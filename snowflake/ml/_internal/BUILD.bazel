@@ -1,0 +1,15 @@
+load("//bazel:py_rules.bzl", "py_library")
+
+package(default_visibility = ["//visibility:public"])
+
+py_library(
+    name = "env",
+    srcs = ["env.py"],
+    deps = ["//snowflake/ml:version"]
+)
+
+py_library(
+    name = "init_utils",
+    srcs = ["init_utils.py"],
+    deps = [],
+)

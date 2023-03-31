@@ -1,0 +1,44 @@
+load("//bazel:py_rules.bzl", "py_library", "py_test")
+load("@rules_python//python:packaging.bzl", "py_package")
+
+package(default_visibility = ["//visibility:public"])
+
+# src/snowflake/ml/registry
+py_library(
+    name = "model_registry",
+    srcs = ["model_registry.py"],
+    deps = [
+        ":_schema",
+        "//snowflake/ml/model",
+        "//snowflake/ml/model:deployer",
+        "//snowflake/ml/utils:formatting",
+        "//snowflake/ml/utils:query_result_checker",
+        "//snowflake/ml/utils:telemetry",
+        "//snowflake/ml/utils:uri",
+    ],
+)
+
+py_test(
+    name = "model_registry_test",
+    srcs = ["model_registry_test.py"],
+    deps = [
+        ":_schema",
+        ":model_registry",
+        "//snowflake/ml/test_utils:mock_data_frame",
+        "//snowflake/ml/test_utils:mock_session",
+    ],
+)
+
+py_library(
+    name = "_schema",
+    srcs = ["_schema.py"],
+    visibility = ["//visibility:private"],
+)
+
+py_package(
+    name = "model_registry_pkg",
+    packages = ["snowflake.ml"],
+    deps = [
+        ":model_registry",
+    ],
+)

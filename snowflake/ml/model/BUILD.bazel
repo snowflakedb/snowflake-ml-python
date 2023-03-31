@@ -1,0 +1,89 @@
+load("//bazel:py_rules.bzl", "py_library", "py_test")
+
+package(default_visibility = ["//visibility:public"])
+
+py_library(
+    name = "type_spec",
+    srcs = ["type_spec.py"],
+)
+
+py_library(
+    name = "env",
+    srcs = ["env.py"],
+)
+
+py_library(
+    name = "util",
+    srcs = ["util.py"],
+)
+
+py_library(
+    name = "type_util",
+    srcs = ["type_util.py"],
+)
+
+py_library(
+    name = "custom_model",
+    srcs = ["custom_model.py"],
+    deps = [
+        ":type_spec",
+    ],
+)
+
+py_library(
+    name = "model_meta",
+    srcs = ["model_meta.py"],
+    deps = [
+        ":env",
+        ":type_spec",
+        ":util",
+    ],
+)
+
+py_library(
+    name = "udf_util",
+    srcs = ["udf_util.py"],
+    deps = [
+        ":model_meta",
+    ],
+)
+
+py_library(
+    name = "deployer",
+    srcs = ["deployer.py"],
+    deps = [
+        ":udf_util",
+    ],
+)
+
+py_library(
+    name = "model_handler",
+    srcs = ["model_handler.py"],
+    deps = [
+        ":model_meta",
+        ":type_spec",
+        ":type_util",
+        ":util",
+    ],
+)
+
+py_library(
+    name = "model",
+    srcs = ["model.py"],
+    deps = [
+        ":env",
+        ":model_handler",
+        ":model_meta",
+    ],
+)
+
+py_test(
+    name = "model_test",
+    srcs = ["model_test.py"],
+    tags = ["skip_mypy_check"],
+    deps = [
+        ":custom_model",
+        ":model",
+        ":type_spec",
+    ],
+)

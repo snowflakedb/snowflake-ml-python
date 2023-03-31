@@ -1,0 +1,32 @@
+load("//bazel:py_rules.bzl", "py_test")
+
+package(default_visibility = ["//visibility:public"])
+
+py_test(
+    name = "test_r2_score",
+    srcs = ["test_r2_score.py"],
+    deps = [
+        "//snowflake/ml/metrics",
+        "//snowflake/ml/utils:connection_params",
+    ],
+)
+
+py_test(
+    name = "test_correlation",
+    timeout = "long",
+    srcs = ["test_correlation.py"],
+    deps = [
+        "//snowflake/ml/metrics",
+        "//snowflake/ml/utils:connection_params",
+    ],
+)
+
+py_test(
+    name = "test_covariance",
+    timeout = "long",
+    srcs = ["test_covariance.py"],
+    deps = [
+        "//snowflake/ml/metrics",
+        "//snowflake/ml/utils:connection_params",
+    ],
+)

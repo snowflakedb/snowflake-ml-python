@@ -1,0 +1,48 @@
+load("//bazel:py_rules.bzl", "py_library", "py_test")
+
+package(default_visibility = ["//visibility:public"])
+
+py_library(
+    name = "mock_snowml_base",
+    testonly = True,
+    srcs = ["mock_snowml_base.py"],
+    deps = [
+        "//snowflake/ml/utils:formatting",
+    ],
+)
+
+py_library(
+    name = "mock_data_frame",
+    testonly = True,
+    srcs = ["mock_data_frame.py"],
+    deps = [
+        ":mock_snowml_base",
+    ],
+)
+
+py_test(
+    name = "mock_data_frame_test",
+    srcs = ["mock_data_frame_test.py"],
+    deps = [
+        ":mock_data_frame",
+    ],
+)
+
+py_library(
+    name = "mock_session",
+    testonly = True,
+    srcs = ["mock_session.py"],
+    deps = [
+        ":mock_data_frame",
+        "//snowflake/ml/utils:string_matcher",
+    ],
+)
+
+py_test(
+    name = "mock_session_test",
+    srcs = ["mock_session_test.py"],
+    deps = [
+        ":mock_data_frame",
+        ":mock_session",
+    ],
+)
