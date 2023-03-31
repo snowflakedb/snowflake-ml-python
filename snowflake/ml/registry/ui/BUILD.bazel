@@ -1,0 +1,22 @@
+load("//bazel:py_rules.bzl", "py_library")
+
+package(default_visibility = ["//visibility:public"])
+
+py_library(
+    name = "render_pandas_df",
+    srcs = ["render_pandas_df.py"],
+    deps = [
+        "//snowflake/ml/registry:model_registry",
+        "//snowflake/ml/utils:identifier",
+    ],
+)
+
+py_library(
+    name = "streamlit_app",
+    srcs = ["streamlit_app.py"],
+    deps = [
+        ":render_pandas_df",
+        "//snowflake/ml/registry:model_registry",
+        "//snowflake/ml/utils:connection_params",
+    ],
+)

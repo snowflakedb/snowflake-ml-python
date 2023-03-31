@@ -1,0 +1,77 @@
+load("//bazel:py_rules.bzl", "py_library", "py_wheel")
+
+package(default_visibility = ["//visibility:public"])
+
+_TENSORFLOW_REQUIRES = ["tensorflow>=2.9,<3"]
+
+_PYTORCH_REQUIRES = ["torchdata>=0.4,<1"]
+
+_ALL_REQUIRES = _TENSORFLOW_REQUIRES + _PYTORCH_REQUIRES
+
+py_wheel(
+    name = "wheel",
+    author = "Snowflake, Inc",
+    author_email = "support@snowflake.com",
+    classifiers = [
+        "Development Status :: 5 - Production/Stable",
+        "Environment :: Console",
+        "Environment :: Other Environment",
+        "Intended Audience :: Developers",
+        "Intended Audience :: Education",
+        "Intended Audience :: Information Technology",
+        "Intended Audience :: System Administrators",
+        "License :: OSI Approved :: Apache Software License",
+        "Operating System :: OS Independent",
+        "Programming Language :: Python :: 3.8",
+        "Topic :: Database",
+        "Topic :: Software Development",
+        "Topic :: Software Development :: Libraries",
+        "Topic :: Software Development :: Libraries :: Application Frameworks",
+        "Topic :: Software Development :: Libraries :: Python Modules",
+        "Topic :: Scientific/Engineering :: Information Analysis",
+    ],
+    compatible_with_snowpark = False,
+    distribution = "snowflake-ml-python",
+    extra_requires = {
+        "tensorflow": _TENSORFLOW_REQUIRES,
+        "pytorch": _PYTORCH_REQUIRES,
+        "all": _ALL_REQUIRES,
+    },
+    license = "Apache License, Version 2.0",
+    python_requires = ">=3.8,<4",
+    python_tag = "py3",
+    # TODO(zhuo): consider adding a check to make sure what's listed
+    # here is a subset that is compatible with what is specified in conda-env.yml.
+    requires = [
+        "absl-py>=0.15,<2",
+        "fsspec[http]>=2022.11,<=2023.1",
+        "numpy>=1.23,<1.24",
+        "pyyaml>=6.0,<7",
+        "scipy>=1.9,<2",
+        "scikit-learn>=1.1,<=1.2.1",
+        "snowflake-connector-python[pandas]",
+        "snowflake-snowpark-python>=1.0.0,<=1.3",
+        "sqlparse>=0.4,<1",
+    ],
+    version = "0.2.2",
+    deps = [
+        "//snowflake/ml/metrics:metrics_pkg",
+        "//snowflake/ml/preprocessing:preprocessing_pkg",
+        "//snowflake/ml/utils:utils_pkg",
+        "//snowflake/ml/fileset:fileset_pkg",
+        "//snowflake/ml/registry:model_registry_pkg",
+        # TODO(snandamuri): Uncomment below lines to include estimators in SnowML pkg.
+        # "//snowflake/ml/linear_model:sklearn_linear_model_pkg",
+        # "//snowflake/ml/ensemble:sklearn_ensemble_pkg",
+        # "//snowflake/ml/svm:sklearn_svm_pkg",
+        # "//snowflake/ml/neural_network:sklearn_neural_network_pkg",
+        # "//snowflake/ml/tree:sklearn_tree_pkg",
+        # "//snowflake/ml/xgboost:xgboost_pkg",
+    ],
+)
+
+py_library(
+    name = "version",
+    srcs = ["version.py"],
+    deps = [],
+)

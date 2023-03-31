@@ -1,0 +1,33 @@
+load("//bazel:py_rules.bzl", "py_test")
+
+package(default_visibility = ["//visibility:public"])
+
+py_test(
+    name = "test_column_name_inference",
+    srcs = ["test_column_name_inference.py"],
+    deps = [
+        "//snowflake/ml/linear_model:linear_regression",
+        "//snowflake/ml/utils:connection_params",
+    ],
+)
+
+py_test(
+    name = "test_grid_search",
+    srcs = ["test_grid_search.py"],
+    deps = [
+        "//snowflake/ml/model_selection:grid_search_cv",
+        "//snowflake/ml/svm:svr",
+        "//snowflake/ml/utils:connection_params",
+    ],
+)
+
+py_test(
+    name = "test_voting_regressor",
+    srcs = ["test_voting_regressor.py"],
+    deps = [
+        "//snowflake/ml/ensemble:voting_regressor",
+        "//snowflake/ml/linear_model:linear_regression",
+        "//snowflake/ml/linear_model:sgd_regressor",
+        "//snowflake/ml/utils:connection_params",
+    ],
+)

@@ -1,0 +1,7 @@
+exports_files([
+    "conda-env-extended.yml",
+    "conda-env-snowflake.yml",
+    "conda-env.yml",
+    "mypy.ini",
+    "requirements.txt",
+])

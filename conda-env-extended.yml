@@ -1,0 +1,19 @@
+# Dependencies not available in the Snowflake conda channel.
+# Each dependency must be accompanied with a JIRA ticket requesting it
+# to be added to the Snowflake channel.
+#
+# After updating this file, conda-env.yml should be updated. See instructions
+# there.
+
+channels:
+  - conda-forge
+dependencies:
+  - moto==4.0.11 # SNOW-690705
+  - torchdata==0.4.1 # SNOW-702102
+  # SNOW-747683: Tensorflow is available on snowflake conda channel,
+  # however, macos-arm64 is only available on conda-forge.
+  - tensorflow==2.9.1
+  # For mypy on YAML. Not required to be released.
+  - types-PyYAML==6.0.12
+  # For huggingface model creation. Not required to be released.
+  - transformers==4.27.1

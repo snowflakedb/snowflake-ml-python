@@ -1,0 +1,669 @@
+#
+# Copyright (c) 2012-2022 Snowflake Computing Inc. All rights reserved.
+#
+import inspect
+import os
+from typing import Iterable, Optional, Union, List, Any
+from uuid import uuid4
+
+import joblib
+import json
+import pandas as pd
+import numpy as np
+{transform.estimator_imports}
+from sklearn.utils.metaestimators import available_if
+
+from snowflake.ml.framework.base import BaseEstimator, BaseTransformer
+from snowflake.ml.utils import telemetry
+from snowflake.ml.utils.query_result_checker import SqlResultValidator
+from snowflake.ml.utils.temp_file_utils import cleanup_temp_files, get_temp_file_path
+from snowflake.snowpark import DataFrame, Session
+from snowflake.snowpark.functions import pandas_udf, sproc
+from snowflake.snowpark.session import _get_active_session
+from snowflake.snowpark.types import PandasSeries
+
+_PROJECT = "ModelDevelopment"
+# Derive subproject from module name by removing "sklearn"
+# and converting module name from underscore to camelcase
+# e.g. sklearn.linear_model -> LinearModel.
+_SUBPROJECT = "".join([s.capitalize() for s in "{transform.root_module_name}".replace("sklearn.", "").split("_")])
+
+
+def _original_estimator_has_callable(attr : str):
+    """ Checks that the original estimator has callable `attr`.
+
+    Args:
+        attr: Arrtibute to check for.
+
+    Returns:
+        A function which checks for the existance of callable `attr` on the given object.
+    """
+    def check(self) -> bool:
+        """ Check for the existance of callable `attr` in self.
+
+        Returns:
+            True of the callable `attr` exists in self, False otherwise.
+        """
+        return callable(getattr(self._sklearn_object, attr, None))
+
+    return check
+
+def _transform_snowml_obj_to_sklearn_obj(obj: Any) -> Any:
+    """Converts SnowML Estimator and Transformer objects to equivalent SKLearn objects.
+
+    Args:
+        obj: Source object that needs to be converted. Source object could of any type, example, lists, tuples, etc.
+
+    Returns:
+        An equivalent object with SnowML estimators and transforms replaced with equivalent SKLearn objects.
+    """
+
+    if isinstance(obj, list):
+        # Apply transform functiont to each element in the list
+        return list(map(_transform_snowml_obj_to_sklearn_obj, obj))
+    elif isinstance(obj, tuple):
+        # Apply transform functiont to each element in the tuple
+        return tuple(map(_transform_snowml_obj_to_sklearn_obj, obj))
+    elif isinstance(obj, BaseTransformer):
+        # Convert SnowML object to equivalent SKLearn object
+        return obj.get_sklearn_object()
+    else:
+        # Return all other objects as it is.
+        return obj
+
+
+class {transform.estimator_class_name}(BaseEstimator, BaseTransformer):
+    r"""{transform.estimator_class_docstring}
+    """
+
+    def __init__(
+        {transform.estimator_init_signature}
+    ) -> None:
+        super().__init__(custom_state=None)
+        self.id = str(uuid4())
+        {transform.estimator_args_transform_calls}
+        self._sklearn_object = {transform.root_module_name}.{transform.original_class_name}(
+            {transform.sklearn_init_arguments}
+        )
+        {transform.estimator_init_member_args}
+
+    def _infer_input_output_cols(self, dataset: Union[DataFrame, pd.DataFrame]) -> None:
+        """
+        Infer `self.input_cols` and `self.output_cols` if they are not set explicitly.
+
+        Args:
+            dataset: Input dataset.
+
+        Raises:
+            RuntimeError: If `self.label_cols` is not set.
+        """
+        if not self.label_cols:
+            raise RuntimeError("label_cols not specified.")
+
+        if not self.input_cols:
+            cols = [c for c in dataset.columns if c not in self.label_cols]
+            self.set_input_cols(input_cols=cols)
+        
+        if not self.output_cols:
+            cols = [f"OUTPUT_{{c}}" for c in self.label_cols]
+            self.set_output_cols(output_cols=cols)
+
+    @telemetry.send_api_usage_telemetry(
+        project=_PROJECT,
+        subproject=_SUBPROJECT,
+        custom_tags=dict([("autogen", True)]),
+    )
+    def fit(self, dataset: Union[DataFrame, pd.DataFrame]) -> "{transform.transformer_class_name}":
+        """{transform.fit_docstring}
+
+        Args:
+            dataset: Input dataset.
+
+        Returns:
+            self. Fitted Transform.
+        """
+        self._infer_input_output_cols(dataset)
+        if isinstance(dataset, pd.DataFrame):
+            self._fit_sklearn(dataset)
+        elif isinstance(dataset, DataFrame):
+            self._fit_snowpark(dataset)
+        else:
+            raise TypeError(
+                f"Unexpected dataset type: {{type(dataset)}}."
+                "Supported dataset types: snowpark.DataFrame, pandas.DataFrame."
+            )
+        self._is_fitted = True
+        return self
+
+    def _fit_snowpark(self, dataset: DataFrame) -> None:
+        # Extract query that generated the datafrome. We will need to pass it to the fit procedure.
+        query = str(dataset.queries["queries"][0])
+
+        # Create a temp file and dump the transform to that file.
+        local_transform_file_name = get_temp_file_path()
+        joblib.dump(self._sklearn_object, local_transform_file_name)
+
+        # Create temp stage to run fit.
+        transform_stage_name = "SNOWML_TRANSFORM_{{safe_id}}".format(safe_id=self.id.replace("-", "_").upper())
+        session = dataset._session
+        stage_creation_query = f"CREATE OR REPLACE TEMPORARY STAGE {{transform_stage_name}};"
+        stage_creation_results = (
+            SqlResultValidator(
+                session=session,
+                query=stage_creation_query
+            )
+            .has_dimensions(expected_rows = 1, expected_cols = 1)
+            .has_value_match(
+                row_idx=0,
+                col_idx=0,
+                expected_value=f"Stage area {{transform_stage_name}} successfully created."
+            )
+            .validate()
+        )
+
+        stage_transform_file_name = os.path.join(transform_stage_name, os.path.basename(local_transform_file_name))
+        local_result_file_name = get_temp_file_path()
+        stage_result_file_name = os.path.join(transform_stage_name, os.path.basename(local_transform_file_name))
+
+        # Put locally serialized transform on stage.
+        session.file.put(local_transform_file_name, stage_transform_file_name, auto_compress=False, overwrite=True)
+
+        fit_sproc_name = "SNOWML_FIT_{{safe_id}}".format(safe_id=self.id.replace("-", "_").upper())
+        @sproc(
+                is_permanent=False,
+                name=fit_sproc_name,
+                packages=["snowflake-snowpark-python", {transform.fit_sproc_deps}],
+                replace=True)
+        def fit_wrapper_sproc(
+                session: Session,
+                sql_query: str,
+                stage_transform_file_name: str,
+                stage_result_file_name: str,
+                input_cols: List[str],
+                label_cols: List[str],
+                sample_weight_col: Optional[str]
+        ) -> str:
+            import joblib
+            import numpy as np
+            import os
+            import pandas
+            import tempfile
+            import inspect
+            {transform.fit_sproc_imports}
+
+            df = session.sql(sql_query).to_pandas()
+
+            local_transform_file = tempfile.NamedTemporaryFile(delete=True)
+            local_transform_file_name = local_transform_file.name
+            local_transform_file.close()
+
+            session.file.get(stage_transform_file_name, local_transform_file_name)
+
+            estimator = joblib.load(os.path.join(local_transform_file_name, os.listdir(local_transform_file_name)[0]))
+
+
+            argspec = inspect.getfullargspec(estimator.fit)
+            args = {{'X': df[input_cols]}}
+            if label_cols:
+                label_arg_name = "Y" if "Y" in argspec.args else "y"
+                args[label_arg_name] = df[label_cols].squeeze()
+
+            if sample_weight_col is not None and "sample_weight" in argspec.args:
+                args['sample_weight'] = df[sample_weight_col].squeeze()
+
+            estimator.fit(**args)
+
+            local_result_file = tempfile.NamedTemporaryFile(delete=True)
+            local_result_file_name = local_result_file.name
+            local_result_file.close()
+
+            joblib_dump_files = joblib.dump(estimator, local_result_file_name)
+            session.file.put(local_result_file_name, stage_result_file_name, auto_compress = False, overwrite = True)
+
+            # Note: you can add something like  + "|" + str(df) to the return string
+            # to pass debug information to the caller.
+            return str(os.path.basename(joblib_dump_files[0]))
+        
+        # Call fit sproc
+        sproc_export_file_name = session.call(
+            fit_sproc_name,
+            query,
+            stage_transform_file_name,
+            stage_result_file_name,
+            self.input_cols,
+            self.label_cols,
+            self.sample_weight_col
+        )
+
+        if "|" in sproc_export_file_name:
+            fields = sproc_export_file_name.strip().split("|")
+            sproc_export_file_name = fields[0]
+            if len(fields) > 1:
+                print("\n".join(fields[1:]))
+
+        session.file.get(os.path.join(stage_result_file_name, sproc_export_file_name), local_result_file_name)
+        self._sklearn_object = joblib.load(os.path.join(local_result_file_name, sproc_export_file_name))
+
+        cleanup_temp_files([local_transform_file_name, local_result_file_name])
+
+    def _fit_sklearn(self, dataset: pd.DataFrame) -> None:
+        argspec = inspect.getfullargspec(self._sklearn_object.fit)
+        args = {{'X': dataset[self.input_cols]}}
+        if self.label_cols:
+            label_arg_name = "Y" if "Y" in argspec.args else "y"
+            args[label_arg_name] = dataset[self.label_cols].squeeze()
+
+        if self.sample_weight_col is not None and "sample_weight" in argspec.args:
+            args['sample_weight'] = dataset[self.sample_weight_col].squeeze()
+
+        self._sklearn_object.fit(**args)
+
+    def _get_pass_through_columns(self, dataset: DataFrame):
+        # TODO(amauser): Ensure that this works with upper/lower case columns.
+        # TODO(amauser): Currently we don't drop the label column for classifiers.
+        result = []
+        input_column_set = set(self.input_cols)
+
+        copy = False
+        if "copy" in self.__dict__:
+            copy = self.copy
+        elif "copy_X" in self.__dict__:
+            copy = self.copy_X
+
+        for c in dataset.columns:
+            if c in input_column_set and copy is False:
+                continue
+            result.append(c)
+        return result
+
+    def _batch_inference(
+        self,
+        dataset: DataFrame,
+        inference_method: str,
+        expected_output_cols_list: List[str],
+        expected_output_cols_type: str = "",
+    ) -> DataFrame:
+        """Util method to create UDF and run batch inference.
+        """
+        if not self._is_fitted:
+            raise RuntimeError(f"Estimator not fitted before calling {{inference_method}} method.")
+
+        # Register vectorized UDF for batch inference
+        batch_inference_udf_name = "SNOWML_BATCH_INFERENCE_{{safe_id}}_{{method}}".format(
+                safe_id=self.id.replace("-", "_").upper(), method=inference_method)
+
+        # Need to do this since if we use self._sklearn_object directly in the UDF, Snowpark
+        # will try to pickle all of self which fails.
+        estimator = self._sklearn_object
+
+        # Input columns for UDF are sorted by column names.
+        # We need actual order of input cols to reorder dataframe before calling inference methods.
+        input_cols = self.input_cols
+
+        @pandas_udf(
+            is_permanent=False,
+            name=batch_inference_udf_name,
+            packages=[{transform.predict_udf_deps}],
+            replace=True
+        )
+        def vec_batch_infer(ds: PandasSeries[dict]) -> PandasSeries[dict]:
+            import pandas as pd
+            import numpy as np
+
+            input_df = pd.io.json.json_normalize(ds)
+            transformed_numpy_array = getattr(estimator, inference_method)(input_df[input_cols])
+            if (
+                isinstance(transformed_numpy_array, list) 
+                and len(transformed_numpy_array) > 0 
+                and isinstance(transformed_numpy_array[0], np.ndarray)
+            ):
+                # In case of multioutput estimators, predict_proba(), decision_function(), etc., functions return 
+                # a list of ndarrays. We need to concatenate them.
+                transformed_numpy_array = np.concatenate(transformed_numpy_array, axis=1)
+
+            if len(transformed_numpy_array.shape) == 3:
+                # VotingClassifier will return results of shape (n_classifiers, n_samples, n_classes)
+                # when voting = "soft" and flatten_transform = False. We can't handle unflatten transforms,
+                # so we ignore flatten_transform flag and flatten the results.
+                transformed_numpy_array = np.hstack(transformed_numpy_array)
+
+            if (
+                len(transformed_numpy_array.shape) > 1 
+                and transformed_numpy_array.shape[1] != len(expected_output_cols_list)
+            ):
+                # HeterogeneousEnsemble's transfrom method produce results with variying shapes
+                # from (n_samples, n_estimators) to (n_samples, n_estimators * n_classes). 
+                # It is hard to predict the response shape without using fragile introspection logic.
+                # So, to avoid that we are packing the results into a dataframe of shape (n_samples, 1) with
+                # each element being a list.
+                if len(expected_output_cols_list) != 1:
+                    raise TypeError("expected_output_cols_list must be same length as transformed array or "
+                            "should be of length 1")
+                series = pd.Series(transformed_numpy_array.tolist())
+                transformed_pandas_df = pd.DataFrame(series, columns = expected_output_cols_list)
+            else:
+                transformed_pandas_df = pd.DataFrame(transformed_numpy_array, columns=expected_output_cols_list)
+            return transformed_pandas_df.to_dict("records")
+
+
+        batch_inference_table_name = "SNOWML_BATCH_INFERENCE_INPUT_TABLE_{{safe_id}}".format(
+            safe_id=self.id.replace("-", "_").upper()
+        )
+
+        pass_through_columns = self._get_pass_through_columns(dataset)
+        # Run Transform
+        query_from_df = str(dataset.queries["queries"][0])
+        
+        outer_select_list = pass_through_columns[:]
+        inner_select_list = pass_through_columns[:]
+
+        outer_select_list.extend([
+                "{{object_name}}:{{column_name}}{{udf_datatype}} as {{column_name}}".format(
+                    object_name=batch_inference_udf_name,
+                    column_name=c,
+                    udf_datatype=(f"::{{expected_output_cols_type}}" if expected_output_cols_type else "")
+                )
+                for c in expected_output_cols_list
+        ])
+
+        inner_select_list.extend([
+            "{{udf_name}}(object_construct({{input_cols_dict}})) AS {{udf_name}}".format(
+                udf_name=batch_inference_udf_name,
+                input_cols_dict=", ".join([f"'{{c}}', {{c}}" for c in self.input_cols]),
+            )
+        ])
+
+        sql = """WITH {{input_table_name}} AS ({{query}})
+                    SELECT
+                      {{outer_select_stmt}}
+                    FROM (
+                      SELECT
+                        {{inner_select_stmt}}
+                      FROM {{input_table_name}}
+                    )
+               """.format(
+            input_table_name=batch_inference_table_name,
+            query=query_from_df,
+            outer_select_stmt=", ".join(outer_select_list),
+            inner_select_stmt=", ".join(inner_select_list),
+        )
+
+        session = dataset._session
+        return session.sql(sql)
+
+    def _sklearn_inference(
+        self,
+        dataset: pd.DataFrame,
+        inference_method: str,
+        expected_output_cols_list: List[str]
+    ) -> pd.DataFrame:
+        dataset = dataset.copy()
+        output_cols = expected_output_cols_list.copy()
+        transformed_numpy_array = getattr(self._sklearn_object, inference_method)(dataset[self.input_cols])
+        if (
+                isinstance(transformed_numpy_array, list) 
+                and len(transformed_numpy_array) > 0 
+                and isinstance(transformed_numpy_array[0], np.ndarray)
+            ):
+                # In case of multioutput estimators, predict_proba(), decision_function(), etc., functions return 
+                # a list of ndarrays. We need to concatenate them.
+
+                # First compute output column names
+                if(len(output_cols) == len(transformed_numpy_array)):
+                    actual_output_cols = []
+                    for idx, np_arr in enumerate(transformed_numpy_array):
+                        for i in range(1 if len(np_arr.shape) <= 1 else np_arr.shape[1]):
+                            actual_output_cols.append(f"{{output_cols[idx]}}_{{i}}")
+                    output_cols = actual_output_cols
+                # Concatenate np arrays
+                transformed_numpy_array = np.concatenate(transformed_numpy_array, axis=1)
+
+        if len(transformed_numpy_array.shape) == 3:
+                # VotingClassifier will return results of shape (n_classifiers, n_samples, n_classes)
+                # when voting = "soft" and flatten_transform = False. We can't handle unflatten transforms,
+                # so we ignore flatten_transform flag and flatten the results.
+                transformed_numpy_array = np.hstack(transformed_numpy_array)
+
+        if len(transformed_numpy_array.shape) == 1:
+            transformed_numpy_array = np.reshape(transformed_numpy_array, (-1, 1))
+
+        shape = transformed_numpy_array.shape
+        if shape[1] != len(output_cols):
+            if len(output_cols) != 1:
+                    raise TypeError("expected_output_cols_list must be same length as transformed array or "
+                            "should be of length 1 or should be of length number of label columns")
+            actual_output_cols = []
+            for i in range(shape[1]):
+                actual_output_cols.append(f"{{output_cols[0]}}_{{i}}")
+            output_cols = actual_output_cols
+
+        dataset[output_cols] = transformed_numpy_array
+        return dataset
+
+    @available_if(_original_estimator_has_callable("predict"))
+    @telemetry.send_api_usage_telemetry(
+        project=_PROJECT,
+        subproject=_SUBPROJECT,
+        custom_tags=dict([("autogen", True)]),
+    )
+    def predict(self, dataset: Union[DataFrame, pd.DataFrame]) -> Union[DataFrame, pd.DataFrame]:
+        """Predict lable values for each example in the input dataset.
+
+        Args:
+            dataset: Input dataset.
+
+        Returns:
+            Transformed dataset.
+        """
+        if isinstance(dataset, DataFrame):
+            output_df = self._batch_inference(
+                dataset=dataset,
+                inference_method="predict",
+                expected_output_cols_list=self.output_cols,
+                expected_output_cols_type="{transform.udf_datatype}",
+            )
+        elif isinstance(dataset, pd.DataFrame):
+            output_df = self._sklearn_inference(
+                dataset=dataset,
+                inference_method="predict",
+                expected_output_cols_list=self.output_cols,)
+        else:
+            raise TypeError(
+                f"Unexpected dataset type: {{type(dataset)}}."
+                "Supported dataset types: snowpark.DataFrame, pandas.DataFrame."
+            )
+
+        return output_df
+
+    @available_if(_original_estimator_has_callable("transform"))
+    @telemetry.send_api_usage_telemetry(
+        project=_PROJECT,
+        subproject=_SUBPROJECT,
+        custom_tags=dict([("autogen", True)]),
+    )
+    def transform(self, dataset: Union[DataFrame, pd.DataFrame]) -> Union[DataFrame, pd.DataFrame]:
+        """Transform the dataset.
+
+        Args:
+            dataset: Input dataset.
+
+        Returns:
+            Transformed dataset.
+        """
+        if isinstance(dataset, DataFrame):
+            expected_dtype = "{transform.udf_datatype}"
+            if {transform._is_heterogeneous_ensemble}: # is child of _BaseHeterogeneousEnsemble
+                # transform() method of HeterogeneousEnsemble estimators return responses of varying 
+                # shapes from (n_samples, n_estimators) to (n_samples, n_estimators * n_classes) (and everything in between)
+                # based on init param values. We will convert that to pandas dataframe of shape (n_samples, 1) with
+                # each row containing a list of values.
+                expected_dtype = "ARRAY"
+
+            output_df = self._batch_inference(
+                dataset=dataset,
+                inference_method="transform",
+                expected_output_cols_list=self.output_cols,
+                expected_output_cols_type=expected_dtype,
+            )
+        elif isinstance(dataset, pd.DataFrame):
+            output_df = self._sklearn_inference(
+                dataset=dataset,
+                inference_method="transform",
+                expected_output_cols_list=self.output_cols,
+            )
+        else:
+            raise TypeError(
+                f"Unexpected dataset type: {{type(dataset)}}."
+                "Supported dataset types: snowpark.DataFrame, pandas.DataFrame."
+            )
+
+        return output_df
+
+    def _get_output_column_names(self, output_cols_prefix: str) -> List[str]:
+        """ Returns the list of output columns for predict_proba(), decision_function(), etc.. functions.
+        Returns an empty list if current object is not a classifier or not yet fitted.
+        """
+        if getattr(self._sklearn_object, "classes_", None) is None:
+            return []
+
+        classes = self._sklearn_object.classes_
+        if isinstance(classes, numpy.ndarray):
+            return [f'{{output_cols_prefix}}{{c}}' for c in classes.tolist()]
+        elif isinstance(classes, list) and len(classes) > 0 and isinstance(classes[0], numpy.ndarray):
+            # If the estimator is a multioutput estimator, classes_ will be a list of ndarrays.
+            output_cols = []
+            for i, cl in enumerate(classes):
+                # For binary classification, there is only one output column for each class
+                # ndarray as the two classes are complementary.
+                if len(cl) == 2:
+                    output_cols.append(f'{{output_cols_prefix}}_{{i}}_{{cl[0]}}')
+                else:
+                    output_cols.extend([
+                        f'{{output_cols_prefix}}_{{i}}_{{c}}' for c in cl.tolist()
+                    ])
+            return output_cols
+        return []
+
+    @available_if(_original_estimator_has_callable("predict_proba"))
+    @telemetry.send_api_usage_telemetry(
+        project=_PROJECT,
+        subproject=_SUBPROJECT,
+        custom_tags=dict([("autogen", True)]),
+    )
+    def predict_proba(
+        self, dataset: Union[DataFrame, pd.DataFrame], output_cols_prefix: str = "predict_proba_"
+    ) -> Union[DataFrame, pd.DataFrame]:
+        """Compute probabilities of possible outcomes for samples in dataset.
+
+        Args:
+            dataset: Input dataset. Shape (n_samples, n_features).
+            output_cols_prefix: Prefix for the response columns
+
+        Returns:
+            Output dataset with probability of the sample for each class in the model.
+            n_classes of new columns with output_cols_prefix as column name prefix will be present in the response
+            dataframe.
+        """
+        if isinstance(dataset, DataFrame):
+            output_df = self._batch_inference(
+                dataset=dataset,
+                inference_method="predict_proba",
+                expected_output_cols_list=self._get_output_column_names(output_cols_prefix),
+                expected_output_cols_type="float"
+            )
+        elif isinstance(dataset, pd.DataFrame):
+            output_df = self._sklearn_inference(
+                dataset=dataset,
+                inference_method="predict_proba",
+                expected_output_cols_list=self._get_output_column_names(output_cols_prefix),
+            )
+        else:
+            raise TypeError(
+                f"Unexpected dataset type: {{type(dataset)}}."
+                "Supported dataset types: snowpark.DataFrame, pandas.DataFrame."
+            )
+
+        return output_df
+
+    @available_if(_original_estimator_has_callable("predict_log_proba"))
+    @telemetry.send_api_usage_telemetry(
+        project=_PROJECT,
+        subproject=_SUBPROJECT,
+        custom_tags=dict([("autogen", True)]),
+    )
+    def predict_log_proba(
+        self, dataset: Union[DataFrame, pd.DataFrame], output_cols_prefix: str = "predict_log_proba_"
+    ) -> Union[DataFrame, pd.DataFrame]:
+        """Compute log probabilities of possible outcomes for samples in dataset.
+
+        Args:
+            dataset: Input dataset. Shape (n_samples, n_features).
+            output_cols_prefix: Prefix for the response columns
+
+        Returns:
+            Output dataset with log probability of the sample for each class in the model.
+            n_classes of new columns with output_cols_prefix as column name prefix will be prresent in the response
+            dataframe.
+        """
+        if isinstance(dataset, DataFrame):
+            output_df = self._batch_inference(
+                dataset=dataset,
+                inference_method="predict_log_proba",
+                expected_output_cols_list=self._get_output_column_names(output_cols_prefix),
+                expected_output_cols_type="float"
+            )
+        elif isinstance(dataset, pd.DataFrame):
+            output_df = self._sklearn_inference(
+                dataset=dataset,
+                inference_method="predict_log_proba",
+                expected_output_cols_list=self._get_output_column_names(output_cols_prefix),
+            )
+        else:
+            raise TypeError(
+                f"Unexpected dataset type: {{type(dataset)}}."
+                "Supported dataset types: snowpark.DataFrame, pandas.DataFrame."
+            )
+
+        return output_df
+
+    @available_if(_original_estimator_has_callable("decision_function"))
+    @telemetry.send_api_usage_telemetry(
+        project=_PROJECT,
+        subproject=_SUBPROJECT,
+        custom_tags=dict([("autogen", True)]),
+    )
+    def decision_function(
+        self, dataset: Union[DataFrame, pd.DataFrame], output_cols_prefix: str = "decision_function_"
+    ) -> Union[DataFrame, pd.DataFrame]:
+        """Evaluate the decision function for the samples in dataset.
+
+        Args:
+            dataset: Input dataset. Shape (n_samples, n_features).
+            output_cols_prefix: Prefix for the response columns
+
+        Returns:
+            Output dataset with results of the decision function for the samples in input dataset.
+            n_classes of new columns with output_cols_prefix as column name prefix will be prresent in the response
+            dataframe.
+        """
+        if isinstance(dataset, DataFrame):
+            output_df = self._batch_inference(
+                dataset=dataset,
+                inference_method="decision_function",
+                expected_output_cols_list=self._get_output_column_names(output_cols_prefix),
+                expected_output_cols_type="float"
+            )
+        elif isinstance(dataset, pd.DataFrame):
+            output_df = self._sklearn_inference(
+                dataset=dataset,
+                inference_method="decision_function",
+                expected_output_cols_list=self._get_output_column_names(output_cols_prefix),
+            )
+        else:
+            raise TypeError(
+                f"Unexpected dataset type: {{type(dataset)}}."
+                "Supported dataset types: snowpark.DataFrame, pandas.DataFrame."
+            )
+
+        return output_df
+
