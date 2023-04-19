@@ -1,0 +1,4 @@
+[darglint]
+strictness = short
+ignore_regex=^.*(_test.py)$
+message_template={path}:{line}: {obj} has error: [{msg_id}] {msg}

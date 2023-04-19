@@ -1,0 +1,32 @@
+load("//bazel:py_rules.bzl", "py_library", "py_binary")
+
+package(default_visibility = ["//visibility:public"])
+
+filegroup(
+    name = "templates",
+    srcs = [
+        "sklearn_wrapper_template.py_template",
+        "transformer_autogen_test_template.py_template",
+        "init_template.py_template",
+    ],
+)
+
+py_library(
+    name = "codegen_lib",
+    srcs = [
+        "sklearn_wrapper_generator.py",
+        "sklearn_wrapper_autogen.py",
+    ],
+    deps = []
+)
+
+py_binary(
+    name = "estimator_autogen_tool",
+    srcs = [
+        "estimator_autogen_tool.py",
+    ],
+    deps = [":codegen_lib"],
+    data = [
+        ":templates"
+    ]
+)

@@ -1,0 +1,58 @@
+load("//bazel:py_rules.bzl", "py_test")
+
+package(default_visibility = ["//visibility:public"])
+
+py_test(
+    name = "test_column_name_inference",
+    srcs = ["test_column_name_inference.py"],
+    deps = [
+        "//snowflake/ml/modeling/linear_model:linear_regression",
+        "//snowflake/ml/utils:connection_params",
+    ],
+)
+
+py_test(
+    name = "test_grid_search",
+    srcs = ["test_grid_search.py"],
+    deps = [
+        "//snowflake/ml/modeling/model_selection:grid_search_cv",
+        "//snowflake/ml/modeling/svm:svr",
+        "//snowflake/ml/utils:connection_params",
+    ],
+)
+
+py_test(
+    name = "test_voting_regressor",
+    srcs = ["test_voting_regressor.py"],
+    deps = [
+        "//snowflake/ml/modeling/ensemble:voting_regressor",
+        "//snowflake/ml/modeling/linear_model:linear_regression",
+        "//snowflake/ml/modeling/linear_model:sgd_regressor",
+        "//snowflake/ml/utils:connection_params",
+    ],
+)
+
+py_test(
+    name="test_grid_search_on_pipeline",
+    srcs = ["test_grid_search_on_pipeline.py"],
+    deps = [
+        "//snowflake/ml/modeling/linear_model:logistic_regression",
+        "//snowflake/ml/modeling/model_selection:grid_search_cv",
+        "//snowflake/ml/modeling/compose:column_transformer",
+        "//snowflake/ml/framework:framework",
+        "//snowflake/ml/preprocessing:one_hot_encoder",
+        "//snowflake/ml/preprocessing:min_max_scaler",
+        "//snowflake/ml/preprocessing:label_encoder",
+        "//snowflake/ml/utils:connection_params",
+    ]
+)
+
+py_test(
+    name="test_iterative_imputer",
+    srcs = ["test_iterative_imputer.py"],
+    deps = [
+        "//snowflake/ml/modeling/linear_model:linear_regression",
+        "//snowflake/ml/modeling/impute:iterative_imputer",
+        "//snowflake/ml/utils:connection_params",
+    ]
+)

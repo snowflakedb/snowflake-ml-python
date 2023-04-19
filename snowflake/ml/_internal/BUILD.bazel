@@ -1,0 +1,33 @@
+load("//bazel:py_rules.bzl", "py_library", "py_test")
+
+package(default_visibility = ["//visibility:public"])
+
+py_library(
+    name = "env",
+    srcs = ["env.py"],
+    deps = ["//snowflake/ml:version"]
+)
+
+py_library(
+    name = "init_utils",
+    srcs = ["init_utils.py"],
+    deps = [],
+)
+
+py_library(
+    name = "type_utils",
+    srcs = ["type_utils.py"],
+)
+
+py_library(
+    name = "file_utils",
+    srcs = ["file_utils.py"],
+)
+
+py_test(
+    name = "file_utils_test",
+    srcs = ["file_utils_test.py"],
+    deps = [
+        ":file_utils",
+    ],
+)

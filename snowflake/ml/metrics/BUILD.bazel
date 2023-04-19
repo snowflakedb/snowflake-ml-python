@@ -1,0 +1,39 @@
+load("//bazel:py_rules.bzl", "py_library")
+load("@rules_python//python:packaging.bzl", "py_package")
+
+package(default_visibility = ["//visibility:public"])
+
+py_library(
+    name = "metrics",
+    srcs = [
+        "regression.py",
+        "correlation.py",
+        "covariance.py",
+    ],
+    deps = [
+        ":init",
+        ":utils",
+        "//snowflake/ml/utils:telemetry",
+    ],
+)
+
+py_package(
+    name = "metrics_pkg",
+    packages = ["snowflake.ml"],
+    deps = [
+        ":metrics",
+    ],
+)
+
+py_library(
+    name = "init",
+    srcs = ["__init__.py"],
+)
+
+py_library(
+    name = "utils",
+    srcs = ["_utils.py"],
+    deps = [
+        "//snowflake/ml/utils:telemetry",
+    ],
+)

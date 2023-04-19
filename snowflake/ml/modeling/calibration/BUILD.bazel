@@ -1,0 +1,6 @@
+load("//codegen:codegen_rules.bzl", "autogen_estimators", "autogen_init_file_for_module")
+load(":estimators_info.bzl", "estimator_info_list")
+package(default_visibility = ["//visibility:public"])
+
+autogen_init_file_for_module(module="sklearn.calibration")
+autogen_estimators(module="sklearn.calibration", estimator_info_list=estimator_info_list)
