@@ -1,0 +1,36 @@
+load("//bazel:py_rules.bzl", "py_library")
+
+package(default_visibility = ["//visibility:public"])
+
+py_library(
+    name = "_base",
+    srcs = ["_base.py"],
+    deps = [
+        "//snowflake/ml/model:model_meta",
+        "//snowflake/ml/model:model_types",
+    ],
+)
+
+
+py_library(
+    name = "custom",
+    srcs = ["custom.py"],
+    deps = [
+        ":_base",
+        "//snowflake/ml/_internal:type_utils",
+        "//snowflake/ml/model:custom_model",
+        "//snowflake/ml/model:model_handler",
+        "//snowflake/ml/model:model_types",
+    ],
+)
+
+py_library(
+    name = "sklearn",
+    srcs = ["sklearn.py"],
+    deps = [
+        ":_base",
+        "//snowflake/ml/model:custom_model",
+        "//snowflake/ml/_internal:type_utils",
+        "//snowflake/ml/model:model_types",
+    ],
+)

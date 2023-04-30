@@ -1,0 +1,79 @@
+load("//bazel:py_rules.bzl", "py_library", "snowml_wheel")
+
+package(default_visibility = ["//visibility:public"])
+
+_TENSORFLOW_REQUIRES = ["tensorflow>=2.9,<3"]
+
+_PYTORCH_REQUIRES = ["torchdata>=0.4,<1"]
+
+_LIGHTGBM_REQUIRES = ["lightgbm==3.3.5"]
+
+_ALL_REQUIRES = _TENSORFLOW_REQUIRES + _PYTORCH_REQUIRES + _LIGHTGBM_REQUIRES
+
+py_library(
+    name = "version",
+    srcs = ["version.py"],
+    deps = [],
+)
+
+snowml_wheel(
+    name = "wheel",
+    compatible_with_snowpark = False,
+    development_status = "PrPr",
+    extra_requires = {
+        "tensorflow": _TENSORFLOW_REQUIRES,
+        "pytorch": _PYTORCH_REQUIRES,
+        "lightgbm": _LIGHTGBM_REQUIRES,
+        "all": _ALL_REQUIRES,
+    },
+    # TODO(zhuo): consider adding a check to make sure what's listed
+    # here is a subset that is compatible with what is specified in conda-env.yml.
+    requires = [
+        "absl-py>=0.15,<2",
+        "fsspec[http]>=2022.11,<=2023.1",
+        "numpy>=1.23,<1.24",
+        "pyyaml>=6.0,<7",
+        "scipy>=1.9,<2",
+        "scikit-learn==1.2.1",
+        "snowflake-connector-python[pandas]",
+        "snowflake-snowpark-python>=1.0.0,<=1.3",
+        "sqlparse>=0.4,<1",
+        "xgboost==1.7.3",
+    ],
+    version = "0.2.3",
+    deps = [
+        "//snowflake/ml/metrics:metrics_pkg",
+        "//snowflake/ml/preprocessing:preprocessing_pkg",
+        "//snowflake/ml/utils:utils_pkg",
+        "//snowflake/ml/fileset:fileset_pkg",
+        "//snowflake/ml/registry:model_registry_pkg",
+        # Auotgen packages
+        "//snowflake/ml/modeling/linear_model:sklearn_linear_model_pkg",
+        "//snowflake/ml/modeling/ensemble:sklearn_ensemble_pkg",
+        "//snowflake/ml/modeling/svm:sklearn_svm_pkg",
+        "//snowflake/ml/modeling/neural_network:sklearn_neural_network_pkg",
+        "//snowflake/ml/modeling/tree:sklearn_tree_pkg",
+        "//snowflake/ml/modeling/xgboost:xgboost_pkg",
+        "//snowflake/ml/modeling/calibration:sklearn_calibration_pkg",
+        "//snowflake/ml/modeling/cluster:sklearn_cluster_pkg",
+        "//snowflake/ml/modeling/compose:sklearn_compose_pkg",
+        "//snowflake/ml/modeling/covariance:sklearn_covariance_pkg",
+        "//snowflake/ml/modeling/decomposition:sklearn_decomposition_pkg",
+        "//snowflake/ml/modeling/discriminant_analysis:sklearn_discriminant_analysis_pkg",
+        "//snowflake/ml/modeling/feature_selection:sklearn_feature_selection_pkg",
+        "//snowflake/ml/modeling/gaussian_process:sklearn_gaussian_process_pkg",
+        "//snowflake/ml/modeling/impute:sklearn_impute_pkg",
+        "//snowflake/ml/modeling/isotonic:sklearn_isotonic_pkg",
+        "//snowflake/ml/modeling/kernel_approximation:sklearn_kernel_approximation_pkg",
+        "//snowflake/ml/modeling/kernel_ridge:sklearn_kernel_ridge_pkg",
+        "//snowflake/ml/modeling/manifold:sklearn_manifold_pkg",
+        "//snowflake/ml/modeling/mixture:sklearn_mixture_pkg",
+        "//snowflake/ml/modeling/model_selection:sklearn_model_selection_pkg",
+        "//snowflake/ml/modeling/multiclass:sklearn_multiclass_pkg",
+        "//snowflake/ml/modeling/multioutput:sklearn_multioutput_pkg",
+        "//snowflake/ml/modeling/naive_bayes:sklearn_naive_bayes_pkg",
+        "//snowflake/ml/modeling/neighbors:sklearn_neighbors_pkg",
+        "//snowflake/ml/modeling/semi_supervised:sklearn_semi_supervised_pkg",
+        "//snowflake/ml/modeling/lightgbm:lightgbm_pkg",
+    ],
+)

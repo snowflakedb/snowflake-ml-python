@@ -1,0 +1,118 @@
+load("//bazel:py_rules.bzl", "py_library", "py_test")
+
+package(default_visibility = ["//visibility:public"])
+
+py_library(
+    name = "schema",
+    srcs = ["schema.py"],
+)
+
+py_library(
+    name = "_utils",
+    srcs = ["_utils.py"],
+)
+
+py_library(
+    name = "model_types",
+    srcs = ["model_types.py"],
+)
+
+py_library(
+    name = "_env",
+    srcs = ["_env.py"],
+    deps = [
+        ":_utils",
+    ],
+)
+
+py_library(
+    name = "custom_model",
+    srcs = ["custom_model.py"],
+    deps = [
+        ":model_types",
+        "//snowflake/ml/model/_handlers:_base",
+    ],
+)
+
+py_library(
+    name = "model_meta",
+    srcs = ["model_meta.py"],
+    deps = [
+        ":_env",
+        ":schema",
+        "//snowflake/ml/_internal:file_utils",
+    ],
+)
+
+py_library(
+    name = "_udf_util",
+    srcs = ["_udf_util.py"],
+    deps = [
+        ":model_meta",
+    ],
+)
+
+py_library(
+    name = "deployer",
+    srcs = ["deployer.py"],
+    deps = [
+        ":model",
+        ":_udf_util",
+    ],
+)
+
+py_library(
+    name = "model_handler",
+    srcs = ["model_handler.py"],
+    deps = [
+        "//snowflake/ml/model/_handlers:_base",
+    ],
+)
+
+py_library(
+    name = "model",
+    srcs = ["model.py"],
+    deps = [
+        ":custom_model",
+        ":model_handler",
+        "//snowflake/ml/model/_handlers:custom",
+        "//snowflake/ml/model/_handlers:sklearn"
+    ],
+)
+
+py_test(
+    name = "custom_model_test",
+    srcs = ["custom_model_test.py"],
+    deps = [
+        ":custom_model",
+    ],
+)
+
+py_test(
+    name = "_env_test",
+    srcs = ["_env_test.py"],
+    timeout = "long",
+    deps = [
+        ":_env",
+    ],
+)
+
+py_test(
+    name = "schema_test",
+    srcs = ["schema_test.py"],
+    deps = [
+        ":schema",
+    ],
+)
+
+
+py_test(
+    name = "model_test",
+    srcs = ["model_test.py"],
+    shard_count = 5,
+    timeout = "long",
+    deps = [
+        ":model",
+        ":deployer"
+    ],
+)

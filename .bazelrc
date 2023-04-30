@@ -1,0 +1,12 @@
+# Make the target platform and the host platform the same
+build --platforms //bazel/platforms:extended_conda_env --host_platform //bazel/platforms:extended_conda_env
+test --platforms //bazel/platforms:extended_conda_env --host_platform //bazel/platforms:extended_conda_env
+run --platforms //bazel/platforms:extended_conda_env --host_platform //bazel/platforms:extended_conda_env
+cquery --platforms //bazel/platforms:extended_conda_env --host_platform //bazel/platforms:extended_conda_env
+
+build:typecheck --aspects //bazel/mypy:mypy.bzl%mypy_aspect --output_groups=mypy
+
+# Since integration tests are located in different packages than code under test,
+# the default instrumentation filter would exclude the code under test. This
+# makes bazel consider all the source code in our repo for coverage.
+coverage --instrumentation_filter="-//tests[/:]"

@@ -1,0 +1,14 @@
+load("//bazel:py_rules.bzl", "py_test")
+
+py_test(
+    name = "model_integ_test",
+    srcs = ["model_integ_test.py"],
+    timeout = "long",
+    shard_count=6,
+    deps = [
+        "//snowflake/ml/model:model",
+        "//snowflake/ml/model:deployer",
+        "//snowflake/ml/utils:connection_params"
+    ],
+    tags = ["skip_merge_gates"],
+)

@@ -1,0 +1,299 @@
+#
+# Copyright (c) 2012-2022 Snowflake Computing Inc. All rights reserved.
+#
+import inspect
+import inflection
+import numpy as np
+import pandas as pd
+import json
+import random
+
+from typing import Optional, Any
+from absl.testing.absltest import TestCase, main
+{transform.test_estimator_imports}
+from snowflake.ml.utils.connection_params import SnowflakeLoginOptions
+from snowflake.snowpark import Session, DataFrame
+
+class {transform.test_class_name}(TestCase):
+    def setUp(self):
+        """Creates Snowpark and Snowflake environments for testing."""
+        self._session = Session.builder.configs(SnowflakeLoginOptions()).create()
+
+    def tearDown(self):
+        self._session.close()
+
+    def _get_test_dataset(self, sklearn_obj: Optional[Any] = None, add_sample_weight_col: bool = False):
+        """ Constructs input dataset to be used in the integration test.
+
+        Args:
+            sklearn_obj: SKLearn object under tests. If the sklearn_obj supports multioutput, then this method will
+            add extra lable columns to test multioutput functionality.
+            add_sample_weight_col: If true and addiptional column named "SAMPLE_WEIGHT" will be added to the dataset
+            representing the weight of each sample.
+
+        Retrurns:
+            A tuple containing pandas dataframe, list of input columns names, and list of lable column names.
+        """
+        input_df_pandas = {transform.test_dataset_func}(as_frame=True).frame
+
+        # Some of the estimators inherit from MultiOutputMixin class but don't actually support multi task learning.
+        # Those estimators can be identified by calling _is_multitask() method or checking "multioutput" tag.
+        if (
+            {transform._is_multioutput}
+            and (
+                (callable(getattr(sklearn_obj, "_is_multitask", None)) and sklearn_obj._is_multitask())
+                or (
+                    callable(getattr(sklearn_obj, "_more_tags", None))
+                    and (
+                        ("multioutput" in sklearn_obj._more_tags() and sklearn_obj._more_tags()["multioutput"])
+                        or ("multioutput_only" in sklearn_obj._more_tags() and sklearn_obj._more_tags()["multioutput_only"])
+                    )
+                )
+            )
+            or {transform._is_multioutput_estimator}
+            or {transform._is_chain_multioutput}
+        ):
+            input_df_pandas["target2"] = input_df_pandas["target"].apply(lambda x: 1 if not x % 2 else 0)
+
+        # Normalize column names
+        input_df_pandas.columns = [inflection.parameterize(c, "_").upper() for c in input_df_pandas.columns]
+        input_cols = [c for c in input_df_pandas.columns if not c.startswith("TARGET")]
+        if {transform._is_single_col_input}:
+            input_cols = [input_cols[0]]
+        label_col = [c for c in input_df_pandas.columns if c.startswith("TARGET")]
+        if add_sample_weight_col:
+            random.seed(0)
+            input_df_pandas["sample_weight"] = np.array([random.randint(0, 100) for _ in range(input_df_pandas.shape[0])])
+
+        # Predict UDF processes and returns data in random order.
+        # Add INDEX column so that output can be sorted by that column
+        # to compare results with local sklearn predict.
+        input_df_pandas["INDEX"] = input_df_pandas.reset_index().index
+        if {transform._is_positive_value_input}:
+            input_df_pandas = input_df_pandas.abs()
+
+        # Normalize column names
+        input_df_pandas.columns = [inflection.parameterize(c, "_").upper() for c in input_df_pandas.columns]
+
+        input_cols = [
+                c for c in input_df_pandas.columns 
+                if not c.startswith("TARGET") and not c.startswith("SAMPLE_WEIGHT") and not c.startswith("INDEX")
+        ]
+        label_col = [c for c in input_df_pandas.columns if c.startswith("TARGET")]
+        return (input_df_pandas, input_cols, label_col)
+
+    def _fit_and_compare_results(
+            self,
+            use_weighted_dataset: bool,
+            fit_with_sproc: bool = True,
+            inference_with_udf: bool = True
+    ) -> None:
+
+        input_df_pandas = {transform.test_dataset_func}(as_frame=True).frame
+        cols = [inflection.parameterize(c, "_").upper() for c in input_df_pandas.columns if not c.startswith("target")]
+        cols_half_1, cols_half_2 = cols[:int(len(cols)/2)], cols[int(len(cols)/2)+1:]
+
+        sklearn_reg = Sk{transform.original_class_name}({transform.test_estimator_input_args})
+
+        input_df_pandas, input_cols, label_col = self._get_test_dataset(
+                sklearn_obj=sklearn_reg,
+                add_sample_weight_col=use_weighted_dataset
+        )
+        input_df = self._session.create_dataframe(input_df_pandas)
+
+        reg = {transform.original_class_name}({transform.test_estimator_input_args})
+        reg.set_input_cols(input_cols)
+        output_cols = ["OUTPUT_" + c for c in label_col]
+        reg.set_output_cols(output_cols)
+        reg.set_label_cols(label_col)
+
+        args = {{
+            'X':input_df_pandas[input_cols],
+            'y':input_df_pandas[label_col].squeeze()
+        }}
+        if use_weighted_dataset:
+            reg.set_sample_weight_col("SAMPLE_WEIGHT")
+            args['sample_weight'] = input_df_pandas["SAMPLE_WEIGHT"].squeeze()
+
+        if fit_with_sproc:
+            reg.fit(input_df)
+        else:
+            reg.fit(input_df_pandas)
+
+        sklearn_reg.fit(**args)
+
+        inference_methods = ["transform", "predict"]
+        for m in inference_methods:
+            if callable(getattr(sklearn_reg, m, None)):
+
+                if inference_with_udf:
+                    output_df = getattr(reg, m)(input_df)
+                    output_df_pandas = output_df.to_pandas().sort_values(by="INDEX")[output_cols]
+
+                    if (
+                        len(output_df_pandas.shape) == 2
+                        and output_df_pandas.shape[1] == 1
+                        and (output_df_pandas.dtypes[0] == object or output_df_pandas.dtypes[0] == pd.StringDtype)
+                    ):
+                        # transform() method of HeterogeneousEnsemble estimators return responses of varying 
+                        # shapes from (n_samples, n_estimators) to (n_samples, n_estimators * n_classes)
+                        # based on init param values. We will convert that to pandas dataframe of shape (n_samples, 1) with
+                        # each row containing a list of values in the transfrom() UDF.
+                        #
+                        # We need to flatten the response from (n_samples, 1) to original 
+                        # dimentions (n_samples, n_original_columns) by flattening list objects.
+                        output_df_pandas = output_df_pandas.apply(lambda row: pd.Series(json.loads(row[0])), axis=1)
+
+                    # TODO(snandamuri): Implement type inference for trnasform and predict methods to return results with
+                    # correct datatype.
+                    actual_arr = output_df_pandas.astype("float64").to_numpy()
+                else:
+                    output_df_pandas = getattr(reg, m)(input_df_pandas)
+                    actual_output_cols = [
+                        c for c in output_df_pandas.columns 
+                        if any([c.find(colName) >= 0 for colName in output_cols])
+                    ]
+                    actual_arr = output_df_pandas[actual_output_cols].to_numpy()
+
+                sklearn_numpy_arr = getattr(sklearn_reg, m)(input_df_pandas[input_cols])
+                if len(sklearn_numpy_arr.shape) == 3:
+                    # VotingClassifier will retunr results of shape (n_classifiers, n_samples, n_classes)
+                    # when voting = "soft" and flatten_transform = False. We can't handle unflatten transforms,
+                    # so we ignore flatten_transform flag and flatten the results. We need flatten sklearn results
+                    # also to compare with snowflake results.
+                    sklearn_numpy_arr = np.hstack(sklearn_numpy_arr)
+                elif len(sklearn_numpy_arr.shape) == 1:
+                    # Some times sklearn retuns results as 1D array of shape (n_samples,), but snowfkale always retunrs
+                    # response as 2D array of shape (n_samples, 1). Flatten the snowflake response to compare results.
+                    actual_arr = actual_arr.flatten()
+
+                # TODO(snandamuri): HistGradientBoostingRegressor is returning different results in different envs.
+                # Needs further debugging.
+                if {transform._is_hist_gradient_boosting_regressor}:
+                    num_diffs = (~np.isclose(actual_arr, sklearn_numpy_arr)).sum()
+                    num_example = sklearn_numpy_arr.shape[0]
+                    assert num_diffs < 0.1 * num_example
+                else:
+                    if not np.allclose(actual_arr, sklearn_numpy_arr, rtol=1.e-1, atol=1.e-2):
+                        has_diff = ~np.isclose(actual_arr, sklearn_numpy_arr, rtol=1.e-1, atol=1.e-2)
+                        print(f"Num differences: {{has_diff.sum()}}")
+                        print(f"Actual values: {{actual_arr.take(has_diff.nonzero())}}")
+                        print(f"SK values: {{sklearn_numpy_arr.take(has_diff.nonzero())}}")
+                        raise AssertionError(f"Results didn't match for {{m}}")
+
+        if {transform._is_classifier}:
+            expected_methods = ["predict_proba", "predict_log_proba", "decision_function"]
+            for m in expected_methods:
+                assert not (
+                    callable(getattr(sklearn_reg, m, None))
+                    ^ callable(getattr(reg, m, None))
+                ), f"Estimator doesn't have method {{m}}"
+
+                if callable(getattr(sklearn_reg, m, None)):
+                    if inference_with_udf:
+                        actual_inference_result = getattr(reg, m)(
+                            dataset=input_df, output_cols_prefix="OUTPUT_").to_pandas().sort_values(by="INDEX")
+                    else:
+                        actual_inference_result = getattr(reg, m)(dataset=input_df_pandas, output_cols_prefix="OUTPUT_")
+
+                    actual_output_cols = [c for c in actual_inference_result.columns if c.find("OUTPUT_") >= 0]
+                    actual_inference_result = actual_inference_result[actual_output_cols].to_numpy()
+
+                    sklearn_inference_result = getattr(sklearn_reg, m)(input_df_pandas[input_cols])
+                    if isinstance(sklearn_inference_result, list):
+                        # Incase of multioutput estimators predict_proba, decision_function, etc., returns a list of
+                        # ndarrays as output. We need to concatenate them to compare with snowflake output.
+                        sklearn_inference_result = np.concatenate(sklearn_inference_result, axis=1)
+
+                    if not np.allclose(actual_inference_result, sklearn_inference_result, rtol=1.e-1, atol=1.e-2):
+                        has_diff = ~np.isclose(actual_inference_result, sklearn_inference_result, rtol=1.e-1, atol=1.e-2)
+                        print(f"Num differences: {{has_diff.sum()}}")
+                        print(f"Actual values: {{actual_inference_result.take(has_diff.nonzero())}}")
+                        print(f"SK values: {{sklearn_inference_result.take(has_diff.nonzero())}}")
+                        raise AssertionError(f"Results didn't match for {{m}}")
+
+        if callable(getattr(sklearn_reg, "score", None)) and callable(getattr(reg, "score", None)):
+            # Some classes that has sample_weight argument in fit() but not in score().
+            if use_weighted_dataset is True:
+                no_sample_weight_for_score = ['KernelDensity', 'RANSACRegressor']
+                for c in inspect.getmro({transform.original_class_name}):
+                    if c.__name__ in no_sample_weight_for_score:
+                        del args['sample_weight']
+                        input_df_pandas = input_df_pandas.drop(['sample_weight', 'SAMPLE_WEIGHT'], axis=1, errors='ignore')
+
+            # Some classes have different arg name in score: X -> X_test
+            arg_name_is_x_test = [
+                'GraphicalLassoCV', 
+                'ShrunkCovariance', 
+                'LedoitWolf', 
+                'MinCovDet', 
+                'EmpiricalCovariance', 
+                'GraphicalLasso',
+                'OAS']
+            for c in inspect.getmro({transform.original_class_name}):
+                if c.__name__ in arg_name_is_x_test:
+                    args['X_test'] = args.pop('X')
+
+            if inference_with_udf:
+                actual_score = getattr(reg, "score")(dataset=input_df)
+                if isinstance(actual_score, DataFrame):
+                    actual_score.to_pandas().sort_values(by="INDEX")[output_cols].to_numpy(dtype=np.float).squeeze()
+            else:
+                actual_score = getattr(reg, "score")(dataset=input_df_pandas)
+                if isinstance(actual_score, pd.DataFrame):
+                    actual_output_cols = [
+                        c for c in actual_score.columns 
+                        if any([c.find(colName) >= 0 for colName in output_cols])
+                    ]
+                    actual_score = actual_score[actual_output_cols].to_numpy(dtype=np.float).squeeze()
+
+            sklearn_score = getattr(sklearn_reg, "score")(**args)
+
+            if not np.allclose(actual_score, sklearn_score, rtol=1.e-1, atol=1.e-2):
+                has_diff = ~np.isclose(actual_score, sklearn_score, rtol=1.e-1, atol=1.e-2)
+                print(f"Num differences: {{has_diff.sum()}}")
+                print(f"Actual values: {{actual_score.take(has_diff.nonzero())}}")
+                print(f"SK values: {{sklearn_score.take(has_diff.nonzero())}}")
+                raise AssertionError(f"Results didn't match for {{m}}")
+
+
+
+    def test_fit_with_sproc_infer_with_udf_non_weighted_datasets(self):
+        self._fit_and_compare_results(use_weighted_dataset=False, fit_with_sproc = True, inference_with_udf = True)
+
+    def test_fit_with_sproc_infer_with_pandas_non_weighted_datasets(self):
+        self._fit_and_compare_results(use_weighted_dataset=False, fit_with_sproc = True, inference_with_udf = False)
+
+    def test_fit_with_pandas_infer_with_pandas_non_weighted_datasets(self):
+        self._fit_and_compare_results(use_weighted_dataset=False, fit_with_sproc = False, inference_with_udf = False)
+
+    def test_fit_with_pandas_infer_with_udf_non_weighted_datasets(self):
+        self._fit_and_compare_results(use_weighted_dataset=False, fit_with_sproc = False, inference_with_udf = True)
+
+    def _is_weighted_dataset_supported(self, klass: type) -> bool:
+        is_weighted_dataset_supported = False
+        for m in inspect.getmembers(klass):
+            if inspect.isfunction(m[1]) and m[0] == "fit":
+                argspec = inspect.getfullargspec(m[1])
+                is_weighted_dataset_supported = True if "sample_weight" in argspec.args else False
+        return is_weighted_dataset_supported
+
+    def test_fit_with_sproc_infer_with_udf_weighted_datasets(self):
+        if self._is_weighted_dataset_supported(Sk{transform.original_class_name}):
+            self._fit_and_compare_results(use_weighted_dataset=True, fit_with_sproc = True, inference_with_udf = True)
+
+    def test_fit_with_sproc_infer_with_pandas_weighted_datasets(self):
+        if self._is_weighted_dataset_supported(Sk{transform.original_class_name}):
+            self._fit_and_compare_results(use_weighted_dataset=True, fit_with_sproc = True, inference_with_udf = False)
+
+    def test_fit_with_pandas_infer_with_pandas_weighted_datasets(self):
+        if self._is_weighted_dataset_supported(Sk{transform.original_class_name}):
+            self._fit_and_compare_results(use_weighted_dataset=True, fit_with_sproc = False, inference_with_udf = False)
+
+    def test_fit_with_pandas_infer_with_udf_weighted_datasets(self):
+        if self._is_weighted_dataset_supported(Sk{transform.original_class_name}):
+            self._fit_and_compare_results(use_weighted_dataset=True, fit_with_sproc = False, inference_with_udf = True)
+
+
+if __name__ == "__main__":
+    main()
