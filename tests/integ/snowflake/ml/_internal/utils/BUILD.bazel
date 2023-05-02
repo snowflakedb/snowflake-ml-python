@@ -6,7 +6,7 @@ py_test(
     name = "test_parallelize",
     srcs = ["test_parallelize.py"],
     deps = [
-        "//snowflake/ml/utils:parallelize",
+        "//snowflake/ml/_internal/utils:parallelize",
         "//snowflake/ml/utils:connection_params",
         "//tests/integ/snowflake/ml/framework:utils",
     ],

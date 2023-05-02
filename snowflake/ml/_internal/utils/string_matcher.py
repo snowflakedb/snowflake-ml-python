@@ -3,7 +3,7 @@ from typing import Dict, List
 
 import sqlparse
 
-from snowflake.ml.utils.formatting import unwrap
+from snowflake.ml._internal.utils.formatting import unwrap
 
 
 class StringMatcherIgnoreWhitespace:

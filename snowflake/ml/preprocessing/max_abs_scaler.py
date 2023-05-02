@@ -6,18 +6,18 @@ from typing import Dict, Iterable, List, Optional, Union
 
 import numpy as np
 import pandas as pd
-import sklearn.preprocessing._data as sklearn_preprocessing_data
-from sklearn.preprocessing import MaxAbsScaler as SklearnMaxAbsScaler
+from sklearn import preprocessing
+from sklearn.preprocessing import _data as sklearn_preprocessing_data
 
-from snowflake.ml.framework.base import BaseEstimator, BaseTransformer
+from snowflake import snowpark
+from snowflake.ml.framework import base
 from snowflake.ml.utils import telemetry
-from snowflake.snowpark import DataFrame
 
 _PROJECT = "ModelDevelopment"
 _SUBPROJECT = "Preprocessing"
 
 
-class MaxAbsScaler(BaseEstimator, BaseTransformer):
+class MaxAbsScaler(base.BaseEstimator, base.BaseTransformer):
     def __init__(
         self,
         *,
@@ -25,7 +25,8 @@ class MaxAbsScaler(BaseEstimator, BaseTransformer):
         output_cols: Optional[Union[str, Iterable[str]]] = None,
         drop_input_cols: Optional[bool] = False,
     ) -> None:
-        """Scale each feature by its maximum absolute value.
+        """
+        Scale each feature by its maximum absolute value.
 
         This transfomer scales and translates each feature individually such
         that the maximal absolute value of each feature in the
@@ -46,18 +47,19 @@ class MaxAbsScaler(BaseEstimator, BaseTransformer):
         self.max_abs_: Dict[str, float] = {}
         self.scale_: Dict[str, float] = {}
 
-        self.custom_state: List[str] = [
+        self.custom_states: List[str] = [
             "SQL>>>max(abs({col_name}))",
         ]
 
-        BaseEstimator.__init__(self, custom_state=self.custom_state)
-        BaseTransformer.__init__(self, drop_input_cols=drop_input_cols)
+        base.BaseEstimator.__init__(self, custom_states=self.custom_states)
+        base.BaseTransformer.__init__(self, drop_input_cols=drop_input_cols)
 
         self.set_input_cols(input_cols)
         self.set_output_cols(output_cols)
 
     def _reset(self) -> None:
-        """Reset internal data-dependent state of the scaler, if necessary.
+        """
+        Reset internal data-dependent state of the scaler, if necessary.
         __init__ parameters are not touched.
         """
         super()._reset()
@@ -68,8 +70,9 @@ class MaxAbsScaler(BaseEstimator, BaseTransformer):
         project=_PROJECT,
         subproject=_SUBPROJECT,
     )
-    def fit(self, dataset: Union[DataFrame, pd.DataFrame]) -> "MaxAbsScaler":
-        """Compute the maximum absolute value to be used for later scaling.
+    def fit(self, dataset: Union[snowpark.DataFrame, pd.DataFrame]) -> "MaxAbsScaler":
+        """
+        Compute the maximum absolute value to be used for later scaling.
 
         Args:
             dataset: Input dataset.
@@ -78,35 +81,35 @@ class MaxAbsScaler(BaseEstimator, BaseTransformer):
             Return self as fitted scaler.
 
         Raises:
-            TypeError: If the input dataset is neither a pandas or Snowpark DataFrame.
+            TypeError: If the input dataset is neither a pandas nor Snowpark DataFrame.
         """
         super()._check_input_cols()
         self._reset()
 
         if isinstance(dataset, pd.DataFrame):
             self._fit_sklearn(dataset)
-        elif isinstance(dataset, DataFrame):
+        elif isinstance(dataset, snowpark.DataFrame):
             self._fit_snowpark(dataset)
         else:
             raise TypeError(
                 f"Unexpected dataset type: {type(dataset)}."
                 "Supported dataset types: snowpark.DataFrame, pandas.DataFrame."
             )
-        self._is_fitted = True
 
+        self._is_fitted = True
         return self
 
     def _fit_sklearn(self, dataset: pd.DataFrame) -> None:
         dataset = self._use_input_cols_only(dataset)
-        sklearn_encoder = self._create_unfitted_sklearn_object()
-        sklearn_encoder.fit(dataset[self.input_cols])
+        sklearn_scaler = self._create_unfitted_sklearn_object()
+        sklearn_scaler.fit(dataset[self.input_cols])
 
         for (i, input_col) in enumerate(self.input_cols):
-            self.max_abs_[input_col] = float(sklearn_encoder.max_abs_[i])
-            self.scale_[input_col] = float(sklearn_encoder.scale_[i])
+            self.max_abs_[input_col] = float(sklearn_scaler.max_abs_[i])
+            self.scale_[input_col] = float(sklearn_scaler.scale_[i])
 
-    def _fit_snowpark(self, dataset: DataFrame) -> None:
-        computed_states = self._compute(dataset, self.input_cols, self.custom_state)
+    def _fit_snowpark(self, dataset: snowpark.DataFrame) -> None:
+        computed_states = self._compute(dataset, self.input_cols, self.custom_states)
 
         for input_col in self.input_cols:
             max_abs = float(computed_states[input_col]["SQL>>>max(abs({col_name}))"])
@@ -119,8 +122,9 @@ class MaxAbsScaler(BaseEstimator, BaseTransformer):
         project=_PROJECT,
         subproject=_SUBPROJECT,
     )
-    def transform(self, dataset: Union[DataFrame, pd.DataFrame]) -> Union[DataFrame, pd.DataFrame]:
-        """Scale the data.
+    def transform(self, dataset: Union[snowpark.DataFrame, pd.DataFrame]) -> Union[snowpark.DataFrame, pd.DataFrame]:
+        """
+        Scale the data.
 
         Args:
             dataset: Input dataset.
@@ -130,14 +134,14 @@ class MaxAbsScaler(BaseEstimator, BaseTransformer):
 
         Raises:
             RuntimeError: If transformer is not fitted first.
-            TypeError: If the input dataset is neither a pandas or Snowpark DataFrame.
+            TypeError: If the input dataset is neither a pandas nor Snowpark DataFrame.
         """
         if not self._is_fitted:
             raise RuntimeError("Transformer not fitted before calling transform().")
         super()._check_input_cols()
         super()._check_output_cols()
 
-        if isinstance(dataset, DataFrame):
+        if isinstance(dataset, snowpark.DataFrame):
             output_df = self._transform_snowpark(dataset)
         elif isinstance(dataset, pd.DataFrame):
             output_df = self._transform_sklearn(dataset)
@@ -149,8 +153,9 @@ class MaxAbsScaler(BaseEstimator, BaseTransformer):
 
         return self._drop_input_columns(output_df) if self._drop_input_cols is True else output_df
 
-    def _transform_snowpark(self, dataset: DataFrame) -> DataFrame:
-        """Scale the data on snowflake DataFrame.
+    def _transform_snowpark(self, dataset: snowpark.DataFrame) -> snowpark.DataFrame:
+        """
+        Scale the data on snowflake DataFrame.
 
         Args:
             dataset: Input dataset.
@@ -164,14 +169,15 @@ class MaxAbsScaler(BaseEstimator, BaseTransformer):
             col /= float(self.scale_[input_col])
             output_columns.append(col)
 
-        transformed_dataset = dataset.with_columns(self.output_cols, output_columns)
+        transformed_dataset: snowpark.DataFrame = dataset.with_columns(self.output_cols, output_columns)
         return transformed_dataset
 
-    def _create_unfitted_sklearn_object(self) -> SklearnMaxAbsScaler:
-        return SklearnMaxAbsScaler()
+    def _create_unfitted_sklearn_object(self) -> preprocessing.MaxAbsScaler:
+        return preprocessing.MaxAbsScaler()
 
-    def _create_sklearn_object(self) -> SklearnMaxAbsScaler:
-        """Get an equivalent sklearn MaxAbsdScaler.
+    def _create_sklearn_object(self) -> preprocessing.MaxAbsScaler:
+        """
+        Get an equivalent sklearn MaxAbsdScaler.
 
         Returns:
             Sklearn MaxAbsScaler.

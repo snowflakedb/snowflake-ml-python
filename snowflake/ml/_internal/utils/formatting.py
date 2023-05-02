@@ -79,8 +79,8 @@ def unwrap(text: str, keep_newlines: bool = False) -> str:
     """Unwraps a string into a single line while preserving word boundaries. Leading and trailing spaces are removed.
 
     Args:
-        text (str): Text to unwrap.
-        keep_newlines (str): Keep newlines when formatting.
+        text: Text to unwrap.
+        keep_newlines: Keep newlines when formatting.
 
     Returns:
         Unwrapped text.

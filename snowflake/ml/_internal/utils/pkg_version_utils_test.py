@@ -2,8 +2,8 @@ from typing import List, cast
 
 from absl.testing import absltest
 
+from snowflake.ml._internal.utils import pkg_version_utils
 from snowflake.ml.test_utils import mock_data_frame, mock_session
-from snowflake.ml.utils import pkg_version_utils
 from snowflake.snowpark import row, session
 
 

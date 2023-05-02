@@ -1,6 +1,6 @@
 from absl.testing.absltest import TestCase, main
 
-from snowflake.ml.utils.string_matcher import (
+from snowflake.ml._internal.utils.string_matcher import (
     StringMatcherIgnoreWhitespace,
     StringMatcherSql,
 )

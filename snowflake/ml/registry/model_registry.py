@@ -5,17 +5,21 @@ import sys
 import tempfile
 import types
 import zipfile
-from typing import Any, Dict, List, Optional, cast
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, cast
 from uuid import uuid1
 
 import joblib
 from absl import logging
 
 from snowflake import connector, snowpark
-from snowflake.ml.model import deployer, model as model_api, schema as model_schema
+from snowflake.ml._internal.utils import formatting, query_result_checker, uri
+from snowflake.ml.model import deployer, model as model_api, model_signature
 from snowflake.ml.registry import _schema
-from snowflake.ml.utils import formatting, query_result_checker, telemetry, uri
+from snowflake.ml.utils import telemetry
 from snowflake.snowpark._internal import utils
+
+if TYPE_CHECKING:
+    import pandas as pd
 
 _DEFAULT_REGISTRY_NAME: str = "MODEL_REGISTRY"
 _DEFAULT_PROJECT_NAME: str = "PUBLIC"
@@ -82,7 +86,7 @@ def _create_registry_database(
     Args:
         session: Session object to communicate with Snowflake.
         database_name: Desired name of the model registry database.
-        schema_name: Desired name of the schema used by this model registry inside the databse.
+        schema_name: Desired name of the schema used by this model registry inside the database.
         registry_table_name: Name for the main model registry table.
         metadata_table_name: Name for the metadata table used by the model registry.
 
@@ -231,6 +235,7 @@ class ModelRegistry:
         self._metadata_table = _DEFAULT_METADATA_NAME
 
         self._session = session
+        self._deploy_api = deployer.Deployer(session=self._session, manager=deployer.LocalDeploymentManager())
 
         self.open(name=name)
 
@@ -595,7 +600,7 @@ class ModelRegistry:
         project=_TELEMETRY_PROJECT,
         subproject=_TELEMETRY_SUBPROJECT,
     )
-    def get_tag_value(self, id: str, name: str) -> Any:
+    def get_tag_value(self, id: str, name: str) -> Optional[str]:
         """Return the value of the tag for the model.
 
         The returned value can be None. If the tag does not exist, KeyError will be raised.
@@ -709,7 +714,7 @@ class ModelRegistry:
         project=_TELEMETRY_PROJECT,
         subproject=_TELEMETRY_SUBPROJECT,
     )
-    def set_metric(self, id: str, name: str, value: float) -> None:
+    def set_metric(self, id: str, name: str, value: object) -> None:
         """Set scalar model metric to value.
 
         If a metric with that name already exists for the model, the metric value will be overwritten.
@@ -772,7 +777,7 @@ class ModelRegistry:
         project=_TELEMETRY_PROJECT,
         subproject=_TELEMETRY_SUBPROJECT,
     )
-    def get_metric_value(self, id: str, name: str) -> Any:
+    def get_metric_value(self, id: str, name: str) -> Optional[object]:
         """Return the value of the given metric for the model.
 
         The returned value can be None. If the metric does not exist, KeyError will be raised.
@@ -790,7 +795,7 @@ class ModelRegistry:
         project=_TELEMETRY_PROJECT,
         subproject=_TELEMETRY_SUBPROJECT,
     )
-    def get_metrics(self, id: str) -> Dict[str, float]:
+    def get_metrics(self, id: str) -> Dict[str, object]:
         """Get all metrics and values stored for the given model id.
 
         Args:
@@ -804,23 +809,10 @@ class ModelRegistry:
         result = self._get_metadata_attribute(id, _METADATA_ATTRIBUTE_METRICS)
 
         if result:
-            ret: Dict[str, float] = json.loads(result)
+            ret: Dict[str, object] = json.loads(result)
             return ret
         else:
             return dict()
-
-    @telemetry.send_api_usage_telemetry(
-        project=_TELEMETRY_PROJECT,
-        subproject=_TELEMETRY_SUBPROJECT,
-    )
-    def grant_registry(self, permission: str, role: str) -> None:
-        """Grant privileges to the current registry.
-
-        Args:
-            permission: What privileges to grant.
-            role: Role to grant privileges to.
-        """
-        pass
 
     # Combined Registry and Repository operations.
     @telemetry.send_api_usage_telemetry(
@@ -831,20 +823,27 @@ class ModelRegistry:
         self,
         *,
         model: Any,
-        schema: model_schema.Schema,
         name: Optional[str] = None,
         tags: Optional[Dict[str, str]] = None,
+        conda_dependencies: Optional[List[str]] = None,
         pip_requirements: Optional[List[str]] = None,
+        signature: Optional[model_signature.ModelSignature] = None,
         sample_input_data: Optional[Any] = None,
     ) -> Optional[str]:
         """Uploads a model to the Model Registry.
 
         Args:
             model: Local model object in a supported format.
-            schema: Schema of the model, could be inferred by calling `infer_schema` method with sample input data.
             name: The given name for the model.
             tags: string-to-string dictonary of tag names and values to be set for the model.
-            pip_requirements: List of dependencies to include with the model
+            conda_dependencies: List of Conda package specs. Use "[channel::]package [operator version]" syntax to
+                specify a dependency. It is a recommended way to specify your dependencies using conda. When channel is
+                not specified, defaults channel will be used. When deploying to Snowflake Warehouse, defaults channel
+                would be replaced with the Snowflake Anaconda channel.
+            pip_requirements: List of PIP package specs. Model will not be able to deploy to the warehouse if there is
+                pip requirements.
+            signature: Signature of the model, could be inferred by calling `infer_signature` method with sample
+                input data.
             sample_input_data: Sample of the input data for the model.
 
         Returns:
@@ -863,10 +862,11 @@ class ModelRegistry:
                     name=name if name else self._get_new_unique_identifier(),
                     model_dir_path=tmpdir,
                     model=model,
-                    schema=schema,
+                    signature=signature,
                     metadata=tags,
-                    pip_requirements=["scikit-learn"],  # TODO: avoid hack
-                    sample_data=sample_input_data,
+                    conda_dependencies=conda_dependencies,
+                    pip_requirements=pip_requirements,
+                    sample_input=sample_input_data,
                 )
                 id = self.log_model_path(
                     path=tmpdir, type="snowflake_native", name=name, tags=tags  # TODO: Inherent model type enum.
@@ -1094,41 +1094,26 @@ class ModelRegistry:
 
         return restored_model
 
-    @telemetry.send_api_usage_telemetry(
-        project=_TELEMETRY_PROJECT,
-        subproject=_TELEMETRY_SUBPROJECT,
-    )
-    def grant_model(self, id: str, permission: str, role: str) -> None:
-        """Grant privileges to the model with the given id.
-
-        Granting privileges to a model will also grant privileges to access the relevant model metadata.
-
-        Args:
-            id: Model id.
-            permission: What privileges to grant.
-            role: Role to grant privileges to.
-
-        Raises:
-            KeyError: The model with the given id does not exist in the registry.
-        """
-        raise KeyError
-
     # Repository Operations
 
     @telemetry.send_api_usage_telemetry(
         project=_TELEMETRY_PROJECT,
         subproject=_TELEMETRY_SUBPROJECT,
     )
-    def deploy(self, id: str, name: str) -> None:
+    def deploy(self, id: str, *, deployment_name: str, options: Optional[Dict[str, Any]] = None) -> None:
         """Deploy the model with the given id with the given name.
 
         Args:
             id: Id of the model to deploy.
-            name: name of the generated UDF.
+            deployment_name: name of the generated UDF.
+            options: Optional options for model deployment. Defaults to None.
 
         Raises:
             TypeError: The model with given id does not conform to native model format.
         """
+        if options is None:
+            options = {}
+
         remote_model_path = self._get_model_path(id)
         with tempfile.TemporaryDirectory() as local_model_directory:
             self._session.file.get(remote_model_path, local_model_directory)
@@ -1140,20 +1125,42 @@ class ModelRegistry:
                     with zipfile.ZipFile(local_path, "r") as myzip:
                         if len(myzip.namelist()) > 1:
                             myzip.extractall(extracted_dir)
-                            deploy_api = deployer.Deployer(
-                                session=self._session, manager=deployer.LocalDeploymentManager()
-                            )
-                            deploy_api.create_deployment(
-                                name=name,
+                            self._deploy_api.create_deployment(
+                                name=deployment_name,
                                 model_dir_path=extracted_dir,
                                 platform=deployer.TargetPlatform.WAREHOUSE,
-                                options={},
+                                options=options,
                             )
                             is_native_model_format = True
             except TypeError:
                 pass
             if not is_native_model_format:
                 raise TypeError("Deployment is only supported for native model format.")
+
+    @telemetry.send_api_usage_telemetry(
+        project=_TELEMETRY_PROJECT,
+        subproject=_TELEMETRY_SUBPROJECT,
+    )
+    def predict(self, id: str, deployment_name: str, data: Any) -> "pd.DataFrame":
+        """Predict using the deployed model in Snowflake.
+
+        Args:
+            id: Id of the model to deploy.
+            deployment_name: name of the generated UDF.
+            data: Data to run predict.
+
+        Raises:
+            ValueError: The deployment with given name haven't been deployed.
+
+        Returns:
+            A dataframe containing the result of prediction.
+        """
+
+        di = self._deploy_api.get_deployment(name=deployment_name)
+        if di is None:
+            raise ValueError(f"The deployment with name {deployment_name} haven't been deployed")
+
+        return self._deploy_api.predict(di.name, data)
 
     def delete_model(self, id: str, delete_artifact: bool = True) -> None:
         """Delete model with the given ID from the registry.

@@ -2,7 +2,10 @@ import os
 
 from absl.testing.absltest import TestCase, main
 
-from snowflake.ml.utils.temp_file_utils import cleanup_temp_files, get_temp_file_path
+from snowflake.ml._internal.utils.temp_file_utils import (
+    cleanup_temp_files,
+    get_temp_file_path,
+)
 
 
 class TempFileUtilsTest(TestCase):

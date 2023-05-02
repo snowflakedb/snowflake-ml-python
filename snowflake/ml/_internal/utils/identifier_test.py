@@ -1,6 +1,6 @@
 from absl.testing import absltest
 
-import snowflake.ml.utils.identifier as identifier
+import snowflake.ml._internal.utils.identifier as identifier
 
 
 class SnowflakeIdentifierTest(absltest.TestCase):
@@ -47,6 +47,19 @@ class SnowflakeIdentifierTest(absltest.TestCase):
                 self.assertTupleEqual(
                     tuple(test_case[1:]), identifier.parse_schema_level_object_identifier(test_case[0])
                 )
+
+    def test_get_equivalent_identifier_in_the_response_pandas_dataframe(self) -> None:
+        input_and_expected_output_tuples = [
+            (None, None),
+            ("Abc", "ABC"),
+            ('"Abc"', "Abc"),
+            (["Abc", '"Abc"'], ["ABC", "Abc"]),
+        ]
+
+        for (input, expected_output) in input_and_expected_output_tuples:
+            self.assertEqual(
+                identifier.get_equivalent_identifier_in_the_response_pandas_dataframe(input), expected_output
+            )
 
 
 if __name__ == "__main__":

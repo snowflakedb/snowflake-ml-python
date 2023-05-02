@@ -6,24 +6,25 @@ import inspect
 from abc import abstractmethod
 from collections import defaultdict
 from datetime import datetime
-from typing import Any, Dict, Iterable, List, Optional, Union, overload
+from typing import Any, Dict, Iterable, List, Mapping, Optional, Union, overload
 
 import numpy as np
 import numpy.typing as npt
 import pandas as pd
 
-import snowflake.snowpark.functions as F
 from snowflake import snowpark
-from snowflake.ml.framework import utils
-from snowflake.ml.utils import parallelize, telemetry
-from snowflake.snowpark._internal import type_utils as snowpark_types
+from snowflake.ml._internal.utils import parallelize
+from snowflake.ml.framework import _utils
+from snowflake.ml.utils import telemetry
+from snowflake.snowpark import functions
+from snowflake.snowpark._internal import type_utils
 
 _PROJECT = "ModelDevelopment"
 _SUBPROJECT = "Preprocessing"
 
 
 def _process_cols(cols: Optional[Union[str, Iterable[str]]]) -> List[str]:
-    """Convert cols to a list and convert column names to uppercase."""
+    """Convert cols to a list."""
     col_list: List[str] = []
     if cols is None:
         return col_list
@@ -36,12 +37,13 @@ def _process_cols(cols: Optional[Union[str, Iterable[str]]]) -> List[str]:
     else:
         raise TypeError(f"Could not convert {cols} to list")
 
-    return [col_name.upper() for col_name in col_list]
+    return col_list
 
 
 class Base:
     def __init__(self) -> None:
-        """Base class for all estimators and transformers.
+        """
+        Base class for all estimators and transformers.
 
         Attributes:
             input_cols: Input columns.
@@ -271,9 +273,9 @@ class Base:
         Returns:
             Sklearn parameter names mapped to their values.
         """
-        default_sklearn_args = utils.get_default_args(default_sklearn_obj.__init__)  # type: ignore
+        default_sklearn_args = _utils.get_default_args(default_sklearn_obj.__class__.__init__)
         given_args = self.get_params()
-        sklearn_args: Dict[str, Any] = utils.get_filtered_valid_sklearn_args(
+        sklearn_args: Dict[str, Any] = _utils.get_filtered_valid_sklearn_args(
             args=given_args,
             default_sklearn_args=default_sklearn_args,
             sklearn_initial_keywords=sklearn_initial_keywords,
@@ -288,36 +290,36 @@ class Base:
 
 
 class BaseEstimator(Base):
-    """
-    Base class for all estimators.
-
-    Following scikit-learn APIs, all estimators should specify all
-    the parameters that can be set at the class level in their ``__init__``
-    as explicit keyword arguments (no ``*args`` or ``**kwargs``)
-
-    Args:
-        file_names: File names.
-        custom_state: Custom states.
-
-    Attributes:
-        start_time: Start time of the transformer.
-    """
-
     def __init__(
         self,
         *,
         file_names: Optional[List[str]] = None,
-        custom_state: Optional[List[str]] = None,
+        custom_states: Optional[List[str]] = None,
         sample_weight_col: Optional[str] = None,
     ) -> None:
+        """
+        Base class for all estimators.
+
+        Following scikit-learn APIs, all estimators should specify all
+        the parameters that can be set at the class level in their ``__init__``
+        as explicit keyword arguments (no ``*args`` or ``**kwargs``)
+
+        Args:
+            file_names: File names.
+            custom_states: Custom states.
+            sample_weight_col: Sample weight column.
+
+        Attributes:
+            start_time: Start time of the transformer.
+        """
         super().__init__()
 
         # transformer state
         self.file_names = file_names
-        self.custom_state = custom_state
+        self.custom_states = custom_states
         self.sample_weight_col = sample_weight_col
 
-        self.start_time = datetime.now().strftime(utils.DATETIME_FORMAT)[:-3]
+        self.start_time = datetime.now().strftime(_utils.DATETIME_FORMAT)[:-3]
 
     def get_sample_weight_col(self) -> Optional[str]:
         """
@@ -349,7 +351,7 @@ class BaseEstimator(Base):
         """Returns the pandas dataframe filtered on `input_cols`, or raises an error if malformed."""
         input_cols = set(self.input_cols)
         dataset_cols = set(dataset.columns.to_list())
-        if not (input_cols <= dataset_cols):
+        if not input_cols.issubset(dataset_cols):
             raise KeyError(
                 f"The `input_cols` contains columns that do not match any of the columns in "
                 f"the dataframe: {input_cols - dataset_cols}."
@@ -360,7 +362,9 @@ class BaseEstimator(Base):
         project=_PROJECT,
         subproject=_SUBPROJECT,
     )
-    def _compute(self, dataset: snowpark.DataFrame, cols: List[str], states: List[str]) -> Dict[str, Dict[str, Any]]:
+    def _compute(
+        self, dataset: snowpark.DataFrame, cols: List[str], states: List[str]
+    ) -> Dict[str, Dict[str, Union[int, float, str]]]:
         """
         Compute required states of the columns.
 
@@ -394,10 +398,11 @@ class BaseEstimator(Base):
                         sql_expr = state[len(sql_prefix) :].format(col_name=col_name)
                         exprs.append(sql_expr)
                     else:
-                        func = utils.STATE_TO_FUNC_DICT[state].__name__
+                        func = _utils.STATE_TO_FUNC_DICT[state].__name__
                         exprs.append(f"{func}({col_name})")
 
-            return df.select_expr(exprs)  # type: ignore
+            res: snowpark.DataFrame = df.select_expr(exprs)
+            return res
 
         _results = parallelize.map_dataframe_by_column(
             df=dataset,
@@ -407,7 +412,7 @@ class BaseEstimator(Base):
             statement_params=statement_params,
         )
 
-        computed_dict: Dict[str, Dict[str, Any]] = {}
+        computed_dict: Dict[str, Dict[str, Union[int, float, str]]] = {}
         for idx, val in enumerate(_results[0]):
             col_name = cols[idx // len(states)]
             if col_name not in computed_dict:
@@ -420,9 +425,8 @@ class BaseEstimator(Base):
 
 
 class BaseTransformer(Base):
-    """Base class for all transformers."""
-
     def __init__(self, *, drop_input_cols: Optional[bool] = False) -> None:
+        """Base class for all transformers."""
         super().__init__()
         self._sklearn_object = None
         self._is_fitted = False
@@ -440,6 +444,10 @@ class BaseTransformer(Base):
     def transform(self, dataset: Union[snowpark.DataFrame, pd.DataFrame]) -> Union[snowpark.DataFrame, pd.DataFrame]:
         raise NotImplementedError()
 
+    def enforce_fit(self) -> None:
+        if not self._is_fitted:
+            raise RuntimeError("Transformer not fitted before calling transform().")
+
     def set_drop_input_cols(self, drop_input_cols: Optional[bool] = False) -> None:
         self._drop_input_cols = drop_input_cols
 
@@ -453,19 +461,24 @@ class BaseTransformer(Base):
         self._is_fitted = False
 
     def _convert_attribute_dict_to_ndarray(
-        self, attribute: Dict[str, Any], dtype: Optional[type] = None
-    ) -> npt.NDArray[Any]:
+        self,
+        attribute: Optional[Mapping[str, Union[int, float, str, Iterable[Union[int, float, str]]]]],
+        dtype: Optional[type] = None,
+    ) -> Optional[npt.NDArray[Union[np.int_, np.float_, np.str_]]]:
         """
-        Convert the attribute from dict to ndarray based on the
-        order of `self.input_cols`.
+        Convert the attribute from dict to ndarray based on the order of `self.input_cols`.
 
         Args:
-            attribute: Attribute to convert.
+            attribute: Attribute to convert. Attribute is a mapping of a column to its attribute value(s)
+                (e.g. `StandardScaler.mean_: {column_name: mean_value}`).
             dtype: The dtype of the converted ndarray. If None, there is no type conversion.
 
         Returns:
-            A np.ndarray of attribute values.
+            A np.ndarray of attribute values, or None if the attribute is None.
         """
+        if attribute is None:
+            return None
+
         attribute_vals = []
         is_nested = False
         if self.input_cols:
@@ -483,7 +496,8 @@ class BaseTransformer(Base):
         return attribute_arr
 
     def _transform_sklearn(self, dataset: pd.DataFrame) -> pd.DataFrame:
-        """Transform the input dataset using the fitted sklearn transform obj.
+        """
+        Transform the input dataset using the fitted sklearn transform obj.
 
         Args:
             dataset: Input dataset to transform.
@@ -523,9 +537,9 @@ class BaseTransformer(Base):
 
         null_count_columns = []
         for input_col in self.input_cols:
-            col = snowpark_types.ColumnOrLiteral(
-                F.count(snowpark_types.ColumnOrName(F.lit(snowpark_types.LiteralType("*"))))
-            ) - snowpark_types.ColumnOrLiteral(F.count(snowpark_types.ColumnOrName(dataset[input_col])))
+            col = type_utils.ColumnOrLiteral(
+                functions.count(type_utils.ColumnOrName(functions.lit(type_utils.LiteralType("*"))))
+            ) - type_utils.ColumnOrLiteral(functions.count(type_utils.ColumnOrName(dataset[input_col])))
             null_count_columns.append(col)
 
         statement_params = telemetry.get_function_usage_statement_params(
@@ -550,7 +564,8 @@ class BaseTransformer(Base):
     def _drop_input_columns(
         self, dataset: Union[snowpark.DataFrame, pd.DataFrame]
     ) -> Union[snowpark.DataFrame, pd.DataFrame]:
-        """Drop input column for given dataset.
+        """
+        Drop input column for given dataset.
 
         Args:
             dataset: The input Dataset. Either a Snowflake DataFrame or Pandas DataFrame.

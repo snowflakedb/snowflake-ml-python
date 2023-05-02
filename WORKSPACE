@@ -36,7 +36,7 @@ load("//third_party/rules_conda:defs.bzl", "conda_create", "load_conda", "regist
 # The default platform when --platforms flag is not set, is specified in
 # .bazelrc .
 
-load_conda(conda_repo_name = "snowflake_conda", quiet = False)
+load_conda(conda_repo_name = "snowflake_conda", quiet = True)
 
 conda_create(
     name = "py3_env_snowflake_conda_only",
@@ -44,7 +44,7 @@ conda_create(
     timeout = 3600,
     clean = False,
     environment = "@//:conda-env-snowflake.yml",
-    quiet = False,
+    quiet = True,
 )
 
 register_toolchain(
@@ -54,7 +54,7 @@ register_toolchain(
     toolchain_name = "py3_toolchain_snowflake_conda_only",
 )
 
-load_conda(conda_repo_name = "extended_conda", quiet = False)
+load_conda(conda_repo_name = "extended_conda", quiet = True)
 
 conda_create(
     name = "py3_env_extended_channels",
@@ -62,7 +62,7 @@ conda_create(
     timeout = 3600,
     clean = False,
     environment = "@//:conda-env.yml",
-    quiet = False,
+    quiet = True,
 )
 
 register_toolchain(

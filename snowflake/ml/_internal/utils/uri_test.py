@@ -1,5 +1,6 @@
-import uri
 from absl.testing.absltest import TestCase, main
+
+import snowflake.ml._internal.utils.uri as uri
 
 
 class UriTest(TestCase):

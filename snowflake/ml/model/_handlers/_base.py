@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from typing import Any
+from typing import Any, Optional
 
 from snowflake.ml.model import model_meta, model_types
 
@@ -29,6 +29,7 @@ class _ModelHandler(ABC):
         model: model_types.ModelType,
         model_meta: model_meta.ModelMetadata,
         model_blobs_dir_path: str,
+        sample_input: Optional[Any] = None,
         **kwargs: Any
     ) -> None:
         """Save the model.
@@ -38,6 +39,7 @@ class _ModelHandler(ABC):
             model: The model object.
             model_meta: The model metadata.
             model_blobs_dir_path: Directory path to the model.
+            sample_input: Sample input to infer the signature from.
             **kwargs: Additional keyword args.
         """
         ...

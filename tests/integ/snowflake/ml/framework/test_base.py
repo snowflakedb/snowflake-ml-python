@@ -7,7 +7,7 @@ import pandas as pd
 import pytest
 from absl.testing.absltest import TestCase, main
 
-from snowflake.ml.framework.base import BaseTransformer
+from snowflake.ml.framework.base import BaseTransformer, _process_cols
 from snowflake.ml.preprocessing import MinMaxScaler, StandardScaler
 from snowflake.ml.utils.connection_params import SnowflakeLoginOptions
 from snowflake.snowpark import Session
@@ -142,6 +142,29 @@ class TestBaseFunctions(TestCase):
         with pytest.raises(SnowparkColumnException) as excinfo:
             transformer._validate_data_has_no_nulls(df)
         assert "The DataFrame does not contain the column" in excinfo.value.args[0]
+
+    def test_base_double_quoted_identifiers(self) -> None:
+        """
+        According to identifier syntax, double-quoted Identifiers should be case sensitive
+        Doc: https://docs.snowflake.com/en/sql-reference/identifiers-syntax
+        """
+        input_cols = [
+            "CARAT",
+            "DEPTH",
+            "TABLE_PCT",
+            "PRICE",
+            "X",
+            "Y",
+            "Z",
+            '"CUT_OE_Fair"',
+            '"CUT_OE_Good"',
+            '"CUT_OE_Ideal"',
+            '"CUT_OE_Premium"',
+            '"CUT_OE_Very Good"',
+            '"carat"',
+        ]
+        after_processed_input_cols = _process_cols(input_cols)
+        self.assertEqual(input_cols, after_processed_input_cols)
 
 
 if __name__ == "__main__":

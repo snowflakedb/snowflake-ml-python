@@ -1,6 +1,8 @@
 import sys
 from typing import Any, Generic, Type, TypeVar, Union, cast
 
+import numpy as np
+import numpy.typing as npt
 import typing_extensions as te
 
 T = TypeVar("T")
@@ -62,3 +64,6 @@ class LazyType(Generic[T]):
             return isinstance(obj, self.get_class())
         except ValueError:
             return False
+
+
+LiteralNDArrayType = Union[npt.NDArray[np.int_], npt.NDArray[np.float_], npt.NDArray[np.str_], npt.NDArray[np.bool_]]

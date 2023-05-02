@@ -3,30 +3,31 @@
 # Copyright (c) 2012-2022 Snowflake Computing Inc. All rights reserved.
 #
 import inspect
-from typing import Dict, Iterable, Optional, Union
+import typing
+from typing import Any, Dict, Iterable, Optional, Union
 
 import numpy as np
 import pandas as pd
-from sklearn.impute import SimpleImputer as SklearnSimpleImputer
+from sklearn import impute
 
-import snowflake.snowpark.functions as F
-from snowflake.ml.framework import utils
-from snowflake.ml.framework.base import BaseEstimator, BaseTransformer
+from snowflake import snowpark
+from snowflake.ml.framework import _utils, base
 from snowflake.ml.utils import telemetry
-from snowflake.snowpark import DataFrame, types
-from snowflake.snowpark._internal import utils as snowpark_internal_utils
+from snowflake.snowpark import functions, types
+from snowflake.snowpark._internal import type_utils, utils as snowpark_internal_utils
 
 _PROJECT = "ModelDevelopment"
 _SUBPROJECT = "Preprocessing"
 
 STRATEGY_TO_STATE_DICT = {
     "constant": None,
-    "mean": utils.NumericStatistics.MEAN,
-    "median": utils.NumericStatistics.MEDIAN,
-    "most_frequent": utils.BasicStatistics.MODE,
+    "mean": _utils.NumericStatistics.MEAN,
+    "median": _utils.NumericStatistics.MEDIAN,
+    "most_frequent": _utils.BasicStatistics.MODE,
 }
 
-SNOWFLAKE_DATATYPE_TO_NUMPY_DTYPE_MAP: Dict[types.DataType, np.dtype] = {
+# TODO: change the type hint to np.dtype[Any] when snowml stops supporting python <= 3.8
+SNOWFLAKE_DATATYPE_TO_NUMPY_DTYPE_MAP: Dict[types.DataType, np.dtype] = {  # type: ignore[type-arg]
     types.ByteType(): np.dtype("int8"),
     types.ShortType(): np.dtype("int16"),
     types.IntegerType(): np.dtype("int32"),
@@ -39,9 +40,20 @@ SNOWFLAKE_DATATYPE_TO_NUMPY_DTYPE_MAP: Dict[types.DataType, np.dtype] = {
 
 # Constants used to validate the compatibility of the kwargs passed to the sklearn
 # transformer with the sklearn version.
-_SKLEARN_INITIAL_KEYWORDS = ["missing_values", "strategy", "fill_value"]  # initial keywords in sklearn
-_SKLEARN_UNUSED_KEYWORDS = ["verbose", "copy", "add_indicator"]  # sklearn keywords that are unused in snowml
-_SNOWML_ONLY_KEYWORDS = ["input_cols", "output_cols"]  # snowml only keywords not present in sklearn
+_SKLEARN_INITIAL_KEYWORDS = [
+    "missing_values",
+    "strategy",
+    "fill_value",
+]  # initial keywords in sklearn
+_SKLEARN_UNUSED_KEYWORDS = [
+    "verbose",
+    "copy",
+    "add_indicator",
+]  # sklearn keywords that are unused in snowml
+_SNOWML_ONLY_KEYWORDS = [
+    "input_cols",
+    "output_cols",
+]  # snowml only keywords not present in sklearn
 
 # Added keywords mapped to the sklearn versions in which they were added. Update mappings in new
 # sklearn versions to support parameter validation.
@@ -55,26 +67,17 @@ _SKLEARN_ADDED_KWARG_VALUE_TO_VERSION_DICT = {
     "strategy": {"constant": "0.20"},
 }
 
+_NUMERIC_TYPES = [
+    types.ByteType(),
+    types.ShortType(),
+    types.IntegerType(),
+    types.LongType(),
+    types.FloatType(),
+    types.DoubleType(),
+]
 
-class SimpleImputer(BaseEstimator, BaseTransformer):
-    """
-    Univariate imputer for completing missing values with simple strategies.
 
-    Attributes:
-        statistics_: dict {input_col: stats_value}
-            Dict contaning the imputation fill value for each feature. Computing statistics can result in `np.nan`
-            values. During `transform`, features corresponding to `np.nan` statistics will be discarded.
-
-        n_features_in_: int
-            Number of features seen during `fit`.
-
-        feature_names_in_: ndarray of shape (n_features_in,)
-            Names of features seen during `fit`.
-
-        TODO(thoyt): Implement logic for `add_indicator` parameter and `indicator_` attribute. Requires
-            `snowflake.ml.impute.MissingIndicator` to be implemented.
-    """
-
+class SimpleImputer(base.BaseEstimator, base.BaseTransformer):
     def __init__(
         self,
         *,
@@ -86,7 +89,8 @@ class SimpleImputer(BaseEstimator, BaseTransformer):
         drop_input_cols: Optional[bool] = False,
     ) -> None:
         """
-        Initialize the SimpleImputer. Note that the `add_indicator` param/functionality is not implemented.
+        Univariate imputer for completing missing values with simple strategies.
+        Note that the `add_indicator` param/functionality is not implemented.
 
         Args:
             missing_values: The values to treat as missing and impute during transform.
@@ -109,13 +113,25 @@ class SimpleImputer(BaseEstimator, BaseTransformer):
                 New column labels for the columns that will contain the output of a transform.
             drop_input_cols: Remove input columns from output if set True. False by default.
 
+        Attributes:
+        statistics_: dict {input_col: stats_value}
+            Dict contaning the imputation fill value for each feature. Computing statistics can result in `np.nan`
+            values. During `transform`, features corresponding to `np.nan` statistics will be discarded.
+        n_features_in_: int
+            Number of features seen during `fit`.
+        feature_names_in_: ndarray of shape (n_features_in,)
+            Names of features seen during `fit`.
+
+        TODO(thoyt): Implement logic for `add_indicator` parameter and `indicator_` attribute. Requires
+            `snowflake.ml.impute.MissingIndicator` to be implemented.
+
         Raises:
             ValueError: If strategy is invalid, or if fill value is specified for strategy that isn't "constant".
         """
         if strategy in STRATEGY_TO_STATE_DICT:
             self.strategy = strategy
         else:
-            raise ValueError(f"Strategy must be one of {STRATEGY_TO_STATE_DICT.keys()}")
+            raise ValueError(f"Invalid strategy {strategy}. Strategy must be one of {STRATEGY_TO_STATE_DICT.keys()}")
 
         # Check that the strategy is "constant" if `fill_value` is specified.
         if fill_value is not None and strategy != "constant":
@@ -127,8 +143,8 @@ class SimpleImputer(BaseEstimator, BaseTransformer):
         #  Add back when `keep_empty_features` is supported.
         # self.keep_empty_features = keep_empty_features
 
-        BaseEstimator.__init__(self)
-        BaseTransformer.__init__(self, drop_input_cols=drop_input_cols)
+        base.BaseEstimator.__init__(self)
+        base.BaseTransformer.__init__(self, drop_input_cols=drop_input_cols)
 
         self.set_input_cols(input_cols)
         self.set_output_cols(output_cols)
@@ -147,9 +163,10 @@ class SimpleImputer(BaseEstimator, BaseTransformer):
             del self.feature_names_in_
             del self._sklearn_fit_dtype
 
-    def _get_dataset_input_col_datatypes(self, dataset: DataFrame) -> Dict[str, types.DataType]:
+    def _get_dataset_input_col_datatypes(self, dataset: snowpark.DataFrame) -> Dict[str, types.DataType]:
         """
-        Checks that the input columns are all the same datatype and returns the datatype.
+        Checks that the input columns are all the same datatype category(except for most_frequent strategy) and
+        returns the datatype.
 
         Args:
             dataset: The input dataframe.
@@ -158,14 +175,28 @@ class SimpleImputer(BaseEstimator, BaseTransformer):
             The datatype of the input columns.
 
         Raises:
-            TypeError: If the input columns are not all the same datatype or if the datatype is not supported.
+            TypeError: If the input columns are not all the same datatype category or if the datatype is not supported.
         """
+
+        def check_type_consistency(col_types: Dict[str, types.DataType]) -> None:
+            is_numeric_type = None
+            for col_name, col_type in col_types.items():
+                if is_numeric_type is None:
+                    is_numeric_type = True if col_type in _NUMERIC_TYPES else False
+                if (col_type in _NUMERIC_TYPES) ^ is_numeric_type:
+                    raise TypeError(
+                        f"Inconsistent input column types. Column {col_name} type {col_type} does not match previous"
+                        " type category."
+                    )
+
         input_col_datatypes = {}
         for field in dataset.schema.fields:
             if field.name in self.input_cols:
                 if field.datatype not in SNOWFLAKE_DATATYPE_TO_NUMPY_DTYPE_MAP:
                     raise TypeError(f"Input column type {field.datatype} is not supported by the simple imputer.")
                 input_col_datatypes[field.name] = field.datatype
+        if self.strategy != "most_frequent":
+            check_type_consistency(input_col_datatypes)
 
         return input_col_datatypes
 
@@ -173,7 +204,7 @@ class SimpleImputer(BaseEstimator, BaseTransformer):
         project=_PROJECT,
         subproject=_SUBPROJECT,
     )
-    def fit(self, dataset: DataFrame) -> "SimpleImputer":
+    def fit(self, dataset: snowpark.DataFrame) -> "SimpleImputer":
         """
         Compute values to impute for the dataset according to the strategy.
 
@@ -188,14 +219,14 @@ class SimpleImputer(BaseEstimator, BaseTransformer):
         # In order to fit, the input columns should have the same type.
         input_col_datatypes = self._get_dataset_input_col_datatypes(dataset)
 
-        self.statistics_ = {}
+        self.statistics_: Dict[str, Any] = {}
         statement_params = telemetry.get_function_usage_statement_params(
             project=_PROJECT,
             subproject=_SUBPROJECT,
             function_name=telemetry.get_statement_params_full_func_name(
                 inspect.currentframe(), self.__class__.__name__
             ),
-            api_calls=[DataFrame.count],
+            api_calls=[snowpark.DataFrame.count],
         )
 
         if self.strategy == "constant":
@@ -217,7 +248,7 @@ class SimpleImputer(BaseEstimator, BaseTransformer):
                     #  Add back when `keep_empty_features` is supported.
                     # not self.keep_empty_features
                     # and dataset.filter(F.col(input_col).is_not_null()).count(statement_params=statement_params) == 0
-                    dataset.filter(F.col(input_col).is_not_null()).count(statement_params=statement_params)
+                    dataset.filter(functions.col(input_col).is_not_null()).count(statement_params=statement_params)
                     == 0
                 ):
                     self.statistics_[input_col] = np.nan
@@ -225,6 +256,7 @@ class SimpleImputer(BaseEstimator, BaseTransformer):
                     self.statistics_[input_col] = self.fill_value
         else:
             state = STRATEGY_TO_STATE_DICT[self.strategy]
+            assert state is not None, "state cannot be None"
             _computed_states = self._compute(dataset, self.input_cols, states=[state])
             for input_col in self.input_cols:
                 statistic = _computed_states[input_col][state]
@@ -234,13 +266,15 @@ class SimpleImputer(BaseEstimator, BaseTransformer):
                 elif self.strategy == "most_frequent":
                     # Check if there is only one occurrence of the value. If so, the statistic should be the mininum
                     # value in the dataset.
-                    if dataset.filter(F.col(input_col) == statistic).count(statement_params=statement_params) == 1:
-                        statistic_min = self._compute(dataset, [input_col], states=[utils.NumericStatistics.MIN])
-                        self.statistics_[input_col] = statistic_min[input_col][utils.NumericStatistics.MIN]
+                    if (
+                        dataset.filter(functions.col(input_col) == statistic).count(statement_params=statement_params)
+                        == 1
+                    ):
+                        statistic_min = self._compute(dataset, [input_col], states=[_utils.NumericStatistics.MIN])
+                        self.statistics_[input_col] = statistic_min[input_col][_utils.NumericStatistics.MIN]
 
         self.n_features_in_ = len(self.input_cols)
         self.feature_names_in_ = self.input_cols
-        self._is_fitted = True
 
         # This attribute is set during `fit` by sklearn objects. In order to avoid fitting
         # the sklearn object directly when creating the sklearn simple imputer, we have to
@@ -249,13 +283,14 @@ class SimpleImputer(BaseEstimator, BaseTransformer):
             SNOWFLAKE_DATATYPE_TO_NUMPY_DTYPE_MAP[input_col_datatypes[input_col]] for input_col in self.input_cols
         )
 
+        self._is_fitted = True
         return self
 
     @telemetry.send_api_usage_telemetry(
         project=_PROJECT,
         subproject=_SUBPROJECT,
     )
-    def transform(self, dataset: Union[DataFrame, pd.DataFrame]) -> Union[DataFrame, pd.DataFrame]:
+    def transform(self, dataset: Union[snowpark.DataFrame, pd.DataFrame]) -> Union[snowpark.DataFrame, pd.DataFrame]:
         """
         Transform the input dataset by imputing the computed statistics in the input columns.
 
@@ -266,15 +301,15 @@ class SimpleImputer(BaseEstimator, BaseTransformer):
             Output dataset.
 
         Raises:
-            RuntimeError: If the imputer has not been fitted.
-            TypeError: If the type of the input dataset is neither a snowpark dataframe nor pandas dataframe.
+            RuntimeError: If transformer is not fitted first.
+            TypeError: If the input dataset is neither a pandas nor Snowpark DataFrame.
         """
         if not self._is_fitted:
             raise RuntimeError("Transformer not fitted before calling transform().")
         super()._check_input_cols()
         super()._check_output_cols()
 
-        if isinstance(dataset, DataFrame):
+        if isinstance(dataset, snowpark.DataFrame):
             output_df = self._transform_snowpark(dataset)
         elif isinstance(dataset, pd.DataFrame):
             output_df = self._transform_sklearn(dataset)
@@ -286,7 +321,7 @@ class SimpleImputer(BaseEstimator, BaseTransformer):
 
         return self._drop_input_columns(output_df) if self._drop_input_cols is True else output_df
 
-    def _transform_snowpark(self, dataset: DataFrame) -> DataFrame:
+    def _transform_snowpark(self, dataset: snowpark.DataFrame) -> snowpark.DataFrame:
         """
         Perform imputation in snowpark dataframe.
 
@@ -296,8 +331,8 @@ class SimpleImputer(BaseEstimator, BaseTransformer):
         Returns:
             Output dataset.
         """
-        output_columns = [F.col(input_col) for input_col in self.input_cols]
-        transformed_dataset = dataset.with_columns(self.output_cols, output_columns)
+        output_columns = [functions.col(input_col) for input_col in self.input_cols]
+        transformed_dataset: snowpark.DataFrame = dataset.with_columns(self.output_cols, output_columns)
 
         # Get the type of input columns.
         input_col_datatypes = self._get_dataset_input_col_datatypes(dataset)
@@ -331,9 +366,13 @@ class SimpleImputer(BaseEstimator, BaseTransformer):
                 # Use `fillna` for replacing nans. Check if the column has a string data type, or coerce a float.
                 if not isinstance(input_col_datatypes[input_col], types.StringType):
                     statistic = float(statistic)
-                transformed_dataset = transformed_dataset.fillna({output_col: statistic})
+                transformed_dataset = transformed_dataset.na.fill({output_col: statistic})
             else:
-                transformed_dataset = transformed_dataset.replace(self.missing_values, fill_value, subset=[output_col])
+                transformed_dataset = transformed_dataset.na.replace(
+                    typing.cast(type_utils.LiteralType, self.missing_values),
+                    fill_value,
+                    subset=[output_col],
+                )
 
         # Rename the input_cols as needed.
         for input_col, output_col in zip(self.input_cols, self.output_cols):
@@ -343,7 +382,7 @@ class SimpleImputer(BaseEstimator, BaseTransformer):
 
         return transformed_dataset
 
-    def _create_sklearn_object(self) -> SklearnSimpleImputer:
+    def _create_sklearn_object(self) -> impute.SimpleImputer:
         """
         Get an equivalent sklearn SimpleImputer.
 
@@ -351,14 +390,14 @@ class SimpleImputer(BaseEstimator, BaseTransformer):
             Sklearn SimpleImputer.
         """
         sklearn_args = self.get_sklearn_args(
-            default_sklearn_obj=SklearnSimpleImputer(),
+            default_sklearn_obj=impute.SimpleImputer(),
             sklearn_initial_keywords=_SKLEARN_INITIAL_KEYWORDS,
             sklearn_unused_keywords=_SKLEARN_UNUSED_KEYWORDS,
             snowml_only_keywords=_SNOWML_ONLY_KEYWORDS,
             sklearn_added_keyword_to_version_dict=_SKLEARN_ADDED_KEYWORD_TO_VERSION_DICT,
         )
 
-        simple_imputer = SklearnSimpleImputer(**sklearn_args)
+        simple_imputer = impute.SimpleImputer(**sklearn_args)
         if self._is_fitted:
             simple_imputer.statistics_ = np.array(list(self.statistics_.values()))
             simple_imputer.n_features_in_ = self.n_features_in_

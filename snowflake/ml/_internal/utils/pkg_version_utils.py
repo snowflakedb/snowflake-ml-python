@@ -1,7 +1,8 @@
 from typing import List
 
 from snowflake import connector
-from snowflake.ml.utils import query_result_checker, telemetry
+from snowflake.ml._internal.utils import query_result_checker
+from snowflake.ml.utils import telemetry
 from snowflake.snowpark import Session
 
 cache = {}

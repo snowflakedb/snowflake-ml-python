@@ -136,7 +136,7 @@ class OneHotEncoderTest(parameterized.TestCase):
         encoder_sklearn.fit(df_pandas[input_cols])
 
         for actual_cats, sklearn_cats in zip(actual_categories, encoder_sklearn.categories_):
-            self.assertEqual(actual_cats.tolist(), sklearn_cats.tolist())
+            self.assertEqual(sklearn_cats.tolist(), actual_cats.tolist())
 
     @parameterized.parameters(  # type: ignore
         {"params": {}},
@@ -173,7 +173,7 @@ class OneHotEncoderTest(parameterized.TestCase):
 
         # Validate that SnowML transformer state is equivalent to SKLearn transformer state
         for pandas_cats, sklearn_cats in zip(encoder2._categories_list, encoder_sklearn.categories_):
-            self.assertEqual(pandas_cats.tolist(), sklearn_cats.tolist())
+            self.assertEqual(sklearn_cats.tolist(), pandas_cats.tolist())
 
         # Validate that transformer state is equivalent whether fitted with pandas or Snowpark DataFrame.
         attrs: Dict[str, _EqualityFunc] = {
@@ -242,39 +242,32 @@ class OneHotEncoderTest(parameterized.TestCase):
         -----------------------
 
         Transformed SQL query:
-        SELECT "STR1", "STR2", "ID", "OUTPUT1_'A'", "OUTPUT1_'a'", "OUTPUT1_'b'", "OUTPUT1_'c'", "OUTPUT1_'d'",
-        "OUTPUT2_'TuDOcLxToB'", "OUTPUT2_'g1ehQlL80t'", "OUTPUT2_'zOyDvcyZ2s'"
-        FROM ( SELECT  *  FROM (( SELECT "STR1" AS "STR1", "STR2" AS "STR2", "ID" AS "ID",
-        "OUTPUT1_'A'" AS "OUTPUT1_'A'", "OUTPUT1_'a'" AS "OUTPUT1_'a'", "OUTPUT1_'b'" AS "OUTPUT1_'b'",
-        "OUTPUT1_'c'" AS "OUTPUT1_'c'", "OUTPUT1_'d'" AS "OUTPUT1_'d'"
-        FROM ( SELECT "STR1", "STR2", "ID", "OUTPUT1_'A'", "OUTPUT1_'a'", "OUTPUT1_'b'", "OUTPUT1_'c'", "OUTPUT1_'d'"
-        FROM ( SELECT  *  FROM (( SELECT "STR1" AS "STR1", "STR2" AS "STR2", "ID" AS "ID"
-        FROM ( SELECT "STR1", "STR2", "ID" FROM ( SELECT  *  FROM TEMP_TABLE))) AS TEMP_TABLE
-        LEFT OUTER JOIN ( SELECT "OUTPUT1_'A'" AS "OUTPUT1_'A'", "OUTPUT1_'a'" AS "OUTPUT1_'a'",
-        "OUTPUT1_'b'" AS "OUTPUT1_'b'", "OUTPUT1_'c'" AS "OUTPUT1_'c'", "OUTPUT1_'d'" AS "OUTPUT1_'d'",
-        "'_CATEGORY_jzg6b2gfe2'" AS "'_CATEGORY_jzg6b2gfe2'"
-        FROM ( SELECT "OUTPUT1_'A'", "OUTPUT1_'a'", "OUTPUT1_'b'", "OUTPUT1_'c'", "OUTPUT1_'d'",
-        "'_CATEGORY_jzg6b2gfe2'" FROM ( SELECT  *  FROM ( SELECT  *  FROM TEMP_TABLE) WHERE ("_COLUMN_NAME" = 'STR1'))))
-        AS TEMP_TABLE ON EQUAL_NULL("STR1", "'_CATEGORY_jzg6b2gfe2'"))))) AS TEMP_TABLE
-        LEFT OUTER JOIN ( SELECT "OUTPUT2_'TuDOcLxToB'" AS "OUTPUT2_'TuDOcLxToB'",
-        "OUTPUT2_'g1ehQlL80t'" AS "OUTPUT2_'g1ehQlL80t'", "OUTPUT2_'zOyDvcyZ2s'" AS "OUTPUT2_'zOyDvcyZ2s'",
-        "'_CATEGORY_jzg6b2gfe2'" AS "'_CATEGORY_jzg6b2gfe2'"
-        FROM ( SELECT "OUTPUT2_'TuDOcLxToB'", "OUTPUT2_'g1ehQlL80t'", "OUTPUT2_'zOyDvcyZ2s'", "'_CATEGORY_jzg6b2gfe2'"
-        FROM ( SELECT  *  FROM ( SELECT  *  FROM TEMP_TABLE) WHERE ("_COLUMN_NAME" = 'STR2')))) AS TEMP_TABLE
-        ON EQUAL_NULL("STR2", "'_CATEGORY_jzg6b2gfe2'")))
+        SELECT "STR1", "STR2", "ID", "OUTPUT1_A", "OUTPUT1_a", "OUTPUT1_b", "OUTPUT1_c", "OUTPUT1_d",
+        "OUTPUT2_TuDOcLxToB", "OUTPUT2_g1ehQlL80t", "OUTPUT2_zOyDvcyZ2s"
+        FROM ( SELECT  *  FROM (( SELECT "STR1" AS "STR1", "STR2" AS "STR2", "ID" AS "ID", "OUTPUT1_A" AS "OUTPUT1_A",
+        "OUTPUT1_a" AS "OUTPUT1_a", "OUTPUT1_b" AS "OUTPUT1_b", "OUTPUT1_c" AS "OUTPUT1_c", "OUTPUT1_d" AS "OUTPUT1_d"
+        FROM ( SELECT  *  FROM (( SELECT "STR1" AS "STR1", "STR2" AS "STR2", "ID" AS "ID" FROM <TEMP_TABLE>)
+        AS SNOWPARK_LEFT LEFT OUTER JOIN ( SELECT "OUTPUT1_A" AS "OUTPUT1_A", "OUTPUT1_a" AS "OUTPUT1_a",
+        "OUTPUT1_b" AS "OUTPUT1_b", "OUTPUT1_c" AS "OUTPUT1_c", "OUTPUT1_d" AS "OUTPUT1_d", "_CATEGORY" AS "_CATEGORY"
+        FROM ( SELECT  *  FROM <TEMP_TABLE> WHERE ("_COLUMN_NAME" = 'STR1'))) AS SNOWPARK_RIGHT
+        ON EQUAL_NULL("STR1", "_CATEGORY")))) AS SNOWPARK_LEFT
+        LEFT OUTER JOIN ( SELECT "OUTPUT2_TuDOcLxToB" AS "OUTPUT2_TuDOcLxToB",
+        "OUTPUT2_g1ehQlL80t" AS "OUTPUT2_g1ehQlL80t", "OUTPUT2_zOyDvcyZ2s" AS "OUTPUT2_zOyDvcyZ2s",
+        "_CATEGORY" AS "_CATEGORY" FROM ( SELECT  *  FROM <TEMP_TABLE> WHERE ("_COLUMN_NAME" = 'STR2'))) AS SNOWPARK_RIGHT
+        ON EQUAL_NULL("STR2", "_CATEGORY")))
 
         Transformed dataset:
-        ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- # noqa
-        |"STR1"  |"STR2"      |"OUTPUT1_'A'"  |"OUTPUT1_'a'"  |"OUTPUT1_'b'"  |"OUTPUT1_'c'"  |"OUTPUT1_'d'"  |"OUTPUT2_'TuDOcLxToB'"  |"OUTPUT2_'g1ehQlL80t'"  |"OUTPUT2_'zOyDvcyZ2s'"  | # noqa
-        ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- # noqa
-        |c       |g1ehQlL80t  |0.0            |0.0            |0.0            |1.0            |0.0            |0.0                     |1.0                     |0.0                     | # noqa
-        |a       |zOyDvcyZ2s  |0.0            |1.0            |0.0            |0.0            |0.0            |0.0                     |0.0                     |1.0                     | # noqa
-        |b       |zOyDvcyZ2s  |0.0            |0.0            |1.0            |0.0            |0.0            |0.0                     |0.0                     |1.0                     | # noqa
-        |A       |TuDOcLxToB  |1.0            |0.0            |0.0            |0.0            |0.0            |1.0                     |0.0                     |0.0                     | # noqa
-        |d       |g1ehQlL80t  |0.0            |0.0            |0.0            |0.0            |1.0            |0.0                     |1.0                     |0.0                     | # noqa
-        |b       |g1ehQlL80t  |0.0            |0.0            |1.0            |0.0            |0.0            |0.0                     |1.0                     |0.0                     | # noqa
-        |b       |g1ehQlL80t  |0.0            |0.0            |1.0            |0.0            |0.0            |0.0                     |1.0                     |0.0                     | # noqa
-        ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- # noqa
+        ------------------------------------------------------------------------------------------------------------------------------------------------------------------ # noqa
+        |"STR1"  |"STR2"      |"OUTPUT1_A"  |"OUTPUT1_a"  |"OUTPUT1_b"  |"OUTPUT1_c"  |"OUTPUT1_d"  |"OUTPUT2_TuDOcLxToB"  |"OUTPUT2_g1ehQlL80t"  |"OUTPUT2_zOyDvcyZ2s"  | # noqa
+        ------------------------------------------------------------------------------------------------------------------------------------------------------------------ # noqa
+        |c       |g1ehQlL80t  |0.0          |0.0          |0.0          |1.0          |0.0          |0.0                   |1.0                   |0.0                   | # noqa
+        |a       |zOyDvcyZ2s  |0.0          |1.0          |0.0          |0.0          |0.0          |0.0                   |0.0                   |1.0                   | # noqa
+        |b       |zOyDvcyZ2s  |0.0          |0.0          |1.0          |0.0          |0.0          |0.0                   |0.0                   |1.0                   | # noqa
+        |A       |TuDOcLxToB  |1.0          |0.0          |0.0          |0.0          |0.0          |1.0                   |0.0                   |0.0                   | # noqa
+        |d       |g1ehQlL80t  |0.0          |0.0          |0.0          |0.0          |1.0          |0.0                   |1.0                   |0.0                   | # noqa
+        |b       |g1ehQlL80t  |0.0          |0.0          |1.0          |0.0          |0.0          |0.0                   |1.0                   |0.0                   | # noqa
+        |b       |g1ehQlL80t  |0.0          |0.0          |1.0          |0.0          |0.0          |0.0                   |1.0                   |0.0                   | # noqa
+        ------------------------------------------------------------------------------------------------------------------------------------------------------------------ # noqa
 
         Raises
         ------
@@ -346,19 +339,15 @@ class OneHotEncoderTest(parameterized.TestCase):
         Transformed SQL query:
         SELECT "STR1", "STR2", "ID", "OUTPUT1", "OUTPUT2"
         FROM ( SELECT  *  FROM (( SELECT "STR1" AS "STR1", "STR2" AS "STR2", "ID" AS "ID", "OUTPUT1" AS "OUTPUT1"
-        FROM ( SELECT "STR1", "STR2", "ID", "OUTPUT1"
-        FROM ( SELECT  *  FROM (( SELECT "STR1" AS "STR1", "STR2" AS "STR2", "ID" AS "ID"
-        FROM ( SELECT "STR1", "STR2", "ID" FROM ( SELECT  *  FROM TEMP_TABLE))) AS TEMP_TABLE
-        LEFT OUTER JOIN ( SELECT "'_CATEGORY_7uq0fgjnhm'" AS "'_CATEGORY_7uq0fgjnhm'", "OUTPUT1" AS "OUTPUT1"
-        FROM ( SELECT "'_CATEGORY_7uq0fgjnhm'", "_ENCODED_VALUE" AS "OUTPUT1"
-        FROM ( SELECT "'_CATEGORY_7uq0fgjnhm'", "_ENCODED_VALUE"
-        FROM ( SELECT  *  FROM ( SELECT  *  FROM TEMP_TABLE) WHERE ("_COLUMN_NAME" = 'STR1'))))) AS TEMP_TABLE
-        ON EQUAL_NULL("STR1", "'_CATEGORY_7uq0fgjnhm'"))))) AS TEMP_TABLE
-        LEFT OUTER JOIN ( SELECT "'_CATEGORY_7uq0fgjnhm'" AS "'_CATEGORY_7uq0fgjnhm'", "OUTPUT2" AS "OUTPUT2"
-        FROM ( SELECT "'_CATEGORY_7uq0fgjnhm'", "_ENCODED_VALUE" AS "OUTPUT2"
-        FROM ( SELECT "'_CATEGORY_7uq0fgjnhm'", "_ENCODED_VALUE"
-        FROM ( SELECT  *  FROM ( SELECT  *  FROM TEMP_TABLE) WHERE ("_COLUMN_NAME" = 'STR2'))))) AS TEMP_TABLE
-        ON EQUAL_NULL("STR2", "'_CATEGORY_7uq0fgjnhm'")))
+        FROM ( SELECT  *  FROM (( SELECT "STR1" AS "STR1", "STR2" AS "STR2", "ID" AS "ID" FROM <TEMP_TABLE>)
+        AS SNOWPARK_LEFT LEFT OUTER JOIN ( SELECT "_CATEGORY" AS "_CATEGORY", "OUTPUT1" AS "OUTPUT1"
+        FROM ( SELECT "_CATEGORY", "_ENCODED_VALUE" AS "OUTPUT1"
+        FROM ( SELECT  *  FROM <TEMP_TABLE> WHERE ("_COLUMN_NAME" = 'STR1')))) AS SNOWPARK_RIGHT
+        ON EQUAL_NULL("STR1", "_CATEGORY")))) AS SNOWPARK_LEFT
+        LEFT OUTER JOIN ( SELECT "_CATEGORY" AS "_CATEGORY", "OUTPUT2" AS "OUTPUT2"
+        FROM ( SELECT "_CATEGORY", "_ENCODED_VALUE" AS "OUTPUT2"
+        FROM ( SELECT  *  FROM <TEMP_TABLE> WHERE ("_COLUMN_NAME" = 'STR2')))) AS SNOWPARK_RIGHT
+        ON EQUAL_NULL("STR2", "_CATEGORY")))
 
         Transformed dataset:
         -------------------------------------------------------------------
@@ -660,28 +649,48 @@ class OneHotEncoderTest(parameterized.TestCase):
         AssertionError
             If the fitted categories do not match those of the sklearn encoder.
         """
-        input_cols = CATEGORICAL_COLS
+        input_cols, output_cols, id_col = CATEGORICAL_COLS, OUTPUT_COLS, ID_COL
+        input_cols_extended = input_cols.copy()
+        input_cols_extended.append(id_col)
         df_pandas, df = framework_utils.get_df(self._session, DATA, SCHEMA, np.nan)
 
         categories = {}
         categories_list = []
         for idx, input_col in enumerate(input_cols):
             cats = list(set(framework_utils.get_pandas_feature(df_pandas[input_cols], feature_idx=idx)))
+            # test excessive given categories
+            cats.append(f"extra_cat_{input_col}")
+            # sort categories in descending order to test if orders are preserved
+            cats.sort(reverse=True)
             cats_arr = np.array(cats)
             categories[input_col] = cats_arr
             categories_list.append(cats_arr)
 
-        encoder = OneHotEncoder(categories=categories).set_input_cols(input_cols)
+        sparse = False
+        encoder = (
+            OneHotEncoder(sparse=sparse, categories=categories).set_input_cols(input_cols).set_output_cols(output_cols)
+        )
         encoder.fit(df)
-
         actual_categories = encoder._categories_list
 
+        transformed_df = encoder.transform(df[input_cols_extended])
+        actual_arr = transformed_df.sort(id_col)[encoder.get_output_cols()].to_pandas().to_numpy()
+
         # sklearn
-        encoder_sklearn = SklearnOneHotEncoder(categories=categories_list)
+        encoder_sklearn = SklearnOneHotEncoder(sparse=sparse, categories=categories_list)
         encoder_sklearn.fit(df_pandas[input_cols])
+        sklearn_arr = encoder_sklearn.transform(df_pandas.sort_values(by=[id_col])[input_cols])
+
+        # verify all given categories including excessive ones are in `encoder._state_pandas`
+        category_col = [c for c in encoder._state_pandas.columns if "_CATEGORY" in c][0]
+        actual_state_categories = encoder._state_pandas.groupby("_COLUMN_NAME")[category_col].apply(np.array).to_dict()
+        self.assertEqual(set(categories.keys()), set(actual_state_categories.keys()))
+        for key in categories.keys():
+            self.assertEqual(set(categories[key]), set(actual_state_categories[key]))
 
         for actual_cats, sklearn_cats in zip(actual_categories, encoder_sklearn.categories_):
-            self.assertEqual(actual_cats.tolist(), sklearn_cats.tolist())
+            self.assertEqual(sklearn_cats.tolist(), actual_cats.tolist())
+        assert np.allclose(actual_arr, sklearn_arr)
 
     def test_categories_unknown(self) -> None:
         """
@@ -694,20 +703,23 @@ class OneHotEncoderTest(parameterized.TestCase):
         """
         values_list = UNKNOWN_CATEGORICAL_VALUES_LIST
         input_cols = CATEGORICAL_COLS
-        _, df = framework_utils.get_df(self._session, DATA, SCHEMA, np.nan)
+        df_pandas, _ = framework_utils.get_df(self._session, DATA, SCHEMA, np.nan)
 
-        categories_df_pandas = pd.DataFrame(list(zip(*values_list)), columns=input_cols)
+        unknown_data = list(zip(*values_list))
+        unknown_pandas = pd.DataFrame(unknown_data, columns=input_cols)
+        unknown_df = self._session.create_dataframe(unknown_pandas)
+
         categories = {}
         for idx, input_col in enumerate(input_cols):
-            cats = set(framework_utils.get_pandas_feature(categories_df_pandas[input_cols], feature_idx=idx))
+            cats = set(framework_utils.get_pandas_feature(df_pandas[input_cols], feature_idx=idx))
             categories[input_col] = np.array(cats)
 
         encoder = OneHotEncoder(categories=categories).set_input_cols(input_cols)
 
         with pytest.raises(ValueError) as excinfo:
-            encoder.fit(df)
+            encoder.fit(unknown_df)
 
-        assert "Found unknown categories" in excinfo.value.args[0]
+        assert "Found unknown categories during fit" in excinfo.value.args[0]
 
     def test_drop_first(self) -> None:
         """
@@ -800,7 +812,7 @@ class OneHotEncoderTest(parameterized.TestCase):
         with pytest.raises(ValueError) as excinfo:
             encoder.transform(unknown_df).collect()
 
-        assert "Found unknown categories" in excinfo.value.args[0]
+        assert "Found unknown categories during transform" in excinfo.value.args[0]
 
         # dense
         sparse = False
@@ -812,7 +824,7 @@ class OneHotEncoderTest(parameterized.TestCase):
         with pytest.raises(ValueError) as excinfo:
             encoder.transform(unknown_df).collect()
 
-        assert "Found unknown categories" in excinfo.value.args[0]
+        assert "Found unknown categories during transform" in excinfo.value.args[0]
 
     def test_handle_unknown_ignore_dense(self) -> None:
         """
@@ -881,18 +893,15 @@ class OneHotEncoderTest(parameterized.TestCase):
         Transformed SQL query:
         SELECT "STR1", "STR2", "OUTPUT1", "OUTPUT2"
         FROM ( SELECT  *  FROM (( SELECT "STR1" AS "STR1", "STR2" AS "STR2", "OUTPUT1" AS "OUTPUT1"
-        FROM ( SELECT "STR1", "STR2", "OUTPUT1" FROM ( SELECT  *  FROM (( SELECT "STR1" AS "STR1", "STR2" AS "STR2"
-        FROM ( SELECT  *  FROM TEMP_TABLE)) AS TEMP_TABLE
-        LEFT OUTER JOIN ( SELECT "'_CATEGORY_0q2mpo4us1'" AS "'_CATEGORY_0q2mpo4us1'", "OUTPUT1" AS "OUTPUT1"
-        FROM ( SELECT "'_CATEGORY_0q2mpo4us1'", "_ENCODED_VALUE" AS "OUTPUT1"
-        FROM ( SELECT "'_CATEGORY_0q2mpo4us1'", "_ENCODED_VALUE"
-        FROM ( SELECT  *  FROM ( SELECT  *  FROM TEMP_TABLE) WHERE ("_COLUMN_NAME" = 'STR1'))))) AS TEMP_TABLE
-        ON EQUAL_NULL("STR1", "'_CATEGORY_0q2mpo4us1'"))))) AS TEMP_TABLE
-        LEFT OUTER JOIN ( SELECT "'_CATEGORY_0q2mpo4us1'" AS "'_CATEGORY_0q2mpo4us1'", "OUTPUT2" AS "OUTPUT2"
-        FROM ( SELECT "'_CATEGORY_0q2mpo4us1'", "_ENCODED_VALUE" AS "OUTPUT2"
-        FROM ( SELECT "'_CATEGORY_0q2mpo4us1'", "_ENCODED_VALUE"
-        FROM ( SELECT  *  FROM ( SELECT  *  FROM TEMP_TABLE) WHERE ("_COLUMN_NAME" = 'STR2'))))) AS TEMP_TABLE
-        ON EQUAL_NULL("STR2", "'_CATEGORY_0q2mpo4us1'")))
+        FROM ( SELECT  *  FROM (( SELECT "STR1" AS "STR1", "STR2" AS "STR2" FROM <TEMP_TABLE>) AS SNOWPARK_LEFT
+        LEFT OUTER JOIN ( SELECT "_CATEGORY" AS "_CATEGORY", "OUTPUT1" AS "OUTPUT1"
+        FROM ( SELECT "_CATEGORY", "_ENCODED_VALUE" AS "OUTPUT1"
+        FROM ( SELECT  *  FROM <TEMP_TABLE> WHERE ("_COLUMN_NAME" = 'STR1')))) AS SNOWPARK_RIGHT
+        ON EQUAL_NULL("STR1", "_CATEGORY")))) AS SNOWPARK_LEFT
+        LEFT OUTER JOIN ( SELECT "_CATEGORY" AS "_CATEGORY", "OUTPUT2" AS "OUTPUT2"
+        FROM ( SELECT "_CATEGORY", "_ENCODED_VALUE" AS "OUTPUT2"
+        FROM ( SELECT  *  FROM <TEMP_TABLE> WHERE ("_COLUMN_NAME" = 'STR2')))) AS SNOWPARK_RIGHT
+        ON EQUAL_NULL("STR2", "_CATEGORY")))
 
         Transformed dataset:
         -----------------------------------------------
@@ -1406,7 +1415,7 @@ class OneHotEncoderTest(parameterized.TestCase):
         encoder.fit(df)
         expected_output_cols = []
         for input_col in input_cols:
-            expected_output_cols.extend(encoder._dense_output_cols_mappings[input_col])
+            expected_output_cols.extend([f'"{col}"' for col in encoder._dense_output_cols_mappings[input_col]])
 
         # output columns are set before fitting
         # fit Snowpark dataframe

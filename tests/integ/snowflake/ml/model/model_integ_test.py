@@ -6,15 +6,19 @@ import asyncio
 import os
 import random
 import string
+import tempfile
 
 import numpy as np
 import pandas as pd
 from absl.testing import absltest
-from sklearn import datasets, linear_model
-from sklearn.ensemble import RandomForestClassifier
-from sklearn.multioutput import MultiOutputClassifier
+from sklearn import datasets, ensemble, linear_model, multioutput
 
-from snowflake.ml.model import custom_model, deployer, model as model_api, schema
+from snowflake.ml.model import (
+    custom_model,
+    deployer,
+    model as model_api,
+    model_signature,
+)
 from snowflake.ml.utils import connection_params
 from snowflake.snowpark import Session
 
@@ -23,6 +27,7 @@ class DemoModel(custom_model.CustomModel):
     def __init__(self, context: custom_model.ModelContext) -> None:
         super().__init__(context)
 
+    @custom_model.inference_api
     def predict(self, input: pd.DataFrame) -> pd.DataFrame:
         return pd.DataFrame({"output": input["c1"]})
 
@@ -31,6 +36,7 @@ class AsyncComposeModel(custom_model.CustomModel):
     def __init__(self, context: custom_model.ModelContext) -> None:
         super().__init__(context)
 
+    @custom_model.inference_api
     async def predict(self, input: pd.DataFrame) -> pd.DataFrame:
         res1 = await self.context.model_ref("m1").predict.async_run(input)
         res_sum = res1["output"] + self.context.model_ref("m2").predict(input)["output"]
@@ -44,8 +50,9 @@ class DemoModelWithArtifacts(custom_model.CustomModel):
             v = int(f.read())
         self.bias = v
 
+    @custom_model.inference_api
     def predict(self, input: pd.DataFrame) -> pd.DataFrame:
-        return pd.DataFrame({"output": input["c1"] + self.bias})
+        return pd.DataFrame({"output": (input["c1"] + self.bias) > 12})
 
 
 class TestModelInteg(absltest.TestCase):
@@ -71,131 +78,126 @@ class TestModelInteg(absltest.TestCase):
             )
             acm = AsyncComposeModel(model_context)
             p2 = await acm.predict(d)
-            s = schema.infer_schema(d, p2)
-            tmpdir = self.create_tempdir()
-            model_api.save_model(
-                name="async_model_composition",
-                model_dir_path=os.path.join(tmpdir.full_path, "async_model_composition"),
-                model=acm,
-                schema=s,
-                metadata={"author": "halu", "version": "1"},
-            )
-            dc = deployer.Deployer(self._session, deployer.LocalDeploymentManager())
-            di = dc.create_deployment(
-                name=f"async_model_composition_{self.run_id}",
-                model_dir_path=os.path.join(tmpdir.full_path, "async_model_composition"),
-                platform=deployer.TargetPlatform.WAREHOUSE,
-                options={"relax_version": True},
-            )
-            res = dc.predict(di.name, d)
+            s = model_signature.infer_signature(d, p2)
+            with tempfile.TemporaryDirectory() as tmpdir:
+                model_api.save_model(
+                    name="async_model_composition",
+                    model_dir_path=os.path.join(tmpdir, "async_model_composition"),
+                    model=acm,
+                    signature=s,
+                    metadata={"author": "halu", "version": "1"},
+                )
+                dc = deployer.Deployer(self._session, deployer.LocalDeploymentManager())
+                di = dc.create_deployment(
+                    name=f"async_model_composition_{self.run_id}",
+                    model_dir_path=os.path.join(tmpdir, "async_model_composition"),
+                    platform=deployer.TargetPlatform.WAREHOUSE,
+                    options={"relax_version": True},
+                )
 
-            pd.testing.assert_series_equal(
-                res["OUTPUT"].astype(str).astype(int),
-                pd.Series([1, 4]),
-                check_dtype=False,
-                check_names=False,
-                check_index=False,
-            )
+                assert di is not None
+                res = dc.predict(di.name, d)
 
-            self.assertTrue(di in dc.list_deployments())
-            self.assertEqual(di, dc.get_deployment(f"async_model_composition_{self.run_id}"))
+                pd.testing.assert_frame_equal(
+                    res,
+                    pd.DataFrame([1.0, 4.0], columns=["output"]),
+                )
+
+                self.assertTrue(di in dc.list_deployments())
+                self.assertEqual(di, dc.get_deployment(f"async_model_composition_{self.run_id}"))
 
         asyncio.get_event_loop().run_until_complete(_test(self))
 
     def test_bad_model_deploy(self) -> None:
-        tmpdir = self.create_tempdir()
-        lm = DemoModel(custom_model.ModelContext())
-        arr = np.array([[1, 2, 3], [4, 2, 5]])
-        d = pd.DataFrame(arr, columns=["c1", "c2", "c3"])
-        s = schema.infer_schema(d, lm.predict(d))
-        model_api.save_model(
-            name="custom_bad_model",
-            model_dir_path=os.path.join(tmpdir.full_path, "custom_bad_model"),
-            model=lm,
-            schema=s,
-            metadata={"author": "halu", "version": "1"},
-            pip_requirements=["numpy==1.22.4"],
-        )
-
-        dc = deployer.Deployer(self._session, deployer.LocalDeploymentManager())
-        with self.assertRaises(RuntimeError):
-            _ = dc.create_deployment(
-                name=f"custom_bad_model_{self.run_id}",
-                model_dir_path=os.path.join(tmpdir.full_path, "custom_bad_model"),
-                platform=deployer.TargetPlatform.WAREHOUSE,
-                options={"relax_version": False},
+        with tempfile.TemporaryDirectory() as tmpdir:
+            lm = DemoModel(custom_model.ModelContext())
+            arr = np.array([[1, 2, 3], [4, 2, 5]])
+            d = pd.DataFrame(arr, columns=["c1", "c2", "c3"])
+            s = model_signature.infer_signature(d, lm.predict(d))
+            model_api.save_model(
+                name="custom_bad_model",
+                model_dir_path=os.path.join(tmpdir, "custom_bad_model"),
+                model=lm,
+                signature=s,
+                metadata={"author": "halu", "version": "1"},
+                conda_dependencies=["numpy==1.22.4"],
             )
 
-        with self.assertRaises(ValueError):
-            _ = dc.predict(f"custom_bad_model_{self.run_id}", d)
+            dc = deployer.Deployer(self._session, deployer.LocalDeploymentManager())
+            with self.assertRaises(RuntimeError):
+                _ = dc.create_deployment(
+                    name=f"custom_bad_model_{self.run_id}",
+                    model_dir_path=os.path.join(tmpdir, "custom_bad_model"),
+                    platform=deployer.TargetPlatform.WAREHOUSE,
+                    options={"relax_version": False},
+                )
+
+            with self.assertRaises(ValueError):
+                _ = dc.predict(f"custom_bad_model_{self.run_id}", d)
 
     def test_custom_demo_model(self) -> None:
-        tmpdir = self.create_tempdir()
-        lm = DemoModel(custom_model.ModelContext())
-        arr = np.array([[1, 2, 3], [4, 2, 5]])
-        d = pd.DataFrame(arr, columns=["c1", "c2", "c3"])
-        s = schema.infer_schema(d, lm.predict(d))
-        model_api.save_model(
-            name="custom_demo_model",
-            model_dir_path=os.path.join(tmpdir.full_path, "custom_demo_model"),
-            model=lm,
-            schema=s,
-            metadata={"author": "halu", "version": "1"},
-        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            lm = DemoModel(custom_model.ModelContext())
+            arr = np.array([[1, 2, 3], [4, 2, 5]])
+            d = pd.DataFrame(arr, columns=["c1", "c2", "c3"])
+            s = model_signature.infer_signature(d, lm.predict(d))
+            model_api.save_model(
+                name="custom_demo_model",
+                model_dir_path=os.path.join(tmpdir, "custom_demo_model"),
+                model=lm,
+                signature=s,
+                metadata={"author": "halu", "version": "1"},
+            )
 
-        dc = deployer.Deployer(self._session, deployer.LocalDeploymentManager())
-        di = dc.create_deployment(
-            name=f"custom_demo_model_{self.run_id}",
-            model_dir_path=os.path.join(tmpdir.full_path, "custom_demo_model"),
-            platform=deployer.TargetPlatform.WAREHOUSE,
-            options={"relax_version": True},
-        )
-        res = dc.predict(di.name, d)
+            dc = deployer.Deployer(self._session, deployer.LocalDeploymentManager())
+            di = dc.create_deployment(
+                name=f"custom_demo_model_{self.run_id}",
+                model_dir_path=os.path.join(tmpdir, "custom_demo_model"),
+                platform=deployer.TargetPlatform.WAREHOUSE,
+                options={"relax_version": True},
+            )
+            assert di is not None
+            res = dc.predict(di.name, d)
 
-        pd.testing.assert_series_equal(
-            res["OUTPUT"].astype(str).astype(int),
-            pd.Series([1, 4]),
-            check_dtype=False,
-            check_names=False,
-            check_index=False,
-        )
+            pd.testing.assert_frame_equal(
+                res,
+                pd.DataFrame([1, 4], columns=["output"]),
+            )
 
-        self.assertTrue(di in dc.list_deployments())
-        self.assertEqual(di, dc.get_deployment(f"custom_demo_model_{self.run_id}"))
+            self.assertTrue(di in dc.list_deployments())
+            self.assertEqual(di, dc.get_deployment(f"custom_demo_model_{self.run_id}"))
 
     def test_custom_model_with_artifacts(self) -> None:
-        tmpdir = self.create_tempdir()
-        with open(os.path.join(tmpdir.full_path, "bias"), "w") as f:
-            f.write("10")
-        lm = DemoModelWithArtifacts(
-            custom_model.ModelContext(models={}, artifacts={"bias": os.path.join(tmpdir.full_path, "bias")})
-        )
-        arr = np.array([[1, 2, 3], [4, 2, 5]])
-        d = pd.DataFrame(arr, columns=["c1", "c2", "c3"])
-        s = schema.infer_schema(d, lm.predict(d))
-        model_api.save_model(
-            name="custom_model_with_artifacts",
-            model_dir_path=os.path.join(tmpdir.full_path, "custom_model_with_artifacts"),
-            model=lm,
-            schema=s,
-            metadata={"author": "halu", "version": "1"},
-        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with open(os.path.join(tmpdir, "bias"), "w") as f:
+                f.write("10")
+            lm = DemoModelWithArtifacts(
+                custom_model.ModelContext(models={}, artifacts={"bias": os.path.join(tmpdir, "bias")})
+            )
+            arr = np.array([[1, 2, 3], [4, 2, 5]])
+            d = pd.DataFrame(arr, columns=["c1", "c2", "c3"])
+            s = model_signature.infer_signature(d, lm.predict(d))
+            model_api.save_model(
+                name="custom_model_with_artifacts",
+                model_dir_path=os.path.join(tmpdir, "custom_model_with_artifacts"),
+                model=lm,
+                signature=s,
+                metadata={"author": "halu", "version": "1"},
+            )
 
-        dc = deployer.Deployer(self._session, deployer.LocalDeploymentManager())
-        di = dc.create_deployment(
-            name=f"custom_model_with_artifacts_{self.run_id}",
-            model_dir_path=os.path.join(tmpdir.full_path, "custom_model_with_artifacts"),
-            platform=deployer.TargetPlatform.WAREHOUSE,
-            options={"relax_version": True},
-        )
-        res = dc.predict(di.name, d)
+            dc = deployer.Deployer(self._session, deployer.LocalDeploymentManager())
+            di = dc.create_deployment(
+                name=f"custom_model_with_artifacts_{self.run_id}",
+                model_dir_path=os.path.join(tmpdir, "custom_model_with_artifacts"),
+                platform=deployer.TargetPlatform.WAREHOUSE,
+                options={"relax_version": True},
+            )
+            assert di is not None
+            res = dc.predict(di.name, d)
 
-        pd.testing.assert_series_equal(
-            res["OUTPUT"].astype(str).astype(int),
-            pd.Series([11, 14]),
-            check_dtype=False,
-            check_names=False,
-            check_index=False,
+        pd.testing.assert_frame_equal(
+            res,
+            pd.DataFrame([False, True], columns=["output"]),
         )
 
     def test_skl_model_deploy(self) -> None:
@@ -203,80 +205,82 @@ class TestModelInteg(absltest.TestCase):
         regr = linear_model.LinearRegression()
         iris_X_df = pd.DataFrame(iris_X, columns=["c1", "c2", "c3", "c4"])
         regr.fit(iris_X_df, iris_y)
-        tmpdir = self.create_tempdir()
-        s = schema.infer_schema(iris_X_df, regr.predict(iris_X_df))
-        model_api.save_model(
-            name="skl_model",
-            model_dir_path=os.path.join(tmpdir.full_path, "skl_model"),
-            model=regr,
-            schema=s,
-            metadata={"author": "halu", "version": "1"},
-        )
-        dc = deployer.Deployer(self._session, deployer.LocalDeploymentManager())
-        di = dc.create_deployment(
-            name=f"skl_model_{self.run_id}",
-            model_dir_path=os.path.join(tmpdir.full_path, "skl_model"),
-            platform=deployer.TargetPlatform.WAREHOUSE,
-            options={"relax_version": True},
-        )
-        res = dc.predict(di.name, iris_X_df[:1])
-        self.assertTrue(np.allclose(np.array([-0.08254936]), res.astype(str).astype(float).values))
+        with tempfile.TemporaryDirectory() as tmpdir:
+            s = model_signature.infer_signature(iris_X_df, regr.predict(iris_X_df))
+            model_api.save_model(
+                name="skl_model",
+                model_dir_path=os.path.join(tmpdir, "skl_model"),
+                model=regr,
+                signature=s,
+                metadata={"author": "halu", "version": "1"},
+            )
+            dc = deployer.Deployer(self._session, deployer.LocalDeploymentManager())
+            di = dc.create_deployment(
+                name=f"skl_model_{self.run_id}",
+                model_dir_path=os.path.join(tmpdir, "skl_model"),
+                platform=deployer.TargetPlatform.WAREHOUSE,
+                options={"relax_version": True},
+            )
+
+            assert di is not None
+            res = dc.predict(di.name, iris_X_df[:1])
+            np.testing.assert_allclose(np.array([[-0.08254936]]), res.values)
 
     def test_skl_model_proba_deploy(self) -> None:
         iris_X, iris_y = datasets.load_iris(return_X_y=True)
-        model = RandomForestClassifier(random_state=42)
+        model = ensemble.RandomForestClassifier(random_state=42)
         iris_X_df = pd.DataFrame(iris_X, columns=["c1", "c2", "c3", "c4"])
         model.fit(iris_X_df, iris_y)
-        tmpdir = self.create_tempdir()
-        s = schema.infer_schema(iris_X_df, model.predict_proba(iris_X_df))
-        model_api.save_model(
-            name="skl_model_proba",
-            model_dir_path=os.path.join(tmpdir.full_path, "skl_model_proba"),
-            model=model,
-            schema=s,
-            metadata={"author": "halu", "version": "1"},
-            pip_requirements=["scikit-learn"],
-            target_method="predict_proba",
-        )
-        dc = deployer.Deployer(self._session, deployer.LocalDeploymentManager())
-        di = dc.create_deployment(
-            name=f"skl_model_proba_{self.run_id}",
-            model_dir_path=os.path.join(tmpdir.full_path, "skl_model_proba"),
-            platform=deployer.TargetPlatform.WAREHOUSE,
-            options={"relax_version": True},
-        )
-        res = dc.predict(di.name, iris_X_df[:10])
-        self.assertTrue(np.allclose(res.astype(str).astype(float).values, model.predict_proba(iris_X_df[:10])))
+        with tempfile.TemporaryDirectory() as tmpdir:
+            s = model_signature.infer_signature(iris_X_df, model.predict_proba(iris_X_df))
+            model_api.save_model(
+                name="skl_model_proba",
+                model_dir_path=os.path.join(tmpdir, "skl_model_proba"),
+                model=model,
+                signature=s,
+                metadata={"author": "halu", "version": "1"},
+                conda_dependencies=["scikit-learn"],
+                target_method="predict_proba",
+            )
+            dc = deployer.Deployer(self._session, deployer.LocalDeploymentManager())
+            di = dc.create_deployment(
+                name=f"skl_model_proba_{self.run_id}",
+                model_dir_path=os.path.join(tmpdir, "skl_model_proba"),
+                platform=deployer.TargetPlatform.WAREHOUSE,
+                options={"relax_version": True},
+            )
+            assert di is not None
+            res = dc.predict(di.name, iris_X_df[:10])
+            np.testing.assert_allclose(res.values, model.predict_proba(iris_X_df[:10]))
 
     def test_skl_multiple_output_model_proba_deploy(self) -> None:
         iris_X, iris_y = datasets.load_iris(return_X_y=True)
         target2 = np.random.randint(0, 6, size=iris_y.shape)
         dual_target = np.vstack([iris_y, target2]).T
-        model = MultiOutputClassifier(RandomForestClassifier(random_state=42))
+        model = multioutput.MultiOutputClassifier(ensemble.RandomForestClassifier(random_state=42))
         iris_X_df = pd.DataFrame(iris_X, columns=["c1", "c2", "c3", "c4"])
         model.fit(iris_X_df[:-10], dual_target[:-10])
-        tmpdir = self.create_tempdir()
-        s = schema.infer_schema(iris_X_df, model.predict_proba(iris_X_df))
-        model_api.save_model(
-            name="skl_multiple_output_model_proba",
-            model_dir_path=os.path.join(tmpdir.full_path, "skl_multiple_output_model_proba"),
-            model=model,
-            schema=s,
-            metadata={"author": "halu", "version": "1"},
-            pip_requirements=["scikit-learn"],
-            target_method="predict_proba",
-        )
-        dc = deployer.Deployer(self._session, deployer.LocalDeploymentManager())
-        di = dc.create_deployment(
-            name=f"skl_multiple_output_model_proba_{self.run_id}",
-            model_dir_path=os.path.join(tmpdir.full_path, "skl_multiple_output_model_proba"),
-            platform=deployer.TargetPlatform.WAREHOUSE,
-            options={"relax_version": True},
-        )
-        res = dc.predict(di.name, iris_X_df[-10:])
-        self.assertTrue(
-            np.allclose(res.astype(str).astype(float).values, np.hstack(model.predict_proba(iris_X_df[-10:])))
-        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            s = model_signature.infer_signature(iris_X_df, model.predict_proba(iris_X_df))
+            model_api.save_model(
+                name="skl_multiple_output_model_proba",
+                model_dir_path=os.path.join(tmpdir, "skl_multiple_output_model_proba"),
+                model=model,
+                signature=s,
+                metadata={"author": "halu", "version": "1"},
+                conda_dependencies=["scikit-learn"],
+                target_method="predict_proba",
+            )
+            dc = deployer.Deployer(self._session, deployer.LocalDeploymentManager())
+            di = dc.create_deployment(
+                name=f"skl_multiple_output_model_proba_{self.run_id}",
+                model_dir_path=os.path.join(tmpdir, "skl_multiple_output_model_proba"),
+                platform=deployer.TargetPlatform.WAREHOUSE,
+                options={"relax_version": True},
+            )
+            assert di is not None
+            res = dc.predict(di.name, iris_X_df[-10:])
+            np.testing.assert_allclose(res.values, np.hstack(model.predict_proba(iris_X_df[-10:])))
 
 
 if __name__ == "__main__":

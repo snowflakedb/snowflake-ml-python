@@ -195,21 +195,21 @@ class OrdinalEncoderTest(parameterized.TestCase):
         -----------------------
 
         Transformed SQL query:
-        SELECT "STR1", "STR2", "OUTPUT1", "OUTPUT2" FROM ( SELECT  *
-        FROM (( SELECT "STR1" AS "STR1", "STR2" AS "STR2", "OUTPUT1" AS "OUTPUT1"
-        FROM ( SELECT "STR1", "STR2", "OUTPUT1" FROM ( SELECT  *  FROM (( SELECT "STR1" AS "STR1", "STR2" AS "STR2"
-        FROM (TEMP_TABLE1)) AS TEMP_TABLE2
-        LEFT OUTER JOIN ( SELECT "_CATEGORY_<RANDOM_ALPHANUMERIC>" AS "_CATEGORY_<RANDOM_ALPHANUMERIC>",
-        "OUTPUT1" AS "OUTPUT1" FROM ( SELECT "_CATEGORY_<RANDOM_ALPHANUMERIC>", "_INDEX" AS "OUTPUT1"
-        FROM ( SELECT "_CATEGORY_<RANDOM_ALPHANUMERIC>", "_INDEX" FROM ( SELECT  *  FROM ( SELECT  *
-        FROM (ORDINAL_ENCODER_STATE_<RANDOM_ALPHANUMERIC>)) WHERE ("_COLUMN_NAME" = 'STR1'))))) AS TEMP_TABLE3
-        ON EQUAL_NULL("STR1", "_CATEGORY_<RANDOM_ALPHANUMERIC>"))))) AS TEMP_TABLE4
-        LEFT OUTER JOIN ( SELECT "_CATEGORY_<RANDOM_ALPHANUMERIC>" AS "_CATEGORY_<RANDOM_ALPHANUMERIC>",
-        "OUTPUT2" AS "OUTPUT2" FROM ( SELECT "_CATEGORY_<RANDOM_ALPHANUMERIC>", "_INDEX" AS "OUTPUT2"
-        FROM ( SELECT "_CATEGORY_<RANDOM_ALPHANUMERIC>", "_INDEX"
-        FROM ( SELECT  *  FROM ( SELECT  *  FROM (ORDINAL_ENCODER_STATE_<RANDOM_ALPHANUMERIC>))
-        WHERE ("_COLUMN_NAME" = 'STR2'))))) AS TEMP_TABLE5
-        ON EQUAL_NULL("STR2", "_CATEGORY_<RANDOM_ALPHANUMERIC>")))
+        SELECT "STR1", "STR2", "ID", "OUTPUT1", "OUTPUT2"
+        FROM ( SELECT  *  FROM (( SELECT "STR1" AS "STR1", "STR2" AS "STR2", "ID" AS "ID", "OUTPUT1" AS "OUTPUT1"
+        FROM ( SELECT  *  FROM (( SELECT "STR1" AS "STR1", "STR2" AS "STR2", "ID" AS "ID" FROM <TEMP_TABLE>)
+        AS SNOWPARK_LEFT LEFT OUTER JOIN ( SELECT "_CATEGORY" AS "_CATEGORY", "OUTPUT1" AS "OUTPUT1"
+        FROM ( SELECT "_CATEGORY", "_INDEX" AS "OUTPUT1"
+        FROM ( SELECT  *  FROM (( SELECT  *  FROM <TEMP_TABLE> WHERE "_CATEGORY" IS NOT NULL)
+        UNION ( SELECT "_COLUMN_NAME", "_CATEGORY", 'NAN' :: FLOAT AS "_INDEX"
+        FROM ( SELECT  *  FROM <TEMP_TABLE> WHERE "_CATEGORY" IS NULL)))
+        WHERE ("_COLUMN_NAME" = 'STR1')))) AS SNOWPARK_RIGHT ON EQUAL_NULL("STR1", "_CATEGORY")))) AS SNOWPARK_LEFT
+        LEFT OUTER JOIN ( SELECT "_CATEGORY" AS "_CATEGORY", "OUTPUT2" AS "OUTPUT2"
+        FROM ( SELECT "_CATEGORY", "_INDEX" AS "OUTPUT2"
+        FROM ( SELECT  *  FROM (( SELECT  *  FROM <TEMP_TABLE> WHERE "_CATEGORY" IS NOT NULL)
+        UNION ( SELECT "_COLUMN_NAME", "_CATEGORY", 'NAN' :: FLOAT AS "_INDEX"
+        FROM ( SELECT  *  FROM <TEMP_TABLE> WHERE "_CATEGORY" IS NULL)))
+        WHERE ("_COLUMN_NAME" = 'STR2')))) AS SNOWPARK_RIGHT ON EQUAL_NULL("STR2", "_CATEGORY")))
 
         Transformed dataset:
         -----------------------------------------------
@@ -290,21 +290,20 @@ class OrdinalEncoderTest(parameterized.TestCase):
         -----------------------
 
         Transformed SQL query:
-        SELECT "STR1", "STR2", "OUTPUT1", "OUTPUT2"
-        FROM ( SELECT  *  FROM (( SELECT "STR1" AS "STR1", "STR2" AS "STR2", "OUTPUT1" AS "OUTPUT1"
-        FROM ( SELECT "STR1", "STR2", "OUTPUT1" FROM ( SELECT  *  FROM (( SELECT "STR1" AS "STR1", "STR2" AS "STR2"
-        FROM ( SELECT "STR1", "STR2" FROM ( SELECT  *  FROM (TEMP_TABLE1)))) AS TEMP_TABLE2
-        LEFT OUTER JOIN ( SELECT "_CATEGORY_<RANDOM_ALPHANUMERIC>" AS "_CATEGORY_<RANDOM_ALPHANUMERIC>",
-        "OUTPUT1" AS "OUTPUT1" FROM ( SELECT "_CATEGORY_<RANDOM_ALPHANUMERIC>", "_INDEX" AS "OUTPUT1"
-        FROM ( SELECT "_CATEGORY_<RANDOM_ALPHANUMERIC>", "_INDEX"
-        FROM ( SELECT  *  FROM ( SELECT  *  FROM (ORDINAL_ENCODER_STATE_<RANDOM_ALPHANUMERIC>))
-        WHERE ("_COLUMN_NAME" = 'STR1'))))) AS TEMP_TABLE3
-        ON EQUAL_NULL("STR1", "_CATEGORY_<RANDOM_ALPHANUMERIC>"))))) AS TEMP_TABLE4
-        LEFT OUTER JOIN ( SELECT "_CATEGORY_<RANDOM_ALPHANUMERIC>" AS "_CATEGORY_<RANDOM_ALPHANUMERIC>",
-        "OUTPUT2" AS "OUTPUT2" FROM ( SELECT "_CATEGORY_<RANDOM_ALPHANUMERIC>", "_INDEX" AS "OUTPUT2"
-        FROM ( SELECT "_CATEGORY_<RANDOM_ALPHANUMERIC>", "_INDEX"
-        FROM ( SELECT  *  FROM ( SELECT  *  FROM (ORDINAL_ENCODER_STATE_<RANDOM_ALPHANUMERIC>))
-        WHERE ("_COLUMN_NAME" = 'STR2'))))) AS TEMP_TABLE5 ON EQUAL_NULL("STR2", "_CATEGORY_<RANDOM_ALPHANUMERIC>")))
+        SELECT "STR1", "STR2", "ID", "OUTPUT1", "OUTPUT2"
+        FROM ( SELECT  *  FROM (( SELECT "STR1" AS "STR1", "STR2" AS "STR2", "ID" AS "ID", "OUTPUT1" AS "OUTPUT1"
+        FROM ( SELECT  *  FROM (( SELECT "STR1" AS "STR1", "STR2" AS "STR2", "ID" AS "ID" FROM <TEMP_TABLE>)
+        AS SNOWPARK_LEFT LEFT OUTER JOIN ( SELECT "_CATEGORY" AS "_CATEGORY", "OUTPUT1" AS "OUTPUT1"
+        FROM ( SELECT "_CATEGORY", "_INDEX" AS "OUTPUT1"
+        FROM ( SELECT  *  FROM (( SELECT  *  FROM <TEMP_TABLE> WHERE "_CATEGORY" IS NOT NULL)
+        UNION ( SELECT "_COLUMN_NAME", "_CATEGORY", 'NAN' :: FLOAT AS "_INDEX"
+        FROM ( SELECT  *  FROM <TEMP_TABLE> WHERE "_CATEGORY" IS NULL)))
+        WHERE ("_COLUMN_NAME" = 'STR1')))) AS SNOWPARK_RIGHT ON EQUAL_NULL("STR1", "_CATEGORY")))) AS SNOWPARK_LEFT
+        LEFT OUTER JOIN ( SELECT "_CATEGORY" AS "_CATEGORY", "OUTPUT2" AS "OUTPUT2"
+        FROM ( SELECT "_CATEGORY", "_INDEX" AS "OUTPUT2" FROM ( SELECT  *  FROM (( SELECT  *  FROM <TEMP_TABLE>
+        WHERE "_CATEGORY" IS NOT NULL) UNION ( SELECT "_COLUMN_NAME", "_CATEGORY", 'NAN' :: FLOAT AS "_INDEX"
+        FROM ( SELECT  *  FROM <TEMP_TABLE> WHERE "_CATEGORY" IS NULL)))
+        WHERE ("_COLUMN_NAME" = 'STR2')))) AS SNOWPARK_RIGHT ON EQUAL_NULL("STR2", "_CATEGORY")))
 
         Transformed dataset:
         -----------------------------------------------
@@ -630,6 +629,32 @@ class OrdinalEncoderTest(parameterized.TestCase):
         sklearn_arr = encoder_sklearn.transform(df_pandas.sort_values(by=[id_col])[input_cols])
 
         assert np.allclose(actual_arr, sklearn_arr, equal_nan=True)
+
+    def test_invalid_encoded_missing_value(self) -> None:
+        """
+        Test `encoded_missing_value` being set to an encoding of known categories.
+
+        Raises
+        ------
+        AssertionError
+            If no error on `encoded_missing_value` is raised during fit.
+        """
+        input_cols, output_cols, id_col = CATEGORICAL_COLS, OUTPUT_COLS, ID_COL
+        input_cols_extended = input_cols.copy()
+        input_cols_extended.append(id_col)
+        df_pandas, df = framework_utils.get_df(self._session, DATA_NONE_NAN, SCHEMA, np.nan)
+
+        encoded_missing_value = 1
+        encoder = (
+            OrdinalEncoder(encoded_missing_value=encoded_missing_value)
+            .set_input_cols(input_cols)
+            .set_output_cols(output_cols)
+        )
+
+        with self.assertRaisesRegex(
+            ValueError, r"encoded_missing_value \(.+\) is already used to encode a known category in features: .+"
+        ):
+            encoder.fit(df)
 
     def test_transform_pandas(self) -> None:
         """

@@ -4,8 +4,8 @@ from typing import cast
 from absl.testing import absltest
 
 from snowflake import snowpark
+from snowflake.ml._internal.utils import rbac
 from snowflake.ml.test_utils import mock_data_frame, mock_session
-from snowflake.ml.utils import rbac
 from snowflake.snowpark import Session
 
 

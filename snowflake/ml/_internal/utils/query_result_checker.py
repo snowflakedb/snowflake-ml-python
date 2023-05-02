@@ -4,7 +4,7 @@ from functools import partial
 from typing import Any, Callable
 
 from snowflake import connector, snowpark
-from snowflake.ml.utils import formatting
+from snowflake.ml._internal.utils import formatting
 
 
 def _query_log(sql: str | None) -> str:
@@ -22,7 +22,7 @@ def result_dimension_matcher(
     Args:
         expected_rows (int): Number of expected rows in the result.
         expected_cols (int): Number of expected columns in the result:
-        result (List[snowpark.Row]): Collected dataframe containing the resutl status of a Snowflake SQL operation.
+        result (List[snowpark.Row]): Collected dataframe containing the result status of a Snowflake SQL operation.
         sql (str): Query string to be included in the error messages. Will not affect the functionality otherwise.
 
     Returns:
@@ -40,14 +40,23 @@ def result_dimension_matcher(
             )
         )
 
-    actual_cols = len(result[0])
-    if expected_cols and actual_cols != expected_cols:
-        raise connector.DataError(
-            formatting.unwrap(
-                f"""Query Result did not match expected number of columns. Expected {expected_cols} columns,
-                found {actual_cols} columns. Result from operation was: {result}.{_query_log(sql)}"""
+    if expected_cols:
+        if not result:
+            raise connector.DataError(
+                formatting.unwrap(
+                    f"""Query Result is empty but a number of columns expected. Expected {expected_cols} columns.
+                    Result from operation was: {result}.{_query_log(sql)}"""
+                )
             )
-        )
+
+        actual_cols = len(result[0])
+        if actual_cols != expected_cols:
+            raise connector.DataError(
+                formatting.unwrap(
+                    f"""Query Result did not match expected number of columns. Expected {expected_cols} columns,
+                    found {actual_cols} columns. Result from operation was: {result}.{_query_log(sql)}"""
+                )
+            )
     return True
 
 
@@ -75,7 +84,7 @@ def cell_value_by_column_matcher(
         row_idx (int): index of the row to check the value
         expected_col_name (str): name of the column to check
         expected_value (Any): What to compare the value in the result against.
-        result (list[snowpark.Row]): result to check. Typilcally the result of a .collect() call on a DataFrame.
+        result (list[snowpark.Row]): result to check. Typically the result of a .collect() call on a DataFrame.
         sql (Optional[str]): Sql string that generated this result. This is optional and for more detailed error
             messages only.
 
@@ -83,13 +92,13 @@ def cell_value_by_column_matcher(
         True iff the given result matches the expectation given by the arguments.
 
     Raises:
-        DataError: There is a mismatche between the given result and the stated expectation.
+        DataError: There is a mismatch between the given result and the stated expectation.
     """
     if len(result) <= row_idx or len(result[row_idx]) < 1:
         raise connector.DataError(
             formatting.unwrap(
-                f"""Query Result did not have required number of rows x col [{row_idx}][{expected_col_name}]. Result from
-                    operation was: {result}.{_query_log(sql)}"""
+                f"""Query Result did not have required number of rows x col [{row_idx}][{expected_col_name}]. Result
+                from operation was: {result}.{_query_log(sql)}"""
             )
         )
     if expected_col_name not in result[row_idx]:

@@ -17,6 +17,7 @@ class SnowflakeQueryResultCheckerTest(TestCase):
         self.assertTrue(query_result_checker.result_dimension_matcher(None, 2, [row1, row2]))
         self.assertTrue(query_result_checker.result_dimension_matcher(2, None, [row1, row2]))
         self.assertRaises(DataError, query_result_checker.result_dimension_matcher, 2, 1, [row1, row2])
+        self.assertRaises(DataError, query_result_checker.result_dimension_matcher, None, 2, [])
         self.assertRaises(DataError, query_result_checker.result_dimension_matcher, 1, 2, [row1, row2])
 
     def test_column_name_matcher(self) -> None:

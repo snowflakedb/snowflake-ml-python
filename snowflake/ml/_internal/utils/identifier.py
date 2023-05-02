@@ -1,5 +1,5 @@
 import re
-from typing import Any, List, Tuple, Union
+from typing import Any, List, Optional, Tuple, Union
 
 # Snowflake Identifier Regex. See https://docs.snowflake.com/en/sql-reference/identifiers-syntax.html.
 _SF_UNQUOTED_IDENTIFIER = "[A-Za-z_][A-Za-z0-9_$]*"
@@ -7,6 +7,8 @@ SF_QUOTED_IDENTIFIER = '"(?:[^"]|"")*"'
 _SF_IDENTIFIER = f"({_SF_UNQUOTED_IDENTIFIER}|{SF_QUOTED_IDENTIFIER})"
 _SF_SCHEMA_LEVEL_OBJECT = rf"{_SF_IDENTIFIER}\.{_SF_IDENTIFIER}\.{_SF_IDENTIFIER}(.*)"
 _SF_SCHEMA_LEVEL_OBJECT_RE = re.compile(_SF_SCHEMA_LEVEL_OBJECT)
+
+UNQUOTED_CASE_INSENSITIVE_RE = re.compile(f"^({_SF_UNQUOTED_IDENTIFIER})$")
 
 
 def _is_quoted(id: str) -> bool:
@@ -102,3 +104,38 @@ def parse_schema_level_object_identifier(
     if len(identifiers) != 4:
         raise ValueError(f"Failed to parse the identifier. Identifiers parsed: {identifiers}")
     return identifiers[0], identifiers[1], identifiers[2], identifiers[3]
+
+
+def get_equivalent_identifier_in_the_response_pandas_dataframe(
+    ids: Optional[Union[str, List[str]]]
+) -> Optional[Union[str, List[str]]]:
+    """Given a user provided identifier(s), this method will compute the equivalent column name identifier(s) in the
+    response pandas dataframe(i.e., in the respones of snowpark_df.to_pandas()) using the rules defined here
+    https://docs.snowflake.com/en/sql-reference/identifiers-syntax.
+
+    Args:
+        ids: User provided column name identifier(s).
+
+    Returns:
+        Equivalent column name identifier(s) in the response pandas dataframe.
+
+    Raises:
+        ValueError: if input types is unsupported or column name identifiers are invalid.
+    """
+
+    def _resolve(id: str) -> str:
+        if UNQUOTED_CASE_INSENSITIVE_RE.fullmatch(id):
+            # Unquoted case insensitive identifier. Snowflake would convert it to uppercase.
+            return id.upper()
+        else:
+            # Quoted or unquoted identifer with special charcters. Just remove quotes and return.
+            return remove_quote_if_quoted(id)
+
+    if ids is None:
+        return None
+    elif type(ids) is list:
+        return [_resolve(id) for id in ids]
+    elif type(ids) is str:
+        return _resolve(ids)
+    else:
+        raise ValueError("Unsupported type. Only string or list of string are supported for selecting columns.")

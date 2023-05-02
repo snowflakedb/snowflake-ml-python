@@ -170,7 +170,7 @@ for test results.
 ### `pytest`
 
 Make each unit test file its own runnable `py_test` target and use the `main()`
-function provided by `snowflake.ml.utils.pytest_driver`.
+function provided by `snowflake.ml.test_utils.pytest_driver`.
 
 For example:
 

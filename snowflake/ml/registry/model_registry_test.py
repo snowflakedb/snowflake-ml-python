@@ -6,9 +6,10 @@ from _schema import _METADATA_TABLE_SCHEMA, _REGISTRY_TABLE_SCHEMA
 from absl.testing import absltest
 
 from snowflake import connector, snowpark
+from snowflake.ml._internal.utils import formatting
 from snowflake.ml.registry import model_registry
 from snowflake.ml.test_utils import mock_data_frame, mock_session
-from snowflake.ml.utils import formatting, telemetry
+from snowflake.ml.utils import telemetry
 
 _DATABASE_NAME = "MODEL_REGISTRY"
 _SCHEMA_NAME = "PUBLIC"

@@ -1,12 +1,13 @@
 import os
 import tempfile
-from typing import Optional
+import warnings
+from typing import IO, List, Optional, Tuple
 
-from packaging.requirements import Requirement
+from snowflake.ml._internal import env_utils, file_utils as snowml_file_utils
+from snowflake.ml.model import model, model_meta, model_types
+from snowflake.snowpark import session as snowpark_session, types as st
 
-from snowflake.ml._internal import file_utils as snowml_file_utils
-from snowflake.ml.model import _env, _utils
-from snowflake.snowpark import Session, types as st
+_SNOWFLAKE_CONDA_CHANNEL_URL = "https://repo.anaconda.com/pkgs/snowflake"
 
 _UDF_CODE_TEMPLATE = """
 import pandas as pd
@@ -49,7 +50,7 @@ model, meta = _load_model_for_deploy(extracted_model_dir_path)
 # TODO(halu): Avoid per batch async detection branching.
 @vectorized(input=pd.DataFrame, max_batch_size=10)
 def infer(df):
-    input_cols = [spec.name for spec in meta.schema.inputs]
+    input_cols = [spec.name for spec in meta.signature.inputs]
     input_df = pd.io.json.json_normalize(df[0])
     if inspect.iscoroutinefunction(model.predict):
         predictions_df = anyio.run(model.predict, input_df[input_cols])
@@ -62,7 +63,7 @@ def infer(df):
 
 # TODO: Take care dedupe if already existed without code change.
 def _upload_snowml_to_tmp_stage(
-    session: Session,
+    session: snowpark_session.Session,
 ) -> str:
     """Upload model module of snowml to tmp stage.
 
@@ -94,8 +95,8 @@ def _upload_snowml_to_tmp_stage(
 
 
 def _deploy_to_warehouse(
-    session: Session, *, model_dir_path: str, udf_name: str, relax_version: Optional[bool] = False
-) -> None:
+    session: snowpark_session.Session, *, model_dir_path: str, udf_name: str, relax_version: Optional[bool] = False
+) -> Tuple[model_types.ModelType, model_meta.ModelMetadata]:
     """Deploy the model to warehouse as UDF.
 
     Args:
@@ -103,31 +104,21 @@ def _deploy_to_warehouse(
         model_dir_path: Path to model directory.
         udf_name: Name of the UDF.
         relax_version: Whether or not relax the version restriction when fail to resolve dependencies.
+            Defaults to False.
 
     Raises:
         ValueError: Raised when incompatible model.
-        RuntimeError: Raised when not all packages are available in snowflake conda channel.
+
+    Returns:
+        A Tuple of the model object and the metadata of the model deployed.
     """
     if not os.path.exists(model_dir_path):
         raise ValueError("Model config did not exist.")
     model_dir_name = os.path.basename(model_dir_path)
-    udf_code = _UDF_CODE_TEMPLATE.format(model_dir_name=model_dir_name)
+    m, meta = model.load_model(model_dir_path)
+    final_packages = _get_model_final_packages(meta, session, relax_version)
     with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
-        with open(os.path.join(model_dir_path, _env._REQUIREMENTS_FILE_NAME)) as rf:
-            final_packages = None
-            deps = rf.readlines()
-            _env._validate_dependencies(deps)
-            if _utils._resolve_dependencies(deps, [_env._SNOWFLAKE_CONDA_CHANNEL_URL]) is None:
-                if relax_version:
-                    relaxed_deps = [Requirement(dep).name for dep in deps]
-                    if _utils._resolve_dependencies(relaxed_deps, [_env._SNOWFLAKE_CONDA_CHANNEL_URL]) is not None:
-                        final_packages = relaxed_deps
-            else:
-                final_packages = deps
-            if final_packages is None:
-                raise RuntimeError("Not all dependencies are resolvable in snowflake conda channel.")
-        f.write(udf_code)
-        f.flush()
+        _write_UDF_py_file(f.file, model_dir_name)
         print(f"Generated UDF file is persisted at: {f.name}")
         # TODO: Less hacky way to import `snowml`
         snowml_stage_path = _upload_snowml_to_tmp_stage(session)
@@ -142,3 +133,72 @@ def _deploy_to_warehouse(
             packages=list(final_packages),
         )
     print(f"{udf_name} is deployed to warehouse.")
+    return m, meta
+
+
+def _write_UDF_py_file(f: IO[str], model_dir_name: str) -> None:
+    """Generate and write UDF python code into a file
+
+    Args:
+        f: File descriptor to write the python code.
+        model_dir_name: Path to model directory.
+    """
+    udf_code = _UDF_CODE_TEMPLATE.format(model_dir_name=model_dir_name)
+    f.write(udf_code)
+    f.flush()
+
+
+def _get_model_final_packages(
+    meta: model_meta.ModelMetadata, session: snowpark_session.Session, relax_version: Optional[bool] = False
+) -> List[str]:
+    """Generate final packages list of dependency of a model to be deployed to warehouse.
+
+    Args:
+        meta: Model metadata to get dependency information.
+        session: Snowpark connection session.
+        relax_version: Whether or not relax the version restriction when fail to resolve dependencies.
+            Defaults to False.
+
+    Raises:
+        RuntimeError: Raised when PIP requirements and dependencies from non-Snowflake anaconda channel found.
+        RuntimeError: Raised when not all packages are available in snowflake conda channel.
+
+    Returns:
+        List of final packages string that is accepted by Snowpark register UDF call.
+    """
+    final_packages = None
+    if (
+        len(meta._conda_dependencies.keys()) > 1
+        or list(meta._conda_dependencies.keys())[0] != "defaults"
+        or meta.pip_requirements
+    ):
+        raise RuntimeError("PIP requirements and dependencies from non-Snowflake anaconda channel is not supported.")
+    try:
+        final_packages = env_utils.resolve_conda_environment(
+            meta._conda_dependencies["defaults"], [_SNOWFLAKE_CONDA_CHANNEL_URL]
+        )
+        if final_packages is None and relax_version:
+            final_packages = env_utils.resolve_conda_environment(
+                list(map(env_utils.relax_requirement_version, meta._conda_dependencies["defaults"])),
+                [_SNOWFLAKE_CONDA_CHANNEL_URL],
+            )
+    except ImportError:
+        warnings.warn(
+            "Cannot find conda resolver, use Snowflake information schema for best-effort dependency pre-check.",
+            category=RuntimeWarning,
+        )
+        final_packages = env_utils.validate_requirements_in_snowflake_conda_channel(
+            session=session, reqs=meta._conda_dependencies["defaults"]
+        )
+        if final_packages is None and relax_version:
+            final_packages = env_utils.validate_requirements_in_snowflake_conda_channel(
+                session=session,
+                reqs=list(map(env_utils.relax_requirement_version, meta._conda_dependencies["defaults"])),
+            )
+    finally:
+        if final_packages is None:
+            raise RuntimeError(
+                "The model's dependency cannot fit into Snowflake Warehouse. "
+                + "Trying to set relax_version as True in the options."
+            )
+    return final_packages

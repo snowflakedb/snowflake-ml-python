@@ -40,7 +40,7 @@ snowml_wheel(
         "sqlparse>=0.4,<1",
         "xgboost==1.7.3",
     ],
-    version = "0.2.3",
+    version = "0.2.4",
     deps = [
         "//snowflake/ml/metrics:metrics_pkg",
         "//snowflake/ml/preprocessing:preprocessing_pkg",
