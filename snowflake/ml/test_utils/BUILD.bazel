@@ -7,7 +7,7 @@ py_library(
     testonly = True,
     srcs = ["mock_snowml_base.py"],
     deps = [
-        "//snowflake/ml/utils:formatting",
+        "//snowflake/ml/_internal/utils:formatting",
     ],
 )
 
@@ -34,7 +34,7 @@ py_library(
     srcs = ["mock_session.py"],
     deps = [
         ":mock_data_frame",
-        "//snowflake/ml/utils:string_matcher",
+        "//snowflake/ml/_internal/utils:string_matcher",
     ],
 )
 
@@ -45,4 +45,10 @@ py_test(
         ":mock_data_frame",
         ":mock_session",
     ],
+)
+
+py_library(
+    name = "pytest_driver",
+    testonly = True,
+    srcs = ["pytest_driver.py"],
 )

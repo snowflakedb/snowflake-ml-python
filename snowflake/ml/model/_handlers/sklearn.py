@@ -1,13 +1,22 @@
 import os
-from typing import Any
+from typing import TYPE_CHECKING, Any, Optional, Union
 
 import cloudpickle
 import numpy as np
 import pandas as pd
 
 from snowflake.ml._internal import type_utils
-from snowflake.ml.model import custom_model, model_meta as model_meta_api, model_types
+from snowflake.ml.model import (
+    custom_model,
+    model_meta as model_meta_api,
+    model_signature,
+    model_types,
+)
 from snowflake.ml.model._handlers import _base
+
+if TYPE_CHECKING:
+    import sklearn.base
+    import sklearn.pipeline
 
 
 class _SKLModelHandler(_base._ModelHandler):
@@ -28,9 +37,10 @@ class _SKLModelHandler(_base._ModelHandler):
     @staticmethod
     def _save_model(
         name: str,
-        model: model_types.ModelType,
+        model: Union["sklearn.base.BaseEstimator", "sklearn.pipeline.Pipeline"],
         model_meta: model_meta_api.ModelMetadata,
         model_blobs_dir_path: str,
+        sample_input: Optional[Any] = None,
         **kwargs: Any,
     ) -> None:
         import sklearn.base
@@ -39,6 +49,10 @@ class _SKLModelHandler(_base._ModelHandler):
         assert isinstance(model, sklearn.base.BaseEstimator) or isinstance(model, sklearn.pipeline.Pipeline)
 
         target_method = kwargs.pop("target_method", _SKLModelHandler.DEFAULT_TARGET_METHOD)
+        predict_method = getattr(model, target_method, None)
+        if not callable(predict_method):
+            raise ValueError(f"Target method {target_method} is not callable.")
+
         model_blob_path = os.path.join(model_blobs_dir_path, name)
         os.makedirs(model_blob_path, exist_ok=True)
         with open(os.path.join(model_blob_path, _SKLModelHandler.MODEL_BLOB_FILE), "wb") as f:
@@ -50,12 +64,17 @@ class _SKLModelHandler(_base._ModelHandler):
             target_method=target_method,
         )
         model_meta.models[name] = base_meta
-        model_meta._include_if_absent(["scikit-learn"])
+        model_meta._include_if_absent([("scikit-learn", "scikit-learn")])
+
+        if model_meta._signature is None:
+            # In this case sample_input should be available, because of the check in save_model.
+            assert sample_input is not None
+            model_meta._signature = model_signature.infer_signature(sample_input, predict_method(sample_input))
 
     @staticmethod
     def _load_model(
         name: str, model_meta: model_meta_api.ModelMetadata, model_blobs_dir_path: str
-    ) -> model_types.ModelType:
+    ) -> Union["sklearn.base.BaseEstimator", "sklearn.pipeline.Pipeline"]:
         model_blob_path = os.path.join(model_blobs_dir_path, name)
         if not hasattr(model_meta, "models"):
             raise ValueError("Ill model metadata found.")
@@ -68,10 +87,13 @@ class _SKLModelHandler(_base._ModelHandler):
             m = cloudpickle.load(f)
         return m
 
+    class _SKLModel(custom_model.CustomModel):
+        ...
+
     @staticmethod
     def _load_as_custom_model(
         name: str, model_meta: model_meta_api.ModelMetadata, model_blobs_dir_path: str
-    ) -> custom_model.CustomModel:
+    ) -> _SKLModel:
         """Create a custom model class wrap for unified interface when being deployed. The predict method will be
         re-targeted based on target_method metadata.
 
@@ -83,22 +105,27 @@ class _SKLModelHandler(_base._ModelHandler):
         Returns:
             The model object as a custom model.
         """
+        from snowflake.ml.model import custom_model
+
         raw_m = _SKLModelHandler._load_model(name, model_meta, model_blobs_dir_path)
         target_method = model_meta.models[name].target_method
-        output_col_names = [spec.name for spec in model_meta.schema.outputs]
+        output_col_names = [spec.name for spec in model_meta.signature.outputs]
 
-        class SKLModel(custom_model.CustomModel):
-            def predict(self, X: pd.DataFrame) -> pd.DataFrame:
-                func = getattr(raw_m, target_method)
-                predicts_as_numpy = func(X)
-                if (
-                    isinstance(predicts_as_numpy, list)
-                    and len(predicts_as_numpy) > 0
-                    and isinstance(predicts_as_numpy[0], np.ndarray)
-                ):
-                    # In case of multi-output estimators, predict_proba(), decision_function(), etc., functions return
-                    # a list of ndarrays. We need to concatenate them.
-                    predicts_as_numpy = np.concatenate(predicts_as_numpy, axis=1)
-                return pd.DataFrame(predicts_as_numpy, columns=output_col_names)
+        @custom_model.inference_api
+        def predict(self: _SKLModelHandler._SKLModel, X: pd.DataFrame) -> pd.DataFrame:
+            func = getattr(raw_m, target_method)
+            predicts_as_numpy = func(X)
+            if (
+                isinstance(predicts_as_numpy, list)
+                and len(predicts_as_numpy) > 0
+                and isinstance(predicts_as_numpy[0], np.ndarray)
+            ):
+                # In case of multi-output estimators, predict_proba(), decision_function(), etc., functions return
+                # a list of ndarrays. We need to concatenate them.
+                predicts_as_numpy = np.concatenate(predicts_as_numpy, axis=1)
+            return pd.DataFrame(predicts_as_numpy, columns=output_col_names)
 
-        return SKLModel(custom_model.ModelContext())
+        skl_model = _SKLModelHandler._SKLModel(custom_model.ModelContext())
+        custom_model._bind(skl_model, predict)
+
+        return skl_model

@@ -13,6 +13,16 @@ py_test(
 )
 
 py_test(
+    name = "test_k_bins_discretizer",
+    srcs = ["test_k_bins_discretizer.py"],
+    deps = [
+        "//snowflake/ml/preprocessing:k_bins_discretizer",
+        "//snowflake/ml/utils:connection_params",
+        "//tests/integ/snowflake/ml/framework:utils",
+    ],
+)
+
+py_test(
     name = "test_label_encoder",
     srcs = ["test_label_encoder.py"],
     deps = [

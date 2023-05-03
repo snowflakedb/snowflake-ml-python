@@ -3,13 +3,8 @@ load("//bazel:py_rules.bzl", "py_library", "py_test")
 package(default_visibility = ["//visibility:public"])
 
 py_library(
-    name = "schema",
-    srcs = ["schema.py"],
-)
-
-py_library(
-    name = "_utils",
-    srcs = ["_utils.py"],
+    name = "model_signature",
+    srcs = ["model_signature.py"],
 )
 
 py_library(
@@ -21,7 +16,8 @@ py_library(
     name = "_env",
     srcs = ["_env.py"],
     deps = [
-        ":_utils",
+        "//snowflake/ml/_internal:env",
+        "//snowflake/ml/_internal:env_utils",
     ],
 )
 
@@ -39,7 +35,7 @@ py_library(
     srcs = ["model_meta.py"],
     deps = [
         ":_env",
-        ":schema",
+        ":model_signature",
         "//snowflake/ml/_internal:file_utils",
     ],
 )
@@ -49,6 +45,8 @@ py_library(
     srcs = ["_udf_util.py"],
     deps = [
         ":model_meta",
+        ":model_types",
+        ":model"
     ],
 )
 
@@ -56,8 +54,8 @@ py_library(
     name = "deployer",
     srcs = ["deployer.py"],
     deps = [
-        ":model",
         ":_udf_util",
+        "//snowflake/ml/_internal/utils:identifier"
     ],
 )
 
@@ -91,20 +89,36 @@ py_test(
 py_test(
     name = "_env_test",
     srcs = ["_env_test.py"],
-    timeout = "long",
     deps = [
         ":_env",
     ],
 )
 
 py_test(
-    name = "schema_test",
-    srcs = ["schema_test.py"],
+    name = "_udf_util_test",
+    srcs = ["_udf_util_test.py"],
     deps = [
-        ":schema",
+        ":_udf_util",
+        "//snowflake/ml/test_utils:mock_data_frame",
+        "//snowflake/ml/test_utils:mock_session",
     ],
 )
 
+py_test(
+    name = "model_signature_test",
+    srcs = ["model_signature_test.py"],
+    deps = [
+        ":model_signature",
+    ],
+)
+
+py_test(
+    name = "model_meta_test",
+    srcs = ["model_meta_test.py"],
+    deps = [
+        ":model_meta",
+    ],
+)
 
 py_test(
     name = "model_test",

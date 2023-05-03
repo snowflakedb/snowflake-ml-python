@@ -46,6 +46,26 @@ class SimpleImputerTest(TestCase):
             if os.path.exists(filepath):
                 os.remove(filepath)
 
+    def test_inconsistent_input_col_type(self) -> None:
+        """
+        Verify failure scenario of inconsistent input types.
+
+        Raises
+        ------
+        AssertionError
+            If the input columns do not have same type.
+        """
+        input_cols = ["FLOAT1", "STR1"]
+        output_cols = input_cols
+        _, df = framework_utils.get_df(self._session, DATA, SCHEMA)  # type: ignore
+        df = df.to_df(SCHEMA)
+
+        for strategy in ["mean", "constant", "median"]:
+            simple_imputer = SimpleImputer(strategy=strategy, input_cols=input_cols, output_cols=output_cols)
+            with self.assertRaises(TypeError) as ex:
+                simple_imputer.fit(df)
+            self.assertTrue(str(ex.exception).startswith("Inconsistent input column types."))
+
     def test_fit(self) -> None:
         """
         Verify fitted categories.

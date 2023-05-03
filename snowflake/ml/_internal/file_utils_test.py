@@ -1,6 +1,7 @@
 import importlib
 import os
 import sys
+import tempfile
 
 from absl.testing import absltest
 
@@ -16,32 +17,32 @@ def get_file():
 
 class UtilsTest(absltest.TestCase):
     def test_zip_file_or_directory_to_stream(self) -> None:
-        tmpdir = self.create_tempdir()
-        leading_path = os.path.join(tmpdir.full_path, "test")
-        fake_mod_dirpath = os.path.join(leading_path, "snowflake", "snowpark", "fake_module")
-        os.makedirs(fake_mod_dirpath)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            leading_path = os.path.join(tmpdir, "test")
+            fake_mod_dirpath = os.path.join(leading_path, "snowflake", "snowpark", "fake_module")
+            os.makedirs(fake_mod_dirpath)
 
-        py_file_path = os.path.join(fake_mod_dirpath, "p.py")
-        with open(py_file_path, "w") as f:
-            f.write(PY_SRC)
+            py_file_path = os.path.join(fake_mod_dirpath, "p.py")
+            with open(py_file_path, "w") as f:
+                f.write(PY_SRC)
 
-        zip_module_filename = os.path.join(tmpdir.full_path, "fake_module.zip")
-        with file_utils.zip_file_or_directory_to_stream(py_file_path, leading_path) as input_stream:
-            with open(zip_module_filename, "wb") as f:
-                f.write(input_stream.getbuffer())
+            zip_module_filename = os.path.join(tmpdir, "fake_module.zip")
+            with file_utils.zip_file_or_directory_to_stream(py_file_path, leading_path) as input_stream:
+                with open(zip_module_filename, "wb") as f:
+                    f.write(input_stream.getbuffer())
 
-        sys.path.insert(0, os.path.abspath(zip_module_filename))
+            sys.path.insert(0, os.path.abspath(zip_module_filename))
 
-        importlib.import_module("snowflake.snowpark.fake_module.p")
+            importlib.import_module("snowflake.snowpark.fake_module.p")
 
-        sys.path.remove(os.path.abspath(zip_module_filename))
+            sys.path.remove(os.path.abspath(zip_module_filename))
 
-        with file_utils.zip_file_or_directory_to_stream(fake_mod_dirpath, leading_path) as input_stream:
-            with open(zip_module_filename, "wb") as f:
-                f.write(input_stream.getbuffer())
+            with file_utils.zip_file_or_directory_to_stream(fake_mod_dirpath, leading_path) as input_stream:
+                with open(zip_module_filename, "wb") as f:
+                    f.write(input_stream.getbuffer())
 
-        sys.path.insert(0, os.path.abspath(zip_module_filename))
+            sys.path.insert(0, os.path.abspath(zip_module_filename))
 
-        importlib.import_module("snowflake.snowpark.fake_module.p")
+            importlib.import_module("snowflake.snowpark.fake_module.p")
 
-        sys.path.remove(os.path.abspath(zip_module_filename))
+            sys.path.remove(os.path.abspath(zip_module_filename))

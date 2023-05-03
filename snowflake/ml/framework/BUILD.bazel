@@ -7,10 +7,11 @@ py_library(
     srcs = [
         "base.py",
         "pipeline.py",
+        "_utils.py"
     ],
     deps = [
-        "//snowflake/ml/framework/utils",
-        "//snowflake/ml/utils:parallelize",
+        "//snowflake/ml:version",
+        "//snowflake/ml/_internal/utils:parallelize",
         "//snowflake/ml/utils:telemetry",
     ],
 )

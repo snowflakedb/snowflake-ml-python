@@ -82,7 +82,17 @@ bazel build --config=typecheck <your target>
 
 #### Enforcement as a merge gate
 
-Type checking is not enforced against targets listed in `ci/type_ignored_targets`.
+Type checking is not enforced against targets listed in `ci/type_ignored_targets`, or any target
+depending on those ignored targets. Thus `bazel build --config=typecheck //...` may give (expected)
+errors.
+
+To properly type check all the targets, run:
+
+```
+./ci/type_check.sh -a -b <path_to_bazel>
+```
+
+You only need to specify `-b <path_to_bazel>` if your `bazel` is not in `$PATH` or is an alias.
 
 ### Test
 
@@ -170,7 +180,7 @@ for test results.
 ### `pytest`
 
 Make each unit test file its own runnable `py_test` target and use the `main()`
-function provided by `snowflake.ml.utils.pytest_driver`.
+function provided by `snowflake.ml.test_utils.pytest_driver`.
 
 For example:
 

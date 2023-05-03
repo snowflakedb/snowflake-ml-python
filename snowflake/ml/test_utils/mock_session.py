@@ -3,8 +3,8 @@ from __future__ import annotations  # for return self methods
 from typing import Any
 from unittest import TestCase
 
+from snowflake.ml._internal.utils.string_matcher import StringMatcherSql
 from snowflake.ml.test_utils import mock_data_frame, mock_snowml_base
-from snowflake.ml.utils.string_matcher import StringMatcherSql
 
 
 class MockSession(mock_snowml_base.MockSnowMLBase):

@@ -1,0 +1,40 @@
+# TODO(SNOW-728020): Make this file a template so that it can read ground truths
+# (dependencies, version number) from a common place. We also need to define that
+# common place, as currently it's a BUILD rule.
+# See https://docs.conda.io/projects/conda-build/en/latest/resources/define-metadata.html#templating-with-jinja
+
+package:
+  name: snowflake-ml-python
+  version: 0.2.4
+
+source:
+  path: ../../
+
+requirements:
+  build:
+    - python
+    - bazel >=6.0.0
+    - absl-py>=0.15,<2
+    - fsspec[http]>=2022.11,<=2023.1
+    - numpy>=1.23,<1.24
+    - pyyaml>=6.0,<7
+    - scipy>=1.9,<2
+    - scikit-learn==1.2.1
+    - snowflake-connector-python[pandas]
+    - snowflake-snowpark-python>=1.0.0,<=1.3
+    - sqlparse>=0.4,<1
+    - xgboost==1.7.3
+
+  run:
+    - python
+about:
+  home: https://github.com/snowflakedb/snowflake-ml-python
+  license: Apache-2.0
+  license_family : Apache
+  license_file: ../../LICENSE.txt
+  summary: Snowflake ML Library
+  description: |
+      Snowflake ML client Library is used for interacting with Snowflake to build machine learning solutions.
+      Functionalities include feature engineering, modeling, model management, deployment, etc
+  dev_url: https://github.com/snowflakedb/snowflake-ml-python
+  doc_url: https://github.com/snowflakedb/snowflake-ml-python/blob/main/README.md

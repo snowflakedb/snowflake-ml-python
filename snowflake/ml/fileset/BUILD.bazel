@@ -29,7 +29,7 @@ py_library(
     deps = [
         ":fileset_errors",
         ":stage_fs",
-        "//snowflake/ml/utils:identifier",
+        "//snowflake/ml/_internal/utils:identifier",
         "//snowflake/ml/utils:telemetry",
     ],
 )
@@ -61,7 +61,7 @@ py_library(
         ":sfcfs",
         ":tf_dataset",
         ":torch_datapipe",
-        "//snowflake/ml/utils:import_utils",
+        "//snowflake/ml/_internal/utils:import_utils",
         "//snowflake/ml/utils:telemetry",
     ],
 )

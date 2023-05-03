@@ -6,20 +6,19 @@ from typing import Dict, Iterable, List, Optional, Tuple, Union
 
 import numpy as np
 import pandas as pd
-import sklearn.preprocessing._data as sklearn_preprocessing_data
 from scipy import stats
-from sklearn.preprocessing import RobustScaler as SklearnRobustScaler
+from sklearn import preprocessing
+from sklearn.preprocessing import _data as sklearn_preprocessing_data
 
-from snowflake.ml.framework import utils
-from snowflake.ml.framework.base import BaseEstimator, BaseTransformer
+from snowflake import snowpark
+from snowflake.ml.framework import _utils, base
 from snowflake.ml.utils import telemetry
-from snowflake.snowpark import DataFrame
 
 _PROJECT = "ModelDevelopment"
 _SUBPROJECT = "Preprocessing"
 
 
-class RobustScaler(BaseEstimator, BaseTransformer):
+class RobustScaler(base.BaseEstimator, base.BaseTransformer):
     def __init__(
         self,
         *,
@@ -31,7 +30,8 @@ class RobustScaler(BaseEstimator, BaseTransformer):
         output_cols: Optional[Union[str, Iterable[str]]] = None,
         drop_input_cols: Optional[bool] = False,
     ) -> None:
-        """Scale features using statistics that are robust to outliers.
+        """
+        Scale features using statistics that are robust to outliers.
 
         Args:
             with_centering: If True, center the data before scaling. This will cause transform
@@ -65,20 +65,21 @@ class RobustScaler(BaseEstimator, BaseTransformer):
 
         l_range = self.quantile_range[0] / 100.0
         r_range = self.quantile_range[1] / 100.0
-        self.custom_state: List[str] = [
-            utils.NumericStatistics.MEDIAN.value,
+        self.custom_states: List[str] = [
+            _utils.NumericStatistics.MEDIAN,
             "SQL>>>percentile_cont(" + str(l_range) + ") within group (order by {col_name})",
             "SQL>>>percentile_cont(" + str(r_range) + ") within group (order by {col_name})",
         ]
 
-        BaseEstimator.__init__(self, custom_state=self.custom_state)
-        BaseTransformer.__init__(self, drop_input_cols=drop_input_cols)
+        base.BaseEstimator.__init__(self, custom_states=self.custom_states)
+        base.BaseTransformer.__init__(self, drop_input_cols=drop_input_cols)
 
         self.set_input_cols(input_cols)
         self.set_output_cols(output_cols)
 
     def _reset(self) -> None:
-        """Reset internal data-dependent state of the scaler, if necessary.
+        """
+        Reset internal data-dependent state of the scaler, if necessary.
         __init__ parameters are not touched.
         """
         super()._reset()
@@ -98,8 +99,9 @@ class RobustScaler(BaseEstimator, BaseTransformer):
         project=_PROJECT,
         subproject=_SUBPROJECT,
     )
-    def fit(self, dataset: Union[DataFrame, pd.DataFrame]) -> "RobustScaler":
-        """Compute center, scale and quantile values of the dataset.
+    def fit(self, dataset: Union[snowpark.DataFrame, pd.DataFrame]) -> "RobustScaler":
+        """
+        Compute center, scale and quantile values of the dataset.
 
         Args:
             dataset: Input dataset.
@@ -108,55 +110,55 @@ class RobustScaler(BaseEstimator, BaseTransformer):
             Return self as fitted scaler.
 
         Raises:
-            TypeError: If the input dataset is neither a pandas or Snowpark DataFrame.
+            TypeError: If the input dataset is neither a pandas nor Snowpark DataFrame.
         """
         super()._check_input_cols()
         self._reset()
 
         if isinstance(dataset, pd.DataFrame):
             self._fit_sklearn(dataset)
-        elif isinstance(dataset, DataFrame):
+        elif isinstance(dataset, snowpark.DataFrame):
             self._fit_snowpark(dataset)
         else:
             raise TypeError(
                 f"Unexpected dataset type: {type(dataset)}."
                 "Supported dataset types: snowpark.DataFrame, pandas.DataFrame."
             )
+
         self._is_fitted = True
         self._state_is_set = True
-
         return self
 
     def _fit_sklearn(self, dataset: pd.DataFrame) -> None:
         dataset = self._use_input_cols_only(dataset)
-        sklearn_encoder = self._create_unfitted_sklearn_object()
-        sklearn_encoder.fit(dataset[self.input_cols])
+        sklearn_scaler = self._create_unfitted_sklearn_object()
+        sklearn_scaler.fit(dataset[self.input_cols])
 
         for (i, input_col) in enumerate(self.input_cols):
             if self.with_centering:
-                self._center[input_col] = float(sklearn_encoder.center_[i])
+                self._center[input_col] = float(sklearn_scaler.center_[i])
             if self.with_scaling:
-                self._scale[input_col] = float(sklearn_encoder.scale_[i])
+                self._scale[input_col] = float(sklearn_scaler.scale_[i])
 
-    def _fit_snowpark(self, dataset: DataFrame) -> None:
-        computed_states = self._compute(dataset, self.input_cols, self.custom_state)
+    def _fit_snowpark(self, dataset: snowpark.DataFrame) -> None:
+        computed_states = self._compute(dataset, self.input_cols, self.custom_states)
 
         q_min, q_max = self.quantile_range
         if not 0 <= q_min <= q_max <= 100:
             raise ValueError("Invalid quantile range: %s" % str(self.quantile_range))
 
-        pcont_left = self.custom_state[1]
-        pcont_right = self.custom_state[2]
+        pcont_left = self.custom_states[1]
+        pcont_right = self.custom_states[2]
 
         for input_col in self.input_cols:
             numeric_stats = computed_states[input_col]
             if self.with_centering:
-                self._center[input_col] = float(numeric_stats[utils.NumericStatistics.MEDIAN])
+                self._center[input_col] = float(numeric_stats[_utils.NumericStatistics.MEDIAN])
             else:
                 self._center[input_col] = 0
 
             if self.with_scaling:
-                self._scale[input_col] = numeric_stats[pcont_right] - numeric_stats[pcont_left]
+                self._scale[input_col] = float(numeric_stats[pcont_right]) - float(numeric_stats[pcont_left])
                 self._scale[input_col] = sklearn_preprocessing_data._handle_zeros_in_scale(
                     self._scale[input_col], copy=False
                 )
@@ -170,8 +172,9 @@ class RobustScaler(BaseEstimator, BaseTransformer):
         project=_PROJECT,
         subproject=_SUBPROJECT,
     )
-    def transform(self, dataset: Union[DataFrame, pd.DataFrame]) -> Union[DataFrame, pd.DataFrame]:
-        """Center and scale the data.
+    def transform(self, dataset: Union[snowpark.DataFrame, pd.DataFrame]) -> Union[snowpark.DataFrame, pd.DataFrame]:
+        """
+        Center and scale the data.
 
         Args:
             dataset: Input dataset.
@@ -181,14 +184,14 @@ class RobustScaler(BaseEstimator, BaseTransformer):
 
         Raises:
             RuntimeError: If transformer is not fitted first.
-            TypeError: If the input dataset is neither a pandas or Snowpark DataFrame.
+            TypeError: If the input dataset is neither a pandas nor Snowpark DataFrame.
         """
         if not self._is_fitted:
             raise RuntimeError("Transformer not fitted before calling transform().")
         super()._check_input_cols()
         super()._check_output_cols()
 
-        if isinstance(dataset, DataFrame):
+        if isinstance(dataset, snowpark.DataFrame):
             output_df = self._transform_snowpark(dataset)
         elif isinstance(dataset, pd.DataFrame):
             output_df = self._transform_sklearn(dataset)
@@ -200,8 +203,9 @@ class RobustScaler(BaseEstimator, BaseTransformer):
 
         return self._drop_input_columns(output_df) if self._drop_input_cols is True else output_df
 
-    def _transform_snowpark(self, dataset: DataFrame) -> DataFrame:
-        """Center and scale the data on snowflake DataFrame.
+    def _transform_snowpark(self, dataset: snowpark.DataFrame) -> snowpark.DataFrame:
+        """
+        Center and scale the data on snowflake DataFrame.
 
         Args:
             dataset: Input dataset.
@@ -218,11 +222,11 @@ class RobustScaler(BaseEstimator, BaseTransformer):
                 col /= float(self.scale_[input_col])
             output_columns.append(col)
 
-        transformed_dataset = dataset.with_columns(self.output_cols, output_columns)
+        transformed_dataset: snowpark.DataFrame = dataset.with_columns(self.output_cols, output_columns)
         return transformed_dataset
 
-    def _create_unfitted_sklearn_object(self) -> SklearnRobustScaler:
-        return SklearnRobustScaler(
+    def _create_unfitted_sklearn_object(self) -> preprocessing.RobustScaler:
+        return preprocessing.RobustScaler(
             with_centering=self.with_centering,
             with_scaling=self.with_scaling,
             quantile_range=self.quantile_range,
@@ -230,8 +234,9 @@ class RobustScaler(BaseEstimator, BaseTransformer):
             unit_variance=self.unit_variance,
         )
 
-    def _create_sklearn_object(self) -> SklearnRobustScaler:
-        """Get an equivalent sklearn RobustScaler.
+    def _create_sklearn_object(self) -> preprocessing.RobustScaler:
+        """
+        Get an equivalent sklearn RobustScaler.
 
         Returns:
             Sklearn RobustScaler.

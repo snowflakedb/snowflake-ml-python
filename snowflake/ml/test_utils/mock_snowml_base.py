@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from types import TracebackType
 from typing import Any, TypeVar
 
-from snowflake.ml.utils import formatting
+from snowflake.ml._internal.utils import formatting
 
 _STATEMENT_PARAMS = "statement_params"
 

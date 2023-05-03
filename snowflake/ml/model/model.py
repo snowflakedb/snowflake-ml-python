@@ -1,26 +1,29 @@
 import os
 from types import ModuleType
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, overload
 
 from snowflake.ml.model import (
     custom_model,
     model_handler,
     model_meta,
+    model_signature,
     model_types,
-    schema,
 )
 
 MODEL_BLOBS_DIR = "models"
 
 
+@overload
 def save_model(
     *,
     name: str,
     model_dir_path: str,
     model: Any,
-    schema: schema.Schema,
+    signature: model_signature.ModelSignature,
     metadata: Optional[Dict[str, str]] = None,
+    conda_dependencies: Optional[List[str]] = None,
     pip_requirements: Optional[List[str]] = None,
+    python_version: Optional[str] = None,
     ext_modules: Optional[List[ModuleType]] = None,
     code_paths: Optional[List[str]] = None,
     **kwargs: Any,
@@ -31,9 +34,95 @@ def save_model(
         name: Name of the model.
         model_dir_path: Directory to save the model.
         model: Model object.
-        schema: Model data schema for inputs and output.
+        signature: Model data signature for inputs and output.
         metadata: Model metadata.
-        pip_requirements: List of PIP package specs.
+        conda_dependencies: List of Conda package specs. Use "[channel::]package [operator version]" syntax to specify
+            a dependency. It is a recommended way to specify your dependencies using conda. When channel is not
+            specified, defaults channel will be used. When deploying to Snowflake Warehouse, defaults channel would be
+            replaced with the Snowflake Anaconda channel.
+        pip_requirements: List of PIP package specs. Model will not be able to deploy to the warehouse if there is pip
+            requirements.
+        python_version: A string of python version where model is run. Used for user override. If specified as None,
+            current version would be captured. Defaults to None.
+        code_paths: Directory of code to import.
+        ext_modules: External modules that user might want to get pickled with model object. Defaults to None.
+        **kwargs: Model specific kwargs.
+    """
+    ...
+
+
+@overload
+def save_model(
+    *,
+    name: str,
+    model_dir_path: str,
+    model: Any,
+    sample_input: Any,
+    metadata: Optional[Dict[str, str]] = None,
+    conda_dependencies: Optional[List[str]] = None,
+    pip_requirements: Optional[List[str]] = None,
+    python_version: Optional[str] = None,
+    ext_modules: Optional[List[ModuleType]] = None,
+    code_paths: Optional[List[str]] = None,
+    **kwargs: Any,
+) -> model_meta.ModelMetadata:
+    """Save the model under `dir_path`.
+
+    Args:
+        name: Name of the model.
+        model_dir_path: Directory to save the model.
+        model: Model object.
+        sample_input: Sample input data to infer the model signature from.
+        metadata: Model metadata.
+        conda_dependencies: List of Conda package specs. Use "[channel::]package [operator version]" syntax to specify
+            a dependency. It is a recommended way to specify your dependencies using conda. When channel is not
+            specified, defaults channel will be used. When deploying to Snowflake Warehouse, defaults channel would be
+            replaced with the Snowflake Anaconda channel.
+        pip_requirements: List of PIP package specs. Model will not be able to deploy to the warehouse if there is pip
+            requirements.
+        python_version: A string of python version where model is run. Used for user override. If specified as None,
+            current version would be captured. Defaults to None.
+        code_paths: Directory of code to import.
+        ext_modules: External modules that user might want to get pickled with model object. Defaults to None.
+        **kwargs: Model specific kwargs.
+    """
+    ...
+
+
+def save_model(
+    *,
+    name: str,
+    model_dir_path: str,
+    model: Any,
+    signature: Optional[model_signature.ModelSignature] = None,
+    sample_input: Optional[Any] = None,
+    metadata: Optional[Dict[str, str]] = None,
+    conda_dependencies: Optional[List[str]] = None,
+    pip_requirements: Optional[List[str]] = None,
+    python_version: Optional[str] = None,
+    ext_modules: Optional[List[ModuleType]] = None,
+    code_paths: Optional[List[str]] = None,
+    **kwargs: Any,
+) -> model_meta.ModelMetadata:
+    """Save the model under `dir_path`.
+
+    Args:
+        name: Name of the model.
+        model_dir_path: Directory to save the model.
+        model: Model object.
+        signature: Model data signature for inputs and output. If it is None, sample_input would be used to infer the
+            signature. If not None, sample_input should not be specified. Defaults to None.
+        sample_input: Sample input data to infer the model signature from. If it is None, signature must be specified.
+            If not None, signature should not be specified. Defaults to None.
+        metadata: Model metadata.
+        conda_dependencies: List of Conda package specs. Use "[channel::]package [operator version]" syntax to specify
+            a dependency. It is a recommended way to specify your dependencies using conda. When channel is not
+            specified, defaults channel will be used. When deploying to Snowflake Warehouse, defaults channel would be
+            replaced with the Snowflake Anaconda channel.
+        pip_requirements: List of PIP package specs. Model will not be able to deploy to the warehouse if there is pip
+            requirements.
+        python_version: A string of python version where model is run. Used for user override. If specified as None,
+            current version would be captured. Defaults to None.
         code_paths: Directory of code to import.
         ext_modules: External modules that user might want to get pickled with model object. Defaults to None.
         **kwargs: Model specific kwargs.
@@ -42,8 +131,16 @@ def save_model(
         Model metadata.
 
     Raises:
+        ValueError: Raised when the signature and sample_input specified at the same time.
         TypeError: Raised if model type is not supported.
     """
+
+    if not ((signature is None) ^ (sample_input is None)):
+        raise ValueError(
+            "Signature and sample_input both cannot be "
+            + f"{'None' if signature is None else 'specified'} at the same time."
+        )
+
     handler = model_handler._find_handler(model)
     if handler is None:
         raise TypeError(f"{type(model)} is not supported.")
@@ -55,9 +152,11 @@ def save_model(
         model_type=handler.handler_type,
         metadata=metadata,
         code_paths=code_paths,
-        schema=schema,
+        signature=signature,
         ext_modules=ext_modules,
+        conda_dependencies=conda_dependencies,
         pip_requirements=pip_requirements,
+        python_version=python_version,
     ) as meta:
         model_blobs_path = os.path.join(model_dir_path, MODEL_BLOBS_DIR)
         os.makedirs(model_blobs_path, exist_ok=True)
@@ -66,6 +165,7 @@ def save_model(
             model,
             meta,
             model_blobs_path,
+            sample_input=sample_input,
             ext_modules=ext_modules,
             code_paths=code_paths,
             **kwargs,

@@ -66,8 +66,8 @@ class MaxAbsScalerTest(TestCase):
             scaler_sklearn = SklearnMaxAbsScaler()
             scaler_sklearn.fit(df_pandas[input_cols])
 
-            assert np.allclose(actual_max_abs, scaler_sklearn.max_abs_)
-            assert np.allclose(actual_scale, scaler_sklearn.scale_)
+            np.testing.assert_allclose(actual_max_abs, scaler_sklearn.max_abs_)
+            np.testing.assert_allclose(actual_scale, scaler_sklearn.scale_)
 
     def test_transform(self) -> None:
         input_cols, output_cols, id_col = NUMERIC_COLS, OUTPUT_COLS, ID_COL
@@ -98,8 +98,8 @@ class MaxAbsScalerTest(TestCase):
         scaler_sklearn.fit(input_df_pandas[input_cols])
         expected_arr = scaler_sklearn.transform(input_df_pandas.sort_values(by=[id_col])[input_cols])
 
-        assert np.allclose(actual_arr, expected_arr)
-        assert np.allclose(actual_arr2, expected_arr)
+        np.testing.assert_allclose(actual_arr, expected_arr)
+        np.testing.assert_allclose(actual_arr2, expected_arr)
 
     def test_transform_pandas_input(self) -> None:
         data, schema = DATA, SCHEMA
@@ -120,7 +120,7 @@ class MaxAbsScalerTest(TestCase):
         transformed_df_sklearn = scaler_sklearn.transform(input_df_pandas[input_cols])
         expected_arr = transformed_df_sklearn
 
-        assert np.allclose(actual_arr, expected_arr)
+        np.testing.assert_allclose(actual_arr, expected_arr)
 
     def test_serde(self) -> None:
         """
@@ -174,9 +174,9 @@ class MaxAbsScalerTest(TestCase):
         scaler_sklearn.fit(df_pandas[input_cols])
         sklearn_arr = scaler_sklearn.transform(df_pandas[input_cols])
 
-        assert np.allclose(actual_arr_cloudpickle, sklearn_arr)
-        assert np.allclose(actual_arr_pickle, sklearn_arr)
-        assert np.allclose(actual_arr_joblib, sklearn_arr)
+        np.testing.assert_allclose(actual_arr_cloudpickle, sklearn_arr)
+        np.testing.assert_allclose(actual_arr_pickle, sklearn_arr)
+        np.testing.assert_allclose(actual_arr_joblib, sklearn_arr)
 
 
 if __name__ == "__main__":
