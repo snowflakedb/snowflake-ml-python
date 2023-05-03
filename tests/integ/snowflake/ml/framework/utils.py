@@ -1,9 +1,12 @@
 #
 # Copyright (c) 2012-2022 Snowflake Computing Inc. All rights reserved.
 #
+import sys
+from enum import Enum
 from typing import Any, Callable, List, Optional, Tuple, Union
 
 import numpy as np
+import numpy.typing as npt
 import pandas as pd
 from pandas._typing import ArrayLike
 
@@ -131,6 +134,48 @@ OUTPUT_COLS = ["OUTPUT1", "OUTPUT2"]
 
 ID_COL = "ID"
 
+MIN_INT = -sys.maxsize - 1
+MAX_INT = sys.maxsize
+
+
+class DataType(Enum):
+    INTEGER = 1
+    FLOAT = 2
+
+
+def gen_fuzz_data(
+    rows: int, types: List[DataType], low: int = MIN_INT, high: int = MAX_INT
+) -> Tuple[List[Any], List[str]]:
+    """
+    Generate random data based on input column types and row count.
+    First column in the result data will be an ID column for indexing.
+
+    Args:
+        rows: num of rows to generate
+        types: type per column
+        low: lower bound of the output interval (inclusive)
+        high: upper bound of the output interval (exclusive)
+
+    Returns:
+        A tuple of generated data and column names
+
+    Raises:
+        ValueError: if data type is not supported
+    """
+    data: List[npt.NDArray[Any]] = [np.arange(1, rows + 1, 1)]
+    names = ["ID"]
+
+    for idx, t in enumerate(types):
+        if t == DataType.INTEGER:
+            data.append(np.random.randint(low, high, rows))
+        elif t == DataType.FLOAT:
+            data.append(np.random.uniform(low, high, rows))
+        else:
+            raise ValueError(f"Unsupported data type {t}")
+        names.append(f"COL_{idx}")
+
+    return np.core.records.fromarrays(data, names=names).tolist(), names  # type: ignore
+
 
 def get_df(
     session: Session,
@@ -156,17 +201,17 @@ def get_df(
     return df_pandas, df
 
 
-def sort_by_columns(array: np.ndarray, num_col: int = 1) -> np.ndarray:
+def sort_by_columns(array: npt.NDArray[Any], num_col: int = 1) -> npt.NDArray[Any]:
     keys = (array[:, idx] for idx in range(num_col))
-    return array[np.lexsort(keys)]
+    return array[np.lexsort(keys)]  # type: ignore
 
 
 def get_pandas_feature(X, feature_idx) -> np.ndarray:  # type: ignore
     if hasattr(X, "iloc"):
         # pandas dataframes
-        return X.iloc[:, feature_idx]
+        return X.iloc[:, feature_idx]  # type: ignore
     # numpy arrays, sparse arrays
-    return X[:, feature_idx]
+    return X[:, feature_idx]  # type: ignore
 
 
 def create_columns_metadata(session: Session) -> None:
@@ -275,7 +320,7 @@ def equal_default(x1: Any, x2: Any) -> bool:
     return bool(x1 == x2)
 
 
-def equal_np_array(x1: np.ndarray, x2: np.ndarray) -> bool:
+def equal_np_array(x1: npt.NDArray[Any], x2: npt.NDArray[Any]) -> bool:
     return bool(np.array_equal(x1, x2))
 
 

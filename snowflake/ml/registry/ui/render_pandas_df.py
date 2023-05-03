@@ -5,8 +5,8 @@ from typing import Callable, Dict, Optional
 
 import pandas as pd
 
+from snowflake.ml._internal.utils import identifier
 from snowflake.ml.registry import model_registry
-from snowflake.ml.utils import identifier
 from snowflake.snowpark import functions
 from snowflake.snowpark._internal import type_utils
 

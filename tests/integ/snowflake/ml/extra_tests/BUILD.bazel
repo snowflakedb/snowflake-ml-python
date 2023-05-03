@@ -56,3 +56,15 @@ py_test(
         "//snowflake/ml/utils:connection_params",
     ]
 )
+
+py_test(
+    name="test_pipeline_with_ohe_and_xgbr",
+    srcs = ["test_pipeline_with_ohe_and_xgbr.py"],
+    deps = [
+        "//snowflake/ml/modeling/xgboost:xgb_regressor",
+        "//snowflake/ml/framework:framework",
+        "//snowflake/ml/preprocessing:one_hot_encoder",
+        "//snowflake/ml/preprocessing:min_max_scaler",
+        "//snowflake/ml/utils:connection_params",
+    ]
+)

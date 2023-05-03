@@ -1,7 +1,6 @@
 import functools
 import inspect
-from abc import ABC, abstractmethod
-from typing import Any, Callable, Dict, Optional
+from typing import Any, Callable, Dict, Generator, Optional
 
 import anyio
 import pandas as pd
@@ -138,7 +137,41 @@ class ModelContext:
         return self.model_refs[name]
 
 
-def _validate_predict_function(func: Callable[["CustomModel", pd.DataFrame], pd.DataFrame]) -> None:
+class CustomModel:
+    """Abstract class for user defined custom model.
+
+    Attributes:
+        context: A ModelContext object showing sub-models and artifacts related to this model.
+    """
+
+    def __init__(self, context: ModelContext) -> None:
+        self.context = context
+        for method in self._get_infer_methods():
+            _validate_predict_function(method)
+
+    def __setattr__(self, __name: str, __value: Any) -> None:
+        # A hook for case when users reassign the method.
+        if getattr(__value, "_is_inference_api", False):
+            if inspect.ismethod(__value):
+                _validate_predict_function(__value.__func__)
+            else:
+                raise TypeError("A non-method inference API function is not supported.")
+        super().__setattr__(__name, __value)
+
+    def _get_infer_methods(
+        self,
+    ) -> Generator[Callable[[model_types.CustomModelType, pd.DataFrame], pd.DataFrame], None, None]:
+        """Returns all methods in CLS with DECORATOR as the outermost decorator."""
+        for cls_method_str in dir(self):
+            cls_method = getattr(self, cls_method_str)
+            if getattr(cls_method, "_is_inference_api", False):
+                if inspect.ismethod(cls_method):
+                    yield cls_method.__func__
+                else:
+                    raise TypeError("A non-method inference API function is not supported.")
+
+
+def _validate_predict_function(func: Callable[[model_types.CustomModelType, pd.DataFrame], pd.DataFrame]) -> None:
     """Validate the user provided predict method.
 
     Args:
@@ -171,28 +204,28 @@ def _validate_predict_function(func: Callable[["CustomModel", pd.DataFrame], pd.
         raise TypeError("Output for predict method should have type pandas.DataFrame.")
 
 
-class CustomModel(ABC):
-    """Abstract class for user defined custom model.
+def _bind(
+    instance: model_types.CustomModelType,
+    func: Callable[[model_types.CustomModelType, pd.DataFrame], pd.DataFrame],
+    as_name: str = None,
+) -> None:
+    """Bind the function *func* to *instance*, with either provided name *as_name* or the existing name of *func*.
+    The provided *func* should accept the instance as the first argument, i.e. "self".
 
-    Attributes:
-        context: A ModelContext object showing sub-models and artifacts related to this model.
+    Args:
+        instance: The instance to bind the method to.
+        func: The function to be bound.
+        as_name: The name in the instance to bind the function. Defaults to None.
+
     """
+    if as_name is None:
+        as_name = func.__name__
+    bound_method = func.__get__(instance, instance.__class__)
+    setattr(instance, as_name, bound_method)
 
-    def __init__(self, context: ModelContext) -> None:
-        self.context = context
-        _validate_predict_function(type(self).predict)
 
-    @abstractmethod
-    def predict(self, X: pd.DataFrame) -> pd.DataFrame:
-        """Predict method for model inference.
-
-        Args:
-            X: The input dataframe.
-        """
-        ...
-
-    def __setattr__(self, __name: str, __value: Any) -> None:
-        # A hook for case when users reassign the predict method.
-        if __name == "predict":
-            _validate_predict_function(__value)
-        return super().__setattr__(__name, __value)
+def inference_api(
+    func: Callable[[model_types.CustomModelType, pd.DataFrame], pd.DataFrame]
+) -> Callable[[model_types.CustomModelType, pd.DataFrame], pd.DataFrame]:
+    func.__dict__["_is_inference_api"] = True
+    return func

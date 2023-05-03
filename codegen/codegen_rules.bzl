@@ -84,9 +84,10 @@ def autogen_estimators(module, estimator_info_list):
                 ":init",
                 "//snowflake/ml/framework:framework",
                 "//snowflake/ml/utils:telemetry",
-                "//snowflake/ml/utils:temp_file_utils",
-                "//snowflake/ml/utils:query_result_checker",
-                "//snowflake/ml/utils:pkg_version_utils",
+                "//snowflake/ml/_internal/utils:temp_file_utils",
+                "//snowflake/ml/_internal/utils:query_result_checker",
+                "//snowflake/ml/_internal/utils:pkg_version_utils",
+                "//snowflake/ml/_internal/utils:identifier",
             ],
             tags = ["skip_mypy_check"],
         )

@@ -9,14 +9,13 @@ from typing import Dict, Iterable, List, Optional, Union
 
 import numpy as np
 import pandas as pd
-from sklearn import utils as sklearn_utils
-from sklearn.preprocessing import OrdinalEncoder as SklearnOrdinalEncoder
+from sklearn import preprocessing, utils as sklearn_utils
 
-import snowflake.snowpark.functions as F
-import snowflake.snowpark.types as T
-from snowflake.ml.framework.base import BaseEstimator, BaseTransformer
+from snowflake import snowpark
+from snowflake.ml._internal import type_utils
+from snowflake.ml.framework import base
 from snowflake.ml.utils import telemetry
-from snowflake.snowpark import DataFrame, DataFrameWriter, Window
+from snowflake.snowpark import functions, types
 
 _PROJECT = "ModelDevelopment"
 _SUBPROJECT = "Preprocessing"
@@ -39,47 +38,11 @@ _SKLEARN_ADDED_KEYWORD_TO_VERSION_DICT = {
 }
 
 
-class OrdinalEncoder(BaseEstimator, BaseTransformer):
-    """
-    Encode categorical features as an integer column.
-
-    The input to this transformer should be an array-like of integers or
-    strings, denoting the values taken on by categorical (discrete) features.
-    The features are converted to ordinal integers. This results in
-    a single column of integers (0 to n_categories - 1) per feature.
-
-    Args:
-        categories: 'auto' or dict {column_name: ndarray([category])}, default='auto'
-            Categories (unique values) per feature:
-            - 'auto': Determine categories automatically from the training data.
-            - dict: ``categories[column_name]`` holds the categories expected in
-              the column provided. The passed categories should not mix strings
-              and numeric values within a single feature, and should be sorted in
-              case of numeric values.
-            The used categories can be found in the ``categories_`` attribute.
-        handle_unknown: {'error', 'use_encoded_value'}, default='error'
-            When set to 'error' an error will be raised in case an unknown
-            categorical feature is present during transform. When set to
-            'use_encoded_value', the encoded value of unknown categories will be
-            set to the value given for the parameter `unknown_value`.
-        unknown_value: int or np.nan, default=None
-            When the parameter handle_unknown is set to 'use_encoded_value', this
-            parameter is required and will set the encoded value of unknown
-            categories. It has to be distinct from the values used to encode any of
-            the categories in `fit`.
-        encoded_missing_value: Encoded value of missing categories.
-        input_cols: Single or multiple input columns.
-        output_cols: Single or multiple output columns.
-        drop_input_cols: Remove input columns from output if set True. False by default.
-
-    Attributes:
-        categories_: The categories of each feature determined during fitting.
-    """
-
+class OrdinalEncoder(base.BaseEstimator, base.BaseTransformer):
     def __init__(
         self,
         *,
-        categories: Union[str, Dict[str, np.ndarray]] = "auto",
+        categories: Union[str, Dict[str, type_utils.LiteralNDArrayType]] = "auto",
         handle_unknown: str = "error",
         unknown_value: Optional[Union[int, float]] = None,
         encoded_missing_value: Union[int, float] = np.nan,
@@ -87,19 +50,53 @@ class OrdinalEncoder(BaseEstimator, BaseTransformer):
         output_cols: Optional[Union[str, Iterable[str]]] = None,
         drop_input_cols: Optional[bool] = False,
     ) -> None:
-        """See class-level docstring."""
+        """
+        Encode categorical features as an integer column.
+
+        The input to this transformer should be an array-like of integers or
+        strings, denoting the values taken on by categorical (discrete) features.
+        The features are converted to ordinal integers. This results in
+        a single column of integers (0 to n_categories - 1) per feature.
+
+        Args:
+            categories: 'auto' or dict {column_name: ndarray([category])}, default='auto'
+                Categories (unique values) per feature:
+                - 'auto': Determine categories automatically from the training data.
+                - dict: ``categories[column_name]`` holds the categories expected in
+                  the column provided. The passed categories should not mix strings
+                  and numeric values within a single feature, and should be sorted in
+                  case of numeric values.
+                The used categories can be found in the ``categories_`` attribute.
+            handle_unknown: {'error', 'use_encoded_value'}, default='error'
+                When set to 'error' an error will be raised in case an unknown
+                categorical feature is present during transform. When set to
+                'use_encoded_value', the encoded value of unknown categories will be
+                set to the value given for the parameter `unknown_value`.
+            unknown_value: int or np.nan, default=None
+                When the parameter handle_unknown is set to 'use_encoded_value', this
+                parameter is required and will set the encoded value of unknown
+                categories. It has to be distinct from the values used to encode any of
+                the categories in `fit`.
+            encoded_missing_value: Encoded value of missing categories.
+            input_cols: Single or multiple input columns.
+            output_cols: Single or multiple output columns.
+            drop_input_cols: Remove input columns from output if set True. False by default.
+
+        Attributes:
+            categories_: The categories of each feature determined during fitting.
+        """
         self.categories = categories
         self.handle_unknown = handle_unknown
         self.unknown_value = unknown_value
         self.encoded_missing_value = encoded_missing_value
 
-        self.categories_: Dict[str, np.ndarray] = {}
-        self._categories_list: List[np.ndarray] = []
+        self.categories_: Dict[str, type_utils.LiteralNDArrayType] = {}
+        self._categories_list: List[type_utils.LiteralNDArrayType] = []
         self._missing_indices: Dict[int, int] = {}
         self._vocab_table_name = "snowml_preprocessing_ordinal_encoder_temp_table_" + uuid.uuid4().hex
 
-        BaseEstimator.__init__(self)
-        BaseTransformer.__init__(self, drop_input_cols=drop_input_cols)
+        base.BaseEstimator.__init__(self)
+        base.BaseTransformer.__init__(self, drop_input_cols=drop_input_cols)
 
         self.set_input_cols(input_cols)
         self.set_output_cols(output_cols)
@@ -121,7 +118,7 @@ class OrdinalEncoder(BaseEstimator, BaseTransformer):
         project=_PROJECT,
         subproject=_SUBPROJECT,
     )
-    def fit(self, dataset: Union[DataFrame, pd.DataFrame]) -> "OrdinalEncoder":
+    def fit(self, dataset: Union[snowpark.DataFrame, pd.DataFrame]) -> "OrdinalEncoder":
         """
         Fit the OrdinalEncoder to dataset.
 
@@ -132,7 +129,7 @@ class OrdinalEncoder(BaseEstimator, BaseTransformer):
             Fitted encoder.
 
         Raises:
-            TypeError: If the input dataset is neither a pandas or Snowpark DataFrame.
+            TypeError: If the input dataset is neither a pandas nor Snowpark DataFrame.
         """
         self._reset()
         self._validate_keywords()
@@ -140,13 +137,15 @@ class OrdinalEncoder(BaseEstimator, BaseTransformer):
 
         if isinstance(dataset, pd.DataFrame):
             self._fit_sklearn(dataset)
-        elif isinstance(dataset, DataFrame):
+        elif isinstance(dataset, snowpark.DataFrame):
             self._fit_snowpark(dataset)
         else:
             raise TypeError(
                 f"Unexpected dataset type: {type(dataset)}."
                 "Supported dataset types: snowpark.DataFrame, pandas.DataFrame."
             )
+        self._validate_unknown_value()
+        self._check_missing_categories()
 
         self._is_fitted = True
         return self
@@ -186,16 +185,13 @@ class OrdinalEncoder(BaseEstimator, BaseTransformer):
             _state_pandas_ordinals.append(_column_ordinals)
 
         self._state_pandas = pd.concat(_state_pandas_ordinals, ignore_index=True)
-        self._validate_unknown_value()
-        self._check_missing_categories()
 
-    def _fit_snowpark(self, dataset: DataFrame) -> None:
+    def _fit_snowpark(self, dataset: snowpark.DataFrame) -> None:
         self._fit_category_state(dataset)
-        self._validate_unknown_value()
-        self._check_missing_categories()
 
-    def _fit_category_state(self, dataset: DataFrame) -> None:
-        """Get and index the categories of dataset. Fitted states are saved as a temp
+    def _fit_category_state(self, dataset: snowpark.DataFrame) -> None:
+        """
+        Get and index the categories of dataset. Fitted states are saved as a temp
         table `self._state_table`. Fitted categories are assigned to the object.
 
         Args:
@@ -210,7 +206,7 @@ class OrdinalEncoder(BaseEstimator, BaseTransformer):
             function_name=telemetry.get_statement_params_full_func_name(
                 inspect.currentframe(), self.__class__.__name__
             ),
-            api_calls=[DataFrameWriter.save_as_table],
+            api_calls=[snowpark.DataFrameWriter.save_as_table],
         )
         state_df.write.save_as_table(
             self._vocab_table_name,
@@ -224,13 +220,13 @@ class OrdinalEncoder(BaseEstimator, BaseTransformer):
             function_name=telemetry.get_statement_params_full_func_name(
                 inspect.currentframe(), self.__class__.__name__
             ),
-            api_calls=[DataFrame.to_pandas],
+            api_calls=[snowpark.DataFrame.to_pandas],
         )
         self._state_pandas = state_df.to_pandas(statement_params=statement_params_to_pandas)
 
         self._assign_categories()
 
-    def _get_category_index_state_df(self, dataset: DataFrame) -> DataFrame:
+    def _get_category_index_state_df(self, dataset: snowpark.DataFrame) -> snowpark.DataFrame:
         """
         Get and index the categories of each input column in dataset.
         If `categories` is provided, use the given categories with orders preserved;
@@ -248,31 +244,35 @@ class OrdinalEncoder(BaseEstimator, BaseTransformer):
                 and unknown categories exist in dataset.
         """
         # states of categories found in dataset
-        found_state_df: Optional[DataFrame] = None
+        found_state_df: Optional[snowpark.DataFrame] = None
         for input_col in self.input_cols:
             distinct_dataset = dataset[[input_col]].distinct()
 
             # encode non-missing categories
             encoded_value_columns = [
-                F.lit(input_col).alias(_COLUMN_NAME),
-                F.col(input_col).alias(_CATEGORY),
-                (F.dense_rank().over(Window.order_by(input_col)) - 1)
-                .cast(T.FloatType())
+                functions.lit(input_col).alias(_COLUMN_NAME),  # type: ignore[arg-type]
+                functions.col(input_col).alias(_CATEGORY),
+                (
+                    functions.dense_rank().over(snowpark.Window.order_by(input_col))  # type: ignore[arg-type]
+                    - 1  # type: ignore[operator]
+                )
+                .cast(types.FloatType())
                 .alias(_INDEX),  # index categories
             ]
             encoded_value_df = (
-                distinct_dataset.filter(F.col(input_col).is_not_null())
-                .sort(F.col(input_col).asc())
+                distinct_dataset.filter(functions.col(input_col).is_not_null())
+                .sort(functions.col(input_col).asc())
                 .select(encoded_value_columns)
             )
 
             # encode missing categories
             encoded_missing_value_columns = [
-                F.lit(input_col).alias(_COLUMN_NAME),
-                F.col(input_col).alias(_CATEGORY),
-                F.lit(self.encoded_missing_value).alias(_INDEX),  # index missing categories
+                functions.lit(input_col).alias(_COLUMN_NAME),  # type: ignore[arg-type]
+                functions.col(input_col).alias(_CATEGORY),
+                # index missing categories
+                functions.lit(self.encoded_missing_value).alias(_INDEX),  # type: ignore[arg-type]
             ]
-            encoded_missing_value_df = distinct_dataset.filter(F.col(input_col).is_null()).select(
+            encoded_missing_value_df = distinct_dataset.filter(functions.col(input_col).is_null()).select(
                 encoded_missing_value_columns
             )
 
@@ -281,12 +281,15 @@ class OrdinalEncoder(BaseEstimator, BaseTransformer):
                 found_state_df.union(all_encoded_value_df) if found_state_df is not None else all_encoded_value_df
             )
 
+        assert found_state_df is not None, "found_state_df cannot be None"
         if self.categories != "auto":
             state_data = []
+            assert isinstance(self.categories, dict), "self.categories must be dict"
             for input_col, cats in self.categories.items():
-                for idx, cat in enumerate(cats.tolist()):  # type: ignore
+                for idx, cat in enumerate(cats.tolist()):
                     state_data.append([input_col, cat, idx])
             # states of given categories
+            assert dataset._session is not None, "dataset._session cannot be None"
             given_state_df = dataset._session.create_dataframe(
                 data=state_data, schema=[_COLUMN_NAME, _CATEGORY, _INDEX]
             )
@@ -304,7 +307,7 @@ class OrdinalEncoder(BaseEstimator, BaseTransformer):
                     function_name=telemetry.get_statement_params_full_func_name(
                         inspect.currentframe(), self.__class__.__name__
                     ),
-                    api_calls=[DataFrame.to_pandas],
+                    api_calls=[snowpark.DataFrame.to_pandas],
                 )
                 unknown_pandas = unknown_df.to_pandas(statement_params=statement_params)
                 if not unknown_pandas.empty:
@@ -359,9 +362,7 @@ class OrdinalEncoder(BaseEstimator, BaseTransformer):
         """
         if self.handle_unknown == "use_encoded_value":
             for feature_cats in self._categories_list:
-                if isinstance(self.unknown_value, numbers.Integral) and 0 <= self.unknown_value < len(  # type: ignore
-                    feature_cats
-                ):
+                if isinstance(self.unknown_value, numbers.Integral) and 0 <= self.unknown_value < len(feature_cats):
                     raise ValueError(
                         "The used value for unknown_value "
                         f"{self.unknown_value} is one of the "
@@ -376,7 +377,7 @@ class OrdinalEncoder(BaseEstimator, BaseTransformer):
         """
         # stores the missing indices per category
         for cat_idx, categories_for_idx in enumerate(self._categories_list):
-            for idx, cat in enumerate(categories_for_idx.tolist()):  # type: ignore
+            for idx, cat in enumerate(categories_for_idx.tolist()):
                 if cat is None or cat is np.nan:
                     self._missing_indices[cat_idx] = idx
                     break
@@ -398,15 +399,12 @@ class OrdinalEncoder(BaseEstimator, BaseTransformer):
                 # and encoded_missing_value was already used to encode a
                 # known category
                 invalid_features = [
-                    cat_idx
+                    self.input_cols[cat_idx]
                     for cat_idx, categories_for_idx in enumerate(self._categories_list)
                     if cat_idx in self._missing_indices and 0 <= self.encoded_missing_value < len(categories_for_idx)
                 ]
 
                 if invalid_features:
-                    # Use feature names if they are available
-                    if hasattr(self, "feature_names_in_"):
-                        invalid_features = self.feature_names_in_[invalid_features]
                     raise ValueError(
                         f"encoded_missing_value ({self.encoded_missing_value}) "
                         "is already used to encode a known category in features: "
@@ -417,7 +415,7 @@ class OrdinalEncoder(BaseEstimator, BaseTransformer):
         project=_PROJECT,
         subproject=_SUBPROJECT,
     )
-    def transform(self, dataset: Union[DataFrame, pd.DataFrame]) -> Union[DataFrame, pd.DataFrame]:
+    def transform(self, dataset: Union[snowpark.DataFrame, pd.DataFrame]) -> Union[snowpark.DataFrame, pd.DataFrame]:
         """
         Transform dataset to ordinal codes.
 
@@ -429,14 +427,14 @@ class OrdinalEncoder(BaseEstimator, BaseTransformer):
 
         Raises:
             RuntimeError: If transformer is not fitted first.
-            TypeError: If the input dataset is neither a pandas or Snowpark DataFrame.
+            TypeError: If the input dataset is neither a pandas nor Snowpark DataFrame.
         """
         if not self._is_fitted:
             raise RuntimeError("Transformer not fitted before calling transform().")
         super()._check_input_cols()
         super()._check_output_cols()
 
-        if isinstance(dataset, DataFrame):
+        if isinstance(dataset, snowpark.DataFrame):
             output_df = self._transform_snowpark(dataset)
         elif isinstance(dataset, pd.DataFrame):
             output_df = self._transform_sklearn(dataset)
@@ -448,7 +446,7 @@ class OrdinalEncoder(BaseEstimator, BaseTransformer):
 
         return self._drop_input_columns(output_df) if self._drop_input_cols is True else output_df
 
-    def _transform_snowpark(self, dataset: DataFrame) -> DataFrame:
+    def _transform_snowpark(self, dataset: snowpark.DataFrame) -> snowpark.DataFrame:
         """
         Transform Snowpark dataframe to ordinal codes.
 
@@ -458,6 +456,7 @@ class OrdinalEncoder(BaseEstimator, BaseTransformer):
         Returns:
             Output dataset.
         """
+        assert dataset._session is not None, "dataset._session cannot be None"
         state_df = (
             dataset._session.table(self._vocab_table_name)
             if dataset._session._table_exists(self._vocab_table_name)
@@ -465,17 +464,17 @@ class OrdinalEncoder(BaseEstimator, BaseTransformer):
         )
 
         # replace NULL with nan
-        null_category_state_df = state_df.filter(F.col(_CATEGORY).is_null()).with_column(
-            _INDEX, F.lit(self.encoded_missing_value)
+        null_category_state_df = state_df.filter(functions.col(_CATEGORY).is_null()).with_column(
+            _INDEX, functions.lit(self.encoded_missing_value)  # type: ignore[arg-type]
         )
-        state_df = state_df.filter(F.col(_CATEGORY).is_not_null()).union_by_name(null_category_state_df)
+        state_df = state_df.filter(functions.col(_CATEGORY).is_not_null()).union_by_name(null_category_state_df)
 
         suffix = uuid.uuid4().hex.upper()
         transformed_dataset = dataset
 
         for idx, input_col in enumerate(self.input_cols):
             output_col = self.output_cols[idx]
-            input_col_state_df = state_df.filter(F.col(_COLUMN_NAME) == input_col)[
+            input_col_state_df = state_df.filter(functions.col(_COLUMN_NAME) == input_col)[
                 [_CATEGORY, _INDEX]
             ].with_column_renamed(_INDEX, output_col)
 
@@ -500,22 +499,22 @@ class OrdinalEncoder(BaseEstimator, BaseTransformer):
             transformed_dataset = transformed_dataset[output_cols]
 
         if _CATEGORY + suffix in transformed_dataset.columns:
-            transformed_dataset = transformed_dataset.with_column_renamed(F.col(_CATEGORY + suffix), _CATEGORY)
-        transformed_dataset = self._handle_unknown_in_transform(transformed_dataset)
+            transformed_dataset = transformed_dataset.with_column_renamed(functions.col(_CATEGORY + suffix), _CATEGORY)
 
+        transformed_dataset = self._handle_unknown_in_transform(transformed_dataset)
         return transformed_dataset
 
-    def _create_unfitted_sklearn_object(self) -> SklearnOrdinalEncoder:
+    def _create_unfitted_sklearn_object(self) -> preprocessing.OrdinalEncoder:
         sklearn_args = self.get_sklearn_args(
-            default_sklearn_obj=SklearnOrdinalEncoder(),
+            default_sklearn_obj=preprocessing.OrdinalEncoder(),
             sklearn_initial_keywords=_SKLEARN_INITIAL_KEYWORDS,
             sklearn_unused_keywords=_SKLEARN_UNUSED_KEYWORDS,
             snowml_only_keywords=_SNOWML_ONLY_KEYWORDS,
             sklearn_added_keyword_to_version_dict=_SKLEARN_ADDED_KEYWORD_TO_VERSION_DICT,
         )
-        return SklearnOrdinalEncoder(**sklearn_args)
+        return preprocessing.OrdinalEncoder(**sklearn_args)
 
-    def _create_sklearn_object(self) -> SklearnOrdinalEncoder:
+    def _create_sklearn_object(self) -> preprocessing.OrdinalEncoder:
         """
         Get an equivalent sklearn OrdinalEncoder.
 
@@ -558,7 +557,7 @@ class OrdinalEncoder(BaseEstimator, BaseTransformer):
                 f"got {self.unknown_value}."
             )
 
-    def _handle_unknown_in_transform(self, transformed_dataset: DataFrame) -> DataFrame:
+    def _handle_unknown_in_transform(self, transformed_dataset: snowpark.DataFrame) -> snowpark.DataFrame:
         """
         Handle unknown values in the transformed dataset.
 
@@ -575,17 +574,17 @@ class OrdinalEncoder(BaseEstimator, BaseTransformer):
         if self.handle_unknown == "error":
             # dataframe with unknown values
             # columns: COLUMN_NAME, UNKNOWN_VALUE
-            unknown_df: Optional[DataFrame] = None
+            unknown_df: Optional[snowpark.DataFrame] = None
             for idx, input_col in enumerate(self.input_cols):
                 output_col = self.output_cols[idx]
                 unknown_columns = [
-                    F.lit(input_col),
-                    F.col(input_col),
+                    functions.lit(input_col),  # type: ignore[arg-type]
+                    functions.col(input_col),
                 ]
                 temp_df = (
                     transformed_dataset[list({input_col, output_col})]
                     .distinct()
-                    .filter(F.col(output_col).is_null())
+                    .filter(functions.col(output_col).is_null())
                     .select(unknown_columns)
                     .to_df(["COLUMN_NAME", "UNKNOWN_VALUE"])
                 )
@@ -600,16 +599,18 @@ class OrdinalEncoder(BaseEstimator, BaseTransformer):
                 function_name=telemetry.get_statement_params_full_func_name(
                     inspect.currentframe(), self.__class__.__name__
                 ),
-                api_calls=[DataFrame.to_pandas],
+                api_calls=[snowpark.DataFrame.to_pandas],
             )
             unknown_pandas = unknown_df.to_pandas(statement_params=statement_params)
-            if unknown_pandas.shape[0] > 0:
+            if not unknown_pandas.empty:
                 msg = f"Found unknown categories during transform:\n{unknown_pandas.to_string()}"
                 raise ValueError(msg)
 
         if self.handle_unknown == "use_encoded_value":
             # left outer join has already filled unknown values with null
             if not (self.unknown_value is None or sklearn_utils.is_scalar_nan(self.unknown_value)):
-                transformed_dataset = transformed_dataset.fillna(self.unknown_value, self.output_cols)
+                transformed_dataset = transformed_dataset.na.fill(
+                    self.unknown_value, self.output_cols  # type: ignore[arg-type]
+                )
 
         return transformed_dataset

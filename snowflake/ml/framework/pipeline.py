@@ -5,19 +5,19 @@
 from typing import Any, Callable, List, Optional, Tuple, Union
 
 import pandas as pd
-from sklearn.pipeline import Pipeline as SkPipeline
-from sklearn.utils.metaestimators import available_if
+from sklearn import pipeline
+from sklearn.utils import metaestimators
 
-from snowflake.ml.framework.base import BaseEstimator, BaseTransformer
+from snowflake import snowpark
+from snowflake.ml.framework import base
 from snowflake.ml.utils import telemetry
-from snowflake.snowpark import DataFrame
 
 _PROJECT = "ModelDevelopment"
 _SUBPROJECT = "Framework"
 
 
 def _final_step_has(attr: str) -> Callable[..., bool]:
-    """Check that final_estimator has `attr`.  Used together with `available_if` in `Pipeline`."""
+    """Check that final_estimator has `attr`. Used together with `available_if` in `Pipeline`."""
 
     def check(self: "Pipeline") -> bool:
         # Raises original `AttributeError` if `attr` does not exist.
@@ -41,7 +41,7 @@ def has_callable_attr(obj: object, attr: str) -> bool:
     return callable(getattr(obj, attr, None))
 
 
-class Pipeline(BaseEstimator, BaseTransformer):
+class Pipeline(base.BaseEstimator, base.BaseTransformer):
     def __init__(self, steps: List[Tuple[str, Any]]) -> None:
         """
         Pipeline of transforms.
@@ -92,14 +92,16 @@ class Pipeline(BaseEstimator, BaseTransformer):
                     "{name} (type {type}) doesn't".format(name=t, type=type(t))
                 )
 
-    def _transform_dataset(self, dataset: Union[DataFrame, pd.DataFrame]) -> Union[DataFrame, pd.DataFrame]:
+    def _transform_dataset(
+        self, dataset: Union[snowpark.DataFrame, pd.DataFrame]
+    ) -> Union[snowpark.DataFrame, pd.DataFrame]:
         transformed_dataset = dataset
         transforms = self._get_transforms()
         for _, (_, trans) in enumerate(transforms):
             transformed_dataset = trans.transform(transformed_dataset)
         return transformed_dataset
 
-    def _fit_transform_dataset(self, dataset: DataFrame) -> DataFrame:
+    def _fit_transform_dataset(self, dataset: snowpark.DataFrame) -> snowpark.DataFrame:
         transformed_dataset = dataset
         transforms = self._get_transforms()
         for _, (_, trans) in enumerate(transforms):
@@ -115,7 +117,7 @@ class Pipeline(BaseEstimator, BaseTransformer):
         project=_PROJECT,
         subproject=_SUBPROJECT,
     )
-    def fit(self, dataset: DataFrame) -> "Pipeline":
+    def fit(self, dataset: snowpark.DataFrame) -> "Pipeline":
         """
         Fit the entire pipeline using the dataset.
 
@@ -137,12 +139,12 @@ class Pipeline(BaseEstimator, BaseTransformer):
         self._is_fitted = True
         return self
 
-    @available_if(_final_step_has("transform"))  # type: ignore[misc]
+    @metaestimators.available_if(_final_step_has("transform"))  # type: ignore[misc]
     @telemetry.send_api_usage_telemetry(
         project=_PROJECT,
         subproject=_SUBPROJECT,
     )
-    def transform(self, dataset: Union[DataFrame, pd.DataFrame]) -> Union[DataFrame, pd.DataFrame]:
+    def transform(self, dataset: Union[snowpark.DataFrame, pd.DataFrame]) -> Union[snowpark.DataFrame, pd.DataFrame]:
         """
         Call `transform` of each transformer in the pipeline.
 
@@ -170,12 +172,12 @@ class Pipeline(BaseEstimator, BaseTransformer):
             has_callable_attr(self.steps[-1][1], "fit") and has_callable_attr(self.steps[-1][1], "transform")
         )
 
-    @available_if(_final_step_can_fit_transform)  # type: ignore[misc]
+    @metaestimators.available_if(_final_step_can_fit_transform)  # type: ignore[misc]
     @telemetry.send_api_usage_telemetry(
         project=_PROJECT,
         subproject=_SUBPROJECT,
     )
-    def fit_transform(self, dataset: DataFrame) -> DataFrame:
+    def fit_transform(self, dataset: snowpark.DataFrame) -> snowpark.DataFrame:
         """
         Fits all the transformer objs one after another and transforms the data. Then fits and transforms data using the
         estimator. This will only be available if the estimator (or final step) has fit_transform or transform
@@ -196,7 +198,7 @@ class Pipeline(BaseEstimator, BaseTransformer):
         estimator = self._get_estimator()
         if estimator:
             if has_callable_attr(estimator[1], "fit_transform"):
-                res: DataFrame = estimator[1].fit_transform(transformed_dataset)
+                res: snowpark.DataFrame = estimator[1].fit_transform(transformed_dataset)
             else:
                 res = estimator[1].fit(transformed_dataset).transform(transformed_dataset)
             return res
@@ -209,12 +211,12 @@ class Pipeline(BaseEstimator, BaseTransformer):
             has_callable_attr(self.steps[-1][1], "fit") and has_callable_attr(self.steps[-1][1], "predict")
         )
 
-    @available_if(_final_step_can_fit_predict)  # type: ignore[misc]
+    @metaestimators.available_if(_final_step_can_fit_predict)  # type: ignore[misc]
     @telemetry.send_api_usage_telemetry(
         project=_PROJECT,
         subproject=_SUBPROJECT,
     )
-    def fit_predict(self, dataset: DataFrame) -> DataFrame:
+    def fit_predict(self, dataset: snowpark.DataFrame) -> snowpark.DataFrame:
         """
         Fits all the transformer objs one after another and transforms the data. Then fits and predicts using the
         estimator. This will only be available if the estimator (or final step) has fit_predict or predict
@@ -244,12 +246,12 @@ class Pipeline(BaseEstimator, BaseTransformer):
 
     # TODO(snandamuri): Support pandas dataframe in predict method in estimators. Then change Pipeline.predict()
     #  method to support pandas dataframe.
-    @available_if(_final_step_has("predict"))  # type: ignore[misc]
+    @metaestimators.available_if(_final_step_has("predict"))  # type: ignore[misc]
     @telemetry.send_api_usage_telemetry(
         project=_PROJECT,
         subproject=_SUBPROJECT,
     )
-    def predict(self, dataset: DataFrame) -> DataFrame:
+    def predict(self, dataset: snowpark.DataFrame) -> snowpark.DataFrame:
         """
         Transform the dataset by applying all the transformers in order and predict using the estimator.
 
@@ -269,14 +271,16 @@ class Pipeline(BaseEstimator, BaseTransformer):
         transformed_dataset = self._transform_dataset(dataset=dataset)
         estimator = self._get_estimator()
         # Estimator is guaranteed to be not None because of _final_step_has("predict") check.
-        return estimator[1].predict(transformed_dataset)  # type: ignore
+        assert estimator is not None, "estimator cannot be None"
+        res: snowpark.DataFrame = estimator[1].predict(transformed_dataset)
+        return res
 
-    @available_if(_final_step_has("predict_proba"))  # type: ignore[misc]
+    @metaestimators.available_if(_final_step_has("predict_proba"))  # type: ignore[misc]
     @telemetry.send_api_usage_telemetry(
         project=_PROJECT,
         subproject=_SUBPROJECT,
     )
-    def predict_proba(self, dataset: DataFrame) -> DataFrame:
+    def predict_proba(self, dataset: snowpark.DataFrame) -> snowpark.DataFrame:
         """
         Transform the dataset by applying all the transformers in order and apply `predict_proba` using the estimator.
 
@@ -296,14 +300,16 @@ class Pipeline(BaseEstimator, BaseTransformer):
         transformed_dataset = self._transform_dataset(dataset=dataset)
         estimator = self._get_estimator()
         # Estimator is guaranteed to be not None because of _final_step_has("predict_proba") check.
-        return estimator[1].predict_proba(transformed_dataset)  # type: ignore
+        assert estimator is not None, "estimator cannot be None"
+        res: snowpark.DataFrame = estimator[1].predict_proba(transformed_dataset)
+        return res
 
-    @available_if(_final_step_has("predict_log_proba"))  # type: ignore[misc]
+    @metaestimators.available_if(_final_step_has("predict_log_proba"))  # type: ignore[misc]
     @telemetry.send_api_usage_telemetry(
         project=_PROJECT,
         subproject=_SUBPROJECT,
     )
-    def predict_log_proba(self, dataset: DataFrame) -> DataFrame:
+    def predict_log_proba(self, dataset: snowpark.DataFrame) -> snowpark.DataFrame:
         """
         Transform the dataset by applying all the transformers in order and apply `predict_log_proba` using the
         estimator.
@@ -324,14 +330,16 @@ class Pipeline(BaseEstimator, BaseTransformer):
         transformed_dataset = self._transform_dataset(dataset=dataset)
         estimator = self._get_estimator()
         # Estimator is guaranteed to be not None because of _final_step_has("predict_log_proba") check.
-        return estimator[1].predict_log_proba(transformed_dataset)  # type: ignore
+        assert estimator is not None, "estimator cannot be None"
+        res: snowpark.DataFrame = estimator[1].predict_log_proba(transformed_dataset)
+        return res
 
-    @available_if(_final_step_has("score"))  # type: ignore[misc]
+    @metaestimators.available_if(_final_step_has("score"))  # type: ignore[misc]
     @telemetry.send_api_usage_telemetry(
         project=_PROJECT,
         subproject=_SUBPROJECT,
     )
-    def score(self, dataset: DataFrame) -> DataFrame:
+    def score(self, dataset: snowpark.DataFrame) -> snowpark.DataFrame:
         """
         Transform the dataset by applying all the transformers in order and apply `score` using the estimator.
 
@@ -351,13 +359,15 @@ class Pipeline(BaseEstimator, BaseTransformer):
         transformed_dataset = self._transform_dataset(dataset=dataset)
         estimator = self._get_estimator()
         # Estimator is guaranteed to be not None because of _final_step_has("score") check.
-        return estimator[1].score(transformed_dataset)  # type: ignore
+        assert estimator is not None, "estimator cannot be None"
+        res: snowpark.DataFrame = estimator[1].score(transformed_dataset)
+        return res
 
     def _create_sklearn_object(self) -> Any:
         sksteps = []
         for step in self.steps:
-            if isinstance(step[1], BaseTransformer):
+            if isinstance(step[1], base.BaseTransformer):
                 sksteps.append(tuple([step[0], step[1].get_sklearn_object()]))
             else:
                 sksteps.append(tuple([step[0], step[1]]))
-        return SkPipeline(steps=sksteps)
+        return pipeline.Pipeline(steps=sksteps)

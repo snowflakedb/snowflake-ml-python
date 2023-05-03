@@ -31,3 +31,21 @@ py_test(
         ":file_utils",
     ],
 )
+
+py_library(
+    name = "env_utils",
+    srcs = ["env_utils.py"],
+    deps = [
+        "//snowflake/ml/_internal/utils:query_result_checker",
+    ],
+)
+
+py_test(
+    name = "env_utils_test",
+    srcs = ["env_utils_test.py"],
+    deps = [
+        ":env_utils",
+        "//snowflake/ml/test_utils:mock_data_frame",
+        "//snowflake/ml/test_utils:mock_session",
+    ],
+)

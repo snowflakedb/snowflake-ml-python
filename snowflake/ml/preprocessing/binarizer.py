@@ -5,19 +5,18 @@
 from typing import Iterable, Optional, Union
 
 import pandas as pd
-from sklearn.preprocessing import Binarizer as SklearnBinarizer
+from sklearn import preprocessing
 
-import snowflake.snowpark.functions as F
-import snowflake.snowpark.types as T
-from snowflake.ml.framework.base import BaseEstimator, BaseTransformer
+from snowflake import snowpark
+from snowflake.ml.framework import base
 from snowflake.ml.utils import telemetry
-from snowflake.snowpark import DataFrame
+from snowflake.snowpark import functions, types
 
 _PROJECT = "ModelDevelopment"
 _SUBPROJECT = "Preprocessing"
 
 
-class Binarizer(BaseEstimator, BaseTransformer):
+class Binarizer(base.BaseEstimator, base.BaseTransformer):
     def __init__(
         self,
         *,
@@ -26,7 +25,8 @@ class Binarizer(BaseEstimator, BaseTransformer):
         output_cols: Optional[Union[str, Iterable[str]]] = None,
         drop_input_cols: Optional[bool] = False,
     ) -> None:
-        """Map each feature to a binary value.
+        """
+        Map each feature to a binary value.
 
         Values greater than the threshold map to 1, while values less than or equal to
         the threshold map to 0. With the default threshold of 0, only positive values map to 1.
@@ -37,18 +37,19 @@ class Binarizer(BaseEstimator, BaseTransformer):
             threshold: Feature values below or equal to this are replaced by 0, above it by 1.
             input_cols: Single or multiple input columns.
             output_cols: Single or multiple output columns.
-            drop_input_cols (Optional[bool]): Remove input columns from output if set True. False by default.
+            drop_input_cols: Remove input columns from output if set True. False by default.
         """
         self.threshold = threshold
 
-        BaseEstimator.__init__(self)
-        BaseTransformer.__init__(self, drop_input_cols=drop_input_cols)
+        base.BaseEstimator.__init__(self)
+        base.BaseTransformer.__init__(self, drop_input_cols=drop_input_cols)
 
         self.set_input_cols(input_cols)
         self.set_output_cols(output_cols)
 
     def _reset(self) -> None:
-        """Reset internal data-dependent state of the binarizer.
+        """
+        Reset internal data-dependent state of the binarizer.
         __init__ parameters are not touched.
 
         This is a stateless transformer, so there is nothing to reset.
@@ -59,8 +60,9 @@ class Binarizer(BaseEstimator, BaseTransformer):
         project=_PROJECT,
         subproject=_SUBPROJECT,
     )
-    def fit(self, dataset: Union[DataFrame, pd.DataFrame]) -> "Binarizer":
-        """This is a stateless transformer, so there is nothing to fit.
+    def fit(self, dataset: Union[snowpark.DataFrame, pd.DataFrame]) -> "Binarizer":
+        """
+        This is a stateless transformer, so there is nothing to fit.
 
         Args:
             dataset: Input dataset.
@@ -81,8 +83,9 @@ class Binarizer(BaseEstimator, BaseTransformer):
         project=_PROJECT,
         subproject=_SUBPROJECT,
     )
-    def transform(self, dataset: Union[DataFrame, pd.DataFrame]) -> Union[DataFrame, pd.DataFrame]:
-        """Binarize the data. Map to 1 if it is strictly greater than the threshold, otherwise 0.
+    def transform(self, dataset: Union[snowpark.DataFrame, pd.DataFrame]) -> Union[snowpark.DataFrame, pd.DataFrame]:
+        """
+        Binarize the data. Map to 1 if it is strictly greater than the threshold, otherwise 0.
 
         Args:
             dataset: Input dataset.
@@ -91,12 +94,12 @@ class Binarizer(BaseEstimator, BaseTransformer):
             Output dataset.
 
         Raises:
-            TypeError: If the input dataset is neither a pandas or Snowpark DataFrame.
+            TypeError: If the input dataset is neither a pandas nor Snowpark DataFrame.
         """
         super()._check_input_cols()
         super()._check_output_cols()
 
-        if isinstance(dataset, DataFrame):
+        if isinstance(dataset, snowpark.DataFrame):
             output_df = self._transform_snowpark(dataset)
         elif isinstance(dataset, pd.DataFrame):
             output_df = self._transform_sklearn(dataset)
@@ -108,21 +111,24 @@ class Binarizer(BaseEstimator, BaseTransformer):
 
         return self._drop_input_columns(output_df) if self._drop_input_cols is True else output_df
 
-    def _transform_snowpark(self, dataset: DataFrame) -> DataFrame:
+    def _transform_snowpark(self, dataset: snowpark.DataFrame) -> snowpark.DataFrame:
         self._validate_data_has_no_nulls(dataset)
         output_columns = []
         for input_col in self.input_cols:
-            col = F.iff(dataset[input_col] > self.threshold, 1.0, 0.0).cast(T.FloatType())
+            col = functions.iff(dataset[input_col] > self.threshold, 1.0, 0.0).cast(  # type: ignore[arg-type]
+                types.FloatType()
+            )
             output_columns.append(col)
 
-        transformed_dataset = dataset.with_columns(self.output_cols, output_columns)
+        transformed_dataset: snowpark.DataFrame = dataset.with_columns(self.output_cols, output_columns)
         return transformed_dataset
 
-    def _create_unfitted_sklearn_object(self) -> SklearnBinarizer:
-        return SklearnBinarizer(threshold=self.threshold)
+    def _create_unfitted_sklearn_object(self) -> preprocessing.Binarizer:
+        return preprocessing.Binarizer(threshold=self.threshold)
 
-    def _create_sklearn_object(self) -> SklearnBinarizer:
-        """Get an equivalent sklearn Binarizer.
+    def _create_sklearn_object(self) -> preprocessing.Binarizer:
+        """
+        Get an equivalent sklearn Binarizer.
 
         Returns:
             Sklearn Binarizer.

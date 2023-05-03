@@ -1,0 +1,24 @@
+# TODO(SNOW-728020): Make this file a template so that it can read ground truths
+# (dependencies, version number) from a common place. We also need to define that
+# common place, as currently it's a BUILD rule.
+# See https://docs.conda.io/projects/conda-build/en/latest/resources/define-metadata.html#templating-with-jinja
+
+package:
+  name: snowflake-ml
+  version: 0.0.1
+
+source:
+  path: ../../
+
+requirements:
+  build:
+    - python
+    - bazel >=6.0.0
+  run:
+    - python
+
+about:
+  home: https://github.com/snowflakedb/snowml
+  license: APACHE
+  license_file: ../../LICENSE.txt
+  summary: Snowflake ML Library

@@ -21,6 +21,7 @@ py_library(
         "//snowflake/ml/model:custom_model",
         "//snowflake/ml/model:model_handler",
         "//snowflake/ml/model:model_types",
+        "//snowflake/ml/model:model_signature",
     ],
 )
 
@@ -32,5 +33,6 @@ py_library(
         "//snowflake/ml/model:custom_model",
         "//snowflake/ml/_internal:type_utils",
         "//snowflake/ml/model:model_types",
+        "//snowflake/ml/model:model_signature",
     ],
 )
