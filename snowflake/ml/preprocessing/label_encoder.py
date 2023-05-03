@@ -4,21 +4,21 @@
 #
 from typing import Iterable, Optional, Union
 
-import numpy as np
 import pandas as pd
-from sklearn.preprocessing import LabelEncoder as SklearnLabelEncoder
+from sklearn import preprocessing
 
-from snowflake.ml.framework.base import BaseEstimator, BaseTransformer
-from snowflake.ml.preprocessing.ordinal_encoder import OrdinalEncoder
+from snowflake import snowpark
+from snowflake.ml._internal import type_utils
+from snowflake.ml.framework import base
+from snowflake.ml.preprocessing import ordinal_encoder
 from snowflake.ml.utils import telemetry
-from snowflake.snowpark import DataFrame
 
 _PROJECT = "ModelDevelopment"
 _SUBPROJECT = "Preprocessing"
 _INDEX = "_INDEX"
 
 
-class LabelEncoder(BaseEstimator, BaseTransformer):
+class LabelEncoder(base.BaseEstimator, base.BaseTransformer):
     def __init__(
         self,
         input_cols: Optional[Union[str, Iterable[str]]] = None,
@@ -37,11 +37,11 @@ class LabelEncoder(BaseEstimator, BaseTransformer):
             classes_: A np.ndarray that holds the label for each class.
 
         """
-        self._ordinal_encoder: Optional[OrdinalEncoder] = None
-        self.classes_: Optional[np.ndarray] = None
+        self._ordinal_encoder: Optional[ordinal_encoder.OrdinalEncoder] = None
+        self.classes_: Optional[type_utils.LiteralNDArrayType] = None
 
-        BaseEstimator.__init__(self)
-        BaseTransformer.__init__(self, drop_input_cols=drop_input_cols)
+        base.BaseEstimator.__init__(self)
+        base.BaseTransformer.__init__(self, drop_input_cols=drop_input_cols)
 
         self.set_input_cols(input_cols)
         self.set_output_cols(output_cols)
@@ -56,7 +56,7 @@ class LabelEncoder(BaseEstimator, BaseTransformer):
         project=_PROJECT,
         subproject=_SUBPROJECT,
     )
-    def fit(self, dataset: Union[DataFrame, pd.DataFrame]) -> "LabelEncoder":
+    def fit(self, dataset: Union[snowpark.DataFrame, pd.DataFrame]) -> "LabelEncoder":
         """
         Fit label encoder with label column in dataset.
 
@@ -79,7 +79,7 @@ class LabelEncoder(BaseEstimator, BaseTransformer):
         self._reset()
 
         # Use `OrdinalEncoder` to handle fits and transforms.
-        self._ordinal_encoder = OrdinalEncoder(input_cols=self.input_cols, output_cols=self.output_cols)
+        self._ordinal_encoder = ordinal_encoder.OrdinalEncoder(input_cols=self.input_cols, output_cols=self.output_cols)
 
         self._ordinal_encoder.fit(dataset)
 
@@ -87,14 +87,13 @@ class LabelEncoder(BaseEstimator, BaseTransformer):
         self.classes_ = self._ordinal_encoder.categories_[input_col]
 
         self._is_fitted = True
-
         return self
 
     @telemetry.send_api_usage_telemetry(
         project=_PROJECT,
         subproject=_SUBPROJECT,
     )
-    def transform(self, dataset: Union[DataFrame, pd.DataFrame]) -> Union[DataFrame, pd.DataFrame]:
+    def transform(self, dataset: Union[snowpark.DataFrame, pd.DataFrame]) -> Union[snowpark.DataFrame, pd.DataFrame]:
         """
         Use fit result to transform snowpark dataframe or pandas dataframe. The original dataset with
         the transform result column added will be returned.
@@ -107,15 +106,16 @@ class LabelEncoder(BaseEstimator, BaseTransformer):
 
         Raises:
             RuntimeError: If transformer is not fitted first.
-            TypeError: If the input dataset is neither a pandas or Snowpark DataFrame.
+            TypeError: If the input dataset is neither a pandas nor Snowpark DataFrame.
         """
         if not self._is_fitted or self._ordinal_encoder is None or self.classes_ is None:
             raise RuntimeError("Label encoder must be fitted before calling transform().")
 
-        if isinstance(dataset, DataFrame):
-            output_df = self._ordinal_encoder.transform(dataset).replace(
-                float("nan"),
-                len(self.classes_) - 1,
+        if isinstance(dataset, snowpark.DataFrame):
+            # [SNOW-802691] Support for mypy type checking
+            output_df = self._ordinal_encoder.transform(dataset).na.replace(
+                float("nan"),  # type: ignore[arg-type]
+                len(self.classes_) - 1,  # type: ignore[arg-type]
                 subset=self.output_cols,
             )
         elif isinstance(dataset, pd.DataFrame):
@@ -128,10 +128,10 @@ class LabelEncoder(BaseEstimator, BaseTransformer):
 
         return self._drop_input_columns(output_df) if self._drop_input_cols is True else output_df
 
-    def _create_unfitted_sklearn_object(self) -> SklearnLabelEncoder:
-        return SklearnLabelEncoder()
+    def _create_unfitted_sklearn_object(self) -> preprocessing.LabelEncoder:
+        return preprocessing.LabelEncoder()
 
-    def _create_sklearn_object(self) -> SklearnLabelEncoder:
+    def _create_sklearn_object(self) -> preprocessing.LabelEncoder:
         """
         Initialize and return the equivalent sklearn label encoder.
 

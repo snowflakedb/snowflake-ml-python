@@ -1,0 +1,12 @@
+load("//bazel:py_rules.bzl", "py_test")
+
+py_test(
+    name = "env_utils_integ_test",
+    srcs = ["env_utils_integ_test.py"],
+    timeout = "long",
+    deps = [
+        "//snowflake/ml/_internal:env_utils",
+        "//snowflake/ml/utils:connection_params"
+    ],
+    tags = ["skip_merge_gates"],
+)

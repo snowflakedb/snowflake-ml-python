@@ -6,8 +6,8 @@ py_library(
     name = "render_pandas_df",
     srcs = ["render_pandas_df.py"],
     deps = [
+        "//snowflake/ml/_internal/utils:identifier",
         "//snowflake/ml/registry:model_registry",
-        "//snowflake/ml/utils:identifier",
     ],
 )
 

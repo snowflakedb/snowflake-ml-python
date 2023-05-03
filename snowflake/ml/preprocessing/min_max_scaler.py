@@ -6,20 +6,19 @@ from typing import Dict, Iterable, List, Optional, Tuple, Union
 
 import numpy as np
 import pandas as pd
-import sklearn.preprocessing._data as sklearn_preprocessing_data
-from sklearn.preprocessing import MinMaxScaler as SklearnMinMaxScaler
+from sklearn import preprocessing
+from sklearn.preprocessing import _data as sklearn_preprocessing_data
 
-import snowflake.snowpark.functions as F
-from snowflake.ml.framework import utils
-from snowflake.ml.framework.base import BaseEstimator, BaseTransformer
+from snowflake import snowpark
+from snowflake.ml.framework import _utils, base
 from snowflake.ml.utils import telemetry
-from snowflake.snowpark import DataFrame
+from snowflake.snowpark import functions
 
 _PROJECT = "ModelDevelopment"
 _SUBPROJECT = "Preprocessing"
 
 
-class MinMaxScaler(BaseEstimator, BaseTransformer):
+class MinMaxScaler(base.BaseEstimator, base.BaseTransformer):
     def __init__(
         self,
         *,
@@ -55,10 +54,10 @@ class MinMaxScaler(BaseEstimator, BaseTransformer):
         self.data_max_: Dict[str, float] = {}
         self.data_range_: Dict[str, float] = {}
 
-        self.custom_state: List[str] = [utils.NumericStatistics.MIN.value, utils.NumericStatistics.MAX.value]
+        self.custom_states: List[str] = [_utils.NumericStatistics.MIN, _utils.NumericStatistics.MAX]
 
-        BaseEstimator.__init__(self, custom_state=self.custom_state)
-        BaseTransformer.__init__(self, drop_input_cols=drop_input_cols)
+        base.BaseEstimator.__init__(self, custom_states=self.custom_states)
+        base.BaseTransformer.__init__(self, drop_input_cols=drop_input_cols)
 
         self.set_input_cols(input_cols)
         self.set_output_cols(output_cols)
@@ -81,7 +80,7 @@ class MinMaxScaler(BaseEstimator, BaseTransformer):
         project=_PROJECT,
         subproject=_SUBPROJECT,
     )
-    def fit(self, dataset: Union[DataFrame, pd.DataFrame]) -> "MinMaxScaler":
+    def fit(self, dataset: Union[snowpark.DataFrame, pd.DataFrame]) -> "MinMaxScaler":
         """
         Compute min and max values of the dataset.
 
@@ -92,14 +91,14 @@ class MinMaxScaler(BaseEstimator, BaseTransformer):
             Fitted scaler.
 
         Raises:
-            TypeError: If the input dataset is neither a pandas or Snowpark DataFrame.
+            TypeError: If the input dataset is neither a pandas nor Snowpark DataFrame.
         """
         super()._check_input_cols()
         self._reset()
 
         if isinstance(dataset, pd.DataFrame):
             self._fit_sklearn(dataset)
-        elif isinstance(dataset, DataFrame):
+        elif isinstance(dataset, snowpark.DataFrame):
             self._fit_snowpark(dataset)
         else:
             raise TypeError(
@@ -112,25 +111,25 @@ class MinMaxScaler(BaseEstimator, BaseTransformer):
 
     def _fit_sklearn(self, dataset: pd.DataFrame) -> None:
         dataset = self._use_input_cols_only(dataset)
-        sklearn_encoder = self._create_unfitted_sklearn_object()
-        sklearn_encoder.fit(dataset[self.input_cols])
+        sklearn_scaler = self._create_unfitted_sklearn_object()
+        sklearn_scaler.fit(dataset[self.input_cols])
 
         for (i, input_col) in enumerate(self.input_cols):
-            self.min_[input_col] = float(sklearn_encoder.min_[i])
-            self.scale_[input_col] = float(sklearn_encoder.scale_[i])
-            self.data_min_[input_col] = float(sklearn_encoder.data_min_[i])
-            self.data_max_[input_col] = float(sklearn_encoder.data_max_[i])
-            self.data_range_[input_col] = float(sklearn_encoder.data_range_[i])
+            self.min_[input_col] = float(sklearn_scaler.min_[i])
+            self.scale_[input_col] = float(sklearn_scaler.scale_[i])
+            self.data_min_[input_col] = float(sklearn_scaler.data_min_[i])
+            self.data_max_[input_col] = float(sklearn_scaler.data_max_[i])
+            self.data_range_[input_col] = float(sklearn_scaler.data_range_[i])
 
-    def _fit_snowpark(self, dataset: DataFrame) -> None:
-        computed_states = self._compute(dataset, self.input_cols, self.custom_state)
+    def _fit_snowpark(self, dataset: snowpark.DataFrame) -> None:
+        computed_states = self._compute(dataset, self.input_cols, self.custom_states)
 
         # assign states to the object
         for input_col in self.input_cols:
             numeric_stats = computed_states[input_col]
 
-            data_min = float(numeric_stats[utils.NumericStatistics.MIN])
-            data_max = float(numeric_stats[utils.NumericStatistics.MAX])
+            data_min = float(numeric_stats[_utils.NumericStatistics.MIN])
+            data_max = float(numeric_stats[_utils.NumericStatistics.MAX])
             data_range = data_max - data_min
             self.scale_[input_col] = (
                 self.feature_range[1] - self.feature_range[0]
@@ -144,7 +143,7 @@ class MinMaxScaler(BaseEstimator, BaseTransformer):
         project=_PROJECT,
         subproject=_SUBPROJECT,
     )
-    def transform(self, dataset: Union[DataFrame, pd.DataFrame]) -> Union[DataFrame, pd.DataFrame]:
+    def transform(self, dataset: Union[snowpark.DataFrame, pd.DataFrame]) -> Union[snowpark.DataFrame, pd.DataFrame]:
         """
         Scale features according to feature_range.
 
@@ -156,14 +155,14 @@ class MinMaxScaler(BaseEstimator, BaseTransformer):
 
         Raises:
             RuntimeError: If transformer is not fitted first.
-            TypeError: If the input dataset is neither a pandas or Snowpark DataFrame.
+            TypeError: If the input dataset is neither a pandas nor Snowpark DataFrame.
         """
         if not self._is_fitted:
             raise RuntimeError("Transformer not fitted before calling transform().")
         super()._check_input_cols()
         super()._check_output_cols()
 
-        if isinstance(dataset, DataFrame):
+        if isinstance(dataset, snowpark.DataFrame):
             output_df = self._transform_snowpark(dataset)
         elif isinstance(dataset, pd.DataFrame):
             output_df = self._transform_sklearn(dataset)
@@ -175,7 +174,7 @@ class MinMaxScaler(BaseEstimator, BaseTransformer):
 
         return self._drop_input_columns(output_df) if self._drop_input_cols is True else output_df
 
-    def _transform_snowpark(self, dataset: DataFrame) -> DataFrame:
+    def _transform_snowpark(self, dataset: snowpark.DataFrame) -> snowpark.DataFrame:
         """
         Scale features according to feature_range on
         Snowpark dataframe.
@@ -191,18 +190,24 @@ class MinMaxScaler(BaseEstimator, BaseTransformer):
             output_column = dataset[input_col] * self.scale_[input_col] + self.min_[input_col]
 
             if self.clip:
-                output_column = F.greatest(output_column, F.lit(self.feature_range[0]))
-                output_column = F.least(output_column, F.lit(self.feature_range[1]))
+                output_column = functions.greatest(
+                    output_column,
+                    functions.lit(self.feature_range[0]),  # type: ignore[arg-type]
+                )
+                output_column = functions.least(
+                    output_column,
+                    functions.lit(self.feature_range[1]),  # type: ignore[arg-type]
+                )
 
             output_columns.append(output_column)
 
-        transformed_dataset = dataset.with_columns(self.output_cols, output_columns)
+        transformed_dataset: snowpark.DataFrame = dataset.with_columns(self.output_cols, output_columns)
         return transformed_dataset
 
-    def _create_unfitted_sklearn_object(self) -> SklearnMinMaxScaler:
-        return SklearnMinMaxScaler(feature_range=self.feature_range, clip=self.clip)
+    def _create_unfitted_sklearn_object(self) -> preprocessing.MinMaxScaler:
+        return preprocessing.MinMaxScaler(feature_range=self.feature_range, clip=self.clip)
 
-    def _create_sklearn_object(self) -> SklearnMinMaxScaler:
+    def _create_sklearn_object(self) -> preprocessing.MinMaxScaler:
         """
         Get an equivalent sklearn MinMaxScaler.
 

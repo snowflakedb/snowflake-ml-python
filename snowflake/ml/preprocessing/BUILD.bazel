@@ -26,6 +26,18 @@ py_library(
 )
 
 py_library(
+    name = "k_bins_discretizer",
+    srcs = [
+        "k_bins_discretizer.py",
+    ],
+    deps = [
+        ":init",
+        "//snowflake/ml/framework",
+        "//snowflake/ml/utils:telemetry",
+    ],
+)
+
+py_library(
     name = "label_encoder",
     srcs = [
         "label_encoder.py",
@@ -33,6 +45,7 @@ py_library(
     deps = [
         ":init",
         ":ordinal_encoder",
+        "//snowflake/ml/_internal:type_utils",
         "//snowflake/ml/framework",
         "//snowflake/ml/utils:telemetry",
     ],
@@ -81,6 +94,7 @@ py_library(
     ],
     deps = [
         ":init",
+        "//snowflake/ml/_internal:type_utils",
         "//snowflake/ml/framework",
         "//snowflake/ml/utils:telemetry",
     ],
@@ -93,6 +107,7 @@ py_library(
     ],
     deps = [
         ":init",
+        "//snowflake/ml/_internal:type_utils",
         "//snowflake/ml/framework",
         "//snowflake/ml/utils:telemetry",
     ],

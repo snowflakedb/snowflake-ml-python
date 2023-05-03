@@ -1,11 +1,19 @@
 import os
-from typing import Any
+from typing import TYPE_CHECKING, Any, Optional
 
 import cloudpickle
 
 from snowflake.ml._internal import file_utils, type_utils
-from snowflake.ml.model import model_handler, model_meta as model_meta_api, model_types
+from snowflake.ml.model import (
+    model_handler,
+    model_meta as model_meta_api,
+    model_signature,
+    model_types,
+)
 from snowflake.ml.model._handlers import _base
+
+if TYPE_CHECKING:
+    from snowflake.ml.model import custom_model
 
 
 class _CustomModelHandler(_base._ModelHandler):
@@ -20,14 +28,20 @@ class _CustomModelHandler(_base._ModelHandler):
     @staticmethod
     def _save_model(
         name: str,
-        model: model_types.ModelType,
+        model: "custom_model.CustomModel",
         model_meta: model_meta_api.ModelMetadata,
         model_blobs_dir_path: str,
+        sample_input: Optional[Any] = None,
         **kwargs: Any,
     ) -> None:
         from snowflake.ml.model import custom_model
 
         assert isinstance(model, custom_model.CustomModel)
+
+        target_method = kwargs.pop("target_method", _CustomModelHandler.DEFAULT_TARGET_METHOD)
+        predict_method = getattr(model, target_method, None)
+        if not callable(predict_method):
+            raise ValueError(f"Target method {target_method} is not callable.")
 
         model_blob_path = os.path.join(model_blobs_dir_path, name)
         os.makedirs(model_blob_path, exist_ok=True)
@@ -56,10 +70,15 @@ class _CustomModelHandler(_base._ModelHandler):
             },
         )
 
+        if model_meta._signature is None:
+            # In this case sample_input should be available, because of the check in save_model.
+            assert sample_input is not None
+            model_meta._signature = model_signature.infer_signature(sample_input, predict_method(sample_input))
+
     @staticmethod
     def _load_model(
         name: str, model_meta: model_meta_api.ModelMetadata, model_blobs_dir_path: str
-    ) -> model_types.ModelType:
+    ) -> "custom_model.CustomModel":
         from snowflake.ml.model import custom_model
 
         model_blob_path = os.path.join(model_blobs_dir_path, name)
@@ -74,6 +93,9 @@ class _CustomModelHandler(_base._ModelHandler):
         with open(os.path.join(model_blob_path, model_blob_filename), "rb") as f:
             m = cloudpickle.load(f)
         ModelClass = type(m)
+
+        assert issubclass(ModelClass, custom_model.CustomModel)
+
         artifacts_meta = model_blob_metadata.artifacts
         artifacts = {name: os.path.join(model_blob_path, rel_path) for name, rel_path in artifacts_meta.items()}
         models = dict()

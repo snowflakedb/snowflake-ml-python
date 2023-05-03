@@ -3,8 +3,8 @@ from __future__ import annotations  # for return self methods
 from typing import Any
 
 from snowflake import snowpark
+from snowflake.ml._internal.utils import formatting
 from snowflake.ml.test_utils import mock_snowml_base
-from snowflake.ml.utils import formatting
 
 
 class MockDataFrame(mock_snowml_base.MockSnowMLBase):

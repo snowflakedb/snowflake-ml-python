@@ -1,11 +1,13 @@
+import json
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional
 
 import pandas as pd
 
-from snowflake.ml.model import _udf_util, model
+from snowflake.ml._internal.utils import identifier
+from snowflake.ml.model import _udf_util, model_meta, model_signature, model_types
 from snowflake.snowpark import DataFrame, Session, functions as F
 from snowflake.snowpark._internal import type_utils
 
@@ -21,14 +23,16 @@ class Deployment:
 
     Attributes:
         name: Name of the deployment.
-        model_dir_path: Local path to the directory of the packed model.
+        model: The model object that get deployed.
+        model_meta: The model metadata.
         platform: Target platform to deploy the model.
         options: Additional options when deploying the model.
     """
 
     name: str
-    model_dir_path: str
     platform: TargetPlatform
+    model: model_types.ModelType
+    model_meta: model_meta.ModelMetadata
     options: Dict[str, str]
 
 
@@ -38,12 +42,20 @@ class DeploymentManager(ABC):
     """
 
     @abstractmethod
-    def create(self, name: str, model_dir_path: str, platform: TargetPlatform, options: Dict[str, str]) -> Deployment:
+    def create(
+        self,
+        name: str,
+        platform: TargetPlatform,
+        model: model_types.ModelType,
+        model_meta: model_meta.ModelMetadata,
+        options: Dict[str, str],
+    ) -> Deployment:
         """Create a deployment.
 
         Args:
             name: Name of the deployment for the model.
-            model_dir_path: Directory of the model.
+            model: The model object that get deployed.
+            model_meta: The model metadata.
             platform: Target platform to deploy the model.
             options: Additional options when deploying the model.
                 Each target platform will have their own specifications of options.
@@ -80,20 +92,28 @@ class LocalDeploymentManager(DeploymentManager):
     def __init__(self) -> None:
         self._storage: Dict[str, Deployment] = dict()
 
-    def create(self, name: str, model_dir_path: str, platform: TargetPlatform, options: Dict[str, Any]) -> Deployment:
+    def create(
+        self,
+        name: str,
+        platform: TargetPlatform,
+        model: model_types.ModelType,
+        model_meta: model_meta.ModelMetadata,
+        options: Dict[str, Any],
+    ) -> Deployment:
         """Create a deployment.
 
         Args:
             name: Name of the deployment for the model.
-            model_dir_path: Directory of the model.
             platform: Target platform to deploy the model.
+            model: The model object that get deployed.
+            model_meta: The model metadata.
             options: Additional options when deploying the model.
                 Each target platform will have their own specifications of options.
 
         Returns:
             The deployment information.
         """
-        info = Deployment(name, model_dir_path, platform, options)
+        info = Deployment(name, platform, model, model_meta, options)
         self._storage[name] = info
         return info
 
@@ -149,7 +169,7 @@ class Deployer:
         model_dir_path: str,
         platform: TargetPlatform,
         options: Dict[str, Any],
-    ) -> Deployment:
+    ) -> Optional[Deployment]:
         """Create a deployment and deploy it to remote platform.
 
         Args:
@@ -167,22 +187,24 @@ class Deployer:
         """
         is_success = False
         error_msg = ""
+        info = None
         try:
-            info = self._manager.create(name, model_dir_path, platform, options)
             if platform == TargetPlatform.WAREHOUSE:
-                _udf_util._deploy_to_warehouse(
+                m, meta = _udf_util._deploy_to_warehouse(
                     self._session,
                     udf_name=name,
                     model_dir_path=model_dir_path,
                     relax_version=options.get("relax_version", False),
                 )
+            info = self._manager.create(name, platform, m, meta, options)
             is_success = True
         except Exception as e:
             print(e)
             error_msg = str(e)
         finally:
             if not is_success:
-                self._manager.delete(name)
+                if self._manager.get(name) is not None:
+                    self._manager.delete(name)
                 raise RuntimeError(error_msg)
         return info
 
@@ -213,7 +235,7 @@ class Deployer:
         """
         self._manager.delete(name)
 
-    def predict(self, name: str, df: Union[DataFrame, pd.DataFrame]) -> pd.DataFrame:
+    def predict(self, name: str, df: Any) -> pd.DataFrame:
         """Execute batch inference of a model remotely.
 
         Args:
@@ -222,36 +244,48 @@ class Deployer:
 
         Raises:
             ValueError: Raised when the deployment does not exist.
+            NotImplementedError: Raised when confronting unsupported feature group.
 
         Returns:
             The output dataframe.
         """
-        if isinstance(df, pd.DataFrame):
-            df = self._session.create_dataframe(df)
         d = self.get_deployment(name)
         if not d:
             raise ValueError(f"Deployment {name} does not exist.")
-        _, meta = model.load_model(d.model_dir_path)
+        meta = d.model_meta
+        if not isinstance(df, DataFrame):
+            df = model_signature._validate_data_with_features_and_convert_to_df(meta.signature.inputs, df)
+            s_df = self._session.create_dataframe(df)
+        else:
+            s_df = df
 
         cols = []
-        for col_name in df.columns:
-            if col_name[0] == '"' and col_name[-1] == '"':
-                # To deal with ugly double quoted col names
-                literal_col_name = col_name[1:-1]
-            else:
-                literal_col_name = col_name
+        for col_name in s_df.columns:
+            literal_col_name = identifier.remove_quote_if_quoted(col_name)
             cols.extend(
                 [
                     type_utils.ColumnOrName(F.lit(type_utils.LiteralType(literal_col_name))),
                     type_utils.ColumnOrName(F.col(col_name)),
                 ]
             )
-        output_col_names = [cs.name for cs in meta.schema.outputs]
+        output_col_names = [feature.name for feature in meta.signature.outputs]
         output_cols = []
         for output_col_name in output_col_names:
-            output_cols.append(F.col("tmp_result")[output_col_name].alias(output_col_name))
-        return (
-            df.select(F.call_udf(name, type_utils.ColumnOrLiteral(F.object_construct(*cols))).alias("tmp_result"))
+            # To avoid automatic upper-case convert, we quoted the result name.
+            output_cols.append(F.col("tmp_result")[output_col_name].alias(f'"{output_col_name}"'))
+
+        dtype_map = {}
+        for feature in meta.signature.outputs:
+            if isinstance(feature, model_signature.FeatureSpec):
+                dtype_map[feature.name] = feature._dtype._value
+            else:
+                raise NotImplementedError("FeatureGroup is not supported yet.")
+        df_local = (
+            s_df.select(F.call_udf(name, type_utils.ColumnOrLiteral(F.object_construct(*cols))).alias("tmp_result"))
             .select(*output_cols)
             .to_pandas()
+            .applymap(json.loads)
+            .rename(columns=identifier.remove_quote_if_quoted)
+            .astype(dtype=dtype_map)
         )
+        return df_local

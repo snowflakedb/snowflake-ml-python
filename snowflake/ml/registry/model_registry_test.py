@@ -6,9 +6,10 @@ from _schema import _METADATA_TABLE_SCHEMA, _REGISTRY_TABLE_SCHEMA
 from absl.testing import absltest
 
 from snowflake import connector, snowpark
+from snowflake.ml._internal.utils import formatting
 from snowflake.ml.registry import model_registry
 from snowflake.ml.test_utils import mock_data_frame, mock_session
-from snowflake.ml.utils import formatting, telemetry
+from snowflake.ml.utils import telemetry
 
 _DATABASE_NAME = "MODEL_REGISTRY"
 _SCHEMA_NAME = "PUBLIC"
@@ -592,8 +593,8 @@ class ModelRegistryTest(absltest.TestCase):
         self._session.add_operation("get_current_role", result="current_role")
 
         self.add_session_mock_sql(
-            query="""INSERT INTO "MODEL_REGISTRY"."PUBLIC"."MODELS" ( CREATION_ENVIRONMENT_SPEC,CREATION_ROLE,CREATION_TIME,
-                    ID,INPUT_SPEC,OUTPUT_SPEC,TYPE,URI,VERSION )
+            query="""INSERT INTO "MODEL_REGISTRY"."PUBLIC"."MODELS" ( CREATION_ENVIRONMENT_SPEC,CREATION_ROLE,
+                    CREATION_TIME,ID,INPUT_SPEC,OUTPUT_SPEC,TYPE,URI,VERSION )
                 SELECT OBJECT_CONSTRUCT('python','3.8.13'),'current_role',CURRENT_TIMESTAMP(),
                     'id',null,null,'type','uri',null""",
             result=mock_data_frame.MockDataFrame([snowpark.Row(**{"number of rows inserted": 1})]),
@@ -615,8 +616,8 @@ class ModelRegistryTest(absltest.TestCase):
         self._session.add_operation("get_current_role", result="current_role")
 
         self.add_session_mock_sql(
-            query=f"""INSERT INTO "MODEL_REGISTRY"."PUBLIC"."MODELS" ( CREATION_ENVIRONMENT_SPEC,CREATION_ROLE,CREATION_TIME,
-                    ID,INPUT_SPEC,OUTPUT_SPEC,TYPE,URI,VERSION )
+            query=f"""INSERT INTO "MODEL_REGISTRY"."PUBLIC"."MODELS" ( CREATION_ENVIRONMENT_SPEC,CREATION_ROLE,
+                    CREATION_TIME,ID,INPUT_SPEC,OUTPUT_SPEC,TYPE,URI,VERSION )
                 SELECT OBJECT_CONSTRUCT('python','3.8.13'),'current_role',CURRENT_TIMESTAMP(),
                     '{self.model_id}',null,null,'type','uri',null""",
             result=mock_data_frame.MockDataFrame([snowpark.Row(**{"number of rows inserted": 1})]),
@@ -698,8 +699,8 @@ class ModelRegistryTest(absltest.TestCase):
         self._session.add_operation("get_current_role", result="current_role")
 
         self.add_session_mock_sql(
-            query=f"""INSERT INTO "MODEL_REGISTRY"."PUBLIC"."MODELS" ( CREATION_ENVIRONMENT_SPEC,CREATION_ROLE,CREATION_TIME,
-                    ID,INPUT_SPEC,OUTPUT_SPEC,TYPE,URI,VERSION )
+            query=f"""INSERT INTO "MODEL_REGISTRY"."PUBLIC"."MODELS" ( CREATION_ENVIRONMENT_SPEC,CREATION_ROLE,
+                    CREATION_TIME,ID,INPUT_SPEC,OUTPUT_SPEC,TYPE,URI,VERSION )
                 SELECT OBJECT_CONSTRUCT('python','3.8.13'),'current_role',CURRENT_TIMESTAMP(),
                     '{self.model_id}',null,null,'type','uri',null""",
             result=mock_data_frame.MockDataFrame([snowpark.Row(**{"number of rows inserted": 1})]),
@@ -733,6 +734,52 @@ class ModelRegistryTest(absltest.TestCase):
                 ):
                     model_registry.register_model(
                         id=self.model_id, uri="uri", type="type", description="Model B-263-54"
+                    )
+
+    def test_log_model_path_file(self) -> None:
+        """Test log_model_path() when the model is a file.
+
+        Validate log_model_path() can perform stage file put operation with the expected stage path and call
+        register_model() with the expected arguments.
+        """
+        model_registry = self.get_model_registry()
+
+        self.add_session_mock_sql(
+            query=f"""CREATE OR REPLACE STAGE "{_DATABASE_NAME}"."{_SCHEMA_NAME}".SNOWML_MODEL_{self.model_id}""",
+            result=mock_data_frame.MockDataFrame(
+                [snowpark.Row(**{"status": f"Stage area SNOWML_MODEL_{self.model_id.upper()} successfully created."})]
+            ),
+        )
+
+        # Mock the snowpark.session.file operation
+        mock_sp_file_operation = absltest.mock.Mock()
+        self._session.__setattr__("file", mock_sp_file_operation)
+
+        expected_stage_path = f'"{_DATABASE_NAME}"."{_SCHEMA_NAME}".SNOWML_MODEL_{self.model_id.upper()}/data'
+
+        with absltest.mock.patch("model_registry.os.path.isfile", return_value=True) as mock_isfile:
+            with absltest.mock.patch.object(
+                model_registry,
+                "_get_new_unique_identifier",
+                return_value=self.model_id,
+            ):
+                with absltest.mock.patch.object(
+                    model_registry,
+                    "register_model",
+                    return_value=True,
+                ):
+                    model_registry.log_model_path(path="path", type="type", name="name", description="description")
+                    mock_isfile.assert_called_once_with("path")
+                    mock_sp_file_operation.put.assert_called_with("path", expected_stage_path)
+                    assert isinstance(model_registry.register_model, absltest.mock.Mock)
+                    model_registry.register_model.assert_called_with(
+                        id=self.model_id,
+                        type="type",
+                        uri=f"sfc:MODEL_REGISTRY.PUBLIC.SNOWML_MODEL_{self.model_id.upper()}",
+                        name="name",
+                        version=None,
+                        description="description",
+                        tags=None,
                     )
 
     def test_delete_model_with_artifact(self) -> None:

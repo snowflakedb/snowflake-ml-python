@@ -15,9 +15,9 @@ from sklearn.utils.metaestimators import available_if
 
 from snowflake.ml.framework.base import BaseEstimator, BaseTransformer
 from snowflake.ml.utils import telemetry
-from snowflake.ml.utils.query_result_checker import SqlResultValidator
-from snowflake.ml.utils import pkg_version_utils
-from snowflake.ml.utils.temp_file_utils import cleanup_temp_files, get_temp_file_path
+from snowflake.ml._internal.utils.query_result_checker import SqlResultValidator
+from snowflake.ml._internal.utils import pkg_version_utils, identifier
+from snowflake.ml._internal.utils.temp_file_utils import cleanup_temp_files, get_temp_file_path
 from snowflake.snowpark import DataFrame, Session
 from snowflake.snowpark.functions import pandas_udf, sproc
 from snowflake.snowpark.session import _get_active_session
@@ -107,7 +107,7 @@ class {transform.estimator_class_name}(BaseEstimator, BaseTransformer):
     def __init__(
         {transform.estimator_init_signature}
     ) -> None:
-        super().__init__(custom_state=None)
+        super().__init__(custom_states=None)
         self.id = str(uuid4()).replace("-", "_").upper()
         {transform.estimator_args_transform_calls}
         init_args = {transform.sklearn_init_args_dict}
@@ -138,7 +138,7 @@ class {transform.estimator_class_name}(BaseEstimator, BaseTransformer):
             self.set_input_cols(input_cols=cols)
         
         if not self.output_cols:
-            cols = [f"OUTPUT_{{c}}" for c in self.label_cols]
+            cols = [identifier.concat_names(ids=['OUTPUT_', c]) for c in self.label_cols]
             self.set_output_cols(output_cols=cols)
 
     @telemetry.send_api_usage_telemetry(
@@ -172,7 +172,7 @@ class {transform.estimator_class_name}(BaseEstimator, BaseTransformer):
         session = dataset._session
         # Validate that key package version in user workspace are supported in snowflake conda channel
         pkg_version_utils.validate_pkg_versions_supported_in_snowflake_conda_channel(
-            pkg_versions=[{transform.fit_sproc_deps}], session=session)
+            pkg_versions=[{transform.fit_sproc_deps}], session=session, subproject=_SUBPROJECT)
 
         # Specify input columns so column pruing will be enforced
         selected_cols = (
@@ -284,9 +284,9 @@ class {transform.estimator_class_name}(BaseEstimator, BaseTransformer):
             query,
             stage_transform_file_name,
             stage_result_file_name,
-            self.input_cols,
-            self.label_cols,
-            self.sample_weight_col,
+            identifier.get_equivalent_identifier_in_the_response_pandas_dataframe(self.input_cols),
+            identifier.get_equivalent_identifier_in_the_response_pandas_dataframe(self.label_cols),
+            identifier.get_equivalent_identifier_in_the_response_pandas_dataframe(self.sample_weight_col),
             statement_params=statement_params,
         )
 
@@ -334,7 +334,7 @@ class {transform.estimator_class_name}(BaseEstimator, BaseTransformer):
         session = dataset._session
         # Validate that key package version in user workspace are supported in snowflake conda channel
         pkg_version_utils.validate_pkg_versions_supported_in_snowflake_conda_channel(
-            pkg_versions=[{transform.predict_udf_deps}], session=session)
+            pkg_versions=[{transform.predict_udf_deps}], session=session, subproject=_SUBPROJECT)
 
         # Register vectorized UDF for batch inference
         batch_inference_udf_name = "SNOWML_BATCH_INFERENCE_{{safe_id}}_{{method}}".format(
@@ -347,6 +347,7 @@ class {transform.estimator_class_name}(BaseEstimator, BaseTransformer):
         # Input columns for UDF are sorted by column names.
         # We need actual order of input cols to reorder dataframe before calling inference methods.
         input_cols = self.input_cols
+        unquoted_input_cols = identifier.get_equivalent_identifier_in_the_response_pandas_dataframe(self.input_cols)
 
         @pandas_udf(
             is_permanent=False,
@@ -360,7 +361,30 @@ class {transform.estimator_class_name}(BaseEstimator, BaseTransformer):
             import numpy as np
 
             input_df = pd.io.json.json_normalize(ds)
-            transformed_numpy_array = getattr(estimator, inference_method)(input_df[input_cols])
+
+            # pd.io.json.json_normalize() doesn't remove quotes around quoted identifiers like snowpakr_df.to_pandas().
+            # But trained models have unquoted input column names saved in internal state if trained using snowpark_df
+            # or quoted input column names saved in internal state if trained using pandas_df.
+            # Model expects exact same columns names in the input df for predict call.
+
+            input_df = input_df[input_cols] # Select input columns with quoted column names.
+            if hasattr(estimator, "feature_names_in_"):
+                missing_features = []
+                for i, f in enumerate(getattr(estimator, "feature_names_in_")):
+                    if i >= len(input_cols) or (input_cols[i] != f and unquoted_input_cols[i] != f):
+                        missing_features.append(f)
+
+                if len(missing_features) > 0:
+                    raise ValueError(
+                        "The feature names should match with those that were passed during fit.\n"
+                        f"Features seen during fit call but not present in the input: {{missing_features}}\n"
+                        f"Features in the input dataframe : {{input_cols}}\n"
+                    )
+                input_df.columns = getattr(estimator, "feature_names_in_")
+            else:
+                # Just rename the column names to unquoted identifiers.
+                input_df.columns = unquoted_input_cols # Replace the quoted columns identifier with unquoted column ids.
+            transformed_numpy_array = getattr(estimator, inference_method)(input_df)
             if (
                 isinstance(transformed_numpy_array, list) 
                 and len(transformed_numpy_array) > 0 
@@ -445,7 +469,9 @@ class {transform.estimator_class_name}(BaseEstimator, BaseTransformer):
         expected_output_cols_list: List[str]
     ) -> pd.DataFrame:
         output_cols = expected_output_cols_list.copy()
-        transformed_numpy_array = getattr(self._sklearn_object, inference_method)(dataset[self.input_cols])
+        transformed_numpy_array = getattr(self._sklearn_object, inference_method)(
+            dataset[self.input_cols]
+        )
         if (
                 isinstance(transformed_numpy_array, list)
                 and len(transformed_numpy_array) > 0
@@ -859,9 +885,9 @@ class {transform.estimator_class_name}(BaseEstimator, BaseTransformer):
             score_sproc_name,
             query,
             stage_score_file_name,
-            self.input_cols,
-            self.label_cols,
-            self.sample_weight_col,
+            identifier.get_equivalent_identifier_in_the_response_pandas_dataframe(self.input_cols),
+            identifier.get_equivalent_identifier_in_the_response_pandas_dataframe(self.label_cols),
+            identifier.get_equivalent_identifier_in_the_response_pandas_dataframe(self.sample_weight_col),
             statement_params=statement_params,
         )
 

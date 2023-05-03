@@ -1,0 +1,141 @@
+load("//bazel:py_rules.bzl", "py_library", "py_test")
+
+package(default_visibility = ["//visibility:public"])
+
+py_library(
+    name = "import_utils",
+    srcs = ["import_utils.py"],
+)
+
+py_test(
+    name = "import_utils_test",
+    srcs = ["import_utils_test.py"],
+    deps = [
+        ":import_utils",
+    ],
+)
+
+py_library(
+    name = "string_matcher",
+    srcs = ["string_matcher.py"],
+    deps = [
+        ":formatting",
+    ],
+)
+
+py_test(
+    name = "string_matcher_test",
+    srcs = ["string_matcher_test.py"],
+    deps = [
+        ":string_matcher",
+    ],
+)
+
+py_library(
+    name = "identifier",
+    srcs = ["identifier.py"],
+)
+
+py_test(
+    name = "identifier_test",
+    srcs = ["identifier_test.py"],
+    deps = [
+        ":identifier",
+    ],
+)
+
+py_library(
+    name = "query_result_checker",
+    srcs = ["query_result_checker.py"],
+    deps = [
+        ":formatting",
+    ],
+)
+
+py_test(
+    name = "query_result_checker_test",
+    srcs = ["query_result_checker_test.py"],
+    deps = [
+        ":query_result_checker",
+        "//snowflake/ml/test_utils:mock_data_frame",
+        "//snowflake/ml/test_utils:mock_session",
+    ],
+)
+
+py_library(
+    name = "formatting",
+    srcs = ["formatting.py"],
+)
+
+py_test(
+    name = "formatting_test",
+    srcs = ["formatting_test.py"],
+    deps = [
+        ":formatting",
+    ],
+)
+
+py_library(
+    name = "uri",
+    srcs = ["uri.py"],
+)
+
+py_test(
+    name = "uri_test",
+    srcs = ["uri_test.py"],
+    deps = [
+        ":uri",
+    ],
+)
+
+py_library(
+    name = "rbac",
+    srcs = ["rbac.py"],
+)
+
+py_test(
+    name = "rbac_test",
+    srcs = ["rbac_test.py"],
+    deps = [
+        ":rbac",
+        "//snowflake/ml/test_utils:mock_data_frame",
+        "//snowflake/ml/test_utils:mock_session",
+    ],
+)
+
+py_library(
+    name = "pkg_version_utils",
+    srcs = ["pkg_version_utils.py"],
+    deps = [
+        ":query_result_checker",
+        "//snowflake/ml/utils:telemetry",
+    ],
+)
+
+py_test(
+    name = "pkg_version_utils_test",
+    srcs = ["pkg_version_utils_test.py"],
+    deps = [
+        ":pkg_version_utils",
+        "//snowflake/ml/test_utils:mock_data_frame",
+        "//snowflake/ml/test_utils:mock_session",
+        "//snowflake/ml/utils:telemetry",
+    ],
+)
+
+py_library(
+    name = "temp_file_utils",
+    srcs = ["temp_file_utils.py"],
+    deps = [],
+)
+
+py_test(
+    name = "temp_file_utils_test",
+    srcs = ["temp_file_utils_test.py"],
+    deps = [":temp_file_utils"],
+)
+
+py_library(
+    name = "parallelize",
+    srcs = ["parallelize.py"],
+)
