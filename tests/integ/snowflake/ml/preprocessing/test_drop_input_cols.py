@@ -9,7 +9,7 @@ import numpy as np
 from absl.testing.absltest import TestCase
 
 from snowflake.ml.framework.pipeline import Pipeline
-from snowflake.ml.preprocessing import (
+from snowflake.ml.preprocessing import (  # type: ignore[attr-defined]
     Binarizer,
     LabelEncoder,
     MaxAbsScaler,
@@ -65,12 +65,12 @@ class DropInputColsTest(TestCase):
         output_df = transformer.transform(input_df[input_cols_extended])
         pruned_output_cols = output_df.columns.copy()
         pruned_output_cols.remove(id_col)
-        assert all(elem not in input_df.columns for elem in pruned_output_cols)
+        self.assertTrue(all(elem not in input_df.columns for elem in pruned_output_cols))
         # Transform Pandas DataFrame
         pandas_output_df = transformer.transform(input_pandas_df[input_cols_extended])
         pandas_pruned_output_cols = pandas_output_df.columns.tolist()
         pandas_pruned_output_cols.remove(id_col)
-        assert all(elem not in input_pandas_df.columns for elem in pandas_pruned_output_cols)
+        self.assertTrue(all(elem not in input_pandas_df.columns for elem in pandas_pruned_output_cols))
 
     def test_one_hot_encoder(self) -> None:
         self._run_and_compare_result(
@@ -132,4 +132,4 @@ class DropInputColsTest(TestCase):
         ppl = Pipeline([("ohe", ohe), ("mms", mms)])
         ppl.fit(df)
         transformed_df = ppl.transform(df)
-        assert all(elem not in [CATEGORICAL_COLS + NUMERIC_COLS] for elem in transformed_df.columns)
+        self.assertTrue(all(elem not in [CATEGORICAL_COLS + NUMERIC_COLS] for elem in transformed_df.columns))

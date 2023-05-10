@@ -2,35 +2,45 @@ import textwrap
 import warnings
 from abc import ABC, abstractmethod
 from enum import Enum
-from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple, Union, cast
 
 import numpy as np
 import numpy.typing as npt
 import pandas as pd
 
 import snowflake.snowpark.types as spt
+from snowflake.ml.model import type_hints as model_types
 
 
 class DataType(Enum):
-    def __init__(self, value: str, snowpark_type: spt.DataType, numpy_type: npt.DTypeLike) -> None:
+    def __init__(self, value: str, sql_type: str, snowpark_type: spt.DataType, numpy_type: npt.DTypeLike) -> None:
         self._value = value
+        self._sql_type = sql_type
         self._snowpark_type = snowpark_type
         self._numpy_type = numpy_type
 
-    INT16 = ("int16", spt.IntegerType(), np.int16)
-    INT32 = ("int32", spt.IntegerType(), np.int32)
-    INT64 = ("int64", spt.IntegerType(), np.int64)
+    INT16 = ("int16", "INTEGER", spt.IntegerType(), np.int16)
+    INT32 = ("int32", "INTEGER", spt.IntegerType(), np.int32)
+    INT64 = ("int64", "INTEGER", spt.IntegerType(), np.int64)
 
-    FLOAT = ("float", spt.FloatType(), np.float32)
-    DOUBLE = ("double", spt.DoubleType(), np.float64)
+    FLOAT = ("float", "FLOAT", spt.FloatType(), np.float32)
+    DOUBLE = ("double", "DOUBLE", spt.DoubleType(), np.float64)
 
-    UINT16 = ("uint16", spt.IntegerType(), np.uint16)
-    UINT32 = ("uint32", spt.IntegerType(), np.uint32)
-    UINT64 = ("uint64", spt.IntegerType(), np.uint64)
+    UINT16 = ("uint16", "INTEGER", spt.IntegerType(), np.uint16)
+    UINT32 = ("uint32", "INTEGER", spt.IntegerType(), np.uint32)
+    UINT64 = ("uint64", "INTEGER", spt.IntegerType(), np.uint64)
 
-    BOOL = ("bool", spt.BooleanType(), np.bool8)
-    STRING = ("string", spt.StringType(), np.str0)
-    BYTES = ("bytes", spt.BinaryType(), np.bytes0)
+    BOOL = ("bool", "BOOLEAN", spt.BooleanType(), np.bool8)
+    STRING = ("string", "VARCHAR", spt.StringType(), np.str0)
+    BYTES = ("bytes", "VARBINARY", spt.BinaryType(), np.bytes0)
+
+    def as_sql_type(self) -> str:
+        """Convert to corresponding Snowflake Logic Type.
+
+        Returns:
+            A Snowflake Logic Type.
+        """
+        return self._sql_type
 
     def as_snowpark_type(self) -> spt.DataType:
         """Convert to corresponding Snowpark Type.
@@ -81,7 +91,7 @@ class BaseFeatureSpec(ABC):
         pass
 
     @abstractmethod
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self, as_sql_type: Optional[bool] = False) -> Dict[str, Any]:
         """Serialization"""
         pass
 
@@ -137,13 +147,19 @@ class FeatureSpec(BaseFeatureSpec):
         shape_str = f", shape={repr(self._shape)}" if self._shape else ""
         return f"FeatureSpec(dtype={repr(self._dtype)}, name={repr(self._name)}{shape_str})"
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self, as_sql_type: Optional[bool] = False) -> Dict[str, Any]:
         """Serialize the feature group into a dict.
+
+        Args:
+            as_sql_type: Whether to use Snowflake Logic Types.
 
         Returns:
             A dict that serializes the feature group.
         """
-        base_dict: Dict[str, Any] = {"type": self._dtype.name, "name": self._name}
+        base_dict: Dict[str, Any] = {
+            "type": self._dtype.as_sql_type() if as_sql_type else self._dtype.name,
+            "name": self._name,
+        }
         if self._shape is not None:
             base_dict["shape"] = self._shape
         return base_dict
@@ -213,13 +229,18 @@ class FeatureGroupSpec(BaseFeatureSpec):
             """
         )
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self, as_sql_type: Optional[bool] = False) -> Dict[str, Any]:
         """Serialize the feature group into a dict.
+
+        Args:
+            as_sql_type: Whether to use Snowflake Logic Types.
 
         Returns:
             A dict that serializes the feature group.
         """
-        return {"feature_group": {"name": self._name, "specs": [s.to_dict() for s in self._specs]}}
+        return {
+            "feature_group": {"name": self._name, "specs": [s.to_dict(as_sql_type=as_sql_type) for s in self._specs]}
+        }
 
     @classmethod
     def from_dict(cls, input_dict: Dict[str, Any]) -> "FeatureGroupSpec":
@@ -269,16 +290,19 @@ class ModelSignature:
         else:
             return False
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self, as_sql_type: Optional[bool] = False) -> Dict[str, Any]:
         """Generate a dict to represent the whole signature.
+
+        Args:
+            as_sql_type: Whether to use Snowflake Logic Types.
 
         Returns:
             A dict that serializes the signature.
         """
 
         return {
-            "inputs": [spec.to_dict() for spec in self._inputs],
-            "outputs": [spec.to_dict() for spec in self._outputs],
+            "inputs": [spec.to_dict(as_sql_type=as_sql_type) for spec in self._inputs],
+            "outputs": [spec.to_dict(as_sql_type=as_sql_type) for spec in self._outputs],
         }
 
     @classmethod
@@ -320,7 +344,7 @@ class ModelSignature:
 
 
 def _infer_signature(
-    data: Any,
+    data: model_types.SupportedDataType,
     feature_prefix: str = "feature_",
     output_prefix: str = "output_",
     is_output: bool = False,
@@ -349,6 +373,9 @@ def _infer_signature(
         return _infer_signature_np_ndarray(data, feature_prefix=feature_prefix)
     if isinstance(data, list) and len(data) > 0:
         if is_output and all(isinstance(data_col, np.ndarray) for data_col in data):
+            # Added because mypy still claiming that data has a wider type than
+            # Sequence[model_types._SupportedNumpyArray] since we don't have pandas stubs.
+            data = cast(Sequence[model_types._SupportedNumpyArray], data)
             return _infer_signature_list_multioutput(data, feature_prefix=feature_prefix, output_prefix=output_prefix)
         else:
             return _infer_signature_list_builtins(data, feature_prefix=feature_prefix)
@@ -422,7 +449,7 @@ def _infer_signature_pd_DataFrame(data: pd.DataFrame, feature_prefix: str = "fea
     if len(df_cols) == 0:
         raise ValueError("Unable to construct signature: Empty data is found.")
 
-    df_col_dtypes = [data[col].dtype for col in data.columns]
+    df_col_dtypes = [data[col].to_numpy().dtype for col in data.columns]
     if df_cols.dtype == np.dtype("O"):  # List of String index
         ft_names = list(map(str, data.columns.to_list()))
     elif isinstance(df_cols, pd.RangeIndex):
@@ -499,7 +526,9 @@ def _infer_signature_pd_DataFrame(data: pd.DataFrame, feature_prefix: str = "fea
     return specs
 
 
-def _infer_signature_np_ndarray(data: npt.NDArray[Any], feature_prefix: str = "feature_") -> Sequence[FeatureSpec]:
+def _infer_signature_np_ndarray(
+    data: model_types._SupportedNumpyArray, feature_prefix: str = "feature_"
+) -> Sequence[FeatureSpec]:
     """If a numpy array is provided, `feature_name` if provided is used to name features, otherwise, name like
     `feature_0` `feature_1` will be generated and assigned.
 
@@ -539,7 +568,10 @@ def _infer_signature_np_ndarray(data: npt.NDArray[Any], feature_prefix: str = "f
         return features
 
 
-def _infer_signature_list_builtins(data: List[Any], feature_prefix: str = "feature_") -> Sequence[FeatureSpec]:
+def _infer_signature_list_builtins(
+    data: Union[Sequence[model_types._SupportedNumpyArray], model_types._SupportedBuiltinsList],
+    feature_prefix: str = "feature_",
+) -> Sequence[FeatureSpec]:
     """If a list or a nested list of built-in types are provided, we treat them as a pd.DataFrame.
         Before that we check if all elements have the same type.
         After converting to dataframe, if the original data has ill shape, there would be nan or None.
@@ -565,7 +597,7 @@ def _infer_signature_list_builtins(data: List[Any], feature_prefix: str = "featu
 
 
 def _infer_signature_list_multioutput(
-    data: List[npt.NDArray[Any]], feature_prefix: str = "feature_", output_prefix: str = "output_"
+    data: Sequence[model_types._SupportedNumpyArray], feature_prefix: str = "feature_", output_prefix: str = "output_"
 ) -> Sequence[FeatureSpec]:
     """If a Python list is provided, which will happen if user packs a multi-output model. In this case,
     _infer_signature is called for every element of the list, and a output prefix like `output_0_` `output_1_` would be
@@ -668,21 +700,20 @@ def _validate_data_with_features_and_convert_to_df(features: Sequence[BaseFeatur
     else:
         raise NotImplementedError(f"Unable to validate data: Un-supported type provided {type(data)} as X.")
 
-    if len(features) != len(df.columns):
-        raise ValueError(
-            "Input data does not have the same number of features as signature. "
-            + f"Signature requires {len(features)} features, but have {len(df.columns)} in input data."
-        )
-
     # Rename if that data may have name inferred if provided to infer signature
     if not keep_columns:
-        df.columns = [feature.name for feature in features]
+        if len(features) != len(df.columns):
+            raise ValueError(
+                "Input data does not have the same number of features as signature. "
+                + f"Signature requires {len(features)} features, but have {len(df.columns)} in input data."
+            )
+        df.columns = pd.Index([feature.name for feature in features])
     return df
 
 
 def infer_signature(
-    input_data: Any,
-    output_data: Any,
+    input_data: model_types.SupportedDataType,
+    output_data: model_types.SupportedDataType,
     input_feature_names: Optional[List[str]] = None,
     output_feature_names: Optional[List[str]] = None,
 ) -> ModelSignature:

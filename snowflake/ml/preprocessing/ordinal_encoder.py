@@ -15,7 +15,7 @@ from snowflake import snowpark
 from snowflake.ml._internal import type_utils
 from snowflake.ml.framework import base
 from snowflake.ml.utils import telemetry
-from snowflake.snowpark import functions, types
+from snowflake.snowpark import functions as F, types as T
 
 _PROJECT = "ModelDevelopment"
 _SUBPROJECT = "Preprocessing"
@@ -250,29 +250,29 @@ class OrdinalEncoder(base.BaseEstimator, base.BaseTransformer):
 
             # encode non-missing categories
             encoded_value_columns = [
-                functions.lit(input_col).alias(_COLUMN_NAME),  # type: ignore[arg-type]
-                functions.col(input_col).alias(_CATEGORY),
+                F.lit(input_col).alias(_COLUMN_NAME),  # type: ignore[arg-type]
+                F.col(input_col).alias(_CATEGORY),
                 (
-                    functions.dense_rank().over(snowpark.Window.order_by(input_col))  # type: ignore[arg-type]
+                    F.dense_rank().over(snowpark.Window.order_by(input_col))  # type: ignore[arg-type]
                     - 1  # type: ignore[operator]
                 )
-                .cast(types.FloatType())
+                .cast(T.FloatType())
                 .alias(_INDEX),  # index categories
             ]
             encoded_value_df = (
-                distinct_dataset.filter(functions.col(input_col).is_not_null())
-                .sort(functions.col(input_col).asc())
+                distinct_dataset.filter(F.col(input_col).is_not_null())
+                .sort(F.col(input_col).asc())
                 .select(encoded_value_columns)
             )
 
             # encode missing categories
             encoded_missing_value_columns = [
-                functions.lit(input_col).alias(_COLUMN_NAME),  # type: ignore[arg-type]
-                functions.col(input_col).alias(_CATEGORY),
+                F.lit(input_col).alias(_COLUMN_NAME),  # type: ignore[arg-type]
+                F.col(input_col).alias(_CATEGORY),
                 # index missing categories
-                functions.lit(self.encoded_missing_value).alias(_INDEX),  # type: ignore[arg-type]
+                F.lit(self.encoded_missing_value).alias(_INDEX),  # type: ignore[arg-type]
             ]
-            encoded_missing_value_df = distinct_dataset.filter(functions.col(input_col).is_null()).select(
+            encoded_missing_value_df = distinct_dataset.filter(F.col(input_col).is_null()).select(
                 encoded_missing_value_columns
             )
 
@@ -464,17 +464,17 @@ class OrdinalEncoder(base.BaseEstimator, base.BaseTransformer):
         )
 
         # replace NULL with nan
-        null_category_state_df = state_df.filter(functions.col(_CATEGORY).is_null()).with_column(
-            _INDEX, functions.lit(self.encoded_missing_value)  # type: ignore[arg-type]
+        null_category_state_df = state_df.filter(F.col(_CATEGORY).is_null()).with_column(
+            _INDEX, F.lit(self.encoded_missing_value)  # type: ignore[arg-type]
         )
-        state_df = state_df.filter(functions.col(_CATEGORY).is_not_null()).union_by_name(null_category_state_df)
+        state_df = state_df.filter(F.col(_CATEGORY).is_not_null()).union_by_name(null_category_state_df)
 
         suffix = uuid.uuid4().hex.upper()
         transformed_dataset = dataset
 
         for idx, input_col in enumerate(self.input_cols):
             output_col = self.output_cols[idx]
-            input_col_state_df = state_df.filter(functions.col(_COLUMN_NAME) == input_col)[
+            input_col_state_df = state_df.filter(F.col(_COLUMN_NAME) == input_col)[
                 [_CATEGORY, _INDEX]
             ].with_column_renamed(_INDEX, output_col)
 
@@ -499,7 +499,7 @@ class OrdinalEncoder(base.BaseEstimator, base.BaseTransformer):
             transformed_dataset = transformed_dataset[output_cols]
 
         if _CATEGORY + suffix in transformed_dataset.columns:
-            transformed_dataset = transformed_dataset.with_column_renamed(functions.col(_CATEGORY + suffix), _CATEGORY)
+            transformed_dataset = transformed_dataset.with_column_renamed(F.col(_CATEGORY + suffix), _CATEGORY)
 
         transformed_dataset = self._handle_unknown_in_transform(transformed_dataset)
         return transformed_dataset
@@ -578,13 +578,13 @@ class OrdinalEncoder(base.BaseEstimator, base.BaseTransformer):
             for idx, input_col in enumerate(self.input_cols):
                 output_col = self.output_cols[idx]
                 unknown_columns = [
-                    functions.lit(input_col),  # type: ignore[arg-type]
-                    functions.col(input_col),
+                    F.lit(input_col),  # type: ignore[arg-type]
+                    F.col(input_col),
                 ]
                 temp_df = (
                     transformed_dataset[list({input_col, output_col})]
                     .distinct()
-                    .filter(functions.col(output_col).is_null())
+                    .filter(F.col(output_col).is_null())
                     .select(unknown_columns)
                     .to_df(["COLUMN_NAME", "UNKNOWN_VALUE"])
                 )

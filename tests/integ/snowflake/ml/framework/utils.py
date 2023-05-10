@@ -24,7 +24,7 @@ DATA = [
     ["7", "b", "g1ehQlL80t", -10.0, -12.564],
 ]
 
-DATA_NONE_NAN = [
+DATA_NONE_NAN: List[List[Any]] = [
     ["1", "a", "g1ehQlL80t", -1.0, 0.0],
     ["2", "a", "zOyDvcyZ2s", None, np.nan],
     ["3", "b", None, 2.0, 2253463.5342],

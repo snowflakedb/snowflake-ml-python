@@ -18,7 +18,7 @@ from snowflake import snowpark
 from snowflake.ml._internal import type_utils
 from snowflake.ml.framework import _utils, base
 from snowflake.ml.utils import telemetry
-from snowflake.snowpark import functions, types
+from snowflake.snowpark import functions as F, types as T
 from snowflake.snowpark._internal import utils as snowpark_utils
 
 _PROJECT = "ModelDevelopment"
@@ -364,17 +364,17 @@ class OneHotEncoder(base.BaseEstimator, base.BaseTransformer):
         found_state_df: Optional[snowpark.DataFrame] = None
         for input_col in self.input_cols:
             state_columns = [
-                functions.lit(input_col).alias(_COLUMN_NAME),  # type: ignore[arg-type]
-                functions.col(input_col).cast(types.StringType()).alias(_CATEGORY),
-                functions.iff(
+                F.lit(input_col).alias(_COLUMN_NAME),  # type: ignore[arg-type]
+                F.col(input_col).cast(T.StringType()).alias(_CATEGORY),
+                F.iff(
                     # null or nan values
-                    functions.col(input_col).is_null()  # type: ignore[arg-type]
-                    | (functions.col(input_col).cast(types.StringType()).equal_nan()),
+                    F.col(input_col).is_null()  # type: ignore[arg-type]
+                    | (F.col(input_col).cast(T.StringType()).equal_nan()),
                     # count null and nan values
-                    functions.sum(  # type: ignore[arg-type]
-                        functions.iff(  # type: ignore[arg-type]
-                            functions.col(input_col).is_null()  # type: ignore[arg-type]
-                            | (functions.col(input_col).cast(types.StringType()).equal_nan()),
+                    F.sum(  # type: ignore[arg-type]
+                        F.iff(  # type: ignore[arg-type]
+                            F.col(input_col).is_null()  # type: ignore[arg-type]
+                            | (F.col(input_col).cast(T.StringType()).equal_nan()),
                             1,  # type: ignore[arg-type]
                             0,  # type: ignore[arg-type]
                         )
@@ -382,7 +382,7 @@ class OneHotEncoder(base.BaseEstimator, base.BaseTransformer):
                         snowpark.Window.partition_by(input_col)  # type: ignore[arg-type]
                     ),
                     # count values that are not null or nan
-                    functions.count(input_col).over(snowpark.Window.partition_by(input_col)),  # type: ignore[arg-type]
+                    F.count(input_col).over(snowpark.Window.partition_by(input_col)),  # type: ignore[arg-type]
                 ).alias(_COUNT),
             ]
             temp_df = dataset.select(state_columns).distinct()
@@ -672,7 +672,7 @@ class OneHotEncoder(base.BaseEstimator, base.BaseTransformer):
         transformed_dataset = dataset
         for idx, input_col in enumerate(self.input_cols):
             output_col = self.output_cols[idx]
-            input_col_state_df = state_df.filter(functions.col(_COLUMN_NAME) == input_col)[
+            input_col_state_df = state_df.filter(F.col(_COLUMN_NAME) == input_col)[
                 [_CATEGORY, _ENCODED_VALUE]
             ].with_column_renamed(_ENCODED_VALUE, output_col)
 
@@ -732,7 +732,7 @@ class OneHotEncoder(base.BaseEstimator, base.BaseTransformer):
         transformed_dataset = dataset
         for input_col in self.input_cols:
             output_cols = [f'"{col}"' for col in self._dense_output_cols_mappings[input_col]]
-            input_col_state_df = state_df.filter(functions.col(_COLUMN_NAME) == input_col)[output_cols + [_CATEGORY]]
+            input_col_state_df = state_df.filter(F.col(_COLUMN_NAME) == input_col)[output_cols + [_CATEGORY]]
 
             # index values through a left join over the dataset and its states
             transformed_dataset = transformed_dataset.join(
@@ -766,14 +766,14 @@ class OneHotEncoder(base.BaseEstimator, base.BaseTransformer):
             function_name=telemetry.get_statement_params_full_func_name(
                 inspect.currentframe(), self.__class__.__name__
             ),
-            api_calls=[functions.pandas_udf],
+            api_calls=[F.pandas_udf],
         )
 
-        @functions.pandas_udf(  # type: ignore
+        @F.pandas_udf(  # type: ignore
             is_permanent=False,
             replace=True,
-            return_type=types.PandasSeriesType(types.ArrayType(types.MapType(types.FloatType(), types.FloatType()))),
-            input_types=[types.PandasDataFrameType([types.StringType() for _ in range(len(self.input_cols))])],
+            return_type=T.PandasSeriesType(T.ArrayType(T.MapType(T.FloatType(), T.FloatType()))),
+            input_types=[T.PandasDataFrameType([T.StringType() for _ in range(len(self.input_cols))])],
             packages=["numpy", "scikit-learn"],
             statement_params=statement_params,
         )
@@ -808,7 +808,7 @@ class OneHotEncoder(base.BaseEstimator, base.BaseTransformer):
         # output columns of value {column_index: 1.0} or null
         output_columns = []
         for idx, _ in enumerate(self.input_cols):
-            output_columns.append(functions.col(encoded_output_col)[idx])
+            output_columns.append(F.col(encoded_output_col)[idx])
 
         transformed_dataset: snowpark.DataFrame = encoded_dataset.with_columns(self.output_cols, output_columns).drop(
             encoded_output_col
@@ -938,13 +938,13 @@ class OneHotEncoder(base.BaseEstimator, base.BaseTransformer):
                     check_col = output_cat_cols[0]
 
                 unknown_columns = [
-                    functions.lit(input_col),  # type: ignore[arg-type]
-                    functions.col(input_col),
+                    F.lit(input_col),  # type: ignore[arg-type]
+                    F.col(input_col),
                 ]
                 temp_df = (
                     transformed_dataset[[input_col, check_col]]
                     .distinct()
-                    .filter(functions.col(check_col).is_null())
+                    .filter(F.col(check_col).is_null())
                     .select(unknown_columns)
                     .to_df(["COLUMN_NAME", "UNKNOWN_VALUE"])
                 )

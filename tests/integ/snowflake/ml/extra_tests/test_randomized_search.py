@@ -5,12 +5,13 @@
 import inflection
 import numpy as np
 from absl.testing.absltest import TestCase, main
-from sklearn.datasets import load_diabetes
-from sklearn.model_selection import GridSearchCV as SkGridSearchCV
-from sklearn.svm import SVR as SkSVR
+from scipy.stats import randint
+from sklearn.datasets import load_iris
+from sklearn.ensemble import RandomForestClassifier as SkRandomForestClassifier
+from sklearn.model_selection import RandomizedSearchCV as SkRandomizedSearchCV
 
-from snowflake.ml.modeling.model_selection import GridSearchCV
-from snowflake.ml.modeling.svm import SVR
+from snowflake.ml.modeling.ensemble import RandomForestClassifier
+from snowflake.ml.modeling.model_selection import RandomizedSearchCV
 from snowflake.ml.utils.connection_params import SnowflakeLoginOptions
 from snowflake.snowpark import Session
 
@@ -24,15 +25,32 @@ class GridSearchCVTest(TestCase):
         self._session.close()
 
     def test_fit_and_compare_results(self) -> None:
-        input_df_pandas = load_diabetes(as_frame=True).frame
+        input_df_pandas = load_iris(as_frame=True).frame
         input_df_pandas.columns = [inflection.parameterize(c, "_").upper() for c in input_df_pandas.columns]
         input_cols = [c for c in input_df_pandas.columns if not c.startswith("TARGET")]
         label_col = [c for c in input_df_pandas.columns if c.startswith("TARGET")]
         input_df_pandas["INDEX"] = input_df_pandas.reset_index().index
         input_df = self._session.create_dataframe(input_df_pandas)
 
-        sklearn_reg = SkGridSearchCV(estimator=SkSVR(), param_grid={"C": [1, 10], "kernel": ("linear", "rbf")})
-        reg = GridSearchCV(estimator=SVR(), param_grid={"C": [1, 10], "kernel": ("linear", "rbf")})
+        sklearn_reg = SkRandomizedSearchCV(
+            estimator=SkRandomForestClassifier(random_state=0),
+            param_distributions={
+                "n_estimators": randint(50, 200),
+                "max_depth": randint(3, 8),
+                "min_samples_leaf": randint(2, 5),
+            },
+            random_state=0,
+        )
+
+        reg = RandomizedSearchCV(
+            estimator=RandomForestClassifier(random_state=0),
+            param_distributions={
+                "n_estimators": randint(50, 200),
+                "max_depth": randint(3, 8),
+                "min_samples_leaf": randint(2, 5),
+            },
+            random_state=0,
+        )
         reg.set_input_cols(input_cols)
         output_cols = ["OUTPUT_" + c for c in label_col]
         reg.set_output_cols(output_cols)

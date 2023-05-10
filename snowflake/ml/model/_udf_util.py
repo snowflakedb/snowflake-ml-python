@@ -3,18 +3,36 @@ import tempfile
 import warnings
 from typing import IO, List, Optional, Tuple
 
-from snowflake.ml._internal import env_utils, file_utils as snowml_file_utils
-from snowflake.ml.model import model, model_meta, model_types
+from typing_extensions import Unpack
+
+from snowflake.ml._internal import env_utils
+from snowflake.ml.model import (
+    _env as model_env,
+    _model,
+    _model_meta,
+    type_hints as model_types,
+)
 from snowflake.snowpark import session as snowpark_session, types as st
 
-_SNOWFLAKE_CONDA_CHANNEL_URL = "https://repo.anaconda.com/pkgs/snowflake"
+_KEEP_ORDER_CODE_TEMPLATE = 'predictions_df["_ID"] = input_df["_ID"]'
+
+_SNOWML_IMPORT_CODE = """
+
+snowml_filename = '{snowml_filename}'
+snowml_path = import_dir + snowml_filename
+snowml_extracted = '/tmp/' + snowml_filename
+with FileLock():
+    if not os.path.isdir(snowml_extracted):
+        with zipfile.ZipFile(snowml_path, 'r') as myzip:
+            myzip.extractall(snowml_extracted)
+sys.path.insert(0, snowml_extracted)
+"""
 
 _UDF_CODE_TEMPLATE = """
 import pandas as pd
 import numpy as np
 import sys
 from _snowflake import vectorized
-from snowflake.ml.model.model import _load_model_for_deploy
 import os
 import fcntl
 import threading
@@ -35,6 +53,11 @@ class FileLock:
 
 IMPORT_DIRECTORY_NAME = "snowflake_import_directory"
 import_dir = sys._xoptions[IMPORT_DIRECTORY_NAME]
+
+{snowml_import_code}
+
+from snowflake.ml.model._model import _load_model_for_deploy
+
 model_dir_name = '{model_dir_name}'
 zip_model_path = os.path.join(import_dir, '{model_dir_name}.zip')
 extracted = '/tmp/models'
@@ -50,61 +73,35 @@ model, meta = _load_model_for_deploy(extracted_model_dir_path)
 # TODO(halu): Avoid per batch async detection branching.
 @vectorized(input=pd.DataFrame, max_batch_size=10)
 def infer(df):
-    input_cols = [spec.name for spec in meta.signature.inputs]
+    input_cols = [spec.name for spec in meta.signatures["{target_method}"].inputs]
     input_df = pd.io.json.json_normalize(df[0])
-    if inspect.iscoroutinefunction(model.predict):
-        predictions_df = anyio.run(model.predict, input_df[input_cols])
+    if inspect.iscoroutinefunction(model.{target_method}):
+        predictions_df = anyio.run(model.{target_method}, input_df[input_cols])
     else:
-        predictions_df = model.predict(input_df[input_cols])
+        predictions_df = model.{target_method}(input_df[input_cols])
+
+    {keep_order_code}
 
     return predictions_df.to_dict("records")
 """
 
 
-# TODO: Take care dedupe if already existed without code change.
-def _upload_snowml_to_tmp_stage(
-    session: snowpark_session.Session,
-) -> str:
-    """Upload model module of snowml to tmp stage.
-
-    Args:
-        session: Snowpark session.
-
-    Returns:
-        The stage path to uploaded snowml.zip file.
-    """
-    # Only upload `model` module of snowml
-    dir_path = os.path.normpath(os.path.join(__file__, "..", ".."))
-    # leading path to set up proper import path for the zipimport
-    idx = dir_path.rfind("snowflake")
-    leading_path = os.path.abspath(dir_path[:idx])
-    tmp_stage = session.get_session_stage()
-    filename = "snowml.zip"
-    with snowml_file_utils.zip_file_or_directory_to_stream(dir_path, leading_path) as input_stream:
-        session._conn.upload_stream(
-            input_stream=input_stream,
-            stage_location=tmp_stage,
-            dest_filename=filename,
-            dest_prefix="",
-            source_compression="DEFLATE",
-            compress_data=False,
-            overwrite=True,
-            is_in_udf=True,
-        )
-    return f"{tmp_stage}/{filename}"
-
-
 def _deploy_to_warehouse(
-    session: snowpark_session.Session, *, model_dir_path: str, udf_name: str, relax_version: Optional[bool] = False
-) -> Tuple[model_types.ModelType, model_meta.ModelMetadata]:
+    session: snowpark_session.Session,
+    *,
+    model_dir_path: str,
+    udf_name: str,
+    target_method: str,
+    **kwargs: Unpack[model_types.WarehouseDeployOptions],
+) -> Tuple[model_types.ModelType, _model_meta.ModelMetadata]:
     """Deploy the model to warehouse as UDF.
 
     Args:
         session: Snowpark session.
         model_dir_path: Path to model directory.
         udf_name: Name of the UDF.
-        relax_version: Whether or not relax the version restriction when fail to resolve dependencies.
-            Defaults to False.
+        target_method: The name of the target method to be deployed.
+        **kwargs: Options that control some features in generated udf code.
 
     Raises:
         ValueError: Raised when incompatible model.
@@ -115,13 +112,19 @@ def _deploy_to_warehouse(
     if not os.path.exists(model_dir_path):
         raise ValueError("Model config did not exist.")
     model_dir_name = os.path.basename(model_dir_path)
-    m, meta = model.load_model(model_dir_path)
-    final_packages = _get_model_final_packages(meta, session, relax_version)
+    m, meta = _model.load_model(model_dir_path)
+    relax_version = kwargs.get("relax_version", False)
+
+    if target_method not in meta.signatures.keys():
+        raise ValueError(f"Target method {target_method} does not exist in model.")
+
+    _snowml_wheel_path = kwargs.get("_snowml_wheel_path", None)
+
+    final_packages = _get_model_final_packages(meta, session, relax_version=relax_version)
     with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
-        _write_UDF_py_file(f.file, model_dir_name)
+        _write_UDF_py_file(f.file, model_dir_name, target_method, **kwargs)
         print(f"Generated UDF file is persisted at: {f.name}")
-        # TODO: Less hacky way to import `snowml`
-        snowml_stage_path = _upload_snowml_to_tmp_stage(session)
+        imports = [model_dir_path] + [_snowml_wheel_path] if _snowml_wheel_path else []
         session.udf.register_from_file(
             file_path=f.name,
             func_name="infer",
@@ -129,27 +132,45 @@ def _deploy_to_warehouse(
             return_type=st.PandasSeriesType(st.MapType(st.StringType(), st.VariantType())),
             input_types=[st.PandasDataFrameType([st.MapType()])],
             replace=True,
-            imports=[model_dir_path, snowml_stage_path],
+            imports=list(imports),
             packages=list(final_packages),
         )
     print(f"{udf_name} is deployed to warehouse.")
     return m, meta
 
 
-def _write_UDF_py_file(f: IO[str], model_dir_name: str) -> None:
+def _write_UDF_py_file(
+    f: IO[str],
+    model_dir_name: str,
+    target_method: str,
+    **kwargs: Unpack[model_types.WarehouseDeployOptions],
+) -> None:
     """Generate and write UDF python code into a file
 
     Args:
         f: File descriptor to write the python code.
         model_dir_name: Path to model directory.
+        target_method: The name of the target method to be deployed.
+        **kwargs: Options that control some features in generated udf code.
     """
-    udf_code = _UDF_CODE_TEMPLATE.format(model_dir_name=model_dir_name)
+    keep_order = kwargs.get("keep_order", True)
+    snowml_wheel_path = kwargs.get("_snowml_wheel_path", None)
+    if snowml_wheel_path:
+        whl_filename = os.path.basename(snowml_wheel_path)
+        snowml_import_code = _SNOWML_IMPORT_CODE.format(snowml_filename=whl_filename)
+
+    udf_code = _UDF_CODE_TEMPLATE.format(
+        model_dir_name=model_dir_name,
+        keep_order_code=_KEEP_ORDER_CODE_TEMPLATE if keep_order else "",
+        target_method=target_method,
+        snowml_import_code=snowml_import_code if snowml_wheel_path else "",
+    )
     f.write(udf_code)
     f.flush()
 
 
 def _get_model_final_packages(
-    meta: model_meta.ModelMetadata, session: snowpark_session.Session, relax_version: Optional[bool] = False
+    meta: _model_meta.ModelMetadata, session: snowpark_session.Session, relax_version: Optional[bool] = False
 ) -> List[str]:
     """Generate final packages list of dependency of a model to be deployed to warehouse.
 
@@ -168,19 +189,18 @@ def _get_model_final_packages(
     """
     final_packages = None
     if (
-        len(meta._conda_dependencies.keys()) > 1
-        or list(meta._conda_dependencies.keys())[0] != "defaults"
+        any(channel.lower() not in ["", "snowflake"] for channel in meta._conda_dependencies.keys())
         or meta.pip_requirements
     ):
         raise RuntimeError("PIP requirements and dependencies from non-Snowflake anaconda channel is not supported.")
     try:
         final_packages = env_utils.resolve_conda_environment(
-            meta._conda_dependencies["defaults"], [_SNOWFLAKE_CONDA_CHANNEL_URL]
+            meta._conda_dependencies[""], [model_env._SNOWFLAKE_CONDA_CHANNEL_URL]
         )
         if final_packages is None and relax_version:
             final_packages = env_utils.resolve_conda_environment(
-                list(map(env_utils.relax_requirement_version, meta._conda_dependencies["defaults"])),
-                [_SNOWFLAKE_CONDA_CHANNEL_URL],
+                list(map(env_utils.relax_requirement_version, meta._conda_dependencies[""])),
+                [model_env._SNOWFLAKE_CONDA_CHANNEL_URL],
             )
     except ImportError:
         warnings.warn(
@@ -188,12 +208,12 @@ def _get_model_final_packages(
             category=RuntimeWarning,
         )
         final_packages = env_utils.validate_requirements_in_snowflake_conda_channel(
-            session=session, reqs=meta._conda_dependencies["defaults"]
+            session=session, reqs=meta._conda_dependencies[""]
         )
         if final_packages is None and relax_version:
             final_packages = env_utils.validate_requirements_in_snowflake_conda_channel(
                 session=session,
-                reqs=list(map(env_utils.relax_requirement_version, meta._conda_dependencies["defaults"])),
+                reqs=list(map(env_utils.relax_requirement_version, meta._conda_dependencies[""])),
             )
     finally:
         if final_packages is None:

@@ -16,34 +16,34 @@ class EnvTest(absltest.TestCase):
         cd: DefaultDict[str, List[requirements.Requirement]]
         with tempfile.TemporaryDirectory() as tmpdir:
             cd = collections.defaultdict(list)
-            _env.save_conda_env_file(tmpdir, cd)
-            loaded_cd, _ = _env.load_conda_env_file(tmpdir)
+            env_file_path = _env.save_conda_env_file(tmpdir, cd)
+            loaded_cd, _ = _env.load_conda_env_file(env_file_path)
             self.assertEqual(cd, loaded_cd)
 
         with tempfile.TemporaryDirectory() as tmpdir:
             cd = collections.defaultdict(list)
-            cd["defaults"] = [requirements.Requirement("numpy")]
-            _env.save_conda_env_file(tmpdir, cd)
-            loaded_cd, _ = _env.load_conda_env_file(tmpdir)
+            cd[""] = [requirements.Requirement("numpy")]
+            env_file_path = _env.save_conda_env_file(tmpdir, cd)
+            loaded_cd, _ = _env.load_conda_env_file(env_file_path)
             self.assertEqual(cd, loaded_cd)
 
         with tempfile.TemporaryDirectory() as tmpdir:
             cd = collections.defaultdict(list)
-            cd["defaults"] = [requirements.Requirement("numpy>=1.22.4")]
-            _env.save_conda_env_file(tmpdir, cd)
-            loaded_cd, _ = _env.load_conda_env_file(tmpdir)
+            cd[""] = [requirements.Requirement("numpy>=1.22.4")]
+            env_file_path = _env.save_conda_env_file(tmpdir, cd)
+            loaded_cd, _ = _env.load_conda_env_file(env_file_path)
             self.assertEqual(cd, loaded_cd)
 
         with tempfile.TemporaryDirectory() as tmpdir:
             cd = collections.defaultdict(list)
             cd.update(
                 {
-                    "defaults": [requirements.Requirement("numpy>=1.22.4")],
-                    "conda-forge": [requirements.Requirement("pytorch~=2.0")],
+                    "": [requirements.Requirement("numpy>=1.22.4")],
+                    "conda-forge": [requirements.Requirement("pytorch!=2.0")],
                 }
             )
-            _env.save_conda_env_file(tmpdir, cd)
-            loaded_cd, _ = _env.load_conda_env_file(tmpdir)
+            env_file_path = _env.save_conda_env_file(tmpdir, cd)
+            loaded_cd, _ = _env.load_conda_env_file(env_file_path)
             self.assertEqual(cd, loaded_cd)
 
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -52,19 +52,20 @@ class EnvTest(absltest.TestCase):
                     stream=f,
                     data={
                         "name": "snow-env",
+                        "chanels": ["https://repo.anaconda.com/pkgs/snowflake", "nodefaults"],
                         "dependencies": [
-                            f"python={snowml_env.PYTHON_VERSION}",
-                            "defaults::numpy>=1.22.4",
-                            "conda-forge::pytorch~=2.0",
+                            f"python=={snowml_env.PYTHON_VERSION}",
+                            "::numpy>=1.22.4",
+                            "conda-forge::pytorch!=2.0",
                             {"pip": "python-package"},
                         ],
                     },
                 )
-            loaded_cd, _ = _env.load_conda_env_file(tmpdir)
+            loaded_cd, _ = _env.load_conda_env_file(os.path.join(tmpdir, _env._CONDA_ENV_FILE_NAME))
             self.assertEqual(
                 {
-                    "defaults": [requirements.Requirement("numpy>=1.22.4")],
-                    "conda-forge": [requirements.Requirement("pytorch~=2.0")],
+                    "": [requirements.Requirement("numpy>=1.22.4")],
+                    "conda-forge": [requirements.Requirement("pytorch!=2.0")],
                 },
                 loaded_cd,
             )
@@ -72,14 +73,14 @@ class EnvTest(absltest.TestCase):
     def test_generate_requirements_file(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             rl: List[requirements.Requirement] = []
-            _env.save_requirements_file(tmpdir, rl)
-            loaded_rl = _env.load_requirements_file(tmpdir)
+            pip_file_path = _env.save_requirements_file(tmpdir, rl)
+            loaded_rl = _env.load_requirements_file(pip_file_path)
             self.assertEqual(rl, loaded_rl)
 
         with tempfile.TemporaryDirectory() as tmpdir:
             rl = [requirements.Requirement("python-package==1.0.1")]
-            _env.save_requirements_file(tmpdir, rl)
-            loaded_rl = _env.load_requirements_file(tmpdir)
+            pip_file_path = _env.save_requirements_file(tmpdir, rl)
+            loaded_rl = _env.load_requirements_file(pip_file_path)
             self.assertEqual(rl, loaded_rl)
 
 

@@ -14,7 +14,7 @@ import numpy as np
 from absl.testing.absltest import main
 from sklearn.preprocessing import LabelEncoder as SklearnLabelEncoder
 
-from snowflake.ml.preprocessing.label_encoder import LabelEncoder
+from snowflake.ml.preprocessing import LabelEncoder  # type: ignore[attr-defined]
 from snowflake.ml.utils.connection_params import SnowflakeLoginOptions
 from snowflake.snowpark import Session
 from tests.integ.snowflake.ml.framework import utils as framework_utils
@@ -34,18 +34,18 @@ OUTPUT_COL = "_TEST"
 class LabelEncoderTest(TestCase):
     """Test LabelEncoder."""
 
-    def setUp(self):
+    def setUp(self) -> None:
         """Creates Snowpark and Snowflake environments for testing."""
         self._session = Session.builder.configs(SnowflakeLoginOptions()).create()
         self._to_be_deleted_files = []
 
-    def tearDown(self):
+    def tearDown(self) -> None:
         self._session.close()
         for filepath in self._to_be_deleted_files:
             if os.path.exists(filepath):
                 os.remove(filepath)
 
-    def test_fit(self):
+    def test_fit(self) -> None:
         """
         Verify fitted categories.
 
@@ -62,9 +62,9 @@ class LabelEncoderTest(TestCase):
         encoder_sklearn = SklearnLabelEncoder()
         encoder_sklearn.fit(df_pandas[INPUT_COL])
 
-        assert np.array_equal(encoder.classes_, encoder_sklearn.classes_)
+        np.testing.assert_equal(encoder.classes_, encoder_sklearn.classes_)
 
-    def test_fit_nones(self):
+    def test_fit_nones(self) -> None:
         """
         Verify fitted categories with `None`s in the label column.
 
@@ -81,9 +81,9 @@ class LabelEncoderTest(TestCase):
         encoder_sklearn = SklearnLabelEncoder()
         encoder_sklearn.fit(df_pandas[INPUT_COL])
 
-        assert np.array_equal(encoder.classes_, encoder_sklearn.classes_)
+        np.testing.assert_equal(encoder.classes_, encoder_sklearn.classes_)
 
-    def test_transform_snowpark(self):
+    def test_transform_snowpark(self) -> None:
         """
         Verify transformed dataset.
 
@@ -104,9 +104,9 @@ class LabelEncoderTest(TestCase):
         sklearn_encoder.fit(sklearn_input_ndarray)
         sklearn_tranformed_dataset = sklearn_encoder.transform(sklearn_input_ndarray)
 
-        assert np.array_equal(sklearn_tranformed_dataset, transformed_dataset_output_col)
+        np.testing.assert_equal(sklearn_tranformed_dataset, transformed_dataset_output_col)
 
-    def test_transform_snowpark_none(self):
+    def test_transform_snowpark_none(self) -> None:
         """
         Verify transformed dataset containing `None`s.
 
@@ -121,7 +121,7 @@ class LabelEncoderTest(TestCase):
         encoder.fit(df_none_nan)
 
         # `None` is included.
-        assert None in encoder.classes_
+        self.assertTrue(None in encoder.classes_)
 
         transformed_dataset = encoder.transform(df_none_nan)
         transformed_dataset_output_col = transformed_dataset.to_pandas()[[OUTPUT_COL]].to_numpy().flatten()
@@ -131,14 +131,14 @@ class LabelEncoderTest(TestCase):
         sklearn_encoder.fit(sklearn_input_ndarray)
         sklearn_transformed_dataset = sklearn_encoder.transform(sklearn_input_ndarray)
 
-        assert np.array_equal(sklearn_transformed_dataset, transformed_dataset_output_col)
+        np.testing.assert_equal(sklearn_transformed_dataset, transformed_dataset_output_col)
 
         # Attempt to transform the dataset without `None`s should raise ValueError.
         df_pandas, df = framework_utils.get_df(self._session, DATA, SCHEMA)
         with self.assertRaises(ValueError):
             encoder.transform(df)
 
-    def test_transform_snowpark_boolean(self):
+    def test_transform_snowpark_boolean(self) -> None:
         """
         Verify transformed dataset containing booleans.
 
@@ -160,9 +160,9 @@ class LabelEncoderTest(TestCase):
         sklearn_encoder.fit(sklearn_input_ndarray)
         sklearn_transformed_dataset = sklearn_encoder.transform(sklearn_input_ndarray)
 
-        assert np.array_equal(sklearn_transformed_dataset, transformed_dataset_output_col)
+        np.testing.assert_equal(sklearn_transformed_dataset, transformed_dataset_output_col)
 
-    def test_transform_sklearn(self):
+    def test_transform_sklearn(self) -> None:
         """ """
         df_pandas, df = framework_utils.get_df(self._session, DATA, SCHEMA, np.nan)
         encoder = LabelEncoder(input_cols=INPUT_COL, output_cols=OUTPUT_COL)
@@ -175,9 +175,9 @@ class LabelEncoderTest(TestCase):
         sklearn_encoder.fit(df_pandas_y)
         sklearn_transformed_dataset = sklearn_encoder.transform(df_pandas_y)
 
-        assert np.array_equal(sklearn_transformed_dataset, transformed_dataset[[OUTPUT_COL]].to_numpy().flatten())
+        np.testing.assert_equal(sklearn_transformed_dataset, transformed_dataset[[OUTPUT_COL]].to_numpy().flatten())
 
-    def test_serde(self):
+    def test_serde(self) -> None:
         """
         Test serialization and deserialization via cloudpickle, pickle, and joblib.
 
@@ -230,9 +230,9 @@ class LabelEncoderTest(TestCase):
         label_encoder_sklearn.fit(df_pandas[input_cols])
         sklearn_arr = label_encoder_sklearn.transform(df_pandas[input_cols])
 
-        assert np.allclose(actual_arr_cloudpickle, sklearn_arr)
-        assert np.allclose(actual_arr_pickle, sklearn_arr)
-        assert np.allclose(actual_arr_joblib, sklearn_arr)
+        np.testing.assert_allclose(actual_arr_cloudpickle, sklearn_arr)
+        np.testing.assert_allclose(actual_arr_pickle, sklearn_arr)
+        np.testing.assert_allclose(actual_arr_joblib, sklearn_arr)
 
 
 if __name__ == "__main__":

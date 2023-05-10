@@ -1,6 +1,7 @@
+import inspect
 from typing import List, Optional
 
-from snowflake import connector
+from snowflake import connector, snowpark
 from snowflake.ml._internal.utils import query_result_checker
 from snowflake.ml.utils import telemetry
 from snowflake.snowpark import Session
@@ -40,7 +41,10 @@ def _validate_pkg_version_supported_in_snowflake_conda_channel(
                     AND version = '{version}';"""
         result = session.sql(sql).collect(
             statement_params=telemetry.get_function_usage_statement_params(
-                project=_PROJECT, subproject=subproject or _SUBPROJECT
+                project=_PROJECT,
+                subproject=subproject or _SUBPROJECT,
+                function_name=telemetry.get_statement_params_full_func_name(inspect.currentframe()),
+                api_calls=[snowpark.DataFrame.collect],
             )
         )
         try:

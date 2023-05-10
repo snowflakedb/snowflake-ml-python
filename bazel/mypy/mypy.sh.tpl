@@ -14,7 +14,8 @@ main() {
 
   export MYPYPATH="$(pwd):{ADDITIONAL_MYPYPATH}"
 
-  $mypy {VERBOSE_OPT} --bazel {PACKAGE_ROOTS} --config-file {MYPY_INI} --cache-map {CACHE_MAP_TRIPLES} -- {SRCS} > "${report_file}" 2>&1
+  # --enable-incomplete-features is specified to support unpacking features for precise TypedDict typing. Can be changed to --enable-incomplete-features=Unpack with mypy version >= 1.0
+  $mypy {VERBOSE_OPT} --bazel {PACKAGE_ROOTS} --config-file {MYPY_INI} --cache-map {CACHE_MAP_TRIPLES} --enable-incomplete-features -- {SRCS} > "${report_file}" 2>&1
   status=$?
 
   if [[ $status -ne 0 ]]; then

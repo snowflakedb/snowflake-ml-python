@@ -212,20 +212,31 @@ class {transform.estimator_class_name}(BaseEstimator, BaseTransformer):
         session.file.put(local_transform_file_name, stage_transform_file_name, auto_compress=False, overwrite=True)
 
         fit_sproc_name = "SNOWML_FIT_{{safe_id}}".format(safe_id=self.id)
+        statement_params = telemetry.get_function_usage_statement_params(
+            project=_PROJECT,
+            subproject=_SUBPROJECT,
+            function_name=telemetry.get_statement_params_full_func_name(
+                inspect.currentframe(), self.__class__.__name__
+            ),
+            api_calls=[sproc],
+            custom_tags=dict([("autogen", True)]),
+        )
         @sproc(
-                is_permanent=False,
-                name=fit_sproc_name,
-                packages=["snowflake-snowpark-python", {transform.fit_sproc_deps}],
-                replace=True,
-                session=session)
+            is_permanent=False,
+            name=fit_sproc_name,
+            packages=["snowflake-snowpark-python", {transform.fit_sproc_deps}],
+            replace=True,
+            session=session,
+            statement_params=statement_params,
+        )
         def fit_wrapper_sproc(
-                session: Session,
-                sql_query: str,
-                stage_transform_file_name: str,
-                stage_result_file_name: str,
-                input_cols: List[str],
-                label_cols: List[str],
-                sample_weight_col: Optional[str]
+            session: Session,
+            sql_query: str,
+            stage_transform_file_name: str,
+            stage_result_file_name: str,
+            input_cols: List[str],
+            label_cols: List[str],
+            sample_weight_col: Optional[str]
         ) -> str:
             import joblib
             import numpy as np
@@ -349,12 +360,22 @@ class {transform.estimator_class_name}(BaseEstimator, BaseTransformer):
         input_cols = self.input_cols
         unquoted_input_cols = identifier.get_equivalent_identifier_in_the_response_pandas_dataframe(self.input_cols)
 
+        statement_params = telemetry.get_function_usage_statement_params(
+            project=_PROJECT,
+            subproject=_SUBPROJECT,
+            function_name=telemetry.get_statement_params_full_func_name(
+                inspect.currentframe(), self.__class__.__name__
+            ),
+            api_calls=[pandas_udf],
+            custom_tags=dict([("autogen", True)]),
+        )
         @pandas_udf(
             is_permanent=False,
             name=batch_inference_udf_name,
             packages=[{transform.predict_udf_deps}],
             replace=True,
-            session=session
+            session=session,
+            statement_params=statement_params,
         )
         def vec_batch_infer(ds: PandasSeries[dict]) -> PandasSeries[dict]:
             import pandas as pd
@@ -439,7 +460,7 @@ class {transform.estimator_class_name}(BaseEstimator, BaseTransformer):
         ])
 
         inner_select_list.extend([
-            "{{udf_name}}(object_construct({{input_cols_dict}})) AS {{udf_name}}".format(
+            "{{udf_name}}(object_construct_keep_null({{input_cols_dict}})) AS {{udf_name}}".format(
                 udf_name=batch_inference_udf_name,
                 input_cols_dict=", ".join([f"'{{c}}', {{c}}" for c in self.input_cols]),
             )
@@ -823,12 +844,23 @@ class {transform.estimator_class_name}(BaseEstimator, BaseTransformer):
         session.file.put(local_score_file_name, stage_score_file_name, auto_compress=False, overwrite=True)
 
         score_sproc_name = "SNOWML_SCORE_{{safe_id}}".format(safe_id=self.id)
+        statement_params = telemetry.get_function_usage_statement_params(
+            project=_PROJECT,
+            subproject=_SUBPROJECT,
+            function_name=telemetry.get_statement_params_full_func_name(
+                inspect.currentframe(), self.__class__.__name__
+            ),
+            api_calls=[sproc],
+            custom_tags=dict([("autogen", True)]),
+        )
         @sproc(
             is_permanent=False,
             name=score_sproc_name,
             packages=["snowflake-snowpark-python", {transform.fit_sproc_deps}],
             replace=True,
-            session=session)
+            session=session,
+            statement_params=statement_params,
+        )
         def score_wrapper_sproc(
             session: Session,
             sql_query: str,

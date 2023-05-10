@@ -21,6 +21,7 @@ def _validate_pip_requirement_string(req_str: str) -> requirements.Requirement:
         req_str: The string contains the pip requirement specification.
 
     Raises:
+        ValueError: Raised when python is specified as a dependency.
         ValueError: Raised when invalid requirement string confronted.
         ValueError: Raised when requirement containing marker record confronted.
 
@@ -30,6 +31,9 @@ def _validate_pip_requirement_string(req_str: str) -> requirements.Requirement:
     try:
         r = requirements.Requirement(req_str)
         r.name = packaging_utils.canonicalize_name(r.name)
+
+        if r.name == "python":
+            raise ValueError("Don't specify python as a dependency, use python version argument instead.")
     except requirements.InvalidRequirement:
         raise ValueError(f"Invalid package requirement {req_str} found.")
 
@@ -48,19 +52,21 @@ def _validate_conda_dependency_string(dep_str: str) -> Tuple[str, requirements.R
     Raises:
         ValueError: Raised when invalid conda dependency containing extras record confronted.
         ValueError: Raised when invalid conda dependency containing url record confronted.
+        ValueError: Raised when conda dependency operator ~= which is not supported by conda.
 
     Returns:
         A tuple containing the conda channel name and requirement.Requirement object showing requirement information.
     """
     channel_str, _, requirement_str = dep_str.rpartition("::")
-    if channel_str == "":
-        channel_str = "defaults"
     r = _validate_pip_requirement_string(requirement_str)
     if channel_str != "pip":
         if r.extras:
             raise ValueError("Extras is not supported in conda dependency.")
         if r.url:
             raise ValueError("Url is not supported in conda dependency.")
+        for specifier in r.specifier:
+            if specifier.operator == "~=":
+                raise ValueError("Operator ~= is not supported in conda dependency.")
     return (channel_str, r)
 
 

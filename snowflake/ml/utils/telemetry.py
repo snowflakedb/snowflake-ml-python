@@ -32,9 +32,11 @@ _Args = ParamSpec("_Args")
 _ReturnValue = TypeVar("_ReturnValue")
 
 
-def get_statement_params_full_func_name(frame: Optional[types.FrameType], class_name: str) -> str:
+def get_statement_params_full_func_name(frame: Optional[types.FrameType], class_name: Optional[str] = None) -> str:
     """
-    Get the full function name with module and class to be logged in statement parameters.
+    Get the class-level or module-level full function name to be logged in statement parameters.
+    The full function name is in the form of "module_name.class_name.function_name" (class-level)
+    or "module_name.function_name" (module-level) when `class_name` is None.
 
     Args:
         frame: Frame object for the caller’s stack frame.
@@ -295,6 +297,8 @@ def send_api_usage_telemetry(
                 return res
             finally:
                 telemetry.send_function_usage_telemetry(**telemetry_args)
+                if "error" in telemetry_args:
+                    telemetry.send_batch()
 
         return cast(Callable[_Args, _ReturnValue], wrap)
 
@@ -363,6 +367,9 @@ def _extract_arg_value(field: str, func_spec: inspect.FullArgSpec, args: Any, kw
 
 
 class _SourceTelemetryClient:
+
+    DEFAULT_FORCE_FLUSH_SIZE = 10
+
     def __init__(
         self,
         conn: connector.SnowflakeConnection,
@@ -394,6 +401,9 @@ class _SourceTelemetryClient:
         self.version = env.VERSION
         self.python_version: str = env.PYTHON_VERSION
         self.os: str = env.OS
+
+        if self._telemetry:
+            self._telemetry._flush_size = _SourceTelemetryClient.DEFAULT_FORCE_FLUSH_SIZE
 
     def _send(self, msg: Dict[str, Any], timestamp: Optional[int] = None) -> None:
         """
@@ -467,3 +477,9 @@ class _SourceTelemetryClient:
             message[TelemetryField.KEY_ERROR_INFO.value] = error
 
         self._send(message)
+
+    @suppress_exceptions
+    def send_batch(self) -> None:
+        """Send the telemetry data batch immediately."""
+        if self._telemetry:
+            self._telemetry.send_batch()

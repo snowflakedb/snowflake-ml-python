@@ -16,7 +16,7 @@ _PROJECT = "ModelDevelopment"
 _SUBPROJECT = "Metrics"
 
 
-@telemetry.send_api_usage_telemetry(  # type: ignore[misc]
+@telemetry.send_api_usage_telemetry(
     project=_PROJECT,
     subproject=_SUBPROJECT,
 )
@@ -57,6 +57,7 @@ def covariance(*, df: DataFrame, columns: Optional[Collection[str]] = None, ddof
     )
 
     input_df, columns = _utils.validate_and_return_dataframe_and_columns(df=df, columns=columns)
+    assert input_df._session is not None, "input_df._session cannot be None"
     sharded_dot_and_sum_computer = _utils.register_sharded_dot_sum_computer(
         session=input_df._session, statement_params=statement_params
     )
@@ -83,7 +84,7 @@ def covariance(*, df: DataFrame, columns: Optional[Collection[str]] = None, ddof
     # as the resultant covariance matrix.
     # Pushing this to a udtf requires creating a temp udtf which takes about 20 secs, so it doesn't make sense
     # to have this in a udtf.
-    n_cols = len(columns)  # type: ignore
+    n_cols = len(columns)
     sum_by_count = np.zeros(n_cols)
     sum_by_countd = np.zeros(n_cols)
     term1 = np.zeros((n_cols, n_cols))

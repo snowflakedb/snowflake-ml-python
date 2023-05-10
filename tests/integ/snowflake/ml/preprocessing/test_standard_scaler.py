@@ -15,7 +15,7 @@ import numpy as np
 from absl.testing.absltest import TestCase, main
 from sklearn.preprocessing import StandardScaler as SklearnStandardScaler
 
-from snowflake.ml.preprocessing import StandardScaler
+from snowflake.ml.preprocessing import StandardScaler  # type: ignore[attr-defined]
 from snowflake.ml.utils.connection_params import SnowflakeLoginOptions
 from snowflake.snowpark import Session
 from tests.integ.snowflake.ml.framework import utils as framework_utils
@@ -66,9 +66,9 @@ class StandardScalerTest(TestCase):
             scaler_sklearn = SklearnStandardScaler()
             scaler_sklearn.fit(df_pandas[input_cols])
 
-            assert np.allclose(actual_scale, scaler_sklearn.scale_)
-            assert np.allclose(actual_mean, scaler_sklearn.mean_)
-            assert np.allclose(actual_var, scaler_sklearn.var_)
+            np.testing.assert_allclose(actual_scale, scaler_sklearn.scale_)
+            np.testing.assert_allclose(actual_mean, scaler_sklearn.mean_)
+            np.testing.assert_allclose(actual_var, scaler_sklearn.var_)
 
     def test_transform(self) -> None:
         """
@@ -150,8 +150,8 @@ class StandardScalerTest(TestCase):
         scaler_sklearn.fit(df_pandas[input_cols])
         sklearn_arr = scaler_sklearn.transform(df_pandas.sort_values(by=[id_col])[input_cols])
 
-        assert np.allclose(actual_arr, sklearn_arr)
-        assert np.allclose(actual_arr2, sklearn_arr)
+        np.testing.assert_allclose(actual_arr, sklearn_arr)
+        np.testing.assert_allclose(actual_arr2, sklearn_arr)
 
     def test_transform_without_mean(self) -> None:
         """
@@ -225,7 +225,7 @@ class StandardScalerTest(TestCase):
         scaler_sklearn.fit(df_pandas[input_cols])
         sklearn_arr = scaler_sklearn.transform(df_pandas.sort_values(by=[id_col])[input_cols])
 
-        assert np.allclose(actual_arr, sklearn_arr)
+        np.testing.assert_allclose(actual_arr, sklearn_arr)
 
     def test_transform_without_std(self) -> None:
         """
@@ -299,7 +299,7 @@ class StandardScalerTest(TestCase):
         scaler_sklearn.fit(df_pandas[input_cols])
         sklearn_arr = scaler_sklearn.transform(df_pandas.sort_values(by=[id_col])[input_cols])
 
-        assert np.allclose(actual_arr, sklearn_arr)
+        np.testing.assert_allclose(actual_arr, sklearn_arr)
 
     def test_transform_pandas(self) -> None:
         """
@@ -324,7 +324,7 @@ class StandardScalerTest(TestCase):
         scaler_sklearn.fit(df_pandas[input_cols])
         sklearn_arr = scaler_sklearn.transform(df_pandas[input_cols])
 
-        assert np.allclose(actual_arr, sklearn_arr)
+        np.testing.assert_allclose(actual_arr, sklearn_arr)
 
     def test_args_with_cols(self) -> None:
         """
@@ -351,8 +351,8 @@ class StandardScalerTest(TestCase):
         scaler3 = StandardScaler().set_input_cols(input_cols).set_output_cols(output_cols)
         transformed_df3 = scaler3.fit(df).transform(df[input_cols_extended])
 
-        assert transformed_df1.queries["queries"][-1] == transformed_df2.queries["queries"][-1]
-        assert transformed_df1.queries["queries"][-1] == transformed_df3.queries["queries"][-1]
+        self.assertEqual(transformed_df1.queries["queries"][-1], transformed_df2.queries["queries"][-1])
+        self.assertEqual(transformed_df1.queries["queries"][-1], transformed_df3.queries["queries"][-1])
 
     def test_serde(self) -> None:
         """
@@ -407,9 +407,9 @@ class StandardScalerTest(TestCase):
         scaler_sklearn.fit(df_pandas[input_cols])
         sklearn_arr = scaler_sklearn.transform(df_pandas[input_cols])
 
-        assert np.allclose(actual_arr_cloudpickle, sklearn_arr)
-        assert np.allclose(actual_arr_pickle, sklearn_arr)
-        assert np.allclose(actual_arr_joblib, sklearn_arr)
+        np.testing.assert_allclose(actual_arr_cloudpickle, sklearn_arr)
+        np.testing.assert_allclose(actual_arr_pickle, sklearn_arr)
+        np.testing.assert_allclose(actual_arr_joblib, sklearn_arr)
 
 
 if __name__ == "__main__":

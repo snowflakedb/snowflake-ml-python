@@ -11,7 +11,7 @@ _PROJECT = "ModelDevelopment"
 _SUBPROJECT = "Metrics"
 
 
-@telemetry.send_api_usage_telemetry(  # type: ignore[misc]
+@telemetry.send_api_usage_telemetry(
     project=_PROJECT,
     subproject=_SUBPROJECT,
 )
@@ -35,11 +35,11 @@ def r2_score(*, df: DataFrame, y_true_col_name: str, y_pred_col_name: str) -> fl
         R squared metric.
     """
 
-    df_avg = df.select(F.avg(y_true_col_name).as_("avg_y_true"))
+    df_avg = df.select(F.avg(y_true_col_name).as_("avg_y_true"))  # type: ignore[arg-type]
     df_r_square = df.join(df_avg).select(
-        F.lit(1)
-        - F.sum((df[y_true_col_name] - df[y_pred_col_name]) ** 2)
-        / F.sum((df[y_true_col_name] - df_avg["avg_y_true"]) ** 2)
+        F.lit(1)  # type: ignore[arg-type]
+        - F.sum((df[y_true_col_name] - df[y_pred_col_name]) ** 2)  # type: ignore[operator]
+        / F.sum((df[y_true_col_name] - df_avg["avg_y_true"]) ** 2)  # type: ignore[operator]
     )
 
     statement_params = telemetry.get_function_usage_statement_params(
@@ -47,4 +47,4 @@ def r2_score(*, df: DataFrame, y_true_col_name: str, y_pred_col_name: str) -> fl
         subproject=_SUBPROJECT,
         function_name=telemetry.get_statement_params_full_func_name(inspect.currentframe(), None),
     )
-    return df_r_square.collect(statement_params=statement_params)[0][0]
+    return float(df_r_square.collect(statement_params=statement_params)[0][0])

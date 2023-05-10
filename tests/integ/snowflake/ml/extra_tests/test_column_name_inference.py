@@ -45,7 +45,7 @@ class ColumnNameInferenceTest(TestCase):
         actual_results = reg.predict(input_df_pandas)[reg.get_output_cols()].to_numpy()
         sklearn_results = sklearn_reg.predict(input_df_pandas[input_cols])
 
-        assert np.allclose(actual_results.flatten(), sklearn_results.flatten())
+        np.testing.assert_allclose(actual_results.flatten(), sklearn_results.flatten())
 
     def test_snowpark_interface(self):
         self._test_column_name_inference(use_snowpark_interface=True)

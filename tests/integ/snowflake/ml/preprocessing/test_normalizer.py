@@ -16,7 +16,7 @@ from absl.testing import parameterized
 from absl.testing.absltest import main
 from sklearn.preprocessing import Normalizer as SklearnNormalizer
 
-from snowflake.ml.preprocessing import Normalizer
+from snowflake.ml.preprocessing import Normalizer  # type: ignore[attr-defined]
 from snowflake.ml.utils.connection_params import SnowflakeLoginOptions
 from snowflake.snowpark import Session
 from snowflake.snowpark.exceptions import SnowparkSQLException
@@ -77,7 +77,7 @@ class NormalizerTest(parameterized.TestCase):
         normalizer_sklearn.fit(df_pandas[input_cols])
         sklearn_arr = normalizer_sklearn.transform(df_pandas.sort_values(by=[id_col])[input_cols])
 
-        assert np.allclose(actual_arr, sklearn_arr)
+        np.testing.assert_allclose(actual_arr, sklearn_arr)
 
     def test_transform_raises_on_unsupported_norm(self) -> None:
         input_cols, output_cols, id_col = NUMERIC_COLS, OUTPUT_COLS, ID_COL
@@ -164,7 +164,7 @@ class NormalizerTest(parameterized.TestCase):
         normalizer_sklearn.fit(df_pandas[input_cols])
         sklearn_arr = normalizer_sklearn.transform(df_pandas.sort_values(by=[id_col])[input_cols])
 
-        assert np.allclose(actual_arr, sklearn_arr)
+        np.testing.assert_allclose(actual_arr, sklearn_arr)
 
     def test_serde(self) -> None:
         """
@@ -219,9 +219,9 @@ class NormalizerTest(parameterized.TestCase):
         normalizer_sklearn.fit(df_pandas[input_cols])
         sklearn_arr = normalizer_sklearn.transform(df_pandas[input_cols])
 
-        assert np.allclose(actual_arr_cloudpickle, sklearn_arr)
-        assert np.allclose(actual_arr_pickle, sklearn_arr)
-        assert np.allclose(actual_arr_joblib, sklearn_arr)
+        np.testing.assert_allclose(actual_arr_cloudpickle, sklearn_arr)
+        np.testing.assert_allclose(actual_arr_pickle, sklearn_arr)
+        np.testing.assert_allclose(actual_arr_joblib, sklearn_arr)
 
 
 if __name__ == "__main__":

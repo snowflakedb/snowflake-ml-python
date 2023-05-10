@@ -20,7 +20,7 @@ from absl.testing.absltest import main
 from scipy.sparse import csr_matrix
 from sklearn.preprocessing import OneHotEncoder as SklearnOneHotEncoder
 
-from snowflake.ml.preprocessing import OneHotEncoder
+from snowflake.ml.preprocessing import OneHotEncoder  # type: ignore[attr-defined]
 from snowflake.ml.utils import sparse as utils_sparse
 from snowflake.ml.utils.connection_params import SnowflakeLoginOptions
 from snowflake.snowpark import DataFrame, Session
@@ -195,8 +195,8 @@ class OneHotEncoderTest(parameterized.TestCase):
 
         if mismatched_attributes:
             raise AssertionError(
-                f"Attributes {mismatched_attributes} are do not match on the transformers fitted "
-                f"with a snowpark.DataFrame and a pd.DataFrame."
+                f"Attributes\n{mismatched_attributes}\ndo not match on the transformers fitted with "
+                f"a snowpark.DataFrame and a pd.DataFrame."
             )
 
     def test_fit_pandas_bad_input_cols(self) -> None:
@@ -300,8 +300,8 @@ class OneHotEncoderTest(parameterized.TestCase):
         encoder_sklearn.fit(df_pandas[input_cols])
         sklearn_arr = encoder_sklearn.transform(df_pandas.sort_values(by=[id_col])[input_cols])
 
-        assert np.allclose(actual_arr, sklearn_arr)
-        assert np.allclose(actual_arr2, sklearn_arr)
+        np.testing.assert_allclose(actual_arr, sklearn_arr)
+        np.testing.assert_allclose(actual_arr2, sklearn_arr)
 
     def test_transform_sparse(self) -> None:
         """
@@ -413,18 +413,18 @@ class OneHotEncoderTest(parameterized.TestCase):
         encoder_sklearn.fit(df_pandas[input_cols])
         sklearn_arr = encoder_sklearn.transform(df_pandas.sort_values(by=[id_col])[input_cols])
 
-        assert self.compare_sparse_transform_results(actual_arr, sklearn_arr)
-        assert self.compare_sparse_transform_results(actual_arr2, sklearn_arr)
+        self.assertTrue(self.compare_sparse_transform_results(actual_arr, sklearn_arr))
+        self.assertTrue(self.compare_sparse_transform_results(actual_arr2, sklearn_arr))
 
         # assert array length
         output_pandas = transformed_df[output_cols].to_pandas().applymap(lambda x: json.loads(x) if x else None)
         for idx, n_features_out in enumerate(encoder_sklearn._n_features_outs):
             array_length = output_pandas.iloc[0, idx]["array_length"]
-            assert array_length == n_features_out
+            self.assertEqual(array_length, n_features_out)
 
         # loading into memory with `to_pandas_with_sparse`
         df_pandas_output = utils_sparse.to_pandas_with_sparse(transformed_df.sort(id_col)[output_cols], output_cols)
-        assert np.allclose(df_pandas_output.to_numpy(), sklearn_arr.toarray())
+        np.testing.assert_allclose(df_pandas_output.to_numpy(), sklearn_arr.toarray())
 
     def test_transform_null_dense(self) -> None:
         """
@@ -452,7 +452,7 @@ class OneHotEncoderTest(parameterized.TestCase):
         encoder_sklearn.fit(df_pandas[input_cols])
         sklearn_arr = encoder_sklearn.transform(df_pandas.sort_values(by=[id_col])[input_cols])
 
-        assert np.allclose(actual_arr, sklearn_arr)
+        np.testing.assert_allclose(actual_arr, sklearn_arr)
 
     def test_transform_null_sparse(self) -> None:
         """
@@ -480,7 +480,7 @@ class OneHotEncoderTest(parameterized.TestCase):
         encoder_sklearn.fit(df_pandas[input_cols])
         sklearn_arr = encoder_sklearn.transform(df_pandas.sort_values(by=[id_col])[input_cols])
 
-        assert self.compare_sparse_transform_results(actual_arr, sklearn_arr)
+        self.assertTrue(self.compare_sparse_transform_results(actual_arr, sklearn_arr))
 
     def test_transform_boolean_dense(self) -> None:
         """
@@ -508,7 +508,7 @@ class OneHotEncoderTest(parameterized.TestCase):
         encoder_sklearn.fit(df_pandas[input_cols])
         sklearn_arr = encoder_sklearn.transform(df_pandas.sort_values(by=[id_col])[input_cols])
 
-        assert np.allclose(actual_arr, sklearn_arr)
+        np.testing.assert_allclose(actual_arr, sklearn_arr)
 
     def test_transform_boolean_sparse(self) -> None:
         """
@@ -536,7 +536,7 @@ class OneHotEncoderTest(parameterized.TestCase):
         encoder_sklearn.fit(df_pandas[input_cols])
         sklearn_arr = encoder_sklearn.transform(df_pandas.sort_values(by=[id_col])[input_cols])
 
-        assert self.compare_sparse_transform_results(actual_arr, sklearn_arr)
+        self.assertTrue(self.compare_sparse_transform_results(actual_arr, sklearn_arr))
 
     def test_transform_numeric_dense(self) -> None:
         """
@@ -565,7 +565,7 @@ class OneHotEncoderTest(parameterized.TestCase):
         sklearn_arr = encoder_sklearn.transform(df_pandas.sort_values(by=[id_col])[input_cols])
 
         # compare the frequency of each category
-        assert np.allclose(
+        np.testing.assert_allclose(
             np.sort(actual_arr.sum(axis=0)),
             np.sort(sklearn_arr.sum(axis=0)),
         )
@@ -606,7 +606,7 @@ class OneHotEncoderTest(parameterized.TestCase):
         actual_arr_dense = csr_matrix((data, (row, col)), shape=sklearn_arr_dense.shape).toarray()
 
         # compare the frequency of each category
-        assert np.allclose(
+        np.testing.assert_allclose(
             np.sort(actual_arr_dense.sum(axis=0)),
             np.sort(sklearn_arr_dense.sum(axis=0)),
         )
@@ -638,7 +638,7 @@ class OneHotEncoderTest(parameterized.TestCase):
         encoder_sklearn.fit(df_pandas[input_cols])
         sklearn_arr = encoder_sklearn.transform(df_pandas.sort_values(by=[id_col])[input_cols])
 
-        assert np.allclose(actual_arr, sklearn_arr)
+        np.testing.assert_allclose(actual_arr, sklearn_arr)
 
     def test_categories(self) -> None:
         """
@@ -690,7 +690,7 @@ class OneHotEncoderTest(parameterized.TestCase):
 
         for actual_cats, sklearn_cats in zip(actual_categories, encoder_sklearn.categories_):
             self.assertEqual(sklearn_cats.tolist(), actual_cats.tolist())
-        assert np.allclose(actual_arr, sklearn_arr)
+        np.testing.assert_allclose(actual_arr, sklearn_arr)
 
     def test_categories_unknown(self) -> None:
         """
@@ -719,7 +719,7 @@ class OneHotEncoderTest(parameterized.TestCase):
         with pytest.raises(ValueError) as excinfo:
             encoder.fit(unknown_df)
 
-        assert "Found unknown categories during fit" in excinfo.value.args[0]
+        self.assertIn("Found unknown categories during fit", excinfo.value.args[0])
 
     def test_drop_first(self) -> None:
         """
@@ -751,7 +751,7 @@ class OneHotEncoderTest(parameterized.TestCase):
         encoder_sklearn.fit(df_pandas[input_cols])
         sklearn_arr = encoder_sklearn.transform(df_pandas.sort_values(by=[id_col])[input_cols])
 
-        assert np.allclose(actual_arr, sklearn_arr)
+        np.testing.assert_allclose(actual_arr, sklearn_arr)
 
     def test_drop_if_binary(self) -> None:
         """
@@ -783,7 +783,7 @@ class OneHotEncoderTest(parameterized.TestCase):
         encoder_sklearn.fit(df_pandas[input_cols])
         sklearn_arr = encoder_sklearn.transform(df_pandas.sort_values(by=[id_col])[input_cols])
 
-        assert np.allclose(actual_arr, sklearn_arr)
+        np.testing.assert_allclose(actual_arr, sklearn_arr)
 
     def test_handle_unknown_error(self) -> None:
         """
@@ -812,7 +812,7 @@ class OneHotEncoderTest(parameterized.TestCase):
         with pytest.raises(ValueError) as excinfo:
             encoder.transform(unknown_df).collect()
 
-        assert "Found unknown categories during transform" in excinfo.value.args[0]
+        self.assertIn("Found unknown categories during transform", excinfo.value.args[0])
 
         # dense
         sparse = False
@@ -824,7 +824,7 @@ class OneHotEncoderTest(parameterized.TestCase):
         with pytest.raises(ValueError) as excinfo:
             encoder.transform(unknown_df).collect()
 
-        assert "Found unknown categories during transform" in excinfo.value.args[0]
+        self.assertIn("Found unknown categories during transform", excinfo.value.args[0])
 
     def test_handle_unknown_ignore_dense(self) -> None:
         """
@@ -859,7 +859,7 @@ class OneHotEncoderTest(parameterized.TestCase):
         encoder_sklearn.fit(df_pandas[input_cols])
         sklearn_arr = encoder_sklearn.transform(unknown_pandas.sort_values(by=[input_cols[0]])[input_cols])
 
-        assert np.allclose(actual_arr, sklearn_arr)
+        np.testing.assert_allclose(actual_arr, sklearn_arr)
 
     def test_handle_unknown_ignore_sparse(self) -> None:
         """
@@ -947,7 +947,7 @@ class OneHotEncoderTest(parameterized.TestCase):
         encoder_sklearn.fit(df_pandas[input_cols])
         sklearn_arr = encoder_sklearn.transform(unknown_pandas.sort_values(by=[input_cols[0]])[input_cols])
 
-        assert self.compare_sparse_transform_results(actual_arr, sklearn_arr)
+        self.assertTrue(self.compare_sparse_transform_results(actual_arr, sklearn_arr))
 
     # TODO(hayu): [SNOW-752263] Support OneHotEncoder handle_unknown="infrequent_if_exist".
     #  Add back when `handle_unknown="infrequent_if_exist"` is supported.
@@ -984,7 +984,7 @@ class OneHotEncoderTest(parameterized.TestCase):
     #     encoder_sklearn.fit(df_pandas[input_cols])
     #     sklearn_arr = encoder_sklearn.transform(unknown_pandas.sort_values(by=[input_cols[0]])[input_cols])
 
-    #     assert np.allclose(actual_arr, sklearn_arr)
+    #     np.testing.assert_allclose(actual_arr, sklearn_arr)
 
     # TODO(hayu): [SNOW-752263] Support OneHotEncoder handle_unknown="infrequent_if_exist".
     #  Add back when `handle_unknown="infrequent_if_exist"` is supported.
@@ -1058,7 +1058,7 @@ class OneHotEncoderTest(parameterized.TestCase):
         encoder_sklearn.fit(df_pandas[input_cols])
         sklearn_arr = encoder_sklearn.transform(df_pandas.sort_values(by=[id_col])[input_cols])
 
-        assert np.allclose(actual_arr, sklearn_arr)
+        np.testing.assert_allclose(actual_arr, sklearn_arr)
 
         # min_frequency: numbers.Real
         min_frequency_float: float = 0.3
@@ -1077,7 +1077,7 @@ class OneHotEncoderTest(parameterized.TestCase):
         encoder_sklearn.fit(df_pandas[input_cols])
         sklearn_arr = encoder_sklearn.transform(df_pandas.sort_values(by=[id_col])[input_cols])
 
-        assert np.allclose(actual_arr, sklearn_arr)
+        np.testing.assert_allclose(actual_arr, sklearn_arr)
 
     def test_min_frequency_sparse(self) -> None:
         """
@@ -1112,7 +1112,7 @@ class OneHotEncoderTest(parameterized.TestCase):
         encoder_sklearn.fit(df_pandas[input_cols])
         sklearn_arr = encoder_sklearn.transform(df_pandas.sort_values(by=[id_col])[input_cols])
 
-        assert self.compare_sparse_transform_results(actual_arr, sklearn_arr)
+        self.assertTrue(self.compare_sparse_transform_results(actual_arr, sklearn_arr))
 
         # min_frequency: numbers.Real
         min_frequency_float: float = 0.3
@@ -1131,7 +1131,7 @@ class OneHotEncoderTest(parameterized.TestCase):
         encoder_sklearn.fit(df_pandas[input_cols])
         sklearn_arr = encoder_sklearn.transform(df_pandas.sort_values(by=[id_col])[input_cols])
 
-        assert self.compare_sparse_transform_results(actual_arr, sklearn_arr)
+        self.assertTrue(self.compare_sparse_transform_results(actual_arr, sklearn_arr))
 
     def test_min_frequency_null_dense(self) -> None:
         """
@@ -1159,7 +1159,7 @@ class OneHotEncoderTest(parameterized.TestCase):
         encoder_sklearn.fit(df_pandas[input_cols])
         sklearn_arr = encoder_sklearn.transform(df_pandas.sort_values(by=[id_col])[input_cols])
 
-        assert np.allclose(actual_arr, sklearn_arr)
+        np.testing.assert_allclose(actual_arr, sklearn_arr)
 
     def test_min_frequency_null_sparse(self) -> None:
         """
@@ -1187,7 +1187,7 @@ class OneHotEncoderTest(parameterized.TestCase):
         encoder_sklearn.fit(df_pandas[input_cols])
         sklearn_arr = encoder_sklearn.transform(df_pandas.sort_values(by=[id_col])[input_cols])
 
-        assert self.compare_sparse_transform_results(actual_arr, sklearn_arr)
+        self.assertTrue(self.compare_sparse_transform_results(actual_arr, sklearn_arr))
 
     def test_max_categories_dense(self) -> None:
         """
@@ -1215,7 +1215,7 @@ class OneHotEncoderTest(parameterized.TestCase):
         encoder_sklearn.fit(df_pandas[input_cols])
         sklearn_arr = encoder_sklearn.transform(df_pandas.sort_values(by=[id_col])[input_cols])
 
-        assert np.allclose(actual_arr, sklearn_arr)
+        np.testing.assert_allclose(actual_arr, sklearn_arr)
 
     def test_max_categories_sparse(self) -> None:
         """
@@ -1243,7 +1243,7 @@ class OneHotEncoderTest(parameterized.TestCase):
         encoder_sklearn.fit(df_pandas[input_cols])
         sklearn_arr = encoder_sklearn.transform(df_pandas.sort_values(by=[id_col])[input_cols])
 
-        assert self.compare_sparse_transform_results(actual_arr, sklearn_arr)
+        self.assertTrue(self.compare_sparse_transform_results(actual_arr, sklearn_arr))
 
     def test_transform_pandas_dense(self) -> None:
         """
@@ -1269,7 +1269,7 @@ class OneHotEncoderTest(parameterized.TestCase):
         encoder_sklearn.fit(df_pandas[input_cols])
         sklearn_arr = encoder_sklearn.transform(df_pandas[input_cols])
 
-        assert np.allclose(actual_arr, sklearn_arr)
+        np.testing.assert_allclose(actual_arr, sklearn_arr)
 
     def test_transform_pandas_sparse(self) -> None:
         """
@@ -1294,7 +1294,7 @@ class OneHotEncoderTest(parameterized.TestCase):
         encoder_sklearn.fit(df_pandas[input_cols])
         sklearn_matrix = encoder_sklearn.transform(df_pandas[input_cols])
 
-        assert np.allclose(transformed_matrix.toarray(), sklearn_matrix.toarray())
+        np.testing.assert_allclose(transformed_matrix.toarray(), sklearn_matrix.toarray())
 
     def test_transform_null_pandas_dense(self) -> None:
         """
@@ -1321,7 +1321,7 @@ class OneHotEncoderTest(parameterized.TestCase):
         encoder_sklearn.fit(df_pandas[input_cols])
         sklearn_arr = encoder_sklearn.transform(df_pandas[input_cols])
 
-        assert np.allclose(actual_arr, sklearn_arr)
+        np.testing.assert_allclose(actual_arr, sklearn_arr)
 
     def test_transform_null_pandas_sparse(self) -> None:
         """
@@ -1347,7 +1347,7 @@ class OneHotEncoderTest(parameterized.TestCase):
         encoder_sklearn.fit(df_pandas[input_cols])
         sklearn_matrix = encoder_sklearn.transform(df_pandas[input_cols])
 
-        assert np.allclose(transformed_matrix.toarray(), sklearn_matrix.toarray())
+        np.testing.assert_allclose(transformed_matrix.toarray(), sklearn_matrix.toarray())
 
     def test_fit_transform_null_pandas(self) -> None:
         input_cols, output_cols = CATEGORICAL_COLS, OUTPUT_COLS
@@ -1365,7 +1365,7 @@ class OneHotEncoderTest(parameterized.TestCase):
         encoder_sklearn.fit(df_pandas[input_cols])
         sklearn_arr = encoder_sklearn.transform(df_pandas[input_cols])
 
-        assert np.allclose(actual_arr, sklearn_arr)
+        np.testing.assert_allclose(actual_arr, sklearn_arr)
 
     def test_handle_unknown_error_pandas(self) -> None:
         """
@@ -1395,7 +1395,7 @@ class OneHotEncoderTest(parameterized.TestCase):
         with pytest.raises(ValueError) as excinfo:
             encoder.transform(converted_unknown_pandas)
 
-        assert "Found unknown categories" in excinfo.value.args[0]
+        self.assertIn("Found unknown categories", excinfo.value.args[0])
 
         # dense
         sparse = False
@@ -1407,7 +1407,7 @@ class OneHotEncoderTest(parameterized.TestCase):
         with pytest.raises(ValueError) as excinfo:
             encoder.transform(converted_unknown_pandas)
 
-        assert "Found unknown categories" in excinfo.value.args[0]
+        self.assertIn("Found unknown categories", excinfo.value.args[0])
 
     @parameterized.parameters(  # type: ignore
         {"params": {"sparse": False}},
@@ -1521,9 +1521,9 @@ class OneHotEncoderTest(parameterized.TestCase):
         encoder_sklearn.fit(df_pandas[input_cols])
         sklearn_arr = encoder_sklearn.transform(df_pandas[input_cols])
 
-        assert np.allclose(actual_arr_cloudpickle, sklearn_arr)
-        assert np.allclose(actual_arr_pickle, sklearn_arr)
-        assert np.allclose(actual_arr_joblib, sklearn_arr)
+        np.testing.assert_allclose(actual_arr_cloudpickle, sklearn_arr)
+        np.testing.assert_allclose(actual_arr_pickle, sklearn_arr)
+        np.testing.assert_allclose(actual_arr_joblib, sklearn_arr)
 
     def test_drop_input_cols(self) -> None:
         input_cols = CATEGORICAL_COLS
@@ -1534,7 +1534,7 @@ class OneHotEncoderTest(parameterized.TestCase):
         encoder = OneHotEncoder(input_cols=input_cols, output_cols=output_cols, drop_input_cols=True)
         transformed_df = encoder.fit(df).transform(df)
 
-        assert len(set(input_cols) & set(transformed_df.to_pandas().columns)) == 0
+        self.assertEqual(0, len(set(input_cols) & set(transformed_df.to_pandas().columns)))
 
 
 if __name__ == "__main__":

@@ -5,16 +5,17 @@
 from __future__ import annotations
 
 from itertools import chain
-from typing import Iterable, List, Optional, Union, cast
+from typing import Dict, Iterable, List, Optional, Union, cast
 
 import numpy as np
 import numpy.typing as npt
 import pandas as pd
+from scipy import sparse
 from sklearn.preprocessing import KBinsDiscretizer as SK_KBinsDiscretizer
 
-import snowflake.snowpark.functions as F
 from snowflake import snowpark
 from snowflake.ml.framework import base
+from snowflake.snowpark import functions as F, types as T
 
 # constants used to validate the compatibility of the kwargs passed to the sklearn
 # transformer with the sklearn version
@@ -103,7 +104,9 @@ class KBinsDiscretizer(base.BaseEstimator, base.BaseTransformer):
         self._is_fitted = True
         return self
 
-    def transform(self, dataset: Union[snowpark.DataFrame, pd.DataFrame]) -> Union[snowpark.DataFrame, pd.DataFrame]:
+    def transform(
+        self, dataset: Union[snowpark.DataFrame, pd.DataFrame]
+    ) -> Union[snowpark.DataFrame, pd.DataFrame, sparse.csr_matrix]:
         self.enforce_fit()
         super()._check_input_cols()
         super()._check_output_cols()
@@ -199,26 +202,168 @@ class KBinsDiscretizer(base.BaseEstimator, base.BaseTransformer):
         return sklearn_discretizer
 
     def _transform_snowpark(self, dataset: snowpark.DataFrame) -> snowpark.DataFrame:
-        # 1. Register bucketize UDF
-        # TODO(tbao): look into vectorized UDF
-        @F.udf(  # type: ignore[arg-type, misc]
-            name="bucketize", replace=True, packages=["numpy"], session=dataset._session
-        )
-        def bucketize(x: float, boarders: List[float]) -> int:
-            import numpy as np
+        if self.encode == "ordinal":
+            return self._handle_ordinal(dataset)
+        elif self.encode == "onehot":
+            return self._handle_onehot(dataset)
+        elif self.encode == "onehot-dense":
+            return self._handle_onehot_dense(dataset)
+        else:
+            raise ValueError(f"{self.encode} is not a valid encoding scheme.")
 
-            return int(np.searchsorted(boarders[1:-1], x, side="right"))
+    def _handle_ordinal(self, dataset: snowpark.DataFrame) -> snowpark.DataFrame:
+        """
+        Transform dataset with bucketization and output as ordinal encoding.
+
+        Args:
+            dataset: Input dataset.
+
+        Returns:
+            Output dataset with ordinal encoding.
+        """
+
+        # 1. Register vec_bucketize UDF
+        @F.pandas_udf(  # type: ignore[arg-type, misc]
+            name="vec_bucketize",
+            replace=True,
+            packages=["numpy"],
+            session=dataset._session,
+        )
+        def vec_bucketize(x: T.PandasSeries[float], boarders: T.PandasSeries[List[float]]) -> T.PandasSeries[int]:
+            # NB: vectorized udf doesn't work well with const array arg, so we pass it in as a list via PandasSeries
+            boarders = boarders[0]
+            res = np.searchsorted(boarders[1:-1], x, side="right")
+            return pd.Series(res)  # type: ignore[no-any-return]
 
         # 2. compute bucket per feature column
+        for idx, input_col in enumerate(self.input_cols):
+            output_col = self.output_cols[idx]
+            boarders = [F.lit(float(x)) for x in self.bin_edges_[idx]]  # type: ignore[arg-type, index]
+            dataset = dataset.select(
+                *dataset.columns,
+                F.call_udf(
+                    "vec_bucketize", F.col(input_col), F.array_construct(*boarders)  # type: ignore[arg-type]
+                ).alias(output_col),
+            )
+        return dataset
+
+    def _handle_onehot(self, dataset: snowpark.DataFrame) -> snowpark.DataFrame:
+        """
+        Transform dataset with bucketization and output as sparse representation:
+        {"{bucket_id}": 1.0, "array_length": {num_buckets}}
+
+        Args:
+            dataset: Input dataset.
+
+        Returns:
+            Output dataset in sparse representation.
+        """
+
+        @F.pandas_udf(  # type: ignore[arg-type, misc]
+            name="vec_bucketize_sparse_output",
+            replace=True,
+            packages=["numpy"],
+            session=dataset._session,
+        )
+        def vec_bucketize_sparse_output(
+            x: T.PandasSeries[float], boarders: T.PandasSeries[List[float]]
+        ) -> T.PandasSeries[Dict[str, int]]:
+            res: List[Dict[str, int]] = []
+            boarders = boarders[0]
+            buckets = np.searchsorted(boarders[1:-1], x, side="right")
+            assert isinstance(buckets, np.ndarray), f"expecting buckets to be numpy ndarray, got {type(buckets)}"
+            array_length = len(boarders) - 1
+            for bucket in buckets:
+                res.append({str(bucket): 1, "array_length": array_length})
+            return pd.Series(res)
+
+        for idx, input_col in enumerate(self.input_cols):
+            output_col = self.output_cols[idx]
+            boarders = [F.lit(float(x)) for x in self.bin_edges_[idx]]  # type: ignore[arg-type, index]
+            dataset = dataset.select(
+                *dataset.columns,
+                F.call_udf(
+                    "vec_bucketize_sparse_output", F.col(input_col), F.array_construct(*boarders)  # type: ignore
+                ).alias(output_col),
+            )
+        return dataset
+
+    def _handle_onehot_dense(self, dataset: snowpark.DataFrame) -> snowpark.DataFrame:
+        @F.pandas_udf(  # type: ignore[arg-type, misc]
+            name="vec_bucketize_dense_output",
+            replace=True,
+            packages=["numpy"],
+            session=dataset._session,
+        )
+        def vec_bucketize_dense_output(
+            x: T.PandasSeries[float], boarders: T.PandasSeries[List[float]]
+        ) -> T.PandasSeries[List[int]]:
+            res: List[npt.NDArray[np.int32]] = []
+            boarders = boarders[0]
+            buckets = np.searchsorted(boarders[1:-1], x, side="right")
+            assert isinstance(buckets, np.ndarray), f"expecting buckets to be numpy ndarray, got {type(buckets)}"
+            for bucket in buckets:
+                encoded = np.zeros(len(boarders), dtype=int)
+                encoded[bucket] = 1
+                res.append(encoded)
+            return pd.Series(res)
+
+        for idx, input_col in enumerate(self.input_cols):
+            output_col = self.output_cols[idx]
+            boarders = [F.lit(float(x)) for x in self.bin_edges_[idx]]  # type: ignore[arg-type, index]
+            dataset = dataset.select(
+                *dataset.columns,
+                F.call_udf(
+                    "vec_bucketize_dense_output", F.col(input_col), F.array_construct(*boarders)  # type: ignore
+                ).alias(output_col),
+            )
+            dataset = dataset.with_columns(
+                [f"{output_col}_{i}" for i in range(len(boarders) - 1)],
+                [F.col(output_col)[i].cast(T.IntegerType()) for i in range(len(boarders) - 1)],
+            ).drop(output_col)
+
+        return dataset
+
+    def _transform_sklearn(self, dataset: pd.DataFrame) -> Union[pd.DataFrame, sparse.csr_matrix]:
+        """
+        Transform pandas dataframe using sklearn KBinsDiscretizer.
+        Output be a sparse matrix if self.encode='onehot' and pandas dataframe otherwise.
+
+        Args:
+            dataset: Input dataset.
+
+        Returns:
+            Output dataset.
+        """
+        self.enforce_fit()
+        encoder_sklearn = self.get_sklearn_object()
+
+        transformed_dataset = encoder_sklearn.transform(dataset[self.input_cols])
+
         if self.encode == "ordinal":
-            for idx, input_col in enumerate(self.input_cols):
-                output_col = self.output_cols[idx]
-                dataset = dataset.select(
-                    *dataset.columns,
-                    F.call_udf(
-                        "bucketize", F.col(input_col), self.bin_edges_[idx].tolist()  # type: ignore[arg-type, index]
-                    ).alias(output_col),
-                )
+            dataset = dataset.copy()
+            dataset[self.output_cols] = transformed_dataset
+            return dataset
+        elif self.encode == "onehot-dense":
+            dataset = dataset.copy()
+            dataset[self.get_output_cols()] = transformed_dataset
             return dataset
         else:
-            raise NotImplementedError(f"{self.encode} is not supported yet.")
+            return transformed_dataset
+
+    def get_output_cols(self) -> List[str]:
+        """
+        Get output column names.
+        Expand output column names for 'onehot-dense' encoding.
+
+        Returns:
+            Output column names.
+        """
+
+        if self.encode == "onehot-dense":
+            output_cols = []
+            for idx, col in enumerate(self.output_cols):
+                output_cols.extend([f"{col}_{i}" for i in range(self.n_bins_[idx])])  # type: ignore[index]
+            return output_cols
+        else:
+            return self.output_cols

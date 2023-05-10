@@ -4,7 +4,7 @@ import pkgutil
 from types import ModuleType
 from typing import Dict, Optional, Type
 
-from snowflake.ml.model import model_types
+from snowflake.ml.model import type_hints as model_types
 from snowflake.ml.model._handlers import _base
 
 _HANDLERS_BASE = "_handlers"

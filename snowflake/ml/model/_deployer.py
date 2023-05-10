@@ -1,13 +1,19 @@
 import json
+import os
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Dict, List, Optional
+from typing import Dict, List, Optional, TypedDict, Union, overload
 
 import pandas as pd
+from typing_extensions import Required
 
 from snowflake.ml._internal.utils import identifier
-from snowflake.ml.model import _udf_util, model_meta, model_signature, model_types
+from snowflake.ml.model import (
+    _model_meta,
+    _udf_util,
+    model_signature,
+    type_hints as model_types,
+)
 from snowflake.snowpark import DataFrame, Session, functions as F
 from snowflake.snowpark._internal import type_utils
 
@@ -17,8 +23,7 @@ class TargetPlatform(Enum):
     WAREHOUSE = "warehouse"
 
 
-@dataclass
-class Deployment:
+class Deployment(TypedDict):
     """Deployment information.
 
     Attributes:
@@ -26,14 +31,16 @@ class Deployment:
         model: The model object that get deployed.
         model_meta: The model metadata.
         platform: Target platform to deploy the model.
+        target_method: The name of the target method to be deployed.
         options: Additional options when deploying the model.
     """
 
-    name: str
-    platform: TargetPlatform
-    model: model_types.ModelType
-    model_meta: model_meta.ModelMetadata
-    options: Dict[str, str]
+    name: Required[str]
+    platform: Required[TargetPlatform]
+    model: Required[model_types.ModelType]
+    model_meta: Required[_model_meta.ModelMetadata]
+    target_method: str
+    options: Required[model_types.DeployOptions]
 
 
 class DeploymentManager(ABC):
@@ -47,8 +54,9 @@ class DeploymentManager(ABC):
         name: str,
         platform: TargetPlatform,
         model: model_types.ModelType,
-        model_meta: model_meta.ModelMetadata,
-        options: Dict[str, str],
+        model_meta: _model_meta.ModelMetadata,
+        target_method: str,
+        options: Optional[model_types.DeployOptions] = None,
     ) -> Deployment:
         """Create a deployment.
 
@@ -57,6 +65,7 @@ class DeploymentManager(ABC):
             model: The model object that get deployed.
             model_meta: The model metadata.
             platform: Target platform to deploy the model.
+            target_method: The name of the target method to be deployed.
             options: Additional options when deploying the model.
                 Each target platform will have their own specifications of options.
         """
@@ -97,8 +106,9 @@ class LocalDeploymentManager(DeploymentManager):
         name: str,
         platform: TargetPlatform,
         model: model_types.ModelType,
-        model_meta: model_meta.ModelMetadata,
-        options: Dict[str, Any],
+        model_meta: _model_meta.ModelMetadata,
+        target_method: str,
+        options: Optional[model_types.DeployOptions] = None,
     ) -> Deployment:
         """Create a deployment.
 
@@ -107,13 +117,23 @@ class LocalDeploymentManager(DeploymentManager):
             platform: Target platform to deploy the model.
             model: The model object that get deployed.
             model_meta: The model metadata.
+            target_method: The name of the target method to be deployed.
             options: Additional options when deploying the model.
                 Each target platform will have their own specifications of options.
 
         Returns:
             The deployment information.
         """
-        info = Deployment(name, platform, model, model_meta, options)
+        if not options:
+            options = {}
+        info = Deployment(
+            name=name,
+            platform=platform,
+            model=model,
+            model_meta=model_meta,
+            target_method=target_method,
+            options=options,
+        )
         self._storage[name] = info
         return info
 
@@ -168,7 +188,8 @@ class Deployer:
         name: str,
         model_dir_path: str,
         platform: TargetPlatform,
-        options: Dict[str, Any],
+        target_method: str,
+        options: Optional[model_types.DeployOptions],
     ) -> Optional[Deployment]:
         """Create a deployment and deploy it to remote platform.
 
@@ -176,6 +197,7 @@ class Deployer:
             name: Name of the deployment for the model.
             model_dir_path: Directory of the model.
             platform: Target platform to deploy the model.
+            target_method: The name of the target method to be deployed.
             options: Additional options when deploying the model.
                 Each target platform will have their own specifications of options.
 
@@ -185,18 +207,25 @@ class Deployer:
         Returns:
             The deployment information.
         """
+        model_dir_path = os.path.normpath(model_dir_path)
+
         is_success = False
         error_msg = ""
         info = None
+
+        if not options:
+            options = {}
+
         try:
             if platform == TargetPlatform.WAREHOUSE:
                 m, meta = _udf_util._deploy_to_warehouse(
                     self._session,
-                    udf_name=name,
                     model_dir_path=model_dir_path,
-                    relax_version=options.get("relax_version", False),
+                    udf_name=name,
+                    target_method=target_method,
+                    **options,
                 )
-            info = self._manager.create(name, platform, m, meta, options)
+            info = self._manager.create(name, platform, m, meta, target_method, options)
             is_success = True
         except Exception as e:
             print(e)
@@ -235,15 +264,37 @@ class Deployer:
         """
         self._manager.delete(name)
 
-    def predict(self, name: str, df: Any) -> pd.DataFrame:
+    @overload
+    def predict(self, name: str, X: model_types.SupportedDataType) -> pd.DataFrame:
+        """Execute batch inference of a model remotely on local data. Can be any supported data type. Return a local
+            Pandas Dataframe.
+
+        Args:
+            name: The name of the deployment that contains the model used to infer.
+            X: The input data.
+        """
+        ...
+
+    @overload
+    def predict(self, name: str, X: DataFrame) -> DataFrame:
+        """Execute batch inference of a model remotely on a Snowpark DataFrame. Return a Snowpark DataFrame.
+
+        Args:
+            name: The name of the deployment that contains the model used to infer.
+            X: The input Snowpark dataframe.
+
+        """
+
+    def predict(self, name: str, X: Union[model_types.SupportedDataType, DataFrame]) -> Union[pd.DataFrame, DataFrame]:
         """Execute batch inference of a model remotely.
 
         Args:
             name: The name of the deployment that contains the model used to infer.
-            df: The input dataframe.
+            X: The input dataframe.
 
         Raises:
             ValueError: Raised when the deployment does not exist.
+            ValueError: Raised when the input is too large to use keep_order option.
             NotImplementedError: Raised when confronting unsupported feature group.
 
         Returns:
@@ -252,12 +303,21 @@ class Deployer:
         d = self.get_deployment(name)
         if not d:
             raise ValueError(f"Deployment {name} does not exist.")
-        meta = d.model_meta
-        if not isinstance(df, DataFrame):
-            df = model_signature._validate_data_with_features_and_convert_to_df(meta.signature.inputs, df)
+        meta = d["model_meta"]
+        target_method = d["target_method"]
+        keep_order = d["options"].get("keep_order", True)
+        sig = meta.signatures[target_method]
+        if not isinstance(X, DataFrame):
+            df = model_signature._validate_data_with_features_and_convert_to_df(sig.inputs, X)
             s_df = self._session.create_dataframe(df)
         else:
-            s_df = df
+            s_df = X
+
+        if keep_order:
+            # ID is UINT64 type, this we should limit.
+            if s_df.count() > 2**64:
+                raise ValueError("Unable to keep order of a DataFrame with more than 2 ** 64 rows.")
+            s_df = s_df.with_column("_ID", F.monotonically_increasing_id())
 
         cols = []
         for col_name in s_df.columns:
@@ -268,24 +328,32 @@ class Deployer:
                     type_utils.ColumnOrName(F.col(col_name)),
                 ]
             )
-        output_col_names = [feature.name for feature in meta.signature.outputs]
+        output_col_names = [feature.name for feature in sig.outputs]
         output_cols = []
         for output_col_name in output_col_names:
             # To avoid automatic upper-case convert, we quoted the result name.
             output_cols.append(F.col("tmp_result")[output_col_name].alias(f'"{output_col_name}"'))
 
         dtype_map = {}
-        for feature in meta.signature.outputs:
+        for feature in sig.outputs:
             if isinstance(feature, model_signature.FeatureSpec):
                 dtype_map[feature.name] = feature._dtype._value
             else:
                 raise NotImplementedError("FeatureGroup is not supported yet.")
-        df_local = (
-            s_df.select(F.call_udf(name, type_utils.ColumnOrLiteral(F.object_construct(*cols))).alias("tmp_result"))
-            .select(*output_cols)
-            .to_pandas()
-            .applymap(json.loads)
-            .rename(columns=identifier.remove_quote_if_quoted)
-            .astype(dtype=dtype_map)
+        df_res = s_df.select(
+            F.call_udf(name, type_utils.ColumnOrLiteral(F.object_construct(*cols))).alias("tmp_result")
         )
-        return df_local
+
+        if keep_order:
+            df_res = df_res.order_by(F.col("_ID"), ascending=True)
+
+        df_res = df_res.select(*output_cols)
+
+        if not isinstance(X, DataFrame):
+            df_local = df_res.to_pandas()
+            df_local = (
+                df_local.applymap(json.loads).rename(columns=identifier.remove_quote_if_quoted).astype(dtype=dtype_map)
+            )
+            return pd.DataFrame(df_local)
+        else:
+            return df_res

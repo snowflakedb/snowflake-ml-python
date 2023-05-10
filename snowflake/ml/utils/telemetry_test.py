@@ -50,6 +50,9 @@ class TelemetryTest(absltest.TestCase):
         test_obj = DummyObject()
         test_obj.foo(param="val")
         self.mock_telemetry.try_add_log_to_batch.assert_called()
+        self.assertEqual(
+            utils_telemetry._SourceTelemetryClient.DEFAULT_FORCE_FLUSH_SIZE, self.mock_telemetry._flush_size
+        )
 
         message = self.mock_telemetry.try_add_log_to_batch.call_args.args[0].to_dict()["message"]
         data = message["data"]
@@ -168,9 +171,10 @@ class TelemetryTest(absltest.TestCase):
         with pytest.raises(RuntimeError):
             test_obj.foo()
         self.mock_telemetry.try_add_log_to_batch.assert_called()
+        self.mock_telemetry.send_batch.assert_called()
 
         message = self.mock_telemetry.try_add_log_to_batch.call_args.args[0].to_dict()["message"]
-        assert message[utils_telemetry.TelemetryField.KEY_ERROR_INFO.value] == repr(RuntimeError("foo error"))
+        self.assertEqual(repr(RuntimeError("foo error")), message[utils_telemetry.TelemetryField.KEY_ERROR_INFO.value])
 
     def test_get_statement_params_full_func_name(self) -> None:
         """Test get_statement_params_full_func_name."""

@@ -3,13 +3,16 @@ load("//bazel:py_rules.bzl", "py_library", "py_test")
 package(default_visibility = ["//visibility:public"])
 
 py_library(
-    name = "model_signature",
-    srcs = ["model_signature.py"],
+    name = "type_hints",
+    srcs = ["type_hints.py"],
 )
 
 py_library(
-    name = "model_types",
-    srcs = ["model_types.py"],
+    name = "model_signature",
+    srcs = ["model_signature.py"],
+    deps = [
+        ":type_hints",
+    ],
 )
 
 py_library(
@@ -25,17 +28,18 @@ py_library(
     name = "custom_model",
     srcs = ["custom_model.py"],
     deps = [
-        ":model_types",
-        "//snowflake/ml/model/_handlers:_base",
+        ":type_hints"
     ],
 )
 
 py_library(
-    name = "model_meta",
-    srcs = ["model_meta.py"],
+    name = "_model_meta",
+    srcs = ["_model_meta.py"],
     deps = [
         ":_env",
         ":model_signature",
+        "//snowflake/ml/_internal:env",
+        "//snowflake/ml/_internal:env_utils",
         "//snowflake/ml/_internal:file_utils",
     ],
 )
@@ -44,35 +48,44 @@ py_library(
     name = "_udf_util",
     srcs = ["_udf_util.py"],
     deps = [
-        ":model_meta",
-        ":model_types",
-        ":model"
+        ":_model_meta",
+        ":type_hints",
+        ":_model",
+        ":_env",
+        "//snowflake/ml/_internal:env_utils",
     ],
 )
 
 py_library(
-    name = "deployer",
-    srcs = ["deployer.py"],
+    name = "_deployer",
+    srcs = ["_deployer.py"],
     deps = [
         ":_udf_util",
+        ":_model_meta",
+        ":model_signature",
+        ":type_hints",
         "//snowflake/ml/_internal/utils:identifier"
     ],
 )
 
 py_library(
-    name = "model_handler",
-    srcs = ["model_handler.py"],
+    name = "_model_handler",
+    srcs = ["_model_handler.py"],
     deps = [
+        ":type_hints",
         "//snowflake/ml/model/_handlers:_base",
     ],
 )
 
 py_library(
-    name = "model",
-    srcs = ["model.py"],
+    name = "_model",
+    srcs = ["_model.py"],
     deps = [
         ":custom_model",
-        ":model_handler",
+        ":_model_handler",
+        ":_model_meta",
+        ":model_signature",
+        ":type_hints",
         "//snowflake/ml/model/_handlers:custom",
         "//snowflake/ml/model/_handlers:sklearn"
     ],
@@ -90,6 +103,7 @@ py_test(
     name = "_env_test",
     srcs = ["_env_test.py"],
     deps = [
+        "//snowflake/ml/_internal:env",
         ":_env",
     ],
 )
@@ -99,6 +113,9 @@ py_test(
     srcs = ["_udf_util_test.py"],
     deps = [
         ":_udf_util",
+        ":_model_meta",
+        ":model_signature",
+        "//snowflake/ml/_internal:env_utils",
         "//snowflake/ml/test_utils:mock_data_frame",
         "//snowflake/ml/test_utils:mock_session",
     ],
@@ -113,20 +130,25 @@ py_test(
 )
 
 py_test(
-    name = "model_meta_test",
-    srcs = ["model_meta_test.py"],
+    name = "_model_meta_test",
+    srcs = ["_model_meta_test.py"],
     deps = [
-        ":model_meta",
+        ":_model_meta",
+        ":model_signature"
     ],
 )
 
 py_test(
-    name = "model_test",
-    srcs = ["model_test.py"],
+    name = "_model_test",
+    srcs = ["_model_test.py"],
     shard_count = 5,
     timeout = "long",
     deps = [
-        ":model",
-        ":deployer"
+        ":_model",
+        ":custom_model",
+        ":_model_handler",
+        ":_model_meta",
+        ":model_signature",
+        ":type_hints",
     ],
 )

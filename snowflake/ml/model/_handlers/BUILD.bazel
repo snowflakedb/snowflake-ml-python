@@ -6,8 +6,8 @@ py_library(
     name = "_base",
     srcs = ["_base.py"],
     deps = [
-        "//snowflake/ml/model:model_meta",
-        "//snowflake/ml/model:model_types",
+        "//snowflake/ml/model:_model_meta",
+        "//snowflake/ml/model:type_hints",
     ],
 )
 
@@ -18,9 +18,10 @@ py_library(
     deps = [
         ":_base",
         "//snowflake/ml/_internal:type_utils",
+        "//snowflake/ml/model:_model_meta",
         "//snowflake/ml/model:custom_model",
-        "//snowflake/ml/model:model_handler",
-        "//snowflake/ml/model:model_types",
+        "//snowflake/ml/model:_model_handler",
+        "//snowflake/ml/model:type_hints",
         "//snowflake/ml/model:model_signature",
     ],
 )
@@ -30,9 +31,10 @@ py_library(
     srcs = ["sklearn.py"],
     deps = [
         ":_base",
+        "//snowflake/ml/model:_model_meta",
         "//snowflake/ml/model:custom_model",
         "//snowflake/ml/_internal:type_utils",
-        "//snowflake/ml/model:model_types",
+        "//snowflake/ml/model:type_hints",
         "//snowflake/ml/model:model_signature",
     ],
 )

@@ -75,6 +75,37 @@ class GridSearchCVTest(absltest.TestCase):
         pipeline.fit(raw_data)
         pipeline.predict(raw_data).to_pandas()
 
+    def test_fit_and_compare_results_pandas_dataframe(self) -> None:
+        raw_data = self._session.sql(
+            """SELECT *, IFF(Y = 'yes', 1.0, 0.0) as LABEL
+                FROM ML_DATASETS.PUBLIC.UCI_BANK_MARKETING_20COLUMNS
+                LIMIT 2000"""
+        ).drop(Column("Y"))
+        raw_data_pandas = raw_data.to_pandas()
+
+        pipeline = Pipeline(
+            steps=[
+                (
+                    "OHE",
+                    OneHotEncoder(
+                        input_cols=categorical_columns, output_cols=categorical_columns, drop_input_cols=True
+                    ),
+                ),
+                (
+                    "MMS",
+                    MinMaxScaler(
+                        clip=True,
+                        input_cols=numerical_columns,
+                        output_cols=numerical_columns,
+                    ),
+                ),
+                ("regression", XGBRegressor(label_cols=label_column)),
+            ]
+        )
+
+        pipeline.fit(raw_data_pandas)
+        pipeline.predict(raw_data_pandas)
+
 
 if __name__ == "__main__":
     absltest.main()

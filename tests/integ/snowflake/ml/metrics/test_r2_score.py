@@ -15,14 +15,14 @@ from snowflake.snowpark import Row, Session
 class R2ScoreTest(TestCase):
     """Test R2 score."""
 
-    def setUp(self):
+    def setUp(self) -> None:
         """Creates Snowpark and Snowflake environments for testing."""
         self._session = Session.builder.configs(SnowflakeLoginOptions()).create()
 
-    def tearDown(self):
+    def tearDown(self) -> None:
         self._session.close()
 
-    def test_r2_score(self):
+    def test_r2_score(self) -> None:
         input_df = self._session.create_dataframe(
             [
                 Row(-1.0, -1.5),
