@@ -37,7 +37,6 @@ _SET_METADATA_OPERATION: str = "SET"
 # Metadata types.
 _METADATA_ATTRIBUTE_DESCRIPTION: str = "DESCRIPTION"
 _METADATA_ATTRIBUTE_METRICS: str = "METRICS"
-_METADATA_ATTRIBUTE_NAME: str = "NAME"
 _METADATA_ATTRIBUTE_REGISTRATION: str = "REGISTRATION"
 _METADATA_ATTRIBUTE_TAGS: str = "TAGS"
 _METADATA_ATTRIBUTE_DELETION: str = "DELETION"
@@ -46,7 +45,6 @@ _METADATA_ATTRIBUTE_DELETION: str = "DELETION"
 _LIST_METADATA_ATTRIBUTE: List[str] = [
     _METADATA_ATTRIBUTE_DESCRIPTION,
     _METADATA_ATTRIBUTE_METRICS,
-    _METADATA_ATTRIBUTE_NAME,
     _METADATA_ATTRIBUTE_TAGS,
 ]
 _TELEMETRY_PROJECT = "MLOps"
@@ -295,11 +293,15 @@ class ModelRegistry:
             .validate()
         )
 
-    def _insert_registry_entry(self, *, id: str, properties: Dict[str, Any]) -> List[snowpark.Row]:
+    def _insert_registry_entry(
+        self, *, id: str, name: str, version: str, properties: Dict[str, Any]
+    ) -> List[snowpark.Row]:
         """Insert a new row into the model registry table.
 
         Args:
             id: Model id to register.
+            name: Model Name string.
+            version: Model Version string.
             properties: Dictionary of properties corresponding to table columns.
 
         Returns:
@@ -310,16 +312,18 @@ class ModelRegistry:
         """
         if not id:
             raise connector.DataError("Model ID is required but none given.")
-        if "ID" not in properties:
-            properties["ID"] = id
-        else:
-            if id and id != properties["ID"]:
-                raise connector.DataError(
-                    formatting.unwrap(
-                        f"""Parameter 'id' is given and parameter 'properties' has the field 'ID' set but the values
-                        do not match: id=="{id}" properties['ID']=="{properties['ID']}"."""
+        mandatory_args = {"ID": id, "NAME": name, "VERSION": version}
+        for k, v in mandatory_args.items():
+            if k not in properties:
+                properties[k] = v
+            else:
+                if v and v != properties[k]:
+                    raise connector.DataError(
+                        formatting.unwrap(
+                            f"""Parameter '{k.lower()}' is given and parameter 'properties' has the field '{k}' set but the values
+                            do not match: {k.lower()}=="{v}" properties['{k}']=="{properties[k]}"."""
+                        )
                     )
-                )
         # Could do a multi-table insert here with some pros and cons:
         # [PRO] Atomic insert across multiple tables.
         # [CON] Code logic becomes messy depending on which fields are set.
@@ -578,46 +582,10 @@ class ModelRegistry:
         Raises:
             DataError: The requested model could not be found.
         """
-        result = self._get_metadata_attribute(
-            _METADATA_ATTRIBUTE_NAME, model_name=model_name, model_version=model_version
-        )
+        result = self._get_metadata_attribute("ID", model_name=model_name, model_version=model_version)
         if not result:
             raise connector.DataError(f"Model {model_name}/{model_version} doesn't exist.")
         return str(result)
-
-    @telemetry.send_api_usage_telemetry(
-        project=_TELEMETRY_PROJECT,
-        subproject=_TELEMETRY_SUBPROJECT,
-    )
-    def get_model_name(self, id: str) -> Optional[str]:
-        """Set name of the model with the given id to name.
-
-        Args:
-            id: Model ID string.
-
-        Returns:
-            Name of the model or None.
-        """
-        result = self._get_metadata_attribute(_METADATA_ATTRIBUTE_NAME, id=id)
-        return None if result is None else str(result)
-
-    @telemetry.send_api_usage_telemetry(
-        project=_TELEMETRY_PROJECT,
-        subproject=_TELEMETRY_SUBPROJECT,
-    )
-    def set_model_name(
-        self,
-        *,
-        id: str,
-        name: str,
-    ) -> None:
-        """Set name of the model with the given id to name.
-
-        Args:
-            name: Desired new model name.
-            id: Model ID string. Required if either old name or model version is None.
-        """
-        self._set_metadata_attribute(_METADATA_ATTRIBUTE_NAME, name, id=id)
 
     @telemetry.send_api_usage_telemetry(
         project=_TELEMETRY_PROJECT,
@@ -1047,7 +1015,7 @@ class ModelRegistry:
         is_native_model_format = False
 
         with tempfile.TemporaryDirectory() as tmpdir:
-            model = cast(model_types.ModelType, model)
+            model = cast(model_types.SupportedModelType, model)
             try:
                 if signatures:
                     model_api.save_model(
@@ -1151,6 +1119,8 @@ class ModelRegistry:
 
         new_model: Dict[Any, Any] = {}
         new_model["ID"] = id
+        new_model["NAME"] = name
+        new_model["VERSION"] = version
         new_model["INPUT_SPEC"] = input_spec
         new_model["OUTPUT_SPEC"] = output_spec
         new_model["TYPE"] = type
@@ -1158,18 +1128,15 @@ class ModelRegistry:
         new_model["CREATION_ROLE"] = self._session.get_current_role()
         new_model["CREATION_ENVIRONMENT_SPEC"] = {"python": ".".join(map(str, sys.version_info[:3]))}
         new_model["URI"] = uri
-        new_model["VERSION"] = version
 
         existing_model_nums = self._list_selected_models(id=id, model_name=name, model_version=version).count()
         if existing_model_nums:
             raise connector.DataError(f"Model {name}/{version} already exists. Unable to register the model.")
 
-        if self._insert_registry_entry(id=id, properties=new_model):
+        if self._insert_registry_entry(id=id, name=name, version=version, properties=new_model):
             self._set_metadata_attribute(id=id, attribute=_METADATA_ATTRIBUTE_REGISTRATION, value=new_model)
             if description:
                 self.set_model_description(id=id, description=description)
-            if name:
-                self.set_model_name(id=id, name=name)
             if tags:
                 self._set_metadata_attribute(id=id, attribute=_METADATA_ATTRIBUTE_TAGS, value=tags)
             return True
@@ -1615,4 +1582,5 @@ class ModelReference:
             )
             setattr(self.__class__, name, locals()[name])
             setattr(self.__class__.__dict__[name], "__doc__", docstring)  # NoQA
+
         setattr(self.__class__, "init_complete", True)  # NoQA

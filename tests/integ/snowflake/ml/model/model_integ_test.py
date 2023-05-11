@@ -11,10 +11,11 @@ import tempfile
 
 import numpy as np
 import pandas as pd
+import xgboost
 from absl import flags
 from absl.testing import absltest
 from packaging import utils as packaging_utils
-from sklearn import datasets, ensemble, linear_model, multioutput
+from sklearn import datasets, ensemble, linear_model, model_selection, multioutput
 
 from snowflake.ml.model import (
     _deployer,
@@ -98,6 +99,21 @@ def _upload_snowml_to_tmp_stage(
     return f"{tmp_stage}/{whl_filename}"
 
 
+def _create_stage(session: Session, stage_qual_name: str) -> None:
+    sql = f"CREATE STAGE {stage_qual_name}"
+    session.sql(sql).collect()
+
+
+def _drop_function(session: Session, func_name: str) -> None:
+    sql = f"DROP FUNCTION {func_name}(OBJECT)"
+    session.sql(sql).collect()
+
+
+def _drop_stage(session: Session, stage_qual_name: str) -> None:
+    sql = f"DROP STAGE {stage_qual_name}"
+    session.sql(sql).collect()
+
+
 class TestModelInteg(absltest.TestCase):
     @classmethod
     def setUpClass(self) -> None:
@@ -107,8 +123,14 @@ class TestModelInteg(absltest.TestCase):
         self.run_id = "".join(random.choices(string.ascii_lowercase, k=8))
         self._snowml_wheel_path = _upload_snowml_to_tmp_stage(self._session)
 
+        db = self._session.get_current_database()
+        schema = self._session.get_current_schema()
+        self.stage_qual_name = f"{db}.{schema}.SNOWML_MODEL_TEST_STAGE_{self.run_id.upper()}"
+        _create_stage(session=self._session, stage_qual_name=self.stage_qual_name)
+
     @classmethod
     def tearDownClass(self) -> None:
+        _drop_stage(session=self._session, stage_qual_name=self.stage_qual_name)
         self._session.close()
 
     def test_async_model_composition(self) -> None:
@@ -204,7 +226,11 @@ class TestModelInteg(absltest.TestCase):
                 platform=_deployer.TargetPlatform.WAREHOUSE,
                 target_method="predict",
                 options=model_types.WarehouseDeployOptions(
-                    {"relax_version": True, "_snowml_wheel_path": self._snowml_wheel_path}
+                    {
+                        "relax_version": True,
+                        "_snowml_wheel_path": self._snowml_wheel_path,
+                        "permanent_udf_stage_location": f"@{self.stage_qual_name}/",
+                    }
                 ),
             )
             assert di is not None
@@ -217,6 +243,23 @@ class TestModelInteg(absltest.TestCase):
 
             self.assertTrue(di in dc.list_deployments())
             self.assertEqual(di, dc.get_deployment(f"custom_demo_model_{self.run_id}"))
+
+            with self.assertRaises(RuntimeError):
+                di = dc.create_deployment(
+                    name=f"custom_demo_model_{self.run_id}",
+                    model_dir_path=os.path.join(tmpdir, "custom_demo_model"),
+                    platform=_deployer.TargetPlatform.WAREHOUSE,
+                    target_method="predict",
+                    options=model_types.WarehouseDeployOptions(
+                        {
+                            "relax_version": True,
+                            "_snowml_wheel_path": self._snowml_wheel_path,
+                            "permanent_udf_stage_location": f"@{self.stage_qual_name}/",
+                        }
+                    ),
+                )
+
+            _drop_function(self._session, f"custom_demo_model_{self.run_id}")
 
     def test_custom_model_with_artifacts(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -361,6 +404,35 @@ class TestModelInteg(absltest.TestCase):
             assert di_predict_proba is not None
             res = dc.predict(di_predict_proba["name"], iris_X[-10:])
             np.testing.assert_allclose(res.values, np.hstack(model.predict_proba(iris_X[-10:])))
+
+    def test_xgb(self) -> None:
+        cal_data = datasets.load_breast_cancer()
+        cal_X = pd.DataFrame(cal_data.data, columns=cal_data.feature_names)
+        cal_y = pd.Series(cal_data.target)
+        cal_X_train, cal_X_test, cal_y_train, cal_y_test = model_selection.train_test_split(cal_X, cal_y)
+        regressor = xgboost.XGBRegressor(n_estimators=100, reg_lambda=1, gamma=0, max_depth=3)
+        regressor.fit(cal_X_train, cal_y_train)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            model_api.save_model(
+                name="xgb_model",
+                model_dir_path=os.path.join(tmpdir, "xgb_model"),
+                model=regressor,
+                sample_input=cal_X_test,
+                metadata={"author": "halu", "version": "1"},
+            )
+            dc = _deployer.Deployer(self._session, _deployer.LocalDeploymentManager())
+            di_predict = dc.create_deployment(
+                name=f"xgb_model_{self.run_id}",
+                model_dir_path=os.path.join(tmpdir, "xgb_model"),
+                platform=_deployer.TargetPlatform.WAREHOUSE,
+                target_method="predict",
+                options=model_types.WarehouseDeployOptions(
+                    {"relax_version": True, "_snowml_wheel_path": self._snowml_wheel_path}
+                ),
+            )
+            assert di_predict is not None
+            res = dc.predict(di_predict["name"], cal_X_test)
+            np.testing.assert_allclose(res.values, np.expand_dims(regressor.predict(cal_X_test), axis=1))
 
 
 if __name__ == "__main__":

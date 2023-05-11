@@ -8,12 +8,7 @@ import pandas as pd
 from typing_extensions import Required
 
 from snowflake.ml._internal.utils import identifier
-from snowflake.ml.model import (
-    _model_meta,
-    _udf_util,
-    model_signature,
-    type_hints as model_types,
-)
+from snowflake.ml.model import _udf_util, model_signature, type_hints as model_types
 from snowflake.snowpark import DataFrame, Session, functions as F
 from snowflake.snowpark._internal import type_utils
 
@@ -28,18 +23,14 @@ class Deployment(TypedDict):
 
     Attributes:
         name: Name of the deployment.
-        model: The model object that get deployed.
-        model_meta: The model metadata.
         platform: Target platform to deploy the model.
-        target_method: The name of the target method to be deployed.
+        signature: The signature of the model method.
         options: Additional options when deploying the model.
     """
 
     name: Required[str]
     platform: Required[TargetPlatform]
-    model: Required[model_types.ModelType]
-    model_meta: Required[_model_meta.ModelMetadata]
-    target_method: str
+    signature: model_signature.ModelSignature
     options: Required[model_types.DeployOptions]
 
 
@@ -53,19 +44,15 @@ class DeploymentManager(ABC):
         self,
         name: str,
         platform: TargetPlatform,
-        model: model_types.ModelType,
-        model_meta: _model_meta.ModelMetadata,
-        target_method: str,
+        signature: model_signature.ModelSignature,
         options: Optional[model_types.DeployOptions] = None,
     ) -> Deployment:
         """Create a deployment.
 
         Args:
             name: Name of the deployment for the model.
-            model: The model object that get deployed.
-            model_meta: The model metadata.
             platform: Target platform to deploy the model.
-            target_method: The name of the target method to be deployed.
+            signature: The signature of the model method.
             options: Additional options when deploying the model.
                 Each target platform will have their own specifications of options.
         """
@@ -105,9 +92,7 @@ class LocalDeploymentManager(DeploymentManager):
         self,
         name: str,
         platform: TargetPlatform,
-        model: model_types.ModelType,
-        model_meta: _model_meta.ModelMetadata,
-        target_method: str,
+        signature: model_signature.ModelSignature,
         options: Optional[model_types.DeployOptions] = None,
     ) -> Deployment:
         """Create a deployment.
@@ -115,9 +100,7 @@ class LocalDeploymentManager(DeploymentManager):
         Args:
             name: Name of the deployment for the model.
             platform: Target platform to deploy the model.
-            model: The model object that get deployed.
-            model_meta: The model metadata.
-            target_method: The name of the target method to be deployed.
+            signature: The signature of the model method.
             options: Additional options when deploying the model.
                 Each target platform will have their own specifications of options.
 
@@ -129,9 +112,7 @@ class LocalDeploymentManager(DeploymentManager):
         info = Deployment(
             name=name,
             platform=platform,
-            model=model,
-            model_meta=model_meta,
-            target_method=target_method,
+            signature=signature,
             options=options,
         )
         self._storage[name] = info
@@ -203,6 +184,7 @@ class Deployer:
 
         Raises:
             RuntimeError: Raised when running into issues when deploying.
+            ValueError: Raised when target method does not exist in model.
 
         Returns:
             The deployment information.
@@ -225,7 +207,10 @@ class Deployer:
                     target_method=target_method,
                     **options,
                 )
-            info = self._manager.create(name, platform, m, meta, target_method, options)
+            signature = meta.signatures.get(target_method, None)
+            if not signature:
+                raise ValueError(f"Target method {target_method} does not exist in model.")
+            info = self._manager.create(name=name, platform=platform, signature=signature, options=options)
             is_success = True
         except Exception as e:
             print(e)
@@ -303,10 +288,8 @@ class Deployer:
         d = self.get_deployment(name)
         if not d:
             raise ValueError(f"Deployment {name} does not exist.")
-        meta = d["model_meta"]
-        target_method = d["target_method"]
+        sig = d["signature"]
         keep_order = d["options"].get("keep_order", True)
-        sig = meta.signatures[target_method]
         if not isinstance(X, DataFrame):
             df = model_signature._validate_data_with_features_and_convert_to_df(sig.inputs, X)
             s_df = self._session.create_dataframe(df)

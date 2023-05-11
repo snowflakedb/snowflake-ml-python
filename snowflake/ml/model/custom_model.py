@@ -51,7 +51,7 @@ class ModelRef:
     graph level.
     """
 
-    def __init__(self, name: str, model: model_types.ModelType) -> None:
+    def __init__(self, name: str, model: model_types.SupportedModelType) -> None:
         """Initialize the ModelRef.
 
         Args:
@@ -67,7 +67,7 @@ class ModelRef:
         return self._name
 
     @property
-    def model(self) -> model_types.ModelType:
+    def model(self) -> model_types.SupportedModelType:
         """The model object of the sub-model."""
         return self._model
 
@@ -102,7 +102,7 @@ class ModelContext:
         self,
         *,
         artifacts: Optional[Dict[str, str]] = None,
-        models: Optional[Dict[str, model_types.ModelType]] = None,
+        models: Optional[Dict[str, model_types.SupportedModelType]] = None,
     ) -> None:
         """Initialize the model context
 

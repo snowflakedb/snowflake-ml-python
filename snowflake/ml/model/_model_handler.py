@@ -8,7 +8,7 @@ from snowflake.ml.model import type_hints as model_types
 from snowflake.ml.model._handlers import _base
 
 _HANDLERS_BASE = "_handlers"
-_MODEL_HANDLER_REGISTRY: Dict[str, Type[_base._ModelHandler]] = dict()
+_MODEL_HANDLER_REGISTRY: Dict[str, Type[_base._ModelHandler[model_types.SupportedModelType]]] = dict()
 
 
 def _register_handlers() -> None:
@@ -34,7 +34,9 @@ def _register_handlers() -> None:
                     _MODEL_HANDLER_REGISTRY[k_class.handler_type] = k_class
 
 
-def _find_handler(model: model_types.ModelType) -> Optional[Type[_base._ModelHandler]]:
+def _find_handler(
+    model: model_types.SupportedModelType,
+) -> Optional[Type[_base._ModelHandler[model_types.SupportedModelType]]]:
     retried = False
     while True:
         for handler in _MODEL_HANDLER_REGISTRY.values():
@@ -47,7 +49,7 @@ def _find_handler(model: model_types.ModelType) -> Optional[Type[_base._ModelHan
             retried = True
 
 
-def _load_handler(target_model_type: str) -> Optional[Type[_base._ModelHandler]]:
+def _load_handler(target_model_type: str) -> Optional[Type[_base._ModelHandler[model_types.SupportedModelType]]]:
     retried = False
     while True:
         for model_type, handler in _MODEL_HANDLER_REGISTRY.items():

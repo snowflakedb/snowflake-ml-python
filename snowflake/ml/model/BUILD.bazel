@@ -61,7 +61,6 @@ py_library(
     srcs = ["_deployer.py"],
     deps = [
         ":_udf_util",
-        ":_model_meta",
         ":model_signature",
         ":type_hints",
         "//snowflake/ml/_internal/utils:identifier"
@@ -87,7 +86,8 @@ py_library(
         ":model_signature",
         ":type_hints",
         "//snowflake/ml/model/_handlers:custom",
-        "//snowflake/ml/model/_handlers:sklearn"
+        "//snowflake/ml/model/_handlers:sklearn",
+        "//snowflake/ml/model/_handlers:xgboost"
     ],
 )
 

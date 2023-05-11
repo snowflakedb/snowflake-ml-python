@@ -39,12 +39,14 @@ class _ModelBlobMetadata:
         path: Path to the picked model file. It is a relative path from the model blob directory.
         artifacts: Optional, used in custom model to show the mapping between artifact name and relative path
             from the model blob directory.
+        options: Optional, used for some model specific metadata storage
     """
 
     name: str
     model_type: str
     path: str
     artifacts: Dict[str, str] = dataclasses.field(default_factory=dict)
+    options: Dict[str, str] = dataclasses.field(default_factory=dict)
 
 
 @contextmanager

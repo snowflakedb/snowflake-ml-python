@@ -1,7 +1,7 @@
 import inspect
 import os
 import sys
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, Dict, Optional
 
 import anyio
 import cloudpickle
@@ -20,14 +20,21 @@ if TYPE_CHECKING:
     from snowflake.ml.model import custom_model
 
 
-class _CustomModelHandler(_base._ModelHandler):
+class _CustomModelHandler(_base._ModelHandler["custom_model.CustomModel"]):
     """Handler for custom model."""
 
     handler_type = "custom"
 
     @staticmethod
-    def can_handle(model: model_types.ModelType) -> bool:
+    def can_handle(model: model_types.SupportedModelType) -> bool:
         return bool(type_utils.LazyType("snowflake.ml.model.custom_model.CustomModel").isinstance(model))
+
+    @staticmethod
+    def cast_model(model: model_types.SupportedModelType) -> "custom_model.CustomModel":
+        from snowflake.ml.model import custom_model
+
+        assert isinstance(model, custom_model.CustomModel)
+        return model
 
     @staticmethod
     def _save_model(
@@ -36,32 +43,34 @@ class _CustomModelHandler(_base._ModelHandler):
         model_meta: model_meta_api.ModelMetadata,
         model_blobs_dir_path: str,
         sample_input: Optional[model_types.SupportedDataType] = None,
+        is_sub_model: Optional[bool] = False,
         **kwargs: Unpack[model_types.CustomModelSaveOption],
     ) -> None:
         from snowflake.ml.model import custom_model
 
         assert isinstance(model, custom_model.CustomModel)
 
-        if model_meta._signatures is None:
-            # In this case sample_input should be available, because of the check in save_model.
-            assert sample_input is not None
-            model_meta._signatures = {}
-            for target_method in model._get_infer_methods():
-                if inspect.iscoroutinefunction(target_method):
-                    with anyio.start_blocking_portal() as portal:
-                        predictions_df = portal.call(target_method, model, sample_input)
-                else:
-                    predictions_df = target_method(model, sample_input)
-                func_name = target_method.__name__
-                sig = model_signature.infer_signature(sample_input, predictions_df)
-                model_meta._signatures[func_name] = sig
-        else:
-            method_names = [method.__name__ for method in model._get_infer_methods()]
-            for method_name in model_meta._signatures.keys():
-                if method_name not in method_names:
-                    raise ValueError(f"Target method {method_name} does not exists.")
-                if not callable(getattr(model, method_name, None)):
-                    raise ValueError(f"Target method {method_name} is not callable.")
+        if not is_sub_model:
+            if model_meta._signatures is None:
+                # In this case sample_input should be available, because of the check in save_model.
+                assert sample_input is not None
+                model_meta._signatures = {}
+                for target_method in model._get_infer_methods():
+                    if inspect.iscoroutinefunction(target_method):
+                        with anyio.start_blocking_portal() as portal:
+                            predictions_df = portal.call(target_method, model, sample_input)
+                    else:
+                        predictions_df = target_method(model, sample_input)
+                    func_name = target_method.__name__
+                    sig = model_signature.infer_signature(sample_input, predictions_df)
+                    model_meta._signatures[func_name] = sig
+            else:
+                method_names = [method.__name__ for method in model._get_infer_methods()]
+                for method_name in model_meta._signatures.keys():
+                    if method_name not in method_names:
+                        raise ValueError(f"Target method {method_name} does not exists.")
+                    if not callable(getattr(model, method_name, None)):
+                        raise ValueError(f"Target method {method_name} is not callable.")
 
         model_blob_path = os.path.join(model_blobs_dir_path, name)
         os.makedirs(model_blob_path, exist_ok=True)
@@ -76,7 +85,14 @@ class _CustomModelHandler(_base._ModelHandler):
             for sub_name, model_ref in model.context.model_refs.items():
                 handler = _model_handler._find_handler(model_ref.model)
                 assert handler is not None
-                handler._save_model(sub_name, model_ref.model, model_meta, model_blobs_dir_path)
+                sub_model = handler.cast_model(model_ref.model)
+                handler._save_model(
+                    name=sub_name,
+                    model=sub_model,
+                    model_meta=model_meta,
+                    model_blobs_dir_path=model_blobs_dir_path,
+                    is_sub_model=True,
+                )
 
         # Make sure that the module where the model is defined get pickled by value as well.
         cloudpickle.register_pickle_by_value(sys.modules[model.__module__])
@@ -115,7 +131,7 @@ class _CustomModelHandler(_base._ModelHandler):
 
         artifacts_meta = model_blob_metadata.artifacts
         artifacts = {name: os.path.join(model_blob_path, rel_path) for name, rel_path in artifacts_meta.items()}
-        models = dict()
+        models: Dict[str, model_types.SupportedModelType] = dict()
         for sub_model_name, _ref in m.context.model_refs.items():
             model_type = model_meta.models[sub_model_name].model_type
             handler = _model_handler._load_handler(model_type)

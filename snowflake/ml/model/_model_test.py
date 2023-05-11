@@ -5,8 +5,9 @@ import warnings
 
 import numpy as np
 import pandas as pd
+import xgboost
 from absl.testing import absltest
-from sklearn import datasets, ensemble, linear_model, multioutput
+from sklearn import datasets, ensemble, linear_model, model_selection, multioutput
 
 from snowflake.ml.model import (
     _model as model_api,
@@ -37,6 +38,28 @@ class DemoModel(custom_model.CustomModel):
     @custom_model.inference_api
     def predict(self, input: pd.DataFrame) -> pd.DataFrame:
         return pd.DataFrame({"output": input["c1"]})
+
+
+class AnotherDemoModel(custom_model.CustomModel):
+    def __init__(self, context: custom_model.ModelContext) -> None:
+        super().__init__(context)
+
+    @custom_model.inference_api
+    def predict(self, input: pd.DataFrame) -> pd.DataFrame:
+        return pd.DataFrame(input[["c1", "c2"]])
+
+
+class ComposeModel(custom_model.CustomModel):
+    def __init__(self, context: custom_model.ModelContext) -> None:
+        super().__init__(context)
+
+    @custom_model.inference_api
+    def predict(self, input: pd.DataFrame) -> pd.DataFrame:
+        return pd.DataFrame(
+            (self.context.model_ref("m1").predict(input)["c1"] + self.context.model_ref("m2").predict(input)["output"])
+            / 2,
+            columns=["output"],
+        )
 
 
 class AsyncComposeModel(custom_model.CustomModel):
@@ -152,6 +175,40 @@ class ModelTest(absltest.TestCase):
                 res = m.predict(d)
                 np.testing.assert_allclose(res["output"], pd.Series(np.array([94, 97])))
                 self.assertEqual(s, meta.signatures)
+
+    def test_model_composition(self) -> None:
+        arr = np.array([[1, 2, 3], [4, 2, 5]])
+        d = pd.DataFrame(arr, columns=["c1", "c2", "c3"])
+        aclf = AnotherDemoModel(custom_model.ModelContext())
+        clf = DemoModel(custom_model.ModelContext())
+        model_context = custom_model.ModelContext(
+            models={
+                "m1": aclf,
+                "m2": clf,
+            }
+        )
+        acm = ComposeModel(model_context)
+        p1 = clf.predict(d)
+        p2 = acm.predict(d)
+        s = {"predict": model_signature.infer_signature(d, p2)}
+        with tempfile.TemporaryDirectory() as tmpdir:
+            model_api.save_model(
+                name="model1",
+                model_dir_path=os.path.join(tmpdir, "model1"),
+                model=acm,
+                signatures=s,
+                metadata={"author": "halu", "version": "1"},
+            )
+            lm, _ = model_api.load_model(os.path.join(tmpdir, "model1"))
+            assert isinstance(lm, ComposeModel)
+            p3 = lm.predict(d)
+
+            m_UDF, _ = model_api._load_model_for_deploy(os.path.join(tmpdir, "model1"))
+            assert isinstance(m_UDF, ComposeModel)
+            p4 = m_UDF.predict(d)
+            np.testing.assert_allclose(p1, p2)
+            np.testing.assert_allclose(p2, p3)
+            np.testing.assert_allclose(p2, p4)
 
     def test_async_model_composition(self) -> None:
         async def _test(self: "ModelTest") -> None:
@@ -316,11 +373,11 @@ class ModelTest(absltest.TestCase):
 
                 m: linear_model.LinearRegression
                 m, _ = model_api.load_model(os.path.join(tmpdir, "model1"))
-                self.assertTrue(np.allclose(np.array([-0.08254936]), m.predict(iris_X_df[:1])))
+                np.testing.assert_allclose(np.array([-0.08254936]), m.predict(iris_X_df[:1]))
                 m_udf, _ = model_api._load_model_for_deploy(os.path.join(tmpdir, "model1"))
                 predict_method = getattr(m_udf, "predict", None)
                 assert callable(predict_method)
-                self.assertTrue(np.allclose(np.array([-0.08254936]), predict_method(iris_X_df[:1])))
+                np.testing.assert_allclose(np.array([[-0.08254936]]), predict_method(iris_X_df[:1]))
 
             model_api.save_model(
                 name="model1_no_sig",
@@ -338,6 +395,68 @@ class ModelTest(absltest.TestCase):
             predict_method = getattr(m_udf, "predict", None)
             assert callable(predict_method)
             np.testing.assert_allclose(np.array([[-0.08254936]]), predict_method(iris_X_df[:1]))
+
+    def test_xgb(self) -> None:
+        cal_data = datasets.load_breast_cancer()
+        cal_X = pd.DataFrame(cal_data.data, columns=cal_data.feature_names)
+        cal_y = pd.Series(cal_data.target)
+        cal_X_train, cal_X_test, cal_y_train, cal_y_test = model_selection.train_test_split(cal_X, cal_y)
+        regressor = xgboost.XGBClassifier(n_estimators=100, reg_lambda=1, gamma=0, max_depth=3)
+        regressor.fit(cal_X_train, cal_y_train)
+        y_pred = regressor.predict(cal_X_test)
+        y_pred_proba = regressor.predict_proba(cal_X_test)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            s = {"predict": model_signature.infer_signature(cal_X_test, y_pred)}
+            with self.assertRaises(ValueError):
+                model_api.save_model(
+                    name="model1",
+                    model_dir_path=os.path.join(tmpdir, "model1"),
+                    model=regressor,
+                    signatures={**s, "another_predict": s["predict"]},
+                    metadata={"author": "halu", "version": "1"},
+                )
+
+            model_api.save_model(
+                name="model1",
+                model_dir_path=os.path.join(tmpdir, "model1"),
+                model=regressor,
+                signatures=s,
+                metadata={"author": "halu", "version": "1"},
+            )
+
+            with warnings.catch_warnings():
+                warnings.simplefilter("error")
+
+                m, _ = model_api.load_model(os.path.join(tmpdir, "model1"))
+                assert isinstance(m, xgboost.XGBClassifier)
+                np.testing.assert_allclose(m.predict(cal_X_test), y_pred)
+                m_udf, _ = model_api._load_model_for_deploy(os.path.join(tmpdir, "model1"))
+                predict_method = getattr(m_udf, "predict", None)
+                assert callable(predict_method)
+                np.testing.assert_allclose(predict_method(cal_X_test), np.expand_dims(y_pred, axis=1))
+
+            model_api.save_model(
+                name="model1_no_sig",
+                model_dir_path=os.path.join(tmpdir, "model1_no_sig"),
+                model=regressor,
+                sample_input=cal_X_test,
+                metadata={"author": "halu", "version": "1"},
+            )
+
+            m, meta = model_api.load_model(os.path.join(tmpdir, "model1_no_sig"))
+            assert isinstance(m, xgboost.XGBClassifier)
+            np.testing.assert_allclose(m.predict(cal_X_test), y_pred)
+            np.testing.assert_allclose(m.predict_proba(cal_X_test), y_pred_proba)
+            self.assertEqual(s["predict"], meta.signatures["predict"])
+
+            m_udf, _ = model_api._load_model_for_deploy(os.path.join(tmpdir, "model1_no_sig"))
+            predict_method = getattr(m_udf, "predict", None)
+            assert callable(predict_method)
+            np.testing.assert_allclose(predict_method(cal_X_test), np.expand_dims(y_pred, axis=1))
+
+            predict_method = getattr(m_udf, "predict_proba", None)
+            assert callable(predict_method)
+            np.testing.assert_allclose(predict_method(cal_X_test), y_pred_proba)
 
 
 if __name__ == "__main__":

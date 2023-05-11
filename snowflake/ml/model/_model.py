@@ -18,7 +18,7 @@ def save_model(
     *,
     name: str,
     model_dir_path: str,
-    model: model_types.ModelType,
+    model: model_types.SupportedModelType,
     signatures: Dict[str, model_signature.ModelSignature],
     metadata: Optional[Dict[str, str]] = None,
     conda_dependencies: Optional[List[str]] = None,
@@ -56,7 +56,7 @@ def save_model(
     *,
     name: str,
     model_dir_path: str,
-    model: model_types.ModelType,
+    model: model_types.SupportedModelType,
     sample_input: model_types.SupportedDataType,
     metadata: Optional[Dict[str, str]] = None,
     conda_dependencies: Optional[List[str]] = None,
@@ -93,7 +93,7 @@ def save_model(
     *,
     name: str,
     model_dir_path: str,
-    model: model_types.ModelType,
+    model: model_types.SupportedModelType,
     signatures: Optional[Dict[str, model_signature.ModelSignature]] = None,
     sample_input: Optional[model_types.SupportedDataType] = None,
     metadata: Optional[Dict[str, str]] = None,
@@ -165,19 +165,21 @@ def save_model(
     ) as meta:
         model_blobs_path = os.path.join(model_dir_path, MODEL_BLOBS_DIR)
         os.makedirs(model_blobs_path, exist_ok=True)
+        model = handler.cast_model(model)
         handler._save_model(
-            name,
-            model,
-            meta,
-            model_blobs_path,
-            sample_input,
+            name=name,
+            model=model,
+            model_meta=meta,
+            model_blobs_dir_path=model_blobs_path,
+            sample_input=sample_input,
+            is_sub_model=False,
             **options,
         )
     return meta
 
 
 # TODO(SNOW-786570): Allows path to be stage path.
-def load_model(model_dir_path: str) -> Tuple[model_types.ModelType, _model_meta.ModelMetadata]:
+def load_model(model_dir_path: str) -> Tuple[model_types.SupportedModelType, _model_meta.ModelMetadata]:
     """Load the model into memory from directory.
 
     Args:

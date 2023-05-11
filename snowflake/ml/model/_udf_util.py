@@ -1,7 +1,8 @@
 import os
 import tempfile
 import warnings
-from typing import IO, List, Optional, Tuple
+from types import ModuleType
+from typing import IO, List, Optional, Tuple, TypedDict, Union
 
 from typing_extensions import Unpack
 
@@ -93,7 +94,7 @@ def _deploy_to_warehouse(
     udf_name: str,
     target_method: str,
     **kwargs: Unpack[model_types.WarehouseDeployOptions],
-) -> Tuple[model_types.ModelType, _model_meta.ModelMetadata]:
+) -> Tuple[model_types.SupportedModelType, _model_meta.ModelMetadata]:
     """Deploy the model to warehouse as UDF.
 
     Args:
@@ -105,6 +106,7 @@ def _deploy_to_warehouse(
 
     Raises:
         ValueError: Raised when incompatible model.
+        ValueError: Raised when target method does not exist in model.
 
     Returns:
         A Tuple of the model object and the metadata of the model deployed.
@@ -121,20 +123,38 @@ def _deploy_to_warehouse(
     _snowml_wheel_path = kwargs.get("_snowml_wheel_path", None)
 
     final_packages = _get_model_final_packages(meta, session, relax_version=relax_version)
+
     with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
         _write_UDF_py_file(f.file, model_dir_name, target_method, **kwargs)
         print(f"Generated UDF file is persisted at: {f.name}")
         imports = [model_dir_path] + [_snowml_wheel_path] if _snowml_wheel_path else []
-        session.udf.register_from_file(
+
+        stage_location = kwargs.get("permanent_udf_stage_location", None)
+
+        class _UDFParams(TypedDict):
+            file_path: str
+            func_name: str
+            name: str
+            input_types: List[st.DataType]
+            return_type: st.DataType
+            imports: List[Union[str, Tuple[str, str]]]
+            packages: List[Union[str, ModuleType]]
+
+        params = _UDFParams(
             file_path=f.name,
             func_name="infer",
             name=f"{udf_name}",
             return_type=st.PandasSeriesType(st.MapType(st.StringType(), st.VariantType())),
             input_types=[st.PandasDataFrameType([st.MapType()])],
-            replace=True,
             imports=list(imports),
             packages=list(final_packages),
         )
+        if stage_location is None:  # Temporary UDF
+            session.udf.register_from_file(**params, replace=True)
+        else:  # Permanent UDF
+            stage_location = stage_location.rstrip().rstrip("/")
+            session.udf.register_from_file(**params, replace=False, is_permanent=True, stage_location=stage_location)
+
     print(f"{udf_name} is deployed to warehouse.")
     return m, meta
 
