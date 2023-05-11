@@ -16,6 +16,7 @@ from sklearn.preprocessing import KBinsDiscretizer as SK_KBinsDiscretizer
 from snowflake import snowpark
 from snowflake.ml.framework import base
 from snowflake.snowpark import functions as F, types as T
+from snowflake.snowpark._internal import utils as snowpark_utils
 
 # constants used to validate the compatibility of the kwargs passed to the sklearn
 # transformer with the sklearn version
@@ -46,9 +47,47 @@ def decimal_to_float(data: npt.NDArray[np.generic]) -> npt.NDArray[np.float32]:
     return np.array([float(x) for x in data])
 
 
-# TODO(tbao): add doc string
+# TODO(tbao): suport kmeans with snowpark if needed
 # TODO(tbao): add telemetry
 class KBinsDiscretizer(base.BaseEstimator, base.BaseTransformer):
+    """
+    Bin continuous data into intervals.
+
+    Args:
+        n_bins: int or array-like of shape (n_features,), default=5
+            The number of bins to produce. Raises ValueError if n_bins < 2.
+
+        encode: {'onehot', 'onehot-dense', 'ordinal'}, default='onehot'
+            Method used to encode the transformed result.
+
+            - 'onehot': Encode the transformed result with one-hot encoding and return a sparse representation.
+            - 'onehot-dense': Encode the transformed result with one-hot encoding and return separate column for
+                each encoded value.
+            - 'ordinal': Return the bin identifier encoded as an integer value.
+
+        strategy: {'uniform', 'quantile'}, default='quantile'
+            Strategy used to define the widths of the bins.
+
+            - 'uniform': All bins in each feature have identical widths.
+            - 'quantile': All bins in each feature have the same number of points.
+
+        input_cols: str or Iterable [column_name], default=None
+            Single or multiple input columns.
+
+        output_cols: str or Iterable [column_name], default=None
+            Single or multiple output columns.
+
+        drop_input_cols: boolean, default=False
+            Remove input columns from output if set True.
+
+    Attributes:
+        bin_edges_: ndarray of ndarray of shape (n_features,)
+            The edges of each bin. Contain arrays of varying shapes (n_bins_, )
+
+        n_bins_: ndarray of shape (n_features,), dtype=np.int_
+            Number of bins per feature.
+    """
+
     def __init__(
         self,
         *,
@@ -87,6 +126,18 @@ class KBinsDiscretizer(base.BaseEstimator, base.BaseTransformer):
         self.n_bins_: Optional[npt.NDArray[np.int32]] = None
 
     def fit(self, dataset: Union[snowpark.DataFrame, pd.DataFrame]) -> KBinsDiscretizer:
+        """
+        Fit KBinsDiscretizer with dataset.
+
+        Args:
+            dataset: Input dataset.
+
+        Returns:
+            Fitted self instance.
+
+        Raises:
+            TypeError: If the input dataset is neither a pandas nor Snowpark DataFrame.
+        """
         self._reset()
         self._enforce_params()
         super()._check_input_cols()
@@ -107,6 +158,21 @@ class KBinsDiscretizer(base.BaseEstimator, base.BaseTransformer):
     def transform(
         self, dataset: Union[snowpark.DataFrame, pd.DataFrame]
     ) -> Union[snowpark.DataFrame, pd.DataFrame, sparse.csr_matrix]:
+        """
+        Discretize the data.
+
+        Args:
+            dataset: Input dataset.
+
+        Returns:
+            Discretized output data based on input type.
+            - If input is snowpark DataFrame, returns snowpark DataFrame
+            - If input is a pd.DataFrame and 'self.encdoe=onehot', returns 'csr_matrix'
+            - If input is a pd.DataFrame and 'self.encode in ['ordinal', 'onehot-dense']', returns 'pd.DataFrame'
+
+        Raises:
+            TypeError: If the input dataset is neither a pandas nor Snowpark DataFrame.
+        """
         self.enforce_fit()
         super()._check_input_cols()
         super()._check_output_cols()
@@ -132,6 +198,13 @@ class KBinsDiscretizer(base.BaseEstimator, base.BaseTransformer):
             raise NotImplementedError("kmeans not supported yet")
 
     def _handle_quantile(self, dataset: snowpark.DataFrame) -> None:
+        """
+        Compute bins with percentile values of the feature.
+        All bins in each feature will have the same number of points.
+
+        Args:
+            dataset: Input dataset.
+        """
         # 1. Collect percentiles for each feature column
         # NB: if SQL compilation ever take too long on wide schema, consider applying optimization mentioned in
         # https://docs.google.com/document/d/1cilfCCtKYv6HvHqaqdZxfHAvQ0gg-t1AM8KYCQtJiLE/edit
@@ -156,6 +229,13 @@ class KBinsDiscretizer(base.BaseEstimator, base.BaseTransformer):
             self.n_bins_[i] = len(self.bin_edges_[i]) - 1
 
     def _handle_uniform(self, dataset: snowpark.DataFrame) -> None:
+        """
+        Compute bins with min and max value of the feature.
+        All bins in each feature will have identical widths.
+
+        Args:
+            dataset: Input dataset.
+        """
         # 1. Collect min and max for each feature column
         agg_queries = list(
             chain.from_iterable(
@@ -221,10 +301,14 @@ class KBinsDiscretizer(base.BaseEstimator, base.BaseTransformer):
         Returns:
             Output dataset with ordinal encoding.
         """
+        # NB: the reason we need to generate a random UDF name each time is because the UDF registration
+        # is centralized per database, so if there are multiple sessions with same UDF name, there might be
+        # a conflict and some parties could fail to fetch the UDF.
+        udf_name = f"vec_bucketize_{snowpark_utils.generate_random_alphanumeric()}"
 
         # 1. Register vec_bucketize UDF
         @F.pandas_udf(  # type: ignore[arg-type, misc]
-            name="vec_bucketize",
+            name=udf_name,
             replace=True,
             packages=["numpy"],
             session=dataset._session,
@@ -242,7 +326,7 @@ class KBinsDiscretizer(base.BaseEstimator, base.BaseTransformer):
             dataset = dataset.select(
                 *dataset.columns,
                 F.call_udf(
-                    "vec_bucketize", F.col(input_col), F.array_construct(*boarders)  # type: ignore[arg-type]
+                    f"{udf_name}", F.col(input_col), F.array_construct(*boarders)  # type: ignore[arg-type]
                 ).alias(output_col),
             )
         return dataset
@@ -258,9 +342,10 @@ class KBinsDiscretizer(base.BaseEstimator, base.BaseTransformer):
         Returns:
             Output dataset in sparse representation.
         """
+        udf_name = f"vec_bucketize_sparse_{snowpark_utils.generate_random_alphanumeric()}"
 
         @F.pandas_udf(  # type: ignore[arg-type, misc]
-            name="vec_bucketize_sparse_output",
+            name=udf_name,
             replace=True,
             packages=["numpy"],
             session=dataset._session,
@@ -282,15 +367,27 @@ class KBinsDiscretizer(base.BaseEstimator, base.BaseTransformer):
             boarders = [F.lit(float(x)) for x in self.bin_edges_[idx]]  # type: ignore[arg-type, index]
             dataset = dataset.select(
                 *dataset.columns,
-                F.call_udf(
-                    "vec_bucketize_sparse_output", F.col(input_col), F.array_construct(*boarders)  # type: ignore
-                ).alias(output_col),
+                F.call_udf(f"{udf_name}", F.col(input_col), F.array_construct(*boarders)).alias(  # type: ignore
+                    output_col
+                ),
             )
         return dataset
 
     def _handle_onehot_dense(self, dataset: snowpark.DataFrame) -> snowpark.DataFrame:
+        """
+        Transform dataset with bucketization and output as onehot dense representation:
+        Each category will be reprensented in its own output column.
+
+        Args:
+            dataset: Input dataset.
+
+        Returns:
+            Output dataset in dense representation.
+        """
+        udf_name = f"vec_bucketize_dense_{snowpark_utils.generate_random_alphanumeric()}"
+
         @F.pandas_udf(  # type: ignore[arg-type, misc]
-            name="vec_bucketize_dense_output",
+            name=udf_name,
             replace=True,
             packages=["numpy"],
             session=dataset._session,
@@ -313,9 +410,9 @@ class KBinsDiscretizer(base.BaseEstimator, base.BaseTransformer):
             boarders = [F.lit(float(x)) for x in self.bin_edges_[idx]]  # type: ignore[arg-type, index]
             dataset = dataset.select(
                 *dataset.columns,
-                F.call_udf(
-                    "vec_bucketize_dense_output", F.col(input_col), F.array_construct(*boarders)  # type: ignore
-                ).alias(output_col),
+                F.call_udf(f"{udf_name}", F.col(input_col), F.array_construct(*boarders)).alias(  # type: ignore
+                    output_col
+                ),
             )
             dataset = dataset.with_columns(
                 [f"{output_col}_{i}" for i in range(len(boarders) - 1)],

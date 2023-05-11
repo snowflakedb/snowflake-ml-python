@@ -20,14 +20,22 @@ requirements:
   run:
     - python
     - absl-py>=0.15,<2
+    - anyio>=3.5.0,<4
     - fsspec>=2022.11,<=2023.1
     - numpy>=1.23,<1.24
     - pyyaml>=6.0,<7
     - scipy>=1.9,<2
-    - scikit-learn==1.2.1
     - snowflake-connector-python
-    - snowflake-snowpark-python>=1.0.0,<=1.3
+    - snowflake-snowpark-python>=1.3.0,<=2
     - sqlparse>=0.4,<1
+
+    # TODO(snandamuri): Versions of these packages must be exactly same between user's workspace and
+    # snowpark sandbox. Generic definitions like scikit-learn>=1.1.0,<2 wont work because snowflake conda channel
+    # only has a few allowlisted versions of scikit-learn available, so we must force users to use scikit-learn
+    # versions that are available in the snowflake conda channel. Since there is no way to specify allow list of
+    # versions in the requirements file, we are pinning the versions here.
+    - joblib>=1.0.0,<=1.1.1
+    - scikit-learn==1.2.1
     - xgboost==1.7.3
 about:
   home: https://github.com/snowflakedb/snowflake-ml-python

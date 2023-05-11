@@ -7,7 +7,6 @@ from typing import Iterable, Optional, Union, List, Any, Dict, Callable
 from uuid import uuid4
 
 import joblib
-import json
 import pandas as pd
 import numpy as np
 {transform.estimator_imports}
@@ -20,7 +19,6 @@ from snowflake.ml._internal.utils import pkg_version_utils, identifier
 from snowflake.ml._internal.utils.temp_file_utils import cleanup_temp_files, get_temp_file_path
 from snowflake.snowpark import DataFrame, Session
 from snowflake.snowpark.functions import pandas_udf, sproc
-from snowflake.snowpark.session import _get_active_session
 from snowflake.snowpark.types import PandasSeries
 
 _PROJECT = "ModelDevelopment"
@@ -87,12 +85,12 @@ def _validate_sklearn_args(args: Dict[str, Any], klass: type) -> Dict[str, Any]:
     result = {{}}
     signature = inspect.signature(klass.__init__)
     for k, v in args.items():
-        if k not in signature.parameters.keys(): # Arg is not supported.
+        if k not in signature.parameters.keys():  # Arg is not supported.
             if (
-                v[2] # Arg doesn't have default value in the signature.
+                v[2]  # Arg doesn't have default value in the signature.
                 or (
                     v[0] != v[1]  # Value is not same as default.
-                    and not (isinstance(v[0], float) and np.isnan(v[0]) and np.isnan(v[1]))) # both are not NANs
+                    and not (isinstance(v[0], float) and np.isnan(v[0]) and np.isnan(v[1])))  # both are not NANs
             ):
                 raise RuntimeError(f"Arg {{k}} is not supported by current version of SKLearn/XGBoost.")
         else:
@@ -100,14 +98,14 @@ def _validate_sklearn_args(args: Dict[str, Any], klass: type) -> Dict[str, Any]:
     return result
 
 
-class {transform.estimator_class_name}(BaseEstimator, BaseTransformer):
+class {transform.original_class_name}(BaseEstimator, BaseTransformer):
     r"""{transform.estimator_class_docstring}
     """
 
     def __init__(
         {transform.estimator_init_signature}
     ) -> None:
-        super().__init__(custom_states=None)
+        super().__init__()
         self.id = str(uuid4()).replace("-", "_").upper()
         {transform.estimator_args_transform_calls}
         init_args = {transform.sklearn_init_args_dict}
@@ -122,21 +120,18 @@ class {transform.estimator_class_name}(BaseEstimator, BaseTransformer):
 
     def _infer_input_output_cols(self, dataset: Union[DataFrame, pd.DataFrame]) -> None:
         """
-        Infer `self.input_cols` and `self.output_cols` if they are not set explicitly.
+        Infer `self.input_cols` and `self.output_cols` if they are not explicitly set.
 
         Args:
             dataset: Input dataset.
         """
         if not self.input_cols:
-            non_input_cols = []
-            if self.label_cols:
-                non_input_cols.extend(self.label_cols)
-            if self.sample_weight_col:
-                non_input_cols.extended(self.sample_weight_col)
-
-            cols = [c for c in dataset.columns if c not in non_input_cols]
+            cols = [
+                c for c in dataset.columns 
+                if c not in self.get_label_cols() and c != self.sample_weight_col
+            ]
             self.set_input_cols(input_cols=cols)
-        
+
         if not self.output_cols:
             cols = [identifier.concat_names(ids=['OUTPUT_', c]) for c in self.label_cols]
             self.set_output_cols(output_cols=cols)
@@ -146,7 +141,7 @@ class {transform.estimator_class_name}(BaseEstimator, BaseTransformer):
         subproject=_SUBPROJECT,
         custom_tags=dict([("autogen", True)]),
     )
-    def fit(self, dataset: Union[DataFrame, pd.DataFrame]) -> "{transform.transformer_class_name}":
+    def fit(self, dataset: Union[DataFrame, pd.DataFrame]) -> "{transform.original_class_name}":
         """{transform.fit_docstring}
 
         Args:
@@ -176,9 +171,9 @@ class {transform.estimator_class_name}(BaseEstimator, BaseTransformer):
 
         # Specify input columns so column pruing will be enforced
         selected_cols = (
-            self.input_cols + self.label_cols + [self.sample_weight_col]
-            if self.sample_weight_col is not None
-            else []
+            self.input_cols +
+            self.label_cols +
+            [self.sample_weight_col] if self.sample_weight_col is not None else []
         )
         if len(selected_cols) > 0:
             dataset = dataset.select(selected_cols)
@@ -221,6 +216,7 @@ class {transform.estimator_class_name}(BaseEstimator, BaseTransformer):
             api_calls=[sproc],
             custom_tags=dict([("autogen", True)]),
         )
+
         @sproc(
             is_permanent=False,
             name=fit_sproc_name,
@@ -279,7 +275,7 @@ class {transform.estimator_class_name}(BaseEstimator, BaseTransformer):
             # Note: you can add something like  + "|" + str(df) to the return string
             # to pass debug information to the caller.
             return str(os.path.basename(joblib_dump_files[0]))
-        
+
         # Call fit sproc
         statement_params = telemetry.get_function_usage_statement_params(
             project=_PROJECT,
@@ -369,6 +365,7 @@ class {transform.estimator_class_name}(BaseEstimator, BaseTransformer):
             api_calls=[pandas_udf],
             custom_tags=dict([("autogen", True)]),
         )
+
         @pandas_udf(
             is_permanent=False,
             name=batch_inference_udf_name,
@@ -407,8 +404,8 @@ class {transform.estimator_class_name}(BaseEstimator, BaseTransformer):
                 input_df.columns = unquoted_input_cols # Replace the quoted columns identifier with unquoted column ids.
             transformed_numpy_array = getattr(estimator, inference_method)(input_df)
             if (
-                isinstance(transformed_numpy_array, list) 
-                and len(transformed_numpy_array) > 0 
+                isinstance(transformed_numpy_array, list)
+                and len(transformed_numpy_array) > 0
                 and isinstance(transformed_numpy_array[0], np.ndarray)
             ):
                 # In case of multioutput estimators, predict_proba(), decision_function(), etc., functions return
@@ -422,7 +419,7 @@ class {transform.estimator_class_name}(BaseEstimator, BaseTransformer):
                 transformed_numpy_array = np.hstack(transformed_numpy_array)
 
             if (
-                len(transformed_numpy_array.shape) > 1 
+                len(transformed_numpy_array.shape) > 1
                 and transformed_numpy_array.shape[1] != len(expected_output_cols_list)
             ):
                 # HeterogeneousEnsemble's transfrom method produce results with variying shapes
@@ -446,7 +443,7 @@ class {transform.estimator_class_name}(BaseEstimator, BaseTransformer):
         pass_through_columns = self._get_pass_through_columns(dataset)
         # Run Transform
         query_from_df = str(dataset.queries["queries"][0])
-        
+
         outer_select_list = pass_through_columns[:]
         inner_select_list = pass_through_columns[:]
 
@@ -494,22 +491,23 @@ class {transform.estimator_class_name}(BaseEstimator, BaseTransformer):
             dataset[self.input_cols]
         )
         if (
-                isinstance(transformed_numpy_array, list)
-                and len(transformed_numpy_array) > 0
-                and isinstance(transformed_numpy_array[0], np.ndarray)
-            ):
-                # In case of multioutput estimators, predict_proba(), decision_function(), etc., functions return 
-                # a list of ndarrays. We need to concatenate them.
+            isinstance(transformed_numpy_array, list)
+            and len(transformed_numpy_array) > 0
+            and isinstance(transformed_numpy_array[0], np.ndarray)
+        ):
+            # In case of multioutput estimators, predict_proba(), decision_function(), etc., functions return 
+            # a list of ndarrays. We need to concatenate them.
 
-                # First compute output column names
-                if(len(output_cols) == len(transformed_numpy_array)):
-                    actual_output_cols = []
-                    for idx, np_arr in enumerate(transformed_numpy_array):
-                        for i in range(1 if len(np_arr.shape) <= 1 else np_arr.shape[1]):
-                            actual_output_cols.append(f"{{output_cols[idx]}}_{{i}}")
-                    output_cols = actual_output_cols
-                # Concatenate np arrays
-                transformed_numpy_array = np.concatenate(transformed_numpy_array, axis=1)
+            # First compute output column names
+            if len(output_cols) == len(transformed_numpy_array):
+                actual_output_cols = []
+                for idx, np_arr in enumerate(transformed_numpy_array):
+                    for i in range(1 if len(np_arr.shape) <= 1 else np_arr.shape[1]):
+                        actual_output_cols.append(f"{{output_cols[idx]}}_{{i}}")
+                output_cols = actual_output_cols
+
+            # Concatenate np arrays
+            transformed_numpy_array = np.concatenate(transformed_numpy_array, axis=1)
 
         if len(transformed_numpy_array.shape) == 3:
             # VotingClassifier will return results of shape (n_classifiers, n_samples, n_classes)
@@ -523,8 +521,10 @@ class {transform.estimator_class_name}(BaseEstimator, BaseTransformer):
         shape = transformed_numpy_array.shape
         if shape[1] != len(output_cols):
             if len(output_cols) != 1:
-                    raise TypeError("expected_output_cols_list must be same length as transformed array or "
-                            "should be of length 1 or should be of length number of label columns")
+                raise TypeError(
+                    "expected_output_cols_list must be same length as transformed array or "
+                    "should be of length 1 or should be of length number of label columns"
+                )
             actual_output_cols = []
             for i in range(shape[1]):
                 actual_output_cols.append(f"{{output_cols[0]}}_{{i}}")
@@ -589,9 +589,9 @@ class {transform.estimator_class_name}(BaseEstimator, BaseTransformer):
         """
         if isinstance(dataset, DataFrame):
             expected_dtype = "{transform.udf_datatype}"
-            if {transform._is_heterogeneous_ensemble}: # is child of _BaseHeterogeneousEnsemble
-                # transform() method of HeterogeneousEnsemble estimators return responses of varying 
-                # shapes from (n_samples, n_estimators) to (n_samples, n_estimators * n_classes) (and everything in between)
+            if {transform._is_heterogeneous_ensemble}:  # is child of _BaseHeterogeneousEnsemble
+                # transform() method of HeterogeneousEnsemble estimators return responses of varying shapes
+                # from (n_samples, n_estimators) to (n_samples, n_estimators * n_classes) (and everything in between)
                 # based on init param values. We will convert that to pandas dataframe of shape (n_samples, 1) with
                 # each row containing a list of values.
                 expected_dtype = "ARRAY"
@@ -764,7 +764,6 @@ class {transform.estimator_class_name}(BaseEstimator, BaseTransformer):
 
         return output_df
 
-
     @available_if(_original_estimator_has_callable("score"))
     def score(self, dataset: Union[DataFrame, pd.DataFrame]) -> float:
         """{transform.fit_docstring}
@@ -786,7 +785,6 @@ class {transform.estimator_class_name}(BaseEstimator, BaseTransformer):
                 "Supported dataset types: snowpark.DataFrame, pandas.DataFrame."
             )
 
-
     def _score_sklearn(self, dataset: pd.DataFrame) -> float:
         argspec = inspect.getfullargspec(self._sklearn_object.score)
         if "X" in argspec.args:
@@ -805,7 +803,6 @@ class {transform.estimator_class_name}(BaseEstimator, BaseTransformer):
 
         score = self._sklearn_object.score(**args)
         return score
-
 
     def _score_snowpark(self, dataset: DataFrame) -> float:
         # Specify input columns so column pruing will be enforced
@@ -902,7 +899,7 @@ class {transform.estimator_class_name}(BaseEstimator, BaseTransformer):
 
             result = estimator.score(**args)
             return result
-        
+
         # Call score sproc
         statement_params = telemetry.get_function_usage_statement_params(
             project=_PROJECT,
