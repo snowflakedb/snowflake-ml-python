@@ -16,7 +16,7 @@ import pandas as pd
 from absl.testing.absltest import TestCase, main
 from sklearn.preprocessing import MaxAbsScaler as SklearnMaxAbsScaler
 
-from snowflake.ml.preprocessing import MaxAbsScaler
+from snowflake.ml.preprocessing import MaxAbsScaler  # type: ignore[attr-defined]
 from snowflake.ml.utils.connection_params import SnowflakeLoginOptions
 from snowflake.snowpark import Session
 from tests.integ.snowflake.ml.framework import utils as framework_utils

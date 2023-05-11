@@ -4,7 +4,7 @@
 # bazel build //bazel:conda-env.yml && cp bazel-bin/bazel/conda-env.yml .
 
 channels:
-  - snowflake
+  - https://repo.anaconda.com/pkgs/snowflake
   - conda-forge
 dependencies:
   - absl-py==0.15.0
@@ -36,4 +36,5 @@ dependencies:
   - torchdata==0.4.1
   - transformers==4.27.1
   - types-PyYAML==6.0.12
+  - typing-extensions==4.3.0
   - xgboost==1.7.3

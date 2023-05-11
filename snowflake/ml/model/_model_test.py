@@ -8,7 +8,12 @@ import pandas as pd
 from absl.testing import absltest
 from sklearn import datasets, ensemble, linear_model, multioutput
 
-from snowflake.ml.model import custom_model, model as model_api, model_signature
+from snowflake.ml.model import (
+    _model as model_api,
+    custom_model,
+    model_signature,
+    type_hints as model_types,
+)
 
 
 class DemoModelWithManyArtifacts(custom_model.CustomModel):
@@ -70,14 +75,23 @@ class ModelTest(absltest.TestCase):
         )
         arr = np.array([[1, 2, 3], [4, 2, 5]])
         d = pd.DataFrame(arr, columns=["c1", "c2", "c3"])
-        s = model_signature.infer_signature(d, lm.predict(d))
+        s = {"predict": model_signature.infer_signature(d, lm.predict(d))}
+        with self.assertRaises(ValueError):
+            model_api.save_model(  # type:ignore[call-overload]
+                name="model1",
+                model_dir_path=os.path.join(tmpdir.full_path, "model1"),
+                model=lm,
+                signatures=s,
+                sample_input=d,
+                metadata={"author": "halu", "version": "1"},
+            )
+
         with self.assertRaises(ValueError):
             model_api.save_model(
                 name="model1",
                 model_dir_path=os.path.join(tmpdir.full_path, "model1"),
                 model=lm,
-                signature=s,
-                sample_input=d,
+                signatures={**s, "another_predict": s["predict"]},
                 metadata={"author": "halu", "version": "1"},
             )
 
@@ -97,16 +111,18 @@ class ModelTest(absltest.TestCase):
             with open(os.path.join(tmpdir, "bias", "bias2"), "w") as f:
                 f.write("68")
             lm = DemoModelWithManyArtifacts(
-                custom_model.ModelContext(models={}, artifacts={"bias": os.path.join(tmpdir, "bias")})
+                custom_model.ModelContext(
+                    models={}, artifacts={"bias": os.path.join(tmpdir, "bias", "")}
+                )  # Test sanitizing user path input.
             )
             arr = np.array([[1, 2, 3], [4, 2, 5]])
             d = pd.DataFrame(arr, columns=["c1", "c2", "c3"])
-            s = model_signature.infer_signature(d, lm.predict(d))
+            s = {"predict": model_signature.infer_signature(d, lm.predict(d))}
             model_api.save_model(
                 name="model1",
                 model_dir_path=os.path.join(tmpdir, "model1"),
                 model=lm,
-                signature=s,
+                signatures=s,
                 metadata={"author": "halu", "version": "1"},
             )
             with warnings.catch_warnings():
@@ -115,12 +131,12 @@ class ModelTest(absltest.TestCase):
                 m, meta = model_api.load_model(os.path.join(tmpdir, "model1"))
                 assert isinstance(m, DemoModelWithManyArtifacts)
                 res = m.predict(d)
-                self.assertTrue(np.allclose(res["output"], pd.Series(np.array([94, 97]))))
+                np.testing.assert_allclose(res["output"], pd.Series(np.array([94, 97])))
 
                 m_UDF, meta = model_api._load_model_for_deploy(os.path.join(tmpdir, "model1"))
                 assert isinstance(m_UDF, DemoModelWithManyArtifacts)
                 res = m_UDF.predict(d)
-                self.assertTrue(np.allclose(res["output"], pd.Series(np.array([94, 97]))))
+                np.testing.assert_allclose(res["output"], pd.Series(np.array([94, 97])))
                 self.assertEqual(meta.metadata["author"] if meta.metadata else None, "halu")
 
                 model_api.save_model(
@@ -134,8 +150,8 @@ class ModelTest(absltest.TestCase):
                 m, meta = model_api.load_model(os.path.join(tmpdir, "model1_no_sig"))
                 assert isinstance(m, DemoModelWithManyArtifacts)
                 res = m.predict(d)
-                self.assertTrue(np.allclose(res["output"], pd.Series(np.array([94, 97]))))
-                self.assertEqual(s, meta.signature)
+                np.testing.assert_allclose(res["output"], pd.Series(np.array([94, 97])))
+                self.assertEqual(s, meta.signatures)
 
     def test_async_model_composition(self) -> None:
         async def _test(self: "ModelTest") -> None:
@@ -151,13 +167,13 @@ class ModelTest(absltest.TestCase):
             acm = AsyncComposeModel(model_context)
             p1 = clf.predict(d)
             p2 = await acm.predict(d)
-            s = model_signature.infer_signature(d, p2)
+            s = {"predict": model_signature.infer_signature(d, p2)}
             with tempfile.TemporaryDirectory() as tmpdir:
                 model_api.save_model(
                     name="model1",
                     model_dir_path=os.path.join(tmpdir, "model1"),
                     model=acm,
-                    signature=s,
+                    signatures=s,
                     metadata={"author": "halu", "version": "1"},
                 )
                 lm, _ = model_api.load_model(os.path.join(tmpdir, "model1"))
@@ -167,9 +183,9 @@ class ModelTest(absltest.TestCase):
                 m_UDF, _ = model_api._load_model_for_deploy(os.path.join(tmpdir, "model1"))
                 assert isinstance(m_UDF, AsyncComposeModel)
                 p4 = await m_UDF.predict(d)
-                self.assertTrue(np.allclose(p1, p2))
-                self.assertTrue(np.allclose(p2, p3))
-                self.assertTrue(np.allclose(p2, p4))
+                np.testing.assert_allclose(p1, p2)
+                np.testing.assert_allclose(p2, p3)
+                np.testing.assert_allclose(p2, p4)
 
         asyncio.get_event_loop().run_until_complete(_test(self))
 
@@ -182,19 +198,19 @@ class ModelTest(absltest.TestCase):
             )
             arr = np.array([[1, 2, 3], [4, 2, 5]])
             d = pd.DataFrame(arr, columns=["c1", "c2", "c3"])
-            s = model_signature.infer_signature(d, lm.predict(d))
+            s = {"predict": model_signature.infer_signature(d, lm.predict(d))}
             model_api.save_model(
                 name="model1",
                 model_dir_path=os.path.join(tmpdir, "model1"),
                 model=lm,
-                signature=s,
+                signatures=s,
                 metadata={"author": "halu", "version": "1"},
             )
 
             m, meta = model_api.load_model(os.path.join(tmpdir, "model1"))
             assert isinstance(m, DemoModelWithArtifacts)
             res = m.predict(d)
-            self.assertTrue(np.allclose(res["output"], pd.Series(np.array([11, 14]))))
+            np.testing.assert_allclose(res["output"], pd.Series(np.array([11, 14])))
 
             # test re-init when loading the model
             with open(os.path.join(tmpdir, "model1", "models", "model1", "artifacts", "bias"), "w") as f:
@@ -204,7 +220,7 @@ class ModelTest(absltest.TestCase):
             assert isinstance(m_UDF, DemoModelWithArtifacts)
             res = m_UDF.predict(d)
 
-            self.assertTrue(np.allclose(res["output"], pd.Series(np.array([21, 24]))))
+            np.testing.assert_allclose(res["output"], pd.Series(np.array([21, 24])))
             self.assertEqual(meta.metadata["author"] if meta.metadata else None, "halu")
 
     def test_skl_multiple_output_proba(self) -> None:
@@ -215,30 +231,36 @@ class ModelTest(absltest.TestCase):
         iris_X_df = pd.DataFrame(iris_X, columns=["c1", "c2", "c3", "c4"])
         model.fit(iris_X_df[:-10], dual_target[:-10])
         with tempfile.TemporaryDirectory() as tmpdir:
-            s = model_signature.infer_signature(iris_X_df, model.predict_proba(iris_X_df))
+            s = {"predict_proba": model_signature.infer_signature(iris_X_df, model.predict_proba(iris_X_df))}
             model_api.save_model(
                 name="model1",
                 model_dir_path=os.path.join(tmpdir, "model1"),
                 model=model,
-                signature=s,
+                signatures=s,
                 metadata={"author": "halu", "version": "1"},
                 conda_dependencies=["scikit-learn"],
-                target_method="predict_proba",
             )
 
             m: multioutput.MultiOutputClassifier
             m, _ = model_api.load_model(os.path.join(tmpdir, "model1"))
-            self.assertTrue(
-                np.allclose(
-                    np.hstack(model.predict_proba(iris_X_df[-10:])), np.hstack(m.predict_proba(iris_X_df[-10:]))
-                )
+            np.testing.assert_allclose(
+                np.hstack(model.predict_proba(iris_X_df[-10:])), np.hstack(m.predict_proba(iris_X_df[-10:]))
             )
+
             m_udf, _ = model_api._load_model_for_deploy(os.path.join(tmpdir, "model1"))
-            predict_method = getattr(m_udf, "predict", None)
+            predict_method = getattr(m_udf, "predict_proba", None)
             assert callable(predict_method)
-            self.assertTrue(
-                np.allclose(np.hstack(model.predict_proba(iris_X_df[-10:])), predict_method(iris_X_df[-10:]))
-            )
+            np.testing.assert_allclose(np.hstack(model.predict_proba(iris_X_df[-10:])), predict_method(iris_X_df[-10:]))
+
+            with self.assertRaises(ValueError):
+                model_api.save_model(
+                    name="model1_no_sig_bad",
+                    model_dir_path=os.path.join(tmpdir, "model1_no_sig_bad"),
+                    model=model,
+                    sample_input=iris_X_df,
+                    metadata={"author": "halu", "version": "1"},
+                    options=model_types.SKLModelSaveOptions({"target_methods": ["random"]}),
+                )
 
             model_api.save_model(
                 name="model1_no_sig",
@@ -246,16 +268,24 @@ class ModelTest(absltest.TestCase):
                 model=model,
                 sample_input=iris_X_df,
                 metadata={"author": "halu", "version": "1"},
-                target_method="predict_proba",
             )
 
             m, meta = model_api.load_model(os.path.join(tmpdir, "model1_no_sig"))
-            self.assertTrue(
-                np.allclose(
-                    np.hstack(model.predict_proba(iris_X_df[-10:])), np.hstack(m.predict_proba(iris_X_df[-10:]))
-                )
+            np.testing.assert_allclose(
+                np.hstack(model.predict_proba(iris_X_df[-10:])), np.hstack(m.predict_proba(iris_X_df[-10:]))
             )
-            self.assertEqual(s, meta.signature)
+            np.testing.assert_allclose(model.predict(iris_X_df[-10:]), m.predict(iris_X_df[-10:]))
+            self.assertEqual(s["predict_proba"], meta.signatures["predict_proba"])
+
+            m_udf, _ = model_api._load_model_for_deploy(os.path.join(tmpdir, "model1_no_sig"))
+
+            predict_method = getattr(m_udf, "predict_proba", None)
+            assert callable(predict_method)
+            np.testing.assert_allclose(np.hstack(model.predict_proba(iris_X_df[-10:])), predict_method(iris_X_df[-10:]))
+
+            predict_method = getattr(m_udf, "predict", None)
+            assert callable(predict_method)
+            np.testing.assert_allclose(model.predict(iris_X_df[-10:]), predict_method(iris_X_df[-10:]))
 
     def test_skl(self) -> None:
         iris_X, iris_y = datasets.load_iris(return_X_y=True)
@@ -263,14 +293,24 @@ class ModelTest(absltest.TestCase):
         iris_X_df = pd.DataFrame(iris_X, columns=["c1", "c2", "c3", "c4"])
         regr.fit(iris_X_df, iris_y)
         with tempfile.TemporaryDirectory() as tmpdir:
-            s = model_signature.infer_signature(iris_X_df, regr.predict(iris_X_df))
+            s = {"predict": model_signature.infer_signature(iris_X_df, regr.predict(iris_X_df))}
+            with self.assertRaises(ValueError):
+                model_api.save_model(
+                    name="model1",
+                    model_dir_path=os.path.join(tmpdir, "model1"),
+                    model=regr,
+                    signatures={**s, "another_predict": s["predict"]},
+                    metadata={"author": "halu", "version": "1"},
+                )
+
             model_api.save_model(
                 name="model1",
                 model_dir_path=os.path.join(tmpdir, "model1"),
                 model=regr,
-                signature=s,
+                signatures=s,
                 metadata={"author": "halu", "version": "1"},
             )
+
             with warnings.catch_warnings():
                 warnings.simplefilter("error")
 
@@ -291,20 +331,13 @@ class ModelTest(absltest.TestCase):
             )
 
             m, meta = model_api.load_model(os.path.join(tmpdir, "model1_no_sig"))
-            self.assertTrue(np.allclose(np.array([-0.08254936]), m.predict(iris_X_df[:1])))
-            self.assertEqual(s, meta.signature)
+            np.testing.assert_allclose(np.array([-0.08254936]), m.predict(iris_X_df[:1]))
+            self.assertEqual(s["predict"], meta.signatures["predict"])
 
-            model_api.save_model(
-                name="model1_no_sig",
-                model_dir_path=os.path.join(tmpdir, "model1_no_sig"),
-                model=regr,
-                sample_input=iris_X_df,
-                metadata={"author": "halu", "version": "1"},
-            )
-
-            m, meta = model_api.load_model(os.path.join(tmpdir, "model1_no_sig"))
-            self.assertTrue(np.allclose(np.array([-0.08254936]), m.predict(iris_X_df[:1])))
-            self.assertEqual(s, meta.signature)
+            m_udf, _ = model_api._load_model_for_deploy(os.path.join(tmpdir, "model1_no_sig"))
+            predict_method = getattr(m_udf, "predict", None)
+            assert callable(predict_method)
+            np.testing.assert_allclose(np.array([[-0.08254936]]), predict_method(iris_X_df[:1]))
 
 
 if __name__ == "__main__":

@@ -18,7 +18,7 @@ from absl.testing import parameterized
 from absl.testing.absltest import main
 from sklearn.preprocessing import OrdinalEncoder as SklearnOrdinalEncoder
 
-from snowflake.ml.preprocessing import OrdinalEncoder
+from snowflake.ml.preprocessing import OrdinalEncoder  # type: ignore[attr-defined]
 from snowflake.ml.utils.connection_params import SnowflakeLoginOptions
 from snowflake.snowpark import Session
 from tests.integ.snowflake.ml.framework import utils as framework_utils
@@ -39,7 +39,7 @@ from tests.integ.snowflake.ml.framework.utils import (
     equal_list_of,
     equal_np_array,
     equal_optional_of,
-    equal_pandas_df,
+    equal_pandas_df_ignore_row_order,
 )
 
 
@@ -145,7 +145,7 @@ class OrdinalEncoderTest(parameterized.TestCase):
         attrs: Dict[str, _EqualityFunc] = {
             "categories_": equal_list_of(equal_np_array),
             "_missing_indices": equal_default,
-            "_state_pandas": equal_pandas_df,
+            "_state_pandas": equal_pandas_df_ignore_row_order,
         }
 
         mismatched_attributes: Dict[str, Tuple[Any, Any]] = {}
@@ -157,8 +157,8 @@ class OrdinalEncoderTest(parameterized.TestCase):
 
         if mismatched_attributes:
             raise AssertionError(
-                f"Attributes {mismatched_attributes} do not match on the transformers fitted "
-                f"with a snowpark.DataFrame and a pd.DataFrame."
+                f"Attributes\n{mismatched_attributes}\ndo not match on the transformers fitted with "
+                f"a snowpark.DataFrame and a pd.DataFrame."
             )
 
     def test_transform(self) -> None:
@@ -253,8 +253,8 @@ class OrdinalEncoderTest(parameterized.TestCase):
         encoder_sklearn.fit(df_pandas[input_cols])
         sklearn_arr = encoder_sklearn.transform(df_pandas.sort_values(by=[id_col])[input_cols])
 
-        assert np.allclose(actual_arr, sklearn_arr, equal_nan=True)
-        assert np.allclose(actual_arr2, sklearn_arr, equal_nan=True)
+        np.testing.assert_allclose(actual_arr, sklearn_arr, equal_nan=True)
+        np.testing.assert_allclose(actual_arr2, sklearn_arr, equal_nan=True)
 
     def test_transform_null(self) -> None:
         """
@@ -339,7 +339,7 @@ class OrdinalEncoderTest(parameterized.TestCase):
         encoder_sklearn.fit(df_pandas[input_cols])
         sklearn_arr = encoder_sklearn.transform(df_pandas.sort_values(by=[id_col])[input_cols])
 
-        assert np.allclose(actual_arr, sklearn_arr, equal_nan=True)
+        np.testing.assert_allclose(actual_arr, sklearn_arr, equal_nan=True)
 
     def test_transform_boolean(self) -> None:
         """
@@ -366,7 +366,7 @@ class OrdinalEncoderTest(parameterized.TestCase):
         encoder_sklearn.fit(df_pandas[input_cols])
         sklearn_arr = encoder_sklearn.transform(df_pandas.sort_values(by=[id_col])[input_cols])
 
-        assert np.allclose(actual_arr, sklearn_arr, equal_nan=True)
+        np.testing.assert_allclose(actual_arr, sklearn_arr, equal_nan=True)
 
     def test_transform_numeric(self) -> None:
         """
@@ -393,7 +393,7 @@ class OrdinalEncoderTest(parameterized.TestCase):
         encoder_sklearn.fit(df_pandas[input_cols])
         sklearn_arr = encoder_sklearn.transform(df_pandas.sort_values(by=[id_col])[input_cols])
 
-        assert np.allclose(actual_arr, sklearn_arr, equal_nan=True)
+        np.testing.assert_allclose(actual_arr, sklearn_arr, equal_nan=True)
 
     def test_categories(self) -> None:
         """
@@ -442,7 +442,7 @@ class OrdinalEncoderTest(parameterized.TestCase):
 
         for actual_cats, sklearn_cats in zip(actual_categories, encoder_sklearn.categories_):
             self.assertEqual(sklearn_cats.tolist(), actual_cats.tolist())
-        assert np.allclose(actual_arr, sklearn_arr, equal_nan=True)
+        np.testing.assert_allclose(actual_arr, sklearn_arr, equal_nan=True)
 
     def test_categories_unknown(self) -> None:
         """
@@ -471,7 +471,7 @@ class OrdinalEncoderTest(parameterized.TestCase):
         with pytest.raises(ValueError) as excinfo:
             encoder.fit(unknown_df)
 
-        assert "Found unknown categories during fit" in excinfo.value.args[0]
+        self.assertTrue("Found unknown categories during fit" in excinfo.value.args[0])
 
     def test_handle_unknown_error(self) -> None:
         """
@@ -496,7 +496,7 @@ class OrdinalEncoderTest(parameterized.TestCase):
         with pytest.raises(ValueError) as excinfo:
             encoder.transform(unknown_df)
 
-        assert "Found unknown categories during transform" in excinfo.value.args[0]
+        self.assertTrue("Found unknown categories during transform" in excinfo.value.args[0])
 
     def test_handle_unknown_use_encoded_value_nan(self) -> None:
         """
@@ -530,7 +530,7 @@ class OrdinalEncoderTest(parameterized.TestCase):
         encoder_sklearn.fit(df_pandas[input_cols])
         sklearn_arr = encoder_sklearn.transform(unknown_pandas.sort_values(by=[input_cols[0]])[input_cols])
 
-        assert np.allclose(actual_arr, sklearn_arr, equal_nan=True)
+        np.testing.assert_allclose(actual_arr, sklearn_arr, equal_nan=True)
 
     def test_handle_unknown_use_encoded_value_int(self) -> None:
         """
@@ -564,7 +564,7 @@ class OrdinalEncoderTest(parameterized.TestCase):
         encoder_sklearn.fit(df_pandas[input_cols])
         sklearn_arr = encoder_sklearn.transform(unknown_pandas.sort_values(by=[input_cols[0]])[input_cols])
 
-        assert np.allclose(actual_arr, sklearn_arr, equal_nan=True)
+        np.testing.assert_allclose(actual_arr, sklearn_arr, equal_nan=True)
 
     def test_encoded_missing_value_nan(self) -> None:
         """
@@ -596,7 +596,7 @@ class OrdinalEncoderTest(parameterized.TestCase):
         encoder_sklearn.fit(df_pandas[input_cols])
         sklearn_arr = encoder_sklearn.transform(df_pandas.sort_values(by=[id_col])[input_cols])
 
-        assert np.allclose(actual_arr, sklearn_arr, equal_nan=True)
+        np.testing.assert_allclose(actual_arr, sklearn_arr, equal_nan=True)
 
     def test_encoded_missing_value_int(self) -> None:
         """
@@ -628,7 +628,7 @@ class OrdinalEncoderTest(parameterized.TestCase):
         encoder_sklearn.fit(df_pandas[input_cols])
         sklearn_arr = encoder_sklearn.transform(df_pandas.sort_values(by=[id_col])[input_cols])
 
-        assert np.allclose(actual_arr, sklearn_arr, equal_nan=True)
+        np.testing.assert_allclose(actual_arr, sklearn_arr, equal_nan=True)
 
     def test_invalid_encoded_missing_value(self) -> None:
         """
@@ -680,7 +680,7 @@ class OrdinalEncoderTest(parameterized.TestCase):
         encoder_sklearn.fit(df_pandas[input_cols])
         sklearn_arr = encoder_sklearn.transform(df_pandas[input_cols])
 
-        assert np.allclose(actual_arr, sklearn_arr, equal_nan=True)
+        np.testing.assert_allclose(actual_arr, sklearn_arr, equal_nan=True)
 
     def test_transform_null_pandas(self) -> None:
         """
@@ -709,7 +709,7 @@ class OrdinalEncoderTest(parameterized.TestCase):
         encoder_sklearn.fit(df_pandas[input_cols])
         sklearn_arr = encoder_sklearn.transform(df_pandas[input_cols])
 
-        assert np.allclose(actual_arr, sklearn_arr, equal_nan=True)
+        np.testing.assert_allclose(actual_arr, sklearn_arr, equal_nan=True)
 
     def test_handle_unknown_use_encoded_value_int_pandas(self) -> None:
         """
@@ -744,7 +744,7 @@ class OrdinalEncoderTest(parameterized.TestCase):
         encoder_sklearn.fit(df_pandas[input_cols])
         sklearn_arr = encoder_sklearn.transform(unknown_pandas[input_cols])
 
-        assert np.allclose(actual_arr, sklearn_arr, equal_nan=True)
+        np.testing.assert_allclose(actual_arr, sklearn_arr, equal_nan=True)
 
     def test_encoded_missing_value_int_pandas(self) -> None:
         """
@@ -776,7 +776,7 @@ class OrdinalEncoderTest(parameterized.TestCase):
         encoder_sklearn.fit(df_pandas[input_cols])
         sklearn_arr = encoder_sklearn.transform(df_pandas[input_cols])
 
-        assert np.allclose(actual_arr, sklearn_arr, equal_nan=True)
+        np.testing.assert_allclose(actual_arr, sklearn_arr, equal_nan=True)
 
     def test_serde(self) -> None:
         """
@@ -831,9 +831,9 @@ class OrdinalEncoderTest(parameterized.TestCase):
         encoder_sklearn.fit(df_pandas[input_cols])
         sklearn_arr = encoder_sklearn.transform(df_pandas[input_cols])
 
-        assert np.allclose(actual_arr_cloudpickle, sklearn_arr, equal_nan=True)
-        assert np.allclose(actual_arr_pickle, sklearn_arr, equal_nan=True)
-        assert np.allclose(actual_arr_joblib, sklearn_arr, equal_nan=True)
+        np.testing.assert_allclose(actual_arr_cloudpickle, sklearn_arr, equal_nan=True)
+        np.testing.assert_allclose(actual_arr_pickle, sklearn_arr, equal_nan=True)
+        np.testing.assert_allclose(actual_arr_joblib, sklearn_arr, equal_nan=True)
 
     def test_same_input_output_cols(self) -> None:
         """

@@ -1,11 +1,11 @@
 import functools
 import inspect
-from typing import Any, Callable, Dict, Generator, Optional
+from typing import Any, Callable, Coroutine, Dict, Generator, Optional
 
 import anyio
 import pandas as pd
 
-from snowflake.ml.model import model_types
+from snowflake.ml.model import type_hints as model_types
 
 
 class MethodRef:
@@ -102,7 +102,7 @@ class ModelContext:
         self,
         *,
         artifacts: Optional[Dict[str, str]] = None,
-        models: Optional[Dict[str, Any]] = None,
+        models: Optional[Dict[str, model_types.ModelType]] = None,
     ) -> None:
         """Initialize the model context
 
@@ -110,8 +110,10 @@ class ModelContext:
             artifacts: A dict mapping name of the artifact to its currently available path. Defaults to None.
             models: A dict mapping name of the sub-model to the corresponding model object. Defaults to None.
         """
-        self.artifacts = artifacts if artifacts else dict()
-        self.model_refs = {name: ModelRef(name, model) for name, model in models.items()} if models else dict()
+        self.artifacts: Dict[str, str] = artifacts if artifacts else dict()
+        self.model_refs: Dict[str, ModelRef] = (
+            {name: ModelRef(name, model) for name, model in models.items()} if models else dict()
+        )
 
     def path(self, key: str) -> str:
         """Get the actual path to a specific artifact.
@@ -200,28 +202,11 @@ def _validate_predict_function(func: Callable[[model_types.CustomModelType, pd.D
     if input_annotation != pd.core.frame.DataFrame:
         raise TypeError("Input for predict method should have type pandas.DataFrame.")
 
-    if output_annotation != pd.core.frame.DataFrame:
+    if (
+        output_annotation != pd.core.frame.DataFrame
+        and output_annotation != Coroutine[Any, Any, pd.core.frame.DataFrame]
+    ):
         raise TypeError("Output for predict method should have type pandas.DataFrame.")
-
-
-def _bind(
-    instance: model_types.CustomModelType,
-    func: Callable[[model_types.CustomModelType, pd.DataFrame], pd.DataFrame],
-    as_name: str = None,
-) -> None:
-    """Bind the function *func* to *instance*, with either provided name *as_name* or the existing name of *func*.
-    The provided *func* should accept the instance as the first argument, i.e. "self".
-
-    Args:
-        instance: The instance to bind the method to.
-        func: The function to be bound.
-        as_name: The name in the instance to bind the function. Defaults to None.
-
-    """
-    if as_name is None:
-        as_name = func.__name__
-    bound_method = func.__get__(instance, instance.__class__)
-    setattr(instance, as_name, bound_method)
 
 
 def inference_api(

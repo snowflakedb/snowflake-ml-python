@@ -2,6 +2,7 @@
 #
 # Copyright (c) 2012-2022 Snowflake Computing Inc. All rights reserved.
 #
+import copy
 import inspect
 from typing import Any, Dict, Iterable, Optional, Union
 
@@ -12,7 +13,7 @@ from sklearn import impute
 from snowflake import snowpark
 from snowflake.ml.framework import _utils, base
 from snowflake.ml.utils import telemetry
-from snowflake.snowpark import functions, types
+from snowflake.snowpark import functions as F, types as T
 from snowflake.snowpark._internal import utils as snowpark_internal_utils
 
 _PROJECT = "ModelDevelopment"
@@ -26,15 +27,15 @@ STRATEGY_TO_STATE_DICT = {
 }
 
 # TODO: change the type hint to np.dtype[Any] when snowml stops supporting python <= 3.8
-SNOWFLAKE_DATATYPE_TO_NUMPY_DTYPE_MAP: Dict[types.DataType, np.dtype] = {  # type: ignore[type-arg]
-    types.ByteType(): np.dtype("int8"),
-    types.ShortType(): np.dtype("int16"),
-    types.IntegerType(): np.dtype("int32"),
-    types.LongType(): np.dtype("int64"),
-    types.FloatType(): np.dtype("float64"),
-    types.DoubleType(): np.dtype("float64"),
-    types.DecimalType(): np.dtype("object"),
-    types.StringType(): np.dtype("str"),
+SNOWFLAKE_DATATYPE_TO_NUMPY_DTYPE_MAP: Dict[T.DataType, np.dtype] = {  # type: ignore[type-arg]
+    T.ByteType(): np.dtype("int8"),
+    T.ShortType(): np.dtype("int16"),
+    T.IntegerType(): np.dtype("int32"),
+    T.LongType(): np.dtype("int64"),
+    T.FloatType(): np.dtype("float64"),
+    T.DoubleType(): np.dtype("float64"),
+    T.DecimalType(): np.dtype("object"),
+    T.StringType(): np.dtype("str"),
 }
 
 # Constants used to validate the compatibility of the kwargs passed to the sklearn
@@ -67,12 +68,12 @@ _SKLEARN_ADDED_KWARG_VALUE_TO_VERSION_DICT = {
 }
 
 _NUMERIC_TYPES = [
-    types.ByteType(),
-    types.ShortType(),
-    types.IntegerType(),
-    types.LongType(),
-    types.FloatType(),
-    types.DoubleType(),
+    T.ByteType(),
+    T.ShortType(),
+    T.IntegerType(),
+    T.LongType(),
+    T.FloatType(),
+    T.DoubleType(),
 ]
 
 
@@ -162,7 +163,7 @@ class SimpleImputer(base.BaseEstimator, base.BaseTransformer):
             del self.feature_names_in_
             del self._sklearn_fit_dtype
 
-    def _get_dataset_input_col_datatypes(self, dataset: snowpark.DataFrame) -> Dict[str, types.DataType]:
+    def _get_dataset_input_col_datatypes(self, dataset: snowpark.DataFrame) -> Dict[str, T.DataType]:
         """
         Checks that the input columns are all the same datatype category(except for most_frequent strategy) and
         returns the datatype.
@@ -177,7 +178,7 @@ class SimpleImputer(base.BaseEstimator, base.BaseTransformer):
             TypeError: If the input columns are not all the same datatype category or if the datatype is not supported.
         """
 
-        def check_type_consistency(col_types: Dict[str, types.DataType]) -> None:
+        def check_type_consistency(col_types: Dict[str, T.DataType]) -> None:
             is_numeric_type = None
             for col_name, col_type in col_types.items():
                 if is_numeric_type is None:
@@ -236,7 +237,7 @@ class SimpleImputer(base.BaseEstimator, base.BaseTransformer):
                 # but use this algorithm for sklearn compatibility.
                 self.fill_value = 0
                 for input_col_datatype in list(input_col_datatypes):
-                    if isinstance(input_col_datatype, types.StringType):
+                    if isinstance(input_col_datatype, T.StringType):
                         self.fill_value = "missing_data"
                         break
 
@@ -247,7 +248,7 @@ class SimpleImputer(base.BaseEstimator, base.BaseTransformer):
                     #  Add back when `keep_empty_features` is supported.
                     # not self.keep_empty_features
                     # and dataset.filter(F.col(input_col).is_not_null()).count(statement_params=statement_params) == 0
-                    dataset.filter(functions.col(input_col).is_not_null()).count(statement_params=statement_params)
+                    dataset.filter(F.col(input_col).is_not_null()).count(statement_params=statement_params)
                     == 0
                 ):
                     self.statistics_[input_col] = np.nan
@@ -256,7 +257,11 @@ class SimpleImputer(base.BaseEstimator, base.BaseTransformer):
         else:
             state = STRATEGY_TO_STATE_DICT[self.strategy]
             assert state is not None, "state cannot be None"
-            _computed_states = self._compute(dataset, self.input_cols, states=[state])
+            dataset_copy = copy.copy(dataset)
+            if not pd.isna(self.missing_values):
+                # Replace `self.missing_values` with null to avoid including it when computing states.
+                dataset_copy = dataset_copy.na.replace(self.missing_values, None)  # type: ignore[arg-type]
+            _computed_states = self._compute(dataset_copy, self.input_cols, states=[state])
             for input_col in self.input_cols:
                 statistic = _computed_states[input_col][state]
                 self.statistics_[input_col] = np.nan if statistic is None else statistic
@@ -265,10 +270,7 @@ class SimpleImputer(base.BaseEstimator, base.BaseTransformer):
                 elif self.strategy == "most_frequent":
                     # Check if there is only one occurrence of the value. If so, the statistic should be the mininum
                     # value in the dataset.
-                    if (
-                        dataset.filter(functions.col(input_col) == statistic).count(statement_params=statement_params)
-                        == 1
-                    ):
+                    if dataset.filter(F.col(input_col) == statistic).count(statement_params=statement_params) == 1:
                         statistic_min = self._compute(dataset, [input_col], states=[_utils.NumericStatistics.MIN])
                         self.statistics_[input_col] = statistic_min[input_col][_utils.NumericStatistics.MIN]
 
@@ -330,7 +332,7 @@ class SimpleImputer(base.BaseEstimator, base.BaseTransformer):
         Returns:
             Output dataset.
         """
-        output_columns = [functions.col(input_col) for input_col in self.input_cols]
+        output_columns = [F.col(input_col) for input_col in self.input_cols]
         transformed_dataset: snowpark.DataFrame = dataset.with_columns(self.output_cols, output_columns)
 
         # Get the type of input columns.
@@ -363,7 +365,7 @@ class SimpleImputer(base.BaseEstimator, base.BaseTransformer):
 
             if self.missing_values is not None and pd.isna(self.missing_values):
                 # Use `fillna` for replacing nans. Check if the column has a string data type, or coerce a float.
-                if not isinstance(input_col_datatypes[input_col], types.StringType):
+                if not isinstance(input_col_datatypes[input_col], T.StringType):
                     statistic = float(statistic)
                 transformed_dataset = transformed_dataset.na.fill({output_col: statistic})
             else:

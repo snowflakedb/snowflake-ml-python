@@ -16,7 +16,7 @@ from snowflake import snowpark
 from snowflake.ml._internal.utils import parallelize
 from snowflake.ml.framework import _utils
 from snowflake.ml.utils import telemetry
-from snowflake.snowpark import functions
+from snowflake.snowpark import functions as F
 from snowflake.snowpark._internal import type_utils
 
 _PROJECT = "ModelDevelopment"
@@ -226,8 +226,7 @@ class Base:
             if key not in valid_params:
                 local_valid_params = self._get_param_names()
                 raise ValueError(
-                    f"Invalid parameter {key!r} for transformer {self}. "
-                    f"Valid parameters are: {local_valid_params!r}."
+                    f"Invalid parameter {key} for transformer {self}. Valid parameters are: {local_valid_params}."
                 )
 
             if delim:
@@ -353,7 +352,7 @@ class BaseEstimator(Base):
         dataset_cols = set(dataset.columns.to_list())
         if not input_cols.issubset(dataset_cols):
             raise KeyError(
-                f"The `input_cols` contains columns that do not match any of the columns in "
+                "The `input_cols` contains columns that do not match any of the columns in "
                 f"the dataframe: {input_cols - dataset_cols}."
             )
         return dataset[self.input_cols]
@@ -507,16 +506,17 @@ class BaseTransformer(Base):
 
         Raises:
             TypeError: If the supplied output columns don't match that of the transformed array.
-            RuntimeWarning: If called before fit().
         """
-        if not self._is_fitted:
-            raise RuntimeWarning("Transformer not fitted before calling transform().")
+        self.enforce_fit()
         dataset = dataset.copy()
         sklearn_transform = self.get_sklearn_object()
         transformed_data = sklearn_transform.transform(dataset[self.input_cols])
         shape = transformed_data.shape
         if (len(shape) == 1 and len(self.output_cols) != 1) or (len(shape) > 1 and shape[1] != len(self.output_cols)):
-            raise TypeError("output_cols must be same length as transformed array")
+            raise TypeError(
+                f"output_cols must be same length as transformed array. Got output_cols len: {len(self.output_cols)},"
+                f" transformed array shape: {shape}"
+            )
 
         if len(shape) == 1:
             transformed_data = np.reshape(transformed_data, (-1, 1))
@@ -538,8 +538,8 @@ class BaseTransformer(Base):
         null_count_columns = []
         for input_col in self.input_cols:
             col = type_utils.ColumnOrLiteral(
-                functions.count(type_utils.ColumnOrName(functions.lit(type_utils.LiteralType("*"))))
-            ) - type_utils.ColumnOrLiteral(functions.count(type_utils.ColumnOrName(dataset[input_col])))
+                F.count(type_utils.ColumnOrName(F.lit(type_utils.LiteralType("*"))))
+            ) - type_utils.ColumnOrLiteral(F.count(type_utils.ColumnOrName(dataset[input_col])))
             null_count_columns.append(col)
 
         statement_params = telemetry.get_function_usage_statement_params(
@@ -557,7 +557,7 @@ class BaseTransformer(Base):
 
         if any(invalid_columns):
             raise ValueError(
-                f"Dataset may not contain nulls, but "
+                "Dataset may not contain nulls, but "
                 f"the following columns have a non-zero number of nulls: {invalid_columns}."
             )
 

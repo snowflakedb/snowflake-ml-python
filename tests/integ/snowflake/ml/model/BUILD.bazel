@@ -6,9 +6,12 @@ py_test(
     timeout = "long",
     shard_count=6,
     deps = [
-        "//snowflake/ml/model:model",
-        "//snowflake/ml/model:deployer",
+        "//snowflake/ml/model:_model",
+        "//snowflake/ml/model:_deployer",
         "//snowflake/ml/utils:connection_params"
     ],
     tags = ["skip_merge_gates"],
+    data = [
+        "//snowflake/ml:wheel"
+    ]
 )

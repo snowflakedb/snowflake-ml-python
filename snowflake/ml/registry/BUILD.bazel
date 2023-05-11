@@ -11,8 +11,8 @@ py_library(
         "//snowflake/ml/_internal/utils:formatting",
         "//snowflake/ml/_internal/utils:query_result_checker",
         "//snowflake/ml/_internal/utils:uri",
-        "//snowflake/ml/model",
-        "//snowflake/ml/model:deployer",
+        "//snowflake/ml/model:_model",
+        "//snowflake/ml/model:_deployer",
         "//snowflake/ml/utils:telemetry",
     ],
 )

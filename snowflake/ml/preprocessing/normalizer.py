@@ -10,7 +10,7 @@ from sklearn import preprocessing
 from snowflake import snowpark
 from snowflake.ml.framework import base
 from snowflake.ml.utils import telemetry
-from snowflake.snowpark import functions, types
+from snowflake.snowpark import functions as F, types as T
 
 _PROJECT = "ModelDevelopment"
 _SUBPROJECT = "Preprocessing"
@@ -118,20 +118,18 @@ class Normalizer(base.BaseEstimator, base.BaseTransformer):
             raise ValueError("Found array with 0 columns, but a minimum of 1 is required.")
 
         if self.norm == "l1":
-            norm = functions.lit("0")  # type: ignore[arg-type]
+            norm = F.lit("0")  # type: ignore[arg-type]
             for input_col in self.input_cols:
-                norm += functions.abs(dataset[input_col])  # type: ignore[operator]
+                norm += F.abs(dataset[input_col])  # type: ignore[operator]
 
         elif self.norm == "l2":
-            norm = functions.lit("0")  # type: ignore[arg-type]
+            norm = F.lit("0")  # type: ignore[arg-type]
             for input_col in self.input_cols:
                 norm += dataset[input_col] * dataset[input_col]
-            norm = functions.sqrt(norm)  # type: ignore[arg-type]
+            norm = F.sqrt(norm)  # type: ignore[arg-type]
 
         elif self.norm == "max":
-            norm = functions.greatest(
-                *[functions.abs(dataset[input_col]) for input_col in self.input_cols]  # type: ignore[arg-type]
-            )
+            norm = F.greatest(*[F.abs(dataset[input_col]) for input_col in self.input_cols])  # type: ignore[arg-type]
 
         else:
             raise ValueError(f"'{self.norm}' is not a supported norm.")
@@ -139,8 +137,8 @@ class Normalizer(base.BaseEstimator, base.BaseTransformer):
         output_columns = []
         for input_col in self.input_cols:
             # Set the entry to 0 if the norm is 0, because the norm is 0 only when all entries are 0.
-            output_column = functions.div0(
-                dataset[input_col].cast(types.FloatType()),
+            output_column = F.div0(
+                dataset[input_col].cast(T.FloatType()),
                 norm,  # type: ignore[arg-type]
             )
             output_columns.append(output_column)

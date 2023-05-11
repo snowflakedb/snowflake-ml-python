@@ -10,7 +10,7 @@ from sklearn import preprocessing
 from snowflake import snowpark
 from snowflake.ml.framework import base
 from snowflake.ml.utils import telemetry
-from snowflake.snowpark import functions, types
+from snowflake.snowpark import functions as F, types as T
 
 _PROJECT = "ModelDevelopment"
 _SUBPROJECT = "Preprocessing"
@@ -115,9 +115,7 @@ class Binarizer(base.BaseEstimator, base.BaseTransformer):
         self._validate_data_has_no_nulls(dataset)
         output_columns = []
         for input_col in self.input_cols:
-            col = functions.iff(dataset[input_col] > self.threshold, 1.0, 0.0).cast(  # type: ignore[arg-type]
-                types.FloatType()
-            )
+            col = F.iff(dataset[input_col] > self.threshold, 1.0, 0.0).cast(T.FloatType())  # type: ignore[arg-type]
             output_columns.append(col)
 
         transformed_dataset: snowpark.DataFrame = dataset.with_columns(self.output_cols, output_columns)

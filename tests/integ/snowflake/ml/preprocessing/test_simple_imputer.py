@@ -15,7 +15,7 @@ import numpy as np
 from absl.testing.absltest import main
 from sklearn.impute import SimpleImputer as SklearnSimpleImputer
 
-from snowflake.ml.preprocessing import SimpleImputer
+from snowflake.ml.preprocessing import SimpleImputer  # type: ignore[attr-defined]
 from snowflake.ml.utils.connection_params import SnowflakeLoginOptions
 from snowflake.snowpark import Session
 from tests.integ.snowflake.ml.framework import utils as framework_utils
@@ -57,8 +57,7 @@ class SimpleImputerTest(TestCase):
         """
         input_cols = ["FLOAT1", "STR1"]
         output_cols = input_cols
-        _, df = framework_utils.get_df(self._session, DATA, SCHEMA)  # type: ignore
-        df = df.to_df(SCHEMA)
+        _, df = framework_utils.get_df(self._session, DATA, SCHEMA)
 
         for strategy in ["mean", "constant", "median"]:
             simple_imputer = SimpleImputer(strategy=strategy, input_cols=input_cols, output_cols=output_cols)
@@ -77,7 +76,7 @@ class SimpleImputerTest(TestCase):
         """
         input_cols = NUMERIC_COLS
         output_cols = OUTPUT_COLS
-        df_pandas, df = framework_utils.get_df(self._session, DATA, SCHEMA)  # type: ignore
+        df_pandas, df = framework_utils.get_df(self._session, DATA, SCHEMA)
 
         simple_imputer = SimpleImputer(input_cols=input_cols, output_cols=output_cols)
         simple_imputer.fit(df)
@@ -87,7 +86,7 @@ class SimpleImputerTest(TestCase):
 
         statistics_numpy = np.array(list(simple_imputer.statistics_.values()))
 
-        assert np.array_equal(statistics_numpy, simple_imputer_sklearn.statistics_)
+        np.testing.assert_equal(statistics_numpy, simple_imputer_sklearn.statistics_)
 
     def test_fit_constant(self) -> None:
         """
@@ -101,7 +100,7 @@ class SimpleImputerTest(TestCase):
         input_cols = NUMERIC_COLS
         output_cols = OUTPUT_COLS
         fill_value = 2
-        df_pandas, df = framework_utils.get_df(self._session, DATA, SCHEMA)  # type: ignore
+        df_pandas, df = framework_utils.get_df(self._session, DATA, SCHEMA)
 
         simple_imputer = SimpleImputer(
             input_cols=input_cols, output_cols=output_cols, strategy="constant", fill_value=fill_value
@@ -113,7 +112,7 @@ class SimpleImputerTest(TestCase):
 
         statistics_numpy = np.array(list(simple_imputer.statistics_.values()))
 
-        assert np.array_equal(statistics_numpy, simple_imputer_sklearn.statistics_)
+        np.testing.assert_equal(statistics_numpy, simple_imputer_sklearn.statistics_)
 
     def test_fit_constant_no_fill_numeric(self) -> None:
         """
@@ -126,7 +125,7 @@ class SimpleImputerTest(TestCase):
         """
         input_cols = NUMERIC_COLS
         output_cols = OUTPUT_COLS
-        df_pandas, df = framework_utils.get_df(self._session, DATA, SCHEMA)  # type: ignore
+        df_pandas, df = framework_utils.get_df(self._session, DATA, SCHEMA)
 
         simple_imputer = SimpleImputer(input_cols=input_cols, output_cols=output_cols, strategy="constant")
         simple_imputer.fit(df)
@@ -136,7 +135,7 @@ class SimpleImputerTest(TestCase):
 
         statistics_numpy = np.array(list(simple_imputer.statistics_.values()))
 
-        assert np.array_equal(statistics_numpy, simple_imputer_sklearn.statistics_)
+        np.testing.assert_equal(statistics_numpy, simple_imputer_sklearn.statistics_)
 
     def test_fit_all_missing(self) -> None:
         """
@@ -149,7 +148,7 @@ class SimpleImputerTest(TestCase):
         """
         input_cols = NUMERIC_COLS
         output_cols = OUTPUT_COLS
-        df_pandas, df = framework_utils.get_df(self._session, DATA_ALL_NONE, SCHEMA)  # type: ignore
+        df_pandas, df = framework_utils.get_df(self._session, DATA_ALL_NONE, SCHEMA)
 
         simple_imputer = SimpleImputer(input_cols=input_cols, output_cols=output_cols)
         simple_imputer.fit(df)
@@ -159,7 +158,7 @@ class SimpleImputerTest(TestCase):
 
         statistics_numpy = np.array(list(simple_imputer.statistics_.values()))
 
-        assert np.allclose(statistics_numpy, simple_imputer_sklearn.statistics_, equal_nan=True)
+        np.testing.assert_allclose(statistics_numpy, simple_imputer_sklearn.statistics_, equal_nan=True)
 
     def test_fit_all_missing_categorial_keep_empty_features_false(self) -> None:
         """
@@ -172,7 +171,7 @@ class SimpleImputerTest(TestCase):
         """
         input_cols = CATEGORICAL_COLS
         output_cols = OUTPUT_COLS
-        df_pandas, df = framework_utils.get_df(self._session, DATA_ALL_NONE, SCHEMA)  # type: ignore
+        df_pandas, df = framework_utils.get_df(self._session, DATA_ALL_NONE, SCHEMA)
 
         # TODO(hayu): [SNOW-752265] Support SimpleImputer keep_empty_features.
         #  Add back `keep_empty_features=False` when supported.
@@ -184,7 +183,7 @@ class SimpleImputerTest(TestCase):
 
         statistics_numpy = np.array(list(simple_imputer.statistics_.values()))
 
-        assert np.allclose(statistics_numpy, simple_imputer_sklearn.statistics_, equal_nan=True)
+        np.testing.assert_allclose(statistics_numpy, simple_imputer_sklearn.statistics_, equal_nan=True)
 
     def test_fit_all_missing_keep_missing_false(self) -> None:
         """
@@ -197,7 +196,7 @@ class SimpleImputerTest(TestCase):
         """
         input_cols = NUMERIC_COLS
         output_cols = OUTPUT_COLS
-        df_pandas, df = framework_utils.get_df(self._session, DATA_ALL_NONE, SCHEMA)  # type: ignore
+        df_pandas, df = framework_utils.get_df(self._session, DATA_ALL_NONE, SCHEMA)
 
         # TODO(hayu): [SNOW-752265] Support SimpleImputer keep_empty_features.
         #  Add back `keep_empty_features=False` when supported.
@@ -209,7 +208,7 @@ class SimpleImputerTest(TestCase):
 
         statistics_numpy = np.array(list(simple_imputer.statistics_.values()))
 
-        assert np.allclose(statistics_numpy, simple_imputer_sklearn.statistics_, equal_nan=True)
+        np.testing.assert_allclose(statistics_numpy, simple_imputer_sklearn.statistics_, equal_nan=True)
 
     def test_reset(self) -> None:
         """
@@ -222,7 +221,7 @@ class SimpleImputerTest(TestCase):
         """
         input_cols = NUMERIC_COLS
         output_cols = OUTPUT_COLS
-        df_pandas, df = framework_utils.get_df(self._session, DATA, SCHEMA)  # type: ignore
+        df_pandas, df = framework_utils.get_df(self._session, DATA, SCHEMA)
 
         simple_imputer = SimpleImputer(input_cols=input_cols, output_cols=output_cols)
         simple_imputer.fit(df)
@@ -242,20 +241,19 @@ class SimpleImputerTest(TestCase):
         """
         input_cols = NUMERIC_COLS
         output_cols = OUTPUT_COLS
-        df_pandas, df = framework_utils.get_df(self._session, DATA, SCHEMA)  # type: ignore
-        df = df.to_df(SCHEMA)
+        df_pandas, df = framework_utils.get_df(self._session, DATA, SCHEMA)
 
         simple_imputer = SimpleImputer(input_cols=input_cols, output_cols=output_cols)
         simple_imputer.fit(df)
 
-        df_none_nan_pandas, df_none_nan = framework_utils.get_df(self._session, DATA_NONE_NAN, SCHEMA)  # type: ignore
+        df_none_nan_pandas, df_none_nan = framework_utils.get_df(self._session, DATA_NONE_NAN, SCHEMA)
         transformed_df = simple_imputer.transform(df_none_nan)
 
         sklearn_simple_imputer = SklearnSimpleImputer()
         sklearn_simple_imputer.fit(df_pandas[input_cols])
         sklearn_transformed_dataset = sklearn_simple_imputer.transform(df_none_nan_pandas[input_cols])
 
-        assert np.allclose(transformed_df[output_cols].to_pandas().to_numpy(), sklearn_transformed_dataset)
+        np.testing.assert_allclose(transformed_df[output_cols].to_pandas().to_numpy(), sklearn_transformed_dataset)
 
     def test_transform_snowpark_output_columns_same_as_input_columns(self) -> None:
         """
@@ -268,20 +266,19 @@ class SimpleImputerTest(TestCase):
         """
         input_cols = NUMERIC_COLS
         output_cols = input_cols
-        df_pandas, df = framework_utils.get_df(self._session, DATA, SCHEMA)  # type: ignore
-        df = df.to_df(SCHEMA)
+        df_pandas, df = framework_utils.get_df(self._session, DATA, SCHEMA)
 
         simple_imputer = SimpleImputer(input_cols=input_cols, output_cols=output_cols)
         simple_imputer.fit(df)
 
-        df_none_nan_pandas, df_none_nan = framework_utils.get_df(self._session, DATA_NONE_NAN, SCHEMA)  # type: ignore
+        df_none_nan_pandas, df_none_nan = framework_utils.get_df(self._session, DATA_NONE_NAN, SCHEMA)
         transformed_df = simple_imputer.transform(df_none_nan)
 
         sklearn_simple_imputer = SklearnSimpleImputer()
         sklearn_simple_imputer.fit(df_pandas[input_cols])
         sklearn_transformed_dataset = sklearn_simple_imputer.transform(df_none_nan_pandas[input_cols])
 
-        assert np.allclose(transformed_df[output_cols].to_pandas().to_numpy(), sklearn_transformed_dataset)
+        np.testing.assert_allclose(transformed_df[output_cols].to_pandas().to_numpy(), sklearn_transformed_dataset)
 
     def test_transform_snowpark_output_columns_one_equal_to_input_column(self) -> None:
         """
@@ -294,20 +291,19 @@ class SimpleImputerTest(TestCase):
         """
         input_cols = NUMERIC_COLS
         output_cols = [NUMERIC_COLS[0], OUTPUT_COLS[0]]
-        df_pandas, df = framework_utils.get_df(self._session, DATA, SCHEMA)  # type: ignore
-        df = df.to_df(SCHEMA)
+        df_pandas, df = framework_utils.get_df(self._session, DATA, SCHEMA)
 
         simple_imputer = SimpleImputer(input_cols=input_cols, output_cols=output_cols)
         simple_imputer.fit(df)
 
-        df_none_nan_pandas, df_none_nan = framework_utils.get_df(self._session, DATA_NONE_NAN, SCHEMA)  # type: ignore
+        df_none_nan_pandas, df_none_nan = framework_utils.get_df(self._session, DATA_NONE_NAN, SCHEMA)
         transformed_df = simple_imputer.transform(df_none_nan)
 
         sklearn_simple_imputer = SklearnSimpleImputer()
         sklearn_simple_imputer.fit(df_pandas[input_cols])
         sklearn_transformed_dataset = sklearn_simple_imputer.transform(df_none_nan_pandas[input_cols])
 
-        assert np.allclose(transformed_df[output_cols].to_pandas().to_numpy(), sklearn_transformed_dataset)
+        np.testing.assert_allclose(transformed_df[output_cols].to_pandas().to_numpy(), sklearn_transformed_dataset)
 
     def test_transform_snowpark_missing_values_not_nan(self) -> None:
         """
@@ -320,23 +316,21 @@ class SimpleImputerTest(TestCase):
         """
         input_cols = NUMERIC_COLS
         output_cols = OUTPUT_COLS
-        df_pandas, df = framework_utils.get_df(self._session, DATA, SCHEMA)  # type: ignore
-        df = df.to_df(SCHEMA)
+        df_pandas, df = framework_utils.get_df(self._session, DATA, SCHEMA)
 
-        simple_imputer = SimpleImputer(input_cols=input_cols, output_cols=output_cols, missing_values=2)
-        simple_imputer.fit(df)
+        for strategy in ["mean", "median", "most_frequent", "constant"]:
+            simple_imputer = SimpleImputer(
+                strategy=strategy, input_cols=input_cols, output_cols=output_cols, missing_values=-1.0
+            )
+            simple_imputer.fit(df)
 
-        transformed_df = simple_imputer.transform(df)
+            transformed_df = simple_imputer.transform(df)
 
-        sklearn_simple_imputer = SklearnSimpleImputer(missing_values=2)
-        sklearn_simple_imputer.fit(df_pandas[input_cols])
-        sklearn_transformed_dataset = sklearn_simple_imputer.transform(df_pandas[input_cols])
+            sklearn_simple_imputer = SklearnSimpleImputer(strategy=strategy, missing_values=-1.0)
+            sklearn_simple_imputer.fit(df_pandas[input_cols])
+            sklearn_transformed_dataset = sklearn_simple_imputer.transform(df_pandas[input_cols])
 
-        np.array_equal(
-            sklearn_transformed_dataset,
-            transformed_df[output_cols].to_pandas().to_numpy().flatten(),
-            equal_nan=True,
-        )
+            np.testing.assert_allclose(transformed_df[output_cols].to_pandas().to_numpy(), sklearn_transformed_dataset)
 
     def test_transform_snowpark_most_frequent_strategy_categorical(self) -> None:
         """
@@ -349,22 +343,21 @@ class SimpleImputerTest(TestCase):
         """
         input_cols = CATEGORICAL_COLS
         output_cols = OUTPUT_COLS
-        df_pandas, df = framework_utils.get_df(self._session, DATA, SCHEMA)  # type: ignore
-        df = df.to_df(SCHEMA)
+        df_pandas, df = framework_utils.get_df(self._session, DATA, SCHEMA)
 
         simple_imputer = SimpleImputer(
             input_cols=input_cols, output_cols=output_cols, missing_values=None, strategy="most_frequent"
         )
         simple_imputer.fit(df)
 
-        df_none_nan_pandas, df_none_nan = framework_utils.get_df(self._session, DATA_NONE_NAN, SCHEMA)  # type: ignore
+        df_none_nan_pandas, df_none_nan = framework_utils.get_df(self._session, DATA_NONE_NAN, SCHEMA)
         transformed_df = simple_imputer.transform(df_none_nan)
 
         sklearn_simple_imputer = SklearnSimpleImputer(missing_values=None, strategy="most_frequent")
         sklearn_simple_imputer.fit(df_pandas[input_cols])
         sklearn_transformed_dataset = sklearn_simple_imputer.transform(df_none_nan_pandas[input_cols])
 
-        assert np.array_equal(transformed_df[output_cols].to_pandas().to_numpy(), sklearn_transformed_dataset)
+        np.testing.assert_equal(transformed_df[output_cols].to_pandas().to_numpy(), sklearn_transformed_dataset)
 
     def test_transform_snowpark_most_frequent_strategy_categorical_mixed_types(self) -> None:
         """
@@ -377,20 +370,19 @@ class SimpleImputerTest(TestCase):
         """
         input_cols = [CATEGORICAL_COLS[0], NUMERIC_COLS[0]]
         output_cols = OUTPUT_COLS
-        df_pandas, df = framework_utils.get_df(self._session, DATA, SCHEMA)  # type: ignore
-        df = df.to_df(SCHEMA)
+        df_pandas, df = framework_utils.get_df(self._session, DATA, SCHEMA)
 
         simple_imputer = SimpleImputer(input_cols=input_cols, output_cols=output_cols, strategy="most_frequent")
         simple_imputer.fit(df)
 
-        df_none_nan_pandas, df_none_nan = framework_utils.get_df(self._session, DATA_NAN, SCHEMA)  # type: ignore
+        df_none_nan_pandas, df_none_nan = framework_utils.get_df(self._session, DATA_NAN, SCHEMA)
         transformed_df = simple_imputer.transform(df_none_nan)
 
         sklearn_simple_imputer = SklearnSimpleImputer(strategy="most_frequent")
         sklearn_simple_imputer.fit(df_pandas[input_cols])
         sklearn_transformed_dataset = sklearn_simple_imputer.transform(df_none_nan_pandas[input_cols])
 
-        assert np.array_equal(transformed_df[output_cols].to_pandas().to_numpy(), sklearn_transformed_dataset)
+        np.testing.assert_equal(transformed_df[output_cols].to_pandas().to_numpy(), sklearn_transformed_dataset)
 
     def test_transform_snowpark_most_frequent_strategy_numeric(self) -> None:
         """
@@ -403,20 +395,19 @@ class SimpleImputerTest(TestCase):
         """
         input_cols = NUMERIC_COLS
         output_cols = OUTPUT_COLS
-        df_pandas, df = framework_utils.get_df(self._session, DATA, SCHEMA)  # type: ignore
-        df = df.to_df(SCHEMA)
+        df_pandas, df = framework_utils.get_df(self._session, DATA, SCHEMA)
 
         simple_imputer = SimpleImputer(input_cols=input_cols, output_cols=output_cols, strategy="most_frequent")
         simple_imputer.fit(df)
 
-        df_none_nan_pandas, df_none_nan = framework_utils.get_df(self._session, DATA_NONE_NAN, SCHEMA)  # type: ignore
+        df_none_nan_pandas, df_none_nan = framework_utils.get_df(self._session, DATA_NONE_NAN, SCHEMA)
         transformed_df = simple_imputer.transform(df_none_nan)
 
         simple_imputer_sklearn = SklearnSimpleImputer(strategy="most_frequent")
         simple_imputer_sklearn.fit(df_pandas[input_cols])
         sklearn_transformed_dataset = simple_imputer_sklearn.transform(df_none_nan_pandas[input_cols])
 
-        assert np.allclose(transformed_df[output_cols].to_pandas().to_numpy(), sklearn_transformed_dataset)
+        np.testing.assert_allclose(transformed_df[output_cols].to_pandas().to_numpy(), sklearn_transformed_dataset)
 
     def test_transform_sklearn(self) -> None:
         """
@@ -429,20 +420,19 @@ class SimpleImputerTest(TestCase):
         """
         input_cols = NUMERIC_COLS
         output_cols = OUTPUT_COLS
-        df_pandas, df = framework_utils.get_df(self._session, DATA, SCHEMA)  # type: ignore
-        df = df.to_df(SCHEMA)
+        df_pandas, df = framework_utils.get_df(self._session, DATA, SCHEMA)
 
         simple_imputer = SimpleImputer(input_cols=input_cols, output_cols=output_cols)
         simple_imputer.fit(df)
 
-        df_none_nan_pandas, df_none_nan = framework_utils.get_df(self._session, DATA_NONE_NAN, SCHEMA)  # type: ignore
+        df_none_nan_pandas, df_none_nan = framework_utils.get_df(self._session, DATA_NONE_NAN, SCHEMA)
         transformed_df = simple_imputer.transform(df_none_nan_pandas)
 
         sklearn_simple_imputer = SklearnSimpleImputer()
         sklearn_simple_imputer.fit(df_pandas[input_cols])
         sklearn_transformed_dataset = sklearn_simple_imputer.transform(df_none_nan_pandas[input_cols])
 
-        assert np.allclose(transformed_df[output_cols].to_numpy(), sklearn_transformed_dataset)
+        np.testing.assert_allclose(transformed_df[output_cols].to_numpy(), sklearn_transformed_dataset)
 
     def test_transform_sklearn_constant_string(self) -> None:
         """
@@ -455,8 +445,7 @@ class SimpleImputerTest(TestCase):
         """
         input_cols = CATEGORICAL_COLS
         output_cols = OUTPUT_COLS
-        df_pandas, df = framework_utils.get_df(self._session, DATA, SCHEMA)  # type: ignore
-        df = df.to_df(SCHEMA)
+        df_pandas, df = framework_utils.get_df(self._session, DATA, SCHEMA)
 
         fill_value = "foo"
         simple_imputer = SimpleImputer(
@@ -468,7 +457,7 @@ class SimpleImputerTest(TestCase):
         )
         simple_imputer.fit(df)
 
-        df_none_nan_pandas, df_none_nan = framework_utils.get_df(self._session, DATA_NONE_NAN, SCHEMA)  # type: ignore
+        df_none_nan_pandas, df_none_nan = framework_utils.get_df(self._session, DATA_NONE_NAN, SCHEMA)
         transformed_df_sklearn = simple_imputer.transform(df_none_nan_pandas)
 
         sklearn_simple_imputer = SklearnSimpleImputer(
@@ -479,7 +468,7 @@ class SimpleImputerTest(TestCase):
         sklearn_simple_imputer.fit(df_pandas[input_cols])
         sklearn_transformed_dataset = sklearn_simple_imputer.transform(df_none_nan_pandas[input_cols])
 
-        assert np.array_equal(transformed_df_sklearn[output_cols].to_numpy(), sklearn_transformed_dataset)
+        np.testing.assert_equal(transformed_df_sklearn[output_cols].to_numpy(), sklearn_transformed_dataset)
 
     def test_serde(self) -> None:
         """
@@ -494,7 +483,7 @@ class SimpleImputerTest(TestCase):
         input_cols, output_cols, id_col = NUMERIC_COLS, OUTPUT_COLS, ID_COL
 
         # fit in session 1
-        df_pandas, df1 = framework_utils.get_df(self._session, data, schema, np.nan)  # type: ignore
+        df_pandas, df1 = framework_utils.get_df(self._session, data, schema, np.nan)
 
         simple_imputer = SimpleImputer().set_input_cols(input_cols).set_output_cols(output_cols)
         simple_imputer.fit(df1)
@@ -508,7 +497,7 @@ class SimpleImputerTest(TestCase):
 
         # transform in session 2
         self._session = Session.builder.configs(SnowflakeLoginOptions()).create()
-        _, df2 = framework_utils.get_df(self._session, data, schema, np.nan)  # type: ignore
+        _, df2 = framework_utils.get_df(self._session, data, schema, np.nan)
         input_cols_extended = input_cols.copy()
         input_cols_extended.append(id_col)
 
@@ -534,9 +523,9 @@ class SimpleImputerTest(TestCase):
         simple_imputer_sklearn.fit(df_pandas[input_cols])
         sklearn_arr = simple_imputer_sklearn.transform(df_pandas[input_cols])
 
-        assert np.allclose(actual_arr_cloudpickle, sklearn_arr)
-        assert np.allclose(actual_arr_pickle, sklearn_arr)
-        assert np.allclose(actual_arr_joblib, sklearn_arr)
+        np.testing.assert_allclose(actual_arr_cloudpickle, sklearn_arr)
+        np.testing.assert_allclose(actual_arr_pickle, sklearn_arr)
+        np.testing.assert_allclose(actual_arr_joblib, sklearn_arr)
 
 
 if __name__ == "__main__":

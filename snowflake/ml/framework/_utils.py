@@ -12,38 +12,27 @@ import numpy as np
 import sklearn
 from packaging import version
 
-from snowflake.snowpark._internal.utils import generate_random_alphanumeric
-from snowflake.snowpark.functions import (
-    avg,
-    count,
-    max,
-    median,
-    min,
-    mode,
-    stddev,
-    stddev_pop,
-    var_pop,
-    variance,
-)
+from snowflake.snowpark import functions as F
+from snowflake.snowpark._internal import utils
 
 DATETIME_FORMAT = "%Y-%m-%d %H:%M:%S.%f"
 
 # numeric states to the corresponding Snowpark functions
 NUMERIC_STATE_TO_FUNC_DICT = {
-    "count": count,
-    "max": max,
-    "mean": avg,
-    "median": median,
-    "min": min,
-    "stddev": stddev,
-    "stddev_pop": stddev_pop,
-    "variance": variance,
-    "var_pop": var_pop,
+    "count": F.count,
+    "max": F.max,
+    "mean": F.avg,
+    "median": F.median,
+    "min": F.min,
+    "stddev": F.stddev,
+    "stddev_pop": F.stddev_pop,
+    "variance": F.variance,
+    "var_pop": F.var_pop,
 }
 
 # basic states to the corresponding Snowpark functions
 BASIC_STATE_TO_FUNC_DICT = {
-    "mode": mode,
+    "mode": F.mode,
 }
 
 # states, as the combination of numeric and basic states,
@@ -74,7 +63,7 @@ def get_default_args(func: Callable[..., None]) -> Dict[str, Any]:
 
 
 def generate_value_with_prefix(prefix: str) -> str:
-    return f"{prefix}{generate_random_alphanumeric()}"
+    return f"{prefix}{utils.generate_random_alphanumeric()}"
 
 
 def get_filtered_valid_sklearn_args(

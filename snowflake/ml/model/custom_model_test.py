@@ -48,7 +48,9 @@ class ModelTest(absltest.TestCase):
             def bad_predict_2(input: pd.DataFrame) -> pd.DataFrame:
                 return pd.DataFrame(input)
 
-            custom_model._bind(good_model, bad_predict_2, "predict")
+            bad_predict_2 = bad_predict_2.__get__(good_model, type(good_model))
+
+            good_model.predict = bad_predict_2  # type: ignore[assignment]
 
         class AnotherBadModel(custom_model.CustomModel):
             def __init__(self, context: custom_model.ModelContext) -> None:

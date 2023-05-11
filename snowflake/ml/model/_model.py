@@ -1,13 +1,13 @@
 import os
 from types import ModuleType
-from typing import Any, Dict, List, Optional, Tuple, overload
+from typing import Dict, List, Optional, Tuple, overload
 
 from snowflake.ml.model import (
+    _model_handler,
+    _model_meta,
     custom_model,
-    model_handler,
-    model_meta,
     model_signature,
-    model_types,
+    type_hints as model_types,
 )
 
 MODEL_BLOBS_DIR = "models"
@@ -18,23 +18,23 @@ def save_model(
     *,
     name: str,
     model_dir_path: str,
-    model: Any,
-    signature: model_signature.ModelSignature,
+    model: model_types.ModelType,
+    signatures: Dict[str, model_signature.ModelSignature],
     metadata: Optional[Dict[str, str]] = None,
     conda_dependencies: Optional[List[str]] = None,
     pip_requirements: Optional[List[str]] = None,
     python_version: Optional[str] = None,
     ext_modules: Optional[List[ModuleType]] = None,
     code_paths: Optional[List[str]] = None,
-    **kwargs: Any,
-) -> model_meta.ModelMetadata:
+    options: Optional[model_types.ModelSaveOption] = None,
+) -> _model_meta.ModelMetadata:
     """Save the model under `dir_path`.
 
     Args:
         name: Name of the model.
         model_dir_path: Directory to save the model.
         model: Model object.
-        signature: Model data signature for inputs and output.
+        signatures: Model data signatures for inputs and output for every target methods.
         metadata: Model metadata.
         conda_dependencies: List of Conda package specs. Use "[channel::]package [operator version]" syntax to specify
             a dependency. It is a recommended way to specify your dependencies using conda. When channel is not
@@ -46,7 +46,7 @@ def save_model(
             current version would be captured. Defaults to None.
         code_paths: Directory of code to import.
         ext_modules: External modules that user might want to get pickled with model object. Defaults to None.
-        **kwargs: Model specific kwargs.
+        options: Model specific kwargs.
     """
     ...
 
@@ -56,23 +56,23 @@ def save_model(
     *,
     name: str,
     model_dir_path: str,
-    model: Any,
-    sample_input: Any,
+    model: model_types.ModelType,
+    sample_input: model_types.SupportedDataType,
     metadata: Optional[Dict[str, str]] = None,
     conda_dependencies: Optional[List[str]] = None,
     pip_requirements: Optional[List[str]] = None,
     python_version: Optional[str] = None,
     ext_modules: Optional[List[ModuleType]] = None,
     code_paths: Optional[List[str]] = None,
-    **kwargs: Any,
-) -> model_meta.ModelMetadata:
+    options: Optional[model_types.ModelSaveOption] = None,
+) -> _model_meta.ModelMetadata:
     """Save the model under `dir_path`.
 
     Args:
         name: Name of the model.
         model_dir_path: Directory to save the model.
         model: Model object.
-        sample_input: Sample input data to infer the model signature from.
+        sample_input: Sample input data to infer the model signatures from.
         metadata: Model metadata.
         conda_dependencies: List of Conda package specs. Use "[channel::]package [operator version]" syntax to specify
             a dependency. It is a recommended way to specify your dependencies using conda. When channel is not
@@ -84,7 +84,7 @@ def save_model(
             current version would be captured. Defaults to None.
         code_paths: Directory of code to import.
         ext_modules: External modules that user might want to get pickled with model object. Defaults to None.
-        **kwargs: Model specific kwargs.
+        options: Model specific kwargs.
     """
     ...
 
@@ -93,27 +93,27 @@ def save_model(
     *,
     name: str,
     model_dir_path: str,
-    model: Any,
-    signature: Optional[model_signature.ModelSignature] = None,
-    sample_input: Optional[Any] = None,
+    model: model_types.ModelType,
+    signatures: Optional[Dict[str, model_signature.ModelSignature]] = None,
+    sample_input: Optional[model_types.SupportedDataType] = None,
     metadata: Optional[Dict[str, str]] = None,
     conda_dependencies: Optional[List[str]] = None,
     pip_requirements: Optional[List[str]] = None,
     python_version: Optional[str] = None,
     ext_modules: Optional[List[ModuleType]] = None,
     code_paths: Optional[List[str]] = None,
-    **kwargs: Any,
-) -> model_meta.ModelMetadata:
+    options: Optional[model_types.ModelSaveOption] = None,
+) -> _model_meta.ModelMetadata:
     """Save the model under `dir_path`.
 
     Args:
         name: Name of the model.
         model_dir_path: Directory to save the model.
         model: Model object.
-        signature: Model data signature for inputs and output. If it is None, sample_input would be used to infer the
-            signature. If not None, sample_input should not be specified. Defaults to None.
-        sample_input: Sample input data to infer the model signature from. If it is None, signature must be specified.
-            If not None, signature should not be specified. Defaults to None.
+        signatures: Model data signatures for inputs and output for every target methods. If it is None, sample_input
+            would be used to infer the signatures. If not None, sample_input should not be specified. Defaults to None.
+        sample_input: Sample input data to infer the model signatures from. If it is None, signatures must be specified.
+            If not None, signatures should not be specified. Defaults to None.
         metadata: Model metadata.
         conda_dependencies: List of Conda package specs. Use "[channel::]package [operator version]" syntax to specify
             a dependency. It is a recommended way to specify your dependencies using conda. When channel is not
@@ -125,34 +125,39 @@ def save_model(
             current version would be captured. Defaults to None.
         code_paths: Directory of code to import.
         ext_modules: External modules that user might want to get pickled with model object. Defaults to None.
-        **kwargs: Model specific kwargs.
+        options: Model specific kwargs.
 
     Returns:
         Model metadata.
 
     Raises:
-        ValueError: Raised when the signature and sample_input specified at the same time.
+        ValueError: Raised when the signatures and sample_input specified at the same time.
         TypeError: Raised if model type is not supported.
     """
 
-    if not ((signature is None) ^ (sample_input is None)):
+    model_dir_path = os.path.normpath(model_dir_path)
+
+    if not ((signatures is None) ^ (sample_input is None)):
         raise ValueError(
-            "Signature and sample_input both cannot be "
-            + f"{'None' if signature is None else 'specified'} at the same time."
+            "Signatures and sample_input both cannot be "
+            + f"{'None' if signatures is None else 'specified'} at the same time."
         )
 
-    handler = model_handler._find_handler(model)
+    if not options:
+        options = {}
+
+    handler = _model_handler._find_handler(model)
     if handler is None:
         raise TypeError(f"{type(model)} is not supported.")
     if not os.path.exists(model_dir_path):
         os.makedirs(model_dir_path)
-    with model_meta._create_model_metadata(
+    with _model_meta._create_model_metadata(
         model_dir_path=model_dir_path,
         name=name,
         model_type=handler.handler_type,
         metadata=metadata,
         code_paths=code_paths,
-        signature=signature,
+        signatures=signatures,
         ext_modules=ext_modules,
         conda_dependencies=conda_dependencies,
         pip_requirements=pip_requirements,
@@ -165,16 +170,14 @@ def save_model(
             model,
             meta,
             model_blobs_path,
-            sample_input=sample_input,
-            ext_modules=ext_modules,
-            code_paths=code_paths,
-            **kwargs,
+            sample_input,
+            **options,
         )
     return meta
 
 
 # TODO(SNOW-786570): Allows path to be stage path.
-def load_model(model_dir_path: str) -> Tuple[model_types.ModelType, model_meta.ModelMetadata]:
+def load_model(model_dir_path: str) -> Tuple[model_types.ModelType, _model_meta.ModelMetadata]:
     """Load the model into memory from directory.
 
     Args:
@@ -186,8 +189,10 @@ def load_model(model_dir_path: str) -> Tuple[model_types.ModelType, model_meta.M
     Returns:
         A tuple containing the model object and the model metadata.
     """
-    meta = model_meta._load_model_metadata(model_dir_path)
-    handler = model_handler._load_handler(meta.model_type)
+    model_dir_path = os.path.normpath(model_dir_path)
+
+    meta = _model_meta._load_model_metadata(model_dir_path)
+    handler = _model_handler._load_handler(meta.model_type)
     if handler is None:
         raise TypeError(f"{meta.model_type} is not supported.")
     model_blobs_path = os.path.join(model_dir_path, MODEL_BLOBS_DIR)
@@ -195,7 +200,7 @@ def load_model(model_dir_path: str) -> Tuple[model_types.ModelType, model_meta.M
     return m, meta
 
 
-def _load_model_for_deploy(model_dir_path: str) -> Tuple[custom_model.CustomModel, model_meta.ModelMetadata]:
+def _load_model_for_deploy(model_dir_path: str) -> Tuple[custom_model.CustomModel, _model_meta.ModelMetadata]:
     """Load the model into memory from directory. Internal used when deploying only.
     It will try to use _load_as_custom_model method in the handler if provided, otherwise, it will use _load_model.
 
@@ -208,8 +213,10 @@ def _load_model_for_deploy(model_dir_path: str) -> Tuple[custom_model.CustomMode
     Returns:
         A tuple containing the model object as a custom model and the model metadata.
     """
-    meta = model_meta._load_model_metadata(model_dir_path)
-    handler = model_handler._load_handler(meta.model_type)
+    model_dir_path = os.path.normpath(model_dir_path)
+
+    meta = _model_meta._load_model_metadata(model_dir_path)
+    handler = _model_handler._load_handler(meta.model_type)
     if handler is None:
         raise TypeError(f"{meta.model_type} is not supported.")
     model_blobs_path = os.path.join(model_dir_path, MODEL_BLOBS_DIR)

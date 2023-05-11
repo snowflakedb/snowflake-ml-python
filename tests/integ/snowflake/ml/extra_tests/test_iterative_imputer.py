@@ -55,7 +55,7 @@ class IterativeImputerTest(TestCase):
             reg.transform(input_df).to_pandas().sort_values(by="INDEX")[input_cols].astype("float64").to_numpy()
         )
 
-        assert not np.any(np.isnan(actual_arr))
+        self.assertFalse(np.any(np.isnan(actual_arr)))
         if not np.allclose(actual_arr, sklearn_numpy_arr, rtol=1.0e-1, atol=1.0e-2):
             has_diff = ~np.isclose(actual_arr, sklearn_numpy_arr, rtol=1.0e-1, atol=1.0e-2)
             print(f"Num differences: {has_diff.sum()}")

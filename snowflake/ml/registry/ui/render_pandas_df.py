@@ -1,7 +1,7 @@
 import functools
 import urllib
 from dataclasses import dataclass
-from typing import Callable, Dict, Optional
+from typing import Callable, Dict, Hashable, Optional, cast
 
 import pandas as pd
 
@@ -66,7 +66,7 @@ def _format_pandas_df(df: pd.DataFrame, params: Dict[str, str], transpose: bool 
     for c in _COLUMN_ORDER:
         if c in cols:
             new_order.append(c)
-    for c in df.columns:
+    for c in df.columns.to_list():
         if c not in _COLUMN_ORDER:
             new_order.append(c)
     df = df[new_order]
@@ -90,7 +90,12 @@ def _format_pandas_df(df: pd.DataFrame, params: Dict[str, str], transpose: bool 
                 df[c] = df[c].apply(f)
         df = df.transpose()
     return str(
-        df.to_html(escape=False, formatters=None if transpose else formatters, header=False if transpose else True)
+        # Cast is adding here since both Mapping and Callable type are invariant.
+        df.to_html(
+            escape=False,
+            formatters=None if transpose else cast(Dict[Hashable, Callable[[object], str]], formatters),
+            header=False if transpose else True,
+        )
     )
 
 

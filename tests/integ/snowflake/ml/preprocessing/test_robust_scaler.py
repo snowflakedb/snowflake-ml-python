@@ -17,7 +17,7 @@ from absl.testing import parameterized
 from absl.testing.absltest import main
 from sklearn.preprocessing import RobustScaler as SklearnRobustScaler
 
-from snowflake.ml.preprocessing import RobustScaler
+from snowflake.ml.preprocessing import RobustScaler  # type: ignore[attr-defined]
 from snowflake.ml.utils.connection_params import SnowflakeLoginOptions
 from snowflake.snowpark import Session
 from tests.integ.snowflake.ml.framework import utils as framework_utils
@@ -109,9 +109,6 @@ class RobustScalerTest(parameterized.TestCase):
 
         Args:
             params: Dict with a single `params` key, which maps to the desired RobustScaler constructor arguments.
-
-        Raises:
-            AssertionError: If the fitted states do not match those of the sklearn scaler.
         """
         input_cols = NUMERIC_COLS
         df_pandas, df = framework_utils.get_df(self._session, DATA, SCHEMA, np.nan)
@@ -132,8 +129,8 @@ class RobustScalerTest(parameterized.TestCase):
             scaler_sklearn = SklearnRobustScaler(**params)
             scaler_sklearn.fit(df_pandas[input_cols])
 
-            assert equality_func(actual_center, scaler_sklearn.center_)
-            assert equality_func(actual_scale, scaler_sklearn.scale_)
+            self.assertTrue(equality_func(actual_center, scaler_sklearn.center_))
+            self.assertTrue(equality_func(actual_scale, scaler_sklearn.scale_))
 
     def _run_and_compare(
         self,
@@ -192,8 +189,8 @@ class RobustScalerTest(parameterized.TestCase):
         scaler_sklearn.fit(input_df_pandas[input_cols])
         expected_arr = scaler_sklearn.transform(input_df_pandas.sort_values(by=[id_col])[input_cols])
 
-        assert np.allclose(actual_arr, expected_arr)
-        assert np.allclose(actual_arr2, expected_arr)
+        np.testing.assert_allclose(actual_arr, expected_arr)
+        np.testing.assert_allclose(actual_arr2, expected_arr)
 
     def test_transform_default(self) -> None:
         self._run_and_compare(with_scaling=True, with_centering=True, quantile_range=(25.0, 75.0), unit_variance=False)
@@ -246,14 +243,11 @@ class RobustScalerTest(parameterized.TestCase):
         transformed_df_sklearn = scaler_sklearn.transform(input_df_pandas[input_cols])
         expected_arr = transformed_df_sklearn
 
-        assert np.allclose(actual_arr, expected_arr)
+        np.testing.assert_allclose(actual_arr, expected_arr)
 
     def test_serde(self) -> None:
         """
         Test serialization and deserialization via cloudpickle, pickle, and joblib.
-
-        Raises:
-            AssertionError: If the transformed output does not match that of the sklearn scaler.
         """
         data, schema = DATA, SCHEMA
         input_cols, output_cols, id_col = NUMERIC_COLS, OUTPUT_COLS, ID_COL
@@ -299,9 +293,9 @@ class RobustScalerTest(parameterized.TestCase):
         scaler_sklearn.fit(df_pandas[input_cols])
         sklearn_arr = scaler_sklearn.transform(df_pandas[input_cols])
 
-        assert np.allclose(actual_arr_cloudpickle, sklearn_arr)
-        assert np.allclose(actual_arr_pickle, sklearn_arr)
-        assert np.allclose(actual_arr_joblib, sklearn_arr)
+        np.testing.assert_allclose(actual_arr_cloudpickle, sklearn_arr)
+        np.testing.assert_allclose(actual_arr_pickle, sklearn_arr)
+        np.testing.assert_allclose(actual_arr_joblib, sklearn_arr)
 
 
 if __name__ == "__main__":

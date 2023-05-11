@@ -8,7 +8,10 @@ import pytest
 from absl.testing.absltest import TestCase, main
 
 from snowflake.ml.framework.base import BaseTransformer, _process_cols
-from snowflake.ml.preprocessing import MinMaxScaler, StandardScaler
+from snowflake.ml.preprocessing import (  # type: ignore[attr-defined]
+    MinMaxScaler,
+    StandardScaler,
+)
 from snowflake.ml.utils.connection_params import SnowflakeLoginOptions
 from snowflake.snowpark import Session
 from snowflake.snowpark.exceptions import SnowparkColumnException
@@ -25,14 +28,14 @@ from tests.integ.snowflake.ml.framework.utils import (
 class TestBaseFunctions(TestCase):
     """Test Base."""
 
-    def setUp(self):
+    def setUp(self) -> None:
         """Creates Snowpark and Snowflake environments for testing."""
         self._session = Session.builder.configs(SnowflakeLoginOptions()).create()
 
-    def tearDown(self):
+    def tearDown(self) -> None:
         self._session.close()
 
-    def test_fit_input_cols_check(self):
+    def test_fit_input_cols_check(self) -> None:
         """
         Verify the input columns check during fitting.
 
@@ -48,7 +51,7 @@ class TestBaseFunctions(TestCase):
             scaler.fit(df)
         assert "input_cols is not set." in excinfo.value.args[0]
 
-    def test_transform_input_cols_check(self):
+    def test_transform_input_cols_check(self) -> None:
         """
         Verify the input columns check during transform.
 
@@ -67,7 +70,7 @@ class TestBaseFunctions(TestCase):
             scaler.transform(df)
         assert "input_cols is not set." in excinfo.value.args[0]
 
-    def test_transform_output_cols_check(self):
+    def test_transform_output_cols_check(self) -> None:
         """
         Verify the output columns check during transform.
 
@@ -102,7 +105,7 @@ class TestBaseFunctions(TestCase):
             scaler.transform(df)
         assert "Size mismatch" in excinfo.value.args[0]
 
-    def test_get_sklearn_object(self):
+    def test_get_sklearn_object(self) -> None:
         input_cols = ["F"]
         output_cols = ["F"]
         pandas_df_1 = pd.DataFrame(data={"F": [1, 2, 3]})
@@ -119,7 +122,7 @@ class TestBaseFunctions(TestCase):
         sk_object_2 = scaler.get_sklearn_object()
         assert np.allclose([sk_object_2.mean_], [5.0])
 
-    def test_validate_data_has_no_nulls(self):
+    def test_validate_data_has_no_nulls(self) -> None:
         input_cols = NUMERIC_COLS
         _, df = framework_utils.get_df(self._session, DATA, SCHEMA, np.nan)
         _, df_with_nulls = framework_utils.get_df(self._session, DATA_NONE_NAN, SCHEMA, np.nan)
@@ -128,19 +131,19 @@ class TestBaseFunctions(TestCase):
             pass
 
         # Assert that numeric data with no null data passes
-        transformer = TestTransformer().set_input_cols(input_cols)
-        transformer._validate_data_has_no_nulls(df)
+        transformer = TestTransformer().set_input_cols(input_cols)  # type: ignore[abstract]
+        transformer._validate_data_has_no_nulls(df)  # type: ignore[attr-defined]
 
         # Assert that numeric data with null data raises
-        transformer = TestTransformer().set_input_cols(input_cols)
+        transformer = TestTransformer().set_input_cols(input_cols)  # type: ignore[abstract]
         with pytest.raises(ValueError) as excinfo:
-            transformer._validate_data_has_no_nulls(df_with_nulls)
+            transformer._validate_data_has_no_nulls(df_with_nulls)  # type: ignore[attr-defined]
         assert "Dataset may not contain nulls" in excinfo.value.args[0]
 
         # Assert that extra input columns raises
-        transformer = TestTransformer().set_input_cols(input_cols + ["nonexistent_column"])
-        with pytest.raises(SnowparkColumnException) as excinfo:
-            transformer._validate_data_has_no_nulls(df)
+        transformer = TestTransformer().set_input_cols(input_cols + ["nonexistent_column"])  # type: ignore[abstract]
+        with pytest.raises(SnowparkColumnException) as excinfo:  # type: ignore[assignment]
+            transformer._validate_data_has_no_nulls(df)  # type: ignore[attr-defined]
         assert "The DataFrame does not contain the column" in excinfo.value.args[0]
 
     def test_base_double_quoted_identifiers(self) -> None:

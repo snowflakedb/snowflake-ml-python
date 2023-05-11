@@ -84,7 +84,7 @@ class Pipeline(base.BaseEstimator, base.BaseTransformer):
     def _validate_steps(self) -> None:
         transforms = self._get_transforms()
 
-        for (_, t) in transforms:
+        for _, t in transforms:
             if not Pipeline._is_transformer(t):
                 raise TypeError(
                     "All intermediate steps should be "
@@ -101,7 +101,9 @@ class Pipeline(base.BaseEstimator, base.BaseTransformer):
             transformed_dataset = trans.transform(transformed_dataset)
         return transformed_dataset
 
-    def _fit_transform_dataset(self, dataset: snowpark.DataFrame) -> snowpark.DataFrame:
+    def _fit_transform_dataset(
+        self, dataset: Union[snowpark.DataFrame, pd.DataFrame]
+    ) -> Union[snowpark.DataFrame, pd.DataFrame]:
         transformed_dataset = dataset
         transforms = self._get_transforms()
         for _, (_, trans) in enumerate(transforms):
@@ -117,7 +119,7 @@ class Pipeline(base.BaseEstimator, base.BaseTransformer):
         project=_PROJECT,
         subproject=_SUBPROJECT,
     )
-    def fit(self, dataset: snowpark.DataFrame) -> "Pipeline":
+    def fit(self, dataset: Union[snowpark.DataFrame, pd.DataFrame]) -> "Pipeline":
         """
         Fit the entire pipeline using the dataset.
 
@@ -177,7 +179,9 @@ class Pipeline(base.BaseEstimator, base.BaseTransformer):
         project=_PROJECT,
         subproject=_SUBPROJECT,
     )
-    def fit_transform(self, dataset: snowpark.DataFrame) -> snowpark.DataFrame:
+    def fit_transform(
+        self, dataset: Union[snowpark.DataFrame, pd.DataFrame]
+    ) -> Union[snowpark.DataFrame, pd.DataFrame]:
         """
         Fits all the transformer objs one after another and transforms the data. Then fits and transforms data using the
         estimator. This will only be available if the estimator (or final step) has fit_transform or transform
@@ -216,7 +220,7 @@ class Pipeline(base.BaseEstimator, base.BaseTransformer):
         project=_PROJECT,
         subproject=_SUBPROJECT,
     )
-    def fit_predict(self, dataset: snowpark.DataFrame) -> snowpark.DataFrame:
+    def fit_predict(self, dataset: Union[snowpark.DataFrame, pd.DataFrame]) -> Union[snowpark.DataFrame, pd.DataFrame]:
         """
         Fits all the transformer objs one after another and transforms the data. Then fits and predicts using the
         estimator. This will only be available if the estimator (or final step) has fit_predict or predict
@@ -244,14 +248,12 @@ class Pipeline(base.BaseEstimator, base.BaseTransformer):
         self._is_fitted = True
         return transformed_dataset
 
-    # TODO(snandamuri): Support pandas dataframe in predict method in estimators. Then change Pipeline.predict()
-    #  method to support pandas dataframe.
     @metaestimators.available_if(_final_step_has("predict"))  # type: ignore[misc]
     @telemetry.send_api_usage_telemetry(
         project=_PROJECT,
         subproject=_SUBPROJECT,
     )
-    def predict(self, dataset: snowpark.DataFrame) -> snowpark.DataFrame:
+    def predict(self, dataset: Union[snowpark.DataFrame, pd.DataFrame]) -> Union[snowpark.DataFrame, pd.DataFrame]:
         """
         Transform the dataset by applying all the transformers in order and predict using the estimator.
 
@@ -272,7 +274,7 @@ class Pipeline(base.BaseEstimator, base.BaseTransformer):
         estimator = self._get_estimator()
         # Estimator is guaranteed to be not None because of _final_step_has("predict") check.
         assert estimator is not None, "estimator cannot be None"
-        res: snowpark.DataFrame = estimator[1].predict(transformed_dataset)
+        res: Union[snowpark.DataFrame, pd.DataFrame] = estimator[1].predict(transformed_dataset)
         return res
 
     @metaestimators.available_if(_final_step_has("predict_proba"))  # type: ignore[misc]
@@ -280,7 +282,9 @@ class Pipeline(base.BaseEstimator, base.BaseTransformer):
         project=_PROJECT,
         subproject=_SUBPROJECT,
     )
-    def predict_proba(self, dataset: snowpark.DataFrame) -> snowpark.DataFrame:
+    def predict_proba(
+        self, dataset: Union[snowpark.DataFrame, pd.DataFrame]
+    ) -> Union[snowpark.DataFrame, pd.DataFrame]:
         """
         Transform the dataset by applying all the transformers in order and apply `predict_proba` using the estimator.
 
@@ -301,7 +305,7 @@ class Pipeline(base.BaseEstimator, base.BaseTransformer):
         estimator = self._get_estimator()
         # Estimator is guaranteed to be not None because of _final_step_has("predict_proba") check.
         assert estimator is not None, "estimator cannot be None"
-        res: snowpark.DataFrame = estimator[1].predict_proba(transformed_dataset)
+        res: Union[snowpark.DataFrame, pd.DataFrame] = estimator[1].predict_proba(transformed_dataset)
         return res
 
     @metaestimators.available_if(_final_step_has("predict_log_proba"))  # type: ignore[misc]
@@ -309,7 +313,9 @@ class Pipeline(base.BaseEstimator, base.BaseTransformer):
         project=_PROJECT,
         subproject=_SUBPROJECT,
     )
-    def predict_log_proba(self, dataset: snowpark.DataFrame) -> snowpark.DataFrame:
+    def predict_log_proba(
+        self, dataset: Union[snowpark.DataFrame, pd.DataFrame]
+    ) -> Union[snowpark.DataFrame, pd.DataFrame]:
         """
         Transform the dataset by applying all the transformers in order and apply `predict_log_proba` using the
         estimator.
@@ -339,18 +345,18 @@ class Pipeline(base.BaseEstimator, base.BaseTransformer):
         project=_PROJECT,
         subproject=_SUBPROJECT,
     )
-    def score(self, dataset: snowpark.DataFrame) -> snowpark.DataFrame:
+    def score(self, dataset: Union[snowpark.DataFrame, pd.DataFrame]) -> Union[snowpark.DataFrame, pd.DataFrame]:
         """
         Transform the dataset by applying all the transformers in order and apply `score` using the estimator.
 
         Args:
             dataset: Input dataset.
 
-        Returns:
-            Output dataset.
-
         Raises:
             RuntimeError: If the pipeline is not fitted first.
+
+        Returns:
+            Output dataset.
         """
 
         if not self._is_fitted:
@@ -363,7 +369,7 @@ class Pipeline(base.BaseEstimator, base.BaseTransformer):
         res: snowpark.DataFrame = estimator[1].score(transformed_dataset)
         return res
 
-    def _create_sklearn_object(self) -> Any:
+    def _create_unfitted_sklearn_object(self) -> pipeline.Pipeline:
         sksteps = []
         for step in self.steps:
             if isinstance(step[1], base.BaseTransformer):
@@ -371,3 +377,6 @@ class Pipeline(base.BaseEstimator, base.BaseTransformer):
             else:
                 sksteps.append(tuple([step[0], step[1]]))
         return pipeline.Pipeline(steps=sksteps)
+
+    def _create_sklearn_object(self) -> pipeline.Pipeline:
+        return self._create_unfitted_sklearn_object()

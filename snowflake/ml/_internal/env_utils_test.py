@@ -31,6 +31,8 @@ class EnvUtilsTest(absltest.TestCase):
         )
         self.assertEqual(r.name, "pip")
         with self.assertRaises(ValueError):
+            env_utils._validate_pip_requirement_string("python==3.8.13")
+        with self.assertRaises(ValueError):
             env_utils._validate_pip_requirement_string("python-package=1.0.1")
         with self.assertRaises(ValueError):
             env_utils._validate_pip_requirement_string("_python-package==1.0.1")
@@ -39,10 +41,10 @@ class EnvUtilsTest(absltest.TestCase):
 
     def test_validate_conda_dependency_string(self) -> None:
         c, r = env_utils._validate_conda_dependency_string("python-package==1.0.1")
-        self.assertEqual(c, "defaults")
-        c, r = env_utils._validate_conda_dependency_string("conda-forge::python-package>=1.0.1,<2,~=1.1,!=1.0.3")
+        self.assertEqual(c, "")
+        c, r = env_utils._validate_conda_dependency_string("conda-forge::python-package>=1.0.1,<2,!=1.0.3")
         self.assertEqual(c, "conda-forge")
-        self.assertEqual(r.specifier, specifiers.SpecifierSet(">=1.0.1, <2, ~=1.1, !=1.0.3"))
+        self.assertEqual(r.specifier, specifiers.SpecifierSet(">=1.0.1, <2, !=1.0.3"))
         c, r = env_utils._validate_conda_dependency_string("https://repo.anaconda.com/pkgs/snowflake::python-package")
         self.assertEqual(c, "https://repo.anaconda.com/pkgs/snowflake")
         self.assertEqual(r.name, "python-package")
@@ -63,6 +65,8 @@ class EnvUtilsTest(absltest.TestCase):
 
         with self.assertRaises(ValueError):
             env_utils._validate_conda_dependency_string("python-package=1.0.1")
+        with self.assertRaises(ValueError):
+            env_utils._validate_conda_dependency_string("python-package~=1.0.1")
         with self.assertRaises(ValueError):
             env_utils._validate_conda_dependency_string("_python-package==1.0.1")
         with self.assertRaises(ValueError):
@@ -192,7 +196,7 @@ class EnvUtilsTest(absltest.TestCase):
         rl = ["python-package==1.0.1", "a::another-python-package!=1.0.2"]
         trd = {
             "a": [requirements.Requirement("another-python-package!=1.0.2")],
-            "defaults": [requirements.Requirement("python-package==1.0.1")],
+            "": [requirements.Requirement("python-package==1.0.1")],
         }
         self.assertDictEqual(env_utils.validate_conda_dependency_string_list(rl), trd)
 

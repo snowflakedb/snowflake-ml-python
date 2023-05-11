@@ -53,6 +53,24 @@ class FeatureGroupSpecTest(absltest.TestCase):
         ft2 = model_signature.FeatureSpec(name="feature2", dtype=model_signature.DataType.INT64)
         fts = model_signature.FeatureGroupSpec(name="features", specs=[ft1, ft2])
         self.assertEqual(fts, eval(repr(fts), model_signature.__dict__))
+        self.assertDictEqual(
+            {
+                "feature_group": {
+                    "name": "features",
+                    "specs": [
+                        {
+                            "type": "INTEGER",
+                            "name": "feature1",
+                        },
+                        {
+                            "type": "INTEGER",
+                            "name": "feature2",
+                        },
+                    ],
+                }
+            },
+            fts.to_dict(as_sql_type=True),
+        )
         self.assertEqual(fts, model_signature.FeatureGroupSpec.from_dict(fts.to_dict()))
         self.assertEqual(fts.as_snowpark_type(), spt.MapType(spt.StringType(), spt.IntegerType()))
 
@@ -219,8 +237,8 @@ class ModelSignatureTest(absltest.TestCase):
             ],
         )
 
-        a = pd.DataFrame([2.5, 6.8])
-        df = pd.DataFrame([[1, a], [2, a]], columns=["a", "b"])
+        sub_df = pd.DataFrame([2.5, 6.8])
+        df = pd.DataFrame([[1, sub_df], [2, sub_df]], columns=["a", "b"])
         with self.assertRaises(NotImplementedError):
             model_signature._infer_signature_pd_DataFrame(df)
 
@@ -271,7 +289,6 @@ class ModelSignatureTest(absltest.TestCase):
 
         arrays = [[1, 2], ["red", "blue"]]
         df = pd.DataFrame([[1, 2.0], [2, 4.0]], columns=pd.MultiIndex.from_arrays(arrays, names=("number", "color")))
-        print(model_signature._infer_signature_pd_DataFrame(df))
         self.assertListEqual(
             model_signature._infer_signature_pd_DataFrame(df),
             [
@@ -360,9 +377,9 @@ class ModelSignatureTest(absltest.TestCase):
             ],
         )
 
-        lt5 = [[1, 2.0], [3, 4]]
+        lt5 = [[1, 2.0], [3, 4]]  # This is not encouraged and will have type error, but we support it.
         self.assertListEqual(
-            model_signature._infer_signature_list_builtins(lt5),
+            model_signature._infer_signature_list_builtins(lt5),  # type:ignore[arg-type]
             [
                 model_signature.FeatureSpec("feature_0", model_signature.DataType.INT64),
                 model_signature.FeatureSpec("feature_1", model_signature.DataType.DOUBLE),

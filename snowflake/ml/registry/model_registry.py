@@ -13,7 +13,12 @@ from absl import logging
 
 from snowflake import connector, snowpark
 from snowflake.ml._internal.utils import formatting, query_result_checker, uri
-from snowflake.ml.model import deployer, model as model_api, model_signature
+from snowflake.ml.model import (
+    _deployer,
+    _model as model_api,
+    model_signature,
+    type_hints as model_types,
+)
 from snowflake.ml.registry import _schema
 from snowflake.ml.utils import telemetry
 from snowflake.snowpark._internal import utils
@@ -235,7 +240,7 @@ class ModelRegistry:
         self._metadata_table = _DEFAULT_METADATA_NAME
 
         self._session = session
-        self._deploy_api = deployer.Deployer(session=self._session, manager=deployer.LocalDeploymentManager())
+        self._deploy_api = _deployer.Deployer(session=self._session, manager=_deployer.LocalDeploymentManager())
 
         self.open(name=name)
 
@@ -394,37 +399,88 @@ class ModelRegistry:
 
         return fully_qualified_model_stage_name
 
-    def _get_metadata_attribute(self, id: str, attribute: str) -> Any:
-        """Get the value of the given metadata attribute for model id.
+    def _list_selected_models(
+        self, *, id: Optional[str] = None, model_name: Optional[str] = None, model_version: Optional[str] = None
+    ) -> Any:
+        """Retrieve the Snowpark dataframe of models matching the specified ID or (name and version).
 
         Args:
-            id: Model ID string.
+            id: Model ID string. Required if either name or version is None.
+            model_name: Model Name string. Required if id is None.
+            model_version: Model Version string. Required if id is None.
+
+        Returns:
+            A Snowpark dataframe representing the models that match the given constraints.
+
+        Raises:
+            DataError: Model ID or (Model Name + Model Version) is not given.
+        """
+        if not (id or (model_name and model_version)):
+            raise connector.DataError("Either (Model Name + Model Version) or Model ID is required, but none is given.")
+
+        models = self.list_models()
+
+        if id:
+            filtered_models = models.filter(snowpark.Column("ID") == id)
+        else:
+            assert model_name
+            assert model_version
+            filtered_models = models.filter(snowpark.Column("NAME") == model_name).filter(
+                snowpark.Column("VERSION") == model_version
+            )
+
+        return filtered_models
+
+    def _get_metadata_attribute(
+        self,
+        attribute: str,
+        id: Optional[str] = None,
+        model_name: Optional[str] = None,
+        model_version: Optional[str] = None,
+    ) -> Any:
+        """Get the value of the given metadata attribute for target model with (model name + model version) or id.
+
+        Args:
             attribute: Name of the attribute to get.
+            id: Model ID string. Required if either name or version is None.
+            model_name: Model Name string. Required if id is None.
+            model_version: Model Version string. Required if version is None.
 
         Returns:
             The value of the attribute that was requested. Can be None if the attribute is not set.
+
+        Raises:
+            DataError: The given model identifier points to more than one models.
         """
         statement_params = self._get_statement_params(inspect.currentframe())
-        result = (
-            self.list_models()
-            .filter(snowpark.Column("ID") == id)
-            .select(attribute)
-            .collect(statement_params=statement_params)
-        )
-        if result and len(result) == 1 and attribute in result[0]:
+        selected_models = self._list_selected_models(id=id, model_name=model_name, model_version=model_version)
+        result = selected_models.select(attribute).collect(statement_params=statement_params)
+
+        if len(result) > 1:
+            identifier = f"id {id}" if id else f"{model_name}/{model_version}"
+            raise connector.DataError(f"Model {identifier} existed {len(result)} times. It should only exist once.")
+        elif len(result) == 1 and attribute in result[0]:
             return result[0][attribute]
         else:
             return None
 
     def _set_metadata_attribute(
-        self, id: str, attribute: str, value: Any, enable_model_presence_check: bool = True
+        self,
+        attribute: str,
+        value: Any,
+        id: Optional[str] = None,
+        model_name: Optional[str] = None,
+        model_version: Optional[str] = None,
+        enable_model_presence_check: bool = True,
     ) -> None:
         """Set the value of the given metadata attribute for model id.
 
         Args:
-            id: Model ID string.
             attribute: Name of the attribute to set.
             value: Value to set.
+            id: Model ID string. Required if either name or version is None.
+            model_name: Model Name string. Required if id is None.
+            model_version: Model Version string. Required if version is None.
             enable_model_presence_check: If True, we will check if the model with the given ID is currently registered
                 before setting the metadata attribute. False by default meaning that by default we will check.
 
@@ -432,16 +488,21 @@ class ModelRegistry:
             DataError: The requested model id could not be found or is ambiguous.
         """
         statement_params = self._get_statement_params(inspect.currentframe())
-        number_of_entries_with_id = (
-            self.list_models().filter(snowpark.Column("id") == id).count(statement_params=statement_params)
-        )
+        selected_models = self._list_selected_models(id=id, model_name=model_name, model_version=model_version)
+        number_of_entries_filtered = selected_models.count(statement_params=statement_params)
 
-        if enable_model_presence_check and number_of_entries_with_id == 0:
-            raise connector.DataError(f"Model id {id} was not found in the registry.")
-        elif number_of_entries_with_id > 1:
+        identifier = f"id {id}" if id else f"{model_name}/{model_version}"
+        if enable_model_presence_check and number_of_entries_filtered == 0:
+            raise connector.DataError(f"Model {identifier} was not found in the registry.")
+        elif number_of_entries_filtered > 1:
             raise connector.DataError(
-                f"Model id {id} existed {number_of_entries_with_id} times. It should only exist once."
+                f"Model {identifier} existed {number_of_entries_filtered} times. It should only exist once."
             )
+
+        if not id:
+            res = selected_models.select("ID").collect(statement_params=statement_params)
+            id = res[0]["ID"]
+        assert id is not None
 
         try:
             self._insert_metadata_entry(id=id, attribute=attribute, value={attribute: value})
@@ -504,6 +565,30 @@ class ModelRegistry:
         project=_TELEMETRY_PROJECT,
         subproject=_TELEMETRY_SUBPROJECT,
     )
+    def _get_model_id(self, *, model_name: Optional[str], model_version: Optional[str]) -> str:
+        """Get ID of the model with the given (model name + model version).
+
+        Args:
+            model_name: Model Name string.
+            model_version: Model Version string.
+
+        Returns:
+            Id of the model.
+
+        Raises:
+            DataError: The requested model could not be found.
+        """
+        result = self._get_metadata_attribute(
+            _METADATA_ATTRIBUTE_NAME, model_name=model_name, model_version=model_version
+        )
+        if not result:
+            raise connector.DataError(f"Model {model_name}/{model_version} doesn't exist.")
+        return str(result)
+
+    @telemetry.send_api_usage_telemetry(
+        project=_TELEMETRY_PROJECT,
+        subproject=_TELEMETRY_SUBPROJECT,
+    )
     def get_model_name(self, id: str) -> Optional[str]:
         """Set name of the model with the given id to name.
 
@@ -513,123 +598,162 @@ class ModelRegistry:
         Returns:
             Name of the model or None.
         """
-        result = self._get_metadata_attribute(id, _METADATA_ATTRIBUTE_NAME)
+        result = self._get_metadata_attribute(_METADATA_ATTRIBUTE_NAME, id=id)
         return None if result is None else str(result)
 
     @telemetry.send_api_usage_telemetry(
         project=_TELEMETRY_PROJECT,
         subproject=_TELEMETRY_SUBPROJECT,
     )
-    def set_model_name(self, *, id: str, name: str) -> None:
+    def set_model_name(
+        self,
+        *,
+        id: str,
+        name: str,
+    ) -> None:
         """Set name of the model with the given id to name.
 
         Args:
-            id: Model ID string.
             name: Desired new model name.
+            id: Model ID string. Required if either old name or model version is None.
         """
-        self._set_metadata_attribute(id, _METADATA_ATTRIBUTE_NAME, name)
+        self._set_metadata_attribute(_METADATA_ATTRIBUTE_NAME, name, id=id)
 
     @telemetry.send_api_usage_telemetry(
         project=_TELEMETRY_PROJECT,
         subproject=_TELEMETRY_SUBPROJECT,
     )
-    def set_tag(self, id: str, name: str, value: str) -> None:
+    def set_tag(
+        self,
+        name: str,
+        value: str,
+        id: Optional[str] = None,
+        model_name: Optional[str] = None,
+        model_version: Optional[str] = None,
+    ) -> None:
         """Set model tag to with value.
 
         If the model tag already exists, the tag value will be overwritten.
 
         Args:
-            id: Model ID string.
             name: Desired tag name.
             value: (optional) New tag value. If no value is given the value of the tag will be set to None.
+            id: Model ID string. Required if either model name or model version is None.
+            model_name: Model Name string. Required if id is None.
+            model_version: Model Version string. Required if version is None.
         """
         # This method uses a read-modify-write pattern for setting tags.
         # TODO(amauser): Investigate the use of transactions to avoid race conditions.
-        model_tags = self.get_tags(id)
+        model_tags = self.get_tags(id=id, model_name=model_name, model_version=model_version)
         model_tags[name] = value
-        self._set_metadata_attribute(id, _METADATA_ATTRIBUTE_TAGS, model_tags)
+        self._set_metadata_attribute(
+            _METADATA_ATTRIBUTE_TAGS, model_tags, id=id, model_name=model_name, model_version=model_version
+        )
 
     @telemetry.send_api_usage_telemetry(
         project=_TELEMETRY_PROJECT,
         subproject=_TELEMETRY_SUBPROJECT,
     )
-    def remove_tag(self, id: str, name: str) -> None:
-        """Set model tag to with value.
-
-        If the model tag already exists, the tag value will be overwritten.
+    def remove_tag(
+        self, name: str, id: Optional[str] = None, model_name: Optional[str] = None, model_version: Optional[str] = None
+    ) -> None:
+        """Remove target model tag.
 
         Args:
-            id: Model ID string.
             name: Desired tag name.
+            id: Model ID string. Required if either model name or model version is None.
+            model_name: Model Name string. Required if id is None.
+            model_version: Model Version string. Required if version is None.
 
         Raises:
             DataError: If the model does not have the requested tag.
         """
         # This method uses a read-modify-write pattern for updating tags.
 
-        model_tags = self.get_tags(id)
+        model_tags = self.get_tags(id=id, model_name=model_name, model_version=model_version)
         try:
             del model_tags[name]
         except KeyError:
             raise connector.DataError(f"Model id {id} has not tag named {name}. Full list of tags: {model_tags}")
 
-        self._set_metadata_attribute(id, _METADATA_ATTRIBUTE_TAGS, model_tags)
+        self._set_metadata_attribute(
+            _METADATA_ATTRIBUTE_TAGS, model_tags, id=id, model_name=model_name, model_version=model_version
+        )
 
     @telemetry.send_api_usage_telemetry(
         project=_TELEMETRY_PROJECT,
         subproject=_TELEMETRY_SUBPROJECT,
     )
-    def has_tag(self, id: str, name: str, value: Optional[str] = None) -> bool:
+    def has_tag(
+        self,
+        name: str,
+        value: Optional[str] = None,
+        id: Optional[str] = None,
+        model_name: Optional[str] = None,
+        model_version: Optional[str] = None,
+    ) -> bool:
         """Check if a model has a tag with the given name and value.
 
         If no value is given, any value for the tag will return true.
 
         Args:
-            id: Model ID string.
             name: Desired tag name.
             value: (optional) Tag value to check. If not value is given, only the presence of the tag will be
                 checked.
+            id: Model ID string. Required if either model name or model version is None.
+            model_name: Model Name string. Required if id is None.
+            model_version: Model Version string. Required if version is None.
 
         Returns:
             True if the tag or tag and value combination is present for the model with the given id, False otherwise.
         """
-        tags = self.get_tags(id)
+        tags = self.get_tags(id=id, model_name=model_name, model_version=model_version)
         return name in tags and tags[name] == str(value)
 
     @telemetry.send_api_usage_telemetry(
         project=_TELEMETRY_PROJECT,
         subproject=_TELEMETRY_SUBPROJECT,
     )
-    def get_tag_value(self, id: str, name: str) -> Optional[str]:
+    def get_tag_value(
+        self, name: str, id: Optional[str] = None, model_name: Optional[str] = None, model_version: Optional[str] = None
+    ) -> Optional[str]:
         """Return the value of the tag for the model.
 
         The returned value can be None. If the tag does not exist, KeyError will be raised.
 
         Args:
-            id: Model ID string.
             name: Desired tag name.
+            id: Model ID string. Required if either model name or model version is None.
+            model_name: Model Name string. Required if id is None.
+            model_version: Model Version string. Required if version is None.
 
         Returns:
             Value string of the tag or None, if no value is set for the tag.
         """
-        return self.get_tags(id)[name]
+        return self.get_tags(id=id, model_name=model_name, model_version=model_version)[name]
 
     @telemetry.send_api_usage_telemetry(
         project=_TELEMETRY_PROJECT,
         subproject=_TELEMETRY_SUBPROJECT,
     )
-    def get_tags(self, id: str) -> Dict[str, str]:
-        """Get all tags and values stored for the given model id.
+    def get_tags(
+        self, id: Optional[str] = None, model_name: Optional[str] = None, model_version: Optional[str] = None
+    ) -> Dict[str, str]:
+        """Get all tags and values stored for the given (model name + model version) or model id.
 
         Args:
-            id: Model ID string.
+            id: Model ID string. Required if either model name or model version is None.
+            model_name: Model Name string. Required if id is None.
+            model_version: Model Version string. Required if version is None.
 
         Returns:
             String-to-string dictionary containing all tags and values. The resulting dictionary can be empty.
         """
         # Snowpark snowpark.dataframes returns dictionary objects as strings. We need to convert it back to a dictionary
         # here.
-        result = self._get_metadata_attribute(id, _METADATA_ATTRIBUTE_TAGS)
+        result = self._get_metadata_attribute(
+            _METADATA_ATTRIBUTE_TAGS, id=id, model_name=model_name, model_version=model_version
+        )
 
         if result:
             ret: Dict[str, str] = json.loads(result)
@@ -641,30 +765,47 @@ class ModelRegistry:
         project=_TELEMETRY_PROJECT,
         subproject=_TELEMETRY_SUBPROJECT,
     )
-    def get_model_description(self, id: str) -> Optional[str]:
-        """Get the description of the model with the given id.
+    def get_model_description(
+        self, id: Optional[str] = None, model_name: Optional[str] = None, model_version: Optional[str] = None
+    ) -> Optional[str]:
+        """Get the description of the model with the given (model name + model version) or id.
 
         Args:
-            id: Model ID string.
+            id: Model ID string. Required if either model name or model version is None.
+            model_name: Model Name string. Required if id is None.
+            model_version: Model Version string. Required if version is None.
 
         Returns:
             Descrption of the model or None.
         """
-        result = self._get_metadata_attribute(id, _METADATA_ATTRIBUTE_DESCRIPTION)
+        result = self._get_metadata_attribute(
+            _METADATA_ATTRIBUTE_DESCRIPTION, id=id, model_name=model_name, model_version=model_version
+        )
         return None if result is None else str(result)
 
     @telemetry.send_api_usage_telemetry(
         project=_TELEMETRY_PROJECT,
         subproject=_TELEMETRY_SUBPROJECT,
     )
-    def set_model_description(self, *, id: str, description: str) -> None:
+    def set_model_description(
+        self,
+        *,
+        description: str,
+        id: Optional[str] = None,
+        model_name: Optional[str] = None,
+        model_version: Optional[str] = None,
+    ) -> None:
         """Set the description of the model with the given id.
 
         Args:
-            id: Model ID string.
             description: Desired new model description.
+            id: Model ID string. Required if either model name or model version is None.
+            model_name: Model Name string. Required if id is None.
+            model_version: Model Version string. Required if version is None.
         """
-        self._set_metadata_attribute(id, _METADATA_ATTRIBUTE_DESCRIPTION, description)
+        self._set_metadata_attribute(
+            _METADATA_ATTRIBUTE_DESCRIPTION, description, id=id, model_name=model_name, model_version=model_version
+        )
 
     @telemetry.send_api_usage_telemetry(
         project=_TELEMETRY_PROJECT,
@@ -697,56 +838,84 @@ class ModelRegistry:
         project=_TELEMETRY_PROJECT,
         subproject=_TELEMETRY_SUBPROJECT,
     )
-    def get_model_history(self, id: str) -> snowpark.DataFrame:
-        """Return a dataframe with the history of operations performed on the model with the given id.
+    def get_model_history(
+        self,
+        id: Optional[str] = None,
+        model_name: Optional[str] = None,
+        model_version: Optional[str] = None,
+    ) -> snowpark.DataFrame:
+        """Return a dataframe with the history of operations performed on the desired model.
 
         The returned dataframe is order by time and can be filtered further.
 
         Args:
-            id: Id of the model to retrieve the history for.
+            id: Id of the model to retrieve the history for. Required if either model name or model version is None.
+            model_name: Model Name string. Required if id is None.
+            model_version: Model Version string. Required if version is None.
 
         Returns:
             snowpark.DataFrame with the history of the model.
         """
+        if not id:
+            id = self._get_model_id(model_name=model_name, model_version=model_version)
         return cast(snowpark.DataFrame, self.get_history().filter(snowpark.Column("MODEL_ID") == id))
 
     @telemetry.send_api_usage_telemetry(
         project=_TELEMETRY_PROJECT,
         subproject=_TELEMETRY_SUBPROJECT,
     )
-    def set_metric(self, id: str, name: str, value: object) -> None:
+    def set_metric(
+        self,
+        name: str,
+        value: object,
+        id: Optional[str] = None,
+        model_name: Optional[str] = None,
+        model_version: Optional[str] = None,
+    ) -> None:
         """Set scalar model metric to value.
 
         If a metric with that name already exists for the model, the metric value will be overwritten.
 
         Args:
-            id: Model ID string.
             name: Desired metric name.
             value: New metric value.
+            id: Model ID string. Required if either model name or model version is None.
+            model_name: Model Name string. Required if id is None.
+            model_version: Model Version string. Required if version is None.
         """
         # This method uses a read-modify-write pattern for setting tags.
         # TODO(amauser): Investigate the use of transactions to avoid race conditions.
-        model_metrics = self.get_metrics(id)
+        model_metrics = self.get_metrics(id=id, model_name=model_name, model_version=model_version)
         model_metrics[name] = value
-        self._set_metadata_attribute(id, _METADATA_ATTRIBUTE_METRICS, model_metrics)
+        self._set_metadata_attribute(
+            _METADATA_ATTRIBUTE_METRICS, model_metrics, id=id, model_name=model_name, model_version=model_version
+        )
 
     @telemetry.send_api_usage_telemetry(
         project=_TELEMETRY_PROJECT,
         subproject=_TELEMETRY_SUBPROJECT,
     )
-    def remove_metric(self, id: str, name: str) -> None:
+    def remove_metric(
+        self,
+        name: str,
+        id: Optional[str] = None,
+        model_name: Optional[str] = None,
+        model_version: Optional[str] = None,
+    ) -> None:
         """Remove a specific metric entry from the model.
 
         Args:
-            id: Model ID string.
             name: Desired tag name.
+            id: Model ID string. Required if either model name or model version is None.
+            model_name: Model Name string. Required if id is None.
+            model_version: Model Version string. Required if version is None.
 
         Raises:
             DataError: If the model does not have the requested metric.
         """
         # This method uses a read-modify-write pattern for updating tags.
 
-        model_metrics = self.get_metrics(id)
+        model_metrics = self.get_metrics(id=id, model_name=model_name, model_version=model_version)
         try:
             del model_metrics[name]
         except KeyError:
@@ -754,59 +923,75 @@ class ModelRegistry:
                 f"Model id {id} has no metric named {name}. Full list of metrics: {model_metrics}"
             )
 
-        self._set_metadata_attribute(id, _METADATA_ATTRIBUTE_METRICS, model_metrics)
+        self._set_metadata_attribute(
+            _METADATA_ATTRIBUTE_METRICS, model_metrics, id=id, model_name=model_name, model_version=model_version
+        )
 
     @telemetry.send_api_usage_telemetry(
         project=_TELEMETRY_PROJECT,
         subproject=_TELEMETRY_SUBPROJECT,
     )
-    def has_metric(self, id: str, name: str) -> bool:
+    def has_metric(
+        self, name: str, id: Optional[str] = None, model_name: Optional[str] = None, model_version: Optional[str] = None
+    ) -> bool:
         """Check if a model has a metric with the given name.
 
         Args:
-            id: Model ID string.
             name: Desired metric name.
+            id: Model ID string. Required if either model name or model version is None.
+            model_name: Model Name string. Required if id is None.
+            model_version: Model Version string. Required if version is None.
 
         Returns:
             True if the metric is present for the model with the given id, False otherwise.
         """
-        metrics = self.get_metrics(id)
+        metrics = self.get_metrics(id=id, model_name=model_name, model_version=model_version)
         return name in metrics
 
     @telemetry.send_api_usage_telemetry(
         project=_TELEMETRY_PROJECT,
         subproject=_TELEMETRY_SUBPROJECT,
     )
-    def get_metric_value(self, id: str, name: str) -> Optional[object]:
+    def get_metric_value(
+        self, name: str, id: Optional[str] = None, model_name: Optional[str] = None, model_version: Optional[str] = None
+    ) -> Optional[object]:
         """Return the value of the given metric for the model.
 
         The returned value can be None. If the metric does not exist, KeyError will be raised.
 
         Args:
-            id: Model ID string.
             name: Desired tag name.
+            id: Model ID string. Required if either model name or model version is None.
+            model_name: Model Name string. Required if id is None.
+            model_version: Model Version string. Required if version is None.
 
         Returns:
             Value of the metric. Can be None if the metric was set to None.
         """
-        return self.get_metrics(id)[name]
+        return self.get_metrics(id=id, model_name=model_name, model_version=model_version)[name]
 
     @telemetry.send_api_usage_telemetry(
         project=_TELEMETRY_PROJECT,
         subproject=_TELEMETRY_SUBPROJECT,
     )
-    def get_metrics(self, id: str) -> Dict[str, object]:
-        """Get all metrics and values stored for the given model id.
+    def get_metrics(
+        self, id: Optional[str] = None, model_name: Optional[str] = None, model_version: Optional[str] = None
+    ) -> Dict[str, object]:
+        """Get all metrics and values stored for the given (model name + model version) or model id.
 
         Args:
-            id: Model ID string.
+            id: Model ID string. Required if either model name or model version is None.
+            model_name: Model Name string. Required if id is None.
+            model_version: Model Version string. Required if version is None.
 
         Returns:
             String-to-float dictionary containing all metrics and values. The resulting dictionary can be empty.
         """
         # Snowpark snowpark.dataframes returns dictionary objects as strings. We need to convert it back to a dictionary
         # here.
-        result = self._get_metadata_attribute(id, _METADATA_ATTRIBUTE_METRICS)
+        result = self._get_metadata_attribute(
+            _METADATA_ATTRIBUTE_METRICS, id=id, model_name=model_name, model_version=model_version
+        )
 
         if result:
             ret: Dict[str, object] = json.loads(result)
@@ -823,21 +1008,22 @@ class ModelRegistry:
         self,
         *,
         model: Any,
-        name: Optional[str] = None,
-        version: Optional[str] = None,
+        name: str,
+        version: str,
         description: Optional[str] = None,
         tags: Optional[Dict[str, str]] = None,
         conda_dependencies: Optional[List[str]] = None,
         pip_requirements: Optional[List[str]] = None,
-        signature: Optional[model_signature.ModelSignature] = None,
+        signatures: Optional[Dict[str, model_signature.ModelSignature]] = None,
         sample_input_data: Optional[Any] = None,
     ) -> Optional[str]:
         """Uploads and register a model to the Model Registry.
 
         Args:
             model: Local model object in a supported format.
-            name: The given name for the model.
-            version: Version string to be set for the model.
+            name: The given name for the model. The combination (name + version) must be unique for each model.
+            version: Version string to be set for the model. The combination (name + version) must be unique for each
+                model.
             description: A desription for the model. The description can be changed later.
             tags: string-to-string dictonary of tag names and values to be set for the model.
             conda_dependencies: List of Conda package specs. Use "[channel::]package [operator version]" syntax to
@@ -846,8 +1032,8 @@ class ModelRegistry:
                 would be replaced with the Snowflake Anaconda channel.
             pip_requirements: List of PIP package specs. Model will not be able to deploy to the warehouse if there is
                 pip requirements.
-            signature: Signature of the model, could be inferred by calling `infer_signature` method with sample
-                input data.
+            signatures: Signatures of the model, which is a mapping from target method name to signatures of input and
+                output, which could be inferred by calling `infer_signature` method with sample input data.
             sample_input_data: Sample of the input data for the model.
 
         Returns:
@@ -861,17 +1047,28 @@ class ModelRegistry:
         is_native_model_format = False
 
         with tempfile.TemporaryDirectory() as tmpdir:
+            model = cast(model_types.ModelType, model)
             try:
-                model_api.save_model(
-                    name=name if name else self._get_new_unique_identifier(),
-                    model_dir_path=tmpdir,
-                    model=model,
-                    signature=signature,
-                    metadata=tags,
-                    conda_dependencies=conda_dependencies,
-                    pip_requirements=pip_requirements,
-                    sample_input=sample_input_data,
-                )
+                if signatures:
+                    model_api.save_model(
+                        name=name if name else self._get_new_unique_identifier(),
+                        model_dir_path=tmpdir,
+                        model=model,
+                        signatures=signatures,
+                        metadata=tags,
+                        conda_dependencies=conda_dependencies,
+                        pip_requirements=pip_requirements,
+                    )
+                elif sample_input_data is not None:
+                    model_api.save_model(
+                        name=name if name else self._get_new_unique_identifier(),
+                        model_dir_path=tmpdir,
+                        model=model,
+                        metadata=tags,
+                        conda_dependencies=conda_dependencies,
+                        pip_requirements=pip_requirements,
+                        sample_input=sample_input_data,
+                    )
                 id = self.log_model_path(
                     path=tmpdir,
                     type="snowflake_native",
@@ -910,10 +1107,10 @@ class ModelRegistry:
         id: str,
         type: str,
         uri: str,
+        name: str,
+        version: str,
         input_spec: Optional[Dict[str, str]] = None,
         output_spec: Optional[Dict[str, str]] = None,
-        name: Optional[str] = None,
-        version: Optional[str] = None,
         description: Optional[str] = None,
         tags: Optional[Dict[str, str]] = None,
     ) -> bool:
@@ -928,23 +1125,27 @@ class ModelRegistry:
             type: Type of the model. Only a subset of types are supported natively.
             uri: Resource identifier pointing to the model artifact. There are no restrictions on the URI format,
                 however only a limited set of URI schemes is supported natively.
+            name: Name to be set for the model. The model name can be changed after registration and is not
+                required to be unique inside the registry. The combination of name and version is expected to be unique
+                inside the registry.
+            version: Version string to be set for the model. The model version string can NOT be changed after model
+                registration and is not required to be unique inside the registry. The combination of name and version
+                is expected to be unique inside the registry.
             input_spec: The expected input schema of the model. Dictionary where the keys are
                 expected column names and the values are the value types.
             output_spec: The expected output schema of the model. Dictionary where the keys
                 are expected column names and the values are the value types.
-            name: Name to be set for the model. The model name can be changed after registration and is not
-                required to be unique inside the registry. The combination of name and version is expected to be unique
-                inside the registry.
-            version: Version string to be set for the model. The model version string can be changed after model
-                registration and is not required to be unique inside the registry. The combination of name and version
-                is expected to be unique inside the registry.
             description: A desription for the model. The description can be changed later.
             tags: Key-value pairs of tags to be set for this model. Tags can be modified
                 after model registration.
 
         Returns:
             True if the operation was successful.
+
+        Raises:
+            DataError: The given model already exists.
         """
+        # TODO(Zhe SNOW-813224): Remove input_spec and output_spec. Use signature instead.
 
         # Create registry entry.
 
@@ -958,6 +1159,10 @@ class ModelRegistry:
         new_model["CREATION_ENVIRONMENT_SPEC"] = {"python": ".".join(map(str, sys.version_info[:3]))}
         new_model["URI"] = uri
         new_model["VERSION"] = version
+
+        existing_model_nums = self._list_selected_models(id=id, model_name=name, model_version=version).count()
+        if existing_model_nums:
+            raise connector.DataError(f"Model {name}/{version} already exists. Unable to register the model.")
 
         if self._insert_registry_entry(id=id, properties=new_model):
             self._set_metadata_attribute(id=id, attribute=_METADATA_ATTRIBUTE_REGISTRATION, value=new_model)
@@ -980,8 +1185,8 @@ class ModelRegistry:
         *,
         path: str,
         type: str,
-        name: Optional[str] = None,
-        version: Optional[str] = None,
+        name: str,
+        version: str,
         description: Optional[str] = None,
         tags: Optional[Dict[Any, Any]] = None,
     ) -> str:
@@ -1036,11 +1241,15 @@ class ModelRegistry:
 
         return id
 
-    def _get_model_path(self, id: str) -> str:
-        """Get the stage path for the model with the given `id` from the registry.
+    def _get_model_path(
+        self, id: Optional[str] = None, model_name: Optional[str] = None, model_version: Optional[str] = None
+    ) -> str:
+        """Get the stage path for the model with the given (model name + model version) or `id` from the registry.
 
         Args:
-            id: Id of the model to deploy.
+            id: Id of the model to deploy. Required if either model name or model version is None.
+            model_name: Model Name string. Required if id is None.
+            model_version: Model Version string. Required if id is None.
 
         Raises:
             DataError: When the model cannot be found or not be restored.
@@ -1050,12 +1259,8 @@ class ModelRegistry:
             str: Stage path for the model.
         """
         statement_params = self._get_statement_params(inspect.currentframe())
-        model_uri_result = (
-            self.list_models()
-            .select("ID", "URI")
-            .filter(snowpark.Column("id") == id)
-            .collect(statement_params=statement_params)
-        )
+        selected_models = self._list_selected_models(id=id, model_name=model_name, model_version=model_version)
+        model_uri_result = selected_models.select("ID", "URI").collect(statement_params=statement_params)
 
         table_name = self._fully_qualified_registry_table_name()
         if len(model_uri_result) == 0:
@@ -1087,16 +1292,20 @@ class ModelRegistry:
         project=_TELEMETRY_PROJECT,
         subproject=_TELEMETRY_SUBPROJECT,
     )
-    def load_model(self, *, id: str) -> Any:
-        """Loads the model with the given `id` from the registry into memory.
+    def load_model(
+        self, *, id: Optional[str] = None, model_name: Optional[str] = None, model_version: Optional[str] = None
+    ) -> Any:
+        """Loads the model with the given (model_name + model_version) or `id` from the registry into memory.
 
         Args:
-            id: Model identifier.
+            id: Model identifier. Required if either model name or model version is None.
+            model_name: Model Name string. Required if id is None.
+            model_version: Model Version string. Required if version is None.
 
         Returns:
             Restored model object.
         """
-        remote_model_path = self._get_model_path(id)
+        remote_model_path = self._get_model_path(id=id, model_name=model_name, model_version=model_version)
         restored_model = None
         with tempfile.TemporaryDirectory() as local_model_directory:
             self._session.file.get(remote_model_path, local_model_directory)
@@ -1125,12 +1334,24 @@ class ModelRegistry:
         project=_TELEMETRY_PROJECT,
         subproject=_TELEMETRY_SUBPROJECT,
     )
-    def deploy(self, id: str, *, deployment_name: str, options: Optional[Dict[str, Any]] = None) -> None:
-        """Deploy the model with the given id with the given name.
+    def deploy(
+        self,
+        *,
+        deployment_name: str,
+        target_method: str,
+        id: Optional[str] = None,
+        model_name: Optional[str] = None,
+        model_version: Optional[str] = None,
+        options: Optional[model_types.DeployOptions] = None,
+    ) -> None:
+        """Deploy the model with the the given deployment name.
 
         Args:
-            id: Id of the model to deploy.
             deployment_name: name of the generated UDF.
+            target_method: The method name to use in deployment.
+            id: Id of the model to deploy. Required if either model name or model version is None.
+            model_name: Model Name string. Required if id is None.
+            model_version: Model Version string. Required if version is None.
             options: Optional options for model deployment. Defaults to None.
 
         Raises:
@@ -1139,7 +1360,7 @@ class ModelRegistry:
         if options is None:
             options = {}
 
-        remote_model_path = self._get_model_path(id)
+        remote_model_path = self._get_model_path(id=id, model_name=model_name, model_version=model_version)
         with tempfile.TemporaryDirectory() as local_model_directory:
             self._session.file.get(remote_model_path, local_model_directory)
             is_native_model_format = False
@@ -1153,7 +1374,8 @@ class ModelRegistry:
                             self._deploy_api.create_deployment(
                                 name=deployment_name,
                                 model_dir_path=extracted_dir,
-                                platform=deployer.TargetPlatform.WAREHOUSE,
+                                platform=_deployer.TargetPlatform.WAREHOUSE,
+                                target_method=target_method,
                                 options=options,
                             )
                             is_native_model_format = True
@@ -1166,11 +1388,10 @@ class ModelRegistry:
         project=_TELEMETRY_PROJECT,
         subproject=_TELEMETRY_SUBPROJECT,
     )
-    def predict(self, id: str, deployment_name: str, data: Any) -> "pd.DataFrame":
+    def predict(self, deployment_name: str, data: Any) -> "pd.DataFrame":
         """Predict using the deployed model in Snowflake.
 
         Args:
-            id: Id of the model to deploy.
             deployment_name: name of the generated UDF.
             data: Data to run predict.
 
@@ -1185,17 +1406,26 @@ class ModelRegistry:
         if di is None:
             raise ValueError(f"The deployment with name {deployment_name} haven't been deployed")
 
-        return self._deploy_api.predict(di.name, data)
+        return self._deploy_api.predict(di["name"], data)
 
-    def delete_model(self, id: str, delete_artifact: bool = True) -> None:
+    def delete_model(
+        self,
+        delete_artifact: bool = True,
+        id: Optional[str] = None,
+        model_name: Optional[str] = None,
+        model_version: Optional[str] = None,
+    ) -> None:
         """Delete model with the given ID from the registry.
 
         The history of the model will still be preserved.
 
         Args:
-            id: Id of the model to delete.
             delete_artifact: If True, the underlying model artifact will also be deleted, not just the entry in
                 the registry table.
+            id: Id of the model to delete. Required if either model name or model version is None.
+            model_name: Model Name string. Required if id is None.
+            model_version: Model Version string. Required if version is None.
+
 
         Raises:
             KeyError: Model with the given ID does not exist in the registry.
@@ -1206,24 +1436,25 @@ class ModelRegistry:
         # statements.
         model_info = None
         try:
+            selected_models = self._list_selected_models(id=id, model_name=model_name, model_version=model_version)
             model_info = (
-                query_result_checker.ResultValidator(
-                    result=self.list_models().filter(snowpark.Column("ID") == id).collect()
-                )
+                query_result_checker.ResultValidator(result=selected_models.collect())
                 .has_dimensions(expected_rows=1)
                 .validate()
             )
         except connector.DataError:
+            identifier = f"with id {id}" if id else f"named {model_name}/{model_version}"
             if model_info is None or len(model_info) == 0:
-                raise KeyError(f"The model with id {id} does not exist in the current registry.")
+                raise KeyError(f"The model {identifier} does not exist in the current registry.")
             else:
                 raise KeyError(
                     formatting.unwrap(
-                        f"""There are {len(model_info)} models with the same id {id}. This might indicate a problem with
+                        f"""There are {len(model_info)} models {identifier}. This might indicate a problem with
                             the integrity of the model registry data."""
                     )
                 )
-
+        if not id:
+            id = model_info[0]["ID"]
         model_uri = model_info[0]["URI"]
 
         # Step 1/3: Delete the registry entry.
@@ -1325,9 +1556,16 @@ class ModelReference:
 
         return "\n".join([docstring_lines[i] for i in sorted(keep_lines)])
 
-    def __init__(self, *, registry: ModelRegistry, id: str) -> None:
+    def __init__(
+        self,
+        *,
+        registry: ModelRegistry,
+        id: Optional[str] = None,
+        model_name: Optional[str] = None,
+        model_version: Optional[str] = None,
+    ) -> None:
         self._registry = registry
-        self._id = id
+        self._id = id if id else registry._get_model_id(model_name=model_name, model_version=model_version)
 
         # Wrap all functions of the ModelRegistry that have an "id" parameter and bind that parameter
         # the the "_id" member of this class.
@@ -1355,10 +1593,17 @@ class ModelReference:
                 ["id=self._id"]
                 + [
                     "{p.name}={p.name}".format(p=p)
-                    for p in filter(lambda p: p.name not in ["id", "self"], old_sig.parameters.values())
+                    for p in filter(
+                        lambda p: p.name not in ["id", "model_name", "model_version", "self"],
+                        old_sig.parameters.values(),
+                    )
                 ]
             )
             docstring = self._remove_arg_from_docstring("id", obj.__doc__)
+            if docstring and "model_name" in docstring:
+                docstring = self._remove_arg_from_docstring("model_name", docstring)
+            if docstring and "model_version" in docstring:
+                docstring = self._remove_arg_from_docstring("model_version", docstring)
             exec(
                 _TEMPLATE_MODEL_REF_METHOD_DEFN.format(
                     name=name,

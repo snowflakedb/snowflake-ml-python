@@ -7,7 +7,7 @@ import os
 import pickle
 import sys
 import tempfile
-from typing import List
+from typing import List, Union
 
 import cloudpickle
 import inflection
@@ -28,7 +28,10 @@ from sklearn.preprocessing import (
 )
 
 from snowflake.ml.framework.pipeline import Pipeline
-from snowflake.ml.preprocessing import MinMaxScaler, StandardScaler
+from snowflake.ml.preprocessing import (  # type: ignore[attr-defined]
+    MinMaxScaler,
+    StandardScaler,
+)
 from snowflake.ml.utils.connection_params import SnowflakeLoginOptions
 from snowflake.snowpark import DataFrame, Session
 from tests.integ.snowflake.ml.framework import utils as framework_utils
@@ -50,16 +53,25 @@ class SnowmlLinearRegression:
         self.label_cols = label_cols
         self._session = session
 
-    def fit(self, dataset: DataFrame) -> "SnowmlLinearRegression":
-        pandas_df = dataset.to_pandas()
+    def fit(self, dataset: Union[DataFrame, pd.DataFrame]) -> "SnowmlLinearRegression":
+        if isinstance(dataset, DataFrame):
+            pandas_df = dataset.to_pandas()
+        else:
+            pandas_df = dataset
         self.model.fit(pandas_df[self.input_cols], pandas_df[self.label_cols])
         return self
 
-    def predict(self, dataset: DataFrame) -> DataFrame:
-        pandas_df = dataset.to_pandas()
-        result = self.model.predict(pandas_df[self.input_cols])
-        pandas_df[self.output_cols] = result.reshape(pandas_df.shape[0], len(self.output_cols))
-        return self._session.create_dataframe(pandas_df)
+    def predict(self, dataset: Union[DataFrame, pd.DataFrame]) -> Union[DataFrame, pd.DataFrame]:
+        if isinstance(dataset, DataFrame):
+            pandas_df = dataset.to_pandas()
+            result = self.model.predict(pandas_df[self.input_cols])
+            pandas_df[self.output_cols] = result.reshape(pandas_df.shape[0], len(self.output_cols))
+            return self._session.create_dataframe(pandas_df)
+        else:
+            pandas_df = dataset
+            result = self.model.predict(pandas_df[self.input_cols])
+            pandas_df[self.output_cols] = result.reshape(pandas_df.shape[0], len(self.output_cols))
+            return pandas_df
 
 
 class SnowmlSGDClassifier:
@@ -130,7 +142,7 @@ class TestPipeline(TestCase):
             If the queries of the transformed dataframes with and without Pipeline are not identical.
         """
         input_col, output_col = NUMERIC_COLS[0], "output"
-        _, df = framework_utils.get_df(self._session, DATA, SCHEMA, np.nan)  # type: ignore
+        _, df = framework_utils.get_df(self._session, DATA, SCHEMA, np.nan)
 
         scaler = MinMaxScaler().set_input_cols(input_col).set_output_cols(output_col)
         pipeline = Pipeline([("scaler", scaler)])
@@ -150,7 +162,7 @@ class TestPipeline(TestCase):
             If the queries of the transformed dataframes with and without Pipeline are not identical.
         """
         input_col, output_col1, output_col2 = NUMERIC_COLS[0], "output1", "output2"
-        _, df = framework_utils.get_df(self._session, DATA, SCHEMA, np.nan)  # type: ignore
+        _, df = framework_utils.get_df(self._session, DATA, SCHEMA, np.nan)
 
         mms = MinMaxScaler().set_input_cols(input_col).set_output_cols(output_col1)
         ss = StandardScaler().set_input_cols(output_col1).set_output_cols(output_col2)
@@ -176,7 +188,7 @@ class TestPipeline(TestCase):
         pipeline_output_cols = ["OUT1", "OUT2"]
 
         # fit in session 1
-        df_pandas, df1 = framework_utils.get_df(self._session, data, schema, np.nan)  # type: ignore
+        df_pandas, df1 = framework_utils.get_df(self._session, data, schema, np.nan)
 
         ss = StandardScaler(input_cols=input_cols, output_cols=output_cols)
         mms = MinMaxScaler(input_cols=output_cols, output_cols=pipeline_output_cols)
@@ -192,7 +204,7 @@ class TestPipeline(TestCase):
 
         # transform in session 2
         self._session = Session.builder.configs(SnowflakeLoginOptions()).create()
-        _, df2 = framework_utils.get_df(self._session, data, schema, np.nan)  # type: ignore
+        _, df2 = framework_utils.get_df(self._session, data, schema, np.nan)
         input_cols_extended = input_cols.copy()
         input_cols_extended.append(id_col)
 
@@ -351,6 +363,61 @@ class TestPipeline(TestCase):
 
         assert pandas_df_output_2.columns.shape == snow_df_output_2.columns.shape
         assert np.allclose(snow_df_output_2[pandas_df_output_2.columns].to_numpy(), pandas_df_output_2.to_numpy())
+
+    def test_pipeline_with_regression_estimators_pandas_dataframe(self) -> None:
+        input_df_pandas = load_diabetes(as_frame=True).frame
+        # Normalize column names
+        input_df_pandas.columns = [inflection.parameterize(c, "_").upper() for c in input_df_pandas.columns]
+
+        input_cols = [c for c in input_df_pandas.columns if not c.startswith("TARGET")]
+        label_cols = ["TARGET"]
+        output_cols = ["OUTPUT"]
+
+        mms = MinMaxScaler()
+        mms.set_input_cols(["AGE"])
+        mms.set_output_cols(["AGE"])
+        ss = StandardScaler()
+        ss.set_input_cols(["AGE"])
+        ss.set_output_cols(["AGE"])
+
+        estimator = SnowmlLinearRegression(
+            input_cols=input_cols, output_cols=output_cols, label_cols=label_cols, session=self._session
+        )
+
+        pipeline = Pipeline(steps=[("mms", mms), ("ss", ss), ("estimator", estimator)])
+
+        self.assertFalse(hasattr(pipeline, "transform"))
+        self.assertFalse(hasattr(pipeline, "fit_transform"))
+        self.assertTrue(hasattr(pipeline, "predict"))
+        self.assertTrue(hasattr(pipeline, "fit_predict"))
+        self.assertFalse(hasattr(pipeline, "predict_proba"))
+        self.assertFalse(hasattr(pipeline, "predict_log_proba"))
+        self.assertFalse(hasattr(pipeline, "score"))
+
+        # fit and predict
+        pipeline.fit(input_df_pandas)
+        output_df = pipeline.predict(input_df_pandas)
+
+        actual_results = output_df[output_cols].to_numpy()
+
+        # Do the same with SKLearn
+        age_col_transform = SkPipeline(steps=[("mms", SklearnMinMaxScaler()), ("ss", SklearnStandardScaler())])
+        skpipeline = SkPipeline(
+            steps=[
+                (
+                    "preprocessor",
+                    SkColumnTransformer(
+                        transformers=[("age_col_transform", age_col_transform, ["AGE"])], remainder="passthrough"
+                    ),
+                ),
+                ("estimator", SklearnLinearRegression()),
+            ]
+        )
+
+        skpipeline.fit(input_df_pandas[input_cols], input_df_pandas[label_cols])
+        sk_predict_results = skpipeline.predict(input_df_pandas[input_cols])
+
+        np.testing.assert_allclose(actual_results, sk_predict_results)
 
 
 if __name__ == "__main__":

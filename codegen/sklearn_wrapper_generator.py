@@ -826,7 +826,7 @@ class SklearnWrapperGenerator(WrapperGeneratorBase):
 
         self.fit_sproc_deps = self.predict_udf_deps = (
             "f'numpy=={np.__version__}', f'pandas=={pd.__version__}', f'scikit-learn=={sklearn.__version__}',"
-            "f'xgboost=={xgboost.__version__}'"
+            "f'xgboost=={xgboost.__version__}', f'joblib=={joblib.__version__}'"
         )
         self._construct_string_from_lists()
         return self
@@ -841,9 +841,10 @@ class XGBoostWrapperGenerator(WrapperGeneratorBase):
         self.estimator_imports_list.append("import xgboost")
         self.test_estimator_input_args_list.extend(["random_state=0", "subsample=1.0", "colsample_bynode=1.0"])
         self.fit_sproc_imports = "import xgboost"
-        self.fit_sproc_deps = (
-            self.predict_udf_deps
-        ) = "f'numpy=={np.__version__}', f'pandas=={pd.__version__}', f'xgboost=={xgboost.__version__}'"
+        self.fit_sproc_deps = self.predict_udf_deps = (
+            "f'numpy=={np.__version__}', f'pandas=={pd.__version__}', f'xgboost=={xgboost.__version__}',"
+            "f'joblib=={joblib.__version__}'"
+        )
         self._construct_string_from_lists()
         return self
 
@@ -857,8 +858,9 @@ class LightGBMWrapperGenerator(WrapperGeneratorBase):
         self.estimator_imports_list.append("import lightgbm")
         self.test_estimator_input_args_list.extend(["random_state=0"])
         self.fit_sproc_imports = "import lightgbm"
-        self.fit_sproc_deps = (
-            self.predict_udf_deps
-        ) = "f'numpy=={np.__version__}', f'pandas=={pd.__version__}', f'lightgbm=={lightgbm.__version__}'"
+        self.fit_sproc_deps = self.predict_udf_deps = (
+            "f'numpy=={np.__version__}', f'pandas=={pd.__version__}', f'lightgbm=={lightgbm.__version__}',"
+            "f'joblib=={joblib.__version__}'"
+        )
         self._construct_string_from_lists()
         return self

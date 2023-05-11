@@ -15,7 +15,7 @@ import numpy as np
 from absl.testing.absltest import TestCase, main
 from sklearn.preprocessing import MinMaxScaler as SklearnMinMaxScaler
 
-from snowflake.ml.preprocessing import MinMaxScaler
+from snowflake.ml.preprocessing import MinMaxScaler  # type: ignore[attr-defined]
 from snowflake.ml.utils.connection_params import SnowflakeLoginOptions
 from snowflake.snowpark import Session
 from tests.integ.snowflake.ml.framework import utils as framework_utils

@@ -12,7 +12,7 @@ from sklearn.preprocessing import _data as sklearn_preprocessing_data
 from snowflake import snowpark
 from snowflake.ml.framework import _utils, base
 from snowflake.ml.utils import telemetry
-from snowflake.snowpark import functions
+from snowflake.snowpark import functions as F
 
 _PROJECT = "ModelDevelopment"
 _SUBPROJECT = "Preprocessing"
@@ -190,13 +190,13 @@ class MinMaxScaler(base.BaseEstimator, base.BaseTransformer):
             output_column = dataset[input_col] * self.scale_[input_col] + self.min_[input_col]
 
             if self.clip:
-                output_column = functions.greatest(
+                output_column = F.greatest(
                     output_column,
-                    functions.lit(self.feature_range[0]),  # type: ignore[arg-type]
+                    F.lit(self.feature_range[0]),  # type: ignore[arg-type]
                 )
-                output_column = functions.least(
+                output_column = F.least(
                     output_column,
-                    functions.lit(self.feature_range[1]),  # type: ignore[arg-type]
+                    F.lit(self.feature_range[1]),  # type: ignore[arg-type]
                 )
 
             output_columns.append(output_column)

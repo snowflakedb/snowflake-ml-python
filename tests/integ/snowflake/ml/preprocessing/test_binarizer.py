@@ -14,7 +14,7 @@ import numpy as np
 from absl.testing.absltest import TestCase, main
 from sklearn.preprocessing import Binarizer as SklearnBinarizer
 
-from snowflake.ml.preprocessing import Binarizer
+from snowflake.ml.preprocessing import Binarizer  # type: ignore[attr-defined]
 from snowflake.ml.utils.connection_params import SnowflakeLoginOptions
 from snowflake.snowpark import Session
 from tests.integ.snowflake.ml.framework import utils as framework_utils
@@ -31,18 +31,18 @@ from tests.integ.snowflake.ml.framework.utils import (
 class BinarizerTest(TestCase):
     """Test Binarizer."""
 
-    def setUp(self):
+    def setUp(self) -> None:
         """Creates Snowpark and Snowflake environments for testing."""
         self._session = Session.builder.configs(SnowflakeLoginOptions()).create()
         self._to_be_deleted_files = []
 
-    def tearDown(self):
+    def tearDown(self) -> None:
         self._session.close()
         for filepath in self._to_be_deleted_files:
             if os.path.exists(filepath):
                 os.remove(filepath)
 
-    def test_transform(self):
+    def test_transform(self) -> None:
         threshold = 2.0
 
         input_cols, output_cols, id_col = NUMERIC_COLS, OUTPUT_COLS, ID_COL
@@ -65,9 +65,9 @@ class BinarizerTest(TestCase):
         sklearn_binarizer.fit(input_df_pandas[input_cols])
         expected_arr = sklearn_binarizer.transform(input_df_pandas.sort_values(by=[id_col])[input_cols])
 
-        assert np.allclose(actual_arr, expected_arr)
+        np.testing.assert_allclose(actual_arr, expected_arr)
 
-    def test_transform_pandas_input(self):
+    def test_transform_pandas_input(self) -> None:
         threshold = 2.0
 
         input_cols, output_cols, id_col = NUMERIC_COLS, OUTPUT_COLS, ID_COL
@@ -87,9 +87,9 @@ class BinarizerTest(TestCase):
         sklearn_binarizer.fit(input_df_pandas[input_cols])
         expected_arr = sklearn_binarizer.transform(input_df_pandas.sort_values(by=[id_col])[input_cols])
 
-        assert np.allclose(actual_arr, expected_arr)
+        np.testing.assert_allclose(actual_arr, expected_arr)
 
-    def test_transform_raises_on_nulls(self):
+    def test_transform_raises_on_nulls(self) -> None:
         threshold = 2.0
 
         input_cols, output_cols, id_col = NUMERIC_COLS, OUTPUT_COLS, ID_COL
@@ -108,7 +108,7 @@ class BinarizerTest(TestCase):
         with self.assertRaises(ValueError):
             binarizer.transform(input_df[input_cols_extended])
 
-    def test_serde(self):
+    def test_serde(self) -> None:
         """
         Test serialization and deserialization via cloudpickle, pickle, and joblib.
         Raises
@@ -161,9 +161,9 @@ class BinarizerTest(TestCase):
         binarizer_sklearn.fit(df_pandas[input_cols])
         sklearn_arr = binarizer_sklearn.transform(df_pandas[input_cols])
 
-        assert np.allclose(actual_arr_cloudpickle, sklearn_arr)
-        assert np.allclose(actual_arr_pickle, sklearn_arr)
-        assert np.allclose(actual_arr_joblib, sklearn_arr)
+        np.testing.assert_allclose(actual_arr_cloudpickle, sklearn_arr)
+        np.testing.assert_allclose(actual_arr_pickle, sklearn_arr)
+        np.testing.assert_allclose(actual_arr_joblib, sklearn_arr)
 
 
 if __name__ == "__main__":

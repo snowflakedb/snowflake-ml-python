@@ -7,6 +7,7 @@ from packaging import requirements
 from snowflake.ml._internal import env as snowml_env, env_utils
 
 _CONDA_ENV_FILE_NAME = "conda.yaml"
+_SNOWFLAKE_CONDA_CHANNEL_URL = "https://repo.anaconda.com/pkgs/snowflake"
 _REQUIREMENTS_FILE_NAME = "requirements.txt"
 
 
@@ -14,48 +15,58 @@ def save_conda_env_file(
     dir_path: str,
     deps: DefaultDict[str, List[requirements.Requirement]],
     python_version: Optional[str] = snowml_env.PYTHON_VERSION,
-) -> None:
+) -> str:
     """Generate conda.yaml file given a dict of dependencies after validation.
 
     Args:
         dir_path: Path to the directory where conda.yaml file should be written.
         deps: Dict of conda dependencies after validated.
         python_version: A string 'major.minor.patchlevel' showing python version relate to model. Default to current.
+
+    Returns:
+        The path to conda env file.
     """
     path = os.path.join(dir_path, _CONDA_ENV_FILE_NAME)
     env: Dict[str, Any] = dict()
     env["name"] = "snow-env"
-    env["dependencies"] = [f"python={python_version}"]
-    for channel, reqs in deps.items():
-        env["dependencies"].extend([f"{channel}::{req}" for req in reqs])
+    env["channels"] = [_SNOWFLAKE_CONDA_CHANNEL_URL, "nodefaults"]
+    env["dependencies"] = [f"python=={python_version}"]
+    for chan, reqs in deps.items():
+        env["dependencies"].extend([f"{chan}::{str(req)}" if chan else str(req) for req in reqs])
 
     with open(path, "w") as f:
         yaml.safe_dump(env, stream=f, default_flow_style=False)
 
+    return path
 
-def save_requirements_file(dir_path: str, pip_deps: List[requirements.Requirement]) -> None:
+
+def save_requirements_file(dir_path: str, pip_deps: List[requirements.Requirement]) -> str:
     """Generate Python requirements.txt file in the given directory path.
 
     Args:
         dir_path: Path to the directory where requirements.txt file should be written.
         pip_deps: List of dependencies string after validated.
+
+    Returns:
+        The path to pip requirements file.
     """
     requirements = "\n".join(map(str, pip_deps))
     path = os.path.join(dir_path, _REQUIREMENTS_FILE_NAME)
     with open(path, "w") as out:
         out.write(requirements)
 
+    return path
 
-def load_conda_env_file(dir_path: str) -> Tuple[DefaultDict[str, List[requirements.Requirement]], Optional[str]]:
+
+def load_conda_env_file(path: str) -> Tuple[DefaultDict[str, List[requirements.Requirement]], Optional[str]]:
     """Read conda.yaml file to get n a dict of dependencies after validation.
 
     Args:
-        dir_path: Path to the directory where conda.yaml file should be written.
+        path: Path to conda.yaml.
 
     Returns:
         A tuple of Dict of conda dependencies after validated and a string 'major.minor.patchlevel' of python version.
     """
-    path = os.path.join(dir_path, _CONDA_ENV_FILE_NAME)
     with open(path) as f:
         env = yaml.safe_load(stream=f)
 
@@ -67,8 +78,8 @@ def load_conda_env_file(dir_path: str) -> Tuple[DefaultDict[str, List[requiremen
 
     for dep in env["dependencies"]:
         if isinstance(dep, str):
-            if dep.startswith("python="):
-                hd, _, ver = dep.partition("=")
+            if dep.startswith("python=="):
+                hd, _, ver = dep.partition("==")
                 assert hd == "python"
                 python_version = ver
             else:
@@ -77,16 +88,15 @@ def load_conda_env_file(dir_path: str) -> Tuple[DefaultDict[str, List[requiremen
     return env_utils.validate_conda_dependency_string_list(deps), python_version
 
 
-def load_requirements_file(dir_path: str) -> List[requirements.Requirement]:
+def load_requirements_file(path: str) -> List[requirements.Requirement]:
     """Load Python requirements.txt file from the given directory path.
 
     Args:
-        dir_path: Path to the directory where requirements.txt file should be written.
+        path: Path to the requirements.txt file.
 
     Returns:
         List of dependencies string after validated.
     """
-    path = os.path.join(dir_path, _REQUIREMENTS_FILE_NAME)
     with open(path) as f:
         reqs = f.readlines()
 

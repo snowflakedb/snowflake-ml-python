@@ -8,7 +8,8 @@ import numpy as np
 from absl.testing.absltest import TestCase, main
 from sklearn.preprocessing import KBinsDiscretizer as SklearnKBinsDiscretizer
 
-from snowflake.ml.preprocessing import KBinsDiscretizer
+from snowflake.ml.preprocessing import KBinsDiscretizer  # type: ignore[attr-defined]
+from snowflake.ml.utils import sparse as sparse_utils
 from snowflake.ml.utils.connection_params import SnowflakeLoginOptions
 from snowflake.snowpark import Session
 from tests.integ.snowflake.ml.framework import utils
@@ -29,10 +30,10 @@ class KBinsDiscretizerTest(TestCase):
 
     #     k_bins_discretizer = KBinsDiscretizer(
     #         n_bins=[3, 2],
-    #         encode="ordinal",
+    #         encode="onehot-dense",
     #         strategy="uniform",
-    #         input_cols=["col1", "col2"],
-    #         output_cols=["col1", "col2"],
+    #         input_cols=["COL1", "COL2"],
+    #         output_cols=["OUTPUT1", "OUTPUT2"],
     #     )
     #     k_bins_discretizer.fit(df)
     #     print(f"bin_edges_: {k_bins_discretizer.bin_edges_}")
@@ -45,7 +46,7 @@ class KBinsDiscretizerTest(TestCase):
     #     df = self._session.create_dataframe([[-3, 5], [0, 6], [6, 3]], schema=["col1", "col2"])
     #     k_bins_discretizer = KBinsDiscretizer(
     #         n_bins=[3, 2],
-    #         encode="ordinal",
+    #         encode="onehot-dense",
     #         strategy="uniform",
     #         input_cols=["col1", "col2"],
     #         output_cols=["output1", "output2"],
@@ -157,7 +158,7 @@ class KBinsDiscretizerTest(TestCase):
                 for i in range(len(target_bin_edges)):
                     np.testing.assert_allclose(target_bin_edges[i], actual_edges[i])
 
-    def test_transform(self) -> None:
+    def test_transform_ordinal_encoding(self) -> None:
         N_BINS = [3, 2]
         ENCODE = "ordinal"
         INPUT_COLS, ID_COL, OUTPUT_COLS = (
@@ -193,7 +194,7 @@ class KBinsDiscretizerTest(TestCase):
             pd_actual_output = discretizer.transform(pandas_df.sort_values(by=[ID_COL])[INPUT_COLS])[OUTPUT_COLS]
             np.testing.assert_allclose(target_output, pd_actual_output)
 
-    def test_transform_fuzz_data(self) -> None:
+    def test_transform_ordinal_encoding_fuzz_data(self) -> None:
         N_BINS = [2, 9, 5]
         ENCODE = "ordinal"
         OUTPUT_COLS = [f"OUT_{x}" for x in range(len(N_BINS))]
@@ -233,6 +234,93 @@ class KBinsDiscretizerTest(TestCase):
             # 4. Transform with Pandas DF and compare
             pd_actual_output = discretizer.transform(pandas_df.sort_values(by=[schema[0]])[schema[1:]])[OUTPUT_COLS]
             np.testing.assert_allclose(target_output, pd_actual_output)
+
+    def test_transform_onehot_encoding(self) -> None:
+        N_BINS = [3, 2]
+        ENCODE = "onehot"
+        INPUT_COLS, ID_COL, OUTPUT_COLS = (
+            utils.NUMERIC_COLS,
+            utils.ID_COL,
+            utils.OUTPUT_COLS,
+        )
+
+        pandas_df, snowpark_df = utils.get_df(self._session, utils.DATA, utils.SCHEMA, np.nan)
+
+        for strategy in self._strategies:
+            # 1. Create OSS SKLearn discretizer
+            sklearn_discretizer = SklearnKBinsDiscretizer(n_bins=N_BINS, encode=ENCODE, strategy=strategy)
+            sklearn_discretizer.fit(pandas_df[INPUT_COLS])
+            target_output = sklearn_discretizer.transform(pandas_df.sort_values(by=[ID_COL])[INPUT_COLS])
+
+            # 2. Create SnowML discretizer, fit and transform with snowpark DF
+            discretizer = KBinsDiscretizer(
+                n_bins=N_BINS,
+                encode=ENCODE,
+                strategy=strategy,
+                input_cols=INPUT_COLS,
+                output_cols=OUTPUT_COLS,
+            )
+            discretizer.fit(snowpark_df)
+            snowpark_output = discretizer.transform(snowpark_df).sort(ID_COL)[OUTPUT_COLS]
+            snowpark_actual_output = sparse_utils.to_pandas_with_sparse(snowpark_output, OUTPUT_COLS)
+            np.testing.assert_equal(target_output.toarray(), snowpark_actual_output.to_numpy())
+
+            # 3. Create SnowML discretizer, fit and transform with pandas DF
+            discretizer = KBinsDiscretizer(
+                n_bins=N_BINS,
+                encode=ENCODE,
+                strategy=strategy,
+                input_cols=INPUT_COLS,
+                output_cols=OUTPUT_COLS,
+            )
+            discretizer.fit(pandas_df)
+            pd_actual_output = discretizer.transform(pandas_df.sort_values(by=[ID_COL])[INPUT_COLS])
+            np.testing.assert_equal(target_output.toarray(), pd_actual_output.toarray())
+
+    def test_transform_onehot_dense_encoding(self) -> None:
+        N_BINS = [3, 2]
+        ENCODE = "onehot-dense"
+        INPUT_COLS, ID_COL, OUTPUT_COLS = (
+            utils.NUMERIC_COLS,
+            utils.ID_COL,
+            utils.OUTPUT_COLS,
+        )
+
+        pandas_df, snowpark_df = utils.get_df(self._session, utils.DATA, utils.SCHEMA, np.nan)
+
+        for strategy in self._strategies:
+            # 1. Create OSS SKLearn discretizer
+            sklearn_discretizer = SklearnKBinsDiscretizer(n_bins=N_BINS, encode=ENCODE, strategy=strategy)
+            sklearn_discretizer.fit(pandas_df[INPUT_COLS])
+            target_output = sklearn_discretizer.transform(pandas_df.sort_values(by=[ID_COL])[INPUT_COLS])
+
+            # 2. Create SnowML discretizer, fit and transform with snowpark DF
+            discretizer = KBinsDiscretizer(
+                n_bins=N_BINS,
+                encode=ENCODE,
+                strategy=strategy,
+                input_cols=INPUT_COLS,
+                output_cols=OUTPUT_COLS,
+            )
+            discretizer.fit(snowpark_df)
+            snowpark_actual_output = (
+                discretizer.transform(snowpark_df).sort(ID_COL)[discretizer.get_output_cols()].to_pandas()
+            )
+            np.testing.assert_equal(target_output, snowpark_actual_output)
+
+            # 3. Create SnowML discretizer, fit and transform with pandas DF
+            discretizer = KBinsDiscretizer(
+                n_bins=N_BINS,
+                encode=ENCODE,
+                strategy=strategy,
+                input_cols=INPUT_COLS,
+                output_cols=OUTPUT_COLS,
+            )
+            discretizer.fit(pandas_df)
+            pd_actual_output = discretizer.transform(pandas_df.sort_values(by=[ID_COL])[INPUT_COLS])[
+                discretizer.get_output_cols()
+            ]
+            np.testing.assert_equal(target_output, pd_actual_output)
 
 
 if __name__ == "__main__":
