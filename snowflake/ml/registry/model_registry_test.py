@@ -35,6 +35,8 @@ class ModelRegistryTest(absltest.TestCase):
         self._session = mock_session.MockSession(conn=None, test_case=self)
         self.event_id = "fedcba9876543210fedcba9876543210"
         self.model_id = "0123456789abcdef0123456789abcdef"
+        self.model_name = "name"
+        self.model_version = "abc"
         self.datetime = datetime.datetime(2022, 11, 4, 17, 1, 30, 153000)
 
     def tearDown(self) -> None:
@@ -219,12 +221,30 @@ class ModelRegistryTest(absltest.TestCase):
             result=mock_data_frame.MockDataFrame([snowpark.Row(status="View MODELS_VIEW successfully created.")]),
         )
 
+    def template_test_get_attribute(
+        self, collection_res: List[snowpark.Row], use_id: bool = False
+    ) -> mock_data_frame.MockDataFrame:
+        expected_df = self.setup_list_model_call()
+        expected_df.add_operation("filter")
+        if not use_id:
+            expected_df.add_operation("filter")
+        expected_df.add_collect_result(collection_res)
+        return expected_df
+
     def template_test_set_attribute(
-        self, attribute_name: str, attribute_value: Union[str, Dict[Any, Any]], result_num_inserted: int = 1
+        self,
+        attribute_name: str,
+        attribute_value: Union[str, Dict[Any, Any]],
+        result_num_inserted: int = 1,
+        use_id: bool = False,
     ) -> None:
         expected_df = self.setup_list_model_call()
         expected_df.add_operation("filter")
-        expected_df.add_count_result(1)
+        if not use_id:
+            expected_df.add_operation("filter")
+        expected_df.add_collect_result(
+            [snowpark.Row(ID=self.model_id, NAME="name", VERSION="abc", URI="sfc://model_stage")]
+        )
 
         self._session.add_operation("get_current_role", result="current_role")
 
@@ -337,20 +357,24 @@ class ModelRegistryTest(absltest.TestCase):
             "_get_new_unique_identifier",
             return_value=self.event_id,
         ):
-            model_registry.set_model_description(id=self.model_id, description="new_description")
+            model_registry.set_model_description(
+                model_name=self.model_name, model_version=self.model_version, description="new_description"
+            )
 
     def test_get_model_description(self) -> None:
         """Test that we can get the description of an existing model from the registry."""
         model_registry = self.get_model_registry()
-        expected_df = self.setup_list_model_call()
-        expected_df.add_operation(operation="filter")
-        expected_df.add_operation(
-            operation="select",
-            args=("DESCRIPTION",),
-            result=mock_data_frame.MockDataFrame([snowpark.Row(ID=self.model_id, DESCRIPTION="model_description")]),
+        self.template_test_get_attribute(
+            [
+                snowpark.Row(
+                    ID=self.model_id, NAME=self.model_name, VERSION=self.model_version, DESCRIPTION="model_description"
+                )
+            ]
         )
 
-        model_description = model_registry.get_model_description(id=self.model_id)
+        model_description = model_registry.get_model_description(
+            model_name=self.model_name, model_version=self.model_version
+        )
         self.assertEqual(model_description, "model_description")
 
     def test_get_history(self) -> None:
@@ -392,6 +416,9 @@ class ModelRegistryTest(absltest.TestCase):
     def test_get_model_history(self) -> None:
         """Test that we can retrieve the history for a specific model."""
         model_registry = self.get_model_registry()
+        self.template_test_get_attribute(
+            [snowpark.Row(ID=self.model_id, NAME=self.model_name, VERSION=self.model_version)]
+        )
         expected_collect_result = [
             snowpark.Row(
                 EVENT_TIMESTAMP="ts",
@@ -424,17 +451,16 @@ class ModelRegistryTest(absltest.TestCase):
         expected_df.add_operation(operation="filter", check_args=False, check_kwargs=False)
         expected_df.add_collect_result(expected_collect_result)
 
-        self.assertEqual(model_registry.get_model_history(id=self.model_id).collect(), expected_collect_result)
+        self.assertEqual(
+            model_registry.get_model_history(model_name=self.model_name, model_version=self.model_version).collect(),
+            expected_collect_result,
+        )
 
     def test_set_metric_no_existing(self) -> None:
         """Test that we can set a metric for an existing model that does not yet have any metrics set."""
         model_registry = self.get_model_registry()
-        expected_df = self.setup_list_model_call()
-        expected_df.add_operation(operation="filter")
-        expected_df.add_operation(
-            operation="select",
-            args=("METRICS",),
-            result=mock_data_frame.MockDataFrame([snowpark.Row(ID=self.model_id, METRICS=None)]),
+        self.template_test_get_attribute(
+            [snowpark.Row(ID=self.model_id, NAME=self.model_name, VERSION=self.model_version, METRICS=None)]
         )
         self.template_test_set_attribute("METRICS", {"voight-kampff": 0.9})
 
@@ -444,17 +470,19 @@ class ModelRegistryTest(absltest.TestCase):
             "_get_new_unique_identifier",
             return_value=self.event_id,
         ):
-            model_registry.set_metric(id=self.model_id, name="voight-kampff", value=0.9)
+            model_registry.set_metric(
+                model_name=self.model_name, model_version=self.model_version, name="voight-kampff", value=0.9
+            )
 
     def test_set_metric_with_existing(self) -> None:
         """Test that we can set a metric for an existing model that already has metrics."""
         model_registry = self.get_model_registry()
-        expected_df = self.setup_list_model_call()
-        expected_df.add_operation(operation="filter")
-        expected_df.add_operation(
-            operation="select",
-            args=("METRICS",),
-            result=mock_data_frame.MockDataFrame([snowpark.Row(ID=self.model_id, METRICS='{"human-factor": 1.1}')]),
+        self.template_test_get_attribute(
+            [
+                snowpark.Row(
+                    ID=self.model_id, NAME=self.model_name, VERSION=self.model_version, METRICS='{"human-factor": 1.1}'
+                )
+            ]
         )
         self.template_test_set_attribute("METRICS", {"human-factor": 1.1, "voight-kampff": 0.9})
 
@@ -464,35 +492,42 @@ class ModelRegistryTest(absltest.TestCase):
             "_get_new_unique_identifier",
             return_value=self.event_id,
         ):
-            model_registry.set_metric(id=self.model_id, name="voight-kampff", value=0.9)
+            model_registry.set_metric(
+                model_name=self.model_name, model_version=self.model_version, name="voight-kampff", value=0.9
+            )
 
     def test_get_metrics(self) -> None:
         """Test that we can get the metrics for an existing model."""
         metrics_dict = {"human-factor": 1.1, "voight-kampff": 0.9}
         model_registry = self.get_model_registry()
-        expected_df = self.setup_list_model_call()
-        expected_df.add_operation(operation="filter")
-        expected_df.add_operation(
-            operation="select",
-            args=("METRICS",),
-            result=mock_data_frame.MockDataFrame([snowpark.Row(ID=self.model_id, METRICS=json.dumps(metrics_dict))]),
+        self.template_test_get_attribute(
+            [
+                snowpark.Row(
+                    ID=self.model_id, NAME=self.model_name, VERSION=self.model_version, METRICS=json.dumps(metrics_dict)
+                )
+            ]
         )
-
-        self.assertEqual(model_registry.get_metrics(id=self.model_id), metrics_dict)
+        self.assertEqual(
+            model_registry.get_metrics(model_name=self.model_name, model_version=self.model_version), metrics_dict
+        )
 
     def test_get_metric_value(self) -> None:
         """Test that we can get a single metric value for an existing model."""
         metrics_dict = {"human-factor": 1.1, "voight-kampff": 0.9}
         model_registry = self.get_model_registry()
-        expected_df = self.setup_list_model_call()
-        expected_df.add_operation(operation="filter")
-        expected_df.add_operation(
-            operation="select",
-            args=("METRICS",),
-            result=mock_data_frame.MockDataFrame([snowpark.Row(ID=self.model_id, METRICS=json.dumps(metrics_dict))]),
+        self.template_test_get_attribute(
+            [
+                snowpark.Row(
+                    ID=self.model_id, NAME=self.model_name, VERSION=self.model_version, METRICS=json.dumps(metrics_dict)
+                )
+            ]
         )
-
-        self.assertEqual(model_registry.get_metric_value(id=self.model_id, name="human-factor"), 1.1)
+        self.assertEqual(
+            model_registry.get_metric_value(
+                model_name=self.model_name, model_version=self.model_version, name="human-factor"
+            ),
+            1.1,
+        )
 
     def test_private_insert_registry_entry(self) -> None:
         model_registry = self.get_model_registry()
@@ -513,7 +548,7 @@ class ModelRegistryTest(absltest.TestCase):
         self._session.add_operation("get_current_role", result="current_role")
 
         mock_df = self.setup_list_model_call()
-        mock_df.add_operation("filter", result=mock_data_frame.MockDataFrame([]))
+        mock_df.add_operation("filter").add_operation("filter", result=mock_data_frame.MockDataFrame([]))
         mock_df.add_count_result(0)
 
         self.add_session_mock_sql(
@@ -526,12 +561,13 @@ class ModelRegistryTest(absltest.TestCase):
 
         # Mock calls to variable values: python version and internal _set_metadata_attribute.
         with absltest.mock.patch.object(model_registry, "_set_metadata_attribute", return_value=True):
-            with absltest.mock.patch(
-                "model_registry.sys.version_info", new_callable=absltest.mock.PropertyMock(return_value=(3, 8, 13))
-            ):
-                model_registry.register_model(
-                    id="id", uri="uri", type="type", name="name", version="abc", tags={"tag_name": "tag_value"}
-                )
+            with absltest.mock.patch.object(model_registry, "_get_new_unique_identifier", return_value="id"):
+                with absltest.mock.patch(
+                    "model_registry.sys.version_info", new_callable=absltest.mock.PropertyMock(return_value=(3, 8, 13))
+                ):
+                    model_registry.register_model(
+                        uri="uri", type="type", name="name", version="abc", tags={"tag_name": "tag_value"}
+                    )
 
     def test_register_model_no_tags(self) -> None:
         """Test registering a model without giving a tag."""
@@ -540,7 +576,7 @@ class ModelRegistryTest(absltest.TestCase):
         self._session.add_operation("get_current_role", result="current_role")
 
         mock_df = self.setup_list_model_call()
-        mock_df.add_operation("filter", result=mock_data_frame.MockDataFrame([]))
+        mock_df.add_operation("filter").add_operation("filter", result=mock_data_frame.MockDataFrame([]))
         mock_df.add_count_result(0)
 
         self.add_session_mock_sql(
@@ -572,23 +608,20 @@ class ModelRegistryTest(absltest.TestCase):
         with absltest.mock.patch.object(
             model_registry,
             "_get_new_unique_identifier",
-            return_value=self.event_id,
+            side_effect=[self.model_id, self.event_id],
         ):
             with absltest.mock.patch(
                 "model_registry.sys.version_info", new_callable=absltest.mock.PropertyMock(return_value=(3, 8, 13))
             ):
-                model_registry.register_model(id=self.model_id, uri="uri", type="type", name="name", version="abc")
+                model_registry.register_model(uri="uri", type="type", name="name", version="abc")
 
     def test_get_tags(self) -> None:
         """Test that get_tags is working correctly with various types."""
         model_registry = self.get_model_registry()
-        self.setup_list_model_call().add_operation(operation="filter").add_operation(
-            operation="select",
-            args=("TAGS",),
-            result=mock_data_frame.MockDataFrame(
-                [
-                    snowpark.Row(
-                        TAGS="""
+        self.template_test_get_attribute(
+            [
+                snowpark.Row(
+                    TAGS="""
                         {
                             "top_level": "string",
                             "nested": {
@@ -615,11 +648,12 @@ class ModelRegistryTest(absltest.TestCase):
                                 ]
                             }
                         }""",
-                    )
-                ],
-            ),
+                )
+            ]
         )
-        model_registry.get_tags(id=self.model_id)
+        tags = model_registry.get_tags(model_name=self.model_name, model_version=self.model_version)
+        self.assertEqual(tags["top_level"], "string")
+        self.assertEqual(tags["nested"]["float"], 0.9)
 
     def test_register_model_with_description(self) -> None:
         """Test registering a model with a description."""
@@ -628,7 +662,7 @@ class ModelRegistryTest(absltest.TestCase):
         self._session.add_operation("get_current_role", result="current_role")
 
         mock_df = self.setup_list_model_call()
-        mock_df.add_operation("filter", result=mock_data_frame.MockDataFrame([]))
+        mock_df.add_operation("filter").add_operation("filter", result=mock_data_frame.MockDataFrame([]))
         mock_df.add_count_result(0)
 
         self.add_session_mock_sql(
@@ -665,13 +699,12 @@ class ModelRegistryTest(absltest.TestCase):
         with absltest.mock.patch.object(
             model_registry,
             "_get_new_unique_identifier",
-            return_value=self.event_id,
+            side_effect=[self.model_id, self.event_id, self.event_id],
         ):
             with absltest.mock.patch(
                 "model_registry.sys.version_info", new_callable=absltest.mock.PropertyMock(return_value=(3, 8, 13))
             ):
                 model_registry.register_model(
-                    id=self.model_id,
                     uri="uri",
                     type="type",
                     version="abc",
@@ -687,10 +720,14 @@ class ModelRegistryTest(absltest.TestCase):
         """
         model_registry = self.get_model_registry()
 
+        model_name = "name"
+        model_version = "abc"
+        expected_stage_postfix = f"{model_name}_{model_version}".upper()
+
         self.add_session_mock_sql(
-            query=f"""CREATE OR REPLACE STAGE "{_DATABASE_NAME}"."{_SCHEMA_NAME}".SNOWML_MODEL_{self.model_id}""",
+            query=f'CREATE OR REPLACE STAGE "{_DATABASE_NAME}"."{_SCHEMA_NAME}".SNOWML_MODEL_{expected_stage_postfix}',
             result=mock_data_frame.MockDataFrame(
-                [snowpark.Row(**{"status": f"Stage area SNOWML_MODEL_{self.model_id.upper()} successfully created."})]
+                [snowpark.Row(**{"status": f"Stage area SNOWML_MODEL_{expected_stage_postfix} successfully created."})]
             ),
         )
 
@@ -698,7 +735,7 @@ class ModelRegistryTest(absltest.TestCase):
         mock_sp_file_operation = absltest.mock.Mock()
         self._session.__setattr__("file", mock_sp_file_operation)
 
-        expected_stage_path = f'"{_DATABASE_NAME}"."{_SCHEMA_NAME}".SNOWML_MODEL_{self.model_id.upper()}/data'
+        expected_stage_path = f'"{_DATABASE_NAME}"."{_SCHEMA_NAME}".SNOWML_MODEL_{expected_stage_postfix}/data'
 
         with absltest.mock.patch("model_registry.os.path.isfile", return_value=True) as mock_isfile:
             with absltest.mock.patch.object(
@@ -712,17 +749,16 @@ class ModelRegistryTest(absltest.TestCase):
                     return_value=True,
                 ):
                     model_registry.log_model_path(
-                        path="path", type="type", name="name", version="abc", description="description"
+                        path="path", type="type", name=model_name, version=model_version, description="description"
                     )
                     mock_isfile.assert_called_once_with("path")
                     mock_sp_file_operation.put.assert_called_with("path", expected_stage_path)
                     assert isinstance(model_registry.register_model, absltest.mock.Mock)
                     model_registry.register_model.assert_called_with(
-                        id=self.model_id,
                         type="type",
-                        uri=f"sfc:MODEL_REGISTRY.PUBLIC.SNOWML_MODEL_{self.model_id.upper()}",
-                        name="name",
-                        version="abc",
+                        uri=f"sfc:MODEL_REGISTRY.PUBLIC.SNOWML_MODEL_{expected_stage_postfix}",
+                        name=model_name,
+                        version=model_version,
                         description="description",
                         tags=None,
                     )
@@ -730,15 +766,17 @@ class ModelRegistryTest(absltest.TestCase):
     def test_delete_model_with_artifact(self) -> None:
         """Test deleting a model and artifact from the registry."""
         model_registry = self.get_model_registry()
-        self.setup_list_model_call().add_operation(operation="filter").add_collect_result(
-            [snowpark.Row(URI="sfc://model_stage")],
+        self.setup_list_model_call().add_operation(operation="filter").add_operation(
+            operation="filter"
+        ).add_collect_result(
+            [snowpark.Row(ID=self.model_id, NAME=self.model_name, VERSION=self.model_version, URI="sfc://model_stage")],
         )
         self.add_session_mock_sql(
             query=f"""DELETE FROM "MODEL_REGISTRY"."PUBLIC"."MODELS" WHERE ID='{self.model_id}'""",
             result=mock_data_frame.MockDataFrame([snowpark.Row(**{"number of rows deleted": 1})]),
         )
         self.add_session_mock_sql(
-            query="DROP STAGE model_stage",
+            query='DROP STAGE "MODEL_REGISTRY"."PUBLIC".model_stage',
             result=mock_data_frame.MockDataFrame([snowpark.Row(**{"status": "'model_stage' successfully dropped."})]),
         )
         self.template_test_set_attribute(
@@ -747,6 +785,7 @@ class ModelRegistryTest(absltest.TestCase):
                 "URI": "sfc://model_stage",
                 "delete_artifact": True,
             },
+            use_id=True,
         )
 
         with absltest.mock.patch.object(
@@ -754,7 +793,7 @@ class ModelRegistryTest(absltest.TestCase):
             "_get_new_unique_identifier",
             return_value=self.event_id,
         ):
-            model_registry.delete_model(id=self.model_id)
+            model_registry.delete_model(model_name="name", model_version="abc")
 
 
 if __name__ == "__main__":

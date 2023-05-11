@@ -22,6 +22,9 @@ class KBinsDiscretizerTest(TestCase):
         self._session = Session.builder.configs(SnowflakeLoginOptions()).create()
         self._strategies = ["quantile", "uniform"]
 
+    def tearDown(self) -> None:
+        self._session.close()
+
     # TODO(tbao): just some small dev functions for fast iteration, remove later
     # def test_dummy(self) -> None:
     #     import pandas as pd

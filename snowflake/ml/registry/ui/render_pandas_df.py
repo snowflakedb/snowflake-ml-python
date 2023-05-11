@@ -141,8 +141,9 @@ class DfRenderer:
             model_list = model_list.filter(model_list["ID"] == model_id)
             transpose = True
             content.header = "Details of model ID: " + model_id
+            model_info = model_list.collect()[0]
             history = (
-                self._registry.get_model_history(id=model_id)
+                self._registry.get_model_history(model_name=model_info["NAME"], model_version=model_info["VERSION"])
                 .select(_HISTORY_COLUMNS)
                 .order_by("EVENT_TIMESTAMP", ascending=False)
             )
