@@ -5,7 +5,7 @@ from typing import Any, Dict, List, Union, cast
 from _schema import _METADATA_TABLE_SCHEMA, _REGISTRY_TABLE_SCHEMA
 from absl.testing import absltest
 
-from snowflake import connector, snowpark
+from snowflake import snowpark
 from snowflake.ml._internal.utils import formatting
 from snowflake.ml.registry import model_registry
 from snowflake.ml.test_utils import mock_data_frame, mock_session
@@ -179,20 +179,6 @@ class ModelRegistryTest(absltest.TestCase):
         )
         self.add_session_mock_sql(
             query=(
-                """CREATE OR REPLACE VIEW "MODEL_REGISTRY"."PUBLIC"."METADATA_LAST_NAME" COPY GRANTS AS
-                        SELECT DISTINCT
-                            MODEL_ID,
-                            (LAST_VALUE(VALUE) OVER (
-                                PARTITION BY MODEL_ID ORDER BY SEQUENCE_ID))['NAME']
-                            as NAME
-                        FROM "METADATA" WHERE ATTRIBUTE_NAME = 'NAME'"""
-            ),
-            result=mock_data_frame.MockDataFrame(
-                [snowpark.Row(status="View METADATA_LAST_NAME successfully created.")]
-            ),
-        )
-        self.add_session_mock_sql(
-            query=(
                 """CREATE OR REPLACE VIEW "MODEL_REGISTRY"."PUBLIC"."METADATA_LAST_TAGS" COPY GRANTS AS
                         SELECT DISTINCT
                             MODEL_ID,
@@ -220,13 +206,12 @@ class ModelRegistryTest(absltest.TestCase):
             query=(
                 """CREATE OR REPLACE VIEW "MODEL_REGISTRY"."PUBLIC"."MODELS_VIEW" COPY GRANTS AS
                     SELECT "MODELS".*, "METADATA_LAST_DESCRIPTION".DESCRIPTION AS DESCRIPTION,
-                        "METADATA_LAST_METRICS".METRICS AS METRICS, "METADATA_LAST_NAME".NAME AS NAME,
+                        "METADATA_LAST_METRICS".METRICS AS METRICS,
                         "METADATA_LAST_TAGS".TAGS AS TAGS,
                         "METADATA_LAST_REGISTRATION".REGISTRATION_TIMESTAMP AS REGISTRATION_TIMESTAMP
                     FROM "MODELS"
                         LEFT JOIN "METADATA_LAST_DESCRIPTION" ON ("METADATA_LAST_DESCRIPTION".MODEL_ID = "MODELS".ID)
                         LEFT JOIN "METADATA_LAST_METRICS" ON ("METADATA_LAST_METRICS".MODEL_ID = "MODELS".ID)
-                        LEFT JOIN "METADATA_LAST_NAME" ON ("METADATA_LAST_NAME".MODEL_ID = "MODELS".ID)
                         LEFT JOIN "METADATA_LAST_TAGS" ON ("METADATA_LAST_TAGS".MODEL_ID = "MODELS".ID)
                         LEFT JOIN "METADATA_LAST_REGISTRATION" ON ("METADATA_LAST_REGISTRATION".MODEL_ID = "MODELS".ID)
                 """
@@ -340,71 +325,6 @@ class ModelRegistryTest(absltest.TestCase):
 
         model_list = model_registry.list_models().collect()
         self.assertEqual(model_list, [snowpark.Row(ID=self.model_id, NAME="model_name")])
-
-    def test_get_model_name(self) -> None:
-        """Test that we can get the name of an existing model from the registry."""
-        model_registry = self.get_model_registry()
-        expected_df = self.setup_list_model_call()
-        expected_df.add_operation(operation="filter")
-        expected_df.add_operation(
-            operation="select",
-            args=("NAME",),
-            result=mock_data_frame.MockDataFrame([snowpark.Row(ID=self.model_id, NAME="model_name")]),
-        )
-
-        model_name = model_registry.get_model_name(id=self.model_id)
-        self.assertEqual(model_name, "model_name")
-
-    def test_get_model_name_via_reference(self) -> None:
-        """Test that we can get the name of an existing model from the registry via ModelReference."""
-        model_registry_obj = self.get_model_registry()
-        expected_df = self.setup_list_model_call()
-        expected_df.add_operation(operation="filter")
-        expected_df.add_operation(
-            operation="select",
-            args=("NAME",),
-            result=mock_data_frame.MockDataFrame([snowpark.Row(ID=self.model_id, NAME="model_name")]),
-        )
-
-        model = model_registry.ModelReference(registry=model_registry_obj, id=self.model_id)
-
-        self.assertEqual(model.get_model_name(), "model_name")  # type: ignore
-
-    def test_get_model_name_not_found(self) -> None:
-        """Test that if the model is not found, we return None."""
-        model_registry = self.get_model_registry()
-        expected_df = self.setup_list_model_call()
-        expected_df.add_operation(operation="filter")
-        expected_df.add_operation(operation="select", args=("NAME",))
-        expected_df.add_collect_result([])
-
-        model_name = model_registry.get_model_name(id=self.model_id)
-        self.assertEqual(model_name, None)
-
-    def test_set_model_name(self) -> None:
-        """Test that we can set the name for an existing model."""
-        model_registry = self.get_model_registry()
-        self.template_test_set_attribute("NAME", "new_name")
-
-        with absltest.mock.patch.object(
-            model_registry,
-            "_get_new_unique_identifier",
-            return_value=self.event_id,
-        ):
-            model_registry.set_model_name(id=self.model_id, name="new_name")
-
-    def test_set_model_name_fail(self) -> None:
-        """Test that setting a name fails when the model foes not exist."""
-        model_registry = self.get_model_registry()
-        self.template_test_set_attribute("NAME", "new_name", result_num_inserted=0)
-
-        with absltest.mock.patch.object(
-            model_registry,
-            "_get_new_unique_identifier",
-            return_value=self.event_id,
-        ):
-            with self.assertRaises(connector.DataError):
-                model_registry.set_model_name(id=self.model_id, name="new_name")
 
     def test_set_model_description(self) -> None:
         """Test that we can set the description for an existing model."""
@@ -578,14 +498,14 @@ class ModelRegistryTest(absltest.TestCase):
         model_registry = self.get_model_registry()
 
         self.add_session_mock_sql(
-            query="""INSERT INTO "MODEL_REGISTRY"."PUBLIC"."MODELS" ( ID,NAME,TYPE,URI ) SELECT 'id','name','type',"""
-            + """'uri'""",
+            query="""INSERT INTO "MODEL_REGISTRY"."PUBLIC"."MODELS" ( ID,NAME,TYPE,URI,VERSION ) SELECT 'id','name',"""
+            + """'type','uri','abc'""",
             result=mock_data_frame.MockDataFrame([snowpark.Row(**{"number of rows inserted": 1})]),
         )
 
         model_properties = {"ID": "id", "NAME": "name", "TYPE": "type", "URI": "uri"}
 
-        model_registry._insert_registry_entry(id="id", properties=model_properties)
+        model_registry._insert_registry_entry(id="id", name="name", version="abc", properties=model_properties)
 
     def test_register_model(self) -> None:
         model_registry = self.get_model_registry()
@@ -598,9 +518,9 @@ class ModelRegistryTest(absltest.TestCase):
 
         self.add_session_mock_sql(
             query="""INSERT INTO "MODEL_REGISTRY"."PUBLIC"."MODELS" ( CREATION_ENVIRONMENT_SPEC,CREATION_ROLE,
-                    CREATION_TIME,ID,INPUT_SPEC,OUTPUT_SPEC,TYPE,URI,VERSION )
+                    CREATION_TIME,ID,INPUT_SPEC,NAME,OUTPUT_SPEC,TYPE,URI,VERSION )
                 SELECT OBJECT_CONSTRUCT('python','3.8.13'),'current_role',CURRENT_TIMESTAMP(),
-                    'id',null,null,'type','uri','abc'""",
+                    'id',null,'name',null,'type','uri','abc'""",
             result=mock_data_frame.MockDataFrame([snowpark.Row(**{"number of rows inserted": 1})]),
         )
 
@@ -625,9 +545,9 @@ class ModelRegistryTest(absltest.TestCase):
 
         self.add_session_mock_sql(
             query=f"""INSERT INTO "MODEL_REGISTRY"."PUBLIC"."MODELS" ( CREATION_ENVIRONMENT_SPEC,CREATION_ROLE,
-                    CREATION_TIME,ID,INPUT_SPEC,OUTPUT_SPEC,TYPE,URI,VERSION )
+                    CREATION_TIME,ID,INPUT_SPEC,NAME,OUTPUT_SPEC,TYPE,URI,VERSION )
                 SELECT OBJECT_CONSTRUCT('python','3.8.13'),'current_role',CURRENT_TIMESTAMP(),
-                    '{self.model_id}',null,null,'type','uri','abc'""",
+                    '{self.model_id}',null,'name',null,'type','uri','abc'""",
             result=mock_data_frame.MockDataFrame([snowpark.Row(**{"number of rows inserted": 1})]),
         )
 
@@ -640,16 +560,12 @@ class ModelRegistryTest(absltest.TestCase):
                 "CREATION_TIME": formatting.SqlStr("CURRENT_TIMESTAMP()"),
                 "ID": self.model_id,
                 "INPUT_SPEC": None,
+                "NAME": "name",
                 "OUTPUT_SPEC": None,
                 "TYPE": "type",
                 "URI": "uri",
                 "VERSION": "abc",
             },
-        )
-
-        self.template_test_set_attribute(
-            "NAME",
-            "name",
         )
 
         # Mock calls to variable values: internal set_model_name, python version, current time
@@ -717,9 +633,9 @@ class ModelRegistryTest(absltest.TestCase):
 
         self.add_session_mock_sql(
             query=f"""INSERT INTO "MODEL_REGISTRY"."PUBLIC"."MODELS" ( CREATION_ENVIRONMENT_SPEC,CREATION_ROLE,
-                    CREATION_TIME,ID,INPUT_SPEC,OUTPUT_SPEC,TYPE,URI,VERSION )
+                    CREATION_TIME,ID,INPUT_SPEC,NAME,OUTPUT_SPEC,TYPE,URI,VERSION )
                 SELECT OBJECT_CONSTRUCT('python','3.8.13'),'current_role',CURRENT_TIMESTAMP(),
-                    '{self.model_id}',null,null,'type','uri','abc'""",
+                    '{self.model_id}',null,'name',null,'type','uri','abc'""",
             result=mock_data_frame.MockDataFrame([snowpark.Row(**{"number of rows inserted": 1})]),
         )
 
@@ -732,6 +648,7 @@ class ModelRegistryTest(absltest.TestCase):
                 "CREATION_TIME": formatting.SqlStr("CURRENT_TIMESTAMP()"),
                 "ID": self.model_id,
                 "INPUT_SPEC": None,
+                "NAME": "name",
                 "OUTPUT_SPEC": None,
                 "TYPE": "type",
                 "URI": "uri",
@@ -742,11 +659,6 @@ class ModelRegistryTest(absltest.TestCase):
         self.template_test_set_attribute(
             "DESCRIPTION",
             "Model B-263-54",
-        )
-
-        self.template_test_set_attribute(
-            "NAME",
-            "name",
         )
 
         # Mock calls to variable values: internal set_model_description, python version, current time

@@ -1,7 +1,6 @@
 import os
-from typing import TYPE_CHECKING, Callable, Optional, Sequence, Type, Union, cast
+from typing import TYPE_CHECKING, Callable, Optional, Sequence, Type
 
-import cloudpickle
 import numpy as np
 import pandas as pd
 from typing_extensions import Unpack
@@ -16,58 +15,49 @@ from snowflake.ml.model import (
 from snowflake.ml.model._handlers import _base
 
 if TYPE_CHECKING:
-    import sklearn.base
-    import sklearn.pipeline
+    import xgboost
 
 
-class _SKLModelHandler(_base._ModelHandler[Union["sklearn.base.BaseEstimator", "sklearn.pipeline.Pipeline"]]):
-    """Handler for scikit-learn based model.
+class _XGBModelHandler(_base._ModelHandler["xgboost.XGBModel"]):
+    """Handler for XGBoost based model.
 
-    Currently sklearn.base.BaseEstimator and sklearn.pipeline.Pipeline based classes are supported.
+    Currently xgboost.XGBModel based classes are supported.
     """
 
-    handler_type = "sklearn"
-    DEFAULT_TARGET_METHODS = ["predict", "transform", "predict_proba", "predict_log_proba", "decision_function"]
+    handler_type = "xgboost"
+    MODEL_BLOB_FILE = "model.ubj"
+    DEFAULT_TARGET_METHODS = ["apply", "predict", "predict_proba"]
 
     @staticmethod
     def can_handle(model: model_types.SupportedModelType) -> bool:
-        return (
-            (
-                type_utils.LazyType("sklearn.base.BaseEstimator").isinstance(model)
-                or type_utils.LazyType("sklearn.pipeline.Pipeline").isinstance(model)
-            )
-            and (not type_utils.LazyType("xgboost.XGBModel").isinstance(model))  # XGBModel is actually a BaseEstimator
-            and any(
-                (hasattr(model, method) and callable(getattr(model, method, None)))
-                for method in _SKLModelHandler.DEFAULT_TARGET_METHODS
-            )
+        return (type_utils.LazyType("xgboost.XGBModel").isinstance(model)) and any(
+            (hasattr(model, method) and callable(getattr(model, method, None)))
+            for method in _XGBModelHandler.DEFAULT_TARGET_METHODS
         )
 
     @staticmethod
     def cast_model(
         model: model_types.SupportedModelType,
-    ) -> Union["sklearn.base.BaseEstimator", "sklearn.pipeline.Pipeline"]:
-        import sklearn.base
-        import sklearn.pipeline
+    ) -> "xgboost.XGBModel":
+        import xgboost
 
-        assert isinstance(model, sklearn.base.BaseEstimator) or isinstance(model, sklearn.pipeline.Pipeline)
+        assert isinstance(model, xgboost.XGBModel)
 
-        return cast(Union["sklearn.base.BaseEstimator", "sklearn.pipeline.Pipeline"], model)
+        return model
 
     @staticmethod
     def _save_model(
         name: str,
-        model: Union["sklearn.base.BaseEstimator", "sklearn.pipeline.Pipeline"],
+        model: "xgboost.XGBModel",
         model_meta: model_meta_api.ModelMetadata,
         model_blobs_dir_path: str,
         sample_input: Optional[model_types.SupportedDataType] = None,
         is_sub_model: Optional[bool] = False,
-        **kwargs: Unpack[model_types.SKLModelSaveOptions],
+        **kwargs: Unpack[model_types.XGBModelSaveOptions],
     ) -> None:
-        import sklearn.base
-        import sklearn.pipeline
+        import xgboost
 
-        assert isinstance(model, sklearn.base.BaseEstimator) or isinstance(model, sklearn.pipeline.Pipeline)
+        assert isinstance(model, xgboost.XGBModel)
 
         if not is_sub_model:
             if model_meta._signatures is None:
@@ -77,14 +67,14 @@ class _SKLModelHandler(_base._ModelHandler[Union["sklearn.base.BaseEstimator", "
                 if target_methods is None:
                     target_methods = [
                         method
-                        for method in _SKLModelHandler.DEFAULT_TARGET_METHODS
+                        for method in _XGBModelHandler.DEFAULT_TARGET_METHODS
                         if hasattr(model, method) and callable(getattr(model, method, None))
                     ]
                 else:
                     for method_name in target_methods:
                         if not callable(getattr(model, method_name, None)):
                             raise ValueError(f"Target method {method_name} is not callable.")
-                        if method_name not in _SKLModelHandler.DEFAULT_TARGET_METHODS:
+                        if method_name not in _XGBModelHandler.DEFAULT_TARGET_METHODS:
                             raise ValueError(f"Target method {method_name} is not supported.")
 
                 model_meta._signatures = {}
@@ -96,23 +86,27 @@ class _SKLModelHandler(_base._ModelHandler[Union["sklearn.base.BaseEstimator", "
                 for method_name in model_meta._signatures.keys():
                     if not callable(getattr(model, method_name, None)):
                         raise ValueError(f"Target method {method_name} is not callable.")
-                    if method_name not in _SKLModelHandler.DEFAULT_TARGET_METHODS:
+                    if method_name not in _XGBModelHandler.DEFAULT_TARGET_METHODS:
                         raise ValueError(f"Target method {method_name} is not supported.")
 
         model_blob_path = os.path.join(model_blobs_dir_path, name)
         os.makedirs(model_blob_path, exist_ok=True)
-        with open(os.path.join(model_blob_path, _SKLModelHandler.MODEL_BLOB_FILE), "wb") as f:
-            cloudpickle.dump(model, f)
+        model.save_model(os.path.join(model_blob_path, _XGBModelHandler.MODEL_BLOB_FILE))
         base_meta = model_meta_api._ModelBlobMetadata(
-            name=name, model_type=_SKLModelHandler.handler_type, path=_SKLModelHandler.MODEL_BLOB_FILE
+            name=name,
+            model_type=_XGBModelHandler.handler_type,
+            path=_XGBModelHandler.MODEL_BLOB_FILE,
+            options={"xgb_estimator_type": model.__class__.__name__},
         )
         model_meta.models[name] = base_meta
-        model_meta._include_if_absent([("scikit-learn", "scikit-learn")])
+        model_meta._include_if_absent([("scikit-learn", "scikit-learn"), ("xgboost", "xgboost")])
 
     @staticmethod
     def _load_model(
         name: str, model_meta: model_meta_api.ModelMetadata, model_blobs_dir_path: str
-    ) -> Union["sklearn.base.BaseEstimator", "sklearn.pipeline.Pipeline"]:
+    ) -> "xgboost.XGBModel":
+        import xgboost
+
         model_blob_path = os.path.join(model_blobs_dir_path, name)
         if not hasattr(model_meta, "models"):
             raise ValueError("Ill model metadata found.")
@@ -121,8 +115,12 @@ class _SKLModelHandler(_base._ModelHandler[Union["sklearn.base.BaseEstimator", "
             raise ValueError(f"Blob of model {name} does not exist.")
         model_blob_metadata = model_blobs_metadata[name]
         model_blob_filename = model_blob_metadata.path
-        with open(os.path.join(model_blob_path, model_blob_filename), "rb") as f:
-            m = cloudpickle.load(f)
+        xgb_estimator_type = model_blob_metadata.options.get("xgb_estimator_type", None)
+        if not xgb_estimator_type or not hasattr(xgboost, xgb_estimator_type):
+            raise ValueError("Type of XGB estimator unknown or illegal.")
+        m = getattr(xgboost, xgb_estimator_type)()
+        assert isinstance(m, xgboost.XGBModel)
+        m.load_model(os.path.join(model_blob_path, model_blob_filename))
         return m
 
     @staticmethod
@@ -143,11 +141,11 @@ class _SKLModelHandler(_base._ModelHandler[Union["sklearn.base.BaseEstimator", "
         from snowflake.ml.model import custom_model
 
         def _create_custom_model(
-            raw_model: Union["sklearn.base.BaseEstimator", "sklearn.pipeline.Pipeline"],
+            raw_model: "xgboost.XGBModel",
             model_meta: model_meta_api.ModelMetadata,
         ) -> Type[custom_model.CustomModel]:
             def fn_factory(
-                raw_model: Union["sklearn.base.BaseEstimator", "sklearn.pipeline.Pipeline"],
+                raw_model: "xgboost.XGBModel",
                 output_col_names: Sequence[str],
                 target_method: str,
             ) -> Callable[[custom_model.CustomModel, pd.DataFrame], pd.DataFrame]:
@@ -169,16 +167,16 @@ class _SKLModelHandler(_base._ModelHandler[Union["sklearn.base.BaseEstimator", "
                     raw_model, [spec.name for spec in sig.outputs], target_method_name
                 )
 
-            _SKLModel = type(
-                "_SKLModel",
+            _XGBModel = type(
+                "_XGBModel",
                 (custom_model.CustomModel,),
                 type_method_dict,
             )
 
-            return _SKLModel
+            return _XGBModel
 
-        raw_model = _SKLModelHandler._load_model(name, model_meta, model_blobs_dir_path)
-        _SKLModel = _create_custom_model(raw_model, model_meta)
-        skl_model = _SKLModel(custom_model.ModelContext())
+        raw_model = _XGBModelHandler._load_model(name, model_meta, model_blobs_dir_path)
+        _XGBModel = _create_custom_model(raw_model, model_meta)
+        xgb_model = _XGBModel(custom_model.ModelContext())
 
-        return skl_model
+        return xgb_model

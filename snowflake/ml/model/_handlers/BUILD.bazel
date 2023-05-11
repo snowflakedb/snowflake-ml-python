@@ -38,3 +38,16 @@ py_library(
         "//snowflake/ml/model:model_signature",
     ],
 )
+
+py_library(
+    name = "xgboost",
+    srcs = ["xgboost.py"],
+    deps = [
+        ":_base",
+        "//snowflake/ml/model:_model_meta",
+        "//snowflake/ml/model:custom_model",
+        "//snowflake/ml/_internal:type_utils",
+        "//snowflake/ml/model:type_hints",
+        "//snowflake/ml/model:model_signature",
+    ],
+)
