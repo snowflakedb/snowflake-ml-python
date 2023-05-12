@@ -46,9 +46,9 @@ snowml_wheel(
         # versions in the requirements file, we are pinning the versions here.
         "scikit-learn==1.2.1",
         "xgboost==1.7.3",
-        "joblib>=1.0.0,<=1.1.1", # All the release versions between 1.0.0 and 1.1.1 are available in SF Conda channel.
+        "joblib>=1.0.0,<=1.1.1",  # All the release versions between 1.0.0 and 1.1.1 are available in SF Conda channel.
     ],
-    version = "0.2.4", # this has to be in sync with version.py and ci/conda_recipe/meta.yaml
+    version = "0.3.0",  # this has to be in sync with version.py and ci/conda_recipe/meta.yaml
     deps = [
         "//snowflake/ml/metrics:metrics_pkg",
         "//snowflake/ml/preprocessing:preprocessing_pkg",

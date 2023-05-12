@@ -27,6 +27,7 @@ py_library(
 py_test(
     name = "file_utils_test",
     srcs = ["file_utils_test.py"],
+    timeout = "short",
     deps = [
         ":file_utils",
     ],

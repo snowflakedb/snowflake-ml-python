@@ -12,6 +12,7 @@ import joblib
 from absl import logging
 
 from snowflake import connector, snowpark
+from snowflake.ml._internal import file_utils
 from snowflake.ml._internal.utils import formatting, query_result_checker, uri
 from snowflake.ml.model import (
     _deployer,
@@ -21,7 +22,6 @@ from snowflake.ml.model import (
 )
 from snowflake.ml.registry import _schema
 from snowflake.ml.utils import telemetry
-from snowflake.snowpark._internal import utils
 
 if TYPE_CHECKING:
     import pandas as pd
@@ -998,6 +998,9 @@ class ModelRegistry:
                 output, which could be inferred by calling `infer_signature` method with sample input data.
             sample_input_data: Sample of the input data for the model.
 
+        Raises:
+            TypeError: Raised when both signatures and sample_input_data is not presented. Will be captured locally.
+
         Returns:
             String of the auto-generate unique model identifier. None if failed.
         """
@@ -1031,6 +1034,8 @@ class ModelRegistry:
                         pip_requirements=pip_requirements,
                         sample_input=sample_input_data,
                     )
+                else:
+                    raise TypeError("Either signature or sample input data should exist for native model packaging.")
                 id = self.log_model_path(
                     path=tmpdir,
                     type="snowflake_native",
@@ -1174,7 +1179,6 @@ class ModelRegistry:
         Returns:
             String of the auto-generate unique model identifier.
         """
-
         # Copy model from local disk to remote stage.
         fully_qualified_model_stage_name = self._prepare_model_stage(model_name=name, model_version=version)
 
@@ -1183,7 +1187,7 @@ class ModelRegistry:
         if os.path.isfile(path):
             self._session.file.put(path, f"{fully_qualified_model_stage_name}/data")
         elif os.path.isdir(path):
-            with utils.zip_file_or_directory_to_stream(path, path, add_init_py=True) as input_stream:
+            with file_utils.zip_file_or_directory_to_stream(path, path) as input_stream:
                 self._session._conn.upload_stream(
                     input_stream=input_stream,
                     stage_location=fully_qualified_model_stage_name,
