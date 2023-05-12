@@ -70,10 +70,11 @@ def zip_file_or_directory_to_stream(
     with io.BytesIO() as input_stream:
         with zipfile.ZipFile(input_stream, mode="w", compression=zipfile.ZIP_DEFLATED) as zf:
 
-            cur_path = os.path.dirname(path)
-            while os.path.realpath(cur_path) != os.path.realpath(start_path):
-                zf.writestr(f"{os.path.relpath(cur_path, start_path)}/", "")
-                cur_path = os.path.dirname(cur_path)
+            if os.path.realpath(path) != os.path.realpath(start_path):
+                cur_path = os.path.dirname(path)
+                while os.path.realpath(cur_path) != os.path.realpath(start_path):
+                    zf.writestr(f"{os.path.relpath(cur_path, start_path)}/", "")
+                    cur_path = os.path.dirname(cur_path)
 
             if os.path.isdir(path):
                 for dirname, _, files in os.walk(path):

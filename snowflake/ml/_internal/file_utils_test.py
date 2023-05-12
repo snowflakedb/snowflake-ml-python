@@ -46,3 +46,7 @@ class UtilsTest(absltest.TestCase):
             importlib.import_module("snowflake.snowpark.fake_module.p")
 
             sys.path.remove(os.path.abspath(zip_module_filename))
+
+            with file_utils.zip_file_or_directory_to_stream(fake_mod_dirpath, fake_mod_dirpath) as input_stream:
+                with open(zip_module_filename, "wb") as f:
+                    f.write(input_stream.getbuffer())
