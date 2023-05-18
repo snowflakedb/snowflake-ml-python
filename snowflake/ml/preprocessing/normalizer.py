@@ -8,16 +8,14 @@ import pandas as pd
 from sklearn import preprocessing
 
 from snowflake import snowpark
+from snowflake.ml._internal import telemetry
 from snowflake.ml.framework import base
-from snowflake.ml.utils import telemetry
 from snowflake.snowpark import functions as F, types as T
 
-_PROJECT = "ModelDevelopment"
-_SUBPROJECT = "Preprocessing"
 _VALID_NORMS = ["l1", "l2", "max"]
 
 
-class Normalizer(base.BaseEstimator, base.BaseTransformer):
+class Normalizer(base.BaseTransformer):
     def __init__(
         self,
         *,
@@ -44,7 +42,6 @@ class Normalizer(base.BaseEstimator, base.BaseTransformer):
         self.norm = norm
         self._is_fitted = False
 
-        base.BaseEstimator.__init__(self)
         base.BaseTransformer.__init__(self, drop_input_cols=drop_input_cols)
 
         self.set_input_cols(input_cols)
@@ -60,8 +57,8 @@ class Normalizer(base.BaseEstimator, base.BaseTransformer):
         pass
 
     @telemetry.send_api_usage_telemetry(
-        project=_PROJECT,
-        subproject=_SUBPROJECT,
+        project=base.PROJECT,
+        subproject=base.SUBPROJECT,
     )
     def fit(self, dataset: Union[snowpark.DataFrame, pd.DataFrame]) -> "Normalizer":
         """
@@ -77,8 +74,12 @@ class Normalizer(base.BaseEstimator, base.BaseTransformer):
         return self
 
     @telemetry.send_api_usage_telemetry(
-        project=_PROJECT,
-        subproject=_SUBPROJECT,
+        project=base.PROJECT,
+        subproject=base.SUBPROJECT,
+    )
+    @telemetry.add_stmt_params_to_df(
+        project=base.PROJECT,
+        subproject=base.SUBPROJECT,
     )
     def transform(self, dataset: Union[snowpark.DataFrame, pd.DataFrame]) -> Union[snowpark.DataFrame, pd.DataFrame]:
         """

@@ -17,6 +17,7 @@ py_library(
     srcs = ["mock_data_frame.py"],
     deps = [
         ":mock_snowml_base",
+        "//snowflake/ml/_internal/utils:string_matcher",
     ],
 )
 

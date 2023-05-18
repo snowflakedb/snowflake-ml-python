@@ -1,4 +1,5 @@
 import datetime
+import itertools
 import json
 from typing import Any, Dict, List, Union, cast
 
@@ -6,10 +7,10 @@ from _schema import _METADATA_TABLE_SCHEMA, _REGISTRY_TABLE_SCHEMA
 from absl.testing import absltest
 
 from snowflake import snowpark
+from snowflake.ml._internal import telemetry
 from snowflake.ml._internal.utils import formatting
 from snowflake.ml.registry import model_registry
 from snowflake.ml.test_utils import mock_data_frame, mock_session
-from snowflake.ml.utils import telemetry
 
 _DATABASE_NAME = "MODEL_REGISTRY"
 _SCHEMA_NAME = "PUBLIC"
@@ -261,49 +262,115 @@ class ModelRegistryTest(absltest.TestCase):
     def test_create_new(self) -> None:
         """Verify that we can create a new ModelRegistry database with the default names."""
         # "Create" calls.
-        statement_params = telemetry.get_function_usage_statement_params(
-            project="MLOps",
-            subproject="ModelRegistry",
-            function_name="snowflake.ml.registry.model_registry._create_registry_database",
-        )
-        self.add_session_mock_sql(
-            query="SHOW DATABASES LIKE 'MODEL_REGISTRY'",
-            result=mock_data_frame.MockDataFrame([]).add_collect_result([], statement_params=statement_params),
-        )
-        self.add_session_mock_sql(
-            query='CREATE DATABASE "MODEL_REGISTRY"',
-            result=mock_data_frame.MockDataFrame(
-                [snowpark.Row(status="Database MODEL_REGISTRY successfully created.")],
-                collect_statement_params=statement_params,
-            ),
-        )
-        self.add_session_mock_sql(
-            query="SHOW SCHEMAS LIKE 'PUBLIC' IN DATABASE \"MODEL_REGISTRY\"",
-            result=mock_data_frame.MockDataFrame(self.get_show_schemas_success(name=_SCHEMA_NAME)).add_collect_result(
-                self.get_show_schemas_success(name=_SCHEMA_NAME),
-                statement_params=statement_params,
-            ),
-        )
-        self.add_session_mock_sql(
-            query=f'CREATE TABLE "MODEL_REGISTRY"."PUBLIC"."MODELS" ({_REGISTRY_SCHEMA_STRING})',
-            result=mock_data_frame.MockDataFrame(
-                [snowpark.Row(status="Table MODELS successfully created.")],
-                collect_statement_params=statement_params,
-            ),
-        )
-        self.add_session_mock_sql(
-            query=f'CREATE TABLE "MODEL_REGISTRY"."PUBLIC"."METADATA" ({_METADATA_SCHEMA_STRING})',
-            result=mock_data_frame.MockDataFrame(
-                [snowpark.Row(status="Table METADATA successfully created.")],
-                collect_statement_params=statement_params,
-            ),
-        )
+        combinations = list(itertools.product([True, False], repeat=4))
+        for database_exists, schema_exists, registry_table_exists, metadata_table_exists in combinations:
+            with self.subTest(
+                msg=(
+                    f"database_exists={database_exists}, "
+                    f"schema_exists={schema_exists}, "
+                    f"registry_table_exists={registry_table_exists}, "
+                    f"metadata_table_exists={metadata_table_exists}"
+                )
+            ):
+                statement_params = telemetry.get_function_usage_statement_params(
+                    project="MLOps",
+                    subproject="ModelRegistry",
+                    function_name="snowflake.ml.registry.model_registry.create_model_registry",
+                )
+                if database_exists:
+                    self.add_session_mock_sql(
+                        query="SHOW DATABASES LIKE 'MODEL_REGISTRY'",
+                        result=mock_data_frame.MockDataFrame(self.get_show_databases_success(name=_DATABASE_NAME)),
+                    )
+                else:
+                    self.add_session_mock_sql(
+                        query="SHOW DATABASES LIKE 'MODEL_REGISTRY'",
+                        result=mock_data_frame.MockDataFrame([]).add_collect_result(
+                            [], statement_params=statement_params
+                        ),
+                    )
+                    self.add_session_mock_sql(
+                        query='CREATE DATABASE "MODEL_REGISTRY"',
+                        result=mock_data_frame.MockDataFrame(
+                            [snowpark.Row(status="Database MODEL_REGISTRY successfully created.")],
+                            collect_statement_params=statement_params,
+                        ),
+                    )
+                if schema_exists:
+                    self.add_session_mock_sql(
+                        query="SHOW SCHEMAS LIKE 'PUBLIC' IN DATABASE \"MODEL_REGISTRY\"",
+                        result=mock_data_frame.MockDataFrame(
+                            self.get_show_schemas_success(name=_SCHEMA_NAME)
+                        ).add_collect_result(
+                            self.get_show_schemas_success(name=_SCHEMA_NAME),
+                            statement_params=statement_params,
+                        ),
+                    )
+                else:
+                    self.add_session_mock_sql(
+                        query="SHOW SCHEMAS LIKE 'PUBLIC' IN DATABASE \"MODEL_REGISTRY\"",
+                        result=mock_data_frame.MockDataFrame([]).add_collect_result(
+                            [], statement_params=statement_params
+                        ),
+                    )
+                    self.add_session_mock_sql(
+                        query='CREATE SCHEMA "MODEL_REGISTRY"."PUBLIC"',
+                        result=mock_data_frame.MockDataFrame(
+                            [snowpark.Row(status="SCHEMA PUBLIC successfully created.")],
+                            collect_statement_params=statement_params,
+                        ),
+                    )
+                if registry_table_exists:
+                    self.add_session_mock_sql(
+                        query='SHOW TABLES LIKE \'MODELS\' IN SCHEMA "MODEL_REGISTRY"."PUBLIC"',
+                        result=mock_data_frame.MockDataFrame(
+                            self.get_show_tables_success(name=_REGISTRY_TABLE_NAME),
+                            collect_statement_params=statement_params,
+                        ),
+                    )
+                else:
+                    self.add_session_mock_sql(
+                        query='SHOW TABLES LIKE \'MODELS\' IN SCHEMA "MODEL_REGISTRY"."PUBLIC"',
+                        result=mock_data_frame.MockDataFrame([]).add_collect_result(
+                            [], statement_params=statement_params
+                        ),
+                    )
+                    self.add_session_mock_sql(
+                        query=f'CREATE TABLE "MODEL_REGISTRY"."PUBLIC"."MODELS" ({_REGISTRY_SCHEMA_STRING})',
+                        result=mock_data_frame.MockDataFrame(
+                            [snowpark.Row(status="Table MODELS successfully created.")],
+                            collect_statement_params=statement_params,
+                        ),
+                    )
+                if metadata_table_exists:
+                    self.add_session_mock_sql(
+                        query='SHOW TABLES LIKE \'METADATA\' IN SCHEMA "MODEL_REGISTRY"."PUBLIC"',
+                        result=mock_data_frame.MockDataFrame(
+                            self.get_show_tables_success(name=_METADATA_TABLE_NAME),
+                            collect_statement_params=statement_params,
+                        ),
+                    )
+                else:
+                    self.add_session_mock_sql(
+                        query='SHOW TABLES LIKE \'METADATA\' IN SCHEMA "MODEL_REGISTRY"."PUBLIC"',
+                        result=mock_data_frame.MockDataFrame([]).add_collect_result(
+                            [], statement_params=statement_params
+                        ),
+                    )
+                    self.add_session_mock_sql(
+                        query=f'CREATE TABLE "MODEL_REGISTRY"."PUBLIC"."METADATA" ({_METADATA_SCHEMA_STRING})',
+                        result=mock_data_frame.MockDataFrame(
+                            [snowpark.Row(status="Table METADATA successfully created.")],
+                            collect_statement_params=statement_params,
+                        ),
+                    )
 
-        self.setup_create_views_call()
-        model_registry.create_model_registry(
-            session=cast(snowpark.Session, self._session),
-            database_name=_DATABASE_NAME,
-        )
+                self.setup_create_views_call()
+                model_registry.create_model_registry(
+                    session=cast(snowpark.Session, self._session),
+                    database_name=_DATABASE_NAME,
+                    schema_name=_SCHEMA_NAME,
+                )
 
     def test_open_existing(self) -> None:
         """Verify that we can open an existing ModelRegistry database with the default names."""
@@ -324,19 +391,6 @@ class ModelRegistryTest(absltest.TestCase):
             result=mock_data_frame.MockDataFrame(self.get_show_tables_success(name=_METADATA_TABLE_NAME)),
         )
         model_registry.ModelRegistry(session=cast(snowpark.Session, self._session))
-
-    def test_create_existing_fail(self) -> None:
-        """Verify that we skip creation in case we want to create a ModelRegistry that already exists."""
-        self.add_session_mock_sql(
-            query="SHOW DATABASES LIKE 'MODEL_REGISTRY'",
-            result=mock_data_frame.MockDataFrame(self.get_show_databases_success(name=_DATABASE_NAME)),
-        )
-        self.assertFalse(
-            model_registry.create_model_registry(
-                session=cast(snowpark.Session, self._session),
-                database_name=_DATABASE_NAME,
-            )
-        )
 
     def test_list_models(self) -> None:
         """Test the normal operation of list_models. We create a view and return the model metadata."""
@@ -471,7 +525,10 @@ class ModelRegistryTest(absltest.TestCase):
             return_value=self.event_id,
         ):
             model_registry.set_metric(
-                model_name=self.model_name, model_version=self.model_version, name="voight-kampff", value=0.9
+                model_name=self.model_name,
+                model_version=self.model_version,
+                metric_name="voight-kampff",
+                metric_value=0.9,
             )
 
     def test_set_metric_with_existing(self) -> None:
@@ -493,7 +550,10 @@ class ModelRegistryTest(absltest.TestCase):
             return_value=self.event_id,
         ):
             model_registry.set_metric(
-                model_name=self.model_name, model_version=self.model_version, name="voight-kampff", value=0.9
+                model_name=self.model_name,
+                model_version=self.model_version,
+                metric_name="voight-kampff",
+                metric_value=0.9,
             )
 
     def test_get_metrics(self) -> None:
@@ -524,7 +584,7 @@ class ModelRegistryTest(absltest.TestCase):
         )
         self.assertEqual(
             model_registry.get_metric_value(
-                model_name=self.model_name, model_version=self.model_version, name="human-factor"
+                model_name=self.model_name, model_version=self.model_version, metric_name="human-factor"
             ),
             1.1,
         )
@@ -548,8 +608,7 @@ class ModelRegistryTest(absltest.TestCase):
         self._session.add_operation("get_current_role", result="current_role")
 
         mock_df = self.setup_list_model_call()
-        mock_df.add_operation("filter").add_operation("filter", result=mock_data_frame.MockDataFrame([]))
-        mock_df.add_count_result(0)
+        mock_df.add_operation("filter").add_operation("filter", result=mock_data_frame.MockDataFrame(count_result=0))
 
         self.add_session_mock_sql(
             query="""INSERT INTO "MODEL_REGISTRY"."PUBLIC"."MODELS" ( CREATION_ENVIRONMENT_SPEC,CREATION_ROLE,
@@ -566,7 +625,7 @@ class ModelRegistryTest(absltest.TestCase):
                     "model_registry.sys.version_info", new_callable=absltest.mock.PropertyMock(return_value=(3, 8, 13))
                 ):
                     model_registry.register_model(
-                        uri="uri", type="type", name="name", version="abc", tags={"tag_name": "tag_value"}
+                        model_name="name", model_version="abc", uri="uri", type="type", tags={"tag_name": "tag_value"}
                     )
 
     def test_register_model_no_tags(self) -> None:
@@ -576,8 +635,7 @@ class ModelRegistryTest(absltest.TestCase):
         self._session.add_operation("get_current_role", result="current_role")
 
         mock_df = self.setup_list_model_call()
-        mock_df.add_operation("filter").add_operation("filter", result=mock_data_frame.MockDataFrame([]))
-        mock_df.add_count_result(0)
+        mock_df.add_operation("filter").add_operation("filter", result=mock_data_frame.MockDataFrame(count_result=0))
 
         self.add_session_mock_sql(
             query=f"""INSERT INTO "MODEL_REGISTRY"."PUBLIC"."MODELS" ( CREATION_ENVIRONMENT_SPEC,CREATION_ROLE,
@@ -613,7 +671,7 @@ class ModelRegistryTest(absltest.TestCase):
             with absltest.mock.patch(
                 "model_registry.sys.version_info", new_callable=absltest.mock.PropertyMock(return_value=(3, 8, 13))
             ):
-                model_registry.register_model(uri="uri", type="type", name="name", version="abc")
+                model_registry.register_model(model_name="name", model_version="abc", uri="uri", type="type")
 
     def test_get_tags(self) -> None:
         """Test that get_tags is working correctly with various types."""
@@ -662,8 +720,7 @@ class ModelRegistryTest(absltest.TestCase):
         self._session.add_operation("get_current_role", result="current_role")
 
         mock_df = self.setup_list_model_call()
-        mock_df.add_operation("filter").add_operation("filter", result=mock_data_frame.MockDataFrame([]))
-        mock_df.add_count_result(0)
+        mock_df.add_operation("filter").add_operation("filter", result=mock_data_frame.MockDataFrame(count_result=0))
 
         self.add_session_mock_sql(
             query=f"""INSERT INTO "MODEL_REGISTRY"."PUBLIC"."MODELS" ( CREATION_ENVIRONMENT_SPEC,CREATION_ROLE,
@@ -707,8 +764,8 @@ class ModelRegistryTest(absltest.TestCase):
                 model_registry.register_model(
                     uri="uri",
                     type="type",
-                    version="abc",
-                    name="name",
+                    model_version="abc",
+                    model_name="name",
                     description="Model B-263-54",
                 )
 
@@ -749,7 +806,11 @@ class ModelRegistryTest(absltest.TestCase):
                     return_value=True,
                 ):
                     model_registry.log_model_path(
-                        path="path", type="type", name=model_name, version=model_version, description="description"
+                        path="path",
+                        type="type",
+                        model_name=model_name,
+                        model_version=model_version,
+                        description="description",
                     )
                     mock_isfile.assert_called_once_with("path")
                     mock_sp_file_operation.put.assert_called_with("path", expected_stage_path)
@@ -757,8 +818,8 @@ class ModelRegistryTest(absltest.TestCase):
                     model_registry.register_model.assert_called_with(
                         type="type",
                         uri=f"sfc:MODEL_REGISTRY.PUBLIC.SNOWML_MODEL_{expected_stage_postfix}",
-                        name=model_name,
-                        version=model_version,
+                        model_name=model_name,
+                        model_version=model_version,
                         description="description",
                         tags=None,
                     )

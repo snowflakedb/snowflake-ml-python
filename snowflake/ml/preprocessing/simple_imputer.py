@@ -3,7 +3,6 @@
 # Copyright (c) 2012-2022 Snowflake Computing Inc. All rights reserved.
 #
 import copy
-import inspect
 from typing import Any, Dict, Iterable, Optional, Union
 
 import numpy as np
@@ -11,13 +10,10 @@ import pandas as pd
 from sklearn import impute
 
 from snowflake import snowpark
+from snowflake.ml._internal import telemetry
 from snowflake.ml.framework import _utils, base
-from snowflake.ml.utils import telemetry
 from snowflake.snowpark import functions as F, types as T
 from snowflake.snowpark._internal import utils as snowpark_internal_utils
-
-_PROJECT = "ModelDevelopment"
-_SUBPROJECT = "Preprocessing"
 
 STRATEGY_TO_STATE_DICT = {
     "constant": None,
@@ -77,7 +73,7 @@ _NUMERIC_TYPES = [
 ]
 
 
-class SimpleImputer(base.BaseEstimator, base.BaseTransformer):
+class SimpleImputer(base.BaseTransformer):
     def __init__(
         self,
         *,
@@ -143,7 +139,6 @@ class SimpleImputer(base.BaseEstimator, base.BaseTransformer):
         #  Add back when `keep_empty_features` is supported.
         # self.keep_empty_features = keep_empty_features
 
-        base.BaseEstimator.__init__(self)
         base.BaseTransformer.__init__(self, drop_input_cols=drop_input_cols)
 
         self.set_input_cols(input_cols)
@@ -201,8 +196,8 @@ class SimpleImputer(base.BaseEstimator, base.BaseTransformer):
         return input_col_datatypes
 
     @telemetry.send_api_usage_telemetry(
-        project=_PROJECT,
-        subproject=_SUBPROJECT,
+        project=base.PROJECT,
+        subproject=base.SUBPROJECT,
     )
     def fit(self, dataset: snowpark.DataFrame) -> "SimpleImputer":
         """
@@ -220,14 +215,7 @@ class SimpleImputer(base.BaseEstimator, base.BaseTransformer):
         input_col_datatypes = self._get_dataset_input_col_datatypes(dataset)
 
         self.statistics_: Dict[str, Any] = {}
-        statement_params = telemetry.get_function_usage_statement_params(
-            project=_PROJECT,
-            subproject=_SUBPROJECT,
-            function_name=telemetry.get_statement_params_full_func_name(
-                inspect.currentframe(), self.__class__.__name__
-            ),
-            api_calls=[snowpark.DataFrame.count],
-        )
+        statement_params = telemetry.get_statement_params(base.PROJECT, base.SUBPROJECT, self.__class__.__name__)
 
         if self.strategy == "constant":
             if self.fill_value is None:
@@ -288,8 +276,12 @@ class SimpleImputer(base.BaseEstimator, base.BaseTransformer):
         return self
 
     @telemetry.send_api_usage_telemetry(
-        project=_PROJECT,
-        subproject=_SUBPROJECT,
+        project=base.PROJECT,
+        subproject=base.SUBPROJECT,
+    )
+    @telemetry.add_stmt_params_to_df(
+        project=base.PROJECT,
+        subproject=base.SUBPROJECT,
     )
     def transform(self, dataset: Union[snowpark.DataFrame, pd.DataFrame]) -> Union[snowpark.DataFrame, pd.DataFrame]:
         """

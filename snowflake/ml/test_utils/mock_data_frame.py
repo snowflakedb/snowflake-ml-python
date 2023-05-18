@@ -4,6 +4,7 @@ from typing import Any
 
 from snowflake import snowpark
 from snowflake.ml._internal.utils import formatting
+from snowflake.ml._internal.utils.string_matcher import StringMatcherIgnoreWhitespace
 from snowflake.ml.test_utils import mock_snowml_base
 
 
@@ -26,6 +27,7 @@ class MockDataFrame(mock_snowml_base.MockSnowMLBase):
         collect_statement_params: dict[str, str] | None = None,
         count_statement_params: dict[str, str] | None = None,
         check_call_sequence_completion: bool = True,
+        columns: list[str] | None = None,
     ) -> None:
         """Initializes MockDataFrame.
 
@@ -36,19 +38,24 @@ class MockDataFrame(mock_snowml_base.MockSnowMLBase):
             count_statement_params: It will check if the same `statement_params` specified during collect() call.
             check_call_sequence_completion: If True (default), we will check the completion of all expected operation
                 calls in the finalize() call and when leaving a `with MockDataFrame()` context.
+            columns: List of columns avaialble in the mock dataframe. This value is exposed as a propery.
         """
         super().__init__(
             check_call_sequence_completion,
         )
+        self.columns = columns
         # We cannot specify both collect_result and count_result for the same DataFrame. No shorter version of this
         # expression worked.
         assert not (collect_result is not None and count_result is not None)
         # If collect_statement_params given, collect_result must be present.
         assert not collect_statement_params or collect_result
 
-        if collect_result:
+        # We need to differenciate between None and empty list. Empty list is a valid response to collect call.
+        if collect_result is not None:
             self.add_collect_result(collect_result, collect_statement_params)
-        if count_result:
+
+        # Similarly we need to differenciate between None and 0. Dataframe with result count 0 is a valid scenario.
+        if count_result is not None:
             self.add_count_result(count_result, count_statement_params)
 
     def __repr__(self) -> str:
@@ -100,21 +107,25 @@ class MockDataFrame(mock_snowml_base.MockSnowMLBase):
             operation="count", kwargs=kwargs, result=result, check_statement_params=check_statement_params
         )
 
+    def add_mock_filter(self, expr: str, result: MockDataFrame | None = None) -> MockDataFrame:
+        return self.add_operation(
+            operation="filter", args=(), kwargs={"expr": StringMatcherIgnoreWhitespace(expr)}, result=result
+        )
+
     def collect(self, *args: Any, **kwargs: Any) -> Any:
         """Collect a dataframe. Corresponds to DataFrame.collect."""
         mdfo = self._check_operation("collect", args, kwargs)
         return mdfo.result
 
-    def filter(self, *args: Any, **kwargs: Any) -> MockDataFrame:
+    def filter(self, *args: Any, **kwargs: Any) -> Any:
         """Filter a dataframe. Corresponds to DataFrame.filter.
 
-        Filter calls are no-ops for now and return self. We currently cannot check the arguments to filter. Argument
-        checking for the call is disabled.
+        We currently cannot check the arguments to filter. Argument checking for the call is disabled.
 
         # noqa
         """
-        self._check_operation("filter", args=args, kwargs=kwargs, check_args=False, check_kwargs=False)
-        return self
+        mdfo = self._check_operation("filter", args=args, kwargs=kwargs, check_args=False, check_kwargs=False)
+        return mdfo.result
 
     def count(self, *args: Any, **kwargs: Any) -> Any:
         """Count the number of rows in the dataframe. Corresponds to DataFrame.count."""

@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING, Dict, Optional
 
 import anyio
 import cloudpickle
-from typing_extensions import Unpack
+from typing_extensions import TypeGuard, Unpack
 
 from snowflake.ml._internal import file_utils, type_utils
 from snowflake.ml.model import (
@@ -26,7 +26,7 @@ class _CustomModelHandler(_base._ModelHandler["custom_model.CustomModel"]):
     handler_type = "custom"
 
     @staticmethod
-    def can_handle(model: model_types.SupportedModelType) -> bool:
+    def can_handle(model: model_types.SupportedModelType) -> TypeGuard["custom_model.CustomModel"]:
         return bool(type_utils.LazyType("snowflake.ml.model.custom_model.CustomModel").isinstance(model))
 
     @staticmethod

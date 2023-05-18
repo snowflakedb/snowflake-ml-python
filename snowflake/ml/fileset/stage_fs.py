@@ -9,8 +9,8 @@ from fsspec.implementations import http as httpfs
 
 from snowflake import snowpark
 from snowflake.connector import connection
+from snowflake.ml._internal import telemetry
 from snowflake.ml.fileset import fileset_errors
-from snowflake.ml.utils import telemetry
 from snowflake.snowpark import exceptions
 
 # The default length of how long a presigned url stays active in seconds.

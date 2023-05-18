@@ -63,6 +63,8 @@ py_test(
 py_test(
     name = "test_normalizer",
     srcs = ["test_normalizer.py"],
+    shard_count = SHARD_COUNT,
+    timeout = TIMEOUT,
     deps = [
         "//snowflake/ml/preprocessing:normalizer",
         "//snowflake/ml/utils:connection_params",

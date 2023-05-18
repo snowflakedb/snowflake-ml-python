@@ -288,17 +288,17 @@ class EnvUtilsTest(absltest.TestCase):
     def test_validate_requirements_in_snowflake_conda_channel(self) -> None:
         query = textwrap.dedent(
             """
-            SELECT *
+            SELECT PACKAGE_NAME, VERSION
             FROM information_schema.packages
             WHERE (package_name = 'pytorch' OR package_name = 'xgboost')
             AND language = 'python';
             """
         )
         sql_result = [
-            row.Row(PACKAGE_NAME="xgboost", VERSION="1.3.3", LANGUAGE="python"),
-            row.Row(PACKAGE_NAME="xgboost", VERSION="1.5.1", LANGUAGE="python"),
-            row.Row(PACKAGE_NAME="xgboost", VERSION="1.7.3", LANGUAGE="python"),
-            row.Row(PACKAGE_NAME="pytorch", VERSION="1.12.1", LANGUAGE="python"),
+            row.Row(PACKAGE_NAME="xgboost", VERSION="1.3.3"),
+            row.Row(PACKAGE_NAME="xgboost", VERSION="1.5.1"),
+            row.Row(PACKAGE_NAME="xgboost", VERSION="1.7.3"),
+            row.Row(PACKAGE_NAME="pytorch", VERSION="1.12.1"),
         ]
 
         m_session = mock_session.MockSession(conn=None, test_case=self)
@@ -325,16 +325,16 @@ class EnvUtilsTest(absltest.TestCase):
 
         query = textwrap.dedent(
             """
-            SELECT *
+            SELECT PACKAGE_NAME, VERSION
             FROM information_schema.packages
             WHERE (package_name = 'xgboost')
             AND language = 'python';
             """
         )
         sql_result = [
-            row.Row(PACKAGE_NAME="xgboost", VERSION="1.3.3", LANGUAGE="python"),
-            row.Row(PACKAGE_NAME="xgboost", VERSION="1.5.1", LANGUAGE="python"),
-            row.Row(PACKAGE_NAME="xgboost", VERSION="1.7.3", LANGUAGE="python"),
+            row.Row(PACKAGE_NAME="xgboost", VERSION="1.3.3"),
+            row.Row(PACKAGE_NAME="xgboost", VERSION="1.5.1"),
+            row.Row(PACKAGE_NAME="xgboost", VERSION="1.7.3"),
         ]
 
         m_session = mock_session.MockSession(conn=None, test_case=self)
@@ -358,14 +358,14 @@ class EnvUtilsTest(absltest.TestCase):
 
         query = textwrap.dedent(
             """
-            SELECT *
+            SELECT PACKAGE_NAME, VERSION
             FROM information_schema.packages
             WHERE (package_name = 'pytorch')
             AND language = 'python';
             """
         )
         sql_result = [
-            row.Row(PACKAGE_NAME="pytorch", VERSION="1.12.1", LANGUAGE="python"),
+            row.Row(PACKAGE_NAME="pytorch", VERSION="1.12.1"),
         ]
 
         m_session = mock_session.MockSession(conn=None, test_case=self)
@@ -392,16 +392,16 @@ class EnvUtilsTest(absltest.TestCase):
 
         query = textwrap.dedent(
             """
-            SELECT *
+            SELECT PACKAGE_NAME, VERSION
             FROM information_schema.packages
             WHERE (package_name = 'xgboost')
             AND language = 'python';
             """
         )
         sql_result = [
-            row.Row(PACKAGE_NAME="xgboost", VERSION="1.3.3", LANGUAGE="python"),
-            row.Row(PACKAGE_NAME="xgboost", VERSION="1.5.1", LANGUAGE="python"),
-            row.Row(PACKAGE_NAME="xgboost", VERSION="1.7.3", LANGUAGE="python"),
+            row.Row(PACKAGE_NAME="xgboost", VERSION="1.3.3"),
+            row.Row(PACKAGE_NAME="xgboost", VERSION="1.5.1"),
+            row.Row(PACKAGE_NAME="xgboost", VERSION="1.7.3"),
         ]
 
         m_session.add_mock_sql(query=query, result=mock_data_frame.MockDataFrame(sql_result))
@@ -467,7 +467,7 @@ class EnvUtilsTest(absltest.TestCase):
 
         query = textwrap.dedent(
             """
-            SELECT *
+            SELECT PACKAGE_NAME, VERSION
             FROM information_schema.packages
             WHERE (package_name = 'python-package')
             AND language = 'python';

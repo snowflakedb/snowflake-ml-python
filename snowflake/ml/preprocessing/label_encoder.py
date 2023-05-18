@@ -8,17 +8,12 @@ import pandas as pd
 from sklearn import preprocessing
 
 from snowflake import snowpark
-from snowflake.ml._internal import type_utils
+from snowflake.ml._internal import telemetry, type_utils
 from snowflake.ml.framework import base
 from snowflake.ml.preprocessing import ordinal_encoder
-from snowflake.ml.utils import telemetry
-
-_PROJECT = "ModelDevelopment"
-_SUBPROJECT = "Preprocessing"
-_INDEX = "_INDEX"
 
 
-class LabelEncoder(base.BaseEstimator, base.BaseTransformer):
+class LabelEncoder(base.BaseTransformer):
     def __init__(
         self,
         input_cols: Optional[Union[str, Iterable[str]]] = None,
@@ -40,7 +35,6 @@ class LabelEncoder(base.BaseEstimator, base.BaseTransformer):
         self._ordinal_encoder: Optional[ordinal_encoder.OrdinalEncoder] = None
         self.classes_: Optional[type_utils.LiteralNDArrayType] = None
 
-        base.BaseEstimator.__init__(self)
         base.BaseTransformer.__init__(self, drop_input_cols=drop_input_cols)
 
         self.set_input_cols(input_cols)
@@ -53,8 +47,8 @@ class LabelEncoder(base.BaseEstimator, base.BaseTransformer):
             self.classes_ = None
 
     @telemetry.send_api_usage_telemetry(
-        project=_PROJECT,
-        subproject=_SUBPROJECT,
+        project=base.PROJECT,
+        subproject=base.SUBPROJECT,
     )
     def fit(self, dataset: Union[snowpark.DataFrame, pd.DataFrame]) -> "LabelEncoder":
         """
@@ -90,8 +84,12 @@ class LabelEncoder(base.BaseEstimator, base.BaseTransformer):
         return self
 
     @telemetry.send_api_usage_telemetry(
-        project=_PROJECT,
-        subproject=_SUBPROJECT,
+        project=base.PROJECT,
+        subproject=base.SUBPROJECT,
+    )
+    @telemetry.add_stmt_params_to_df(
+        project=base.PROJECT,
+        subproject=base.SUBPROJECT,
     )
     def transform(self, dataset: Union[snowpark.DataFrame, pd.DataFrame]) -> Union[snowpark.DataFrame, pd.DataFrame]:
         """

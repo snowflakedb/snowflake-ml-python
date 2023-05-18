@@ -50,3 +50,20 @@ py_test(
         "//snowflake/ml/test_utils:mock_session",
     ],
 )
+
+py_library(
+    name = "telemetry",
+    srcs = ["telemetry.py"],
+    deps = [
+        "//snowflake/ml/_internal:env",
+    ],
+)
+
+py_test(
+    name = "telemetry_test",
+    srcs = ["telemetry_test.py"],
+    deps = [
+        ":telemetry",
+        "//snowflake/ml/_internal:env",
+    ],
+)

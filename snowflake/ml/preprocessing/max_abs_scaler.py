@@ -10,14 +10,11 @@ from sklearn import preprocessing
 from sklearn.preprocessing import _data as sklearn_preprocessing_data
 
 from snowflake import snowpark
+from snowflake.ml._internal import telemetry
 from snowflake.ml.framework import base
-from snowflake.ml.utils import telemetry
-
-_PROJECT = "ModelDevelopment"
-_SUBPROJECT = "Preprocessing"
 
 
-class MaxAbsScaler(base.BaseEstimator, base.BaseTransformer):
+class MaxAbsScaler(base.BaseTransformer):
     def __init__(
         self,
         *,
@@ -51,8 +48,7 @@ class MaxAbsScaler(base.BaseEstimator, base.BaseTransformer):
             "SQL>>>max(abs({col_name}))",
         ]
 
-        base.BaseEstimator.__init__(self, custom_states=self.custom_states)
-        base.BaseTransformer.__init__(self, drop_input_cols=drop_input_cols)
+        base.BaseTransformer.__init__(self, drop_input_cols=drop_input_cols, custom_states=self.custom_states)
 
         self.set_input_cols(input_cols)
         self.set_output_cols(output_cols)
@@ -67,8 +63,8 @@ class MaxAbsScaler(base.BaseEstimator, base.BaseTransformer):
         self.max_abs_ = {}
 
     @telemetry.send_api_usage_telemetry(
-        project=_PROJECT,
-        subproject=_SUBPROJECT,
+        project=base.PROJECT,
+        subproject=base.SUBPROJECT,
     )
     def fit(self, dataset: Union[snowpark.DataFrame, pd.DataFrame]) -> "MaxAbsScaler":
         """
@@ -119,8 +115,12 @@ class MaxAbsScaler(base.BaseEstimator, base.BaseTransformer):
             )
 
     @telemetry.send_api_usage_telemetry(
-        project=_PROJECT,
-        subproject=_SUBPROJECT,
+        project=base.PROJECT,
+        subproject=base.SUBPROJECT,
+    )
+    @telemetry.add_stmt_params_to_df(
+        project=base.PROJECT,
+        subproject=base.SUBPROJECT,
     )
     def transform(self, dataset: Union[snowpark.DataFrame, pd.DataFrame]) -> Union[snowpark.DataFrame, pd.DataFrame]:
         """

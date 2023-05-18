@@ -1,3 +1,4 @@
+# mypy: disable-error-code="import"
 from typing import TYPE_CHECKING, Sequence, TypedDict, TypeVar, Union
 
 import numpy.typing as npt
@@ -6,6 +7,9 @@ from typing_extensions import NotRequired
 if TYPE_CHECKING:
     import numpy as np
     import pandas as pd
+    import sklearn.base
+    import sklearn.pipeline
+    import xgboost
 
     import snowflake.ml.model.custom_model
 
@@ -31,10 +35,14 @@ SupportedDataType = Union["pd.DataFrame", _SupportedNumpyArray, Sequence[_Suppor
 
 CustomModelType = TypeVar("CustomModelType", bound="snowflake.ml.model.custom_model.CustomModel")
 
-SupportedModelType = object
+SupportedModelType = Union[
+    "snowflake.ml.model.custom_model.CustomModel",
+    "sklearn.base.BaseEstimator",
+    "sklearn.pipeline.Pipeline",
+    "xgboost.XGBModel",
+    "xgboost.Booster",
+]
 """This is defined as the type that Snowflake native model packaging could accept.
-To avoid importing a lot of modules that users might not need or have, we use object here.
-
 Here is all acceptable types of Snowflake native model packaging and its handler file in _handlers/ folder.
 
 | Type                            | Handler File | Handler             |
@@ -42,11 +50,12 @@ Here is all acceptable types of Snowflake native model packaging and its handler
 | snowflake.ml.model.custom_model.CustomModel | custom.py    | _CustomModelHandler |
 | sklearn.base.BaseEstimator      | sklearn.py   | _SKLModelHandler    |
 | sklearn.pipeline.Pipeline       | sklearn.py   | _SKLModelHandler    |
-| xgboost.XGBoost       | xgboost.py   | _XGBModelHandler    |
+| xgboost.XGBModel       | xgboost.py   | _XGBModelHandler    |
+| xgboost.Booster        | xgboost.py   | _XGBModelHandler    |
 """
 
 
-ModelType = TypeVar("ModelType", bound=SupportedModelType)
+_ModelType = TypeVar("_ModelType", bound=SupportedModelType)
 
 
 class DeployOptions(TypedDict):

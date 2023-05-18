@@ -1,15 +1,16 @@
 import inspect
-from typing import List, Optional
+import sys
+from typing import Dict, List, Optional
 
-from snowflake import connector, snowpark
-from snowflake.ml._internal.utils import query_result_checker
-from snowflake.ml.utils import telemetry
-from snowflake.snowpark import Session
+from snowflake.ml._internal import telemetry
+from snowflake.snowpark import DataFrame, Session
 
-cache = {}
+cache: Dict[str, bool] = {}
 
 _PROJECT = "ModelDevelopment"
 _SUBPROJECT = "utils"
+
+_RUNTIME_VERSION = f"{sys.version_info.major}.{sys.version_info.minor}"
 
 
 def validate_pkg_versions_supported_in_snowflake_conda_channel(
@@ -19,7 +20,10 @@ def validate_pkg_versions_supported_in_snowflake_conda_channel(
         if not _validate_pkg_version_supported_in_snowflake_conda_channel(
             pkg_version=pkg_version, session=session, subproject=subproject
         ):
-            raise RuntimeError(f"Package {pkg_version} is not supported in snowflake conda channel.")
+            raise RuntimeError(
+                f"Package {pkg_version} is not supported in snowflake conda channel for "
+                f"python runtime {_RUNTIME_VERSION}."
+            )
 
 
 def _validate_pkg_version_supported_in_snowflake_conda_channel(
@@ -38,20 +42,20 @@ def _validate_pkg_version_supported_in_snowflake_conda_channel(
         sql = f"""SELECT *
                     FROM information_schema.packages
                     WHERE package_name = '{pkg_name}'
-                    AND version = '{version}';"""
-        result = session.sql(sql).collect(
+                    AND version = '{version}'"""
+        result_df = session.sql(sql)
+
+        # TODO(snandamuri): Move this filter into main SQL query after BCR 7.19 is completed.
+        if "RUNTIME_VERSION" in result_df.columns:
+            result_df = result_df.filter(f"RUNTIME_VERSION = {_RUNTIME_VERSION}")
+
+        num_rows = result_df.count(
             statement_params=telemetry.get_function_usage_statement_params(
                 project=_PROJECT,
                 subproject=subproject or _SUBPROJECT,
                 function_name=telemetry.get_statement_params_full_func_name(inspect.currentframe()),
-                api_calls=[snowpark.DataFrame.collect],
+                api_calls=[DataFrame.count],
             )
         )
-        try:
-            cache[pkg_version] = query_result_checker.result_dimension_matcher(
-                expected_rows=1, expected_cols=3, result=result, sql=sql
-            )
-        except connector.DataError:
-            cache[pkg_version] = False
-
+        cache[pkg_version] = num_rows >= 1
     return cache[pkg_version]

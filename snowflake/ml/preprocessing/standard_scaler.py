@@ -10,14 +10,11 @@ from sklearn import preprocessing
 from sklearn.preprocessing import _data as sklearn_preprocessing_data
 
 from snowflake import snowpark
+from snowflake.ml._internal import telemetry
 from snowflake.ml.framework import _utils, base
-from snowflake.ml.utils import telemetry
-
-_PROJECT = "ModelDevelopment"
-_SUBPROJECT = "Preprocessing"
 
 
-class StandardScaler(base.BaseEstimator, base.BaseTransformer):
+class StandardScaler(base.BaseTransformer):
     def __init__(
         self,
         *,
@@ -69,8 +66,7 @@ class StandardScaler(base.BaseEstimator, base.BaseTransformer):
             self.custom_states.append(_utils.NumericStatistics.VAR_POP)
             self.custom_states.append(_utils.NumericStatistics.STDDEV_POP)
 
-        base.BaseEstimator.__init__(self, custom_states=self.custom_states)
-        base.BaseTransformer.__init__(self, drop_input_cols=drop_input_cols)
+        base.BaseTransformer.__init__(self, drop_input_cols=drop_input_cols, custom_states=self.custom_states)
 
         self.set_input_cols(input_cols)
         self.set_output_cols(output_cols)
@@ -89,8 +85,8 @@ class StandardScaler(base.BaseEstimator, base.BaseTransformer):
             self.var_ = {} if self.with_std else None
 
     @telemetry.send_api_usage_telemetry(
-        project=_PROJECT,
-        subproject=_SUBPROJECT,
+        project=base.PROJECT,
+        subproject=base.SUBPROJECT,
     )
     def fit(self, dataset: Union[snowpark.DataFrame, pd.DataFrame]) -> "StandardScaler":
         """
@@ -153,8 +149,12 @@ class StandardScaler(base.BaseEstimator, base.BaseTransformer):
                 )
 
     @telemetry.send_api_usage_telemetry(
-        project=_PROJECT,
-        subproject=_SUBPROJECT,
+        project=base.PROJECT,
+        subproject=base.SUBPROJECT,
+    )
+    @telemetry.add_stmt_params_to_df(
+        project=base.PROJECT,
+        subproject=base.SUBPROJECT,
     )
     def transform(self, dataset: Union[snowpark.DataFrame, pd.DataFrame]) -> Union[snowpark.DataFrame, pd.DataFrame]:
         """

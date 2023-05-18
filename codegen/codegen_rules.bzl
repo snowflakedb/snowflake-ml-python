@@ -83,7 +83,7 @@ def autogen_estimators(module, estimator_info_list):
             deps = [
                 ":init",
                 "//snowflake/ml/framework:framework",
-                "//snowflake/ml/utils:telemetry",
+                "//snowflake/ml/_internal:telemetry",
                 "//snowflake/ml/_internal/utils:temp_file_utils",
                 "//snowflake/ml/_internal/utils:query_result_checker",
                 "//snowflake/ml/_internal/utils:pkg_version_utils",

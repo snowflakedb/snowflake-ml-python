@@ -8,7 +8,7 @@ py_library(
     srcs = ["stage_fs.py"],
     deps = [
         ":fileset_errors",
-        "//snowflake/ml/utils:telemetry",
+        "//snowflake/ml/_internal:telemetry",
     ],
 )
 
@@ -30,7 +30,7 @@ py_library(
         ":fileset_errors",
         ":stage_fs",
         "//snowflake/ml/_internal/utils:identifier",
-        "//snowflake/ml/utils:telemetry",
+        "//snowflake/ml/_internal:telemetry",
     ],
 )
 
@@ -61,8 +61,8 @@ py_library(
         ":sfcfs",
         ":tf_dataset",
         ":torch_datapipe",
+        "//snowflake/ml/_internal:telemetry",
         "//snowflake/ml/_internal/utils:import_utils",
-        "//snowflake/ml/utils:telemetry",
     ],
 )
 
@@ -155,7 +155,7 @@ snowml_wheel(
         "numpy>=1.23,<1.24",
         "pyyaml>=6.0,<7",
         "snowflake-connector-python[pandas]",
-        "snowflake-snowpark-python>=1.0.0,<=1.3",
+        "snowflake-snowpark-python>=1.4.0,<2",
     ],
     version = "0.2.2",
     deps = [

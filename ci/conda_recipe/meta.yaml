@@ -2,10 +2,11 @@
 # (dependencies, version number) from a common place. We also need to define that
 # common place, as currently it's a BUILD rule.
 # See https://docs.conda.io/projects/conda-build/en/latest/resources/define-metadata.html#templating-with-jinja
+{% set version_match = load_file_regex(load_file='../../snowflake/ml/version.bzl', regex_pattern='VERSION = "(\d\.\d\.\d*)"\s.*') %}
 
 package:
   name: snowflake-ml-python
-  version: 0.3.0 # this has to be in sync with snowflake/ml/BUILD.bazel and snowflake/ml/version.py
+  version: {{ version_match.group(1) }}
 
 source:
   path: ../../
@@ -26,7 +27,7 @@ requirements:
     - pyyaml>=6.0,<7
     - scipy>=1.9,<2
     - snowflake-connector-python
-    - snowflake-snowpark-python>=1.3.0,<=2
+    - snowflake-snowpark-python>=1.4.0,<=2
     - sqlparse>=0.4,<1
 
     # TODO(snandamuri): Versions of these packages must be exactly same between user's workspace and
@@ -35,7 +36,7 @@ requirements:
     # versions that are available in the snowflake conda channel. Since there is no way to specify allow list of
     # versions in the requirements file, we are pinning the versions here.
     - joblib>=1.0.0,<=1.1.1
-    - scikit-learn==1.2.1
+    - scikit-learn>=1.2.1,<2
     - xgboost==1.7.3
 about:
   home: https://github.com/snowflakedb/snowflake-ml-python

@@ -1,10 +1,12 @@
 from abc import ABC, abstractmethod
 from typing import Generic, Optional
 
+from typing_extensions import TypeGuard
+
 from snowflake.ml.model import _model_meta, type_hints as model_types
 
 
-class _ModelHandler(ABC, Generic[model_types.ModelType]):
+class _ModelHandler(ABC, Generic[model_types._ModelType]):
     """Provides handling for a given type of model defined by `type` class property."""
 
     handler_type = "_base"
@@ -14,7 +16,7 @@ class _ModelHandler(ABC, Generic[model_types.ModelType]):
 
     @staticmethod
     @abstractmethod
-    def can_handle(model: model_types.SupportedModelType) -> bool:
+    def can_handle(model: model_types.SupportedDataType) -> TypeGuard[model_types._ModelType]:
         """Whether this handler could support the type of the `model`.
 
         Args:
@@ -24,7 +26,7 @@ class _ModelHandler(ABC, Generic[model_types.ModelType]):
 
     @staticmethod
     @abstractmethod
-    def cast_model(model: model_types.SupportedModelType) -> model_types.ModelType:
+    def cast_model(model: model_types.SupportedModelType) -> model_types._ModelType:
         """Cast the model from Union type into the type that handler could handle.
 
         Args:
@@ -36,7 +38,7 @@ class _ModelHandler(ABC, Generic[model_types.ModelType]):
     @abstractmethod
     def _save_model(
         name: str,
-        model: model_types.ModelType,
+        model: model_types._ModelType,
         model_meta: _model_meta.ModelMetadata,
         model_blobs_dir_path: str,
         sample_input: Optional[model_types.SupportedDataType] = None,
@@ -58,7 +60,7 @@ class _ModelHandler(ABC, Generic[model_types.ModelType]):
     @abstractmethod
     def _load_model(
         name: str, model_meta: _model_meta.ModelMetadata, model_blobs_dir_path: str
-    ) -> model_types.ModelType:
+    ) -> model_types._ModelType:
         """Load the model into memory.
 
         Args:

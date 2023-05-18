@@ -6,9 +6,9 @@ import fsspec
 
 from snowflake import snowpark
 from snowflake.connector import connection
+from snowflake.ml._internal import telemetry
 from snowflake.ml._internal.utils import identifier
 from snowflake.ml.fileset import stage_fs
-from snowflake.ml.utils import telemetry
 
 PROTOCOL_NAME = "sfc"
 

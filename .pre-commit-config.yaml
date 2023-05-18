@@ -31,7 +31,7 @@ repos:
         # The first two lines of meta.yaml does not work with check-yaml
         exclude: >
           (?x)^(
-              recipe/meta.yaml|
+              ci/conda_recipe/meta.yaml|
               .github/repo_meta.yaml|
           )$
       - id: debug-statements

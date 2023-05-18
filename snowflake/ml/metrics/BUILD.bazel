@@ -13,7 +13,7 @@ py_library(
     deps = [
         ":init",
         ":utils",
-        "//snowflake/ml/utils:telemetry",
+        "//snowflake/ml/_internal:telemetry",
     ],
 )
 
@@ -34,6 +34,6 @@ py_library(
     name = "utils",
     srcs = ["_utils.py"],
     deps = [
-        "//snowflake/ml/utils:telemetry",
+        "//snowflake/ml/_internal:telemetry",
     ],
 )

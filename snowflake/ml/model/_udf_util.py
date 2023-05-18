@@ -231,10 +231,7 @@ def _get_model_final_packages(
             session=session, reqs=meta._conda_dependencies[""]
         )
         if final_packages is None and relax_version:
-            final_packages = env_utils.validate_requirements_in_snowflake_conda_channel(
-                session=session,
-                reqs=list(map(env_utils.relax_requirement_version, meta._conda_dependencies[""])),
-            )
+            final_packages = list(map(str, map(env_utils.relax_requirement_version, meta._conda_dependencies[""])))
     finally:
         if final_packages is None:
             raise RuntimeError(

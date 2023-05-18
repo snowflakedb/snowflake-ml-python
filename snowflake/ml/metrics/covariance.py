@@ -8,8 +8,8 @@ import cloudpickle
 import numpy as np
 import pandas as pd
 
+from snowflake.ml._internal import telemetry
 from snowflake.ml.metrics import _utils
-from snowflake.ml.utils import telemetry
 from snowflake.snowpark import DataFrame
 
 _PROJECT = "ModelDevelopment"
