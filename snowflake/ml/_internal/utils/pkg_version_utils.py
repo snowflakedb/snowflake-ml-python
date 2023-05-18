@@ -2,8 +2,8 @@ import inspect
 from typing import List, Optional
 
 from snowflake import connector, snowpark
+from snowflake.ml._internal import telemetry
 from snowflake.ml._internal.utils import query_result_checker
-from snowflake.ml.utils import telemetry
 from snowflake.snowpark import Session
 
 cache = {}

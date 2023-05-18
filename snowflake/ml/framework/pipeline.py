@@ -9,8 +9,8 @@ from sklearn import pipeline
 from sklearn.utils import metaestimators
 
 from snowflake import snowpark
+from snowflake.ml._internal import telemetry
 from snowflake.ml.framework import base
-from snowflake.ml.utils import telemetry
 
 _PROJECT = "ModelDevelopment"
 _SUBPROJECT = "Framework"
@@ -75,29 +75,26 @@ class Pipeline(base.BaseEstimator, base.BaseTransformer):
     def _is_transformer(obj: object) -> bool:
         return has_callable_attr(obj, "fit") and has_callable_attr(obj, "transform")
 
-    def _get_transforms(self) -> List[Tuple[str, Any]]:
+    def _get_transformers(self) -> List[Tuple[str, Any]]:
         return self.steps[:-1] if self._is_final_step_estimator else self.steps
 
     def _get_estimator(self) -> Optional[Tuple[str, Any]]:
         return self.steps[-1] if self._is_final_step_estimator else None
 
     def _validate_steps(self) -> None:
-        transforms = self._get_transforms()
-
-        for _, t in transforms:
+        for name, t in self._get_transformers():
             if not Pipeline._is_transformer(t):
                 raise TypeError(
                     "All intermediate steps should be "
                     "transformers and implement both fit() and transform() methods, but"
-                    "{name} (type {type}) doesn't".format(name=t, type=type(t))
+                    f"{name} (type {type(t)}) doesn't."
                 )
 
     def _transform_dataset(
         self, dataset: Union[snowpark.DataFrame, pd.DataFrame]
     ) -> Union[snowpark.DataFrame, pd.DataFrame]:
         transformed_dataset = dataset
-        transforms = self._get_transforms()
-        for _, (_, trans) in enumerate(transforms):
+        for _, trans in self._get_transformers():
             transformed_dataset = trans.transform(transformed_dataset)
         return transformed_dataset
 
@@ -105,8 +102,7 @@ class Pipeline(base.BaseEstimator, base.BaseTransformer):
         self, dataset: Union[snowpark.DataFrame, pd.DataFrame]
     ) -> Union[snowpark.DataFrame, pd.DataFrame]:
         transformed_dataset = dataset
-        transforms = self._get_transforms()
-        for _, (_, trans) in enumerate(transforms):
+        for _, trans in self._get_transformers():
             if has_callable_attr(trans, "fit_transform"):
                 transformed_dataset = trans.fit_transform(transformed_dataset)
             else:
@@ -131,12 +127,11 @@ class Pipeline(base.BaseEstimator, base.BaseTransformer):
         """
 
         self._validate_steps()
-        dataset_copy = dataset
-        dataset_copy = self._fit_transform_dataset(dataset_copy)
+        transformed_dataset = self._fit_transform_dataset(dataset)
 
         estimator = self._get_estimator()
         if estimator:
-            estimator[1].fit(dataset_copy)
+            estimator[1].fit(transformed_dataset)
 
         self._is_fitted = True
         return self
@@ -161,7 +156,7 @@ class Pipeline(base.BaseEstimator, base.BaseTransformer):
         """
 
         if not self._is_fitted:
-            raise RuntimeError("Pipeline not fitted before calling transform().")
+            raise RuntimeError("Pipeline is not fitted before calling transform().")
 
         transformed_dataset = self._transform_dataset(dataset=dataset)
         estimator = self._get_estimator()
@@ -196,8 +191,7 @@ class Pipeline(base.BaseEstimator, base.BaseTransformer):
 
         self._validate_steps()
 
-        transformed_dataset = dataset
-        transformed_dataset = self._fit_transform_dataset(transformed_dataset)
+        transformed_dataset = self._fit_transform_dataset(dataset=dataset)
 
         estimator = self._get_estimator()
         if estimator:
@@ -235,8 +229,7 @@ class Pipeline(base.BaseEstimator, base.BaseTransformer):
 
         self._validate_steps()
 
-        transformed_dataset = dataset
-        transformed_dataset = self._fit_transform_dataset(transformed_dataset)
+        transformed_dataset = self._fit_transform_dataset(dataset=dataset)
 
         estimator = self._get_estimator()
         if estimator:
@@ -262,20 +255,8 @@ class Pipeline(base.BaseEstimator, base.BaseTransformer):
 
         Returns:
             Output dataset.
-
-        Raises:
-            RuntimeError: If the pipeline is not fitted first.
         """
-
-        if not self._is_fitted:
-            raise RuntimeError("Pipeline not fitted before calling predict().")
-
-        transformed_dataset = self._transform_dataset(dataset=dataset)
-        estimator = self._get_estimator()
-        # Estimator is guaranteed to be not None because of _final_step_has("predict") check.
-        assert estimator is not None, "estimator cannot be None"
-        res: Union[snowpark.DataFrame, pd.DataFrame] = estimator[1].predict(transformed_dataset)
-        return res
+        return self._invoke_estimator_func("predict", dataset)
 
     @metaestimators.available_if(_final_step_has("predict_proba"))  # type: ignore[misc]
     @telemetry.send_api_usage_telemetry(
@@ -293,20 +274,8 @@ class Pipeline(base.BaseEstimator, base.BaseTransformer):
 
         Returns:
             Output dataset.
-
-        Raises:
-            RuntimeError: If the pipeline is not fitted first.
         """
-
-        if not self._is_fitted:
-            raise RuntimeError("Pipeline not fitted before calling predict_proba().")
-
-        transformed_dataset = self._transform_dataset(dataset=dataset)
-        estimator = self._get_estimator()
-        # Estimator is guaranteed to be not None because of _final_step_has("predict_proba") check.
-        assert estimator is not None, "estimator cannot be None"
-        res: Union[snowpark.DataFrame, pd.DataFrame] = estimator[1].predict_proba(transformed_dataset)
-        return res
+        return self._invoke_estimator_func("predict_proba", dataset)
 
     @metaestimators.available_if(_final_step_has("predict_log_proba"))  # type: ignore[misc]
     @telemetry.send_api_usage_telemetry(
@@ -325,20 +294,8 @@ class Pipeline(base.BaseEstimator, base.BaseTransformer):
 
         Returns:
             Output dataset.
-
-        Raises:
-            RuntimeError: If the pipeline is not fitted first.
         """
-
-        if not self._is_fitted:
-            raise RuntimeError("Pipeline not fitted before calling predict_log_proba().")
-
-        transformed_dataset = self._transform_dataset(dataset=dataset)
-        estimator = self._get_estimator()
-        # Estimator is guaranteed to be not None because of _final_step_has("predict_log_proba") check.
-        assert estimator is not None, "estimator cannot be None"
-        res: snowpark.DataFrame = estimator[1].predict_log_proba(transformed_dataset)
-        return res
+        return self._invoke_estimator_func("predict_log_proba", dataset)
 
     @metaestimators.available_if(_final_step_has("score"))  # type: ignore[misc]
     @telemetry.send_api_usage_telemetry(
@@ -352,21 +309,34 @@ class Pipeline(base.BaseEstimator, base.BaseTransformer):
         Args:
             dataset: Input dataset.
 
+        Returns:
+            Output dataset.
+        """
+        return self._invoke_estimator_func("score", dataset)
+
+    def _invoke_estimator_func(
+        self, func_name: str, dataset: Union[snowpark.DataFrame, pd.DataFrame]
+    ) -> Union[snowpark.DataFrame, pd.DataFrame]:
+        """
+        Transform the dataset by applying all the transformers in order and apply specified estimator function.
+
+        Args:
+            func_name: Target function name.
+            dataset: Input dataset.
+
         Raises:
             RuntimeError: If the pipeline is not fitted first.
 
         Returns:
             Output dataset.
         """
-
         if not self._is_fitted:
-            raise RuntimeError("Pipeline not fitted before calling score().")
+            raise RuntimeError(f"Pipeline is not fitted before calling {func_name}().")
 
         transformed_dataset = self._transform_dataset(dataset=dataset)
         estimator = self._get_estimator()
-        # Estimator is guaranteed to be not None because of _final_step_has("score") check.
         assert estimator is not None, "estimator cannot be None"
-        res: snowpark.DataFrame = estimator[1].score(transformed_dataset)
+        res: snowpark.DataFrame = getattr(estimator[1], func_name)(transformed_dataset)
         return res
 
     def _create_unfitted_sklearn_object(self) -> pipeline.Pipeline:

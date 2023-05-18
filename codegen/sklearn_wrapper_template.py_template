@@ -13,7 +13,7 @@ import numpy as np
 from sklearn.utils.metaestimators import available_if
 
 from snowflake.ml.framework.base import BaseEstimator, BaseTransformer
-from snowflake.ml.utils import telemetry
+from snowflake.ml._internal import telemetry
 from snowflake.ml._internal.utils.query_result_checker import SqlResultValidator
 from snowflake.ml._internal.utils import pkg_version_utils, identifier
 from snowflake.ml._internal.utils.temp_file_utils import cleanup_temp_files, get_temp_file_path
@@ -203,9 +203,6 @@ class {transform.original_class_name}(BaseEstimator, BaseTransformer):
         local_result_file_name = get_temp_file_path()
         stage_result_file_name = os.path.join(transform_stage_name, os.path.basename(local_transform_file_name))
 
-        # Put locally serialized transform on stage.
-        session.file.put(local_transform_file_name, stage_transform_file_name, auto_compress=False, overwrite=True)
-
         fit_sproc_name = "SNOWML_FIT_{{safe_id}}".format(safe_id=self.id)
         statement_params = telemetry.get_function_usage_statement_params(
             project=_PROJECT,
@@ -216,6 +213,8 @@ class {transform.original_class_name}(BaseEstimator, BaseTransformer):
             api_calls=[sproc],
             custom_tags=dict([("autogen", True)]),
         )
+        # Put locally serialized transform on stage.
+        session.file.put(local_transform_file_name, stage_transform_file_name, auto_compress=False, overwrite=True, statement_params=statement_params)
 
         @sproc(
             is_permanent=False,
@@ -244,13 +243,13 @@ class {transform.original_class_name}(BaseEstimator, BaseTransformer):
 
             # Execute snowpark query and obtain the results as pandas dataframe
             # NB: this implies that the result data must fit into memory.
-            df = session.sql(sql_query).to_pandas()
+            df = session.sql(sql_query).to_pandas(statement_params=statement_params)
 
             local_transform_file = tempfile.NamedTemporaryFile(delete=True)
             local_transform_file_name = local_transform_file.name
             local_transform_file.close()
 
-            session.file.get(stage_transform_file_name, local_transform_file_name)
+            session.file.get(stage_transform_file_name, local_transform_file_name, statement_params=statement_params)
 
             estimator = joblib.load(os.path.join(local_transform_file_name, os.listdir(local_transform_file_name)[0]))
 
@@ -270,7 +269,7 @@ class {transform.original_class_name}(BaseEstimator, BaseTransformer):
             local_result_file.close()
 
             joblib_dump_files = joblib.dump(estimator, local_result_file_name)
-            session.file.put(local_result_file_name, stage_result_file_name, auto_compress = False, overwrite = True)
+            session.file.put(local_result_file_name, stage_result_file_name, auto_compress = False, overwrite = True, statement_params=statement_params)
 
             # Note: you can add something like  + "|" + str(df) to the return string
             # to pass debug information to the caller.
@@ -303,7 +302,7 @@ class {transform.original_class_name}(BaseEstimator, BaseTransformer):
             if len(fields) > 1:
                 print("\n".join(fields[1:]))
 
-        session.file.get(os.path.join(stage_result_file_name, sproc_export_file_name), local_result_file_name)
+        session.file.get(os.path.join(stage_result_file_name, sproc_export_file_name), local_result_file_name, statement_params=statement_params)
         self._sklearn_object = joblib.load(os.path.join(local_result_file_name, sproc_export_file_name))
 
         cleanup_temp_files([local_transform_file_name, local_result_file_name])
@@ -837,9 +836,6 @@ class {transform.original_class_name}(BaseEstimator, BaseTransformer):
         ).validate()
 
         stage_score_file_name = os.path.join(score_stage_name, os.path.basename(local_score_file_name))
-        # Put locally serialized score on stage.
-        session.file.put(local_score_file_name, stage_score_file_name, auto_compress=False, overwrite=True)
-
         score_sproc_name = "SNOWML_SCORE_{{safe_id}}".format(safe_id=self.id)
         statement_params = telemetry.get_function_usage_statement_params(
             project=_PROJECT,
@@ -850,6 +846,9 @@ class {transform.original_class_name}(BaseEstimator, BaseTransformer):
             api_calls=[sproc],
             custom_tags=dict([("autogen", True)]),
         )
+        # Put locally serialized score on stage.
+        session.file.put(local_score_file_name, stage_score_file_name, auto_compress=False, overwrite=True, statement_params=statement_params)
+
         @sproc(
             is_permanent=False,
             name=score_sproc_name,
@@ -874,13 +873,13 @@ class {transform.original_class_name}(BaseEstimator, BaseTransformer):
             import inspect
             {transform.fit_sproc_imports}
 
-            df = session.sql(sql_query).to_pandas()
+            df = session.sql(sql_query).to_pandas(statement_params=statement_params)
 
             local_score_file = tempfile.NamedTemporaryFile(delete=True)
             local_score_file_name = local_score_file.name
             local_score_file.close()
 
-            session.file.get(stage_score_file_name, local_score_file_name)
+            session.file.get(stage_score_file_name, local_score_file_name, statement_params=statement_params)
             estimator = joblib.load(os.path.join(local_score_file_name, os.listdir(local_score_file_name)[0]))
             argspec = inspect.getfullargspec(estimator.score)
             if "X" in argspec.args:

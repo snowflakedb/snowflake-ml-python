@@ -12,7 +12,7 @@ import joblib
 from absl import logging
 
 from snowflake import connector, snowpark
-from snowflake.ml._internal import file_utils
+from snowflake.ml._internal import file_utils, telemetry
 from snowflake.ml._internal.utils import formatting, query_result_checker, uri
 from snowflake.ml.model import (
     _deployer,
@@ -21,7 +21,6 @@ from snowflake.ml.model import (
     type_hints as model_types,
 )
 from snowflake.ml.registry import _schema
-from snowflake.ml.utils import telemetry
 
 if TYPE_CHECKING:
     import pandas as pd
@@ -240,9 +239,36 @@ class ModelRegistry:
         self._session = session
         self._deploy_api = _deployer.Deployer(session=self._session, manager=_deployer.LocalDeploymentManager())
 
-        self.open(name=name)
+        self._open(name=name)
 
     # Private methods
+
+    def _open(self, *, name: str = _DEFAULT_REGISTRY_NAME) -> None:
+        """Open a model registry.
+
+        If no name is give, the default registry will be used.
+
+        Args:
+            name: (optional) Name of the Model Registry to open.
+        """
+        self._name = name
+        # Check that the required tables exist and are accessible by the current role.
+
+        query_result_checker.SqlResultValidator(
+            self._session, query=f"SHOW DATABASES LIKE '{self._name}'"
+        ).has_dimensions(expected_rows=1).validate()
+
+        query_result_checker.SqlResultValidator(
+            self._session, query=f"SHOW SCHEMAS LIKE '{self._schema}' IN DATABASE \"{self._name}\""
+        ).has_dimensions(expected_rows=1).validate()
+
+        query_result_checker.SqlResultValidator(
+            self._session, query=f"SHOW TABLES LIKE '{self._registry_table}' IN {self._fully_qualified_schema_name()}"
+        ).has_dimensions(expected_rows=1).validate()
+
+        query_result_checker.SqlResultValidator(
+            self._session, query=f"SHOW TABLES LIKE '{self._metadata_table}' IN {self._fully_qualified_schema_name()}"
+        ).has_dimensions(expected_rows=1).validate()
 
     def _get_statement_params(self, frame: Optional[types.FrameType]) -> Dict[str, Any]:
         return telemetry.get_function_usage_statement_params(
@@ -406,6 +432,23 @@ class ModelRegistry:
 
         return fully_qualified_model_stage_name
 
+    def _get_fully_qualified_stage_name_from_uri(self, model_uri: str) -> Optional[str]:
+        """Get fully qualified stage path pointed by the URI.
+
+        Args:
+            model_uri: URI for which stage file is needed.
+
+        Returns:
+            The fully qualified Snowflake stage location encoded by the given URI. Returns None if the URI is not
+                pointing to a Snowflake stage.
+        """
+        raw_stage_name = uri.get_snowflake_stage_path_from_uri(model_uri)
+        if not raw_stage_name:
+            return None
+        model_stage_name = raw_stage_name.split(".")[-1]
+        qualified_stage_path = f"{self._fully_qualified_schema_name()}.{model_stage_name}"
+        return qualified_stage_path
+
     def _list_selected_models(
         self, *, id: Optional[str] = None, model_name: Optional[str] = None, model_version: Optional[str] = None
     ) -> snowpark.DataFrame:
@@ -539,38 +582,78 @@ class ModelRegistry:
         except connector.DataError:
             raise connector.DataError(f"Setting model name for mode id {id} failed.")
 
-    # Registry operations
-
-    @telemetry.send_api_usage_telemetry(
-        project=_TELEMETRY_PROJECT,
-        subproject=_TELEMETRY_SUBPROJECT,
-    )
-    def open(self, *, name: str = _DEFAULT_REGISTRY_NAME) -> None:
-        """Open a model registry.
-
-        If no name is give, the default registry will be used.
+    def _model_identifier_is_nonempty_or_raise(self, model_name: str, model_version: str) -> None:
+        """Validate model_name and model_version are non-empty strings.
 
         Args:
-            name: (optional) Name of the Model Registry to open.
+            model_name: Model Name string.
+            model_version: Model Version string.
+
+        Raises:
+            ValueError: Raised when either model_name and model_version is empty.
         """
-        self._name = name
-        # Check that the required tables exist and are accessible by the current role.
+        if not model_name or not model_version:
+            raise ValueError("model_name and model_version have to be non-empty strings.")
 
-        query_result_checker.SqlResultValidator(
-            self._session, query=f"SHOW DATABASES LIKE '{self._name}'"
-        ).has_dimensions(expected_rows=1).validate()
+    def _get_model_id(self, model_name: str, model_version: str) -> str:
+        """Get ID of the model with the given (model name + model version).
 
-        query_result_checker.SqlResultValidator(
-            self._session, query=f"SHOW SCHEMAS LIKE '{self._schema}' IN DATABASE \"{self._name}\""
-        ).has_dimensions(expected_rows=1).validate()
+        Args:
+            model_name: Model Name string.
+            model_version: Model Version string.
 
-        query_result_checker.SqlResultValidator(
-            self._session, query=f"SHOW TABLES LIKE '{self._registry_table}' IN {self._fully_qualified_schema_name()}"
-        ).has_dimensions(expected_rows=1).validate()
+        Returns:
+            Id of the model.
 
-        query_result_checker.SqlResultValidator(
-            self._session, query=f"SHOW TABLES LIKE '{self._metadata_table}' IN {self._fully_qualified_schema_name()}"
-        ).has_dimensions(expected_rows=1).validate()
+        Raises:
+            DataError: The requested model could not be found.
+        """
+        result = self._get_metadata_attribute("ID", model_name=model_name, model_version=model_version)
+        if not result:
+            raise connector.DataError(f"Model {model_name}/{model_version} doesn't exist.")
+        return str(result)
+
+    def _get_model_path(
+        self, id: Optional[str] = None, model_name: Optional[str] = None, model_version: Optional[str] = None
+    ) -> str:
+        """Get the stage path for the model with the given (model name + model version) or `id` from the registry.
+
+        Args:
+            id: Id of the model to deploy. Required if either model name or model version is None.
+            model_name: Model Name string. Required if id is None.
+            model_version: Model Version string. Required if id is None.
+
+        Returns:
+            str: Stage path for the model.
+
+        Raises:
+            DataError: When the model cannot be found or not be restored.
+            NotImplementedError: For models that span multiple files.
+        """
+        statement_params = self._get_statement_params(inspect.currentframe())
+        selected_models = self._list_selected_models(id=id, model_name=model_name, model_version=model_version)
+        identifier = f"id {id}" if id else f"{model_name}/{model_version}"
+        model_info = self._validate_exact_one_result(selected_models, identifier)
+        if not id:
+            id = model_info[0]["ID"]
+        model_uri = model_info[0]["URI"]
+
+        if not uri.is_snowflake_stage_uri(model_uri):
+            raise connector.DataError(
+                f"Artifacts with URI scheme {uri.get_uri_scheme(model_uri)} are currently not supported."
+            )
+
+        model_stage_path = self._get_fully_qualified_stage_name_from_uri(model_uri=model_uri)
+
+        # Currently we assume only the model is on the stage.
+        model_file_list = self._session.sql(f"LIST @{model_stage_path}").collect(statement_params=statement_params)
+        if len(model_file_list) == 0:
+            raise connector.DataError(f"No files in model artifact for id {id} located at {model_uri}.")
+        if len(model_file_list) > 1:
+            raise NotImplementedError("Restoring models consisting of multiple files is currently not supported.")
+        return f"{self._fully_qualified_schema_name()}.{model_file_list[0].name}"
+
+    # Registry operations
 
     @telemetry.send_api_usage_telemetry(
         project=_TELEMETRY_PROJECT,
@@ -595,49 +678,27 @@ class ModelRegistry:
         project=_TELEMETRY_PROJECT,
         subproject=_TELEMETRY_SUBPROJECT,
     )
-    def _get_model_id(self, *, model_name: str, model_version: str) -> str:
-        """Get ID of the model with the given (model name + model version).
-
-        Args:
-            model_name: Model Name string.
-            model_version: Model Version string.
-
-        Returns:
-            Id of the model.
-
-        Raises:
-            DataError: The requested model could not be found.
-        """
-        result = self._get_metadata_attribute("ID", model_name=model_name, model_version=model_version)
-        if not result:
-            raise connector.DataError(f"Model {model_name}/{model_version} doesn't exist.")
-        return str(result)
-
-    @telemetry.send_api_usage_telemetry(
-        project=_TELEMETRY_PROJECT,
-        subproject=_TELEMETRY_SUBPROJECT,
-    )
     def set_tag(
         self,
-        name: str,
         model_name: str,
         model_version: str,
-        value: Optional[str] = None,
+        tag_name: str,
+        tag_value: Optional[str] = None,
     ) -> None:
         """Set model tag to the model with value.
 
         If the model tag already exists, the tag value will be overwritten.
 
         Args:
-            name: Desired tag name.
             model_name: Model Name string.
             model_version: Model Version string.
-            value: (optional) New tag value. If no value is given the value of the tag will be set to None.
+            tag_name: Desired tag name string.
+            tag_value: (optional) New tag value string. If no value is given the value of the tag will be set to None.
         """
         # This method uses a read-modify-write pattern for setting tags.
         # TODO(amauser): Investigate the use of transactions to avoid race conditions.
         model_tags = self.get_tags(model_name=model_name, model_version=model_version)
-        model_tags[name] = value
+        model_tags[tag_name] = tag_value
         self._set_metadata_attribute(
             _METADATA_ATTRIBUTE_TAGS, model_tags, model_name=model_name, model_version=model_version
         )
@@ -646,13 +707,13 @@ class ModelRegistry:
         project=_TELEMETRY_PROJECT,
         subproject=_TELEMETRY_SUBPROJECT,
     )
-    def remove_tag(self, name: str, model_name: str, model_version: str) -> None:
+    def remove_tag(self, model_name: str, model_version: str, tag_name: str) -> None:
         """Remove target model tag.
 
         Args:
-            name: Desired tag name.
             model_name: Model Name string.
             model_version: Model Version string.
+            tag_name: Desired tag name string.
 
         Raises:
             DataError: If the model does not have the requested tag.
@@ -661,9 +722,9 @@ class ModelRegistry:
 
         model_tags = self.get_tags(model_name=model_name, model_version=model_version)
         try:
-            del model_tags[name]
+            del model_tags[tag_name]
         except KeyError:
-            raise connector.DataError(f"Model id {id} has not tag named {name}. Full list of tags: {model_tags}")
+            raise connector.DataError(f"Model id {id} has not tag named {tag_name}. Full list of tags: {model_tags}")
 
         self._set_metadata_attribute(
             _METADATA_ATTRIBUTE_TAGS, model_tags, model_name=model_name, model_version=model_version
@@ -675,48 +736,49 @@ class ModelRegistry:
     )
     def has_tag(
         self,
-        name: str,
         model_name: str,
         model_version: str,
-        value: Optional[str] = None,
+        tag_name: str,
+        tag_value: Optional[str] = None,
     ) -> bool:
         """Check if a model has a tag with the given name and value.
 
         If no value is given, any value for the tag will return true.
 
         Args:
-            name: Desired tag name.
             model_name: Model Name string.
             model_version: Model Version string.
-            value: (optional) Tag value to check. If not value is given, only the presence of the tag will be checked.
+            tag_name: Desired tag name string.
+            tag_value: (optional) Tag value to check. If not value is given, only the presence of the tag will be
+                checked.
 
         Returns:
             True if the tag or tag and value combination is present for the model with the given id, False otherwise.
         """
         tags = self.get_tags(model_name=model_name, model_version=model_version)
-        has_tag = name in tags
-        if value is None:
+        has_tag = tag_name in tags
+        if tag_value is None:
             return has_tag
-        return has_tag and tags[name] == str(value)
+        return has_tag and tags[tag_name] == str(tag_value)
 
     @telemetry.send_api_usage_telemetry(
         project=_TELEMETRY_PROJECT,
         subproject=_TELEMETRY_SUBPROJECT,
     )
-    def get_tag_value(self, name: str, model_name: str, model_version: str) -> Any:
+    def get_tag_value(self, model_name: str, model_version: str, tag_name: str) -> Any:
         """Return the value of the tag for the model.
 
         The returned value can be None. If the tag does not exist, KeyError will be raised.
 
         Args:
-            name: Desired tag name.
             model_name: Model Name string.
             model_version: Model Version string.
+            tag_name: Desired tag name string.
 
         Returns:
             Value string of the tag or None, if no value is set for the tag.
         """
-        return self.get_tags(model_name=model_name, model_version=model_version)[name]
+        return self.get_tags(model_name=model_name, model_version=model_version)[tag_name]
 
     @telemetry.send_api_usage_telemetry(
         project=_TELEMETRY_PROJECT,
@@ -769,17 +831,16 @@ class ModelRegistry:
     )
     def set_model_description(
         self,
-        *,
-        description: str,
         model_name: str,
         model_version: str,
+        description: str,
     ) -> None:
         """Set the description of the model.
 
         Args:
-            description: Desired new model description.
             model_name: Model Name string.
             model_version: Model Version string.
+            description: Desired new model description.
         """
         self._set_metadata_attribute(
             _METADATA_ATTRIBUTE_DESCRIPTION, description, model_name=model_name, model_version=model_version
@@ -841,25 +902,25 @@ class ModelRegistry:
     )
     def set_metric(
         self,
-        name: str,
-        value: object,
         model_name: str,
         model_version: str,
+        metric_name: str,
+        metric_value: object,
     ) -> None:
         """Set scalar model metric to value.
 
         If a metric with that name already exists for the model, the metric value will be overwritten.
 
         Args:
-            name: Desired metric name.
-            value: New metric value.
             model_name: Model Name string.
             model_version: Model Version string.
+            metric_name: Desired metric name.
+            metric_value: New metric value.
         """
         # This method uses a read-modify-write pattern for setting tags.
         # TODO(amauser): Investigate the use of transactions to avoid race conditions.
         model_metrics = self.get_metrics(model_name=model_name, model_version=model_version)
-        model_metrics[name] = value
+        model_metrics[metric_name] = metric_value
         self._set_metadata_attribute(
             _METADATA_ATTRIBUTE_METRICS, model_metrics, model_name=model_name, model_version=model_version
         )
@@ -870,16 +931,16 @@ class ModelRegistry:
     )
     def remove_metric(
         self,
-        name: str,
         model_name: str,
         model_version: str,
+        metric_name: str,
     ) -> None:
         """Remove a specific metric entry from the model.
 
         Args:
-            name: Desired tag name.
             model_name: Model Name string.
             model_version: Model Version string.
+            metric_name: Desired metric name.
 
         Raises:
             DataError: If the model does not have the requested metric.
@@ -888,10 +949,11 @@ class ModelRegistry:
 
         model_metrics = self.get_metrics(model_name=model_name, model_version=model_version)
         try:
-            del model_metrics[name]
+            del model_metrics[metric_name]
         except KeyError:
             raise connector.DataError(
-                f"Model {model_name}/{model_version} has no metric named {name}. Full list of metrics: {model_metrics}"
+                f"Model {model_name}/{model_version} has no metric named {metric_name}. "
+                f"Full list of metrics: {model_metrics}"
             )
 
         self._set_metadata_attribute(
@@ -902,38 +964,38 @@ class ModelRegistry:
         project=_TELEMETRY_PROJECT,
         subproject=_TELEMETRY_SUBPROJECT,
     )
-    def has_metric(self, name: str, model_name: str, model_version: str) -> bool:
+    def has_metric(self, model_name: str, model_version: str, metric_name: str) -> bool:
         """Check if a model has a metric with the given name.
 
         Args:
-            name: Desired metric name.
             model_name: Model Name string.
             model_version: Model Version string.
+            metric_name: Desired metric name.
 
         Returns:
             True if the metric is present for the model with the given id, False otherwise.
         """
         metrics = self.get_metrics(model_name=model_name, model_version=model_version)
-        return name in metrics
+        return metric_name in metrics
 
     @telemetry.send_api_usage_telemetry(
         project=_TELEMETRY_PROJECT,
         subproject=_TELEMETRY_SUBPROJECT,
     )
-    def get_metric_value(self, name: str, model_name: str, model_version: str) -> Optional[object]:
+    def get_metric_value(self, model_name: str, model_version: str, metric_name: str) -> Optional[object]:
         """Return the value of the given metric for the model.
 
         The returned value can be None. If the metric does not exist, KeyError will be raised.
 
         Args:
-            name: Desired tag name.
             model_name: Model Name string.
             model_version: Model Version string.
+            metric_name: Desired metric name.
 
         Returns:
             Value of the metric. Can be None if the metric was set to None.
         """
-        return self.get_metrics(model_name=model_name, model_version=model_version)[name]
+        return self.get_metrics(model_name=model_name, model_version=model_version)[metric_name]
 
     @telemetry.send_api_usage_telemetry(
         project=_TELEMETRY_PROJECT,
@@ -968,10 +1030,10 @@ class ModelRegistry:
     )
     def log_model(
         self,
+        model_name: str,
+        model_version: str,
         *,
         model: Any,
-        name: str,
-        version: str,
         description: Optional[str] = None,
         tags: Optional[Dict[str, str]] = None,
         conda_dependencies: Optional[List[str]] = None,
@@ -982,10 +1044,10 @@ class ModelRegistry:
         """Uploads and register a model to the Model Registry.
 
         Args:
+            model_name: The given name for the model. The combination (name + version) must be unique for each model.
+            model_version: Version string to be set for the model. The combination (name + version) must be unique for
+                each model.
             model: Local model object in a supported format.
-            name: The given name for the model. The combination (name + version) must be unique for each model.
-            version: Version string to be set for the model. The combination (name + version) must be unique for each
-                model.
             description: A desription for the model. The description can be changed later.
             tags: string-to-string dictonary of tag names and values to be set for the model.
             conda_dependencies: List of Conda package specs. Use "[channel::]package [operator version]" syntax to
@@ -1011,12 +1073,14 @@ class ModelRegistry:
         # Save model to local disk.
         is_native_model_format = False
 
+        self._model_identifier_is_nonempty_or_raise(model_name, model_version)
+
         with tempfile.TemporaryDirectory() as tmpdir:
             model = cast(model_types.SupportedModelType, model)
             try:
                 if signatures:
                     model_api.save_model(
-                        name=name if name else self._get_new_unique_identifier(),
+                        name=model_name,
                         model_dir_path=tmpdir,
                         model=model,
                         signatures=signatures,
@@ -1026,7 +1090,7 @@ class ModelRegistry:
                     )
                 elif sample_input_data is not None:
                     model_api.save_model(
-                        name=name if name else self._get_new_unique_identifier(),
+                        name=model_name,
                         model_dir_path=tmpdir,
                         model=model,
                         metadata=tags,
@@ -1037,10 +1101,10 @@ class ModelRegistry:
                 else:
                     raise TypeError("Either signature or sample input data should exist for native model packaging.")
                 id = self.log_model_path(
+                    model_name=model_name,
+                    model_version=model_version,
                     path=tmpdir,
                     type="snowflake_native",
-                    name=name,
-                    version=version,
                     description=description,
                     tags=tags,  # TODO: Inherent model type enum.
                 )
@@ -1054,10 +1118,10 @@ class ModelRegistry:
                 local_model_file.flush()
 
                 id = self.log_model_path(
+                    model_name=model_name,
+                    model_version=model_version,
                     path=local_model_file.name,
                     type=model.__class__.__name__,
-                    name=name,
-                    version=version,
                     description=description,
                     tags=tags,
                 )
@@ -1070,11 +1134,11 @@ class ModelRegistry:
     )
     def register_model(
         self,
+        model_name: str,
+        model_version: str,
         *,
         type: str,
         uri: str,
-        name: str,
-        version: str,
         input_spec: Optional[Dict[str, str]] = None,
         output_spec: Optional[Dict[str, str]] = None,
         description: Optional[str] = None,
@@ -1086,15 +1150,13 @@ class ModelRegistry:
         that points the the actual model artifact.
 
         Args:
+            model_name: Name to be set for the model. The model name can NOT be changed after registration. The
+                combination of name and version is expected to be unique inside the registry.
+            model_version: Version string to be set for the model. The model version string can NOT be changed after
+                model registration. The combination of name and version is expected to be unique inside the registry.
             type: Type of the model. Only a subset of types are supported natively.
             uri: Resource identifier pointing to the model artifact. There are no restrictions on the URI format,
                 however only a limited set of URI schemes is supported natively.
-            name: Name to be set for the model. The model name can be changed after registration and is not
-                required to be unique inside the registry. The combination of name and version is expected to be unique
-                inside the registry.
-            version: Version string to be set for the model. The model version string can NOT be changed after model
-                registration and is not required to be unique inside the registry. The combination of name and version
-                is expected to be unique inside the registry.
             input_spec: The expected input schema of the model. Dictionary where the keys are
                 expected column names and the values are the value types.
             output_spec: The expected output schema of the model. Dictionary where the keys
@@ -1113,14 +1175,16 @@ class ModelRegistry:
         """
         # TODO(Zhe SNOW-813224): Remove input_spec and output_spec. Use signature instead.
 
+        self._model_identifier_is_nonempty_or_raise(model_name, model_version)
+
         # Create registry entry.
 
         id = self._get_new_unique_identifier()
 
         new_model: Dict[Any, Any] = {}
         new_model["ID"] = id
-        new_model["NAME"] = name
-        new_model["VERSION"] = version
+        new_model["NAME"] = model_name
+        new_model["VERSION"] = model_version
         new_model["INPUT_SPEC"] = input_spec
         new_model["OUTPUT_SPEC"] = output_spec
         new_model["TYPE"] = type
@@ -1129,19 +1193,24 @@ class ModelRegistry:
         new_model["CREATION_ENVIRONMENT_SPEC"] = {"python": ".".join(map(str, sys.version_info[:3]))}
         new_model["URI"] = uri
 
-        existing_model_nums = self._list_selected_models(model_name=name, model_version=version).count()
+        existing_model_nums = self._list_selected_models(model_name=model_name, model_version=model_version).count()
         if existing_model_nums:
-            raise connector.DataError(f"Model {name}/{version} already exists. Unable to register the model.")
+            raise connector.DataError(
+                f"Model {model_name}/{model_version} already exists. Unable to register the model."
+            )
 
-        if self._insert_registry_entry(id=id, name=name, version=version, properties=new_model):
+        if self._insert_registry_entry(id=id, name=model_name, version=model_version, properties=new_model):
             self._set_metadata_attribute(
-                model_name=name, model_version=version, attribute=_METADATA_ATTRIBUTE_REGISTRATION, value=new_model
+                model_name=model_name,
+                model_version=model_version,
+                attribute=_METADATA_ATTRIBUTE_REGISTRATION,
+                value=new_model,
             )
             if description:
-                self.set_model_description(model_name=name, model_version=version, description=description)
+                self.set_model_description(model_name=model_name, model_version=model_version, description=description)
             if tags:
                 self._set_metadata_attribute(
-                    _METADATA_ATTRIBUTE_TAGS, value=tags, model_name=name, model_version=version
+                    _METADATA_ATTRIBUTE_TAGS, value=tags, model_name=model_name, model_version=model_version
                 )
             return id
         else:
@@ -1153,11 +1222,11 @@ class ModelRegistry:
     )
     def log_model_path(
         self,
+        model_name: str,
+        model_version: str,
         *,
         path: str,
         type: str,
-        name: str,
-        version: str,
         description: Optional[str] = None,
         tags: Optional[Dict[Any, Any]] = None,
     ) -> str:
@@ -1169,18 +1238,20 @@ class ModelRegistry:
         NOTE: If any symlinks under `path` point to a parent directory, this can lead to infinite recursion.
 
         Args:
+            model_name: The given name for the model.
+            model_version: Version string to be set for the model.
             path: Local file path to be uploaded.
             type: Type of the model to be added.
-            name: The given name for the model.
-            version: Version string to be set for the model.
             description: A desription for the model. The description can be changed later.
             tags: string-to-string dictonary of tag names and values to be set for the model.
 
         Returns:
             String of the auto-generate unique model identifier.
         """
+        self._model_identifier_is_nonempty_or_raise(model_name, model_version)
+
         # Copy model from local disk to remote stage.
-        fully_qualified_model_stage_name = self._prepare_model_stage(model_name=name, model_version=version)
+        fully_qualified_model_stage_name = self._prepare_model_stage(model_name=model_name, model_version=model_version)
 
         # Check if directory or file and adapt accordingly.
         # TODO: Unify and explicit about compression for both file and directory.
@@ -1199,69 +1270,21 @@ class ModelRegistry:
                     is_in_udf=True,
                 )
         id = self.register_model(
+            model_name=model_name,
+            model_version=model_version,
             type=type,
             uri=uri.get_uri_from_snowflake_stage_path(fully_qualified_model_stage_name),
-            name=name if name else fully_qualified_model_stage_name,
-            version=version,
             description=description,
             tags=tags,
         )
 
         return id
 
-    def _get_fully_qualified_stage_name_from_uri(self, model_uri: str) -> Optional[str]:
-        raw_stage_name = uri.get_snowflake_stage_path_from_uri(model_uri)
-        if not raw_stage_name:
-            return None
-        model_stage_name = raw_stage_name.split(".")[-1]
-        qualified_stage_path = f"{self._fully_qualified_schema_name()}.{model_stage_name}"
-        return qualified_stage_path
-
-    def _get_model_path(
-        self, id: Optional[str] = None, model_name: Optional[str] = None, model_version: Optional[str] = None
-    ) -> str:
-        """Get the stage path for the model with the given (model name + model version) or `id` from the registry.
-
-        Args:
-            id: Id of the model to deploy. Required if either model name or model version is None.
-            model_name: Model Name string. Required if id is None.
-            model_version: Model Version string. Required if id is None.
-
-        Returns:
-            str: Stage path for the model.
-
-        Raises:
-            DataError: When the model cannot be found or not be restored.
-            NotImplementedError: For models that span multiple files.
-        """
-        statement_params = self._get_statement_params(inspect.currentframe())
-        selected_models = self._list_selected_models(id=id, model_name=model_name, model_version=model_version)
-        identifier = f"id {id}" if id else f"{model_name}/{model_version}"
-        model_info = self._validate_exact_one_result(selected_models, identifier)
-        if not id:
-            id = model_info[0]["ID"]
-        model_uri = model_info[0]["URI"]
-
-        if not uri.is_snowflake_stage_uri(model_uri):
-            raise connector.DataError(
-                f"Artifacts with URI scheme {uri.get_uri_scheme(model_uri)} are currently not supported."
-            )
-
-        model_stage_path = self._get_fully_qualified_stage_name_from_uri(model_uri=model_uri)
-
-        # Currently we assume only the model is on the stage.
-        model_file_list = self._session.sql(f"LIST @{model_stage_path}").collect(statement_params=statement_params)
-        if len(model_file_list) == 0:
-            raise connector.DataError(f"No files in model artifact for id {id} located at {model_uri}.")
-        if len(model_file_list) > 1:
-            raise NotImplementedError("Restoring models consisting of multiple files is currently not supported.")
-        return f"{self._fully_qualified_schema_name()}.{model_file_list[0].name}"
-
     @telemetry.send_api_usage_telemetry(
         project=_TELEMETRY_PROJECT,
         subproject=_TELEMETRY_SUBPROJECT,
     )
-    def load_model(self, *, model_name: str, model_version: str) -> Any:
+    def load_model(self, model_name: str, model_version: str) -> Any:
         """Loads the model with the given (model_name + model_version) from the registry into memory.
 
         Args:
@@ -1302,11 +1325,11 @@ class ModelRegistry:
     )
     def deploy(
         self,
+        model_name: str,
+        model_version: str,
         *,
         deployment_name: str,
         target_method: str,
-        model_name: str,
-        model_version: str,
         options: Optional[model_types.DeployOptions] = None,
     ) -> None:
         """Deploy the model with the the given deployment name.

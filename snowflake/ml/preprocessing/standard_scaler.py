@@ -10,11 +10,8 @@ from sklearn import preprocessing
 from sklearn.preprocessing import _data as sklearn_preprocessing_data
 
 from snowflake import snowpark
+from snowflake.ml._internal import telemetry
 from snowflake.ml.framework import _utils, base
-from snowflake.ml.utils import telemetry
-
-_PROJECT = "ModelDevelopment"
-_SUBPROJECT = "Preprocessing"
 
 
 class StandardScaler(base.BaseEstimator, base.BaseTransformer):
@@ -89,8 +86,8 @@ class StandardScaler(base.BaseEstimator, base.BaseTransformer):
             self.var_ = {} if self.with_std else None
 
     @telemetry.send_api_usage_telemetry(
-        project=_PROJECT,
-        subproject=_SUBPROJECT,
+        project=base.PROJECT,
+        subproject=base.SUBPROJECT,
     )
     def fit(self, dataset: Union[snowpark.DataFrame, pd.DataFrame]) -> "StandardScaler":
         """
@@ -153,8 +150,8 @@ class StandardScaler(base.BaseEstimator, base.BaseTransformer):
                 )
 
     @telemetry.send_api_usage_telemetry(
-        project=_PROJECT,
-        subproject=_SUBPROJECT,
+        project=base.PROJECT,
+        subproject=base.SUBPROJECT,
     )
     def transform(self, dataset: Union[snowpark.DataFrame, pd.DataFrame]) -> Union[snowpark.DataFrame, pd.DataFrame]:
         """

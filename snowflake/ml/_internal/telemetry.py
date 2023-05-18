@@ -25,13 +25,58 @@ from typing_extensions import ParamSpec
 from snowflake import connector
 from snowflake.connector import telemetry as connector_telemetry, time_util
 from snowflake.ml._internal import env
-from snowflake.snowpark import context, exceptions
+from snowflake.snowpark import dataframe, exceptions, session
 from snowflake.snowpark._internal import utils
 
 _Args = ParamSpec("_Args")
 _ReturnValue = TypeVar("_ReturnValue")
 
 
+@enum.unique
+class TelemetryField(enum.Enum):
+    # constants
+    NAME = "name"
+    # types of telemetry
+    TYPE_FUNCTION_USAGE = "function_usage"
+    # message keys for telemetry
+    KEY_PROJECT = "project"
+    KEY_SUBPROJECT = "subproject"
+    KEY_FUNC_NAME = "func_name"
+    KEY_FUNC_PARAMS = "func_params"
+    KEY_ERROR_INFO = "error_info"
+    KEY_VERSION = "version"
+    KEY_PYTHON_VERSION = "python_version"
+    KEY_OS = "operating_system"
+    KEY_DATA = "data"
+    KEY_CATEGORY = "category"
+    KEY_API_CALLS = "api_calls"
+    KEY_SFQIDS = "sfqids"
+    KEY_CUSTOM_TAGS = "custom_tags"
+    # function categories
+    FUNC_CAT_USAGE = "usage"
+
+
+def get_statement_params(project: str, subproject: str, class_name: Optional[str] = None) -> Dict[str, Any]:
+    """
+    Get telemetry statement parameters.
+
+    Args:
+        project: Project name.
+        subproject: Subproject name.
+        class_name: Caller's module name.
+
+    Returns:
+        dictionary of parameters to log to event table.
+    """
+    frame = inspect.currentframe()
+    return get_function_usage_statement_params(
+        project=project,
+        subproject=subproject,
+        function_name=get_statement_params_full_func_name(frame.f_back if frame else None, class_name),
+    )
+
+
+# TODO: we can merge this with get_statement_params after code clean up
 def get_statement_params_full_func_name(frame: Optional[types.FrameType], class_name: Optional[str] = None) -> str:
     """
     Get the class-level or module-level full function name to be logged in statement parameters.
@@ -57,46 +102,6 @@ def get_statement_params_full_func_name(frame: Optional[types.FrameType], class_
     function_name = frame.f_code.co_name if frame else None
     func_name = ".".join([name for name in [module_name, class_name, function_name] if name])
     return func_name
-
-
-def _get_full_func_name(func: Callable[..., Any]) -> str:
-    """
-    Get the full function name with module and qualname.
-
-    Args:
-        func: Function.
-
-    Returns:
-        Full function name.
-    """
-    module = func.__module__ if hasattr(func, "__module__") else None
-    qualname = func.__qualname__
-    func_name = f"{module}.{qualname}" if module else qualname
-    return func_name
-
-
-@enum.unique
-class TelemetryField(enum.Enum):
-    # constants
-    NAME = "name"
-    # types of telemetry
-    TYPE_FUNCTION_USAGE = "function_usage"
-    # message keys for telemetry
-    KEY_PROJECT = "project"
-    KEY_SUBPROJECT = "subproject"
-    KEY_FUNC_NAME = "func_name"
-    KEY_FUNC_PARAMS = "func_params"
-    KEY_ERROR_INFO = "error_info"
-    KEY_VERSION = "version"
-    KEY_PYTHON_VERSION = "python_version"
-    KEY_OS = "operating_system"
-    KEY_DATA = "data"
-    KEY_CATEGORY = "category"
-    KEY_API_CALLS = "api_calls"
-    KEY_SFQIDS = "sfqids"
-    KEY_CUSTOM_TAGS = "custom_tags"
-    # function categories
-    FUNC_CAT_USAGE = "usage"
 
 
 def get_function_usage_statement_params(
@@ -247,15 +252,16 @@ def send_api_usage_telemetry(
                 conn = operator.attrgetter(conn_attr_name)(args[0])
                 if not isinstance(conn, connector.SnowflakeConnection):
                     raise TypeError(f"Expected a conn object of type SnowflakeConnection, but got {type(conn)}")
-            # get the active session
+            # get an active session
             else:
                 try:
-                    active_session = context.get_active_session()
+                    active_session = next(iter(session._get_active_sessions()))
+                # server no default session
                 except exceptions.SnowparkSessionException:
                     try:
                         return func(*args, **kwargs)
                     except Exception as e:
-                        # suppress SnowparkSessionException in the stack trace
+                        # suppress SnowparkSessionException from telemetry in the stack trace
                         raise e from None
                 conn = active_session._conn._conn
                 if conn is None:
@@ -303,6 +309,84 @@ def send_api_usage_telemetry(
         return cast(Callable[_Args, _ReturnValue], wrap)
 
     return decorator
+
+
+def add_stmt_params_to_df(
+    project: str,
+    subproject: Optional[str] = None,
+    *,
+    function_category: str = TelemetryField.FUNC_CAT_USAGE.value,
+    func_params_to_log: Optional[Iterable[str]] = None,
+    api_calls: Optional[
+        List[
+            Union[
+                Dict[str, Union[Callable[..., Any], str]],
+                Union[Callable[..., Any], str],
+            ]
+        ]
+    ] = None,
+    custom_tags: Optional[Dict[str, Union[bool, int, str, float]]] = None,
+) -> Callable[[Callable[_Args, _ReturnValue]], Callable[_Args, _ReturnValue]]:
+    """
+    Decorator that adds function usage statement parameters to the dataframe returned by the function.
+
+    Args:
+        project: Project.
+        subproject: Subproject.
+        function_category: Function category.
+        func_params_to_log: Function parameters to log.
+        api_calls: API calls in the function.
+        custom_tags: Custom tags.
+
+    Returns:
+        Decorator that adds function usage statement parameters to the dataframe returned by the decorated function.
+    """
+
+    def decorator(func: Callable[_Args, _ReturnValue]) -> Callable[_Args, _ReturnValue]:
+        @functools.wraps(func)
+        def wrap(*args: Any, **kwargs: Any) -> _ReturnValue:
+            params = _get_func_params(func, func_params_to_log, args, kwargs) if func_params_to_log else None
+            statement_params = get_function_usage_statement_params(
+                project=project,
+                subproject=subproject,
+                function_category=function_category,
+                function_name=_get_full_func_name(func),
+                function_parameters=params,
+                api_calls=api_calls,
+                custom_tags=custom_tags,
+            )
+
+            try:
+                res = func(*args, **kwargs)
+                if isinstance(res, dataframe.DataFrame):
+                    if hasattr(res, "_statement_params") and res._statement_params:
+                        res._statement_params.update(statement_params)
+                    else:
+                        res._statement_params = statement_params  # type: ignore[assignment]
+            except Exception:
+                raise
+            else:
+                return res
+
+        return cast(Callable[_Args, _ReturnValue], wrap)
+
+    return decorator
+
+
+def _get_full_func_name(func: Callable[..., Any]) -> str:
+    """
+    Get the full function name with module and qualname.
+
+    Args:
+        func: Function.
+
+    Returns:
+        Full function name.
+    """
+    module = func.__module__ if hasattr(func, "__module__") else None
+    qualname = func.__qualname__
+    func_name = f"{module}.{qualname}" if module else qualname
+    return func_name
 
 
 def _get_func_params(
@@ -385,7 +469,7 @@ class _SourceTelemetryClient:
             subproject: Subproject.
 
         Attributes:
-            telemetry: Python connector TelemetryClient.
+            _telemetry: Python connector TelemetryClient.
             source: Source.
             version: Library version.
             python_version: Python version.
@@ -395,9 +479,9 @@ class _SourceTelemetryClient:
         self._telemetry: Optional[connector_telemetry.TelemetryClient] = (
             None if utils.is_in_stored_procedure() else conn._telemetry  # type: ignore[no-untyped-call]
         )
+        self.source: str = env.SOURCE
         self.project: Optional[str] = project
         self.subproject: Optional[str] = subproject
-        self.source: str = env.SOURCE
         self.version = env.VERSION
         self.python_version: str = env.PYTHON_VERSION
         self.os: str = env.OS

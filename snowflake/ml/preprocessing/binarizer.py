@@ -8,12 +8,9 @@ import pandas as pd
 from sklearn import preprocessing
 
 from snowflake import snowpark
+from snowflake.ml._internal import telemetry
 from snowflake.ml.framework import base
-from snowflake.ml.utils import telemetry
 from snowflake.snowpark import functions as F, types as T
-
-_PROJECT = "ModelDevelopment"
-_SUBPROJECT = "Preprocessing"
 
 
 class Binarizer(base.BaseEstimator, base.BaseTransformer):
@@ -57,8 +54,8 @@ class Binarizer(base.BaseEstimator, base.BaseTransformer):
         super()._reset()
 
     @telemetry.send_api_usage_telemetry(
-        project=_PROJECT,
-        subproject=_SUBPROJECT,
+        project=base.PROJECT,
+        subproject=base.SUBPROJECT,
     )
     def fit(self, dataset: Union[snowpark.DataFrame, pd.DataFrame]) -> "Binarizer":
         """
@@ -80,8 +77,8 @@ class Binarizer(base.BaseEstimator, base.BaseTransformer):
         return self
 
     @telemetry.send_api_usage_telemetry(
-        project=_PROJECT,
-        subproject=_SUBPROJECT,
+        project=base.PROJECT,
+        subproject=base.SUBPROJECT,
     )
     def transform(self, dataset: Union[snowpark.DataFrame, pd.DataFrame]) -> Union[snowpark.DataFrame, pd.DataFrame]:
         """

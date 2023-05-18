@@ -4,10 +4,9 @@
 
 import asyncio
 import os
-import random
-import string
 import sys
 import tempfile
+from uuid import uuid4
 
 import numpy as np
 import pandas as pd
@@ -120,7 +119,7 @@ class TestModelInteg(absltest.TestCase):
         """Creates Snowpark and Snowflake environments for testing."""
         self._session = Session.builder.configs(connection_params.SnowflakeLoginOptions()).create()
         # To create different UDF names among different runs
-        self.run_id = "".join(random.choices(string.ascii_lowercase, k=8))
+        self.run_id = str(uuid4()).replace("-", "_")
         self._snowml_wheel_path = _upload_snowml_to_tmp_stage(self._session)
 
         db = self._session.get_current_database()

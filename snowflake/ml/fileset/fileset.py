@@ -5,9 +5,9 @@ from typing import Any, Callable, List, Optional
 
 from snowflake import snowpark
 from snowflake.connector import connection
+from snowflake.ml._internal import telemetry
 from snowflake.ml._internal.utils import identifier, import_utils
 from snowflake.ml.fileset import fileset_errors, sfcfs
-from snowflake.ml.utils import telemetry
 from snowflake.snowpark import exceptions, functions, types
 from snowflake.snowpark._internal import type_utils as snowpark_types
 

@@ -14,6 +14,7 @@ from scipy import sparse
 from sklearn.preprocessing import KBinsDiscretizer as SK_KBinsDiscretizer
 
 from snowflake import snowpark
+from snowflake.ml._internal import telemetry
 from snowflake.ml.framework import base
 from snowflake.snowpark import functions as F, types as T
 from snowflake.snowpark._internal import utils as snowpark_utils
@@ -48,7 +49,6 @@ def decimal_to_float(data: npt.NDArray[np.generic]) -> npt.NDArray[np.float32]:
 
 
 # TODO(tbao): suport kmeans with snowpark if needed
-# TODO(tbao): add telemetry
 class KBinsDiscretizer(base.BaseEstimator, base.BaseTransformer):
     """
     Bin continuous data into intervals.
@@ -125,6 +125,10 @@ class KBinsDiscretizer(base.BaseEstimator, base.BaseTransformer):
         self.bin_edges_: Optional[npt.NDArray[np.float32]] = None
         self.n_bins_: Optional[npt.NDArray[np.int32]] = None
 
+    @telemetry.send_api_usage_telemetry(
+        project=base.PROJECT,
+        subproject=base.SUBPROJECT,
+    )
     def fit(self, dataset: Union[snowpark.DataFrame, pd.DataFrame]) -> KBinsDiscretizer:
         """
         Fit KBinsDiscretizer with dataset.
@@ -155,6 +159,10 @@ class KBinsDiscretizer(base.BaseEstimator, base.BaseTransformer):
         self._is_fitted = True
         return self
 
+    @telemetry.send_api_usage_telemetry(
+        project=base.PROJECT,
+        subproject=base.SUBPROJECT,
+    )
     def transform(
         self, dataset: Union[snowpark.DataFrame, pd.DataFrame]
     ) -> Union[snowpark.DataFrame, pd.DataFrame, sparse.csr_matrix]:
@@ -216,7 +224,13 @@ class KBinsDiscretizer(base.BaseEstimator, base.BaseTransformer):
                     F.percentile_cont(pct).within_group(col_name).alias(f"{col_name}_pct_{i}")  # type: ignore[arg-type]
                 )
         state_df = dataset.agg(agg_queries)
-        state = state_df.to_pandas().to_numpy().ravel()
+        state = (
+            state_df.to_pandas(
+                statement_params=telemetry.get_statement_params(base.PROJECT, base.SUBPROJECT, self.__class__.__name__)
+            )
+            .to_numpy()
+            .ravel()
+        )
 
         # 2. Populate internal state variables
         # TODO(tbao): Remove bins whose width are too small (i.e., <= 1e-8)
@@ -244,7 +258,13 @@ class KBinsDiscretizer(base.BaseEstimator, base.BaseTransformer):
             )
         )
         state_df = dataset.select(*agg_queries)
-        state = state_df.to_pandas().to_numpy().ravel()
+        state = (
+            state_df.to_pandas(
+                statement_params=telemetry.get_statement_params(base.PROJECT, base.SUBPROJECT, self.__class__.__name__)
+            )
+            .to_numpy()
+            .ravel()
+        )
 
         # 2. Populate internal state variables
         self.bin_edges_ = np.zeros(len(self.input_cols), dtype=object)
@@ -312,6 +332,7 @@ class KBinsDiscretizer(base.BaseEstimator, base.BaseTransformer):
             replace=True,
             packages=["numpy"],
             session=dataset._session,
+            statement_params=telemetry.get_statement_params(base.PROJECT, base.SUBPROJECT, self.__class__.__name__),
         )
         def vec_bucketize(x: T.PandasSeries[float], boarders: T.PandasSeries[List[float]]) -> T.PandasSeries[int]:
             # NB: vectorized udf doesn't work well with const array arg, so we pass it in as a list via PandasSeries
@@ -349,6 +370,7 @@ class KBinsDiscretizer(base.BaseEstimator, base.BaseTransformer):
             replace=True,
             packages=["numpy"],
             session=dataset._session,
+            statement_params=telemetry.get_statement_params(base.PROJECT, base.SUBPROJECT, self.__class__.__name__),
         )
         def vec_bucketize_sparse_output(
             x: T.PandasSeries[float], boarders: T.PandasSeries[List[float]]
@@ -391,6 +413,7 @@ class KBinsDiscretizer(base.BaseEstimator, base.BaseTransformer):
             replace=True,
             packages=["numpy"],
             session=dataset._session,
+            statement_params=telemetry.get_statement_params(base.PROJECT, base.SUBPROJECT, self.__class__.__name__),
         )
         def vec_bucketize_dense_output(
             x: T.PandasSeries[float], boarders: T.PandasSeries[List[float]]

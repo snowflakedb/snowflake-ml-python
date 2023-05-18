@@ -2,7 +2,6 @@
 #
 # Copyright (c) 2012-2022 Snowflake Computing Inc. All rights reserved.
 #
-import inspect
 import numbers
 from typing import Any, Dict, Iterable, List, Optional, Union
 
@@ -15,14 +14,11 @@ from scipy import sparse
 from sklearn import preprocessing, utils as sklearn_utils
 
 from snowflake import snowpark
-from snowflake.ml._internal import type_utils
+from snowflake.ml._internal import telemetry, type_utils
 from snowflake.ml.framework import _utils, base
-from snowflake.ml.utils import telemetry
 from snowflake.snowpark import functions as F, types as T
 from snowflake.snowpark._internal import utils as snowpark_utils
 
-_PROJECT = "ModelDevelopment"
-_SUBPROJECT = "Preprocessing"
 _INFREQUENT_CATEGORY = "_INFREQUENT"
 _COLUMN_NAME = "_COLUMN_NAME"
 _CATEGORY = "_CATEGORY"
@@ -220,8 +216,8 @@ class OneHotEncoder(base.BaseEstimator, base.BaseTransformer):
             del self._state_pandas
 
     @telemetry.send_api_usage_telemetry(
-        project=_PROJECT,
-        subproject=_SUBPROJECT,
+        project=base.PROJECT,
+        subproject=base.SUBPROJECT,
     )
     def fit(self, dataset: Union[snowpark.DataFrame, pd.DataFrame]) -> "OneHotEncoder":
         """
@@ -317,15 +313,9 @@ class OneHotEncoder(base.BaseEstimator, base.BaseTransformer):
         """
         # columns: COLUMN_NAME, CATEGORY, COUNT
         state_df = self._get_category_count_state_df(dataset)
-        statement_params = telemetry.get_function_usage_statement_params(
-            project=_PROJECT,
-            subproject=_SUBPROJECT,
-            function_name=telemetry.get_statement_params_full_func_name(
-                inspect.currentframe(), self.__class__.__name__
-            ),
-            api_calls=[snowpark.DataFrame.to_pandas],
+        self._state_pandas = state_df.to_pandas(
+            statement_params=telemetry.get_statement_params(base.PROJECT, base.SUBPROJECT, self.__class__.__name__)
         )
-        self._state_pandas = state_df.to_pandas(statement_params=statement_params)
 
         # columns: COLUMN_NAME, STATE
         # state object: {category: count}
@@ -420,15 +410,11 @@ class OneHotEncoder(base.BaseEstimator, base.BaseTransformer):
                     .subtract(given_state_df[[_COLUMN_NAME, _CATEGORY]])
                     .to_df(["COLUMN_NAME", "UNKNOWN_VALUE"])
                 )
-                statement_params = telemetry.get_function_usage_statement_params(
-                    project=_PROJECT,
-                    subproject=_SUBPROJECT,
-                    function_name=telemetry.get_statement_params_full_func_name(
-                        inspect.currentframe(), self.__class__.__name__
-                    ),
-                    api_calls=[snowpark.DataFrame.to_pandas],
+                unknown_pandas = unknown_df.to_pandas(
+                    statement_params=telemetry.get_statement_params(
+                        base.PROJECT, base.SUBPROJECT, self.__class__.__name__
+                    )
                 )
-                unknown_pandas = unknown_df.to_pandas(statement_params=statement_params)
                 if not unknown_pandas.empty:
                     msg = f"Found unknown categories during fit:\n{unknown_pandas.to_string()}"
                     raise ValueError(msg)
@@ -576,8 +562,8 @@ class OneHotEncoder(base.BaseEstimator, base.BaseTransformer):
         self._state_pandas[_ENCODING] = self._state_pandas.apply(lambda x: map_encoding(x), axis=1)
 
     @telemetry.send_api_usage_telemetry(
-        project=_PROJECT,
-        subproject=_SUBPROJECT,
+        project=base.PROJECT,
+        subproject=base.SUBPROJECT,
     )
     def transform(
         self, dataset: Union[snowpark.DataFrame, pd.DataFrame]
@@ -760,14 +746,6 @@ class OneHotEncoder(base.BaseEstimator, base.BaseTransformer):
             Output dataset in the sparse representation.
         """
         encoder_sklearn = self.get_sklearn_object()
-        statement_params = telemetry.get_function_usage_statement_params(
-            project=_PROJECT,
-            subproject=_SUBPROJECT,
-            function_name=telemetry.get_statement_params_full_func_name(
-                inspect.currentframe(), self.__class__.__name__
-            ),
-            api_calls=[F.pandas_udf],
-        )
 
         @F.pandas_udf(  # type: ignore
             is_permanent=False,
@@ -775,7 +753,7 @@ class OneHotEncoder(base.BaseEstimator, base.BaseTransformer):
             return_type=T.PandasSeriesType(T.ArrayType(T.MapType(T.FloatType(), T.FloatType()))),
             input_types=[T.PandasDataFrameType([T.StringType() for _ in range(len(self.input_cols))])],
             packages=["numpy", "scikit-learn"],
-            statement_params=statement_params,
+            statement_params=telemetry.get_statement_params(base.PROJECT, base.SUBPROJECT, self.__class__.__name__),
         )
         def one_hot_encoder_sparse_transform(data: pd.DataFrame) -> List[List[Optional[Dict[Any, Any]]]]:
             data = data.replace({np.nan: None})  # fill NA with None as represented in `categories_`
@@ -951,15 +929,11 @@ class OneHotEncoder(base.BaseEstimator, base.BaseTransformer):
                 unknown_df = unknown_df.union_by_name(temp_df) if unknown_df is not None else temp_df
 
             if unknown_df:
-                statement_params = telemetry.get_function_usage_statement_params(
-                    project=_PROJECT,
-                    subproject=_SUBPROJECT,
-                    function_name=telemetry.get_statement_params_full_func_name(
-                        inspect.currentframe(), self.__class__.__name__
-                    ),
-                    api_calls=[snowpark.DataFrame.to_pandas],
+                unknown_pandas = unknown_df.to_pandas(
+                    statement_params=telemetry.get_statement_params(
+                        base.PROJECT, base.SUBPROJECT, self.__class__.__name__
+                    )
                 )
-                unknown_pandas = unknown_df.to_pandas(statement_params=statement_params)
                 if not unknown_pandas.empty:
                     msg = f"Found unknown categories during transform:\n{unknown_pandas.to_string()}"
                     raise ValueError(msg)

@@ -11,11 +11,8 @@ from sklearn import preprocessing
 from sklearn.preprocessing import _data as sklearn_preprocessing_data
 
 from snowflake import snowpark
+from snowflake.ml._internal import telemetry
 from snowflake.ml.framework import _utils, base
-from snowflake.ml.utils import telemetry
-
-_PROJECT = "ModelDevelopment"
-_SUBPROJECT = "Preprocessing"
 
 
 class RobustScaler(base.BaseEstimator, base.BaseTransformer):
@@ -96,8 +93,8 @@ class RobustScaler(base.BaseEstimator, base.BaseTransformer):
         return None if (not self.with_scaling or not self._state_is_set) else self._scale
 
     @telemetry.send_api_usage_telemetry(
-        project=_PROJECT,
-        subproject=_SUBPROJECT,
+        project=base.PROJECT,
+        subproject=base.SUBPROJECT,
     )
     def fit(self, dataset: Union[snowpark.DataFrame, pd.DataFrame]) -> "RobustScaler":
         """
@@ -169,8 +166,8 @@ class RobustScaler(base.BaseEstimator, base.BaseTransformer):
                 self._scale[input_col] = 1
 
     @telemetry.send_api_usage_telemetry(
-        project=_PROJECT,
-        subproject=_SUBPROJECT,
+        project=base.PROJECT,
+        subproject=base.SUBPROJECT,
     )
     def transform(self, dataset: Union[snowpark.DataFrame, pd.DataFrame]) -> Union[snowpark.DataFrame, pd.DataFrame]:
         """

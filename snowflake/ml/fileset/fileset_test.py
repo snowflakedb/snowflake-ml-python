@@ -123,7 +123,9 @@ class FileSetTest(absltest.TestCase):
                         " FILE_FORMAT  = (  TYPE  = parquet )  max_file_size = 33554432 detailed_output = True "
                         "  HEADER  = True"
                     )
-                    mock_cursor.execute.assert_called_with(expected_query, _statement_params=absltest.mock.ANY)
+                    mock_cursor.execute.assert_called_with(
+                        expected_query, params=absltest.mock.ANY, _statement_params=absltest.mock.ANY
+                    )
 
                     # FileSet.make() will shuffle rows by random if shuffle is true
                     mock_cursor.execute.reset_mock()
@@ -140,7 +142,9 @@ class FileSetTest(absltest.TestCase):
                             " FILE_FORMAT  = (  TYPE  = parquet )  max_file_size = 33554432 detailed_output = True "
                             "  HEADER  = True"
                         )
-                        mock_cursor.execute.assert_called_with(expected_query, _statement_params=absltest.mock.ANY)
+                        mock_cursor.execute.assert_called_with(
+                            expected_query, params=absltest.mock.ANY, _statement_params=absltest.mock.ANY
+                        )
 
     def test_make_and_no_cast(self) -> None:
         """Test if a FileSet can be created from a make call and uncasted data type are not casted."""
@@ -189,7 +193,9 @@ class FileSetTest(absltest.TestCase):
                         " FILE_FORMAT  = (  TYPE  = parquet )  max_file_size = 33554432 detailed_output = True "
                         "  HEADER  = True"
                     )
-                    mock_cursor.execute.assert_called_with(expected_query, _statement_params=absltest.mock.ANY)
+                    mock_cursor.execute.assert_called_with(
+                        expected_query, params=absltest.mock.ANY, _statement_params=absltest.mock.ANY
+                    )
 
     def test_make_fail_by_files_from_different_query(self) -> None:
         """Test if a FileSet creation could fail because files contain different query id."""

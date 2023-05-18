@@ -10,12 +10,9 @@ from sklearn import preprocessing
 from sklearn.preprocessing import _data as sklearn_preprocessing_data
 
 from snowflake import snowpark
+from snowflake.ml._internal import telemetry
 from snowflake.ml.framework import _utils, base
-from snowflake.ml.utils import telemetry
 from snowflake.snowpark import functions as F
-
-_PROJECT = "ModelDevelopment"
-_SUBPROJECT = "Preprocessing"
 
 
 class MinMaxScaler(base.BaseEstimator, base.BaseTransformer):
@@ -77,8 +74,8 @@ class MinMaxScaler(base.BaseEstimator, base.BaseTransformer):
             self.data_range_ = {}
 
     @telemetry.send_api_usage_telemetry(
-        project=_PROJECT,
-        subproject=_SUBPROJECT,
+        project=base.PROJECT,
+        subproject=base.SUBPROJECT,
     )
     def fit(self, dataset: Union[snowpark.DataFrame, pd.DataFrame]) -> "MinMaxScaler":
         """
@@ -140,8 +137,8 @@ class MinMaxScaler(base.BaseEstimator, base.BaseTransformer):
             self.data_range_[input_col] = data_range
 
     @telemetry.send_api_usage_telemetry(
-        project=_PROJECT,
-        subproject=_SUBPROJECT,
+        project=base.PROJECT,
+        subproject=base.SUBPROJECT,
     )
     def transform(self, dataset: Union[snowpark.DataFrame, pd.DataFrame]) -> Union[snowpark.DataFrame, pd.DataFrame]:
         """

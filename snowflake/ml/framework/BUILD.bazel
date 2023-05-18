@@ -11,7 +11,7 @@ py_library(
     ],
     deps = [
         "//snowflake/ml:version",
+        "//snowflake/ml/_internal:telemetry",
         "//snowflake/ml/_internal/utils:parallelize",
-        "//snowflake/ml/utils:telemetry",
     ],
 )

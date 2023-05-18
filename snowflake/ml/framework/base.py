@@ -13,14 +13,14 @@ import numpy.typing as npt
 import pandas as pd
 
 from snowflake import snowpark
+from snowflake.ml._internal import telemetry
 from snowflake.ml._internal.utils import parallelize
 from snowflake.ml.framework import _utils
-from snowflake.ml.utils import telemetry
 from snowflake.snowpark import functions as F
 from snowflake.snowpark._internal import type_utils
 
-_PROJECT = "ModelDevelopment"
-_SUBPROJECT = "Preprocessing"
+PROJECT = "ModelDevelopment"
+SUBPROJECT = "Preprocessing"
 
 
 def _process_cols(cols: Optional[Union[str, Iterable[str]]]) -> List[str]:
@@ -358,8 +358,8 @@ class BaseEstimator(Base):
         return dataset[self.input_cols]
 
     @telemetry.send_api_usage_telemetry(
-        project=_PROJECT,
-        subproject=_SUBPROJECT,
+        project=PROJECT,
+        subproject=SUBPROJECT,
     )
     def _compute(
         self, dataset: snowpark.DataFrame, cols: List[str], states: List[str]
@@ -377,14 +377,6 @@ class BaseEstimator(Base):
         Returns:
             A dict of {column_name: {state: value}} of each column.
         """
-        statement_params = telemetry.get_function_usage_statement_params(
-            project=_PROJECT,
-            subproject=_SUBPROJECT,
-            function_name=telemetry.get_statement_params_full_func_name(
-                inspect.currentframe(), self.__class__.__name__
-            ),
-            api_calls=[snowpark.DataFrame.collect],
-        )
 
         def _compute_on_partition(df: snowpark.DataFrame, cols_subset: List[str]) -> snowpark.DataFrame:
             """Returns a DataFrame with the desired computation on the specified column subset."""
@@ -408,7 +400,7 @@ class BaseEstimator(Base):
             cols=cols,
             map_func=_compute_on_partition,
             partition_size=40,
-            statement_params=statement_params,
+            statement_params=telemetry.get_statement_params(PROJECT, SUBPROJECT, self.__class__.__name__),
         )
 
         computed_dict: Dict[str, Dict[str, Union[int, float, str]]] = {}
@@ -542,15 +534,9 @@ class BaseTransformer(Base):
             ) - type_utils.ColumnOrLiteral(F.count(type_utils.ColumnOrName(dataset[input_col])))
             null_count_columns.append(col)
 
-        statement_params = telemetry.get_function_usage_statement_params(
-            project=_PROJECT,
-            subproject=_SUBPROJECT,
-            function_name=telemetry.get_statement_params_full_func_name(
-                inspect.currentframe(), self.__class__.__name__
-            ),
-            api_calls=[snowpark.DataFrame.collect],
+        null_counts = dataset.agg(*null_count_columns).collect(
+            statement_params=telemetry.get_statement_params(PROJECT, SUBPROJECT, self.__class__.__name__)
         )
-        null_counts = dataset.agg(*null_count_columns).collect(statement_params=statement_params)
         assert len(null_counts) == 1
 
         invalid_columns = {col: n for (col, n) in zip(self.input_cols, null_counts[0].as_dict().values()) if n > 0}

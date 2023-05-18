@@ -6,10 +6,10 @@ from _schema import _METADATA_TABLE_SCHEMA, _REGISTRY_TABLE_SCHEMA
 from absl.testing import absltest
 
 from snowflake import snowpark
+from snowflake.ml._internal import telemetry
 from snowflake.ml._internal.utils import formatting
 from snowflake.ml.registry import model_registry
 from snowflake.ml.test_utils import mock_data_frame, mock_session
-from snowflake.ml.utils import telemetry
 
 _DATABASE_NAME = "MODEL_REGISTRY"
 _SCHEMA_NAME = "PUBLIC"
@@ -471,7 +471,10 @@ class ModelRegistryTest(absltest.TestCase):
             return_value=self.event_id,
         ):
             model_registry.set_metric(
-                model_name=self.model_name, model_version=self.model_version, name="voight-kampff", value=0.9
+                model_name=self.model_name,
+                model_version=self.model_version,
+                metric_name="voight-kampff",
+                metric_value=0.9,
             )
 
     def test_set_metric_with_existing(self) -> None:
@@ -493,7 +496,10 @@ class ModelRegistryTest(absltest.TestCase):
             return_value=self.event_id,
         ):
             model_registry.set_metric(
-                model_name=self.model_name, model_version=self.model_version, name="voight-kampff", value=0.9
+                model_name=self.model_name,
+                model_version=self.model_version,
+                metric_name="voight-kampff",
+                metric_value=0.9,
             )
 
     def test_get_metrics(self) -> None:
@@ -524,7 +530,7 @@ class ModelRegistryTest(absltest.TestCase):
         )
         self.assertEqual(
             model_registry.get_metric_value(
-                model_name=self.model_name, model_version=self.model_version, name="human-factor"
+                model_name=self.model_name, model_version=self.model_version, metric_name="human-factor"
             ),
             1.1,
         )
@@ -566,7 +572,7 @@ class ModelRegistryTest(absltest.TestCase):
                     "model_registry.sys.version_info", new_callable=absltest.mock.PropertyMock(return_value=(3, 8, 13))
                 ):
                     model_registry.register_model(
-                        uri="uri", type="type", name="name", version="abc", tags={"tag_name": "tag_value"}
+                        model_name="name", model_version="abc", uri="uri", type="type", tags={"tag_name": "tag_value"}
                     )
 
     def test_register_model_no_tags(self) -> None:
@@ -613,7 +619,7 @@ class ModelRegistryTest(absltest.TestCase):
             with absltest.mock.patch(
                 "model_registry.sys.version_info", new_callable=absltest.mock.PropertyMock(return_value=(3, 8, 13))
             ):
-                model_registry.register_model(uri="uri", type="type", name="name", version="abc")
+                model_registry.register_model(model_name="name", model_version="abc", uri="uri", type="type")
 
     def test_get_tags(self) -> None:
         """Test that get_tags is working correctly with various types."""
@@ -707,8 +713,8 @@ class ModelRegistryTest(absltest.TestCase):
                 model_registry.register_model(
                     uri="uri",
                     type="type",
-                    version="abc",
-                    name="name",
+                    model_version="abc",
+                    model_name="name",
                     description="Model B-263-54",
                 )
 
@@ -749,7 +755,11 @@ class ModelRegistryTest(absltest.TestCase):
                     return_value=True,
                 ):
                     model_registry.log_model_path(
-                        path="path", type="type", name=model_name, version=model_version, description="description"
+                        path="path",
+                        type="type",
+                        model_name=model_name,
+                        model_version=model_version,
+                        description="description",
                     )
                     mock_isfile.assert_called_once_with("path")
                     mock_sp_file_operation.put.assert_called_with("path", expected_stage_path)
@@ -757,8 +767,8 @@ class ModelRegistryTest(absltest.TestCase):
                     model_registry.register_model.assert_called_with(
                         type="type",
                         uri=f"sfc:MODEL_REGISTRY.PUBLIC.SNOWML_MODEL_{expected_stage_postfix}",
-                        name=model_name,
-                        version=model_version,
+                        model_name=model_name,
+                        model_version=model_version,
                         description="description",
                         tags=None,
                     )

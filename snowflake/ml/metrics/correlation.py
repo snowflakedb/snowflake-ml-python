@@ -9,8 +9,8 @@ import numpy as np
 import pandas as pd
 
 from snowflake import snowpark
+from snowflake.ml._internal import telemetry
 from snowflake.ml.metrics import _utils
-from snowflake.ml.utils import telemetry
 
 _PROJECT = "ModelDevelopment"
 _SUBPROJECT = "Metrics"
