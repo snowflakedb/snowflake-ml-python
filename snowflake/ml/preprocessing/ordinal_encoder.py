@@ -2,7 +2,6 @@
 #
 # Copyright (c) 2012-2022 Snowflake Computing Inc. All rights reserved.
 #
-import inspect
 import numbers
 import uuid
 from typing import Dict, Iterable, List, Optional, Union
@@ -12,13 +11,10 @@ import pandas as pd
 from sklearn import preprocessing, utils as sklearn_utils
 
 from snowflake import snowpark
-from snowflake.ml._internal import type_utils
+from snowflake.ml._internal import telemetry, type_utils
 from snowflake.ml.framework import base
-from snowflake.ml.utils import telemetry
 from snowflake.snowpark import functions as F, types as T
 
-_PROJECT = "ModelDevelopment"
-_SUBPROJECT = "Preprocessing"
 _COLUMN_NAME = "_COLUMN_NAME"
 _CATEGORY = "_CATEGORY"
 _INDEX = "_INDEX"
@@ -38,7 +34,7 @@ _SKLEARN_ADDED_KEYWORD_TO_VERSION_DICT = {
 }
 
 
-class OrdinalEncoder(base.BaseEstimator, base.BaseTransformer):
+class OrdinalEncoder(base.BaseTransformer):
     def __init__(
         self,
         *,
@@ -95,7 +91,6 @@ class OrdinalEncoder(base.BaseEstimator, base.BaseTransformer):
         self._missing_indices: Dict[int, int] = {}
         self._vocab_table_name = "snowml_preprocessing_ordinal_encoder_temp_table_" + uuid.uuid4().hex
 
-        base.BaseEstimator.__init__(self)
         base.BaseTransformer.__init__(self, drop_input_cols=drop_input_cols)
 
         self.set_input_cols(input_cols)
@@ -115,8 +110,8 @@ class OrdinalEncoder(base.BaseEstimator, base.BaseTransformer):
             del self._state_pandas
 
     @telemetry.send_api_usage_telemetry(
-        project=_PROJECT,
-        subproject=_SUBPROJECT,
+        project=base.PROJECT,
+        subproject=base.SUBPROJECT,
     )
     def fit(self, dataset: Union[snowpark.DataFrame, pd.DataFrame]) -> "OrdinalEncoder":
         """
@@ -200,29 +195,15 @@ class OrdinalEncoder(base.BaseEstimator, base.BaseTransformer):
         # columns: COLUMN_NAME, CATEGORY, INDEX
         state_df = self._get_category_index_state_df(dataset)
         # save the dataframe on server side so that transform doesn't need to upload
-        statement_params_save_as_table = telemetry.get_function_usage_statement_params(
-            project=_PROJECT,
-            subproject=_SUBPROJECT,
-            function_name=telemetry.get_statement_params_full_func_name(
-                inspect.currentframe(), self.__class__.__name__
-            ),
-            api_calls=[snowpark.DataFrameWriter.save_as_table],
-        )
         state_df.write.save_as_table(
             self._vocab_table_name,
             mode="overwrite",
             table_type="temporary",
-            statement_params=statement_params_save_as_table,
+            statement_params=telemetry.get_statement_params(base.PROJECT, base.SUBPROJECT, self.__class__.__name__),
         )
-        statement_params_to_pandas = telemetry.get_function_usage_statement_params(
-            project=_PROJECT,
-            subproject=_SUBPROJECT,
-            function_name=telemetry.get_statement_params_full_func_name(
-                inspect.currentframe(), self.__class__.__name__
-            ),
-            api_calls=[snowpark.DataFrame.to_pandas],
+        self._state_pandas = state_df.to_pandas(
+            statement_params=telemetry.get_statement_params(base.PROJECT, base.SUBPROJECT, self.__class__.__name__)
         )
-        self._state_pandas = state_df.to_pandas(statement_params=statement_params_to_pandas)
 
         self._assign_categories()
 
@@ -301,15 +282,11 @@ class OrdinalEncoder(base.BaseEstimator, base.BaseTransformer):
                     .subtract(given_state_df[[_COLUMN_NAME, _CATEGORY]])
                     .to_df(["COLUMN_NAME", "UNKNOWN_VALUE"])
                 )
-                statement_params = telemetry.get_function_usage_statement_params(
-                    project=_PROJECT,
-                    subproject=_SUBPROJECT,
-                    function_name=telemetry.get_statement_params_full_func_name(
-                        inspect.currentframe(), self.__class__.__name__
-                    ),
-                    api_calls=[snowpark.DataFrame.to_pandas],
+                unknown_pandas = unknown_df.to_pandas(
+                    statement_params=telemetry.get_statement_params(
+                        base.PROJECT, base.SUBPROJECT, self.__class__.__name__
+                    )
                 )
-                unknown_pandas = unknown_df.to_pandas(statement_params=statement_params)
                 if not unknown_pandas.empty:
                     msg = f"Found unknown categories during fit:\n{unknown_pandas.to_string()}"
                     raise ValueError(msg)
@@ -412,8 +389,12 @@ class OrdinalEncoder(base.BaseEstimator, base.BaseTransformer):
                     )
 
     @telemetry.send_api_usage_telemetry(
-        project=_PROJECT,
-        subproject=_SUBPROJECT,
+        project=base.PROJECT,
+        subproject=base.SUBPROJECT,
+    )
+    @telemetry.add_stmt_params_to_df(
+        project=base.PROJECT,
+        subproject=base.SUBPROJECT,
     )
     def transform(self, dataset: Union[snowpark.DataFrame, pd.DataFrame]) -> Union[snowpark.DataFrame, pd.DataFrame]:
         """
@@ -593,15 +574,9 @@ class OrdinalEncoder(base.BaseEstimator, base.BaseTransformer):
             if unknown_df is None:
                 raise ValueError("snowml internal error caused by handle_unknown='error': empty input columns")
 
-            statement_params = telemetry.get_function_usage_statement_params(
-                project=_PROJECT,
-                subproject=_SUBPROJECT,
-                function_name=telemetry.get_statement_params_full_func_name(
-                    inspect.currentframe(), self.__class__.__name__
-                ),
-                api_calls=[snowpark.DataFrame.to_pandas],
+            unknown_pandas = unknown_df.to_pandas(
+                statement_params=telemetry.get_statement_params(base.PROJECT, base.SUBPROJECT, self.__class__.__name__)
             )
-            unknown_pandas = unknown_df.to_pandas(statement_params=statement_params)
             if not unknown_pandas.empty:
                 msg = f"Found unknown categories during transform:\n{unknown_pandas.to_string()}"
                 raise ValueError(msg)

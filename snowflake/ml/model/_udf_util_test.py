@@ -46,14 +46,14 @@ class TestFinalPackagesWithoutConda(absltest.TestCase):
         pkg_names_str = " OR ".join(f"package_name = '{pkg}'" for pkg in sorted(packages_dicts.keys()))
         query = textwrap.dedent(
             f"""
-            SELECT *
+            SELECT PACKAGE_NAME, VERSION
             FROM information_schema.packages
             WHERE ({pkg_names_str})
             AND language = 'python';
             """
         )
         sql_result = [
-            row.Row(PACKAGE_NAME=pkg, VERSION=pkg_ver, LANGUAGE="python")
+            row.Row(PACKAGE_NAME=pkg, VERSION=pkg_ver)
             for pkg, pkg_vers in packages_dicts.items()
             for pkg_ver in pkg_vers
         ]
@@ -88,7 +88,7 @@ class TestFinalPackagesWithoutConda(absltest.TestCase):
         c_session = cast(session.Session, self.m_session)
         with self.assertWarns(RuntimeWarning):
             final_packages = _udf_util._get_model_final_packages(meta, c_session, relax_version=True)
-            self.assertListEqual(final_packages, _BASIC_DEPENDENCIES_FINAL_PACKAGES)
+            self.assertListEqual(final_packages, _model_meta._BASIC_DEPENDENCIES)
 
     def test_get_model_final_packages_with_pip(self) -> None:
         env_utils._SNOWFLAKE_CONDA_PACKAGE_CACHE = {}

@@ -107,8 +107,7 @@ py_library(
     name = "pkg_version_utils",
     srcs = ["pkg_version_utils.py"],
     deps = [
-        ":query_result_checker",
-        "//snowflake/ml/utils:telemetry",
+        "//snowflake/ml/_internal:telemetry",
     ],
 )
 
@@ -119,7 +118,6 @@ py_test(
         ":pkg_version_utils",
         "//snowflake/ml/test_utils:mock_data_frame",
         "//snowflake/ml/test_utils:mock_session",
-        "//snowflake/ml/utils:telemetry",
     ],
 )
 

@@ -45,7 +45,7 @@ def create_session() -> session.Session:
 
 def get_registry(session: session.Session, name: Optional[str] = None) -> model_registry.ModelRegistry:
     if name:
-        registry = model_registry.ModelRegistry(session=session, name=name)
+        registry = model_registry.ModelRegistry(session=session, database_name=name)
     else:
         registry = model_registry.ModelRegistry(session=session)
     return registry

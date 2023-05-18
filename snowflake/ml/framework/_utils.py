@@ -164,7 +164,7 @@ def get_filtered_valid_sklearn_args(
         if (
             sklearn_added_kwarg_value_to_version_dict
             and (key in sklearn_added_kwarg_value_to_version_dict)
-            and (val in sklearn_added_kwarg_value_to_version_dict[key])
+            and (isinstance(val, str) and val in sklearn_added_kwarg_value_to_version_dict[key])
             and (version.parse(sklearn_version) < version.parse(sklearn_added_kwarg_value_to_version_dict[key][val]))
         ):
             required_version = sklearn_added_kwarg_value_to_version_dict[key][val]

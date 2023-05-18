@@ -275,7 +275,7 @@ def validate_requirements_in_snowflake_conda_channel(
         )
         sql = textwrap.dedent(
             f"""
-            SELECT *
+            SELECT PACKAGE_NAME, VERSION
             FROM information_schema.packages
             WHERE ({pkg_names_str})
             AND language = 'python';
@@ -289,7 +289,7 @@ def validate_requirements_in_snowflake_conda_channel(
                     query=sql,
                 )
                 .has_column("VERSION")
-                .has_dimensions(expected_rows=None, expected_cols=3)
+                .has_dimensions(expected_rows=None, expected_cols=2)
                 .validate()
             )
             for row in result:

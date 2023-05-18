@@ -1,9 +1,10 @@
+# mypy: disable-error-code="import"
 import os
-from typing import TYPE_CHECKING, Callable, Optional, Sequence, Type
+from typing import TYPE_CHECKING, Callable, Optional, Sequence, Type, Union
 
 import numpy as np
 import pandas as pd
-from typing_extensions import Unpack
+from typing_extensions import TypeGuard, Unpack
 
 from snowflake.ml._internal import type_utils
 from snowflake.ml.model import (
@@ -18,7 +19,7 @@ if TYPE_CHECKING:
     import xgboost
 
 
-class _XGBModelHandler(_base._ModelHandler["xgboost.XGBModel"]):
+class _XGBModelHandler(_base._ModelHandler[Union["xgboost.Booster", "xgboost.XGBModel"]]):
     """Handler for XGBoost based model.
 
     Currently xgboost.XGBModel based classes are supported.
@@ -29,8 +30,11 @@ class _XGBModelHandler(_base._ModelHandler["xgboost.XGBModel"]):
     DEFAULT_TARGET_METHODS = ["apply", "predict", "predict_proba"]
 
     @staticmethod
-    def can_handle(model: model_types.SupportedModelType) -> bool:
-        return (type_utils.LazyType("xgboost.XGBModel").isinstance(model)) and any(
+    def can_handle(model: model_types.SupportedModelType) -> TypeGuard[Union["xgboost.Booster", "xgboost.XGBModel"]]:
+        return (
+            type_utils.LazyType("xgboost.Booster").isinstance(model)
+            or type_utils.LazyType("xgboost.XGBModel").isinstance(model)
+        ) and any(
             (hasattr(model, method) and callable(getattr(model, method, None)))
             for method in _XGBModelHandler.DEFAULT_TARGET_METHODS
         )
@@ -38,17 +42,17 @@ class _XGBModelHandler(_base._ModelHandler["xgboost.XGBModel"]):
     @staticmethod
     def cast_model(
         model: model_types.SupportedModelType,
-    ) -> "xgboost.XGBModel":
+    ) -> Union["xgboost.Booster", "xgboost.XGBModel"]:
         import xgboost
 
-        assert isinstance(model, xgboost.XGBModel)
+        assert isinstance(model, xgboost.Booster) or isinstance(model, xgboost.XGBModel)
 
         return model
 
     @staticmethod
     def _save_model(
         name: str,
-        model: "xgboost.XGBModel",
+        model: Union["xgboost.Booster", "xgboost.XGBModel"],
         model_meta: model_meta_api.ModelMetadata,
         model_blobs_dir_path: str,
         sample_input: Optional[model_types.SupportedDataType] = None,
@@ -57,7 +61,7 @@ class _XGBModelHandler(_base._ModelHandler["xgboost.XGBModel"]):
     ) -> None:
         import xgboost
 
-        assert isinstance(model, xgboost.XGBModel)
+        assert isinstance(model, xgboost.Booster) or isinstance(model, xgboost.XGBModel)
 
         if not is_sub_model:
             if model_meta._signatures is None:
@@ -104,7 +108,7 @@ class _XGBModelHandler(_base._ModelHandler["xgboost.XGBModel"]):
     @staticmethod
     def _load_model(
         name: str, model_meta: model_meta_api.ModelMetadata, model_blobs_dir_path: str
-    ) -> "xgboost.XGBModel":
+    ) -> Union["xgboost.Booster", "xgboost.XGBModel"]:
         import xgboost
 
         model_blob_path = os.path.join(model_blobs_dir_path, name)
@@ -119,7 +123,8 @@ class _XGBModelHandler(_base._ModelHandler["xgboost.XGBModel"]):
         if not xgb_estimator_type or not hasattr(xgboost, xgb_estimator_type):
             raise ValueError("Type of XGB estimator unknown or illegal.")
         m = getattr(xgboost, xgb_estimator_type)()
-        assert isinstance(m, xgboost.XGBModel)
+
+        assert isinstance(m, xgboost.Booster) or isinstance(m, xgboost.XGBModel)
         m.load_model(os.path.join(model_blob_path, model_blob_filename))
         return m
 
@@ -141,11 +146,11 @@ class _XGBModelHandler(_base._ModelHandler["xgboost.XGBModel"]):
         from snowflake.ml.model import custom_model
 
         def _create_custom_model(
-            raw_model: "xgboost.XGBModel",
+            raw_model: Union["xgboost.Booster", "xgboost.XGBModel"],
             model_meta: model_meta_api.ModelMetadata,
         ) -> Type[custom_model.CustomModel]:
             def fn_factory(
-                raw_model: "xgboost.XGBModel",
+                raw_model: Union["xgboost.Booster", "xgboost.XGBModel"],
                 output_col_names: Sequence[str],
                 target_method: str,
             ) -> Callable[[custom_model.CustomModel, pd.DataFrame], pd.DataFrame]:

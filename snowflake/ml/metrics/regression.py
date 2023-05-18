@@ -4,7 +4,7 @@
 
 import inspect
 
-from snowflake.ml.utils import telemetry
+from snowflake.ml._internal import telemetry
 from snowflake.snowpark import DataFrame, functions as F
 
 _PROJECT = "ModelDevelopment"

@@ -2,6 +2,9 @@ load("//bazel:py_rules.bzl", "py_library", "py_test")
 
 package(default_visibility = ["//visibility:public"])
 
+SHARD_COUNT = 3
+TIMEOUT = "long"  # 900s
+
 py_test(
     name = "test_base",
     srcs = ["test_base.py"],
@@ -16,6 +19,8 @@ py_test(
 py_test(
     name = "test_pipeline",
     srcs = ["test_pipeline.py"],
+    shard_count = SHARD_COUNT,
+    timeout = TIMEOUT,
     deps = [
         ":utils",
         "//snowflake/ml/preprocessing:min_max_scaler",

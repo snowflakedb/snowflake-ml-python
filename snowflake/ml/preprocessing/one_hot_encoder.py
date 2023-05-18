@@ -2,7 +2,6 @@
 #
 # Copyright (c) 2012-2022 Snowflake Computing Inc. All rights reserved.
 #
-import inspect
 import numbers
 from typing import Any, Dict, Iterable, List, Optional, Union
 
@@ -15,14 +14,11 @@ from scipy import sparse
 from sklearn import preprocessing, utils as sklearn_utils
 
 from snowflake import snowpark
-from snowflake.ml._internal import type_utils
+from snowflake.ml._internal import telemetry, type_utils
 from snowflake.ml.framework import _utils, base
-from snowflake.ml.utils import telemetry
 from snowflake.snowpark import functions as F, types as T
 from snowflake.snowpark._internal import utils as snowpark_utils
 
-_PROJECT = "ModelDevelopment"
-_SUBPROJECT = "Preprocessing"
 _INFREQUENT_CATEGORY = "_INFREQUENT"
 _COLUMN_NAME = "_COLUMN_NAME"
 _CATEGORY = "_CATEGORY"
@@ -69,7 +65,7 @@ _SKLEARN_REMOVED_KEYWORD_TO_VERSION_DICT = {
 }
 
 
-class OneHotEncoder(base.BaseEstimator, base.BaseTransformer):
+class OneHotEncoder(base.BaseTransformer):
     """
     Encode categorical features as a one-hot numeric array. The order of input
     columns are preserved as the order of features.
@@ -99,6 +95,9 @@ class OneHotEncoder(base.BaseEstimator, base.BaseTransformer):
               left intact.
             - array: ``drop[i]`` is the category in feature ``input_cols[i]`` that
               should be dropped.
+            When `max_categories` or `min_frequency` is configured to group
+            infrequent categories, the dropping behavior is handled after the
+            grouping.
         sparse: bool, default=False
             Will return a column with sparse representation if set True else will return
             a separate column for each category.
@@ -179,12 +178,12 @@ class OneHotEncoder(base.BaseEstimator, base.BaseTransformer):
         self.categories_: Dict[str, type_utils.LiteralNDArrayType] = {}
         self._categories_list: List[type_utils.LiteralNDArrayType] = []
         self.drop_idx_: Optional[npt.NDArray[np.int_]] = None
+        self._drop_idx_after_grouping: Optional[npt.NDArray[np.int_]] = None
         self._n_features_outs: List[int] = []
         self._dense_output_cols_mappings: Dict[
             str, List[str]
         ] = {}  # transform state when output columns are unset before fitting
 
-        base.BaseEstimator.__init__(self)
         base.BaseTransformer.__init__(self, drop_input_cols=drop_input_cols)
 
         self.set_input_cols(input_cols)
@@ -209,6 +208,7 @@ class OneHotEncoder(base.BaseEstimator, base.BaseTransformer):
         self.categories_ = {}
         self._categories_list = []
         self.drop_idx_ = None
+        self._drop_idx_after_grouping = None
         self._n_features_outs = []
         self._dense_output_cols_mappings = {}
 
@@ -220,8 +220,8 @@ class OneHotEncoder(base.BaseEstimator, base.BaseTransformer):
             del self._state_pandas
 
     @telemetry.send_api_usage_telemetry(
-        project=_PROJECT,
-        subproject=_SUBPROJECT,
+        project=base.PROJECT,
+        subproject=base.SUBPROJECT,
     )
     def fit(self, dataset: Union[snowpark.DataFrame, pd.DataFrame]) -> "OneHotEncoder":
         """
@@ -262,6 +262,10 @@ class OneHotEncoder(base.BaseEstimator, base.BaseTransformer):
 
         self._categories_list = sklearn_encoder.categories_
         self.drop_idx_ = sklearn_encoder.drop_idx_
+        if version.parse(sklearn.__version__) >= version.parse("1.2.2"):
+            self._drop_idx_after_grouping = sklearn_encoder._drop_idx_after_grouping
+        else:
+            self._drop_idx_after_grouping = sklearn_encoder.drop_idx_
         self._n_features_outs = sklearn_encoder._n_features_outs
 
         # Set `categories_`
@@ -287,21 +291,15 @@ class OneHotEncoder(base.BaseEstimator, base.BaseTransformer):
 
         # Set `_state_pandas`
         self._state_pandas = pd.concat(_state_pandas_counts, ignore_index=True)
-        self._remove_dropped_categories_state()
-        self._add_n_features_out_state()
-        self._add_fitted_category_state()
-        self._add_encoding_state()
+        self._update_categories_state()
 
     def _fit_snowpark(self, dataset: snowpark.DataFrame) -> None:
         fit_results = self._fit_category_state(dataset, return_counts=self._infrequent_enabled)
         if self._infrequent_enabled:
             self._fit_infrequent_category_mapping(fit_results["n_samples"], fit_results["category_counts"])
-        self.drop_idx_ = self._compute_drop_idx()
+        self._set_drop_idx()
         self._n_features_outs = self._compute_n_features_outs()
-        self._remove_dropped_categories_state()
-        self._add_n_features_out_state()
-        self._add_fitted_category_state()
-        self._add_encoding_state()
+        self._update_categories_state()
 
     def _fit_category_state(self, dataset: snowpark.DataFrame, return_counts: bool) -> Dict[str, Any]:
         """
@@ -317,15 +315,9 @@ class OneHotEncoder(base.BaseEstimator, base.BaseTransformer):
         """
         # columns: COLUMN_NAME, CATEGORY, COUNT
         state_df = self._get_category_count_state_df(dataset)
-        statement_params = telemetry.get_function_usage_statement_params(
-            project=_PROJECT,
-            subproject=_SUBPROJECT,
-            function_name=telemetry.get_statement_params_full_func_name(
-                inspect.currentframe(), self.__class__.__name__
-            ),
-            api_calls=[snowpark.DataFrame.to_pandas],
+        self._state_pandas = state_df.to_pandas(
+            statement_params=telemetry.get_statement_params(base.PROJECT, base.SUBPROJECT, self.__class__.__name__)
         )
-        self._state_pandas = state_df.to_pandas(statement_params=statement_params)
 
         # columns: COLUMN_NAME, STATE
         # state object: {category: count}
@@ -420,15 +412,11 @@ class OneHotEncoder(base.BaseEstimator, base.BaseTransformer):
                     .subtract(given_state_df[[_COLUMN_NAME, _CATEGORY]])
                     .to_df(["COLUMN_NAME", "UNKNOWN_VALUE"])
                 )
-                statement_params = telemetry.get_function_usage_statement_params(
-                    project=_PROJECT,
-                    subproject=_SUBPROJECT,
-                    function_name=telemetry.get_statement_params_full_func_name(
-                        inspect.currentframe(), self.__class__.__name__
-                    ),
-                    api_calls=[snowpark.DataFrame.to_pandas],
+                unknown_pandas = unknown_df.to_pandas(
+                    statement_params=telemetry.get_statement_params(
+                        base.PROJECT, base.SUBPROJECT, self.__class__.__name__
+                    )
                 )
-                unknown_pandas = unknown_df.to_pandas(statement_params=statement_params)
                 if not unknown_pandas.empty:
                     msg = f"Found unknown categories during fit:\n{unknown_pandas.to_string()}"
                     raise ValueError(msg)
@@ -491,6 +479,12 @@ class OneHotEncoder(base.BaseEstimator, base.BaseTransformer):
         # list of ndarray same as `sklearn.preprocessing.OneHotEncoder.categories_`
         for input_col in self.input_cols:
             self._categories_list.append(self.categories_[input_col])
+
+    def _update_categories_state(self) -> None:
+        self._add_n_features_out_state()
+        self._add_fitted_category_state()
+        self._add_encoding_state()
+        self._remove_dropped_categories_state()
 
     def _remove_dropped_categories_state(self) -> None:
         """Remove dropped categories from `self._state_pandas` if `self.drop` is set."""
@@ -563,11 +557,11 @@ class OneHotEncoder(base.BaseEstimator, base.BaseTransformer):
             else:
                 encoding = cat_idx
 
-            # decrement the encoding that occurs after that of the dropped category
+            # decrement the encoding if it occurs after that of the dropped category
             if (
-                self.drop_idx_ is not None
-                and self.drop_idx_[col_idx] is not None
-                and encoding > self.drop_idx_[col_idx]
+                self._drop_idx_after_grouping is not None
+                and self._drop_idx_after_grouping[col_idx] is not None
+                and encoding > self._drop_idx_after_grouping[col_idx]
             ):
                 encoding -= 1
 
@@ -576,8 +570,12 @@ class OneHotEncoder(base.BaseEstimator, base.BaseTransformer):
         self._state_pandas[_ENCODING] = self._state_pandas.apply(lambda x: map_encoding(x), axis=1)
 
     @telemetry.send_api_usage_telemetry(
-        project=_PROJECT,
-        subproject=_SUBPROJECT,
+        project=base.PROJECT,
+        subproject=base.SUBPROJECT,
+    )
+    @telemetry.add_stmt_params_to_df(
+        project=base.PROJECT,
+        subproject=base.SUBPROJECT,
     )
     def transform(
         self, dataset: Union[snowpark.DataFrame, pd.DataFrame]
@@ -760,14 +758,6 @@ class OneHotEncoder(base.BaseEstimator, base.BaseTransformer):
             Output dataset in the sparse representation.
         """
         encoder_sklearn = self.get_sklearn_object()
-        statement_params = telemetry.get_function_usage_statement_params(
-            project=_PROJECT,
-            subproject=_SUBPROJECT,
-            function_name=telemetry.get_statement_params_full_func_name(
-                inspect.currentframe(), self.__class__.__name__
-            ),
-            api_calls=[F.pandas_udf],
-        )
 
         @F.pandas_udf(  # type: ignore
             is_permanent=False,
@@ -775,7 +765,7 @@ class OneHotEncoder(base.BaseEstimator, base.BaseTransformer):
             return_type=T.PandasSeriesType(T.ArrayType(T.MapType(T.FloatType(), T.FloatType()))),
             input_types=[T.PandasDataFrameType([T.StringType() for _ in range(len(self.input_cols))])],
             packages=["numpy", "scikit-learn"],
-            statement_params=statement_params,
+            statement_params=telemetry.get_statement_params(base.PROJECT, base.SUBPROJECT, self.__class__.__name__),
         )
         def one_hot_encoder_sparse_transform(data: pd.DataFrame) -> List[List[Optional[Dict[Any, Any]]]]:
             data = data.replace({np.nan: None})  # fill NA with None as represented in `categories_`
@@ -861,6 +851,7 @@ class OneHotEncoder(base.BaseEstimator, base.BaseTransformer):
         if self._is_fitted:
             encoder.categories_ = self._categories_list
             encoder.drop_idx_ = self.drop_idx_
+            encoder._drop_idx_after_grouping = self._drop_idx_after_grouping
             encoder._infrequent_enabled = self._infrequent_enabled
             encoder._n_features_outs = self._n_features_outs
 
@@ -951,15 +942,11 @@ class OneHotEncoder(base.BaseEstimator, base.BaseTransformer):
                 unknown_df = unknown_df.union_by_name(temp_df) if unknown_df is not None else temp_df
 
             if unknown_df:
-                statement_params = telemetry.get_function_usage_statement_params(
-                    project=_PROJECT,
-                    subproject=_SUBPROJECT,
-                    function_name=telemetry.get_statement_params_full_func_name(
-                        inspect.currentframe(), self.__class__.__name__
-                    ),
-                    api_calls=[snowpark.DataFrame.to_pandas],
+                unknown_pandas = unknown_df.to_pandas(
+                    statement_params=telemetry.get_statement_params(
+                        base.PROJECT, base.SUBPROJECT, self.__class__.__name__
+                    )
                 )
-                unknown_pandas = unknown_df.to_pandas(statement_params=statement_params)
                 if not unknown_pandas.empty:
                     msg = f"Found unknown categories during transform:\n{unknown_pandas.to_string()}"
                     raise ValueError(msg)
@@ -996,7 +983,7 @@ class OneHotEncoder(base.BaseEstimator, base.BaseTransformer):
         """
         Convert `drop_idx` into the index for infrequent categories.
         If there are no infrequent categories, then `drop_idx` is
-        returned. This method is called in `_compute_drop_idx` when the `drop`
+        returned. This method is called in `_set_drop_idx` when the `drop`
         parameter is an array-like.
 
         Same as :meth:`sklearn.preprocessing.OneHotEncoder._map_drop_idx_to_infrequent`
@@ -1029,23 +1016,33 @@ class OneHotEncoder(base.BaseEstimator, base.BaseTransformer):
             )
         return default_to_infrequent[drop_idx]
 
-    def _compute_drop_idx(self) -> Optional[npt.NDArray[np.int_]]:
+    def _set_drop_idx(self) -> None:
         """
         Compute the drop indices associated with `self.categories_`.
 
-        Same as :meth:`sklearn.preprocessing.OneHotEncoder._compute_drop_idx`
+        Same as :meth:`sklearn.preprocessing.OneHotEncoder._set_drop_idx`
         with `self.categories_` replaced by `self._categories_list`.
 
-        Returns:
-            Drop indices. If `self.drop` is:
-                - `None`, returns `None`.
-                - `'first'`, returns all zeros to drop the first category.
-                - `'if_binary'`, returns zero if the category is binary and `None`
-                  otherwise.
-                - array-like, returns the indices of the categories that match the
-                  categories in `self.drop`. If the dropped category is an infrequent
-                  category, then the index for the infrequent category is used. This
-                  means that the entire infrequent category is dropped.
+        If `self.drop` is:
+        - `None`, No categories have been dropped.
+        - `'first'`, All zeros to drop the first category.
+        - `'if_binary'`, All zeros if the category is binary and `None`
+          otherwise.
+        - array-like, The indices of the categories that match the
+          categories in `self.drop`. If the dropped category is an infrequent
+          category, then the index for the infrequent category is used. This
+          means that the entire infrequent category is dropped.
+
+        This method defines a public `drop_idx_` and a private
+        `_drop_idx_after_grouping`.
+
+        - `drop_idx_`: Public facing API that references the drop category in
+          `self.categories_`.
+        - `_drop_idx_after_grouping`: Used internally to drop categories *after* the
+          infrequent categories are grouped together.
+
+        If there are no infrequent categories or drop is `None`, then
+        `drop_idx_=_drop_idx_after_grouping`.
 
         Raises:
             ValueError: If `self.drop` is array-like:
@@ -1054,10 +1051,10 @@ class OneHotEncoder(base.BaseEstimator, base.BaseTransformer):
                 - The categories to drop are not found.
         """
         if self.drop is None:
-            return None
+            drop_idx_after_grouping = None
         elif isinstance(self.drop, str):
             if self.drop == "first":
-                return np.zeros(len(self._categories_list), dtype=object)
+                drop_idx_after_grouping = np.zeros(len(self._categories_list), dtype=object)
             else:  # if_binary
                 n_features_out_no_drop = [len(cat) for cat in self._categories_list]
                 if self._infrequent_enabled:
@@ -1066,7 +1063,7 @@ class OneHotEncoder(base.BaseEstimator, base.BaseTransformer):
                             continue
                         n_features_out_no_drop[i] -= infreq_idx.size - 1
 
-                return np.array(
+                drop_idx_after_grouping = np.array(
                     [0 if n_features_out == 2 else None for n_features_out in n_features_out_no_drop],
                     dtype=object,
                 )
@@ -1109,7 +1106,27 @@ class OneHotEncoder(base.BaseEstimator, base.BaseTransformer):
                     "data.\n{}".format("\n".join([f"Category: {c}, Feature: {v}" for c, v in missing_drops]))
                 )
                 raise ValueError(msg)
-            return np.array(drop_indices, dtype=object)
+            drop_idx_after_grouping = np.array(drop_indices, dtype=object)
+
+        # `_drop_idx_after_grouping` are the categories to drop *after* the infrequent
+        # categories are grouped together. If needed, we remap `drop_idx` back
+        # to the categories seen in `self.categories_`.
+        self._drop_idx_after_grouping = drop_idx_after_grouping
+
+        if not self._infrequent_enabled or drop_idx_after_grouping is None:
+            self.drop_idx_ = self._drop_idx_after_grouping
+        else:
+            drop_idx_ = []
+            for feature_idx, drop_idx in enumerate(drop_idx_after_grouping):
+                default_to_infrequent = self._default_to_infrequent_mappings[feature_idx]
+                if drop_idx is None or default_to_infrequent is None:
+                    orig_drop_idx = drop_idx
+                else:
+                    orig_drop_idx = np.flatnonzero(default_to_infrequent == drop_idx)[0]
+
+                drop_idx_.append(orig_drop_idx)
+
+            self.drop_idx_ = np.asarray(drop_idx_, dtype=object)
 
     def _fit_infrequent_category_mapping(
         self, n_samples: int, category_counts: Dict[str, Dict[str, Dict[str, int]]]
@@ -1263,17 +1280,33 @@ class OneHotEncoder(base.BaseEstimator, base.BaseTransformer):
             if has_infrequent_categories:
                 infrequent_idx = self._infrequent_indices[idx][0]
                 infrequent_encoding = self._default_to_infrequent_mappings[idx][infrequent_idx]
+                if (
+                    self._drop_idx_after_grouping is not None
+                    and self._drop_idx_after_grouping[idx] is not None
+                    and infrequent_encoding > self._drop_idx_after_grouping[idx]
+                ):
+                    infrequent_encoding -= 1
 
             # get output column names
             for encoding in range(n_features_out):
+                # increment the encoding if it occurs after that of the dropped category
+                orig_encoding = encoding
+                if (
+                    (not has_infrequent_categories or encoding != infrequent_encoding)
+                    and self._drop_idx_after_grouping is not None
+                    and self._drop_idx_after_grouping[idx] is not None
+                    and encoding >= self._drop_idx_after_grouping[idx]
+                ):
+                    orig_encoding += 1
+
                 if has_infrequent_categories:
                     if encoding == infrequent_encoding:
                         cat = _INFREQUENT_CATEGORY
                     else:
-                        cat_idx = np.where(self._default_to_infrequent_mappings[idx] == encoding)[0][0]
+                        cat_idx = np.where(self._default_to_infrequent_mappings[idx] == orig_encoding)[0][0]
                         cat = self.categories_[input_col][cat_idx]
                 else:
-                    cat = self.categories_[input_col][encoding]
+                    cat = self.categories_[input_col][orig_encoding]
                 if cat and isinstance(cat, str):
                     cat = cat.replace('"', "'")
                 self._dense_output_cols_mappings[input_col].append(f"{output_col}_{cat}")

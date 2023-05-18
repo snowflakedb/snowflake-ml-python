@@ -4,7 +4,7 @@ from typing import TYPE_CHECKING, Callable, Optional, Sequence, Type, Union, cas
 import cloudpickle
 import numpy as np
 import pandas as pd
-from typing_extensions import Unpack
+from typing_extensions import TypeGuard, Unpack
 
 from snowflake.ml._internal import type_utils
 from snowflake.ml.model import (
@@ -30,7 +30,9 @@ class _SKLModelHandler(_base._ModelHandler[Union["sklearn.base.BaseEstimator", "
     DEFAULT_TARGET_METHODS = ["predict", "transform", "predict_proba", "predict_log_proba", "decision_function"]
 
     @staticmethod
-    def can_handle(model: model_types.SupportedModelType) -> bool:
+    def can_handle(
+        model: model_types.SupportedModelType,
+    ) -> TypeGuard[Union["sklearn.base.BaseEstimator", "sklearn.pipeline.Pipeline"]]:
         return (
             (
                 type_utils.LazyType("sklearn.base.BaseEstimator").isinstance(model)

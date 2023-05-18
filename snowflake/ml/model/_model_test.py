@@ -235,7 +235,7 @@ class ModelTest(absltest.TestCase):
                 )
                 lm, _ = model_api.load_model(os.path.join(tmpdir, "model1"))
                 assert isinstance(lm, AsyncComposeModel)
-                p3 = await lm.predict(d)
+                p3 = await lm.predict(d)  # type: ignore[misc]
 
                 m_UDF, _ = model_api._load_model_for_deploy(os.path.join(tmpdir, "model1"))
                 assert isinstance(m_UDF, AsyncComposeModel)

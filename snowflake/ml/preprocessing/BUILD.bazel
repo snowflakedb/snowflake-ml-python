@@ -20,8 +20,8 @@ py_library(
     ],
     deps = [
         ":init",
+        "//snowflake/ml/_internal:telemetry",
         "//snowflake/ml/framework",
-        "//snowflake/ml/utils:telemetry",
     ],
 )
 
@@ -32,8 +32,8 @@ py_library(
     ],
     deps = [
         ":init",
+        "//snowflake/ml/_internal:telemetry",
         "//snowflake/ml/framework",
-        "//snowflake/ml/utils:telemetry",
     ],
 )
 
@@ -45,9 +45,9 @@ py_library(
     deps = [
         ":init",
         ":ordinal_encoder",
+        "//snowflake/ml/_internal:telemetry",
         "//snowflake/ml/_internal:type_utils",
         "//snowflake/ml/framework",
-        "//snowflake/ml/utils:telemetry",
     ],
 )
 
@@ -58,8 +58,8 @@ py_library(
     ],
     deps = [
         ":init",
+        "//snowflake/ml/_internal:telemetry",
         "//snowflake/ml/framework",
-        "//snowflake/ml/utils:telemetry",
     ],
 )
 
@@ -70,8 +70,8 @@ py_library(
     ],
     deps = [
         ":init",
+        "//snowflake/ml/_internal:telemetry",
         "//snowflake/ml/framework",
-        "//snowflake/ml/utils:telemetry",
     ],
 )
 
@@ -82,8 +82,8 @@ py_library(
     ],
     deps = [
         ":init",
+        "//snowflake/ml/_internal:telemetry",
         "//snowflake/ml/framework",
-        "//snowflake/ml/utils:telemetry",
     ],
 )
 
@@ -94,9 +94,9 @@ py_library(
     ],
     deps = [
         ":init",
+        "//snowflake/ml/_internal:telemetry",
         "//snowflake/ml/_internal:type_utils",
         "//snowflake/ml/framework",
-        "//snowflake/ml/utils:telemetry",
     ],
 )
 
@@ -107,9 +107,9 @@ py_library(
     ],
     deps = [
         ":init",
+        "//snowflake/ml/_internal:telemetry",
         "//snowflake/ml/_internal:type_utils",
         "//snowflake/ml/framework",
-        "//snowflake/ml/utils:telemetry",
     ],
 )
 
@@ -120,8 +120,8 @@ py_library(
     ],
     deps = [
         ":init",
+        "//snowflake/ml/_internal:telemetry",
         "//snowflake/ml/framework",
-        "//snowflake/ml/utils:telemetry",
     ],
 )
 
@@ -132,8 +132,8 @@ py_library(
     ],
     deps = [
         ":init",
+        "//snowflake/ml/_internal:telemetry",
         "//snowflake/ml/framework",
-        "//snowflake/ml/utils:telemetry",
     ],
 )
 
@@ -144,8 +144,8 @@ py_library(
     ],
     deps = [
         ":init",
+        "//snowflake/ml/_internal:telemetry",
         "//snowflake/ml/framework",
-        "//snowflake/ml/utils:telemetry",
     ],
 )
 
@@ -155,6 +155,7 @@ py_package(
     packages = ["snowflake.ml"],
     deps = [
         ":binarizer",
+        ":k_bins_discretizer",
         ":label_encoder",
         ":max_abs_scaler",
         ":min_max_scaler",

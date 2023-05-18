@@ -785,6 +785,73 @@ class OneHotEncoderTest(parameterized.TestCase):
 
         np.testing.assert_allclose(actual_arr, sklearn_arr)
 
+    def test_drop_idx_infrequent_categories(self) -> None:
+        """
+        Test drop_idx is defined correctly with infrequent categories.
+
+        Raises
+        ------
+        AssertionError
+            - If drop_idx does not match that of the sklearn encoder.
+            - If the transformed output does not match that of the sklearn encoder.
+        """
+        schema = ["COL1"]
+        input_cols, output_cols = ["COL1"], ["OUT1"]
+        sparse = False
+
+        data = np.array([["a"] * 2 + ["b"] * 4 + ["c"] * 4 + ["d"] * 4 + ["e"] * 4]).T.tolist()
+        df_pandas, df = framework_utils.get_df(self._session, data, schema)
+        for drop in ["first", ["d"]]:
+            # sklearn
+            encoder_sklearn = SklearnOneHotEncoder(sparse=sparse, min_frequency=4, handle_unknown="ignore", drop=drop)
+            encoder_sklearn.fit(df_pandas[input_cols])
+            sklearn_arr = encoder_sklearn.transform(df_pandas.sort_values(by=input_cols)[input_cols])
+            for _df in [df, df_pandas]:
+                encoder = (
+                    OneHotEncoder(sparse=sparse, min_frequency=4, handle_unknown="ignore", drop=drop)
+                    .set_input_cols(input_cols)
+                    .set_output_cols(output_cols)
+                )
+                encoder.fit(_df)
+                transformed_df = encoder.transform(_df)
+                if isinstance(transformed_df, DataFrame):
+                    actual_arr = transformed_df.sort(input_cols)[encoder.get_output_cols()].to_pandas().to_numpy()
+                else:
+                    actual_arr = transformed_df[encoder.get_output_cols()].to_numpy()
+
+                self.assertEqual(
+                    encoder_sklearn.categories_[0][encoder_sklearn.drop_idx_[0]],
+                    encoder.categories_[input_cols[0]][encoder.drop_idx_[0]],
+                )
+                np.testing.assert_allclose(actual_arr, sklearn_arr)
+
+        data = np.array([["a"] * 2 + ["b"] * 2 + ["c"] * 10]).T.tolist()
+        df_pandas, df = framework_utils.get_df(self._session, data, schema)
+        # sklearn
+        encoder_sklearn = SklearnOneHotEncoder(
+            sparse=sparse, min_frequency=4, handle_unknown="ignore", drop="if_binary"
+        )
+        encoder_sklearn.fit(df_pandas[input_cols])
+        sklearn_arr = encoder_sklearn.transform(df_pandas.sort_values(by=input_cols)[input_cols])
+        for _df in [df, df_pandas]:
+            encoder = (
+                OneHotEncoder(sparse=sparse, min_frequency=4, handle_unknown="ignore", drop="if_binary")
+                .set_input_cols(input_cols)
+                .set_output_cols(output_cols)
+            )
+            encoder.fit(_df)
+            transformed_df = encoder.transform(_df)
+            if isinstance(transformed_df, DataFrame):
+                actual_arr = transformed_df.sort(input_cols)[encoder.get_output_cols()].to_pandas().to_numpy()
+            else:
+                actual_arr = transformed_df[encoder.get_output_cols()].to_numpy()
+
+            self.assertEqual(
+                encoder_sklearn.categories_[0][encoder_sklearn.drop_idx_[0]],
+                encoder.categories_[input_cols[0]][encoder.drop_idx_[0]],
+            )
+            np.testing.assert_allclose(actual_arr, sklearn_arr)
+
     def test_handle_unknown_error(self) -> None:
         """
         Test `handle_unknown="error"`.
