@@ -2,7 +2,7 @@
 # (dependencies, version number) from a common place. We also need to define that
 # common place, as currently it's a BUILD rule.
 # See https://docs.conda.io/projects/conda-build/en/latest/resources/define-metadata.html#templating-with-jinja
-{% set version_match = load_file_regex(load_file='../../snowflake/ml/version.bzl', regex_pattern='VERSION = "(\d\.\d\.\d*)"\s.*') %}
+{% set version_match = load_file_regex(load_file='snowflake/ml/version.bzl', regex_pattern='VERSION = "(\d\.\d\.\d*)"\s.*') %}
 
 package:
   name: snowflake-ml-python

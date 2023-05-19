@@ -19,6 +19,7 @@ class DataType(Enum):
         self._snowpark_type = snowpark_type
         self._numpy_type = numpy_type
 
+    INT8 = ("int8", "INTEGER", spt.IntegerType(), np.int8)
     INT16 = ("int16", "INTEGER", spt.IntegerType(), np.int16)
     INT32 = ("int32", "INTEGER", spt.IntegerType(), np.int32)
     INT64 = ("int64", "INTEGER", spt.IntegerType(), np.int64)
@@ -26,6 +27,7 @@ class DataType(Enum):
     FLOAT = ("float", "FLOAT", spt.FloatType(), np.float32)
     DOUBLE = ("double", "DOUBLE", spt.DoubleType(), np.float64)
 
+    UINT8 = ("uint8", "INTEGER", spt.IntegerType(), np.uint8)
     UINT16 = ("uint16", "INTEGER", spt.IntegerType(), np.uint16)
     UINT32 = ("uint32", "INTEGER", spt.IntegerType(), np.uint32)
     UINT64 = ("uint64", "INTEGER", spt.IntegerType(), np.uint64)
