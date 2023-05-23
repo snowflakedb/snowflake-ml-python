@@ -163,7 +163,7 @@ class OneHotEncoder(base.BaseTransformer):
         drop_input_cols: Optional[bool] = False,
     ) -> None:
         """See class-level docstring."""
-        # Object parameters
+        super().__init__(drop_input_cols=drop_input_cols)
         self.categories = categories
         self.drop = drop
         self.sparse = sparse
@@ -183,8 +183,6 @@ class OneHotEncoder(base.BaseTransformer):
         self._dense_output_cols_mappings: Dict[
             str, List[str]
         ] = {}  # transform state when output columns are unset before fitting
-
-        base.BaseTransformer.__init__(self, drop_input_cols=drop_input_cols)
 
         self.set_input_cols(input_cols)
         self.set_output_cols(output_cols)

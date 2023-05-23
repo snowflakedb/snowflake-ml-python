@@ -53,7 +53,7 @@ class MinMaxScaler(base.BaseTransformer):
 
         self.custom_states: List[str] = [_utils.NumericStatistics.MIN, _utils.NumericStatistics.MAX]
 
-        base.BaseTransformer.__init__(self, drop_input_cols=drop_input_cols, custom_states=self.custom_states)
+        super().__init__(drop_input_cols=drop_input_cols, custom_states=self.custom_states)
 
         self.set_input_cols(input_cols)
         self.set_output_cols(output_cols)

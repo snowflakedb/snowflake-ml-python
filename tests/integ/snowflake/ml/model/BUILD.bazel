@@ -2,16 +2,17 @@ load("//bazel:py_rules.bzl", "py_test")
 
 py_test(
     name = "model_integ_test",
-    srcs = ["model_integ_test.py"],
     timeout = "long",
-    shard_count=6,
-    deps = [
-        "//snowflake/ml/model:_model",
-        "//snowflake/ml/model:_deployer",
-        "//snowflake/ml/utils:connection_params"
-    ],
-    tags = ["skip_merge_gates"],
+    srcs = ["model_integ_test.py"],
     data = [
-        "//snowflake/ml:wheel"
-    ]
+        "//snowflake/ml:wheel",
+    ],
+    shard_count = 6,
+    tags = ["skip_merge_gates"],
+    deps = [
+        "//snowflake/ml/model:_deployer",
+        "//snowflake/ml/model:_model",
+        "//snowflake/ml/modeling/linear_model:linear_regression",
+        "//snowflake/ml/utils:connection_params",
+    ],
 )

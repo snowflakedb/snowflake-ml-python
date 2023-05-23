@@ -215,12 +215,13 @@ def _get_model_final_packages(
         raise RuntimeError("PIP requirements and dependencies from non-Snowflake anaconda channel is not supported.")
     try:
         final_packages = env_utils.resolve_conda_environment(
-            meta._conda_dependencies[""], [model_env._SNOWFLAKE_CONDA_CHANNEL_URL]
+            meta._conda_dependencies[""], [model_env._SNOWFLAKE_CONDA_CHANNEL_URL], python_version=meta.python_version
         )
         if final_packages is None and relax_version:
             final_packages = env_utils.resolve_conda_environment(
                 list(map(env_utils.relax_requirement_version, meta._conda_dependencies[""])),
                 [model_env._SNOWFLAKE_CONDA_CHANNEL_URL],
+                python_version=meta.python_version,
             )
     except ImportError:
         warnings.warn(
@@ -228,10 +229,17 @@ def _get_model_final_packages(
             category=RuntimeWarning,
         )
         final_packages = env_utils.validate_requirements_in_snowflake_conda_channel(
-            session=session, reqs=meta._conda_dependencies[""]
+            session=session,
+            reqs=meta._conda_dependencies[""],
+            python_version=meta.python_version,
         )
         if final_packages is None and relax_version:
-            final_packages = list(map(str, map(env_utils.relax_requirement_version, meta._conda_dependencies[""])))
+            final_packages = env_utils.validate_requirements_in_snowflake_conda_channel(
+                session=session,
+                reqs=list(map(env_utils.relax_requirement_version, meta._conda_dependencies[""])),
+                python_version=meta.python_version,
+            )
+
     finally:
         if final_packages is None:
             raise RuntimeError(

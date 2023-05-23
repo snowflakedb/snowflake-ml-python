@@ -124,6 +124,7 @@ class SimpleImputer(base.BaseTransformer):
         Raises:
             ValueError: If strategy is invalid, or if fill value is specified for strategy that isn't "constant".
         """
+        super().__init__(drop_input_cols=drop_input_cols)
         if strategy in STRATEGY_TO_STATE_DICT:
             self.strategy = strategy
         else:
@@ -138,8 +139,6 @@ class SimpleImputer(base.BaseTransformer):
         # TODO(hayu): [SNOW-752265] Support SimpleImputer keep_empty_features.
         #  Add back when `keep_empty_features` is supported.
         # self.keep_empty_features = keep_empty_features
-
-        base.BaseTransformer.__init__(self, drop_input_cols=drop_input_cols)
 
         self.set_input_cols(input_cols)
         self.set_output_cols(output_cols)

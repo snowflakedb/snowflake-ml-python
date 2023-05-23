@@ -4,6 +4,8 @@ from absl.testing import absltest
 
 import snowflake.snowpark.types as spt
 from snowflake.ml.model import model_signature
+from snowflake.ml.utils import connection_params
+from snowflake.snowpark import Session
 
 
 class DataTypeTest(absltest.TestCase):
@@ -145,38 +147,61 @@ class ModelSignatureTest(absltest.TestCase):
         self.assertEqual(s, eval(repr(s), model_signature.__dict__))
         self.assertEqual(s, model_signature.ModelSignature.from_dict(s.to_dict()))
 
-    def test_infer_signature_pd_DataFrame(self) -> None:
+
+class PandasDataFrameHandlerTest(absltest.TestCase):
+    def test_validate_pd_DataFrame(self) -> None:
         df = pd.DataFrame([])
         with self.assertRaises(ValueError):
-            self.assertEmpty(model_signature._infer_signature_pd_DataFrame(df))
+            model_signature._PandasDataFrameHandler.validate(df)
 
+        sub_df = pd.DataFrame([2.5, 6.8])
+        df = pd.DataFrame([[1, sub_df], [2, sub_df]], columns=["a", "b"])
+        with self.assertRaises(ValueError):
+            model_signature._PandasDataFrameHandler.validate(df)
+
+        df = pd.DataFrame(
+            [[1, 2.0, 1, 2.0, 1, 2.0], [2, 4.0, 2, 4.0, 2, 4.0]],
+            columns=pd.CategoricalIndex(["a", "b", "c", "a", "b", "c"]),
+        )
+        with self.assertRaises(ValueError):
+            model_signature._PandasDataFrameHandler.validate(df)
+
+        df = pd.DataFrame([[1, [2.5, 6.8]], [2, [2, 6]]], columns=["a", "b"])
+        with self.assertRaises(ValueError):
+            model_signature._PandasDataFrameHandler.validate(df)
+
+        df = pd.DataFrame([[1, np.array([2.5, 6.8])], [2, np.array([2, 6])]], columns=["a", "b"])
+        with self.assertRaises(ValueError):
+            model_signature._PandasDataFrameHandler.validate(df)
+
+    def test_infer_signature_pd_DataFrame(self) -> None:
         df = pd.DataFrame([1, 2, 3, 4])
         self.assertListEqual(
-            model_signature._infer_signature_pd_DataFrame(df),
+            model_signature._PandasDataFrameHandler.infer_signature(df, role="input"),
             [model_signature.FeatureSpec("feature_0", model_signature.DataType.INT64)],
         )
 
         df = pd.DataFrame([1, 2, 3, 4], columns=["a"])
         self.assertListEqual(
-            model_signature._infer_signature_pd_DataFrame(df),
+            model_signature._PandasDataFrameHandler.infer_signature(df, role="input"),
             [model_signature.FeatureSpec("a", model_signature.DataType.INT64)],
         )
 
         df = pd.DataFrame(["a", "b", "c", "d"], columns=["a"])
         self.assertListEqual(
-            model_signature._infer_signature_pd_DataFrame(df),
+            model_signature._PandasDataFrameHandler.infer_signature(df, role="input"),
             [model_signature.FeatureSpec("a", model_signature.DataType.STRING)],
         )
 
         df = pd.DataFrame([ele.encode() for ele in ["a", "b", "c", "d"]], columns=["a"])
         self.assertListEqual(
-            model_signature._infer_signature_pd_DataFrame(df),
+            model_signature._PandasDataFrameHandler.infer_signature(df, role="input"),
             [model_signature.FeatureSpec("a", model_signature.DataType.BYTES)],
         )
 
         df = pd.DataFrame([[1, 2.0], [2, 4.0]])
         self.assertListEqual(
-            model_signature._infer_signature_pd_DataFrame(df),
+            model_signature._PandasDataFrameHandler.infer_signature(df, role="input"),
             [
                 model_signature.FeatureSpec("feature_0", model_signature.DataType.INT64),
                 model_signature.FeatureSpec("feature_1", model_signature.DataType.DOUBLE),
@@ -185,24 +210,25 @@ class ModelSignatureTest(absltest.TestCase):
 
         df = pd.DataFrame([[1, [2.5, 6.8]], [2, [2.5, 6.8]]], columns=["a", "b"])
         self.assertListEqual(
-            model_signature._infer_signature_pd_DataFrame(df),
+            model_signature._PandasDataFrameHandler.infer_signature(df, role="input"),
             [
                 model_signature.FeatureSpec("a", model_signature.DataType.INT64),
                 model_signature.FeatureSpec("b", model_signature.DataType.DOUBLE, shape=(2,)),
             ],
         )
 
-        df = pd.DataFrame([[1, [2.5, 6.8]], [2, [2, 6]]], columns=["a", "b"])
-        with self.assertRaises(ValueError):
-            model_signature._infer_signature_pd_DataFrame(df)
-
         df = pd.DataFrame([[1, [2.5, 6.8]], [2, [2.5]]], columns=["a", "b"])
-        with self.assertRaises(NotImplementedError):
-            model_signature._infer_signature_pd_DataFrame(df)
+        self.assertListEqual(
+            model_signature._PandasDataFrameHandler.infer_signature(df, role="input"),
+            [
+                model_signature.FeatureSpec("a", model_signature.DataType.INT64),
+                model_signature.FeatureSpec("b", model_signature.DataType.DOUBLE, shape=(-1,)),
+            ],
+        )
 
         df = pd.DataFrame([[1, [[2.5], [6.8]]], [2, [[2.5], [6.8]]]], columns=["a", "b"])
         self.assertListEqual(
-            model_signature._infer_signature_pd_DataFrame(df),
+            model_signature._PandasDataFrameHandler.infer_signature(df, role="input"),
             [
                 model_signature.FeatureSpec("a", model_signature.DataType.INT64),
                 model_signature.FeatureSpec("b", model_signature.DataType.DOUBLE, shape=(2, 1)),
@@ -212,39 +238,35 @@ class ModelSignatureTest(absltest.TestCase):
         a = np.array([2.5, 6.8])
         df = pd.DataFrame([[1, a], [2, a]], columns=["a", "b"])
         self.assertListEqual(
-            model_signature._infer_signature_pd_DataFrame(df),
+            model_signature._PandasDataFrameHandler.infer_signature(df, role="input"),
             [
                 model_signature.FeatureSpec("a", model_signature.DataType.INT64),
                 model_signature.FeatureSpec("b", model_signature.DataType.DOUBLE, shape=(2,)),
             ],
         )
 
-        df = pd.DataFrame([[1, np.array([2.5, 6.8])], [2, np.array([2, 6])]], columns=["a", "b"])
-        with self.assertRaises(ValueError):
-            model_signature._infer_signature_pd_DataFrame(df)
-
         df = pd.DataFrame([[1, np.array([2.5, 6.8])], [2, np.array([2.5])]], columns=["a", "b"])
-        with self.assertRaises(NotImplementedError):
-            model_signature._infer_signature_pd_DataFrame(df)
+        self.assertListEqual(
+            model_signature._PandasDataFrameHandler.infer_signature(df, role="input"),
+            [
+                model_signature.FeatureSpec("a", model_signature.DataType.INT64),
+                model_signature.FeatureSpec("b", model_signature.DataType.DOUBLE, shape=(-1,)),
+            ],
+        )
 
         a = np.array([[2, 5], [6, 8]])
         df = pd.DataFrame([[1, a], [2, a]], columns=["a", "b"])
         self.assertListEqual(
-            model_signature._infer_signature_pd_DataFrame(df),
+            model_signature._PandasDataFrameHandler.infer_signature(df, role="input"),
             [
                 model_signature.FeatureSpec("a", model_signature.DataType.INT64),
                 model_signature.FeatureSpec("b", model_signature.DataType.INT64, shape=(2, 2)),
             ],
         )
 
-        sub_df = pd.DataFrame([2.5, 6.8])
-        df = pd.DataFrame([[1, sub_df], [2, sub_df]], columns=["a", "b"])
-        with self.assertRaises(NotImplementedError):
-            model_signature._infer_signature_pd_DataFrame(df)
-
         df = pd.DataFrame([[1, 2.0], [2, 4.0]], columns=pd.PeriodIndex(year=[2000, 2002], quarter=[1, 3]))
         self.assertListEqual(
-            model_signature._infer_signature_pd_DataFrame(df),
+            model_signature._PandasDataFrameHandler.infer_signature(df, role="input"),
             [
                 model_signature.FeatureSpec("2000Q1", model_signature.DataType.INT64),
                 model_signature.FeatureSpec("2002Q3", model_signature.DataType.DOUBLE),
@@ -253,7 +275,7 @@ class ModelSignatureTest(absltest.TestCase):
 
         df = pd.DataFrame([[1, 2.0], [2, 4.0]], columns=pd.date_range("2020-01-06", "2020-03-03", freq="MS"))
         self.assertListEqual(
-            model_signature._infer_signature_pd_DataFrame(df),
+            model_signature._PandasDataFrameHandler.infer_signature(df, role="input"),
             [
                 model_signature.FeatureSpec("2020-02-01 00:00:00", model_signature.DataType.INT64),
                 model_signature.FeatureSpec("2020-03-01 00:00:00", model_signature.DataType.DOUBLE),
@@ -264,7 +286,7 @@ class ModelSignatureTest(absltest.TestCase):
             [[1, 2.0], [2, 4.0]], columns=pd.TimedeltaIndex(data=["1 days 02:00:00", "1 days 06:05:01.000030"])
         )
         self.assertListEqual(
-            model_signature._infer_signature_pd_DataFrame(df),
+            model_signature._PandasDataFrameHandler.infer_signature(df, role="input"),
             [
                 model_signature.FeatureSpec("1 days 02:00:00", model_signature.DataType.INT64),
                 model_signature.FeatureSpec("1 days 06:05:01.000030", model_signature.DataType.DOUBLE),
@@ -273,44 +295,44 @@ class ModelSignatureTest(absltest.TestCase):
 
         df = pd.DataFrame([[1, 2.0], [2, 4.0]], columns=pd.interval_range(start=0, end=2))
         self.assertListEqual(
-            model_signature._infer_signature_pd_DataFrame(df),
+            model_signature._PandasDataFrameHandler.infer_signature(df, role="input"),
             [
                 model_signature.FeatureSpec("(0, 1]", model_signature.DataType.INT64),
                 model_signature.FeatureSpec("(1, 2]", model_signature.DataType.DOUBLE),
             ],
         )
 
-        df = pd.DataFrame(
-            [[1, 2.0, 1, 2.0, 1, 2.0], [2, 4.0, 2, 4.0, 2, 4.0]],
-            columns=pd.CategoricalIndex(["a", "b", "c", "a", "b", "c"]),
-        )
-        with self.assertRaises(NotImplementedError):
-            model_signature._infer_signature_pd_DataFrame(df)
-
         arrays = [[1, 2], ["red", "blue"]]
         df = pd.DataFrame([[1, 2.0], [2, 4.0]], columns=pd.MultiIndex.from_arrays(arrays, names=("number", "color")))
         self.assertListEqual(
-            model_signature._infer_signature_pd_DataFrame(df),
+            model_signature._PandasDataFrameHandler.infer_signature(df, role="input"),
             [
                 model_signature.FeatureSpec("(1, 'red')", model_signature.DataType.INT64),
                 model_signature.FeatureSpec("(2, 'blue')", model_signature.DataType.DOUBLE),
             ],
         )
 
-    def test_infer_signature_np_ndarray(self) -> None:
+
+class NumpyArrayHandlerTest(absltest.TestCase):
+    def test_validate_np_ndarray(self) -> None:
         arr = np.array([])
         with self.assertRaises(ValueError):
-            self.assertEmpty(model_signature._infer_signature_np_ndarray(arr))
+            model_signature._NumpyArrayHandler.validate(arr)
 
+        arr = np.array(1)
+        with self.assertRaises(ValueError):
+            model_signature._NumpyArrayHandler.validate(arr)
+
+    def test_infer_schema_np_ndarray(self) -> None:
         arr = np.array([1, 2, 3, 4])
         self.assertListEqual(
-            model_signature._infer_signature_np_ndarray(arr),
+            model_signature._NumpyArrayHandler.infer_signature(arr, role="input"),
             [model_signature.FeatureSpec("feature_0", model_signature.DataType.INT64)],
         )
 
         arr = np.array([[1, 2], [3, 4]])
         self.assertListEqual(
-            model_signature._infer_signature_np_ndarray(arr),
+            model_signature._NumpyArrayHandler.infer_signature(arr, role="input"),
             [
                 model_signature.FeatureSpec("feature_0", model_signature.DataType.INT64),
                 model_signature.FeatureSpec("feature_1", model_signature.DataType.INT64),
@@ -319,28 +341,34 @@ class ModelSignatureTest(absltest.TestCase):
 
         arr = np.array([[[1, 1], [2, 2]], [[3, 3], [4, 4]]])
         self.assertListEqual(
-            model_signature._infer_signature_np_ndarray(arr),
+            model_signature._NumpyArrayHandler.infer_signature(arr, role="input"),
             [
                 model_signature.FeatureSpec("feature_0", model_signature.DataType.INT64, shape=(2,)),
                 model_signature.FeatureSpec("feature_1", model_signature.DataType.INT64, shape=(2,)),
             ],
         )
 
-    def test_infer_signature_list_of(self) -> None:
+
+class ListOfNumpyArrayHandlerTest(absltest.TestCase):
+    def test_validate_list_of_numpy_array(self) -> None:
+        lt8 = [pd.DataFrame([1]), pd.DataFrame([2, 3])]
+        self.assertFalse(model_signature._ListOfNumpyArrayHandler.can_handle(lt8))
+
+    def test_infer_signature_list_of_numpy_array(self) -> None:
         arr = np.array([1, 2, 3, 4])
         lt = [arr, arr]
         self.assertListEqual(
-            model_signature._infer_signature_list_multioutput(lt),
+            model_signature._ListOfNumpyArrayHandler.infer_signature(lt, role="input"),
             [
-                model_signature.FeatureSpec("output_0_feature_0", model_signature.DataType.INT64),
-                model_signature.FeatureSpec("output_1_feature_0", model_signature.DataType.INT64),
+                model_signature.FeatureSpec("input_0_feature_0", model_signature.DataType.INT64),
+                model_signature.FeatureSpec("input_1_feature_0", model_signature.DataType.INT64),
             ],
         )
 
         arr = np.array([[[1, 1], [2, 2]], [[3, 3], [4, 4]]])
         lt = [arr, arr]
         self.assertListEqual(
-            model_signature._infer_signature_list_multioutput(lt),
+            model_signature._ListOfNumpyArrayHandler.infer_signature(lt, role="output"),
             [
                 model_signature.FeatureSpec("output_0_feature_0", model_signature.DataType.INT64, shape=(2,)),
                 model_signature.FeatureSpec("output_0_feature_1", model_signature.DataType.INT64, shape=(2,)),
@@ -349,28 +377,38 @@ class ModelSignatureTest(absltest.TestCase):
             ],
         )
 
+
+class ListOfBuiltinsHandlerTest(absltest.TestCase):
+    def test_validate_list_builtins(self) -> None:
+        lt7 = [[1], [2, 3]]
+        with self.assertRaises(ValueError):
+            model_signature._ListOfBuiltinHandler.validate(lt7)
+
+        lt8 = [pd.DataFrame([1]), pd.DataFrame([2, 3])]
+        self.assertFalse(model_signature._ListOfBuiltinHandler.can_handle(lt8))
+
     def test_infer_signature_list_builtins(self) -> None:
         lt1 = [1, 2, 3, 4]
         self.assertListEqual(
-            model_signature._infer_signature_list_builtins(lt1),
+            model_signature._ListOfBuiltinHandler.infer_signature(lt1, role="input"),
             [model_signature.FeatureSpec("feature_0", model_signature.DataType.INT64)],
         )
 
         lt2 = ["a", "b", "c", "d"]
         self.assertListEqual(
-            model_signature._infer_signature_list_builtins(lt2),
+            model_signature._ListOfBuiltinHandler.infer_signature(lt2, role="input"),
             [model_signature.FeatureSpec("feature_0", model_signature.DataType.STRING)],
         )
 
         lt3 = [ele.encode() for ele in lt2]
         self.assertListEqual(
-            model_signature._infer_signature_list_builtins(lt3),
+            model_signature._ListOfBuiltinHandler.infer_signature(lt3, role="input"),
             [model_signature.FeatureSpec("feature_0", model_signature.DataType.BYTES)],
         )
 
         lt4 = [[1, 2], [3, 4]]
         self.assertListEqual(
-            model_signature._infer_signature_list_builtins(lt4),
+            model_signature._ListOfBuiltinHandler.infer_signature(lt4, role="input"),
             [
                 model_signature.FeatureSpec("feature_0", model_signature.DataType.INT64),
                 model_signature.FeatureSpec("feature_1", model_signature.DataType.INT64),
@@ -379,7 +417,7 @@ class ModelSignatureTest(absltest.TestCase):
 
         lt5 = [[1, 2.0], [3, 4]]  # This is not encouraged and will have type error, but we support it.
         self.assertListEqual(
-            model_signature._infer_signature_list_builtins(lt5),  # type:ignore[arg-type]
+            model_signature._ListOfBuiltinHandler.infer_signature(lt5, role="input"),  # type:ignore[arg-type]
             [
                 model_signature.FeatureSpec("feature_0", model_signature.DataType.INT64),
                 model_signature.FeatureSpec("feature_1", model_signature.DataType.DOUBLE),
@@ -388,21 +426,73 @@ class ModelSignatureTest(absltest.TestCase):
 
         lt6 = [[[1, 1], [2, 2]], [[3, 3], [4, 4]]]
         self.assertListEqual(
-            model_signature._infer_signature_list_builtins(lt6),
+            model_signature._ListOfBuiltinHandler.infer_signature(lt6, role="input"),
             [
                 model_signature.FeatureSpec("feature_0", model_signature.DataType.INT64, shape=(2,)),
                 model_signature.FeatureSpec("feature_1", model_signature.DataType.INT64, shape=(2,)),
             ],
         )
 
-        lt7 = [[1], [2, 3]]
+
+class SnowParkDataFrameHandlerTest(absltest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls._session = Session.builder.configs(connection_params.SnowflakeLoginOptions()).create()
+
+    @classmethod
+    def tearDownClass(cls) -> None:
+        cls._session.close()
+
+    def test_validate_snowpark_df(self) -> None:
+        schema = spt.StructType([spt.StructField('"a"', spt.VariantType()), spt.StructField('"b"', spt.StringType())])
+        df = self._session.create_dataframe([[1, "snow"], [3, "flake"]], schema)
         with self.assertRaises(ValueError):
-            model_signature._infer_signature_list_builtins(lt7)
+            model_signature._SnowparkDataFrameHandler.validate(df)
 
-        lt8 = [pd.DataFrame([1]), pd.DataFrame([2, 3])]
-        with self.assertRaises(NotImplementedError):
-            model_signature._infer_signature_list_builtins(lt8)
+    def test_infer_schema_snowpark_df(self) -> None:
+        schema = spt.StructType([spt.StructField('"a"', spt.LongType()), spt.StructField('"b"', spt.StringType())])
+        df = self._session.create_dataframe([[1, "snow"], [3, "flake"]], schema)
+        self.assertListEqual(
+            model_signature._SnowparkDataFrameHandler.infer_signature(df, role="input"),
+            [
+                model_signature.FeatureSpec("a", model_signature.DataType.INT64),
+                model_signature.FeatureSpec("b", model_signature.DataType.STRING),
+            ],
+        )
 
+    def test_validate_data_with_features(self) -> None:
+        fts = [
+            model_signature.FeatureSpec("a", model_signature.DataType.INT64),
+            model_signature.FeatureSpec("b", model_signature.DataType.INT64),
+        ]
+        df = self._session.create_dataframe([{'"a"': 1}, {'"b"': 2}])
+        with self.assertWarns(RuntimeWarning):
+            model_signature._validate_snowpark_data(df, fts)
+
+        fts = [
+            model_signature.FeatureSpec("a", model_signature.DataType.INT64),
+            model_signature.FeatureSpec("b", model_signature.DataType.STRING),
+        ]
+        schema = spt.StructType([spt.StructField('"a"', spt.LongType()), spt.StructField('"b"', spt.StringType())])
+        df = self._session.create_dataframe([[1, "snow"], [3, "flake"]], schema)
+        model_signature._validate_snowpark_data(df, fts)
+
+        schema = spt.StructType([spt.StructField('"a"', spt.LongType()), spt.StructField('"b"', spt.IntegerType())])
+        df = self._session.create_dataframe([[1, 3], [3, 9]], schema)
+        with self.assertRaises(ValueError):
+            model_signature._validate_snowpark_data(df, fts)
+
+        schema = spt.StructType([spt.StructField('"a1"', spt.LongType()), spt.StructField('"b"', spt.StringType())])
+        df = self._session.create_dataframe([[1, "snow"], [3, "flake"]], schema)
+        with self.assertRaises(ValueError):
+            model_signature._validate_snowpark_data(df, fts)
+
+        df = self._session.create_dataframe([{'"a"': 1}, {'"b"': 2}])
+        with self.assertRaises(ValueError):
+            model_signature._validate_snowpark_data(df, fts)
+
+
+class ModelSignatureMiscTest(absltest.TestCase):
     def test_rename_features(self) -> None:
         model_signature._rename_features([])
 
@@ -428,25 +518,25 @@ class ModelSignatureTest(absltest.TestCase):
     def test_infer_signature(self) -> None:
         df = pd.DataFrame([1, 2, 3, 4])
         self.assertListEqual(
-            model_signature._infer_signature(df),
+            model_signature._infer_signature(df, role="input"),
             [model_signature.FeatureSpec("feature_0", model_signature.DataType.INT64)],
         )
 
         arr = np.array([1, 2, 3, 4])
         self.assertListEqual(
-            model_signature._infer_signature(arr),
+            model_signature._infer_signature(arr, role="input"),
             [model_signature.FeatureSpec("feature_0", model_signature.DataType.INT64)],
         )
 
         lt1 = [1, 2, 3, 4]
         self.assertListEqual(
-            model_signature._infer_signature(lt1),
+            model_signature._infer_signature(lt1, role="input"),
             [model_signature.FeatureSpec("feature_0", model_signature.DataType.INT64)],
         )
 
         lt2 = [[1, 2], [3, 4]]
         self.assertListEqual(
-            model_signature._infer_signature(lt2),
+            model_signature._infer_signature(lt2, role="input"),
             [
                 model_signature.FeatureSpec("feature_0", model_signature.DataType.INT64),
                 model_signature.FeatureSpec("feature_1", model_signature.DataType.INT64),
@@ -455,7 +545,7 @@ class ModelSignatureTest(absltest.TestCase):
 
         lt = [arr, arr]
         self.assertListEqual(
-            model_signature._infer_signature(lt, is_output=True),
+            model_signature._infer_signature(lt, role="output"),
             [
                 model_signature.FeatureSpec("output_0_feature_0", model_signature.DataType.INT64),
                 model_signature.FeatureSpec("output_1_feature_0", model_signature.DataType.INT64),
@@ -463,28 +553,26 @@ class ModelSignatureTest(absltest.TestCase):
         )
 
         self.assertListEqual(
-            model_signature._infer_signature(lt),
+            model_signature._infer_signature(lt, role="input"),
             [
-                model_signature.FeatureSpec("feature_0", model_signature.DataType.INT64),
-                model_signature.FeatureSpec("feature_1", model_signature.DataType.INT64),
-                model_signature.FeatureSpec("feature_2", model_signature.DataType.INT64),
-                model_signature.FeatureSpec("feature_3", model_signature.DataType.INT64),
+                model_signature.FeatureSpec("input_0_feature_0", model_signature.DataType.INT64),
+                model_signature.FeatureSpec("input_1_feature_0", model_signature.DataType.INT64),
             ],
         )
 
         df = pd.DataFrame([1, 2, 3, 4])
         lt = [df, arr]
-        with self.assertRaises(ValueError):
-            model_signature._infer_signature(lt)
+        with self.assertRaises(NotImplementedError):
+            model_signature._infer_signature(lt, role="input")
 
         with self.assertRaises(ValueError):
-            model_signature._infer_signature([True, 1])
+            model_signature._infer_signature([True, 1], role="input")
 
         with self.assertRaises(NotImplementedError):
-            model_signature._infer_signature(1)
+            model_signature._infer_signature(1, role="input")
 
         with self.assertRaises(NotImplementedError):
-            model_signature._infer_signature([])
+            model_signature._infer_signature([], role="input")
 
     def test_validate_data_with_features(self) -> None:
         fts = [
@@ -493,47 +581,63 @@ class ModelSignatureTest(absltest.TestCase):
         ]
 
         with self.assertRaises(ValueError):
-            model_signature._validate_data_with_features_and_convert_to_df(fts, np.array([]))
+            model_signature._convert_and_validate_local_data(np.array([]), fts)
 
         with self.assertRaises(ValueError):
-            model_signature._validate_data_with_features_and_convert_to_df(fts, np.array(5))
-
-        with self.assertRaises(NotImplementedError):
-            model_signature._validate_data_with_features_and_convert_to_df(fts, [])
+            model_signature._convert_and_validate_local_data(np.array(5), fts)
 
         with self.assertRaises(ValueError):
-            model_signature._validate_data_with_features_and_convert_to_df(fts, [1, [1, 1]])
+            model_signature._convert_and_validate_local_data(np.array([[2.5, 5], [6.8, 8]]), fts)
 
         with self.assertRaises(ValueError):
-            model_signature._validate_data_with_features_and_convert_to_df(fts, [[1], [1, 1]])
+            model_signature._convert_and_validate_local_data([], fts)
 
         with self.assertRaises(ValueError):
-            model_signature._validate_data_with_features_and_convert_to_df(fts, pd.DataFrame([5, 6]))
+            model_signature._convert_and_validate_local_data([1, [1, 1]], fts)
 
         with self.assertRaises(ValueError):
-            model_signature._validate_data_with_features_and_convert_to_df(fts, np.array([5, 6]))
+            model_signature._convert_and_validate_local_data([[1], [1, 1]], fts)
 
-        df = model_signature._validate_data_with_features_and_convert_to_df(fts[:1], np.array([5, 6]))
+        with self.assertRaises(ValueError):
+            model_signature._convert_and_validate_local_data([[2.1, 5.0], [6.8, 8.0]], fts)
+
+        with self.assertRaises(ValueError):
+            model_signature._convert_and_validate_local_data(pd.DataFrame([[2.5, 5], [6.8, 8]]), fts)
+
+        with self.assertRaises(ValueError):
+            model_signature._convert_and_validate_local_data(pd.DataFrame([5, 6]), fts)
+
+        with self.assertRaises(ValueError):
+            model_signature._convert_and_validate_local_data(np.array([5, 6]), fts)
+
+        with self.assertRaises(ValueError):
+            model_signature._convert_and_validate_local_data(pd.DataFrame([[2, 5], [6, 8]], columns=["a", "b"]), fts)
+
+        df = model_signature._convert_and_validate_local_data(np.array([5, 6]), fts[:1])
         self.assertListEqual(df.columns.to_list(), ["feature_0"])
 
-        df = model_signature._validate_data_with_features_and_convert_to_df(fts[:1], pd.DataFrame([5, 6]))
+        df = model_signature._convert_and_validate_local_data(pd.DataFrame([5, 6]), fts[:1])
         self.assertListEqual(df.columns.to_list(), ["feature_0"])
 
-        df = model_signature._validate_data_with_features_and_convert_to_df(fts[:1], [5, 6])
+        df = model_signature._convert_and_validate_local_data([5, 6], fts[:1])
         self.assertListEqual(df.columns.to_list(), ["feature_0"])
 
-        df = model_signature._validate_data_with_features_and_convert_to_df(fts, np.array([[2, 5], [6, 8]]))
+        df = model_signature._convert_and_validate_local_data(np.array([[2, 5], [6, 8]]), fts)
         self.assertListEqual(df.columns.to_list(), ["feature_0", "feature_1"])
 
-        df = model_signature._validate_data_with_features_and_convert_to_df(fts, pd.DataFrame([[2, 5], [6, 8]]))
+        df = model_signature._convert_and_validate_local_data(pd.DataFrame([[2, 5], [6, 8]]), fts)
         self.assertListEqual(df.columns.to_list(), ["feature_0", "feature_1"])
 
-        df = model_signature._validate_data_with_features_and_convert_to_df(
-            fts, pd.DataFrame([[2, 5], [6, 8]], columns=["a", "b"])
+        df = model_signature._convert_and_validate_local_data(
+            pd.DataFrame([[2, 5], [6, 8]], columns=["a", "b"]),
+            [
+                model_signature.FeatureSpec("a", model_signature.DataType.INT64),
+                model_signature.FeatureSpec("b", model_signature.DataType.INT64),
+            ],
         )
         self.assertListEqual(df.columns.to_list(), ["a", "b"])
 
-        df = model_signature._validate_data_with_features_and_convert_to_df(fts, [[2, 5], [6, 8]])
+        df = model_signature._convert_and_validate_local_data([[2, 5], [6, 8]], fts)
         self.assertListEqual(df.columns.to_list(), ["feature_0", "feature_1"])
 
 

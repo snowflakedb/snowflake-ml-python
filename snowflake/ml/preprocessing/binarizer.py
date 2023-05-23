@@ -36,10 +36,8 @@ class Binarizer(base.BaseTransformer):
             output_cols: Single or multiple output columns.
             drop_input_cols: Remove input columns from output if set True. False by default.
         """
+        super().__init__(drop_input_cols=drop_input_cols)
         self.threshold = threshold
-
-        base.BaseTransformer.__init__(self, drop_input_cols=drop_input_cols)
-
         self.set_input_cols(input_cols)
         self.set_output_cols(output_cols)
 

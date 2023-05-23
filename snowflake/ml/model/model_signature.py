@@ -2,39 +2,56 @@ import textwrap
 import warnings
 from abc import ABC, abstractmethod
 from enum import Enum
-from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple, Union, cast
+from typing import (
+    Any,
+    Callable,
+    Dict,
+    Final,
+    Generic,
+    List,
+    Literal,
+    Optional,
+    Sequence,
+    Tuple,
+    Type,
+    Union,
+    final,
+)
 
 import numpy as np
 import numpy.typing as npt
 import pandas as pd
+from typing_extensions import TypeGuard
 
+import snowflake.snowpark
 import snowflake.snowpark.types as spt
+from snowflake.ml._internal.utils import identifier
 from snowflake.ml.model import type_hints as model_types
 
 
 class DataType(Enum):
-    def __init__(self, value: str, sql_type: str, snowpark_type: spt.DataType, numpy_type: npt.DTypeLike) -> None:
+    def __init__(self, value: str, sql_type: str, snowpark_type: Type[spt.DataType], numpy_type: npt.DTypeLike) -> None:
         self._value = value
         self._sql_type = sql_type
         self._snowpark_type = snowpark_type
         self._numpy_type = numpy_type
 
-    INT8 = ("int8", "INTEGER", spt.IntegerType(), np.int8)
-    INT16 = ("int16", "INTEGER", spt.IntegerType(), np.int16)
-    INT32 = ("int32", "INTEGER", spt.IntegerType(), np.int32)
-    INT64 = ("int64", "INTEGER", spt.IntegerType(), np.int64)
+    INT8 = ("int8", "INTEGER", spt.IntegerType, np.int8)
+    INT16 = ("int16", "INTEGER", spt.IntegerType, np.int16)
+    INT32 = ("int32", "INTEGER", spt.IntegerType, np.int32)
+    INT64 = ("int64", "INTEGER", spt.IntegerType, np.int64)
 
-    FLOAT = ("float", "FLOAT", spt.FloatType(), np.float32)
-    DOUBLE = ("double", "DOUBLE", spt.DoubleType(), np.float64)
+    FLOAT = ("float", "FLOAT", spt.FloatType, np.float32)
+    DOUBLE = ("double", "DOUBLE", spt.DoubleType, np.float64)
 
-    UINT8 = ("uint8", "INTEGER", spt.IntegerType(), np.uint8)
-    UINT16 = ("uint16", "INTEGER", spt.IntegerType(), np.uint16)
-    UINT32 = ("uint32", "INTEGER", spt.IntegerType(), np.uint32)
-    UINT64 = ("uint64", "INTEGER", spt.IntegerType(), np.uint64)
+    UINT8 = ("uint8", "INTEGER", spt.IntegerType, np.uint8)
+    UINT16 = ("uint16", "INTEGER", spt.IntegerType, np.uint16)
+    UINT32 = ("uint32", "INTEGER", spt.IntegerType, np.uint32)
+    UINT64 = ("uint64", "INTEGER", spt.IntegerType, np.uint64)
 
-    BOOL = ("bool", "BOOLEAN", spt.BooleanType(), np.bool8)
-    STRING = ("string", "VARCHAR", spt.StringType(), np.str0)
-    BYTES = ("bytes", "VARBINARY", spt.BinaryType(), np.bytes0)
+    BOOL = ("bool", "BOOLEAN", spt.BooleanType, np.bool8)
+    STRING = ("string", "VARCHAR", spt.StringType, np.str0)
+    BYTES = ("bytes", "VARBINARY", spt.BinaryType, np.bytes0)
 
     def as_sql_type(self) -> str:
         """Convert to corresponding Snowflake Logic Type.
@@ -50,7 +67,7 @@ class DataType(Enum):
         Returns:
             A Snowpark type.
         """
-        return self._snowpark_type
+        return self._snowpark_type()
 
     def __repr__(self) -> str:
         return f"DataType.{self.name}"
@@ -75,6 +92,44 @@ class DataType(Enum):
                 return np_to_snowml_type_mapping[potential_type]
         raise NotImplementedError(f"Type {np_type} is not supported as a DataType.")
 
+    @classmethod
+    def from_snowpark_type(cls, snowpark_type: spt.DataType) -> "DataType":
+        """Translate snowpark type to DataType for signature definition.
+
+        Args:
+            snowpark_type: The snowpark type.
+
+        Raises:
+            NotImplementedError: Raised when the given numpy type is not supported.
+
+        Returns:
+            Corresponding DataType.
+        """
+        snowpark_to_snowml_type_mapping: Dict[Type[spt.DataType], DataType] = {
+            spt._IntegralType: DataType.INT64,
+            **{i._snowpark_type: i for i in DataType if i._snowpark_type != spt.IntegerType},
+        }
+        for potential_type in snowpark_to_snowml_type_mapping.keys():
+            if isinstance(snowpark_type, potential_type):
+                return snowpark_to_snowml_type_mapping[potential_type]
+        raise NotImplementedError(f"Type {snowpark_type} is not supported as a DataType.")
+
+    def is_same_snowpark_type(self, incoming_snowpark_type: spt.DataType) -> bool:
+        """Check if provided snowpark type is the same as Data Type.
+            Since for Snowflake all integer types are same, thus when datatype is a integer type, the incoming snowpark
+            type can be any type inherit from _IntegralType.
+
+        Args:
+            incoming_snowpark_type: The snowpark type.
+
+        Returns:
+            If the provided snowpark type is the same as the DataType.
+        """
+        if self._snowpark_type == spt.IntegerType:
+            return isinstance(incoming_snowpark_type, spt._IntegralType)
+        else:
+            return isinstance(incoming_snowpark_type, self._snowpark_type)
+
 
 class BaseFeatureSpec(ABC):
     """Abstract Class for specification of a feature."""
@@ -82,6 +137,7 @@ class BaseFeatureSpec(ABC):
     def __init__(self, name: str) -> None:
         self._name = name
 
+    @final
     @property
     def name(self) -> str:
         """Name of the feature."""
@@ -345,11 +401,277 @@ class ModelSignature:
         )
 
 
+class _BaseDataHandler(ABC, Generic[model_types._DataType]):
+    FEATURE_PREFIX: Final[str] = "feature"
+    INPUT_PREFIX: Final[str] = "input"
+    OUTPUT_PREFIX: Final[str] = "output"
+
+    @staticmethod
+    @abstractmethod
+    def can_handle(data: model_types.SupportedDataType) -> TypeGuard[model_types._DataType]:
+        ...
+
+    @staticmethod
+    @abstractmethod
+    def validate(data: model_types._DataType) -> None:
+        ...
+
+    @staticmethod
+    @abstractmethod
+    def infer_signature(data: model_types._DataType, role: Literal["input", "output"]) -> Sequence[FeatureSpec]:
+        ...
+
+    @staticmethod
+    @abstractmethod
+    def convert_to_df(data: model_types._DataType) -> Union[pd.DataFrame, snowflake.snowpark.DataFrame]:
+        ...
+
+
+class _PandasDataFrameHandler(_BaseDataHandler[pd.DataFrame]):
+    @staticmethod
+    def can_handle(data: model_types.SupportedDataType) -> TypeGuard[pd.DataFrame]:
+        return isinstance(data, pd.DataFrame)
+
+    @staticmethod
+    def validate(data: pd.DataFrame) -> None:
+        df_cols = data.columns
+        if not all(hasattr(data[col], "dtype") for col in data.columns):
+            raise ValueError(f"Data Validation Error: Unknown column confronted in {data}.")
+
+        if len(df_cols) == 0:
+            raise ValueError("Data Validation Error: Empty data is found.")
+
+        if df_cols.has_duplicates:  # Rule out categorical index with duplicates
+            raise ValueError("Data Validation Error: Duplicate column index is found.")
+
+        if df_cols.dtype not in [np.int64, np.uint64, np.float64, np.object0]:
+            raise ValueError("Data Validation Error: Unsupported column index type is found.")
+
+        df_col_dtypes = [data[col].dtype for col in data.columns]
+        for df_col, df_col_dtype in zip(df_cols, df_col_dtypes):
+            if df_col_dtype == np.dtype("O"):
+                # Check if all objects have the same type
+                if not all(isinstance(data_row, type(data[df_col][0])) for data_row in data[df_col]):
+                    raise ValueError(
+                        f"Data Validation Error: Inconsistent type of object found in column data {data[df_col]}."
+                    )
+
+                if isinstance(data[df_col][0], list):
+                    arr = _convert_list_to_ndarray(data[df_col][0])
+                    arr_dtype = DataType.from_numpy_type(arr.dtype)
+
+                    converted_data_list = [_convert_list_to_ndarray(data_row) for data_row in data[df_col]]
+
+                    if not all(
+                        DataType.from_numpy_type(converted_data.dtype) == arr_dtype
+                        for converted_data in converted_data_list
+                    ):
+                        raise ValueError(
+                            "Data Validation Error: "
+                            + f"Inconsistent type of object found in column data {data[df_col]}."
+                        )
+
+                elif isinstance(data[df_col][0], np.ndarray):
+                    arr_dtype = DataType.from_numpy_type(data[df_col][0].dtype)
+
+                    if not all(DataType.from_numpy_type(data_row.dtype) == arr_dtype for data_row in data[df_col]):
+                        raise ValueError(
+                            "Data Validation Error: "
+                            + f"Inconsistent type of object found in column data {data[df_col]}."
+                        )
+                elif not isinstance(data[df_col][0], (str, bytes)):
+                    raise ValueError(f"Data Validation Error: Unsupported type confronted in {data[df_col]}")
+
+    @staticmethod
+    def infer_signature(data: pd.DataFrame, role: Literal["input", "output"]) -> Sequence[FeatureSpec]:
+        feature_prefix = f"{_PandasDataFrameHandler.FEATURE_PREFIX}_"
+        df_cols = data.columns
+        if df_cols.dtype in [np.int64, np.uint64, np.float64]:
+            ft_names = [f"{feature_prefix}{i}" for i in df_cols]
+        else:
+            ft_names = list(map(str, data.columns.to_list()))
+
+        df_col_dtypes = [data[col].dtype for col in data.columns]
+
+        specs = []
+        for df_col, df_col_dtype, ft_name in zip(df_cols, df_col_dtypes, ft_names):
+            if df_col_dtype == np.dtype("O"):
+                if isinstance(data[df_col][0], list):
+                    arr = _convert_list_to_ndarray(data[df_col][0])
+                    arr_dtype = DataType.from_numpy_type(arr.dtype)
+                    ft_shape = np.shape(data[df_col][0])
+
+                    converted_data_list = [_convert_list_to_ndarray(data_row) for data_row in data[df_col]]
+
+                    if not all(np.shape(converted_data) == ft_shape for converted_data in converted_data_list):
+                        ft_shape = (-1,)
+
+                    specs.append(FeatureSpec(dtype=arr_dtype, name=ft_name, shape=ft_shape))
+                elif isinstance(data[df_col][0], np.ndarray):
+                    arr_dtype = DataType.from_numpy_type(data[df_col][0].dtype)
+                    ft_shape = np.shape(data[df_col][0])
+
+                    if not all(np.shape(data_row) == ft_shape for data_row in data[df_col]):
+                        ft_shape = (-1,)
+
+                    specs.append(FeatureSpec(dtype=arr_dtype, name=ft_name, shape=ft_shape))
+                elif isinstance(data[df_col][0], str):
+                    specs.append(FeatureSpec(dtype=DataType.STRING, name=ft_name))
+                elif isinstance(data[df_col][0], bytes):
+                    specs.append(FeatureSpec(dtype=DataType.BYTES, name=ft_name))
+            else:
+                specs.append(FeatureSpec(dtype=DataType.from_numpy_type(df_col_dtype), name=ft_name))
+        return specs
+
+    @staticmethod
+    @abstractmethod
+    def convert_to_df(data: pd.DataFrame) -> pd.DataFrame:
+        return data
+
+
+class _NumpyArrayHandler(_BaseDataHandler[model_types._SupportedNumpyArray]):
+    @staticmethod
+    def can_handle(data: model_types.SupportedDataType) -> TypeGuard[model_types._SupportedNumpyArray]:
+        return isinstance(data, np.ndarray)
+
+    @staticmethod
+    def validate(data: model_types._SupportedNumpyArray) -> None:
+        if data.shape == (0,):
+            # Empty array
+            raise ValueError("Data Validation Error: Empty data is found.")
+
+        if data.shape == ():
+            # scalar
+            raise ValueError("Data Validation Error: Scalar data is found.")
+
+    @staticmethod
+    def infer_signature(
+        data: model_types._SupportedNumpyArray, role: Literal["input", "output"]
+    ) -> Sequence[FeatureSpec]:
+        feature_prefix = f"{_PandasDataFrameHandler.FEATURE_PREFIX}_"
+        dtype = DataType.from_numpy_type(data.dtype)
+        if len(data.shape) == 1:
+            return [FeatureSpec(dtype=dtype, name=f"{feature_prefix}0")]
+        else:
+            # For high-dimension array, 0-axis is for batch, 1-axis is for column, further more is details of columns.
+            features = []
+            n_cols = data.shape[1]
+            ft_names = [f"{feature_prefix}{i}" for i in range(n_cols)]
+            for col_data, ft_name in zip(data[0], ft_names):
+                if isinstance(col_data, np.ndarray):
+                    ft_shape = np.shape(col_data)
+                    features.append(FeatureSpec(dtype=dtype, name=ft_name, shape=ft_shape))
+                else:
+                    features.append(FeatureSpec(dtype=dtype, name=ft_name))
+            return features
+
+    @staticmethod
+    def convert_to_df(data: model_types._SupportedNumpyArray) -> pd.DataFrame:
+        if len(data.shape) == 1:
+            data = np.expand_dims(data, axis=1)
+        return pd.DataFrame(data)
+
+
+class _ListOfNumpyArrayHandler(_BaseDataHandler[List[model_types._SupportedNumpyArray]]):
+    @staticmethod
+    def can_handle(data: model_types.SupportedDataType) -> TypeGuard[List[model_types._SupportedNumpyArray]]:
+        return (
+            isinstance(data, list)
+            and len(data) > 0
+            and all(_NumpyArrayHandler.can_handle(data_col) for data_col in data)
+        )
+
+    @staticmethod
+    def validate(data: List[model_types._SupportedNumpyArray]) -> None:
+        for data_col in data:
+            _NumpyArrayHandler.validate(data_col)
+
+    @staticmethod
+    def infer_signature(
+        data: List[model_types._SupportedNumpyArray], role: Literal["input", "output"]
+    ) -> Sequence[FeatureSpec]:
+        features: List[FeatureSpec] = []
+
+        for i, data_col in enumerate(data):
+            inferred_res = _NumpyArrayHandler.infer_signature(data_col, role)
+            for ft in inferred_res:
+                additional_prefix = (
+                    _ListOfNumpyArrayHandler.OUTPUT_PREFIX
+                    if role == "output"
+                    else _ListOfNumpyArrayHandler.INPUT_PREFIX
+                )
+                ft._name = f"{additional_prefix}_{i}_{ft._name}"
+            features.extend(inferred_res)
+        return features
+
+    @staticmethod
+    def convert_to_df(data: List[model_types._SupportedNumpyArray]) -> pd.DataFrame:
+        arr = np.concatenate(data, axis=1)
+        return pd.DataFrame(arr)
+
+
+class _ListOfBuiltinHandler(_BaseDataHandler[model_types._SupportedBuiltinsList]):
+    @staticmethod
+    def can_handle(data: model_types.SupportedDataType) -> TypeGuard[model_types._SupportedBuiltinsList]:
+        return (
+            isinstance(data, list)
+            and len(data) > 0
+            and all(isinstance(data_col, (int, float, bool, str, bytes, list)) for data_col in data)
+        )
+
+    @staticmethod
+    def validate(data: model_types._SupportedBuiltinsList) -> None:
+        if not all(isinstance(data_row, type(data[0])) for data_row in data):
+            raise ValueError(f"Data Validation Error: Inconsistent type of object found in data {data}.")
+        df = pd.DataFrame(data)
+        if df.isnull().values.any():
+            raise ValueError(f"Data Validation Error: Ill-shaped list data {data} confronted.")
+
+    @staticmethod
+    def infer_signature(
+        data: model_types._SupportedBuiltinsList, role: Literal["input", "output"]
+    ) -> Sequence[FeatureSpec]:
+        return _PandasDataFrameHandler.infer_signature(pd.DataFrame(data), role)
+
+    @staticmethod
+    def convert_to_df(data: model_types._SupportedBuiltinsList) -> pd.DataFrame:
+        return pd.DataFrame(data)
+
+
+class _SnowparkDataFrameHandler(_BaseDataHandler[snowflake.snowpark.DataFrame]):
+    @staticmethod
+    def can_handle(data: model_types.SupportedDataType) -> TypeGuard[snowflake.snowpark.DataFrame]:
+        return isinstance(data, snowflake.snowpark.DataFrame)
+
+    @staticmethod
+    def validate(data: snowflake.snowpark.DataFrame) -> None:
+        schema = data.schema
+        for field in schema.fields:
+            if not any(type.is_same_snowpark_type(field.datatype) for type in DataType):
+                raise ValueError(
+                    f"Data Validation Error: Unsupported data type {field.datatype} in column {field.name}."
+                )
+
+    @staticmethod
+    def infer_signature(data: snowflake.snowpark.DataFrame, role: Literal["input", "output"]) -> Sequence[FeatureSpec]:
+        features: List[FeatureSpec] = []
+        schema = data.schema
+        for field in schema.fields:
+            name = identifier.remove_quote_if_quoted(field.name)
+            features.append(FeatureSpec(name=name, dtype=DataType.from_snowpark_type(field.datatype)))
+        return features
+
+    @staticmethod
+    def convert_to_df(data: snowflake.snowpark.DataFrame) -> snowflake.snowpark.DataFrame:
+        return data
+
+
+_LOCAL_DATA_HANDLERS = [_PandasDataFrameHandler, _NumpyArrayHandler, _ListOfNumpyArrayHandler, _ListOfBuiltinHandler]
+_ALL_DATA_HANDLERS = _LOCAL_DATA_HANDLERS + [_SnowparkDataFrameHandler]
+
+
 def _infer_signature(
-    data: model_types.SupportedDataType,
-    feature_prefix: str = "feature_",
-    output_prefix: str = "output_",
-    is_output: bool = False,
+    data: model_types.SupportedLocalDataType, role: Literal["input", "output"]
 ) -> Sequence[FeatureSpec]:
     """Infer the inputs/outputs signature given a data that could be dataframe, numpy array or list.
         Dispatching is used to separate logic for different types.
@@ -357,11 +679,7 @@ def _infer_signature(
 
     Args:
         data: The data that we want to infer signature from.
-        feature_prefix: a prefix string to added before the column name to distinguish them as a fallback.
-            Defaults to "feature_".
-        output_prefix: a prefix string to added in multi-output case before the column name to distinguish them as a
-            fallback. Defaults to "output_".
-        is_output: a flag indicating that if this is to infer an output feature.
+        role: a flag indicating that if this is to infer an input or output feature.
 
     Raises:
         NotImplementedError: Raised when an unsupported data type is provided.
@@ -369,18 +687,10 @@ def _infer_signature(
     Returns:
         A sequence of feature specifications and feature group specifications.
     """
-    if isinstance(data, pd.DataFrame):
-        return _infer_signature_pd_DataFrame(data, feature_prefix=feature_prefix)
-    if isinstance(data, np.ndarray):
-        return _infer_signature_np_ndarray(data, feature_prefix=feature_prefix)
-    if isinstance(data, list) and len(data) > 0:
-        if is_output and all(isinstance(data_col, np.ndarray) for data_col in data):
-            # Added because mypy still claiming that data has a wider type than
-            # Sequence[model_types._SupportedNumpyArray] since we don't have pandas stubs.
-            data = cast(Sequence[model_types._SupportedNumpyArray], data)
-            return _infer_signature_list_multioutput(data, feature_prefix=feature_prefix, output_prefix=output_prefix)
-        else:
-            return _infer_signature_list_builtins(data, feature_prefix=feature_prefix)
+    for handler in _ALL_DATA_HANDLERS:
+        if handler.can_handle(data):
+            handler.validate(data)
+            return handler.infer_signature(data, role)
     raise NotImplementedError(
         f"Unable to infer model signature: Un-supported type provided {type(data)} for X type inference."
     )
@@ -416,216 +726,6 @@ def _convert_list_to_ndarray(data: List[Any]) -> npt.NDArray[Any]:
     return arr
 
 
-def _infer_signature_pd_DataFrame(data: pd.DataFrame, feature_prefix: str = "feature_") -> Sequence[FeatureSpec]:
-    """If a dataframe is provided, its index will be used to name these features. Children features specifications are
-    are created according to dataframe type. If it is simple type, then scalar feature specification would be created.
-    If it is Python list, then a feature specification with shape are created correspondingly.
-
-    Args:
-        data: The data that we want to infer signature from.
-        feature_prefix: a prefix string to added before the column name to distinguish them as a fallback.
-            Defaults to "feature_".
-
-    Raises:
-        NotImplementedError: Raised when an unsupported column is provided.
-        ValueError: Raised when an empty data is provided.
-        NotImplementedError: Raised when an unsupported column index type is provided.
-
-        ValueError: Raised when an object column have different Python object types.
-
-        ValueError: Raised when an column of list have different element types.
-        NotImplementedError: Raised when an column of list have different variant shapes.
-
-        ValueError: Raised when an column of array have different element types.
-        NotImplementedError: Raised when an column of array have different variant shapes.
-
-        NotImplementedError: Raised when an unsupported data type is provided.
-
-    Returns:
-        A sequence of feature specifications and feature group specifications.
-    """
-    df_cols = data.columns
-    if not all(hasattr(data[col], "dtype") for col in data.columns):
-        raise NotImplementedError(f"Unable to infer signature: Unsupported column confronted in {data}.")
-
-    if len(df_cols) == 0:
-        raise ValueError("Unable to construct signature: Empty data is found.")
-
-    df_col_dtypes = [data[col].to_numpy().dtype for col in data.columns]
-    if df_cols.dtype == np.dtype("O"):  # List of String index
-        ft_names = list(map(str, data.columns.to_list()))
-    elif isinstance(df_cols, pd.RangeIndex):
-        ft_names = [f"{feature_prefix}{i}" for i in df_cols]
-    elif isinstance(df_cols, pd.CategoricalIndex):
-        raise NotImplementedError(
-            f"Unable to infer model signature: Unsupported column index type confronted in {df_cols}."
-        )
-    else:
-        ft_names = [str(x) for x in df_cols.to_list()]
-
-    specs = []
-    for df_col, df_col_dtype, ft_name in zip(df_cols, df_col_dtypes, ft_names):
-        if df_col_dtype == np.dtype("O"):
-            # Check if all objects have the same type
-            if not all(isinstance(data_row, type(data[df_col][0])) for data_row in data[df_col]):
-                raise ValueError(
-                    "Unable to construct model signature: "
-                    + f"Inconsistent type of object found in column data {data[df_col]}."
-                )
-
-            if isinstance(data[df_col][0], list):
-                arr = _convert_list_to_ndarray(data[df_col][0])
-                arr_dtype = DataType.from_numpy_type(arr.dtype)
-                ft_shape = np.shape(data[df_col][0])
-
-                converted_data_list = [_convert_list_to_ndarray(data_row) for data_row in data[df_col]]
-
-                if not all(
-                    DataType.from_numpy_type(converted_data.dtype) == arr_dtype
-                    for converted_data in converted_data_list
-                ):
-                    raise ValueError(
-                        "Unable to construct model signature: "
-                        + f"Inconsistent type of object found in column data {data[df_col]}."
-                    )
-
-                if not all(np.shape(converted_data) == ft_shape for converted_data in converted_data_list):
-                    raise NotImplementedError(
-                        "Unable to infer model signature: "
-                        + f"Inconsistent shape of element found in column data {data[df_col]}. "
-                        + "Model signature infer for variant length feature is not currently supported. "
-                        + "Consider specify the model signature manually."
-                    )
-
-                specs.append(FeatureSpec(dtype=arr_dtype, name=ft_name, shape=ft_shape))
-            elif isinstance(data[df_col][0], np.ndarray):
-                arr_dtype = DataType.from_numpy_type(data[df_col][0].dtype)
-                ft_shape = np.shape(data[df_col][0])
-
-                if not all(DataType.from_numpy_type(data_row.dtype) == arr_dtype for data_row in data[df_col]):
-                    raise ValueError(
-                        "Unable to construct model signature: "
-                        + f"Inconsistent type of object found in column data {data[df_col]}."
-                    )
-
-                if not all(np.shape(data_row) == ft_shape for data_row in data[df_col]):
-                    raise NotImplementedError(
-                        "Unable to infer model signature: "
-                        + f"Inconsistent shape of element found in column data {data[df_col]}. "
-                        + "Model signature infer for variant length feature is not currently supported. "
-                        + "Consider specify the model signature manually."
-                    )
-
-                specs.append(FeatureSpec(dtype=arr_dtype, name=ft_name, shape=ft_shape))
-            elif isinstance(data[df_col][0], str):
-                specs.append(FeatureSpec(dtype=DataType.STRING, name=ft_name))
-            elif isinstance(data[df_col][0], bytes):
-                specs.append(FeatureSpec(dtype=DataType.BYTES, name=ft_name))
-            else:
-                raise NotImplementedError(f"Unsupported type confronted in {data[df_col]}")
-        else:
-            specs.append(FeatureSpec(dtype=DataType.from_numpy_type(df_col_dtype), name=ft_name))
-    return specs
-
-
-def _infer_signature_np_ndarray(
-    data: model_types._SupportedNumpyArray, feature_prefix: str = "feature_"
-) -> Sequence[FeatureSpec]:
-    """If a numpy array is provided, `feature_name` if provided is used to name features, otherwise, name like
-    `feature_0` `feature_1` will be generated and assigned.
-
-    Args:
-        data: The data that we want to infer signature from.
-        feature_prefix: a prefix string to added before the column name to distinguish them as a fallback.
-            Defaults to "feature_".
-
-    Raises:
-        ValueError: Raised when an empty data is provided.
-        ValueError: Raised when a scalar data is provided.
-
-    Returns:
-        A sequence of feature specifications and feature group specifications.
-    """
-    if data.shape == (0,):
-        # Empty array
-        raise ValueError("Unable to construct signature: Empty data is found. Unable to infer signature.")
-
-    if data.shape == ():
-        # scalar
-        raise ValueError("Unable to construct signature: Scalar data is found. Unable to infer signature.")
-    dtype = DataType.from_numpy_type(data.dtype)
-    if len(data.shape) == 1:
-        return [FeatureSpec(dtype=dtype, name=f"{feature_prefix}0")]
-    else:
-        # For high-dimension array, 0-axis is for batch, 1-axis is for column, further more is details of columns.
-        features = []
-        n_cols = data.shape[1]
-        ft_names = [f"{feature_prefix}{i}" for i in range(n_cols)]
-        for col_data, ft_name in zip(data[0], ft_names):
-            if isinstance(col_data, np.ndarray):
-                ft_shape = np.shape(col_data)
-                features.append(FeatureSpec(dtype=dtype, name=ft_name, shape=ft_shape))
-            else:
-                features.append(FeatureSpec(dtype=dtype, name=ft_name))
-        return features
-
-
-def _infer_signature_list_builtins(
-    data: Union[Sequence[model_types._SupportedNumpyArray], model_types._SupportedBuiltinsList],
-    feature_prefix: str = "feature_",
-) -> Sequence[FeatureSpec]:
-    """If a list or a nested list of built-in types are provided, we treat them as a pd.DataFrame.
-        Before that we check if all elements have the same type.
-        After converting to dataframe, if the original data has ill shape, there would be nan or None.
-
-    Args:
-        data: The data that we want to infer signature from.
-        feature_prefix: a prefix string to added before the column name to distinguish them as a fallback.
-            Defaults to "feature_".
-
-    Raises:
-        ValueError: Raised when the list have different Python object types.
-        ValueError: Raised when converted dataframe has nan or None, meaning that the original data is ill-shaped.
-
-    Returns:
-        A sequence of feature specifications and feature group specifications.
-    """
-    if not all(isinstance(data_row, type(data[0])) for data_row in data):
-        raise ValueError(f"Unable to construct model signature: Inconsistent type of object found in data {data}.")
-    df = pd.DataFrame(data)
-    if df.isnull().values.any():
-        raise ValueError(f"Unable to construct model signature: Ill-shaped list data {data} confronted.")
-    return _infer_signature_pd_DataFrame(df, feature_prefix=feature_prefix)
-
-
-def _infer_signature_list_multioutput(
-    data: Sequence[model_types._SupportedNumpyArray], feature_prefix: str = "feature_", output_prefix: str = "output_"
-) -> Sequence[FeatureSpec]:
-    """If a Python list is provided, which will happen if user packs a multi-output model. In this case,
-    _infer_signature is called for every element of the list, and a output prefix like `output_0_` `output_1_` would be
-    added to the name. All children feature specifications would be flatten.
-
-    Args:
-        data: The data that we want to infer signature from.
-        feature_prefix: a prefix string to added before the column name to distinguish them as a fallback.
-            Defaults to "feature_".
-        output_prefix: a prefix string to added in multi-output case before the column name to distinguish them as a
-            fallback. Defaults to "output_".
-
-    Returns:
-        A sequence of feature specifications and feature group specifications.
-    """
-    # If the estimator is a multi-output estimator, output will be a list of ndarrays.
-    features: List[FeatureSpec] = []
-
-    for i, d in enumerate(data):
-        inferred_res = _infer_signature(d, feature_prefix=feature_prefix, output_prefix=output_prefix)
-        for ft in inferred_res:
-            ft._name = f"{output_prefix}{i}_{ft._name}"
-        features.extend(inferred_res)
-    return features
-
-
 def _rename_features(
     features: Sequence[FeatureSpec], feature_names: Optional[List[str]] = None
 ) -> Sequence[FeatureSpec]:
@@ -652,7 +752,167 @@ def _rename_features(
     return features
 
 
-def _validate_data_with_features_and_convert_to_df(features: Sequence[BaseFeatureSpec], data: Any) -> pd.DataFrame:
+def _rename_pandas_df(data: pd.DataFrame, features: Sequence[BaseFeatureSpec]) -> pd.DataFrame:
+    """It renames pandas dataframe that has non-object column index with provided features.
+
+    Args:
+        data: A pandas dataframe to be renamed.
+        features: A sequence of feature specifications and feature group specifications to rename the dataframe.
+
+    Raises:
+        ValueError: Raised when the data does not have the same number of features as signature.
+
+    Returns:
+        A pandas dataframe with columns renamed.
+    """
+    df_cols = data.columns
+    if df_cols.dtype in [np.int64, np.uint64, np.float64]:
+        if len(features) != len(data.columns):
+            raise ValueError(
+                "Data does not have the same number of features as signature. "
+                + f"Signature requires {len(features)} features, but have {len(data.columns)} in input data."
+            )
+        data.columns = pd.Index([feature.name for feature in features])
+    return data
+
+
+def _validate_pandas_df(data: pd.DataFrame, features: Sequence[BaseFeatureSpec]) -> None:
+    """It validates pandas dataframe with provided features.
+
+    Args:
+        data: A pandas dataframe to be validated.
+        features: A sequence of feature specifications and feature group specifications, where the dataframe should fit.
+
+    Raises:
+        ValueError: Raised when a feature cannot be found.
+        ValueError: Raised when feature is scalar but confront list element.
+        ValueError: Raised when feature type is not aligned in list element.
+        ValueError: Raised when feature shape is not aligned in list element.
+        ValueError: Raised when feature is scalar but confront array element.
+        ValueError: Raised when feature type is not aligned in numpy array element.
+        ValueError: Raised when feature shape is not aligned in numpy array element.
+        ValueError: Raised when feature type is not aligned in string element.
+        ValueError: Raised when feature type is not aligned in bytes element.
+        ValueError: Raised when feature type is not met.
+    """
+    _features: List[FeatureSpec] = []
+    for feature in features:
+        if isinstance(feature, FeatureSpec):
+            _features.append(feature)
+        elif isinstance(feature, FeatureGroupSpec):
+            _features.extend(feature._specs)
+    for feature in _features:
+        ft_name = feature.name
+        try:
+            data_col = data[ft_name]
+        except KeyError:
+            raise ValueError(f"Data Validation Error: feature {ft_name} does not exist in data.")
+
+        df_col_dtype = data_col.dtype
+        ft_type = feature._dtype
+        if df_col_dtype == np.dtype("O"):
+            if isinstance(data_col[0], list):
+                ft_shape = feature._shape
+                if not ft_shape:
+                    raise ValueError(
+                        f"Data Validation Error in feature {ft_name}: "
+                        + "Feature is a scalar feature while list data is provided."
+                    )
+
+                converted_data_list = [_convert_list_to_ndarray(data_row) for data_row in data_col]
+
+                if not all(
+                    DataType.from_numpy_type(converted_data.dtype) == ft_type for converted_data in converted_data_list
+                ):
+                    raise ValueError(
+                        f"Data Validation Error in feature {ft_name}: "
+                        + f"Feature type {ft_type} is not met by all elements in {data_col}."
+                    )
+
+                if ft_shape and ft_shape != (-1,):
+                    if not all(np.shape(converted_data) == ft_shape for converted_data in converted_data_list):
+                        raise ValueError(
+                            f"Data Validation Error in feature {ft_name}: "
+                            + f"Feature shape {ft_shape} is not met by all elements in {data_col}."
+                        )
+            elif isinstance(data_col[0], np.ndarray):
+                ft_shape = feature._shape
+                if not ft_shape:
+                    raise ValueError(
+                        f"Data Validation Error in feature {ft_name}: "
+                        + "Feature is a scalar feature while array data is provided."
+                    )
+
+                if not all(DataType.from_numpy_type(data_row.dtype) == ft_type for data_row in data_col):
+                    raise ValueError(
+                        f"Data Validation Error in feature {ft_name}: "
+                        + f"Feature type {ft_type} is not met by all elements in {data_col}."
+                    )
+
+                ft_shape = feature._shape
+                if ft_shape and ft_shape != (-1,):
+                    if not all(np.shape(data_row) == ft_shape for data_row in data_col):
+                        ft_shape = (-1,)
+                        raise ValueError(
+                            f"Data Validation Error in feature {ft_name}: "
+                            + f"Feature shape {ft_shape} is not met by all elements in {data_col}."
+                        )
+            elif isinstance(data_col[0], str):
+                if ft_type != DataType.STRING:
+                    raise ValueError(
+                        f"Data Validation Error in feature {ft_name}: "
+                        + f"Feature type {ft_type} is not met by all elements in {data_col}."
+                    )
+            elif isinstance(data_col[0], bytes):
+                if ft_type != DataType.BYTES:
+                    raise ValueError(
+                        f"Data Validation Error in feature {ft_name}: "
+                        + f"Feature type {ft_type} is not met by all elements in {data_col}."
+                    )
+        else:
+            if ft_type != DataType.from_numpy_type(df_col_dtype):
+                raise ValueError(
+                    f"Data Validation Error in feature {ft_name}: "
+                    + f"Feature type {ft_type} is not met by all elements in {data_col}."
+                )
+
+
+def _validate_snowpark_data(data: snowflake.snowpark.DataFrame, features: Sequence[BaseFeatureSpec]) -> None:
+    _features: List[FeatureSpec] = []
+    for feature in features:
+        if isinstance(feature, FeatureSpec):
+            _features.append(feature)
+        elif isinstance(feature, FeatureGroupSpec):
+            _features.extend(feature._specs)
+    schema = data.schema
+    for feature in _features:
+        ft_name = feature.name
+        found = False
+        for field in schema.fields:
+            name = identifier.remove_quote_if_quoted(field.name)
+            if name == ft_name:
+                found = True
+                if field.nullable:
+                    warnings.warn(
+                        f"Warn in feature {ft_name}: Nullable column {field.name} provided,"
+                        + " inference might fail if there is null value.",
+                        category=RuntimeWarning,
+                    )
+
+                ft_type = feature._dtype
+                if not ft_type.is_same_snowpark_type(field.datatype):
+                    raise ValueError(
+                        f"Data Validation Error in feature {ft_name}: "
+                        + f"Feature type {ft_type} is not met by column {field.name}."
+                    )
+                break
+        if not found:
+            raise ValueError(f"Data Validation Error: feature {ft_name} does not exist in data.")
+
+
+def _convert_and_validate_local_data(
+    data: model_types.SupportedDataType, features: Sequence[BaseFeatureSpec]
+) -> pd.DataFrame:
     """Validate the data with features in model signature and convert to DataFrame
 
     Args:
@@ -660,62 +920,28 @@ def _validate_data_with_features_and_convert_to_df(features: Sequence[BaseFeatur
         data: The provided data.
 
     Raises:
-        ValueError: Raised when input data is empty dataframe.
-        ValueError: Raised when input data is empty array.
-        ValueError: Raised when input data is scalar.
-        ValueError: Raised when input data is list with different types.
-        ValueError: Raised when input data is ill-shaped list.
-        NotImplementedError: Raised when input data has unsupported types.
-        ValueError: Raised when input data has different number of features as the features required.
+        ValueError: Raised when data cannot be handled by any data handler.
 
     Returns:
         The converted dataframe with renamed column index.
     """
-    keep_columns = False
-    if isinstance(data, pd.DataFrame):
-        df_cols = data.columns
+    df = None
+    for handler in _LOCAL_DATA_HANDLERS:
+        if handler.can_handle(data):
+            handler.validate(data)
+            df = handler.convert_to_df(data)
+    if df is None:
+        raise ValueError(f"Data Validation Error: Un-supported type {type(data)} provided.")
+    assert isinstance(df, pd.DataFrame)
+    df = _rename_pandas_df(df, features)
+    _validate_pandas_df(df, features)
 
-        if len(df_cols) == 0:
-            raise ValueError("Empty dataframe is invalid input data.")
-        if df_cols.dtype == np.dtype("O"):
-            # List of String index, users should take care about names
-            keep_columns = True
-        df = data
-    elif isinstance(data, np.ndarray):
-        if data.shape == (0,):
-            # Empty array
-            raise ValueError("Empty array is invalid input data.")
-
-        if data.shape == ():
-            # scalar
-            raise ValueError("Scalar is invalid input data.")
-
-        if len(data.shape) == 1:
-            data = np.expand_dims(data, axis=1)
-        df = pd.DataFrame(data)
-    elif isinstance(data, list) and len(data) > 0:
-        if not all(isinstance(data_row, type(data[0])) for data_row in data):
-            raise ValueError("List of data with different types is invalid input data.")
-        df = pd.DataFrame(data)
-        if df.isnull().values.any():
-            raise ValueError("Ill-shaped list is invalid input data.")
-    else:
-        raise NotImplementedError(f"Unable to validate data: Un-supported type provided {type(data)} as X.")
-
-    # Rename if that data may have name inferred if provided to infer signature
-    if not keep_columns:
-        if len(features) != len(df.columns):
-            raise ValueError(
-                "Input data does not have the same number of features as signature. "
-                + f"Signature requires {len(features)} features, but have {len(df.columns)} in input data."
-            )
-        df.columns = pd.Index([feature.name for feature in features])
     return df
 
 
 def infer_signature(
-    input_data: model_types.SupportedDataType,
-    output_data: model_types.SupportedDataType,
+    input_data: model_types.SupportedLocalDataType,
+    output_data: model_types.SupportedLocalDataType,
     input_feature_names: Optional[List[str]] = None,
     output_feature_names: Optional[List[str]] = None,
 ) -> ModelSignature:
@@ -746,8 +972,8 @@ def infer_signature(
     Returns:
         A model signature.
     """
-    inputs = _infer_signature(input_data)
+    inputs = _infer_signature(input_data, role="input")
     inputs = _rename_features(inputs, input_feature_names)
-    outputs = _infer_signature(output_data, is_output=True)
+    outputs = _infer_signature(output_data, role="output")
     outputs = _rename_features(outputs, output_feature_names)
     return ModelSignature(inputs, outputs)

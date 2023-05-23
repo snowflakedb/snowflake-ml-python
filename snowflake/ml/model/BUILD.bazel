@@ -12,6 +12,7 @@ py_library(
     srcs = ["model_signature.py"],
     deps = [
         ":type_hints",
+        "//snowflake/ml/_internal/utils:identifier",
     ],
 )
 
@@ -28,7 +29,7 @@ py_library(
     name = "custom_model",
     srcs = ["custom_model.py"],
     deps = [
-        ":type_hints"
+        ":type_hints",
     ],
 )
 
@@ -48,10 +49,10 @@ py_library(
     name = "_udf_util",
     srcs = ["_udf_util.py"],
     deps = [
+        ":_env",
+        ":_model",
         ":_model_meta",
         ":type_hints",
-        ":_model",
-        ":_env",
         "//snowflake/ml/_internal:env_utils",
     ],
 )
@@ -61,9 +62,7 @@ py_library(
     srcs = ["_deployer.py"],
     deps = [
         ":_udf_util",
-        ":model_signature",
-        ":type_hints",
-        "//snowflake/ml/_internal/utils:identifier"
+        "//snowflake/ml/_internal/utils:identifier",
     ],
 )
 
@@ -80,14 +79,15 @@ py_library(
     name = "_model",
     srcs = ["_model.py"],
     deps = [
-        ":custom_model",
         ":_model_handler",
         ":_model_meta",
+        ":custom_model",
         ":model_signature",
         ":type_hints",
         "//snowflake/ml/model/_handlers:custom",
         "//snowflake/ml/model/_handlers:sklearn",
-        "//snowflake/ml/model/_handlers:xgboost"
+        "//snowflake/ml/model/_handlers:snowmlmodel",
+        "//snowflake/ml/model/_handlers:xgboost",
     ],
 )
 
@@ -103,8 +103,8 @@ py_test(
     name = "_env_test",
     srcs = ["_env_test.py"],
     deps = [
-        "//snowflake/ml/_internal:env",
         ":_env",
+        "//snowflake/ml/_internal:env",
     ],
 )
 
@@ -112,8 +112,8 @@ py_test(
     name = "_udf_util_test",
     srcs = ["_udf_util_test.py"],
     deps = [
-        ":_udf_util",
         ":_model_meta",
+        ":_udf_util",
         ":model_signature",
         "//snowflake/ml/_internal:env_utils",
         "//snowflake/ml/test_utils:mock_data_frame",
@@ -126,6 +126,7 @@ py_test(
     srcs = ["model_signature_test.py"],
     deps = [
         ":model_signature",
+        "//snowflake/ml/utils:connection_params",
     ],
 )
 
@@ -134,21 +135,22 @@ py_test(
     srcs = ["_model_meta_test.py"],
     deps = [
         ":_model_meta",
-        ":model_signature"
+        ":model_signature",
     ],
 )
 
 py_test(
     name = "_model_test",
+    timeout = "long",
     srcs = ["_model_test.py"],
     shard_count = 5,
-    timeout = "long",
     deps = [
         ":_model",
-        ":custom_model",
         ":_model_handler",
         ":_model_meta",
+        ":custom_model",
         ":model_signature",
         ":type_hints",
+        "//snowflake/ml/modeling/linear_model:linear_regression",
     ],
 )
