@@ -46,6 +46,7 @@ py_test(
     srcs = ["env_utils_test.py"],
     deps = [
         ":env_utils",
+        ":env",
         "//snowflake/ml/test_utils:mock_data_frame",
         "//snowflake/ml/test_utils:mock_session",
     ],

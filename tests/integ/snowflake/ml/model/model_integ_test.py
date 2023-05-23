@@ -22,6 +22,7 @@ from snowflake.ml.model import (
     custom_model,
     type_hints as model_types,
 )
+from snowflake.ml.modeling.linear_model import LinearRegression
 from snowflake.ml.utils import connection_params
 from snowflake.snowpark import Session
 
@@ -432,6 +433,41 @@ class TestModelInteg(absltest.TestCase):
             assert di_predict is not None
             res = dc.predict(di_predict["name"], cal_X_test)
             np.testing.assert_allclose(res.values, np.expand_dims(regressor.predict(cal_X_test), axis=1))
+
+    def test_snowml_model_deploy(self) -> None:
+        iris = datasets.load_iris()
+        df = pd.DataFrame(data=np.c_[iris["data"], iris["target"]], columns=iris["feature_names"] + ["target"])
+        df.columns = [s.replace(" (CM)", "").replace(" ", "") for s in df.columns.str.upper()]
+
+        INPUT_COLUMNS = ["SEPALLENGTH", "SEPALWIDTH", "PETALLENGTH", "PETALWIDTH"]
+        LABEL_COLUMNS = "TARGET"
+        OUTPUT_COLUMNS = "PREDICTED_TARGET"
+        regr = LinearRegression(input_cols=INPUT_COLUMNS, output_cols=OUTPUT_COLUMNS, label_cols=LABEL_COLUMNS)
+        test_features = df[:10]
+        regr.fit(test_features)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            model_api.save_model(
+                name="snowml_model",
+                model_dir_path=os.path.join(tmpdir, "snowml_model"),
+                model=regr,
+                sample_input=test_features,
+                metadata={"author": "xjiang", "version": "1"},
+            )
+            dc = _deployer.Deployer(self._session, _deployer.LocalDeploymentManager())
+            di = dc.create_deployment(
+                name=f"snowml_model{self.run_id}",
+                model_dir_path=os.path.join(tmpdir, "snowml_model"),
+                platform=_deployer.TargetPlatform.WAREHOUSE,
+                target_method="predict",
+                options=model_types.WarehouseDeployOptions(
+                    {"relax_version": True, "_snowml_wheel_path": self._snowml_wheel_path}
+                ),
+            )
+
+            assert di is not None
+            res = dc.predict(di["name"], test_features)
+            np.testing.assert_allclose(res[OUTPUT_COLUMNS].values, regr.predict(test_features)[OUTPUT_COLUMNS].values)
 
 
 if __name__ == "__main__":

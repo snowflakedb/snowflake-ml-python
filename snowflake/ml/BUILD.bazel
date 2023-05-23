@@ -38,13 +38,16 @@ snowml_wheel(
     requires = [
         "absl-py>=0.15,<2",
         "anyio>=3.5.0,<4",
+        "cloudpickle", # Version range is specified by snowpark. We are implicitly depending on it.
         "fsspec[http]>=2022.11,<=2023.1",
         "numpy>=1.23,<1.24",
+        "packaging>=23.0,<24",
         "pyyaml>=6.0,<7",
         "scipy>=1.9,<2",
         "snowflake-connector-python[pandas]",
         "snowflake-snowpark-python>=1.4.0,<2",
         "sqlparse>=0.4,<1",
+        "typing-extensions>=4.1.0,<5",
 
         # TODO(snandamuri): Versions of these packages must be exactly same between user's workspace and
         # snowpark sandbox. Generic definitions like scikit-learn>=1.1.0,<2 wont work because snowflake conda channel
@@ -53,7 +56,6 @@ snowml_wheel(
         # versions in the requirements file, we are pinning the versions here.
         "scikit-learn>=1.2.1,<2",
         "xgboost==1.7.3",
-        "joblib>=1.0.0,<=1.1.1",  # All the release versions between 1.0.0 and 1.1.1 are available in SF Conda channel.
     ],
     version = VERSION,
     deps = [

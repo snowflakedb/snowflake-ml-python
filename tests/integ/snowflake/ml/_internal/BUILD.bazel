@@ -6,6 +6,7 @@ py_test(
     timeout = "long",
     deps = [
         "//snowflake/ml/_internal:env_utils",
+        "//snowflake/ml/_internal:env",
         "//snowflake/ml/utils:connection_params"
     ],
     tags = ["skip_merge_gates"],

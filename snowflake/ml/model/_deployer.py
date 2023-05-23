@@ -1,4 +1,3 @@
-import json
 import os
 from abc import ABC, abstractmethod
 from enum import Enum
@@ -9,7 +8,7 @@ from typing_extensions import Required
 
 from snowflake.ml._internal.utils import identifier
 from snowflake.ml.model import _udf_util, model_signature, type_hints as model_types
-from snowflake.snowpark import DataFrame, Session, functions as F
+from snowflake.snowpark import DataFrame as SnowparkDataFrame, Session, functions as F
 from snowflake.snowpark._internal import type_utils
 
 
@@ -250,7 +249,7 @@ class Deployer:
         self._manager.delete(name)
 
     @overload
-    def predict(self, name: str, X: model_types.SupportedDataType) -> pd.DataFrame:
+    def predict(self, name: str, X: model_types.SupportedLocalDataType) -> pd.DataFrame:
         """Execute batch inference of a model remotely on local data. Can be any supported data type. Return a local
             Pandas Dataframe.
 
@@ -261,7 +260,7 @@ class Deployer:
         ...
 
     @overload
-    def predict(self, name: str, X: DataFrame) -> DataFrame:
+    def predict(self, name: str, X: SnowparkDataFrame) -> SnowparkDataFrame:
         """Execute batch inference of a model remotely on a Snowpark DataFrame. Return a Snowpark DataFrame.
 
         Args:
@@ -270,7 +269,9 @@ class Deployer:
 
         """
 
-    def predict(self, name: str, X: Union[model_types.SupportedDataType, DataFrame]) -> Union[pd.DataFrame, DataFrame]:
+    def predict(
+        self, name: str, X: Union[model_types.SupportedDataType, SnowparkDataFrame]
+    ) -> Union[pd.DataFrame, SnowparkDataFrame]:
         """Execute batch inference of a model remotely.
 
         Args:
@@ -280,7 +281,6 @@ class Deployer:
         Raises:
             ValueError: Raised when the deployment does not exist.
             ValueError: Raised when the input is too large to use keep_order option.
-            NotImplementedError: Raised when confronting unsupported feature group.
 
         Returns:
             The output dataframe.
@@ -290,10 +290,11 @@ class Deployer:
             raise ValueError(f"Deployment {name} does not exist.")
         sig = d["signature"]
         keep_order = d["options"].get("keep_order", True)
-        if not isinstance(X, DataFrame):
-            df = model_signature._validate_data_with_features_and_convert_to_df(sig.inputs, X)
+        if not isinstance(X, SnowparkDataFrame):
+            df = model_signature._convert_and_validate_local_data(X, sig.inputs)
             s_df = self._session.create_dataframe(df)
         else:
+            model_signature._validate_snowpark_data(X, sig.inputs)
             s_df = X
 
         if keep_order:
@@ -311,18 +312,16 @@ class Deployer:
                     type_utils.ColumnOrName(F.col(col_name)),
                 ]
             )
-        output_col_names = [feature.name for feature in sig.outputs]
-        output_cols = []
-        for output_col_name in output_col_names:
-            # To avoid automatic upper-case convert, we quoted the result name.
-            output_cols.append(F.col("tmp_result")[output_col_name].alias(f'"{output_col_name}"'))
 
-        dtype_map = {}
-        for feature in sig.outputs:
-            if isinstance(feature, model_signature.FeatureSpec):
-                dtype_map[feature.name] = feature._dtype._value
-            else:
-                raise NotImplementedError("FeatureGroup is not supported yet.")
+        output_cols = []
+        for output_feature in sig.outputs:
+            # To avoid automatic upper-case convert, we quoted the result name.
+            output_cols.append(
+                F.parse_json(type_utils.ColumnOrName(F.col("tmp_result")[output_feature.name]))
+                .astype(output_feature.as_snowpark_type())
+                .alias(f'"{output_feature.name}"')
+            )
+
         df_res = s_df.select(
             F.call_udf(name, type_utils.ColumnOrLiteral(F.object_construct(*cols))).alias("tmp_result")
         )
@@ -332,11 +331,16 @@ class Deployer:
 
         df_res = df_res.select(*output_cols)
 
-        if not isinstance(X, DataFrame):
+        if not isinstance(X, SnowparkDataFrame):
+            dtype_map = {}
+            for feature in sig.outputs:
+                if isinstance(feature, model_signature.FeatureSpec):
+                    dtype_map[feature.name] = feature._dtype._value
+                elif isinstance(feature, model_signature.FeatureGroupSpec):
+                    for ft in feature._specs:
+                        dtype_map[ft.name] = ft._dtype._value
             df_local = df_res.to_pandas()
-            df_local = (
-                df_local.applymap(json.loads).rename(columns=identifier.remove_quote_if_quoted).astype(dtype=dtype_map)
-            )
+            df_local = df_local.rename(columns=identifier.remove_quote_if_quoted).astype(dtype=dtype_map)
             return pd.DataFrame(df_local)
         else:
             return df_res

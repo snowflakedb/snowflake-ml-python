@@ -81,6 +81,7 @@ class OrdinalEncoder(base.BaseTransformer):
         Attributes:
             categories_: The categories of each feature determined during fitting.
         """
+        super().__init__(drop_input_cols=drop_input_cols)
         self.categories = categories
         self.handle_unknown = handle_unknown
         self.unknown_value = unknown_value
@@ -90,8 +91,6 @@ class OrdinalEncoder(base.BaseTransformer):
         self._categories_list: List[type_utils.LiteralNDArrayType] = []
         self._missing_indices: Dict[int, int] = {}
         self._vocab_table_name = "snowml_preprocessing_ordinal_encoder_temp_table_" + uuid.uuid4().hex
-
-        base.BaseTransformer.__init__(self, drop_input_cols=drop_input_cols)
 
         self.set_input_cols(input_cols)
         self.set_output_cols(output_cols)

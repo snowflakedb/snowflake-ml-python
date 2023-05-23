@@ -25,20 +25,34 @@ _BASIC_DEPENDENCIES_FINAL_PACKAGES = list(
 
 
 class TestFinalPackagesWithoutConda(absltest.TestCase):
-    def setUp(self) -> None:
-        self._temp_conda = None
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls._temp_conda = None
         if sys.modules.get("conda"):
-            self._temp_conda = sys.modules["conda"]
+            cls._temp_conda = sys.modules["conda"]
         sys.modules["conda"] = None  # type: ignore[assignment]
 
-        self.m_session = mock_session.MockSession(conn=None, test_case=self)
+        cls.m_session = mock_session.MockSession(conn=None, test_case=None)
+        cls.m_session.add_mock_sql(
+            query=textwrap.dedent(
+                """
+                SHOW COLUMNS
+                LIKE 'runtime_version'
+                IN TABLE information_schema.packages;
+                """
+            ),
+            result=mock_data_frame.MockDataFrame(count_result=0),
+        )
+
+    def setUp(self) -> None:
         self.add_packages(
             {basic_dep: [importlib_metadata.version(basic_dep)] for basic_dep in _model_meta._BASIC_DEPENDENCIES}
         )
 
-    def tearDown(self) -> None:
-        if self._temp_conda:
-            sys.modules["conda"] = self._temp_conda
+    @classmethod
+    def tearDownClass(cls) -> None:
+        if cls._temp_conda:
+            sys.modules["conda"] = cls._temp_conda
         else:
             del sys.modules["conda"]
 
@@ -73,7 +87,7 @@ class TestFinalPackagesWithoutConda(absltest.TestCase):
     def test_get_model_final_packages_no_relax(self) -> None:
         env_utils._SNOWFLAKE_CONDA_PACKAGE_CACHE = {}
         meta = _model_meta.ModelMetadata(
-            name="model1", model_type="custom", signatures=_DUMMY_SIG, conda_dependencies=["pandas<1"]
+            name="model1", model_type="custom", signatures=_DUMMY_SIG, conda_dependencies=["pandas==1.0.*"]
         )
         c_session = cast(session.Session, self.m_session)
         with self.assertWarns(RuntimeWarning):
@@ -83,12 +97,12 @@ class TestFinalPackagesWithoutConda(absltest.TestCase):
     def test_get_model_final_packages_relax(self) -> None:
         env_utils._SNOWFLAKE_CONDA_PACKAGE_CACHE = {}
         meta = _model_meta.ModelMetadata(
-            name="model1", model_type="custom", signatures=_DUMMY_SIG, conda_dependencies=["pandas<1"]
+            name="model1", model_type="custom", signatures=_DUMMY_SIG, conda_dependencies=["pandas==1.0.*"]
         )
         c_session = cast(session.Session, self.m_session)
         with self.assertWarns(RuntimeWarning):
             final_packages = _udf_util._get_model_final_packages(meta, c_session, relax_version=True)
-            self.assertListEqual(final_packages, _model_meta._BASIC_DEPENDENCIES)
+            self.assertListEqual(final_packages, sorted(_model_meta._BASIC_DEPENDENCIES))
 
     def test_get_model_final_packages_with_pip(self) -> None:
         env_utils._SNOWFLAKE_CONDA_PACKAGE_CACHE = {}

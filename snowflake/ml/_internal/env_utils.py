@@ -11,6 +11,7 @@ import snowflake.connector
 from snowflake.ml._internal.utils import query_result_checker
 from snowflake.snowpark import session
 
+_INFO_SCHEMA_PACKAGES_HAS_RUNTIME_VERSION: Optional[bool] = None
 _SNOWFLAKE_CONDA_PACKAGE_CACHE: Dict[str, List[version.Version]] = {}
 
 
@@ -219,13 +220,16 @@ def relax_requirement_version(req: requirements.Requirement) -> requirements.Req
     return new_req
 
 
-def resolve_conda_environment(packages: List[requirements.Requirement], channels: List[str]) -> Optional[List[str]]:
+def resolve_conda_environment(
+    packages: List[requirements.Requirement], channels: List[str], python_version: str
+) -> Optional[List[str]]:
     """Use conda api to check if given packages are resolvable in given channels. Only work when conda is
         locally installed.
 
     Args:
         packages: Packages to be installed.
         channels: Anaconda channels (name or url) where conda should search into.
+        python_version: A string of python version where model is run.
 
     Returns:
         List of frozen dependencies represented in PEP 508 form if resolvable, None otherwise.
@@ -234,7 +238,7 @@ def resolve_conda_environment(packages: List[requirements.Requirement], channels
     from conda_libmamba_solver import solver
 
     package_names = list(map(lambda x: x.name, packages))
-    specs = list(map(str, packages))
+    specs = list(map(str, packages)) + [f"python=={python_version}"]
 
     conda_solver = solver.LibMambaSolver("snow-env", channels=channels, specs_to_add=specs)
     try:
@@ -252,18 +256,38 @@ def resolve_conda_environment(packages: List[requirements.Requirement], channels
     )
 
 
+def _check_runtime_version_column_existence(session: session.Session) -> bool:
+    sql = textwrap.dedent(
+        """
+        SHOW COLUMNS
+        LIKE 'runtime_version'
+        IN TABLE information_schema.packages;
+        """
+    )
+    result = session.sql(sql).count()
+    return result == 1
+
+
 def validate_requirements_in_snowflake_conda_channel(
-    session: session.Session, reqs: List[requirements.Requirement]
+    session: session.Session, reqs: List[requirements.Requirement], python_version: str
 ) -> Optional[List[str]]:
     """Search the snowflake anaconda channel for packages with version meet the specifier.
 
     Args:
         session: Snowflake connection session.
         reqs: List of requirement specifiers.
+        python_version: A string of python version where model is run.
+
+    Raises:
+        ValueError: Raised when the specifier cannot be supported when creating UDF.
 
     Returns:
         A list of pinned latest version that available in Snowflake anaconda channel and meet the version specifier.
     """
+    global _INFO_SCHEMA_PACKAGES_HAS_RUNTIME_VERSION
+
+    if _INFO_SCHEMA_PACKAGES_HAS_RUNTIME_VERSION is None:
+        _INFO_SCHEMA_PACKAGES_HAS_RUNTIME_VERSION = _check_runtime_version_column_existence(session)
     ret_list = []
     reqs_to_request = []
     for req in reqs:
@@ -273,14 +297,26 @@ def validate_requirements_in_snowflake_conda_channel(
         pkg_names_str = " OR ".join(
             f"package_name = '{req_name}'" for req_name in sorted(req.name for req in reqs_to_request)
         )
-        sql = textwrap.dedent(
-            f"""
-            SELECT PACKAGE_NAME, VERSION
-            FROM information_schema.packages
-            WHERE ({pkg_names_str})
-            AND language = 'python';
-            """
-        )
+        if _INFO_SCHEMA_PACKAGES_HAS_RUNTIME_VERSION:
+            parsed_python_version = version.Version(python_version)
+            sql = textwrap.dedent(
+                f"""
+                SELECT PACKAGE_NAME, VERSION
+                FROM information_schema.packages
+                WHERE ({pkg_names_str})
+                AND language = 'python'
+                AND runtime_version = '{parsed_python_version.major}.{parsed_python_version.minor}';
+                """
+            )
+        else:
+            sql = textwrap.dedent(
+                f"""
+                SELECT PACKAGE_NAME, VERSION
+                FROM information_schema.packages
+                WHERE ({pkg_names_str})
+                AND language = 'python';
+                """
+            )
 
         try:
             result = (
@@ -301,10 +337,11 @@ def validate_requirements_in_snowflake_conda_channel(
         except snowflake.connector.DataError:
             return None
     for req in reqs:
-        available_versions = list(req.specifier.filter(_SNOWFLAKE_CONDA_PACKAGE_CACHE.get(req.name, [])))
+        if len(req.specifier) > 1 or any(spec.operator != "==" for spec in req.specifier):
+            raise ValueError("At most 1 version specifier using == operator is supported without local conda resolver.")
+        available_versions = list(req.specifier.filter(set(_SNOWFLAKE_CONDA_PACKAGE_CACHE.get(req.name, []))))
         if not available_versions:
             return None
         else:
-            latest_version = max(available_versions)
-            ret_list.append(f"{req.name}=={latest_version}")
+            ret_list.append(str(req))
     return sorted(ret_list)

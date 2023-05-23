@@ -8,7 +8,7 @@ import zipfile
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, cast
 from uuid import uuid1
 
-import joblib
+import cloudpickle as cp
 from absl import logging
 
 from snowflake import connector, snowpark
@@ -1170,7 +1170,7 @@ class ModelRegistry:
 
         if not is_native_model_format:
             with tempfile.NamedTemporaryFile(delete=True) as local_model_file:
-                joblib.dump(model, local_model_file)
+                cp.dump(model, local_model_file)
                 local_model_file.flush()
 
                 id = self.log_model_path(
@@ -1367,9 +1367,9 @@ class ModelRegistry:
             except TypeError:
                 pass
             if not is_native_model_format:
-                restored_model = joblib.load(
-                    os.path.join(local_model_directory, os.path.basename(os.path.basename(remote_model_path)))
-                )
+                file_path = os.path.join(local_model_directory, os.path.basename(os.path.basename(remote_model_path)))
+                with open(file_path, mode="r+b") as model_file:
+                    restored_model = cp.load(model_file)
 
         return restored_model
 

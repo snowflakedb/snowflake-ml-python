@@ -32,11 +32,9 @@ class LabelEncoder(base.BaseTransformer):
             classes_: A np.ndarray that holds the label for each class.
 
         """
+        super().__init__(drop_input_cols=drop_input_cols)
         self._ordinal_encoder: Optional[ordinal_encoder.OrdinalEncoder] = None
         self.classes_: Optional[type_utils.LiteralNDArrayType] = None
-
-        base.BaseTransformer.__init__(self, drop_input_cols=drop_input_cols)
-
         self.set_input_cols(input_cols)
         self.set_output_cols(output_cols)
 

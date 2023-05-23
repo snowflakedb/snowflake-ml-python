@@ -6,7 +6,7 @@ import os
 from typing import Iterable, Optional, Union, List, Any, Dict, Callable
 from uuid import uuid4
 
-import joblib
+import cloudpickle as cp
 import pandas as pd
 import numpy as np
 {transform.estimator_imports}
@@ -183,7 +183,8 @@ class {transform.original_class_name}(BaseTransformer):
 
         # Create a temp file and dump the transform to that file.
         local_transform_file_name = get_temp_file_path()
-        joblib.dump(self._sklearn_object, local_transform_file_name)
+        with open(local_transform_file_name, mode="w+b") as local_transform_file:
+            cp.dump(self._sklearn_object, local_transform_file)
 
         # Create temp stage to run fit.
         transform_stage_name = "SNOWML_TRANSFORM_{{safe_id}}".format(safe_id=self.id)
@@ -214,7 +215,13 @@ class {transform.original_class_name}(BaseTransformer):
             custom_tags=dict([("autogen", True)]),
         )
         # Put locally serialized transform on stage.
-        session.file.put(local_transform_file_name, stage_transform_file_name, auto_compress=False, overwrite=True, statement_params=statement_params)
+        session.file.put(
+            local_transform_file_name,
+            stage_transform_file_name,
+            auto_compress=False,
+            overwrite=True,
+            statement_params=statement_params
+        )
 
         @sproc(
             is_permanent=False,
@@ -233,7 +240,7 @@ class {transform.original_class_name}(BaseTransformer):
             label_cols: List[str],
             sample_weight_col: Optional[str]
         ) -> str:
-            import joblib
+            import cloudpickle as cp
             import numpy as np
             import os
             import pandas
@@ -251,7 +258,12 @@ class {transform.original_class_name}(BaseTransformer):
 
             session.file.get(stage_transform_file_name, local_transform_file_name, statement_params=statement_params)
 
-            estimator = joblib.load(os.path.join(local_transform_file_name, os.listdir(local_transform_file_name)[0]))
+            local_transform_file_path = os.path.join(
+                local_transform_file_name,
+                os.listdir(local_transform_file_name)[0]
+            )
+            with open(local_transform_file_path, mode="r+b") as local_transform_file_obj:
+                estimator = cp.load(local_transform_file_obj)
 
             argspec = inspect.getfullargspec(estimator.fit)
             args = {{'X': df[input_cols]}}
@@ -268,12 +280,20 @@ class {transform.original_class_name}(BaseTransformer):
             local_result_file_name = local_result_file.name
             local_result_file.close()
 
-            joblib_dump_files = joblib.dump(estimator, local_result_file_name)
-            session.file.put(local_result_file_name, stage_result_file_name, auto_compress = False, overwrite = True, statement_params=statement_params)
+            with open(local_result_file_name, mode="w+b") as local_result_file_obj:
+                cp.dump(estimator, local_result_file_obj)
+
+            session.file.put(
+                local_result_file_name,
+                stage_result_file_name,
+                auto_compress = False,
+                overwrite = True,
+                statement_params=statement_params
+            )
 
             # Note: you can add something like  + "|" + str(df) to the return string
             # to pass debug information to the caller.
-            return str(os.path.basename(joblib_dump_files[0]))
+            return str(os.path.basename(local_result_file_name))
 
         # Call fit sproc
         statement_params = telemetry.get_function_usage_statement_params(
@@ -302,8 +322,13 @@ class {transform.original_class_name}(BaseTransformer):
             if len(fields) > 1:
                 print("\n".join(fields[1:]))
 
-        session.file.get(os.path.join(stage_result_file_name, sproc_export_file_name), local_result_file_name, statement_params=statement_params)
-        self._sklearn_object = joblib.load(os.path.join(local_result_file_name, sproc_export_file_name))
+        session.file.get(
+            os.path.join(stage_result_file_name, sproc_export_file_name),
+            local_result_file_name,
+            statement_params=statement_params
+        )
+        with open(os.path.join(local_result_file_name, sproc_export_file_name),mode="r+b") as result_file_obj:
+            self._sklearn_object = cp.load(result_file_obj)
 
         cleanup_temp_files([local_transform_file_name, local_result_file_name])
 
@@ -843,7 +868,8 @@ class {transform.original_class_name}(BaseTransformer):
 
         # Create a temp file and dump the score to that file.
         local_score_file_name = get_temp_file_path()
-        joblib.dump(self._sklearn_object, local_score_file_name)
+        with open(local_score_file_name, mode="w+b") as local_score_file:
+            cp.dump(self._sklearn_object, local_score_file)
 
         # Create temp stage to run score.
         score_stage_name = "SNOWML_SCORE_{{safe_id}}".format(safe_id=self.id)
@@ -872,7 +898,13 @@ class {transform.original_class_name}(BaseTransformer):
             custom_tags=dict([("autogen", True)]),
         )
         # Put locally serialized score on stage.
-        session.file.put(local_score_file_name, stage_score_file_name, auto_compress=False, overwrite=True, statement_params=statement_params)
+        session.file.put(
+            local_score_file_name,
+            stage_score_file_name,
+            auto_compress=False,
+            overwrite=True,
+            statement_params=statement_params
+        )
 
         @sproc(
             is_permanent=False,
@@ -890,7 +922,7 @@ class {transform.original_class_name}(BaseTransformer):
             label_cols: List[str],
             sample_weight_col: Optional[str]
         ) -> float:
-            import joblib
+            import cloudpickle as cp
             import numpy as np
             import os
             import pandas
@@ -905,7 +937,11 @@ class {transform.original_class_name}(BaseTransformer):
             local_score_file.close()
 
             session.file.get(stage_score_file_name, local_score_file_name, statement_params=statement_params)
-            estimator = joblib.load(os.path.join(local_score_file_name, os.listdir(local_score_file_name)[0]))
+
+            local_score_file_name_path = os.path.join(local_score_file_name, os.listdir(local_score_file_name)[0])
+            with open(local_score_file_name_path, mode="r+b") as local_score_file_obj:
+                estimator = cp.load(local_score_file_obj)
+
             argspec = inspect.getfullargspec(estimator.score)
             if "X" in argspec.args:
                 args = {{'X': df[input_cols]}}

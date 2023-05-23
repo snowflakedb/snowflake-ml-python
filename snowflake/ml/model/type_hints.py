@@ -11,16 +11,20 @@ if TYPE_CHECKING:
     import sklearn.pipeline
     import xgboost
 
+    import snowflake.ml.framework.base.BaseEstimator
     import snowflake.ml.model.custom_model
+    import snowflake.snowpark
 
 
 _SupportedBuiltins = Union[int, float, bool, str, bytes, "_SupportedBuiltinsList"]
 _SupportedNumpyDtype = Union[
+    "np.int8",
     "np.int16",
     "np.int32",
     "np.int64",
     "np.float32",
     "np.float64",
+    "np.uint8",
     "np.uint16",
     "np.uint32",
     "np.uint64",
@@ -31,7 +35,13 @@ _SupportedNumpyDtype = Union[
 _SupportedNumpyArray = npt.NDArray[_SupportedNumpyDtype]
 _SupportedBuiltinsList = Sequence[_SupportedBuiltins]
 
-SupportedDataType = Union["pd.DataFrame", _SupportedNumpyArray, Sequence[_SupportedNumpyArray], _SupportedBuiltinsList]
+SupportedLocalDataType = Union[
+    "pd.DataFrame", _SupportedNumpyArray, Sequence[_SupportedNumpyArray], _SupportedBuiltinsList
+]
+
+SupportedDataType = Union[SupportedLocalDataType, "snowflake.snowpark.DataFrame"]
+
+_DataType = TypeVar("_DataType", bound=SupportedDataType)
 
 CustomModelType = TypeVar("CustomModelType", bound="snowflake.ml.model.custom_model.CustomModel")
 
@@ -41,6 +51,7 @@ SupportedModelType = Union[
     "sklearn.pipeline.Pipeline",
     "xgboost.XGBModel",
     "xgboost.Booster",
+    "snowflake.ml.framework.base.BaseEstimator",
 ]
 """This is defined as the type that Snowflake native model packaging could accept.
 Here is all acceptable types of Snowflake native model packaging and its handler file in _handlers/ folder.
@@ -52,6 +63,8 @@ Here is all acceptable types of Snowflake native model packaging and its handler
 | sklearn.pipeline.Pipeline       | sklearn.py   | _SKLModelHandler    |
 | xgboost.XGBModel       | xgboost.py   | _XGBModelHandler    |
 | xgboost.Booster        | xgboost.py   | _XGBModelHandler    |
+| snowflake.ml.framework.base.BaseEstimator      | snowmlmodel.py   | _SnowMLModelHandler    |
+| snowflake.ml.framework.pipeline.Pipeline       | snowmlmodel.py   | _SnowMLModelHandler    |
 """
 
 
@@ -90,4 +103,8 @@ class SKLModelSaveOptions(ModelSaveOption):
 
 
 class XGBModelSaveOptions(ModelSaveOption):
+    target_methods: NotRequired[Sequence[str]]
+
+
+class SNOWModelSaveOptions(ModelSaveOption):
     target_methods: NotRequired[Sequence[str]]

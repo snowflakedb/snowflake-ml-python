@@ -15,6 +15,7 @@ from snowflake.ml.model import (
     model_signature,
     type_hints as model_types,
 )
+from snowflake.ml.modeling.linear_model import LinearRegression
 
 
 class DemoModelWithManyArtifacts(custom_model.CustomModel):
@@ -457,6 +458,69 @@ class ModelTest(absltest.TestCase):
             predict_method = getattr(m_udf, "predict_proba", None)
             assert callable(predict_method)
             np.testing.assert_allclose(predict_method(cal_X_test), y_pred_proba)
+
+    def test_snowml(self) -> None:
+        iris = datasets.load_iris()
+
+        df = pd.DataFrame(data=np.c_[iris["data"], iris["target"]], columns=iris["feature_names"] + ["target"])
+        df.columns = [s.replace(" (CM)", "").replace(" ", "") for s in df.columns.str.upper()]
+
+        INPUT_COLUMNS = ["SEPALLENGTH", "SEPALWIDTH", "PETALLENGTH", "PETALWIDTH"]
+        LABEL_COLUMNS = "TARGET"
+        OUTPUT_COLUMNS = "PREDICTED_TARGET"
+        regr = LinearRegression(input_cols=INPUT_COLUMNS, output_cols=OUTPUT_COLUMNS, label_cols=LABEL_COLUMNS)
+        regr.fit(df)
+
+        predictions = regr.predict(df[:1])[[OUTPUT_COLUMNS]]
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            s = {"predict": model_signature.infer_signature(df[INPUT_COLUMNS], regr.predict(df)[[OUTPUT_COLUMNS]])}
+            with self.assertRaises(ValueError):
+                model_api.save_model(
+                    name="model1",
+                    model_dir_path=os.path.join(tmpdir, "model1"),
+                    model=regr,
+                    signatures={**s, "another_predict": s["predict"]},
+                    metadata={"author": "halu", "version": "1"},
+                )
+
+            model_api.save_model(
+                name="model1",
+                model_dir_path=os.path.join(tmpdir, "model1"),
+                model=regr,
+                signatures=s,
+                metadata={"author": "halu", "version": "1"},
+            )
+
+            with warnings.catch_warnings():
+                warnings.simplefilter("error")
+
+                m: LinearRegression
+                m, _ = model_api.load_model(os.path.join(tmpdir, "model1"))
+                np.testing.assert_allclose(predictions, m.predict(df[:1])[[OUTPUT_COLUMNS]])
+                m_udf, _ = model_api._load_model_for_deploy(os.path.join(tmpdir, "model1"))
+                predict_method = getattr(m_udf, "predict", None)
+                assert callable(predict_method)
+                np.testing.assert_allclose(predictions, predict_method(df[:1])[[OUTPUT_COLUMNS]])
+
+            model_api.save_model(
+                name="model1_no_sig",
+                model_dir_path=os.path.join(tmpdir, "model1_no_sig"),
+                model=regr,
+                sample_input=df,
+                metadata={"author": "halu", "version": "1"},
+            )
+
+            m, meta = model_api.load_model(os.path.join(tmpdir, "model1_no_sig"))
+            np.testing.assert_allclose(np.array([[-0.08254936]]), m.predict(df[:1])[[OUTPUT_COLUMNS]])
+            # TODO: After model_signatures() function is updated in codegen, next line should be changed to
+            # s = regr.model_signatures()
+            # self.assertEqual(s["predict"], meta.signatures["predict"])
+
+            m_udf, _ = model_api._load_model_for_deploy(os.path.join(tmpdir, "model1_no_sig"))
+            predict_method = getattr(m_udf, "predict", None)
+            assert callable(predict_method)
+            np.testing.assert_allclose(np.array([[-0.08254936]]), predict_method(df[:1])[[OUTPUT_COLUMNS]])
 
 
 if __name__ == "__main__":

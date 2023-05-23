@@ -98,12 +98,10 @@ class KBinsDiscretizer(base.BaseTransformer):
         output_cols: Optional[Union[str, Iterable[str]]] = None,
         drop_input_cols: Optional[bool] = False,
     ) -> None:
+        super().__init__(drop_input_cols=drop_input_cols)
         self.n_bins = n_bins
         self.encode = encode
         self.strategy = strategy
-
-        base.BaseTransformer.__init__(self, drop_input_cols=drop_input_cols)
-
         self.set_input_cols(input_cols)
         self.set_output_cols(output_cols)
 

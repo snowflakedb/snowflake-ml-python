@@ -11,18 +11,17 @@ py_library(
     ],
 )
 
-
 py_library(
     name = "custom",
     srcs = ["custom.py"],
     deps = [
         ":_base",
         "//snowflake/ml/_internal:type_utils",
+        "//snowflake/ml/model:_model_handler",
         "//snowflake/ml/model:_model_meta",
         "//snowflake/ml/model:custom_model",
-        "//snowflake/ml/model:_model_handler",
-        "//snowflake/ml/model:type_hints",
         "//snowflake/ml/model:model_signature",
+        "//snowflake/ml/model:type_hints",
     ],
 )
 
@@ -31,11 +30,25 @@ py_library(
     srcs = ["sklearn.py"],
     deps = [
         ":_base",
+        "//snowflake/ml/_internal:type_utils",
         "//snowflake/ml/model:_model_meta",
         "//snowflake/ml/model:custom_model",
-        "//snowflake/ml/_internal:type_utils",
-        "//snowflake/ml/model:type_hints",
         "//snowflake/ml/model:model_signature",
+        "//snowflake/ml/model:type_hints",
+    ],
+)
+
+py_library(
+    name = "snowmlmodel",
+    srcs = ["snowmlmodel.py"],
+    deps = [
+        ":_base",
+        "//snowflake/ml/_internal:type_utils",
+        "//snowflake/ml/model:_model_meta",
+        "//snowflake/ml/model:custom_model",
+        "//snowflake/ml/model:model_signature",
+        "//snowflake/ml/model:type_hints",
+        "//snowflake/ml/framework",
     ],
 )
 
@@ -44,10 +57,10 @@ py_library(
     srcs = ["xgboost.py"],
     deps = [
         ":_base",
+        "//snowflake/ml/_internal:type_utils",
         "//snowflake/ml/model:_model_meta",
         "//snowflake/ml/model:custom_model",
-        "//snowflake/ml/_internal:type_utils",
-        "//snowflake/ml/model:type_hints",
         "//snowflake/ml/model:model_signature",
+        "//snowflake/ml/model:type_hints",
     ],
 )
