@@ -12,6 +12,7 @@ from sklearn import preprocessing, utils as sklearn_utils
 
 from snowflake import snowpark
 from snowflake.ml._internal import telemetry, type_utils
+from snowflake.ml._internal.utils import identifier
 from snowflake.ml.framework import base
 from snowflake.snowpark import functions as F, types as T
 
@@ -460,7 +461,6 @@ class OrdinalEncoder(base.BaseTransformer):
 
             # index values through a join operation over dataset and its states
             # In case of inplace transform, origin column name adds suffix (lsuffix=suffix)
-
             transformed_dataset = (
                 transformed_dataset.join(
                     input_col_state_df,
@@ -469,7 +469,7 @@ class OrdinalEncoder(base.BaseTransformer):
                     lsuffix=suffix,
                 )
                 .drop(_CATEGORY)
-                .drop(input_col + suffix)
+                .drop(identifier.concat_names([input_col, suffix]))
             )
 
             # in case of duplicate column, filter them

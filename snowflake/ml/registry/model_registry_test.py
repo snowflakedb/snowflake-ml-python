@@ -602,77 +602,6 @@ class ModelRegistryTest(absltest.TestCase):
 
         model_registry._insert_registry_entry(id="id", name="name", version="abc", properties=model_properties)
 
-    def test_register_model(self) -> None:
-        model_registry = self.get_model_registry()
-
-        self._session.add_operation("get_current_role", result="current_role")
-
-        mock_df = self.setup_list_model_call()
-        mock_df.add_operation("filter").add_operation("filter", result=mock_data_frame.MockDataFrame(count_result=0))
-
-        self.add_session_mock_sql(
-            query="""INSERT INTO "MODEL_REGISTRY"."PUBLIC"."MODELS" ( CREATION_ENVIRONMENT_SPEC,CREATION_ROLE,
-                    CREATION_TIME,ID,INPUT_SPEC,NAME,OUTPUT_SPEC,TYPE,URI,VERSION )
-                SELECT OBJECT_CONSTRUCT('python','3.8.13'),'current_role',CURRENT_TIMESTAMP(),
-                    'id',null,'name',null,'type','uri','abc'""",
-            result=mock_data_frame.MockDataFrame([snowpark.Row(**{"number of rows inserted": 1})]),
-        )
-
-        # Mock calls to variable values: python version and internal _set_metadata_attribute.
-        with absltest.mock.patch.object(model_registry, "_set_metadata_attribute", return_value=True):
-            with absltest.mock.patch.object(model_registry, "_get_new_unique_identifier", return_value="id"):
-                with absltest.mock.patch(
-                    "model_registry.sys.version_info", new_callable=absltest.mock.PropertyMock(return_value=(3, 8, 13))
-                ):
-                    model_registry.register_model(
-                        model_name="name", model_version="abc", uri="uri", type="type", tags={"tag_name": "tag_value"}
-                    )
-
-    def test_register_model_no_tags(self) -> None:
-        """Test registering a model without giving a tag."""
-        model_registry = self.get_model_registry()
-
-        self._session.add_operation("get_current_role", result="current_role")
-
-        mock_df = self.setup_list_model_call()
-        mock_df.add_operation("filter").add_operation("filter", result=mock_data_frame.MockDataFrame(count_result=0))
-
-        self.add_session_mock_sql(
-            query=f"""INSERT INTO "MODEL_REGISTRY"."PUBLIC"."MODELS" ( CREATION_ENVIRONMENT_SPEC,CREATION_ROLE,
-                    CREATION_TIME,ID,INPUT_SPEC,NAME,OUTPUT_SPEC,TYPE,URI,VERSION )
-                SELECT OBJECT_CONSTRUCT('python','3.8.13'),'current_role',CURRENT_TIMESTAMP(),
-                    '{self.model_id}',null,'name',null,'type','uri','abc'""",
-            result=mock_data_frame.MockDataFrame([snowpark.Row(**{"number of rows inserted": 1})]),
-        )
-
-        # Adding registration metadata.
-        self.template_test_set_attribute(
-            "REGISTRATION",
-            {
-                "CREATION_ENVIRONMENT_SPEC": {"python": "3.8.13"},
-                "CREATION_ROLE": "current_role",
-                "CREATION_TIME": formatting.SqlStr("CURRENT_TIMESTAMP()"),
-                "ID": self.model_id,
-                "INPUT_SPEC": None,
-                "NAME": "name",
-                "OUTPUT_SPEC": None,
-                "TYPE": "type",
-                "URI": "uri",
-                "VERSION": "abc",
-            },
-        )
-
-        # Mock calls to variable values: internal set_model_name, python version, current time
-        with absltest.mock.patch.object(
-            model_registry,
-            "_get_new_unique_identifier",
-            side_effect=[self.model_id, self.event_id],
-        ):
-            with absltest.mock.patch(
-                "model_registry.sys.version_info", new_callable=absltest.mock.PropertyMock(return_value=(3, 8, 13))
-            ):
-                model_registry.register_model(model_name="name", model_version="abc", uri="uri", type="type")
-
     def test_get_tags(self) -> None:
         """Test that get_tags is working correctly with various types."""
         model_registry = self.get_model_registry()
@@ -713,73 +642,17 @@ class ModelRegistryTest(absltest.TestCase):
         self.assertEqual(tags["top_level"], "string")
         self.assertEqual(tags["nested"]["float"], 0.9)
 
-    def test_register_model_with_description(self) -> None:
-        """Test registering a model with a description."""
-        model_registry = self.get_model_registry()
-
-        self._session.add_operation("get_current_role", result="current_role")
-
-        mock_df = self.setup_list_model_call()
-        mock_df.add_operation("filter").add_operation("filter", result=mock_data_frame.MockDataFrame(count_result=0))
-
-        self.add_session_mock_sql(
-            query=f"""INSERT INTO "MODEL_REGISTRY"."PUBLIC"."MODELS" ( CREATION_ENVIRONMENT_SPEC,CREATION_ROLE,
-                    CREATION_TIME,ID,INPUT_SPEC,NAME,OUTPUT_SPEC,TYPE,URI,VERSION )
-                SELECT OBJECT_CONSTRUCT('python','3.8.13'),'current_role',CURRENT_TIMESTAMP(),
-                    '{self.model_id}',null,'name',null,'type','uri','abc'""",
-            result=mock_data_frame.MockDataFrame([snowpark.Row(**{"number of rows inserted": 1})]),
-        )
-
-        # Adding registration metadata.
-        self.template_test_set_attribute(
-            "REGISTRATION",
-            {
-                "CREATION_ENVIRONMENT_SPEC": {"python": "3.8.13"},
-                "CREATION_ROLE": "current_role",
-                "CREATION_TIME": formatting.SqlStr("CURRENT_TIMESTAMP()"),
-                "ID": self.model_id,
-                "INPUT_SPEC": None,
-                "NAME": "name",
-                "OUTPUT_SPEC": None,
-                "TYPE": "type",
-                "URI": "uri",
-                "VERSION": "abc",
-            },
-        )
-
-        self.template_test_set_attribute(
-            "DESCRIPTION",
-            "Model B-263-54",
-        )
-
-        # Mock calls to variable values: internal set_model_description, python version, current time
-        with absltest.mock.patch.object(
-            model_registry,
-            "_get_new_unique_identifier",
-            side_effect=[self.model_id, self.event_id, self.event_id],
-        ):
-            with absltest.mock.patch(
-                "model_registry.sys.version_info", new_callable=absltest.mock.PropertyMock(return_value=(3, 8, 13))
-            ):
-                model_registry.register_model(
-                    uri="uri",
-                    type="type",
-                    model_version="abc",
-                    model_name="name",
-                    description="Model B-263-54",
-                )
-
     def test_log_model_path_file(self) -> None:
-        """Test log_model_path() when the model is a file.
+        """Test _log_model_path() when the model is a file.
 
-        Validate log_model_path() can perform stage file put operation with the expected stage path and call
+        Validate _log_model_path() can perform stage file put operation with the expected stage path and call
         register_model() with the expected arguments.
         """
         model_registry = self.get_model_registry()
 
         model_name = "name"
         model_version = "abc"
-        expected_stage_postfix = f"{model_name}_{model_version}".upper()
+        expected_stage_postfix = f"{self.model_id}".upper()
 
         self.add_session_mock_sql(
             query=f'CREATE OR REPLACE STAGE "{_DATABASE_NAME}"."{_SCHEMA_NAME}".SNOWML_MODEL_{expected_stage_postfix}',
@@ -802,10 +675,10 @@ class ModelRegistryTest(absltest.TestCase):
             ):
                 with absltest.mock.patch.object(
                     model_registry,
-                    "register_model",
-                    return_value=True,
+                    "_register_model_with_id",
+                    return_value=self.model_id,
                 ):
-                    model_registry.log_model_path(
+                    model_registry._log_model_path(
                         path="path",
                         type="type",
                         model_name=model_name,
@@ -814,12 +687,13 @@ class ModelRegistryTest(absltest.TestCase):
                     )
                     mock_isfile.assert_called_once_with("path")
                     mock_sp_file_operation.put.assert_called_with("path", expected_stage_path)
-                    assert isinstance(model_registry.register_model, absltest.mock.Mock)
-                    model_registry.register_model.assert_called_with(
-                        type="type",
-                        uri=f"sfc:MODEL_REGISTRY.PUBLIC.SNOWML_MODEL_{expected_stage_postfix}",
+                    assert isinstance(model_registry._register_model_with_id, absltest.mock.Mock)
+                    model_registry._register_model_with_id.assert_called_with(
                         model_name=model_name,
                         model_version=model_version,
+                        model_id=self.model_id,
+                        type="type",
+                        uri=f"sfc:MODEL_REGISTRY.PUBLIC.SNOWML_MODEL_{expected_stage_postfix}",
                         description="description",
                         tags=None,
                     )

@@ -1,0 +1,22 @@
+load("//bazel:py_rules.bzl", "py_library", "py_test")
+
+package(default_visibility = ["//visibility:public"])
+
+
+py_library(
+    name = "deploy",
+    srcs = ["deploy.py"],
+    deps = [
+        "//snowflake/ml/model/_deploy_client/docker:base_image_builder",
+        "//snowflake/ml/model/_deploy_client/docker:client_image_builder"
+    ]
+)
+
+py_test(
+    name = "deploy_test",
+    srcs = ["deploy_test.py"],
+    deps = [
+        ":deploy",
+        "//snowflake/ml/test_utils:mock_session"
+    ]
+)

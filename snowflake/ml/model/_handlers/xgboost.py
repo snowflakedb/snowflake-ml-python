@@ -10,7 +10,6 @@ from snowflake.ml._internal import type_utils
 from snowflake.ml.model import (
     _model_meta as model_meta_api,
     custom_model,
-    model_signature,
     type_hints as model_types,
 )
 from snowflake.ml.model._handlers import _base
@@ -64,34 +63,27 @@ class _XGBModelHandler(_base._ModelHandler[Union["xgboost.Booster", "xgboost.XGB
         assert isinstance(model, xgboost.Booster) or isinstance(model, xgboost.XGBModel)
 
         if not is_sub_model:
-            if model_meta._signatures is None:
-                # In this case sample_input should be available, because of the check in save_model.
-                assert sample_input is not None
-                target_methods = kwargs.pop("target_methods", None)
-                if target_methods is None:
-                    target_methods = [
-                        method
-                        for method in _XGBModelHandler.DEFAULT_TARGET_METHODS
-                        if hasattr(model, method) and callable(getattr(model, method, None))
-                    ]
-                else:
-                    for method_name in target_methods:
-                        if not callable(getattr(model, method_name, None)):
-                            raise ValueError(f"Target method {method_name} is not callable.")
-                        if method_name not in _XGBModelHandler.DEFAULT_TARGET_METHODS:
-                            raise ValueError(f"Target method {method_name} is not supported.")
+            target_methods = model_meta_api._get_target_methods(
+                model=model,
+                target_methods=kwargs.pop("target_methods", None),
+                default_target_methods=_XGBModelHandler.DEFAULT_TARGET_METHODS,
+            )
 
-                model_meta._signatures = {}
-                for method_name in target_methods:
-                    target_method = getattr(model, method_name)
-                    sig = model_signature.infer_signature(sample_input, target_method(sample_input))
-                    model_meta._signatures[method_name] = sig
-            else:
-                for method_name in model_meta._signatures.keys():
-                    if not callable(getattr(model, method_name, None)):
-                        raise ValueError(f"Target method {method_name} is not callable.")
-                    if method_name not in _XGBModelHandler.DEFAULT_TARGET_METHODS:
-                        raise ValueError(f"Target method {method_name} is not supported.")
+            def get_prediction(
+                target_method_name: str, sample_input: model_types.SupportedLocalDataType
+            ) -> model_types.SupportedLocalDataType:
+                target_method = getattr(model, target_method_name, None)
+                assert callable(target_method)
+                predictions_df = target_method(sample_input)
+                return predictions_df
+
+            model_meta = model_meta_api._validate_signature(
+                model=model,
+                model_meta=model_meta,
+                target_methods=target_methods,
+                sample_input=sample_input,
+                get_prediction_fn=get_prediction,
+            )
 
         model_blob_path = os.path.join(model_blobs_dir_path, name)
         os.makedirs(model_blob_path, exist_ok=True)
@@ -103,7 +95,7 @@ class _XGBModelHandler(_base._ModelHandler[Union["xgboost.Booster", "xgboost.XGB
             options={"xgb_estimator_type": model.__class__.__name__},
         )
         model_meta.models[name] = base_meta
-        model_meta._include_if_absent([("scikit-learn", "scikit-learn"), ("xgboost", "xgboost")])
+        model_meta._include_if_absent([("xgboost", "xgboost")])
 
     @staticmethod
     def _load_model(

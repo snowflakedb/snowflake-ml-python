@@ -55,24 +55,6 @@ class FeatureGroupSpecTest(absltest.TestCase):
         ft2 = model_signature.FeatureSpec(name="feature2", dtype=model_signature.DataType.INT64)
         fts = model_signature.FeatureGroupSpec(name="features", specs=[ft1, ft2])
         self.assertEqual(fts, eval(repr(fts), model_signature.__dict__))
-        self.assertDictEqual(
-            {
-                "feature_group": {
-                    "name": "features",
-                    "specs": [
-                        {
-                            "type": "INTEGER",
-                            "name": "feature1",
-                        },
-                        {
-                            "type": "INTEGER",
-                            "name": "feature2",
-                        },
-                    ],
-                }
-            },
-            fts.to_dict(as_sql_type=True),
-        )
         self.assertEqual(fts, model_signature.FeatureGroupSpec.from_dict(fts.to_dict()))
         self.assertEqual(fts.as_snowpark_type(), spt.MapType(spt.StringType(), spt.IntegerType()))
 

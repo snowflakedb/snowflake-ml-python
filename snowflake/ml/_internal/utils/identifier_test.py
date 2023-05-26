@@ -15,6 +15,21 @@ class SnowflakeIdentifierTest(absltest.TestCase):
         self.assertEqual('foo"', identifier.remove_quote_if_quoted('foo"'))
         self.assertEqual('foo"bar', identifier.remove_quote_if_quoted('foo"bar'))
 
+    def test_remove_and_unescape_quote_if_quoted(self) -> None:
+        self.assertEqual("foo", identifier.remove_and_unescape_quote_if_quoted('"foo"'))
+        self.assertEqual('"foo"', identifier.remove_and_unescape_quote_if_quoted('"""foo"""'))
+        self.assertEqual('foo"bar', identifier.remove_and_unescape_quote_if_quoted('"foo""bar"'))
+        with self.assertRaises(ValueError):
+            identifier.remove_and_unescape_quote_if_quoted('foo"')
+        with self.assertRaises(ValueError):
+            identifier.remove_and_unescape_quote_if_quoted('"bar')
+        with self.assertRaises(ValueError):
+            identifier.remove_and_unescape_quote_if_quoted('foo"bar')
+        with self.assertRaises(ValueError):
+            identifier.remove_and_unescape_quote_if_quoted('""foo""')
+        with self.assertRaises(ValueError):
+            identifier.remove_and_unescape_quote_if_quoted('"foo"""bar"')
+
     def test_plan_concat(self) -> None:
         """Test vanilla concat with no quotes."""
         self.assertEqual("demo__task1", identifier.concat_names(["demo__", "task1"]))

@@ -24,25 +24,28 @@ requirements:
     - anyio>=3.5.0,<4
     - cloudpickle
     - fsspec>=2022.11,<=2023.1
-    - numpy>=1.23,<1.24
+    - numpy>=1.23,<2
     - packaging>=23.0,<24
+    - pandas>=1.0.0,<2  # Limit since 2.x is not available in Snowflake Anaconda Channel yet.
     - pyyaml>=6.0,<7
+    - scikit-learn>=1.2.1,<2
     - scipy>=1.9,<2
     - snowflake-connector-python
     - snowflake-snowpark-python>=1.4.0,<=2
     - sqlparse>=0.4,<1
     - typing-extensions>=4.1.0,<5
+    - xgboost>=1.7.3,<2
 
     # conda-libmamba-solver is conda-specific requirement, and should not appear in wheel's dependency.
     - conda-libmamba-solver>=23.1.0,<24
+  run_constrained:
+    # Any dependencies required by extra should be specified here so that conda could consider the constraints when
+    # installing them simultaneously. This part should sync with the extra_requirements in snowml_wheel in
+    # snowflake/ml/BUILD.bazel file.
+    - tensorflow>=2.9,<3
+    - torchdata>=0.4,<1
+    - lightgbm==3.3.5
 
-    # TODO(snandamuri): Versions of these packages must be exactly same between user's workspace and
-    # snowpark sandbox. Generic definitions like scikit-learn>=1.1.0,<2 wont work because snowflake conda channel
-    # only has a few allowlisted versions of scikit-learn available, so we must force users to use scikit-learn
-    # versions that are available in the snowflake conda channel. Since there is no way to specify allow list of
-    # versions in the requirements file, we are pinning the versions here.
-    - scikit-learn>=1.2.1,<2
-    - xgboost==1.7.3
 about:
   home: https://github.com/snowflakedb/snowflake-ml-python
   license: Apache-2.0

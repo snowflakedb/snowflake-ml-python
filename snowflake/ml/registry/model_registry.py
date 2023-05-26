@@ -14,6 +14,7 @@ from absl import logging
 from snowflake import connector, snowpark
 from snowflake.ml._internal import file_utils, telemetry
 from snowflake.ml._internal.utils import formatting, query_result_checker, uri
+from snowflake.ml.framework import base
 from snowflake.ml.model import (
     _deployer,
     _model as model_api,
@@ -441,7 +442,7 @@ class ModelRegistry:
 
         return self._insert_table_entry(table=self._fully_qualified_metadata_table_name(), columns=columns)
 
-    def _prepare_model_stage(self, *, model_name: str, model_version: str) -> str:
+    def _prepare_model_stage(self, model_id: str) -> str:
         """Create a stage in the model registry for storing the model with the given id.
 
         Creating a permanent stage here since we do not have a way to swtich a stage from temporary to permanent.
@@ -450,8 +451,7 @@ class ModelRegistry:
         operation is complete.
 
         Args:
-            model_name: Model Name string.
-            model_version: Model Version string.
+            model_id: Internal model ID string.
 
         Returns:
             Name of the stage that was created.
@@ -461,9 +461,9 @@ class ModelRegistry:
         """
         schema = self._fully_qualified_schema_name()
 
-        stage_name = f"{model_name}_{model_version}".replace("-", "_").upper()
+        # Uppercasing the model_stage_name to avoid having to quote the the stage name.
+        stage_name = model_id.upper()
 
-        # Replacing dashes and uppercasing the model_stage_name to avoid having to quote the the stage name.
         model_stage_name = f"SNOWML_MODEL_{stage_name}"
         fully_qualified_model_stage_name = f"{schema}.{model_stage_name}"
         statement_params = self._get_statement_params(inspect.currentframe())
@@ -708,6 +708,76 @@ class ModelRegistry:
         if len(model_file_list) > 1:
             raise NotImplementedError("Restoring models consisting of multiple files is currently not supported.")
         return f"{self._fully_qualified_schema_name()}.{model_file_list[0].name}"
+
+    def _register_model_with_id(
+        self,
+        model_name: str,
+        model_version: str,
+        model_id: str,
+        *,
+        type: str,
+        uri: str,
+        input_spec: Optional[Dict[str, str]] = None,
+        output_spec: Optional[Dict[str, str]] = None,
+        description: Optional[str] = None,
+        tags: Optional[Dict[str, str]] = None,
+    ) -> None:
+        """Helper function to register model metadata.
+
+        Args:
+            model_name: Name to be set for the model. The model name can NOT be changed after registration. The
+                combination of name and version is expected to be unique inside the registry.
+            model_version: Version string to be set for the model. The model version string can NOT be changed after
+                model registration. The combination of name and version is expected to be unique inside the registry.
+            model_id: The internal id for the model.
+            type: Type of the model. Only a subset of types are supported natively.
+            uri: Resource identifier pointing to the model artifact. There are no restrictions on the URI format,
+                however only a limited set of URI schemes is supported natively.
+            input_spec: The expected input schema of the model. Dictionary where the keys are
+                expected column names and the values are the value types.
+            output_spec: The expected output schema of the model. Dictionary where the keys
+                are expected column names and the values are the value types.
+            description: A desription for the model. The description can be changed later.
+            tags: Key-value pairs of tags to be set for this model. Tags can be modified
+                after model registration.
+
+        Raises:
+            DataError: The given model already exists.
+            DatabaseError: Unable to register the model properties into table.
+        """
+        new_model: Dict[Any, Any] = {}
+        new_model["ID"] = model_id
+        new_model["NAME"] = model_name
+        new_model["VERSION"] = model_version
+        new_model["TYPE"] = type
+        new_model["URI"] = uri
+        new_model["INPUT_SPEC"] = input_spec
+        new_model["OUTPUT_SPEC"] = output_spec
+        new_model["CREATION_TIME"] = formatting.SqlStr("CURRENT_TIMESTAMP()")
+        new_model["CREATION_ROLE"] = self._session.get_current_role()
+        new_model["CREATION_ENVIRONMENT_SPEC"] = {"python": ".".join(map(str, sys.version_info[:3]))}
+
+        existing_model_nums = self._list_selected_models(model_name=model_name, model_version=model_version).count()
+        if existing_model_nums:
+            raise connector.DataError(
+                f"Model {model_name}/{model_version} already exists. Unable to register the model."
+            )
+
+        if self._insert_registry_entry(id=model_id, name=model_name, version=model_version, properties=new_model):
+            self._set_metadata_attribute(
+                model_name=model_name,
+                model_version=model_version,
+                attribute=_METADATA_ATTRIBUTE_REGISTRATION,
+                value=new_model,
+            )
+            if description:
+                self.set_model_description(model_name=model_name, model_version=model_version, description=description)
+            if tags:
+                self._set_metadata_attribute(
+                    _METADATA_ATTRIBUTE_TAGS, value=tags, model_name=model_name, model_version=model_version
+                )
+        else:
+            raise connector.DatabaseError("Failed to insert the model properties to the registry table.")
 
     # Registry operations
 
@@ -1096,7 +1166,7 @@ class ModelRegistry:
         pip_requirements: Optional[List[str]] = None,
         signatures: Optional[Dict[str, model_signature.ModelSignature]] = None,
         sample_input_data: Optional[Any] = None,
-    ) -> Optional[str]:
+    ) -> str:
         """Uploads and register a model to the Model Registry.
 
         Args:
@@ -1122,12 +1192,8 @@ class ModelRegistry:
         Returns:
             String of the auto-generate unique model identifier. None if failed.
         """
-        # TODO(amauser): We should never return None, investigate and update the return type accordingly.
-        id = None
         # Ideally, the whole operation should be a single transaction. Currently, transactions do not support stage
         # operations.
-        # Save model to local disk.
-        is_native_model_format = False
 
         self._model_identifier_is_nonempty_or_raise(model_name, model_version)
 
@@ -1154,9 +1220,18 @@ class ModelRegistry:
                         pip_requirements=pip_requirements,
                         sample_input=sample_input_data,
                     )
+                elif isinstance(model, base.BaseEstimator):
+                    model_api.save_model(
+                        name=model_name,
+                        model_dir_path=tmpdir,
+                        model=model,
+                        metadata=tags,
+                        conda_dependencies=conda_dependencies,
+                        pip_requirements=pip_requirements,
+                    )
                 else:
                     raise TypeError("Either signature or sample input data should exist for native model packaging.")
-                id = self.log_model_path(
+                return self._log_model_path(
                     model_name=model_name,
                     model_version=model_version,
                     path=tmpdir,
@@ -1164,119 +1239,27 @@ class ModelRegistry:
                     description=description,
                     tags=tags,  # TODO: Inherent model type enum.
                 )
-                is_native_model_format = True
             except (AttributeError, TypeError):
                 pass
 
-        if not is_native_model_format:
-            with tempfile.NamedTemporaryFile(delete=True) as local_model_file:
-                cp.dump(model, local_model_file)
-                local_model_file.flush()
+        with tempfile.NamedTemporaryFile(delete=True) as local_model_file:
+            cp.dump(model, local_model_file)
+            local_model_file.flush()
 
-                id = self.log_model_path(
-                    model_name=model_name,
-                    model_version=model_version,
-                    path=local_model_file.name,
-                    type=model.__class__.__name__,
-                    description=description,
-                    tags=tags,
-                )
-
-        return id
-
-    @telemetry.send_api_usage_telemetry(
-        project=_TELEMETRY_PROJECT,
-        subproject=_TELEMETRY_SUBPROJECT,
-    )
-    def register_model(
-        self,
-        model_name: str,
-        model_version: str,
-        *,
-        type: str,
-        uri: str,
-        input_spec: Optional[Dict[str, str]] = None,
-        output_spec: Optional[Dict[str, str]] = None,
-        description: Optional[str] = None,
-        tags: Optional[Dict[str, str]] = None,
-    ) -> str:
-        """Register a new model in the ModelRegistry.
-
-        This operation will only create the metadata and not handle any model artifacts. A URI is expected to be given
-        that points the the actual model artifact.
-
-        Args:
-            model_name: Name to be set for the model. The model name can NOT be changed after registration. The
-                combination of name and version is expected to be unique inside the registry.
-            model_version: Version string to be set for the model. The model version string can NOT be changed after
-                model registration. The combination of name and version is expected to be unique inside the registry.
-            type: Type of the model. Only a subset of types are supported natively.
-            uri: Resource identifier pointing to the model artifact. There are no restrictions on the URI format,
-                however only a limited set of URI schemes is supported natively.
-            input_spec: The expected input schema of the model. Dictionary where the keys are
-                expected column names and the values are the value types.
-            output_spec: The expected output schema of the model. Dictionary where the keys
-                are expected column names and the values are the value types.
-            description: A desription for the model. The description can be changed later.
-            tags: Key-value pairs of tags to be set for this model. Tags can be modified
-                after model registration.
-
-        Returns:
-            The model id string, which is unique identifier to be used for the model. None will be returned if the
-            operation failed.
-
-        Raises:
-            DataError: The given model already exists.
-            DatabaseError: Unable to register the model properties into table.
-        """
-        # TODO(Zhe SNOW-813224): Remove input_spec and output_spec. Use signature instead.
-
-        self._model_identifier_is_nonempty_or_raise(model_name, model_version)
-
-        # Create registry entry.
-
-        id = self._get_new_unique_identifier()
-
-        new_model: Dict[Any, Any] = {}
-        new_model["ID"] = id
-        new_model["NAME"] = model_name
-        new_model["VERSION"] = model_version
-        new_model["INPUT_SPEC"] = input_spec
-        new_model["OUTPUT_SPEC"] = output_spec
-        new_model["TYPE"] = type
-        new_model["CREATION_TIME"] = formatting.SqlStr("CURRENT_TIMESTAMP()")
-        new_model["CREATION_ROLE"] = self._session.get_current_role()
-        new_model["CREATION_ENVIRONMENT_SPEC"] = {"python": ".".join(map(str, sys.version_info[:3]))}
-        new_model["URI"] = uri
-
-        existing_model_nums = self._list_selected_models(model_name=model_name, model_version=model_version).count()
-        if existing_model_nums:
-            raise connector.DataError(
-                f"Model {model_name}/{model_version} already exists. Unable to register the model."
-            )
-
-        if self._insert_registry_entry(id=id, name=model_name, version=model_version, properties=new_model):
-            self._set_metadata_attribute(
+            return self._log_model_path(
                 model_name=model_name,
                 model_version=model_version,
-                attribute=_METADATA_ATTRIBUTE_REGISTRATION,
-                value=new_model,
+                path=local_model_file.name,
+                type=model.__class__.__name__,
+                description=description,
+                tags=tags,
             )
-            if description:
-                self.set_model_description(model_name=model_name, model_version=model_version, description=description)
-            if tags:
-                self._set_metadata_attribute(
-                    _METADATA_ATTRIBUTE_TAGS, value=tags, model_name=model_name, model_version=model_version
-                )
-            return id
-        else:
-            raise connector.DatabaseError("Failed to insert the model properties to the registry table.")
 
     @telemetry.send_api_usage_telemetry(
         project=_TELEMETRY_PROJECT,
         subproject=_TELEMETRY_SUBPROJECT,
     )
-    def log_model_path(
+    def _log_model_path(
         self,
         model_name: str,
         model_version: str,
@@ -1305,9 +1288,10 @@ class ModelRegistry:
             String of the auto-generate unique model identifier.
         """
         self._model_identifier_is_nonempty_or_raise(model_name, model_version)
+        id = self._get_new_unique_identifier()
 
         # Copy model from local disk to remote stage.
-        fully_qualified_model_stage_name = self._prepare_model_stage(model_name=model_name, model_version=model_version)
+        fully_qualified_model_stage_name = self._prepare_model_stage(model_id=id)
 
         # Check if directory or file and adapt accordingly.
         # TODO: Unify and explicit about compression for both file and directory.
@@ -1325,9 +1309,10 @@ class ModelRegistry:
                     overwrite=True,
                     is_in_udf=True,
                 )
-        id = self.register_model(
+        self._register_model_with_id(
             model_name=model_name,
             model_version=model_version,
+            model_id=id,
             type=type,
             uri=uri.get_uri_from_snowflake_stage_path(fully_qualified_model_stage_name),
             description=description,

@@ -6,19 +6,18 @@ from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 from types import ModuleType
-from typing import Any, Dict, Generator, List, Optional, Tuple
+from typing import Any, Callable, Dict, Generator, List, Optional, Sequence, Tuple, cast
 
 import cloudpickle
 import yaml
 from packaging import version
 
 from snowflake.ml._internal import env as snowml_env, env_utils, file_utils
-from snowflake.ml.model import _env, model_signature
+from snowflake.ml.model import _env, model_signature, type_hints as model_types
+from snowflake.snowpark import DataFrame as SnowparkDataFrame
 
-MANIFEST_VERSION = 1
-MANIFEST_LANGUAGE = "python"
-MANIFEST_KIND = "model"
 MODEL_METADATA_VERSION = 1
+
 _BASIC_DEPENDENCIES = [
     "pandas",
     "pyyaml",
@@ -26,6 +25,7 @@ _BASIC_DEPENDENCIES = [
     "cloudpickle",
     "anyio",
     "snowflake-snowpark-python",
+    "scikit-learn",
 ]
 
 
@@ -189,7 +189,7 @@ class ModelMetadata:
         """
         self.name = name
         self._signatures = signatures
-        self._metadata = metadata
+        self.metadata = metadata
         self.creation_timestamp = str(datetime.utcnow())
         self.model_type = model_type
         self._models: Dict[str, _ModelBlobMetadata] = dict()
@@ -226,11 +226,6 @@ class ModelMetadata:
             for chan, reqs in self._conda_dependencies.items()
             for req in reqs
         )
-
-    @property
-    def metadata(self) -> Dict[str, str]:
-        """User provided key-value metadata of the model."""
-        return self._metadata if self._metadata else {}
 
     def _include_if_absent(self, pkgs: List[Tuple[str, str]]) -> None:
         conda_names, pip_names = tuple(zip(*pkgs))
@@ -317,66 +312,6 @@ class ModelMetadata:
         }
         return cls(**model_dict)
 
-    def save_manifest(self, path: str, conda_file_path: str, pip_file_path: str) -> None:
-        """Save the model manifest file in the model directory.
-
-        Args:
-            path: The path of the directory to write a manifest file in it.
-            conda_file_path: The path to conda env file.
-            pip_file_path: The path to pip requirements file.
-        """
-        manifest_yaml_path = os.path.join(path, ModelMetadata.MANIFEST_FILE)
-        manifest_data = {
-            "metadata": self.metadata,
-            "signatures": {method: sig.to_dict(as_sql_type=True) for method, sig in self.signatures.items()},
-            "language": MANIFEST_LANGUAGE,
-            "kind": MANIFEST_KIND,
-            "env": {"conda": os.path.relpath(conda_file_path, path), "pip": os.path.relpath(pip_file_path, path)},
-            "version": MANIFEST_VERSION,
-        }
-        with open(manifest_yaml_path, "w") as out:
-            yaml.safe_dump(manifest_data, stream=out, default_flow_style=False)
-
-    @classmethod
-    def load_manifest(cls, path: str) -> Tuple[Optional[Dict[str, str]], Optional[str], Optional[str]]:
-        """Load the model metadata from the model metadata yaml file in the model directory.
-
-        Args:
-            path: The path of the directory to read the metadata yaml file in it.
-
-        Raises:
-            ValueError: raised when manifest file structure is incorrect.
-            NotImplementedError: raised when version is not found or unsupported in manifest file.
-            NotImplementedError: raised when language is not found or unsupported in manifest file.
-            NotImplementedError: raised when kind is not found or unsupported in manifest file.
-
-        Returns:
-            A tuple of optional metadata, conda env file path and pip requirements file path.
-        """
-        manifest_yaml_path = os.path.join(path, ModelMetadata.MANIFEST_FILE)
-        with open(manifest_yaml_path) as f:
-            manifest_data = yaml.safe_load(f.read())
-
-        if not isinstance(manifest_data, dict):
-            raise ValueError("Incorrect manifest data found.")
-
-        manifest_version = manifest_data.get("version", None)
-        if not manifest_version or manifest_version != MANIFEST_VERSION:
-            raise NotImplementedError("Unknown or unsupported manifest file found.")
-
-        manifest_language = manifest_data.get("language", None)
-        if not manifest_language or manifest_language != MANIFEST_LANGUAGE:
-            raise NotImplementedError("Unknown or unsupported language found.")
-
-        manifest_kind = manifest_data.get("kind", None)
-        if not manifest_kind or manifest_kind != MANIFEST_KIND:
-            raise NotImplementedError("Unknown or unsupported packaging kind found.")
-
-        metadata = manifest_data.get("metadata", None)
-        conda_file_path = manifest_data.get("env", dict()).get("conda", None)
-        pip_file_path = manifest_data.get("env", dict()).get("pip", None)
-        return metadata, conda_file_path, pip_file_path
-
     def save_model_metadata(self, path: str) -> None:
         """Save the model metadata as a yaml file in the model directory.
 
@@ -390,10 +325,8 @@ class ModelMetadata:
         env_dir_path = os.path.join(path, ModelMetadata.ENV_DIR)
         os.makedirs(env_dir_path, exist_ok=True)
 
-        conda_file_path = _env.save_conda_env_file(env_dir_path, self._conda_dependencies, self.python_version)
-        pip_file_path = _env.save_requirements_file(env_dir_path, self._pip_requirements)
-
-        self.save_manifest(path, conda_file_path=conda_file_path, pip_file_path=pip_file_path)
+        _env.save_conda_env_file(env_dir_path, self._conda_dependencies, self.python_version)
+        _env.save_requirements_file(env_dir_path, self._pip_requirements)
 
     @classmethod
     def load_model_metadata(cls, path: str) -> "ModelMetadata":
@@ -408,15 +341,6 @@ class ModelMetadata:
         Returns:
             Loaded model metadata object.
         """
-        metadata, conda_file_path, pip_file_path = ModelMetadata.load_manifest(path)
-
-        env_dir_path = os.path.join(path, ModelMetadata.ENV_DIR)
-        if not conda_file_path:
-            conda_file_path = os.path.join(env_dir_path, _env._CONDA_ENV_FILE_NAME)
-
-        if not pip_file_path:
-            pip_file_path = os.path.join(env_dir_path, _env._REQUIREMENTS_FILE_NAME)
-
         model_yaml_path = os.path.join(path, ModelMetadata.MODEL_METADATA_FILE)
         with open(model_yaml_path) as f:
             loaded_mata = yaml.safe_load(f.read())
@@ -426,10 +350,65 @@ class ModelMetadata:
             raise NotImplementedError("Unknown or unsupported model metadata file found.")
 
         meta = ModelMetadata.from_dict(loaded_mata)
-        meta._metadata = metadata
-
-        meta._conda_dependencies, python_version = _env.load_conda_env_file(os.path.join(path, conda_file_path))
+        env_dir_path = os.path.join(path, ModelMetadata.ENV_DIR)
+        meta._conda_dependencies, python_version = _env.load_conda_env_file(
+            os.path.join(env_dir_path, _env._CONDA_ENV_FILE_NAME)
+        )
         if python_version:
             meta.python_version = python_version
-        meta._pip_requirements = _env.load_requirements_file(os.path.join(path, pip_file_path))
+        meta._pip_requirements = _env.load_requirements_file(os.path.join(env_dir_path, _env._REQUIREMENTS_FILE_NAME))
         return meta
+
+
+def _is_callable(model: model_types.SupportedLocalModelType, method_name: str) -> bool:
+    return callable(getattr(model, method_name, None))
+
+
+def _validate_signature(
+    model: model_types.SupportedLocalModelType,
+    model_meta: ModelMetadata,
+    target_methods: Sequence[str],
+    sample_input: Optional[model_types.SupportedDataType],
+    get_prediction_fn: Callable[[str, model_types.SupportedLocalDataType], model_types.SupportedLocalDataType],
+) -> ModelMetadata:
+    if model_meta._signatures is not None:
+        _validate_target_methods(model, list(model_meta.signatures.keys()))
+        return model_meta
+
+    # In this case sample_input should be available, because of the check in save_model.
+    assert (
+        sample_input is not None
+    ), "Model signature and sample input are None at the same time. This should not happen with local model."
+    model_meta._signatures = {}
+    trunc_sample_input = model_signature._truncate_data(sample_input)
+    if isinstance(sample_input, SnowparkDataFrame):
+        # Added because of Any from missing stubs.
+        trunc_sample_input = cast(SnowparkDataFrame, trunc_sample_input)
+        local_sample_input = trunc_sample_input.to_pandas()
+    else:
+        local_sample_input = trunc_sample_input
+    for target_method in target_methods:
+        predictions_df = get_prediction_fn(target_method, local_sample_input)
+        sig = model_signature.infer_signature(sample_input, predictions_df)
+        model_meta._signatures[target_method] = sig
+    return model_meta
+
+
+def _get_target_methods(
+    model: model_types.SupportedLocalModelType,
+    target_methods: Optional[Sequence[str]],
+    default_target_methods: Sequence[str],
+) -> Sequence[str]:
+    if target_methods is None:
+        target_methods = [method_name for method_name in default_target_methods if _is_callable(model, method_name)]
+
+    _validate_target_methods(model, target_methods)
+    return target_methods
+
+
+def _validate_target_methods(model: model_types.SupportedModelType, target_methods: Sequence[str]) -> None:
+    for method_name in target_methods:
+        if method_name not in target_methods:
+            raise ValueError(f"Target method {method_name} does not exists.")
+        if not _is_callable(model, method_name):
+            raise ValueError(f"Target method {method_name} is not callable.")

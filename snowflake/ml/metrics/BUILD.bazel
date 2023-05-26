@@ -6,9 +6,10 @@ package(default_visibility = ["//visibility:public"])
 py_library(
     name = "metrics",
     srcs = [
-        "regression.py",
+        "accuracy_score.py",
         "correlation.py",
         "covariance.py",
+        "regression.py",
     ],
     deps = [
         ":init",

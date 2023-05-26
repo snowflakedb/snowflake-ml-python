@@ -127,6 +127,20 @@ class ModelTest(absltest.TestCase):
                 metadata={"author": "halu", "version": "1"},
             )
 
+        model_api.save_model(
+            name="model1",
+            model_dir_path=os.path.join(tmpdir.full_path, "model1"),
+            model=lm,
+            signatures=s,
+            metadata={"author": "halu", "version": "1"},
+            python_version="3.5.2",
+        )
+
+        _ = model_api.load_model(os.path.join(tmpdir, "model1"), meta_only=True)
+
+        with self.assertRaises(RuntimeError):
+            m, meta = model_api.load_model(os.path.join(tmpdir, "model1"))
+
     def test_custom_model_with_multiple_artifacts(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             os.mkdir(os.path.join(tmpdir, "bias"))

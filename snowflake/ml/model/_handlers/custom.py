@@ -11,7 +11,6 @@ from snowflake.ml._internal import file_utils, type_utils
 from snowflake.ml.model import (
     _model_handler,
     _model_meta as model_meta_api,
-    model_signature,
     type_hints as model_types,
 )
 from snowflake.ml.model._handlers import _base
@@ -50,27 +49,27 @@ class _CustomModelHandler(_base._ModelHandler["custom_model.CustomModel"]):
 
         assert isinstance(model, custom_model.CustomModel)
 
-        if not is_sub_model:
-            if model_meta._signatures is None:
-                # In this case sample_input should be available, because of the check in save_model.
-                assert sample_input is not None
-                model_meta._signatures = {}
-                for target_method in model._get_infer_methods():
-                    if inspect.iscoroutinefunction(target_method):
-                        with anyio.start_blocking_portal() as portal:
-                            predictions_df = portal.call(target_method, model, sample_input)
-                    else:
-                        predictions_df = target_method(model, sample_input)
-                    func_name = target_method.__name__
-                    sig = model_signature.infer_signature(sample_input, predictions_df)
-                    model_meta._signatures[func_name] = sig
+        def get_prediction(
+            target_method_name: str, sample_input: model_types.SupportedLocalDataType
+        ) -> model_types.SupportedLocalDataType:
+            target_method = getattr(model, target_method_name, None)
+            assert callable(target_method) and inspect.ismethod(target_method)
+            target_method = target_method.__func__
+            if inspect.iscoroutinefunction(target_method):
+                with anyio.start_blocking_portal() as portal:
+                    predictions_df = portal.call(target_method, model, sample_input)
             else:
-                method_names = [method.__name__ for method in model._get_infer_methods()]
-                for method_name in model_meta._signatures.keys():
-                    if method_name not in method_names:
-                        raise ValueError(f"Target method {method_name} does not exists.")
-                    if not callable(getattr(model, method_name, None)):
-                        raise ValueError(f"Target method {method_name} is not callable.")
+                predictions_df = target_method(model, sample_input)
+            return predictions_df
+
+        if not is_sub_model:
+            model_meta = model_meta_api._validate_signature(
+                model=model,
+                model_meta=model_meta,
+                target_methods=[method.__name__ for method in model._get_infer_methods()],
+                sample_input=sample_input,
+                get_prediction_fn=get_prediction,
+            )
 
         model_blob_path = os.path.join(model_blobs_dir_path, name)
         os.makedirs(model_blob_path, exist_ok=True)

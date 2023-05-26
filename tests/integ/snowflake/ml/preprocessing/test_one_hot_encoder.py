@@ -1593,7 +1593,6 @@ class OneHotEncoderTest(parameterized.TestCase):
         np.testing.assert_allclose(actual_arr_joblib, sklearn_arr)
 
     def test_drop_input_cols(self) -> None:
-        input_cols = CATEGORICAL_COLS
         df_pandas, df = framework_utils.get_df(self._session, DATA, SCHEMA, np.nan)
 
         input_cols, output_cols = CATEGORICAL_COLS, CATEGORICAL_COLS
@@ -1602,6 +1601,15 @@ class OneHotEncoderTest(parameterized.TestCase):
         transformed_df = encoder.fit(df).transform(df)
 
         self.assertEqual(0, len(set(input_cols) & set(transformed_df.to_pandas().columns)))
+
+    def test_fit_empty(self) -> None:
+        data = [[]]
+        df = self._session.create_dataframe(data, ["CAT"]).na.drop()
+
+        encoder = OneHotEncoder(input_cols=["CAT"], output_cols=["CAT"], drop_input_cols=True)
+        with self.assertRaises(ValueError) as ex:
+            encoder.fit(df)
+        self.assertIn("Empty data while a minimum of 1 sample is required.", str(ex.exception))
 
 
 if __name__ == "__main__":

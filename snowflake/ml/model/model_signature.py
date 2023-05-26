@@ -15,6 +15,7 @@ from typing import (
     Tuple,
     Type,
     Union,
+    cast,
     final,
 )
 
@@ -25,41 +26,32 @@ from typing_extensions import TypeGuard
 
 import snowflake.snowpark
 import snowflake.snowpark.types as spt
-from snowflake.ml._internal.utils import identifier
+from snowflake.ml._internal.utils import formatting, identifier
 from snowflake.ml.model import type_hints as model_types
 
 
 class DataType(Enum):
-    def __init__(self, value: str, sql_type: str, snowpark_type: Type[spt.DataType], numpy_type: npt.DTypeLike) -> None:
+    def __init__(self, value: str, snowpark_type: Type[spt.DataType], numpy_type: npt.DTypeLike) -> None:
         self._value = value
-        self._sql_type = sql_type
         self._snowpark_type = snowpark_type
         self._numpy_type = numpy_type
 
-    INT8 = ("int8", "INTEGER", spt.IntegerType, np.int8)
-    INT16 = ("int16", "INTEGER", spt.IntegerType, np.int16)
-    INT32 = ("int32", "INTEGER", spt.IntegerType, np.int32)
-    INT64 = ("int64", "INTEGER", spt.IntegerType, np.int64)
+    INT8 = ("int8", spt.IntegerType, np.int8)
+    INT16 = ("int16", spt.IntegerType, np.int16)
+    INT32 = ("int32", spt.IntegerType, np.int32)
+    INT64 = ("int64", spt.IntegerType, np.int64)
 
-    FLOAT = ("float", "FLOAT", spt.FloatType, np.float32)
-    DOUBLE = ("double", "DOUBLE", spt.DoubleType, np.float64)
+    FLOAT = ("float", spt.FloatType, np.float32)
+    DOUBLE = ("double", spt.DoubleType, np.float64)
 
-    UINT8 = ("uint8", "INTEGER", spt.IntegerType, np.uint8)
-    UINT16 = ("uint16", "INTEGER", spt.IntegerType, np.uint16)
-    UINT32 = ("uint32", "INTEGER", spt.IntegerType, np.uint32)
-    UINT64 = ("uint64", "INTEGER", spt.IntegerType, np.uint64)
+    UINT8 = ("uint8", spt.IntegerType, np.uint8)
+    UINT16 = ("uint16", spt.IntegerType, np.uint16)
+    UINT32 = ("uint32", spt.IntegerType, np.uint32)
+    UINT64 = ("uint64", spt.IntegerType, np.uint64)
 
-    BOOL = ("bool", "BOOLEAN", spt.BooleanType, np.bool8)
-    STRING = ("string", "VARCHAR", spt.StringType, np.str0)
-    BYTES = ("bytes", "VARBINARY", spt.BinaryType, np.bytes0)
-
-    def as_sql_type(self) -> str:
-        """Convert to corresponding Snowflake Logic Type.
-
-        Returns:
-            A Snowflake Logic Type.
-        """
-        return self._sql_type
+    BOOL = ("bool", spt.BooleanType, np.bool8)
+    STRING = ("string", spt.StringType, np.str0)
+    BYTES = ("bytes", spt.BinaryType, np.bytes0)
 
     def as_snowpark_type(self) -> spt.DataType:
         """Convert to corresponding Snowpark Type.
@@ -149,7 +141,7 @@ class BaseFeatureSpec(ABC):
         pass
 
     @abstractmethod
-    def to_dict(self, as_sql_type: Optional[bool] = False) -> Dict[str, Any]:
+    def to_dict(self) -> Dict[str, Any]:
         """Serialization"""
         pass
 
@@ -205,17 +197,14 @@ class FeatureSpec(BaseFeatureSpec):
         shape_str = f", shape={repr(self._shape)}" if self._shape else ""
         return f"FeatureSpec(dtype={repr(self._dtype)}, name={repr(self._name)}{shape_str})"
 
-    def to_dict(self, as_sql_type: Optional[bool] = False) -> Dict[str, Any]:
+    def to_dict(self) -> Dict[str, Any]:
         """Serialize the feature group into a dict.
-
-        Args:
-            as_sql_type: Whether to use Snowflake Logic Types.
 
         Returns:
             A dict that serializes the feature group.
         """
         base_dict: Dict[str, Any] = {
-            "type": self._dtype.as_sql_type() if as_sql_type else self._dtype.name,
+            "type": self._dtype.name,
             "name": self._name,
         }
         if self._shape is not None:
@@ -287,18 +276,13 @@ class FeatureGroupSpec(BaseFeatureSpec):
             """
         )
 
-    def to_dict(self, as_sql_type: Optional[bool] = False) -> Dict[str, Any]:
+    def to_dict(self) -> Dict[str, Any]:
         """Serialize the feature group into a dict.
-
-        Args:
-            as_sql_type: Whether to use Snowflake Logic Types.
 
         Returns:
             A dict that serializes the feature group.
         """
-        return {
-            "feature_group": {"name": self._name, "specs": [s.to_dict(as_sql_type=as_sql_type) for s in self._specs]}
-        }
+        return {"feature_group": {"name": self._name, "specs": [s.to_dict() for s in self._specs]}}
 
     @classmethod
     def from_dict(cls, input_dict: Dict[str, Any]) -> "FeatureGroupSpec":
@@ -348,19 +332,16 @@ class ModelSignature:
         else:
             return False
 
-    def to_dict(self, as_sql_type: Optional[bool] = False) -> Dict[str, Any]:
+    def to_dict(self) -> Dict[str, Any]:
         """Generate a dict to represent the whole signature.
-
-        Args:
-            as_sql_type: Whether to use Snowflake Logic Types.
 
         Returns:
             A dict that serializes the signature.
         """
 
         return {
-            "inputs": [spec.to_dict(as_sql_type=as_sql_type) for spec in self._inputs],
-            "outputs": [spec.to_dict(as_sql_type=as_sql_type) for spec in self._outputs],
+            "inputs": [spec.to_dict() for spec in self._inputs],
+            "outputs": [spec.to_dict() for spec in self._outputs],
         }
 
     @classmethod
@@ -405,10 +386,21 @@ class _BaseDataHandler(ABC, Generic[model_types._DataType]):
     FEATURE_PREFIX: Final[str] = "feature"
     INPUT_PREFIX: Final[str] = "input"
     OUTPUT_PREFIX: Final[str] = "output"
+    SIG_INFER_ROWS_COUNT_LIMIT: Final[int] = 10
 
     @staticmethod
     @abstractmethod
     def can_handle(data: model_types.SupportedDataType) -> TypeGuard[model_types._DataType]:
+        ...
+
+    @staticmethod
+    @abstractmethod
+    def count(data: model_types._DataType) -> int:
+        ...
+
+    @staticmethod
+    @abstractmethod
+    def truncate(data: model_types._DataType) -> model_types._DataType:
         ...
 
     @staticmethod
@@ -431,6 +423,14 @@ class _PandasDataFrameHandler(_BaseDataHandler[pd.DataFrame]):
     @staticmethod
     def can_handle(data: model_types.SupportedDataType) -> TypeGuard[pd.DataFrame]:
         return isinstance(data, pd.DataFrame)
+
+    @staticmethod
+    def count(data: pd.DataFrame) -> int:
+        return len(data.index)
+
+    @staticmethod
+    def truncate(data: pd.DataFrame) -> pd.DataFrame:
+        return data.head(min(_PandasDataFrameHandler.count(data), _PandasDataFrameHandler.SIG_INFER_ROWS_COUNT_LIMIT))
 
     @staticmethod
     def validate(data: pd.DataFrame) -> None:
@@ -524,7 +524,6 @@ class _PandasDataFrameHandler(_BaseDataHandler[pd.DataFrame]):
         return specs
 
     @staticmethod
-    @abstractmethod
     def convert_to_df(data: pd.DataFrame) -> pd.DataFrame:
         return data
 
@@ -533,6 +532,14 @@ class _NumpyArrayHandler(_BaseDataHandler[model_types._SupportedNumpyArray]):
     @staticmethod
     def can_handle(data: model_types.SupportedDataType) -> TypeGuard[model_types._SupportedNumpyArray]:
         return isinstance(data, np.ndarray)
+
+    @staticmethod
+    def count(data: model_types._SupportedNumpyArray) -> int:
+        return data.shape[0]
+
+    @staticmethod
+    def truncate(data: model_types._SupportedNumpyArray) -> model_types._SupportedNumpyArray:
+        return data[: min(_NumpyArrayHandler.count(data), _NumpyArrayHandler.SIG_INFER_ROWS_COUNT_LIMIT)]
 
     @staticmethod
     def validate(data: model_types._SupportedNumpyArray) -> None:
@@ -582,6 +589,17 @@ class _ListOfNumpyArrayHandler(_BaseDataHandler[List[model_types._SupportedNumpy
         )
 
     @staticmethod
+    def count(data: List[model_types._SupportedNumpyArray]) -> int:
+        return min(_NumpyArrayHandler.count(data_col) for data_col in data)
+
+    @staticmethod
+    def truncate(data: List[model_types._SupportedNumpyArray]) -> List[model_types._SupportedNumpyArray]:
+        return [
+            data_col[: min(_ListOfNumpyArrayHandler.count(data), _ListOfNumpyArrayHandler.SIG_INFER_ROWS_COUNT_LIMIT)]
+            for data_col in data
+        ]
+
+    @staticmethod
     def validate(data: List[model_types._SupportedNumpyArray]) -> None:
         for data_col in data:
             _NumpyArrayHandler.validate(data_col)
@@ -620,6 +638,14 @@ class _ListOfBuiltinHandler(_BaseDataHandler[model_types._SupportedBuiltinsList]
         )
 
     @staticmethod
+    def count(data: model_types._SupportedBuiltinsList) -> int:
+        return len(data)
+
+    @staticmethod
+    def truncate(data: model_types._SupportedBuiltinsList) -> model_types._SupportedBuiltinsList:
+        return data[: min(_ListOfBuiltinHandler.count(data), _ListOfBuiltinHandler.SIG_INFER_ROWS_COUNT_LIMIT)]
+
+    @staticmethod
     def validate(data: model_types._SupportedBuiltinsList) -> None:
         if not all(isinstance(data_row, type(data[0])) for data_row in data):
             raise ValueError(f"Data Validation Error: Inconsistent type of object found in data {data}.")
@@ -644,6 +670,14 @@ class _SnowparkDataFrameHandler(_BaseDataHandler[snowflake.snowpark.DataFrame]):
         return isinstance(data, snowflake.snowpark.DataFrame)
 
     @staticmethod
+    def count(data: snowflake.snowpark.DataFrame) -> int:
+        return data.count()
+
+    @staticmethod
+    def truncate(data: snowflake.snowpark.DataFrame) -> snowflake.snowpark.DataFrame:
+        return cast(snowflake.snowpark.DataFrame, data.limit(_SnowparkDataFrameHandler.SIG_INFER_ROWS_COUNT_LIMIT))
+
+    @staticmethod
     def validate(data: snowflake.snowpark.DataFrame) -> None:
         schema = data.schema
         for field in schema.fields:
@@ -657,7 +691,7 @@ class _SnowparkDataFrameHandler(_BaseDataHandler[snowflake.snowpark.DataFrame]):
         features: List[FeatureSpec] = []
         schema = data.schema
         for field in schema.fields:
-            name = identifier.remove_quote_if_quoted(field.name)
+            name = identifier.remove_and_unescape_quote_if_quoted(field.name)
             features.append(FeatureSpec(name=name, dtype=DataType.from_snowpark_type(field.datatype)))
         return features
 
@@ -666,8 +700,36 @@ class _SnowparkDataFrameHandler(_BaseDataHandler[snowflake.snowpark.DataFrame]):
         return data
 
 
-_LOCAL_DATA_HANDLERS = [_PandasDataFrameHandler, _NumpyArrayHandler, _ListOfNumpyArrayHandler, _ListOfBuiltinHandler]
+_LOCAL_DATA_HANDLERS: List[Type[_BaseDataHandler[Any]]] = [
+    _PandasDataFrameHandler,
+    _NumpyArrayHandler,
+    _ListOfNumpyArrayHandler,
+    _ListOfBuiltinHandler,
+]
 _ALL_DATA_HANDLERS = _LOCAL_DATA_HANDLERS + [_SnowparkDataFrameHandler]
+
+
+def _truncate_data(data: model_types.SupportedDataType) -> model_types.SupportedDataType:
+    for handler in _ALL_DATA_HANDLERS:
+        if handler.can_handle(data):
+            row_count = handler.count(data)
+            if row_count <= handler.SIG_INFER_ROWS_COUNT_LIMIT:
+                return data
+
+            warnings.warn(
+                formatting.unwrap(
+                    f"""
+                    The sample input has {row_count} rows, thus a truncation happened before inferring signature.
+                    This might cause inaccurate signature inference.
+                    If that happens, consider specifying signature manually.
+                    """
+                ),
+                category=UserWarning,
+            )
+            return handler.truncate(data)
+    raise NotImplementedError(
+        f"Unable to infer model signature: Un-supported type provided {type(data)} for data truncate."
+    )
 
 
 def _infer_signature(
@@ -889,7 +951,7 @@ def _validate_snowpark_data(data: snowflake.snowpark.DataFrame, features: Sequen
         ft_name = feature.name
         found = False
         for field in schema.fields:
-            name = identifier.remove_quote_if_quoted(field.name)
+            name = identifier.remove_and_unescape_quote_if_quoted(field.name)
             if name == ft_name:
                 found = True
                 if field.nullable:

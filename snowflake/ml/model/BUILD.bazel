@@ -5,6 +5,9 @@ package(default_visibility = ["//visibility:public"])
 py_library(
     name = "type_hints",
     srcs = ["type_hints.py"],
+    deps = [
+        "//snowflake/ml/framework:framework"
+    ]
 )
 
 py_library(
@@ -12,6 +15,7 @@ py_library(
     srcs = ["model_signature.py"],
     deps = [
         ":type_hints",
+        "//snowflake/ml/_internal/utils:formatting",
         "//snowflake/ml/_internal/utils:identifier",
     ],
 )
@@ -22,6 +26,7 @@ py_library(
     deps = [
         "//snowflake/ml/_internal:env",
         "//snowflake/ml/_internal:env_utils",
+        "//snowflake/ml/_internal/utils:formatting",
     ],
 )
 
@@ -38,6 +43,7 @@ py_library(
     srcs = ["_model_meta.py"],
     deps = [
         ":_env",
+        ":type_hints",
         ":model_signature",
         "//snowflake/ml/_internal:env",
         "//snowflake/ml/_internal:env_utils",
@@ -62,6 +68,8 @@ py_library(
     srcs = ["_deployer.py"],
     deps = [
         ":_udf_util",
+        ":type_hints",
+        ":model_signature",
         "//snowflake/ml/_internal/utils:identifier",
     ],
 )
@@ -79,6 +87,7 @@ py_library(
     name = "_model",
     srcs = ["_model.py"],
     deps = [
+        ":_env",
         ":_model_handler",
         ":_model_meta",
         ":custom_model",
@@ -88,6 +97,7 @@ py_library(
         "//snowflake/ml/model/_handlers:sklearn",
         "//snowflake/ml/model/_handlers:snowmlmodel",
         "//snowflake/ml/model/_handlers:xgboost",
+        "//snowflake/ml/framework:framework"
     ],
 )
 
