@@ -10,10 +10,10 @@ from snowflake.ml._internal.utils import identifier
 from snowflake.ml.model import _udf_util, model_signature, type_hints as model_types
 from snowflake.snowpark import DataFrame as SnowparkDataFrame, Session, functions as F
 from snowflake.snowpark._internal import type_utils
+from snowflake.snowpark._internal.analyzer import analyzer_utils
 
 
 class TargetPlatform(Enum):
-    SNOWPARK = "snowpark"
     WAREHOUSE = "warehouse"
 
 
@@ -182,6 +182,7 @@ class Deployer:
                 Each target platform will have their own specifications of options.
 
         Raises:
+            ValueError: Raised when the target platform is unavailable.
             RuntimeError: Raised when running into issues when deploying.
             ValueError: Raised when target method does not exist in model.
 
@@ -199,13 +200,15 @@ class Deployer:
 
         try:
             if platform == TargetPlatform.WAREHOUSE:
-                m, meta = _udf_util._deploy_to_warehouse(
+                meta = _udf_util._deploy_to_warehouse(
                     self._session,
                     model_dir_path=model_dir_path,
                     udf_name=name,
                     target_method=target_method,
                     **options,
                 )
+            else:
+                raise ValueError("Unsupported target Platform.")
             signature = meta.signatures.get(target_method, None)
             if not signature:
                 raise ValueError(f"Target method {target_method} does not exist in model.")
@@ -305,7 +308,7 @@ class Deployer:
 
         cols = []
         for col_name in s_df.columns:
-            literal_col_name = identifier.remove_quote_if_quoted(col_name)
+            literal_col_name = identifier.remove_and_unescape_quote_if_quoted(col_name)
             cols.extend(
                 [
                     type_utils.ColumnOrName(F.lit(type_utils.LiteralType(literal_col_name))),
@@ -319,7 +322,7 @@ class Deployer:
             output_cols.append(
                 F.parse_json(type_utils.ColumnOrName(F.col("tmp_result")[output_feature.name]))
                 .astype(output_feature.as_snowpark_type())
-                .alias(f'"{output_feature.name}"')
+                .alias(analyzer_utils.quote_name_without_upper_casing(output_feature.name))
             )
 
         df_res = s_df.select(
@@ -339,8 +342,7 @@ class Deployer:
                 elif isinstance(feature, model_signature.FeatureGroupSpec):
                     for ft in feature._specs:
                         dtype_map[ft.name] = ft._dtype._value
-            df_local = df_res.to_pandas()
-            df_local = df_local.rename(columns=identifier.remove_quote_if_quoted).astype(dtype=dtype_map)
+            df_local = df_res.to_pandas().astype(dtype=dtype_map)
             return pd.DataFrame(df_local)
         else:
             return df_res

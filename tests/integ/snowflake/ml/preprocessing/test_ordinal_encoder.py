@@ -860,6 +860,17 @@ class OrdinalEncoderTest(parameterized.TestCase):
         self.assertEqual(len(set(input_cols) & set(transformed_df.to_pandas().columns)), len(set(input_cols)))
         np.testing.assert_allclose(transformed_df[output_cols].to_pandas().to_numpy(), sklearn_arr, equal_nan=True)
 
+    def test_double_quoted_same_input_output_cols(self) -> None:
+        data = [["a", "b"]]
+        schema = ["col1", "col2"]
+        cat_cols = ['"col1"', '"col2"']
+        df_pandas, df = framework_utils.get_df(self._session, data, schema)
+
+        encoder = OrdinalEncoder(drop_input_cols=True).set_input_cols(cat_cols).set_output_cols(cat_cols)
+        transformed_df = encoder.fit(df).transform(df)
+
+        self.assertEqual(cat_cols, transformed_df.columns)
+
 
 if __name__ == "__main__":
     main()

@@ -109,6 +109,7 @@ py_library(
         ":init",
         "//snowflake/ml/_internal:telemetry",
         "//snowflake/ml/_internal:type_utils",
+        "//snowflake/ml/_internal/utils:identifier",
         "//snowflake/ml/framework",
     ],
 )

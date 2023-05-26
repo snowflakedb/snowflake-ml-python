@@ -12,6 +12,16 @@ py_test(
 )
 
 py_test(
+    name = "test_accuracy_score",
+    srcs = ["test_accuracy_score.py"],
+    deps = [
+        "//snowflake/ml/metrics",
+        "//snowflake/ml/utils:connection_params",
+        "//tests/integ/snowflake/ml/framework:utils",
+    ],
+)
+
+py_test(
     name = "test_correlation",
     timeout = "long",
     srcs = ["test_correlation.py"],

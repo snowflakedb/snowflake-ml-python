@@ -310,12 +310,17 @@ class OneHotEncoder(base.BaseTransformer):
 
         Returns:
             Dict with `n_samples` and (optionally) `category_counts` of the dataset.
+
+        Raises:
+            ValueError: Empty data.
         """
         # columns: COLUMN_NAME, CATEGORY, COUNT
         state_df = self._get_category_count_state_df(dataset)
         self._state_pandas = state_df.to_pandas(
             statement_params=telemetry.get_statement_params(base.PROJECT, base.SUBPROJECT, self.__class__.__name__)
         )
+        if self._state_pandas.empty:
+            raise ValueError("Empty data while a minimum of 1 sample is required.")
 
         # columns: COLUMN_NAME, STATE
         # state object: {category: count}
@@ -426,7 +431,7 @@ class OneHotEncoder(base.BaseTransformer):
     def _get_state_object_pandas_df(self) -> pd.DataFrame:
         """
         Convert `self._state_pandas` to a state object pandas dataframe where states
-        are in the form objects.
+        are in the form of objects.
 
         Returns:
             Pandas dataframe with columns [COLUMN_NAME, STATE], where STATE contains

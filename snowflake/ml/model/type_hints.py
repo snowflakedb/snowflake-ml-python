@@ -2,7 +2,9 @@
 from typing import TYPE_CHECKING, Sequence, TypedDict, TypeVar, Union
 
 import numpy.typing as npt
-from typing_extensions import NotRequired
+from typing_extensions import NotRequired, TypeAlias
+
+from snowflake.ml.framework import base
 
 if TYPE_CHECKING:
     import numpy as np
@@ -11,7 +13,6 @@ if TYPE_CHECKING:
     import sklearn.pipeline
     import xgboost
 
-    import snowflake.ml.framework.base.BaseEstimator
     import snowflake.ml.model.custom_model
     import snowflake.snowpark
 
@@ -45,13 +46,19 @@ _DataType = TypeVar("_DataType", bound=SupportedDataType)
 
 CustomModelType = TypeVar("CustomModelType", bound="snowflake.ml.model.custom_model.CustomModel")
 
-SupportedModelType = Union[
+SupportedLocalModelType = Union[
     "snowflake.ml.model.custom_model.CustomModel",
     "sklearn.base.BaseEstimator",
     "sklearn.pipeline.Pipeline",
     "xgboost.XGBModel",
     "xgboost.Booster",
-    "snowflake.ml.framework.base.BaseEstimator",
+]
+
+SupportedSnowMLModelType: TypeAlias = base.BaseEstimator
+
+SupportedModelType = Union[
+    SupportedLocalModelType,
+    SupportedSnowMLModelType,
 ]
 """This is defined as the type that Snowflake native model packaging could accept.
 Here is all acceptable types of Snowflake native model packaging and its handler file in _handlers/ folder.
@@ -64,7 +71,6 @@ Here is all acceptable types of Snowflake native model packaging and its handler
 | xgboost.XGBModel       | xgboost.py   | _XGBModelHandler    |
 | xgboost.Booster        | xgboost.py   | _XGBModelHandler    |
 | snowflake.ml.framework.base.BaseEstimator      | snowmlmodel.py   | _SnowMLModelHandler    |
-| snowflake.ml.framework.pipeline.Pipeline       | snowmlmodel.py   | _SnowMLModelHandler    |
 """
 
 

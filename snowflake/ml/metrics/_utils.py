@@ -9,7 +9,10 @@ import cloudpickle
 import numpy as np
 
 from snowflake import snowpark
-from snowflake.snowpark import Session, types as snowpark_types
+from snowflake.snowpark import Session, functions as F, types as T
+
+_PROJECT = "ModelDevelopment"
+_SUBPROJECT = "Metrics"
 
 
 def register_accumulator_udtf(*, session: Session, statement_params: Dict[str, str]) -> str:
@@ -47,12 +50,12 @@ def register_accumulator_udtf(*, session: Session, statement_params: Dict[str, s
     dot_and_sum_accumulator = "DotAndSumAccumulator_{}".format(str(uuid4()).replace("-", "_").upper())
     session.udtf.register(
         DotAndSumAccumulator,
-        output_schema=snowpark_types.StructType(
+        output_schema=T.StructType(
             [
-                snowpark_types.StructField("result", snowpark_types.BinaryType()),
+                T.StructField("result", T.BinaryType()),
             ]
         ),
-        input_types=[snowpark_types.BinaryType()],
+        input_types=[T.BinaryType()],
         packages=["numpy", "cloudpickle"],
         name=dot_and_sum_accumulator,
         is_permanent=False,
@@ -159,13 +162,13 @@ def register_sharded_dot_sum_computer(*, session: Session, statement_params: Dic
     sharded_dot_and_sum_computer = "ShardedDotAndSumComputer_{}".format(str(uuid4()).replace("-", "_").upper())
     session.udtf.register(
         ShardedDotAndSumComputer,
-        output_schema=snowpark_types.StructType(
+        output_schema=T.StructType(
             [
-                snowpark_types.StructField("result", snowpark_types.BinaryType()),
-                snowpark_types.StructField("part", snowpark_types.StringType()),
+                T.StructField("result", T.BinaryType()),
+                T.StructField("part", T.StringType()),
             ]
         ),
-        input_types=[snowpark_types.ArrayType(), snowpark_types.StringType(), snowpark_types.StringType()],
+        input_types=[T.ArrayType(), T.StringType(), T.StringType()],
         packages=["numpy", "cloudpickle"],
         name=sharded_dot_and_sum_computer,
         is_permanent=False,
@@ -192,12 +195,49 @@ def validate_and_return_dataframe_and_columns(
     """
     input_df = df
     if columns is None:
-        columns = [c.name for c in input_df.schema.fields if issubclass(type(c.datatype), snowpark_types._NumericType)]
+        columns = [c.name for c in input_df.schema.fields if issubclass(type(c.datatype), T._NumericType)]
         input_df = input_df.select(columns)
     else:
         input_df = input_df.select(columns)
         for c in input_df.schema.fields:
-            if not issubclass(type(c.datatype), snowpark_types._NumericType):
+            if not issubclass(type(c.datatype), T._NumericType):
                 msg = "Column: {} is not a numeric column"
                 raise ValueError(msg.format(c.name))
     return (input_df, columns)
+
+
+def weighted_sum(
+    *,
+    df: snowpark.DataFrame,
+    sample_score_column: snowpark.Column,
+    sample_weight_column: Optional[snowpark.Column] = None,
+    normalize: bool = False,
+    statement_params: Dict[str, str],
+) -> float:
+    """Weighted sum of the sample score column.
+
+    Args:
+        df: Input dataframe.
+        sample_score_column: Sample score column.
+        sample_weight_column: Sample weight column.
+        normalize: If ``False``, return the weighted sum.
+            Otherwise, return the fraction of weighted sum.
+        statement_params: Dictionary used for tagging queries for tracking purposes.
+
+    Returns:
+        If ``normalize == True``, return the fraction of weighted sum (float),
+        else returns the weighted sum (int).
+    """
+    if normalize:
+        if sample_weight_column is not None:
+            res = F.sum(sample_score_column * sample_weight_column) / F.sum(  # type: ignore[arg-type, operator]
+                sample_weight_column  # type: ignore[arg-type]
+            )
+        else:
+            res = F.avg(sample_score_column)  # type: ignore[arg-type]
+    elif sample_weight_column is not None:
+        res = F.sum(sample_score_column * sample_weight_column)  # type: ignore[arg-type, operator]
+    else:
+        res = F.sum(sample_score_column)  # type: ignore[arg-type]
+
+    return float(df.select(res).collect(statement_params=statement_params)[0][0])

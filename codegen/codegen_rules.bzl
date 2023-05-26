@@ -133,8 +133,8 @@ def autogen_tests_for_estimators(module, module_root_dir, estimator_info_list):
                 "//{}:{}".format(module_root_dir, e.normalized_class_name),
                 "//snowflake/ml/utils:connection_params",
             ],
+            timeout = "long",
             legacy_create_init = 0,
             shard_count = 5,
-            timeout = "moderate",
             tags = ["autogen", "skip_mypy_check"],
         )

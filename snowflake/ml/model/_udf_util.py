@@ -94,7 +94,7 @@ def _deploy_to_warehouse(
     udf_name: str,
     target_method: str,
     **kwargs: Unpack[model_types.WarehouseDeployOptions],
-) -> Tuple[model_types.SupportedModelType, _model_meta.ModelMetadata]:
+) -> _model_meta.ModelMetadata:
     """Deploy the model to warehouse as UDF.
 
     Args:
@@ -109,12 +109,12 @@ def _deploy_to_warehouse(
         ValueError: Raised when target method does not exist in model.
 
     Returns:
-        A Tuple of the model object and the metadata of the model deployed.
+        The metadata of the model deployed.
     """
     if not os.path.exists(model_dir_path):
         raise ValueError("Model config did not exist.")
     model_dir_name = os.path.basename(model_dir_path)
-    m, meta = _model.load_model(model_dir_path)
+    meta = _model.load_model(model_dir_path, meta_only=True)
     relax_version = kwargs.get("relax_version", False)
 
     if target_method not in meta.signatures.keys():
@@ -156,7 +156,7 @@ def _deploy_to_warehouse(
             session.udf.register_from_file(**params, replace=False, is_permanent=True, stage_location=stage_location)
 
     print(f"{udf_name} is deployed to warehouse.")
-    return m, meta
+    return meta
 
 
 def _write_UDF_py_file(
