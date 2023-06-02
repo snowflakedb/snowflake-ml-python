@@ -8,7 +8,7 @@ from sklearn import metrics as sklearn_metrics
 from snowflake import snowpark
 from snowflake.ml import metrics as snowml_metrics
 from snowflake.ml.utils import connection_params
-from tests.integ.snowflake.ml.framework import utils
+from tests.integ.snowflake.ml.sklearn.framework import utils
 
 _DATA, _SCHEMA = utils.gen_fuzz_data(
     rows=100,

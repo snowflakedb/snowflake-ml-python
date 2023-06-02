@@ -8,7 +8,7 @@ from absl.testing.absltest import TestCase, main
 from sklearn.datasets import load_diabetes
 from sklearn.linear_model import LinearRegression as SkLinearRegression
 
-from snowflake.ml.modeling.linear_model import LinearRegression
+from snowflake.ml.sklearn.linear_model import LinearRegression
 from snowflake.ml.utils.connection_params import SnowflakeLoginOptions
 from snowflake.snowpark import Session
 

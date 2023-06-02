@@ -51,9 +51,6 @@ class TelemetryTest(parameterized.TestCase):
         test_obj = DummyObject()
         test_obj.foo(param="val")
         self.mock_telemetry.try_add_log_to_batch.assert_called()
-        self.assertEqual(
-            utils_telemetry._SourceTelemetryClient.DEFAULT_FORCE_FLUSH_SIZE, self.mock_telemetry._flush_size
-        )
 
         message = self.mock_telemetry.try_add_log_to_batch.call_args.args[0].to_dict()["message"]
         data = message["data"]
@@ -337,6 +334,23 @@ class TelemetryTest(parameterized.TestCase):
         self.assertLessEqual(expected_statement_params.items(), actual_statement_params.items())
         self.assertIn("DummyObject.foo", actual_statement_params[utils_telemetry.TelemetryField.KEY_FUNC_NAME.value])
         self.assertFalse(hasattr(test_obj.foo2(), "_statement_params"))
+
+    @mock.patch("snowflake.snowpark.session._get_active_sessions")
+    def test_client_telemetry_flush_size(self, mock_get_active_sessions: mock.MagicMock) -> None:
+        mock_get_active_sessions.return_value = {self.mock_session}
+
+        class DummyObject:
+            @utils_telemetry.send_api_usage_telemetry(
+                project=_PROJECT,
+                subproject=_SUBPROJECT,
+            )
+            def foo(self) -> None:
+                pass
+
+        test_obj = DummyObject()
+        for _ in range(utils_telemetry._FLUSH_SIZE):
+            test_obj.foo()
+        self.mock_telemetry.send_batch.assert_called()
 
 
 if __name__ == "__main__":

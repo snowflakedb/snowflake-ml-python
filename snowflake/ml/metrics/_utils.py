@@ -11,9 +11,6 @@ import numpy as np
 from snowflake import snowpark
 from snowflake.snowpark import Session, functions as F, types as T
 
-_PROJECT = "ModelDevelopment"
-_SUBPROJECT = "Metrics"
-
 
 def register_accumulator_udtf(*, session: Session, statement_params: Dict[str, str]) -> str:
     """Registers accumulator UDTF in Snowflake and returns the name of the UDTF.
@@ -36,7 +33,7 @@ def register_accumulator_udtf(*, session: Session, statement_params: Dict[str, s
             """Accumulates rows.
 
             Args:
-                input_row (bytes): numpy array serialized using cloudpickle.
+                input_row: numpy array serialized using cloudpickle.
             """
             row = cloudpickle.loads(input_row)
             if self._accumulated_row is None:
@@ -107,19 +104,19 @@ def register_sharded_dot_sum_computer(*, session: Session, statement_params: Dic
             # Square root of count - ddof
             self._sqrt_count_d = -1.0
 
-        def process(self, input_row: List[float], count: str, ddof: str) -> None:
+        def process(self, input_row: List[float], count: int, ddof: int) -> None:
             """Computes sum and dot product.
 
             Args:
-                input_row (List[float]): List of floats.
-                count (str): Number of rows in the table.
-                ddof (str): delta degree of freedom
+                input_row: List of floats.
+                count: Number of rows in the table.
+                ddof: delta degree of freedom
             """
             # 1. initialization of variables
             if not self._variables_initialized:
                 self._n_cols = len(input_row)
-                self._count = int(count)
-                self._ddof = int(ddof)
+                self._count = count
+                self._ddof = ddof
                 self._sqrt_count_d = math.sqrt(self._count - self._ddof)
                 self._sum_by_count = np.zeros(self._n_cols)
                 self._sum_by_countd = np.zeros(self._n_cols)
@@ -168,7 +165,7 @@ def register_sharded_dot_sum_computer(*, session: Session, statement_params: Dic
                 T.StructField("part", T.StringType()),
             ]
         ),
-        input_types=[T.ArrayType(), T.StringType(), T.StringType()],
+        input_types=[T.ArrayType(), T.IntegerType(), T.IntegerType()],
         packages=["numpy", "cloudpickle"],
         name=sharded_dot_and_sum_computer,
         is_permanent=False,

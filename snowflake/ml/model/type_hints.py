@@ -4,7 +4,7 @@ from typing import TYPE_CHECKING, Sequence, TypedDict, TypeVar, Union
 import numpy.typing as npt
 from typing_extensions import NotRequired, TypeAlias
 
-from snowflake.ml.framework import base
+from snowflake.ml.sklearn.framework import base
 
 if TYPE_CHECKING:
     import numpy as np
@@ -78,7 +78,21 @@ _ModelType = TypeVar("_ModelType", bound=SupportedModelType)
 
 
 class DeployOptions(TypedDict):
+    """Common Options for deploying to Snowflake.
+
+    output_with_input_features: Whether or not preserve the input columns in the output when predicting.
+        Defaults to False.
+    keep_order: Whether or not preserve the row order when predicting. Only available for dataframe has fewer than 2**64
+        rows. Defaults to True.
+
+    Internal-only options
+    _snowml_wheel_path: Local or in-stage path to snowml wheel file. If deployed permanently, it needs to be a stage
+        path where the stage is non-temporary, internal stage.
+    """
+
     _snowml_wheel_path: NotRequired[str]
+    output_with_input_features: NotRequired[bool]
+    keep_order: NotRequired[bool]
 
 
 class WarehouseDeployOptions(DeployOptions):
@@ -87,17 +101,20 @@ class WarehouseDeployOptions(DeployOptions):
     permanent_udf_stage_location: A Snowflake stage option where the UDF should be persisted. If specified, the model
         will be deployed as a permanent UDF, otherwise temporary.
     relax_version: Whether or not relax the version constraints of the dependencies if unresolvable. Defaults to False.
-    keep_order: Whether or not preserve the row order when predicting. Only available for dataframe has fewer than 2**64
-        rows. Defaults to True.
     """
 
     permanent_udf_stage_location: NotRequired[str]
     relax_version: NotRequired[bool]
-    keep_order: NotRequired[bool]
 
 
 class ModelSaveOption(TypedDict):
-    ...
+    """Options for saving the model.
+
+    allow_overwritten_stage_file: Flag to indicate when saving the model as a stage file, whether overwriting existed
+        file is allowed. Default to False.
+    """
+
+    allow_overwritten_stage_file: NotRequired[bool]
 
 
 class CustomModelSaveOption(TypedDict):

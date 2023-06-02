@@ -32,21 +32,21 @@ class FeatureSpecTest(absltest.TestCase):
 
 class FeatureGroupSpecTest(absltest.TestCase):
     def test_feature_group_spec(self) -> None:
-        with self.assertRaises(ValueError):
+        with self.assertRaisesRegex(ValueError, "No children feature specs."):
             _ = model_signature.FeatureGroupSpec(name="features", specs=[])
 
-        with self.assertRaises(ValueError):
+        with self.assertRaisesRegex(ValueError, "All children feature specs have to have name."):
             ft1 = model_signature.FeatureSpec(name="feature1", dtype=model_signature.DataType.INT64)
             ft2 = model_signature.FeatureSpec(name="feature2", dtype=model_signature.DataType.INT64)
             ft2._name = None  # type: ignore[assignment]
             _ = model_signature.FeatureGroupSpec(name="features", specs=[ft1, ft2])
 
-        with self.assertRaises(ValueError):
+        with self.assertRaisesRegex(ValueError, "All children feature specs have to have same type."):
             ft1 = model_signature.FeatureSpec(name="feature1", dtype=model_signature.DataType.INT64)
             ft2 = model_signature.FeatureSpec(name="feature2", dtype=model_signature.DataType.FLOAT)
             _ = model_signature.FeatureGroupSpec(name="features", specs=[ft1, ft2])
 
-        with self.assertRaises(ValueError):
+        with self.assertRaisesRegex(ValueError, "All children feature specs have to have same shape."):
             ft1 = model_signature.FeatureSpec(name="feature1", dtype=model_signature.DataType.INT64)
             ft2 = model_signature.FeatureSpec(name="feature2", dtype=model_signature.DataType.INT64, shape=(2,))
             fts = model_signature.FeatureGroupSpec(name="features", specs=[ft1, ft2])
@@ -133,34 +133,77 @@ class ModelSignatureTest(absltest.TestCase):
 class PandasDataFrameHandlerTest(absltest.TestCase):
     def test_validate_pd_DataFrame(self) -> None:
         df = pd.DataFrame([])
-        with self.assertRaises(ValueError):
+        with self.assertRaisesRegex(ValueError, "Empty data is found."):
+            model_signature._PandasDataFrameHandler.validate(df)
+
+        df = pd.DataFrame([[1, 2], [2, 4]], columns=["a", "a"])
+        with self.assertRaisesRegex(ValueError, "Duplicate column index is found"):
             model_signature._PandasDataFrameHandler.validate(df)
 
         sub_df = pd.DataFrame([2.5, 6.8])
         df = pd.DataFrame([[1, sub_df], [2, sub_df]], columns=["a", "b"])
-        with self.assertRaises(ValueError):
+        with self.assertRaisesRegex(ValueError, "Unsupported type confronted in"):
             model_signature._PandasDataFrameHandler.validate(df)
 
         df = pd.DataFrame(
             [[1, 2.0, 1, 2.0, 1, 2.0], [2, 4.0, 2, 4.0, 2, 4.0]],
             columns=pd.CategoricalIndex(["a", "b", "c", "a", "b", "c"]),
         )
-        with self.assertRaises(ValueError):
+        with self.assertRaisesRegex(ValueError, "Duplicate column index is found"):
+            model_signature._PandasDataFrameHandler.validate(df)
+
+        df = pd.DataFrame([[1, 2], [2, 4]], columns=["a", "a"])
+        with self.assertRaisesRegex(ValueError, "Duplicate column index is found"):
+            model_signature._PandasDataFrameHandler.validate(df)
+
+        df = pd.DataFrame([[1, "Hello"], [2, [2, 6]]], columns=["a", "b"])
+        with self.assertRaisesRegex(ValueError, "Inconsistent type of object"):
+            model_signature._PandasDataFrameHandler.validate(df)
+
+        df = pd.DataFrame([[1, 2], [2, [2, 6]]], columns=["a", "b"])
+        with self.assertRaisesRegex(ValueError, "Inconsistent type of object"):
+            model_signature._PandasDataFrameHandler.validate(df)
+
+        df = pd.DataFrame([[1, [2, [6]]], [2, [2, 6]]], columns=["a", "b"])
+        with self.assertRaisesRegex(ValueError, "Ragged nested or Unsupported list-like data"):
+            model_signature._PandasDataFrameHandler.validate(df)
+
+        df = pd.DataFrame([[1, [2, 6]], [2, [2, [6]]]], columns=["a", "b"])
+        with self.assertRaisesRegex(ValueError, "Ragged nested or Unsupported list-like data"):
             model_signature._PandasDataFrameHandler.validate(df)
 
         df = pd.DataFrame([[1, [2.5, 6.8]], [2, [2, 6]]], columns=["a", "b"])
-        with self.assertRaises(ValueError):
+        with self.assertRaisesRegex(ValueError, "Inconsistent type of element in object found in column data"):
             model_signature._PandasDataFrameHandler.validate(df)
 
         df = pd.DataFrame([[1, np.array([2.5, 6.8])], [2, np.array([2, 6])]], columns=["a", "b"])
-        with self.assertRaises(ValueError):
+        with self.assertRaisesRegex(ValueError, "Inconsistent type of element in object found in column data"):
             model_signature._PandasDataFrameHandler.validate(df)
+
+        df = pd.DataFrame([[1, np.array([2.5, 6.8])], [2, 6]], columns=["a", "b"])
+        with self.assertRaisesRegex(ValueError, "Inconsistent type of object found in column data"):
+            model_signature._PandasDataFrameHandler.validate(df)
+
+    def test_trunc_pd_DataFrame(self) -> None:
+        df = pd.DataFrame([1] * (model_signature._PandasDataFrameHandler.SIG_INFER_ROWS_COUNT_LIMIT + 1))
+
+        pd.testing.assert_frame_equal(
+            pd.DataFrame([1] * (model_signature._PandasDataFrameHandler.SIG_INFER_ROWS_COUNT_LIMIT)),
+            model_signature._PandasDataFrameHandler.truncate(df),
+        )
+
+        df = pd.DataFrame([1] * (model_signature._PandasDataFrameHandler.SIG_INFER_ROWS_COUNT_LIMIT - 1))
+
+        pd.testing.assert_frame_equal(
+            df,
+            model_signature._PandasDataFrameHandler.truncate(df),
+        )
 
     def test_infer_signature_pd_DataFrame(self) -> None:
         df = pd.DataFrame([1, 2, 3, 4])
         self.assertListEqual(
             model_signature._PandasDataFrameHandler.infer_signature(df, role="input"),
-            [model_signature.FeatureSpec("feature_0", model_signature.DataType.INT64)],
+            [model_signature.FeatureSpec("input_feature_0", model_signature.DataType.INT64)],
         )
 
         df = pd.DataFrame([1, 2, 3, 4], columns=["a"])
@@ -185,8 +228,8 @@ class PandasDataFrameHandlerTest(absltest.TestCase):
         self.assertListEqual(
             model_signature._PandasDataFrameHandler.infer_signature(df, role="input"),
             [
-                model_signature.FeatureSpec("feature_0", model_signature.DataType.INT64),
-                model_signature.FeatureSpec("feature_1", model_signature.DataType.DOUBLE),
+                model_signature.FeatureSpec("input_feature_0", model_signature.DataType.INT64),
+                model_signature.FeatureSpec("input_feature_1", model_signature.DataType.DOUBLE),
             ],
         )
 
@@ -294,30 +337,78 @@ class PandasDataFrameHandlerTest(absltest.TestCase):
             ],
         )
 
+        df = pd.DataFrame([1, 2, 3, 4])
+        self.assertListEqual(
+            model_signature._PandasDataFrameHandler.infer_signature(df, role="output"),
+            [model_signature.FeatureSpec("output_feature_0", model_signature.DataType.INT64)],
+        )
+
+        df = pd.DataFrame([1, 2, 3, 4], columns=["a"])
+        self.assertListEqual(
+            model_signature._PandasDataFrameHandler.infer_signature(df, role="output"),
+            [model_signature.FeatureSpec("a", model_signature.DataType.INT64)],
+        )
+
+        df = pd.DataFrame(["a", "b", "c", "d"], columns=["a"])
+        self.assertListEqual(
+            model_signature._PandasDataFrameHandler.infer_signature(df, role="output"),
+            [model_signature.FeatureSpec("a", model_signature.DataType.STRING)],
+        )
+
+        df = pd.DataFrame([ele.encode() for ele in ["a", "b", "c", "d"]], columns=["a"])
+        self.assertListEqual(
+            model_signature._PandasDataFrameHandler.infer_signature(df, role="output"),
+            [model_signature.FeatureSpec("a", model_signature.DataType.BYTES)],
+        )
+
+        df = pd.DataFrame([[1, 2.0], [2, 4.0]])
+        self.assertListEqual(
+            model_signature._PandasDataFrameHandler.infer_signature(df, role="output"),
+            [
+                model_signature.FeatureSpec("output_feature_0", model_signature.DataType.INT64),
+                model_signature.FeatureSpec("output_feature_1", model_signature.DataType.DOUBLE),
+            ],
+        )
+
 
 class NumpyArrayHandlerTest(absltest.TestCase):
     def test_validate_np_ndarray(self) -> None:
         arr = np.array([])
-        with self.assertRaises(ValueError):
+        with self.assertRaisesRegex(ValueError, "Empty data is found."):
             model_signature._NumpyArrayHandler.validate(arr)
 
         arr = np.array(1)
-        with self.assertRaises(ValueError):
+        with self.assertRaisesRegex(ValueError, "Scalar data is found."):
             model_signature._NumpyArrayHandler.validate(arr)
+
+    def test_trunc_np_ndarray(self) -> None:
+        arr = np.array([1] * (model_signature._NumpyArrayHandler.SIG_INFER_ROWS_COUNT_LIMIT + 1))
+
+        np.testing.assert_equal(
+            np.array([1] * (model_signature._NumpyArrayHandler.SIG_INFER_ROWS_COUNT_LIMIT)),
+            model_signature._NumpyArrayHandler.truncate(arr),
+        )
+
+        arr = np.array([1] * (model_signature._NumpyArrayHandler.SIG_INFER_ROWS_COUNT_LIMIT - 1))
+
+        np.testing.assert_equal(
+            arr,
+            model_signature._NumpyArrayHandler.truncate(arr),
+        )
 
     def test_infer_schema_np_ndarray(self) -> None:
         arr = np.array([1, 2, 3, 4])
         self.assertListEqual(
             model_signature._NumpyArrayHandler.infer_signature(arr, role="input"),
-            [model_signature.FeatureSpec("feature_0", model_signature.DataType.INT64)],
+            [model_signature.FeatureSpec("input_feature_0", model_signature.DataType.INT64)],
         )
 
         arr = np.array([[1, 2], [3, 4]])
         self.assertListEqual(
             model_signature._NumpyArrayHandler.infer_signature(arr, role="input"),
             [
-                model_signature.FeatureSpec("feature_0", model_signature.DataType.INT64),
-                model_signature.FeatureSpec("feature_1", model_signature.DataType.INT64),
+                model_signature.FeatureSpec("input_feature_0", model_signature.DataType.INT64),
+                model_signature.FeatureSpec("input_feature_1", model_signature.DataType.INT64),
             ],
         )
 
@@ -325,9 +416,52 @@ class NumpyArrayHandlerTest(absltest.TestCase):
         self.assertListEqual(
             model_signature._NumpyArrayHandler.infer_signature(arr, role="input"),
             [
-                model_signature.FeatureSpec("feature_0", model_signature.DataType.INT64, shape=(2,)),
-                model_signature.FeatureSpec("feature_1", model_signature.DataType.INT64, shape=(2,)),
+                model_signature.FeatureSpec("input_feature_0", model_signature.DataType.INT64, shape=(2,)),
+                model_signature.FeatureSpec("input_feature_1", model_signature.DataType.INT64, shape=(2,)),
             ],
+        )
+
+        arr = np.array([1, 2, 3, 4])
+        self.assertListEqual(
+            model_signature._NumpyArrayHandler.infer_signature(arr, role="output"),
+            [model_signature.FeatureSpec("output_feature_0", model_signature.DataType.INT64)],
+        )
+
+        arr = np.array([[1, 2], [3, 4]])
+        self.assertListEqual(
+            model_signature._NumpyArrayHandler.infer_signature(arr, role="output"),
+            [
+                model_signature.FeatureSpec("output_feature_0", model_signature.DataType.INT64),
+                model_signature.FeatureSpec("output_feature_1", model_signature.DataType.INT64),
+            ],
+        )
+
+        arr = np.array([[[1, 1], [2, 2]], [[3, 3], [4, 4]]])
+        self.assertListEqual(
+            model_signature._NumpyArrayHandler.infer_signature(arr, role="output"),
+            [
+                model_signature.FeatureSpec("output_feature_0", model_signature.DataType.INT64, shape=(2,)),
+                model_signature.FeatureSpec("output_feature_1", model_signature.DataType.INT64, shape=(2,)),
+            ],
+        )
+
+    def test_convert_to_df_numpy_array(self) -> None:
+        arr1 = np.array([1, 2, 3, 4])
+        pd.testing.assert_frame_equal(
+            model_signature._NumpyArrayHandler.convert_to_df(arr1),
+            pd.DataFrame([1, 2, 3, 4]),
+        )
+
+        arr2 = np.array([[1, 1], [2, 2], [3, 3], [4, 4]])
+        pd.testing.assert_frame_equal(
+            model_signature._NumpyArrayHandler.convert_to_df(arr2),
+            pd.DataFrame([[1, 1], [2, 2], [3, 3], [4, 4]]),
+        )
+
+        arr3 = np.array([[[1, 1], [2, 2]], [[3, 3], [4, 4]]])
+        pd.testing.assert_frame_equal(
+            model_signature._NumpyArrayHandler.convert_to_df(arr3),
+            pd.DataFrame(data={0: [np.array([1, 1]), np.array([3, 3])], 1: [np.array([2, 2]), np.array([4, 4])]}),
         )
 
 
@@ -335,6 +469,22 @@ class ListOfNumpyArrayHandlerTest(absltest.TestCase):
     def test_validate_list_of_numpy_array(self) -> None:
         lt8 = [pd.DataFrame([1]), pd.DataFrame([2, 3])]
         self.assertFalse(model_signature._ListOfNumpyArrayHandler.can_handle(lt8))
+
+    def test_trunc_np_ndarray(self) -> None:
+        arrs = [np.array([1] * (model_signature._ListOfNumpyArrayHandler.SIG_INFER_ROWS_COUNT_LIMIT + 1))] * 2
+
+        for arr in model_signature._ListOfNumpyArrayHandler.truncate(arrs):
+            np.testing.assert_equal(
+                np.array([1] * (model_signature._ListOfNumpyArrayHandler.SIG_INFER_ROWS_COUNT_LIMIT)), arr
+            )
+
+        arrs = [
+            np.array([1]),
+            np.array([1] * (model_signature._ListOfNumpyArrayHandler.SIG_INFER_ROWS_COUNT_LIMIT - 1)),
+        ]
+
+        for arr in model_signature._ListOfNumpyArrayHandler.truncate(arrs):
+            np.testing.assert_equal(np.array([1]), arr)
 
     def test_infer_signature_list_of_numpy_array(self) -> None:
         arr = np.array([1, 2, 3, 4])
@@ -359,11 +509,45 @@ class ListOfNumpyArrayHandlerTest(absltest.TestCase):
             ],
         )
 
+    def test_convert_to_df_list_of_numpy_array(self) -> None:
+        arr1 = np.array([1, 2, 3, 4])
+        lt = [arr1, arr1]
+        pd.testing.assert_frame_equal(
+            model_signature._ListOfNumpyArrayHandler.convert_to_df(lt),
+            pd.DataFrame([[1, 1], [2, 2], [3, 3], [4, 4]]),
+            check_names=False,
+        )
+
+        arr2 = np.array([[1, 1], [2, 2], [3, 3], [4, 4]])
+        lt = [arr1, arr2]
+        pd.testing.assert_frame_equal(
+            model_signature._ListOfNumpyArrayHandler.convert_to_df(lt),
+            pd.DataFrame([[1, 1, 1], [2, 2, 2], [3, 3, 3], [4, 4, 4]]),
+        )
+
+        arr = np.array([[[1, 1], [2, 2]], [[3, 3], [4, 4]]])
+        lt = [arr, arr]
+        pd.testing.assert_frame_equal(
+            model_signature._ListOfNumpyArrayHandler.convert_to_df(lt),
+            pd.DataFrame(
+                data={
+                    0: [np.array([1, 1]), np.array([3, 3])],
+                    1: [np.array([2, 2]), np.array([4, 4])],
+                    2: [np.array([1, 1]), np.array([3, 3])],
+                    3: [np.array([2, 2]), np.array([4, 4])],
+                }
+            ),
+        )
+
 
 class ListOfBuiltinsHandlerTest(absltest.TestCase):
     def test_validate_list_builtins(self) -> None:
+        lt6 = ["Hello", [2, 3]]
+        with self.assertRaisesRegex(ValueError, "Inconsistent type of object found in data"):
+            model_signature._ListOfBuiltinHandler.validate(lt6)  # type:ignore[arg-type]
+
         lt7 = [[1], [2, 3]]
-        with self.assertRaises(ValueError):
+        with self.assertRaisesRegex(ValueError, "Ill-shaped list data"):
             model_signature._ListOfBuiltinHandler.validate(lt7)
 
         lt8 = [pd.DataFrame([1]), pd.DataFrame([2, 3])]
@@ -373,27 +557,27 @@ class ListOfBuiltinsHandlerTest(absltest.TestCase):
         lt1 = [1, 2, 3, 4]
         self.assertListEqual(
             model_signature._ListOfBuiltinHandler.infer_signature(lt1, role="input"),
-            [model_signature.FeatureSpec("feature_0", model_signature.DataType.INT64)],
+            [model_signature.FeatureSpec("input_feature_0", model_signature.DataType.INT64)],
         )
 
         lt2 = ["a", "b", "c", "d"]
         self.assertListEqual(
             model_signature._ListOfBuiltinHandler.infer_signature(lt2, role="input"),
-            [model_signature.FeatureSpec("feature_0", model_signature.DataType.STRING)],
+            [model_signature.FeatureSpec("input_feature_0", model_signature.DataType.STRING)],
         )
 
         lt3 = [ele.encode() for ele in lt2]
         self.assertListEqual(
             model_signature._ListOfBuiltinHandler.infer_signature(lt3, role="input"),
-            [model_signature.FeatureSpec("feature_0", model_signature.DataType.BYTES)],
+            [model_signature.FeatureSpec("input_feature_0", model_signature.DataType.BYTES)],
         )
 
         lt4 = [[1, 2], [3, 4]]
         self.assertListEqual(
             model_signature._ListOfBuiltinHandler.infer_signature(lt4, role="input"),
             [
-                model_signature.FeatureSpec("feature_0", model_signature.DataType.INT64),
-                model_signature.FeatureSpec("feature_1", model_signature.DataType.INT64),
+                model_signature.FeatureSpec("input_feature_0", model_signature.DataType.INT64),
+                model_signature.FeatureSpec("input_feature_1", model_signature.DataType.INT64),
             ],
         )
 
@@ -401,8 +585,8 @@ class ListOfBuiltinsHandlerTest(absltest.TestCase):
         self.assertListEqual(
             model_signature._ListOfBuiltinHandler.infer_signature(lt5, role="input"),  # type:ignore[arg-type]
             [
-                model_signature.FeatureSpec("feature_0", model_signature.DataType.INT64),
-                model_signature.FeatureSpec("feature_1", model_signature.DataType.DOUBLE),
+                model_signature.FeatureSpec("input_feature_0", model_signature.DataType.INT64),
+                model_signature.FeatureSpec("input_feature_1", model_signature.DataType.DOUBLE),
             ],
         )
 
@@ -410,8 +594,8 @@ class ListOfBuiltinsHandlerTest(absltest.TestCase):
         self.assertListEqual(
             model_signature._ListOfBuiltinHandler.infer_signature(lt6, role="input"),
             [
-                model_signature.FeatureSpec("feature_0", model_signature.DataType.INT64, shape=(2,)),
-                model_signature.FeatureSpec("feature_1", model_signature.DataType.INT64, shape=(2,)),
+                model_signature.FeatureSpec("input_feature_0", model_signature.DataType.INT64, shape=(2,)),
+                model_signature.FeatureSpec("input_feature_1", model_signature.DataType.INT64, shape=(2,)),
             ],
         )
 
@@ -428,7 +612,7 @@ class SnowParkDataFrameHandlerTest(absltest.TestCase):
     def test_validate_snowpark_df(self) -> None:
         schema = spt.StructType([spt.StructField('"a"', spt.VariantType()), spt.StructField('"b"', spt.StringType())])
         df = self._session.create_dataframe([[1, "snow"], [3, "flake"]], schema)
-        with self.assertRaises(ValueError):
+        with self.assertRaisesRegex(ValueError, "Unsupported data type"):
             model_signature._SnowparkDataFrameHandler.validate(df)
 
     def test_infer_schema_snowpark_df(self) -> None:
@@ -442,13 +626,23 @@ class SnowParkDataFrameHandlerTest(absltest.TestCase):
             ],
         )
 
+        schema = spt.StructType([spt.StructField('"""a"""', spt.LongType()), spt.StructField('"b"', spt.StringType())])
+        df = self._session.create_dataframe([[1, "snow"], [3, "flake"]], schema)
+        self.assertListEqual(
+            model_signature._SnowparkDataFrameHandler.infer_signature(df, role="input"),
+            [
+                model_signature.FeatureSpec('"a"', model_signature.DataType.INT64),
+                model_signature.FeatureSpec("b", model_signature.DataType.STRING),
+            ],
+        )
+
     def test_validate_data_with_features(self) -> None:
         fts = [
             model_signature.FeatureSpec("a", model_signature.DataType.INT64),
             model_signature.FeatureSpec("b", model_signature.DataType.INT64),
         ]
         df = self._session.create_dataframe([{'"a"': 1}, {'"b"': 2}])
-        with self.assertWarns(RuntimeWarning):
+        with self.assertWarnsRegex(RuntimeWarning, "Nullable column [^\\s]* provided"):
             model_signature._validate_snowpark_data(df, fts)
 
         fts = [
@@ -461,16 +655,16 @@ class SnowParkDataFrameHandlerTest(absltest.TestCase):
 
         schema = spt.StructType([spt.StructField('"a"', spt.LongType()), spt.StructField('"b"', spt.IntegerType())])
         df = self._session.create_dataframe([[1, 3], [3, 9]], schema)
-        with self.assertRaises(ValueError):
+        with self.assertRaisesRegex(ValueError, "Feature type [^\\s]* is not met by column"):
             model_signature._validate_snowpark_data(df, fts)
 
         schema = spt.StructType([spt.StructField('"a1"', spt.LongType()), spt.StructField('"b"', spt.StringType())])
         df = self._session.create_dataframe([[1, "snow"], [3, "flake"]], schema)
-        with self.assertRaises(ValueError):
+        with self.assertRaisesRegex(ValueError, "feature [^\\s]* does not exist in data."):
             model_signature._validate_snowpark_data(df, fts)
 
         df = self._session.create_dataframe([{'"a"': 1}, {'"b"': 2}])
-        with self.assertRaises(ValueError):
+        with self.assertRaisesRegex(ValueError, "Feature type [^\\s]* is not met by column"):
             model_signature._validate_snowpark_data(df, fts)
 
 
@@ -501,27 +695,27 @@ class ModelSignatureMiscTest(absltest.TestCase):
         df = pd.DataFrame([1, 2, 3, 4])
         self.assertListEqual(
             model_signature._infer_signature(df, role="input"),
-            [model_signature.FeatureSpec("feature_0", model_signature.DataType.INT64)],
+            [model_signature.FeatureSpec("input_feature_0", model_signature.DataType.INT64)],
         )
 
         arr = np.array([1, 2, 3, 4])
         self.assertListEqual(
             model_signature._infer_signature(arr, role="input"),
-            [model_signature.FeatureSpec("feature_0", model_signature.DataType.INT64)],
+            [model_signature.FeatureSpec("input_feature_0", model_signature.DataType.INT64)],
         )
 
         lt1 = [1, 2, 3, 4]
         self.assertListEqual(
             model_signature._infer_signature(lt1, role="input"),
-            [model_signature.FeatureSpec("feature_0", model_signature.DataType.INT64)],
+            [model_signature.FeatureSpec("input_feature_0", model_signature.DataType.INT64)],
         )
 
         lt2 = [[1, 2], [3, 4]]
         self.assertListEqual(
             model_signature._infer_signature(lt2, role="input"),
             [
-                model_signature.FeatureSpec("feature_0", model_signature.DataType.INT64),
-                model_signature.FeatureSpec("feature_1", model_signature.DataType.INT64),
+                model_signature.FeatureSpec("input_feature_0", model_signature.DataType.INT64),
+                model_signature.FeatureSpec("input_feature_1", model_signature.DataType.INT64),
             ],
         )
 
@@ -556,59 +750,257 @@ class ModelSignatureMiscTest(absltest.TestCase):
         with self.assertRaises(NotImplementedError):
             model_signature._infer_signature([], role="input")
 
-    def test_validate_data_with_features(self) -> None:
+    def test_validate_pandas_df(self) -> None:
         fts = [
-            model_signature.FeatureSpec("feature_0", model_signature.DataType.INT64),
-            model_signature.FeatureSpec("feature_1", model_signature.DataType.INT64),
+            model_signature.FeatureSpec("a", model_signature.DataType.INT64),
+            model_signature.FeatureSpec("b", model_signature.DataType.INT64),
         ]
 
-        with self.assertRaises(ValueError):
+        model_signature._validate_pandas_df(pd.DataFrame([[2, 5], [6, 8]], columns=["a", "b"]), fts)
+
+        with self.assertRaisesRegex(ValueError, "Feature type [^\\s]* is not met by all elements"):
+            model_signature._validate_pandas_df(pd.DataFrame([[2.5, 5], [6.8, 8]], columns=["a", "b"]), fts)
+
+        with self.assertRaisesRegex(ValueError, "feature [^\\s]* does not exist in data."):
+            model_signature._validate_pandas_df(pd.DataFrame([5, 6], columns=["a"]), fts)
+
+        model_signature._validate_pandas_df(pd.DataFrame([5, 6], columns=["a"]), fts[:1])
+
+        with self.assertRaisesRegex(ValueError, "feature [^\\s]* does not exist in data."):
+            model_signature._validate_pandas_df(pd.DataFrame([[2, 5], [6, 8]], columns=["c", "d"]), fts)
+
+        with self.assertRaisesRegex(ValueError, "Feature is a scalar feature while list data is provided."):
+            model_signature._validate_pandas_df(
+                pd.DataFrame([[1, [2.5, 6.8]], [2, [2.5, 6.8]]], columns=["a", "b"]), fts
+            )
+
+        fts = [
+            model_signature.FeatureSpec("a", model_signature.DataType.INT64),
+            model_signature.FeatureSpec("b", model_signature.DataType.DOUBLE, shape=(2,)),
+        ]
+
+        model_signature._validate_pandas_df(pd.DataFrame([[1, [2.5, 6.8]], [2, [2.5, 6.8]]], columns=["a", "b"]), fts)
+
+        with self.assertRaisesRegex(ValueError, "Feature is a array type feature while scalar data is provided."):
+            model_signature._validate_pandas_df(pd.DataFrame([[2, 2.5], [6, 6.8]], columns=["a", "b"]), fts)
+
+        with self.assertRaisesRegex(ValueError, "Feature shape [\\(\\)0-9,\\s-]* is not met by all elements"):
+            model_signature._validate_pandas_df(
+                pd.DataFrame([[1, [2.5, 6.8, 6.8]], [2, [2.5, 6.8, 6.8]]], columns=["a", "b"]), fts
+            )
+
+        with self.assertRaisesRegex(ValueError, "Feature shape [\\(\\)0-9,\\s-]* is not met by all elements"):
+            model_signature._validate_pandas_df(
+                pd.DataFrame([[1, [2.5, 6.8]], [2, [2.5, 6.8, 6.8]]], columns=["a", "b"]), fts
+            )
+
+        with self.assertRaisesRegex(ValueError, "Feature type [^\\s]* is not met by all elements"):
+            model_signature._validate_pandas_df(pd.DataFrame([[1, [2, 5]], [2, [6, 8]]], columns=["a", "b"]), fts)
+
+        model_signature._validate_pandas_df(
+            pd.DataFrame([[1, np.array([2.5, 6.8])], [2, np.array([2.5, 6.8])]], columns=["a", "b"]), fts
+        )
+
+        with self.assertRaisesRegex(ValueError, "Feature shape [\\(\\)0-9,\\s-]* is not met by all elements"):
+            model_signature._validate_pandas_df(
+                pd.DataFrame([[1, np.array([2.5, 6.8, 6.8])], [2, np.array([2.5, 6.8, 6.8])]], columns=["a", "b"]), fts
+            )
+
+        with self.assertRaisesRegex(ValueError, "Feature shape [\\(\\)0-9,\\s-]* is not met by all elements"):
+            model_signature._validate_pandas_df(
+                pd.DataFrame([[1, np.array([2.5, 6.8])], [2, np.array([2.5, 6.8, 6.8])]], columns=["a", "b"]), fts
+            )
+
+        with self.assertRaisesRegex(ValueError, "Feature type [^\\s]* is not met by all elements"):
+            model_signature._validate_pandas_df(
+                pd.DataFrame([[1, np.array([2, 5])], [2, np.array([6, 8])]], columns=["a", "b"]), fts
+            )
+
+        with self.assertRaisesRegex(ValueError, "Feature is a array type feature while scalar data is provided."):
+            model_signature._validate_pandas_df(
+                pd.DataFrame([ele.encode() for ele in ["a", "b", "c", "d"]], columns=["b"]), fts[-1:]
+            )
+
+        with self.assertRaisesRegex(ValueError, "Feature is a array type feature while scalar data is provided."):
+            model_signature._validate_pandas_df(pd.DataFrame(["a", "b", "c", "d"], columns=["b"]), fts[-1:])
+
+        fts = [
+            model_signature.FeatureSpec("a", model_signature.DataType.INT64),
+            model_signature.FeatureSpec("b", model_signature.DataType.DOUBLE, shape=(-1,)),
+        ]
+
+        model_signature._validate_pandas_df(pd.DataFrame([[1, [2.5, 6.8]], [2, [2.5, 6.8]]], columns=["a", "b"]), fts)
+
+        model_signature._validate_pandas_df(
+            pd.DataFrame([[1, [2.5, 6.8, 6.8]], [2, [2.5, 6.8, 6.8]]], columns=["a", "b"]), fts
+        )
+
+        model_signature._validate_pandas_df(
+            pd.DataFrame([[1, [2.5, 6.8]], [2, [2.5, 6.8, 6.8]]], columns=["a", "b"]), fts
+        )
+
+        with self.assertRaisesRegex(ValueError, "Feature type [^\\s]* is not met by all elements"):
+            model_signature._validate_pandas_df(pd.DataFrame([[1, [2, 5]], [2, [6, 8]]], columns=["a", "b"]), fts)
+
+        model_signature._validate_pandas_df(
+            pd.DataFrame([[1, np.array([2.5, 6.8])], [2, np.array([2.5, 6.8])]], columns=["a", "b"]), fts
+        )
+
+        model_signature._validate_pandas_df(
+            pd.DataFrame([[1, np.array([2.5, 6.8, 6.8])], [2, np.array([2.5, 6.8, 6.8])]], columns=["a", "b"]), fts
+        )
+
+        model_signature._validate_pandas_df(
+            pd.DataFrame([[1, np.array([2.5, 6.8])], [2, np.array([2.5, 6.8, 6.8])]], columns=["a", "b"]), fts
+        )
+
+        with self.assertRaisesRegex(ValueError, "Feature type [^\\s]* is not met by all elements"):
+            model_signature._validate_pandas_df(
+                pd.DataFrame([[1, np.array([2, 5])], [2, np.array([6, 8])]], columns=["a", "b"]), fts
+            )
+
+        fts = [
+            model_signature.FeatureSpec("a", model_signature.DataType.INT64),
+            model_signature.FeatureSpec("b", model_signature.DataType.DOUBLE, shape=(2, 1)),
+        ]
+
+        model_signature._validate_pandas_df(
+            pd.DataFrame([[1, [[2.5], [6.8]]], [2, [[2.5], [6.8]]]], columns=["a", "b"]), fts
+        )
+
+        with self.assertRaisesRegex(ValueError, "Feature shape [\\(\\)0-9,\\s-]* is not met by all elements"):
+            model_signature._validate_pandas_df(
+                pd.DataFrame([[1, [[2.5], [6.8]]], [2, [[2.5], [6.8], [6.8]]]], columns=["a", "b"]), fts
+            )
+
+        with self.assertRaisesRegex(ValueError, "Feature shape [\\(\\)0-9,\\s-]* is not met by all elements"):
+            model_signature._validate_pandas_df(
+                pd.DataFrame([[1, [2.5, 6.8]], [2, [2.5, 6.8]]], columns=["a", "b"]), fts
+            )
+
+        with self.assertRaisesRegex(ValueError, "Feature type [^\\s]* is not met by all elements"):
+            model_signature._validate_pandas_df(
+                pd.DataFrame([[1, [[2], [5]]], [2, [[6], [8]]]], columns=["a", "b"]), fts
+            )
+
+        model_signature._validate_pandas_df(
+            pd.DataFrame([[1, np.array([[2.5], [6.8]])], [2, np.array([[2.5], [6.8]])]], columns=["a", "b"]), fts
+        )
+
+        with self.assertRaisesRegex(ValueError, "Feature shape [\\(\\)0-9,\\s-]* is not met by all elements"):
+            model_signature._validate_pandas_df(
+                pd.DataFrame([[1, np.array([[2.5], [6.8]])], [2, np.array([[2.5], [6.8], [6.8]])]], columns=["a", "b"]),
+                fts,
+            )
+
+        with self.assertRaisesRegex(ValueError, "Feature shape [\\(\\)0-9,\\s-]* is not met by all elements"):
+            model_signature._validate_pandas_df(
+                pd.DataFrame([[1, np.array([2.5, 6.8])], [2, np.array([2.5, 6.8])]], columns=["a", "b"]), fts
+            )
+
+        with self.assertRaisesRegex(ValueError, "Feature type [^\\s]* is not met by all elements"):
+            model_signature._validate_pandas_df(
+                pd.DataFrame([[1, np.array([[2], [5]])], [2, np.array([[6], [8]])]], columns=["a", "b"]), fts
+            )
+
+        fts = [model_signature.FeatureSpec("a", model_signature.DataType.STRING)]
+        model_signature._validate_pandas_df(pd.DataFrame(["a", "b", "c", "d"], columns=["a"]), fts)
+
+        with self.assertRaisesRegex(ValueError, "Feature type [^\\s]* is not met by all elements"):
+            model_signature._validate_pandas_df(
+                pd.DataFrame([ele.encode() for ele in ["a", "b", "c", "d"]], columns=["a"]), fts
+            )
+
+        with self.assertRaisesRegex(ValueError, "Feature is a scalar feature while list data is provided."):
+            model_signature._validate_pandas_df(pd.DataFrame(data={"a": [[1, 2]]}), fts)
+
+        with self.assertRaisesRegex(ValueError, "Feature is a scalar feature while array data is provided."):
+            model_signature._validate_pandas_df(pd.DataFrame(data={"a": [np.array([1, 2])]}), fts)
+
+        fts = [model_signature.FeatureSpec("a", model_signature.DataType.BYTES)]
+        model_signature._validate_pandas_df(
+            pd.DataFrame([ele.encode() for ele in ["a", "b", "c", "d"]], columns=["a"]), fts
+        )
+
+        with self.assertRaisesRegex(ValueError, "Feature type [^\\s]* is not met by all elements"):
+            model_signature._validate_pandas_df(pd.DataFrame(["a", "b", "c", "d"], columns=["a"]), fts)
+
+        with self.assertRaisesRegex(ValueError, "Feature is a scalar feature while list data is provided."):
+            model_signature._validate_pandas_df(pd.DataFrame(data={"a": [[1, 2]]}), fts)
+
+        with self.assertRaisesRegex(ValueError, "Feature is a scalar feature while array data is provided."):
+            model_signature._validate_pandas_df(pd.DataFrame(data={"a": [np.array([1, 2])]}), fts)
+
+    def test_rename_pandas_df(self) -> None:
+        fts = [
+            model_signature.FeatureSpec("input_feature_0", model_signature.DataType.INT64),
+            model_signature.FeatureSpec("input_feature_1", model_signature.DataType.INT64),
+        ]
+
+        df = pd.DataFrame([[2, 5], [6, 8]], columns=["a", "b"])
+
+        pd.testing.assert_frame_equal(df, model_signature._rename_pandas_df(df, fts))
+
+        df = pd.DataFrame([[2, 5], [6, 8]])
+
+        pd.testing.assert_frame_equal(df, model_signature._rename_pandas_df(df, fts), check_names=False)
+        pd.testing.assert_index_equal(
+            pd.Index(["input_feature_0", "input_feature_1"]), model_signature._rename_pandas_df(df, fts).columns
+        )
+
+    def test_validate_data_with_features(self) -> None:
+        fts = [
+            model_signature.FeatureSpec("input_feature_0", model_signature.DataType.INT64),
+            model_signature.FeatureSpec("input_feature_1", model_signature.DataType.INT64),
+        ]
+
+        with self.assertRaisesRegex(ValueError, "Empty data is found."):
             model_signature._convert_and_validate_local_data(np.array([]), fts)
 
-        with self.assertRaises(ValueError):
+        with self.assertRaisesRegex(ValueError, "Scalar data is found."):
             model_signature._convert_and_validate_local_data(np.array(5), fts)
 
-        with self.assertRaises(ValueError):
+        with self.assertRaisesRegex(ValueError, "Feature type [^\\s]* is not met by all elements"):
             model_signature._convert_and_validate_local_data(np.array([[2.5, 5], [6.8, 8]]), fts)
 
-        with self.assertRaises(ValueError):
+        with self.assertRaisesRegex(ValueError, "Un-supported type <class 'list'> provided."):
             model_signature._convert_and_validate_local_data([], fts)
 
-        with self.assertRaises(ValueError):
+        with self.assertRaisesRegex(ValueError, "Inconsistent type of object found in data"):
             model_signature._convert_and_validate_local_data([1, [1, 1]], fts)
 
-        with self.assertRaises(ValueError):
+        with self.assertRaisesRegex(ValueError, "Ill-shaped list data"):
             model_signature._convert_and_validate_local_data([[1], [1, 1]], fts)
 
-        with self.assertRaises(ValueError):
+        with self.assertRaisesRegex(ValueError, "Feature type [^\\s]* is not met by all elements"):
             model_signature._convert_and_validate_local_data([[2.1, 5.0], [6.8, 8.0]], fts)
 
-        with self.assertRaises(ValueError):
+        with self.assertRaisesRegex(ValueError, "Feature type [^\\s]* is not met by all elements"):
             model_signature._convert_and_validate_local_data(pd.DataFrame([[2.5, 5], [6.8, 8]]), fts)
 
-        with self.assertRaises(ValueError):
+        with self.assertRaisesRegex(ValueError, "Data does not have the same number of features as signature"):
             model_signature._convert_and_validate_local_data(pd.DataFrame([5, 6]), fts)
 
-        with self.assertRaises(ValueError):
+        with self.assertRaisesRegex(ValueError, "Data does not have the same number of features as signature."):
             model_signature._convert_and_validate_local_data(np.array([5, 6]), fts)
 
-        with self.assertRaises(ValueError):
+        with self.assertRaisesRegex(ValueError, "feature [^\\s]* does not exist in data."):
             model_signature._convert_and_validate_local_data(pd.DataFrame([[2, 5], [6, 8]], columns=["a", "b"]), fts)
 
         df = model_signature._convert_and_validate_local_data(np.array([5, 6]), fts[:1])
-        self.assertListEqual(df.columns.to_list(), ["feature_0"])
+        self.assertListEqual(df.columns.to_list(), ["input_feature_0"])
 
         df = model_signature._convert_and_validate_local_data(pd.DataFrame([5, 6]), fts[:1])
-        self.assertListEqual(df.columns.to_list(), ["feature_0"])
+        self.assertListEqual(df.columns.to_list(), ["input_feature_0"])
 
         df = model_signature._convert_and_validate_local_data([5, 6], fts[:1])
-        self.assertListEqual(df.columns.to_list(), ["feature_0"])
+        self.assertListEqual(df.columns.to_list(), ["input_feature_0"])
 
         df = model_signature._convert_and_validate_local_data(np.array([[2, 5], [6, 8]]), fts)
-        self.assertListEqual(df.columns.to_list(), ["feature_0", "feature_1"])
+        self.assertListEqual(df.columns.to_list(), ["input_feature_0", "input_feature_1"])
 
         df = model_signature._convert_and_validate_local_data(pd.DataFrame([[2, 5], [6, 8]]), fts)
-        self.assertListEqual(df.columns.to_list(), ["feature_0", "feature_1"])
+        self.assertListEqual(df.columns.to_list(), ["input_feature_0", "input_feature_1"])
 
         df = model_signature._convert_and_validate_local_data(
             pd.DataFrame([[2, 5], [6, 8]], columns=["a", "b"]),
@@ -620,7 +1012,7 @@ class ModelSignatureMiscTest(absltest.TestCase):
         self.assertListEqual(df.columns.to_list(), ["a", "b"])
 
         df = model_signature._convert_and_validate_local_data([[2, 5], [6, 8]], fts)
-        self.assertListEqual(df.columns.to_list(), ["feature_0", "feature_1"])
+        self.assertListEqual(df.columns.to_list(), ["input_feature_0", "input_feature_1"])
 
 
 if __name__ == "__main__":

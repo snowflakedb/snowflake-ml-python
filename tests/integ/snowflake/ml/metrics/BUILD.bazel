@@ -17,7 +17,7 @@ py_test(
     deps = [
         "//snowflake/ml/metrics",
         "//snowflake/ml/utils:connection_params",
-        "//tests/integ/snowflake/ml/framework:utils",
+        "//tests/integ/snowflake/ml/sklearn/framework:utils",
     ],
 )
 

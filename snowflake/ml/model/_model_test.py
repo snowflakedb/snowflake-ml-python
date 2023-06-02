@@ -2,6 +2,8 @@ import asyncio
 import os
 import tempfile
 import warnings
+from typing import cast
+from unittest import mock
 
 import numpy as np
 import pandas as pd
@@ -15,7 +17,9 @@ from snowflake.ml.model import (
     model_signature,
     type_hints as model_types,
 )
-from snowflake.ml.modeling.linear_model import LinearRegression
+from snowflake.ml.sklearn.linear_model import LinearRegression
+from snowflake.ml.test_utils import mock_session
+from snowflake.snowpark import FileOperation, Session
 
 
 class DemoModelWithManyArtifacts(custom_model.CustomModel):
@@ -86,6 +90,193 @@ class DemoModelWithArtifacts(custom_model.CustomModel):
         return pd.DataFrame({"output": input["c1"] + self.bias})
 
 
+class ModelInterfaceTest(absltest.TestCase):
+    def test_save_interface(self) -> None:
+        m_session = mock_session.MockSession(conn=None, test_case=self)
+        c_session = cast(Session, m_session)
+
+        local_dir = "path/to/local/model/dir"
+        stage_path = '@"db"."schema"."stage"/model.zip'
+
+        arr = np.array([[1, 2, 3], [4, 2, 5]])
+        d = pd.DataFrame(arr, columns=["c1", "c2", "c3"])
+
+        with self.assertRaisesRegex(
+            ValueError, "model_dir_path and model_stage_file_path both cannot be None at the same time."
+        ):
+            model_api.save_model(name="model", model=linear_model.LinearRegression())  # type:ignore[call-overload]
+
+        with self.assertRaisesRegex(
+            ValueError, "Session and model_stage_file_path must be specified at the same time."
+        ):
+            model_api.save_model(
+                name="model", model=linear_model.LinearRegression(), session=c_session, sample_input=d
+            )  # type:ignore[call-overload]
+
+        with self.assertRaisesRegex(ValueError, "Session and model_stage_file_path must be None at the same time."):
+            model_api.save_model(
+                name="model", model=linear_model.LinearRegression(), model_stage_file_path=stage_path, sample_input=d
+            )  # type:ignore[call-overload]
+
+        with self.assertRaisesRegex(
+            ValueError, "Session and model_stage_file_path must be specified at the same time."
+        ):
+            model_api.save_model(
+                name="model",
+                model=linear_model.LinearRegression(),
+                session=c_session,
+                model_dir_path=local_dir,
+                sample_input=d,
+            )  # type:ignore[call-overload]
+
+        with self.assertRaisesRegex(ValueError, "Session and model_stage_file_path must be None at the same time."):
+            model_api.save_model(
+                name="model",
+                model=linear_model.LinearRegression(),
+                model_stage_file_path=stage_path,
+                model_dir_path=local_dir,
+                sample_input=d,
+            )  # type:ignore[call-overload]
+
+        with self.assertRaisesRegex(
+            ValueError, "model_dir_path and model_stage_file_path both cannot be specified at the same time."
+        ):
+            model_api.save_model(
+                name="model",
+                model=linear_model.LinearRegression(),
+                session=c_session,
+                model_stage_file_path=stage_path,
+                model_dir_path=local_dir,
+                sample_input=d,
+            )  # type:ignore[call-overload]
+
+        with self.assertRaisesRegex(
+            ValueError, "Signatures and sample_input both cannot be None for local model at the same time."
+        ):
+            model_api.save_model(
+                name="model1",
+                model_dir_path=local_dir,
+                model=linear_model.LinearRegression(),
+            )
+
+        with self.assertRaisesRegex(
+            ValueError, "Signatures and sample_input both cannot be specified at the same time."
+        ):
+            model_api.save_model(  # type:ignore[call-overload]
+                name="model1",
+                model_dir_path=local_dir,
+                model=linear_model.LinearRegression(),
+                sample_input=d,
+                signatures={"predict": model_signature.ModelSignature(inputs=[], outputs=[])},
+            )
+
+        with self.assertRaisesRegex(
+            ValueError, "Signatures and sample_input both cannot be specified at the same time."
+        ):
+            model_api.save_model(  # type:ignore[call-overload]
+                name="model1",
+                model_dir_path=local_dir,
+                model=LinearRegression(),
+                sample_input=d,
+                signatures={"predict": model_signature.ModelSignature(inputs=[], outputs=[])},
+            )
+
+        with mock.patch.object(model_api, "_save", return_value=None) as mock_save:
+            model_api.save_model(
+                name="model1",
+                model_dir_path=local_dir,
+                model=LinearRegression(),
+            )
+
+        with tempfile.TemporaryDirectory() as tempdir:
+            with open(os.path.join(tempdir, "some_file"), "w") as f:
+                f.write("Hi Ciyana!")
+
+            with self.assertRaisesRegex(ValueError, "Provided model directory [^\\s]* is not a directory."):
+                model_api.save_model(
+                    name="model1",
+                    model_dir_path=os.path.join(tempdir, "some_file"),
+                    model=linear_model.LinearRegression(),
+                    sample_input=d,
+                )
+
+            with self.assertWarnsRegex(UserWarning, "Provided model directory [^\\s]* is not an empty directory."):
+                with mock.patch.object(model_api, "_save", return_value=None) as mock_save:
+                    model_api.save_model(
+                        name="model1",
+                        model_dir_path=tempdir,
+                        model=linear_model.LinearRegression(),
+                        sample_input=d,
+                    )
+                    mock_save.assert_called_once()
+
+        with self.assertRaisesRegex(
+            ValueError, "Provided model path in the stage [^\\s]* must be a path to a zip file."
+        ):
+            model_api.save_model(
+                name="model1",
+                model=linear_model.LinearRegression(),
+                session=c_session,
+                model_stage_file_path='@"db"."schema"."stage"/model',
+                sample_input=d,
+            )
+
+        with mock.patch.object(model_api, "_save", return_value=None) as mock_save:
+            with mock.patch.object(FileOperation, "put_stream", return_value=None) as mock_put_stream:
+                model_api.save_model(
+                    name="model1",
+                    model=linear_model.LinearRegression(),
+                    session=c_session,
+                    model_stage_file_path=stage_path,
+                    sample_input=d,
+                )
+            mock_put_stream.assert_called_once_with(mock.ANY, stage_path, auto_compress=False, overwrite=False)
+
+        with mock.patch.object(model_api, "_save", return_value=None) as mock_save:
+            with mock.patch.object(FileOperation, "put_stream", return_value=None) as mock_put_stream:
+                model_api.save_model(
+                    name="model1",
+                    model=linear_model.LinearRegression(),
+                    session=c_session,
+                    model_stage_file_path=stage_path,
+                    sample_input=d,
+                    options={"allow_overwritten_stage_file": True},
+                )
+            mock_put_stream.assert_called_once_with(mock.ANY, stage_path, auto_compress=False, overwrite=True)
+
+    def test_load_interface(self) -> None:
+        m_session = mock_session.MockSession(conn=None, test_case=self)
+        c_session = cast(Session, m_session)
+
+        local_dir = "path/to/local/model/dir"
+        stage_path = '@"db"."schema"."stage"/model.zip'
+
+        with self.assertRaisesRegex(
+            ValueError, "Session and model_stage_file_path must be specified at the same time."
+        ):
+            model_api.load_model(session=c_session)  # type:ignore[call-overload]
+
+        with self.assertRaisesRegex(
+            ValueError, "model_dir_path and model_stage_file_path both cannot be None at the same time."
+        ):
+            model_api.load_model()  # type:ignore[call-overload]
+
+        with self.assertRaisesRegex(ValueError, "Session and model_stage_file_path must be None at the same time."):
+            model_api.load_model(model_stage_file_path=stage_path)  # type:ignore[call-overload]
+
+        with self.assertRaisesRegex(
+            ValueError, "model_dir_path and model_stage_file_path both cannot be specified at the same time."
+        ):
+            model_api.load_model(
+                session=c_session, model_stage_file_path=stage_path, model_dir_path=local_dir
+            )  # type:ignore[call-overload]
+
+        with self.assertRaisesRegex(
+            ValueError, "Provided model path in the stage [^\\s]* must be a path to a zip file."
+        ):
+            model_api.load_model(session=c_session, model_stage_file_path='@"db"."schema"."stage"/model')
+
+
 class ModelTest(absltest.TestCase):
     def test_bad_save_model(self) -> None:
         tmpdir = self.create_tempdir()
@@ -100,15 +291,6 @@ class ModelTest(absltest.TestCase):
         arr = np.array([[1, 2, 3], [4, 2, 5]])
         d = pd.DataFrame(arr, columns=["c1", "c2", "c3"])
         s = {"predict": model_signature.infer_signature(d, lm.predict(d))}
-        with self.assertRaises(ValueError):
-            model_api.save_model(  # type:ignore[call-overload]
-                name="model1",
-                model_dir_path=os.path.join(tmpdir.full_path, "model1"),
-                model=lm,
-                signatures=s,
-                sample_input=d,
-                metadata={"author": "halu", "version": "1"},
-            )
 
         with self.assertRaises(ValueError):
             model_api.save_model(
@@ -116,14 +298,6 @@ class ModelTest(absltest.TestCase):
                 model_dir_path=os.path.join(tmpdir.full_path, "model1"),
                 model=lm,
                 signatures={**s, "another_predict": s["predict"]},
-                metadata={"author": "halu", "version": "1"},
-            )
-
-        with self.assertRaises(ValueError):
-            model_api.save_model(  # type:ignore[call-overload]
-                name="model1",
-                model_dir_path=os.path.join(tmpdir.full_path, "model1"),
-                model=lm,
                 metadata={"author": "halu", "version": "1"},
             )
 
@@ -136,10 +310,10 @@ class ModelTest(absltest.TestCase):
             python_version="3.5.2",
         )
 
-        _ = model_api.load_model(os.path.join(tmpdir, "model1"), meta_only=True)
+        _ = model_api.load_model(model_dir_path=os.path.join(tmpdir, "model1"), meta_only=True)
 
         with self.assertRaises(RuntimeError):
-            m, meta = model_api.load_model(os.path.join(tmpdir, "model1"))
+            m, meta = model_api.load_model(model_dir_path=os.path.join(tmpdir, "model1"))
 
     def test_custom_model_with_multiple_artifacts(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -166,7 +340,7 @@ class ModelTest(absltest.TestCase):
             with warnings.catch_warnings():
                 warnings.simplefilter("error")
 
-                m, meta = model_api.load_model(os.path.join(tmpdir, "model1"))
+                m, meta = model_api.load_model(model_dir_path=os.path.join(tmpdir, "model1"))
                 assert isinstance(m, DemoModelWithManyArtifacts)
                 res = m.predict(d)
                 np.testing.assert_allclose(res["output"], pd.Series(np.array([94, 97])))
@@ -185,7 +359,7 @@ class ModelTest(absltest.TestCase):
                     metadata={"author": "halu", "version": "1"},
                 )
 
-                m, meta = model_api.load_model(os.path.join(tmpdir, "model1_no_sig"))
+                m, meta = model_api.load_model(model_dir_path=os.path.join(tmpdir, "model1_no_sig"))
                 assert isinstance(m, DemoModelWithManyArtifacts)
                 res = m.predict(d)
                 np.testing.assert_allclose(res["output"], pd.Series(np.array([94, 97])))
@@ -214,11 +388,11 @@ class ModelTest(absltest.TestCase):
                 signatures=s,
                 metadata={"author": "halu", "version": "1"},
             )
-            lm, _ = model_api.load_model(os.path.join(tmpdir, "model1"))
+            lm, _ = model_api.load_model(model_dir_path=os.path.join(tmpdir, "model1"))
             assert isinstance(lm, ComposeModel)
             p3 = lm.predict(d)
 
-            m_UDF, _ = model_api._load_model_for_deploy(os.path.join(tmpdir, "model1"))
+            m_UDF, _ = model_api._load_model_for_deploy(model_dir_path=os.path.join(tmpdir, "model1"))
             assert isinstance(m_UDF, ComposeModel)
             p4 = m_UDF.predict(d)
             np.testing.assert_allclose(p1, p2)
@@ -248,7 +422,7 @@ class ModelTest(absltest.TestCase):
                     signatures=s,
                     metadata={"author": "halu", "version": "1"},
                 )
-                lm, _ = model_api.load_model(os.path.join(tmpdir, "model1"))
+                lm, _ = model_api.load_model(model_dir_path=os.path.join(tmpdir, "model1"))
                 assert isinstance(lm, AsyncComposeModel)
                 p3 = await lm.predict(d)  # type: ignore[misc]
 
@@ -279,7 +453,7 @@ class ModelTest(absltest.TestCase):
                 metadata={"author": "halu", "version": "1"},
             )
 
-            m, meta = model_api.load_model(os.path.join(tmpdir, "model1"))
+            m, meta = model_api.load_model(model_dir_path=os.path.join(tmpdir, "model1"))
             assert isinstance(m, DemoModelWithArtifacts)
             res = m.predict(d)
             np.testing.assert_allclose(res["output"], pd.Series(np.array([11, 14])))
@@ -314,7 +488,7 @@ class ModelTest(absltest.TestCase):
             )
 
             m: multioutput.MultiOutputClassifier
-            m, _ = model_api.load_model(os.path.join(tmpdir, "model1"))
+            m, _ = model_api.load_model(model_dir_path=os.path.join(tmpdir, "model1"))
             np.testing.assert_allclose(
                 np.hstack(model.predict_proba(iris_X_df[-10:])), np.hstack(m.predict_proba(iris_X_df[-10:]))
             )
@@ -342,7 +516,7 @@ class ModelTest(absltest.TestCase):
                 metadata={"author": "halu", "version": "1"},
             )
 
-            m, meta = model_api.load_model(os.path.join(tmpdir, "model1_no_sig"))
+            m, meta = model_api.load_model(model_dir_path=os.path.join(tmpdir, "model1_no_sig"))
             np.testing.assert_allclose(
                 np.hstack(model.predict_proba(iris_X_df[-10:])), np.hstack(m.predict_proba(iris_X_df[-10:]))
             )
@@ -387,7 +561,7 @@ class ModelTest(absltest.TestCase):
                 warnings.simplefilter("error")
 
                 m: linear_model.LinearRegression
-                m, _ = model_api.load_model(os.path.join(tmpdir, "model1"))
+                m, _ = model_api.load_model(model_dir_path=os.path.join(tmpdir, "model1"))
                 np.testing.assert_allclose(np.array([-0.08254936]), m.predict(iris_X_df[:1]))
                 m_udf, _ = model_api._load_model_for_deploy(os.path.join(tmpdir, "model1"))
                 predict_method = getattr(m_udf, "predict", None)
@@ -402,7 +576,7 @@ class ModelTest(absltest.TestCase):
                 metadata={"author": "halu", "version": "1"},
             )
 
-            m, meta = model_api.load_model(os.path.join(tmpdir, "model1_no_sig"))
+            m, meta = model_api.load_model(model_dir_path=os.path.join(tmpdir, "model1_no_sig"))
             np.testing.assert_allclose(np.array([-0.08254936]), m.predict(iris_X_df[:1]))
             self.assertEqual(s["predict"], meta.signatures["predict"])
 
@@ -442,7 +616,7 @@ class ModelTest(absltest.TestCase):
             with warnings.catch_warnings():
                 warnings.simplefilter("error")
 
-                m, _ = model_api.load_model(os.path.join(tmpdir, "model1"))
+                m, _ = model_api.load_model(model_dir_path=os.path.join(tmpdir, "model1"))
                 assert isinstance(m, xgboost.XGBClassifier)
                 np.testing.assert_allclose(m.predict(cal_X_test), y_pred)
                 m_udf, _ = model_api._load_model_for_deploy(os.path.join(tmpdir, "model1"))
@@ -458,7 +632,7 @@ class ModelTest(absltest.TestCase):
                 metadata={"author": "halu", "version": "1"},
             )
 
-            m, meta = model_api.load_model(os.path.join(tmpdir, "model1_no_sig"))
+            m, meta = model_api.load_model(model_dir_path=os.path.join(tmpdir, "model1_no_sig"))
             assert isinstance(m, xgboost.XGBClassifier)
             np.testing.assert_allclose(m.predict(cal_X_test), y_pred)
             np.testing.assert_allclose(m.predict_proba(cal_X_test), y_pred_proba)
@@ -510,7 +684,7 @@ class ModelTest(absltest.TestCase):
                 warnings.simplefilter("error")
 
                 m: LinearRegression
-                m, _ = model_api.load_model(os.path.join(tmpdir, "model1"))
+                m, _ = model_api.load_model(model_dir_path=os.path.join(tmpdir, "model1"))
                 np.testing.assert_allclose(predictions, m.predict(df[:1])[[OUTPUT_COLUMNS]])
                 m_udf, _ = model_api._load_model_for_deploy(os.path.join(tmpdir, "model1"))
                 predict_method = getattr(m_udf, "predict", None)
@@ -525,7 +699,7 @@ class ModelTest(absltest.TestCase):
                 metadata={"author": "halu", "version": "1"},
             )
 
-            m, meta = model_api.load_model(os.path.join(tmpdir, "model1_no_sig"))
+            m, meta = model_api.load_model(model_dir_path=os.path.join(tmpdir, "model1_no_sig"))
             np.testing.assert_allclose(np.array([[-0.08254936]]), m.predict(df[:1])[[OUTPUT_COLUMNS]])
             # TODO: After model_signatures() function is updated in codegen, next line should be changed to
             # s = regr.model_signatures()

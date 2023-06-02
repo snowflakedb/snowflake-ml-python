@@ -187,6 +187,12 @@ class FeatureSpec(BaseFeatureSpec):
             result_type = spt.ArrayType(result_type)
         return result_type
 
+    def as_dtype(self) -> npt.DTypeLike:
+        """Convert to corresponding local Type."""
+        if not self._shape:
+            return self._dtype._numpy_type
+        return np.object0
+
     def __eq__(self, other: object) -> bool:
         if isinstance(other, FeatureSpec):
             return self._name == other._name and self._dtype == other._dtype and self._shape == other._shape
@@ -249,7 +255,7 @@ class FeatureGroupSpec(BaseFeatureSpec):
         if not all(s._name is not None for s in self._specs):
             raise ValueError("All children feature specs have to have name.")
         if not (all(s._shape is None for s in self._specs) or all(s._shape is not None for s in self._specs)):
-            raise ValueError("All children feature specs have to have same type.")
+            raise ValueError("All children feature specs have to have same shape.")
         first_type = self._specs[0]._dtype
         if not all(s._dtype == first_type for s in self._specs):
             raise ValueError("All children feature specs have to have same type.")
@@ -410,7 +416,7 @@ class _BaseDataHandler(ABC, Generic[model_types._DataType]):
 
     @staticmethod
     @abstractmethod
-    def infer_signature(data: model_types._DataType, role: Literal["input", "output"]) -> Sequence[FeatureSpec]:
+    def infer_signature(data: model_types._DataType, role: Literal["input", "output"]) -> Sequence[BaseFeatureSpec]:
         ...
 
     @staticmethod
@@ -435,16 +441,21 @@ class _PandasDataFrameHandler(_BaseDataHandler[pd.DataFrame]):
     @staticmethod
     def validate(data: pd.DataFrame) -> None:
         df_cols = data.columns
-        if not all(hasattr(data[col], "dtype") for col in data.columns):
-            raise ValueError(f"Data Validation Error: Unknown column confronted in {data}.")
-
-        if len(df_cols) == 0:
-            raise ValueError("Data Validation Error: Empty data is found.")
 
         if df_cols.has_duplicates:  # Rule out categorical index with duplicates
             raise ValueError("Data Validation Error: Duplicate column index is found.")
 
-        if df_cols.dtype not in [np.int64, np.uint64, np.float64, np.object0]:
+        assert all(hasattr(data[col], "dtype") for col in data.columns), f"Unknown column confronted in {data}"
+
+        if len(df_cols) == 0:
+            raise ValueError("Data Validation Error: Empty data is found.")
+
+        if df_cols.dtype not in [
+            np.int64,
+            np.uint64,
+            np.float64,
+            np.object0,
+        ]:  # To keep compatibility with Pandas 2.x and 1.x
             raise ValueError("Data Validation Error: Unsupported column index type is found.")
 
         df_col_dtypes = [data[col].dtype for col in data.columns]
@@ -468,7 +479,7 @@ class _PandasDataFrameHandler(_BaseDataHandler[pd.DataFrame]):
                     ):
                         raise ValueError(
                             "Data Validation Error: "
-                            + f"Inconsistent type of object found in column data {data[df_col]}."
+                            + f"Inconsistent type of element in object found in column data {data[df_col]}."
                         )
 
                 elif isinstance(data[df_col][0], np.ndarray):
@@ -477,17 +488,20 @@ class _PandasDataFrameHandler(_BaseDataHandler[pd.DataFrame]):
                     if not all(DataType.from_numpy_type(data_row.dtype) == arr_dtype for data_row in data[df_col]):
                         raise ValueError(
                             "Data Validation Error: "
-                            + f"Inconsistent type of object found in column data {data[df_col]}."
+                            + f"Inconsistent type of element in object found in column data {data[df_col]}."
                         )
                 elif not isinstance(data[df_col][0], (str, bytes)):
                     raise ValueError(f"Data Validation Error: Unsupported type confronted in {data[df_col]}")
 
     @staticmethod
-    def infer_signature(data: pd.DataFrame, role: Literal["input", "output"]) -> Sequence[FeatureSpec]:
+    def infer_signature(data: pd.DataFrame, role: Literal["input", "output"]) -> Sequence[BaseFeatureSpec]:
         feature_prefix = f"{_PandasDataFrameHandler.FEATURE_PREFIX}_"
         df_cols = data.columns
+        role_prefix = (
+            _PandasDataFrameHandler.INPUT_PREFIX if role == "input" else _PandasDataFrameHandler.OUTPUT_PREFIX
+        ) + "_"
         if df_cols.dtype in [np.int64, np.uint64, np.float64]:
-            ft_names = [f"{feature_prefix}{i}" for i in df_cols]
+            ft_names = [f"{role_prefix}{feature_prefix}{i}" for i in df_cols]
         else:
             ft_names = list(map(str, data.columns.to_list()))
 
@@ -554,16 +568,17 @@ class _NumpyArrayHandler(_BaseDataHandler[model_types._SupportedNumpyArray]):
     @staticmethod
     def infer_signature(
         data: model_types._SupportedNumpyArray, role: Literal["input", "output"]
-    ) -> Sequence[FeatureSpec]:
+    ) -> Sequence[BaseFeatureSpec]:
         feature_prefix = f"{_PandasDataFrameHandler.FEATURE_PREFIX}_"
         dtype = DataType.from_numpy_type(data.dtype)
+        role_prefix = (_NumpyArrayHandler.INPUT_PREFIX if role == "input" else _NumpyArrayHandler.OUTPUT_PREFIX) + "_"
         if len(data.shape) == 1:
-            return [FeatureSpec(dtype=dtype, name=f"{feature_prefix}0")]
+            return [FeatureSpec(dtype=dtype, name=f"{role_prefix}{feature_prefix}0")]
         else:
             # For high-dimension array, 0-axis is for batch, 1-axis is for column, further more is details of columns.
             features = []
             n_cols = data.shape[1]
-            ft_names = [f"{feature_prefix}{i}" for i in range(n_cols)]
+            ft_names = [f"{role_prefix}{feature_prefix}{i}" for i in range(n_cols)]
             for col_data, ft_name in zip(data[0], ft_names):
                 if isinstance(col_data, np.ndarray):
                     ft_shape = np.shape(col_data)
@@ -576,7 +591,12 @@ class _NumpyArrayHandler(_BaseDataHandler[model_types._SupportedNumpyArray]):
     def convert_to_df(data: model_types._SupportedNumpyArray) -> pd.DataFrame:
         if len(data.shape) == 1:
             data = np.expand_dims(data, axis=1)
-        return pd.DataFrame(data)
+        n_cols = data.shape[1]
+        if len(data.shape) == 2:
+            return pd.DataFrame(data={i: data[:, i] for i in range(n_cols)})
+        else:
+            n_rows = data.shape[0]
+            return pd.DataFrame(data={i: [np.array(data[k, i]) for k in range(n_rows)] for i in range(n_cols)})
 
 
 class _ListOfNumpyArrayHandler(_BaseDataHandler[List[model_types._SupportedNumpyArray]]):
@@ -607,25 +627,29 @@ class _ListOfNumpyArrayHandler(_BaseDataHandler[List[model_types._SupportedNumpy
     @staticmethod
     def infer_signature(
         data: List[model_types._SupportedNumpyArray], role: Literal["input", "output"]
-    ) -> Sequence[FeatureSpec]:
-        features: List[FeatureSpec] = []
+    ) -> Sequence[BaseFeatureSpec]:
+        features: List[BaseFeatureSpec] = []
+        role_prefix = (
+            _ListOfNumpyArrayHandler.INPUT_PREFIX if role == "input" else _ListOfNumpyArrayHandler.OUTPUT_PREFIX
+        ) + "_"
 
         for i, data_col in enumerate(data):
             inferred_res = _NumpyArrayHandler.infer_signature(data_col, role)
             for ft in inferred_res:
-                additional_prefix = (
-                    _ListOfNumpyArrayHandler.OUTPUT_PREFIX
-                    if role == "output"
-                    else _ListOfNumpyArrayHandler.INPUT_PREFIX
-                )
-                ft._name = f"{additional_prefix}_{i}_{ft._name}"
+                ft._name = f"{role_prefix}{i}_{ft._name[len(role_prefix):]}"
             features.extend(inferred_res)
         return features
 
     @staticmethod
     def convert_to_df(data: List[model_types._SupportedNumpyArray]) -> pd.DataFrame:
-        arr = np.concatenate(data, axis=1)
-        return pd.DataFrame(arr)
+        l_data = []
+        for data_col in data:
+            if len(data_col.shape) == 1:
+                l_data.append(np.expand_dims(data_col, axis=1))
+            else:
+                l_data.append(data_col)
+        arr = np.concatenate(l_data, axis=1)
+        return _NumpyArrayHandler.convert_to_df(arr)
 
 
 class _ListOfBuiltinHandler(_BaseDataHandler[model_types._SupportedBuiltinsList]):
@@ -656,7 +680,7 @@ class _ListOfBuiltinHandler(_BaseDataHandler[model_types._SupportedBuiltinsList]
     @staticmethod
     def infer_signature(
         data: model_types._SupportedBuiltinsList, role: Literal["input", "output"]
-    ) -> Sequence[FeatureSpec]:
+    ) -> Sequence[BaseFeatureSpec]:
         return _PandasDataFrameHandler.infer_signature(pd.DataFrame(data), role)
 
     @staticmethod
@@ -687,11 +711,13 @@ class _SnowparkDataFrameHandler(_BaseDataHandler[snowflake.snowpark.DataFrame]):
                 )
 
     @staticmethod
-    def infer_signature(data: snowflake.snowpark.DataFrame, role: Literal["input", "output"]) -> Sequence[FeatureSpec]:
-        features: List[FeatureSpec] = []
+    def infer_signature(
+        data: snowflake.snowpark.DataFrame, role: Literal["input", "output"]
+    ) -> Sequence[BaseFeatureSpec]:
+        features: List[BaseFeatureSpec] = []
         schema = data.schema
         for field in schema.fields:
-            name = identifier.remove_and_unescape_quote_if_quoted(field.name)
+            name = identifier.get_unescaped_names(field.name)
             features.append(FeatureSpec(name=name, dtype=DataType.from_snowpark_type(field.datatype)))
         return features
 
@@ -734,7 +760,7 @@ def _truncate_data(data: model_types.SupportedDataType) -> model_types.Supported
 
 def _infer_signature(
     data: model_types.SupportedLocalDataType, role: Literal["input", "output"]
-) -> Sequence[FeatureSpec]:
+) -> Sequence[BaseFeatureSpec]:
     """Infer the inputs/outputs signature given a data that could be dataframe, numpy array or list.
         Dispatching is used to separate logic for different types.
         (Not using Python's singledispatch for unsupported feature of union dispatching in 3.8)
@@ -789,8 +815,8 @@ def _convert_list_to_ndarray(data: List[Any]) -> npt.NDArray[Any]:
 
 
 def _rename_features(
-    features: Sequence[FeatureSpec], feature_names: Optional[List[str]] = None
-) -> Sequence[FeatureSpec]:
+    features: Sequence[BaseFeatureSpec], feature_names: Optional[List[str]] = None
+) -> Sequence[BaseFeatureSpec]:
     """It renames the feature in features provided optional feature names.
 
     Args:
@@ -846,6 +872,7 @@ def _validate_pandas_df(data: pd.DataFrame, features: Sequence[BaseFeatureSpec])
         features: A sequence of feature specifications and feature group specifications, where the dataframe should fit.
 
     Raises:
+        NotImplementedError: FeatureGroupSpec is not supported.
         ValueError: Raised when a feature cannot be found.
         ValueError: Raised when feature is scalar but confront list element.
         ValueError: Raised when feature type is not aligned in list element.
@@ -855,15 +882,8 @@ def _validate_pandas_df(data: pd.DataFrame, features: Sequence[BaseFeatureSpec])
         ValueError: Raised when feature shape is not aligned in numpy array element.
         ValueError: Raised when feature type is not aligned in string element.
         ValueError: Raised when feature type is not aligned in bytes element.
-        ValueError: Raised when feature type is not met.
     """
-    _features: List[FeatureSpec] = []
     for feature in features:
-        if isinstance(feature, FeatureSpec):
-            _features.append(feature)
-        elif isinstance(feature, FeatureGroupSpec):
-            _features.extend(feature._specs)
-    for feature in _features:
         ft_name = feature.name
         try:
             data_col = data[ft_name]
@@ -871,10 +891,25 @@ def _validate_pandas_df(data: pd.DataFrame, features: Sequence[BaseFeatureSpec])
             raise ValueError(f"Data Validation Error: feature {ft_name} does not exist in data.")
 
         df_col_dtype = data_col.dtype
+        if isinstance(feature, FeatureGroupSpec):
+            raise NotImplementedError("FeatureGroupSpec is not supported.")
+
+        assert isinstance(feature, FeatureSpec), "Invalid feature kind."
         ft_type = feature._dtype
-        if df_col_dtype == np.dtype("O"):
+        ft_shape = feature._shape
+        if df_col_dtype != np.dtype("O"):
+            if ft_type != DataType.from_numpy_type(df_col_dtype):
+                raise ValueError(
+                    f"Data Validation Error in feature {ft_name}: "
+                    + f"Feature type {ft_type} is not met by all elements in {data_col}."
+                )
+            elif ft_shape is not None:
+                raise ValueError(
+                    f"Data Validation Error in feature {ft_name}: "
+                    + "Feature is a array type feature while scalar data is provided."
+                )
+        else:
             if isinstance(data_col[0], list):
-                ft_shape = feature._shape
                 if not ft_shape:
                     raise ValueError(
                         f"Data Validation Error in feature {ft_name}: "
@@ -898,7 +933,6 @@ def _validate_pandas_df(data: pd.DataFrame, features: Sequence[BaseFeatureSpec])
                             + f"Feature shape {ft_shape} is not met by all elements in {data_col}."
                         )
             elif isinstance(data_col[0], np.ndarray):
-                ft_shape = feature._shape
                 if not ft_shape:
                     raise ValueError(
                         f"Data Validation Error in feature {ft_name}: "
@@ -920,38 +954,47 @@ def _validate_pandas_df(data: pd.DataFrame, features: Sequence[BaseFeatureSpec])
                             + f"Feature shape {ft_shape} is not met by all elements in {data_col}."
                         )
             elif isinstance(data_col[0], str):
+                if ft_shape is not None:
+                    raise ValueError(
+                        f"Data Validation Error in feature {ft_name}: "
+                        + "Feature is a array type feature while scalar data is provided."
+                    )
                 if ft_type != DataType.STRING:
                     raise ValueError(
                         f"Data Validation Error in feature {ft_name}: "
                         + f"Feature type {ft_type} is not met by all elements in {data_col}."
                     )
             elif isinstance(data_col[0], bytes):
+                if ft_shape is not None:
+                    raise ValueError(
+                        f"Data Validation Error in feature {ft_name}: "
+                        + "Feature is a array type feature while scalar data is provided."
+                    )
                 if ft_type != DataType.BYTES:
                     raise ValueError(
                         f"Data Validation Error in feature {ft_name}: "
                         + f"Feature type {ft_type} is not met by all elements in {data_col}."
                     )
-        else:
-            if ft_type != DataType.from_numpy_type(df_col_dtype):
-                raise ValueError(
-                    f"Data Validation Error in feature {ft_name}: "
-                    + f"Feature type {ft_type} is not met by all elements in {data_col}."
-                )
 
 
 def _validate_snowpark_data(data: snowflake.snowpark.DataFrame, features: Sequence[BaseFeatureSpec]) -> None:
-    _features: List[FeatureSpec] = []
-    for feature in features:
-        if isinstance(feature, FeatureSpec):
-            _features.append(feature)
-        elif isinstance(feature, FeatureGroupSpec):
-            _features.extend(feature._specs)
+    """Validate Snowpark DataFrame as input
+
+    Args:
+        data: A snowpark dataframe to be validated.
+        features: A sequence of feature specifications and feature group specifications, where the dataframe should fit.
+
+    Raises:
+        NotImplementedError: FeatureGroupSpec is not supported.
+        ValueError: Raised when confronting invalid feature.
+        ValueError: Raised when a feature cannot be found.
+    """
     schema = data.schema
-    for feature in _features:
+    for feature in features:
         ft_name = feature.name
         found = False
         for field in schema.fields:
-            name = identifier.remove_and_unescape_quote_if_quoted(field.name)
+            name = identifier.get_unescaped_names(field.name)
             if name == ft_name:
                 found = True
                 if field.nullable:
@@ -960,14 +1003,15 @@ def _validate_snowpark_data(data: snowflake.snowpark.DataFrame, features: Sequen
                         + " inference might fail if there is null value.",
                         category=RuntimeWarning,
                     )
-
+                if isinstance(feature, FeatureGroupSpec):
+                    raise NotImplementedError("FeatureGroupSpec is not supported.")
+                assert isinstance(feature, FeatureSpec), "Invalid feature kind."
                 ft_type = feature._dtype
                 if not ft_type.is_same_snowpark_type(field.datatype):
                     raise ValueError(
                         f"Data Validation Error in feature {ft_name}: "
                         + f"Feature type {ft_type} is not met by column {field.name}."
                     )
-                break
         if not found:
             raise ValueError(f"Data Validation Error: feature {ft_name} does not exist in data.")
 
@@ -992,6 +1036,7 @@ def _convert_and_validate_local_data(
         if handler.can_handle(data):
             handler.validate(data)
             df = handler.convert_to_df(data)
+            break
     if df is None:
         raise ValueError(f"Data Validation Error: Un-supported type {type(data)} provided.")
     assert isinstance(df, pd.DataFrame)

@@ -1,7 +1,6 @@
 #
 # Copyright (c) 2012-2022 Snowflake Computing Inc. All rights reserved.
 #
-import inspect
 from typing import Collection, Optional
 
 import cloudpickle
@@ -11,6 +10,7 @@ import pandas as pd
 from snowflake import snowpark
 from snowflake.ml._internal import telemetry
 from snowflake.ml.metrics import _utils
+from snowflake.snowpark import functions as F
 
 _PROJECT = "ModelDevelopment"
 _SUBPROJECT = "Metrics"
@@ -46,34 +46,28 @@ def correlation(*, df: snowpark.DataFrame, columns: Optional[Collection[str]] = 
     Returns:
         Correlation matrix in pandas.DataFrame format.
     """
-    statement_params = telemetry.get_function_usage_statement_params(
-        project=_PROJECT,
-        subproject=_SUBPROJECT,
-        function_name=telemetry.get_statement_params_full_func_name(inspect.currentframe(), None),
-    )
+    assert df._session is not None
+    session = df._session
+    statement_params = telemetry.get_statement_params(_PROJECT, _SUBPROJECT)
 
     input_df, columns = _utils.validate_and_return_dataframe_and_columns(df=df, columns=columns)
-    assert input_df._session is not None, "input_df._session cannot be None"
-    sharded_dot_and_sum_computer = _utils.register_sharded_dot_sum_computer(
-        session=input_df._session, statement_params=statement_params
-    )
-    dot_and_sum_accumulator = _utils.register_accumulator_udtf(
-        session=input_df._session, statement_params=statement_params
-    )
     count = input_df.count(statement_params=statement_params)
 
-    # TODO: Move the below to snowpark dataframe operations
-    input_query = input_df.queries["queries"][-1]
-    query = f"""
-        with temp_table1 as
-        (select array_construct(*) as col from ({input_query})),
-        temp_table2 as
-        (select result as res, part from temp_table1,
-        table({sharded_dot_and_sum_computer}(temp_table1.col, '{str(count)}', '0')))
-        select result, temp_table2.part from temp_table2,
-        table({dot_and_sum_accumulator}(temp_table2.res) over (partition by part))
-    """
-    results = input_df._session.sql(query).collect(statement_params=statement_params)
+    # Register UDTFs.
+    sharded_dot_and_sum_computer = _utils.register_sharded_dot_sum_computer(
+        session=session, statement_params=statement_params
+    )
+    sharded_dot_and_sum_computer_udtf = F.table_function(sharded_dot_and_sum_computer)
+    accumulator = _utils.register_accumulator_udtf(session=session, statement_params=statement_params)
+    accumulator_udtf = F.table_function(accumulator)
+
+    # Compute the confusion matrix.
+    temp_df1 = input_df.select(F.array_construct(*input_df.columns).alias("ARR_COL"))  # type: ignore[arg-type]
+    temp_df2 = temp_df1.select(
+        sharded_dot_and_sum_computer_udtf(F.col("ARR_COL"), F.lit(count), F.lit(0))  # type: ignore[arg-type]
+    ).with_column_renamed("RESULT", "RES")
+    res_df = temp_df2.select(accumulator_udtf(F.col("RES")).over(partition_by="PART"), F.col("PART"))
+    results = res_df.collect(statement_params=statement_params)
 
     # The below computation can be moved to a third udtf. But there is not much benefit in terms of client side
     # resource consumption as the below computation is very fast (< 1 sec for 1000 cols). Memory is in the same order

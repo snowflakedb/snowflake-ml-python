@@ -4,31 +4,38 @@ import snowflake.ml._internal.utils.identifier as identifier
 
 
 class SnowflakeIdentifierTest(absltest.TestCase):
-    def test_remove_quote(self) -> None:
-        """Tests if quote is removed correctly."""
-        self.assertEqual("foo", identifier.remove_quote_if_quoted('"foo"'))
-        self.assertEqual('foo"bar', identifier.remove_quote_if_quoted('"foo"bar"'))
+    def test_is_quote_valid(self) -> None:
+        self.assertTrue(identifier._is_quoted('"foo"'))
+        self.assertTrue(identifier._is_quoted('"""foo"""'))
+        self.assertFalse(identifier._is_quoted("foo"))
 
-    def test_quote_not_removed(self) -> None:
-        """Tests if quote is removed correctly."""
-        self.assertEqual('"foo', identifier.remove_quote_if_quoted('"foo'))
-        self.assertEqual('foo"', identifier.remove_quote_if_quoted('foo"'))
-        self.assertEqual('foo"bar', identifier.remove_quote_if_quoted('foo"bar'))
+    def test_is_quote_invalid(self) -> None:
+        with self.assertRaises(ValueError):
+            identifier._is_quoted('foo"')
+        with self.assertRaises(ValueError):
+            identifier._is_quoted('"bar')
+        with self.assertRaises(ValueError):
+            identifier._is_quoted('foo"bar')
+        with self.assertRaises(ValueError):
+            identifier._is_quoted('""foo""')
+        with self.assertRaises(ValueError):
+            identifier._is_quoted('"foo"""bar"')
 
-    def test_remove_and_unescape_quote_if_quoted(self) -> None:
-        self.assertEqual("foo", identifier.remove_and_unescape_quote_if_quoted('"foo"'))
-        self.assertEqual('"foo"', identifier.remove_and_unescape_quote_if_quoted('"""foo"""'))
-        self.assertEqual('foo"bar', identifier.remove_and_unescape_quote_if_quoted('"foo""bar"'))
-        with self.assertRaises(ValueError):
-            identifier.remove_and_unescape_quote_if_quoted('foo"')
-        with self.assertRaises(ValueError):
-            identifier.remove_and_unescape_quote_if_quoted('"bar')
-        with self.assertRaises(ValueError):
-            identifier.remove_and_unescape_quote_if_quoted('foo"bar')
-        with self.assertRaises(ValueError):
-            identifier.remove_and_unescape_quote_if_quoted('""foo""')
-        with self.assertRaises(ValueError):
-            identifier.remove_and_unescape_quote_if_quoted('"foo"""bar"')
+    def test_get_unescaped_names(self) -> None:
+        self.assertEqual("FOO", identifier.get_unescaped_names("foo"))
+        self.assertEqual("foo", identifier.get_unescaped_names('"foo"'))
+        self.assertEqual('"foo"', identifier.get_unescaped_names('"""foo"""'))
+        self.assertEqual('foo"bar', identifier.get_unescaped_names('"foo""bar"'))
+
+        input_and_expected_output_tuples = [
+            (None, None),
+            ("Abc", "ABC"),
+            ('"Abc"', "Abc"),
+            (["Abc", '"Abc"'], ["ABC", "Abc"]),
+        ]
+
+        for input, expected_output in input_and_expected_output_tuples:
+            self.assertEqual(identifier.get_unescaped_names(input), expected_output)
 
     def test_plan_concat(self) -> None:
         """Test vanilla concat with no quotes."""
@@ -62,19 +69,6 @@ class SnowflakeIdentifierTest(absltest.TestCase):
                 self.assertTupleEqual(
                     tuple(test_case[1:]), identifier.parse_schema_level_object_identifier(test_case[0])
                 )
-
-    def test_get_equivalent_identifier_in_the_response_pandas_dataframe(self) -> None:
-        input_and_expected_output_tuples = [
-            (None, None),
-            ("Abc", "ABC"),
-            ('"Abc"', "Abc"),
-            (["Abc", '"Abc"'], ["ABC", "Abc"]),
-        ]
-
-        for (input, expected_output) in input_and_expected_output_tuples:
-            self.assertEqual(
-                identifier.get_equivalent_identifier_in_the_response_pandas_dataframe(input), expected_output
-            )
 
 
 if __name__ == "__main__":

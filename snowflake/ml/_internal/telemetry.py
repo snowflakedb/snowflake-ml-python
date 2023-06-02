@@ -6,6 +6,7 @@ import enum
 import functools
 import inspect
 import operator
+import threading
 import types
 from typing import (
     Any,
@@ -27,6 +28,10 @@ from snowflake.connector import telemetry as connector_telemetry, time_util
 from snowflake.ml._internal import env
 from snowflake.snowpark import dataframe, exceptions, session
 from snowflake.snowpark._internal import utils
+
+_rlock = threading.RLock()
+_log_counter = 0
+_FLUSH_SIZE = 10
 
 _Args = ParamSpec("_Args")
 _ReturnValue = TypeVar("_ReturnValue")
@@ -303,8 +308,12 @@ def send_api_usage_telemetry(
                 return res
             finally:
                 telemetry.send_function_usage_telemetry(**telemetry_args)
-                if "error" in telemetry_args:
-                    telemetry.send_batch()
+                with _rlock:
+                    global _log_counter
+                    _log_counter += 1
+                    if _log_counter >= _FLUSH_SIZE or "error" in telemetry_args:
+                        telemetry.send_batch()
+                        _log_counter = 0
 
         return cast(Callable[_Args, _ReturnValue], wrap)
 
@@ -451,9 +460,6 @@ def _extract_arg_value(field: str, func_spec: inspect.FullArgSpec, args: Any, kw
 
 
 class _SourceTelemetryClient:
-
-    DEFAULT_FORCE_FLUSH_SIZE = 10
-
     def __init__(
         self,
         conn: connector.SnowflakeConnection,
@@ -485,9 +491,6 @@ class _SourceTelemetryClient:
         self.version = env.VERSION
         self.python_version: str = env.PYTHON_VERSION
         self.os: str = env.OS
-
-        if self._telemetry:
-            self._telemetry._flush_size = _SourceTelemetryClient.DEFAULT_FORCE_FLUSH_SIZE
 
     def _send(self, msg: Dict[str, Any], timestamp: Optional[int] = None) -> None:
         """

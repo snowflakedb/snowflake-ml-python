@@ -23,6 +23,7 @@ _BASIC_DEPENDENCIES = [
     "pyyaml",
     "typing-extensions",
     "cloudpickle",
+    "packaging",
     "anyio",
     "snowflake-snowpark-python",
     "scikit-learn",
