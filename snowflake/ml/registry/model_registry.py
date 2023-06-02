@@ -13,8 +13,12 @@ from absl import logging
 
 from snowflake import connector, snowpark
 from snowflake.ml._internal import file_utils, telemetry
-from snowflake.ml._internal.utils import formatting, query_result_checker, uri
-from snowflake.ml.framework import base
+from snowflake.ml._internal.utils import (
+    formatting,
+    identifier,
+    query_result_checker,
+    uri,
+)
 from snowflake.ml.model import (
     _deployer,
     _model as model_api,
@@ -22,6 +26,7 @@ from snowflake.ml.model import (
     type_hints as model_types,
 )
 from snowflake.ml.registry import _schema
+from snowflake.ml.sklearn.framework import base
 
 if TYPE_CHECKING:
     import pandas as pd
@@ -51,6 +56,7 @@ _TELEMETRY_PROJECT = "MLOps"
 _TELEMETRY_SUBPROJECT = "ModelRegistry"
 
 
+@snowpark._internal.utils.private_preview(version="0.2.0")
 def create_model_registry(
     *,
     session: snowpark.Session,
@@ -156,7 +162,11 @@ def _create_registry_tables(
         metadata_table_name: Name for the metadata table used by the model registry.
         statement_params: Function usage statement parameters used in sql query executions.
     """
-    fully_qualified_schema_name = f'"{database_name}"."{schema_name}"'
+    fully_qualified_schema_name = (
+        f"{identifier.quote_name_without_upper_casing(database_name)}"
+        + "."
+        + f"{identifier.quote_name_without_upper_casing(schema_name)}"
+    )
     fully_qualified_registry_table_name = f'{fully_qualified_schema_name}."{registry_table_name}"'
     fully_qualified_metadata_table_name = f'{fully_qualified_schema_name}."{metadata_table_name}"'
 
@@ -206,7 +216,11 @@ def _create_registry_views(
         metadata_table_name: Name for the metadata table used by the model registry.
         statement_params: Function usage statement parameters used in sql query executions.
     """
-    fully_qualified_schema_name = f'"{database_name}"."{schema_name}"'
+    fully_qualified_schema_name = (
+        f"{identifier.quote_name_without_upper_casing(database_name)}"
+        + "."
+        + f"{identifier.quote_name_without_upper_casing(schema_name)}"
+    )
 
     # From the documentation: Each DDL statement executes as a separate transaction. Races should not be an issue.
     # https://docs.snowflake.com/en/sql-reference/transactions.html#ddl
@@ -236,7 +250,9 @@ def _create_registry_views(
         )
         session.sql(sql).collect(statement_params=statement_params)
         metadata_view_names.append(view_name)
-        metadata_select_fields.append(f'"{view_name}".{attribute_name} AS {attribute_name}')
+        metadata_select_fields.append(
+            f"{identifier.quote_name_without_upper_casing(view_name)}.{attribute_name} AS {attribute_name}"
+        )
 
     # Create a special view for the registration timestamp.
     attribute_name = _METADATA_ATTRIBUTE_REGISTRATION
@@ -253,7 +269,9 @@ def _create_registry_views(
     )
     session.sql(create_registration_view_sql).collect(statement_params=statement_params)
     metadata_view_names.append(view_name)
-    metadata_select_fields.append(f'"{view_name}".{final_attribute_name} AS {final_attribute_name}')
+    metadata_select_fields.append(
+        f"{identifier.quote_name_without_upper_casing(view_name)}.{final_attribute_name} AS {final_attribute_name}"
+    )
 
     metadata_views_join = " ".join(
         [
@@ -343,15 +361,31 @@ class ModelRegistry:
 
     def _fully_qualified_registry_table_name(self) -> str:
         """Get the fully qualified name to the current registry table."""
-        return f'"{self._name}"."{self._schema}"."{self._registry_table}"'
+        return (
+            f"{identifier.quote_name_without_upper_casing(self._name)}"
+            + "."
+            + f"{identifier.quote_name_without_upper_casing(self._schema)}"
+            + "."
+            + f"{identifier.quote_name_without_upper_casing(self._registry_table)}"
+        )
 
     def _fully_qualified_metadata_table_name(self) -> str:
         """Get the fully qualified name to the current metadata table."""
-        return f'"{self._name}"."{self._schema}"."{self._metadata_table}"'
+        return (
+            f"{identifier.quote_name_without_upper_casing(self._name)}"
+            + "."
+            + f"{identifier.quote_name_without_upper_casing(self._schema)}"
+            + "."
+            + f"{identifier.quote_name_without_upper_casing(self._metadata_table)}"
+        )
 
     def _fully_qualified_schema_name(self) -> str:
         """Get the fully qualified name to the current registry schema."""
-        return f'"{self._name}"."{self._schema}"'
+        return (
+            f"{identifier.quote_name_without_upper_casing(self._name)}"
+            + "."
+            + f"{identifier.quote_name_without_upper_casing(self._schema)}"
+        )
 
     def _insert_table_entry(self, *, table: str, columns: Dict[str, Any]) -> List[snowpark.Row]:
         """Insert an entry into an internal Model Registry table.
@@ -709,6 +743,68 @@ class ModelRegistry:
             raise NotImplementedError("Restoring models consisting of multiple files is currently not supported.")
         return f"{self._fully_qualified_schema_name()}.{model_file_list[0].name}"
 
+    def _log_model_path(
+        self,
+        model_name: str,
+        model_version: str,
+        *,
+        path: str,
+        type: str,
+        description: Optional[str] = None,
+        tags: Optional[Dict[Any, Any]] = None,
+    ) -> str:
+        """Uploads and register a model to the Model Registry from a local file path.
+
+        If `path` is a directory all files will be uploaded recursively, preserving the relative directory structure.
+        Symbolic links will be followed.
+
+        NOTE: If any symlinks under `path` point to a parent directory, this can lead to infinite recursion.
+
+        Args:
+            model_name: The given name for the model.
+            model_version: Version string to be set for the model.
+            path: Local file path to be uploaded.
+            type: Type of the model to be added.
+            description: A desription for the model. The description can be changed later.
+            tags: string-to-string dictonary of tag names and values to be set for the model.
+
+        Returns:
+            String of the auto-generate unique model identifier.
+        """
+        self._model_identifier_is_nonempty_or_raise(model_name, model_version)
+        id = self._get_new_unique_identifier()
+
+        # Copy model from local disk to remote stage.
+        fully_qualified_model_stage_name = self._prepare_model_stage(model_id=id)
+
+        # Check if directory or file and adapt accordingly.
+        # TODO: Unify and explicit about compression for both file and directory.
+        if os.path.isfile(path):
+            self._session.file.put(path, f"{fully_qualified_model_stage_name}/data")
+        elif os.path.isdir(path):
+            with file_utils.zip_file_or_directory_to_stream(path, path) as input_stream:
+                self._session._conn.upload_stream(
+                    input_stream=input_stream,
+                    stage_location=fully_qualified_model_stage_name,
+                    dest_filename=f"{os.path.basename(path)}.zip",
+                    dest_prefix="",
+                    source_compression="DEFLATE",
+                    compress_data=False,
+                    overwrite=True,
+                    is_in_udf=True,
+                )
+        self._register_model_with_id(
+            model_name=model_name,
+            model_version=model_version,
+            model_id=id,
+            type=type,
+            uri=uri.get_uri_from_snowflake_stage_path(fully_qualified_model_stage_name),
+            description=description,
+            tags=tags,
+        )
+
+        return id
+
     def _register_model_with_id(
         self,
         model_name: str,
@@ -785,6 +881,7 @@ class ModelRegistry:
         project=_TELEMETRY_PROJECT,
         subproject=_TELEMETRY_SUBPROJECT,
     )
+    @snowpark._internal.utils.private_preview(version="0.2.0")
     def list_models(self) -> snowpark.DataFrame:
         """Lists models contained in the registry.
 
@@ -804,6 +901,7 @@ class ModelRegistry:
         project=_TELEMETRY_PROJECT,
         subproject=_TELEMETRY_SUBPROJECT,
     )
+    @snowpark._internal.utils.private_preview(version="0.2.0")
     def set_tag(
         self,
         model_name: str,
@@ -833,6 +931,7 @@ class ModelRegistry:
         project=_TELEMETRY_PROJECT,
         subproject=_TELEMETRY_SUBPROJECT,
     )
+    @snowpark._internal.utils.private_preview(version="0.2.0")
     def remove_tag(self, model_name: str, model_version: str, tag_name: str) -> None:
         """Remove target model tag.
 
@@ -860,6 +959,7 @@ class ModelRegistry:
         project=_TELEMETRY_PROJECT,
         subproject=_TELEMETRY_SUBPROJECT,
     )
+    @snowpark._internal.utils.private_preview(version="0.2.0")
     def has_tag(
         self,
         model_name: str,
@@ -891,6 +991,7 @@ class ModelRegistry:
         project=_TELEMETRY_PROJECT,
         subproject=_TELEMETRY_SUBPROJECT,
     )
+    @snowpark._internal.utils.private_preview(version="0.2.0")
     def get_tag_value(self, model_name: str, model_version: str, tag_name: str) -> Any:
         """Return the value of the tag for the model.
 
@@ -910,6 +1011,7 @@ class ModelRegistry:
         project=_TELEMETRY_PROJECT,
         subproject=_TELEMETRY_SUBPROJECT,
     )
+    @snowpark._internal.utils.private_preview(version="0.2.0")
     def get_tags(self, model_name: str = None, model_version: str = None) -> Dict[str, Any]:
         """Get all tags and values stored for the target model.
 
@@ -936,6 +1038,7 @@ class ModelRegistry:
         project=_TELEMETRY_PROJECT,
         subproject=_TELEMETRY_SUBPROJECT,
     )
+    @snowpark._internal.utils.private_preview(version="0.2.0")
     def get_model_description(self, model_name: str, model_version: str) -> Optional[str]:
         """Get the description of the model.
 
@@ -955,6 +1058,7 @@ class ModelRegistry:
         project=_TELEMETRY_PROJECT,
         subproject=_TELEMETRY_SUBPROJECT,
     )
+    @snowpark._internal.utils.private_preview(version="0.2.0")
     def set_model_description(
         self,
         model_name: str,
@@ -976,6 +1080,7 @@ class ModelRegistry:
         project=_TELEMETRY_PROJECT,
         subproject=_TELEMETRY_SUBPROJECT,
     )
+    @snowpark._internal.utils.private_preview(version="0.2.0")
     def get_history(self) -> snowpark.DataFrame:
         """Return a dataframe with the history of operations performed on the model registry.
 
@@ -1003,6 +1108,7 @@ class ModelRegistry:
         project=_TELEMETRY_PROJECT,
         subproject=_TELEMETRY_SUBPROJECT,
     )
+    @snowpark._internal.utils.private_preview(version="0.2.0")
     def get_model_history(
         self,
         model_name: str,
@@ -1026,6 +1132,7 @@ class ModelRegistry:
         project=_TELEMETRY_PROJECT,
         subproject=_TELEMETRY_SUBPROJECT,
     )
+    @snowpark._internal.utils.private_preview(version="0.2.0")
     def set_metric(
         self,
         model_name: str,
@@ -1055,6 +1162,7 @@ class ModelRegistry:
         project=_TELEMETRY_PROJECT,
         subproject=_TELEMETRY_SUBPROJECT,
     )
+    @snowpark._internal.utils.private_preview(version="0.2.0")
     def remove_metric(
         self,
         model_name: str,
@@ -1090,6 +1198,7 @@ class ModelRegistry:
         project=_TELEMETRY_PROJECT,
         subproject=_TELEMETRY_SUBPROJECT,
     )
+    @snowpark._internal.utils.private_preview(version="0.2.0")
     def has_metric(self, model_name: str, model_version: str, metric_name: str) -> bool:
         """Check if a model has a metric with the given name.
 
@@ -1108,7 +1217,8 @@ class ModelRegistry:
         project=_TELEMETRY_PROJECT,
         subproject=_TELEMETRY_SUBPROJECT,
     )
-    def get_metric_value(self, model_name: str, model_version: str, metric_name: str) -> Optional[object]:
+    @snowpark._internal.utils.private_preview(version="0.2.0")
+    def get_metric_value(self, model_name: str, model_version: str, metric_name: str) -> object:
         """Return the value of the given metric for the model.
 
         The returned value can be None. If the metric does not exist, KeyError will be raised.
@@ -1127,6 +1237,7 @@ class ModelRegistry:
         project=_TELEMETRY_PROJECT,
         subproject=_TELEMETRY_SUBPROJECT,
     )
+    @snowpark._internal.utils.private_preview(version="0.2.0")
     def get_metrics(self, model_name: str, model_version: str) -> Dict[str, object]:
         """Get all metrics and values stored for the given model.
 
@@ -1154,6 +1265,7 @@ class ModelRegistry:
         project=_TELEMETRY_PROJECT,
         subproject=_TELEMETRY_SUBPROJECT,
     )
+    @snowpark._internal.utils.private_preview(version="0.2.0")
     def log_model(
         self,
         model_name: str,
@@ -1259,72 +1371,7 @@ class ModelRegistry:
         project=_TELEMETRY_PROJECT,
         subproject=_TELEMETRY_SUBPROJECT,
     )
-    def _log_model_path(
-        self,
-        model_name: str,
-        model_version: str,
-        *,
-        path: str,
-        type: str,
-        description: Optional[str] = None,
-        tags: Optional[Dict[Any, Any]] = None,
-    ) -> str:
-        """Uploads and register a model to the Model Registry from a local file path.
-
-        If `path` is a directory all files will be uploaded recursively, preserving the relative directory structure.
-        Symbolic links will be followed.
-
-        NOTE: If any symlinks under `path` point to a parent directory, this can lead to infinite recursion.
-
-        Args:
-            model_name: The given name for the model.
-            model_version: Version string to be set for the model.
-            path: Local file path to be uploaded.
-            type: Type of the model to be added.
-            description: A desription for the model. The description can be changed later.
-            tags: string-to-string dictonary of tag names and values to be set for the model.
-
-        Returns:
-            String of the auto-generate unique model identifier.
-        """
-        self._model_identifier_is_nonempty_or_raise(model_name, model_version)
-        id = self._get_new_unique_identifier()
-
-        # Copy model from local disk to remote stage.
-        fully_qualified_model_stage_name = self._prepare_model_stage(model_id=id)
-
-        # Check if directory or file and adapt accordingly.
-        # TODO: Unify and explicit about compression for both file and directory.
-        if os.path.isfile(path):
-            self._session.file.put(path, f"{fully_qualified_model_stage_name}/data")
-        elif os.path.isdir(path):
-            with file_utils.zip_file_or_directory_to_stream(path, path) as input_stream:
-                self._session._conn.upload_stream(
-                    input_stream=input_stream,
-                    stage_location=fully_qualified_model_stage_name,
-                    dest_filename=f"{os.path.basename(path)}.zip",
-                    dest_prefix="",
-                    source_compression="DEFLATE",
-                    compress_data=False,
-                    overwrite=True,
-                    is_in_udf=True,
-                )
-        self._register_model_with_id(
-            model_name=model_name,
-            model_version=model_version,
-            model_id=id,
-            type=type,
-            uri=uri.get_uri_from_snowflake_stage_path(fully_qualified_model_stage_name),
-            description=description,
-            tags=tags,
-        )
-
-        return id
-
-    @telemetry.send_api_usage_telemetry(
-        project=_TELEMETRY_PROJECT,
-        subproject=_TELEMETRY_SUBPROJECT,
-    )
+    @snowpark._internal.utils.private_preview(version="0.2.0")
     def load_model(self, model_name: str, model_version: str) -> Any:
         """Loads the model with the given (model_name + model_version) from the registry into memory.
 
@@ -1347,7 +1394,7 @@ class ModelRegistry:
                     with zipfile.ZipFile(local_path, "r") as myzip:
                         if len(myzip.namelist()) > 1:
                             myzip.extractall(extracted_dir)
-                            restored_model, _meta = model_api.load_model(extracted_dir)
+                            restored_model, _meta = model_api.load_model(model_dir_path=extracted_dir)
                             is_native_model_format = True
             except TypeError:
                 pass
@@ -1364,6 +1411,7 @@ class ModelRegistry:
         project=_TELEMETRY_PROJECT,
         subproject=_TELEMETRY_SUBPROJECT,
     )
+    @snowpark._internal.utils.private_preview(version="0.2.0")
     def deploy(
         self,
         model_name: str,
@@ -1416,26 +1464,7 @@ class ModelRegistry:
         project=_TELEMETRY_PROJECT,
         subproject=_TELEMETRY_SUBPROJECT,
     )
-    def predict(self, deployment_name: str, data: Any) -> "pd.DataFrame":
-        """Predict using the deployed model in Snowflake.
-
-        Args:
-            deployment_name: name of the generated UDF.
-            data: Data to run predict.
-
-        Raises:
-            ValueError: The deployment with given name haven't been deployed.
-
-        Returns:
-            A dataframe containing the result of prediction.
-        """
-
-        di = self._deploy_api.get_deployment(name=deployment_name)
-        if di is None:
-            raise ValueError(f"The deployment with name {deployment_name} haven't been deployed")
-
-        return self._deploy_api.predict(di["name"], data)
-
+    @snowpark._internal.utils.private_preview(version="0.2.0")
     def delete_model(
         self,
         model_name: str,
@@ -1628,3 +1657,28 @@ class ModelReference:
             setattr(self.__class__.__dict__[name], "__doc__", docstring)  # NoQA
 
         setattr(self.__class__, "init_complete", True)  # NoQA
+
+    @telemetry.send_api_usage_telemetry(
+        project=_TELEMETRY_PROJECT,
+        subproject=_TELEMETRY_SUBPROJECT,
+    )
+    @snowpark._internal.utils.private_preview(version="0.2.0")
+    def predict(self, deployment_name: str, data: Any) -> "pd.DataFrame":
+        """Predict using the deployed model in Snowflake.
+
+        Args:
+            deployment_name: name of the generated UDF.
+            data: Data to run predict.
+
+        Raises:
+            ValueError: The deployment with given name haven't been deployed.
+
+        Returns:
+            A dataframe containing the result of prediction.
+        """
+
+        di = self._registry._deploy_api.get_deployment(name=deployment_name)
+        if di is None:
+            raise ValueError(f"The deployment with name {deployment_name} haven't been deployed")
+
+        return self._registry._deploy_api.predict(di["name"], data)

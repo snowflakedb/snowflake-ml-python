@@ -12,7 +12,7 @@ import numpy as np
 {transform.estimator_imports}
 from sklearn.utils.metaestimators import available_if
 
-from snowflake.ml.framework.base import BaseTransformer
+from snowflake.ml.sklearn.framework.base import BaseTransformer
 from snowflake.ml._internal import telemetry
 from snowflake.ml._internal.utils.query_result_checker import SqlResultValidator
 from snowflake.ml._internal.utils import pkg_version_utils, identifier
@@ -20,6 +20,14 @@ from snowflake.ml._internal.utils.temp_file_utils import cleanup_temp_files, get
 from snowflake.snowpark import DataFrame, Session
 from snowflake.snowpark.functions import pandas_udf, sproc
 from snowflake.snowpark.types import PandasSeries
+
+from snowflake.ml.model.model_signature import (
+    DataType,
+    FeatureSpec,
+    ModelSignature,
+    _infer_signature,
+    _rename_features,
+)
 
 _PROJECT = "ModelDevelopment"
 # Derive subproject from module name by removing "sklearn"
@@ -116,6 +124,7 @@ class {transform.original_class_name}(BaseTransformer):
         self._sklearn_object = {transform.root_module_name}.{transform.original_class_name}(
             {transform.sklearn_init_arguments}
         )
+        self._model_signature_dict = None
         {transform.estimator_init_member_args}
 
     def _infer_input_output_cols(self, dataset: Union[DataFrame, pd.DataFrame]) -> None:
@@ -161,6 +170,7 @@ class {transform.original_class_name}(BaseTransformer):
                 "Supported dataset types: snowpark.DataFrame, pandas.DataFrame."
             )
         self._is_fitted = True
+        self._get_model_signatures(dataset)
         return self
 
     def _fit_snowpark(self, dataset: DataFrame) -> None:
@@ -310,9 +320,9 @@ class {transform.original_class_name}(BaseTransformer):
             query,
             stage_transform_file_name,
             stage_result_file_name,
-            identifier.get_equivalent_identifier_in_the_response_pandas_dataframe(self.input_cols),
-            identifier.get_equivalent_identifier_in_the_response_pandas_dataframe(self.label_cols),
-            identifier.get_equivalent_identifier_in_the_response_pandas_dataframe(self.sample_weight_col),
+            identifier.get_unescaped_names(self.input_cols),
+            identifier.get_unescaped_names(self.label_cols),
+            identifier.get_unescaped_names(self.sample_weight_col),
             statement_params=statement_params,
         )
 
@@ -378,7 +388,7 @@ class {transform.original_class_name}(BaseTransformer):
         # Input columns for UDF are sorted by column names.
         # We need actual order of input cols to reorder dataframe before calling inference methods.
         input_cols = self.input_cols
-        unquoted_input_cols = identifier.get_equivalent_identifier_in_the_response_pandas_dataframe(self.input_cols)
+        unquoted_input_cols = identifier.get_unescaped_names(self.input_cols)
 
         statement_params = telemetry.get_function_usage_statement_params(
             project=_PROJECT,
@@ -511,9 +521,37 @@ class {transform.original_class_name}(BaseTransformer):
         expected_output_cols_list: List[str]
     ) -> pd.DataFrame:
         output_cols = expected_output_cols_list.copy()
-        transformed_numpy_array = getattr(self._sklearn_object, inference_method)(
-            dataset[self.input_cols]
+
+        # Model expects exact same columns names in the input df for predict call.
+        # Given the scenario that user use snowpark DataFrame in fit call, but pandas DataFrame in predict call
+        # input cols need to match unquoted / quoted
+        input_cols = self.input_cols
+        unquoted_input_cols = identifier.get_unescaped_names(self.input_cols)
+
+        estimator = self._sklearn_object
+
+        input_df = dataset[input_cols] # Select input columns with quoted column names.
+        if hasattr(estimator, "feature_names_in_"):
+            missing_features = []
+            for i, f in enumerate(getattr(estimator, "feature_names_in_")):
+                if i >= len(input_cols) or (input_cols[i] != f and unquoted_input_cols[i] != f):
+                    missing_features.append(f)
+
+            if len(missing_features) > 0:
+                raise ValueError(
+                    "The feature names should match with those that were passed during fit.\n"
+                    f"Features seen during fit call but not present in the input: {{missing_features}}\n"
+                    f"Features in the input dataframe : {{input_cols}}\n"
+                )
+            input_df.columns = getattr(estimator, "feature_names_in_")
+        else:
+            # Just rename the column names to unquoted identifiers.
+            input_df.columns = unquoted_input_cols # Replace the quoted columns identifier with unquoted column ids.
+
+        transformed_numpy_array = getattr(estimator, inference_method)(
+            input_df
         )
+
         if (
             isinstance(transformed_numpy_array, list)
             and len(transformed_numpy_array) > 0
@@ -974,12 +1012,45 @@ class {transform.original_class_name}(BaseTransformer):
             score_sproc_name,
             query,
             stage_score_file_name,
-            identifier.get_equivalent_identifier_in_the_response_pandas_dataframe(self.input_cols),
-            identifier.get_equivalent_identifier_in_the_response_pandas_dataframe(self.label_cols),
-            identifier.get_equivalent_identifier_in_the_response_pandas_dataframe(self.sample_weight_col),
+            identifier.get_unescaped_names(self.input_cols),
+            identifier.get_unescaped_names(self.label_cols),
+            identifier.get_unescaped_names(self.sample_weight_col),
             statement_params=statement_params,
         )
 
         cleanup_temp_files([local_score_file_name])
 
         return score
+
+    def _get_model_signatures(self, dataset: Union[DataFrame, pd.DataFrame]) -> None:
+        self._model_signature_dict: Dict[str, ModelSignature] = dict()
+
+        PROB_FUNCTIONS = ["predict_log_proba", "predict_proba", "decision_function"]
+
+        inputs = _infer_signature(dataset[self.input_cols], "input")
+        if hasattr(self, "predict"):
+            # For classifier, the type of predict is the same as the type of label
+            if self._sklearn_object._estimator_type == 'classifier':
+                outputs = _infer_signature(dataset[self.label_cols], "output")  # label columns is the desired type for output
+                outputs = _rename_features(outputs, self.output_cols)  # rename the output columns
+                self._model_signature_dict["predict"] = ModelSignature(inputs, outputs)
+            # For regressor, the type of predict is float64
+            elif self._sklearn_object._estimator_type == 'regressor':
+                outputs = [FeatureSpec(dtype=DataType.DOUBLE, name=c) for c in self.output_cols]
+                self._model_signature_dict["predict"] = ModelSignature(inputs, outputs)
+
+        for prob_func in PROB_FUNCTIONS:
+            if hasattr(self, prob_func):
+                output_cols_prefix: str = f"{{prob_func}}_"
+                output_column_names = self._get_output_column_names(output_cols_prefix)
+                outputs = [FeatureSpec(dtype=DataType.DOUBLE, name=c) for c in output_column_names]
+                self._model_signature_dict[prob_func] = ModelSignature(inputs, outputs)
+
+        ##TODO: Add support for transform method
+
+
+    @property
+    def model_signatures(self) -> Dict[str, ModelSignature]:
+        if self._model_signature_dict is None:
+            raise RuntimeError("Estimator not fitted before accessing property model_signatures! ")
+        return self._model_signature_dict

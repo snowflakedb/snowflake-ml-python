@@ -16,14 +16,14 @@ from snowflake.ml.model import (
 from snowflake.ml.model._handlers import _base
 
 if TYPE_CHECKING:
-    from snowflake.ml.framework.base import BaseEstimator
+    from snowflake.ml.sklearn.framework.base import BaseEstimator
 
 
 class _SnowMLModelHandler(_base._ModelHandler["BaseEstimator"]):
     """Handler for SnowML based model.
 
-    Currently snowflake.ml.framework.base.BaseEstimator
-        and snowflake.ml.framework.pipeline.Pipeline based classes are supported.
+    Currently snowflake.ml.sklearn.framework.base.BaseEstimator
+        and snowflake.ml.sklearn.framework.pipeline.Pipeline based classes are supported.
     """
 
     handler_type = "snowml"
@@ -34,7 +34,7 @@ class _SnowMLModelHandler(_base._ModelHandler["BaseEstimator"]):
         model: model_types.SupportedModelType,
     ) -> TypeGuard["BaseEstimator"]:
         return (
-            type_utils.LazyType("snowflake.ml.framework.base.BaseEstimator").isinstance(model)
+            type_utils.LazyType("snowflake.ml.sklearn.framework.base.BaseEstimator").isinstance(model)
             # Pipeline is inherited from BaseEstimator, so no need to add one more check
         ) and any(
             (hasattr(model, method) and callable(getattr(model, method, None)))
@@ -45,7 +45,7 @@ class _SnowMLModelHandler(_base._ModelHandler["BaseEstimator"]):
     def cast_model(
         model: model_types.SupportedModelType,
     ) -> "BaseEstimator":
-        from snowflake.ml.framework.base import BaseEstimator
+        from snowflake.ml.sklearn.framework.base import BaseEstimator
 
         assert isinstance(model, BaseEstimator)
         # Pipeline is inherited from BaseEstimator, so no need to add one more check
@@ -62,7 +62,7 @@ class _SnowMLModelHandler(_base._ModelHandler["BaseEstimator"]):
         is_sub_model: Optional[bool] = False,
         **kwargs: Unpack[model_types.SNOWModelSaveOptions],
     ) -> None:
-        from snowflake.ml.framework.base import BaseEstimator
+        from snowflake.ml.sklearn.framework.base import BaseEstimator
 
         assert isinstance(model, BaseEstimator)
         # Pipeline is inherited from BaseEstimator, so no need to add one more check
@@ -123,7 +123,7 @@ class _SnowMLModelHandler(_base._ModelHandler["BaseEstimator"]):
         with open(os.path.join(model_blob_path, model_blob_filename), "rb") as f:
             m = cloudpickle.load(f)
 
-        from snowflake.ml.framework.base import BaseEstimator
+        from snowflake.ml.sklearn.framework.base import BaseEstimator
 
         assert isinstance(m, BaseEstimator)
         return m

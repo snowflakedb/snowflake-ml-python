@@ -2,13 +2,21 @@ load("//bazel:py_rules.bzl", "py_library", "py_test")
 
 package(default_visibility = ["//visibility:public"])
 
+py_library(
+    name = "deploy_options",
+    srcs = ["deploy_options.py"],
+    deps = [
+        "//snowflake/ml/model/_deploy_client/utils:constants"
+    ]
+)
 
 py_library(
     name = "deploy",
     srcs = ["deploy.py"],
     deps = [
-        "//snowflake/ml/model/_deploy_client/docker:base_image_builder",
-        "//snowflake/ml/model/_deploy_client/docker:client_image_builder"
+        "//snowflake/ml/model/_deploy_client/image_builds:base_image_builder",
+        "//snowflake/ml/model/_deploy_client/image_builds:client_image_builder",
+        ":deploy_options"
     ]
 )
 

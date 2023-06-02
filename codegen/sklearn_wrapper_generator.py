@@ -311,9 +311,9 @@ class WrapperGeneratorFactory:
         """
         tokens = module_name.split(".")
         if tokens[0] == "sklearn":
-            return "snowflake.ml.modeling." + ".".join(module_name.split(".")[1:])
+            return "snowflake.ml.sklearn." + ".".join(module_name.split(".")[1:])
         else:
-            return "snowflake.ml.modeling." + module_name
+            return "snowflake.ml." + module_name
 
     @staticmethod
     def can_generate_wrapper(class_object: Tuple[str, type]) -> bool:

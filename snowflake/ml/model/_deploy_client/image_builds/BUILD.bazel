@@ -1,0 +1,43 @@
+load("//bazel:py_rules.bzl", "py_library", "py_test")
+
+package(default_visibility = ["//visibility:public"])
+
+
+py_library(
+    name = "base_image_builder",
+    srcs = ["base_image_builder.py"],
+)
+
+py_library(
+    name = "client_image_builder",
+    srcs = ["client_image_builder.py"],
+    deps = [
+        ":base_image_builder",
+        ":docker_context"
+    ]
+)
+
+py_library(
+    name = "docker_context",
+    srcs = ["docker_context.py"],
+)
+
+py_test(
+    name = "client_image_builder_test",
+    srcs = ["client_image_builder_test.py"],
+    deps = [
+        ":client_image_builder",
+    ]
+)
+
+py_test(
+    name = "docker_context_test",
+    srcs = ["docker_context_test.py"],
+    deps = [
+        ":docker_context"
+    ],
+    data = [
+        "templates/dockerfile_template",
+        "templates/app_template",
+    ]
+)

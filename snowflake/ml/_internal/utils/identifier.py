@@ -1,6 +1,8 @@
 import re
 from typing import Any, List, Optional, Tuple, Union, overload
 
+from snowflake.snowpark._internal.analyzer import analyzer_utils
+
 # Snowflake Identifier Regex. See https://docs.snowflake.com/en/sql-reference/identifiers-syntax.html.
 _SF_UNQUOTED_IDENTIFIER = "[A-Za-z_][A-Za-z0-9_$]*"
 SF_QUOTED_IDENTIFIER = '"(?:[^"]|"")*"'
@@ -18,7 +20,7 @@ def _is_quoted(id: str) -> bool:
     NOTE: Snowflake treats all identifiers as UPPERCASE by default. That is 'Hello' would become 'HELLO'. To preserve
     case, one needs to use quoted identifiers, e.g. "Hello" (note the double quote). Callers must take care of that
     quoting themselves. This library assumes that if there is double-quote both sides, it is escaped, otherwise does not
-    require. Anything in the middle is undefined.
+    require.
 
     Args:
         id: The string to be checked
@@ -36,49 +38,33 @@ def _is_quoted(id: str) -> bool:
     if id[0] == '"' and id[-1] == '"':
         if len(id) == 2:
             raise ValueError("Invalid id passed.")
+        if not QUOTED_IDENTIFIER_RE.match(id):
+            raise ValueError("Invalid id passed.")
         return True
+    if not UNQUOTED_CASE_INSENSITIVE_RE.match(id):
+        raise ValueError("Invalid id passed.")
     return False  # To keep mypy happy
 
 
-def remove_quote_if_quoted(id: str) -> str:
-    """Remove double quotes from id if quoted.
+def _get_unescaped_name(id: str) -> str:
+    """Remove double quotes and unescape quotes between them from id if quoted.
+        Uppercase if not quoted.
 
     NOTE: See note in :meth:`_is_quoted`.
 
     Args:
         id: The string to be checked & treated.
-
-    Returns:
-        String with quotes removed if quoted; original string otherwise.
-    """
-    if _is_quoted(id):
-        return id[1:-1]
-    return id
-
-
-def remove_and_unescape_quote_if_quoted(id: str) -> str:
-    """Remove double quotes and escape quotes between them from id if quoted.
-
-    NOTE: See note in :meth:`_is_quoted`.
-
-    Args:
-        id: The string to be checked & treated.
-
-    Raises:
-        ValueError: If the identifier is unquoted, it does not match the syntax.
-        ValueError: There is a continuous odd number of quotes, thus cannot unescape. Example '""a""' is invalid.
 
     Returns:
         String with quotes removed if quoted; original string otherwise.
     """
     if not _is_quoted(id):
-        if not UNQUOTED_CASE_INSENSITIVE_RE.match(id):
-            raise ValueError("Invalid id passed.")
-        return id
-    if not QUOTED_IDENTIFIER_RE.match(id):
-        raise ValueError("Invalid id passed.")
+        return id.upper()
     unquoted_id = id[1:-1]
     return unquoted_id.replace('""', '"')
+
+
+quote_name_without_upper_casing = analyzer_utils.quote_name_without_upper_casing
 
 
 def concat_names(ids: List[str]) -> str:
@@ -99,11 +85,11 @@ def concat_names(ids: List[str]) -> str:
             # If any part is quoted, the user cares about case.
             quotes_needed = True
             # Remove quotes before using it.
-            id = id[1:-1]
+            id = _get_unescaped_name(id)
         parts.append(id)
     final_id = "".join(parts)
     if quotes_needed:
-        return f'"{final_id}"'
+        return quote_name_without_upper_casing(final_id)
     return final_id
 
 
@@ -133,23 +119,21 @@ def parse_schema_level_object_identifier(
 
 
 @overload
-def get_equivalent_identifier_in_the_response_pandas_dataframe(ids: None) -> None:
+def get_unescaped_names(ids: None) -> None:
     ...
 
 
 @overload
-def get_equivalent_identifier_in_the_response_pandas_dataframe(ids: str) -> str:
+def get_unescaped_names(ids: str) -> str:
     ...
 
 
 @overload
-def get_equivalent_identifier_in_the_response_pandas_dataframe(ids: List[str]) -> List[str]:
+def get_unescaped_names(ids: List[str]) -> List[str]:
     ...
 
 
-def get_equivalent_identifier_in_the_response_pandas_dataframe(
-    ids: Optional[Union[str, List[str]]]
-) -> Optional[Union[str, List[str]]]:
+def get_unescaped_names(ids: Optional[Union[str, List[str]]]) -> Optional[Union[str, List[str]]]:
     """Given a user provided identifier(s), this method will compute the equivalent column name identifier(s) in the
     response pandas dataframe(i.e., in the respones of snowpark_df.to_pandas()) using the rules defined here
     https://docs.snowflake.com/en/sql-reference/identifiers-syntax.
@@ -164,19 +148,11 @@ def get_equivalent_identifier_in_the_response_pandas_dataframe(
         ValueError: if input types is unsupported or column name identifiers are invalid.
     """
 
-    def _resolve(id: str) -> str:
-        if UNQUOTED_CASE_INSENSITIVE_RE.fullmatch(id):
-            # Unquoted case insensitive identifier. Snowflake would convert it to uppercase.
-            return id.upper()
-        else:
-            # Quoted or unquoted identifer with special charcters. Just remove quotes and return.
-            return remove_quote_if_quoted(id)
-
     if ids is None:
         return None
     elif type(ids) is list:
-        return [_resolve(id) for id in ids]
+        return [_get_unescaped_name(id) for id in ids]
     elif type(ids) is str:
-        return _resolve(ids)
+        return _get_unescaped_name(ids)
     else:
         raise ValueError("Unsupported type. Only string or list of string are supported for selecting columns.")

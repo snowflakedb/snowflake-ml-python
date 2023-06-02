@@ -15,7 +15,33 @@ from snowflake.ml.model import (
 )
 from snowflake.snowpark import session as snowpark_session, types as st
 
-_KEEP_ORDER_CODE_TEMPLATE = 'predictions_df["_ID"] = input_df["_ID"]'
+_KEEP_ORDER_COL_NAME = "_ID"
+
+_KEEP_ORDER_CODE_TEMPLATE = f'predictions_df["{_KEEP_ORDER_COL_NAME}"] = input_df["{_KEEP_ORDER_COL_NAME}"]'
+
+_EXTRACT_LOCAL_MODEL_CODE = """
+model_dir_name = '{model_dir_name}'
+zip_model_path = os.path.join(import_dir, '{model_dir_name}.zip')
+extracted = '/tmp/models'
+extracted_model_dir_path = os.path.join(extracted, model_dir_name)
+
+with FileLock():
+    if not os.path.isdir(extracted_model_dir_path):
+        with zipfile.ZipFile(zip_model_path, 'r') as myzip:
+            myzip.extractall(extracted)
+"""
+
+_EXTRACT_STAGE_MODEL_CODE = """
+model_dir_name = os.path.splitext('{model_stage_file_name}')[0]
+zip_model_path = os.path.join(import_dir, '{model_stage_file_name}')
+extracted = '/tmp/models'
+extracted_model_dir_path = os.path.join(extracted, model_dir_name)
+
+with FileLock():
+    if not os.path.isdir(extracted_model_dir_path):
+        with zipfile.ZipFile(zip_model_path, 'r') as myzip:
+            myzip.extractall(extracted_model_dir_path)
+"""
 
 _SNOWML_IMPORT_CODE = """
 
@@ -59,15 +85,8 @@ import_dir = sys._xoptions[IMPORT_DIRECTORY_NAME]
 
 from snowflake.ml.model._model import _load_model_for_deploy
 
-model_dir_name = '{model_dir_name}'
-zip_model_path = os.path.join(import_dir, '{model_dir_name}.zip')
-extracted = '/tmp/models'
-extracted_model_dir_path = os.path.join(extracted, model_dir_name)
+{extract_model_code}
 
-with FileLock():
-    if not os.path.isdir(extracted_model_dir_path):
-        with zipfile.ZipFile(zip_model_path, 'r') as myzip:
-            myzip.extractall(extracted)
 model, meta = _load_model_for_deploy(extracted_model_dir_path)
 
 # TODO(halu): Wire `max_batch_size`.
@@ -90,7 +109,8 @@ def infer(df):
 def _deploy_to_warehouse(
     session: snowpark_session.Session,
     *,
-    model_dir_path: str,
+    model_dir_path: Optional[str] = None,
+    model_stage_file_path: Optional[str] = None,
     udf_name: str,
     target_method: str,
     **kwargs: Unpack[model_types.WarehouseDeployOptions],
@@ -99,7 +119,8 @@ def _deploy_to_warehouse(
 
     Args:
         session: Snowpark session.
-        model_dir_path: Path to model directory.
+        model_dir_path: Path to model directory. Exclusive with model_stage_file_path.
+        model_stage_file_path: Path to the stored model zip file in the stage. Exclusive with model_dir_path.
         udf_name: Name of the UDF.
         target_method: The name of the target method to be deployed.
         **kwargs: Options that control some features in generated udf code.
@@ -111,10 +132,17 @@ def _deploy_to_warehouse(
     Returns:
         The metadata of the model deployed.
     """
-    if not os.path.exists(model_dir_path):
-        raise ValueError("Model config did not exist.")
-    model_dir_name = os.path.basename(model_dir_path)
-    meta = _model.load_model(model_dir_path, meta_only=True)
+    if model_dir_path:
+        model_dir_path = os.path.normpath(model_dir_path)
+        model_dir_name = os.path.basename(model_dir_path)
+        extract_model_code = _EXTRACT_LOCAL_MODEL_CODE.format(model_dir_name=model_dir_name)
+        meta = _model.load_model(model_dir_path=model_dir_path, meta_only=True)
+    else:
+        assert model_stage_file_path is not None, "Unreachable assertion error."
+        model_stage_file_name = os.path.basename(model_stage_file_path)
+        extract_model_code = _EXTRACT_STAGE_MODEL_CODE.format(model_stage_file_name=model_stage_file_name)
+        meta = _model.load_model(session=session, model_stage_file_path=model_stage_file_path, meta_only=True)
+
     relax_version = kwargs.get("relax_version", False)
 
     if target_method not in meta.signatures.keys():
@@ -125,9 +153,13 @@ def _deploy_to_warehouse(
     final_packages = _get_model_final_packages(meta, session, relax_version=relax_version)
 
     with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
-        _write_UDF_py_file(f.file, model_dir_name, target_method, **kwargs)
+        _write_UDF_py_file(f.file, extract_model_code, target_method, **kwargs)
         print(f"Generated UDF file is persisted at: {f.name}")
-        imports = [model_dir_path] + [_snowml_wheel_path] if _snowml_wheel_path else []
+        imports = (
+            ([model_dir_path] if model_dir_path else [])
+            + ([model_stage_file_path] if model_stage_file_path else [])
+            + ([_snowml_wheel_path] if _snowml_wheel_path else [])
+        )
 
         stage_location = kwargs.get("permanent_udf_stage_location", None)
 
@@ -161,7 +193,7 @@ def _deploy_to_warehouse(
 
 def _write_UDF_py_file(
     f: IO[str],
-    model_dir_name: str,
+    extract_model_code: str,
     target_method: str,
     **kwargs: Unpack[model_types.WarehouseDeployOptions],
 ) -> None:
@@ -169,7 +201,7 @@ def _write_UDF_py_file(
 
     Args:
         f: File descriptor to write the python code.
-        model_dir_name: Path to model directory.
+        extract_model_code: Code to extract the model.
         target_method: The name of the target method to be deployed.
         **kwargs: Options that control some features in generated udf code.
     """
@@ -180,7 +212,7 @@ def _write_UDF_py_file(
         snowml_import_code = _SNOWML_IMPORT_CODE.format(snowml_filename=whl_filename)
 
     udf_code = _UDF_CODE_TEMPLATE.format(
-        model_dir_name=model_dir_name,
+        extract_model_code=extract_model_code,
         keep_order_code=_KEEP_ORDER_CODE_TEMPLATE if keep_order else "",
         target_method=target_method,
         snowml_import_code=snowml_import_code if snowml_wheel_path else "",
@@ -244,6 +276,9 @@ def _get_model_final_packages(
         if final_packages is None:
             raise RuntimeError(
                 "The model's dependency cannot fit into Snowflake Warehouse. "
-                + "Trying to set relax_version as True in the options."
+                + "Trying to set relax_version as True in the options. Required packages are:\n"
+                + '"'
+                + " ".join(map(str, meta._conda_dependencies[""]))
+                + '"'
             )
     return final_packages

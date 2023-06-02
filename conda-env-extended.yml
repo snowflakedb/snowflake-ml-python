@@ -8,7 +8,6 @@
 channels:
   - conda-forge
 dependencies:
-  - moto==4.0.11 # SNOW-690705
   - torchdata==0.4.1 # SNOW-702102
   # SNOW-747683: Tensorflow is available on snowflake conda channel,
   # however, macos-arm64 is only available on conda-forge.

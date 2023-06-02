@@ -82,12 +82,13 @@ def autogen_estimators(module, estimator_info_list):
             srcs = [":generate_{}".format(e.normalized_class_name)],
             deps = [
                 ":init",
-                "//snowflake/ml/framework:framework",
+                "//snowflake/ml/sklearn/framework:framework",
                 "//snowflake/ml/_internal:telemetry",
                 "//snowflake/ml/_internal/utils:temp_file_utils",
                 "//snowflake/ml/_internal/utils:query_result_checker",
                 "//snowflake/ml/_internal/utils:pkg_version_utils",
                 "//snowflake/ml/_internal/utils:identifier",
+                "//snowflake/ml/model:model_signature",
             ],
             tags = ["skip_mypy_check"],
         )

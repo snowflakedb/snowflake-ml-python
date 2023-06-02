@@ -12,7 +12,9 @@ py_test(
     deps = [
         "//snowflake/ml/model:_deployer",
         "//snowflake/ml/model:_model",
-        "//snowflake/ml/modeling/linear_model:linear_regression",
+        "//snowflake/ml/model:custom_model",
+        "//snowflake/ml/model:type_hints",
+        "//snowflake/ml/sklearn/linear_model:linear_regression",
         "//snowflake/ml/utils:connection_params",
     ],
 )

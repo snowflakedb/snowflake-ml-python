@@ -1,0 +1,9 @@
+load("//codegen:codegen_rules.bzl", "autogen_tests_for_estimators")
+load("//snowflake/ml/sklearn/calibration:estimators_info.bzl", "estimator_info_list")
+package(default_visibility = ["//visibility:public"])
+
+autogen_tests_for_estimators(
+    module = "sklearn.calibration",
+    module_root_dir = "snowflake/ml/sklearn/calibration",
+    estimator_info_list=estimator_info_list
+)

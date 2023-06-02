@@ -8,7 +8,7 @@ from absl.testing import absltest
 
 from snowflake import snowpark
 from snowflake.ml._internal import telemetry
-from snowflake.ml._internal.utils import formatting
+from snowflake.ml._internal.utils import formatting, identifier
 from snowflake.ml.registry import model_registry
 from snowflake.ml.test_utils import mock_data_frame, mock_session
 
@@ -16,7 +16,13 @@ _DATABASE_NAME = "MODEL_REGISTRY"
 _SCHEMA_NAME = "PUBLIC"
 _REGISTRY_TABLE_NAME = "MODELS"
 _METADATA_TABLE_NAME = "METADATA"
-_FULLY_QUALIFIED_REGISTRY_TABLE_NAME = f'"{_DATABASE_NAME}"."{_SCHEMA_NAME}"."{_REGISTRY_TABLE_NAME}"'
+_FULLY_QUALIFIED_REGISTRY_TABLE_NAME = (
+    f"{identifier.quote_name_without_upper_casing(_DATABASE_NAME)}"
+    + "."
+    + f"{identifier.quote_name_without_upper_casing(_SCHEMA_NAME)}"
+    + "."
+    + f"{identifier.quote_name_without_upper_casing(_REGISTRY_TABLE_NAME)}"
+)
 _REGISTRY_SCHEMA_STRING = ", ".join([f"{k} {v}" for k, v in _REGISTRY_TABLE_SCHEMA.items()])
 _METADATA_INSERT_COLUMNS_STRING = ",".join(filter(lambda x: x != "SEQUENCE_ID", _METADATA_TABLE_SCHEMA.keys()))
 _METADATA_SCHEMA_STRING = ", ".join(
@@ -665,7 +671,13 @@ class ModelRegistryTest(absltest.TestCase):
         mock_sp_file_operation = absltest.mock.Mock()
         self._session.__setattr__("file", mock_sp_file_operation)
 
-        expected_stage_path = f'"{_DATABASE_NAME}"."{_SCHEMA_NAME}".SNOWML_MODEL_{expected_stage_postfix}/data'
+        expected_stage_path = (
+            f"{identifier.quote_name_without_upper_casing(_DATABASE_NAME)}"
+            + "."
+            + f"{identifier.quote_name_without_upper_casing(_SCHEMA_NAME)}"
+            + "."
+            + f"SNOWML_MODEL_{expected_stage_postfix}/data"
+        )
 
         with absltest.mock.patch("model_registry.os.path.isfile", return_value=True) as mock_isfile:
             with absltest.mock.patch.object(

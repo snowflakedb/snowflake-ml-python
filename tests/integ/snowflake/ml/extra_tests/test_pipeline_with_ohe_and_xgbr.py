@@ -3,10 +3,10 @@
 #
 from absl.testing import absltest
 
-from snowflake.ml.framework.pipeline import Pipeline
-from snowflake.ml.modeling.xgboost import XGBRegressor
-from snowflake.ml.preprocessing import MinMaxScaler, OneHotEncoder
+from snowflake.ml.sklearn.framework.pipeline import Pipeline
+from snowflake.ml.sklearn.preprocessing import MinMaxScaler, OneHotEncoder
 from snowflake.ml.utils.connection_params import SnowflakeLoginOptions
+from snowflake.ml.xgboost import XGBRegressor
 from snowflake.snowpark import Column, Session
 
 categorical_columns = [

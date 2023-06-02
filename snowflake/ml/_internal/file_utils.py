@@ -2,8 +2,9 @@ import contextlib
 import io
 import os
 import shutil
+import tempfile
 import zipfile
-from typing import Generator, Optional
+from typing import IO, Generator, Optional
 
 GENERATED_PY_FILE_EXT = (".pyc", ".pyo", ".pyd", ".pyi")
 
@@ -69,7 +70,6 @@ def zip_file_or_directory_to_stream(
 
     with io.BytesIO() as input_stream:
         with zipfile.ZipFile(input_stream, mode="w", compression=zipfile.ZIP_DEFLATED) as zf:
-
             if os.path.realpath(path) != os.path.realpath(start_path):
                 cur_path = os.path.dirname(path)
                 while os.path.realpath(cur_path) != os.path.realpath(start_path):
@@ -92,3 +92,20 @@ def zip_file_or_directory_to_stream(
                 zf.write(path, os.path.relpath(path, start_path))
 
         yield input_stream
+
+
+@contextlib.contextmanager
+def unzip_stream_in_temp_dir(stream: IO[bytes], temp_root: Optional[str] = None) -> Generator[str, None, None]:
+    """Unzip an IO stream into a temporary directory.
+
+    Args:
+        stream: The input stream.
+        temp_root: The root directory where the temporary directory should created in. Defaults to None.
+
+    Yields:
+        The path to the created temporary directory.
+    """
+    with tempfile.TemporaryDirectory(dir=temp_root) as tempdir:
+        with zipfile.ZipFile(stream, mode="r", compression=zipfile.ZIP_DEFLATED) as zf:
+            zf.extractall(path=tempdir)
+        yield tempdir

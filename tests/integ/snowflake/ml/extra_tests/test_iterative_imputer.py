@@ -13,8 +13,8 @@ from sklearn.experimental import enable_iterative_imputer  # noqa
 from sklearn.impute import IterativeImputer as SkIterativeImputer
 from sklearn.linear_model import LinearRegression as SkLinearRegression
 
-from snowflake.ml.modeling.impute import IterativeImputer
-from snowflake.ml.modeling.linear_model import LinearRegression
+from snowflake.ml.sklearn.impute import IterativeImputer
+from snowflake.ml.sklearn.linear_model import LinearRegression
 from snowflake.ml.utils.connection_params import SnowflakeLoginOptions
 from snowflake.snowpark import Session
 
