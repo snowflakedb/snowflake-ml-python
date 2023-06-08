@@ -1,0 +1,19 @@
+load("//bazel:py_rules.bzl", "py_library", "py_test")
+
+package(default_visibility = ["//visibility:public"])
+
+py_test(
+    name = "test_base",
+    srcs = ["test_base.py"],
+    deps = [
+        ":utils",
+        "//snowflake/ml/modeling/preprocessing:min_max_scaler",
+        "//snowflake/ml/modeling/preprocessing:standard_scaler",
+        "//snowflake/ml/utils:connection_params",
+    ],
+)
+
+py_library(
+    name = "utils",
+    srcs = ["utils.py"],
+)

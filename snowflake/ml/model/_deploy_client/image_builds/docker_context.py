@@ -47,10 +47,7 @@ class DockerContext(ABC):
         Generates inference code based on the app template and creates a folder named 'server' to house the inference
         server code.
         """
-        server_dir = os.path.join(self.context_dir, "server")
-        os.makedirs(server_dir, exist_ok=True)
-
-        app_file_path = os.path.join(server_dir, "app.py")
-        app_file_template = os.path.join(os.path.dirname(__file__), "templates/app_template")
-        with open(app_file_path, "w") as app_file, open(app_file_template) as template:
-            app_file.write(template.read())
+        inference_server_folder_path = os.path.join(os.path.dirname(__file__), "inference_server")
+        destination_folder_path = os.path.join(self.context_dir, "inference_server")
+        ignore_patterns = shutil.ignore_patterns("BUILD.bazel", "*test.py", "*.\\.*")
+        shutil.copytree(inference_server_folder_path, destination_folder_path, ignore=ignore_patterns)

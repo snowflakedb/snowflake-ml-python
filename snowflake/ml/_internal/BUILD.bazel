@@ -29,6 +29,7 @@ py_test(
     srcs = ["file_utils_test.py"],
     deps = [
         ":file_utils",
+        "//snowflake/ml/test_utils:mock_session",
     ],
 )
 
@@ -37,6 +38,7 @@ py_library(
     srcs = ["env_utils.py"],
     deps = [
         "//snowflake/ml/_internal/utils:query_result_checker",
+        ":env",
     ],
 )
 

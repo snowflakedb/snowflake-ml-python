@@ -1,7 +1,6 @@
 import os
 import shutil
 import tempfile
-import unittest
 
 from absl.testing import absltest
 
@@ -20,14 +19,14 @@ class DockerContextTest(absltest.TestCase):
         shutil.rmtree(self.context_dir)
 
     def test_build(self) -> None:
-        expected_files = [os.path.basename(self.model_dir), "Dockerfile", "server"]
+        expected_files = [os.path.basename(self.model_dir), "Dockerfile", "inference_server"]
         self.docker_context.build()
         generated_files = os.listdir(self.context_dir)
         self.assertCountEqual(expected_files, generated_files)
 
-        actual_inference_files = os.listdir(os.path.join(self.context_dir, "server"))
-        self.assertCountEqual(["app.py"], actual_inference_files)
+        actual_inference_files = os.listdir(os.path.join(self.context_dir, "inference_server"))
+        self.assertCountEqual(["main.py"], actual_inference_files)
 
 
 if __name__ == "__main__":
-    unittest.main()
+    absltest.main()

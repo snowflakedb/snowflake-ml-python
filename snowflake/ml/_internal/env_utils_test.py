@@ -243,6 +243,12 @@ class EnvUtilsTest(absltest.TestCase):
             env_utils.get_local_installed_version_of_pip_package(r),
         )
 
+        r = requirements.Requirement(env_utils._SNOWML_PKG_NAME)
+        self.assertEqual(
+            requirements.Requirement(f"{env_utils._SNOWML_PKG_NAME}=={snowml_env.VERSION}"),
+            env_utils.get_local_installed_version_of_pip_package(r),
+        )
+
         r = requirements.Requirement("python-package")
         self.assertIs(
             r,

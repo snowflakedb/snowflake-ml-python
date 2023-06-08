@@ -38,6 +38,13 @@ py_test(
     ],
     data = [
         "templates/dockerfile_template",
-        "templates/app_template",
+        ":inference_server"
+    ]
+)
+
+filegroup(
+    name = "inference_server",
+    srcs = [
+        "//snowflake/ml/model/_deploy_client/image_builds/inference_server:main"
     ]
 )

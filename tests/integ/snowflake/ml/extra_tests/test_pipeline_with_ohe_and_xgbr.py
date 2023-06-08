@@ -1,13 +1,18 @@
 #
 # Copyright (c) 2012-2022 Snowflake Computing Inc. All rights reserved.
 #
+import numpy as np
 from absl.testing import absltest
 
-from snowflake.ml.sklearn.framework.pipeline import Pipeline
-from snowflake.ml.sklearn.preprocessing import MinMaxScaler, OneHotEncoder
+from snowflake.ml.modeling.pipeline import Pipeline
+from snowflake.ml.modeling.preprocessing import (
+    MinMaxScaler,
+    OneHotEncoder,
+    StandardScaler,
+)
+from snowflake.ml.modeling.xgboost import XGBRegressor
 from snowflake.ml.utils.connection_params import SnowflakeLoginOptions
-from snowflake.ml.xgboost import XGBRegressor
-from snowflake.snowpark import Column, Session
+from snowflake.snowpark import Column, Session, functions as F
 
 categorical_columns = [
     "AGE",
@@ -105,6 +110,86 @@ class GridSearchCVTest(absltest.TestCase):
 
         pipeline.fit(raw_data_pandas)
         pipeline.predict(raw_data_pandas)
+
+    def test_pipeline_export(self) -> None:
+        snow_df = (
+            self._session.sql(
+                """SELECT *, IFF(Y = 'yes', 1.0, 0.0) as LABEL
+                FROM ML_DATASETS.PUBLIC.UCI_BANK_MARKETING_20COLUMNS
+                LIMIT 2000"""
+            )
+            .drop("Y")
+            .withColumn("ROW_INDEX", F.monotonically_increasing_id())
+        )
+        pd_df = snow_df.to_pandas().sort_values(by=["ROW_INDEX"]).drop("LABEL", axis=1)
+
+        pipeline = Pipeline(
+            steps=[
+                (
+                    "OHE",
+                    OneHotEncoder(
+                        input_cols=categorical_columns, output_cols=categorical_columns, drop_input_cols=True
+                    ),
+                ),
+                (
+                    "MMS",
+                    MinMaxScaler(
+                        clip=True,
+                        input_cols=numerical_columns,
+                        output_cols=numerical_columns,
+                    ),
+                ),
+                (
+                    "SS",
+                    StandardScaler(input_cols=(numerical_columns[0:2]), output_cols=(numerical_columns[0:2])),
+                ),
+                ("regression", XGBRegressor(label_cols=label_column)),
+            ]
+        )
+
+        pipeline.fit(snow_df)
+        snow_results = pipeline.predict(snow_df).to_pandas().sort_values(by=["ROW_INDEX"])["OUTPUT_LABEL"].to_numpy()
+
+        sk_pipeline = pipeline.to_sklearn()
+        sk_results = sk_pipeline.predict(pd_df)
+        np.testing.assert_allclose(snow_results.flatten(), sk_results.flatten(), rtol=1.0e-1, atol=1.0e-2)
+
+    def test_pipeline_with_limitted_number_of_columns_in_estimator_export(self) -> None:
+        snow_df = (
+            self._session.sql(
+                """SELECT *, IFF(Y = 'yes', 1.0, 0.0) as LABEL
+                FROM ML_DATASETS.PUBLIC.UCI_BANK_MARKETING_20COLUMNS
+                LIMIT 2000"""
+            )
+            .drop("Y", "DEFAULT")
+            .withColumn("ROW_INDEX", F.monotonically_increasing_id())
+        )
+        pd_df = snow_df.to_pandas().sort_values(by=["ROW_INDEX"]).drop("LABEL", axis=1)
+
+        pipeline = Pipeline(
+            steps=[
+                (
+                    "MMS",
+                    MinMaxScaler(
+                        clip=True,
+                        input_cols=numerical_columns,
+                        output_cols=numerical_columns,
+                    ),
+                ),
+                (
+                    "SS",
+                    StandardScaler(input_cols=(numerical_columns[0:2]), output_cols=(numerical_columns[0:2])),
+                ),
+                ("regression", XGBRegressor(input_cols=numerical_columns, label_cols=label_column)),
+            ]
+        )
+
+        pipeline.fit(snow_df)
+        snow_results = pipeline.predict(snow_df).to_pandas().sort_values(by=["ROW_INDEX"])["OUTPUT_LABEL"].to_numpy()
+
+        sk_pipeline = pipeline.to_sklearn()
+        sk_results = sk_pipeline.predict(pd_df)
+        np.testing.assert_allclose(snow_results.flatten(), sk_results.flatten(), rtol=1.0e-1, atol=1.0e-2)
 
 
 if __name__ == "__main__":

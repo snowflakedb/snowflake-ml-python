@@ -1,0 +1,9 @@
+load("//codegen:codegen_rules.bzl", "autogen_tests_for_estimators")
+load("//snowflake/ml/modeling/discriminant_analysis:estimators_info.bzl", "estimator_info_list")
+package(default_visibility = ["//visibility:public"])
+
+autogen_tests_for_estimators(
+    module = "sklearn.discriminant_analysis",
+    module_root_dir = "snowflake/ml/modeling/discriminant_analysis",
+    estimator_info_list=estimator_info_list
+)

@@ -25,8 +25,8 @@ from snowflake.ml.model import (
     model_signature,
     type_hints as model_types,
 )
+from snowflake.ml.modeling.framework import base
 from snowflake.ml.registry import _schema
-from snowflake.ml.sklearn.framework import base
 
 if TYPE_CHECKING:
     import pandas as pd
@@ -56,6 +56,10 @@ _TELEMETRY_PROJECT = "MLOps"
 _TELEMETRY_SUBPROJECT = "ModelRegistry"
 
 
+@telemetry.send_api_usage_telemetry(
+    project=_TELEMETRY_PROJECT,
+    subproject=_TELEMETRY_SUBPROJECT,
+)
 @snowpark._internal.utils.private_preview(version="0.2.0")
 def create_model_registry(
     *,
@@ -437,8 +441,8 @@ class ModelRegistry:
                 if v and v != properties[k]:
                     raise connector.DataError(
                         formatting.unwrap(
-                            f"""Parameter '{k.lower()}' is given and parameter 'properties' has the field '{k}' set but the values
-                            do not match: {k.lower()}=="{v}" properties['{k}']=="{properties[k]}"."""
+                            f"""Parameter '{k.lower()}' is given and parameter 'properties' has the field '{k}' set but
+                            the values do not match: {k.lower()}=="{v}" properties['{k}']=="{properties[k]}"."""
                         )
                     )
         # Could do a multi-table insert here with some pros and cons:
@@ -551,20 +555,18 @@ class ModelRegistry:
 
         Returns:
             A Snowpark dataframe representing the models that match the given constraints.
-
-        Raises:
-            DataError: Model ID or (Model Name + Model Version) is not given.
         """
-        if not (id or (model_name and model_version)):
-            raise connector.DataError("Either (Model Name + Model Version) or Model ID is required, but none is given.")
-
         models = self.list_models()
 
         if id:
             filtered_models = models.filter(snowpark.Column("ID") == id)
         else:
+            self._model_identifier_is_nonempty_or_raise(model_name, model_version)
+
+            # The following two asserts is to satisfy mypy.
             assert model_name
             assert model_version
+
             filtered_models = models.filter(snowpark.Column("NAME") == model_name).filter(
                 snowpark.Column("VERSION") == model_version
             )
@@ -672,7 +674,7 @@ class ModelRegistry:
         except connector.DataError:
             raise connector.DataError(f"Setting model name for mode id {id} failed.")
 
-    def _model_identifier_is_nonempty_or_raise(self, model_name: str, model_version: str) -> None:
+    def _model_identifier_is_nonempty_or_raise(self, model_name: Optional[str], model_version: Optional[str]) -> None:
         """Validate model_name and model_version are non-empty strings.
 
         Args:
@@ -1300,6 +1302,7 @@ class ModelRegistry:
 
         Raises:
             TypeError: Raised when both signatures and sample_input_data is not presented. Will be captured locally.
+            DataError: Raised when the given model exists.
 
         Returns:
             String of the auto-generate unique model identifier. None if failed.
@@ -1309,6 +1312,9 @@ class ModelRegistry:
 
         self._model_identifier_is_nonempty_or_raise(model_name, model_version)
 
+        existing_model_nums = self._list_selected_models(model_name=model_name, model_version=model_version).count()
+        if existing_model_nums:
+            raise connector.DataError(f"Model {model_name}/{model_version} already exists. Unable to log the model.")
         with tempfile.TemporaryDirectory() as tmpdir:
             model = cast(model_types.SupportedModelType, model)
             try:
@@ -1597,10 +1603,9 @@ class ModelReference:
         registry: ModelRegistry,
         model_name: str,
         model_version: str,
-        id: Optional[str] = None,
     ) -> None:
         self._registry = registry
-        self._id = id if id else registry._get_model_id(model_name=model_name, model_version=model_version)
+        self._id = registry._get_model_id(model_name=model_name, model_version=model_version)
         self._model_name = model_name
         self._model_version = model_version
 

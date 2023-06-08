@@ -1,0 +1,154 @@
+load("//bazel:py_rules.bzl", "py_binary")
+load("@bazel_skylib//rules:diff_test.bzl", "diff_test")
+load("@bazel_skylib//rules:write_file.bzl", "write_file")
+load("@aspect_bazel_lib//lib:yq.bzl", "yq")
+load("//snowflake/ml:version.bzl", "VERSION")
+
+package(default_visibility = ["//visibility:public"])
+
+exports_files(["requirements.schema.json"])
+
+py_binary(
+    name = "parse_and_generate_requirements",
+    srcs = ["parse_and_generate_requirements.py"],
+)
+
+_SRC_REQUIREMENT_FILE = "//:requirements.yml"
+
+_SCHEMA_FILE = ":requirements.schema.json"
+
+_GENERATE_TOOL = ":parse_and_generate_requirements"
+
+_GENERATE_COMMAND = "$(location " + _GENERATE_TOOL + ") $(location " + _SRC_REQUIREMENT_FILE + ") --schema $(location " + _SCHEMA_FILE + ") {options} > $@"
+
+_TEMPLATE_FOLDER_PATH = "//bazel/requirements/templates"
+
+_AUTOGEN_HEADERS = """# DO NOT EDIT!
+# Generate by running 'bazel run //bazel/requirements:sync_requirements'
+"""
+
+_GENERATED_REQUIREMENTS_FILES = {
+    "requirements_txt": {
+        "cmd": "--mode dev_version --format text",
+        "generated": "requirements.txt",
+        "target": "//:requirements.txt",
+    },
+    "conda_env_yml": {
+        "cmd": "--mode dev_version --format conda_env",
+        "generated": "conda-env.yml",
+        "target": "//:conda-env.yml",
+    },
+    "conda_env_snowflake_yml": {
+        "cmd": "--mode dev_version --format conda_env --snowflake_channel_only",
+        "generated": "conda-env-snowflake.yml",
+        "target": "//:conda-env-snowflake.yml",
+    },
+    "conda_meta": {
+        "cmd": "--mode version_requirements --format conda_meta --version " + VERSION,
+        "generated": "meta.yaml",
+        "target": "//ci/conda_recipe:meta.yaml",
+    },
+    "requirements_bzl": {
+        "cmd": "--mode version_requirements --format bzl",
+        "generated": "requirements.bzl",
+        "target": "//snowflake/ml:requirements.bzl",
+    },
+}
+
+[
+    genrule(
+        name = "gen_{name}_body".format(name = name),
+        srcs = [
+            _SRC_REQUIREMENT_FILE,
+            _SCHEMA_FILE,
+        ],
+        outs = ["{generated}.body".format(generated = value["generated"])],
+        cmd = _GENERATE_COMMAND.format(options = value["cmd"]),
+        tools = [_GENERATE_TOOL],
+    )
+    for name, value in _GENERATED_REQUIREMENTS_FILES.items()
+    if name != "conda_meta"
+]
+
+[
+    genrule(
+        name = "gen_{name}".format(name = name),
+        srcs = [
+            "{generated}.body".format(generated = value["generated"]),
+        ],
+        outs = [value["generated"]],
+        cmd = "(echo -e \""+ _AUTOGEN_HEADERS +"\" ; cat $(location :{generated}.body) ) > $@".format(
+            generated = value["generated"],
+        ),
+        tools = [_GENERATE_TOOL],
+    )
+    for name, value in _GENERATED_REQUIREMENTS_FILES.items()
+    if name != "conda_meta"
+]
+
+# Generate ci/conda-recipe/meta.yaml
+genrule(
+    name = "gen_conda_meta_body",
+    srcs = [
+        _SRC_REQUIREMENT_FILE,
+        _SCHEMA_FILE,
+    ],
+    outs = ["meta.body.yaml"],
+    cmd = _GENERATE_COMMAND.format(options = "--mode version_requirements --format conda_meta --version " + VERSION),
+    tools = [_GENERATE_TOOL],
+)
+
+yq(
+    name = "gen_conda_meta",
+    srcs = [
+        ":meta.body.yaml",
+        "{template_folder}:meta.tpl.yaml".format(template_folder = _TEMPLATE_FOLDER_PATH),
+    ],
+    outs = ["meta.yaml"],
+    expression = ". as $item ireduce ({}; . * $item ) | sort_keys(..)",
+)
+
+# Create a test target for each file that Bazel should
+# write to the source tree.
+[
+    diff_test(
+        name = "check_{name}".format(name = name),
+        # Make it trivial for devs to understand that if
+        # this test fails, they just need to run the updater
+        # Note, you need bazel-skylib version 1.1.1 or greater
+        # to get the failure_message attribute
+        failure_message = "Please run:  bazel run //bazel/requirements:sync_requirements",
+        file1 = ":{generated}".format(generated = value["generated"]),
+        file2 = value["target"],
+    )
+    for name, value in _GENERATED_REQUIREMENTS_FILES.items()
+]
+
+# Generate the updater script so there's only one target for devs to run,
+# even if many generated files are in the source folder.
+write_file(
+    name = "gen_sync_requirements",
+    out = "sync_requirements.sh",
+    content = [
+        # This depends on bash, would need tweaks for Windows
+        "#!/usr/bin/env sh",
+        # Bazel gives us a way to access the source folder!
+        "cd $BUILD_WORKSPACE_DIRECTORY",
+    ] + [
+        # Paths are now relative to the workspace.
+        # We can copy files from bazel-bin to the sources
+        "cp -fv bazel-bin/bazel/requirements/{generated} {target}".format(
+            generated = value["generated"],
+            # Convert label to path
+            target = value["target"].lstrip("//").lstrip(":").replace(":", "/"),
+        )
+        for name, value in _GENERATED_REQUIREMENTS_FILES.items()
+    ],
+)
+
+# This is what you can `bazel run` and it can write to the source folder
+sh_binary(
+    name = "sync_requirements",
+    srcs = ["sync_requirements.sh"],
+    data = [":{generated}".format(generated = value["generated"]) for value in _GENERATED_REQUIREMENTS_FILES.values()],
+)

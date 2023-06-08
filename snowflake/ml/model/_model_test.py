@@ -17,7 +17,7 @@ from snowflake.ml.model import (
     model_signature,
     type_hints as model_types,
 )
-from snowflake.ml.sklearn.linear_model import LinearRegression
+from snowflake.ml.modeling.linear_model import LinearRegression
 from snowflake.ml.test_utils import mock_session
 from snowflake.snowpark import FileOperation, Session
 

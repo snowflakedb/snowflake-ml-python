@@ -311,9 +311,9 @@ class WrapperGeneratorFactory:
         """
         tokens = module_name.split(".")
         if tokens[0] == "sklearn":
-            return "snowflake.ml.sklearn." + ".".join(module_name.split(".")[1:])
+            return "snowflake.ml.modeling." + ".".join(module_name.split(".")[1:])
         else:
-            return "snowflake.ml." + module_name
+            return "snowflake.ml.modeling." + module_name
 
     @staticmethod
     def can_generate_wrapper(class_object: Tuple[str, type]) -> bool:
@@ -473,6 +473,9 @@ class WrapperGeneratorBase:
         self.predict_udf_deps = ""
         self.fit_sproc_deps = ""
 
+        # Native function transform
+        self.supported_export_method = ""
+
     def _format_default_value(self, default_value: Any) -> str:
         if isinstance(default_value, str):
             return f'"{default_value}"'
@@ -607,17 +610,20 @@ class WrapperGeneratorBase:
 
         args_to_transform = ["steps", "transformers", "estimator", "estimators", "base_estimator", "final_estimator"]
         arg_transform_calls = []
+        deps_gathering_calls = []
         for arg_to_transform in args_to_transform:
             if arg_to_transform in self.original_init_signature.parameters.keys():
                 arg_transform_calls.append(
                     f"{arg_to_transform} = _transform_snowml_obj_to_sklearn_obj({arg_to_transform})"
                 )
+                deps_gathering_calls.append(f"deps = deps | _gather_dependencies({arg_to_transform})")
 
         self.estimator_init_signature = ",\n        ".join(signature_lines) + ","
         self.sklearn_init_arguments = ",\n            ".join(sklearn_init_lines) + ","
         self.sklearn_init_args_dict = "{" + ",\n            ".join(sklearn_init_args_dict_list) + ",}"
         self.estimator_init_member_args = "\n        ".join(init_member_args)
         self.estimator_args_transform_calls = "\n        ".join(arg_transform_calls)
+        self.estimator_args_gathering_calls = "\n        ".join(deps_gathering_calls)
 
         # TODO(snandamuri): Implement type inference for classifiers.
         self.udf_datatype = "float" if self._from_data_py or self._is_regressor else ""
@@ -803,10 +809,11 @@ class SklearnWrapperGenerator(WrapperGeneratorBase):
             self.test_estimator_input_args_list.extend(["min_samples_leaf=1", "max_leaf_nodes=100"])
 
         # TODO(snandamuri): Replace cloudpickle with joblib after latest version of joblib is added to snowflake conda.
-        self.fit_sproc_deps = self.predict_udf_deps = (
-            "f'numpy=={np.__version__}', f'pandas=={pd.__version__}', f'scikit-learn=={sklearn.__version__}', "
-            "f'xgboost=={xgboost.__version__}', f'cloudpickle=={cp.__version__}'"
+        self.deps = (
+            "f'numpy=={np.__version__}', f'scikit-learn=={sklearn.__version__}', f'cloudpickle=={cp.__version__}'"
         )
+        self.supported_export_method = "to_sklearn"
+        self.unsupported_export_methods = ["to_xgboost", "to_lightgbm"]
         self._construct_string_from_lists()
         return self
 
@@ -821,10 +828,9 @@ class XGBoostWrapperGenerator(WrapperGeneratorBase):
         self.test_estimator_input_args_list.extend(["random_state=0", "subsample=1.0", "colsample_bynode=1.0"])
         self.fit_sproc_imports = "import xgboost"
         # TODO(snandamuri): Replace cloudpickle with joblib after latest version of joblib is added to snowflake conda.
-        self.fit_sproc_deps = self.predict_udf_deps = (
-            "f'numpy=={np.__version__}', f'pandas=={pd.__version__}', f'xgboost=={xgboost.__version__}', "
-            "f'cloudpickle=={cp.__version__}'"
-        )
+        self.supported_export_method = "to_xgboost"
+        self.unsupported_export_methods = ["to_sklearn", "to_lightgbm"]
+        self.deps = "f'numpy=={np.__version__}', f'xgboost=={xgboost.__version__}', f'cloudpickle=={cp.__version__}'"
         self._construct_string_from_lists()
         return self
 
@@ -839,9 +845,8 @@ class LightGBMWrapperGenerator(WrapperGeneratorBase):
         self.test_estimator_input_args_list.extend(["random_state=0"])
         self.fit_sproc_imports = "import lightgbm"
         # TODO(snandamuri): Replace cloudpickle with joblib after latest version of joblib is added to snowflake conda.
-        self.fit_sproc_deps = self.predict_udf_deps = (
-            "f'numpy=={np.__version__}', f'pandas=={pd.__version__}', f'lightgbm=={lightgbm.__version__}', "
-            "f'cloudpickle=={cp.__version__}'"
-        )
+        self.deps = "f'numpy=={np.__version__}', f'lightgbm=={lightgbm.__version__}', f'cloudpickle=={cp.__version__}'"
+        self.supported_export_method = "to_lightgbm"
+        self.unsupported_export_methods = ["to_sklearn", "to_xgboost"]
         self._construct_string_from_lists()
         return self

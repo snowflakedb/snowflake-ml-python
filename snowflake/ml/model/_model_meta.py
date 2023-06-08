@@ -13,21 +13,18 @@ import yaml
 from packaging import version
 
 from snowflake.ml._internal import env as snowml_env, env_utils, file_utils
-from snowflake.ml.model import _env, model_signature, type_hints as model_types
+from snowflake.ml.model import (
+    _core_requirements,
+    _env,
+    model_signature,
+    type_hints as model_types,
+)
 from snowflake.snowpark import DataFrame as SnowparkDataFrame
 
 MODEL_METADATA_VERSION = 1
+_BASIC_DEPENDENCIES = _core_requirements.REQUIREMENTS
 
-_BASIC_DEPENDENCIES = [
-    "pandas",
-    "pyyaml",
-    "typing-extensions",
-    "cloudpickle",
-    "packaging",
-    "anyio",
-    "snowflake-snowpark-python",
-    "scikit-learn",
-]
+_BASIC_DEPENDENCIES.append(env_utils._SNOWML_PKG_NAME)
 
 
 @dataclasses.dataclass
@@ -229,17 +226,18 @@ class ModelMetadata:
         )
 
     def _include_if_absent(self, pkgs: List[Tuple[str, str]]) -> None:
-        conda_names, pip_names = tuple(zip(*pkgs))
-        pip_reqs = env_utils.validate_pip_requirement_string_list(list(pip_names))
+        conda_reqs_str, pip_reqs_str = tuple(zip(*pkgs))
+        pip_reqs = env_utils.validate_pip_requirement_string_list(list(pip_reqs_str))
+        conda_reqs = env_utils.validate_conda_dependency_string_list(list(conda_reqs_str))
 
-        for conda_name, pip_req in zip(conda_names, pip_reqs):
+        for conda_req, pip_req in zip(conda_reqs[""], pip_reqs):
             req_to_add = env_utils.get_local_installed_version_of_pip_package(pip_req)
-            req_to_add.name = conda_name
+            req_to_add.name = conda_req.name
             for added_pip_req in self._pip_requirements:
                 if added_pip_req.name == pip_req.name:
                     warnings.warn(
                         (
-                            f"Basic dependency {conda_name} specified from PIP requirements."
+                            f"Basic dependency {conda_req} specified from PIP requirements."
                             + " This may prevent model deploying to Snowflake Warehouse."
                         ),
                         category=UserWarning,
@@ -251,7 +249,7 @@ class ModelMetadata:
             except env_utils.DuplicateDependencyInMultipleChannelsError:
                 warnings.warn(
                     (
-                        f"Basic dependency {conda_name} specified from non-Snowflake channel."
+                        f"Basic dependency {conda_req.name} specified from non-Snowflake channel."
                         + " This may prevent model deploying to Snowflake Warehouse."
                     ),
                     category=UserWarning,

@@ -1,0 +1,43 @@
+load("//bazel:py_rules.bzl", "py_library")
+load("@rules_python//python:packaging.bzl", "py_package")
+
+package(default_visibility = ["//visibility:public"])
+
+py_library(
+    name = "metrics",
+    srcs = [
+        "accuracy_score.py",
+        "confusion_matrix.py",
+        "correlation.py",
+        "covariance.py",
+        "precision_recall_fscore_support.py",
+        "precision_score.py",
+        "regression.py",
+    ],
+    deps = [
+        ":init",
+        ":metrics_utils",
+        "//snowflake/ml/_internal:telemetry",
+    ],
+)
+
+py_package(
+    name = "metrics_pkg",
+    packages = ["snowflake.ml"],
+    deps = [
+        ":metrics",
+    ],
+)
+
+py_library(
+    name = "init",
+    srcs = ["__init__.py"],
+)
+
+py_library(
+    name = "metrics_utils",
+    srcs = ["metrics_utils.py"],
+    deps = [
+        "//snowflake/ml/_internal:telemetry",
+    ],
+)

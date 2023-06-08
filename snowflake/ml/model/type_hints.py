@@ -4,7 +4,7 @@ from typing import TYPE_CHECKING, Sequence, TypedDict, TypeVar, Union
 import numpy.typing as npt
 from typing_extensions import NotRequired, TypeAlias
 
-from snowflake.ml.sklearn.framework import base
+from snowflake.ml.modeling.framework import base
 
 if TYPE_CHECKING:
     import numpy as np
@@ -86,11 +86,13 @@ class DeployOptions(TypedDict):
         rows. Defaults to True.
 
     Internal-only options
-    _snowml_wheel_path: Local or in-stage path to snowml wheel file. If deployed permanently, it needs to be a stage
-        path where the stage is non-temporary, internal stage.
+    _use_local_snowml: Use local SnowML when as the execution library of the deployment. If set to True, local SnowML
+        would be packed and uploaded to 1) session stage, if it is a temporary deployment, or 2) the provided stage path
+        if it is a permanent deployment. It should be set to True before SnowML available in Snowflake Anaconda Channel.
+        Default to False.
     """
 
-    _snowml_wheel_path: NotRequired[str]
+    _use_local_snowml: NotRequired[bool]
     output_with_input_features: NotRequired[bool]
     keep_order: NotRequired[bool]
 

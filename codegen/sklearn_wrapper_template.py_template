@@ -3,7 +3,7 @@
 #
 import inspect
 import os
-from typing import Iterable, Optional, Union, List, Any, Dict, Callable
+from typing import Iterable, Optional, Union, List, Any, Dict, Callable, Set
 from uuid import uuid4
 
 import cloudpickle as cp
@@ -12,7 +12,8 @@ import numpy as np
 {transform.estimator_imports}
 from sklearn.utils.metaestimators import available_if
 
-from snowflake.ml.sklearn.framework.base import BaseTransformer
+from snowflake.ml.modeling.framework.base import BaseTransformer
+from snowflake.ml.modeling.framework._utils import to_native_format
 from snowflake.ml._internal import telemetry
 from snowflake.ml._internal.utils.query_result_checker import SqlResultValidator
 from snowflake.ml._internal.utils import pkg_version_utils, identifier
@@ -40,7 +41,7 @@ def _original_estimator_has_callable(attr : str) -> Callable[[Any], bool]:
     """ Checks that the original estimator has callable `attr`.
 
     Args:
-        attr: Arrtibute to check for.
+        attr: Attribute to check for.
 
     Returns:
         A function which checks for the existance of callable `attr` on the given object.
@@ -55,6 +56,25 @@ def _original_estimator_has_callable(attr : str) -> Callable[[Any], bool]:
 
     return check
 
+def _gather_dependencies(obj: Any) -> Set[str]:
+    """ Gethers dependencies from the SnowML Estimator and Transformer objects.
+
+    Args:
+        obj: Source object to collect dependencies from. Source object could of any type, example, lists, tuples, etc.
+
+    Returns:
+        A set of dependencies required to work with the object.
+    """
+
+    if isinstance(obj, list) or isinstance(obj, tuple):
+        deps: Set[str] = set()
+        for elem in obj:
+            deps = deps | set(_gather_dependencies(elem))
+        return deps
+    elif isinstance(obj, BaseTransformer):
+        return set(obj._get_dependencies())
+    else:
+        return set()
 
 def _transform_snowml_obj_to_sklearn_obj(obj: Any) -> Any:
     """Converts SnowML Estimator and Transformer objects to equivalent SKLearn objects.
@@ -74,7 +94,7 @@ def _transform_snowml_obj_to_sklearn_obj(obj: Any) -> Any:
         return tuple(map(_transform_snowml_obj_to_sklearn_obj, obj))
     elif isinstance(obj, BaseTransformer):
         # Convert SnowML object to equivalent SKLearn object
-        return obj.get_sklearn_object()
+        return to_native_format(obj)
     else:
         # Return all other objects as it is.
         return obj
@@ -115,6 +135,9 @@ class {transform.original_class_name}(BaseTransformer):
     ) -> None:
         super().__init__()
         self.id = str(uuid4()).replace("-", "_").upper()
+        deps: Set[str] = set([{transform.deps}])
+        {transform.estimator_args_gathering_calls}
+        self._deps = list(deps)
         {transform.estimator_args_transform_calls}
         init_args = {transform.sklearn_init_args_dict}
         cleaned_up_init_args = _validate_sklearn_args(
@@ -176,8 +199,9 @@ class {transform.original_class_name}(BaseTransformer):
     def _fit_snowpark(self, dataset: DataFrame) -> None:
         session = dataset._session
         # Validate that key package version in user workspace are supported in snowflake conda channel
-        pkg_version_utils.validate_pkg_versions_supported_in_snowflake_conda_channel(
-            pkg_versions=[{transform.fit_sproc_deps}], session=session, subproject=_SUBPROJECT)
+        # If customer doesn't have package in conda channel, replace the ones have the closest versions
+        self._deps = pkg_version_utils.get_valid_pkg_versions_supported_in_snowflake_conda_channel(
+            pkg_versions=self._get_dependencies(), session=session, subproject=_SUBPROJECT)
 
         # Specify input columns so column pruing will be enforced
         selected_cols = (
@@ -236,7 +260,7 @@ class {transform.original_class_name}(BaseTransformer):
         @sproc(
             is_permanent=False,
             name=fit_sproc_name,
-            packages=["snowflake-snowpark-python", {transform.fit_sproc_deps}],
+            packages=["snowflake-snowpark-python"] + self._get_dependencies(),
             replace=True,
             session=session,
             statement_params=statement_params,
@@ -374,8 +398,8 @@ class {transform.original_class_name}(BaseTransformer):
 
         session = dataset._session
         # Validate that key package version in user workspace are supported in snowflake conda channel
-        pkg_version_utils.validate_pkg_versions_supported_in_snowflake_conda_channel(
-            pkg_versions=[{transform.predict_udf_deps}], session=session, subproject=_SUBPROJECT)
+        pkg_version_utils.get_valid_pkg_versions_supported_in_snowflake_conda_channel(
+            pkg_versions=self._get_dependencies(), session=session, subproject=_SUBPROJECT)
 
         # Register vectorized UDF for batch inference
         batch_inference_udf_name = "SNOWML_BATCH_INFERENCE_{{safe_id}}_{{method}}".format(
@@ -403,7 +427,7 @@ class {transform.original_class_name}(BaseTransformer):
         @pandas_udf(
             is_permanent=False,
             name=batch_inference_udf_name,
-            packages=[{transform.predict_udf_deps}],
+            packages= self._get_dependencies(),
             replace=True,
             session=session,
             statement_params=statement_params,
@@ -947,7 +971,7 @@ class {transform.original_class_name}(BaseTransformer):
         @sproc(
             is_permanent=False,
             name=score_sproc_name,
-            packages=["snowflake-snowpark-python", {transform.fit_sproc_deps}],
+            packages=["snowflake-snowpark-python"] + self._get_dependencies(),
             replace=True,
             session=session,
             statement_params=statement_params,
@@ -1054,3 +1078,17 @@ class {transform.original_class_name}(BaseTransformer):
         if self._model_signature_dict is None:
             raise RuntimeError("Estimator not fitted before accessing property model_signatures! ")
         return self._model_signature_dict
+
+    def {transform.supported_export_method}(self) -> Any:
+        if self._sklearn_object is None:
+            self._sklearn_object = self._create_sklearn_object()
+        return self._sklearn_object
+
+    def {transform.unsupported_export_methods[0]}(self) -> Any:
+        raise AttributeError("Estimator doesn't support {transform.unsupported_export_methods[0]}(). Please use {transform.supported_export_method}()")
+    
+    def {transform.unsupported_export_methods[1]}(self) -> Any:
+        raise AttributeError("Estimator doesn't support {transform.unsupported_export_methods[1]}(). Please use {transform.supported_export_method}()")
+    
+    def _get_dependencies(self) -> List[str]:
+        return self._deps
