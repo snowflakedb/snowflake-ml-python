@@ -9,7 +9,7 @@ def fetch_classes_from_modules_in_pkg_dir(pkg_dir: str, pkg_name: str) -> Dict[s
 
     Args:
         pkg_dir: Path of the package directory.
-        pkg_name: Package name. Example, "snowflake.ml.sklearn.preprocessing".
+        pkg_name: Package name. Example, "snowflake.ml.modeling.preprocessing".
 
     Returns:
         A dict with class_name as key and class object as value.

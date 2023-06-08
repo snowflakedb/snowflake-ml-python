@@ -44,9 +44,8 @@ py_library(
         "//snowflake/ml/_internal:type_utils",
         "//snowflake/ml/model:_model_meta",
         "//snowflake/ml/model:custom_model",
-        "//snowflake/ml/model:model_signature",
         "//snowflake/ml/model:type_hints",
-        "//snowflake/ml/sklearn/framework",
+        "//snowflake/ml/modeling/framework",
     ],
 )
 

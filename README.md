@@ -142,13 +142,12 @@ Another useful command is, `bazel run`. This builds and then run the built targe
 ### Python dependencies
 
 To introduce a third-party Python dependency, first check if it is available as a package in the
-[Snowflake conda channel](https://repo.anaconda.com/pkgs/snowflake/). If so, add the package
-to [conda-env-snowflake.yml](https://github.com/snowflakedb/snowml/blob/main/conda-env-snowflake.yml),
-and run the following to re-generate
+[Snowflake conda channel](https://repo.anaconda.com/pkgs/snowflake/). Then modify
+[requirements.yml](https://github.com/snowflakedb/snowml/blob/main/requirements.yml) following the instruction there, and run the following to re-generate all requirements files, including
 [conda-env.yml](https://github.com/snowflakedb/snowml/blob/main/conda-env.yml):
 
 ```
-bazel build //bazel:conda-env.yml && cp bazel-bin/bazel/conda-env.yml .
+bazel run //bazel/requirements:sync_requirements
 ```
 
 Then, your code can use the package as if it were "installed" in the Python environment.

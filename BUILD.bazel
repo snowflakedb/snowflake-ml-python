@@ -4,4 +4,5 @@ exports_files([
     "conda-env.yml",
     "mypy.ini",
     "requirements.txt",
+    "requirements.yml",
 ])

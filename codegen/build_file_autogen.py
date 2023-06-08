@@ -6,7 +6,7 @@ Usage:
 python3 snowflake/ml/experimental/amauser/transformer/build_file_autogen.py
 """
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import List
 
 import inflection
@@ -17,7 +17,8 @@ from sklearn_wrapper_autogen import AutogenTool
 @dataclass(frozen=True)
 class ModuleInfo:
     module_name: str
-    exclude_list: List[str]
+    exclude_list: List[str] = field(default_factory=list)
+    include_list: List[str] = field(default_factory=list)
 
 
 MODULES = [
@@ -30,18 +31,18 @@ MODULES = [
         ],
     ),
     ModuleInfo("sklearn.svm", ["OneClassSVM"]),
-    ModuleInfo("sklearn.neural_network", []),
+    ModuleInfo("sklearn.neural_network"),
     ModuleInfo("sklearn.tree", ["BaseDecisionTree"]),  # Excluded BaseDecisionTree which is a private class.
     # TODO(snandamuri): Implement support for XGBRanker
     ModuleInfo("xgboost", ["Booster", "XGBModel", "XGBRanker"]),  # Excluded private classes and Ranker.
     ModuleInfo("sklearn.calibration", ["_SigmoidCalibration"]),  # Abstract base classes.
-    ModuleInfo("sklearn.cluster", []),
-    ModuleInfo("sklearn.compose", []),
-    ModuleInfo("sklearn.covariance", []),
-    # ModuleInfo("sklearn.cross_decomposition", []),
+    ModuleInfo("sklearn.cluster"),
+    ModuleInfo("sklearn.compose"),
+    ModuleInfo("sklearn.covariance"),
+    # ModuleInfo("sklearn.cross_decomposition"),
     ModuleInfo("sklearn.decomposition", ["MiniBatchNMF", "NMF", "SparseCoder", "LatentDirichletAllocation"]),
-    ModuleInfo("sklearn.discriminant_analysis", []),
-    # ModuleInfo("sklearn.feature_extraction", []),
+    ModuleInfo("sklearn.discriminant_analysis"),
+    # ModuleInfo("sklearn.feature_extraction"),
     ModuleInfo(
         "sklearn.feature_selection",
         [
@@ -53,14 +54,14 @@ MODULES = [
             "SelectFromModel",
         ],
     ),
-    ModuleInfo("sklearn.gaussian_process", []),
+    ModuleInfo("sklearn.gaussian_process"),
     ModuleInfo("sklearn.impute", ["SimpleImputer"]),
     ModuleInfo("sklearn.isotonic", ["IsotonicRegression"]),
-    ModuleInfo("sklearn.kernel_approximation", []),
-    ModuleInfo("sklearn.kernel_ridge", []),
+    ModuleInfo("sklearn.kernel_approximation"),
+    ModuleInfo("sklearn.kernel_ridge"),
     ModuleInfo("sklearn.manifold", ["LocallyLinearEmbedding"]),
-    ModuleInfo("sklearn.mixture", []),
-    ModuleInfo("sklearn.model_selection", []),
+    ModuleInfo("sklearn.mixture"),
+    ModuleInfo("sklearn.model_selection"),
     ModuleInfo("sklearn.multiclass", ["_ConstantPredictor"]),
     ModuleInfo(
         "sklearn.multioutput",
@@ -91,6 +92,7 @@ MODULES = [
             "DaskLGBMRegressor",
         ],
     ),
+    ModuleInfo(module_name="sklearn.preprocessing", include_list=["PolynomialFeatures"]),
 ]
 
 SRC_OUTPUT_PATH = ""
@@ -110,11 +112,71 @@ def indent(baseString: str, spaces: int = 0) -> str:
     return " " * spaces + baseString
 
 
+def get_src_build_file_content(module: ModuleInfo, module_root_dir: str) -> str:
+    """Generates the conent of BUILD.bazel file for source directory of the given module.
+
+    Args:
+        module: Module information.
+        module_root_dir: Relative directory path of the module source code.
+
+    Returns:
+        Returns conent of the BUILD.bazel file for module source directory.
+    """
+    # Source dir has bazel rules for native implementation of estimator or transformers?
+    src_build_native_file_path = os.path.join(SRC_OUTPUT_PATH, module_root_dir, "BUILD_NATIVE.bzl")
+    src_build_native_file_exists = os.path.isfile(src_build_native_file_path)
+
+    # Check if init file is alread preset in the source dir
+    src_init_file_path = os.path.join(SRC_OUTPUT_PATH, module_root_dir, "__init__.py")
+    src_init_file_exists = os.path.isfile(src_init_file_path)
+
+    return (
+        'load("//codegen:codegen_rules.bzl", "autogen_estimators", "autogen_init_file_for_module")\n'
+        'load(":estimators_info.bzl", "estimator_info_list")\n'
+        + ('load(":BUILD_NATIVE.bzl", "get_build_rules_for_native_impl")\n' if src_build_native_file_exists else "")
+        + 'package(default_visibility = ["//visibility:public"])\n'
+        + (f'\nautogen_init_file_for_module(module="{module.module_name}")' if not src_init_file_exists else "")
+        + f'\nautogen_estimators(module="{module.module_name}", estimator_info_list=estimator_info_list)\n'
+        + ("get_build_rules_for_native_impl()\n" if src_build_native_file_exists else "")
+    )
+
+
+def get_test_build_file_content(module: ModuleInfo, module_root_dir: str) -> str:
+    """Generates the conent of BUILD.bazel file for test directory of the given module.
+
+    Args:
+        module: Module information.
+        module_root_dir: Relative directory path of the module source code.
+
+    Returns:
+        Returns conent of the BUILD.bazel file for module test directory.
+    """
+
+    # Test dir has bazel rules for native implementation of estimator or transformers?
+    test_build_native_file_path = os.path.join(TEST_OUTPUT_PATH, module_root_dir, "BUILD_NATIVE.bzl")
+    test_build_native_file_exists = os.path.isfile(test_build_native_file_path)
+
+    return (
+        'load("//codegen:codegen_rules.bzl", "autogen_tests_for_estimators")\n'
+        f'load("//{module_root_dir}:estimators_info.bzl", "estimator_info_list")\n'
+        + ('load(":BUILD_NATIVE.bzl", "get_build_rules_for_native_impl")\n' if test_build_native_file_exists else "")
+        + 'package(default_visibility = ["//visibility:public"])\n'
+        "\nautogen_tests_for_estimators(\n"
+        f'    module = "{module.module_name}",\n'
+        f'    module_root_dir = "{module_root_dir}",\n'
+        "    estimator_info_list=estimator_info_list\n"
+        ")\n" + ("get_build_rules_for_native_impl()\n" if test_build_native_file_exists else "")
+    )
+
+
 def main(argv: List[str]) -> None:
     del argv  # Unused.
 
     # For each module
     for module in MODULES:
+        if len(module.exclude_list) > 0 and len(module.include_list) > 0:
+            raise ValueError(f"Both inlcude_list and exclude_list can't be specified for module {module.module_name}!")
+
         module_root_dir = AutogenTool.module_root_dir(module.module_name)
         estimators_info_file_path = os.path.join(module_root_dir, "estimators_info.bzl")
         src_build_file_path = os.path.join(SRC_OUTPUT_PATH, module_root_dir, "BUILD.bazel")
@@ -127,28 +189,13 @@ def main(argv: List[str]) -> None:
 
         # Src build file:
         # Contains genrules and py_library rules for all the estimator wrappers.
-        src_build_file_content = (
-            'load("//codegen:codegen_rules.bzl", "autogen_estimators", "autogen_init_file_for_module")\n'
-            f'load(":estimators_info.bzl", "estimator_info_list")\n'
-            'package(default_visibility = ["//visibility:public"])\n'
-            f'\nautogen_init_file_for_module(module="{module.module_name}")'
-            f'\nautogen_estimators(module="{module.module_name}", estimator_info_list=estimator_info_list)\n'
-        )
+        src_build_file_content = get_src_build_file_content(module, module_root_dir)
         os.makedirs("/".join(src_build_file_path.split("/")[:-1]), exist_ok=True)
         open(src_build_file_path, "w").write(src_build_file_content)
 
         # Test build file:
         # Contains genrules and py_test rules for all the estimator wrappers.
-        test_build_file_content = (
-            'load("//codegen:codegen_rules.bzl", "autogen_tests_for_estimators")\n'
-            f'load("//{module_root_dir}:estimators_info.bzl", "estimator_info_list")\n'
-            'package(default_visibility = ["//visibility:public"])\n'
-            "\nautogen_tests_for_estimators(\n"
-            f'    module = "{module.module_name}",\n'
-            f'    module_root_dir = "{module_root_dir}",\n'
-            "    estimator_info_list=estimator_info_list\n"
-            ")\n"
-        )
+        test_build_file_content = get_test_build_file_content(module, module_root_dir)
         os.makedirs("/".join(test_build_file_path.split("/")[:-1]), exist_ok=True)
         open(test_build_file_path, "w").write(test_build_file_content)
 
@@ -170,7 +217,13 @@ def get_estimators_info_file_content(module: ModuleInfo) -> str:
                 [
                     indent(f'struct(class_name="{c}", normalized_class_name="{inflection.underscore(c)}")', 4)
                     for c in class_list
-                    if c not in module.exclude_list
+                    if (
+                        c not in module.exclude_list
+                        if len(module.exclude_list) > 0
+                        else c in module.include_list
+                        if len(module.include_list) > 0
+                        else True
+                    )
                 ]
             )
         )

@@ -4,17 +4,16 @@ py_test(
     name = "model_integ_test",
     timeout = "long",
     srcs = ["model_integ_test.py"],
-    data = [
-        "//snowflake/ml:wheel",
-    ],
-    shard_count = 6,
+    shard_count = 8,
     tags = ["skip_merge_gates"],
     deps = [
         "//snowflake/ml/model:_deployer",
         "//snowflake/ml/model:_model",
         "//snowflake/ml/model:custom_model",
         "//snowflake/ml/model:type_hints",
-        "//snowflake/ml/sklearn/linear_model:linear_regression",
+        "//snowflake/ml/modeling/lightgbm:lgbm_regressor",
+        "//snowflake/ml/modeling/linear_model:logistic_regression",
+        "//snowflake/ml/modeling/xgboost:xgb_regressor",
         "//snowflake/ml/utils:connection_params",
     ],
 )

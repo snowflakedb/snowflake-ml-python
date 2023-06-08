@@ -1,0 +1,11 @@
+load("//codegen:codegen_rules.bzl", "autogen_tests_for_estimators")
+load("//snowflake/ml/modeling/preprocessing:estimators_info.bzl", "estimator_info_list")
+load(":BUILD_NATIVE.bzl", "get_build_rules_for_native_impl")
+package(default_visibility = ["//visibility:public"])
+
+autogen_tests_for_estimators(
+    module = "sklearn.preprocessing",
+    module_root_dir = "snowflake/ml/modeling/preprocessing",
+    estimator_info_list=estimator_info_list
+)
+get_build_rules_for_native_impl()

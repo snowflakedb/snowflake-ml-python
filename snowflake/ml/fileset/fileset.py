@@ -254,6 +254,7 @@ class FileSet:
     @telemetry.send_api_usage_telemetry(
         project=_PROJECT,
     )
+    @snowpark._internal.utils.private_preview(version="0.2.0")
     @_raise_if_deleted
     def files(self) -> List[str]:
         """Get the list of stage file paths in the current FileSet.
@@ -279,6 +280,10 @@ class FileSet:
         self._files = [f"sfc://{file}" for file in files]
         return self._files
 
+    @telemetry.send_api_usage_telemetry(
+        project=_PROJECT,
+    )
+    @snowpark._internal.utils.private_preview(version="0.2.0")
     @_raise_if_deleted
     def fileset_stage_location(self) -> str:
         """Get the stage path to the current FileSet in sfc protocol.
@@ -300,6 +305,7 @@ class FileSet:
         project=_PROJECT,
         func_params_to_log=["batch_size", "shuffle", "drop_last_batch"],
     )
+    @snowpark._internal.utils.private_preview(version="0.2.0")
     @_raise_if_deleted
     def to_torch_datapipe(self, *, batch_size: int, shuffle: bool = False, drop_last_batch: bool = True) -> Any:
         """Transform the Snowflake data into a ready-to-use Pytorch datapipe.
@@ -341,6 +347,7 @@ class FileSet:
         project=_PROJECT,
         func_params_to_log=["batch_size", "shuffle", "drop_last_batch"],
     )
+    @snowpark._internal.utils.private_preview(version="0.2.0")
     @_raise_if_deleted
     def to_tf_dataset(self, *, batch_size: int, shuffle: bool = False, drop_last_batch: bool = True) -> Any:
         """Transform the Snowflake data into a ready-to-use TensorFlow tf.data.Dataset.
@@ -377,6 +384,7 @@ class FileSet:
     @telemetry.send_api_usage_telemetry(
         project=_PROJECT,
     )
+    @snowpark._internal.utils.private_preview(version="0.2.0")
     @_raise_if_deleted
     def to_snowpark_dataframe(self) -> snowpark.DataFrame:
         """Convert the fileset to a snowpark dataframe.
@@ -398,6 +406,10 @@ class FileSet:
         assert isinstance(df, snowpark.DataFrame)
         return df
 
+    @telemetry.send_api_usage_telemetry(
+        project=_PROJECT,
+    )
+    @snowpark._internal.utils.private_preview(version="0.2.0")
     @_raise_if_deleted
     def delete(self) -> None:
         """Delete the FileSet directory and all the stage files in it.

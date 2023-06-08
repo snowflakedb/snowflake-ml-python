@@ -6,7 +6,7 @@ from typing import IO, List, Optional, Tuple, TypedDict, Union
 
 from typing_extensions import Unpack
 
-from snowflake.ml._internal import env_utils
+from snowflake.ml._internal import env as snowml_env, env_utils, file_utils
 from snowflake.ml.model import (
     _env as model_env,
     _model,
@@ -43,18 +43,6 @@ with FileLock():
             myzip.extractall(extracted_model_dir_path)
 """
 
-_SNOWML_IMPORT_CODE = """
-
-snowml_filename = '{snowml_filename}'
-snowml_path = import_dir + snowml_filename
-snowml_extracted = '/tmp/' + snowml_filename
-with FileLock():
-    if not os.path.isdir(snowml_extracted):
-        with zipfile.ZipFile(snowml_path, 'r') as myzip:
-            myzip.extractall(snowml_extracted)
-sys.path.insert(0, snowml_extracted)
-"""
-
 _UDF_CODE_TEMPLATE = """
 import pandas as pd
 import numpy as np
@@ -81,13 +69,11 @@ class FileLock:
 IMPORT_DIRECTORY_NAME = "snowflake_import_directory"
 import_dir = sys._xoptions[IMPORT_DIRECTORY_NAME]
 
-{snowml_import_code}
-
-from snowflake.ml.model._model import _load_model_for_deploy
+from snowflake.ml.model import _model
 
 {extract_model_code}
 
-model, meta = _load_model_for_deploy(extracted_model_dir_path)
+model, meta = _model._load_model_for_deploy(extracted_model_dir_path)
 
 # TODO(halu): Wire `max_batch_size`.
 # TODO(halu): Avoid per batch async detection branching.
@@ -148,9 +134,16 @@ def _deploy_to_warehouse(
     if target_method not in meta.signatures.keys():
         raise ValueError(f"Target method {target_method} does not exist in model.")
 
-    _snowml_wheel_path = kwargs.get("_snowml_wheel_path", None)
+    _use_local_snowml = kwargs.get("_use_local_snowml", False)
 
-    final_packages = _get_model_final_packages(meta, session, relax_version=relax_version)
+    final_packages = _get_model_final_packages(
+        meta, session, relax_version=relax_version, _use_local_snowml=_use_local_snowml
+    )
+
+    stage_location = kwargs.get("permanent_udf_stage_location", None)
+    _snowml_wheel_path = None
+    if _use_local_snowml:
+        _snowml_wheel_path = file_utils.upload_snowml(session, stage_location=stage_location)
 
     with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
         _write_UDF_py_file(f.file, extract_model_code, target_method, **kwargs)
@@ -160,8 +153,6 @@ def _deploy_to_warehouse(
             + ([model_stage_file_path] if model_stage_file_path else [])
             + ([_snowml_wheel_path] if _snowml_wheel_path else [])
         )
-
-        stage_location = kwargs.get("permanent_udf_stage_location", None)
 
         class _UDFParams(TypedDict):
             file_path: str
@@ -206,23 +197,21 @@ def _write_UDF_py_file(
         **kwargs: Options that control some features in generated udf code.
     """
     keep_order = kwargs.get("keep_order", True)
-    snowml_wheel_path = kwargs.get("_snowml_wheel_path", None)
-    if snowml_wheel_path:
-        whl_filename = os.path.basename(snowml_wheel_path)
-        snowml_import_code = _SNOWML_IMPORT_CODE.format(snowml_filename=whl_filename)
 
     udf_code = _UDF_CODE_TEMPLATE.format(
         extract_model_code=extract_model_code,
         keep_order_code=_KEEP_ORDER_CODE_TEMPLATE if keep_order else "",
         target_method=target_method,
-        snowml_import_code=snowml_import_code if snowml_wheel_path else "",
     )
     f.write(udf_code)
     f.flush()
 
 
 def _get_model_final_packages(
-    meta: _model_meta.ModelMetadata, session: snowpark_session.Session, relax_version: Optional[bool] = False
+    meta: _model_meta.ModelMetadata,
+    session: snowpark_session.Session,
+    relax_version: Optional[bool] = False,
+    _use_local_snowml: Optional[bool] = False,
 ) -> List[str]:
     """Generate final packages list of dependency of a model to be deployed to warehouse.
 
@@ -231,6 +220,7 @@ def _get_model_final_packages(
         session: Snowpark connection session.
         relax_version: Whether or not relax the version restriction when fail to resolve dependencies.
             Defaults to False.
+        _use_local_snowml: Flag to indicate if using local SnowML code as execution library
 
     Raises:
         RuntimeError: Raised when PIP requirements and dependencies from non-Snowflake anaconda channel found.
@@ -245,13 +235,26 @@ def _get_model_final_packages(
         or meta.pip_requirements
     ):
         raise RuntimeError("PIP requirements and dependencies from non-Snowflake anaconda channel is not supported.")
+
+    deps = meta._conda_dependencies[""]
+    if _use_local_snowml:
+        local_snowml_version = snowml_env.VERSION
+        snowml_dept = next((dep for dep in deps if dep.name == env_utils._SNOWML_PKG_NAME), None)
+        if snowml_dept:
+            if not snowml_dept.specifier.contains(local_snowml_version) and not relax_version:
+                raise RuntimeError(
+                    "Incompatible snowflake-ml-python-version is found. "
+                    + f"Require {snowml_dept.specifier}, got {local_snowml_version}."
+                )
+            deps.remove(snowml_dept)
+
     try:
         final_packages = env_utils.resolve_conda_environment(
-            meta._conda_dependencies[""], [model_env._SNOWFLAKE_CONDA_CHANNEL_URL], python_version=meta.python_version
+            deps, [model_env._SNOWFLAKE_CONDA_CHANNEL_URL], python_version=meta.python_version
         )
         if final_packages is None and relax_version:
             final_packages = env_utils.resolve_conda_environment(
-                list(map(env_utils.relax_requirement_version, meta._conda_dependencies[""])),
+                list(map(env_utils.relax_requirement_version, deps)),
                 [model_env._SNOWFLAKE_CONDA_CHANNEL_URL],
                 python_version=meta.python_version,
             )
@@ -262,13 +265,13 @@ def _get_model_final_packages(
         )
         final_packages = env_utils.validate_requirements_in_snowflake_conda_channel(
             session=session,
-            reqs=meta._conda_dependencies[""],
+            reqs=deps,
             python_version=meta.python_version,
         )
         if final_packages is None and relax_version:
             final_packages = env_utils.validate_requirements_in_snowflake_conda_channel(
                 session=session,
-                reqs=list(map(env_utils.relax_requirement_version, meta._conda_dependencies[""])),
+                reqs=list(map(env_utils.relax_requirement_version, deps)),
                 python_version=meta.python_version,
             )
 

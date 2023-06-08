@@ -14,7 +14,6 @@ import pandas as pd
 import xgboost
 from absl import flags
 from absl.testing import absltest
-from packaging import utils as packaging_utils
 from sklearn import datasets, ensemble, linear_model, model_selection, multioutput
 
 from snowflake.ml.model import (
@@ -23,7 +22,9 @@ from snowflake.ml.model import (
     custom_model,
     type_hints as model_types,
 )
-from snowflake.ml.sklearn.linear_model import LinearRegression
+from snowflake.ml.modeling.lightgbm import LGBMRegressor
+from snowflake.ml.modeling.linear_model import LogisticRegression
+from snowflake.ml.modeling.xgboost import XGBRegressor
 from snowflake.ml.utils import connection_params
 from snowflake.snowpark import Session
 
@@ -80,44 +81,6 @@ class DemoModelWithArtifacts(custom_model.CustomModel):
         return pd.DataFrame({"output": (input["c1"] + self.bias) > 12})
 
 
-def _upload_snowml_to_tmp_stage(
-    session: Session,
-) -> str:
-    """Upload model module of snowml to tmp stage.
-
-    Args:
-        session: Snowpark session.
-
-    Returns:
-        The stage path to uploaded snowml.zip file.
-    """
-    root_paths = [
-        os.path.join(absltest.TEST_SRCDIR.value, "SnowML", "snowflake", "ml"),  # Test using bazel
-        os.path.join(absltest.TEST_SRCDIR.value, "bazel-bin", "snowflake", "ml"),  # Test using pytest
-        os.path.join(absltest.TEST_SRCDIR.value),  # Test in Jenkins Wheel build and test pipeline.
-    ]
-    whl_filename = None
-    for root_path in root_paths:
-        if not os.path.exists(root_path):
-            continue
-        for filename in os.listdir(root_path):
-            if os.path.splitext(filename)[-1] == ".whl":
-                try:
-                    packaging_utils.parse_wheel_filename(filename=filename)
-                    whl_filename = filename
-                    break
-                except packaging_utils.InvalidWheelFilename:
-                    continue
-        if whl_filename:
-            break
-    if whl_filename is None:
-        raise RuntimeError("Cannot file wheel file. Have it been built?")
-    whl_path = os.path.join(root_path, whl_filename)
-    tmp_stage = session.get_session_stage()
-    _ = session.file.put(whl_path, tmp_stage, auto_compress=False, overwrite=True)
-    return f"{tmp_stage}/{whl_filename}"
-
-
 def _create_stage(session: Session, stage_qual_name: str) -> None:
     sql = f"CREATE STAGE {stage_qual_name}"
     session.sql(sql).collect()
@@ -140,7 +103,6 @@ class TestModelInteg(absltest.TestCase):
         self._session = Session.builder.configs(connection_params.SnowflakeLoginOptions()).create()
         # To create different UDF names among different runs
         self.run_id = str(uuid4()).replace("-", "_")
-        self._snowml_wheel_path = _upload_snowml_to_tmp_stage(self._session)
 
         db = self._session.get_current_database()
         schema = self._session.get_current_schema()
@@ -178,9 +140,7 @@ class TestModelInteg(absltest.TestCase):
                     model_dir_path=os.path.join(tmpdir, "async_model_composition"),
                     platform=_deployer.TargetPlatform.WAREHOUSE,
                     target_method="predict",
-                    options=model_types.WarehouseDeployOptions(
-                        {"relax_version": True, "_snowml_wheel_path": self._snowml_wheel_path}
-                    ),
+                    options=model_types.WarehouseDeployOptions({"relax_version": True, "_use_local_snowml": True}),
                 )
 
                 assert deploy_info is not None
@@ -217,9 +177,7 @@ class TestModelInteg(absltest.TestCase):
                     model_dir_path=os.path.join(tmpdir, "custom_bad_model"),
                     platform=_deployer.TargetPlatform.WAREHOUSE,
                     target_method="predict",
-                    options=model_types.WarehouseDeployOptions(
-                        {"relax_version": False, "_snowml_wheel_path": self._snowml_wheel_path}
-                    ),
+                    options=model_types.WarehouseDeployOptions({"relax_version": False, "_use_local_snowml": True}),
                 )
 
             with self.assertRaises(ValueError):
@@ -244,9 +202,7 @@ class TestModelInteg(absltest.TestCase):
                 model_dir_path=os.path.join(tmpdir, "custom_demo_model_sp0"),
                 platform=_deployer.TargetPlatform.WAREHOUSE,
                 target_method="predict",
-                options=model_types.WarehouseDeployOptions(
-                    {"relax_version": True, "_snowml_wheel_path": self._snowml_wheel_path}
-                ),
+                options=model_types.WarehouseDeployOptions({"relax_version": True, "_use_local_snowml": True}),
             )
             assert deploy_info is not None
             res = deployer.predict(deploy_info["name"], sp_df)
@@ -276,9 +232,7 @@ class TestModelInteg(absltest.TestCase):
                 model_dir_path=os.path.join(tmpdir, "custom_demo_model_sp_good"),
                 platform=_deployer.TargetPlatform.WAREHOUSE,
                 target_method="predict",
-                options=model_types.WarehouseDeployOptions(
-                    {"relax_version": True, "_snowml_wheel_path": self._snowml_wheel_path}
-                ),
+                options=model_types.WarehouseDeployOptions({"relax_version": True, "_use_local_snowml": True}),
             )
             assert deploy_info is not None
             res = deployer.predict(deploy_info["name"], pd_df)
@@ -308,9 +262,7 @@ class TestModelInteg(absltest.TestCase):
                 model_dir_path=os.path.join(tmpdir, "custom_demo_model_sp1"),
                 platform=_deployer.TargetPlatform.WAREHOUSE,
                 target_method="predict",
-                options=model_types.WarehouseDeployOptions(
-                    {"relax_version": True, "_snowml_wheel_path": self._snowml_wheel_path}
-                ),
+                options=model_types.WarehouseDeployOptions({"relax_version": True, "_use_local_snowml": True}),
             )
             assert deploy_info is not None
             res = deployer.predict(deploy_info["name"], sp_df)
@@ -340,9 +292,7 @@ class TestModelInteg(absltest.TestCase):
                 model_dir_path=os.path.join(tmpdir, "custom_demo_model_sp2"),
                 platform=_deployer.TargetPlatform.WAREHOUSE,
                 target_method="predict",
-                options=model_types.WarehouseDeployOptions(
-                    {"relax_version": True, "_snowml_wheel_path": self._snowml_wheel_path}
-                ),
+                options=model_types.WarehouseDeployOptions({"relax_version": True, "_use_local_snowml": True}),
             )
             assert deploy_info is not None
             res = deployer.predict(deploy_info["name"], pd_df)
@@ -374,7 +324,7 @@ class TestModelInteg(absltest.TestCase):
                 options=model_types.WarehouseDeployOptions(
                     {
                         "relax_version": True,
-                        "_snowml_wheel_path": self._snowml_wheel_path,
+                        "_use_local_snowml": True,
                         "permanent_udf_stage_location": f"@{self.stage_qual_name}/",
                     }
                 ),
@@ -399,7 +349,7 @@ class TestModelInteg(absltest.TestCase):
                     options=model_types.WarehouseDeployOptions(
                         {
                             "relax_version": True,
-                            "_snowml_wheel_path": self._snowml_wheel_path,
+                            "_use_local_snowml": True,
                             "permanent_udf_stage_location": f"@{self.stage_qual_name}/",
                         }
                     ),
@@ -426,9 +376,7 @@ class TestModelInteg(absltest.TestCase):
                 model_dir_path=os.path.join(tmpdir, "custom_demo_model_array"),
                 platform=_deployer.TargetPlatform.WAREHOUSE,
                 target_method="predict",
-                options=model_types.WarehouseDeployOptions(
-                    {"relax_version": True, "_snowml_wheel_path": self._snowml_wheel_path}
-                ),
+                options=model_types.WarehouseDeployOptions({"relax_version": True, "_use_local_snowml": True}),
             )
             assert deploy_info is not None
             res = deployer.predict(deploy_info["name"], pd_df)
@@ -458,9 +406,7 @@ class TestModelInteg(absltest.TestCase):
                 model_dir_path=os.path.join(tmpdir, "custom_demo_model_str"),
                 platform=_deployer.TargetPlatform.WAREHOUSE,
                 target_method="predict",
-                options=model_types.WarehouseDeployOptions(
-                    {"relax_version": True, "_snowml_wheel_path": self._snowml_wheel_path}
-                ),
+                options=model_types.WarehouseDeployOptions({"relax_version": True, "_use_local_snowml": True}),
             )
             assert deploy_info is not None
             res = deployer.predict(deploy_info["name"], pd_df)
@@ -490,9 +436,7 @@ class TestModelInteg(absltest.TestCase):
                 model_dir_path=os.path.join(tmpdir, "custom_demo_model_array_sp"),
                 platform=_deployer.TargetPlatform.WAREHOUSE,
                 target_method="predict",
-                options=model_types.WarehouseDeployOptions(
-                    {"relax_version": True, "_snowml_wheel_path": self._snowml_wheel_path}
-                ),
+                options=model_types.WarehouseDeployOptions({"relax_version": True, "_use_local_snowml": True}),
             )
             assert deploy_info is not None
             res = deployer.predict(deploy_info["name"], sp_df)
@@ -523,9 +467,7 @@ class TestModelInteg(absltest.TestCase):
                 model_dir_path=os.path.join(tmpdir, "custom_demo_model_str_sp"),
                 platform=_deployer.TargetPlatform.WAREHOUSE,
                 target_method="predict",
-                options=model_types.WarehouseDeployOptions(
-                    {"relax_version": True, "_snowml_wheel_path": self._snowml_wheel_path}
-                ),
+                options=model_types.WarehouseDeployOptions({"relax_version": True, "_use_local_snowml": True}),
             )
             assert deploy_info is not None
             res = deployer.predict(deploy_info["name"], sp_df)
@@ -555,9 +497,7 @@ class TestModelInteg(absltest.TestCase):
                 model_dir_path=os.path.join(tmpdir, "custom_demo_model_array_str"),
                 platform=_deployer.TargetPlatform.WAREHOUSE,
                 target_method="predict",
-                options=model_types.WarehouseDeployOptions(
-                    {"relax_version": True, "_snowml_wheel_path": self._snowml_wheel_path}
-                ),
+                options=model_types.WarehouseDeployOptions({"relax_version": True, "_use_local_snowml": True}),
             )
             assert deploy_info is not None
             res = deployer.predict(deploy_info["name"], pd_df)
@@ -589,7 +529,7 @@ class TestModelInteg(absltest.TestCase):
                 options=model_types.WarehouseDeployOptions(
                     {
                         "relax_version": True,
-                        "_snowml_wheel_path": self._snowml_wheel_path,
+                        "_use_local_snowml": True,
                         "output_with_input_features": True,
                         "keep_order": False,
                     }
@@ -621,7 +561,7 @@ class TestModelInteg(absltest.TestCase):
                 options=model_types.WarehouseDeployOptions(
                     {
                         "relax_version": True,
-                        "_snowml_wheel_path": self._snowml_wheel_path,
+                        "_use_local_snowml": True,
                         "output_with_input_features": True,
                     }
                 ),
@@ -661,9 +601,7 @@ class TestModelInteg(absltest.TestCase):
                 model_dir_path=os.path.join(tmpdir, "custom_model_with_artifacts"),
                 platform=_deployer.TargetPlatform.WAREHOUSE,
                 target_method="predict",
-                options=model_types.WarehouseDeployOptions(
-                    {"relax_version": True, "_snowml_wheel_path": self._snowml_wheel_path}
-                ),
+                options=model_types.WarehouseDeployOptions({"relax_version": True, "_use_local_snowml": True}),
             )
             assert deploy_info is not None
             res = deployer.predict(deploy_info["name"], pd_df[["c3", "c1", "c2"]])
@@ -703,9 +641,7 @@ class TestModelInteg(absltest.TestCase):
             model_stage_file_path=model_path_in_stage,
             platform=_deployer.TargetPlatform.WAREHOUSE,
             target_method="predict",
-            options=model_types.WarehouseDeployOptions(
-                {"relax_version": True, "_snowml_wheel_path": self._snowml_wheel_path}
-            ),
+            options=model_types.WarehouseDeployOptions({"relax_version": True, "_use_local_snowml": True}),
         )
         assert deploy_info is not None
         res = deployer.predict(deploy_info["name"], pd_df)
@@ -753,9 +689,7 @@ class TestModelInteg(absltest.TestCase):
                 model_stage_file_path=model_path_in_stage,
                 platform=_deployer.TargetPlatform.WAREHOUSE,
                 target_method="predict",
-                options=model_types.WarehouseDeployOptions(
-                    {"relax_version": True, "_snowml_wheel_path": self._snowml_wheel_path}
-                ),
+                options=model_types.WarehouseDeployOptions({"relax_version": True, "_use_local_snowml": True}),
             )
             assert deploy_info is not None
             res = deployer.predict(deploy_info["name"], pd_df[["c3", "c1", "c2"]])
@@ -767,8 +701,9 @@ class TestModelInteg(absltest.TestCase):
 
     def test_skl_model_deploy(self) -> None:
         iris_X, iris_y = datasets.load_iris(return_X_y=True)
-        regr = linear_model.LinearRegression()
-        regr.fit(iris_X[:10], iris_y[:10])
+        # LogisticRegression is for classfication task, such as iris
+        regr = linear_model.LogisticRegression()
+        regr.fit(iris_X, iris_y)
         with tempfile.TemporaryDirectory() as tmpdir:
             model_api.save_model(
                 name="skl_model",
@@ -783,9 +718,7 @@ class TestModelInteg(absltest.TestCase):
                 model_dir_path=os.path.join(tmpdir, "skl_model"),
                 platform=_deployer.TargetPlatform.WAREHOUSE,
                 target_method="predict",
-                options=model_types.WarehouseDeployOptions(
-                    {"relax_version": True, "_snowml_wheel_path": self._snowml_wheel_path}
-                ),
+                options=model_types.WarehouseDeployOptions({"relax_version": True, "_use_local_snowml": True}),
             )
 
             assert di is not None
@@ -811,9 +744,7 @@ class TestModelInteg(absltest.TestCase):
                 model_dir_path=os.path.join(tmpdir, "skl_model_proba"),
                 platform=_deployer.TargetPlatform.WAREHOUSE,
                 target_method="predict",
-                options=model_types.WarehouseDeployOptions(
-                    {"relax_version": True, "_snowml_wheel_path": self._snowml_wheel_path}
-                ),
+                options=model_types.WarehouseDeployOptions({"relax_version": True, "_use_local_snowml": True}),
             )
             assert di_predict is not None
             res = dc.predict(di_predict["name"], iris_X[:10])
@@ -824,9 +755,7 @@ class TestModelInteg(absltest.TestCase):
                 model_dir_path=os.path.join(tmpdir, "skl_model_proba"),
                 platform=_deployer.TargetPlatform.WAREHOUSE,
                 target_method="predict_proba",
-                options=model_types.WarehouseDeployOptions(
-                    {"relax_version": True, "_snowml_wheel_path": self._snowml_wheel_path}
-                ),
+                options=model_types.WarehouseDeployOptions({"relax_version": True, "_use_local_snowml": True}),
             )
             assert di_predict_proba is not None
             res = dc.predict(di_predict_proba["name"], iris_X[:10])
@@ -853,9 +782,7 @@ class TestModelInteg(absltest.TestCase):
                 model_dir_path=os.path.join(tmpdir, "skl_multiple_output_model_proba"),
                 platform=_deployer.TargetPlatform.WAREHOUSE,
                 target_method="predict",
-                options=model_types.WarehouseDeployOptions(
-                    {"relax_version": True, "_snowml_wheel_path": self._snowml_wheel_path}
-                ),
+                options=model_types.WarehouseDeployOptions({"relax_version": True, "_use_local_snowml": True}),
             )
             assert di_predict is not None
             res = dc.predict(di_predict["name"], iris_X[-10:])
@@ -866,9 +793,7 @@ class TestModelInteg(absltest.TestCase):
                 model_dir_path=os.path.join(tmpdir, "skl_multiple_output_model_proba"),
                 platform=_deployer.TargetPlatform.WAREHOUSE,
                 target_method="predict_proba",
-                options=model_types.WarehouseDeployOptions(
-                    {"relax_version": True, "_snowml_wheel_path": self._snowml_wheel_path}
-                ),
+                options=model_types.WarehouseDeployOptions({"relax_version": True, "_use_local_snowml": True}),
             )
             assert di_predict_proba is not None
             res = dc.predict(di_predict_proba["name"], iris_X[-10:])
@@ -895,9 +820,7 @@ class TestModelInteg(absltest.TestCase):
                 model_dir_path=os.path.join(tmpdir, "xgb_model"),
                 platform=_deployer.TargetPlatform.WAREHOUSE,
                 target_method="predict",
-                options=model_types.WarehouseDeployOptions(
-                    {"relax_version": True, "_snowml_wheel_path": self._snowml_wheel_path}
-                ),
+                options=model_types.WarehouseDeployOptions({"relax_version": True, "_use_local_snowml": True}),
             )
             assert di_predict is not None
             res = dc.predict(di_predict["name"], cal_X_test)
@@ -925,9 +848,7 @@ class TestModelInteg(absltest.TestCase):
                 model_dir_path=os.path.join(tmpdir, "xgb_model"),
                 platform=_deployer.TargetPlatform.WAREHOUSE,
                 target_method="predict",
-                options=model_types.WarehouseDeployOptions(
-                    {"relax_version": True, "_snowml_wheel_path": self._snowml_wheel_path}
-                ),
+                options=model_types.WarehouseDeployOptions({"relax_version": True, "_use_local_snowml": True}),
             )
             assert di_predict is not None
             cal_data_sp_df_test_X = cal_data_sp_df_test.drop('"target"')
@@ -936,24 +857,23 @@ class TestModelInteg(absltest.TestCase):
                 res.to_pandas().values, np.expand_dims(regressor.predict(cal_data_sp_df_test_X.to_pandas()), axis=1)
             )
 
-    def test_snowml_model_deploy(self) -> None:
-        iris = datasets.load_iris()
-        df = pd.DataFrame(data=np.c_[iris["data"], iris["target"]], columns=iris["feature_names"] + ["target"])
-        df.columns = [s.replace(" (CM)", "").replace(" ", "") for s in df.columns.str.upper()]
+    def test_snowml_model_deploy_snowml_sklearn(self) -> None:
+        iris_X = datasets.load_iris(as_frame=True).frame
+        iris_X.columns = [s.replace(" (CM)", "").replace(" ", "") for s in iris_X.columns.str.upper()]
 
         INPUT_COLUMNS = ["SEPALLENGTH", "SEPALWIDTH", "PETALLENGTH", "PETALWIDTH"]
         LABEL_COLUMNS = "TARGET"
         OUTPUT_COLUMNS = "PREDICTED_TARGET"
-        regr = LinearRegression(input_cols=INPUT_COLUMNS, output_cols=OUTPUT_COLUMNS, label_cols=LABEL_COLUMNS)
-        test_features = df[:10]
+        regr = LogisticRegression(input_cols=INPUT_COLUMNS, output_cols=OUTPUT_COLUMNS, label_cols=LABEL_COLUMNS)
+        test_features = iris_X
         regr.fit(test_features)
 
+        # no sample input because snowml can infer the model signature itself
         with tempfile.TemporaryDirectory() as tmpdir:
             model_api.save_model(
                 name="snowml_model",
                 model_dir_path=os.path.join(tmpdir, "snowml_model"),
                 model=regr,
-                sample_input=test_features,
                 metadata={"author": "xjiang", "version": "1"},
             )
             dc = _deployer.Deployer(self._session, _deployer.LocalDeploymentManager())
@@ -962,9 +882,71 @@ class TestModelInteg(absltest.TestCase):
                 model_dir_path=os.path.join(tmpdir, "snowml_model"),
                 platform=_deployer.TargetPlatform.WAREHOUSE,
                 target_method="predict",
-                options=model_types.WarehouseDeployOptions(
-                    {"relax_version": True, "_snowml_wheel_path": self._snowml_wheel_path}
-                ),
+                options=model_types.WarehouseDeployOptions({"relax_version": True, "_use_local_snowml": True}),
+            )
+
+            assert di is not None
+            res = dc.predict(di["name"], test_features)
+            np.testing.assert_allclose(res[OUTPUT_COLUMNS].values, regr.predict(test_features)[OUTPUT_COLUMNS].values)
+
+    def test_snowml_model_deploy_xgboost(self) -> None:
+        iris_X = datasets.load_iris(as_frame=True).frame
+        iris_X.columns = [s.replace(" (CM)", "").replace(" ", "") for s in iris_X.columns.str.upper()]
+
+        INPUT_COLUMNS = ["SEPALLENGTH", "SEPALWIDTH", "PETALLENGTH", "PETALWIDTH"]
+        LABEL_COLUMNS = "TARGET"
+        OUTPUT_COLUMNS = "PREDICTED_TARGET"
+        regr = XGBRegressor(input_cols=INPUT_COLUMNS, output_cols=OUTPUT_COLUMNS, label_cols=LABEL_COLUMNS)
+        test_features = iris_X[:10]
+        regr.fit(test_features)
+
+        # no sample input because snowml can infer the model signature itself
+        with tempfile.TemporaryDirectory() as tmpdir:
+            model_api.save_model(
+                name="snowml_model",
+                model_dir_path=os.path.join(tmpdir, "snowml_model"),
+                model=regr,
+                metadata={"author": "xjiang", "version": "1"},
+            )
+            dc = _deployer.Deployer(self._session, _deployer.LocalDeploymentManager())
+            di = dc.create_deployment(
+                name=f"snowml_model{self.run_id}",
+                model_dir_path=os.path.join(tmpdir, "snowml_model"),
+                platform=_deployer.TargetPlatform.WAREHOUSE,
+                target_method="predict",
+                options=model_types.WarehouseDeployOptions({"relax_version": True, "_use_local_snowml": True}),
+            )
+
+            assert di is not None
+            res = dc.predict(di["name"], test_features)
+            np.testing.assert_allclose(res[OUTPUT_COLUMNS].values, regr.predict(test_features)[OUTPUT_COLUMNS].values)
+
+    def test_snowml_model_deploy_lightgbm(self) -> None:
+        iris_X = datasets.load_iris(as_frame=True).frame
+        iris_X.columns = [s.replace(" (CM)", "").replace(" ", "") for s in iris_X.columns.str.upper()]
+
+        INPUT_COLUMNS = ["SEPALLENGTH", "SEPALWIDTH", "PETALLENGTH", "PETALWIDTH"]
+        LABEL_COLUMNS = "TARGET"
+        OUTPUT_COLUMNS = "PREDICTED_TARGET"
+        regr = LGBMRegressor(input_cols=INPUT_COLUMNS, output_cols=OUTPUT_COLUMNS, label_cols=LABEL_COLUMNS)
+        test_features = iris_X[:10]
+        regr.fit(test_features)
+
+        # no sample input because snowml can infer the model signature itself
+        with tempfile.TemporaryDirectory() as tmpdir:
+            model_api.save_model(
+                name="snowml_model",
+                model_dir_path=os.path.join(tmpdir, "snowml_model"),
+                model=regr,
+                metadata={"author": "xjiang", "version": "1"},
+            )
+            dc = _deployer.Deployer(self._session, _deployer.LocalDeploymentManager())
+            di = dc.create_deployment(
+                name=f"snowml_model{self.run_id}",
+                model_dir_path=os.path.join(tmpdir, "snowml_model"),
+                platform=_deployer.TargetPlatform.WAREHOUSE,
+                target_method="predict",
+                options=model_types.WarehouseDeployOptions({"relax_version": True, "_use_local_snowml": True}),
             )
 
             assert di is not None

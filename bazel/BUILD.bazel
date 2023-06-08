@@ -1,5 +1,4 @@
 load("@rules_python//python:defs.bzl", native_py_test = "py_test")
-load(":py_rules.bzl", "py_binary", "py_library")
 
 native_py_test(
     name = "repo_paths_test",
@@ -7,68 +6,4 @@ native_py_test(
     data = ["repo_paths.bzl"],
     python_version = "PY3",
     srcs_version = "PY3",
-)
-
-py_library(
-    name = "conda_env_utils",
-    srcs = ["conda_env_utils.py"],
-)
-
-py_binary(
-    name = "generate_conda_env",
-    srcs = ["generate_conda_env.py"],
-    deps = [":conda_env_utils"],
-)
-
-py_binary(
-    name = "generate_requirements",
-    srcs = ["generate_requirements.py"],
-    deps = [":conda_env_utils"],
-)
-
-genrule(
-    name = "conda_env_gen",
-    srcs = [
-        "//:conda-env-extended.yml",
-        "//:conda-env-snowflake.yml",
-    ],
-    outs = ["conda-env.yml"],
-    cmd = "$(location :generate_conda_env) $(location //:conda-env-snowflake.yml) $(location //:conda-env-extended.yml)> $@",
-    tools = [":generate_conda_env"],
-)
-
-sh_test(
-    name = "conda_env_test",
-    srcs = ["conda_env_test.sh"],
-    args = [
-        "$(location //:conda-env.yml)",
-        "$(location :conda-env.yml)",
-    ],
-    data = [
-        ":conda-env.yml",
-        "//:conda-env.yml",
-    ],
-)
-
-genrule(
-    name = "requirements_gen",
-    srcs = [
-        "//:conda-env.yml",
-    ],
-    outs = ["requirements.txt"],
-    cmd = "$(location :generate_requirements) $(location //:conda-env.yml) > $@",
-    tools = [":generate_requirements"],
-)
-
-sh_test(
-    name = "requirements_conda_env_sync_test",
-    srcs = ["requirements_conda_env_test.sh"],
-    args = [
-        "$(location //:requirements.txt)",
-        "$(location :requirements.txt)",
-    ],
-    data = [
-        ":requirements.txt",
-        "//:requirements.txt",
-    ],
 )

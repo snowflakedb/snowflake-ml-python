@@ -10,20 +10,19 @@ from snowflake.ml._internal import type_utils
 from snowflake.ml.model import (
     _model_meta as model_meta_api,
     custom_model,
-    model_signature,
     type_hints as model_types,
 )
 from snowflake.ml.model._handlers import _base
 
 if TYPE_CHECKING:
-    from snowflake.ml.sklearn.framework.base import BaseEstimator
+    from snowflake.ml.modeling.framework.base import BaseEstimator
 
 
 class _SnowMLModelHandler(_base._ModelHandler["BaseEstimator"]):
     """Handler for SnowML based model.
 
-    Currently snowflake.ml.sklearn.framework.base.BaseEstimator
-        and snowflake.ml.sklearn.framework.pipeline.Pipeline based classes are supported.
+    Currently snowflake.ml.modeling.framework.base.BaseEstimator
+        and snowflake.ml.modeling.pipeline.Pipeline based classes are supported.
     """
 
     handler_type = "snowml"
@@ -34,7 +33,7 @@ class _SnowMLModelHandler(_base._ModelHandler["BaseEstimator"]):
         model: model_types.SupportedModelType,
     ) -> TypeGuard["BaseEstimator"]:
         return (
-            type_utils.LazyType("snowflake.ml.sklearn.framework.base.BaseEstimator").isinstance(model)
+            type_utils.LazyType("snowflake.ml.modeling.framework.base.BaseEstimator").isinstance(model)
             # Pipeline is inherited from BaseEstimator, so no need to add one more check
         ) and any(
             (hasattr(model, method) and callable(getattr(model, method, None)))
@@ -45,7 +44,7 @@ class _SnowMLModelHandler(_base._ModelHandler["BaseEstimator"]):
     def cast_model(
         model: model_types.SupportedModelType,
     ) -> "BaseEstimator":
-        from snowflake.ml.sklearn.framework.base import BaseEstimator
+        from snowflake.ml.modeling.framework.base import BaseEstimator
 
         assert isinstance(model, BaseEstimator)
         # Pipeline is inherited from BaseEstimator, so no need to add one more check
@@ -62,41 +61,38 @@ class _SnowMLModelHandler(_base._ModelHandler["BaseEstimator"]):
         is_sub_model: Optional[bool] = False,
         **kwargs: Unpack[model_types.SNOWModelSaveOptions],
     ) -> None:
-        from snowflake.ml.sklearn.framework.base import BaseEstimator
+        from snowflake.ml.modeling.framework.base import BaseEstimator
 
         assert isinstance(model, BaseEstimator)
         # Pipeline is inherited from BaseEstimator, so no need to add one more check
 
         if not is_sub_model:
             # TODO(xjiang): get model signature from modeling.
-            if model_meta._signatures is None:
-                # In this case sample_input should be available, because of the check in save_model.
-                assert sample_input is not None
-                target_methods = kwargs.pop("target_methods", None)
-                if target_methods is None:
-                    target_methods = [
-                        method
-                        for method in _SnowMLModelHandler.DEFAULT_TARGET_METHODS
-                        if hasattr(model, method) and callable(getattr(model, method, None))
-                    ]
-                else:
-                    for method_name in target_methods:
-                        if not callable(getattr(model, method_name, None)):
-                            raise ValueError(f"Target method {method_name} is not callable.")
-                        if method_name not in _SnowMLModelHandler.DEFAULT_TARGET_METHODS:
-                            raise ValueError(f"Target method {method_name} is not supported.")
-
-                model_meta._signatures = {}
-                for method_name in target_methods:
-                    target_method = getattr(model, method_name)
-                    sig = model_signature.infer_signature(sample_input, target_method(sample_input))
-                    model_meta._signatures[method_name] = sig
+            if model_meta._signatures is None and sample_input is None:
+                assert hasattr(model, "model_signatures")
+                model_meta._signatures = getattr(model, "model_signatures", {})
             else:
-                for method_name in model_meta._signatures.keys():
-                    if not callable(getattr(model, method_name, None)):
-                        raise ValueError(f"Target method {method_name} is not callable.")
-                    if method_name not in _SnowMLModelHandler.DEFAULT_TARGET_METHODS:
-                        raise ValueError(f"Target method {method_name} is not supported.")
+                target_methods = model_meta_api._get_target_methods(
+                    model=model,
+                    target_methods=kwargs.pop("target_methods", None),
+                    default_target_methods=_SnowMLModelHandler.DEFAULT_TARGET_METHODS,
+                )
+
+                def get_prediction(
+                    target_method_name: str, sample_input: model_types.SupportedLocalDataType
+                ) -> model_types.SupportedLocalDataType:
+                    target_method = getattr(model, target_method_name, None)
+                    assert callable(target_method)
+                    predictions_df = target_method(sample_input)
+                    return predictions_df
+
+                model_meta = model_meta_api._validate_signature(
+                    model=model,
+                    model_meta=model_meta,
+                    target_methods=target_methods,
+                    sample_input=sample_input,
+                    get_prediction_fn=get_prediction,
+                )
 
         model_blob_path = os.path.join(model_blobs_dir_path, name)
         os.makedirs(model_blob_path, exist_ok=True)
@@ -106,9 +102,12 @@ class _SnowMLModelHandler(_base._ModelHandler["BaseEstimator"]):
             name=name, model_type=_SnowMLModelHandler.handler_type, path=_SnowMLModelHandler.MODEL_BLOB_FILE
         )
         model_meta.models[name] = base_meta
-        model_meta._include_if_absent(
-            [("scikit-learn", "scikit-learn"), ("xgboost", "xgboost"), ("lightgbm", "lightgbm"), ("joblib", "joblib")]
-        )
+        _include_if_absent_pkgs = [
+            ("scikit-learn", "scikit-learn"),
+            ("xgboost", "xgboost"),
+            ("lightgbm", "lightgbm"),
+        ]
+        model_meta._include_if_absent(_include_if_absent_pkgs)
 
     @staticmethod
     def _load_model(name: str, model_meta: model_meta_api.ModelMetadata, model_blobs_dir_path: str) -> "BaseEstimator":
@@ -123,7 +122,7 @@ class _SnowMLModelHandler(_base._ModelHandler["BaseEstimator"]):
         with open(os.path.join(model_blob_path, model_blob_filename), "rb") as f:
             m = cloudpickle.load(f)
 
-        from snowflake.ml.sklearn.framework.base import BaseEstimator
+        from snowflake.ml.modeling.framework.base import BaseEstimator
 
         assert isinstance(m, BaseEstimator)
         return m

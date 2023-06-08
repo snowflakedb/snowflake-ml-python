@@ -8,9 +8,11 @@ from typing import DefaultDict, Dict, List, Optional, Tuple
 from packaging import requirements, specifiers, utils as packaging_utils, version
 
 import snowflake.connector
+from snowflake.ml._internal import env as snowml_env
 from snowflake.ml._internal.utils import query_result_checker
 from snowflake.snowpark import session
 
+_SNOWML_PKG_NAME = "snowflake-ml-python"
 _INFO_SCHEMA_PACKAGES_HAS_RUNTIME_VERSION: Optional[bool] = None
 _SNOWFLAKE_CONDA_PACKAGE_CACHE: Dict[str, List[version.Version]] = {}
 
@@ -192,17 +194,20 @@ def get_local_installed_version_of_pip_package(pip_req: requirements.Requirement
     try:
         local_dist = importlib_metadata.distribution(pip_req.name)
         local_dist_version = local_dist.version
-        if pip_req.specifier.contains(local_dist_version):
-            new_pip_req = copy.deepcopy(pip_req)
-            new_pip_req.specifier = specifiers.SpecifierSet(specifiers=f"=={local_dist_version}")
-            return new_pip_req
-        else:
-            warnings.warn(
-                f"Package requirement {str(pip_req)} specified, while version {local_dist_version} is installed.",
-                category=UserWarning,
-            )
-            return pip_req
     except importlib_metadata.PackageNotFoundError:
+        if pip_req.name == _SNOWML_PKG_NAME:
+            local_dist_version = snowml_env.VERSION
+        else:
+            return pip_req
+    if pip_req.specifier.contains(local_dist_version):
+        new_pip_req = copy.deepcopy(pip_req)
+        new_pip_req.specifier = specifiers.SpecifierSet(specifiers=f"=={local_dist_version}")
+        return new_pip_req
+    else:
+        warnings.warn(
+            f"Package requirement {str(pip_req)} specified, while version {local_dist_version} is installed.",
+            category=UserWarning,
+        )
         return pip_req
 
 

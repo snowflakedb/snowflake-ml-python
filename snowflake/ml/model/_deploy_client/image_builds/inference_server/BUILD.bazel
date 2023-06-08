@@ -1,0 +1,20 @@
+load("//bazel:py_rules.bzl", "py_library", "py_test")
+
+package(default_visibility = ["//visibility:public"])
+
+py_library(
+    name = "main",
+    srcs = ["main.py"],
+    deps = [
+        "//snowflake/ml/model:_model",
+        "//snowflake/ml/model:custom_model"
+    ]
+)
+
+py_test(
+    name = "main_test",
+    srcs = ["main_test.py"],
+    deps = [
+        ":main"
+    ]
+)

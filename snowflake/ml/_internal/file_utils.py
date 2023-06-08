@@ -1,10 +1,15 @@
 import contextlib
+import hashlib
+import importlib
 import io
 import os
+import pathlib
 import shutil
 import tempfile
 import zipfile
-from typing import IO, Generator, Optional
+from typing import IO, Generator, Optional, Tuple, Union
+
+from snowflake.snowpark import session as snowpark_session
 
 GENERATED_PY_FILE_EXT = (".pyc", ".pyo", ".pyd", ".pyi")
 
@@ -77,6 +82,7 @@ def zip_file_or_directory_to_stream(
                     cur_path = os.path.dirname(cur_path)
 
             if os.path.isdir(path):
+                zf.writestr(f"{os.path.relpath(path, start_path)}/", "")
                 for dirname, _, files in os.walk(path):
                     # ignore __pycache__
                     if ignore_generated_py_file and "__pycache__" in dirname:
@@ -109,3 +115,61 @@ def unzip_stream_in_temp_dir(stream: IO[bytes], temp_root: Optional[str] = None)
         with zipfile.ZipFile(stream, mode="r", compression=zipfile.ZIP_DEFLATED) as zf:
             zf.extractall(path=tempdir)
         yield tempdir
+
+
+@contextlib.contextmanager
+def zip_snowml() -> Generator[Tuple[io.BytesIO, str], None, None]:
+    """Zip the snowflake-ml source code as a zip-file for import.
+
+    Yields:
+        A bytes IO stream containing the zip file.
+    """
+    snowml_path = list(importlib.import_module("snowflake.ml").__path__)[0]
+    root_path = os.path.normpath(os.path.join(snowml_path, os.pardir, os.pardir))
+    with zip_file_or_directory_to_stream(snowml_path, root_path) as stream:
+        yield stream, hash_directory(snowml_path)
+
+
+def hash_directory(directory: Union[str, pathlib.Path]) -> str:
+    """Hash the **content** of a folder recursively using SHA-1.
+
+    Args:
+        directory: The path to the directory to be hashed.
+
+    Returns:
+        The hexdigest form of the hash result.
+    """
+
+    def _update_hash_from_dir(directory: Union[str, pathlib.Path], hash: "hashlib._Hash") -> "hashlib._Hash":
+        assert pathlib.Path(directory).is_dir(), "Provided path is not a directory."
+        for path in sorted(pathlib.Path(directory).iterdir(), key=lambda p: str(p).lower()):
+            hash.update(path.name.encode())
+            if path.is_file():
+                with open(path, "rb") as f:
+                    for chunk in iter(lambda: f.read(64 * 1024), b""):
+                        hash.update(chunk)
+            elif path.is_dir():
+                hash = _update_hash_from_dir(path, hash)
+        return hash
+
+    return _update_hash_from_dir(directory, hashlib.sha1()).hexdigest()
+
+
+def upload_snowml(session: snowpark_session.Session, stage_location: Optional[str] = None) -> str:
+    """Upload the SnowML local code into a stage if provided, or a session stage.
+    It will label the file name using the SHA-1 of the snowflake.ml folder, so that if the source code does not change,
+    it won't reupload. Any changes will, however, result a new zip file.
+
+    Args:
+        session: Snowpark connection session.
+        stage_location: The path to the stage location where the uploaded SnowML should be. Defaults to None.
+
+    Returns:
+        The path to the uploaded SnowML zip file.
+    """
+    with zip_snowml() as (stream, hash_str):
+        if stage_location is None:
+            stage_location = session.get_session_stage()
+        file_location = os.path.join(stage_location, f"snowml_{hash_str}.zip")
+        session.file.put_stream(stream, stage_location=file_location, auto_compress=False, overwrite=False)
+    return file_location

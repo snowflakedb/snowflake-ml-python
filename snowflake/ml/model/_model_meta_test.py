@@ -4,7 +4,9 @@ from importlib import metadata as importlib_metadata
 
 import yaml
 from absl.testing import absltest
+from packaging import requirements
 
+from snowflake.ml._internal import env_utils
 from snowflake.ml.model import _model_meta, model_signature
 
 _DUMMY_SIG = {
@@ -17,7 +19,12 @@ _DUMMY_SIG = {
 }
 
 _BASIC_DEPENDENCIES_TARGET = list(
-    sorted(map(lambda x: f"{x}=={importlib_metadata.version(x)}", _model_meta._BASIC_DEPENDENCIES))
+    sorted(
+        map(
+            lambda x: str(env_utils.get_local_installed_version_of_pip_package(requirements.Requirement(x))),
+            _model_meta._BASIC_DEPENDENCIES,
+        )
+    )
 )
 
 

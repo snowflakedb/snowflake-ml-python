@@ -1,0 +1,115 @@
+{
+    "$schema": "http://json-schema.org/draft-04/schema#",
+    "type": "array",
+    "items": [
+        {
+            "type": "object",
+            "properties": {
+                "name": {
+                    "type": "string",
+                    "description": "The name of the required packages."
+                },
+                "name_pypi": {
+                    "type": "string",
+                    "description": "The name of the required packages in PyPI, set if differs."
+                },
+                "name_conda": {
+                    "type": "string",
+                    "description": "The name of the required packages in conda, set if differs."
+                },
+                "dev_version": {
+                    "type": "string",
+                    "description": "The version to use in the development environment.",
+                    "pattern": "^([1-9][0-9]*!)?(0|[1-9][0-9]*)(\\.(0|[1-9][0-9]*))*((a|b|rc)(0|[1-9][0-9]*))?(\\.post(0|[1-9][0-9]*))?(\\.dev(0|[1-9][0-9]*))?$"
+                },
+                "dev_version_pypi": {
+                    "type": "string",
+                    "description": "The version to use in the development environment in PyPI, set if differs.",
+                    "pattern": "^([1-9][0-9]*!)?(0|[1-9][0-9]*)(\\.(0|[1-9][0-9]*))*((a|b|rc)(0|[1-9][0-9]*))?(\\.post(0|[1-9][0-9]*))?(\\.dev(0|[1-9][0-9]*))?$"
+                },
+                "dev_version_conda": {
+                    "type": "string",
+                    "description": "The version to use in the development environment in conda, set if differs.",
+                    "pattern": "^([1-9][0-9]*!)?(0|[1-9][0-9]*)(\\.(0|[1-9][0-9]*))*((a|b|rc)(0|[1-9][0-9]*))?(\\.post(0|[1-9][0-9]*))?(\\.dev(0|[1-9][0-9]*))?$"
+                },
+                "from_channel": {
+                    "type": "string",
+                    "description": "The channel where the package come from, set if not from Snowflake Anaconda Channel.",
+                    "default": "https://repo.anaconda.com/pkgs/snowflake"
+                },
+                "version_requirements": {
+                    "type": "string",
+                    "description": "The version requirements of this package as a dependency when released.",
+                    "pattern": "^((<|<=|\\!=|==|>=|>)([1-9][0-9]*!)?(0|[1-9][0-9]*)(\\.(0|[1-9][0-9]*))*((a|b|rc)(0|[1-9][0-9]*))?(\\.post(0|[1-9][0-9]*))?(\\.dev(0|[1-9][0-9]*))?)(,(<|<=|\\!=|==|>=|>)([1-9][0-9]*!)?(0|[1-9][0-9]*)(\\.(0|[1-9][0-9]*))*((a|b|rc)(0|[1-9][0-9]*))?(\\.post(0|[1-9][0-9]*))?(\\.dev(0|[1-9][0-9]*))?)*$"
+                },
+                "version_requirements_pypi": {
+                    "type": "string",
+                    "description": "The version requirements of this package as a dependency when released in PyPI, set if differs.",
+                    "pattern": "^((<|<=|\\!=|==|>=|>)([1-9][0-9]*!)?(0|[1-9][0-9]*)(\\.(0|[1-9][0-9]*))*((a|b|rc)(0|[1-9][0-9]*))?(\\.post(0|[1-9][0-9]*))?(\\.dev(0|[1-9][0-9]*))?)(,(<|<=|\\!=|==|>=|>)([1-9][0-9]*!)?(0|[1-9][0-9]*)(\\.(0|[1-9][0-9]*))*((a|b|rc)(0|[1-9][0-9]*))?(\\.post(0|[1-9][0-9]*))?(\\.dev(0|[1-9][0-9]*))?)*$"
+                },
+                "version_requirements_conda": {
+                    "type": "string",
+                    "description": "The version requirements of this package as a dependency when released.",
+                    "pattern": "^((<|<=|\\!=|==|>=|>)([1-9][0-9]*!)?(0|[1-9][0-9]*)(\\.(0|[1-9][0-9]*))*((a|b|rc)(0|[1-9][0-9]*))?(\\.post(0|[1-9][0-9]*))?(\\.dev(0|[1-9][0-9]*))?)(,(<|<=|\\!=|==|>=|>)([1-9][0-9]*!)?(0|[1-9][0-9]*)(\\.(0|[1-9][0-9]*))*((a|b|rc)(0|[1-9][0-9]*))?(\\.post(0|[1-9][0-9]*))?(\\.dev(0|[1-9][0-9]*))?)*$"
+                },
+                "requirements_extra_tags": {
+                    "type": "array",
+                    "description": "The extras tags that this package belongs to as a dependency.",
+                    "items": [
+                        {
+                            "type": "string"
+                        }
+                    ]
+                },
+                "tags": {
+                    "type": "array",
+                    "items": [
+                        {
+                            "type": "string"
+                        }
+                    ]
+                }
+            },
+            "allOf": [
+                {
+                    "anyOf": [
+                        {
+                            "required": [
+                                "name"
+                            ]
+                        },
+                        {
+                            "required": [
+                                "name_pypi"
+                            ]
+                        },
+                        {
+                            "required": [
+                                "name_conda"
+                            ]
+                        }
+                    ]
+                },
+                {
+                    "anyOf": [
+                        {
+                            "required": [
+                                "dev_version"
+                            ]
+                        },
+                        {
+                            "required": [
+                                "dev_version_pypi"
+                            ]
+                        },
+                        {
+                            "required": [
+                                "dev_version_conda"
+                            ]
+                        }
+                    ]
+                }
+            ]
+        }
+    ]
+}

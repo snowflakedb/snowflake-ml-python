@@ -35,6 +35,7 @@ def autogen_init_file_for_module(module):
         tools = [AUTO_GEN_TOOL_BAZEL_PATH],
         srcs = [INIT_TEMPLATE_BAZEL_PATH],
         cmd = "cat $(location {}) > $@".format(INIT_TEMPLATE_BAZEL_PATH),
+        tags = ["autogen_build"],
     )
 
     py_library(
@@ -75,6 +76,7 @@ def autogen_estimators(module, estimator_info_list):
             tools = [AUTO_GEN_TOOL_BAZEL_PATH],
             srcs = [ESTIMATOR_TEMPLATE_BAZEL_PATH],
             cmd = cmd.format(e.class_name),
+            tags = ["autogen_build"],
         )
 
         py_library(
@@ -82,7 +84,7 @@ def autogen_estimators(module, estimator_info_list):
             srcs = [":generate_{}".format(e.normalized_class_name)],
             deps = [
                 ":init",
-                "//snowflake/ml/sklearn/framework:framework",
+                "//snowflake/ml/modeling/framework:framework",
                 "//snowflake/ml/_internal:telemetry",
                 "//snowflake/ml/_internal/utils:temp_file_utils",
                 "//snowflake/ml/_internal/utils:query_result_checker",
@@ -125,6 +127,7 @@ def autogen_tests_for_estimators(module, module_root_dir, estimator_info_list):
             tools = [AUTO_GEN_TOOL_BAZEL_PATH],
             srcs = [ESTIMATOR_TEST_TEMPLATE_BAZEL_PATH],
             cmd = cmd.format(e.class_name),
+            tags = ["autogen_build"],
         )
 
         py_test(

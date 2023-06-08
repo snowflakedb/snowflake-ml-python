@@ -1,0 +1,16 @@
+load("//bazel:py_rules.bzl", "py_library")
+
+package(default_visibility = ["//visibility:public"])
+
+py_library(
+    name = "framework",
+    srcs = [
+        "base.py",
+        "_utils.py"
+    ],
+    deps = [
+        "//snowflake/ml:version",
+        "//snowflake/ml/_internal:telemetry",
+        "//snowflake/ml/_internal/utils:parallelize",
+    ],
+)

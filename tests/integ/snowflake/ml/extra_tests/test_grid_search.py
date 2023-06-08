@@ -9,8 +9,8 @@ from sklearn.datasets import load_diabetes
 from sklearn.model_selection import GridSearchCV as SkGridSearchCV
 from sklearn.svm import SVR as SkSVR
 
-from snowflake.ml.sklearn.model_selection import GridSearchCV
-from snowflake.ml.sklearn.svm import SVR
+from snowflake.ml.modeling.model_selection import GridSearchCV
+from snowflake.ml.modeling.svm import SVR
 from snowflake.ml.utils.connection_params import SnowflakeLoginOptions
 from snowflake.snowpark import Session
 

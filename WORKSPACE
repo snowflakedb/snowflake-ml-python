@@ -24,6 +24,18 @@ http_archive(
 
 load("//third_party/rules_conda:defs.bzl", "conda_create", "load_conda", "register_toolchain")
 
+http_archive(
+    name = "aspect_bazel_lib",
+    sha256 = "e3151d87910f69cf1fc88755392d7c878034a69d6499b287bcfc00b1cf9bb415",
+    strip_prefix = "bazel-lib-1.32.1",
+    url = "https://github.com/aspect-build/bazel-lib/releases/download/v1.32.1/bazel-lib-v1.32.1.tar.gz",
+)
+
+load("@aspect_bazel_lib//lib:repositories.bzl", "aspect_bazel_lib_dependencies", "register_yq_toolchains")
+
+aspect_bazel_lib_dependencies()
+register_yq_toolchains()
+
 # Below two conda environments (toolchains) are created and they require different
 # constraint values. Two platforms defined in bazel/platforms/BUILD provide those
 # constraint values. A toolchain matches a platform as long as the platform provides
@@ -44,6 +56,7 @@ conda_create(
     timeout = 3600,
     clean = False,
     environment = "@//:conda-env-snowflake.yml",
+    coverage_tool = "@//bazel/coverage_tool:coverage_tool.py",
     quiet = True,
 )
 
@@ -62,6 +75,7 @@ conda_create(
     timeout = 3600,
     clean = False,
     environment = "@//:conda-env.yml",
+    coverage_tool = "@//bazel/coverage_tool:coverage_tool.py",
     quiet = True,
 )
 

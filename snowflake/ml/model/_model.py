@@ -13,7 +13,7 @@ from snowflake.ml.model import (
     model_signature,
     type_hints as model_types,
 )
-from snowflake.ml.sklearn.framework import base
+from snowflake.ml.modeling.framework import base
 from snowflake.snowpark import FileOperation, Session
 
 MODEL_BLOBS_DIR = "models"
