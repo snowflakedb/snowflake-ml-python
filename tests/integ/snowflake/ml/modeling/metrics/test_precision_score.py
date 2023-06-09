@@ -16,11 +16,17 @@ from tests.integ.snowflake.ml.modeling.framework import utils
 
 _ROWS = 100
 _TYPES = [utils.DataType.INTEGER] * 4 + [utils.DataType.FLOAT]
-_DATA, _SCHEMA = utils.gen_fuzz_data(
+_BINARY_DATA, _SCHEMA = utils.gen_fuzz_data(
     rows=_ROWS,
     types=_TYPES,
     low=0,
     high=2,
+)
+_MULTICLASS_DATA, _ = utils.gen_fuzz_data(
+    rows=_ROWS,
+    types=_TYPES,
+    low=0,
+    high=5,
 )
 _Y_TRUE_COL = _SCHEMA[1]
 _Y_PRED_COL = _SCHEMA[2]
@@ -43,13 +49,7 @@ class PrecisionScoreTest(parameterized.TestCase):
         {"params": {"labels": [None, [2, 0, 4]]}},
     )
     def test_precision_score_labels(self, params: Dict[str, Any]) -> None:
-        data, _ = utils.gen_fuzz_data(
-            rows=_ROWS,
-            types=_TYPES,
-            low=0,
-            high=5,
-        )
-        pandas_df = pd.DataFrame(data, columns=_SCHEMA)
+        pandas_df = pd.DataFrame(_MULTICLASS_DATA, columns=_SCHEMA)
         input_df = self._session.create_dataframe(pandas_df)
 
         for labels in params["labels"]:
@@ -69,87 +69,113 @@ class PrecisionScoreTest(parameterized.TestCase):
             np.testing.assert_allclose(actual_p, sklearn_p)
 
     @parameterized.parameters(  # type: ignore[misc]
-        {"params": {"sample_weight_col_name": [None, _SAMPLE_WEIGHT_COL]}},
+        {"params": {"pos_label": [0, 2, 4]}},
     )
-    def test_precision_score_sample_weight(self, params: Dict[str, Any]) -> None:
-        pandas_df = pd.DataFrame(_DATA, columns=_SCHEMA)
+    def test_precision_score_pos_label(self, params: Dict[str, Any]) -> None:
+        pandas_df = pd.DataFrame(_MULTICLASS_DATA, columns=_SCHEMA)
         input_df = self._session.create_dataframe(pandas_df)
 
-        for sample_weight_col_name in params["sample_weight_col_name"]:
+        for pos_label in params["pos_label"]:
             actual_p = snowml_metrics.precision_score(
                 df=input_df,
                 y_true_col_names=_Y_TRUE_COL,
                 y_pred_col_names=_Y_PRED_COL,
-                sample_weight_col_name=sample_weight_col_name,
+                pos_label=pos_label,
+                average="micro",
             )
-            sample_weight = pandas_df[sample_weight_col_name].to_numpy() if sample_weight_col_name else None
             sklearn_p = sklearn_metrics.precision_score(
                 pandas_df[_Y_TRUE_COL],
                 pandas_df[_Y_PRED_COL],
-                sample_weight=sample_weight,
+                pos_label=pos_label,
+                average="micro",
             )
             np.testing.assert_allclose(actual_p, sklearn_p)
 
     @parameterized.parameters(  # type: ignore[misc]
-        {"params": {"average": [None, "binary", "micro", "macro", "samples", "weighted"]}},
+        {
+            "params": {
+                "sample_weight_col_name": [None, _SAMPLE_WEIGHT_COL],
+                "values": [
+                    {"data": _BINARY_DATA, "y_true": _Y_TRUE_COLS, "y_pred": _Y_PRED_COLS},
+                    {"data": _MULTICLASS_DATA, "y_true": _Y_TRUE_COL, "y_pred": _Y_PRED_COL},
+                ],
+            }
+        },
     )
-    def test_precision_score_average(self, params: Dict[str, Any]) -> None:
-        data, _ = utils.gen_fuzz_data(
-            rows=_ROWS,
-            types=_TYPES,
-            low=0,
-            high=5,
-        )
-        multiclass_pandas_df = pd.DataFrame(data, columns=_SCHEMA)
-        multiclass_input_df = self._session.create_dataframe(multiclass_pandas_df)
+    def test_precision_score_sample_weight(self, params: Dict[str, Any]) -> None:
+        for values in params["values"]:
+            data = values["data"]
+            y_true = values["y_true"]
+            y_pred = values["y_pred"]
+            pandas_df = pd.DataFrame(data, columns=_SCHEMA)
+            input_df = self._session.create_dataframe(pandas_df)
+
+            for sample_weight_col_name in params["sample_weight_col_name"]:
+                actual_p = snowml_metrics.precision_score(
+                    df=input_df,
+                    y_true_col_names=y_true,
+                    y_pred_col_names=y_pred,
+                    sample_weight_col_name=sample_weight_col_name,
+                    average="micro",
+                )
+                sample_weight = pandas_df[sample_weight_col_name].to_numpy() if sample_weight_col_name else None
+                sklearn_p = sklearn_metrics.precision_score(
+                    pandas_df[y_true],
+                    pandas_df[y_pred],
+                    sample_weight=sample_weight,
+                    average="micro",
+                )
+                np.testing.assert_allclose(actual_p, sklearn_p)
+
+    @parameterized.parameters(  # type: ignore[misc]
+        {"params": {"average": [None, "micro", "macro", "weighted"]}},
+    )
+    def test_precision_score_average_multiclass(self, params: Dict[str, Any]) -> None:
+        pandas_df = pd.DataFrame(_MULTICLASS_DATA, columns=_SCHEMA)
+        input_df = self._session.create_dataframe(pandas_df)
 
         for average in params["average"]:
-            if average == "binary" or average == "samples":
-                continue
-
             actual_p = snowml_metrics.precision_score(
-                df=multiclass_input_df,
+                df=input_df,
                 y_true_col_names=_Y_TRUE_COL,
                 y_pred_col_names=_Y_PRED_COL,
                 average=average,
             )
             sklearn_p = sklearn_metrics.precision_score(
-                multiclass_pandas_df[_Y_TRUE_COL],
-                multiclass_pandas_df[_Y_PRED_COL],
+                pandas_df[_Y_TRUE_COL],
+                pandas_df[_Y_PRED_COL],
                 average=average,
             )
             np.testing.assert_allclose(actual_p, sklearn_p)
 
-        pandas_df = pd.DataFrame(_DATA, columns=_SCHEMA)
+    @parameterized.parameters(  # type: ignore[misc]
+        {
+            "params": {
+                "average": ["binary", "samples"],
+                "y_true": [_Y_TRUE_COL, _Y_TRUE_COLS],
+                "y_pred": [_Y_PRED_COL, _Y_PRED_COLS],
+            }
+        },
+    )
+    def test_precision_score_average_binary(self, params: Dict[str, Any]) -> None:
+        pandas_df = pd.DataFrame(_BINARY_DATA, columns=_SCHEMA)
         input_df = self._session.create_dataframe(pandas_df)
 
-        # binary
-        actual_p = snowml_metrics.precision_score(
-            df=input_df,
-            y_true_col_names=_Y_TRUE_COL,
-            y_pred_col_names=_Y_PRED_COL,
-            average="binary",
-        )
-        sklearn_p = sklearn_metrics.precision_score(
-            pandas_df[_Y_TRUE_COL],
-            pandas_df[_Y_PRED_COL],
-            average="binary",
-        )
-        np.testing.assert_allclose(actual_p, sklearn_p)
-
-        # samples
-        actual_p = snowml_metrics.precision_score(
-            df=input_df,
-            y_true_col_names=_Y_TRUE_COLS,
-            y_pred_col_names=_Y_PRED_COLS,
-            average="samples",
-        )
-        sklearn_p = sklearn_metrics.precision_score(
-            pandas_df[_Y_TRUE_COLS],
-            pandas_df[_Y_PRED_COLS],
-            average="samples",
-        )
-        np.testing.assert_allclose(actual_p, sklearn_p)
+        for idx, average in enumerate(params["average"]):
+            y_true = params["y_true"][idx]
+            y_pred = params["y_pred"][idx]
+            actual_p = snowml_metrics.precision_score(
+                df=input_df,
+                y_true_col_names=y_true,
+                y_pred_col_names=y_pred,
+                average=average,
+            )
+            sklearn_p = sklearn_metrics.precision_score(
+                pandas_df[y_true],
+                pandas_df[y_pred],
+                average=average,
+            )
+            np.testing.assert_allclose(actual_p, sklearn_p)
 
     @parameterized.parameters(  # type: ignore[misc]
         {"params": {"zero_division": ["warn", 0, 1]}},

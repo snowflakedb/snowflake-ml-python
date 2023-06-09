@@ -144,7 +144,7 @@ class DataType(Enum):
 
 
 def gen_fuzz_data(
-    rows: int, types: List[DataType], low: int = MIN_INT, high: int = MAX_INT
+    rows: int, types: List[DataType], low: Union[int, List[int]] = MIN_INT, high: Union[int, List[int]] = MAX_INT
 ) -> Tuple[List[Any], List[str]]:
     """
     Generate random data based on input column types and row count.
@@ -153,8 +153,8 @@ def gen_fuzz_data(
     Args:
         rows: num of rows to generate
         types: type per column
-        low: lower bound of the output interval (inclusive)
-        high: upper bound of the output interval (exclusive)
+        low: lower bound(s) of the output interval (inclusive)
+        high: upper bound(s) of the output interval (exclusive)
 
     Returns:
         A tuple of generated data and column names
@@ -166,10 +166,12 @@ def gen_fuzz_data(
     names = ["ID"]
 
     for idx, t in enumerate(types):
+        _low = low if isinstance(low, int) else low[idx]
+        _high = high if isinstance(high, int) else high[idx]
         if t == DataType.INTEGER:
-            data.append(np.random.randint(low, high, rows))
+            data.append(np.random.randint(_low, _high, rows))
         elif t == DataType.FLOAT:
-            data.append(np.random.uniform(low, high, rows))
+            data.append(np.random.uniform(_low, _high, rows))
         else:
             raise ValueError(f"Unsupported data type {t}")
         names.append(f"COL_{idx}")

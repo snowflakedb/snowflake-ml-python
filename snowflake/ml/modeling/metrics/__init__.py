@@ -4,6 +4,7 @@ from .correlation import correlation
 from .covariance import covariance
 from .precision_recall_fscore_support import precision_recall_fscore_support
 from .precision_score import precision_score
+from .roc_curve import roc_curve
 
 __all__ = [
     "accuracy_score",
@@ -12,4 +13,5 @@ __all__ = [
     "covariance",
     "precision_recall_fscore_support",
     "precision_score",
+    "roc_curve",
 ]
