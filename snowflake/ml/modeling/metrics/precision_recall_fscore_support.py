@@ -115,9 +115,17 @@ def precision_recall_fscore_support(
 
     session = df._session
     assert session is not None
-    query = df.queries["queries"][-1]
     sproc_name = f"precision_recall_fscore_support_{snowpark_utils.generate_random_alphanumeric()}"
     statement_params = telemetry.get_statement_params(_PROJECT, _SUBPROJECT)
+
+    cols = []
+    if isinstance(y_true_col_names, str):
+        cols = [y_true_col_names, y_pred_col_names]
+    elif isinstance(y_true_col_names, list):
+        cols = y_true_col_names + y_pred_col_names  # type:ignore[assignment, operator]
+    if sample_weight_col_name:
+        cols.append(sample_weight_col_name)
+    query = df[cols].queries["queries"][-1]
 
     @F.sproc(  # type: ignore[misc]
         session=session,

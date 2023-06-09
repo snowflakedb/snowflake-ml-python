@@ -12,7 +12,7 @@
 #     The missing dependency cuold happen when a new operator is being developed, but not yet released.
 
 set -o pipefail
-set -eu
+set -u
 
 echo "Running "$0
 

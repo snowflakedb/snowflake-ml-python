@@ -15,6 +15,8 @@ from snowflake.ml.modeling.framework import _utils, base
 from snowflake.snowpark import functions as F, types as T
 from snowflake.snowpark._internal import utils as snowpark_utils
 
+_SUBPROJECT = "Impute"
+
 STRATEGY_TO_STATE_DICT = {
     "constant": None,
     "mean": _utils.NumericStatistics.MEAN,
@@ -194,10 +196,7 @@ class SimpleImputer(base.BaseTransformer):
 
         return input_col_datatypes
 
-    @telemetry.send_api_usage_telemetry(
-        project=base.PROJECT,
-        subproject=base.SUBPROJECT,
-    )
+    @telemetry.send_api_usage_telemetry(project=base.PROJECT, subproject=_SUBPROJECT)
     def fit(self, dataset: snowpark.DataFrame) -> "SimpleImputer":
         """
         Compute values to impute for the dataset according to the strategy.
@@ -214,7 +213,7 @@ class SimpleImputer(base.BaseTransformer):
         input_col_datatypes = self._get_dataset_input_col_datatypes(dataset)
 
         self.statistics_: Dict[str, Any] = {}
-        statement_params = telemetry.get_statement_params(base.PROJECT, base.SUBPROJECT, self.__class__.__name__)
+        statement_params = telemetry.get_statement_params(base.PROJECT, _SUBPROJECT, self.__class__.__name__)
 
         if self.strategy == "constant":
             if self.fill_value is None:
@@ -274,14 +273,8 @@ class SimpleImputer(base.BaseTransformer):
         self._is_fitted = True
         return self
 
-    @telemetry.send_api_usage_telemetry(
-        project=base.PROJECT,
-        subproject=base.SUBPROJECT,
-    )
-    @telemetry.add_stmt_params_to_df(
-        project=base.PROJECT,
-        subproject=base.SUBPROJECT,
-    )
+    @telemetry.send_api_usage_telemetry(project=base.PROJECT, subproject=_SUBPROJECT)
+    @telemetry.add_stmt_params_to_df(project=base.PROJECT, subproject=_SUBPROJECT)
     def transform(self, dataset: Union[snowpark.DataFrame, pd.DataFrame]) -> Union[snowpark.DataFrame, pd.DataFrame]:
         """
         Transform the input dataset by imputing the computed statistics in the input columns.
