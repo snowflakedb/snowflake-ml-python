@@ -21,11 +21,13 @@ _GENERATE_TOOL = ":parse_and_generate_requirements"
 
 _GENERATE_COMMAND = "$(location " + _GENERATE_TOOL + ") $(location " + _SRC_REQUIREMENT_FILE + ") --schema $(location " + _SCHEMA_FILE + ") {options} > $@"
 
-_TEMPLATE_FOLDER_PATH = "//bazel/requirements/templates"
-
 _AUTOGEN_HEADERS = """# DO NOT EDIT!
 # Generate by running 'bazel run //bazel/requirements:sync_requirements'
 """
+
+# "---" is a document start marker, which is legit but optional (https://yaml.org/spec/1.1/#c-document-start). This
+# is needed for conda meta.yaml to bypass some bug from conda side.
+_YAML_START_DOCUMENT_MARKER = "---"
 
 _GENERATED_REQUIREMENTS_FILES = {
     "requirements_txt": {
@@ -77,7 +79,7 @@ _GENERATED_REQUIREMENTS_FILES = {
             "{generated}.body".format(generated = value["generated"]),
         ],
         outs = [value["generated"]],
-        cmd = "(echo -e \""+ _AUTOGEN_HEADERS +"\" ; cat $(location :{generated}.body) ) > $@".format(
+        cmd = "(echo -e \"" + _AUTOGEN_HEADERS + "\" ; cat $(location :{generated}.body) ) > $@".format(
             generated = value["generated"],
         ),
         tools = [_GENERATE_TOOL],
@@ -99,13 +101,22 @@ genrule(
 )
 
 yq(
-    name = "gen_conda_meta",
+    name = "gen_conda_meta_body_format",
     srcs = [
         ":meta.body.yaml",
-        "{template_folder}:meta.tpl.yaml".format(template_folder = _TEMPLATE_FOLDER_PATH),
+        "//bazel/requirements/templates:meta.tpl.yaml",
+    ],
+    outs = ["meta.body.formatted.yaml"],
+    expression = ". as $item ireduce ({}; . * $item ) | sort_keys(..)",
+)
+
+genrule(
+    name = "gen_conda_meta",
+    srcs = [
+        ":meta.body.formatted.yaml",
     ],
     outs = ["meta.yaml"],
-    expression = ". as $item ireduce ({}; . * $item ) | sort_keys(..)",
+    cmd = "(echo -e \"" + _AUTOGEN_HEADERS + "\" ; echo \"" + _YAML_START_DOCUMENT_MARKER + "\"; cat $(location :meta.body.formatted.yaml) ) > $@",
 )
 
 # Create a test target for each file that Bazel should

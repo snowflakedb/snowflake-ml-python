@@ -16,7 +16,13 @@ from tests.integ.snowflake.ml.modeling.framework import utils
 
 _ROWS = 100
 _TYPES = [utils.DataType.INTEGER] * 4 + [utils.DataType.FLOAT]
-_DATA, _SCHEMA = utils.gen_fuzz_data(
+_BINARY_DATA, _SCHEMA = utils.gen_fuzz_data(
+    rows=_ROWS,
+    types=_TYPES,
+    low=0,
+    high=2,
+)
+_MULTICLASS_DATA, _ = utils.gen_fuzz_data(
     rows=_ROWS,
     types=_TYPES,
     low=0,
@@ -40,10 +46,46 @@ class PrecisionRecallFscoreSupportTest(parameterized.TestCase):
         self._session.close()
 
     @parameterized.parameters(  # type: ignore[misc]
+        {
+            "params": {
+                "beta": [1.0, 0.5],
+                "values": [
+                    {"data": _BINARY_DATA, "y_true": _Y_TRUE_COLS, "y_pred": _Y_PRED_COLS},
+                    {"data": _MULTICLASS_DATA, "y_true": _Y_TRUE_COL, "y_pred": _Y_PRED_COL},
+                ],
+            }
+        },
+    )
+    def test_precision_recall_fscore_support_beta(self, params: Dict[str, Any]) -> None:
+        for values in params["values"]:
+            data = values["data"]
+            y_true = values["y_true"]
+            y_pred = values["y_pred"]
+            pandas_df = pd.DataFrame(data, columns=_SCHEMA)
+            input_df = self._session.create_dataframe(pandas_df)
+
+            for beta in params["beta"]:
+                actual_p, actual_r, actual_f, actual_s = snowml_metrics.precision_recall_fscore_support(
+                    df=input_df,
+                    y_true_col_names=y_true,
+                    y_pred_col_names=y_pred,
+                    beta=beta,
+                )
+                sklearn_p, sklearn_r, sklearn_f, sklearn_s = sklearn_metrics.precision_recall_fscore_support(
+                    pandas_df[y_true],
+                    pandas_df[y_pred],
+                    beta=beta,
+                )
+                np.testing.assert_allclose(
+                    np.array((actual_p, actual_r, actual_f, actual_s)),
+                    np.array((sklearn_p, sklearn_r, sklearn_f, sklearn_s)),
+                )
+
+    @parameterized.parameters(  # type: ignore[misc]
         {"params": {"labels": [None, [2, 0, 4]]}},
     )
     def test_precision_recall_fscore_support_labels(self, params: Dict[str, Any]) -> None:
-        pandas_df = pd.DataFrame(_DATA, columns=_SCHEMA)
+        pandas_df = pd.DataFrame(_MULTICLASS_DATA, columns=_SCHEMA)
         input_df = self._session.create_dataframe(pandas_df)
 
         for labels in params["labels"]:
@@ -64,24 +106,23 @@ class PrecisionRecallFscoreSupportTest(parameterized.TestCase):
             )
 
     @parameterized.parameters(  # type: ignore[misc]
-        {"params": {"sample_weight_col_name": [None, _SAMPLE_WEIGHT_COL]}},
+        {"params": {"pos_label": [0, 2, 4]}},
     )
-    def test_precision_recall_fscore_support_sample_weight(self, params: Dict[str, Any]) -> None:
-        pandas_df = pd.DataFrame(_DATA, columns=_SCHEMA)
+    def test_precision_recall_fscore_support_pos_label(self, params: Dict[str, Any]) -> None:
+        pandas_df = pd.DataFrame(_MULTICLASS_DATA, columns=_SCHEMA)
         input_df = self._session.create_dataframe(pandas_df)
 
-        for sample_weight_col_name in params["sample_weight_col_name"]:
+        for pos_label in params["pos_label"]:
             actual_p, actual_r, actual_f, actual_s = snowml_metrics.precision_recall_fscore_support(
                 df=input_df,
                 y_true_col_names=_Y_TRUE_COL,
                 y_pred_col_names=_Y_PRED_COL,
-                sample_weight_col_name=sample_weight_col_name,
+                pos_label=pos_label,
             )
-            sample_weight = pandas_df[sample_weight_col_name].to_numpy() if sample_weight_col_name else None
             sklearn_p, sklearn_r, sklearn_f, sklearn_s = sklearn_metrics.precision_recall_fscore_support(
                 pandas_df[_Y_TRUE_COL],
                 pandas_df[_Y_PRED_COL],
-                sample_weight=sample_weight,
+                pos_label=pos_label,
             )
             np.testing.assert_allclose(
                 np.array((actual_p, actual_r, actual_f, actual_s)),
@@ -89,16 +130,50 @@ class PrecisionRecallFscoreSupportTest(parameterized.TestCase):
             )
 
     @parameterized.parameters(  # type: ignore[misc]
-        {"params": {"average": [None, "binary", "micro", "macro", "samples", "weighted"]}},
+        {
+            "params": {
+                "sample_weight_col_name": [None, _SAMPLE_WEIGHT_COL],
+                "values": [
+                    {"data": _BINARY_DATA, "y_true": _Y_TRUE_COLS, "y_pred": _Y_PRED_COLS},
+                    {"data": _MULTICLASS_DATA, "y_true": _Y_TRUE_COL, "y_pred": _Y_PRED_COL},
+                ],
+            }
+        },
     )
-    def test_precision_recall_fscore_support_average(self, params: Dict[str, Any]) -> None:
-        pandas_df = pd.DataFrame(_DATA, columns=_SCHEMA)
+    def test_precision_recall_fscore_support_sample_weight(self, params: Dict[str, Any]) -> None:
+        for values in params["values"]:
+            data = values["data"]
+            y_true = values["y_true"]
+            y_pred = values["y_pred"]
+            pandas_df = pd.DataFrame(data, columns=_SCHEMA)
+            input_df = self._session.create_dataframe(pandas_df)
+
+            for sample_weight_col_name in params["sample_weight_col_name"]:
+                actual_p, actual_r, actual_f, actual_s = snowml_metrics.precision_recall_fscore_support(
+                    df=input_df,
+                    y_true_col_names=y_true,
+                    y_pred_col_names=y_pred,
+                    sample_weight_col_name=sample_weight_col_name,
+                )
+                sample_weight = pandas_df[sample_weight_col_name].to_numpy() if sample_weight_col_name else None
+                sklearn_p, sklearn_r, sklearn_f, sklearn_s = sklearn_metrics.precision_recall_fscore_support(
+                    pandas_df[y_true],
+                    pandas_df[y_pred],
+                    sample_weight=sample_weight,
+                )
+                np.testing.assert_allclose(
+                    np.array((actual_p, actual_r, actual_f, actual_s)),
+                    np.array((sklearn_p, sklearn_r, sklearn_f, sklearn_s)),
+                )
+
+    @parameterized.parameters(  # type: ignore[misc]
+        {"params": {"average": [None, "micro", "macro", "weighted"]}},
+    )
+    def test_precision_recall_fscore_support_average_multiclass(self, params: Dict[str, Any]) -> None:
+        pandas_df = pd.DataFrame(_MULTICLASS_DATA, columns=_SCHEMA)
         input_df = self._session.create_dataframe(pandas_df)
 
         for average in params["average"]:
-            if average == "binary" or average == "samples":
-                continue
-
             actual_p, actual_r, actual_f, actual_s = snowml_metrics.precision_recall_fscore_support(
                 df=input_df,
                 y_true_col_names=_Y_TRUE_COL,
@@ -115,48 +190,37 @@ class PrecisionRecallFscoreSupportTest(parameterized.TestCase):
                 np.array((sklearn_p, sklearn_r, sklearn_f, sklearn_s), dtype=np.float_),
             )
 
-        data, _ = utils.gen_fuzz_data(
-            rows=_ROWS,
-            types=_TYPES,
-            low=0,
-            high=2,
-        )
-        binary_pandas_df = pd.DataFrame(data, columns=_SCHEMA)
-        binary_input_df = self._session.create_dataframe(binary_pandas_df)
+    @parameterized.parameters(  # type: ignore[misc]
+        {
+            "params": {
+                "average": ["binary", "samples"],
+                "y_true": [_Y_TRUE_COL, _Y_TRUE_COLS],
+                "y_pred": [_Y_PRED_COL, _Y_PRED_COLS],
+            }
+        },
+    )
+    def test_precision_recall_fscore_support_average_binary(self, params: Dict[str, Any]) -> None:
+        pandas_df = pd.DataFrame(_BINARY_DATA, columns=_SCHEMA)
+        input_df = self._session.create_dataframe(pandas_df)
 
-        # binary
-        actual_p, actual_r, actual_f, actual_s = snowml_metrics.precision_recall_fscore_support(
-            df=binary_input_df,
-            y_true_col_names=_Y_TRUE_COL,
-            y_pred_col_names=_Y_PRED_COL,
-            average="binary",
-        )
-        sklearn_p, sklearn_r, sklearn_f, sklearn_s = sklearn_metrics.precision_recall_fscore_support(
-            binary_pandas_df[_Y_TRUE_COL],
-            binary_pandas_df[_Y_PRED_COL],
-            average="binary",
-        )
-        np.testing.assert_allclose(
-            np.array((actual_p, actual_r, actual_f, actual_s), dtype=np.float_),
-            np.array((sklearn_p, sklearn_r, sklearn_f, sklearn_s), dtype=np.float_),
-        )
-
-        # samples
-        actual_p, actual_r, actual_f, actual_s = snowml_metrics.precision_recall_fscore_support(
-            df=binary_input_df,
-            y_true_col_names=_Y_TRUE_COLS,
-            y_pred_col_names=_Y_PRED_COLS,
-            average="samples",
-        )
-        sklearn_p, sklearn_r, sklearn_f, sklearn_s = sklearn_metrics.precision_recall_fscore_support(
-            binary_pandas_df[_Y_TRUE_COLS],
-            binary_pandas_df[_Y_PRED_COLS],
-            average="samples",
-        )
-        np.testing.assert_allclose(
-            np.array((actual_p, actual_r, actual_f, actual_s), dtype=np.float_),
-            np.array((sklearn_p, sklearn_r, sklearn_f, sklearn_s), dtype=np.float_),
-        )
+        for idx, average in enumerate(params["average"]):
+            y_true = params["y_true"][idx]
+            y_pred = params["y_pred"][idx]
+            actual_p, actual_r, actual_f, actual_s = snowml_metrics.precision_recall_fscore_support(
+                df=input_df,
+                y_true_col_names=y_true,
+                y_pred_col_names=y_pred,
+                average=average,
+            )
+            sklearn_p, sklearn_r, sklearn_f, sklearn_s = sklearn_metrics.precision_recall_fscore_support(
+                pandas_df[y_true],
+                pandas_df[y_pred],
+                average=average,
+            )
+            np.testing.assert_allclose(
+                np.array((actual_p, actual_r, actual_f, actual_s), dtype=np.float_),
+                np.array((sklearn_p, sklearn_r, sklearn_f, sklearn_s), dtype=np.float_),
+            )
 
     @parameterized.parameters(  # type: ignore[misc]
         {"params": {"zero_division": ["warn", 0, 1]}},

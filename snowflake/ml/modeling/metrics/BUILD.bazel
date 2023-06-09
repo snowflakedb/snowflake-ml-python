@@ -13,6 +13,7 @@ py_library(
         "precision_recall_fscore_support.py",
         "precision_score.py",
         "regression.py",
+        "roc_curve.py",
     ],
     deps = [
         ":init",

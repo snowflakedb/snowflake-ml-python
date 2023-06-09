@@ -2,6 +2,9 @@ load("//bazel:py_rules.bzl", "py_test")
 
 package(default_visibility = ["//visibility:public"])
 
+SHARD_COUNT = 3
+TIMEOUT = "long"  # 900s
+
 py_test(
     name = "test_r2_score",
     srcs = ["test_r2_score.py"],
@@ -23,7 +26,7 @@ py_test(
 
 py_test(
     name = "test_confusion_matrix",
-    timeout = "long",
+    timeout = TIMEOUT,
     srcs = ["test_confusion_matrix.py"],
     deps = [
         "//snowflake/ml/modeling/metrics",
@@ -34,7 +37,7 @@ py_test(
 
 py_test(
     name = "test_correlation",
-    timeout = "long",
+    timeout = TIMEOUT,
     srcs = ["test_correlation.py"],
     deps = [
         "//snowflake/ml/modeling/metrics",
@@ -44,7 +47,7 @@ py_test(
 
 py_test(
     name = "test_covariance",
-    timeout = "long",
+    timeout = TIMEOUT,
     srcs = ["test_covariance.py"],
     deps = [
         "//snowflake/ml/modeling/metrics",
@@ -54,8 +57,9 @@ py_test(
 
 py_test(
     name = "test_precision_recall_fscore_support",
-    timeout = "long",
+    timeout = TIMEOUT,
     srcs = ["test_precision_recall_fscore_support.py"],
+    shard_count = SHARD_COUNT,
     deps = [
         "//snowflake/ml/modeling/metrics",
         "//snowflake/ml/utils:connection_params",
@@ -65,8 +69,21 @@ py_test(
 
 py_test(
     name = "test_precision_score",
-    timeout = "long",
+    timeout = TIMEOUT,
     srcs = ["test_precision_score.py"],
+    shard_count = SHARD_COUNT,
+    deps = [
+        "//snowflake/ml/modeling/metrics",
+        "//snowflake/ml/utils:connection_params",
+        "//tests/integ/snowflake/ml/modeling/framework:utils",
+    ],
+)
+
+py_test(
+    name = "test_roc_curve",
+    timeout = TIMEOUT,
+    srcs = ["test_roc_curve.py"],
+    shard_count = SHARD_COUNT,
     deps = [
         "//snowflake/ml/modeling/metrics",
         "//snowflake/ml/utils:connection_params",
