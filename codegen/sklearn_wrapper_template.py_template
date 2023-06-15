@@ -176,11 +176,8 @@ class {transform.original_class_name}(BaseTransformer):
     def fit(self, dataset: Union[DataFrame, pd.DataFrame]) -> "{transform.original_class_name}":
         """{transform.fit_docstring}
 
-        Args:
-            dataset: Input dataset.
-
         Returns:
-            self. Fitted Transform.
+            self
         """
         self._infer_input_output_cols(dataset)
         if isinstance(dataset, pd.DataFrame):
@@ -635,10 +632,7 @@ class {transform.original_class_name}(BaseTransformer):
         custom_tags=dict([("autogen", True)]),
     )
     def predict(self, dataset: Union[DataFrame, pd.DataFrame]) -> Union[DataFrame, pd.DataFrame]:
-        """Predict lable values for each example in the input dataset.
-
-        Args:
-            dataset: Input dataset.
+        """{transform.predict_docstring}
 
         Returns:
             Transformed dataset.
@@ -675,10 +669,7 @@ class {transform.original_class_name}(BaseTransformer):
         custom_tags=dict([("autogen", True)]),
     )
     def transform(self, dataset: Union[DataFrame, pd.DataFrame]) -> Union[DataFrame, pd.DataFrame]:
-        """Transform the dataset.
-
-        Args:
-            dataset: Input dataset.
+        """{transform.transform_docstring}
 
         Returns:
             Transformed dataset.
@@ -751,16 +742,11 @@ class {transform.original_class_name}(BaseTransformer):
     def predict_proba(
         self, dataset: Union[DataFrame, pd.DataFrame], output_cols_prefix: str = "predict_proba_"
     ) -> Union[DataFrame, pd.DataFrame]:
-        """Compute probabilities of possible outcomes for samples in dataset.
-
-        Args:
-            dataset: Input dataset. Shape (n_samples, n_features).
+        """{transform.predict_proba_docstring}
             output_cols_prefix: Prefix for the response columns
 
         Returns:
             Output dataset with probability of the sample for each class in the model.
-            n_classes of new columns with output_cols_prefix as column name prefix will be present in the response
-            dataframe.
         """
         if isinstance(dataset, DataFrame):
             output_df = self._batch_inference(
@@ -797,16 +783,12 @@ class {transform.original_class_name}(BaseTransformer):
     def predict_log_proba(
         self, dataset: Union[DataFrame, pd.DataFrame], output_cols_prefix: str = "predict_log_proba_"
     ) -> Union[DataFrame, pd.DataFrame]:
-        """Compute log probabilities of possible outcomes for samples in dataset.
-
-        Args:
-            dataset: Input dataset. Shape (n_samples, n_features).
-            output_cols_prefix: Prefix for the response columns
+        """{transform.predict_proba_docstring}
+            output_cols_prefix: str
+                Prefix for the response columns
 
         Returns:
             Output dataset with log probability of the sample for each class in the model.
-            n_classes of new columns with output_cols_prefix as column name prefix will be prresent in the response
-            dataframe.
         """
         if isinstance(dataset, DataFrame):
             output_df = self._batch_inference(
@@ -843,16 +825,12 @@ class {transform.original_class_name}(BaseTransformer):
     def decision_function(
         self, dataset: Union[DataFrame, pd.DataFrame], output_cols_prefix: str = "decision_function_"
     ) -> Union[DataFrame, pd.DataFrame]:
-        """Evaluate the decision function for the samples in dataset.
-
-        Args:
-            dataset: Input dataset. Shape (n_samples, n_features).
-            output_cols_prefix: Prefix for the response columns
+        """{transform.decision_function_docstring}
+            output_cols_prefix: str
+                Prefix for the response columns
 
         Returns:
             Output dataset with results of the decision function for the samples in input dataset.
-            n_classes of new columns with output_cols_prefix as column name prefix will be prresent in the response
-            dataframe.
         """
         if isinstance(dataset, DataFrame):
             output_df = self._batch_inference(
@@ -877,10 +855,7 @@ class {transform.original_class_name}(BaseTransformer):
 
     @available_if(_original_estimator_has_callable("score"))
     def score(self, dataset: Union[DataFrame, pd.DataFrame]) -> float:
-        """{transform.fit_docstring}
-
-        Args:
-            dataset: Input dataset.
+        """{transform.score_docstring}
 
         Returns:
             Score.
@@ -1070,9 +1045,6 @@ class {transform.original_class_name}(BaseTransformer):
                 outputs = [FeatureSpec(dtype=DataType.DOUBLE, name=c) for c in output_column_names]
                 self._model_signature_dict[prob_func] = ModelSignature(inputs, outputs)
 
-        ##TODO: Add support for transform method
-
-
     @property
     def model_signatures(self) -> Dict[str, ModelSignature]:
         if self._model_signature_dict is None:
@@ -1086,9 +1058,9 @@ class {transform.original_class_name}(BaseTransformer):
 
     def {transform.unsupported_export_methods[0]}(self) -> Any:
         raise AttributeError("Estimator doesn't support {transform.unsupported_export_methods[0]}(). Please use {transform.supported_export_method}()")
-    
+
     def {transform.unsupported_export_methods[1]}(self) -> Any:
         raise AttributeError("Estimator doesn't support {transform.unsupported_export_methods[1]}(). Please use {transform.supported_export_method}()")
-    
+
     def _get_dependencies(self) -> List[str]:
         return self._deps

@@ -3,6 +3,7 @@ import os
 import shutil
 import sys
 import tempfile
+import warnings
 import zipimport
 from typing import cast
 from unittest import mock
@@ -53,9 +54,17 @@ class FileUtilsTest(absltest.TestCase):
 
             sys.path.remove(os.path.abspath(zip_module_filename))
 
-            with file_utils.zip_file_or_directory_to_stream(fake_mod_dirpath, fake_mod_dirpath) as input_stream:
-                with open(zip_module_filename, "wb") as f:
-                    f.write(input_stream.getbuffer())
+            with warnings.catch_warnings():
+                warnings.simplefilter("error")
+                with file_utils.zip_file_or_directory_to_stream(fake_mod_dirpath, fake_mod_dirpath) as input_stream:
+                    with open(zip_module_filename, "wb") as f:
+                        f.write(input_stream.getbuffer())
+
+            with warnings.catch_warnings():
+                warnings.simplefilter("error")
+                with file_utils.zip_file_or_directory_to_stream(leading_path, leading_path) as input_stream:
+                    with open(zip_module_filename, "wb") as f:
+                        f.write(input_stream.getbuffer())
 
     def test_unzip_stream_in_temp_dir(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -66,11 +75,12 @@ class FileUtilsTest(absltest.TestCase):
             py_file_path = os.path.join(fake_mod_dirpath, "p.py")
             with open(py_file_path, "w") as f:
                 f.write(PY_SRC)
-
-            with file_utils.zip_file_or_directory_to_stream(py_file_path, leading_path) as input_stream:
-                with file_utils.unzip_stream_in_temp_dir(input_stream, temp_root=tmpdir) as sub_tempdir:
-                    with open(os.path.join(sub_tempdir, "snowflake", "fake", "fake_module", "p.py")) as f:
-                        self.assertEqual(f.read(), PY_SRC)
+            with warnings.catch_warnings():
+                warnings.simplefilter("error")
+                with file_utils.zip_file_or_directory_to_stream(py_file_path, leading_path) as input_stream:
+                    with file_utils.unzip_stream_in_temp_dir(input_stream, temp_root=tmpdir) as sub_tempdir:
+                        with open(os.path.join(sub_tempdir, "snowflake", "fake", "fake_module", "p.py")) as f:
+                            self.assertEqual(f.read(), PY_SRC)
 
     def test_zip_snowml(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

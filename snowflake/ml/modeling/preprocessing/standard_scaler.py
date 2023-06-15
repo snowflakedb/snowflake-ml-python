@@ -15,6 +15,29 @@ from snowflake.ml.modeling.framework import _utils, base
 
 
 class StandardScaler(base.BaseTransformer):
+    r"""
+    Standardizes features by removing the mean and scaling to unit variance. Values must be of float type.
+
+    For more details on what this transformer does, see [sklearn.preprocessing.StandardScaler]
+    (https://scikit-learn.org/stable/modules/generated/sklearn.preprocessing.StandardScaler.html).
+
+    Args:
+        with_mean: If True, center the data before scaling.
+        with_std: If True, scale the data unit variance (i.e. unit standard deviation).
+        input_cols: The name(s) of one or more columns in a DataFrame containing a feature to be scaled.
+        output_cols: The name(s) of one or more columns in a DataFrame in which results will be stored. The number of
+            columns specified must match the number of input columns.
+        drop_input_cols: Remove input columns from output if set True. False by default.
+
+    Attributes:
+        scale_: Dictionary mapping input column names to relative scaling factor to achieve zero mean and unit variance.
+            If a variance is zero, unit variance could not be achieved, and the data is left as-is, giving a scaling
+            factor of 1. None if with_std is False.
+        mean_: Dictionary mapping input column name to the mean value for that feature. None if with_mean is False.
+        var_: Dictionary mapping input column name to the variance for that feature. Used to compute scale_. None if
+            with_std is False
+    """
+
     def __init__(
         self,
         *,
@@ -122,7 +145,7 @@ class StandardScaler(base.BaseTransformer):
         sklearn_scaler = self._create_unfitted_sklearn_object()
         sklearn_scaler.fit(dataset[self.input_cols])
 
-        for (i, input_col) in enumerate(self.input_cols):
+        for i, input_col in enumerate(self.input_cols):
             if self.mean_ is not None:
                 self.mean_[input_col] = float(sklearn_scaler.mean_[i])
             if self.scale_ is not None:

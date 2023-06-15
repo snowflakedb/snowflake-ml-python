@@ -7,7 +7,8 @@ from absl.testing import absltest
 from packaging import requirements
 
 from snowflake.ml._internal import env as snowml_env, env_utils
-from snowflake.ml.model import _model_meta, _udf_util, model_signature
+from snowflake.ml.model import _model_meta, model_signature
+from snowflake.ml.model._deploy_client.warehouse import deploy
 from snowflake.ml.test_utils import mock_data_frame, mock_session
 from snowflake.snowpark import row, session
 
@@ -98,7 +99,7 @@ class TestFinalPackagesWithoutCondaWithSnowML(absltest.TestCase):
             RuntimeWarning,
             "Cannot find conda resolver",
         ):
-            final_packages = _udf_util._get_model_final_packages(meta, c_session)
+            final_packages = deploy._get_model_final_packages(meta, c_session)
             self.assertListEqual(final_packages, list(map(str, _BASIC_DEPENDENCIES_FINAL_PACKAGES)))
 
     def test_get_model_final_packages_no_relax(self) -> None:
@@ -112,7 +113,7 @@ class TestFinalPackagesWithoutCondaWithSnowML(absltest.TestCase):
             "Cannot find conda resolver",
         ):
             with self.assertRaises(RuntimeError):
-                _udf_util._get_model_final_packages(meta, c_session)
+                deploy._get_model_final_packages(meta, c_session)
 
     def test_get_model_final_packages_relax(self) -> None:
         env_utils._SNOWFLAKE_CONDA_PACKAGE_CACHE = {}
@@ -124,7 +125,7 @@ class TestFinalPackagesWithoutCondaWithSnowML(absltest.TestCase):
             RuntimeWarning,
             "Cannot find conda resolver",
         ):
-            final_packages = _udf_util._get_model_final_packages(meta, c_session, relax_version=True)
+            final_packages = deploy._get_model_final_packages(meta, c_session, relax_version=True)
             self.assertListEqual(
                 final_packages, sorted(list(map(lambda x: x.name, _BASIC_DEPENDENCIES_FINAL_PACKAGES)))
             )
@@ -136,7 +137,7 @@ class TestFinalPackagesWithoutCondaWithSnowML(absltest.TestCase):
         )
         c_session = cast(session.Session, self.m_session)
         with self.assertRaises(RuntimeError):
-            _udf_util._get_model_final_packages(meta, c_session)
+            deploy._get_model_final_packages(meta, c_session)
 
     def test_get_model_final_packages_with_other_channel(self) -> None:
         env_utils._SNOWFLAKE_CONDA_PACKAGE_CACHE = {}
@@ -148,7 +149,7 @@ class TestFinalPackagesWithoutCondaWithSnowML(absltest.TestCase):
         )
         c_session = cast(session.Session, self.m_session)
         with self.assertRaises(RuntimeError):
-            _udf_util._get_model_final_packages(meta, c_session)
+            deploy._get_model_final_packages(meta, c_session)
 
     def test_get_model_final_packages_with_non_exist_package(self) -> None:
         env_utils._SNOWFLAKE_CONDA_PACKAGE_CACHE = {}
@@ -172,7 +173,7 @@ class TestFinalPackagesWithoutCondaWithSnowML(absltest.TestCase):
             "Cannot find conda resolver",
         ):
             with self.assertRaises(RuntimeError):
-                _udf_util._get_model_final_packages(meta, c_session)
+                deploy._get_model_final_packages(meta, c_session)
 
 
 _BASIC_DEPENDENCIES_FINAL_PACKAGES_NO_SNOWML = list(
@@ -251,7 +252,7 @@ class TestFinalPackagesWithoutCondaWithoutSnowML(absltest.TestCase):
             RuntimeWarning,
             "Cannot find conda resolver",
         ):
-            final_packages = _udf_util._get_model_final_packages(meta, c_session, _use_local_snowml=True)
+            final_packages = deploy._get_model_final_packages(meta, c_session, _use_local_snowml=True)
             self.assertListEqual(final_packages, list(map(str, _BASIC_DEPENDENCIES_FINAL_PACKAGES_NO_SNOWML)))
 
     def test_get_model_final_packages_no_relax(self) -> None:
@@ -265,7 +266,7 @@ class TestFinalPackagesWithoutCondaWithoutSnowML(absltest.TestCase):
             "Cannot find conda resolver",
         ):
             with self.assertRaises(RuntimeError):
-                _udf_util._get_model_final_packages(meta, c_session, _use_local_snowml=True)
+                deploy._get_model_final_packages(meta, c_session, _use_local_snowml=True)
 
     def test_get_model_final_packages_relax(self) -> None:
         env_utils._SNOWFLAKE_CONDA_PACKAGE_CACHE = {}
@@ -277,7 +278,7 @@ class TestFinalPackagesWithoutCondaWithoutSnowML(absltest.TestCase):
             RuntimeWarning,
             "Cannot find conda resolver",
         ):
-            final_packages = _udf_util._get_model_final_packages(
+            final_packages = deploy._get_model_final_packages(
                 meta, c_session, relax_version=True, _use_local_snowml=True
             )
             self.assertListEqual(
@@ -292,7 +293,7 @@ class TestFinalPackagesWithoutCondaWithoutSnowML(absltest.TestCase):
         )
         c_session = cast(session.Session, self.m_session)
         with self.assertRaises(RuntimeError):
-            _udf_util._get_model_final_packages(meta, c_session, _use_local_snowml=True)
+            deploy._get_model_final_packages(meta, c_session, _use_local_snowml=True)
 
     def test_get_model_final_packages_with_other_channel(self) -> None:
         env_utils._SNOWFLAKE_CONDA_PACKAGE_CACHE = {}
@@ -304,7 +305,7 @@ class TestFinalPackagesWithoutCondaWithoutSnowML(absltest.TestCase):
         )
         c_session = cast(session.Session, self.m_session)
         with self.assertRaises(RuntimeError):
-            _udf_util._get_model_final_packages(meta, c_session, _use_local_snowml=True)
+            deploy._get_model_final_packages(meta, c_session, _use_local_snowml=True)
 
     def test_get_model_final_packages_with_non_exist_package(self) -> None:
         env_utils._SNOWFLAKE_CONDA_PACKAGE_CACHE = {}
@@ -325,7 +326,7 @@ class TestFinalPackagesWithoutCondaWithoutSnowML(absltest.TestCase):
             "Cannot find conda resolver",
         ):
             with self.assertRaises(RuntimeError):
-                _udf_util._get_model_final_packages(meta, c_session, _use_local_snowml=True)
+                deploy._get_model_final_packages(meta, c_session, _use_local_snowml=True)
 
     def test_get_model_final_packages_failed_snowml(self) -> None:
         env_utils._SNOWFLAKE_CONDA_PACKAGE_CACHE = {}
@@ -334,7 +335,7 @@ class TestFinalPackagesWithoutCondaWithoutSnowML(absltest.TestCase):
         with self.assertRaises(RuntimeError):
             original_verison = snowml_env.VERSION
             snowml_env.VERSION = "0.0.0"
-            _udf_util._get_model_final_packages(meta, c_session, _use_local_snowml=True)
+            deploy._get_model_final_packages(meta, c_session, _use_local_snowml=True)
             snowml_env.VERSION = original_verison
 
     def test_get_model_final_packages_relax_failed_snowml(self) -> None:
@@ -349,7 +350,7 @@ class TestFinalPackagesWithoutCondaWithoutSnowML(absltest.TestCase):
         ):
             original_verison = snowml_env.VERSION
             snowml_env.VERSION = "0.0.0"
-            final_packages = _udf_util._get_model_final_packages(
+            final_packages = deploy._get_model_final_packages(
                 meta,
                 c_session,
                 relax_version=True,
@@ -371,9 +372,7 @@ class TestFinalPackagesWithCondaWIthoutSnowML(absltest.TestCase):
     def test_get_model_final_packages(self) -> None:
         meta = _model_meta.ModelMetadata(name="model1", model_type="custom", signatures=_DUMMY_SIG)
         c_session = cast(session.Session, self.m_session)
-        final_packages = _udf_util._get_model_final_packages(
-            meta, c_session, relax_version=True, _use_local_snowml=True
-        )
+        final_packages = deploy._get_model_final_packages(meta, c_session, relax_version=True, _use_local_snowml=True)
         self.assertIsNotNone(final_packages)
 
     def test_get_model_final_packages_no_relax(self) -> None:
@@ -382,16 +381,14 @@ class TestFinalPackagesWithCondaWIthoutSnowML(absltest.TestCase):
         )
         c_session = cast(session.Session, self.m_session)
         with self.assertRaises(RuntimeError):
-            _udf_util._get_model_final_packages(meta, c_session, _use_local_snowml=True)
+            deploy._get_model_final_packages(meta, c_session, _use_local_snowml=True)
 
     def test_get_model_final_packages_relax(self) -> None:
         meta = _model_meta.ModelMetadata(
             name="model1", model_type="custom", signatures=_DUMMY_SIG, conda_dependencies=["pandas<1"]
         )
         c_session = cast(session.Session, self.m_session)
-        final_packages = _udf_util._get_model_final_packages(
-            meta, c_session, relax_version=True, _use_local_snowml=True
-        )
+        final_packages = deploy._get_model_final_packages(meta, c_session, relax_version=True, _use_local_snowml=True)
         self.assertIsNotNone(final_packages)
 
     def test_get_model_final_packages_with_pip(self) -> None:
@@ -400,7 +397,7 @@ class TestFinalPackagesWithCondaWIthoutSnowML(absltest.TestCase):
         )
         c_session = cast(session.Session, self.m_session)
         with self.assertRaises(RuntimeError):
-            _udf_util._get_model_final_packages(meta, c_session, _use_local_snowml=True)
+            deploy._get_model_final_packages(meta, c_session, _use_local_snowml=True)
 
     def test_get_model_final_packages_with_other_channel(self) -> None:
         meta = _model_meta.ModelMetadata(
@@ -411,7 +408,7 @@ class TestFinalPackagesWithCondaWIthoutSnowML(absltest.TestCase):
         )
         c_session = cast(session.Session, self.m_session)
         with self.assertRaises(RuntimeError):
-            _udf_util._get_model_final_packages(meta, c_session, _use_local_snowml=True)
+            deploy._get_model_final_packages(meta, c_session, _use_local_snowml=True)
 
     def test_get_model_final_packages_with_non_exist_package(self) -> None:
         meta = _model_meta.ModelMetadata(
@@ -419,7 +416,7 @@ class TestFinalPackagesWithCondaWIthoutSnowML(absltest.TestCase):
         )
         c_session = cast(session.Session, self.m_session)
         with self.assertRaises(RuntimeError):
-            _udf_util._get_model_final_packages(meta, c_session, _use_local_snowml=True)
+            deploy._get_model_final_packages(meta, c_session, _use_local_snowml=True)
 
 
 if __name__ == "__main__":

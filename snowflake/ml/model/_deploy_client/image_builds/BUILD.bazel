@@ -20,6 +20,12 @@ py_library(
 py_library(
     name = "docker_context",
     srcs = ["docker_context.py"],
+    deps = [
+        "//snowflake/ml/model/_deploy_client/utils:constants"
+    ],
+    data = [
+        "gunicorn_run.sh"
+    ]
 )
 
 py_test(
@@ -38,7 +44,8 @@ py_test(
     ],
     data = [
         "templates/dockerfile_template",
-        ":inference_server"
+        ":inference_server",
+        "test_fixtures/dockerfile_test_fixture"
     ]
 )
 

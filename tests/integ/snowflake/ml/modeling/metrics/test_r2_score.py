@@ -7,7 +7,7 @@ import numpy as np
 from absl.testing.absltest import TestCase, main
 from sklearn.metrics import r2_score as SKr2_score
 
-from snowflake.ml.modeling.metrics import regression
+from snowflake.ml.modeling import metrics
 from snowflake.ml.utils.connection_params import SnowflakeLoginOptions
 from snowflake.snowpark import Row, Session
 
@@ -35,7 +35,7 @@ class R2ScoreTest(TestCase):
             schema=["col1", "col2"],
         )
 
-        r2 = regression.r2_score(df=input_df, y_true_col_name="col1", y_pred_col_name="col2")
+        r2 = metrics.r2_score(df=input_df, y_true_col_name="col1", y_pred_col_name="col2")
         pandas_df = input_df.to_pandas()
         SKr2 = SKr2_score(pandas_df["COL1"], pandas_df["COL2"])
         assert np.allclose(r2, SKr2)

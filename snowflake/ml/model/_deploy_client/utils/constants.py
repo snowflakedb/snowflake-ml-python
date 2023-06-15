@@ -38,3 +38,8 @@ MAX_INSTANCES = "max_instances"
 GPU_COUNT = "gpu"
 OVERRIDDEN_BASE_IMAGE = "image"
 ENDPOINT = "endpoint"
+
+"""Image build related constants"""
+MODEL_DIR = "model_dir"
+INFERENCE_SERVER_DIR = "inference_server"
+ENTRYPOINT_SCRIPT = "gunicorn_run.sh"

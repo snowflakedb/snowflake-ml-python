@@ -15,6 +15,31 @@ from snowflake.ml.modeling.framework import base
 
 
 class MaxAbsScaler(base.BaseTransformer):
+    r"""Scale each feature by its maximum absolute value.
+
+    This transfomer scales and translates each feature individually such
+    that the maximal absolute value of each feature in the
+    training set will be 1.0. It does not shift/center the data, and
+    thus does not destroy any sparsity.
+
+    Values must be of float type. Each feature is scaled and transformed individually such that the maximal
+    absolute value of each feature in the dataset is 1.0. This scaler does not shift or center the data,
+    preserving sparsity.
+
+    For more details on what this transformer does, see [sklearn.preprocessing.MaxAbsScaler]
+    (https://scikit-learn.org/stable/modules/generated/sklearn.preprocessing.MaxAbsScaler.html).
+
+    Args:
+        input_cols: The name(s) of one or more columns in a DataFrame containing a feature to be scaled.
+        output_cols: The name(s) of one or more columns in a DataFrame in which results will be stored. The number of
+            columns specified must match the number of input columns.
+        drop_input_cols: Remove input columns from output if set True. False by default.
+
+    Attributes:
+        scale_: dict {column_name: value} or None. Per-feature relative scaling factor.
+        max_abs_: dict {column_name: value} or None. Per-feature maximum absolute value.
+    """
+
     def __init__(
         self,
         *,
@@ -70,6 +95,11 @@ class MaxAbsScaler(base.BaseTransformer):
         """
         Compute the maximum absolute value to be used for later scaling.
 
+        Validates the transformer arguments and derives the scaling factors and maximum absolute values from the data,
+        making dictionaries of both available as attributes of the transformer instance (see Attributes).
+
+        Returns the transformer instance.
+
         Args:
             dataset: Input dataset.
 
@@ -100,7 +130,7 @@ class MaxAbsScaler(base.BaseTransformer):
         sklearn_scaler = self._create_unfitted_sklearn_object()
         sklearn_scaler.fit(dataset[self.input_cols])
 
-        for (i, input_col) in enumerate(self.input_cols):
+        for i, input_col in enumerate(self.input_cols):
             self.max_abs_[input_col] = float(sklearn_scaler.max_abs_[i])
             self.scale_[input_col] = float(sklearn_scaler.scale_[i])
 

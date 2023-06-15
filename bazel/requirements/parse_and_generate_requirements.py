@@ -1,12 +1,24 @@
 import argparse
+import contextlib
 import functools
 import itertools
 import json
+import os
 import sys
-from typing import Literal, MutableMapping, Optional, Sequence, Set, TypedDict, cast
+from typing import (
+    Generator,
+    Literal,
+    MutableMapping,
+    Optional,
+    Sequence,
+    Set,
+    TypedDict,
+    cast,
+)
 
 import jsonschema
 import yaml
+from conda_libmamba_solver import solver
 from packaging import requirements as packaging_requirements
 
 SNOWFLAKE_CONDA_CHANNEL = "https://repo.anaconda.com/pkgs/snowflake"
@@ -111,13 +123,19 @@ def generate_dev_pinned_string(req_info: RequirementInfo, env: Literal["conda", 
         return None
     if env == "conda":
         version = req_info.get("dev_version_conda", req_info.get("dev_version", None))
+        if version is None:
+            raise ValueError("No pinned version exists.")
+        from_channel = req_info.get("from_channel", None)
+        if from_channel:
+            return f"{from_channel}::{name}=={version}"
+        return f"{name}=={version}"
     elif env == "pip":
         version = req_info.get("dev_version_pypi", req_info.get("dev_version", None))
+        if version is None:
+            raise ValueError("No pinned version exists.")
+        return f"{name}=={version}"
     else:
         raise ValueError("Unreachable")
-    if version is None:
-        raise ValueError("No pinned version exists.")
-    return f"{name}=={version}"
 
 
 def generate_user_requirements_string(req_info: RequirementInfo, env: Literal["conda", "pip"]) -> Optional[str]:
@@ -182,6 +200,33 @@ def validate_dev_version_and_user_requirements(req_info: RequirementInfo, env: L
     return
 
 
+def resolve_conda_environment(specs: Sequence[str], channels: Sequence[str]) -> None:
+    """Use conda api to check if given packages are resolvable in given channels.
+
+    Args:
+        specs: Packages to be installed.
+        channels: Anaconda channels (name or url) where conda should search into.
+
+    Raises:
+        ValueError: Raised when the resolving result is empty.
+
+    """
+
+    @contextlib.contextmanager
+    def _block_print() -> Generator[None, None, None]:
+        _original_stdout = sys.stdout
+        sys.stdout = open(os.devnull, "w")
+        yield
+        sys.stdout.close()
+        sys.stdout = _original_stdout
+
+    with _block_print():
+        conda_solver = solver.LibMambaSolver("snowml-dev", channels=channels, specs_to_add=specs)
+        solve_result = conda_solver.solve_final_state()
+        if solve_result is None:
+            raise ValueError("Unable to resolve the environment.")
+
+
 def fold_extras_tags(extras_tags: Set[str], req_info: RequirementInfo) -> Set[str]:
     """Left-fold style function to get all extras tags in all requirements.
 
@@ -241,6 +286,28 @@ def generate_requirements(
     if len(reqs_pypi) != len(set(reqs_pypi)) or len(reqs_conda) != len(set(reqs_conda)):
         raise ValueError("Duplicate Requirements found!")
 
+    channels_to_use = [SNOWFLAKE_CONDA_CHANNEL, "nodefaults"]
+    snowflake_only_env = list(
+        sorted(
+            filter(
+                None,
+                map(
+                    lambda req_info: generate_dev_pinned_string(req_info, "conda"),
+                    filter(
+                        lambda req_info: req_info.get("from_channel", SNOWFLAKE_CONDA_CHANNEL)
+                        == SNOWFLAKE_CONDA_CHANNEL,
+                        requirements,
+                    ),
+                ),
+            )
+        )
+    )
+    extended_env = list(
+        sorted(filter(None, map(lambda req_info: generate_dev_pinned_string(req_info, "conda"), requirements)))
+    )
+    resolve_conda_environment(snowflake_only_env, channels=channels_to_use)
+    resolve_conda_environment(extended_env, channels=channels_to_use)
+
     if (mode, format) == ("dev_version", "text"):
         results = list(
             sorted(
@@ -299,36 +366,11 @@ def generate_requirements(
         )
         sys.stdout.writelines(f"REQUIREMENTS={repr(results)}\n")
     elif (mode, format) == ("dev_version", "conda_env"):
-        if snowflake_channel_only:
-            results = list(
-                sorted(
-                    filter(
-                        None,
-                        map(
-                            lambda req_info: generate_dev_pinned_string(req_info, "conda"),
-                            filter(
-                                lambda req_info: req_info.get("from_channel", SNOWFLAKE_CONDA_CHANNEL)
-                                == SNOWFLAKE_CONDA_CHANNEL,
-                                requirements,
-                            ),
-                        ),
-                    )
-                )
-            )
-            env_result = {"channels": [SNOWFLAKE_CONDA_CHANNEL, "nodefaults"], "dependencies": results}
-            yaml.safe_dump(env_result, sys.stdout, default_flow_style=False)
-        else:
-            all_channels: Set[str] = {SNOWFLAKE_CONDA_CHANNEL}
-            all_channels = functools.reduce(fold_channel, requirements, all_channels)
-            results = list(
-                sorted(filter(None, map(lambda req_info: generate_dev_pinned_string(req_info, "conda"), requirements)))
-            )
-            all_channels.remove(SNOWFLAKE_CONDA_CHANNEL)
-            env_result = {
-                "channels": [SNOWFLAKE_CONDA_CHANNEL] + list(sorted(all_channels)) + ["nodefaults"],
-                "dependencies": results,
-            }
-            yaml.safe_dump(env_result, sys.stdout, default_flow_style=False)
+        env_result = {
+            "channels": channels_to_use,
+            "dependencies": snowflake_only_env if snowflake_channel_only else extended_env,
+        }
+        yaml.safe_dump(env_result, sys.stdout, default_flow_style=False)
     elif (mode, format) == ("version_requirements", "conda_meta"):
         if version is None:
             raise ValueError("Version must be specified when generate conda meta.")

@@ -68,9 +68,34 @@ _SKLEARN_REMOVED_KEYWORD_TO_VERSION_DICT = {
 
 
 class OneHotEncoder(base.BaseTransformer):
-    """
-    Encode categorical features as a one-hot numeric array. The order of input
-    columns are preserved as the order of features.
+    r"""Encode categorical features as a one-hot numeric array.
+
+    The feature is converted to a matrix containing a column for each category. For each row, a column is 0 if the
+    category is absent, or 1 if it exists. The categories can be detected from the data, or you can provide them.
+    If you provide the categories, you can handle unknown categories in one of several different ways
+    (see handle_unknown parameter below).
+
+    Categories that do not appear frequently in a feature may be consolidated into a pseudo-category
+    called “infrequent.” The threshold below which a category is considered “infrequent” is configurable using
+    the min_frequency parameter.
+
+    It is useful to drop one category from features in situations where perfectly collinear features cause problems,
+    such as when feeding the resulting data into an unregularized linear regression model. However, dropping
+    a category breaks the symmetry of the original representation and can therefore induce a bias in downstream models,
+    for instance for penalized linear classification or regression models. You can choose from a handful of strategies
+    for specifying the category to be dropped. See drop parameter below.
+
+    The results of one-hot encoding can be represented in two ways.
+        * Dense representation creates a binary column for each category. For each row, exactly one column will
+            contain a 1.
+        * Sparse representation creates a compressed sparse row (CSR) matrix that indicates which columns contain a
+            nonzero value in each row. As all columns but one contain zeroes, this is an efficient way to represent
+            the results.
+
+    The order of input columns are preserved as the order of features.
+
+    For more details on what this transformer does, see [sklearn.preprocessing.OneHotEncoder]
+    (https://scikit-learn.org/stable/modules/generated/sklearn.preprocessing.OneHotEncoder.html).
 
     Args:
         categories: 'auto' or dict {column_name: ndarray([category])}, default='auto'
@@ -226,6 +251,11 @@ class OneHotEncoder(base.BaseTransformer):
     def fit(self, dataset: Union[snowpark.DataFrame, pd.DataFrame]) -> "OneHotEncoder":
         """
         Fit OneHotEncoder to dataset.
+
+        Validates the transformer arguments and derives the list of categories (distinct values) from the data,
+        making this list available as an attribute of the transformer instance (see Attributes).
+
+        Returns the transformer instance.
 
         Args:
             dataset: Input dataset.

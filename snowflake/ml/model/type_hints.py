@@ -103,10 +103,13 @@ class WarehouseDeployOptions(DeployOptions):
     permanent_udf_stage_location: A Snowflake stage option where the UDF should be persisted. If specified, the model
         will be deployed as a permanent UDF, otherwise temporary.
     relax_version: Whether or not relax the version constraints of the dependencies if unresolvable. Defaults to False.
+    replace_udf: Flag to indicate when deploying model as permanent UDF, whether overwriting existed UDF is allowed.
+        Default to False.
     """
 
     permanent_udf_stage_location: NotRequired[str]
     relax_version: NotRequired[bool]
+    replace_udf: NotRequired[bool]
 
 
 class ModelSaveOption(TypedDict):
