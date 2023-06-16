@@ -9,7 +9,7 @@ py_test(
     name = "test_r2_score",
     srcs = ["test_r2_score.py"],
     deps = [
-        "//snowflake/ml/modeling/metrics",
+        "//snowflake/ml/modeling/metrics:regression",
         "//snowflake/ml/utils:connection_params",
     ],
 )
@@ -18,7 +18,7 @@ py_test(
     name = "test_accuracy_score",
     srcs = ["test_accuracy_score.py"],
     deps = [
-        "//snowflake/ml/modeling/metrics",
+        "//snowflake/ml/modeling/metrics:classification",
         "//snowflake/ml/utils:connection_params",
         "//tests/integ/snowflake/ml/modeling/framework:utils",
     ],
@@ -29,7 +29,7 @@ py_test(
     timeout = TIMEOUT,
     srcs = ["test_confusion_matrix.py"],
     deps = [
-        "//snowflake/ml/modeling/metrics",
+        "//snowflake/ml/modeling/metrics:classification",
         "//snowflake/ml/utils:connection_params",
         "//tests/integ/snowflake/ml/modeling/framework:utils",
     ],
@@ -40,7 +40,7 @@ py_test(
     timeout = TIMEOUT,
     srcs = ["test_correlation.py"],
     deps = [
-        "//snowflake/ml/modeling/metrics",
+        "//snowflake/ml/modeling/metrics:correlation",
         "//snowflake/ml/utils:connection_params",
     ],
 )
@@ -50,8 +50,56 @@ py_test(
     timeout = TIMEOUT,
     srcs = ["test_covariance.py"],
     deps = [
-        "//snowflake/ml/modeling/metrics",
+        "//snowflake/ml/modeling/metrics:covariance",
         "//snowflake/ml/utils:connection_params",
+    ],
+)
+
+py_test(
+    name = "test_f1_score",
+    timeout = TIMEOUT,
+    srcs = ["test_f1_score.py"],
+    shard_count = SHARD_COUNT,
+    deps = [
+        "//snowflake/ml/modeling/metrics:classification",
+        "//snowflake/ml/utils:connection_params",
+        "//tests/integ/snowflake/ml/modeling/framework:utils",
+    ],
+)
+
+py_test(
+    name = "test_fbeta_score",
+    timeout = TIMEOUT,
+    srcs = ["test_fbeta_score.py"],
+    shard_count = SHARD_COUNT,
+    deps = [
+        "//snowflake/ml/modeling/metrics:classification",
+        "//snowflake/ml/utils:connection_params",
+        "//tests/integ/snowflake/ml/modeling/framework:utils",
+    ],
+)
+
+py_test(
+    name = "test_log_loss",
+    timeout = TIMEOUT,
+    srcs = ["test_log_loss.py"],
+    shard_count = SHARD_COUNT,
+    deps = [
+        "//snowflake/ml/modeling/metrics:classification",
+        "//snowflake/ml/utils:connection_params",
+        "//tests/integ/snowflake/ml/modeling/framework:utils",
+    ],
+)
+
+py_test(
+    name = "test_precision_recall_curve",
+    timeout = TIMEOUT,
+    srcs = ["test_precision_recall_curve.py"],
+    shard_count = SHARD_COUNT,
+    deps = [
+        "//snowflake/ml/modeling/metrics:ranking",
+        "//snowflake/ml/utils:connection_params",
+        "//tests/integ/snowflake/ml/modeling/framework:utils",
     ],
 )
 
@@ -61,7 +109,7 @@ py_test(
     srcs = ["test_precision_recall_fscore_support.py"],
     shard_count = SHARD_COUNT,
     deps = [
-        "//snowflake/ml/modeling/metrics",
+        "//snowflake/ml/modeling/metrics:classification",
         "//snowflake/ml/utils:connection_params",
         "//tests/integ/snowflake/ml/modeling/framework:utils",
     ],
@@ -73,7 +121,31 @@ py_test(
     srcs = ["test_precision_score.py"],
     shard_count = SHARD_COUNT,
     deps = [
-        "//snowflake/ml/modeling/metrics",
+        "//snowflake/ml/modeling/metrics:classification",
+        "//snowflake/ml/utils:connection_params",
+        "//tests/integ/snowflake/ml/modeling/framework:utils",
+    ],
+)
+
+py_test(
+    name = "test_recall_score",
+    timeout = TIMEOUT,
+    srcs = ["test_recall_score.py"],
+    shard_count = SHARD_COUNT,
+    deps = [
+        "//snowflake/ml/modeling/metrics:classification",
+        "//snowflake/ml/utils:connection_params",
+        "//tests/integ/snowflake/ml/modeling/framework:utils",
+    ],
+)
+
+py_test(
+    name = "test_roc_auc_score",
+    timeout = TIMEOUT,
+    srcs = ["test_roc_auc_score.py"],
+    shard_count = SHARD_COUNT,
+    deps = [
+        "//snowflake/ml/modeling/metrics:ranking",
         "//snowflake/ml/utils:connection_params",
         "//tests/integ/snowflake/ml/modeling/framework:utils",
     ],
@@ -85,8 +157,18 @@ py_test(
     srcs = ["test_roc_curve.py"],
     shard_count = SHARD_COUNT,
     deps = [
-        "//snowflake/ml/modeling/metrics",
+        "//snowflake/ml/modeling/metrics:ranking",
         "//snowflake/ml/utils:connection_params",
         "//tests/integ/snowflake/ml/modeling/framework:utils",
+    ],
+)
+
+py_test(
+    name = "test_monitor",
+    timeout = "long",
+    srcs = ["test_monitor.py"],
+    deps = [
+        "//snowflake/ml/modeling/metrics:monitor",
+        "//snowflake/ml/utils:connection_params",
     ],
 )

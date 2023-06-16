@@ -31,22 +31,26 @@ from snowflake.ml.registry import _schema
 if TYPE_CHECKING:
     import pandas as pd
 
-_DEFAULT_REGISTRY_NAME: str = "MODEL_REGISTRY"
-_DEFAULT_PROJECT_NAME: str = "PUBLIC"
-_DEFAULT_TASK_NAME: str = "MODELS"
-_DEFAULT_METADATA_NAME: str = "METADATA"
+_DEFAULT_REGISTRY_NAME: str = "_SYSTEM_MODEL_REGISTRY"
+_DEFAULT_SCHEMA_NAME: str = "_SYSTEM_MODEL_REGISTRY_SCHEMA"
+_MODELS_TABLE_NAME: str = "_SYSTEM_REGISTRY_MODELS"
+_METADATA_TABLE_NAME: str = "_SYSTEM_REGISTRY_METADATA"
+_DEPLOYMENT_TABLE_NAME: str = "_SYSTEM_REGISRTRY_DEPLOYMENTS"
 
 # Metadata operation types.
 _SET_METADATA_OPERATION: str = "SET"
+_ADD_METADATA_OPERATION: str = "ADD"
+_DROP_METADATA_OPERATION: str = "DROP"
 
 # Metadata types.
 _METADATA_ATTRIBUTE_DESCRIPTION: str = "DESCRIPTION"
 _METADATA_ATTRIBUTE_METRICS: str = "METRICS"
 _METADATA_ATTRIBUTE_REGISTRATION: str = "REGISTRATION"
 _METADATA_ATTRIBUTE_TAGS: str = "TAGS"
+_METADATA_ATTRIBUTE_DEPLOYMENT: str = "DEPLOYMENTS"
 _METADATA_ATTRIBUTE_DELETION: str = "DELETION"
 
-# Leaving out REGISTRATION evnts as they will be handled differently from all mutable attributes.
+# Leaving out REGISTRATION/DEPLOYMENT evnts as they will be handled differently from all mutable attributes.
 _LIST_METADATA_ATTRIBUTE: List[str] = [
     _METADATA_ATTRIBUTE_DESCRIPTION,
     _METADATA_ATTRIBUTE_METRICS,
@@ -65,7 +69,7 @@ def create_model_registry(
     *,
     session: snowpark.Session,
     database_name: str = _DEFAULT_REGISTRY_NAME,
-    schema_name: str = _DEFAULT_PROJECT_NAME,
+    schema_name: str = _DEFAULT_SCHEMA_NAME,
 ) -> bool:
     """Setup a new model registry. This should be run once per model registry by an administrator role.
 
@@ -80,8 +84,9 @@ def create_model_registry(
     """
 
     # These might be exposed as parameters in the future.
-    registry_table_name = _DEFAULT_TASK_NAME
-    metadata_table_name = _DEFAULT_METADATA_NAME
+    registry_table_name = _MODELS_TABLE_NAME
+    metadata_table_name = _METADATA_TABLE_NAME
+    deployment_table_name = _DEPLOYMENT_TABLE_NAME
     statement_params = telemetry.get_function_usage_statement_params(
         project=_TELEMETRY_PROJECT,
         subproject=_TELEMETRY_SUBPROJECT,
@@ -91,10 +96,22 @@ def create_model_registry(
     _create_registry_database(session, database_name, statement_params)
     _create_registry_schema(session, database_name, schema_name, statement_params)
     _create_registry_tables(
-        session, database_name, schema_name, registry_table_name, metadata_table_name, statement_params
+        session,
+        database_name,
+        schema_name,
+        registry_table_name,
+        metadata_table_name,
+        deployment_table_name,
+        statement_params,
     )
     _create_registry_views(
-        session, database_name, schema_name, registry_table_name, metadata_table_name, statement_params
+        session,
+        database_name,
+        schema_name,
+        registry_table_name,
+        metadata_table_name,
+        deployment_table_name,
+        statement_params,
     )
     return True
 
@@ -148,12 +165,31 @@ def _create_registry_schema(
     session.sql(f'CREATE SCHEMA "{database_name}"."{schema_name}"').collect(statement_params=statement_params)
 
 
+def _get_fully_qualified_schema_name(database_name: str, schema_name: str) -> str:
+    return ".".join(
+        [
+            f"{identifier.quote_name_without_upper_casing(database_name)}",
+            f"{identifier.quote_name_without_upper_casing(schema_name)}",
+        ]
+    )
+
+
+def _get_fully_qualified_table_name(database_name: str, schema_name: str, table_name: str) -> str:
+    return ".".join(
+        [
+            _get_fully_qualified_schema_name(database_name, schema_name),
+            f"{identifier.quote_name_without_upper_casing(table_name)}",
+        ]
+    )
+
+
 def _create_registry_tables(
     session: snowpark.Session,
     database_name: str,
     schema_name: str,
     registry_table_name: str,
     metadata_table_name: str,
+    deployment_table_name: str,
     statement_params: Dict[str, Any],
 ) -> None:
     """Private helper to create the model registry required tables.
@@ -164,42 +200,65 @@ def _create_registry_tables(
         schema_name: Desired name of the schema used by this model registry inside the database.
         registry_table_name: Name for the main model registry table.
         metadata_table_name: Name for the metadata table used by the model registry.
+        deployment_table_name: Name for the deployment event table.
         statement_params: Function usage statement parameters used in sql query executions.
     """
-    fully_qualified_schema_name = (
-        f"{identifier.quote_name_without_upper_casing(database_name)}"
-        + "."
-        + f"{identifier.quote_name_without_upper_casing(schema_name)}"
-    )
-    fully_qualified_registry_table_name = f'{fully_qualified_schema_name}."{registry_table_name}"'
-    fully_qualified_metadata_table_name = f'{fully_qualified_schema_name}."{metadata_table_name}"'
 
+    # Create model registry table to store immutable properties of models
     registry_table_schema_string = ", ".join([f"{k} {v}" for k, v in _schema._REGISTRY_TABLE_SCHEMA.items()])
-    registry_tables = session.sql(
-        f"SHOW TABLES LIKE '{registry_table_name}' IN SCHEMA {fully_qualified_schema_name}"
-    ).collect(statement_params=statement_params)
-    if len(registry_tables) > 0:
-        logging.warning(f"The registry table {fully_qualified_registry_table_name} already exists. Skipping creation.")
-    else:
-        session.sql(f"CREATE TABLE {fully_qualified_registry_table_name} ({registry_table_schema_string})").collect(
-            statement_params=statement_params
-        )
+    fully_qualified_registry_table_name = _create_single_registry_table(
+        session, database_name, schema_name, registry_table_name, registry_table_schema_string, statement_params
+    )
 
+    # Create model metadata table to store mutable properties of models
     metadata_table_schema_string = ", ".join(
         [
             f"{k} {v.format(registry_table_name=fully_qualified_registry_table_name)}"
             for k, v in _schema._METADATA_TABLE_SCHEMA.items()
         ]
     )
-    metadata_tables = session.sql(
-        f"SHOW TABLES LIKE '{metadata_table_name}' IN SCHEMA {fully_qualified_schema_name}"
-    ).collect(statement_params=statement_params)
-    if len(metadata_tables) > 0:
-        logging.warning(f"The metadata table {fully_qualified_metadata_table_name} already exists. Skipping creation.")
-    else:
-        session.sql(f"CREATE TABLE {fully_qualified_metadata_table_name} ({metadata_table_schema_string})").collect(
-            statement_params=statement_params
-        )
+    _create_single_registry_table(
+        session, database_name, schema_name, metadata_table_name, metadata_table_schema_string, statement_params
+    )
+
+    # Create model deployment table to store deployment events of models
+    deployment_table_schema_string = ", ".join(
+        [
+            f"{k} {v.format(registry_table_name=fully_qualified_registry_table_name)}"
+            for k, v in _schema._DEPLOYMENTS_TABLE_SCHEMA.items()
+        ]
+    )
+    _create_single_registry_table(
+        session, database_name, schema_name, deployment_table_name, deployment_table_schema_string, statement_params
+    )
+
+
+def _create_single_registry_table(
+    session: snowpark.Session,
+    database_name: str,
+    schema_name: str,
+    table_name: str,
+    table_schema_string: str,
+    statement_params: Dict[str, Any],
+) -> str:
+    """Creates a single table for registry and returns the fully qualified name of the table.
+
+    Args:
+        session: Session object to communicate with Snowflake.
+        database_name: Desired name of the model registry database.
+        schema_name: Desired name of the schema used by this model registry inside the database.
+        table_name: Name of the target table.
+        table_schema_string: The SQL expression of the desired table schema.
+        statement_params: Function usage statement parameters used in sql query executions.
+
+    Returns:
+        A string which is the name of the created table.
+    """
+    fully_qualified_table_name = _get_fully_qualified_table_name(database_name, schema_name, table_name)
+    session.sql(f"CREATE TABLE IF NOT EXISTS {fully_qualified_table_name} ({table_schema_string})").collect(
+        statement_params=statement_params
+    )
+    return fully_qualified_table_name
 
 
 def _create_registry_views(
@@ -208,6 +267,7 @@ def _create_registry_views(
     schema_name: str,
     registry_table_name: str,
     metadata_table_name: str,
+    deployment_table_name: str,
     statement_params: Dict[str, Any],
 ) -> None:
     """Create views on underlying ModelRegistry tables.
@@ -218,16 +278,18 @@ def _create_registry_views(
         schema_name: Desired name of the schema used by this model registry inside the databse.
         registry_table_name: Name for the main model registry table.
         metadata_table_name: Name for the metadata table used by the model registry.
+        deployment_table_name: Name for the deployment event table.
         statement_params: Function usage statement parameters used in sql query executions.
     """
-    fully_qualified_schema_name = (
-        f"{identifier.quote_name_without_upper_casing(database_name)}"
-        + "."
-        + f"{identifier.quote_name_without_upper_casing(schema_name)}"
-    )
+    fully_qualified_schema_name = _get_fully_qualified_schema_name(database_name, schema_name)
 
     # From the documentation: Each DDL statement executes as a separate transaction. Races should not be an issue.
     # https://docs.snowflake.com/en/sql-reference/transactions.html#ddl
+
+    # Create a view on active permanent deployments.
+    _create_active_permanent_deployment_view(
+        session, fully_qualified_schema_name, registry_table_name, deployment_table_name, statement_params
+    )
 
     # Create views on most recent metadata items.
     metadata_view_name_prefix = metadata_table_name + "_LAST_"
@@ -296,6 +358,47 @@ def _create_registry_views(
     ).collect(statement_params=statement_params)
 
 
+def _create_active_permanent_deployment_view(
+    session: snowpark.Session,
+    fully_qualified_schema_name: str,
+    registry_table_name: str,
+    deployment_table_name: str,
+    statement_params: Dict[str, Any],
+) -> None:
+    """Create a view which lists all available permanent deployments.
+
+    Args:
+        session: Session object to communicate with Snowflake.
+        fully_qualified_schema_name: Schema name to the target table.
+        registry_table_name: Name for the main model registry table.
+        deployment_table_name: Name of the deployment table.
+        statement_params: Function usage statement parameters used in sql query executions.
+    """
+
+    # Create a view on active permanent deployments
+    # Active deployments are those whose last operation is not DROP.
+    active_deployments_view_expr = f"""
+        CREATE OR REPLACE VIEW {fully_qualified_schema_name}."{deployment_table_name}_VIEW"
+        COPY GRANTS AS
+        SELECT
+            DEPLOYMENT_NAME,
+            MODEL_ID,
+            {registry_table_name}.NAME as MODEL_NAME,
+            {registry_table_name}.VERSION as MODEL_VERSION,
+            {deployment_table_name}.CREATION_TIME as CREATION_TIME,
+            TARGET_METHOD,
+            TARGET_PLATFORM,
+            SIGNATURE,
+            OPTIONS,
+            STAGE_PATH,
+            ROLE
+        FROM {deployment_table_name}
+        LEFT JOIN {registry_table_name}
+            ON {deployment_table_name}.MODEL_ID = {registry_table_name}.ID
+    """
+    session.sql(active_deployments_view_expr).collect(statement_params=statement_params)
+
+
 class ModelRegistry:
     """Model Management API."""
 
@@ -304,7 +407,7 @@ class ModelRegistry:
         *,
         session: snowpark.Session,
         database_name: str = _DEFAULT_REGISTRY_NAME,
-        schema_name: str = _DEFAULT_PROJECT_NAME,
+        schema_name: str = _DEFAULT_SCHEMA_NAME,
     ) -> None:
         """
         Opens an already-created registry.
@@ -316,12 +419,18 @@ class ModelRegistry:
         """
         self._name = database_name
         self._schema = schema_name
-        self._registry_table = _DEFAULT_TASK_NAME
+        self._registry_table = _MODELS_TABLE_NAME
         self._registry_table_view = self._registry_table + "_VIEW"
-        self._metadata_table = _DEFAULT_METADATA_NAME
+        self._metadata_table = _METADATA_TABLE_NAME
+        self._deployment_table = _DEPLOYMENT_TABLE_NAME
+        self._permanent_deployment_view = self._deployment_table + "_VIEW"
+        self._permanent_deployment_stage = self._deployment_table + "_STAGE"
 
         self._session = session
-        self._deploy_api = _deployer.Deployer(session=self._session, manager=_deployer.LocalDeploymentManager())
+
+        # A in-memory deployment info cache to store information of temporary deployments
+        # TODO(zhe): Use a temporary table to replace the in-memory cache.
+        self._temporary_deployments: Dict[str, _deployer.Deployment] = {}
 
         self._check_access()
 
@@ -347,6 +456,10 @@ class ModelRegistry:
             self._session, query=f"SHOW TABLES LIKE '{self._metadata_table}' IN {self._fully_qualified_schema_name()}"
         ).has_dimensions(expected_rows=1).validate()
 
+        query_result_checker.SqlResultValidator(
+            self._session, query=f"SHOW TABLES LIKE '{self._deployment_table}' IN {self._fully_qualified_schema_name()}"
+        ).has_dimensions(expected_rows=1).validate()
+
         # TODO(zzhu): Also check validity of views. Consider checking schema as well.
 
     def _get_statement_params(self, frame: Optional[types.FrameType]) -> Dict[str, Any]:
@@ -365,31 +478,27 @@ class ModelRegistry:
 
     def _fully_qualified_registry_table_name(self) -> str:
         """Get the fully qualified name to the current registry table."""
-        return (
-            f"{identifier.quote_name_without_upper_casing(self._name)}"
-            + "."
-            + f"{identifier.quote_name_without_upper_casing(self._schema)}"
-            + "."
-            + f"{identifier.quote_name_without_upper_casing(self._registry_table)}"
-        )
+        return _get_fully_qualified_table_name(self._name, self._schema, self._registry_table)
 
     def _fully_qualified_metadata_table_name(self) -> str:
         """Get the fully qualified name to the current metadata table."""
-        return (
-            f"{identifier.quote_name_without_upper_casing(self._name)}"
-            + "."
-            + f"{identifier.quote_name_without_upper_casing(self._schema)}"
-            + "."
-            + f"{identifier.quote_name_without_upper_casing(self._metadata_table)}"
-        )
+        return _get_fully_qualified_table_name(self._name, self._schema, self._metadata_table)
+
+    def _fully_qualified_deployment_table_name(self) -> str:
+        """Get the fully qualified name to the current deployment table."""
+        return _get_fully_qualified_table_name(self._name, self._schema, self._deployment_table)
+
+    def _fully_qualified_permanent_deployment_view_name(self) -> str:
+        """Get the fully qualified name to the permanent deployment view."""
+        return _get_fully_qualified_table_name(self._name, self._schema, self._permanent_deployment_view)
 
     def _fully_qualified_schema_name(self) -> str:
         """Get the fully qualified name to the current registry schema."""
-        return (
-            f"{identifier.quote_name_without_upper_casing(self._name)}"
-            + "."
-            + f"{identifier.quote_name_without_upper_casing(self._schema)}"
-        )
+        return _get_fully_qualified_schema_name(self._name, self._schema)
+
+    def _fully_qualified_deployment_name(self, deployment_name: str) -> str:
+        """Get the fully qualified name to the given deployment."""
+        return _get_fully_qualified_table_name(self._name, self._schema, deployment_name)
 
     def _insert_table_entry(self, *, table: str, columns: Dict[str, Any]) -> List[snowpark.Row]:
         """Insert an entry into an internal Model Registry table.
@@ -452,13 +561,14 @@ class ModelRegistry:
         # Context: https://docs.snowflake.com/en/sql-reference/sql/insert-multi-table.html
         return self._insert_table_entry(table=self._fully_qualified_registry_table_name(), columns=properties)
 
-    def _insert_metadata_entry(self, *, id: str, attribute: str, value: Any) -> List[snowpark.Row]:
+    def _insert_metadata_entry(self, *, id: str, attribute: str, value: Any, operation: str) -> List[snowpark.Row]:
         """Insert a new row into the model metadata table.
 
         Args:
             id: Model id to register.
             attribute: name of the metadata attribute
             value: new value of the metadata attribute
+            operation: the operation type of the metadata entry.
 
         Returns:
             snowpark.DataFrame with the result of the operation.
@@ -474,11 +584,71 @@ class ModelRegistry:
         columns["EVENT_ID"] = self._get_new_unique_identifier()
         columns["MODEL_ID"] = id
         columns["ROLE"] = self._session.get_current_role()
-        columns["OPERATION"] = _SET_METADATA_OPERATION
+        columns["OPERATION"] = operation
         columns["ATTRIBUTE_NAME"] = attribute
         columns["VALUE"] = value
 
         return self._insert_table_entry(table=self._fully_qualified_metadata_table_name(), columns=columns)
+
+    def _insert_deployment_entry(
+        self,
+        *,
+        id: str,
+        name: str,
+        platform: str,
+        stage_path: str,
+        signature: Dict[str, Any],
+        target_method: str,
+        options: Optional[model_types.WarehouseDeployOptions] = None,
+    ) -> List[snowpark.Row]:
+        """Insert a new row into the model deployment table.
+
+        Each row in the deployment table is a deployment event.
+
+        Args:
+            id: Model id of the deployed model.
+            name: Name of the deployment.
+            platform: The deployment target destination.
+            stage_path: The stage location where the deployment UDF is stored.
+            signature: The model signature.
+            target_method: The method name which is used for the deployment.
+            options: The deployment options.
+
+        Returns:
+            A list of snowpark rows which is the insertion result.
+
+        Raises:
+            DataError: Missing ID field.
+        """
+        if not id:
+            raise connector.DataError("Model ID is required but none given.")
+
+        columns: Dict[str, Any] = {}
+        columns["CREATION_TIME"] = formatting.SqlStr("CURRENT_TIMESTAMP()")
+        columns["MODEL_ID"] = id
+        columns["DEPLOYMENT_NAME"] = name
+        columns["TARGET_PLATFORM"] = platform
+        columns["STAGE_PATH"] = stage_path
+        columns["ROLE"] = self._session.get_current_role()
+        columns["SIGNATURE"] = signature
+        columns["TARGET_METHOD"] = target_method
+        columns["OPTIONS"] = options
+
+        return self._insert_table_entry(table=self._fully_qualified_deployment_table_name(), columns=columns)
+
+    def _prepare_deployment_stage(self) -> str:
+        """Create a stage in the model registry for storing all permanent deployments.
+
+        Returns:
+            Path to the stage that was created.
+        """
+        schema = self._fully_qualified_schema_name()
+        fully_qualified_deployment_stage_name = f"{schema}.{self._permanent_deployment_stage}"
+        statement_params = self._get_statement_params(inspect.currentframe())
+        self._session.sql(f"CREATE STAGE IF NOT EXISTS {fully_qualified_deployment_stage_name}").collect(
+            statement_params=statement_params
+        )
+        return f"@{fully_qualified_deployment_stage_name}"
 
     def _prepare_model_stage(self, model_id: str) -> str:
         """Create a stage in the model registry for storing the model with the given id.
@@ -639,6 +809,7 @@ class ModelRegistry:
         id: Optional[str] = None,
         model_name: Optional[str] = None,
         model_version: Optional[str] = None,
+        operation: str = _SET_METADATA_OPERATION,
         enable_model_presence_check: bool = True,
     ) -> None:
         """Set the value of the given metadata attribute for targat model with given (model name + model version) or id.
@@ -649,6 +820,7 @@ class ModelRegistry:
             id: Model ID string. Required if either name or version is None.
             model_name: Model Name string. Required if id is None.
             model_version: Model Version string. Required if version is None.
+            operation: the operation type of the metadata entry.
             enable_model_presence_check: If True, we will check if the model with the given ID is currently registered
                 before setting the metadata attribute. False by default meaning that by default we will check.
 
@@ -670,9 +842,9 @@ class ModelRegistry:
         assert id is not None
 
         try:
-            self._insert_metadata_entry(id=id, attribute=attribute, value={attribute: value})
+            self._insert_metadata_entry(id=id, attribute=attribute, value={attribute: value}, operation=operation)
         except connector.DataError:
-            raise connector.DataError(f"Setting model name for mode id {id} failed.")
+            raise connector.DataError(f"Setting {attribute} for mode id {id} failed.")
 
     def _model_identifier_is_nonempty_or_raise(self, model_name: Optional[str], model_version: Optional[str]) -> None:
         """Validate model_name and model_version are non-empty strings.
@@ -777,6 +949,7 @@ class ModelRegistry:
         id = self._get_new_unique_identifier()
 
         # Copy model from local disk to remote stage.
+        # TODO(zhe): Check if we could use the same stage for multiple models.
         fully_qualified_model_stage_name = self._prepare_model_stage(model_id=id)
 
         # Check if directory or file and adapt accordingly.
@@ -1425,46 +1598,203 @@ class ModelRegistry:
         *,
         deployment_name: str,
         target_method: str,
-        options: Optional[model_types.DeployOptions] = None,
+        permanent: bool = False,
+        options: Optional[model_types.WarehouseDeployOptions] = None,
     ) -> None:
         """Deploy the model with the the given deployment name.
 
         Args:
-            deployment_name: name of the generated UDF.
-            target_method: The method name to use in deployment.
             model_name: Model Name string.
             model_version: Model Version string.
+            deployment_name: name of the generated UDF.
+            target_method: The method name to use in deployment.
+            permanent: Whether the deployment is permanent or not. Permanent deployment will generate a permanent UDF.
             options: Optional options for model deployment. Defaults to None.
-
-        Raises:
-            TypeError: The model with given id does not conform to native model format.
+                The following keys are acceptable:
+                - "output_with_input_features": Whether or not preserve the input columns in the output when predicting.
+                    Defaults to False.
+                - "keep_order": Whether or not preserve the row order when predicting. Only available for dataframe has
+                    fewer than 2**64 rows. Defaults to True.
+                - "permanent_udf_stage_location": Customized Snowflake stage option where the UDF should be persisted.
+                - "relax_version": Whether or not relax the version constraints of the dependencies if unresolvable.
+                    Defaults to False.
         """
         if options is None:
             options = {}
 
-        remote_model_path = self._get_model_path(model_name=model_name, model_version=model_version)
-        with tempfile.TemporaryDirectory() as local_model_directory:
-            self._session.file.get(remote_model_path, local_model_directory)
-            is_native_model_format = False
-            local_path = os.path.join(local_model_directory, os.path.basename(remote_model_path))
-            try:
-                if zipfile.is_zipfile(local_path):
-                    extracted_dir = os.path.join(local_model_directory, "extracted")
-                    with zipfile.ZipFile(local_path, "r") as myzip:
-                        if len(myzip.namelist()) > 1:
-                            myzip.extractall(extracted_dir)
-                            self._deploy_api.create_deployment(
-                                name=deployment_name,
-                                model_dir_path=extracted_dir,
-                                platform=_deployer.TargetPlatform.WAREHOUSE,
-                                target_method=target_method,
-                                options=options,
-                            )
-                            is_native_model_format = True
-            except TypeError:
-                pass
-            if not is_native_model_format:
-                raise TypeError("Deployment is only supported for native model format.")
+        deployment_stage_path = ""
+
+        if permanent:
+            # Every deployment-generated UDF should reside in its own unique directory. As long as each deployment
+            # is allocated a distinct directory, multiple deployments can coexist within the same stage.
+            # Given that each permanent deployment possesses a unique deployment_name, sharing the same stage doesn't
+            # present any issues
+            deployment_stage_path = (
+                options.get("permanent_udf_stage_location") or f"{self._prepare_deployment_stage()}/{deployment_name}/"
+            )
+            options["permanent_udf_stage_location"] = deployment_stage_path
+
+        remote_model_path = "@" + self._get_model_path(model_name=model_name, model_version=model_version)
+        model_id = self._get_model_id(model_name, model_version)
+
+        # Step 1: Deploy to get the UDF
+        deployment_info = _deployer.deploy(
+            session=self._session,
+            name=self._fully_qualified_deployment_name(deployment_name),
+            platform=_deployer.TargetPlatform.WAREHOUSE,
+            target_method=target_method,
+            model_stage_file_path=remote_model_path,
+            options=options,
+        )
+
+        # Step 2: Record the deployment
+
+        # Assert to convince mypy.
+        assert deployment_info
+        if permanent:
+            self._insert_deployment_entry(
+                id=model_id,
+                name=deployment_name,
+                platform=deployment_info["platform"].value,
+                stage_path=deployment_stage_path,
+                signature=deployment_info["signature"].to_dict(),
+                target_method=target_method,
+                options=options,
+            )
+
+        self._set_metadata_attribute(
+            _METADATA_ATTRIBUTE_DEPLOYMENT,
+            {"name": deployment_name, "permanent": permanent},
+            id=model_id,
+            operation=_ADD_METADATA_OPERATION,
+        )
+
+        # Store temporary deployment information in the in-memory cache. This allows for future referencing and
+        # tracking of its availability status.
+        if not permanent:
+            self._temporary_deployments[deployment_name] = deployment_info
+
+    @telemetry.send_api_usage_telemetry(
+        project=_TELEMETRY_PROJECT,
+        subproject=_TELEMETRY_SUBPROJECT,
+    )
+    @snowpark._internal.utils.private_preview(version="1.0.1")
+    def list_deployments(self, model_name: str, model_version: str) -> snowpark.DataFrame:
+        """List all permanent deployments that originated from the given model.
+
+        Temporary deployment info are currently not supported for listing.
+
+        Args:
+            model_name: Model Name string.
+            model_version: Model Version string.
+
+        Returns:
+            A snowpark dataframe that contains all deployments that assoicated with the given model.
+        """
+        deployments_df = (
+            self._session.sql(f"SELECT * FROM {self._fully_qualified_permanent_deployment_view_name()}")
+            .filter(snowpark.Column("MODEL_NAME") == model_name)
+            .filter(snowpark.Column("MODEL_VERSION") == model_version)
+        )
+        res = deployments_df.select(
+            deployments_df["MODEL_NAME"],
+            deployments_df["MODEL_VERSION"],
+            deployments_df["DEPLOYMENT_NAME"],
+            deployments_df["CREATION_TIME"],
+            deployments_df["TARGET_METHOD"],
+            deployments_df["TARGET_PLATFORM"],
+            deployments_df["SIGNATURE"],
+            deployments_df["OPTIONS"],
+            deployments_df["STAGE_PATH"],
+            deployments_df["ROLE"],
+        )
+        return cast(snowpark.DataFrame, res)
+
+    @telemetry.send_api_usage_telemetry(
+        project=_TELEMETRY_PROJECT,
+        subproject=_TELEMETRY_SUBPROJECT,
+    )
+    @snowpark._internal.utils.private_preview(version="1.0.1")
+    def get_deployment(self, model_name: str, model_version: str, *, deployment_name: str) -> snowpark.DataFrame:
+        """Get the permanent deployment with target name of the given model.
+
+        Temporary deployment info are currently not supported.
+
+        Args:
+            model_name: Model Name string.
+            model_version: Model Version string.
+            deployment_name: Deployment name string.
+
+        Returns:
+            A snowpark dataframe that contains the information of thetarget deployment.
+
+        Raises:
+            KeyError: Raised if the target deployment is not found.
+        """
+        deployment = self.list_deployments(model_name, model_version).filter(
+            snowpark.Column("DEPLOYMENT_NAME") == deployment_name
+        )
+        if deployment.count() == 0:
+            raise KeyError(
+                f"Unable to find deployment named {deployment_name} in the model {model_name}/{model_version}."
+            )
+        return cast(snowpark.DataFrame, deployment)
+
+    @telemetry.send_api_usage_telemetry(
+        project=_TELEMETRY_PROJECT,
+        subproject=_TELEMETRY_SUBPROJECT,
+    )
+    @snowpark._internal.utils.private_preview(version="1.0.1")
+    def delete_deployment(self, model_name: str, model_version: str, *, deployment_name: str) -> None:
+        """Delete the target permanent deployment of the given model.
+
+        Deleting temporary deployment are currently not supported.
+        Temporart deployment will get cleaned automatically when the current session closed.
+
+        Args:
+            model_name: Model Name string.
+            model_version: Model Version string.
+            deployment_name: Name of the deployment that is getting deleted.
+
+        Raises:
+            KeyError: Raised if the target deployment is not found.
+        """
+        deployment = (
+            self._session.sql(f"SELECT * FROM {self._fully_qualified_permanent_deployment_view_name()}")
+            .filter(snowpark.Column("DEPLOYMENT_NAME") == deployment_name)
+            .filter(snowpark.Column("MODEL_NAME") == model_name)
+            .filter(snowpark.Column("MODEL_VERSION") == model_version)
+        ).collect()
+        if len(deployment) == 0:
+            raise KeyError(
+                f"Unable to find deployment named {deployment_name} in the model {model_name}/{model_version}."
+            )
+        deployment = deployment[0]
+
+        # TODO(SNOW-759526): The following sequence should be a transaction.
+        # Step 1: Drop the UDF
+        self._session.sql(
+            f"DROP FUNCTION IF EXISTS {self._fully_qualified_deployment_name(deployment_name)}(OBJECT)"
+        ).collect()
+
+        # Step 2: Remove the staged artifact
+        self._session.sql(f"REMOVE {deployment['STAGE_PATH']}").collect()
+
+        # Step 3: Delete the deployment from the deployment table
+        query_result_checker.SqlResultValidator(
+            self._session,
+            f"""DELETE FROM {self._fully_qualified_deployment_table_name()}
+                WHERE MODEL_ID='{deployment['MODEL_ID']}' AND DEPLOYMENT_NAME='{deployment_name}'
+            """,
+        ).deletion_success(expected_num_rows=1).validate()
+
+        # Step 4: Record the delete event
+        self._set_metadata_attribute(
+            _METADATA_ATTRIBUTE_DEPLOYMENT,
+            {"name": deployment_name},
+            id=deployment["MODEL_ID"],
+            operation=_DROP_METADATA_OPERATION,
+        )
 
     @telemetry.send_api_usage_telemetry(
         project=_TELEMETRY_PROJECT,
@@ -1682,8 +2012,28 @@ class ModelReference:
             A dataframe containing the result of prediction.
         """
 
-        di = self._registry._deploy_api.get_deployment(name=deployment_name)
-        if di is None:
-            raise ValueError(f"The deployment with name {deployment_name} haven't been deployed")
+        # We will search temporary deployments from the local in-memory cache.
+        # If there is no hit, we try to search the remote deployment table.
+        di = self._registry._temporary_deployments.get(deployment_name)
 
-        return self._registry._deploy_api.predict(di["name"], data)
+        if di:
+            return _deployer.predict(session=self._registry._session, deployment=di, X=data)
+
+        try:
+            # Mypy enforce to refer to the registry for calling the function
+            deployment = self._registry.get_deployment(
+                self._model_name, self._model_version, deployment_name=deployment_name
+            ).collect()[0]
+            platform = _deployer.TargetPlatform(deployment["TARGET_PLATFORM"])
+            signature = model_signature.ModelSignature.from_dict(json.loads(deployment["SIGNATURE"]))
+            options_dict = cast(Dict[str, Any], json.loads(deployment["OPTIONS"]))
+            options = model_types.WarehouseDeployOptions(options_dict)  # type: ignore
+            di = _deployer.Deployment(
+                name=self._registry._fully_qualified_deployment_name(deployment_name),
+                platform=platform,
+                signature=signature,
+                options=options,
+            )
+            return _deployer.predict(session=self._registry._session, deployment=di, X=data)
+        except KeyError:
+            raise ValueError(f"The deployment with name {deployment_name} haven't been deployed")

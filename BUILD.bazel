@@ -1,4 +1,6 @@
 exports_files([
+    "CHANGELOG.md",
+    "README.md",
     "conda-env-extended.yml",
     "conda-env-snowflake.yml",
     "conda-env.yml",

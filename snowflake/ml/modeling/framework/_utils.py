@@ -12,7 +12,8 @@ import numpy as np
 import sklearn
 from packaging import version
 
-from snowflake.snowpark import functions as F
+from snowflake import snowpark
+from snowflake.snowpark import exceptions, functions as F
 from snowflake.snowpark._internal import utils
 
 DATETIME_FORMAT = "%Y-%m-%d %H:%M:%S.%f"
@@ -217,3 +218,11 @@ def to_native_format(obj: Any) -> Any:
     elif "LGBM" in obj.__class__.__name__:
         return obj.to_lightgbm()
     return obj.to_sklearn()
+
+
+def table_exists(session: snowpark.Session, table_name: str, statement_params: Dict[str, Any]) -> bool:
+    try:
+        session.table(table_name).limit(0).collect(statement_params=statement_params)
+        return True
+    except exceptions.SnowparkSQLException:
+        return False

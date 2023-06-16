@@ -18,12 +18,27 @@ py_library(
     deps = [],
 )
 
+# This is the project description attached to the wheel METADATA, which will
+# be rendered on the project homepage on pypi.org.
+genrule(
+    name = "generate_description",
+    srcs = [
+        "//:CHANGELOG.md",
+        "//:README.md",
+    ],
+    outs = ["description.md"],
+    cmd = "cat $(location //:README.md) $(location //:CHANGELOG.md) > $@",
+)
+
 snowml_wheel(
     name = "wheel",
     compatible_with_snowpark = False,
+    description_file = ":description.md",
     development_status = "PrPr",
     extra_requires = EXTRA_REQUIREMENTS,
     requires = REQUIREMENTS,
+    summary = "The machine learning client library that is used for interacting with Snowflake to build machine learning solutions.",
+    homepage = "https://github.com/snowflakedb/snowflake-ml-python",
     version = VERSION,
     deps = [
         "//snowflake/ml/modeling/impute:impute_pkg",

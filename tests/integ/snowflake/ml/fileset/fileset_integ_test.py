@@ -17,7 +17,6 @@ from snowflake import connector, snowpark
 from snowflake.ml.fileset import fileset, fileset_errors
 from snowflake.ml.utils import connection_params
 from snowflake.snowpark import functions
-from snowflake.snowpark._internal import type_utils as snowpark_types
 from tests.integ.snowflake.ml.fileset import fileset_integ_utils
 
 np.random.seed(0)
@@ -123,17 +122,17 @@ class TestSnowflakeFileSet(parameterized.TestCase):
         for key in ["NUMBER_INT_COL", "NUMBER_FIXED_POINT_COL"]:
             self.assertAlmostEqual(
                 fileset_integ_utils.get_column_min(key),
-                df.select(functions.min(snowpark_types.ColumnOrName(key))).collect()[0][0],
+                df.select(functions.min(key)).collect()[0][0],  # type:ignore[arg-type]
                 1,
             )
             self.assertAlmostEqual(
                 fileset_integ_utils.get_column_max(key, self.num_rows),
-                df.select(functions.max(snowpark_types.ColumnOrName(key))).collect()[0][0],
+                df.select(functions.max(key)).collect()[0][0],  # type:ignore[arg-type]
                 1,
             )
             self.assertAlmostEqual(
                 fileset_integ_utils.get_column_avg(key, self.num_rows),
-                df.select(functions.avg(snowpark_types.ColumnOrName(key))).collect()[0][0],
+                df.select(functions.avg(key)).collect()[0][0],  # type:ignore[arg-type]
                 1,
             )
 

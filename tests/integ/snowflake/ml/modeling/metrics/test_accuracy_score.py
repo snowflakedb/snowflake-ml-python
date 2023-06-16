@@ -3,7 +3,6 @@
 #
 from typing import Any, Dict
 
-import numpy as np
 import pandas as pd
 from absl.testing import parameterized
 from absl.testing.absltest import main
@@ -56,7 +55,7 @@ class AccuracyScoreTest(parameterized.TestCase):
             }
         },
     )
-    def test_accuracy_score_sample_weight(self, params: Dict[str, Any]) -> None:
+    def test_sample_weight(self, params: Dict[str, Any]) -> None:
         for values in params["values"]:
             data = values["data"]
             y_true = values["y_true"]
@@ -77,7 +76,7 @@ class AccuracyScoreTest(parameterized.TestCase):
                     pandas_df[y_pred],
                     sample_weight=sample_weight,
                 )
-                np.testing.assert_allclose(actual_score, sklearn_score)
+                self.assertAlmostEqual(sklearn_score, actual_score)
 
     @parameterized.parameters(  # type: ignore[misc]
         {
@@ -90,7 +89,7 @@ class AccuracyScoreTest(parameterized.TestCase):
             }
         },
     )
-    def test_accuracy_score_normalized(self, params: Dict[str, Any]) -> None:
+    def test_normalized(self, params: Dict[str, Any]) -> None:
         for values in params["values"]:
             data = values["data"]
             y_true = values["y_true"]
@@ -110,7 +109,7 @@ class AccuracyScoreTest(parameterized.TestCase):
                     pandas_df[y_pred],
                     normalize=normalize,
                 )
-                np.testing.assert_allclose(actual_score, sklearn_score)
+                self.assertAlmostEqual(sklearn_score, actual_score)
 
 
 if __name__ == "__main__":

@@ -58,26 +58,12 @@ py_library(
     name = "_model_meta",
     srcs = ["_model_meta.py"],
     deps = [
+        ":_core_requirements",
         ":_env",
         ":model_signature",
         ":type_hints",
-        ":_core_requirements",
         "//snowflake/ml/_internal:env",
         "//snowflake/ml/_internal:env_utils",
-        "//snowflake/ml/_internal:file_utils",
-    ],
-)
-
-py_library(
-    name = "_udf_util",
-    srcs = ["_udf_util.py"],
-    deps = [
-        ":_env",
-        ":_model",
-        ":_model_meta",
-        ":type_hints",
-        "//snowflake/ml/_internal:env_utils",
-        "//snowflake/ml/_internal:env",
         "//snowflake/ml/_internal:file_utils",
     ],
 )
@@ -86,10 +72,11 @@ py_library(
     name = "_deployer",
     srcs = ["_deployer.py"],
     deps = [
-        ":_udf_util",
         ":model_signature",
         ":type_hints",
         "//snowflake/ml/_internal/utils:identifier",
+        "//snowflake/ml/model/_deploy_client/warehouse:deploy",
+        "//snowflake/ml/model/_deploy_client/warehouse:infer_template",
     ],
 )
 
@@ -135,20 +122,6 @@ py_test(
     deps = [
         ":_env",
         "//snowflake/ml/_internal:env",
-    ],
-)
-
-py_test(
-    name = "_udf_util_test",
-    srcs = ["_udf_util_test.py"],
-    deps = [
-        ":_model_meta",
-        ":_udf_util",
-        ":model_signature",
-        "//snowflake/ml/_internal:env_utils",
-        "//snowflake/ml/_internal:env",
-        "//snowflake/ml/test_utils:mock_data_frame",
-        "//snowflake/ml/test_utils:mock_session",
     ],
 )
 

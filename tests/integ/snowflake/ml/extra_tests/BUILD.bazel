@@ -22,8 +22,8 @@ py_test(
 )
 
 py_test(
-    name = "test_voting_regressor",
-    srcs = ["test_voting_regressor.py"],
+    name = "test_extra_voting_regressor",
+    srcs = ["test_extra_voting_regressor.py"],
     deps = [
         "//snowflake/ml/modeling/ensemble:voting_regressor",
         "//snowflake/ml/modeling/linear_model:linear_regression",
@@ -33,50 +33,52 @@ py_test(
 )
 
 py_test(
-    name="test_grid_search_on_pipeline",
+    name = "test_grid_search_on_pipeline",
     srcs = ["test_grid_search_on_pipeline.py"],
     deps = [
+        "//snowflake/ml/modeling/compose:column_transformer",
         "//snowflake/ml/modeling/linear_model:logistic_regression",
         "//snowflake/ml/modeling/model_selection:grid_search_cv",
-        "//snowflake/ml/modeling/compose:column_transformer",
-        "//snowflake/ml/modeling/pipeline:pipeline",
-        "//snowflake/ml/modeling/preprocessing:one_hot_encoder",
-        "//snowflake/ml/modeling/preprocessing:min_max_scaler",
+        "//snowflake/ml/modeling/pipeline",
         "//snowflake/ml/modeling/preprocessing:label_encoder",
-        "//snowflake/ml/utils:connection_params",
-    ]
-)
-
-py_test(
-    name="test_iterative_imputer",
-    srcs = ["test_iterative_imputer.py"],
-    deps = [
-        "//snowflake/ml/modeling/linear_model:linear_regression",
-        "//snowflake/ml/modeling/impute:iterative_imputer",
-        "//snowflake/ml/utils:connection_params",
-    ]
-)
-
-py_test(
-    name="test_pipeline_with_ohe_and_xgbr",
-    srcs = ["test_pipeline_with_ohe_and_xgbr.py"],
-    deps = [
-        "//snowflake/ml/modeling/pipeline:pipeline",
-        "//snowflake/ml/modeling/preprocessing:one_hot_encoder",
         "//snowflake/ml/modeling/preprocessing:min_max_scaler",
-        "//snowflake/ml/modeling/xgboost:xgb_regressor",
-        "//snowflake/ml/modeling/framework:framework",
-        "//snowflake/ml/modeling/preprocessing:standard_scaler",
+        "//snowflake/ml/modeling/preprocessing:one_hot_encoder",
         "//snowflake/ml/utils:connection_params",
-    ]
+    ],
 )
 
 py_test(
-    name="test_randomized_search",
+    name = "test_extra_iterative_imputer",
+    srcs = ["test_extra_iterative_imputer.py"],
+    deps = [
+        "//snowflake/ml/modeling/impute:iterative_imputer",
+        "//snowflake/ml/modeling/linear_model:linear_regression",
+        "//snowflake/ml/utils:connection_params",
+    ],
+)
+
+py_test(
+    name = "test_pipeline_with_ohe_and_xgbr",
+    timeout = "long",
+    srcs = ["test_pipeline_with_ohe_and_xgbr.py"],
+    shard_count = 4,
+    deps = [
+        "//snowflake/ml/modeling/framework",
+        "//snowflake/ml/modeling/pipeline",
+        "//snowflake/ml/modeling/preprocessing:min_max_scaler",
+        "//snowflake/ml/modeling/preprocessing:one_hot_encoder",
+        "//snowflake/ml/modeling/preprocessing:standard_scaler",
+        "//snowflake/ml/modeling/xgboost:xgb_regressor",
+        "//snowflake/ml/utils:connection_params",
+    ],
+)
+
+py_test(
+    name = "test_randomized_search",
     srcs = ["test_randomized_search.py"],
     deps = [
-        "//snowflake/ml/modeling/model_selection:randomized_search_cv",
         "//snowflake/ml/modeling/ensemble:random_forest_classifier",
+        "//snowflake/ml/modeling/model_selection:randomized_search_cv",
         "//snowflake/ml/utils:connection_params",
-    ]
+    ],
 )

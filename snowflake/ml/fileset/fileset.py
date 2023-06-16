@@ -9,7 +9,6 @@ from snowflake.ml._internal import telemetry
 from snowflake.ml._internal.utils import identifier, import_utils
 from snowflake.ml.fileset import fileset_errors, sfcfs
 from snowflake.snowpark import exceptions, functions, types
-from snowflake.snowpark._internal import type_utils as snowpark_types
 
 # The max file size for data loading.
 TARGET_FILE_SIZE = 32 * 2**20
@@ -218,11 +217,11 @@ class FileSet:
             # "partition_by=name" assigns the same sharding key <name> to all rows, resulting in all the generated files
             # located in <target_stage_loc>/<name>/ directory.
             # typing: snowpark's function signature is bogus.
-            casted_df.write.copy_into_location(  # type: ignore
+            casted_df.write.copy_into_location(  # type:ignore[call-overload]
                 location=target_stage_loc,
                 file_format_type="parquet",
                 header=True,
-                partition_by=snowpark_types.ColumnOrSqlExpr(f"'{name}'"),
+                partition_by=f"'{name}'",
                 max_file_size=TARGET_FILE_SIZE,
                 detailed_output=True,
                 statement_params=telemetry.get_function_usage_statement_params(
@@ -498,9 +497,7 @@ def _validate_target_stage_loc(snowpark_session: snowpark.Session, target_stage_
     try:
         db, schema, stage, _ = identifier.parse_schema_level_object_identifier(target_stage_loc[1:])
         df_stages = snowpark_session.sql(f"Show stages like '{stage}' in SCHEMA {db}.{schema}")
-        df_stages = df_stages.filter(
-            functions.col('"type"').like(snowpark_types.ColumnOrLiteralStr(f"%{_FILESET_STAGE_TYPE}%"))
-        )
+        df_stages = df_stages.filter(functions.col('"type"').like(f"%{_FILESET_STAGE_TYPE}%"))  # type:ignore[arg-type]
         valid_stage = df_stages.collect()
         if not valid_stage:
             raise fileset_errors.FileSetLocationError(
@@ -555,19 +552,19 @@ def _cast_snowpark_dataframe(df: snowpark.DataFrame) -> snowpark.DataFrame:
                 dest: types.DataType = types.FloatType()
             else:
                 dest = types.LongType()
-            selected_cols.append(functions.cast(snowpark_types.ColumnOrName(functions.col(src)), dest).alias(src))
+            selected_cols.append(functions.cast(functions.col(src), dest).alias(src))  # type:ignore[arg-type]
         elif isinstance(field.datatype, types.DoubleType):
             dest = types.FloatType()
-            selected_cols.append(functions.cast(snowpark_types.ColumnOrName(functions.col(src)), dest).alias(src))
+            selected_cols.append(functions.cast(functions.col(src), dest).alias(src))  # type:ignore[arg-type]
         elif isinstance(field.datatype, types.ByteType):
             # Snowpark maps ByteType to BYTEINT, which will not do the casting job when unloading to parquet files.
             # We will use SMALLINT instead until this issue got fixed.
             # Investigate JIRA filed: SNOW-725041
             dest = types.ShortType()
-            selected_cols.append(functions.cast(snowpark_types.ColumnOrName(functions.col(src)), dest).alias(src))
+            selected_cols.append(functions.cast(functions.col(src), dest).alias(src))  # type:ignore[arg-type]
         elif field.datatype in (types.ShortType(), types.IntegerType(), types.LongType()):
             dest = field.datatype
-            selected_cols.append(functions.cast(snowpark_types.ColumnOrName(functions.col(src)), dest).alias(src))
+            selected_cols.append(functions.cast(functions.col(src), dest).alias(src))  # type:ignore[arg-type]
         else:
             if field.datatype in (types.DateType(), types.TimestampType(), types.TimeType()):
                 logging.warning(

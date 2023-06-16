@@ -1,4 +1,5 @@
-import docker
+import subprocess
+
 from absl.testing import absltest
 from absl.testing.absltest import mock
 
@@ -8,24 +9,31 @@ from snowflake.ml.model._deploy_client.image_builds import client_image_builder
 class ClientImageBuilderTestCase(absltest.TestCase):
     def setUp(self) -> None:
         super().setUp()
-        self.idempotent_key = "mock_idempotent_key"
+        self.unique_id = "mock_id"
         self.image_repo = "mock_image_repo"
         self.model_dir = "mock_model_dir"
         self.use_gpu = False
 
         self.client_image_builder = client_image_builder.ClientImageBuilder(
-            id=self.idempotent_key,
+            id=self.unique_id,
             image_repo=self.image_repo,
             model_dir=self.model_dir,
             use_gpu=self.use_gpu,
         )
 
-    @mock.patch("docker.from_env")  # type: ignore
+    @mock.patch(
+        "snowflake.ml.model._deploy_client.image_builds.client_image_builder.subprocess.check_call"
+    )  # type: ignore
+    def test_throw_exception_when_docker_is_not_running(self, m_check_call: mock.MagicMock) -> None:
+        m_check_call.side_effect = subprocess.CalledProcessError(1, "docker info")
+        with self.assertRaises(ConnectionError):
+            self.client_image_builder.build_and_upload_image()
+
     @mock.patch(
         "snowflake.ml.model._deploy_client.image_builds.client_image_builder" ".docker_context.DockerContext"
     )  # type: ignore
     @mock.patch("tempfile.TemporaryDirectory")  # type: ignore
-    def test_build(self, m_tempdir: mock.MagicMock, m_docker_context_class: mock.MagicMock, _) -> None:
+    def test_build(self, m_tempdir: mock.MagicMock, m_docker_context_class: mock.MagicMock) -> None:
         m_docker_context = m_docker_context_class.return_value
         m_context_dir = "mock_context_dir"
         # Modify the m_tempdir mock to return the desired TemporaryDirectory object
@@ -42,22 +50,26 @@ class ClientImageBuilderTestCase(absltest.TestCase):
             m_build.assert_called_once()
             m_build_image_from_context.assert_called_once()
 
-    @mock.patch("docker.from_env")  # type: ignore
-    def test_build_image_from_context_with_docker_daemon_running(self, m_docker_from_env: mock.MagicMock) -> None:
-        m_docker_client = m_docker_from_env.return_value
-        m_context_dir = "mock_context_dir"
-        m_docker_client.images.build.return_value = None
-        self.client_image_builder._build_image_from_context(context_dir=m_context_dir)
-        m_docker_client.images.build.assert_called_once_with(
-            path=m_context_dir,
-            tag=self.client_image_builder.image_tag,
-            platform=client_image_builder.Platform.LINUX_AMD64,
-        )
+    def test_build_image_from_context(self) -> None:
+        with mock.patch.object(self.client_image_builder, "_run_docker_commands") as m_run_docker_commands:
+            m_run_docker_commands.return_value = None
+            m_context_dir = "fake_context_dir"
+            self.client_image_builder._build_image_from_context(context_dir=m_context_dir)
 
-    def test_build_image_from_context_without_docker_daemon_running(self) -> None:
-        with mock.patch("docker.from_env", side_effect=docker.errors.DockerException):
-            with self.assertRaises(ConnectionError):
-                self.client_image_builder._build_image_from_context(context_dir="dummy")
+            expected_commands = [
+                "docker",
+                "buildx",
+                "build",
+                "--platform",
+                "linux/amd64",
+                "--tag",
+                f"{'/'.join([self.image_repo, self.unique_id])}",
+                m_context_dir,
+            ]
+
+            m_run_docker_commands.assert_called_once()
+            actual_commands = m_run_docker_commands.call_args.args[0]
+            self.assertListEqual(expected_commands, actual_commands)
 
 
 if __name__ == "__main__":

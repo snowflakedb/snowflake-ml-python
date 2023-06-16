@@ -1,0 +1,127 @@
+From ea505469e55f50ab59b0253bfedbef27063bd903 Mon Sep 17 00:00:00 2001
+From: Zhuo Peng <zhuo.peng@snowflake.com>
+Date: Thu, 15 Jun 2023 14:14:58 -0700
+Subject: [PATCH] description_content_type
+
+add summary
+---
+ python/packaging.bzl | 14 ++++++++++++++
+ tools/wheelmaker.py  | 16 ++++++++++++++++
+ 2 files changed, 30 insertions(+)
+
+diff --git python/packaging.bzl python/packaging.bzl
+index 19b5894..e7e92e8 100644
+--- python/packaging.bzl
++++ python/packaging.bzl
+@@ -221,6 +221,12 @@ def _py_wheel_impl(ctx):
+         args.add("--description_file", description_file)
+         other_inputs.append(description_file)
+
++    if ctx.attr.summary:
++        args.add("--summary", ctx.attr.summary)
++
++    if ctx.attr.description_content_type:
++        args.add("--description_content_type", ctx.attr.description_content_type)
++
+     ctx.actions.run(
+         inputs = depset(direct = other_inputs, transitive = [inputs_to_package]),
+         outputs = [outfile, name_file],
+@@ -352,6 +358,10 @@ _other_attrs = {
+     "classifiers": attr.string_list(
+         doc = "A list of strings describing the categories for the package. For valid classifiers see https://pypi.org/classifiers",
+     ),
++    "description_content_type": attr.string(
++        doc = "The type of contents in description_file. See https://packaging.python.org/en/latest/specifications/core-metadata/#description-content-type",
++        default = "",
++    ),
+     "description_file": attr.label(
+         doc = "A file containing text describing the package in a single line.",
+         allow_single_file = True,
+@@ -377,6 +387,10 @@ _other_attrs = {
+         default = [],
+         doc = "path prefixes to strip from files added to the generated package",
+     ),
++    "summary": attr.string(
++        doc = "A one-line summary of what the package does",
++        default = "",
++    ),
+ }
+
+ py_wheel = rule(
+diff --git tools/wheelmaker.py tools/wheelmaker.py
+index fb8e37b..6a90062 100644
+--- tools/wheelmaker.py
++++ tools/wheelmaker.py
+@@ -171,10 +171,12 @@ Root-Is-Purelib: {}
+         self,
+         extra_headers,
+         description,
++        description_content_type,
+         classifiers,
+         python_requires,
+         requires,
+         extra_requires,
++        summary,
+     ):
+         """Write METADATA file to the distribution."""
+         # https://www.python.org/dev/peps/pep-0566/
+@@ -183,11 +185,15 @@ Root-Is-Purelib: {}
+         metadata.append("Metadata-Version: 2.1")
+         metadata.append("Name: %s" % self._name)
+         metadata.append("Version: %s" % self._version)
++        if description_content_type:
++            metadata.append("Description-Content-Type: %s" % description_content_type)
+         metadata.extend(extra_headers)
+         for classifier in classifiers:
+             metadata.append("Classifier: %s" % classifier)
+         if python_requires:
+             metadata.append("Requires-Python: %s" % python_requires)
++        if summary:
++            metadata.append("Summary: %s" % summary)
+         for requirement in requires:
+             metadata.append("Requires-Dist: %s" % requirement)
+
+@@ -323,9 +329,15 @@ def parse_args() -> argparse.Namespace:
+     wheel_group.add_argument(
+         "--python_requires", help="Version of python that the wheel will work with"
+     )
++    wheel_group.add_argument(
++        "--summary", help="A one-line summary of what the package does"
++    )
+     wheel_group.add_argument(
+         "--description_file", help="Path to the file with package description"
+     )
++    wheel_group.add_argument(
++        "--description_content_type", help="Content type of the package description"
++    )
+     wheel_group.add_argument(
+         "--entry_points_file",
+         help="Path to a correctly-formatted entry_points.txt file",
+@@ -429,6 +441,7 @@ def main() -> None:
+                     arguments.description_file, "rt", encoding="utf-8"
+                 ) as description_file:
+                     description = description_file.read()
++        description_content_type = arguments.description_content_type
+
+         extra_requires = collections.defaultdict(list)
+         if arguments.extra_requires:
+@@ -439,14 +452,17 @@ def main() -> None:
+         python_requires = arguments.python_requires or ""
+         requires = arguments.requires or []
+         extra_headers = arguments.header or []
++        summary = arguments.summary
+
+         maker.add_metadata(
+             extra_headers=extra_headers,
+             description=description,
++            description_content_type=description_content_type,
+             classifiers=classifiers,
+             python_requires=python_requires,
+             requires=requires,
+             extra_requires=extra_requires,
++            summary=summary,
+         )
+
+         if arguments.entry_points_file:
+--
+2.39.2 (Apple Git-143)

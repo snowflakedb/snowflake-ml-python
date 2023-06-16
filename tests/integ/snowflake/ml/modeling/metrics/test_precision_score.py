@@ -48,7 +48,7 @@ class PrecisionScoreTest(parameterized.TestCase):
     @parameterized.parameters(  # type: ignore[misc]
         {"params": {"labels": [None, [2, 0, 4]]}},
     )
-    def test_precision_score_labels(self, params: Dict[str, Any]) -> None:
+    def test_labels(self, params: Dict[str, Any]) -> None:
         pandas_df = pd.DataFrame(_MULTICLASS_DATA, columns=_SCHEMA)
         input_df = self._session.create_dataframe(pandas_df)
 
@@ -71,7 +71,7 @@ class PrecisionScoreTest(parameterized.TestCase):
     @parameterized.parameters(  # type: ignore[misc]
         {"params": {"pos_label": [0, 2, 4]}},
     )
-    def test_precision_score_pos_label(self, params: Dict[str, Any]) -> None:
+    def test_pos_label(self, params: Dict[str, Any]) -> None:
         pandas_df = pd.DataFrame(_MULTICLASS_DATA, columns=_SCHEMA)
         input_df = self._session.create_dataframe(pandas_df)
 
@@ -102,7 +102,7 @@ class PrecisionScoreTest(parameterized.TestCase):
             }
         },
     )
-    def test_precision_score_sample_weight(self, params: Dict[str, Any]) -> None:
+    def test_sample_weight(self, params: Dict[str, Any]) -> None:
         for values in params["values"]:
             data = values["data"]
             y_true = values["y_true"]
@@ -130,7 +130,7 @@ class PrecisionScoreTest(parameterized.TestCase):
     @parameterized.parameters(  # type: ignore[misc]
         {"params": {"average": [None, "micro", "macro", "weighted"]}},
     )
-    def test_precision_score_average_multiclass(self, params: Dict[str, Any]) -> None:
+    def test_average_multiclass(self, params: Dict[str, Any]) -> None:
         pandas_df = pd.DataFrame(_MULTICLASS_DATA, columns=_SCHEMA)
         input_df = self._session.create_dataframe(pandas_df)
 
@@ -157,7 +157,7 @@ class PrecisionScoreTest(parameterized.TestCase):
             }
         },
     )
-    def test_precision_score_average_binary(self, params: Dict[str, Any]) -> None:
+    def test_average_binary(self, params: Dict[str, Any]) -> None:
         pandas_df = pd.DataFrame(_BINARY_DATA, columns=_SCHEMA)
         input_df = self._session.create_dataframe(pandas_df)
 
@@ -180,7 +180,7 @@ class PrecisionScoreTest(parameterized.TestCase):
     @parameterized.parameters(  # type: ignore[misc]
         {"params": {"zero_division": ["warn", 0, 1]}},
     )
-    def test_precision_score_zero_division(self, params: Dict[str, Any]) -> None:
+    def test_zero_division(self, params: Dict[str, Any]) -> None:
         data = [
             [0, 0, 0, 0, 0, 0],
             [1, 1, 0, 0, 0, 0],

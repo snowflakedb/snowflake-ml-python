@@ -13,83 +13,8 @@ from snowflake.ml.model import (
     _model_meta,
     type_hints as model_types,
 )
+from snowflake.ml.model._deploy_client.warehouse import infer_template
 from snowflake.snowpark import session as snowpark_session, types as st
-
-_KEEP_ORDER_COL_NAME = "_ID"
-
-_KEEP_ORDER_CODE_TEMPLATE = f'predictions_df["{_KEEP_ORDER_COL_NAME}"] = input_df["{_KEEP_ORDER_COL_NAME}"]'
-
-_EXTRACT_LOCAL_MODEL_CODE = """
-model_dir_name = '{model_dir_name}'
-zip_model_path = os.path.join(import_dir, '{model_dir_name}.zip')
-extracted = '/tmp/models'
-extracted_model_dir_path = os.path.join(extracted, model_dir_name)
-
-with FileLock():
-    if not os.path.isdir(extracted_model_dir_path):
-        with zipfile.ZipFile(zip_model_path, 'r') as myzip:
-            myzip.extractall(extracted)
-"""
-
-_EXTRACT_STAGE_MODEL_CODE = """
-model_dir_name = os.path.splitext('{model_stage_file_name}')[0]
-zip_model_path = os.path.join(import_dir, '{model_stage_file_name}')
-extracted = '/tmp/models'
-extracted_model_dir_path = os.path.join(extracted, model_dir_name)
-
-with FileLock():
-    if not os.path.isdir(extracted_model_dir_path):
-        with zipfile.ZipFile(zip_model_path, 'r') as myzip:
-            myzip.extractall(extracted_model_dir_path)
-"""
-
-_UDF_CODE_TEMPLATE = """
-import pandas as pd
-import numpy as np
-import sys
-from _snowflake import vectorized
-import os
-import fcntl
-import threading
-import zipfile
-import anyio
-import inspect
-
-class FileLock:
-   def __enter__(self):
-      self._lock = threading.Lock()
-      self._lock.acquire()
-      self._fd = open('/tmp/lockfile.LOCK', 'w+')
-      fcntl.lockf(self._fd, fcntl.LOCK_EX)
-
-   def __exit__(self, type, value, traceback):
-      self._fd.close()
-      self._lock.release()
-
-IMPORT_DIRECTORY_NAME = "snowflake_import_directory"
-import_dir = sys._xoptions[IMPORT_DIRECTORY_NAME]
-
-from snowflake.ml.model import _model
-
-{extract_model_code}
-
-model, meta = _model._load_model_for_deploy(extracted_model_dir_path)
-
-# TODO(halu): Wire `max_batch_size`.
-# TODO(halu): Avoid per batch async detection branching.
-@vectorized(input=pd.DataFrame, max_batch_size=10)
-def infer(df):
-    input_cols = [spec.name for spec in meta.signatures["{target_method}"].inputs]
-    input_df = pd.io.json.json_normalize(df[0])
-    if inspect.iscoroutinefunction(model.{target_method}):
-        predictions_df = anyio.run(model.{target_method}, input_df[input_cols])
-    else:
-        predictions_df = model.{target_method}(input_df[input_cols])
-
-    {keep_order_code}
-
-    return predictions_df.to_dict("records")
-"""
 
 
 def _deploy_to_warehouse(
@@ -114,6 +39,7 @@ def _deploy_to_warehouse(
     Raises:
         ValueError: Raised when incompatible model.
         ValueError: Raised when target method does not exist in model.
+        ValueError: Raised when confronting invalid stage location.
 
     Returns:
         The metadata of the model deployed.
@@ -121,12 +47,14 @@ def _deploy_to_warehouse(
     if model_dir_path:
         model_dir_path = os.path.normpath(model_dir_path)
         model_dir_name = os.path.basename(model_dir_path)
-        extract_model_code = _EXTRACT_LOCAL_MODEL_CODE.format(model_dir_name=model_dir_name)
+        extract_model_code = infer_template._EXTRACT_LOCAL_MODEL_CODE.format(model_dir_name=model_dir_name)
         meta = _model.load_model(model_dir_path=model_dir_path, meta_only=True)
     else:
         assert model_stage_file_path is not None, "Unreachable assertion error."
         model_stage_file_name = os.path.basename(model_stage_file_path)
-        extract_model_code = _EXTRACT_STAGE_MODEL_CODE.format(model_stage_file_name=model_stage_file_name)
+        extract_model_code = infer_template._EXTRACT_STAGE_MODEL_CODE.format(
+            model_stage_file_name=model_stage_file_name
+        )
         meta = _model.load_model(session=session, model_stage_file_path=model_stage_file_path, meta_only=True)
 
     relax_version = kwargs.get("relax_version", False)
@@ -141,6 +69,11 @@ def _deploy_to_warehouse(
     )
 
     stage_location = kwargs.get("permanent_udf_stage_location", None)
+    if stage_location:
+        stage_location = stage_location.strip().rstrip("/")
+        if not stage_location.startswith("@"):
+            raise ValueError(f"Invalid stage location {stage_location}.")
+
     _snowml_wheel_path = None
     if _use_local_snowml:
         _snowml_wheel_path = file_utils.upload_snowml(session, stage_location=stage_location)
@@ -175,8 +108,12 @@ def _deploy_to_warehouse(
         if stage_location is None:  # Temporary UDF
             session.udf.register_from_file(**params, replace=True)
         else:  # Permanent UDF
-            stage_location = stage_location.rstrip().rstrip("/")
-            session.udf.register_from_file(**params, replace=False, is_permanent=True, stage_location=stage_location)
+            session.udf.register_from_file(
+                **params,
+                replace=kwargs.get("replace_udf", False),
+                is_permanent=True,
+                stage_location=stage_location,
+            )
 
     print(f"{udf_name} is deployed to warehouse.")
     return meta
@@ -198,9 +135,9 @@ def _write_UDF_py_file(
     """
     keep_order = kwargs.get("keep_order", True)
 
-    udf_code = _UDF_CODE_TEMPLATE.format(
+    udf_code = infer_template._UDF_CODE_TEMPLATE.format(
         extract_model_code=extract_model_code,
-        keep_order_code=_KEEP_ORDER_CODE_TEMPLATE if keep_order else "",
+        keep_order_code=infer_template._KEEP_ORDER_CODE_TEMPLATE if keep_order else "",
         target_method=target_method,
     )
     f.write(udf_code)

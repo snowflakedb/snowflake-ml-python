@@ -14,6 +14,22 @@ from snowflake.snowpark import functions as F, types as T
 
 
 class Binarizer(base.BaseTransformer):
+    r"""Binarizes data (sets feature values to 0 or 1) according to the given threshold.
+
+    Values must be of float type. Values greater than the threshold map to 1, while values less than or equal to
+    the threshold map to 0. The default threshold of 0.0 maps only positive values to 1.
+
+    For more details on what this transformer does, see [sklearn.preprocessing.Binarizer]
+    (https://scikit-learn.org/stable/modules/generated/sklearn.preprocessing.Binarizer.html).
+
+    Args:
+        threshold: Feature values below or equal to this are replaced by 0, above it by 1. Default values is 0.0.
+        input_cols: The name(s) of one or more columns in a DataFrame containing a feature to be binarized.
+        output_cols: The name(s) of one or more columns in a DataFrame in which results will be stored. The number of
+            columns specified must match the number of input columns.
+        drop_input_cols: Remove input columns from output if set True. False by default.
+    """
+
     def __init__(
         self,
         *,
@@ -31,9 +47,10 @@ class Binarizer(base.BaseTransformer):
         Data must be float-valued.
 
         Args:
-            threshold: Feature values below or equal to this are replaced by 0, above it by 1.
-            input_cols: Single or multiple input columns.
-            output_cols: Single or multiple output columns.
+            threshold: Feature values below or equal to this are replaced by 0, above it by 1. Default values is 0.0.
+            input_cols: The name(s) of one or more columns in a DataFrame containing a feature to be binarized.
+            output_cols: The name(s) of one or more columns in a DataFrame in which results will be stored. The number
+                of columns specified must match the number of input columns.
             drop_input_cols: Remove input columns from output if set True. False by default.
         """
         super().__init__(drop_input_cols=drop_input_cols)
@@ -56,7 +73,8 @@ class Binarizer(base.BaseTransformer):
     )
     def fit(self, dataset: Union[snowpark.DataFrame, pd.DataFrame]) -> "Binarizer":
         """
-        This is a stateless transformer, so there is nothing to fit.
+        This is a stateless transformer, so there is nothing to fit. Validates the transformer arguments.
+        Returns the transformer instance.
 
         Args:
             dataset: Input dataset.

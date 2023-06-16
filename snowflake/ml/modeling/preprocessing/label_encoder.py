@@ -14,6 +14,21 @@ from snowflake.ml.modeling.preprocessing import ordinal_encoder
 
 
 class LabelEncoder(base.BaseTransformer):
+    r"""Encodes target labels with values between 0 and n_classes-1.
+
+    In other words, each class (i.e., distinct numeric or string) is assigned an integer value, starting with zero.
+    LabelEncoder is a specialization of OrdinalEncoder for 1-dimensional data.
+
+    For more details on what this transformer does, see [sklearn.preprocessing.LabelEncoder]
+    (https://scikit-learn.org/stable/modules/generated/sklearn.preprocessing.LabelEncoder.html).
+
+    Args:
+        input_cols: The name of a column in a DataFrame to be encoded. May be a string or a list containing one string.
+        output_cols: The name of a column in a DataFrame where the results will be stored. May be a string or a list
+            containing one string.
+        drop_input_cols: Remove input columns from output if set True. False by default.
+    """
+
     def __init__(
         self,
         input_cols: Optional[Union[str, Iterable[str]]] = None,
@@ -24,12 +39,15 @@ class LabelEncoder(base.BaseTransformer):
         Encode target labels with integers between 0 and n_classes-1.
 
         Args:
-            input_cols: One label column specified as a string or list with one member.
-            output_cols: One output column specified as a string or list with one member.
+            input_cols: The name of a column in a DataFrame to be encoded. May be a string or a list containing one
+                string.
+            output_cols: The name of a column in a DataFrame where the results will be stored. May be a string or a list
+                containing one string.
             drop_input_cols: Remove input columns from output if set True. False by default.
 
         Attributes:
             classes_: A np.ndarray that holds the label for each class.
+                Attributes are valid only after fit() has been called.
 
         """
         super().__init__(drop_input_cols=drop_input_cols)
@@ -51,6 +69,10 @@ class LabelEncoder(base.BaseTransformer):
     def fit(self, dataset: Union[snowpark.DataFrame, pd.DataFrame]) -> "LabelEncoder":
         """
         Fit label encoder with label column in dataset.
+
+        Validates the transformer arguments and derives the list of classes (distinct values) from the data, making
+        this list available as an attribute of the transformer instance (see Attributes).
+        Returns the transformer instance.
 
         Args:
             dataset: Input dataset.

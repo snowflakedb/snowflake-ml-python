@@ -233,6 +233,16 @@ def check_label_columns(
         )
 
 
+def flatten_cols(cols: List[Optional[Union[str, List[str]]]]) -> List[str]:
+    res = []
+    for col in cols:
+        if isinstance(col, str):
+            res.append(col)
+        if isinstance(col, list):
+            res.extend(col)
+    return res
+
+
 def weighted_sum(
     *,
     df: snowpark.DataFrame,

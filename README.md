@@ -1,230 +1,41 @@
-# `snowflake-ml`
+# Snowpark ML
 
-## Snowflake Machine Learning
+Snowpark ML is a set of tools including SDKs and underlying infrastructure to build and deploy machine learning models. With Snowpark ML, you can pre-process data, train, manage and deploy ML models all within Snowflake, using a single SDK, and benefit from Snowflake’s proven performance, scalability, stability and governance at every stage of the Machine Learning workflow.
 
-The machine learning client library that is used for interacting with Snowflake to build machine learning solutions. Functionalities include model uploading, training, feature engineering, etc.
+## Key Components of Snowpark ML
+The Snowpark ML Python SDK provides a number of APIs to support each stage of an end-to-end Machine Learning development and deployment process, and includes two key components.
 
-## Build system
+### Snowpark ML Development [Public Preview]
 
-We are using `bazel` as the build system.
+A collection of python APIs to enable efficient model development directly in Snowflake:
 
-### Installation
+1. Modeling API (snowflake.ml.modeling) for data preprocessing, feature engineering and model training in Snowflake. This includes snowflake.ml.modeling.preprocessing for scalable data transformations on large data sets utilizing the compute resources of underlying Snowpark Optimized High Memory Warehouses, and a large collection of ML model development classes based on sklearn, xgboost, and lightgbm. See the private preview limited access docs (Preprocessing, Modeling for more details on these.
 
-#### Bazel
+1. Framework Connectors: Optimized, secure and performant data provisioning for Pytorch and Tensorflow frameworks in their native data loader formats.
 
-Install bazel, if not already done:
+### Snowpark ML Ops [Private Preview]
 
+Snowpark MLOps complements the Snowpark ML Development API, and provides model management capabilities along with integrated deployment into Snowflake. Currently, the API consists of
+1. FileSet API: FileSet provides a Python fsspec-compliant API for materializing data into a Snowflake internal stage from a query or Snowpark Dataframe along with a number of convenience APIs.
+
+1. Model Registry: A python API for managing models within Snowflake which also supports deployment of ML models into Snowflake Warehouses as vectorized UDFs.
+
+During PrPr, we are iterating on API without backward compatibility guarantees. It is better to recreate your registry everytime you update the package. This means, at this time, you cannot use the registry for production use.
+
+- [Documentation](http://docs.snowflake.com/developer-guide/snowpark/python/snowpark-ml-modeling)
+- [Issues](https://github.com/snowflakedb/snowflake-ml-python/issues)
+- [Source](https://github.com/snowflakedb/snowflake-ml-python/)
+
+## Getting started
+### Have your Snowflake account ready
+If you don't have a Snowflake account yet, you can [sign up for a 30-day free trial account](https://signup.snowflake.com/).
+
+### Create a Python virtual environment
+Python 3.8 is required. You can use [miniconda](https://docs.conda.io/en/latest/miniconda.html), [anaconda](https://www.anaconda.com/), or [virtualenv](https://docs.python.org/3/tutorial/venv.html) to create a Python 3.8 virtual environment.
+
+To have the best experience when using this library, [creating a local conda environment with the Snowflake channel](https://docs.snowflake.com/en/developer-guide/udf/python/udf-python-packages.html#local-development-and-testing) is recommended.
+
+### Install the library to the Python virtual environment
 ```
-# This installs bazelisk in ~/go/bin/bazelisk
-go install github.com/bazelbuild/bazelisk@latest
+pip install snowflake-ml-python
 ```
-
-Add shortcut in your `~/.bashrc` (or equivalent):
-
-```
-if [ -f ~/go/bin/bazelisk ]; then
-  alias bazel=~/go/bin/bazelisk
-fi
-```
-
-#### Buildifier
-
-This tool helps auto-formatting `BUILD.bazel` file. Installation is similar:
-
-```
-go install github.com/bazelbuild/buildtools/buildifier@latest
-```
-
-Add shortcut in your `~/.bashrc` (or equivalent):
-
-```
-if [ -f ~/go/bin/buildifier ]; then
-  alias buildifier=~/go/bin/buildifier
-fi
-```
-
-Note: You may need to configure your editor to run this on save.
-
-### Build
-
-To build the package, run:
-
-```shell
-> bazel build //snowflake/ml:wheel
-```
-
-`bazel` can be run from anywhere under the monorepo and it can accept absolute path or a relative path. For example,
-
-```shell
-snowml/snowflake/ml> bazel build :wheel
-```
-
-You can build an entire sub-tree as:
-
-```shell
-snowml> bazel build //snowflake/...
-```
-
-### Type-check
-
-#### mypy
-
-We use [mypy](https://mypy.readthedocs.io/en/stable/) to type-check our Python source files. mypy is integrated into our bazel environment.
-
-The version of MyPy is specified in `conda-env-snowflake.yml`, just like other conda
-packages we depend on.
-
-#### Invoke MyPy locally
-
-```
-bazel build --config=typecheck <your target>
-```
-
-#### Enforcement as a merge gate
-
-Type checking is not enforced against targets listed in `ci/type_ignored_targets`, or any target
-depending on those ignored targets. Thus `bazel build --config=typecheck //...` may give (expected)
-errors.
-
-To properly type check all the targets, run:
-
-```
-./ci/type_check.sh -a -b <path_to_bazel>
-```
-
-You only need to specify `-b <path_to_bazel>` if your `bazel` is not in `$PATH` or is an alias.
-
-### Test
-
-Similar to `bazel build`, `bazel test` can test any target. The target must be
-a test target. It will run the target and report if `PASSED` or `FAILED`. It essentially `build`s the target and then `run` it. You can also build and run separately.
-
-TIP: If a test fails, there will be a log file, which is executable. You do not need to open via `less` or `editor`. You can directly paste the path in command line.
-
-### Coverage
-
-A `lcov` coverage report can be generated by running
-
-```
-bazel coverage --combined_report=lcov <target pattern>
-```
-
-To get a human-readable report:
-
-```
-lcov --list $(bazel info output_path)/_coverage/_coverage_report.dat
-```
-
-To get an HTML report:
-
-```
-genhtml --output <output_dir> "$(bazel info output_path)/_coverage/_coverage_report.dat"
-```
-
-Both `lcov` and `genhtml` are part of the [`lcov`](https://github.com/linux-test-project/lcov) project. To install it on MacOS:
-
-```
-brew install lcov
-```
-
-The unit test coverage report is generated periodically by a GitHub
-[workflow](https://github.com/snowflakedb/snowml/actions/workflows/continuous_build.yml?query=branch%3Amain).
-You can download the report in the artifacts generated by the action runs.
-
-### Run
-
-Another useful command is, `bazel run`. This builds and then run the built target directly. Useful for binaries while debugging.
-
-### Other commands
-
-`bazel` is pretty powerful and has lots of other commands. Read more [here](https://bazel.build/run/build).
-
-### Python dependencies
-
-To introduce a third-party Python dependency, first check if it is available as a package in the
-[Snowflake conda channel](https://repo.anaconda.com/pkgs/snowflake/). Then modify
-[requirements.yml](https://github.com/snowflakedb/snowml/blob/main/requirements.yml) following the instruction there, and run the following to re-generate all requirements files, including
-[conda-env.yml](https://github.com/snowflakedb/snowml/blob/main/conda-env.yml):
-
-```
-bazel run //bazel/requirements:sync_requirements
-```
-
-Then, your code can use the package as if it were "installed" in the Python environment.
-
-## Unit Testing
-
-Write `pytest` or Python `unittest` style unit tests.
-
-### `unittest`
-
-Use `absl.testing.absltest` as a drop-in replacement of `unittest`.
-
-For example:
-
-```
-# instead of
-# import unittest
-from absl.testing import absltest
-
-# instead of
-# from unittest import TestCase, main
-from absl.testing.absltest import TestCase, main
-```
-
-`absltest` provides better `bazel` integration which produces a more detailed XML
-test report. The test report is picked up by a Github workflow to provide a nice UI
-for test results.
-
-### `pytest`
-
-Make each unit test file its own runnable `py_test` target and use the `main()`
-function provided by `snowflake.ml.test_utils.pytest_driver`.
-
-For example:
-
-```
-from snowflake.ml.utils import pytest_driver
-
-def test_case():
-    assert some_feature()
-
-if __name__ == "__main__":
-    pytest_driver.main()
-```
-
-`pytest_driver` contains `bazel` integration that allows `pytest` to produce a XML
-test report.
-
-## `pre-commit`
-
-Pull requests against the main branch are subject to `pre-commit` checks. Those checks enforce the code style.
-
-You can make sure the checks can pass by installing the `pre-commit` hooks to your local repo
-([instructions](https://pre-commit.com/#installation)). Those hooks will be invoked when you commit locally,
-and they fix the style violations in-place.
-
-Tip: if you want to isolate those fixes, avoid the `-a` the option in `git commit`. This way the automated changes
-will be unstaged changes.
-
-### Darglint
-
-The [darglint](https://github.com/terrencepreilly/darglint) pre-commit hook lints docstrings to make sure they
-conform to the [Google style guide for docstrings](https://google.github.io/styleguide/pyguide.html#38-comments-and-docstrings).
-Function docstrings must contain "Args" section with input value descriptions, "Returns" section describing output, and
-"Raises" section enumerating the exceptions that the function can raise. Darglint will ensure that all input args are present
-in the docstring and is sensitive to whitespace (e.g. args should be indented the correct number of spaces). Refer
-to the list of [darglint error codes](https://github.com/terrencepreilly/darglint#error-codes) for guidance.
-
-## Editors
-
-### VSCode
-
-Here are few good plugins to use:
-
-1. [Python](https://marketplace.visualstudio.com/items?itemName=ms-python.python)
-1. [Pylance static checking](https://marketplace.visualstudio.com/items?itemName=ms-python.vscode-pylance)
-1. [Bazel](https://marketplace.visualstudio.com/items?itemName=BazelBuild.vscode-bazel)
-   - You need to configure `buildifier` in settings for auto-formatting `BUILD.bazel` files
-1. [Black Python Formatter](https://marketplace.visualstudio.com/items?itemName=ms-python.black-formatter)
-1. [Flake8 Linter](https://marketplace.visualstudio.com/items?itemName=ms-python.flake8)
