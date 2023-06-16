@@ -102,11 +102,11 @@ class _SnowMLModelHandler(_base._ModelHandler["BaseEstimator"]):
             name=name, model_type=_SnowMLModelHandler.handler_type, path=_SnowMLModelHandler.MODEL_BLOB_FILE
         )
         model_meta.models[name] = base_meta
-        _include_if_absent_pkgs = [
-            ("scikit-learn", "scikit-learn"),
-            ("xgboost", "xgboost"),
-            ("lightgbm", "lightgbm"),
-        ]
+        _include_if_absent_pkgs = []
+        model_dependencies = model._get_dependencies()
+        for dep in model_dependencies:
+            pkg_name = dep.split("==")[0]
+            _include_if_absent_pkgs.append((pkg_name, pkg_name))
         model_meta._include_if_absent(_include_if_absent_pkgs)
 
     @staticmethod

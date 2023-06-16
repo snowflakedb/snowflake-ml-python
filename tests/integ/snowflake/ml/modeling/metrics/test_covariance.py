@@ -7,7 +7,7 @@ import numpy as np
 import pandas as pd
 from absl.testing.absltest import TestCase, main
 
-from snowflake.ml.modeling.metrics.covariance import covariance
+from snowflake.ml.modeling import metrics
 from snowflake.ml.utils.connection_params import SnowflakeLoginOptions
 from snowflake.snowpark import Row, Session
 
@@ -35,7 +35,7 @@ class CovarianceTest(TestCase):
             schema=["COL1", "COL2", "COL3"],
         )
 
-        cov_matrix = covariance(df=input_df).to_numpy()
+        cov_matrix = metrics.covariance(df=input_df).to_numpy()
         expected_cov_matrix = input_df.to_pandas().cov().to_numpy()
         assert np.allclose(cov_matrix, expected_cov_matrix)
 
@@ -52,7 +52,7 @@ class CovarianceTest(TestCase):
             schema=["COL1", "COL2", "COL3", "COL4", "COL5"],
         )
 
-        cov_matrix = covariance(df=input_df).to_numpy()
+        cov_matrix = metrics.covariance(df=input_df).to_numpy()
         expected_cov_matrix = np.cov(input_df.to_pandas().to_numpy(), rowvar=False)
 
         assert np.allclose(cov_matrix, expected_cov_matrix, equal_nan=True)
@@ -71,7 +71,7 @@ class CovarianceTest(TestCase):
         )
         columns = ["col1", "col2", "col3"]
 
-        cov_matrix = covariance(df=input_df, columns=columns).to_numpy()
+        cov_matrix = metrics.covariance(df=input_df, columns=columns).to_numpy()
         expected_cov_matrix = np.cov(input_df.select(columns).to_pandas().to_numpy(), rowvar=False)
 
         assert np.allclose(cov_matrix, expected_cov_matrix)
@@ -86,7 +86,7 @@ class CovarianceTest(TestCase):
         pddf = pd.DataFrame(arr, columns=columns)
         input_df = self._session.create_dataframe(pddf)
 
-        cov_matrix = covariance(df=input_df).to_numpy()
+        cov_matrix = metrics.covariance(df=input_df).to_numpy()
         expected_cov_matrix = np.cov(arr, rowvar=False)
 
         assert np.allclose(cov_matrix, expected_cov_matrix)
@@ -101,10 +101,10 @@ class CovarianceTest(TestCase):
         pddf = pd.DataFrame(arr, columns=columns)
         input_df = self._session.create_dataframe(pddf)
 
-        cov_matrix = covariance(df=input_df, ddof=3).to_numpy()
+        cov_matrix = metrics.covariance(df=input_df, ddof=3).to_numpy()
         expected_cov_matrix = np.cov(arr, rowvar=False, ddof=3)
         assert np.allclose(cov_matrix, expected_cov_matrix)
-        cov_matrix = covariance(df=input_df, ddof=0).to_numpy()
+        cov_matrix = metrics.covariance(df=input_df, ddof=0).to_numpy()
         expected_cov_matrix = np.cov(arr, rowvar=False, ddof=0)
         assert np.allclose(cov_matrix, expected_cov_matrix)
 
@@ -118,7 +118,7 @@ class CovarianceTest(TestCase):
         pddf = pd.DataFrame(arr, columns=columns)
         input_df = self._session.create_dataframe(pddf)
 
-        cov_matrix = covariance(df=input_df).to_numpy()
+        cov_matrix = metrics.covariance(df=input_df).to_numpy()
         expected_cov_matrix = np.cov(arr, rowvar=False)
 
         assert np.allclose(cov_matrix, expected_cov_matrix)

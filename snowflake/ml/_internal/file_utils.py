@@ -82,7 +82,6 @@ def zip_file_or_directory_to_stream(
                     cur_path = os.path.dirname(cur_path)
 
             if os.path.isdir(path):
-                zf.writestr(f"{os.path.relpath(path, start_path)}/", "")
                 for dirname, _, files in os.walk(path):
                     # ignore __pycache__
                     if ignore_generated_py_file and "__pycache__" in dirname:

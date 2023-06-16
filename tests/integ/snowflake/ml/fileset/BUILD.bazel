@@ -19,6 +19,7 @@ py_test(
 
 py_test(
     name = "fileset_integ_test",
+    timeout = "long",
     srcs = ["fileset_integ_test.py"],
     shard_count = 5,
     deps = [

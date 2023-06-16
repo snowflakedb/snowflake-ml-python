@@ -1,1 +1,43 @@
-# TODO(shchen): SNOW-825995, Define dockerfile template used for model deployment
+FROM $base_image as build
+
+COPY $model_dir/env/conda.yaml conda.yaml
+COPY $model_dir/env/requirements.txt requirements.txt
+
+# Set MAMBA_DOCKERFILE_ACTIVATE=1 to activate the conda environment during build time.
+ARG MAMBA_DOCKERFILE_ACTIVATE=1
+
+# The micromamba image comes with an empty environment named base.
+RUN --mount=type=cache,target=/opt/conda/pkgs micromamba install -y -n base -f conda.yaml && \
+	python -m pip install "uvicorn[standard]" gunicorn starlette && \
+	python -m pip install -r requirements.txt
+
+FROM debian:buster-slim AS runtime
+
+ENV USER nonrootuser
+ENV UID 1000
+ENV HOME /home/$USER
+RUN adduser --disabled-password \
+	--gecos "A non-root user for running inference server" \
+	--uid $UID \
+	--home $HOME \
+	$USER
+
+# TODO(shchen): use model that already uploaded to stage by image registry.
+COPY $model_dir ./$model_dir
+COPY $inference_server_dir ./$inference_server_dir
+COPY $entrypoint_script ./$entrypoint_script
+RUN chmod +x /$entrypoint_script
+ # Copy Snowflake/ml source code
+COPY snowflake ./snowflake
+
+# The mamba root prefix by default is set to /opt/conda, in which the base conda environment is built at.
+COPY --from=build /opt/conda /opt/conda
+
+# Expose the port on which the Starlette app will run.
+EXPOSE 5000
+# Set MODEL_DIR environment variable, which will be used in inference code.
+ENV MODEL_DIR="$model_dir"
+
+USER nonrootuser
+
+CMD ["/$entrypoint_script"]

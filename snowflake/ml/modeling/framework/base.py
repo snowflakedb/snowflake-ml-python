@@ -17,7 +17,6 @@ from snowflake.ml._internal import telemetry
 from snowflake.ml._internal.utils import parallelize
 from snowflake.ml.modeling.framework import _utils
 from snowflake.snowpark import functions as F
-from snowflake.snowpark._internal import type_utils
 
 PROJECT = "ModelDevelopment"
 SUBPROJECT = "Preprocessing"
@@ -553,9 +552,7 @@ class BaseTransformer(BaseEstimator):
 
         null_count_columns = []
         for input_col in self.input_cols:
-            col = type_utils.ColumnOrLiteral(
-                F.count(type_utils.ColumnOrName(F.lit(type_utils.LiteralType("*"))))
-            ) - type_utils.ColumnOrLiteral(F.count(type_utils.ColumnOrName(dataset[input_col])))
+            col = F.count(F.lit("*")) - F.count(dataset[input_col])  # type:ignore[arg-type, operator]
             null_count_columns.append(col)
 
         null_counts = dataset.agg(*null_count_columns).collect(

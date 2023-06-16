@@ -3,7 +3,11 @@ import itertools
 import json
 from typing import Any, Dict, List, Union, cast
 
-from _schema import _METADATA_TABLE_SCHEMA, _REGISTRY_TABLE_SCHEMA
+from _schema import (
+    _DEPLOYMENTS_TABLE_SCHEMA,
+    _METADATA_TABLE_SCHEMA,
+    _REGISTRY_TABLE_SCHEMA,
+)
 from absl.testing import absltest
 
 from snowflake import snowpark
@@ -12,16 +16,17 @@ from snowflake.ml._internal.utils import formatting, identifier
 from snowflake.ml.registry import model_registry
 from snowflake.ml.test_utils import mock_data_frame, mock_session
 
-_DATABASE_NAME = "MODEL_REGISTRY"
-_SCHEMA_NAME = "PUBLIC"
-_REGISTRY_TABLE_NAME = "MODELS"
-_METADATA_TABLE_NAME = "METADATA"
-_FULLY_QUALIFIED_REGISTRY_TABLE_NAME = (
-    f"{identifier.quote_name_without_upper_casing(_DATABASE_NAME)}"
-    + "."
-    + f"{identifier.quote_name_without_upper_casing(_SCHEMA_NAME)}"
-    + "."
-    + f"{identifier.quote_name_without_upper_casing(_REGISTRY_TABLE_NAME)}"
+_DATABASE_NAME = "_SYSTEM_MODEL_REGISTRY"
+_SCHEMA_NAME = "_SYSTEM_MODEL_REGISTRY_SCHEMA"
+_REGISTRY_TABLE_NAME = "_SYSTEM_REGISTRY_MODELS"
+_METADATA_TABLE_NAME = "_SYSTEM_REGISTRY_METADATA"
+_DEPLOYMENTS_TABLE_NAME = "_SYSTEM_REGISRTRY_DEPLOYMENTS"
+_FULLY_QUALIFIED_REGISTRY_TABLE_NAME = ".".join(
+    [
+        f"{identifier.quote_name_without_upper_casing(_DATABASE_NAME)}",
+        f"{identifier.quote_name_without_upper_casing(_SCHEMA_NAME)}",
+        f"{identifier.quote_name_without_upper_casing(_REGISTRY_TABLE_NAME)}",
+    ]
 )
 _REGISTRY_SCHEMA_STRING = ", ".join([f"{k} {v}" for k, v in _REGISTRY_TABLE_SCHEMA.items()])
 _METADATA_INSERT_COLUMNS_STRING = ",".join(filter(lambda x: x != "SEQUENCE_ID", _METADATA_TABLE_SCHEMA.keys()))
@@ -29,6 +34,12 @@ _METADATA_SCHEMA_STRING = ", ".join(
     [
         f"{k} {v.format(registry_table_name=_FULLY_QUALIFIED_REGISTRY_TABLE_NAME)}"
         for k, v in _METADATA_TABLE_SCHEMA.items()
+    ]
+)
+_DEPLOYMENTS_SCHEMA_STRING = ",".join(
+    [
+        f"{k} {v.format(registry_table_name=_FULLY_QUALIFIED_REGISTRY_TABLE_NAME)}"
+        for k, v in _DEPLOYMENTS_TABLE_SCHEMA.items()
     ]
 )
 
@@ -121,28 +132,34 @@ class ModelRegistryTest(absltest.TestCase):
 
     def setup_open_call(self) -> None:
         self.add_session_mock_sql(
-            query="SHOW DATABASES LIKE 'MODEL_REGISTRY'",
+            query=f"SHOW DATABASES LIKE '{_DATABASE_NAME}'",
             result=mock_data_frame.MockDataFrame(
                 self.get_show_databases_success(name=_DATABASE_NAME)
             ).add_collect_result(self.get_show_databases_success(name=_DATABASE_NAME)),
         )
         self.add_session_mock_sql(
-            query="SHOW SCHEMAS LIKE 'PUBLIC' IN DATABASE \"MODEL_REGISTRY\"",
+            query=f"SHOW SCHEMAS LIKE '{_SCHEMA_NAME}' IN DATABASE \"{_DATABASE_NAME}\"",
             result=mock_data_frame.MockDataFrame(self.get_show_schemas_success(name=_SCHEMA_NAME)).add_collect_result(
                 self.get_show_schemas_success(name=_SCHEMA_NAME)
             ),
         )
         self.add_session_mock_sql(
-            query='SHOW TABLES LIKE \'MODELS\' IN "MODEL_REGISTRY"."PUBLIC"',
+            query=f'SHOW TABLES LIKE \'{_REGISTRY_TABLE_NAME}\' IN "{_DATABASE_NAME}"."{_SCHEMA_NAME}"',
             result=mock_data_frame.MockDataFrame(
                 self.get_show_tables_success(name=_REGISTRY_TABLE_NAME)
             ).add_collect_result(self.get_show_tables_success(name=_REGISTRY_TABLE_NAME)),
         )
         self.add_session_mock_sql(
-            query='SHOW TABLES LIKE \'METADATA\' IN "MODEL_REGISTRY"."PUBLIC"',
+            query=f'SHOW TABLES LIKE \'{_METADATA_TABLE_NAME}\' IN "{_DATABASE_NAME}"."{_SCHEMA_NAME}"',
             result=mock_data_frame.MockDataFrame(
                 self.get_show_tables_success(name=_METADATA_TABLE_NAME)
             ).add_collect_result(self.get_show_tables_success(name=_METADATA_TABLE_NAME)),
+        )
+        self.add_session_mock_sql(
+            query=f'SHOW TABLES LIKE \'{_DEPLOYMENTS_TABLE_NAME}\' IN "{_DATABASE_NAME}"."{_SCHEMA_NAME}"',
+            result=mock_data_frame.MockDataFrame(
+                self.get_show_tables_success(name=_DEPLOYMENTS_TABLE_NAME)
+            ).add_collect_result(self.get_show_tables_success(name=_DEPLOYMENTS_TABLE_NAME)),
         )
 
     def setup_list_model_call(self) -> mock_data_frame.MockDataFrame:
@@ -150,7 +167,7 @@ class ModelRegistryTest(absltest.TestCase):
         result_df = mock_data_frame.MockDataFrame()
 
         self.add_session_mock_sql(
-            query=('SELECT * FROM "MODEL_REGISTRY"."PUBLIC"."MODELS_VIEW"'),
+            query=(f'SELECT * FROM "{_DATABASE_NAME}"."{_SCHEMA_NAME}"."{_REGISTRY_TABLE_NAME}_VIEW"'),
             result=result_df,
         )
         # Returning result_df to allow the caller to add more expected operations.
@@ -160,72 +177,109 @@ class ModelRegistryTest(absltest.TestCase):
         """Setup the expected calls originating from _create_views."""
         self.add_session_mock_sql(
             query=(
-                """CREATE OR REPLACE VIEW "MODEL_REGISTRY"."PUBLIC"."METADATA_LAST_DESCRIPTION" COPY GRANTS AS
+                f"""CREATE OR REPLACE VIEW "{_DATABASE_NAME}"."{_SCHEMA_NAME}"."{_DEPLOYMENTS_TABLE_NAME}_VIEW"
+                    COPY GRANTS AS
+                    SELECT
+                        DEPLOYMENT_NAME,
+                        MODEL_ID,
+                        {_REGISTRY_TABLE_NAME}.NAME as MODEL_NAME,
+                        {_REGISTRY_TABLE_NAME}.VERSION as MODEL_VERSION,
+                        {_DEPLOYMENTS_TABLE_NAME}.CREATION_TIME as CREATION_TIME,
+                        TARGET_METHOD,
+                        TARGET_PLATFORM,
+                        SIGNATURE,
+                        OPTIONS,
+                        STAGE_PATH,
+                        ROLE
+                    FROM {_DEPLOYMENTS_TABLE_NAME}
+                    LEFT JOIN {_REGISTRY_TABLE_NAME}
+                    ON {_DEPLOYMENTS_TABLE_NAME}.MODEL_ID = {_REGISTRY_TABLE_NAME}.ID
+                """
+            ),
+            result=mock_data_frame.MockDataFrame(
+                [snowpark.Row(status=f"View {_DEPLOYMENTS_TABLE_NAME}_VIEW successfully created.")]
+            ),
+        )
+        self.add_session_mock_sql(
+            query=(
+                f"""CREATE OR REPLACE VIEW "{_DATABASE_NAME}"."{_SCHEMA_NAME}"."{_METADATA_TABLE_NAME}_LAST_DESCRIPTION"
+                    COPY GRANTS AS
                         SELECT DISTINCT
                             MODEL_ID,
                             (LAST_VALUE(VALUE) OVER (
                                 PARTITION BY MODEL_ID ORDER BY SEQUENCE_ID))['DESCRIPTION']
                             as DESCRIPTION
-                        FROM "METADATA" WHERE ATTRIBUTE_NAME = 'DESCRIPTION'"""
+                        FROM "{_METADATA_TABLE_NAME}" WHERE ATTRIBUTE_NAME = 'DESCRIPTION'"""
             ),
             result=mock_data_frame.MockDataFrame(
-                [snowpark.Row(status="View METADATA_LAST_DESCRIPTION successfully created.")]
+                [snowpark.Row(status=f"View {_METADATA_TABLE_NAME}_LAST_DESCRIPTION successfully created.")]
             ),
         )
         self.add_session_mock_sql(
             query=(
-                """CREATE OR REPLACE VIEW "MODEL_REGISTRY"."PUBLIC"."METADATA_LAST_METRICS" COPY GRANTS AS
+                f"""CREATE OR REPLACE VIEW "{_DATABASE_NAME}"."{_SCHEMA_NAME}"."{_METADATA_TABLE_NAME}_LAST_METRICS"
+                    COPY GRANTS AS
                         SELECT DISTINCT
                             MODEL_ID,
                             (LAST_VALUE(VALUE) OVER (
                                 PARTITION BY MODEL_ID ORDER BY SEQUENCE_ID))['METRICS']
                             as METRICS
-                        FROM "METADATA" WHERE ATTRIBUTE_NAME = 'METRICS'"""
+                        FROM "{_METADATA_TABLE_NAME}" WHERE ATTRIBUTE_NAME = 'METRICS'"""
             ),
             result=mock_data_frame.MockDataFrame(
-                [snowpark.Row(status="View METADATA_LAST_METRICS successfully created.")]
+                [snowpark.Row(status=f"View {_METADATA_TABLE_NAME}_LAST_METRICS successfully created.")]
             ),
         )
         self.add_session_mock_sql(
             query=(
-                """CREATE OR REPLACE VIEW "MODEL_REGISTRY"."PUBLIC"."METADATA_LAST_TAGS" COPY GRANTS AS
+                f"""CREATE OR REPLACE VIEW "{_DATABASE_NAME}"."{_SCHEMA_NAME}"."{_METADATA_TABLE_NAME}_LAST_TAGS"
+                    COPY GRANTS AS
                         SELECT DISTINCT
                             MODEL_ID,
                             (LAST_VALUE(VALUE) OVER (
                                 PARTITION BY MODEL_ID ORDER BY SEQUENCE_ID))['TAGS']
                             as TAGS
-                        FROM "METADATA" WHERE ATTRIBUTE_NAME = 'TAGS'"""
+                        FROM "{_METADATA_TABLE_NAME}" WHERE ATTRIBUTE_NAME = 'TAGS'"""
             ),
             result=mock_data_frame.MockDataFrame(
-                [snowpark.Row(status="View METADATA_LAST_TAGS successfully created.")]
+                [snowpark.Row(status=f"View {_METADATA_TABLE_NAME}_LAST_TAGS successfully created.")]
             ),
         )
         self.add_session_mock_sql(
             query=(
-                """CREATE OR REPLACE VIEW "MODEL_REGISTRY"."PUBLIC"."METADATA_LAST_REGISTRATION" COPY GRANTS AS
+                f"""CREATE OR REPLACE VIEW
+                    "{_DATABASE_NAME}"."{_SCHEMA_NAME}"."{_METADATA_TABLE_NAME}_LAST_REGISTRATION" COPY GRANTS AS
                         SELECT DISTINCT
                             MODEL_ID, EVENT_TIMESTAMP as REGISTRATION_TIMESTAMP
-                        FROM "METADATA" WHERE ATTRIBUTE_NAME = 'REGISTRATION'"""
+                        FROM "{_METADATA_TABLE_NAME}" WHERE ATTRIBUTE_NAME = 'REGISTRATION'"""
             ),
             result=mock_data_frame.MockDataFrame(
-                [snowpark.Row(status="View METADATA_LAST_TAGS successfully created.")]
+                [snowpark.Row(status=f"View {_METADATA_TABLE_NAME}_LAST_TAGS successfully created.")]
             ),
         )
         self.add_session_mock_sql(
             query=(
-                """CREATE OR REPLACE VIEW "MODEL_REGISTRY"."PUBLIC"."MODELS_VIEW" COPY GRANTS AS
-                    SELECT "MODELS".*, "METADATA_LAST_DESCRIPTION".DESCRIPTION AS DESCRIPTION,
-                        "METADATA_LAST_METRICS".METRICS AS METRICS,
-                        "METADATA_LAST_TAGS".TAGS AS TAGS,
-                        "METADATA_LAST_REGISTRATION".REGISTRATION_TIMESTAMP AS REGISTRATION_TIMESTAMP
-                    FROM "MODELS"
-                        LEFT JOIN "METADATA_LAST_DESCRIPTION" ON ("METADATA_LAST_DESCRIPTION".MODEL_ID = "MODELS".ID)
-                        LEFT JOIN "METADATA_LAST_METRICS" ON ("METADATA_LAST_METRICS".MODEL_ID = "MODELS".ID)
-                        LEFT JOIN "METADATA_LAST_TAGS" ON ("METADATA_LAST_TAGS".MODEL_ID = "MODELS".ID)
-                        LEFT JOIN "METADATA_LAST_REGISTRATION" ON ("METADATA_LAST_REGISTRATION".MODEL_ID = "MODELS".ID)
+                f"""CREATE OR REPLACE VIEW  "{_DATABASE_NAME}"."{_SCHEMA_NAME}"."{_REGISTRY_TABLE_NAME}_VIEW"
+                    COPY GRANTS AS
+                    SELECT "{_REGISTRY_TABLE_NAME}".*, "{_METADATA_TABLE_NAME}_LAST_DESCRIPTION".DESCRIPTION
+                            AS DESCRIPTION,
+                        "{_METADATA_TABLE_NAME}_LAST_METRICS".METRICS AS METRICS,
+                        "{_METADATA_TABLE_NAME}_LAST_TAGS".TAGS AS TAGS,
+                        "{_METADATA_TABLE_NAME}_LAST_REGISTRATION".REGISTRATION_TIMESTAMP AS REGISTRATION_TIMESTAMP
+                    FROM "{_REGISTRY_TABLE_NAME}"
+                        LEFT JOIN "{_METADATA_TABLE_NAME}_LAST_DESCRIPTION" ON
+                            ("{_METADATA_TABLE_NAME}_LAST_DESCRIPTION".MODEL_ID = "{_REGISTRY_TABLE_NAME}".ID)
+                        LEFT JOIN "{_METADATA_TABLE_NAME}_LAST_METRICS"
+                            ON ("{_METADATA_TABLE_NAME}_LAST_METRICS".MODEL_ID = "{_REGISTRY_TABLE_NAME}".ID)
+                        LEFT JOIN "{_METADATA_TABLE_NAME}_LAST_TAGS"
+                            ON ("{_METADATA_TABLE_NAME}_LAST_TAGS".MODEL_ID = "{_REGISTRY_TABLE_NAME}".ID)
+                        LEFT JOIN "{_METADATA_TABLE_NAME}_LAST_REGISTRATION"
+                            ON ("{_METADATA_TABLE_NAME}_LAST_REGISTRATION".MODEL_ID = "{_REGISTRY_TABLE_NAME}".ID)
                 """
             ),
-            result=mock_data_frame.MockDataFrame([snowpark.Row(status="View MODELS_VIEW successfully created.")]),
+            result=mock_data_frame.MockDataFrame(
+                [snowpark.Row(status=f"View {_REGISTRY_TABLE_NAME}_VIEW successfully created.")]
+            ),
         )
 
     def template_test_get_attribute(
@@ -257,7 +311,8 @@ class ModelRegistryTest(absltest.TestCase):
 
         self.add_session_mock_sql(
             query=(
-                f"""INSERT INTO "MODEL_REGISTRY"."PUBLIC"."METADATA" ({_METADATA_INSERT_COLUMNS_STRING})
+                f"""INSERT INTO "{_DATABASE_NAME}"."{_SCHEMA_NAME}"."{_METADATA_TABLE_NAME}"
+                    ({_METADATA_INSERT_COLUMNS_STRING})
                          SELECT '{attribute_name}','{self.event_id}',CURRENT_TIMESTAMP(),'{self.model_id}','SET',
                          'current_role',OBJECT_CONSTRUCT('{attribute_name}',
                          {formatting.format_value_for_select(attribute_value)})"""
@@ -268,14 +323,21 @@ class ModelRegistryTest(absltest.TestCase):
     def test_create_new(self) -> None:
         """Verify that we can create a new ModelRegistry database with the default names."""
         # "Create" calls.
-        combinations = list(itertools.product([True, False], repeat=4))
-        for database_exists, schema_exists, registry_table_exists, metadata_table_exists in combinations:
+        combinations = list(itertools.product([True, False], repeat=5))
+        for (
+            database_exists,
+            schema_exists,
+            registry_table_exists,
+            metadata_table_exists,
+            deployments_table_exists,
+        ) in combinations:
             with self.subTest(
                 msg=(
                     f"database_exists={database_exists}, "
                     f"schema_exists={schema_exists}, "
                     f"registry_table_exists={registry_table_exists}, "
                     f"metadata_table_exists={metadata_table_exists}"
+                    f"deployments_table_exists={deployments_table_exists}"
                 )
             ):
                 statement_params = telemetry.get_function_usage_statement_params(
@@ -285,18 +347,18 @@ class ModelRegistryTest(absltest.TestCase):
                 )
                 if database_exists:
                     self.add_session_mock_sql(
-                        query="SHOW DATABASES LIKE 'MODEL_REGISTRY'",
+                        query=f"SHOW DATABASES LIKE '{_DATABASE_NAME}'",
                         result=mock_data_frame.MockDataFrame(self.get_show_databases_success(name=_DATABASE_NAME)),
                     )
                 else:
                     self.add_session_mock_sql(
-                        query="SHOW DATABASES LIKE 'MODEL_REGISTRY'",
+                        query=f"SHOW DATABASES LIKE '{_DATABASE_NAME}'",
                         result=mock_data_frame.MockDataFrame([]).add_collect_result(
                             [], statement_params=statement_params
                         ),
                     )
                     self.add_session_mock_sql(
-                        query='CREATE DATABASE "MODEL_REGISTRY"',
+                        query=f'CREATE DATABASE "{_DATABASE_NAME}"',
                         result=mock_data_frame.MockDataFrame(
                             [snowpark.Row(status="Database MODEL_REGISTRY successfully created.")],
                             collect_statement_params=statement_params,
@@ -304,7 +366,7 @@ class ModelRegistryTest(absltest.TestCase):
                     )
                 if schema_exists:
                     self.add_session_mock_sql(
-                        query="SHOW SCHEMAS LIKE 'PUBLIC' IN DATABASE \"MODEL_REGISTRY\"",
+                        query=f"SHOW SCHEMAS LIKE '{_SCHEMA_NAME}' IN DATABASE \"{_DATABASE_NAME}\"",
                         result=mock_data_frame.MockDataFrame(
                             self.get_show_schemas_success(name=_SCHEMA_NAME)
                         ).add_collect_result(
@@ -314,59 +376,81 @@ class ModelRegistryTest(absltest.TestCase):
                     )
                 else:
                     self.add_session_mock_sql(
-                        query="SHOW SCHEMAS LIKE 'PUBLIC' IN DATABASE \"MODEL_REGISTRY\"",
+                        query=f"SHOW SCHEMAS LIKE '{_SCHEMA_NAME}' IN DATABASE \"{_DATABASE_NAME}\"",
                         result=mock_data_frame.MockDataFrame([]).add_collect_result(
                             [], statement_params=statement_params
                         ),
                     )
                     self.add_session_mock_sql(
-                        query='CREATE SCHEMA "MODEL_REGISTRY"."PUBLIC"',
+                        query=f'CREATE SCHEMA "{_DATABASE_NAME}"."{_SCHEMA_NAME}"',
                         result=mock_data_frame.MockDataFrame(
-                            [snowpark.Row(status="SCHEMA PUBLIC successfully created.")],
+                            [snowpark.Row(status=f"SCHEMA {_SCHEMA_NAME} successfully created.")],
                             collect_statement_params=statement_params,
                         ),
                     )
                 if registry_table_exists:
                     self.add_session_mock_sql(
-                        query='SHOW TABLES LIKE \'MODELS\' IN SCHEMA "MODEL_REGISTRY"."PUBLIC"',
+                        query=f"""
+                            CREATE TABLE IF NOT EXISTS "{_DATABASE_NAME}"."{_SCHEMA_NAME}"."{_REGISTRY_TABLE_NAME}"
+                            ({_REGISTRY_SCHEMA_STRING})
+                        """,
                         result=mock_data_frame.MockDataFrame(
-                            self.get_show_tables_success(name=_REGISTRY_TABLE_NAME),
+                            [snowpark.Row(status=f"{_REGISTRY_TABLE_NAME} already exists, statement succeeded.")],
                             collect_statement_params=statement_params,
                         ),
                     )
                 else:
                     self.add_session_mock_sql(
-                        query='SHOW TABLES LIKE \'MODELS\' IN SCHEMA "MODEL_REGISTRY"."PUBLIC"',
-                        result=mock_data_frame.MockDataFrame([]).add_collect_result(
-                            [], statement_params=statement_params
-                        ),
-                    )
-                    self.add_session_mock_sql(
-                        query=f'CREATE TABLE "MODEL_REGISTRY"."PUBLIC"."MODELS" ({_REGISTRY_SCHEMA_STRING})',
+                        query=f"""
+                            CREATE TABLE IF NOT EXISTS "{_DATABASE_NAME}"."{_SCHEMA_NAME}"."{_REGISTRY_TABLE_NAME}"
+                            ({_REGISTRY_SCHEMA_STRING})
+                        """,
                         result=mock_data_frame.MockDataFrame(
-                            [snowpark.Row(status="Table MODELS successfully created.")],
+                            [snowpark.Row(status=f"Table {_REGISTRY_TABLE_NAME} successfully created.")],
                             collect_statement_params=statement_params,
                         ),
                     )
                 if metadata_table_exists:
                     self.add_session_mock_sql(
-                        query='SHOW TABLES LIKE \'METADATA\' IN SCHEMA "MODEL_REGISTRY"."PUBLIC"',
+                        query=f"""
+                            CREATE TABLE IF NOT EXISTS "{_DATABASE_NAME}"."{_SCHEMA_NAME}"."{_METADATA_TABLE_NAME}"
+                            ({_METADATA_SCHEMA_STRING})
+                        """,
                         result=mock_data_frame.MockDataFrame(
-                            self.get_show_tables_success(name=_METADATA_TABLE_NAME),
+                            [snowpark.Row(status=f"{_METADATA_TABLE_NAME} already exists, statement succeeded.")],
                             collect_statement_params=statement_params,
                         ),
                     )
                 else:
                     self.add_session_mock_sql(
-                        query='SHOW TABLES LIKE \'METADATA\' IN SCHEMA "MODEL_REGISTRY"."PUBLIC"',
-                        result=mock_data_frame.MockDataFrame([]).add_collect_result(
-                            [], statement_params=statement_params
+                        query=f"""
+                            CREATE TABLE IF NOT EXISTS "{_DATABASE_NAME}"."{_SCHEMA_NAME}"."{_METADATA_TABLE_NAME}"
+                            ({_METADATA_SCHEMA_STRING})
+                        """,
+                        result=mock_data_frame.MockDataFrame(
+                            [snowpark.Row(status=f"Table {_METADATA_TABLE_NAME} successfully created.")],
+                            collect_statement_params=statement_params,
                         ),
                     )
+                if deployments_table_exists:
                     self.add_session_mock_sql(
-                        query=f'CREATE TABLE "MODEL_REGISTRY"."PUBLIC"."METADATA" ({_METADATA_SCHEMA_STRING})',
+                        query=f"""
+                            CREATE TABLE IF NOT EXISTS "{_DATABASE_NAME}"."{_SCHEMA_NAME}"."{_DEPLOYMENTS_TABLE_NAME}"
+                            ({_DEPLOYMENTS_SCHEMA_STRING})
+                        """,
                         result=mock_data_frame.MockDataFrame(
-                            [snowpark.Row(status="Table METADATA successfully created.")],
+                            [snowpark.Row(status=f"{_DEPLOYMENTS_TABLE_NAME} already exists, statement succeeded.")],
+                            collect_statement_params=statement_params,
+                        ),
+                    )
+                else:
+                    self.add_session_mock_sql(
+                        query=f"""
+                            CREATE TABLE IF NOT EXISTS "{_DATABASE_NAME}"."{_SCHEMA_NAME}"."{_DEPLOYMENTS_TABLE_NAME}"
+                            ({_DEPLOYMENTS_SCHEMA_STRING})
+                        """,
+                        result=mock_data_frame.MockDataFrame(
+                            [snowpark.Row(status=f"Table {_DEPLOYMENTS_TABLE_NAME} successfully created.")],
                             collect_statement_params=statement_params,
                         ),
                     )
@@ -381,20 +465,24 @@ class ModelRegistryTest(absltest.TestCase):
     def test_open_existing(self) -> None:
         """Verify that we can open an existing ModelRegistry database with the default names."""
         self.add_session_mock_sql(
-            query="SHOW DATABASES LIKE 'MODEL_REGISTRY'",
+            query=f"SHOW DATABASES LIKE '{_DATABASE_NAME}'",
             result=mock_data_frame.MockDataFrame(self.get_show_databases_success(name=_DATABASE_NAME)),
         )
         self.add_session_mock_sql(
-            query="SHOW SCHEMAS LIKE 'PUBLIC' IN DATABASE \"MODEL_REGISTRY\"",
+            query=f"SHOW SCHEMAS LIKE '{_SCHEMA_NAME}' IN DATABASE \"{_DATABASE_NAME}\"",
             result=mock_data_frame.MockDataFrame(self.get_show_schemas_success(name=_SCHEMA_NAME)),
         )
         self.add_session_mock_sql(
-            query='SHOW TABLES LIKE \'MODELS\' IN "MODEL_REGISTRY"."PUBLIC"',
+            query=f'SHOW TABLES LIKE \'{_REGISTRY_TABLE_NAME}\' IN "{_DATABASE_NAME}"."{_SCHEMA_NAME}"',
             result=mock_data_frame.MockDataFrame(self.get_show_tables_success(name=_REGISTRY_TABLE_NAME)),
         )
         self.add_session_mock_sql(
-            query='SHOW TABLES LIKE \'METADATA\' IN "MODEL_REGISTRY"."PUBLIC"',
+            query=f'SHOW TABLES LIKE \'{_METADATA_TABLE_NAME}\' IN "{_DATABASE_NAME}"."{_SCHEMA_NAME}"',
             result=mock_data_frame.MockDataFrame(self.get_show_tables_success(name=_METADATA_TABLE_NAME)),
+        )
+        self.add_session_mock_sql(
+            query=f'SHOW TABLES LIKE \'{_DEPLOYMENTS_TABLE_NAME}\' IN "{_DATABASE_NAME}"."{_SCHEMA_NAME}"',
+            result=mock_data_frame.MockDataFrame(self.get_show_tables_success(name=_DEPLOYMENTS_TABLE_NAME)),
         )
         model_registry.ModelRegistry(session=cast(snowpark.Session, self._session))
 
@@ -454,7 +542,9 @@ class ModelRegistryTest(absltest.TestCase):
 
         expected_df = mock_data_frame.MockDataFrame()
         self._session.add_operation(
-            operation="table", args=('"MODEL_REGISTRY"."PUBLIC"."METADATA"',), result=expected_df
+            operation="table",
+            args=(f'"{_DATABASE_NAME}"."{_SCHEMA_NAME}"."{_METADATA_TABLE_NAME}"',),
+            result=expected_df,
         )
         expected_df.add_operation("order_by", args=("EVENT_TIMESTAMP",))
         expected_df.add_operation(
@@ -493,7 +583,9 @@ class ModelRegistryTest(absltest.TestCase):
 
         expected_df = mock_data_frame.MockDataFrame()
         self._session.add_operation(
-            operation="table", args=('"MODEL_REGISTRY"."PUBLIC"."METADATA"',), result=expected_df
+            operation="table",
+            args=(f'"{_DATABASE_NAME}"."{_SCHEMA_NAME}"."{_METADATA_TABLE_NAME}"',),
+            result=expected_df,
         )
         expected_df.add_operation("order_by", args=("EVENT_TIMESTAMP",))
         expected_df.add_operation(
@@ -599,8 +691,10 @@ class ModelRegistryTest(absltest.TestCase):
         model_registry = self.get_model_registry()
 
         self.add_session_mock_sql(
-            query="""INSERT INTO "MODEL_REGISTRY"."PUBLIC"."MODELS" ( ID,NAME,TYPE,URI,VERSION ) SELECT 'id','name',"""
-            + """'type','uri','abc'""",
+            query=f"""
+                INSERT INTO "{_DATABASE_NAME}"."{_SCHEMA_NAME}"."{_REGISTRY_TABLE_NAME}" ( ID,NAME,TYPE,URI,VERSION )
+                SELECT 'id','name','type','uri','abc'
+            """,
             result=mock_data_frame.MockDataFrame([snowpark.Row(**{"number of rows inserted": 1})]),
         )
 
@@ -705,7 +799,7 @@ class ModelRegistryTest(absltest.TestCase):
                         model_version=model_version,
                         model_id=self.model_id,
                         type="type",
-                        uri=f"sfc:MODEL_REGISTRY.PUBLIC.SNOWML_MODEL_{expected_stage_postfix}",
+                        uri=f"sfc:{_DATABASE_NAME}.{_SCHEMA_NAME}.SNOWML_MODEL_{expected_stage_postfix}",
                         description="description",
                         tags=None,
                     )
@@ -719,11 +813,13 @@ class ModelRegistryTest(absltest.TestCase):
             [snowpark.Row(ID=self.model_id, NAME=self.model_name, VERSION=self.model_version, URI="sfc://model_stage")],
         )
         self.add_session_mock_sql(
-            query=f"""DELETE FROM "MODEL_REGISTRY"."PUBLIC"."MODELS" WHERE ID='{self.model_id}'""",
+            query=f"""
+                DELETE FROM "{_DATABASE_NAME}"."{_SCHEMA_NAME}"."{_REGISTRY_TABLE_NAME}" WHERE ID='{self.model_id}'
+            """,
             result=mock_data_frame.MockDataFrame([snowpark.Row(**{"number of rows deleted": 1})]),
         )
         self.add_session_mock_sql(
-            query='DROP STAGE "MODEL_REGISTRY"."PUBLIC".model_stage',
+            query=f'DROP STAGE "{_DATABASE_NAME}"."{_SCHEMA_NAME}".model_stage',
             result=mock_data_frame.MockDataFrame([snowpark.Row(**{"status": "'model_stage' successfully dropped."})]),
         )
         self.template_test_set_attribute(

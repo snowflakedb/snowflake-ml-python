@@ -16,6 +16,30 @@ from snowflake.snowpark import functions as F
 
 
 class MinMaxScaler(base.BaseTransformer):
+    r"""Transforms features by scaling each feature to a given range, by default between zero and one.
+
+    Values must be of float type. Each feature is scaled and translated independently.
+
+    For more details on what this transformer does, see [sklearn.preprocessing.MinMaxScaler]
+    (https://scikit-learn.org/stable/modules/generated/sklearn.preprocessing.MinMaxScaler.html).
+
+    Args:
+        feature_range: Desired range of transformed data (default is 0 to 1).
+        clip: Whether to clip transformed values of held-out data to the specified feature range (default is True).
+        input_cols: The name(s) of one or more columns in a DataFrame containing a feature to be scaled. Each specified
+            input column is scaled independently and stored in the corresponding output column.
+        output_cols: The name(s) of one or more columns in a DataFrame in which results will be stored. The number of
+            columns specified must match the number of input columns.
+        drop_input_cols: Remove input columns from output if set True. False by default.
+
+    Attributes:
+        min_: dict {column_name: value} or None. Per-feature adjustment for minimum.
+        scale_: dict {column_name: value} or None. Per-feature relative scaling factor.
+        data_min_: dict {column_name: value} or None. Per-feature minimum seen in the data.
+        data_max_: dict {column_name: value} or None. Per-feature maximum seen in the data.
+        data_range_: dict {column_name: value} or None. Per-feature range seen in the data as a (min, max) tuple.
+    """
+
     def __init__(
         self,
         *,
@@ -80,6 +104,11 @@ class MinMaxScaler(base.BaseTransformer):
         """
         Compute min and max values of the dataset.
 
+        Validates the transformer arguments and derives the scaling factors and ranges from the data, making
+        dictionaries of both available as attributes of the transformer instance (see Attributes).
+
+        Returns the transformer instance.
+
         Args:
             dataset: Input dataset.
 
@@ -110,7 +139,7 @@ class MinMaxScaler(base.BaseTransformer):
         sklearn_scaler = self._create_unfitted_sklearn_object()
         sklearn_scaler.fit(dataset[self.input_cols])
 
-        for (i, input_col) in enumerate(self.input_cols):
+        for i, input_col in enumerate(self.input_cols):
             self.min_[input_col] = float(sklearn_scaler.min_[i])
             self.scale_[input_col] = float(sklearn_scaler.scale_[i])
             self.data_min_[input_col] = float(sklearn_scaler.data_min_[i])

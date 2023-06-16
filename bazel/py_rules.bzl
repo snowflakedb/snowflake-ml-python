@@ -142,8 +142,11 @@ def snowml_wheel(
         extra_requires,
         version,
         deps,
+        description_file = None,
         development_status = "Alpha",
-        compatible_with_snowpark = True):
+        compatible_with_snowpark = True,
+        homepage = None,
+        summary = None):
     """A SnowML customized wheel definition with lots of default values filled in.
 
     Args:
@@ -176,6 +179,8 @@ def snowml_wheel(
                           "License :: OSI Approved :: Apache Software License",
                           "Operating System :: OS Independent",
                           "Programming Language :: Python :: 3.8",
+                          "Programming Language :: Python :: 3.9",
+                          "Programming Language :: Python :: 3.10",
                           "Topic :: Database",
                           "Topic :: Software Development",
                           "Topic :: Software Development :: Libraries",
@@ -183,13 +188,17 @@ def snowml_wheel(
                           "Topic :: Software Development :: Libraries :: Python Modules",
                           "Topic :: Scientific/Engineering :: Information Analysis",
                       ],
+        description_file = description_file,
+        description_content_type = "text/markdown",
         compatible_with_snowpark = compatible_with_snowpark,
         distribution = "snowflake-ml-python",
         extra_requires = extra_requires,
+        homepage = homepage,
         license = "Apache License, Version 2.0",
         python_requires = ">=3.8,<4",
         python_tag = "py3",
         requires = requires,
+        summary = summary,
         version = version,
         deps = deps,
     )

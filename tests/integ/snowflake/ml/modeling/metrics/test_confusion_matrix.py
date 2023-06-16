@@ -37,7 +37,7 @@ class ConfusionMatrixTest(parameterized.TestCase):
     @parameterized.parameters(  # type: ignore[misc]
         {"params": {"labels": [None, [2, 0, 4]]}},
     )
-    def test_confusion_matrix_labels(self, params: Dict[str, Any]) -> None:
+    def test_labels(self, params: Dict[str, Any]) -> None:
         input_df = self._session.create_dataframe(_DATA, schema=_SCHEMA)
         pandas_df = input_df.to_pandas()
 
@@ -58,7 +58,7 @@ class ConfusionMatrixTest(parameterized.TestCase):
     @parameterized.parameters(  # type: ignore[misc]
         {"params": {"sample_weight_col_name": [None, _SAMPLE_WEIGHT_COL]}},
     )
-    def test_confusion_matrix_sample_weight(self, params: Dict[str, Any]) -> None:
+    def test_sample_weight(self, params: Dict[str, Any]) -> None:
         input_df = self._session.create_dataframe(_DATA, schema=_SCHEMA)
         pandas_df = input_df.to_pandas()
 
@@ -80,7 +80,7 @@ class ConfusionMatrixTest(parameterized.TestCase):
     @parameterized.parameters(  # type: ignore[misc]
         {"params": {"normalize": ["true", "pred", "all", None]}},
     )
-    def test_confusion_matrix_normalize(self, params: Dict[str, Any]) -> None:
+    def test_normalize(self, params: Dict[str, Any]) -> None:
         input_df = self._session.create_dataframe(_DATA, schema=_SCHEMA)
         pandas_df = input_df.to_pandas()
 
@@ -103,7 +103,7 @@ class ConfusionMatrixTest(parameterized.TestCase):
         {"params": {"labels": [100, -10]}},
         {"params": {"normalize": "invalid"}},
     )
-    def test_confusion_matrix_invalid_params(self, params: Dict[str, Any]) -> None:
+    def test_invalid_params(self, params: Dict[str, Any]) -> None:
         input_df = self._session.create_dataframe(_DATA, schema=_SCHEMA)
 
         if "labels" in params:

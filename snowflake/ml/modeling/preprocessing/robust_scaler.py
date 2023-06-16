@@ -16,6 +16,31 @@ from snowflake.ml.modeling.framework import _utils, base
 
 
 class RobustScaler(base.BaseTransformer):
+    r"""Scales features using statistics that are robust to outliers. Values must be of float type.
+
+    For more details on what this transformer does, see [sklearn.preprocessing.RobustScaler]
+    (https://scikit-learn.org/stable/modules/generated/sklearn.preprocessing.RobustScaler.html).
+
+    Args:
+        with_centering: If True, center the data around zero before scaling.
+        with_scaling: If True, scale the data to interquartile range.
+        quantile_range: tuple like (q_min, q_max), where 0.0 < q_min < q_max < 100.0, default=(25.0, 75.0). Quantile
+            range used to calculate scale_. By default, this is equal to the IQR, i.e., q_min is the first quantile and
+            q_max is the third quantile.
+        unit_variance: If True, scale data so that normally-distributed features have a variance of 1. In general, if
+            the difference between the x-values of q_max and q_min for a standard normal distribution is greater than 1,
+            the dataset is scaled down. If less than 1, the dataset is scaled up.
+        input_cols: The name(s) of one or more columns in a DataFrame containing a feature to be scaled.
+        output_cols: The name(s) of one or more columns in a DataFrame in which results will be stored. The number of
+            columns specified must match the number of input columns. For dense output, the column names specified are
+            used as base names for the columns created for each category.
+        drop_input_cols: Remove input columns from output if set True. False by default.
+
+    Attributes:
+        center_: Dictionary mapping input column name to the median value for that feature.
+        scale_: Dictionary mapping input column name to the (scaled) interquartile range for that feature.
+    """
+
     def __init__(
         self,
         *,
@@ -130,7 +155,7 @@ class RobustScaler(base.BaseTransformer):
         sklearn_scaler = self._create_unfitted_sklearn_object()
         sklearn_scaler.fit(dataset[self.input_cols])
 
-        for (i, input_col) in enumerate(self.input_cols):
+        for i, input_col in enumerate(self.input_cols):
             if self.with_centering:
                 self._center[input_col] = float(sklearn_scaler.center_[i])
             if self.with_scaling:

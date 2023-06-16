@@ -1,17 +1,9 @@
-from .accuracy_score import accuracy_score
-from .confusion_matrix import confusion_matrix
-from .correlation import correlation
-from .covariance import covariance
-from .precision_recall_fscore_support import precision_recall_fscore_support
-from .precision_score import precision_score
-from .roc_curve import roc_curve
+import os
 
-__all__ = [
-    "accuracy_score",
-    "confusion_matrix",
-    "correlation",
-    "covariance",
-    "precision_recall_fscore_support",
-    "precision_score",
-    "roc_curve",
-]
+from snowflake.ml._internal import init_utils
+
+pkg_dir = os.path.dirname(os.path.abspath(__file__))
+pkg_name = __name__
+exportable_functions = init_utils.fetch_functions_from_modules_in_pkg_dir(pkg_dir=pkg_dir, pkg_name=pkg_name)
+for k, v in exportable_functions.items():
+    globals()[k] = v

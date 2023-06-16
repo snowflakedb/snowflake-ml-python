@@ -134,8 +134,8 @@ class TestModelInteg(absltest.TestCase):
                     sample_input=pd_df,
                     metadata={"author": "halu", "version": "1"},
                 )
-                deployer = _deployer.Deployer(self._session, _deployer.LocalDeploymentManager())
-                deploy_info = deployer.create_deployment(
+                deploy_info = _deployer.deploy(
+                    session=self._session,
                     name=f"async_model_composition_{self.run_id}",
                     model_dir_path=os.path.join(tmpdir, "async_model_composition"),
                     platform=_deployer.TargetPlatform.WAREHOUSE,
@@ -144,15 +144,12 @@ class TestModelInteg(absltest.TestCase):
                 )
 
                 assert deploy_info is not None
-                res = deployer.predict(deploy_info["name"], pd_df)
+                res = _deployer.predict(session=self._session, deployment=deploy_info, X=pd_df)
 
                 pd.testing.assert_frame_equal(
                     res,
                     pd.DataFrame(arr[:, 0], columns=["output"], dtype=float),
                 )
-
-                self.assertTrue(deploy_info in deployer.list_deployments())
-                self.assertEqual(deploy_info, deployer.get_deployment(f"async_model_composition_{self.run_id}"))
 
         asyncio.get_event_loop().run_until_complete(_test(self))
 
@@ -170,18 +167,15 @@ class TestModelInteg(absltest.TestCase):
                 conda_dependencies=["invalidnumpy==1.22.4"],
             )
 
-            deployer = _deployer.Deployer(self._session, _deployer.LocalDeploymentManager())
             with self.assertRaises(RuntimeError):
-                _ = deployer.create_deployment(
+                _ = _deployer.deploy(
+                    session=self._session,
                     name=f"custom_bad_model_{self.run_id}",
                     model_dir_path=os.path.join(tmpdir, "custom_bad_model"),
                     platform=_deployer.TargetPlatform.WAREHOUSE,
                     target_method="predict",
                     options=model_types.WarehouseDeployOptions({"relax_version": False, "_use_local_snowml": True}),
                 )
-
-            with self.assertRaises(ValueError):
-                _ = deployer.predict(f"custom_bad_model_{self.run_id}", pd_df)
 
     def test_custom_demo_model_sp(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -196,8 +190,8 @@ class TestModelInteg(absltest.TestCase):
                 metadata={"author": "halu", "version": "1"},
             )
 
-            deployer = _deployer.Deployer(self._session, _deployer.LocalDeploymentManager())
-            deploy_info = deployer.create_deployment(
+            deploy_info = _deployer.deploy(
+                session=self._session,
                 name=f"custom_demo_model_sp0_{self.run_id}",
                 model_dir_path=os.path.join(tmpdir, "custom_demo_model_sp0"),
                 platform=_deployer.TargetPlatform.WAREHOUSE,
@@ -205,7 +199,7 @@ class TestModelInteg(absltest.TestCase):
                 options=model_types.WarehouseDeployOptions({"relax_version": True, "_use_local_snowml": True}),
             )
             assert deploy_info is not None
-            res = deployer.predict(deploy_info["name"], sp_df)
+            res = _deployer.predict(session=self._session, deployment=deploy_info, X=sp_df)
 
             pd.testing.assert_frame_equal(
                 res.to_pandas(),
@@ -226,8 +220,8 @@ class TestModelInteg(absltest.TestCase):
                 metadata={"author": "halu", "version": "1"},
             )
 
-            deployer = _deployer.Deployer(self._session, _deployer.LocalDeploymentManager())
-            deploy_info = deployer.create_deployment(
+            deploy_info = _deployer.deploy(
+                session=self._session,
                 name=f"custom_demo_model_sp_good_{self.run_id}",
                 model_dir_path=os.path.join(tmpdir, "custom_demo_model_sp_good"),
                 platform=_deployer.TargetPlatform.WAREHOUSE,
@@ -235,7 +229,7 @@ class TestModelInteg(absltest.TestCase):
                 options=model_types.WarehouseDeployOptions({"relax_version": True, "_use_local_snowml": True}),
             )
             assert deploy_info is not None
-            res = deployer.predict(deploy_info["name"], pd_df)
+            res = _deployer.predict(session=self._session, deployment=deploy_info, X=pd_df)
 
             pd.testing.assert_frame_equal(
                 res,
@@ -256,8 +250,8 @@ class TestModelInteg(absltest.TestCase):
                 metadata={"author": "halu", "version": "1"},
             )
 
-            deployer = _deployer.Deployer(self._session, _deployer.LocalDeploymentManager())
-            deploy_info = deployer.create_deployment(
+            deploy_info = _deployer.deploy(
+                session=self._session,
                 name=f"custom_demo_model_sp1_{self.run_id}",
                 model_dir_path=os.path.join(tmpdir, "custom_demo_model_sp1"),
                 platform=_deployer.TargetPlatform.WAREHOUSE,
@@ -265,7 +259,7 @@ class TestModelInteg(absltest.TestCase):
                 options=model_types.WarehouseDeployOptions({"relax_version": True, "_use_local_snowml": True}),
             )
             assert deploy_info is not None
-            res = deployer.predict(deploy_info["name"], sp_df)
+            res = _deployer.predict(session=self._session, deployment=deploy_info, X=sp_df)
 
             pd.testing.assert_frame_equal(
                 res.to_pandas(),
@@ -286,8 +280,8 @@ class TestModelInteg(absltest.TestCase):
                 metadata={"author": "halu", "version": "1"},
             )
 
-            deployer = _deployer.Deployer(self._session, _deployer.LocalDeploymentManager())
-            deploy_info = deployer.create_deployment(
+            deploy_info = _deployer.deploy(
+                session=self._session,
                 name=f"custom_demo_model_sp2_{self.run_id}",
                 model_dir_path=os.path.join(tmpdir, "custom_demo_model_sp2"),
                 platform=_deployer.TargetPlatform.WAREHOUSE,
@@ -295,7 +289,7 @@ class TestModelInteg(absltest.TestCase):
                 options=model_types.WarehouseDeployOptions({"relax_version": True, "_use_local_snowml": True}),
             )
             assert deploy_info is not None
-            res = deployer.predict(deploy_info["name"], pd_df)
+            res = _deployer.predict(session=self._session, deployment=deploy_info, X=pd_df)
 
             pd.testing.assert_frame_equal(
                 res,
@@ -315,8 +309,25 @@ class TestModelInteg(absltest.TestCase):
                 metadata={"author": "halu", "version": "1"},
             )
 
-            deployer = _deployer.Deployer(self._session, _deployer.LocalDeploymentManager())
-            deploy_info = deployer.create_deployment(
+            with self.assertRaises(RuntimeError):
+                deploy_info = _deployer.deploy(
+                    session=self._session,
+                    name=f"custom_demo_model_{self.run_id}",
+                    model_dir_path=os.path.join(tmpdir, "custom_demo_model"),
+                    platform=_deployer.TargetPlatform.WAREHOUSE,
+                    target_method="predict",
+                    options=model_types.WarehouseDeployOptions(
+                        {
+                            "relax_version": True,
+                            "_use_local_snowml": True,
+                            "permanent_udf_stage_location": f"{self.stage_qual_name}/",
+                            # Test stage location validation
+                        }
+                    ),
+                )
+
+            deploy_info = _deployer.deploy(
+                session=self._session,
                 name=f"custom_demo_model_{self.run_id}",
                 model_dir_path=os.path.join(tmpdir, "custom_demo_model", ""),  # Test sanitizing user path input.
                 platform=_deployer.TargetPlatform.WAREHOUSE,
@@ -330,18 +341,16 @@ class TestModelInteg(absltest.TestCase):
                 ),
             )
             assert deploy_info is not None
-            res = deployer.predict(deploy_info["name"], pd_df)
+            res = _deployer.predict(session=self._session, deployment=deploy_info, X=pd_df)
 
             pd.testing.assert_frame_equal(
                 res,
                 pd.DataFrame(arr[:, 0], columns=["output"]),
             )
 
-            self.assertTrue(deploy_info in deployer.list_deployments())
-            self.assertEqual(deploy_info, deployer.get_deployment(f"custom_demo_model_{self.run_id}"))
-
             with self.assertRaises(RuntimeError):
-                deploy_info = deployer.create_deployment(
+                deploy_info = _deployer.deploy(
+                    session=self._session,
                     name=f"custom_demo_model_{self.run_id}",
                     model_dir_path=os.path.join(tmpdir, "custom_demo_model"),
                     platform=_deployer.TargetPlatform.WAREHOUSE,
@@ -357,6 +366,22 @@ class TestModelInteg(absltest.TestCase):
 
             _drop_function(self._session, f"custom_demo_model_{self.run_id}")
 
+            deploy_info = _deployer.deploy(
+                session=self._session,
+                name=f"custom_demo_model_{self.run_id}",
+                model_dir_path=os.path.join(tmpdir, "custom_demo_model"),
+                platform=_deployer.TargetPlatform.WAREHOUSE,
+                target_method="predict",
+                options=model_types.WarehouseDeployOptions(
+                    {
+                        "relax_version": True,
+                        "_use_local_snowml": True,
+                        "permanent_udf_stage_location": f"@{self.stage_qual_name}/",
+                        "replace_udf": True,
+                    }
+                ),
+            )
+
     def test_custom_demo_model_array(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             lm = DemoModelArray(custom_model.ModelContext())
@@ -370,8 +395,8 @@ class TestModelInteg(absltest.TestCase):
                 metadata={"author": "halu", "version": "1"},
             )
 
-            deployer = _deployer.Deployer(self._session, _deployer.LocalDeploymentManager())
-            deploy_info = deployer.create_deployment(
+            deploy_info = _deployer.deploy(
+                session=self._session,
                 name=f"custom_demo_model_array_{self.run_id}",
                 model_dir_path=os.path.join(tmpdir, "custom_demo_model_array"),
                 platform=_deployer.TargetPlatform.WAREHOUSE,
@@ -379,7 +404,7 @@ class TestModelInteg(absltest.TestCase):
                 options=model_types.WarehouseDeployOptions({"relax_version": True, "_use_local_snowml": True}),
             )
             assert deploy_info is not None
-            res = deployer.predict(deploy_info["name"], pd_df)
+            res = _deployer.predict(session=self._session, deployment=deploy_info, X=pd_df)
 
             pd.testing.assert_frame_equal(
                 res,
@@ -400,8 +425,8 @@ class TestModelInteg(absltest.TestCase):
                 metadata={"author": "halu", "version": "1"},
             )
 
-            deployer = _deployer.Deployer(self._session, _deployer.LocalDeploymentManager())
-            deploy_info = deployer.create_deployment(
+            deploy_info = _deployer.deploy(
+                session=self._session,
                 name=f"custom_demo_model_str_{self.run_id}",
                 model_dir_path=os.path.join(tmpdir, "custom_demo_model_str"),
                 platform=_deployer.TargetPlatform.WAREHOUSE,
@@ -409,7 +434,7 @@ class TestModelInteg(absltest.TestCase):
                 options=model_types.WarehouseDeployOptions({"relax_version": True, "_use_local_snowml": True}),
             )
             assert deploy_info is not None
-            res = deployer.predict(deploy_info["name"], pd_df)
+            res = _deployer.predict(session=self._session, deployment=deploy_info, X=pd_df)
 
             pd.testing.assert_frame_equal(
                 res,
@@ -430,8 +455,8 @@ class TestModelInteg(absltest.TestCase):
                 metadata={"author": "halu", "version": "1"},
             )
 
-            deployer = _deployer.Deployer(self._session, _deployer.LocalDeploymentManager())
-            deploy_info = deployer.create_deployment(
+            deploy_info = _deployer.deploy(
+                session=self._session,
                 name=f"custom_demo_model_array_sp_{self.run_id}",
                 model_dir_path=os.path.join(tmpdir, "custom_demo_model_array_sp"),
                 platform=_deployer.TargetPlatform.WAREHOUSE,
@@ -439,7 +464,7 @@ class TestModelInteg(absltest.TestCase):
                 options=model_types.WarehouseDeployOptions({"relax_version": True, "_use_local_snowml": True}),
             )
             assert deploy_info is not None
-            res = deployer.predict(deploy_info["name"], sp_df)
+            res = _deployer.predict(session=self._session, deployment=deploy_info, X=sp_df)
 
             pd.testing.assert_frame_equal(
                 res.to_pandas().applymap(json.loads),
@@ -461,8 +486,8 @@ class TestModelInteg(absltest.TestCase):
                 metadata={"author": "halu", "version": "1"},
             )
 
-            deployer = _deployer.Deployer(self._session, _deployer.LocalDeploymentManager())
-            deploy_info = deployer.create_deployment(
+            deploy_info = _deployer.deploy(
+                session=self._session,
                 name=f"custom_demo_model_str_sp_{self.run_id}",
                 model_dir_path=os.path.join(tmpdir, "custom_demo_model_str_sp"),
                 platform=_deployer.TargetPlatform.WAREHOUSE,
@@ -470,7 +495,7 @@ class TestModelInteg(absltest.TestCase):
                 options=model_types.WarehouseDeployOptions({"relax_version": True, "_use_local_snowml": True}),
             )
             assert deploy_info is not None
-            res = deployer.predict(deploy_info["name"], sp_df)
+            res = _deployer.predict(session=self._session, deployment=deploy_info, X=sp_df)
 
             pd.testing.assert_frame_equal(
                 res.to_pandas(),
@@ -491,8 +516,8 @@ class TestModelInteg(absltest.TestCase):
                 metadata={"author": "halu", "version": "1"},
             )
 
-            deployer = _deployer.Deployer(self._session, _deployer.LocalDeploymentManager())
-            deploy_info = deployer.create_deployment(
+            deploy_info = _deployer.deploy(
+                session=self._session,
                 name=f"custom_demo_model_array_str_{self.run_id}",
                 model_dir_path=os.path.join(tmpdir, "custom_demo_model_array_str"),
                 platform=_deployer.TargetPlatform.WAREHOUSE,
@@ -500,7 +525,7 @@ class TestModelInteg(absltest.TestCase):
                 options=model_types.WarehouseDeployOptions({"relax_version": True, "_use_local_snowml": True}),
             )
             assert deploy_info is not None
-            res = deployer.predict(deploy_info["name"], pd_df)
+            res = _deployer.predict(session=self._session, deployment=deploy_info, X=pd_df)
 
             pd.testing.assert_frame_equal(
                 res,
@@ -520,8 +545,8 @@ class TestModelInteg(absltest.TestCase):
                 metadata={"author": "halu", "version": "1"},
             )
 
-            deployer = _deployer.Deployer(self._session, _deployer.LocalDeploymentManager())
-            deploy_info = deployer.create_deployment(
+            deploy_info = _deployer.deploy(
+                session=self._session,
                 name=f"custom_demo_model_with_input_no_keep_order_{self.run_id}",
                 model_dir_path=os.path.join(tmpdir, "custom_demo_model_with_input_no_keep_order"),
                 platform=_deployer.TargetPlatform.WAREHOUSE,
@@ -536,7 +561,7 @@ class TestModelInteg(absltest.TestCase):
                 ),
             )
             assert deploy_info is not None
-            res = deployer.predict(deploy_info["name"], pd_df)
+            res = _deployer.predict(session=self._session, deployment=deploy_info, X=pd_df)
             pd.testing.assert_series_equal(res["output"], res["c1"], check_dtype=False, check_names=False)
 
     def test_custom_demo_model_with_input(self) -> None:
@@ -552,8 +577,8 @@ class TestModelInteg(absltest.TestCase):
                 metadata={"author": "halu", "version": "1"},
             )
 
-            deployer = _deployer.Deployer(self._session, _deployer.LocalDeploymentManager())
-            deploy_info = deployer.create_deployment(
+            deploy_info = _deployer.deploy(
+                session=self._session,
                 name=f"custom_demo_model_with_input_{self.run_id}",
                 model_dir_path=os.path.join(tmpdir, "custom_demo_model_with_input"),
                 platform=_deployer.TargetPlatform.WAREHOUSE,
@@ -567,7 +592,7 @@ class TestModelInteg(absltest.TestCase):
                 ),
             )
             assert deploy_info is not None
-            res = deployer.predict(deploy_info["name"], pd_df)
+            res = _deployer.predict(session=self._session, deployment=deploy_info, X=pd_df)
             pd.testing.assert_series_equal(res["output"], res["c1"], check_dtype=False, check_names=False)
             pd.testing.assert_frame_equal(
                 res,
@@ -595,8 +620,8 @@ class TestModelInteg(absltest.TestCase):
                 metadata={"author": "halu", "version": "1"},
             )
 
-            deployer = _deployer.Deployer(self._session, _deployer.LocalDeploymentManager())
-            deploy_info = deployer.create_deployment(
+            deploy_info = _deployer.deploy(
+                session=self._session,
                 name=f"custom_model_with_artifacts_{self.run_id}",
                 model_dir_path=os.path.join(tmpdir, "custom_model_with_artifacts"),
                 platform=_deployer.TargetPlatform.WAREHOUSE,
@@ -604,10 +629,44 @@ class TestModelInteg(absltest.TestCase):
                 options=model_types.WarehouseDeployOptions({"relax_version": True, "_use_local_snowml": True}),
             )
             assert deploy_info is not None
-            res = deployer.predict(deploy_info["name"], pd_df[["c3", "c1", "c2"]])
+            res = _deployer.predict(session=self._session, deployment=deploy_info, X=pd_df[["c3", "c1", "c2"]])
 
         pd.testing.assert_frame_equal(
             res,
+            pd.DataFrame([False, True], columns=["output"]),
+        )
+
+    def test_custom_model_bool_sp(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with open(os.path.join(tmpdir, "bias"), "w") as f:
+                f.write("10")
+            lm = DemoModelWithArtifacts(
+                custom_model.ModelContext(models={}, artifacts={"bias": os.path.join(tmpdir, "bias")})
+            )
+            arr = np.array([[1, 2, 3], [4, 2, 5]])
+            pd_df = pd.DataFrame(arr, columns=["c1", "c2", "c3"])
+            sp_df = self._session.create_dataframe(pd_df)
+            model_api.save_model(
+                name="custom_model_bool_sp",
+                model_dir_path=os.path.join(tmpdir, "custom_model_bool_sp"),
+                model=lm,
+                sample_input=sp_df,
+                metadata={"author": "halu", "version": "1"},
+            )
+
+            deploy_info = _deployer.deploy(
+                session=self._session,
+                name=f"custom_model_bool_sp_{self.run_id}",
+                model_dir_path=os.path.join(tmpdir, "custom_model_bool_sp"),
+                platform=_deployer.TargetPlatform.WAREHOUSE,
+                target_method="predict",
+                options=model_types.WarehouseDeployOptions({"relax_version": True, "_use_local_snowml": True}),
+            )
+            assert deploy_info is not None
+            res = _deployer.predict(session=self._session, deployment=deploy_info, X=sp_df)
+
+        pd.testing.assert_frame_equal(
+            res.to_pandas(),
             pd.DataFrame([False, True], columns=["output"]),
         )
 
@@ -635,8 +694,8 @@ class TestModelInteg(absltest.TestCase):
             pd.DataFrame(arr[:, 0], columns=["output"]),
         )
 
-        deployer = _deployer.Deployer(self._session, _deployer.LocalDeploymentManager())
-        deploy_info = deployer.create_deployment(
+        deploy_info = _deployer.deploy(
+            session=self._session,
             name=f"custom_demo_model_{self.run_id}",
             model_stage_file_path=model_path_in_stage,
             platform=_deployer.TargetPlatform.WAREHOUSE,
@@ -644,15 +703,12 @@ class TestModelInteg(absltest.TestCase):
             options=model_types.WarehouseDeployOptions({"relax_version": True, "_use_local_snowml": True}),
         )
         assert deploy_info is not None
-        res = deployer.predict(deploy_info["name"], pd_df)
+        res = _deployer.predict(session=self._session, deployment=deploy_info, X=pd_df)
 
         pd.testing.assert_frame_equal(
             res,
             pd.DataFrame(arr[:, 0], columns=["output"]),
         )
-
-        self.assertTrue(deploy_info in deployer.list_deployments())
-        self.assertEqual(deploy_info, deployer.get_deployment(f"custom_demo_model_{self.run_id}"))
 
     def test_custom_model_with_artifacts_in_stage(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -683,8 +739,8 @@ class TestModelInteg(absltest.TestCase):
                 pd.DataFrame([False, True], columns=["output"]),
             )
 
-            deployer = _deployer.Deployer(self._session, _deployer.LocalDeploymentManager())
-            deploy_info = deployer.create_deployment(
+            deploy_info = _deployer.deploy(
+                session=self._session,
                 name=f"custom_model_with_artifacts{self.run_id}",
                 model_stage_file_path=model_path_in_stage,
                 platform=_deployer.TargetPlatform.WAREHOUSE,
@@ -692,7 +748,7 @@ class TestModelInteg(absltest.TestCase):
                 options=model_types.WarehouseDeployOptions({"relax_version": True, "_use_local_snowml": True}),
             )
             assert deploy_info is not None
-            res = deployer.predict(deploy_info["name"], pd_df[["c3", "c1", "c2"]])
+            res = _deployer.predict(session=self._session, deployment=deploy_info, X=pd_df[["c3", "c1", "c2"]])
 
         pd.testing.assert_frame_equal(
             res,
@@ -712,8 +768,8 @@ class TestModelInteg(absltest.TestCase):
                 sample_input=iris_X,
                 metadata={"author": "halu", "version": "1"},
             )
-            dc = _deployer.Deployer(self._session, _deployer.LocalDeploymentManager())
-            di = dc.create_deployment(
+            deploy_info = _deployer.deploy(
+                session=self._session,
                 name=f"skl_model_{self.run_id}",
                 model_dir_path=os.path.join(tmpdir, "skl_model"),
                 platform=_deployer.TargetPlatform.WAREHOUSE,
@@ -721,8 +777,8 @@ class TestModelInteg(absltest.TestCase):
                 options=model_types.WarehouseDeployOptions({"relax_version": True, "_use_local_snowml": True}),
             )
 
-            assert di is not None
-            res = dc.predict(di["name"], iris_X)
+            assert deploy_info is not None
+            res = _deployer.predict(session=self._session, deployment=deploy_info, X=iris_X)
             np.testing.assert_allclose(res["output_feature_0"].values, regr.predict(iris_X))
 
     def test_skl_model_proba_deploy(self) -> None:
@@ -738,8 +794,8 @@ class TestModelInteg(absltest.TestCase):
                 metadata={"author": "halu", "version": "1"},
                 conda_dependencies=["scikit-learn"],
             )
-            dc = _deployer.Deployer(self._session, _deployer.LocalDeploymentManager())
-            di_predict = dc.create_deployment(
+            di_predict = _deployer.deploy(
+                session=self._session,
                 name=f"skl_model_predict_{self.run_id}",
                 model_dir_path=os.path.join(tmpdir, "skl_model_proba"),
                 platform=_deployer.TargetPlatform.WAREHOUSE,
@@ -747,10 +803,11 @@ class TestModelInteg(absltest.TestCase):
                 options=model_types.WarehouseDeployOptions({"relax_version": True, "_use_local_snowml": True}),
             )
             assert di_predict is not None
-            res = dc.predict(di_predict["name"], iris_X[:10])
+            res = _deployer.predict(session=self._session, deployment=di_predict, X=iris_X[:10])
             np.testing.assert_allclose(res["output_feature_0"].values, model.predict(iris_X[:10]))
 
-            di_predict_proba = dc.create_deployment(
+            di_predict_proba = _deployer.deploy(
+                session=self._session,
                 name=f"skl_model_predict_proba_{self.run_id}",
                 model_dir_path=os.path.join(tmpdir, "skl_model_proba"),
                 platform=_deployer.TargetPlatform.WAREHOUSE,
@@ -758,7 +815,7 @@ class TestModelInteg(absltest.TestCase):
                 options=model_types.WarehouseDeployOptions({"relax_version": True, "_use_local_snowml": True}),
             )
             assert di_predict_proba is not None
-            res = dc.predict(di_predict_proba["name"], iris_X[:10])
+            res = _deployer.predict(session=self._session, deployment=di_predict_proba, X=iris_X[:10])
             np.testing.assert_allclose(res.values, model.predict_proba(iris_X[:10]))
 
     def test_skl_multiple_output_model_proba_deploy(self) -> None:
@@ -776,8 +833,8 @@ class TestModelInteg(absltest.TestCase):
                 metadata={"author": "halu", "version": "1"},
                 conda_dependencies=["scikit-learn"],
             )
-            dc = _deployer.Deployer(self._session, _deployer.LocalDeploymentManager())
-            di_predict = dc.create_deployment(
+            di_predict = _deployer.deploy(
+                session=self._session,
                 name=f"skl_multiple_output_model_predict_{self.run_id}",
                 model_dir_path=os.path.join(tmpdir, "skl_multiple_output_model_proba"),
                 platform=_deployer.TargetPlatform.WAREHOUSE,
@@ -785,10 +842,11 @@ class TestModelInteg(absltest.TestCase):
                 options=model_types.WarehouseDeployOptions({"relax_version": True, "_use_local_snowml": True}),
             )
             assert di_predict is not None
-            res = dc.predict(di_predict["name"], iris_X[-10:])
+            res = _deployer.predict(session=self._session, deployment=di_predict, X=iris_X[-10:])
             np.testing.assert_allclose(res.values, model.predict(iris_X[-10:]))
 
-            di_predict_proba = dc.create_deployment(
+            di_predict_proba = _deployer.deploy(
+                session=self._session,
                 name=f"skl_multiple_output_model_predict_proba_{self.run_id}",
                 model_dir_path=os.path.join(tmpdir, "skl_multiple_output_model_proba"),
                 platform=_deployer.TargetPlatform.WAREHOUSE,
@@ -796,7 +854,7 @@ class TestModelInteg(absltest.TestCase):
                 options=model_types.WarehouseDeployOptions({"relax_version": True, "_use_local_snowml": True}),
             )
             assert di_predict_proba is not None
-            res = dc.predict(di_predict_proba["name"], iris_X[-10:])
+            res = _deployer.predict(session=self._session, deployment=di_predict_proba, X=iris_X[-10:])
             np.testing.assert_allclose(res.values, np.hstack(model.predict_proba(iris_X[-10:])))
 
     def test_xgb(self) -> None:
@@ -814,8 +872,8 @@ class TestModelInteg(absltest.TestCase):
                 sample_input=cal_X_test,
                 metadata={"author": "halu", "version": "1"},
             )
-            dc = _deployer.Deployer(self._session, _deployer.LocalDeploymentManager())
-            di_predict = dc.create_deployment(
+            di_predict = _deployer.deploy(
+                session=self._session,
                 name=f"xgb_model_{self.run_id}",
                 model_dir_path=os.path.join(tmpdir, "xgb_model"),
                 platform=_deployer.TargetPlatform.WAREHOUSE,
@@ -823,7 +881,7 @@ class TestModelInteg(absltest.TestCase):
                 options=model_types.WarehouseDeployOptions({"relax_version": True, "_use_local_snowml": True}),
             )
             assert di_predict is not None
-            res = dc.predict(di_predict["name"], cal_X_test)
+            res = _deployer.predict(session=self._session, deployment=di_predict, X=cal_X_test)
             np.testing.assert_allclose(res.values, np.expand_dims(regressor.predict(cal_X_test), axis=1))
 
     def test_xgb_sp(self) -> None:
@@ -842,8 +900,8 @@ class TestModelInteg(absltest.TestCase):
                     sample_input=cal_data_sp_df_train.drop('"target"'),
                     metadata={"author": "halu", "version": "1"},
                 )
-            dc = _deployer.Deployer(self._session, _deployer.LocalDeploymentManager())
-            di_predict = dc.create_deployment(
+            di_predict = _deployer.deploy(
+                session=self._session,
                 name=f"xgb_model_{self.run_id}",
                 model_dir_path=os.path.join(tmpdir, "xgb_model"),
                 platform=_deployer.TargetPlatform.WAREHOUSE,
@@ -852,7 +910,7 @@ class TestModelInteg(absltest.TestCase):
             )
             assert di_predict is not None
             cal_data_sp_df_test_X = cal_data_sp_df_test.drop('"target"')
-            res = dc.predict(di_predict["name"], cal_data_sp_df_test_X)
+            res = _deployer.predict(session=self._session, deployment=di_predict, X=cal_data_sp_df_test_X)
             np.testing.assert_allclose(
                 res.to_pandas().values, np.expand_dims(regressor.predict(cal_data_sp_df_test_X.to_pandas()), axis=1)
             )
@@ -876,8 +934,8 @@ class TestModelInteg(absltest.TestCase):
                 model=regr,
                 metadata={"author": "xjiang", "version": "1"},
             )
-            dc = _deployer.Deployer(self._session, _deployer.LocalDeploymentManager())
-            di = dc.create_deployment(
+            deployment_info = _deployer.deploy(
+                session=self._session,
                 name=f"snowml_model{self.run_id}",
                 model_dir_path=os.path.join(tmpdir, "snowml_model"),
                 platform=_deployer.TargetPlatform.WAREHOUSE,
@@ -885,8 +943,8 @@ class TestModelInteg(absltest.TestCase):
                 options=model_types.WarehouseDeployOptions({"relax_version": True, "_use_local_snowml": True}),
             )
 
-            assert di is not None
-            res = dc.predict(di["name"], test_features)
+            assert deployment_info is not None
+            res = _deployer.predict(session=self._session, deployment=deployment_info, X=test_features)
             np.testing.assert_allclose(res[OUTPUT_COLUMNS].values, regr.predict(test_features)[OUTPUT_COLUMNS].values)
 
     def test_snowml_model_deploy_xgboost(self) -> None:
@@ -908,8 +966,8 @@ class TestModelInteg(absltest.TestCase):
                 model=regr,
                 metadata={"author": "xjiang", "version": "1"},
             )
-            dc = _deployer.Deployer(self._session, _deployer.LocalDeploymentManager())
-            di = dc.create_deployment(
+            deployment_info = _deployer.deploy(
+                session=self._session,
                 name=f"snowml_model{self.run_id}",
                 model_dir_path=os.path.join(tmpdir, "snowml_model"),
                 platform=_deployer.TargetPlatform.WAREHOUSE,
@@ -917,8 +975,8 @@ class TestModelInteg(absltest.TestCase):
                 options=model_types.WarehouseDeployOptions({"relax_version": True, "_use_local_snowml": True}),
             )
 
-            assert di is not None
-            res = dc.predict(di["name"], test_features)
+            assert deployment_info is not None
+            res = _deployer.predict(session=self._session, deployment=deployment_info, X=test_features)
             np.testing.assert_allclose(res[OUTPUT_COLUMNS].values, regr.predict(test_features)[OUTPUT_COLUMNS].values)
 
     def test_snowml_model_deploy_lightgbm(self) -> None:
@@ -940,8 +998,8 @@ class TestModelInteg(absltest.TestCase):
                 model=regr,
                 metadata={"author": "xjiang", "version": "1"},
             )
-            dc = _deployer.Deployer(self._session, _deployer.LocalDeploymentManager())
-            di = dc.create_deployment(
+            deployment_info = _deployer.deploy(
+                session=self._session,
                 name=f"snowml_model{self.run_id}",
                 model_dir_path=os.path.join(tmpdir, "snowml_model"),
                 platform=_deployer.TargetPlatform.WAREHOUSE,
@@ -949,8 +1007,8 @@ class TestModelInteg(absltest.TestCase):
                 options=model_types.WarehouseDeployOptions({"relax_version": True, "_use_local_snowml": True}),
             )
 
-            assert di is not None
-            res = dc.predict(di["name"], test_features)
+            assert deployment_info is not None
+            res = _deployer.predict(session=self._session, deployment=deployment_info, X=test_features)
             np.testing.assert_allclose(res[OUTPUT_COLUMNS].values, regr.predict(test_features)[OUTPUT_COLUMNS].values)
 
 

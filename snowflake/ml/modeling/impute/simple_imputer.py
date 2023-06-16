@@ -3,9 +3,10 @@
 # Copyright (c) 2012-2022 Snowflake Computing Inc. All rights reserved.
 #
 import copy
-from typing import Any, Dict, Iterable, Optional, Union
+from typing import Any, Dict, Iterable, Optional, Type, Union
 
 import numpy as np
+import numpy._typing as _npt
 import pandas as pd
 from sklearn import impute
 
@@ -24,16 +25,15 @@ STRATEGY_TO_STATE_DICT = {
     "most_frequent": _utils.BasicStatistics.MODE,
 }
 
-# TODO: change the type hint to np.dtype[Any] when snowml stops supporting python <= 3.8
-SNOWFLAKE_DATATYPE_TO_NUMPY_DTYPE_MAP: Dict[T.DataType, np.dtype] = {  # type: ignore[type-arg]
-    T.ByteType(): np.dtype("int8"),
-    T.ShortType(): np.dtype("int16"),
-    T.IntegerType(): np.dtype("int32"),
-    T.LongType(): np.dtype("int64"),
-    T.FloatType(): np.dtype("float64"),
-    T.DoubleType(): np.dtype("float64"),
-    T.DecimalType(): np.dtype("object"),
-    T.StringType(): np.dtype("str"),
+SNOWFLAKE_DATATYPE_TO_NUMPY_DTYPE_MAP: Dict[Type[T.DataType], _npt._DType[Any]] = {
+    T.ByteType: np.dtype("int8"),
+    T.ShortType: np.dtype("int16"),
+    T.IntegerType: np.dtype("int32"),
+    T.LongType: np.dtype("int64"),
+    T.FloatType: np.dtype("float64"),
+    T.DoubleType: np.dtype("float64"),
+    T.DecimalType: np.dtype("object"),
+    T.StringType: np.dtype("str"),
 }
 
 # Constants used to validate the compatibility of the kwargs passed to the sklearn
@@ -188,7 +188,10 @@ class SimpleImputer(base.BaseTransformer):
         input_col_datatypes = {}
         for field in dataset.schema.fields:
             if field.name in self.input_cols:
-                if field.datatype not in SNOWFLAKE_DATATYPE_TO_NUMPY_DTYPE_MAP:
+                if not any(
+                    isinstance(field.datatype, potential_type)
+                    for potential_type in SNOWFLAKE_DATATYPE_TO_NUMPY_DTYPE_MAP.keys()
+                ):
                     raise TypeError(f"Input column type {field.datatype} is not supported by the simple imputer.")
                 input_col_datatypes[field.name] = field.datatype
         if self.strategy != "most_frequent":
@@ -267,7 +270,7 @@ class SimpleImputer(base.BaseTransformer):
         # the sklearn object directly when creating the sklearn simple imputer, we have to
         # set this property.
         self._sklearn_fit_dtype = max(
-            SNOWFLAKE_DATATYPE_TO_NUMPY_DTYPE_MAP[input_col_datatypes[input_col]] for input_col in self.input_cols
+            SNOWFLAKE_DATATYPE_TO_NUMPY_DTYPE_MAP[type(input_col_datatypes[input_col])] for input_col in self.input_cols
         )
 
         self._is_fitted = True

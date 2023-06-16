@@ -4,10 +4,12 @@ from typing import Dict, Optional
 
 from absl import logging
 
+from snowflake import snowpark
+
 _DEFAULT_CONNECTION_FILE = "~/.snowsql/config"
 
 
-def read_token(token_file: str = "") -> str:
+def _read_token(token_file: str = "") -> str:
     """
     Reads token from environment or file provided.
 
@@ -78,6 +80,7 @@ def _load_from_snowsql_config_file(connection_name: str, login_file: str = "") -
     return conn_params
 
 
+@snowpark._internal.utils.private_preview(version="0.2.0")
 def SnowflakeLoginOptions(connection_name: str = "", login_file: Optional[str] = None) -> Dict[str, str]:
     """Returns a dict that can be used directly into snowflake python connector or Snowpark session config.
 
@@ -124,7 +127,7 @@ def SnowflakeLoginOptions(connection_name: str = "", login_file: Optional[str] =
             raise Exception("Snowflake credential is neither set in env nor a login file was provided.")
 
     # Token, if specified, is always side-loaded in all cases.
-    conn_prop["token"] = read_token(conn_prop["token_file"] if "token_file" in conn_prop else "")
+    conn_prop["token"] = _read_token(conn_prop["token_file"] if "token_file" in conn_prop else "")
     data = {
         "account": conn_prop["account"],
     }

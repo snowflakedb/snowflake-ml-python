@@ -20,6 +20,9 @@ http_archive(
     sha256 = "8c8fe44ef0a9afc256d1e75ad5f448bb59b81aba149b8958f02f7b3a98f5d9b4",
     strip_prefix = "rules_python-0.13.0",
     url = "https://github.com/bazelbuild/rules_python/archive/refs/tags/0.13.0.tar.gz",
+    # This will be unnecessary once https://github.com/bazelbuild/rules_python/pull/1274
+    # is released.
+    patches = ["//third_party:rules_python_description_content_type.patch"],
 )
 
 load("//third_party/rules_conda:defs.bzl", "conda_create", "load_conda", "register_toolchain")

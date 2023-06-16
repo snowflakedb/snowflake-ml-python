@@ -13,7 +13,7 @@ from sklearn import preprocessing, utils as sklearn_utils
 from snowflake import snowpark
 from snowflake.ml._internal import telemetry, type_utils
 from snowflake.ml._internal.utils import identifier
-from snowflake.ml.modeling.framework import base
+from snowflake.ml.modeling.framework import _utils, base
 from snowflake.snowpark import functions as F, types as T
 
 _COLUMN_NAME = "_COLUMN_NAME"
@@ -36,6 +36,36 @@ _SKLEARN_ADDED_KEYWORD_TO_VERSION_DICT = {
 
 
 class OrdinalEncoder(base.BaseTransformer):
+    r"""Encodes categorical features as an integer array.
+
+    In other words, each category (i.e., distinct numeric or string value) is assigned an integer value, starting
+    with zero.
+
+    For more details on what this transformer does, see [sklearn.preprocessing.OrdinalEncoder]
+    (https://scikit-learn.org/stable/modules/generated/sklearn.preprocessing.OrdinalEncoder.html).
+
+    Args:
+        categories: The string 'auto' (the default) causes the categories to be extracted from the input columns.
+            To specify the categories yourself, pass a dictionary mapping the column name to an ndarray containing the
+            categories.
+        handle_unknown: Specifies how unknown categories are handled during transformation. Applicable only if\
+            categories is not 'auto'.
+            Valid values are:
+                - 'error': Raise an error if an unknown category is present during transform (default).
+                - 'use_encoded_value': When an unknown category is encountered during transform, the specified
+                    encoded_missing_value (below) is used.
+        encoded_missing_value: The value to be used to encode unknown categories.
+        input_cols: The name(s) of one or more columns in a DataFrame containing a feature to be encoded.
+        output_cols: The name(s) of one or more columns in a DataFrame in which results will be stored. The number of
+            columns specified must match the number of input columns.
+        drop_input_cols: Remove input columns from output if set True. False by default.
+
+    Attributes:
+        categories_ (dict of ndarray): The categories of each feature determined during fitting. Maps input column
+            names to an array of the detected categories.
+            Attributes are valid only after fit() has been called.
+    """
+
     def __init__(
         self,
         *,
@@ -116,6 +146,11 @@ class OrdinalEncoder(base.BaseTransformer):
     def fit(self, dataset: Union[snowpark.DataFrame, pd.DataFrame]) -> "OrdinalEncoder":
         """
         Fit the OrdinalEncoder to dataset.
+
+        Validates the transformer arguments and derives the list of categories (distinct values) from the data, making
+        this list available as an attribute of the transformer instance (see Attributes).
+
+        Returns the transformer instance.
 
         Args:
             dataset: Input dataset.
@@ -441,7 +476,11 @@ class OrdinalEncoder(base.BaseTransformer):
         assert dataset._session is not None, "dataset._session cannot be None"
         state_df = (
             dataset._session.table(self._vocab_table_name)
-            if dataset._session._table_exists(self._vocab_table_name)
+            if _utils.table_exists(
+                dataset._session,
+                self._vocab_table_name,
+                telemetry.get_statement_params(base.PROJECT, base.SUBPROJECT, self.__class__.__name__),
+            )
             else dataset._session.create_dataframe(self._state_pandas)
         )
 

@@ -1,8 +1,10 @@
 # TODO(snandamuri): Rename this file to estimator_wrapper_generator_lib.py
 import inspect
 import os
+import textwrap
+from abc import abstractmethod
 from collections.abc import Iterable
-from typing import Any, List, Tuple
+from typing import Any, Dict, List, Tuple
 
 import inflection
 import numpy as np
@@ -12,6 +14,48 @@ NP_CONSTANTS = [c for c in dir(np) if type(getattr(np, c, None)) == float or typ
 LOAD_BREAST_CANCER = "load_breast_cancer"
 LOAD_IRIS = "load_iris"
 LOAD_DIABETES = "load_diabetes"
+
+
+ADDITIONAL_PARAM_DESCRIPTIONS = """
+
+input_cols : Optional[Union[str, List[str]]]
+    A string or list of strings representing column names that contain features.
+    If this parameter is not specified, all columns in the input DataFrame except
+    the columns specified by label_cols and sample-weight_col parameters are
+    considered input columns.
+
+label_cols : Optional[Union[str, List[str]]]
+    A string or list of strings representing column names that contain labels.
+    This is a required param for estimators, as there is no way to infer these
+    columns. If this parameter is not specified, then object is fitted without
+    labels(Like a transformer).
+
+output_cols: Optional[Union[str, List[str]]]
+    A string or list of strings representing column names that will store the
+    output of predict and transform operations. The length of output_cols mus
+    match the expected number of output columns from the specific estimator or
+    transformer class used.
+    If this parameter is not specified, output column names are derived by
+    adding an OUTPUT_ prefix to the label column names. These inferred output
+    column names work for estimator's predict() method, but output_cols must
+    be set explicitly for transformers.
+
+sample_weight_col: Optional[str]
+    A string representing the column name containing the examples’ weights.
+    This argument is only required when working with weighted datasets.
+
+drop_input_cols: Optional[bool], default=False
+    If set, the response of predict(), transform() methods will not contain input columns.
+"""
+
+ADDITIONAL_METHOD_DESCRIPTION = """
+Raises:
+    TypeError: Supported dataset types: snowpark.DataFrame, pandas.DataFrame.
+
+Args:
+    dataset: Union[snowflake.snowpark.DataFrame, pandas.DataFrame]
+        Snowpark or Pandas DataFrame.
+"""
 
 
 class WrapperGeneratorFactory:
@@ -450,11 +494,19 @@ class WrapperGeneratorBase:
         # Doc strings
         self.original_class_docstring = ""
         self.estimator_class_docstring = ""
+        self.estimator_function_docstring: Dict[str, str] = {}
         self.transformer_class_docstring = ""
         self.original_fit_docstring = ""
         self.fit_docstring = ""
         self.original_transform_docstring = ""
         self.transform_docstring = ""
+        self.original_predict_docstring = ""
+        self.predict_docstring = ""
+        self.predict_proba_docstring = ""
+        self.score_docstring = ""
+        self.predict_proba_docstring = ""
+        self.predict_log_proba_docstring = ""
+        self.decision_function_docstring = ""
 
         # Import strings
         self.estimator_imports = ""
@@ -538,20 +590,65 @@ class WrapperGeneratorBase:
         class_docstring = inspect.getdoc(self.class_object[1]) or ""
         class_docstring = class_docstring.rsplit("Attributes\n", 1)[0]
 
-        def split_long_lines(line: str) -> str:
-            if len(line) < 110:
-                return line
-            split_index = line.rfind(" ", 0, 110)
-            return line[0:split_index] + "\n" + line[split_index + 1 :]
+        class_description, param_description = (
+            class_docstring.rsplit("Parameters\n", 1)
+            if len(class_docstring.rsplit("Parameters\n", 1)) == 2
+            else (class_docstring, "----------\n")
+        )
 
-        # Split long lines
-        class_docstring = "\n".join([split_long_lines(s) for s in class_docstring.splitlines()])
-        # Add indentation
-        class_docstring = class_docstring.replace("\n", "\n    ")
-        # Remove extraspace from balnk lines
-        class_docstring = "\n".join([s.rstrip() for s in class_docstring.splitlines()])
+        # Extract the first sentence fo teh class description
+        class_description = class_description.split(".", 1)[0]
+        # Add link to original source
+        class_description += (
+            "\nFor more details on this class, see ["
+            f"{self.root_module_name}.{self.original_class_name}"
+            f"]\n({self.get_doc_link()})"
+        )
+
+        # Add SnowML specific param desriptions.
+        param_description = "Parameters\n" + param_description.strip()
+        param_description += ADDITIONAL_PARAM_DESCRIPTIONS
+
+        class_docstring = f"{class_description}\n\n{param_description}"
+        class_docstring = textwrap.indent(class_docstring, "    ").strip()
+
+        # Filter out versioned and depricated notes from SKLearn documentation
+        paragraphs = class_docstring.split("\n\n")
+        class_docstring = "\n\n".join([p for p in paragraphs if not p.lstrip().startswith("..")])
 
         self.estimator_class_docstring = class_docstring
+
+    def _populate_function_doc_fields(self) -> None:
+        _METHODS = ["fit", "predict", "predict_log_proba", "predict_proba", "decision_function", "transform"]
+        _CLASS_FUNC = {name: func for name, func in inspect.getmembers(self.class_object[1])}
+        for _each_method in _METHODS:
+            if _each_method in _CLASS_FUNC.keys():
+                docstring = inspect.getdoc(_CLASS_FUNC[_each_method]) or ""
+                func_description, _ = (
+                    docstring.rsplit("Parameters\n", 1)
+                    if len(docstring.rsplit("Parameters\n", 1)) == 2
+                    else (docstring, "")
+                )
+                func_description = func_description.split(".", 1)[0]
+                func_description += (
+                    "\nFor more details on this function, see ["
+                    f"{self.root_module_name}.{self.original_class_name}.{_each_method}"
+                    f"]\n({self.get_func_link(_each_method)})"
+                )
+            else:
+                func_description = "Method not supported for this class."
+
+            param_description = ADDITIONAL_METHOD_DESCRIPTION
+            func_docstring = f"{func_description}\n\n{param_description}"
+            func_docstring = textwrap.indent(func_docstring, "        ").strip()
+            self.estimator_function_docstring[_each_method] = func_docstring
+
+        self.fit_docstring = self.estimator_function_docstring["fit"]
+        self.transform_docstring = self.estimator_function_docstring["transform"]
+        self.predict_docstring = self.estimator_function_docstring["predict"]
+        self.predict_proba_docstring = self.estimator_function_docstring["predict_proba"]
+        self.predict_log_proba_docstring = self.estimator_function_docstring["predict_log_proba"]
+        self.decision_function_docstring = self.estimator_function_docstring["decision_function"]
 
     def _populate_class_names(self) -> None:
         self.original_class_name = self.class_object[0]
@@ -699,10 +796,19 @@ class WrapperGeneratorBase:
         self._populate_class_names()
         self._populate_import_statements()
         self._populate_class_doc_fields()
+        self._populate_function_doc_fields()
         self._populate_function_names_and_signatures()
         self._populate_file_paths()
         self._populate_integ_test_fields()
         return self
+
+    @abstractmethod
+    def get_doc_link(self) -> str:
+        raise NotImplementedError()
+
+    @abstractmethod
+    def get_func_link(self, method_name: str) -> str:
+        raise NotImplementedError()
 
 
 class SklearnWrapperGenerator(WrapperGeneratorBase):
@@ -711,7 +817,7 @@ class SklearnWrapperGenerator(WrapperGeneratorBase):
         super().generate()
 
         # Populate SKLearn specific values
-        self.estimator_imports_list.extend(["import sklearn", f"import {self.root_module_name}", "import xgboost"])
+        self.estimator_imports_list.extend(["import sklearn", f"import {self.root_module_name}"])
         self.fit_sproc_imports = "import sklearn"
 
         if "random_state" in self.original_init_signature.parameters.keys():
@@ -817,6 +923,17 @@ class SklearnWrapperGenerator(WrapperGeneratorBase):
         self._construct_string_from_lists()
         return self
 
+    def get_doc_link(self) -> str:
+        return (
+            f"https://scikit-learn.org/stable/modules/generated/{self.root_module_name}.{self.original_class_name}.html"
+        )
+
+    def get_func_link(self, method_name: str) -> str:
+        return (
+            f"https://scikit-learn.org/stable/modules/generated/{self.root_module_name}.{self.original_class_name}"
+            f".html#{self.root_module_name}.{self.original_class_name}.{method_name}"
+        )
+
 
 class XGBoostWrapperGenerator(WrapperGeneratorBase):
     def generate(self) -> "XGBoostWrapperGenerator":
@@ -834,6 +951,18 @@ class XGBoostWrapperGenerator(WrapperGeneratorBase):
         self._construct_string_from_lists()
         return self
 
+    def get_doc_link(self) -> str:
+        return (
+            "https://xgboost.readthedocs.io/en/stable/python/python_api.html#"
+            f"{self.root_module_name}.{self.original_class_name}"
+        )
+
+    def get_func_link(self, method_name: str) -> str:
+        return (
+            "https://xgboost.readthedocs.io/en/stable/python/python_api.html#"
+            f"{self.root_module_name}.{self.original_class_name}.{method_name}"
+        )
+
 
 class LightGBMWrapperGenerator(WrapperGeneratorBase):
     def generate(self) -> "LightGBMWrapperGenerator":
@@ -850,3 +979,16 @@ class LightGBMWrapperGenerator(WrapperGeneratorBase):
         self.unsupported_export_methods = ["to_sklearn", "to_xgboost"]
         self._construct_string_from_lists()
         return self
+
+    def get_doc_link(self) -> str:
+        return (
+            "https://lightgbm.readthedocs.io/en/v3.3.2/pythonapi/"
+            f"{self.root_module_name}.{self.original_class_name}.html"
+        )
+
+    def get_func_link(self, method_name: str) -> str:
+        return (
+            "https://lightgbm.readthedocs.io/en/v3.3.2/pythonapi/"
+            f"{self.root_module_name}.{self.original_class_name}.html#"
+            f"{self.root_module_name}.{self.original_class_name}.{method_name}"
+        )
