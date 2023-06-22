@@ -14,6 +14,7 @@ from sklearn.utils import metaestimators
 
 from snowflake import snowpark
 from snowflake.ml._internal import telemetry
+from snowflake.ml.model.model_signature import ModelSignature, _infer_signature
 from snowflake.ml.modeling.framework import _utils, base
 
 _PROJECT = "ModelDevelopment"
@@ -102,6 +103,8 @@ class Pipeline(base.BaseTransformer):
         self._n_features_in: List[int] = []
         self._transformers_to_input_indices: Dict[str, List[int]] = {}
         self._is_convertable_to_sklearn = True
+
+        self._model_signature_dict: Optional[Dict[str, ModelSignature]] = None
 
         deps: Set[str] = {f"pandas=={pd.__version__}", f"scikit-learn=={skversion}"}
         for _, obj in steps:
@@ -241,6 +244,7 @@ class Pipeline(base.BaseTransformer):
                 step_name=estimator[0], all_cols=all_cols, input_cols=estimator[1].get_input_cols()
             )
 
+        self._get_model_signatures(dataset=dataset)
         self._is_fitted = True
         return self
 
@@ -309,6 +313,7 @@ class Pipeline(base.BaseTransformer):
                 res = estimator[1].fit(transformed_dataset).transform(transformed_dataset)
             return res
 
+        self._get_model_signatures(dataset=dataset)
         self._is_fitted = True
         return transformed_dataset
 
@@ -346,6 +351,7 @@ class Pipeline(base.BaseTransformer):
             else:
                 transformed_dataset = estimator[1].fit(transformed_dataset).predict(transformed_dataset)
 
+        self._get_model_signatures(dataset=dataset)
         self._is_fitted = True
         return transformed_dataset
 
@@ -559,3 +565,21 @@ class Pipeline(base.BaseTransformer):
 
     def _get_dependencies(self) -> List[str]:
         return self._deps
+
+    def _get_model_signatures(self, dataset: Union[snowpark.DataFrame, pd.DataFrame]) -> None:
+        self._model_signature_dict = dict()
+
+        input_columns = self._get_sanitized_list_of_columns(dataset.columns)
+        inputs_signature = _infer_signature(dataset[input_columns], "input")
+
+        estimator_step = self._get_estimator()
+        if estimator_step:
+            estimator_signatures = estimator_step[1].model_signatures
+            for method, signature in estimator_signatures.items():
+                self._model_signature_dict[method] = ModelSignature(inputs=inputs_signature, outputs=signature.outputs)
+
+    @property
+    def model_signatures(self) -> Dict[str, ModelSignature]:
+        if self._model_signature_dict is None:
+            raise RuntimeError("Estimator not fitted before accessing property model_signatures! ")
+        return self._model_signature_dict

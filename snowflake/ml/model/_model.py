@@ -2,9 +2,9 @@ import os
 import tempfile
 import warnings
 from types import ModuleType
-from typing import Dict, List, Literal, Optional, Tuple, Union, overload
+from typing import TYPE_CHECKING, Dict, List, Literal, Optional, Tuple, Union, overload
 
-from snowflake.ml._internal import file_utils
+from snowflake.ml._internal import file_utils, type_utils
 from snowflake.ml.model import (
     _env,
     _model_handler,
@@ -13,8 +13,10 @@ from snowflake.ml.model import (
     model_signature,
     type_hints as model_types,
 )
-from snowflake.ml.modeling.framework import base
 from snowflake.snowpark import FileOperation, Session
+
+if TYPE_CHECKING:
+    from snowflake.ml.modeling.framework import base
 
 MODEL_BLOBS_DIR = "models"
 
@@ -23,7 +25,7 @@ MODEL_BLOBS_DIR = "models"
 def save_model(
     *,
     name: str,
-    model: base.BaseEstimator,
+    model: "base.BaseEstimator",
     model_dir_path: str,
     metadata: Optional[Dict[str, str]] = None,
     conda_dependencies: Optional[List[str]] = None,
@@ -135,7 +137,7 @@ def save_model(
 def save_model(
     *,
     name: str,
-    model: base.BaseEstimator,
+    model: "base.BaseEstimator",
     session: Session,
     model_stage_file_path: str,
     metadata: Optional[Dict[str, str]] = None,
@@ -322,9 +324,11 @@ def save_model(
             + f"{'None' if model_stage_file_path is None else 'specified'} at the same time."
         )
 
-    if ((signatures is None) and (sample_input is None) and not isinstance(model, base.BaseEstimator)) or (
-        (signatures is not None) and (sample_input is not None)
-    ):
+    if (
+        (signatures is None)
+        and (sample_input is None)
+        and not type_utils.LazyType("snowflake.ml.modeling.framework.base.BaseEstimator").isinstance(model)
+    ) or ((signatures is not None) and (sample_input is not None)):
         raise ValueError(
             "Signatures and sample_input both cannot be "
             + f"{'None for local model' if signatures is None else 'specified'} at the same time."
@@ -361,7 +365,7 @@ def save_model(
 
     assert session and model_stage_file_path
     if os.path.splitext(model_stage_file_path)[1] != ".zip":
-        raise ValueError("Provided model path in the stage {model_stage_file_path} must be a path to a zip file.")
+        raise ValueError(f"Provided model path in the stage {model_stage_file_path} must be a path to a zip file.")
 
     with tempfile.TemporaryDirectory() as temp_local_model_dir_path:
         meta = _save(
@@ -397,15 +401,15 @@ def _save(
     name: str,
     model: model_types.SupportedModelType,
     local_dir_path: str,
-    signatures: Optional[Dict[str, model_signature.ModelSignature]] = None,
-    sample_input: Optional[model_types.SupportedDataType] = None,
-    metadata: Optional[Dict[str, str]] = None,
-    conda_dependencies: Optional[List[str]] = None,
-    pip_requirements: Optional[List[str]] = None,
-    python_version: Optional[str] = None,
-    ext_modules: Optional[List[ModuleType]] = None,
-    code_paths: Optional[List[str]] = None,
-    options: Optional[model_types.ModelSaveOption] = None,
+    signatures: Optional[Dict[str, model_signature.ModelSignature]],
+    sample_input: Optional[model_types.SupportedDataType],
+    metadata: Optional[Dict[str, str]],
+    conda_dependencies: Optional[List[str]],
+    pip_requirements: Optional[List[str]],
+    python_version: Optional[str],
+    ext_modules: Optional[List[ModuleType]],
+    code_paths: Optional[List[str]],
+    options: model_types.ModelSaveOption,
 ) -> _model_meta.ModelMetadata:
     local_dir_path = os.path.normpath(local_dir_path)
 
@@ -423,6 +427,7 @@ def _save(
         conda_dependencies=conda_dependencies,
         pip_requirements=pip_requirements,
         python_version=python_version,
+        **options,
     ) as meta:
         model_blobs_path = os.path.join(local_dir_path, MODEL_BLOBS_DIR)
         os.makedirs(model_blobs_path, exist_ok=True)
@@ -539,7 +544,7 @@ def load_model(
 
     assert session and model_stage_file_path
     if os.path.splitext(model_stage_file_path)[1] != ".zip":
-        raise ValueError("Provided model path in the stage {model_stage_file_path} must be a path to a zip file.")
+        raise ValueError(f"Provided model path in the stage {model_stage_file_path} must be a path to a zip file.")
 
     fo = FileOperation(session=session)
     zf = fo.get_stream(model_stage_file_path)

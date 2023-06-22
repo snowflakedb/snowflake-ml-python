@@ -4,14 +4,19 @@ from typing import Any, List, Optional, Tuple, Union, overload
 from snowflake.snowpark._internal.analyzer import analyzer_utils
 
 # Snowflake Identifier Regex. See https://docs.snowflake.com/en/sql-reference/identifiers-syntax.html.
-_SF_UNQUOTED_IDENTIFIER = "[A-Za-z_][A-Za-z0-9_$]*"
+_SF_UNQUOTED_CASE_INSENSITIVE_IDENTIFIER = "[A-Za-z_][A-Za-z0-9_$]*"
+_SF_UNQUOTED_CASE_SENSITIVE_IDENTIFIER = "[A-Z_][A-Z0-9_$]*"
 SF_QUOTED_IDENTIFIER = '"(?:[^"]|"")*"'
-_SF_IDENTIFIER = f"({_SF_UNQUOTED_IDENTIFIER}|{SF_QUOTED_IDENTIFIER})"
+_SF_IDENTIFIER = f"({_SF_UNQUOTED_CASE_INSENSITIVE_IDENTIFIER}|{SF_QUOTED_IDENTIFIER})"
 _SF_SCHEMA_LEVEL_OBJECT = rf"{_SF_IDENTIFIER}\.{_SF_IDENTIFIER}\.{_SF_IDENTIFIER}(.*)"
 _SF_SCHEMA_LEVEL_OBJECT_RE = re.compile(_SF_SCHEMA_LEVEL_OBJECT)
 
-UNQUOTED_CASE_INSENSITIVE_RE = re.compile(f"^({_SF_UNQUOTED_IDENTIFIER})$")
+UNQUOTED_CASE_INSENSITIVE_RE = re.compile(f"^({_SF_UNQUOTED_CASE_INSENSITIVE_IDENTIFIER})$")
+UNQUOTED_CASE_SENSITIVE_RE = re.compile(f"^({_SF_UNQUOTED_CASE_SENSITIVE_IDENTIFIER})$")
 QUOTED_IDENTIFIER_RE = re.compile(f"^({SF_QUOTED_IDENTIFIER})$")
+DOUBLE_QUOTE = '"'
+
+quote_name_without_upper_casing = analyzer_utils.quote_name_without_upper_casing
 
 
 def _is_quoted(id: str) -> bool:
@@ -61,10 +66,47 @@ def _get_unescaped_name(id: str) -> str:
     if not _is_quoted(id):
         return id.upper()
     unquoted_id = id[1:-1]
-    return unquoted_id.replace('""', '"')
+    return unquoted_id.replace(DOUBLE_QUOTE + DOUBLE_QUOTE, DOUBLE_QUOTE)
 
 
-quote_name_without_upper_casing = analyzer_utils.quote_name_without_upper_casing
+def _get_escaped_name(id: str) -> str:
+    """Add double quotes to escape quotes.
+        Replace double quotes with double double quotes if there is existing double quotes
+
+    NOTE: See note in :meth:`_is_quoted`.
+
+    Args:
+        id: The string to be checked & treated.
+
+    Returns:
+        String with quotes would doubled; original string would add double quotes.
+    """
+    escape_quotes = id.replace(DOUBLE_QUOTE, DOUBLE_QUOTE + DOUBLE_QUOTE)
+    return DOUBLE_QUOTE + escape_quotes + DOUBLE_QUOTE
+
+
+def get_inferred_name(id: str) -> str:
+    """Double quote id when it is case-sensitive and can start with and
+    contain any valid characters; unquote otherwise.
+
+    Examples:
+        COL1 -> COL1
+        1COL -> "1COL"
+        Col -> "Col"
+        "COL" -> \"""COL""\"  (ignore '\')
+        COL 1 -> "COL 1"
+
+    Args:
+        id: The string to be checked & treated.
+
+    Returns:
+        Double quoted identifier if necessary; unquoted string otherwise.
+    """
+    if UNQUOTED_CASE_SENSITIVE_RE.match(id):
+        return id
+    escaped_id = get_escaped_names(id)
+    assert isinstance(escaped_id, str)
+    return escaped_id
 
 
 def concat_names(ids: List[str]) -> str:
@@ -89,7 +131,7 @@ def concat_names(ids: List[str]) -> str:
         parts.append(id)
     final_id = "".join(parts)
     if quotes_needed:
-        return quote_name_without_upper_casing(final_id)
+        return _get_escaped_name(final_id)
     return final_id
 
 
@@ -135,7 +177,7 @@ def get_unescaped_names(ids: List[str]) -> List[str]:
 
 def get_unescaped_names(ids: Optional[Union[str, List[str]]]) -> Optional[Union[str, List[str]]]:
     """Given a user provided identifier(s), this method will compute the equivalent column name identifier(s) in the
-    response pandas dataframe(i.e., in the respones of snowpark_df.to_pandas()) using the rules defined here
+    response pandas dataframe(i.e., in the response of snowpark_df.to_pandas()) using the rules defined here
     https://docs.snowflake.com/en/sql-reference/identifiers-syntax.
 
     Args:
@@ -154,5 +196,30 @@ def get_unescaped_names(ids: Optional[Union[str, List[str]]]) -> Optional[Union[
         return [_get_unescaped_name(id) for id in ids]
     elif type(ids) is str:
         return _get_unescaped_name(ids)
+    else:
+        raise ValueError("Unsupported type. Only string or list of string are supported for selecting columns.")
+
+
+def get_escaped_names(ids: Optional[Union[str, List[str]]]) -> Optional[Union[str, List[str]]]:
+    """Given a user provided identifier(s), this method will compute the equivalent column name identifier(s)
+    in case of column name contains special characters, and maintains case-sensitivity
+    https://docs.snowflake.com/en/sql-reference/identifiers-syntax.
+
+    Args:
+        ids: User provided column name identifier(s).
+
+    Returns:
+        Double-quoted Identifiers for column names, to make sure that column names are case sensitive
+
+    Raises:
+        ValueError: if input types is unsupported or column name identifiers are invalid.
+    """
+
+    if ids is None:
+        return None
+    elif type(ids) is list:
+        return [_get_escaped_name(id) for id in ids]
+    elif type(ids) is str:
+        return _get_escaped_name(ids)
     else:
         raise ValueError("Unsupported type. Only string or list of string are supported for selecting columns.")

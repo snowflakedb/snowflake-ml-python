@@ -2,6 +2,7 @@
 # Copyright (c) 2012-2022 Snowflake Computing Inc. All rights reserved.
 #
 import numpy as np
+import pytest
 from absl.testing import absltest
 
 from snowflake.ml.modeling.pipeline import Pipeline
@@ -42,6 +43,7 @@ label_column = ["LABEL"]
 feature_cols = categorical_columns + numerical_columns
 
 
+@pytest.mark.pip_incompatible
 class GridSearchCVTest(absltest.TestCase):
     def setUp(self):
         """Creates Snowpark and Snowflake environments for testing."""
@@ -110,6 +112,36 @@ class GridSearchCVTest(absltest.TestCase):
 
         pipeline.fit(raw_data_pandas)
         pipeline.predict(raw_data_pandas)
+
+    def test_fit_and_compare_results_pandas(self) -> None:
+        raw_data = self._session.sql(
+            """SELECT *, IFF(Y = 'yes', 1.0, 0.0) as LABEL
+                FROM ML_DATASETS.PUBLIC.UCI_BANK_MARKETING_20COLUMNS
+                LIMIT 2000"""
+        ).drop(Column("Y"))
+
+        pipeline = Pipeline(
+            steps=[
+                (
+                    "OHE",
+                    OneHotEncoder(
+                        input_cols=categorical_columns, output_cols=categorical_columns, drop_input_cols=True
+                    ),
+                ),
+                (
+                    "MMS",
+                    MinMaxScaler(
+                        clip=True,
+                        input_cols=numerical_columns,
+                        output_cols=numerical_columns,
+                    ),
+                ),
+                ("regression", XGBRegressor(label_cols=label_column)),
+            ]
+        )
+
+        pipeline.fit(raw_data)
+        pipeline.predict(raw_data.to_pandas())
 
     def test_pipeline_export(self) -> None:
         snow_df = (

@@ -1,15 +1,13 @@
 import contextlib
 import hashlib
-import importlib
 import io
 import os
 import pathlib
+import pkgutil
 import shutil
 import tempfile
 import zipfile
-from typing import IO, Generator, Optional, Tuple, Union
-
-from snowflake.snowpark import session as snowpark_session
+from typing import IO, Generator, List, Optional, Union
 
 GENERATED_PY_FILE_EXT = (".pyc", ".pyo", ".pyd", ".pyi")
 
@@ -116,19 +114,6 @@ def unzip_stream_in_temp_dir(stream: IO[bytes], temp_root: Optional[str] = None)
         yield tempdir
 
 
-@contextlib.contextmanager
-def zip_snowml() -> Generator[Tuple[io.BytesIO, str], None, None]:
-    """Zip the snowflake-ml source code as a zip-file for import.
-
-    Yields:
-        A bytes IO stream containing the zip file.
-    """
-    snowml_path = list(importlib.import_module("snowflake.ml").__path__)[0]
-    root_path = os.path.normpath(os.path.join(snowml_path, os.pardir, os.pardir))
-    with zip_file_or_directory_to_stream(snowml_path, root_path) as stream:
-        yield stream, hash_directory(snowml_path)
-
-
 def hash_directory(directory: Union[str, pathlib.Path]) -> str:
     """Hash the **content** of a folder recursively using SHA-1.
 
@@ -154,21 +139,9 @@ def hash_directory(directory: Union[str, pathlib.Path]) -> str:
     return _update_hash_from_dir(directory, hashlib.sha1()).hexdigest()
 
 
-def upload_snowml(session: snowpark_session.Session, stage_location: Optional[str] = None) -> str:
-    """Upload the SnowML local code into a stage if provided, or a session stage.
-    It will label the file name using the SHA-1 of the snowflake.ml folder, so that if the source code does not change,
-    it won't reupload. Any changes will, however, result a new zip file.
-
-    Args:
-        session: Snowpark connection session.
-        stage_location: The path to the stage location where the uploaded SnowML should be. Defaults to None.
-
-    Returns:
-        The path to the uploaded SnowML zip file.
-    """
-    with zip_snowml() as (stream, hash_str):
-        if stage_location is None:
-            stage_location = session.get_session_stage()
-        file_location = os.path.join(stage_location, f"snowml_{hash_str}.zip")
-        session.file.put_stream(stream, stage_location=file_location, auto_compress=False, overwrite=False)
-    return file_location
+def get_all_modules(dirname: str, prefix: str = "") -> List[pkgutil.ModuleInfo]:
+    subdirs = [f.path for f in os.scandir(dirname) if f.is_dir()]
+    modules = list(pkgutil.iter_modules(subdirs, prefix=prefix))
+    for dirname in subdirs:
+        modules.extend(get_all_modules(dirname, prefix=f"{prefix}.{dirname}" if prefix else dirname))
+    return modules
