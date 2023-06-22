@@ -1,10 +1,10 @@
 import dataclasses
+import importlib
 import os
 import sys
 import warnings
 from contextlib import contextmanager
 from datetime import datetime
-from pathlib import Path
 from types import ModuleType
 from typing import Any, Callable, Dict, Generator, List, Optional, Sequence, Tuple, cast
 
@@ -23,8 +23,6 @@ from snowflake.snowpark import DataFrame as SnowparkDataFrame
 
 MODEL_METADATA_VERSION = 1
 _BASIC_DEPENDENCIES = _core_requirements.REQUIREMENTS
-
-_BASIC_DEPENDENCIES.append(env_utils._SNOWML_PKG_NAME)
 
 
 @dataclasses.dataclass
@@ -84,6 +82,10 @@ def _create_model_metadata(
         A model metadata object.
     """
     model_dir_path = os.path.normpath(model_dir_path)
+    embed_local_ml_library = kwargs.pop("embed_local_ml_library", False)
+    if embed_local_ml_library:
+        snowml_path = list(importlib.import_module("snowflake.ml").__path__)[0]
+        kwargs["local_ml_library_version"] = f"{snowml_env.VERSION}+{file_utils.hash_directory(snowml_path)}"
 
     model_meta = ModelMetadata(
         name=name,
@@ -100,6 +102,14 @@ def _create_model_metadata(
         os.makedirs(code_dir_path, exist_ok=True)
         for code_path in code_paths:
             file_utils.copy_file_or_tree(code_path, code_dir_path)
+
+    if embed_local_ml_library:
+        code_dir_path = os.path.join(model_dir_path, ModelMetadata.MODEL_CODE_DIR)
+        snowml_path = list(importlib.import_module("snowflake.ml").__path__)[0]
+        snowml_path_in_code = os.path.join(code_dir_path, "snowflake")
+        os.makedirs(snowml_path_in_code, exist_ok=True)
+        file_utils.copy_file_or_tree(snowml_path, snowml_path_in_code)
+
     try:
         imported_modules = []
         if ext_modules:
@@ -117,8 +127,7 @@ def _create_model_metadata(
 
 def _load_model_metadata(model_dir_path: str) -> "ModelMetadata":
     """Load models for a directory. Model is initially loaded normally. If additional codes are included when packed,
-        the code path is added to system path to be imported and overwrites those modules with the same name that has
-        been imported.
+        the code path is added to system path to be imported with highest priority.
 
     Args:
         model_dir_path: Path to the directory containing the model to be loaded.
@@ -131,14 +140,12 @@ def _load_model_metadata(model_dir_path: str) -> "ModelMetadata":
     meta = ModelMetadata.load_model_metadata(model_dir_path)
     code_path = os.path.join(model_dir_path, ModelMetadata.MODEL_CODE_DIR)
     if os.path.exists(code_path):
-        sys.path = [code_path] + sys.path
-        modules = [
-            p.stem
-            for p in Path(code_path).rglob("*.py")
-            if p.is_file() and p.name != "__init__.py" and p.name != "__main__.py"
-        ]
+        if code_path in sys.path:
+            sys.path.remove(code_path)
+        sys.path.insert(0, code_path)
+        modules = file_utils.get_all_modules(code_path)
         for module in modules:
-            sys.modules.pop(module, None)
+            sys.modules.pop(module.name, None)
     return meta
 
 
@@ -206,8 +213,10 @@ class ModelMetadata:
         self._pip_requirements = env_utils.validate_pip_requirement_string_list(
             pip_requirements if pip_requirements else []
         )
-
-        self._include_if_absent([(dep, dep) for dep in _BASIC_DEPENDENCIES])
+        if "local_ml_library_version" in kwargs:
+            self._include_if_absent([(dep, dep) for dep in _BASIC_DEPENDENCIES])
+        else:
+            self._include_if_absent([(dep, dep) for dep in _BASIC_DEPENDENCIES + [env_utils._SNOWML_PKG_NAME]])
 
         self.__dict__.update(kwargs)
 
@@ -344,7 +353,7 @@ class ModelMetadata:
         with open(model_yaml_path) as f:
             loaded_mata = yaml.safe_load(f.read())
 
-        loaded_mata_version = loaded_mata.get("version", None)
+        loaded_mata_version = loaded_mata.pop("version", None)
         if not loaded_mata_version or loaded_mata_version != MODEL_METADATA_VERSION:
             raise NotImplementedError("Unknown or unsupported model metadata file found.")
 

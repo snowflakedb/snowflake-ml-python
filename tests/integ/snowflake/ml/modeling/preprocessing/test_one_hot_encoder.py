@@ -20,7 +20,7 @@ from absl.testing.absltest import main
 from scipy.sparse import csr_matrix
 from sklearn.preprocessing import OneHotEncoder as SklearnOneHotEncoder
 
-from snowflake.ml._internal.utils import identifier as utils_identifier
+from snowflake.ml._internal.utils import identifier
 from snowflake.ml.modeling.preprocessing import (
     OneHotEncoder,  # type: ignore[attr-defined]
 )
@@ -1504,10 +1504,7 @@ class OneHotEncoderTest(parameterized.TestCase):
         expected_output_cols = []
         for input_col in input_cols:
             expected_output_cols.extend(
-                [
-                    utils_identifier.quote_name_without_upper_casing(col)
-                    for col in encoder._dense_output_cols_mappings[input_col]
-                ]
+                [identifier.get_inferred_name(col) for col in encoder._dense_output_cols_mappings[input_col]]
             )
 
         # output columns are set before fitting
@@ -1661,6 +1658,30 @@ class OneHotEncoderTest(parameterized.TestCase):
         sklearn_arr = encoder_sklearn.transform(pd_df[input_cols])
 
         np.testing.assert_allclose(actual_arr, sklearn_arr.toarray())
+
+    def test_identical_snowpark_vs_pandas_output_column_names(self) -> None:
+        snow_df = self._session.sql(
+            """SELECT *, IFF(Y = 'yes', 1.0, 0.0) as LABEL
+            FROM ML_DATASETS.PUBLIC.UCI_BANK_MARKETING_20COLUMNS
+            LIMIT 1000"""
+        ).drop("Y")
+        pd_df = snow_df.to_pandas()
+        cols = [
+            "AGE",
+            "CAMPAIGN",
+            "CONTACT",
+            "DAY_OF_WEEK",
+            "EDUCATION",
+            "JOB",
+            "MONTH",
+            "DURATION",
+        ]
+
+        ohe = OneHotEncoder(input_cols=cols, output_cols=cols).fit(snow_df)
+        snow_cols = ohe.transform(snow_df).columns
+        pd_cols = ohe.transform(pd_df).columns.tolist()
+
+        self.assertCountEqual(snow_cols, pd_cols)
 
 
 if __name__ == "__main__":

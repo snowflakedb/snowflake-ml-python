@@ -26,6 +26,7 @@ from sklearn.preprocessing import (
     StandardScaler as SklearnStandardScaler,
 )
 
+from snowflake.ml.model.model_signature import DataType, FeatureSpec, ModelSignature
 from snowflake.ml.modeling import pipeline as snowml_pipeline
 from snowflake.ml.modeling.linear_model import (
     LinearRegression as SnowmlLinearRegression,
@@ -351,6 +352,37 @@ class TestPipeline(TestCase):
         sk_predict_results = skpipeline.predict(input_df_pandas[input_cols])
 
         np.testing.assert_allclose(actual_results, sk_predict_results)
+
+    def test_pipeline_signature(self) -> None:
+        input_df_pandas = load_diabetes(as_frame=True).frame
+        # Normalize column names
+        input_df_pandas.columns = [inflection.parameterize(c, "_").upper() for c in input_df_pandas.columns]
+
+        input_cols = [c for c in input_df_pandas.columns if not c.startswith("TARGET")]
+        label_cols = ["TARGET"]
+        output_cols = ["OUTPUT"]
+
+        mms = MinMaxScaler()
+        mms.set_input_cols(["AGE"])
+        mms.set_output_cols(["AGE"])
+        ss = StandardScaler()
+        ss.set_input_cols(["AGE"])
+        ss.set_output_cols(["AGE"])
+
+        estimator = SnowmlLinearRegression(input_cols=input_cols, output_cols=output_cols, label_cols=label_cols)
+
+        pipeline = snowml_pipeline.Pipeline(steps=[("mms", mms), ("ss", ss), ("estimator", estimator)])
+        pipeline.fit(input_df_pandas)
+
+        model_signatures = pipeline.model_signatures
+
+        expected_model_signatures = {
+            "predict": ModelSignature(
+                inputs=[FeatureSpec(name=c, dtype=DataType.DOUBLE) for c in input_cols],
+                outputs=[FeatureSpec(name="OUTPUT", dtype=DataType.DOUBLE)],
+            )
+        }
+        self.assertDictEqual(model_signatures, expected_model_signatures)
 
 
 if __name__ == "__main__":

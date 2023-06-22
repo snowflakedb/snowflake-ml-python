@@ -800,7 +800,7 @@ class OneHotEncoder(base.BaseTransformer):
         state_df = dataset._session.create_dataframe(state_pandas)
 
         transformed_dataset = dataset
-        origional_dataset_columns = transformed_dataset.columns[:]
+        original_dataset_columns = transformed_dataset.columns[:]
         all_output_cols = []
         for input_col in self.input_cols:
             output_cols = [
@@ -818,7 +818,7 @@ class OneHotEncoder(base.BaseTransformer):
 
         transformed_dataset = self._handle_unknown_in_transform(transformed_dataset)
         # Reorder columns. Passthrough columns are added at the right to the output of the transformers.
-        transformed_dataset = transformed_dataset[all_output_cols + origional_dataset_columns]
+        transformed_dataset = transformed_dataset[all_output_cols + original_dataset_columns]
         return transformed_dataset
 
     def _transform_snowpark_sparse_udf(self, dataset: snowpark.DataFrame) -> snowpark.DataFrame:
@@ -895,15 +895,14 @@ class OneHotEncoder(base.BaseTransformer):
             Output dataset.
         """
         encoder_sklearn = self.to_sklearn()
-
         transformed_dataset = encoder_sklearn.transform(dataset[self.input_cols])
 
-        if not self.sparse:
-            dataset = dataset.copy()
-            dataset[self.get_output_cols()] = transformed_dataset
-            return dataset
+        if self.sparse:
+            return transformed_dataset
 
-        return transformed_dataset
+        dataset = dataset.copy()
+        dataset[self.get_output_cols()] = transformed_dataset
+        return dataset
 
     def _create_unfitted_sklearn_object(self) -> preprocessing.OneHotEncoder:
         sklearn_args = self.get_sklearn_args(
@@ -1331,17 +1330,17 @@ class OneHotEncoder(base.BaseTransformer):
             Output columns.
         """
         if self.sparse:
-            output_cols = self.output_cols
-        else:
-            output_cols = (
-                [
-                    identifier.quote_name_without_upper_casing(col)
-                    for input_col in self.input_cols
-                    for col in self._dense_output_cols_mappings[input_col]
-                ]
-                if self._dense_output_cols_mappings
-                else []
-            )
+            return self.output_cols
+
+        output_cols = (
+            [
+                identifier.get_inferred_name(col)
+                for input_col in self.input_cols
+                for col in self._dense_output_cols_mappings[input_col]
+            ]
+            if self._dense_output_cols_mappings
+            else []
+        )
         return output_cols
 
     def _get_dense_output_cols_mappings(self) -> None:

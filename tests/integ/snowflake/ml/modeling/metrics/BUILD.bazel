@@ -56,6 +56,42 @@ py_test(
 )
 
 py_test(
+    name = "test_d2_absolute_error_score",
+    timeout = TIMEOUT,
+    srcs = ["test_d2_absolute_error_score.py"],
+    shard_count = SHARD_COUNT,
+    deps = [
+        "//snowflake/ml/modeling/metrics:regression",
+        "//snowflake/ml/utils:connection_params",
+        "//tests/integ/snowflake/ml/modeling/framework:utils",
+    ],
+)
+
+py_test(
+    name = "test_d2_pinball_score",
+    timeout = TIMEOUT,
+    srcs = ["test_d2_pinball_score.py"],
+    shard_count = SHARD_COUNT,
+    deps = [
+        "//snowflake/ml/modeling/metrics:regression",
+        "//snowflake/ml/utils:connection_params",
+        "//tests/integ/snowflake/ml/modeling/framework:utils",
+    ],
+)
+
+py_test(
+    name = "test_explained_variance_score",
+    timeout = TIMEOUT,
+    srcs = ["test_explained_variance_score.py"],
+    shard_count = SHARD_COUNT,
+    deps = [
+        "//snowflake/ml/modeling/metrics:regression",
+        "//snowflake/ml/utils:connection_params",
+        "//tests/integ/snowflake/ml/modeling/framework:utils",
+    ],
+)
+
+py_test(
     name = "test_f1_score",
     timeout = TIMEOUT,
     srcs = ["test_f1_score.py"],
@@ -86,6 +122,42 @@ py_test(
     shard_count = SHARD_COUNT,
     deps = [
         "//snowflake/ml/modeling/metrics:classification",
+        "//snowflake/ml/utils:connection_params",
+        "//tests/integ/snowflake/ml/modeling/framework:utils",
+    ],
+)
+
+py_test(
+    name = "test_mean_absolute_error",
+    timeout = TIMEOUT,
+    srcs = ["test_mean_absolute_error.py"],
+    shard_count = SHARD_COUNT,
+    deps = [
+        "//snowflake/ml/modeling/metrics:regression",
+        "//snowflake/ml/utils:connection_params",
+        "//tests/integ/snowflake/ml/modeling/framework:utils",
+    ],
+)
+
+py_test(
+    name = "test_mean_absolute_percentage_error",
+    timeout = TIMEOUT,
+    srcs = ["test_mean_absolute_percentage_error.py"],
+    shard_count = SHARD_COUNT,
+    deps = [
+        "//snowflake/ml/modeling/metrics:regression",
+        "//snowflake/ml/utils:connection_params",
+        "//tests/integ/snowflake/ml/modeling/framework:utils",
+    ],
+)
+
+py_test(
+    name = "test_mean_squared_error",
+    timeout = TIMEOUT,
+    srcs = ["test_mean_squared_error.py"],
+    shard_count = SHARD_COUNT,
+    deps = [
+        "//snowflake/ml/modeling/metrics:regression",
         "//snowflake/ml/utils:connection_params",
         "//tests/integ/snowflake/ml/modeling/framework:utils",
     ],

@@ -123,8 +123,6 @@
 - name: scikit-learn
   dev_version: "1.2.2"
   version_requirements: ">=1.2.1,<2"
-  tags:
-    - deployment_core
 - name: scipy
   dev_version: "1.9.3"
   version_requirements: ">=1.9,<2"

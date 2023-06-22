@@ -548,26 +548,37 @@ class {transform.original_class_name}(BaseTransformer):
         # input cols need to match unquoted / quoted
         input_cols = self.input_cols
         unquoted_input_cols = identifier.get_unescaped_names(self.input_cols)
+        quoted_input_cols = identifier.get_escaped_names(unquoted_input_cols)
 
         estimator = self._sklearn_object
 
-        input_df = dataset[input_cols] # Select input columns with quoted column names.
-        if hasattr(estimator, "feature_names_in_"):
-            missing_features = []
-            for i, f in enumerate(getattr(estimator, "feature_names_in_")):
-                if i >= len(input_cols) or (input_cols[i] != f and unquoted_input_cols[i] != f):
-                    missing_features.append(f)
+        features_required_by_estimator =  getattr(estimator, "feature_names_in_") if hasattr(estimator, "feature_names_in_") else unquoted_input_cols
+        missing_features = []
+        features_in_dataset = set(dataset.columns)
+        columns_to_select = []
+        for i, f in enumerate(features_required_by_estimator):
+            if (
+                    i >= len(input_cols)
+                or (input_cols[i] != f and unquoted_input_cols[i] != f and quoted_input_cols[i] != f)
+                or (input_cols[i] not in features_in_dataset and unquoted_input_cols[i] not in features_in_dataset 
+                    and quoted_input_cols[i] not in features_in_dataset)
+                ):
+                missing_features.append(f)
+            elif input_cols[i] in features_in_dataset:
+                columns_to_select.append(input_cols[i])
+            elif unquoted_input_cols[i] in features_in_dataset:
+                columns_to_select.append(unquoted_input_cols[i])
+            else:
+                columns_to_select.append(quoted_input_cols[i])
 
-            if len(missing_features) > 0:
-                raise ValueError(
-                    "The feature names should match with those that were passed during fit.\n"
-                    f"Features seen during fit call but not present in the input: {{missing_features}}\n"
-                    f"Features in the input dataframe : {{input_cols}}\n"
-                )
-            input_df.columns = getattr(estimator, "feature_names_in_")
-        else:
-            # Just rename the column names to unquoted identifiers.
-            input_df.columns = unquoted_input_cols # Replace the quoted columns identifier with unquoted column ids.
+        if len(missing_features) > 0:
+            raise ValueError(
+                "The feature names should match with those that were passed during fit.\n"
+                f"Features seen during fit call but not present in the input: {{missing_features}}\n"
+                f"Features in the input dataframe : {{input_cols}}\n"
+            )
+        input_df = dataset[columns_to_select]
+        input_df.columns = features_required_by_estimator
 
         transformed_numpy_array = getattr(estimator, inference_method)(
             input_df

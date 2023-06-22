@@ -54,7 +54,12 @@ def accuracy_score(
     metrics_utils.check_label_columns(y_true_col_names, y_pred_col_names)
 
     if isinstance(y_true_col_names, str) or (len(y_true_col_names) == 1):
-        score_column = F.iff(df[y_true_col_names] == df[y_pred_col_names], 1, 0)  # type: ignore[arg-type]
+        y_true, y_pred = (
+            (y_true_col_names, y_pred_col_names)
+            if isinstance(y_true_col_names, str)
+            else (y_true_col_names[0], y_pred_col_names[0])
+        )
+        score_column = F.iff(df[y_true] == df[y_pred], 1, 0)  # type: ignore[arg-type]
     # multilabel
     else:
         expr = " and ".join([f"({y_true_col_names[i]} = {y_pred_col_names[i]})" for i in range(len(y_true_col_names))])

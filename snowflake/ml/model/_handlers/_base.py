@@ -1,7 +1,7 @@
 from abc import ABC, abstractmethod
 from typing import Generic, Optional
 
-from typing_extensions import TypeGuard
+from typing_extensions import TypeGuard, Unpack
 
 from snowflake.ml.model import _model_meta, type_hints as model_types
 
@@ -43,6 +43,7 @@ class _ModelHandler(ABC, Generic[model_types._ModelType]):
         model_blobs_dir_path: str,
         sample_input: Optional[model_types.SupportedDataType] = None,
         is_sub_model: Optional[bool] = False,
+        **kwargs: Unpack[model_types.ModelSaveOption],
     ) -> None:
         """Save the model.
 
@@ -53,6 +54,7 @@ class _ModelHandler(ABC, Generic[model_types._ModelType]):
             model_blobs_dir_path: Directory path to the model.
             sample_input: Sample input to infer the signatures from.
             is_sub_model: Flag to show if it is a sub model, a sub model does not need signature.
+            kwargs: Additional saving options.
         """
         ...
 
