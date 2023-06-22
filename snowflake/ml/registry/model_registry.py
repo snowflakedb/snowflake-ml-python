@@ -8,7 +8,6 @@ import zipfile
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, cast
 from uuid import uuid1
 
-import cloudpickle as cp
 from absl import logging
 
 from snowflake import connector, snowpark
@@ -1453,6 +1452,8 @@ class ModelRegistry:
         pip_requirements: Optional[List[str]] = None,
         signatures: Optional[Dict[str, model_signature.ModelSignature]] = None,
         sample_input_data: Optional[Any] = None,
+        code_paths: Optional[List[str]] = None,
+        options: Optional[model_types.ModelSaveOption] = None,
     ) -> str:
         """Uploads and register a model to the Model Registry.
 
@@ -1472,6 +1473,8 @@ class ModelRegistry:
             signatures: Signatures of the model, which is a mapping from target method name to signatures of input and
                 output, which could be inferred by calling `infer_signature` method with sample input data.
             sample_input_data: Sample of the input data for the model.
+            code_paths: Directory of code to import when loading and deploying the model.
+            options: Additional options when saving the model.
 
         Raises:
             TypeError: Raised when both signatures and sample_input_data is not presented. Will be captured locally.
@@ -1490,60 +1493,50 @@ class ModelRegistry:
             raise connector.DataError(f"Model {model_name}/{model_version} already exists. Unable to log the model.")
         with tempfile.TemporaryDirectory() as tmpdir:
             model = cast(model_types.SupportedModelType, model)
-            try:
-                if signatures:
-                    model_api.save_model(
-                        name=model_name,
-                        model_dir_path=tmpdir,
-                        model=model,
-                        signatures=signatures,
-                        metadata=tags,
-                        conda_dependencies=conda_dependencies,
-                        pip_requirements=pip_requirements,
-                    )
-                elif sample_input_data is not None:
-                    model_api.save_model(
-                        name=model_name,
-                        model_dir_path=tmpdir,
-                        model=model,
-                        metadata=tags,
-                        conda_dependencies=conda_dependencies,
-                        pip_requirements=pip_requirements,
-                        sample_input=sample_input_data,
-                    )
-                elif isinstance(model, base.BaseEstimator):
-                    model_api.save_model(
-                        name=model_name,
-                        model_dir_path=tmpdir,
-                        model=model,
-                        metadata=tags,
-                        conda_dependencies=conda_dependencies,
-                        pip_requirements=pip_requirements,
-                    )
-                else:
-                    raise TypeError("Either signature or sample input data should exist for native model packaging.")
-                return self._log_model_path(
-                    model_name=model_name,
-                    model_version=model_version,
-                    path=tmpdir,
-                    type="snowflake_native",
-                    description=description,
-                    tags=tags,  # TODO: Inherent model type enum.
+            if signatures:
+                model_metadata = model_api.save_model(
+                    name=model_name,
+                    model_dir_path=tmpdir,
+                    model=model,
+                    signatures=signatures,
+                    metadata=tags,
+                    conda_dependencies=conda_dependencies,
+                    pip_requirements=pip_requirements,
+                    code_paths=code_paths,
+                    options=options,
                 )
-            except (AttributeError, TypeError):
-                pass
-
-        with tempfile.NamedTemporaryFile(delete=True) as local_model_file:
-            cp.dump(model, local_model_file)
-            local_model_file.flush()
-
+            elif sample_input_data is not None:
+                model_metadata = model_api.save_model(
+                    name=model_name,
+                    model_dir_path=tmpdir,
+                    model=model,
+                    metadata=tags,
+                    conda_dependencies=conda_dependencies,
+                    pip_requirements=pip_requirements,
+                    sample_input=sample_input_data,
+                    code_paths=code_paths,
+                    options=options,
+                )
+            elif isinstance(model, base.BaseEstimator):
+                model_metadata = model_api.save_model(
+                    name=model_name,
+                    model_dir_path=tmpdir,
+                    model=model,
+                    metadata=tags,
+                    conda_dependencies=conda_dependencies,
+                    pip_requirements=pip_requirements,
+                    code_paths=code_paths,
+                    options=options,
+                )
+            else:
+                raise TypeError("Either signature or sample input data should exist for native model packaging.")
             return self._log_model_path(
                 model_name=model_name,
                 model_version=model_version,
-                path=local_model_file.name,
-                type=model.__class__.__name__,
+                path=tmpdir,
+                type=model_metadata.model_type,
                 description=description,
-                tags=tags,
+                tags=tags,  # TODO: Inherent model type enum.
             )
 
     @telemetry.send_api_usage_telemetry(
@@ -1565,22 +1558,13 @@ class ModelRegistry:
         restored_model = None
         with tempfile.TemporaryDirectory() as local_model_directory:
             self._session.file.get(remote_model_path, local_model_directory)
-            is_native_model_format = False
             local_path = os.path.join(local_model_directory, os.path.basename(remote_model_path))
-            try:
-                if zipfile.is_zipfile(local_path):
-                    extracted_dir = os.path.join(local_model_directory, "extracted")
-                    with zipfile.ZipFile(local_path, "r") as myzip:
-                        if len(myzip.namelist()) > 1:
-                            myzip.extractall(extracted_dir)
-                            restored_model, _meta = model_api.load_model(model_dir_path=extracted_dir)
-                            is_native_model_format = True
-            except TypeError:
-                pass
-            if not is_native_model_format:
-                file_path = os.path.join(local_model_directory, os.path.basename(os.path.basename(remote_model_path)))
-                with open(file_path, mode="r+b") as model_file:
-                    restored_model = cp.load(model_file)
+            if zipfile.is_zipfile(local_path):
+                extracted_dir = os.path.join(local_model_directory, "extracted")
+                with zipfile.ZipFile(local_path, "r") as myzip:
+                    if len(myzip.namelist()) > 1:
+                        myzip.extractall(extracted_dir)
+                        restored_model, _ = model_api.load_model(model_dir_path=extracted_dir)
 
         return restored_model
 

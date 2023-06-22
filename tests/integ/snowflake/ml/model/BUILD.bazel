@@ -17,3 +17,16 @@ py_test(
         "//snowflake/ml/utils:connection_params",
     ],
 )
+
+py_test(
+    name = "model_badcase_integ_test",
+    timeout = "long",
+    srcs = ["model_badcase_integ_test.py"],
+    deps = [
+        "//snowflake/ml/model:_deployer",
+        "//snowflake/ml/model:_model",
+        "//snowflake/ml/model:custom_model",
+        "//snowflake/ml/model:type_hints",
+        "//snowflake/ml/utils:connection_params",
+    ],
+)

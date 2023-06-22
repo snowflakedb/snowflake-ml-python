@@ -58,6 +58,7 @@ py_library(
     ],
     deps = [
         ":init",
+        ":metrics_utils",
         "//snowflake/ml/_internal:telemetry",
     ],
 )

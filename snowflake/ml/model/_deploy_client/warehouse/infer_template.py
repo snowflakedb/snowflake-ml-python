@@ -48,10 +48,10 @@ class FileLock:
 IMPORT_DIRECTORY_NAME = "snowflake_import_directory"
 import_dir = sys._xoptions[IMPORT_DIRECTORY_NAME]
 
-from snowflake.ml.model import _model
-
 {extract_model_code}
 
+sys.path.insert(0, os.path.join(extracted_model_dir_path, "{code_dir_name}"))
+from snowflake.ml.model import _model
 model, meta = _model._load_model_for_deploy(extracted_model_dir_path)
 
 # TODO(halu): Wire `max_batch_size`.

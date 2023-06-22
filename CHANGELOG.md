@@ -1,5 +1,28 @@
 # Release History
 
+## 1.0.2 (2023-06-22)
+
+### Behavior Changes
+- Model Registry: Prohibit non-snowflake-native models from being logged.
+- Model Registry: `_use_local_snowml` parameter in options of `deploy()` has been removed.
+- Model Registry: A default `False` `embed_local_ml_library` parameter has been added to the options of `log_model()`. With this set to `False` (default), the version of the local snowflake-ml-python library will be recorded and used when deploying the model. With this set to `True`, local snowflake-ml-python library will be embedded into the logged model, and will be used when you load or deploy the model.
+
+### New Features
+- Model Registry: A new optional argument named `code_paths` has been added to the arguments of `log_model()` for users to specify additional code paths to be imported when loading and deploying the model.
+- Model Registry: A new optional argument named `options` has been added to the arguments of `log_model()` to specify any additional options when saving the model.
+- Model Development: Added metrics:
+  - d2_absolute_error_score
+  - d2_pinball_score
+  - explained_variance_score
+  - mean_absolute_error
+  - mean_absolute_percentage_error
+  - mean_squared_error
+
+### Bug Fixes
+
+- Model Development: `accuracy_score()` now works when given label column names are lists of a single value.
+
+
 ## 1.0.1 (2023-06-16)
 ### Behavior Changes
 

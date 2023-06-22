@@ -95,7 +95,7 @@ class _XGBModelHandler(_base._ModelHandler[Union["xgboost.Booster", "xgboost.XGB
             options={"xgb_estimator_type": model.__class__.__name__},
         )
         model_meta.models[name] = base_meta
-        model_meta._include_if_absent([("xgboost", "xgboost")])
+        model_meta._include_if_absent([("scikit-learn", "scikit-learn"), ("xgboost", "xgboost")])
 
     @staticmethod
     def _load_model(

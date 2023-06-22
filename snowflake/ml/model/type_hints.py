@@ -4,8 +4,6 @@ from typing import TYPE_CHECKING, Sequence, TypedDict, TypeVar, Union
 import numpy.typing as npt
 from typing_extensions import NotRequired, TypeAlias
 
-from snowflake.ml.modeling.framework import base
-
 if TYPE_CHECKING:
     import numpy as np
     import pandas as pd
@@ -15,6 +13,7 @@ if TYPE_CHECKING:
 
     import snowflake.ml.model.custom_model
     import snowflake.snowpark
+    from snowflake.ml.modeling.framework import base  # noqa: F401
 
 
 _SupportedBuiltins = Union[int, float, bool, str, bytes, "_SupportedBuiltinsList"]
@@ -54,7 +53,7 @@ SupportedLocalModelType = Union[
     "xgboost.Booster",
 ]
 
-SupportedSnowMLModelType: TypeAlias = base.BaseEstimator
+SupportedSnowMLModelType: TypeAlias = "base.BaseEstimator"
 
 SupportedModelType = Union[
     SupportedLocalModelType,
@@ -84,15 +83,8 @@ class DeployOptions(TypedDict):
         Defaults to False.
     keep_order: Whether or not preserve the row order when predicting. Only available for dataframe has fewer than 2**64
         rows. Defaults to True.
-
-    Internal-only options
-    _use_local_snowml: Use local SnowML when as the execution library of the deployment. If set to True, local SnowML
-        would be packed and uploaded to 1) session stage, if it is a temporary deployment, or 2) the provided stage path
-        if it is a permanent deployment. It should be set to True before SnowML available in Snowflake Anaconda Channel.
-        Default to False.
     """
 
-    _use_local_snowml: NotRequired[bool]
     output_with_input_features: NotRequired[bool]
     keep_order: NotRequired[bool]
 
@@ -115,14 +107,16 @@ class WarehouseDeployOptions(DeployOptions):
 class ModelSaveOption(TypedDict):
     """Options for saving the model.
 
+    embed_local_ml_library: Embedding local SnowML into the code directory of the folder.
     allow_overwritten_stage_file: Flag to indicate when saving the model as a stage file, whether overwriting existed
         file is allowed. Default to False.
     """
 
+    embed_local_ml_library: NotRequired[bool]
     allow_overwritten_stage_file: NotRequired[bool]
 
 
-class CustomModelSaveOption(TypedDict):
+class CustomModelSaveOption(ModelSaveOption):
     ...
 
 

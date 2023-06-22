@@ -6,7 +6,7 @@ from typing import IO, List, Optional, Tuple, TypedDict, Union
 
 from typing_extensions import Unpack
 
-from snowflake.ml._internal import env as snowml_env, env_utils, file_utils
+from snowflake.ml._internal import env_utils
 from snowflake.ml.model import (
     _env as model_env,
     _model,
@@ -62,11 +62,7 @@ def _deploy_to_warehouse(
     if target_method not in meta.signatures.keys():
         raise ValueError(f"Target method {target_method} does not exist in model.")
 
-    _use_local_snowml = kwargs.get("_use_local_snowml", False)
-
-    final_packages = _get_model_final_packages(
-        meta, session, relax_version=relax_version, _use_local_snowml=_use_local_snowml
-    )
+    final_packages = _get_model_final_packages(meta, session, relax_version=relax_version)
 
     stage_location = kwargs.get("permanent_udf_stage_location", None)
     if stage_location:
@@ -74,17 +70,11 @@ def _deploy_to_warehouse(
         if not stage_location.startswith("@"):
             raise ValueError(f"Invalid stage location {stage_location}.")
 
-    _snowml_wheel_path = None
-    if _use_local_snowml:
-        _snowml_wheel_path = file_utils.upload_snowml(session, stage_location=stage_location)
-
     with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
         _write_UDF_py_file(f.file, extract_model_code, target_method, **kwargs)
         print(f"Generated UDF file is persisted at: {f.name}")
-        imports = (
-            ([model_dir_path] if model_dir_path else [])
-            + ([model_stage_file_path] if model_stage_file_path else [])
-            + ([_snowml_wheel_path] if _snowml_wheel_path else [])
+        imports = ([model_dir_path] if model_dir_path else []) + (
+            [model_stage_file_path] if model_stage_file_path else []
         )
 
         class _UDFParams(TypedDict):
@@ -139,6 +129,7 @@ def _write_UDF_py_file(
         extract_model_code=extract_model_code,
         keep_order_code=infer_template._KEEP_ORDER_CODE_TEMPLATE if keep_order else "",
         target_method=target_method,
+        code_dir_name=_model_meta.ModelMetadata.MODEL_CODE_DIR,
     )
     f.write(udf_code)
     f.flush()
@@ -148,7 +139,6 @@ def _get_model_final_packages(
     meta: _model_meta.ModelMetadata,
     session: snowpark_session.Session,
     relax_version: Optional[bool] = False,
-    _use_local_snowml: Optional[bool] = False,
 ) -> List[str]:
     """Generate final packages list of dependency of a model to be deployed to warehouse.
 
@@ -157,7 +147,6 @@ def _get_model_final_packages(
         session: Snowpark connection session.
         relax_version: Whether or not relax the version restriction when fail to resolve dependencies.
             Defaults to False.
-        _use_local_snowml: Flag to indicate if using local SnowML code as execution library
 
     Raises:
         RuntimeError: Raised when PIP requirements and dependencies from non-Snowflake anaconda channel found.
@@ -174,16 +163,6 @@ def _get_model_final_packages(
         raise RuntimeError("PIP requirements and dependencies from non-Snowflake anaconda channel is not supported.")
 
     deps = meta._conda_dependencies[""]
-    if _use_local_snowml:
-        local_snowml_version = snowml_env.VERSION
-        snowml_dept = next((dep for dep in deps if dep.name == env_utils._SNOWML_PKG_NAME), None)
-        if snowml_dept:
-            if not snowml_dept.specifier.contains(local_snowml_version) and not relax_version:
-                raise RuntimeError(
-                    "Incompatible snowflake-ml-python-version is found. "
-                    + f"Require {snowml_dept.specifier}, got {local_snowml_version}."
-                )
-            deps.remove(snowml_dept)
 
     try:
         final_packages = env_utils.resolve_conda_environment(
