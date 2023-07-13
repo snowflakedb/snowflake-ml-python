@@ -36,7 +36,7 @@ def save_conda_env_file(
     for chan, reqs in deps.items():
         env["dependencies"].extend([f"{chan}::{str(req)}" if chan else str(req) for req in reqs])
 
-    with open(path, "w") as f:
+    with open(path, "w", encoding="utf-8") as f:
         yaml.safe_dump(env, stream=f, default_flow_style=False)
 
     return path
@@ -54,7 +54,7 @@ def save_requirements_file(dir_path: str, pip_deps: List[requirements.Requiremen
     """
     requirements = "\n".join(map(str, pip_deps))
     path = os.path.join(dir_path, _REQUIREMENTS_FILE_NAME)
-    with open(path, "w") as out:
+    with open(path, "w", encoding="utf-8") as out:
         out.write(requirements)
 
     return path
@@ -69,7 +69,7 @@ def load_conda_env_file(path: str) -> Tuple[DefaultDict[str, List[requirements.R
     Returns:
         A tuple of Dict of conda dependencies after validated and a string 'major.minor.patchlevel' of python version.
     """
-    with open(path) as f:
+    with open(path, encoding="utf-8") as f:
         env = yaml.safe_load(stream=f)
 
     assert isinstance(env, dict)
@@ -99,7 +99,7 @@ def load_requirements_file(path: str) -> List[requirements.Requirement]:
     Returns:
         List of dependencies string after validated.
     """
-    with open(path) as f:
+    with open(path, encoding="utf-8") as f:
         reqs = f.readlines()
 
     return env_utils.validate_pip_requirement_string_list(reqs)

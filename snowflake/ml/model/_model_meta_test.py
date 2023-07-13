@@ -262,12 +262,12 @@ class ModelMetaTest(absltest.TestCase):
                 metadata={"foo": "bar"},
             ):
                 pass
-            with open(os.path.join(tmpdir, _model_meta.ModelMetadata.MODEL_METADATA_FILE)) as f:
+            with open(os.path.join(tmpdir, _model_meta.ModelMetadata.MODEL_METADATA_FILE), encoding="utf-8") as f:
                 meta_yaml_data = yaml.safe_load(f)
 
             del meta_yaml_data["version"]
 
-            with open(os.path.join(tmpdir, _model_meta.ModelMetadata.MODEL_METADATA_FILE), "w") as f:
+            with open(os.path.join(tmpdir, _model_meta.ModelMetadata.MODEL_METADATA_FILE), "w", encoding="utf-8") as f:
                 yaml.safe_dump(meta_yaml_data, f)
 
             with self.assertRaises(NotImplementedError):

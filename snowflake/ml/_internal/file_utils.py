@@ -59,10 +59,12 @@ def zip_file_or_directory_to_stream(
     Raises:
         FileNotFoundError: Raised when the given path does not exist.
         ValueError: Raised when the leading path is not a actual leading path of path
+        ValueError: Raised when the arcname cannot be encoded using ASCII.
 
     Yields:
         A bytes IO stream containing the zip file.
     """
+    # TODO(SNOW-862576): Should remove check on ASCII encoding after SNOW-862576 fixed.
     if not os.path.exists(path):
         raise FileNotFoundError(f"{path} is not found")
     if leading_path and not path.startswith(leading_path):
@@ -76,23 +78,35 @@ def zip_file_or_directory_to_stream(
             if os.path.realpath(path) != os.path.realpath(start_path):
                 cur_path = os.path.dirname(path)
                 while os.path.realpath(cur_path) != os.path.realpath(start_path):
-                    zf.writestr(f"{os.path.relpath(cur_path, start_path)}/", "")
+                    arcname = os.path.relpath(cur_path, start_path)
+                    if not _able_ascii_encode(arcname):
+                        raise ValueError(f"File name {arcname} cannot be encoded using ASCII. Please rename.")
+                    zf.write(cur_path, arcname)
                     cur_path = os.path.dirname(cur_path)
 
             if os.path.isdir(path):
-                for dirname, _, files in os.walk(path):
+                for dirpath, _, files in os.walk(path):
                     # ignore __pycache__
-                    if ignore_generated_py_file and "__pycache__" in dirname:
+                    if ignore_generated_py_file and "__pycache__" in dirpath:
                         continue
-                    zf.write(dirname, os.path.relpath(dirname, start_path))
+                    arcname = os.path.relpath(dirpath, start_path)
+                    if not _able_ascii_encode(arcname):
+                        raise ValueError(f"File name {arcname} cannot be encoded using ASCII. Please rename.")
+                    zf.write(dirpath, arcname)
                     for file in files:
                         # ignore generated python files
                         if ignore_generated_py_file and file.endswith(GENERATED_PY_FILE_EXT):
                             continue
-                        filename = os.path.join(dirname, file)
-                        zf.write(filename, os.path.relpath(filename, start_path))
+                        file_path = os.path.join(dirpath, file)
+                        arcname = os.path.relpath(file_path, start_path)
+                        if not _able_ascii_encode(arcname):
+                            raise ValueError(f"File name {arcname} cannot be encoded using ASCII. Please rename.")
+                        zf.write(file_path, arcname)
             else:
-                zf.write(path, os.path.relpath(path, start_path))
+                arcname = os.path.relpath(path, start_path)
+                if not _able_ascii_encode(arcname):
+                    raise ValueError(f"File name {arcname} cannot be encoded using ASCII. Please rename.")
+                zf.write(path, arcname)
 
         yield input_stream
 
@@ -145,3 +159,11 @@ def get_all_modules(dirname: str, prefix: str = "") -> List[pkgutil.ModuleInfo]:
     for dirname in subdirs:
         modules.extend(get_all_modules(dirname, prefix=f"{prefix}.{dirname}" if prefix else dirname))
     return modules
+
+
+def _able_ascii_encode(s: str) -> bool:
+    try:
+        s.encode("ascii", errors="strict")
+        return True
+    except UnicodeEncodeError:
+        return False

@@ -54,12 +54,15 @@ sys.path.insert(0, os.path.join(extracted_model_dir_path, "{code_dir_name}"))
 from snowflake.ml.model import _model
 model, meta = _model._load_model_for_deploy(extracted_model_dir_path)
 
+features = meta.signatures["{target_method}"].inputs
+input_cols = [feature.name for feature in features]
+dtype_map = {{feature.name: feature.as_dtype() for feature in features}}
+
 # TODO(halu): Wire `max_batch_size`.
 # TODO(halu): Avoid per batch async detection branching.
 @vectorized(input=pd.DataFrame, max_batch_size=10)
 def infer(df):
-    input_cols = [spec.name for spec in meta.signatures["{target_method}"].inputs]
-    input_df = pd.io.json.json_normalize(df[0])
+    input_df = pd.io.json.json_normalize(df[0]).astype(dtype=dtype_map)
     if inspect.iscoroutinefunction(model.{target_method}):
         predictions_df = anyio.run(model.{target_method}, input_df[input_cols])
     else:

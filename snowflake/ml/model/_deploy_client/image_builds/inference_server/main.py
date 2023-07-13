@@ -1,5 +1,7 @@
 import logging
 import os
+import tempfile
+import zipfile
 
 import pandas as pd
 from starlette import applications, requests, responses, routing
@@ -18,11 +20,24 @@ def _run_setup() -> None:
     from snowflake.ml.model import _model as model_api
 
     global loaded_model
-    model_dir = os.getenv("MODEL_DIR")
-    logger.info(f"Loading model from {model_dir} into memory")
-    assert model_dir, "Environment variable 'model_dir' is not set"
-    loaded_model, _ = model_api._load_model_for_deploy(model_dir_path=model_dir)
-    logger.info("Successfully loaded model into memory")
+
+    MODEL_ZIP_STAGE_PATH = os.getenv("MODEL_ZIP_STAGE_PATH")
+    assert MODEL_ZIP_STAGE_PATH, "Missing environment variable MODEL_ZIP_STAGE_PATH"
+    root_path = os.path.abspath(os.sep)
+    model_zip_stage_path = os.path.join(root_path, MODEL_ZIP_STAGE_PATH)
+
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        if zipfile.is_zipfile(model_zip_stage_path):
+            extracted_dir = os.path.join(tmp_dir, "extracted_model_dir")
+            logger.info(f"Extracting model zip from {model_zip_stage_path} to {extracted_dir}")
+            with zipfile.ZipFile(model_zip_stage_path, "r") as model_zip:
+                if len(model_zip.namelist()) > 1:
+                    model_zip.extractall(extracted_dir)
+        else:
+            raise RuntimeError(f"No model zip found at stage path: {model_zip_stage_path}")
+        logger.info(f"Loading model from {extracted_dir} into memory")
+        loaded_model, _ = model_api._load_model_for_deploy(model_dir_path=extracted_dir)
+        logger.info("Successfully loaded model into memory")
 
 
 async def ready(request: requests.Request) -> responses.JSONResponse:

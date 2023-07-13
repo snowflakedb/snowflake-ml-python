@@ -22,12 +22,11 @@ RUN adduser --disabled-password \
 	--home $HOME \
 	$USER
 
-# TODO(shchen): use model that already uploaded to stage by image registry.
-COPY $model_dir ./$model_dir
 COPY $inference_server_dir ./$inference_server_dir
 COPY $entrypoint_script ./$entrypoint_script
 RUN chmod +x /$entrypoint_script
  # Copy Snowflake/ml source code
+# TODO: not needed as source code is either in model, or pulled from conda
 COPY snowflake ./snowflake
 
 # The mamba root prefix by default is set to /opt/conda, in which the base conda environment is built at.
@@ -35,8 +34,6 @@ COPY --from=build /opt/conda /opt/conda
 
 # Expose the port on which the Starlette app will run.
 EXPOSE 5000
-# Set MODEL_DIR environment variable, which will be used in inference code.
-ENV MODEL_DIR="$model_dir"
 
 USER nonrootuser
 

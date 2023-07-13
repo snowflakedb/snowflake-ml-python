@@ -3,10 +3,11 @@ import importlib
 import os
 import sys
 import warnings
+from collections import namedtuple
 from contextlib import contextmanager
 from datetime import datetime
 from types import ModuleType
-from typing import Any, Callable, Dict, Generator, List, Optional, Sequence, Tuple, cast
+from typing import Any, Callable, Dict, Generator, List, Optional, Sequence, cast
 
 import cloudpickle
 import yaml
@@ -23,6 +24,8 @@ from snowflake.snowpark import DataFrame as SnowparkDataFrame
 
 MODEL_METADATA_VERSION = 1
 _BASIC_DEPENDENCIES = _core_requirements.REQUIREMENTS
+
+Dependency = namedtuple("Dependency", ["conda_name", "pip_name"])
 
 
 @dataclasses.dataclass
@@ -214,9 +217,11 @@ class ModelMetadata:
             pip_requirements if pip_requirements else []
         )
         if "local_ml_library_version" in kwargs:
-            self._include_if_absent([(dep, dep) for dep in _BASIC_DEPENDENCIES])
+            self._include_if_absent([Dependency(conda_name=dep, pip_name=dep) for dep in _BASIC_DEPENDENCIES])
         else:
-            self._include_if_absent([(dep, dep) for dep in _BASIC_DEPENDENCIES + [env_utils._SNOWML_PKG_NAME]])
+            self._include_if_absent(
+                [Dependency(conda_name=dep, pip_name=dep) for dep in _BASIC_DEPENDENCIES + [env_utils._SNOWML_PKG_NAME]]
+            )
 
         self.__dict__.update(kwargs)
 
@@ -234,7 +239,7 @@ class ModelMetadata:
             for req in reqs
         )
 
-    def _include_if_absent(self, pkgs: List[Tuple[str, str]]) -> None:
+    def _include_if_absent(self, pkgs: List[Dependency]) -> None:
         conda_reqs_str, pip_reqs_str = tuple(zip(*pkgs))
         pip_reqs = env_utils.validate_pip_requirement_string_list(list(pip_reqs_str))
         conda_reqs = env_utils.validate_conda_dependency_string_list(list(conda_reqs_str))
@@ -327,7 +332,7 @@ class ModelMetadata:
             path: The path of the directory to write a yaml file in it.
         """
         model_yaml_path = os.path.join(path, ModelMetadata.MODEL_METADATA_FILE)
-        with open(model_yaml_path, "w") as out:
+        with open(model_yaml_path, "w", encoding="utf-8") as out:
             yaml.safe_dump({**self.to_dict(), "version": MODEL_METADATA_VERSION}, stream=out, default_flow_style=False)
 
         env_dir_path = os.path.join(path, ModelMetadata.ENV_DIR)
@@ -350,7 +355,7 @@ class ModelMetadata:
             Loaded model metadata object.
         """
         model_yaml_path = os.path.join(path, ModelMetadata.MODEL_METADATA_FILE)
-        with open(model_yaml_path) as f:
+        with open(model_yaml_path, encoding="utf-8") as f:
             loaded_mata = yaml.safe_load(f.read())
 
         loaded_mata_version = loaded_mata.pop("version", None)
@@ -392,7 +397,7 @@ def _validate_signature(
     if isinstance(sample_input, SnowparkDataFrame):
         # Added because of Any from missing stubs.
         trunc_sample_input = cast(SnowparkDataFrame, trunc_sample_input)
-        local_sample_input = trunc_sample_input.to_pandas()
+        local_sample_input = model_signature._SnowparkDataFrameHandler.convert_to_df(trunc_sample_input)
     else:
         local_sample_input = trunc_sample_input
     for target_method in target_methods:

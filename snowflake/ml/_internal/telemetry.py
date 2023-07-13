@@ -6,7 +6,6 @@ import enum
 import functools
 import inspect
 import operator
-import threading
 import types
 from typing import (
     Any,
@@ -29,7 +28,6 @@ from snowflake.ml._internal import env
 from snowflake.snowpark import dataframe, exceptions, session
 from snowflake.snowpark._internal import utils
 
-_rlock = threading.RLock()
 _log_counter = 0
 _FLUSH_SIZE = 10
 
@@ -308,12 +306,11 @@ def send_api_usage_telemetry(
                 return res
             finally:
                 telemetry.send_function_usage_telemetry(**telemetry_args)
-                with _rlock:
-                    global _log_counter
-                    _log_counter += 1
-                    if _log_counter >= _FLUSH_SIZE or "error" in telemetry_args:
-                        telemetry.send_batch()
-                        _log_counter = 0
+                global _log_counter
+                _log_counter += 1
+                if _log_counter >= _FLUSH_SIZE or "error" in telemetry_args:
+                    telemetry.send_batch()
+                    _log_counter = 0
 
         return cast(Callable[_Args, _ReturnValue], wrap)
 

@@ -82,3 +82,12 @@ py_test(
         "//snowflake/ml/utils:connection_params",
     ],
 )
+
+py_test(
+    name="test_method_chaining",
+    srcs = ["test_method_chaining.py"],
+    deps = [
+        "//snowflake/ml/modeling/linear_model:logistic_regression",
+        "//snowflake/ml/utils:connection_params",
+    ]
+)

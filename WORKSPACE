@@ -1,6 +1,15 @@
 workspace(name = "SnowML")
 
-load("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
+load("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive", "http_jar")
+load("@bazel_tools//tools/build_defs/repo:git.bzl", "git_repository")
+
+http_jar(
+    name = "bazel_diff",
+    urls = [
+        "https://github.com/Tinder/bazel-diff/releases/download/4.3.0/bazel-diff_deploy.jar",
+    ],
+    sha256 = "9c4546623a8b9444c06370165ea79a897fcb9881573b18fa5c9ee5c8ba0867e2",
+)
 
 http_archive(
     name = "bazel_skylib",
@@ -14,15 +23,13 @@ http_archive(
 load("@bazel_skylib//:workspace.bzl", "bazel_skylib_workspace")
 
 bazel_skylib_workspace()
-# Latest @ 2022-10-18. Version 0.13.0 released 2022-09-25
-http_archive(
-    name = "rules_python",
-    sha256 = "8c8fe44ef0a9afc256d1e75ad5f448bb59b81aba149b8958f02f7b3a98f5d9b4",
-    strip_prefix = "rules_python-0.13.0",
-    url = "https://github.com/bazelbuild/rules_python/archive/refs/tags/0.13.0.tar.gz",
-    # This will be unnecessary once https://github.com/bazelbuild/rules_python/pull/1274
-    # is released.
-    patches = ["//third_party:rules_python_description_content_type.patch"],
+
+# Latest @ 2023-06-20
+# Replace with released version once newer version released.
+git_repository(
+    name="rules_python",
+    commit="0d59fcf561f6d2c4705924bc17c151fb4b998841",
+    remote="https://github.com/bazelbuild/rules_python.git"
 )
 
 load("//third_party/rules_conda:defs.bzl", "conda_create", "load_conda", "register_toolchain")

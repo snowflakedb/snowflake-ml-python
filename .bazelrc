@@ -1,6 +1,6 @@
 # Make the target platform and the host platform the same
 build --platforms //bazel/platforms:extended_conda_env --host_platform //bazel/platforms:extended_conda_env
-test --platforms //bazel/platforms:extended_conda_env --host_platform //bazel/platforms:extended_conda_env
+test --platforms //bazel/platforms:extended_conda_env --host_platform //bazel/platforms:extended_conda_env --run_under='//bazel:test_wrapper'
 run --platforms //bazel/platforms:extended_conda_env --host_platform //bazel/platforms:extended_conda_env
 cquery --platforms //bazel/platforms:extended_conda_env --host_platform //bazel/platforms:extended_conda_env
 

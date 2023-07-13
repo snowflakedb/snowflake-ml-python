@@ -3,13 +3,11 @@
 #
 
 import os
-import sys
 import tempfile
-from uuid import uuid4
+import uuid
 
 import numpy as np
 import pandas as pd
-from absl import flags
 from absl.testing import absltest
 
 from snowflake.ml.model import (
@@ -20,8 +18,7 @@ from snowflake.ml.model import (
 )
 from snowflake.ml.utils import connection_params
 from snowflake.snowpark import Session
-
-flags.FLAGS(sys.argv)
+from tests.integ.snowflake.ml.test_utils import db_manager
 
 
 class DemoModel(custom_model.CustomModel):
@@ -33,37 +30,37 @@ class DemoModel(custom_model.CustomModel):
         return pd.DataFrame({"output": input["c1"]})
 
 
-def _create_stage(session: Session, stage_qual_name: str) -> None:
-    sql = f"CREATE STAGE {stage_qual_name}"
-    session.sql(sql).collect()
-
-
-def _drop_function(session: Session, func_name: str) -> None:
-    sql = f"DROP FUNCTION {func_name}(OBJECT)"
-    session.sql(sql).collect()
-
-
-def _drop_stage(session: Session, stage_qual_name: str) -> None:
-    sql = f"DROP STAGE {stage_qual_name}"
-    session.sql(sql).collect()
-
-
 class TestModelBadCaseInteg(absltest.TestCase):
     @classmethod
     def setUpClass(self) -> None:
         """Creates Snowpark and Snowflake environments for testing."""
         self._session = Session.builder.configs(connection_params.SnowflakeLoginOptions()).create()
         # To create different UDF names among different runs
-        self.run_id = str(uuid4()).replace("-", "_")
+        self._db_manager = db_manager.DBManager(self._session)
 
-        db = self._session.get_current_database()
-        schema = self._session.get_current_schema()
-        self.stage_qual_name = f"{db}.{schema}.SNOWML_MODEL_TEST_STAGE_{self.run_id.upper()}"
-        _create_stage(session=self._session, stage_qual_name=self.stage_qual_name)
+        self._db_manager.cleanup_schemas()
+        self._db_manager.cleanup_stages()
+        self._db_manager.cleanup_user_functions()
+
+        # To create different UDF names among different runs
+        self.run_id = uuid.uuid4().hex
+        self._test_schema_name = db_manager.TestObjectNameGenerator.get_snowml_test_object_name(
+            self.run_id, "model_deployment_bad_case_test_schema"
+        )
+        self._db_manager.create_schema(self._test_schema_name)
+        self._db_manager.use_schema(self._test_schema_name)
+
+        self.deploy_stage_name = db_manager.TestObjectNameGenerator.get_snowml_test_object_name(
+            self.run_id, "deployment_stage"
+        )
+        self.full_qual_stage = self._db_manager.create_stage(
+            self.deploy_stage_name, schema_name=self._test_schema_name, sse_encrypted=False
+        )
 
     @classmethod
     def tearDownClass(self) -> None:
-        _drop_stage(session=self._session, stage_qual_name=self.stage_qual_name)
+        self._db_manager.drop_stage(self.deploy_stage_name, schema_name=self._test_schema_name)
+        self._db_manager.drop_schema(self._test_schema_name)
         self._session.close()
 
     def test_bad_model_deploy(self) -> None:
@@ -80,11 +77,13 @@ class TestModelBadCaseInteg(absltest.TestCase):
                 conda_dependencies=["invalidnumpy==1.22.4"],
                 options={"embed_local_ml_library": True},
             )
-
+            function_name = db_manager.TestObjectNameGenerator.get_snowml_test_object_name(
+                self.run_id, "custom_bad_model"
+            )
             with self.assertRaises(RuntimeError):
                 _ = _deployer.deploy(
                     session=self._session,
-                    name=f"custom_bad_model_{self.run_id}",
+                    name=function_name,
                     model_dir_path=os.path.join(tmpdir, "custom_bad_model"),
                     platform=_deployer.TargetPlatform.WAREHOUSE,
                     target_method="predict",
@@ -104,18 +103,20 @@ class TestModelBadCaseInteg(absltest.TestCase):
                 metadata={"author": "halu", "version": "1"},
                 options={"embed_local_ml_library": True},
             )
-
+            function_name = db_manager.TestObjectNameGenerator.get_snowml_test_object_name(
+                self.run_id, "custom_demo_model"
+            )
             with self.assertRaises(RuntimeError):
                 deploy_info = _deployer.deploy(
                     session=self._session,
-                    name=f"custom_demo_model_{self.run_id}",
+                    name=function_name,
                     model_dir_path=os.path.join(tmpdir, "custom_demo_model"),
                     platform=_deployer.TargetPlatform.WAREHOUSE,
                     target_method="predict",
                     options=model_types.WarehouseDeployOptions(
                         {
                             "relax_version": True,
-                            "permanent_udf_stage_location": f"{self.stage_qual_name}/",
+                            "permanent_udf_stage_location": f"{self.full_qual_stage}/",
                             # Test stage location validation
                         }
                     ),
@@ -123,14 +124,14 @@ class TestModelBadCaseInteg(absltest.TestCase):
 
             deploy_info = _deployer.deploy(
                 session=self._session,
-                name=f"custom_demo_model_{self.run_id}",
+                name=function_name,
                 model_dir_path=os.path.join(tmpdir, "custom_demo_model", ""),  # Test sanitizing user path input.
                 platform=_deployer.TargetPlatform.WAREHOUSE,
                 target_method="predict",
                 options=model_types.WarehouseDeployOptions(
                     {
                         "relax_version": True,
-                        "permanent_udf_stage_location": f"@{self.stage_qual_name}/",
+                        "permanent_udf_stage_location": f"@{self.full_qual_stage}/",
                     }
                 ),
             )
@@ -145,31 +146,37 @@ class TestModelBadCaseInteg(absltest.TestCase):
             with self.assertRaises(RuntimeError):
                 deploy_info = _deployer.deploy(
                     session=self._session,
-                    name=f"custom_demo_model_{self.run_id}",
+                    name=function_name,
                     model_dir_path=os.path.join(tmpdir, "custom_demo_model"),
                     platform=_deployer.TargetPlatform.WAREHOUSE,
                     target_method="predict",
                     options=model_types.WarehouseDeployOptions(
                         {
                             "relax_version": True,
-                            "permanent_udf_stage_location": f"@{self.stage_qual_name}/",
+                            "permanent_udf_stage_location": f"@{self.full_qual_stage}/",
                         }
                     ),
                 )
 
-            _drop_function(self._session, f"custom_demo_model_{self.run_id}")
+            self._db_manager.drop_function(function_name=function_name, args=["OBJECT"])
 
             deploy_info = _deployer.deploy(
                 session=self._session,
-                name=f"custom_demo_model_{self.run_id}",
+                name=function_name,
                 model_dir_path=os.path.join(tmpdir, "custom_demo_model"),
                 platform=_deployer.TargetPlatform.WAREHOUSE,
                 target_method="predict",
                 options=model_types.WarehouseDeployOptions(
                     {
                         "relax_version": True,
-                        "permanent_udf_stage_location": f"@{self.stage_qual_name}/",
+                        "permanent_udf_stage_location": f"@{self.full_qual_stage}/",
                         "replace_udf": True,
                     }
                 ),
             )
+
+            self._db_manager.drop_function(function_name=function_name, args=["OBJECT"])
+
+
+if __name__ == "__main__":
+    absltest.main()

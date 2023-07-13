@@ -1,5 +1,23 @@
 # Release History
 
+## 1.0.3 (2023-07-12)
+
+### Behavior Changes
+- Model Registry: When predicting a model whose output is a list of NumPy ndarray, the output would not be flattened, instead, every ndarray will act as a feature(column) in the output.
+
+### New Features
+- Model Registry: Added support save/load/deploy PyTorch models (`torch.nn.Module` and `torch.jit.ScriptModule`).
+
+### Bug Fixes
+
+- Model Registry: Fix an issue that when database or schema name provided to `create_model_registry` contains special characters, the model registry cannot be created.
+- Model Registry: Fix an issue that `get_model_description` returns with additional quotes.
+- Model Registry: Fix incorrect error message when attempting to remove a unset tag of a model.
+- Model Registry: Fix a typo in the default deployment table name.
+- Model Registry: Snowpark dataframe for sample input or input for `predict` method that contains a column with Snowflake `NUMBER(precision, scale)` data type where `scale = 0` will not lead to error, and will now correctly recognized as `INT64` data type in model signature.
+- Model Registry: Fix an issue that prevent model logged in the system whose default encoding is not UTF-8 compatible from deploying.
+- Model Registry: Added earlier and better error message when any file name in the model or the file name of model itself contains characters that are unable to be encoded using ASCII. It is currently not supported to deploy such a model.
+
 ## 1.0.2 (2023-06-22)
 
 ### Behavior Changes

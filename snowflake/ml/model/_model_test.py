@@ -2,11 +2,12 @@ import asyncio
 import os
 import tempfile
 import warnings
-from typing import cast
+from typing import List, Tuple, cast
 from unittest import mock
 
 import numpy as np
 import pandas as pd
+import torch
 import xgboost
 from absl.testing import absltest
 from sklearn import datasets, ensemble, linear_model, model_selection, multioutput
@@ -25,9 +26,9 @@ from snowflake.snowpark import FileOperation, Session
 class DemoModelWithManyArtifacts(custom_model.CustomModel):
     def __init__(self, context: custom_model.ModelContext) -> None:
         super().__init__(context)
-        with open(os.path.join(context.path("bias"), "bias1")) as f:
+        with open(os.path.join(context.path("bias"), "bias1"), encoding="utf-8") as f:
             v1 = int(f.read())
-        with open(os.path.join(context.path("bias"), "bias2")) as f:
+        with open(os.path.join(context.path("bias"), "bias2"), encoding="utf-8") as f:
             v2 = int(f.read())
         self.bias = v1 + v2
 
@@ -81,13 +82,47 @@ class AsyncComposeModel(custom_model.CustomModel):
 class DemoModelWithArtifacts(custom_model.CustomModel):
     def __init__(self, context: custom_model.ModelContext) -> None:
         super().__init__(context)
-        with open(context.path("bias")) as f:
+        with open(context.path("bias"), encoding="utf-8") as f:
             v = int(f.read())
         self.bias = v
 
     @custom_model.inference_api
     def predict(self, input: pd.DataFrame) -> pd.DataFrame:
         return pd.DataFrame({"output": input["c1"] + self.bias})
+
+
+class TorchModel(torch.nn.Module):
+    def __init__(self, n_input: int, n_hidden: int, n_out: int, dtype: torch.dtype = torch.float32) -> None:
+        super().__init__()
+        self.model = torch.nn.Sequential(
+            torch.nn.Linear(n_input, n_hidden, dtype=dtype),
+            torch.nn.ReLU(),
+            torch.nn.Linear(n_hidden, n_out, dtype=dtype),
+            torch.nn.Sigmoid(),
+        )
+
+    def forward(self, tensors: List[torch.Tensor]) -> List[torch.Tensor]:
+        return [self.model(tensors[0])]
+
+
+def _prepare_torch_model(
+    dtype: torch.dtype = torch.float32,
+) -> Tuple[torch.nn.Module, List[torch.Tensor], List[torch.Tensor]]:
+    n_input, n_hidden, n_out, batch_size, learning_rate = 10, 15, 1, 100, 0.01
+    x = np.random.rand(batch_size, n_input)
+    data_x = [torch.from_numpy(x).to(dtype=dtype)]
+    data_y = [(torch.rand(size=(batch_size, 1)) < 0.5).to(dtype=dtype)]
+
+    model = TorchModel(n_input, n_hidden, n_out, dtype=dtype)
+    loss_function = torch.nn.MSELoss()
+    optimizer = torch.optim.SGD(model.parameters(), lr=learning_rate)
+    for _epoch in range(100):
+        pred_y = model(data_x)
+        loss = loss_function(pred_y[0], data_y[0])
+        optimizer.zero_grad()
+        loss.backward()
+        optimizer.step()
+    return model, data_x, data_y
 
 
 class ModelInterfaceTest(absltest.TestCase):
@@ -189,7 +224,7 @@ class ModelInterfaceTest(absltest.TestCase):
             )
 
         with tempfile.TemporaryDirectory() as tempdir:
-            with open(os.path.join(tempdir, "some_file"), "w") as f:
+            with open(os.path.join(tempdir, "some_file"), "w", encoding="utf-8") as f:
                 f.write("Hi Ciyana!")
 
             with self.assertRaisesRegex(ValueError, "Provided model directory [^\\s]* is not a directory."):
@@ -281,9 +316,9 @@ class ModelTest(absltest.TestCase):
     def test_bad_save_model(self) -> None:
         tmpdir = self.create_tempdir()
         os.mkdir(os.path.join(tmpdir.full_path, "bias"))
-        with open(os.path.join(tmpdir.full_path, "bias", "bias1"), "w") as f:
+        with open(os.path.join(tmpdir.full_path, "bias", "bias1"), "w", encoding="utf-8") as f:
             f.write("25")
-        with open(os.path.join(tmpdir.full_path, "bias", "bias2"), "w") as f:
+        with open(os.path.join(tmpdir.full_path, "bias", "bias2"), "w", encoding="utf-8") as f:
             f.write("68")
         lm = DemoModelWithManyArtifacts(
             custom_model.ModelContext(models={}, artifacts={"bias": os.path.join(tmpdir.full_path, "bias")})
@@ -318,9 +353,9 @@ class ModelTest(absltest.TestCase):
     def test_custom_model_with_multiple_artifacts(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             os.mkdir(os.path.join(tmpdir, "bias"))
-            with open(os.path.join(tmpdir, "bias", "bias1"), "w") as f:
+            with open(os.path.join(tmpdir, "bias", "bias1"), "w", encoding="utf-8") as f:
                 f.write("25")
-            with open(os.path.join(tmpdir, "bias", "bias2"), "w") as f:
+            with open(os.path.join(tmpdir, "bias", "bias2"), "w", encoding="utf-8") as f:
                 f.write("68")
             lm = DemoModelWithManyArtifacts(
                 custom_model.ModelContext(
@@ -437,7 +472,7 @@ class ModelTest(absltest.TestCase):
 
     def test_custom_model_with_artifacts(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
-            with open(os.path.join(tmpdir, "bias"), "w") as f:
+            with open(os.path.join(tmpdir, "bias"), "w", encoding="utf-8") as f:
                 f.write("10")
             lm = DemoModelWithArtifacts(
                 custom_model.ModelContext(models={}, artifacts={"bias": os.path.join(tmpdir, "bias")})
@@ -459,7 +494,9 @@ class ModelTest(absltest.TestCase):
             np.testing.assert_allclose(res["output"], pd.Series(np.array([11, 14])))
 
             # test re-init when loading the model
-            with open(os.path.join(tmpdir, "model1", "models", "model1", "artifacts", "bias"), "w") as f:
+            with open(
+                os.path.join(tmpdir, "model1", "models", "model1", "artifacts", "bias"), "w", encoding="utf-8"
+            ) as f:
                 f.write("20")
 
             m_UDF, meta = model_api._load_model_for_deploy(os.path.join(tmpdir, "model1"))
@@ -487,16 +524,21 @@ class ModelTest(absltest.TestCase):
                 conda_dependencies=["scikit-learn"],
             )
 
+            orig_res = model.predict_proba(iris_X_df[-10:])
+
             m: multioutput.MultiOutputClassifier
             m, _ = model_api.load_model(model_dir_path=os.path.join(tmpdir, "model1"))
-            np.testing.assert_allclose(
-                np.hstack(model.predict_proba(iris_X_df[-10:])), np.hstack(m.predict_proba(iris_X_df[-10:]))
-            )
+
+            loaded_res = m.predict_proba(iris_X_df[-10:])
+            np.testing.assert_allclose(np.hstack(orig_res), np.hstack(loaded_res))
 
             m_udf, _ = model_api._load_model_for_deploy(os.path.join(tmpdir, "model1"))
             predict_method = getattr(m_udf, "predict_proba", None)
             assert callable(predict_method)
-            np.testing.assert_allclose(np.hstack(model.predict_proba(iris_X_df[-10:])), predict_method(iris_X_df[-10:]))
+            udf_res = predict_method(iris_X_df[-10:])
+            np.testing.assert_allclose(
+                np.hstack(orig_res), np.hstack([np.array(udf_res[col].to_list()) for col in udf_res])
+            )
 
             with self.assertRaises(ValueError):
                 model_api.save_model(
@@ -527,11 +569,15 @@ class ModelTest(absltest.TestCase):
 
             predict_method = getattr(m_udf, "predict_proba", None)
             assert callable(predict_method)
-            np.testing.assert_allclose(np.hstack(model.predict_proba(iris_X_df[-10:])), predict_method(iris_X_df[-10:]))
+            udf_res = predict_method(iris_X_df[-10:])
+            np.testing.assert_allclose(
+                np.hstack(model.predict_proba(iris_X_df[-10:])),
+                np.hstack([np.array(udf_res[col].to_list()) for col in udf_res]),
+            )
 
             predict_method = getattr(m_udf, "predict", None)
             assert callable(predict_method)
-            np.testing.assert_allclose(model.predict(iris_X_df[-10:]), predict_method(iris_X_df[-10:]))
+            np.testing.assert_allclose(model.predict(iris_X_df[-10:]), predict_method(iris_X_df[-10:]).to_numpy())
 
     def test_skl(self) -> None:
         iris_X, iris_y = datasets.load_iris(return_X_y=True)
@@ -647,7 +693,7 @@ class ModelTest(absltest.TestCase):
             assert callable(predict_method)
             np.testing.assert_allclose(predict_method(cal_X_test), y_pred_proba)
 
-    def test_snowml(self) -> None:
+    def test_snowml_all_input(self) -> None:
         iris = datasets.load_iris()
 
         df = pd.DataFrame(data=np.c_[iris["data"], iris["target"]], columns=iris["feature_names"] + ["target"])
@@ -695,20 +741,339 @@ class ModelTest(absltest.TestCase):
                 name="model1_no_sig",
                 model_dir_path=os.path.join(tmpdir, "model1_no_sig"),
                 model=regr,
+                sample_input=df[INPUT_COLUMNS],
+                metadata={"author": "halu", "version": "1"},
+            )
+
+            m, meta = model_api.load_model(model_dir_path=os.path.join(tmpdir, "model1_no_sig"))
+            np.testing.assert_allclose(np.array([[-0.08254936]]), m.predict(df[:1])[[OUTPUT_COLUMNS]])
+            s = regr.model_signatures
+            self.assertEqual(s["predict"], meta.signatures["predict"])
+
+            m_udf, _ = model_api._load_model_for_deploy(os.path.join(tmpdir, "model1_no_sig"))
+            predict_method = getattr(m_udf, "predict", None)
+            assert callable(predict_method)
+            np.testing.assert_allclose(np.array([[-0.08254936]]), predict_method(df[:1])[[OUTPUT_COLUMNS]])
+
+    def test_snowml_signature_partial_input(self) -> None:
+        iris = datasets.load_iris()
+
+        df = pd.DataFrame(data=np.c_[iris["data"], iris["target"]], columns=iris["feature_names"] + ["target"])
+        df.columns = [s.replace(" (CM)", "").replace(" ", "") for s in df.columns.str.upper()]
+
+        INPUT_COLUMNS = ["SEPALLENGTH", "SEPALWIDTH"]
+        LABEL_COLUMNS = "TARGET"
+        OUTPUT_COLUMNS = "PREDICTED_TARGET"
+        regr = LinearRegression(input_cols=INPUT_COLUMNS, output_cols=OUTPUT_COLUMNS, label_cols=LABEL_COLUMNS)
+        regr.fit(df)
+
+        predictions = regr.predict(df[:1])[[OUTPUT_COLUMNS]]
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            s = {"predict": model_signature.infer_signature(df[INPUT_COLUMNS], regr.predict(df)[[OUTPUT_COLUMNS]])}
+            with self.assertRaises(ValueError):
+                model_api.save_model(
+                    name="model1",
+                    model_dir_path=os.path.join(tmpdir, "model1"),
+                    model=regr,
+                    signatures={**s, "another_predict": s["predict"]},
+                    metadata={"author": "halu", "version": "1"},
+                )
+
+            model_api.save_model(
+                name="model1",
+                model_dir_path=os.path.join(tmpdir, "model1"),
+                model=regr,
+                signatures=s,
+                metadata={"author": "halu", "version": "1"},
+            )
+
+            with warnings.catch_warnings():
+                warnings.simplefilter("error")
+
+                m: LinearRegression
+                m, _ = model_api.load_model(model_dir_path=os.path.join(tmpdir, "model1"))
+                np.testing.assert_allclose(predictions, m.predict(df[:1])[[OUTPUT_COLUMNS]])
+                m_udf, _ = model_api._load_model_for_deploy(os.path.join(tmpdir, "model1"))
+                predict_method = getattr(m_udf, "predict", None)
+                assert callable(predict_method)
+                np.testing.assert_allclose(predictions, predict_method(df[:1])[[OUTPUT_COLUMNS]])
+
+            model_api.save_model(
+                name="model1_no_sig",
+                model_dir_path=os.path.join(tmpdir, "model1_no_sig"),
+                model=regr,
+                sample_input=df,
+                metadata={"author": "halu", "version": "1"},
+            )
+
+            m, meta = model_api.load_model(model_dir_path=os.path.join(tmpdir, "model1_no_sig"))
+            np.testing.assert_allclose(np.array([[0.17150434]]), m.predict(df[:1])[[OUTPUT_COLUMNS]])
+            s = regr.model_signatures
+            # Compare the Model Signature without indexing
+            self.assertItemsEqual(s["predict"].to_dict(), meta.signatures["predict"].to_dict())
+
+            m_udf, _ = model_api._load_model_for_deploy(os.path.join(tmpdir, "model1_no_sig"))
+            predict_method = getattr(m_udf, "predict", None)
+            assert callable(predict_method)
+            np.testing.assert_allclose(np.array([[0.17150434]]), predict_method(df[:1])[[OUTPUT_COLUMNS]])
+
+    def test_snowml_signature_drop_input_cols(self) -> None:
+        iris = datasets.load_iris()
+
+        df = pd.DataFrame(data=np.c_[iris["data"], iris["target"]], columns=iris["feature_names"] + ["target"])
+        df.columns = [s.replace(" (CM)", "").replace(" ", "") for s in df.columns.str.upper()]
+
+        INPUT_COLUMNS = ["SEPALLENGTH", "SEPALWIDTH", "PETALLENGTH", "PETALWIDTH"]
+        LABEL_COLUMNS = "TARGET"
+        OUTPUT_COLUMNS = "PREDICTED_TARGET"
+        regr = LinearRegression(
+            input_cols=INPUT_COLUMNS, output_cols=OUTPUT_COLUMNS, label_cols=LABEL_COLUMNS, drop_input_cols=True
+        )
+        regr.fit(df)
+
+        predictions = regr.predict(df[:1])[[OUTPUT_COLUMNS]]
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            s = {"predict": model_signature.infer_signature(df[INPUT_COLUMNS], regr.predict(df)[[OUTPUT_COLUMNS]])}
+            with self.assertRaises(ValueError):
+                model_api.save_model(
+                    name="model1",
+                    model_dir_path=os.path.join(tmpdir, "model1"),
+                    model=regr,
+                    signatures={**s, "another_predict": s["predict"]},
+                    metadata={"author": "halu", "version": "1"},
+                )
+
+            model_api.save_model(
+                name="model1",
+                model_dir_path=os.path.join(tmpdir, "model1"),
+                model=regr,
+                signatures=s,
+                metadata={"author": "halu", "version": "1"},
+            )
+
+            with warnings.catch_warnings():
+                warnings.simplefilter("error")
+
+                m: LinearRegression
+                m, _ = model_api.load_model(model_dir_path=os.path.join(tmpdir, "model1"))
+                np.testing.assert_allclose(predictions, m.predict(df[:1])[[OUTPUT_COLUMNS]])
+                m_udf, _ = model_api._load_model_for_deploy(os.path.join(tmpdir, "model1"))
+                predict_method = getattr(m_udf, "predict", None)
+                assert callable(predict_method)
+                np.testing.assert_allclose(predictions, predict_method(df[:1])[[OUTPUT_COLUMNS]])
+
+            model_api.save_model(
+                name="model1_no_sig",
+                model_dir_path=os.path.join(tmpdir, "model1_no_sig"),
+                model=regr,
                 sample_input=df,
                 metadata={"author": "halu", "version": "1"},
             )
 
             m, meta = model_api.load_model(model_dir_path=os.path.join(tmpdir, "model1_no_sig"))
             np.testing.assert_allclose(np.array([[-0.08254936]]), m.predict(df[:1])[[OUTPUT_COLUMNS]])
-            # TODO: After model_signatures() function is updated in codegen, next line should be changed to
-            # s = regr.model_signatures()
-            # self.assertEqual(s["predict"], meta.signatures["predict"])
+            s = regr.model_signatures
+            # Compare the Model Signature without indexing
+            self.assertItemsEqual(s["predict"].to_dict(), meta.signatures["predict"].to_dict())
 
             m_udf, _ = model_api._load_model_for_deploy(os.path.join(tmpdir, "model1_no_sig"))
             predict_method = getattr(m_udf, "predict", None)
             assert callable(predict_method)
             np.testing.assert_allclose(np.array([[-0.08254936]]), predict_method(df[:1])[[OUTPUT_COLUMNS]])
+
+    def test_pytorch(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            model, data_x, data_y = _prepare_torch_model()
+            s = {"forward": model_signature.infer_signature(data_x, data_y)}
+            with self.assertRaises(ValueError):
+                model_api.save_model(
+                    name="model1",
+                    model_dir_path=os.path.join(tmpdir, "model1"),
+                    model=model,
+                    signatures={**s, "another_forward": s["forward"]},
+                    metadata={"author": "halu", "version": "1"},
+                )
+
+            model_api.save_model(
+                name="model1",
+                model_dir_path=os.path.join(tmpdir, "model1"),
+                model=model,
+                signatures=s,
+                metadata={"author": "halu", "version": "1"},
+            )
+
+            model.eval()
+            y_pred = model.forward(data_x)[0].detach()
+
+            x_df = model_signature._rename_pandas_df(
+                model_signature._SeqOfPyTorchTensorHandler.convert_to_df(data_x, ensure_serializable=False),
+                s["forward"].inputs,
+            )
+
+            with warnings.catch_warnings():
+                warnings.simplefilter("error")
+
+                m, _ = model_api.load_model(model_dir_path=os.path.join(tmpdir, "model1"))
+                assert isinstance(m, torch.nn.Module)
+                torch.testing.assert_close(m.forward(data_x)[0], y_pred)  # type:ignore[attr-defined]
+                m_udf, _ = model_api._load_model_for_deploy(os.path.join(tmpdir, "model1"))
+                predict_method = getattr(m_udf, "forward", None)
+                assert callable(predict_method)
+                torch.testing.assert_close(  # type:ignore[attr-defined]
+                    model_signature._SeqOfPyTorchTensorHandler.convert_from_df(
+                        predict_method(x_df), s["forward"].outputs
+                    )[0],
+                    y_pred,
+                )
+
+            model_api.save_model(
+                name="model1_no_sig_1",
+                model_dir_path=os.path.join(tmpdir, "model1_no_sig_1"),
+                model=model,
+                sample_input=data_x,
+                metadata={"author": "halu", "version": "1"},
+            )
+
+            m, meta = model_api.load_model(model_dir_path=os.path.join(tmpdir, "model1_no_sig_1"))
+            assert isinstance(m, torch.nn.Module)
+            torch.testing.assert_close(m.forward(data_x)[0], y_pred)  # type:ignore[attr-defined]
+            self.assertEqual(s["forward"], meta.signatures["forward"])
+
+            m_udf, _ = model_api._load_model_for_deploy(os.path.join(tmpdir, "model1_no_sig_1"))
+            predict_method = getattr(m_udf, "forward", None)
+            assert callable(predict_method)
+            torch.testing.assert_close(  # type:ignore[attr-defined]
+                model_signature._SeqOfPyTorchTensorHandler.convert_from_df(predict_method(x_df), s["forward"].outputs)[
+                    0
+                ],
+                y_pred,
+            )
+
+    def test_torchscript(self) -> None:
+        model, data_x, data_y = _prepare_torch_model()
+        model_script = torch.jit.script(model)  # type:ignore[attr-defined]
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            s = {"forward": model_signature.infer_signature(data_x, data_y)}
+            with self.assertRaises(ValueError):
+                model_api.save_model(
+                    name="model1",
+                    model_dir_path=os.path.join(tmpdir, "model1"),
+                    model=model_script,
+                    signatures={**s, "another_forward": s["forward"]},
+                    metadata={"author": "halu", "version": "1"},
+                )
+
+            model_api.save_model(
+                name="model1",
+                model_dir_path=os.path.join(tmpdir, "model1"),
+                model=model_script,
+                signatures=s,
+                metadata={"author": "halu", "version": "1"},
+            )
+
+            model_script.eval()
+            y_pred = model_script.forward(data_x)[0].detach()
+
+            x_df = model_signature._rename_pandas_df(
+                model_signature._SeqOfPyTorchTensorHandler.convert_to_df(data_x, ensure_serializable=False),
+                s["forward"].inputs,
+            )
+
+            with warnings.catch_warnings():
+                warnings.simplefilter("error")
+
+                m, _ = model_api.load_model(model_dir_path=os.path.join(tmpdir, "model1"))
+                assert isinstance(m, torch.jit.ScriptModule)  # type:ignore[attr-defined]
+                torch.testing.assert_close(m.forward(data_x)[0], y_pred)  # type:ignore[attr-defined]
+                m_udf, _ = model_api._load_model_for_deploy(os.path.join(tmpdir, "model1"))
+                predict_method = getattr(m_udf, "forward", None)
+                assert callable(predict_method)
+                torch.testing.assert_close(  # type:ignore[attr-defined]
+                    model_signature._SeqOfPyTorchTensorHandler.convert_from_df(
+                        predict_method(x_df), s["forward"].outputs
+                    )[0],
+                    y_pred,
+                )
+
+            model_api.save_model(
+                name="model1_no_sig_1",
+                model_dir_path=os.path.join(tmpdir, "model1_no_sig_1"),
+                model=model_script,
+                sample_input=data_x,
+                metadata={"author": "halu", "version": "1"},
+            )
+
+            m, meta = model_api.load_model(model_dir_path=os.path.join(tmpdir, "model1_no_sig_1"))
+            assert isinstance(m, torch.jit.ScriptModule)  # type:ignore[attr-defined]
+            torch.testing.assert_close(m.forward(data_x)[0], y_pred)  # type:ignore[attr-defined]
+            self.assertEqual(s["forward"], meta.signatures["forward"])
+
+            m_udf, _ = model_api._load_model_for_deploy(os.path.join(tmpdir, "model1_no_sig_1"))
+            predict_method = getattr(m_udf, "forward", None)
+            assert callable(predict_method)
+            torch.testing.assert_close(  # type:ignore[attr-defined]
+                model_signature._SeqOfPyTorchTensorHandler.convert_from_df(predict_method(x_df), s["forward"].outputs)[
+                    0
+                ],
+                y_pred,
+            )
+
+    def test_torch_df_sample_input(self) -> None:
+        model, data_x, data_y = _prepare_torch_model(torch.float64)
+        model_script = torch.jit.script(model)  # type:ignore[attr-defined]
+        s = {"forward": model_signature.infer_signature(data_x, data_y)}
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            model.eval()
+            y_pred = model.forward(data_x)[0].detach()
+
+            x_df = model_signature._rename_pandas_df(
+                model_signature._SeqOfPyTorchTensorHandler.convert_to_df(data_x, ensure_serializable=False),
+                s["forward"].inputs,
+            )
+            model_api.save_model(
+                name="model1_no_sig_1",
+                model_dir_path=os.path.join(tmpdir, "model1_no_sig_1"),
+                model=model,
+                sample_input=x_df,
+                metadata={"author": "halu", "version": "1"},
+            )
+
+            m, meta = model_api.load_model(model_dir_path=os.path.join(tmpdir, "model1_no_sig_1"))
+            assert isinstance(m, torch.nn.Module)
+            torch.testing.assert_close(m.forward(data_x)[0], y_pred)  # type:ignore[attr-defined]
+
+            m_udf, _ = model_api._load_model_for_deploy(os.path.join(tmpdir, "model1_no_sig_1"))
+            predict_method = getattr(m_udf, "forward", None)
+            assert callable(predict_method)
+            torch.testing.assert_close(  # type:ignore[attr-defined]
+                model_signature._SeqOfPyTorchTensorHandler.convert_from_df(predict_method(x_df))[0], y_pred
+            )
+
+            model_script.eval()
+            y_pred = model_script.forward(data_x)[0].detach()
+
+            model_api.save_model(
+                name="model1_no_sig_2",
+                model_dir_path=os.path.join(tmpdir, "model1_no_sig_2"),
+                model=model_script,
+                sample_input=x_df,
+                metadata={"author": "halu", "version": "1"},
+            )
+
+            m, meta = model_api.load_model(model_dir_path=os.path.join(tmpdir, "model1_no_sig_2"))
+            assert isinstance(m, torch.jit.ScriptModule)  # type:ignore[attr-defined]
+            torch.testing.assert_close(m.forward(data_x)[0], y_pred)  # type:ignore[attr-defined]
+
+            m_udf, _ = model_api._load_model_for_deploy(os.path.join(tmpdir, "model1_no_sig_2"))
+            predict_method = getattr(m_udf, "forward", None)
+            assert callable(predict_method)
+            torch.testing.assert_close(  # type:ignore[attr-defined]
+                model_signature._SeqOfPyTorchTensorHandler.convert_from_df(predict_method(x_df))[0], y_pred
+            )
 
 
 if __name__ == "__main__":

@@ -1,0 +1,24 @@
+spec:
+  container:
+    - name: ${inference_server_container_name}
+      image: ${image}
+      env:
+        MODEL_ZIP_STAGE_PATH: ${model_zip_stage_path}
+      readinessProbe:
+        port: 5000
+        path: /health
+      volumeMounts:
+        - name: vol1
+          mountPath: /local/user/vol1
+        - name: stage
+          mountPath: ${stage}
+  endpoint:
+    - name: ${predict_endpoint_name}
+      port: 5000
+  volume:
+    - name: vol1
+      source: local  # only local emptyDir volume is supported
+    - name: stage
+      source: "@${stage}"
+      uid: 1000
+      gid: 1000

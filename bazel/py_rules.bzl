@@ -144,9 +144,7 @@ def snowml_wheel(
         deps,
         description_file = None,
         development_status = "Alpha",
-        compatible_with_snowpark = True,
-        homepage = None,
-        summary = None):
+        compatible_with_snowpark = True):
     """A SnowML customized wheel definition with lots of default values filled in.
 
     Args:
@@ -156,6 +154,7 @@ def snowml_wheel(
       version: Version string
       deps: List of dependencies of type py_package
       development_status: String with PrPr, PuPr & GA
+      description_file: Label of readme file.
       compatible_with_snowpark: adds a tag to the wheel to indicate that this
         wheel is compatible with the snowpark running environment.
     """
@@ -164,6 +163,7 @@ def snowml_wheel(
         dev_status = "Development Status :: 3 - Alpha"
     elif development_status.lower() == "pupr":
         dev_status = "Development Status :: 3 - Beta"
+    homepage = "https://github.com/snowflakedb/snowflake-ml-python"
     py_wheel(
         name = name,
         author = "Snowflake, Inc",
@@ -194,11 +194,17 @@ def snowml_wheel(
         distribution = "snowflake-ml-python",
         extra_requires = extra_requires,
         homepage = homepage,
+        project_urls = {
+            "Changelog": homepage + "/blob/main/CHANGELOG.md",
+            "Documentation": "https://docs.snowflake.com/developer-guide/snowpark-ml",
+            "Issues": homepage + "/issues",
+            "Source": homepage,
+        },
         license = "Apache License, Version 2.0",
         python_requires = ">=3.8,<4",
         python_tag = "py3",
         requires = requires,
-        summary = summary,
+        summary = "The machine learning client library that is used for interacting with Snowflake to build machine learning solutions.",
         version = version,
         deps = deps,
     )

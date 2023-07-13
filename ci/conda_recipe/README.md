@@ -5,10 +5,9 @@ https://docs.conda.io/projects/conda-build/en/stable/user-guide/wheel-files.html
 
 To invoke conda build:
 ```
-conda build --channel=conda-forge --prefix-length=0 ci/conda_recipe
+conda build --prefix-length=0 ci/conda_recipe
 ```
 
-- `--channel=conda-forge`: bazel is only available on conda-forge
 - `--prefix-length=0`: prevent the conda build environment from being created in
    a directory of very long path. conda does that intentionally to make sure
    packages can be installed at peculiar locations. However, it breaks bazel.

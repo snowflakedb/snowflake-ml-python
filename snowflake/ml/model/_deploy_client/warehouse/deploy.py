@@ -1,4 +1,5 @@
 import os
+import posixpath
 import tempfile
 import warnings
 from types import ModuleType
@@ -6,7 +7,8 @@ from typing import IO, List, Optional, Tuple, TypedDict, Union
 
 from typing_extensions import Unpack
 
-from snowflake.ml._internal import env_utils
+from snowflake.ml._internal import env_utils, file_utils
+from snowflake.ml._internal.utils import identifier
 from snowflake.ml.model import (
     _env as model_env,
     _model,
@@ -37,6 +39,7 @@ def _deploy_to_warehouse(
         **kwargs: Options that control some features in generated udf code.
 
     Raises:
+        ValueError: Raised when model file name is unable to encoded using ASCII.
         ValueError: Raised when incompatible model.
         ValueError: Raised when target method does not exist in model.
         ValueError: Raised when confronting invalid stage location.
@@ -44,14 +47,20 @@ def _deploy_to_warehouse(
     Returns:
         The metadata of the model deployed.
     """
+    # TODO(SNOW-862576): Should remove check on ASCII encoding after SNOW-862576 fixed.
     if model_dir_path:
         model_dir_path = os.path.normpath(model_dir_path)
         model_dir_name = os.path.basename(model_dir_path)
+        if not file_utils._able_ascii_encode(model_dir_name):
+            raise ValueError(f"Model file name {model_dir_name} cannot be encoded using ASCII. Please rename.")
         extract_model_code = infer_template._EXTRACT_LOCAL_MODEL_CODE.format(model_dir_name=model_dir_name)
         meta = _model.load_model(model_dir_path=model_dir_path, meta_only=True)
     else:
         assert model_stage_file_path is not None, "Unreachable assertion error."
-        model_stage_file_name = os.path.basename(model_stage_file_path)
+        model_stage_file_name = posixpath.basename(model_stage_file_path)
+        if not file_utils._able_ascii_encode(model_stage_file_name):
+            raise ValueError(f"Model file name {model_stage_file_name} cannot be encoded using ASCII. Please rename.")
+
         extract_model_code = infer_template._EXTRACT_STAGE_MODEL_CODE.format(
             model_stage_file_name=model_stage_file_name
         )
@@ -59,18 +68,22 @@ def _deploy_to_warehouse(
 
     relax_version = kwargs.get("relax_version", False)
 
+    disable_local_conda_resolver = kwargs.get("disable_local_conda_resolver", False)
+
     if target_method not in meta.signatures.keys():
         raise ValueError(f"Target method {target_method} does not exist in model.")
 
-    final_packages = _get_model_final_packages(meta, session, relax_version=relax_version)
+    final_packages = _get_model_final_packages(
+        meta, session, relax_version=relax_version, disable_local_conda_resolver=disable_local_conda_resolver
+    )
 
     stage_location = kwargs.get("permanent_udf_stage_location", None)
     if stage_location:
-        stage_location = stage_location.strip().rstrip("/")
+        stage_location = posixpath.normpath(stage_location.strip())
         if not stage_location.startswith("@"):
             raise ValueError(f"Invalid stage location {stage_location}.")
 
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False, encoding="utf-8") as f:
         _write_UDF_py_file(f.file, extract_model_code, target_method, **kwargs)
         print(f"Generated UDF file is persisted at: {f.name}")
         imports = ([model_dir_path] if model_dir_path else []) + (
@@ -89,7 +102,7 @@ def _deploy_to_warehouse(
         params = _UDFParams(
             file_path=f.name,
             func_name="infer",
-            name=f"{udf_name}",
+            name=identifier.get_inferred_name(udf_name),
             return_type=st.PandasSeriesType(st.MapType(st.StringType(), st.VariantType())),
             input_types=[st.PandasDataFrameType([st.MapType()])],
             imports=list(imports),
@@ -139,6 +152,7 @@ def _get_model_final_packages(
     meta: _model_meta.ModelMetadata,
     session: snowpark_session.Session,
     relax_version: Optional[bool] = False,
+    disable_local_conda_resolver: Optional[bool] = False,
 ) -> List[str]:
     """Generate final packages list of dependency of a model to be deployed to warehouse.
 
@@ -147,6 +161,8 @@ def _get_model_final_packages(
         session: Snowpark connection session.
         relax_version: Whether or not relax the version restriction when fail to resolve dependencies.
             Defaults to False.
+        disable_local_conda_resolver: Set to disable use local conda resolver to do pre-check on environment and rely on
+            the information schema only. Defaults to False.
 
     Raises:
         RuntimeError: Raised when PIP requirements and dependencies from non-Snowflake anaconda channel found.
@@ -165,6 +181,8 @@ def _get_model_final_packages(
     deps = meta._conda_dependencies[""]
 
     try:
+        if disable_local_conda_resolver:
+            raise ImportError("Raise to disable local conda resolver. Should be captured.")
         final_packages = env_utils.resolve_conda_environment(
             deps, [model_env._SNOWFLAKE_CONDA_CHANNEL_URL], python_version=meta.python_version
         )

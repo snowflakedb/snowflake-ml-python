@@ -17,14 +17,13 @@ RUN adduser --disabled-password \
 	--uid $UID \
 	--home $HOME \
 	$USER
-COPY model_dir ./model_dir
+
 COPY inference_server ./inference_server
 COPY gunicorn_run.sh ./gunicorn_run.sh
 RUN chmod +x /gunicorn_run.sh
 COPY snowflake ./snowflake
 COPY --from=build /opt/conda /opt/conda
 EXPOSE 5000
-ENV MODEL_DIR="model_dir"
 
 USER nonrootuser
 

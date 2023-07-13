@@ -13,7 +13,8 @@ py_library(
     srcs = ["client_image_builder.py"],
     deps = [
         ":base_image_builder",
-        ":docker_context"
+        ":docker_context",
+        "//snowflake/ml/_internal/utils:query_result_checker",
     ]
 )
 
@@ -24,7 +25,9 @@ py_library(
         "//snowflake/ml/model/_deploy_client/utils:constants"
     ],
     data = [
-        "gunicorn_run.sh"
+        "gunicorn_run.sh",
+        "templates/dockerfile_template",
+        ":inference_server",
     ]
 )
 
@@ -33,6 +36,7 @@ py_test(
     srcs = ["client_image_builder_test.py"],
     deps = [
         ":client_image_builder",
+        "//snowflake/ml/test_utils:mock_session",
     ]
 )
 
@@ -43,8 +47,6 @@ py_test(
         ":docker_context"
     ],
     data = [
-        "templates/dockerfile_template",
-        ":inference_server",
         "test_fixtures/dockerfile_test_fixture"
     ]
 )

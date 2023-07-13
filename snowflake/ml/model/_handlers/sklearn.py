@@ -1,5 +1,5 @@
 import os
-from typing import TYPE_CHECKING, Callable, Optional, Sequence, Type, Union, cast
+from typing import TYPE_CHECKING, Callable, Optional, Type, Union, cast
 
 import cloudpickle
 import numpy as np
@@ -10,6 +10,7 @@ from snowflake.ml._internal import type_utils
 from snowflake.ml.model import (
     _model_meta as model_meta_api,
     custom_model,
+    model_signature,
     type_hints as model_types,
 )
 from snowflake.ml.model._handlers import _base
@@ -80,6 +81,9 @@ class _SKLModelHandler(_base._ModelHandler[Union["sklearn.base.BaseEstimator", "
             def get_prediction(
                 target_method_name: str, sample_input: model_types.SupportedLocalDataType
             ) -> model_types.SupportedLocalDataType:
+                if not isinstance(sample_input, (pd.DataFrame, np.ndarray)):
+                    sample_input = model_signature._convert_local_data_to_df(sample_input)
+
                 target_method = getattr(model, target_method_name, None)
                 assert callable(target_method)
                 predictions_df = target_method(sample_input)
@@ -101,7 +105,7 @@ class _SKLModelHandler(_base._ModelHandler[Union["sklearn.base.BaseEstimator", "
             name=name, model_type=_SKLModelHandler.handler_type, path=_SKLModelHandler.MODEL_BLOB_FILE
         )
         model_meta.models[name] = base_meta
-        model_meta._include_if_absent([("scikit-learn", "scikit-learn")])
+        model_meta._include_if_absent([model_meta_api.Dependency(conda_name="scikit-learn", pip_name="scikit-learn")])
 
     @staticmethod
     def _load_model(
@@ -147,7 +151,7 @@ class _SKLModelHandler(_base._ModelHandler[Union["sklearn.base.BaseEstimator", "
         ) -> Type[custom_model.CustomModel]:
             def fn_factory(
                 raw_model: Union["sklearn.base.BaseEstimator", "sklearn.pipeline.Pipeline"],
-                output_col_names: Sequence[str],
+                signature: model_signature.ModelSignature,
                 target_method: str,
             ) -> Callable[[custom_model.CustomModel, pd.DataFrame], pd.DataFrame]:
                 @custom_model.inference_api
@@ -156,17 +160,18 @@ class _SKLModelHandler(_base._ModelHandler[Union["sklearn.base.BaseEstimator", "
 
                     if isinstance(res, list) and len(res) > 0 and isinstance(res[0], np.ndarray):
                         # In case of multi-output estimators, predict_proba(), decision_function(), etc., functions
-                        # return a list of ndarrays. We need to concatenate them.
-                        res = np.concatenate(res, axis=1)
-                    return pd.DataFrame(res, columns=output_col_names)
+                        # return a list of ndarrays. We need to deal them seperately
+                        df = model_signature._SeqOfNumpyArrayHandler.convert_to_df(res)
+                    else:
+                        df = pd.DataFrame(res)
+
+                    return model_signature._rename_pandas_df(df, signature.outputs)
 
                 return fn
 
             type_method_dict = {}
             for target_method_name, sig in model_meta.signatures.items():
-                type_method_dict[target_method_name] = fn_factory(
-                    raw_model, [spec.name for spec in sig.outputs], target_method_name
-                )
+                type_method_dict[target_method_name] = fn_factory(raw_model, sig, target_method_name)
 
             _SKLModel = type(
                 "_SKLModel",

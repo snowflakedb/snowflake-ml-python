@@ -1,6 +1,7 @@
 import inspect
 import json
 import os
+import posixpath
 import sys
 import tempfile
 import types
@@ -34,7 +35,7 @@ _DEFAULT_REGISTRY_NAME: str = "_SYSTEM_MODEL_REGISTRY"
 _DEFAULT_SCHEMA_NAME: str = "_SYSTEM_MODEL_REGISTRY_SCHEMA"
 _MODELS_TABLE_NAME: str = "_SYSTEM_REGISTRY_MODELS"
 _METADATA_TABLE_NAME: str = "_SYSTEM_REGISTRY_METADATA"
-_DEPLOYMENT_TABLE_NAME: str = "_SYSTEM_REGISRTRY_DEPLOYMENTS"
+_DEPLOYMENT_TABLE_NAME: str = "_SYSTEM_REGISTRY_DEPLOYMENTS"
 
 # Metadata operation types.
 _SET_METADATA_OPERATION: str = "SET"
@@ -83,9 +84,11 @@ def create_model_registry(
     """
 
     # These might be exposed as parameters in the future.
-    registry_table_name = _MODELS_TABLE_NAME
-    metadata_table_name = _METADATA_TABLE_NAME
-    deployment_table_name = _DEPLOYMENT_TABLE_NAME
+    database_name = identifier.get_inferred_name(database_name)
+    schema_name = identifier.get_inferred_name(schema_name)
+    registry_table_name = identifier.get_inferred_name(_MODELS_TABLE_NAME)
+    metadata_table_name = identifier.get_inferred_name(_METADATA_TABLE_NAME)
+    deployment_table_name = identifier.get_inferred_name(_DEPLOYMENT_TABLE_NAME)
     statement_params = telemetry.get_function_usage_statement_params(
         project=_TELEMETRY_PROJECT,
         subproject=_TELEMETRY_SUBPROJECT,
@@ -129,14 +132,14 @@ def _create_registry_database(
         database_name: Desired name of the model registry database.
         statement_params: Function usage statement parameters used in sql query executions.
     """
-    registry_databases = session.sql(f"SHOW DATABASES LIKE '{database_name}'").collect(
+    registry_databases = session.sql(f"SHOW DATABASES LIKE '{identifier.get_unescaped_names(database_name)}'").collect(
         statement_params=statement_params
     )
     if len(registry_databases) > 0:
         logging.warning(f"The database {database_name} already exists. Skipping creation.")
         return
 
-    session.sql(f'CREATE DATABASE "{database_name}"').collect(statement_params=statement_params)
+    session.sql(f"CREATE DATABASE {database_name}").collect(statement_params=statement_params)
 
 
 def _create_registry_schema(
@@ -153,31 +156,31 @@ def _create_registry_schema(
         statement_params: Function usage statement parameters used in sql query executions.
     """
     # The default PUBLIC schema is created by default so it might already exist even in a new database.
-    registry_schemas = session.sql(f"SHOW SCHEMAS LIKE '{schema_name}' IN DATABASE \"{database_name}\"").collect(
+    registry_schemas = session.sql(
+        f"SHOW SCHEMAS LIKE '{identifier.get_unescaped_names(schema_name)}' IN DATABASE {database_name}"
+    ).collect(statement_params=statement_params)
+
+    if len(registry_schemas) > 0:
+        logging.warning(
+            f"The schema {_get_fully_qualified_schema_name(database_name, schema_name)}already exists. "
+            + "Skipping creation."
+        )
+        return
+
+    session.sql(f"CREATE SCHEMA {_get_fully_qualified_schema_name(database_name, schema_name)}").collect(
         statement_params=statement_params
     )
 
-    if len(registry_schemas) > 0:
-        logging.warning(f'The schmea "{database_name}"."{schema_name}" already exists. Skipping creation.')
-        return
-
-    session.sql(f'CREATE SCHEMA "{database_name}"."{schema_name}"').collect(statement_params=statement_params)
-
 
 def _get_fully_qualified_schema_name(database_name: str, schema_name: str) -> str:
-    return ".".join(
-        [
-            f"{identifier.quote_name_without_upper_casing(database_name)}",
-            f"{identifier.quote_name_without_upper_casing(schema_name)}",
-        ]
-    )
+    return ".".join([database_name, schema_name])
 
 
 def _get_fully_qualified_table_name(database_name: str, schema_name: str, table_name: str) -> str:
     return ".".join(
         [
             _get_fully_qualified_schema_name(database_name, schema_name),
-            f"{identifier.quote_name_without_upper_casing(table_name)}",
+            table_name,
         ]
     )
 
@@ -291,10 +294,10 @@ def _create_registry_views(
     )
 
     # Create views on most recent metadata items.
-    metadata_view_name_prefix = metadata_table_name + "_LAST_"
+    metadata_view_name_prefix = identifier.concat_names([metadata_table_name, "_LAST_"])
     metadata_view_template = formatting.unwrap(
-        """CREATE OR REPLACE VIEW "{database}"."{schema}"."{attribute_view}" COPY GRANTS AS
-            SELECT DISTINCT MODEL_ID, {select_expression} AS {final_attribute_name} FROM "{metadata_table}"
+        """CREATE OR REPLACE VIEW {database}.{schema}.{attribute_view} COPY GRANTS AS
+            SELECT DISTINCT MODEL_ID, {select_expression} AS {final_attribute_name} FROM {metadata_table}
             WHERE ATTRIBUTE_NAME = '{attribute_name}'"""
     )
 
@@ -302,7 +305,7 @@ def _create_registry_views(
     metadata_view_names = []
     metadata_select_fields = []
     for attribute_name in _LIST_METADATA_ATTRIBUTE:
-        view_name = f"{metadata_view_name_prefix}{attribute_name}"
+        view_name = identifier.concat_names([metadata_view_name_prefix, attribute_name])
         select_expression = f"(LAST_VALUE(VALUE) OVER (PARTITION BY MODEL_ID ORDER BY SEQUENCE_ID))['{attribute_name}']"
         sql = metadata_view_template.format(
             database=database_name,
@@ -315,14 +318,12 @@ def _create_registry_views(
         )
         session.sql(sql).collect(statement_params=statement_params)
         metadata_view_names.append(view_name)
-        metadata_select_fields.append(
-            f"{identifier.quote_name_without_upper_casing(view_name)}.{attribute_name} AS {attribute_name}"
-        )
+        metadata_select_fields.append(f"{view_name}.{attribute_name} AS {attribute_name}")
 
     # Create a special view for the registration timestamp.
     attribute_name = _METADATA_ATTRIBUTE_REGISTRATION
-    final_attribute_name = attribute_name + "_TIMESTAMP"
-    view_name = f"{metadata_view_name_prefix}{attribute_name}"
+    final_attribute_name = identifier.concat_names([attribute_name, "_TIMESTAMP"])
+    view_name = identifier.concat_names([metadata_view_name_prefix, attribute_name])
     create_registration_view_sql = metadata_view_template.format(
         database=database_name,
         schema=schema_name,
@@ -334,13 +335,11 @@ def _create_registry_views(
     )
     session.sql(create_registration_view_sql).collect(statement_params=statement_params)
     metadata_view_names.append(view_name)
-    metadata_select_fields.append(
-        f"{identifier.quote_name_without_upper_casing(view_name)}.{final_attribute_name} AS {final_attribute_name}"
-    )
+    metadata_select_fields.append(f"{view_name}.{final_attribute_name} AS {final_attribute_name}")
 
     metadata_views_join = " ".join(
         [
-            'LEFT JOIN "{view}" ON ("{view}".MODEL_ID = "{registry_table}".ID)'.format(
+            "LEFT JOIN {view} ON ({view}.MODEL_ID = {registry_table}.ID)".format(
                 view=view, registry_table=registry_table_name
             )
             for view in metadata_view_names
@@ -348,12 +347,12 @@ def _create_registry_views(
     )
 
     # Create view to combine all attributes.
-    registry_view_name = registry_table_name + "_VIEW"
+    registry_view_name = identifier.concat_names([registry_table_name, "_VIEW"])
     metadata_select_fields_formatted = ",".join(metadata_select_fields)
     session.sql(
-        f"""CREATE OR REPLACE VIEW {fully_qualified_schema_name}."{registry_view_name}" COPY GRANTS AS
-                SELECT "{registry_table_name}".*, {metadata_select_fields_formatted}
-                FROM "{registry_table_name}" {metadata_views_join}"""
+        f"""CREATE OR REPLACE VIEW {fully_qualified_schema_name}.{registry_view_name} COPY GRANTS AS
+                SELECT {registry_table_name}.*, {metadata_select_fields_formatted}
+                FROM {registry_table_name} {metadata_views_join}"""
     ).collect(statement_params=statement_params)
 
 
@@ -376,8 +375,9 @@ def _create_active_permanent_deployment_view(
 
     # Create a view on active permanent deployments
     # Active deployments are those whose last operation is not DROP.
+    active_deployments_view_name = identifier.concat_names([deployment_table_name, "_VIEW"])
     active_deployments_view_expr = f"""
-        CREATE OR REPLACE VIEW {fully_qualified_schema_name}."{deployment_table_name}_VIEW"
+        CREATE OR REPLACE VIEW {fully_qualified_schema_name}.{active_deployments_view_name}
         COPY GRANTS AS
         SELECT
             DEPLOYMENT_NAME,
@@ -416,14 +416,14 @@ class ModelRegistry:
             database_name: Desired name of the model registry database.
             schema_name: Desired name of the schema used by this model registry inside the database.
         """
-        self._name = database_name
-        self._schema = schema_name
-        self._registry_table = _MODELS_TABLE_NAME
-        self._registry_table_view = self._registry_table + "_VIEW"
-        self._metadata_table = _METADATA_TABLE_NAME
-        self._deployment_table = _DEPLOYMENT_TABLE_NAME
-        self._permanent_deployment_view = self._deployment_table + "_VIEW"
-        self._permanent_deployment_stage = self._deployment_table + "_STAGE"
+        self._name = identifier.get_inferred_name(database_name)
+        self._schema = identifier.get_inferred_name(schema_name)
+        self._registry_table = identifier.get_inferred_name(_MODELS_TABLE_NAME)
+        self._registry_table_view = identifier.concat_names([self._registry_table, "_VIEW"])
+        self._metadata_table = identifier.get_inferred_name(_METADATA_TABLE_NAME)
+        self._deployment_table = identifier.get_inferred_name(_DEPLOYMENT_TABLE_NAME)
+        self._permanent_deployment_view = identifier.concat_names([self._deployment_table, "_VIEW"])
+        self._permanent_deployment_stage = identifier.concat_names([self._deployment_table, "_STAGE"])
 
         self._session = session
 
@@ -440,23 +440,39 @@ class ModelRegistry:
         # Check that the required tables exist and are accessible by the current role.
 
         query_result_checker.SqlResultValidator(
-            self._session, query=f"SHOW DATABASES LIKE '{self._name}'"
+            self._session, query=f"SHOW DATABASES LIKE '{identifier.get_unescaped_names(self._name)}'"
         ).has_dimensions(expected_rows=1).validate()
 
         query_result_checker.SqlResultValidator(
-            self._session, query=f"SHOW SCHEMAS LIKE '{self._schema}' IN DATABASE \"{self._name}\""
+            self._session,
+            query=f"SHOW SCHEMAS LIKE '{identifier.get_unescaped_names(self._schema)}' IN DATABASE {self._name}",
         ).has_dimensions(expected_rows=1).validate()
 
         query_result_checker.SqlResultValidator(
-            self._session, query=f"SHOW TABLES LIKE '{self._registry_table}' IN {self._fully_qualified_schema_name()}"
+            self._session,
+            query=formatting.unwrap(
+                f"""
+            SHOW TABLES LIKE '{identifier.get_unescaped_names(self._registry_table)}'
+            IN {self._fully_qualified_schema_name()}"""
+            ),
         ).has_dimensions(expected_rows=1).validate()
 
         query_result_checker.SqlResultValidator(
-            self._session, query=f"SHOW TABLES LIKE '{self._metadata_table}' IN {self._fully_qualified_schema_name()}"
+            self._session,
+            query=formatting.unwrap(
+                f"""
+            SHOW TABLES LIKE '{identifier.get_unescaped_names(self._metadata_table)}'
+            IN {self._fully_qualified_schema_name()}"""
+            ),
         ).has_dimensions(expected_rows=1).validate()
 
         query_result_checker.SqlResultValidator(
-            self._session, query=f"SHOW TABLES LIKE '{self._deployment_table}' IN {self._fully_qualified_schema_name()}"
+            self._session,
+            query=formatting.unwrap(
+                f"""
+            SHOW TABLES LIKE '{identifier.get_unescaped_names(self._deployment_table)}'
+            IN {self._fully_qualified_schema_name()}"""
+            ),
         ).has_dimensions(expected_rows=1).validate()
 
         # TODO(zzhu): Also check validity of views. Consider checking schema as well.
@@ -824,7 +840,7 @@ class ModelRegistry:
                 before setting the metadata attribute. False by default meaning that by default we will check.
 
         Raises:
-            DataError: Failed to set the meatdata attribute.
+            DataError: Failed to set the metadata attribute.
             KeyError: The target model doesn't exist
         """
         selected_models = self._list_selected_models(id=id, model_name=model_name, model_version=model_version)
@@ -954,13 +970,13 @@ class ModelRegistry:
         # Check if directory or file and adapt accordingly.
         # TODO: Unify and explicit about compression for both file and directory.
         if os.path.isfile(path):
-            self._session.file.put(path, f"{fully_qualified_model_stage_name}/data")
+            self._session.file.put(path, posixpath.join(fully_qualified_model_stage_name, "data"))
         elif os.path.isdir(path):
             with file_utils.zip_file_or_directory_to_stream(path, path) as input_stream:
                 self._session._conn.upload_stream(
                     input_stream=input_stream,
                     stage_location=fully_qualified_model_stage_name,
-                    dest_filename=f"{os.path.basename(path)}.zip",
+                    dest_filename=f"{posixpath.basename(path)}.zip",
                     dest_prefix="",
                     source_compression="DEFLATE",
                     compress_data=False,
@@ -1066,7 +1082,7 @@ class ModelRegistry:
         """
         # Explicitly not calling collect.
         return self._session.sql(
-            'SELECT * FROM "{database}"."{schema}"."{view}"'.format(
+            "SELECT * FROM {database}.{schema}.{view}".format(
                 database=self._name, schema=self._schema, view=self._registry_table_view
             )
         )
@@ -1123,7 +1139,9 @@ class ModelRegistry:
         try:
             del model_tags[tag_name]
         except KeyError:
-            raise connector.DataError(f"Model id {id} has not tag named {tag_name}. Full list of tags: {model_tags}")
+            raise connector.DataError(
+                f"Model {model_name}/{model_version} has no tag named {tag_name}. Full list of tags: {model_tags}"
+            )
 
         self._set_metadata_attribute(
             _METADATA_ATTRIBUTE_TAGS, model_tags, model_name=model_name, model_version=model_version
@@ -1226,7 +1244,7 @@ class ModelRegistry:
         result = self._get_metadata_attribute(
             _METADATA_ATTRIBUTE_DESCRIPTION, model_name=model_name, model_version=model_version
         )
-        return None if result is None else str(result)
+        return None if result is None else json.loads(result)
 
     @telemetry.send_api_usage_telemetry(
         project=_TELEMETRY_PROJECT,
@@ -1558,7 +1576,7 @@ class ModelRegistry:
         restored_model = None
         with tempfile.TemporaryDirectory() as local_model_directory:
             self._session.file.get(remote_model_path, local_model_directory)
-            local_path = os.path.join(local_model_directory, os.path.basename(remote_model_path))
+            local_path = os.path.join(local_model_directory, posixpath.basename(remote_model_path))
             if zipfile.is_zipfile(local_path):
                 extracted_dir = os.path.join(local_model_directory, "extracted")
                 with zipfile.ZipFile(local_path, "r") as myzip:

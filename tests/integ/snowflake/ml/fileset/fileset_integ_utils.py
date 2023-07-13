@@ -2,6 +2,7 @@
 # Copyright (c) 2012-2022 Snowflake Computing Inc. All rights reserved.
 #
 import os
+import posixpath
 import tempfile
 from typing import Union
 
@@ -25,8 +26,8 @@ def upload_file_to_snowflake(
     sp_session: snowpark.Session, file_path: str, snowflake_stage: str, stage_relative_path: str
 ) -> None:
     """Upload a file from local to a Snowflake stage."""
-    query = f"put file://{file_path} @{snowflake_stage}/{stage_relative_path} auto_compress=false"
-    sp_session.sql(query).collect()
+    stage_path = posixpath.join(snowflake_stage, stage_relative_path)
+    sp_session.file.put(file_path, "@" + stage_path, auto_compress=False)
 
 
 def upload_files_to_snowflake(sp_session: snowpark.Session, snowflake_stage: str, content: bytes) -> None:

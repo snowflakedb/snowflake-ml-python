@@ -143,9 +143,12 @@ class {transform.test_class_name}(TestCase):
                         # dimentions (n_samples, n_original_columns) by flattening list objects.
                         output_df_pandas = output_df_pandas.apply(lambda row: pd.Series(json.loads(row[0])), axis=1)
 
-                    # TODO(snandamuri): Implement type inference for trnasform and predict methods to return results with
+                    # TODO(snandamuri): Implement type inference for transform and predict methods to return results with
                     # correct datatype.
-                    actual_arr = output_df_pandas.astype("float64").to_numpy()
+                    if m == 'transform':
+                        actual_arr = output_df_pandas.astype("float64").to_numpy()
+                    else:
+                        actual_arr = output_df_pandas.to_numpy()
                 else:
                     output_df_pandas = getattr(reg, m)(input_df_pandas)
                     actual_output_cols = [
@@ -175,32 +178,35 @@ class {transform.test_class_name}(TestCase):
                 else:
                     np.testing.assert_allclose(actual_arr, sklearn_numpy_arr, rtol=1.e-1, atol=1.e-2)
 
-        if {transform._is_classifier}:
-            expected_methods = ["predict_proba", "predict_log_proba", "decision_function"]
-            for m in expected_methods:
-                assert not (
-                    callable(getattr(sklearn_reg, m, None))
-                    ^ callable(getattr(reg, m, None))
-                ), f"Estimator doesn't have method {{m}}"
+        expected_methods = ["predict_proba", "predict_log_proba", "decision_function"]
+        for m in expected_methods:
+            assert not (
+                callable(getattr(sklearn_reg, m, None))
+                ^ callable(getattr(reg, m, None))
+            ), f"Estimator doesn't have method {{m}}"
 
-                if callable(getattr(sklearn_reg, m, None)):
-                    if inference_with_udf:
-                        actual_inference_result = getattr(reg, m)(
-                            dataset=input_df, output_cols_prefix="OUTPUT_").to_pandas().sort_values(by="INDEX")
-                    else:
-                        actual_inference_result = getattr(reg, m)(dataset=input_df_pandas, output_cols_prefix="OUTPUT_")
+            if callable(getattr(sklearn_reg, m, None)):
+                if inference_with_udf:
+                    actual_inference_result = getattr(reg, m)(
+                        dataset=input_df, output_cols_prefix="OUTPUT_").to_pandas().sort_values(by="INDEX")
+                else:
+                    actual_inference_result = getattr(reg, m)(dataset=input_df_pandas, output_cols_prefix="OUTPUT_")
 
-                    actual_output_cols = [c for c in actual_inference_result.columns if c.find("OUTPUT_") >= 0]
-                    actual_inference_result = actual_inference_result[actual_output_cols].to_numpy()
+                actual_output_cols = [c for c in actual_inference_result.columns if c.find("OUTPUT_") >= 0]
+                actual_inference_result = actual_inference_result[actual_output_cols].to_numpy()
 
-                    sklearn_inference_result = getattr(sklearn_reg, m)(input_df_pandas[input_cols])
-                    if isinstance(sklearn_inference_result, list):
-                        # Incase of multioutput estimators predict_proba, decision_function, etc., returns a list of
-                        # ndarrays as output. We need to concatenate them to compare with snowflake output.
-                        sklearn_inference_result = np.concatenate(sklearn_inference_result, axis=1)
+                sklearn_inference_result = getattr(sklearn_reg, m)(input_df_pandas[input_cols])
+                if isinstance(sklearn_inference_result, list):
+                    # Incase of multioutput estimators predict_proba, decision_function, etc., returns a list of
+                    # ndarrays as output. We need to concatenate them to compare with snowflake output.
+                    sklearn_inference_result = np.concatenate(sklearn_inference_result, axis=1)
+                elif len(sklearn_inference_result.shape) == 1:
+                    # Some times sklearn retuns results as 1D array of shape (n_samples,), but snowfkale always retunrs
+                    # response as 2D array of shape (n_samples, 1). Flatten the snowflake response to compare results.
+                    actual_inference_result = actual_inference_result.flatten()
 
-                    np.testing.assert_allclose(
-                        actual_inference_result, sklearn_inference_result, rtol=1.e-1, atol=1.e-2)
+                np.testing.assert_allclose(
+                    actual_inference_result, sklearn_inference_result, rtol=1.e-1, atol=1.e-2)
 
         if callable(getattr(sklearn_reg, "score", None)) and callable(getattr(reg, "score", None)):
             score_argspec = inspect.getfullargspec(sklearn_reg.score)

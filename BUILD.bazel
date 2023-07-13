@@ -1,3 +1,5 @@
+load("@rules_java//java:defs.bzl", "java_binary")
+
 exports_files([
     "CHANGELOG.md",
     "README.md",
@@ -8,3 +10,9 @@ exports_files([
     "requirements.txt",
     "requirements.yml",
 ])
+
+java_binary(
+    name = "bazel-diff",
+    main_class = "com.bazel_diff.Main",
+    runtime_deps = ["@bazel_diff//jar"],
+)

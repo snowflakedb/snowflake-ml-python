@@ -29,7 +29,7 @@ RESOURCE_TO_STATUS_FUNCTION_MAPPING = {
     ResourceType.JOB: "SYSTEM$GET_JOB_STATUS",
 }
 
-PREDICT_ENDPOINT = "predict"
+PREDICT = "predict"
 STAGE = "stage"
 COMPUTE_POOL = "compute_pool"
 IMAGE_REPO = "image_repo"
@@ -38,6 +38,8 @@ MAX_INSTANCES = "max_instances"
 GPU_COUNT = "gpu"
 OVERRIDDEN_BASE_IMAGE = "image"
 ENDPOINT = "endpoint"
+SERVICE_SPEC = "service_spec"
+INFERENCE_SERVER_CONTAINER = "inference-server"
 
 """Image build related constants"""
 MODEL_DIR = "model_dir"

@@ -1,4 +1,4 @@
-import os.path
+import posixpath
 from typing import Optional
 from urllib.parse import ParseResult, urlparse, urlunparse
 
@@ -35,7 +35,12 @@ def get_snowflake_stage_path_from_uri(uri: str) -> Optional[str]:
     if not is_snowflake_stage_uri(uri):
         return None
     uri_components = urlparse(uri)
-    return os.path.join(uri_components.netloc.strip("/"), uri_components.path.strip("/")).rstrip("/")
+    # posixpath.join will drop other components if any of arguments is absolute path.
+    # The path we get is actually absolute (starting with '/'), however, since we concat them to stage location,
+    # it should not.
+    return posixpath.normpath(
+        posixpath.join(posixpath.normpath(uri_components.netloc), posixpath.normpath(uri_components.path.lstrip("/")))
+    )
 
 
 def get_uri_scheme(uri: str) -> str:
