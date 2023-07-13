@@ -7,6 +7,9 @@ class ImageBuilder(ABC):
     """
 
     @abstractmethod
-    def build_and_upload_image(self) -> None:
-        """Builds and uploads an image to the model registry."""
+    def build_and_upload_image(self) -> str:
+        """Builds and uploads an image to the model registry.
+
+        Returns: Full image path.
+        """
         pass

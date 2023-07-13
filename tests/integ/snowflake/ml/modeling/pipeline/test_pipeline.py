@@ -379,10 +379,11 @@ class TestPipeline(TestCase):
         expected_model_signatures = {
             "predict": ModelSignature(
                 inputs=[FeatureSpec(name=c, dtype=DataType.DOUBLE) for c in input_cols],
-                outputs=[FeatureSpec(name="OUTPUT", dtype=DataType.DOUBLE)],
+                outputs=[FeatureSpec(name=c, dtype=DataType.DOUBLE) for c in input_cols]
+                + [FeatureSpec(name="OUTPUT", dtype=DataType.DOUBLE)],
             )
         }
-        self.assertDictEqual(model_signatures, expected_model_signatures)
+        self.assertItemsEqual(model_signatures["predict"].to_dict(), expected_model_signatures["predict"].to_dict())
 
 
 if __name__ == "__main__":

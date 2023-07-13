@@ -23,7 +23,6 @@ class DockerContextTest(absltest.TestCase):
     def test_build_results_in_correct_docker_context_file_structure(self) -> None:
         expected_files = [
             "Dockerfile",
-            constants.MODEL_DIR,
             constants.INFERENCE_SERVER_DIR,
             constants.ENTRYPOINT_SCRIPT,
             "snowflake",
@@ -48,7 +47,9 @@ class DockerContextTest(absltest.TestCase):
         self.docker_context.build()
         dockerfile_path = os.path.join(self.context_dir, "Dockerfile")
         dockerfile_fixture_path = os.path.join(os.path.dirname(__file__), "test_fixtures", "dockerfile_test_fixture")
-        with open(dockerfile_path) as dockerfile, open(dockerfile_fixture_path) as expected_dockerfile:
+        with open(dockerfile_path, encoding="utf-8") as dockerfile, open(
+            dockerfile_fixture_path, encoding="utf-8"
+        ) as expected_dockerfile:
             actual = dockerfile.read()
             expected = expected_dockerfile.read()
 

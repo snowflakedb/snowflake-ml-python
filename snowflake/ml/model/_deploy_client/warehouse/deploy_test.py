@@ -3,6 +3,7 @@ import tempfile
 import textwrap
 from importlib import metadata as importlib_metadata
 from typing import Dict, List, cast
+from unittest import mock
 
 from absl.testing import absltest
 from packaging import requirements
@@ -183,6 +184,23 @@ class TestFinalPackagesWithCondaWIthoutSnowML(absltest.TestCase):
 
     def tearDown(self) -> None:
         pass
+
+    def test_get_model_final_packages_disable_conda(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with _model_meta._create_model_metadata(
+                model_dir_path=tmpdir,
+                name="model1",
+                model_type="custom",
+                signatures=_DUMMY_SIG,
+                embed_local_ml_library=True,
+            ) as meta:
+                c_session = cast(session.Session, self.m_session)
+                with mock.patch.object(
+                    env_utils, "validate_requirements_in_snowflake_conda_channel", return_value=None
+                ) as mock_validate_requirements_in_snowflake_conda_channel:
+                    with self.assertRaises(RuntimeError):
+                        _ = deploy._get_model_final_packages(meta, c_session, disable_local_conda_resolver=True)
+                    mock_validate_requirements_in_snowflake_conda_channel.assert_called_once()
 
     def test_get_model_final_packages(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

@@ -17,7 +17,7 @@ class DockerContext(ABC):
 
         Args:
             context_dir: Path to context directory.
-            model_dir: Path to model directory.
+            model_dir: Path to local model directory.
             use_gpu: Boolean flag for generating the CPU or GPU base image.
         """
         self.context_dir = context_dir
@@ -30,7 +30,6 @@ class DockerContext(ABC):
         Generates and/or moves resources into the Docker context directory.Rename the random model directory name to
         constant "model_dir" instead for better readability.
         """
-        shutil.copytree(self.model_dir, "/".join([self.context_dir.rstrip("/"), constants.MODEL_DIR]))
         self._generate_inference_code()
         self._copy_entrypoint_script_to_docker_context()
         self._copy_snowml_source_code_to_docker_context()
@@ -63,7 +62,9 @@ class DockerContext(ABC):
         docker_file_path = os.path.join(self.context_dir, "Dockerfile")
         docker_file_template = os.path.join(os.path.dirname(__file__), "templates/dockerfile_template")
 
-        with open(docker_file_path, "w") as dockerfile, open(docker_file_template) as template:
+        with open(docker_file_path, "w", encoding="utf-8") as dockerfile, open(
+            docker_file_template, encoding="utf-8"
+        ) as template:
             dockerfile_content = string.Template(template.read()).safe_substitute(
                 {
                     # TODO(shchen): SNOW-835411, Support overwriting base image

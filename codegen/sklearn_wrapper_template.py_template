@@ -3,6 +3,7 @@
 #
 import inspect
 import os
+import posixpath
 from typing import Iterable, Optional, Union, List, Any, Dict, Callable, Set
 from uuid import uuid4
 
@@ -21,6 +22,7 @@ from snowflake.ml._internal.utils.temp_file_utils import cleanup_temp_files, get
 from snowflake.snowpark import DataFrame, Session
 from snowflake.snowpark.functions import pandas_udf, sproc
 from snowflake.snowpark.types import PandasSeries
+from snowflake.snowpark._internal.type_utils import convert_sp_to_sf_type
 
 from snowflake.ml.model.model_signature import (
     DataType,
@@ -134,7 +136,6 @@ class {transform.original_class_name}(BaseTransformer):
         {transform.estimator_init_signature}
     ) -> None:
         super().__init__()
-        self.id = str(uuid4()).replace("-", "_").upper()
         deps: Set[str] = set([{transform.deps}])
         {transform.estimator_args_gathering_calls}
         self._deps = list(deps)
@@ -149,6 +150,15 @@ class {transform.original_class_name}(BaseTransformer):
         )
         self._model_signature_dict = None
         {transform.estimator_init_member_args}
+
+    def _get_rand_id(self) -> str:
+        """
+        Generate random id to be used in sproc and stage names.
+
+        Returns:
+            Random id string usable in sproc, table, and stage names.
+        """
+        return str(uuid4()).replace("-", "_").upper()
 
     def _infer_input_output_cols(self, dataset: Union[DataFrame, pd.DataFrame]) -> None:
         """
@@ -218,7 +228,7 @@ class {transform.original_class_name}(BaseTransformer):
             cp.dump(self._sklearn_object, local_transform_file)
 
         # Create temp stage to run fit.
-        transform_stage_name = "SNOWML_TRANSFORM_{{safe_id}}".format(safe_id=self.id)
+        transform_stage_name = "SNOWML_TRANSFORM_{{safe_id}}".format(safe_id=self._get_rand_id())
         stage_creation_query = f"CREATE OR REPLACE TEMPORARY STAGE {{transform_stage_name}};"
         SqlResultValidator(
             session=session,
@@ -231,11 +241,12 @@ class {transform.original_class_name}(BaseTransformer):
             expected_value=f"Stage area {{transform_stage_name}} successfully created."
         ).validate()
 
-        stage_transform_file_name = os.path.join(transform_stage_name, os.path.basename(local_transform_file_name))
+        # Use posixpath to construct stage paths
+        stage_transform_file_name = posixpath.join(transform_stage_name, os.path.basename(local_transform_file_name))
+        stage_result_file_name = posixpath.join(transform_stage_name, os.path.basename(local_transform_file_name))
         local_result_file_name = get_temp_file_path()
-        stage_result_file_name = os.path.join(transform_stage_name, os.path.basename(local_transform_file_name))
 
-        fit_sproc_name = "SNOWML_FIT_{{safe_id}}".format(safe_id=self.id)
+        fit_sproc_name = "SNOWML_FIT_{{safe_id}}".format(safe_id=self._get_rand_id())
         statement_params = telemetry.get_function_usage_statement_params(
             project=_PROJECT,
             subproject=_SUBPROJECT,
@@ -261,6 +272,7 @@ class {transform.original_class_name}(BaseTransformer):
             replace=True,
             session=session,
             statement_params=statement_params,
+            anonymous=True
         )
         def fit_wrapper_sproc(
             session: Session,
@@ -269,7 +281,8 @@ class {transform.original_class_name}(BaseTransformer):
             stage_result_file_name: str,
             input_cols: List[str],
             label_cols: List[str],
-            sample_weight_col: Optional[str]
+            sample_weight_col: Optional[str],
+            statement_params: Dict[str, str]
         ) -> str:
             import cloudpickle as cp
             import numpy as np
@@ -336,15 +349,15 @@ class {transform.original_class_name}(BaseTransformer):
             api_calls=[Session.call],
             custom_tags=dict([("autogen", True)]),
         )
-        sproc_export_file_name = session.call(
-            fit_sproc_name,
+        sproc_export_file_name = fit_wrapper_sproc(
+            session,
             query,
             stage_transform_file_name,
             stage_result_file_name,
             identifier.get_unescaped_names(self.input_cols),
             identifier.get_unescaped_names(self.label_cols),
             identifier.get_unescaped_names(self.sample_weight_col),
-            statement_params=statement_params,
+            statement_params,
         )
 
         if "|" in sproc_export_file_name:
@@ -354,7 +367,7 @@ class {transform.original_class_name}(BaseTransformer):
                 print("\n".join(fields[1:]))
 
         session.file.get(
-            os.path.join(stage_result_file_name, sproc_export_file_name),
+            posixpath.join(stage_result_file_name, sproc_export_file_name),
             local_result_file_name,
             statement_params=statement_params
         )
@@ -400,7 +413,7 @@ class {transform.original_class_name}(BaseTransformer):
 
         # Register vectorized UDF for batch inference
         batch_inference_udf_name = "SNOWML_BATCH_INFERENCE_{{safe_id}}_{{method}}".format(
-                safe_id=self.id, method=inference_method)
+                safe_id=self._get_rand_id(), method=inference_method)
 
         # Need to do this since if we use self._sklearn_object directly in the UDF, Snowpark
         # will try to pickle all of self which fails.
@@ -492,7 +505,7 @@ class {transform.original_class_name}(BaseTransformer):
             return transformed_pandas_df.to_dict("records")
 
         batch_inference_table_name = "SNOWML_BATCH_INFERENCE_INPUT_TABLE_{{safe_id}}".format(
-            safe_id=self.id
+            safe_id=self._get_rand_id()
         )
 
         pass_through_columns = self._get_pass_through_columns(dataset)
@@ -649,11 +662,18 @@ class {transform.original_class_name}(BaseTransformer):
             Transformed dataset.
         """
         if isinstance(dataset, DataFrame):
+            expected_type_inferred = "{transform.udf_datatype}"
+            # when it is classifier, infer the datatype from label columns
+            if expected_type_inferred == "" and 'predict' in self.model_signatures:
+                expected_type_inferred = convert_sp_to_sf_type(
+                    self.model_signatures['predict'].outputs[0].as_snowpark_type()
+                )
+            
             output_df = self._batch_inference(
                 dataset=dataset,
                 inference_method="predict",
                 expected_output_cols_list=self.output_cols,
-                expected_output_cols_type="{transform.udf_datatype}",
+                expected_output_cols_type=expected_type_inferred,
             )
         elif isinstance(dataset, pd.DataFrame):
             output_df = self._sklearn_inference(
@@ -716,10 +736,10 @@ class {transform.original_class_name}(BaseTransformer):
 
     def _get_output_column_names(self, output_cols_prefix: str) -> List[str]:
         """ Returns the list of output columns for predict_proba(), decision_function(), etc.. functions.
-        Returns an empty list if current object is not a classifier or not yet fitted.
+        Returns a list with output_cols_prefix as the only element if the estimator is not a classifier.
         """
         if getattr(self._sklearn_object, "classes_", None) is None:
-            return []
+            return [output_cols_prefix]
 
         classes = self._sklearn_object.classes_
         if isinstance(classes, numpy.ndarray):
@@ -920,7 +940,7 @@ class {transform.original_class_name}(BaseTransformer):
             cp.dump(self._sklearn_object, local_score_file)
 
         # Create temp stage to run score.
-        score_stage_name = "SNOWML_SCORE_{{safe_id}}".format(safe_id=self.id)
+        score_stage_name = "SNOWML_SCORE_{{safe_id}}".format(safe_id=self._get_rand_id())
         session = dataset._session
         stage_creation_query = f"CREATE OR REPLACE TEMPORARY STAGE {{score_stage_name}};"
         SqlResultValidator(
@@ -934,8 +954,9 @@ class {transform.original_class_name}(BaseTransformer):
             expected_value=f"Stage area {{score_stage_name}} successfully created."
         ).validate()
 
-        stage_score_file_name = os.path.join(score_stage_name, os.path.basename(local_score_file_name))
-        score_sproc_name = "SNOWML_SCORE_{{safe_id}}".format(safe_id=self.id)
+        # Use posixpath to construct stage paths
+        stage_score_file_name = posixpath.join(score_stage_name, os.path.basename(local_score_file_name))
+        score_sproc_name = "SNOWML_SCORE_{{safe_id}}".format(safe_id=self._get_rand_id())
         statement_params = telemetry.get_function_usage_statement_params(
             project=_PROJECT,
             subproject=_SUBPROJECT,
@@ -961,6 +982,7 @@ class {transform.original_class_name}(BaseTransformer):
             replace=True,
             session=session,
             statement_params=statement_params,
+            anonymous=True
         )
         def score_wrapper_sproc(
             session: Session,
@@ -968,7 +990,8 @@ class {transform.original_class_name}(BaseTransformer):
             stage_score_file_name: str,
             input_cols: List[str],
             label_cols: List[str],
-            sample_weight_col: Optional[str]
+            sample_weight_col: Optional[str],
+            statement_params: Dict[str, str]
         ) -> float:
             import cloudpickle as cp
             import numpy as np
@@ -1018,14 +1041,14 @@ class {transform.original_class_name}(BaseTransformer):
             api_calls=[Session.call],
             custom_tags=dict([("autogen", True)]),
         )
-        score = session.call(
-            score_sproc_name,
+        score = score_wrapper_sproc(
+            session,
             query,
             stage_score_file_name,
             identifier.get_unescaped_names(self.input_cols),
             identifier.get_unescaped_names(self.label_cols),
             identifier.get_unescaped_names(self.sample_weight_col),
-            statement_params=statement_params,
+            statement_params,
         )
 
         cleanup_temp_files([local_score_file_name])
@@ -1043,18 +1066,20 @@ class {transform.original_class_name}(BaseTransformer):
             if self._sklearn_object._estimator_type == 'classifier':
                 outputs = _infer_signature(dataset[self.label_cols], "output")  # label columns is the desired type for output
                 outputs = _rename_features(outputs, self.output_cols)  # rename the output columns
-                self._model_signature_dict["predict"] = ModelSignature(inputs, outputs)
+                self._model_signature_dict["predict"] = ModelSignature(inputs, 
+                                                                       ([] if self._drop_input_cols else inputs) + outputs)
             # For regressor, the type of predict is float64
             elif self._sklearn_object._estimator_type == 'regressor':
                 outputs = [FeatureSpec(dtype=DataType.DOUBLE, name=c) for c in self.output_cols]
-                self._model_signature_dict["predict"] = ModelSignature(inputs, outputs)
-
+                self._model_signature_dict["predict"] = ModelSignature(inputs, 
+                                                                       ([] if self._drop_input_cols else inputs) + outputs)
         for prob_func in PROB_FUNCTIONS:
             if hasattr(self, prob_func):
                 output_cols_prefix: str = f"{{prob_func}}_"
                 output_column_names = self._get_output_column_names(output_cols_prefix)
                 outputs = [FeatureSpec(dtype=DataType.DOUBLE, name=c) for c in output_column_names]
-                self._model_signature_dict[prob_func] = ModelSignature(inputs, outputs)
+                self._model_signature_dict[prob_func] = ModelSignature(inputs, 
+                                                                       ([] if self._drop_input_cols else inputs) + outputs)
 
     @property
     def model_signatures(self) -> Dict[str, ModelSignature]:

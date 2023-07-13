@@ -9,6 +9,8 @@ if TYPE_CHECKING:
     import pandas as pd
     import sklearn.base
     import sklearn.pipeline
+    import tensorflow
+    import torch
     import xgboost
 
     import snowflake.ml.model.custom_model
@@ -34,9 +36,10 @@ _SupportedNumpyDtype = Union[
 ]
 _SupportedNumpyArray = npt.NDArray[_SupportedNumpyDtype]
 _SupportedBuiltinsList = Sequence[_SupportedBuiltins]
+_SupportedArrayLike = Union[_SupportedNumpyArray, "torch.Tensor", "tensorflow.Tensor", "tensorflow.Variable"]
 
 SupportedLocalDataType = Union[
-    "pd.DataFrame", _SupportedNumpyArray, Sequence[_SupportedNumpyArray], _SupportedBuiltinsList
+    "pd.DataFrame", _SupportedNumpyArray, Sequence[_SupportedArrayLike], _SupportedBuiltinsList
 ]
 
 SupportedDataType = Union[SupportedLocalDataType, "snowflake.snowpark.DataFrame"]
@@ -51,6 +54,8 @@ SupportedLocalModelType = Union[
     "sklearn.pipeline.Pipeline",
     "xgboost.XGBModel",
     "xgboost.Booster",
+    "torch.nn.Module",
+    "torch.jit.ScriptModule",  # type:ignore[name-defined]
 ]
 
 SupportedSnowMLModelType: TypeAlias = "base.BaseEstimator"
@@ -70,6 +75,8 @@ Here is all acceptable types of Snowflake native model packaging and its handler
 | xgboost.XGBModel       | xgboost.py   | _XGBModelHandler    |
 | xgboost.Booster        | xgboost.py   | _XGBModelHandler    |
 | snowflake.ml.framework.base.BaseEstimator      | snowmlmodel.py   | _SnowMLModelHandler    |
+| torch.nn.Module      | pytroch.py   | _PyTorchHandler    |
+| torch.jit.ScriptModule      | torchscript.py   | _TorchScripthHandler    |
 """
 
 
@@ -79,18 +86,22 @@ _ModelType = TypeVar("_ModelType", bound=SupportedModelType)
 class DeployOptions(TypedDict):
     """Common Options for deploying to Snowflake.
 
-    output_with_input_features: Whether or not preserve the input columns in the output when predicting.
-        Defaults to False.
+    disable_local_conda_resolver: Set to disable use local conda resolver to do pre-check on environment and rely on
+        the information schema only. Defaults to False.
     keep_order: Whether or not preserve the row order when predicting. Only available for dataframe has fewer than 2**64
         rows. Defaults to True.
+    output_with_input_features: Whether or not preserve the input columns in the output when predicting.
+        Defaults to False.
     """
 
-    output_with_input_features: NotRequired[bool]
+    disable_local_conda_resolver: NotRequired[bool]
     keep_order: NotRequired[bool]
+    output_with_input_features: NotRequired[bool]
 
 
 class WarehouseDeployOptions(DeployOptions):
     """Options for deploying to the Snowflake Warehouse.
+
 
     permanent_udf_stage_location: A Snowflake stage option where the UDF should be persisted. If specified, the model
         will be deployed as a permanent UDF, otherwise temporary.
@@ -129,4 +140,12 @@ class XGBModelSaveOptions(ModelSaveOption):
 
 
 class SNOWModelSaveOptions(ModelSaveOption):
+    target_methods: NotRequired[Sequence[str]]
+
+
+class PyTorchSaveOptions(ModelSaveOption):
+    target_methods: NotRequired[Sequence[str]]
+
+
+class TorchScriptSaveOptions(ModelSaveOption):
     target_methods: NotRequired[Sequence[str]]

@@ -3,6 +3,7 @@ load("//bazel:py_rules.bzl", "py_test")
 package(default_visibility = ["//visibility:public"])
 
 SHARD_COUNT = 3
+
 TIMEOUT = "long"  # 900s
 
 py_test(
@@ -39,6 +40,7 @@ py_test(
     name = "test_correlation",
     timeout = TIMEOUT,
     srcs = ["test_correlation.py"],
+    shard_count = SHARD_COUNT,
     deps = [
         "//snowflake/ml/modeling/metrics:correlation",
         "//snowflake/ml/utils:connection_params",

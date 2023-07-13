@@ -580,7 +580,8 @@ class EnvUtilsTest(absltest.TestCase):
             FROM information_schema.packages
             WHERE (package_name = 'pytorch' OR package_name = 'xgboost')
             AND language = 'python'
-            AND runtime_version = '{platform.python_version_tuple()[0]}.{platform.python_version_tuple()[1]}';
+            AND (runtime_version = '{platform.python_version_tuple()[0]}.{platform.python_version_tuple()[1]}'
+                OR runtime_version is null);
             """
         )
         sql_result = [

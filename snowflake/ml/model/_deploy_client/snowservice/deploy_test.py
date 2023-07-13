@@ -31,7 +31,7 @@ class DeployTestCase(absltest.TestCase):
             session=self.m_session,
             model_id="provided_model_id",
             service_func_name="mock_service_func",
-            model_dir="mock_model_dir",
+            model_zip_stage_path="@mock_model_zip_stage_path",
             **self.options,
         )
 
@@ -39,7 +39,7 @@ class DeployTestCase(absltest.TestCase):
             session=self.m_session,
             model_id="provided_model_id",
             service_func_name="mock_service_func",
-            model_dir="mock_model_dir",
+            model_zip_stage_path="@mock_model_zip_stage_path",
             image_builder=mock.ANY,
             options=mock.ANY,
         )
@@ -52,7 +52,7 @@ class DeployTestCase(absltest.TestCase):
                 session=self.m_session,
                 service_func_name="mock_service_func",
                 model_id="",
-                model_dir="mock_model_dir",
+                model_zip_stage_path="mock_model_zip_stage_path",
                 **self.options,
             )
 
@@ -66,7 +66,7 @@ class DeployTestCase(absltest.TestCase):
                 session=self.m_session,
                 service_func_name="mock_service_func",
                 model_id="mock_model_id",
-                model_dir="mock_model_dir",
+                model_zip_stage_path="@mock_model_zip_stage_path",
                 **options,
             )
 
@@ -76,7 +76,7 @@ class DeployTestCase(absltest.TestCase):
                 session=self.m_session,
                 service_func_name="mock_service_func",
                 model_id="mock_model_id",
-                model_dir="mock_model_dir",
+                model_zip_stage_path="@mock_model_zip_stage_path",
                 **options,
             )
 
@@ -86,7 +86,7 @@ class DeployTestCase(absltest.TestCase):
                 session=self.m_session,
                 service_func_name="mock_service_func",
                 model_id="mock_model_id",
-                model_dir="mock_model_dir",
+                model_zip_stage_path="@mock_model_zip_stage_path",
                 **options,
             )
 
@@ -100,7 +100,7 @@ class SnowServiceDeploymentTestCase(absltest.TestCase):
         self.m_image_builder = mock.create_autospec(client_image_builder.ClientImageBuilder)
         self.m_model_id = "provided_model_id"
         self.m_service_func_name = "provided_service_func_name"
-        self.m_model_dir = "provided_model_dir"
+        self.m_model_zip_stage_path = "@provided_model_zip_stage_path"
         self.m_options = {
             "stage": "mock_stage",
             "compute_pool": "mock_compute_pool",
@@ -111,7 +111,7 @@ class SnowServiceDeploymentTestCase(absltest.TestCase):
             self.m_session,
             model_id=self.m_model_id,
             service_func_name=self.m_service_func_name,
-            model_dir=self.m_model_dir,
+            model_zip_stage_path=self.m_model_zip_stage_path,
             image_builder=self.m_image_builder,
             options=deploy_options.SnowServiceDeployOptions.from_dict(self.m_options),
         )

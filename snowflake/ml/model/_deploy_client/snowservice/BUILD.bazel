@@ -16,7 +16,11 @@ py_library(
     deps = [
         "//snowflake/ml/model/_deploy_client/image_builds:base_image_builder",
         "//snowflake/ml/model/_deploy_client/image_builds:client_image_builder",
-        ":deploy_options"
+        ":deploy_options",
+        "//snowflake/ml/model/_deploy_client/utils:snowservice_client"
+    ],
+    data = [
+        "templates/service_spec_template"
     ]
 )
 

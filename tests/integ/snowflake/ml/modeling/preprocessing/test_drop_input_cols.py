@@ -6,7 +6,7 @@ import os
 from typing import Any, List
 
 import numpy as np
-from absl.testing.absltest import TestCase
+from absl.testing.absltest import TestCase, main
 
 from snowflake.ml.modeling.impute import SimpleImputer  # type: ignore[attr-defined]
 from snowflake.ml.modeling.pipeline import Pipeline
@@ -133,3 +133,7 @@ class DropInputColsTest(TestCase):
         ppl.fit(df)
         transformed_df = ppl.transform(df)
         self.assertTrue(all(elem not in [CATEGORICAL_COLS + NUMERIC_COLS] for elem in transformed_df.columns))
+
+
+if __name__ == "__main__":
+    main()

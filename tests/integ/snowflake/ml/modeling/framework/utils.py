@@ -1,7 +1,6 @@
 #
 # Copyright (c) 2012-2022 Snowflake Computing Inc. All rights reserved.
 #
-import sys
 from enum import Enum
 from typing import Any, Callable, List, Optional, Tuple, Union
 
@@ -134,8 +133,8 @@ OUTPUT_COLS = ["OUTPUT1", "OUTPUT2"]
 
 ID_COL = "ID"
 
-MIN_INT = -sys.maxsize - 1
-MAX_INT = sys.maxsize
+MIN_INT = np.iinfo(np.int32).min
+MAX_INT = np.iinfo(np.int32).max
 
 
 class DataType(Enum):

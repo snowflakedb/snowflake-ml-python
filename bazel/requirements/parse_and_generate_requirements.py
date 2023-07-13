@@ -267,9 +267,9 @@ def generate_requirements(
     tag_filter: Optional[str] = None,
     version: Optional[str] = None,
 ) -> None:
-    with open(schema_file_path) as f:
+    with open(schema_file_path, encoding="utf-8") as f:
         schema = json.load(f)
-    with open(req_file_path) as f:
+    with open(req_file_path, encoding="utf-8") as f:
         requirements = yaml.safe_load(f)
 
     jsonschema.validate(requirements, schema=schema)

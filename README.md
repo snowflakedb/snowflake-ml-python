@@ -22,9 +22,7 @@ Snowpark MLOps complements the Snowpark ML Development API, and provides model m
 
 During PrPr, we are iterating on API without backward compatibility guarantees. It is better to recreate your registry everytime you update the package. This means, at this time, you cannot use the registry for production use.
 
-- [Documentation](http://docs.snowflake.com/developer-guide/snowpark/python/snowpark-ml-modeling)
-- [Issues](https://github.com/snowflakedb/snowflake-ml-python/issues)
-- [Source](https://github.com/snowflakedb/snowflake-ml-python/)
+- [Documentation](https://docs.snowflake.com/developer-guide/snowpark-ml)
 
 ## Getting started
 ### Have your Snowflake account ready

@@ -47,7 +47,7 @@ class EnvTest(absltest.TestCase):
             self.assertEqual(cd, loaded_cd)
 
         with tempfile.TemporaryDirectory() as tmpdir:
-            with open(os.path.join(tmpdir, _env._CONDA_ENV_FILE_NAME), "w") as f:
+            with open(os.path.join(tmpdir, _env._CONDA_ENV_FILE_NAME), "w", encoding="utf-8") as f:
                 yaml.safe_dump(
                     stream=f,
                     data={

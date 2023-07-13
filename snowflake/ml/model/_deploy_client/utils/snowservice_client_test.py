@@ -49,18 +49,26 @@ class SnowServiceClientTest(absltest.TestCase):
         m_service_func_name = "mock_service_func_name"
         m_service_name = "mock_service_name"
         m_endpoint_name = "mock_endpoint_name"
+        m_path_at_endpoint = "mock_route"
+
+        m_sql = f"""
+        CREATE OR REPLACE FUNCTION {m_service_func_name}(input OBJECT)
+            RETURNS OBJECT
+            SERVICE={m_service_name}
+            ENDPOINT={m_endpoint_name}
+            AS '/{m_path_at_endpoint}'
+        """
 
         self.m_session.add_mock_sql(
-            query="create or replace function mock_service_func_name(input OBJECT)"
-            " returns OBJECT"
-            " service=mock_service_name"
-            " endpoint=mock_endpoint_name"
-            " as '/predict'",
+            query=m_sql,
             result=mock_data_frame.MockDataFrame(collect_result=[]),
         )
 
         self.client.create_or_replace_service_function(
-            service_func_name=m_service_func_name, service_name=m_service_name, endpoint_name=m_endpoint_name
+            service_func_name=m_service_func_name,
+            service_name=m_service_name,
+            endpoint_name=m_endpoint_name,
+            path_at_service_endpoint=m_path_at_endpoint,
         )
 
     def test_get_service_status(self) -> None:
@@ -86,7 +94,10 @@ class SnowServiceClientTest(absltest.TestCase):
             result=mock_data_frame.MockDataFrame(collect_result=[row]),
         )
 
-        self.assertEqual(self.client.get_resource_status(self.m_service_name, constants.ResourceType.SERVICE), "READY")
+        self.assertEqual(
+            self.client.get_resource_status(self.m_service_name, constants.ResourceType.SERVICE),
+            constants.ResourceStatus("READY"),
+        )
 
         row = snowpark.Row(
             **{
@@ -110,7 +121,10 @@ class SnowServiceClientTest(absltest.TestCase):
             result=mock_data_frame.MockDataFrame(collect_result=[row]),
         )
 
-        self.assertEqual(self.client.get_resource_status(self.m_service_name, constants.ResourceType.SERVICE), "FAILED")
+        self.assertEqual(
+            self.client.get_resource_status(self.m_service_name, constants.ResourceType.SERVICE),
+            constants.ResourceStatus("FAILED"),
+        )
 
         row = snowpark.Row(
             **{
@@ -136,7 +150,7 @@ class SnowServiceClientTest(absltest.TestCase):
         self.assertEqual(self.client.get_resource_status(self.m_service_name, constants.ResourceType.SERVICE), None)
 
     def test_block_until_service_is_ready_happy_path(self) -> None:
-        with mock.patch.object(self.client, "get_resource_status", return_value="READY"):
+        with mock.patch.object(self.client, "get_resource_status", return_value=constants.ResourceStatus("READY")):
             self.client.block_until_resource_is_ready(
                 self.m_service_name, constants.ResourceType.SERVICE, max_retries=1, retry_interval_secs=1
             )
@@ -150,7 +164,9 @@ class SnowServiceClientTest(absltest.TestCase):
 
     def test_block_until_service_is_ready_retries_and_ready(self) -> None:
         # Service becomes ready on 2nd retry.
-        with mock.patch.object(self.client, "get_resource_status", side_effect=[None, "READY"]):
+        with mock.patch.object(
+            self.client, "get_resource_status", side_effect=[None, constants.ResourceStatus("READY")]
+        ):
             self.client.block_until_resource_is_ready(
                 self.m_service_name, constants.ResourceType.SERVICE, max_retries=2, retry_interval_secs=1
             )
@@ -158,7 +174,13 @@ class SnowServiceClientTest(absltest.TestCase):
     def test_block_until_service_is_ready_retries_and_fail(self) -> None:
         # Service show failure status on 2nd retry.
         with self.assertRaises(RuntimeError):
-            with mock.patch.object(self.client, "get_resource_status", side_effect=[None, "FAILED"]):
+            with mock.patch.object(
+                self.client, "get_resource_status", side_effect=[None, constants.ResourceStatus("FAILED")]
+            ):
                 self.client.block_until_resource_is_ready(
                     self.m_service_name, constants.ResourceType.SERVICE, max_retries=2, retry_interval_secs=1
                 )
+
+
+if __name__ == "__main__":
+    absltest.main()

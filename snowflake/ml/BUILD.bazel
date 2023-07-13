@@ -1,10 +1,9 @@
 load("//bazel:py_rules.bzl", "py_library", "snowml_wheel")
 load(":version.bzl", "VERSION")
 load(":requirements.bzl", "EXTRA_REQUIREMENTS", "REQUIREMENTS")
+package(default_visibility = ["//visibility:public"])
 
 exports_files(["requirements.bzl"])
-
-package(default_visibility = ["//visibility:public"])
 
 genrule(
     name = "generate_version",
@@ -37,8 +36,6 @@ snowml_wheel(
     development_status = "PrPr",
     extra_requires = EXTRA_REQUIREMENTS,
     requires = REQUIREMENTS,
-    summary = "The machine learning client library that is used for interacting with Snowflake to build machine learning solutions.",
-    homepage = "https://github.com/snowflakedb/snowflake-ml-python",
     version = VERSION,
     deps = [
         "//snowflake/ml/modeling/impute:impute_pkg",

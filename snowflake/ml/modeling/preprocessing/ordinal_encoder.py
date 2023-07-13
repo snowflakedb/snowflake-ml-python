@@ -121,6 +121,7 @@ class OrdinalEncoder(base.BaseTransformer):
         self.categories_: Dict[str, type_utils.LiteralNDArrayType] = {}
         self._categories_list: List[type_utils.LiteralNDArrayType] = []
         self._missing_indices: Dict[int, int] = {}
+        self._infrequent_enabled = False
         self._vocab_table_name = "snowml_preprocessing_ordinal_encoder_temp_table_" + uuid.uuid4().hex
 
         self.set_input_cols(input_cols)
@@ -547,6 +548,7 @@ class OrdinalEncoder(base.BaseTransformer):
         if self._is_fitted:
             encoder.categories_ = self._categories_list
             encoder._missing_indices = self._missing_indices
+            encoder._infrequent_enabled = self._infrequent_enabled
         return encoder
 
     def _validate_keywords(self) -> None:

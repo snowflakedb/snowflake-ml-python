@@ -1,9 +1,7 @@
-import json
 import traceback
 from enum import Enum
 from typing import Optional, TypedDict, Union, overload
 
-import numpy as np
 import pandas as pd
 from typing_extensions import Required
 
@@ -184,7 +182,6 @@ def predict(
 
     Raises:
         ValueError: Raised when the input is too large to use keep_order option.
-        NotImplementedError: FeatureGroupSpec is not supported.
 
     Returns:
         The output dataframe.
@@ -199,19 +196,19 @@ def predict(
     # Validate and prepare input
     if not isinstance(X, SnowparkDataFrame):
         df = model_signature._convert_and_validate_local_data(X, sig.inputs)
-        s_df = session.create_dataframe(df)
+        s_df = model_signature._SnowparkDataFrameHandler.convert_from_df(session, df, keep_order=keep_order)
     else:
         model_signature._validate_snowpark_data(X, sig.inputs)
         s_df = X
 
-    if keep_order:
-        # ID is UINT64 type, this we should limit.
-        if s_df.count() > 2**64:
-            raise ValueError("Unable to keep order of a DataFrame with more than 2 ** 64 rows.")
-        s_df = s_df.with_column(
-            infer_template._KEEP_ORDER_COL_NAME,
-            F.monotonically_increasing_id(),
-        )
+        if keep_order:
+            # ID is UINT64 type, this we should limit.
+            if s_df.count() > 2**64:
+                raise ValueError("Unable to keep order of a DataFrame with more than 2 ** 64 rows.")
+            s_df = s_df.with_column(
+                infer_template._KEEP_ORDER_COL_NAME,
+                F.monotonically_increasing_id(),
+            )
 
     # Infer and get intermediate result
     input_cols = []
@@ -223,7 +220,9 @@ def predict(
                 F.col(col_name),
             ]
         )
-    output_obj = F.call_udf(deployment["name"], F.object_construct(*input_cols))  # type:ignore[arg-type]
+    output_obj = F.call_udf(
+        identifier.get_inferred_name(deployment["name"]), F.object_construct(*input_cols)  # type:ignore[arg-type]
+    )
     if output_with_input_features:
         df_res = s_df.with_column(INTERMEDIATE_OBJ_NAME, output_obj)
     else:
@@ -243,24 +242,12 @@ def predict(
         output_cols.append(F.col(INTERMEDIATE_OBJ_NAME)[output_feature.name].astype(output_feature.as_snowpark_type()))
 
     df_res = df_res.with_columns(
-        [identifier.quote_name_without_upper_casing(output_feature.name) for output_feature in sig.outputs],
+        [identifier.get_inferred_name(output_feature.name) for output_feature in sig.outputs],
         output_cols,
     ).drop(INTERMEDIATE_OBJ_NAME)
 
     # Get final result
     if not isinstance(X, SnowparkDataFrame):
-        dtype_map = {}
-        for feature in sig.outputs:
-            if isinstance(feature, model_signature.FeatureGroupSpec):
-                raise NotImplementedError("FeatureGroupSpec is not supported.")
-            assert isinstance(feature, model_signature.FeatureSpec), "Invalid feature kind."
-            dtype_map[feature.name] = feature.as_dtype()
-        df_local = df_res.to_pandas()
-        # This is because Array and object will generate variant type and requires an additional loads to
-        # get correct data otherwise it would be string.
-        for col_name in [col_name for col_name, col_dtype in dtype_map.items() if col_dtype == np.object0]:
-            df_local[col_name] = df_local[col_name].map(json.loads)
-        df_local = df_local.astype(dtype=dtype_map)
-        return pd.DataFrame(df_local)
+        return model_signature._SnowparkDataFrameHandler.convert_to_df(df_res, features=sig.outputs)
     else:
         return df_res

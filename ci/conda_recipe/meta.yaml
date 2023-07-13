@@ -17,7 +17,7 @@ build:
   noarch: python
 package:
   name: snowflake-ml-python
-  version: 1.0.2
+  version: 1.0.3
 requirements:
   build:
     - python
@@ -27,14 +27,13 @@ requirements:
     - anyio>=3.5.0,<4
     - cloudpickle
     - conda-libmamba-solver>=23.1.0,<24
-    - cryptography>=3.1.0,<39.0.0
     - fsspec>=2022.11,<=2023.1
     - numpy>=1.23,<2
     - packaging>=20.9,<24
     - pandas>=1.0.0,<2
     - python
     - pyyaml>=6.0,<7
-    - scikit-learn>=1.2.1,<2
+    - scikit-learn>=1.2.1,<1.3
     - scipy>=1.9,<2
     - snowflake-connector-python>=3.0.3,<4
     - snowflake-snowpark-python>=1.4.0,<2

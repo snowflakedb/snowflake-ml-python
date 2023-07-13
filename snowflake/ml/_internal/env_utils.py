@@ -310,7 +310,8 @@ def validate_requirements_in_snowflake_conda_channel(
                 FROM information_schema.packages
                 WHERE ({pkg_names_str})
                 AND language = 'python'
-                AND runtime_version = '{parsed_python_version.major}.{parsed_python_version.minor}';
+                AND (runtime_version = '{parsed_python_version.major}.{parsed_python_version.minor}'
+                    OR runtime_version is null);
                 """
             )
         else:

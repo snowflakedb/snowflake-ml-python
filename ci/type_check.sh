@@ -10,7 +10,6 @@
 # Inputs
 #   - ci/type_ignored_targets : a list of target patterns against which
 #     typechecking should be enforced. Not required if "-a" is specified.
-#   - /tmp/affected_targets/targets : a list of targets affected by the change.
 #
 # Action
 #   - Performs typechecking against the intersection of
@@ -30,31 +29,43 @@ set -e
 
 bazel="bazel"
 affected_targets=""
+PROG=$0
 
-while getopts "ab:" opt; do
-  case "${opt}" in
+help() {
+    local exit_code=$1
+    echo "Usage: ${PROG} [-a] [-b <bazel_path>]"
+    exit "${exit_code}"
+}
+
+while getopts "ab:h" opt; do
+    case "${opt}" in
     a)
         affected_targets="//..."
         ;;
     b)
         bazel="${OPTARG}"
         ;;
+    h)
+        help 0
+        ;;
     :)
-        echo "Option --bazel requires an argument."
-        exit 1
+        help 1
         ;;
     ?)
-        echo "Invalid option."
-        echo "Usage: $0 [-a] [-b <bazel_path>]"
-        exit 1
+        help 1
         ;;
-  esac
+    esac
 done
 
 echo "Using bazel: " "${bazel}"
+working_dir=$(mktemp -d "/tmp/tmp_XXXXX")
+trap 'rm -rf "${working_dir}"' EXIT
 
 if [[ -z "${affected_targets}" ]]; then
-    affected_targets="$(</tmp/affected_targets/targets)"
+    affected_targets_file="${working_dir}/affected_targets"
+    ./bazel/get_affected_targets.sh -b "${bazel}" -f "${affected_targets_file}"
+
+    affected_targets="$(<"${affected_targets_file}")"
 fi
 
 printf \
@@ -63,17 +74,18 @@ printf \
             let skipped_targets = attr('tags', '[\[ ]skip_mypy_check[,\]]', \$affected_targets) in \
                 let rdeps_targets = rdeps(//..., \$type_ignored_targets) union rdeps(//..., \$skipped_targets) in \
                     \$affected_targets except \$rdeps_targets" \
-    "$(<ci/type_ignored_targets)" "${affected_targets}" > /tmp/type_checked_targets_query
-"${bazel}" query --query_file=/tmp/type_checked_targets_query > /tmp/type_checked_targets
-echo "Type checking the following targets:" "$(</tmp/type_checked_targets)"
+    "$(<ci/type_ignored_targets)" "${affected_targets}" >"${working_dir}/type_checked_targets_query"
+"${bazel}" query --query_file="${working_dir}/type_checked_targets_query" >"${working_dir}/type_checked_targets"
+echo "Type checking the following targets:" "$(<"${working_dir}/type_checked_targets")"
 set +e
 "${bazel}" build \
     --keep_going \
     --config=typecheck \
     --color=yes \
-    --target_pattern_file=/tmp/type_checked_targets
+    --target_pattern_file="${working_dir}/type_checked_targets"
 bazel_exit_code=$?
-if [ $bazel_exit_code -ne 0 ] || [ $bazel_exit_code -ne 4 ]; then
-    exit $bazel_exit_code
+
+if [[ $bazel_exit_code -eq 0 || $bazel_exit_code -eq 4 ]]; then
+    exit 0
 fi
-exit 0
+exit ${bazel_exit_code}

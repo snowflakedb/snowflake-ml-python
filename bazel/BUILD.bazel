@@ -1,4 +1,5 @@
 load("@rules_python//python:defs.bzl", native_py_test = "py_test")
+package(default_visibility = ["//visibility:public"])
 
 native_py_test(
     name = "repo_paths_test",
@@ -6,4 +7,9 @@ native_py_test(
     data = ["repo_paths.bzl"],
     python_version = "PY3",
     srcs_version = "PY3",
+)
+
+sh_binary(
+    name = "test_wrapper",
+    srcs = ["test_wrapper.sh"]
 )

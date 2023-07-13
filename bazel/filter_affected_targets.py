@@ -21,7 +21,7 @@ let raw_targets = set({raw_targets}) in
 
 
 def main(input_file: str, test_target_only: bool) -> None:
-    with open(input_file) as f:
+    with open(input_file, encoding="utf-8") as f:
         raw_targets = f.read()
     pattern = _AFFECTED_TESTS_QUERY_PATTERN if test_target_only else _AFFECTED_TARGETS_QUERY_PATTERN
     print(pattern.format(raw_targets=raw_targets))

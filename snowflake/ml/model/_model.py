@@ -1,4 +1,5 @@
 import os
+import posixpath
 import tempfile
 import warnings
 from types import ModuleType
@@ -364,7 +365,7 @@ def save_model(
         )
 
     assert session and model_stage_file_path
-    if os.path.splitext(model_stage_file_path)[1] != ".zip":
+    if posixpath.splitext(model_stage_file_path)[1] != ".zip":
         raise ValueError(f"Provided model path in the stage {model_stage_file_path} must be a path to a zip file.")
 
     with tempfile.TemporaryDirectory() as temp_local_model_dir_path:
@@ -543,7 +544,7 @@ def load_model(
         return _load(local_dir_path=model_dir_path, meta_only=meta_only)
 
     assert session and model_stage_file_path
-    if os.path.splitext(model_stage_file_path)[1] != ".zip":
+    if posixpath.splitext(model_stage_file_path)[1] != ".zip":
         raise ValueError(f"Provided model path in the stage {model_stage_file_path} must be a path to a zip file.")
 
     fo = FileOperation(session=session)

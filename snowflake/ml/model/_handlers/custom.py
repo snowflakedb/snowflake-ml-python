@@ -1,16 +1,19 @@
 import inspect
 import os
+import pathlib
 import sys
 from typing import TYPE_CHECKING, Dict, Optional
 
 import anyio
 import cloudpickle
+import pandas as pd
 from typing_extensions import TypeGuard, Unpack
 
 from snowflake.ml._internal import file_utils, type_utils
 from snowflake.ml.model import (
     _model_handler,
     _model_meta as model_meta_api,
+    model_signature,
     type_hints as model_types,
 )
 from snowflake.ml.model._handlers import _base
@@ -55,6 +58,10 @@ class _CustomModelHandler(_base._ModelHandler["custom_model.CustomModel"]):
             target_method = getattr(model, target_method_name, None)
             assert callable(target_method) and inspect.ismethod(target_method)
             target_method = target_method.__func__
+
+            if not isinstance(sample_input, pd.DataFrame):
+                sample_input = model_signature._convert_local_data_to_df(sample_input)
+
             if inspect.iscoroutinefunction(target_method):
                 with anyio.start_blocking_portal() as portal:
                     predictions_df = portal.call(target_method, model, sample_input)
@@ -102,7 +109,9 @@ class _CustomModelHandler(_base._ModelHandler["custom_model.CustomModel"]):
             model_type=_CustomModelHandler.handler_type,
             path=_CustomModelHandler.MODEL_BLOB_FILE,
             artifacts={
-                name: os.path.join(_CustomModelHandler.MODEL_ARTIFACTS_DIR, os.path.basename(os.path.normpath(uri)))
+                name: pathlib.Path(
+                    os.path.join(_CustomModelHandler.MODEL_ARTIFACTS_DIR, os.path.basename(os.path.normpath(path=uri)))
+                ).as_posix()
                 for name, uri in model.context.artifacts.items()
             },
         )
@@ -129,7 +138,10 @@ class _CustomModelHandler(_base._ModelHandler["custom_model.CustomModel"]):
         assert issubclass(ModelClass, custom_model.CustomModel)
 
         artifacts_meta = model_blob_metadata.artifacts
-        artifacts = {name: os.path.join(model_blob_path, rel_path) for name, rel_path in artifacts_meta.items()}
+        artifacts = {
+            name: str(pathlib.PurePath(model_blob_path) / pathlib.PurePosixPath(rel_path))
+            for name, rel_path in artifacts_meta.items()
+        }
         models: Dict[str, model_types.SupportedModelType] = dict()
         for sub_model_name, _ref in m.context.model_refs.items():
             model_type = model_meta.models[sub_model_name].model_type
