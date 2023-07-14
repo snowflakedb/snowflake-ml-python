@@ -15,7 +15,7 @@
 #
 
 set -o pipefail
-set -e
+set -u
 
 bazel="bazel"
 mode="standard"
@@ -82,7 +82,7 @@ bazel_exit_code=$?
 #   0: Success;
 #   4: Build Successful but no tests found
 # See https://bazel.build/run/scripts#exit-codes
-if [[ ${MODE} = "diff-only" && ${bazel_exit_code} -eq 4 ]] ; then
+if [[ ${mode} = "diff-only" && ${bazel_exit_code} -eq 4 ]] ; then
   exit 0
 fi
 exit $bazel_exit_code

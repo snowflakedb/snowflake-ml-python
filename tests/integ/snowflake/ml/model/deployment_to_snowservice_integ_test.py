@@ -55,7 +55,7 @@ class DeploymentToSnowServiceIntegTest(absltest.TestCase):
 
         cls.FULL_IMAGE_REPO_PATH = f"{registry_host}/{cls.TEST_DB}/{cls.TEST_SCHEMA}/{cls.TEST_IMAGE_REPO}/".lower()
 
-        cls._session = Session.builder.configs({**cls.login_options}).create()
+        cls._session = Session.builder.configs({**login_options}).create()
         cls._db_manager = db_manager.DBManager(cls._session)
         cls._db_manager.set_role(cls.TEST_ROLE)
         cls._db_manager.create_stage(cls.TEST_STAGE, cls.TEST_SCHEMA, cls.TEST_DB, sse_encrypted=True)

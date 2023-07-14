@@ -20,7 +20,7 @@
 #   - This is to mimic the behavior of using snowml wheel package in user land.
 
 set -o pipefail
-set -eu
+set -u
 
 PROG=$0
 

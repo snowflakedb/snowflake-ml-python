@@ -25,7 +25,7 @@
 #    we used `kind('py_.* rule')` filter.
 
 set -o pipefail
-set -e
+set -u
 
 bazel="bazel"
 affected_targets=""
