@@ -1,6 +1,6 @@
 # Release History
 
-## 1.0.3 (2023-07-12)
+## 1.0.3 (2023-07-14)
 
 ### Behavior Changes
 - Model Registry: When predicting a model whose output is a list of NumPy ndarray, the output would not be flattened, instead, every ndarray will act as a feature(column) in the output.
