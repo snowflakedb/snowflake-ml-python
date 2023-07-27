@@ -1,6 +1,8 @@
 #
 # Copyright (c) 2012-2022 Snowflake Computing Inc. All rights reserved.
 #
+import os
+import tempfile
 from typing import Any, Dict
 
 import numpy as np
@@ -115,6 +117,43 @@ class RocCurveTest(parameterized.TestCase):
                 np.array((actual_fpr, actual_tpr, actual_thresholds)),
                 np.array((sklearn_fpr, sklearn_tpr, sklearn_thresholds)),
             )
+
+    def test_multi_query_df(self) -> None:
+        """Test ROC curve for DataFrames that require multiple queries to reconstruct."""
+        stage = "temp"
+        self._session.sql(f"create temp stage {stage}").collect()
+
+        # Load data into the stage.
+        pandas_df = pd.DataFrame(_BINARY_DATA, columns=_SCHEMA)
+        with tempfile.TemporaryDirectory() as temp_dir:
+            filename = "data.parquet"
+            local_path = os.path.join(temp_dir, filename)
+            pandas_df.to_parquet(local_path)
+            # TODO: Do I need to clean this up?
+            _ = self._session.file.put(local_path, f"@{stage}", auto_compress=False)
+
+        # Retrieve data from the stage, and join it against data from an existing DataFrame.
+        df_lhs = self._session.read.parquet(f"@{stage}/{filename}")
+        pandas_df = pd.DataFrame(_BINARY_DATA, columns=["ID", "A", "B", "C"])
+        df_rhs = self._session.create_dataframe(pandas_df)
+
+        input_df = df_lhs.join(df_rhs, ["ID"])
+        pd_df = input_df.to_pandas()
+
+        actual_fpr, actual_tpr, actual_thresholds = snowml_metrics.roc_curve(
+            df=input_df,
+            y_true_col_name=_Y_TRUE_COL,
+            y_score_col_name=_Y_SCORE_COL,
+        )
+
+        sklearn_fpr, sklearn_tpr, sklearn_thresholds = sklearn_metrics.roc_curve(
+            pd_df[_Y_TRUE_COL],
+            pd_df[_Y_SCORE_COL],
+        )
+        np.testing.assert_allclose(
+            np.array((actual_fpr, actual_tpr, actual_thresholds)),
+            np.array((sklearn_fpr, sklearn_tpr, sklearn_thresholds)),
+        )
 
 
 if __name__ == "__main__":

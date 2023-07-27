@@ -4,17 +4,16 @@ import posixpath
 import string
 import tempfile
 from abc import ABC
-from typing import Any, Dict, cast
+from typing import Any, Dict, Optional, cast
 
 from typing_extensions import Unpack
 
-from snowflake.ml.model._deploy_client.image_builds import (
-    base_image_builder,
-    client_image_builder,
-)
+from snowflake.ml._internal import file_utils
+from snowflake.ml.model import _model, _model_meta, type_hints
+from snowflake.ml.model._deploy_client.image_builds import client_image_builder
 from snowflake.ml.model._deploy_client.snowservice import deploy_options
 from snowflake.ml.model._deploy_client.utils import constants, snowservice_client
-from snowflake.snowpark import Session
+from snowflake.snowpark import FileOperation, Session
 
 
 def _deploy(
@@ -23,8 +22,9 @@ def _deploy(
     model_id: str,
     service_func_name: str,
     model_zip_stage_path: str,
-    **kwargs: Unpack[deploy_options.SnowServiceDeployOptionsTypedHint],
-) -> None:
+    deployment_stage_path: str,
+    **kwargs: Unpack[type_hints.SnowparkContainerServiceDeployOptions],
+) -> _model_meta.ModelMetadata:
     """Entrypoint for model deployment to SnowService. This function will trigger a docker image build followed by
     workflow deployment to SnowService.
 
@@ -33,12 +33,16 @@ def _deploy(
         model_id: Unique hex string of length 32, provided by model registry.
         service_func_name: The service function name in SnowService associated with the created service.
         model_zip_stage_path: Path to model zip file in stage. Note that this path has a "@" prefix.
+        deployment_stage_path: Path to stage containing deployment artifacts.
         **kwargs: various SnowService deployment options.
 
     Raises:
         ValueError: Raised when model_id is empty.
         ValueError: Raised when service_func_name is empty.
         ValueError: Raised when model_stage_file_path is empty.
+
+    Returns:
+        The metadata of the model that has been deployed.
     """
     snowpark_logger = logging.getLogger("snowflake.snowpark")
     snowflake_connector_logger = logging.getLogger("snowflake.connector")
@@ -57,31 +61,79 @@ def _deploy(
             raise ValueError(
                 'Must provide a non-empty string for "model_stage_file_path" when deploying to SnowService'
             )
+        if not deployment_stage_path:
+            raise ValueError(
+                'Must provide a non-empty string for "deployment_stage_path" when deploying to SnowService'
+            )
+
+        # Remove full qualified name to avoid double quotes corrupting the service spec
+        model_zip_stage_path = model_zip_stage_path.replace('"', "")
+        deployment_stage_path = deployment_stage_path.replace('"', "")
+
         assert model_zip_stage_path.startswith("@"), f"stage path should start with @, actual: {model_zip_stage_path}"
+        assert deployment_stage_path.startswith("@"), f"stage path should start with @, actual: {deployment_stage_path}"
         options = deploy_options.SnowServiceDeployOptions.from_dict(cast(Dict[str, Any], kwargs))
-        image_builder = client_image_builder.ClientImageBuilder(
-            id=model_id, image_repo=options.image_repo, model_zip_stage_path=model_zip_stage_path, session=session
-        )
-        ss_deployment = SnowServiceDeployment(
-            session=session,
-            model_id=model_id,
-            service_func_name=service_func_name,
-            model_zip_stage_path=model_zip_stage_path,
-            image_builder=image_builder,
-            options=options,
-        )
-        ss_deployment.deploy()
+
+        # TODO[shchen]: SNOW-863701, Explore ways to prevent entire model zip being downloaded during deploy step
+        #  (for both warehouse and snowservice deployment)
+        # One alternative is for model registry to duplicate the model metadata and env dependency storage from model
+        # zip so that we don't have to pull down the entire model zip.
+        fo = FileOperation(session=session)
+        zf = fo.get_stream(model_zip_stage_path)
+        with file_utils.unzip_stream_in_temp_dir(stream=zf) as temp_local_model_dir_path:
+            # Download the model zip file that is already uploaded to stage during model registry log_model step.
+            # This is needed in order to obtain the conda and requirement file inside the model zip, as well as to
+            # return the model object needed for deployment info tracking.
+            ss_deployment = SnowServiceDeployment(
+                session=session,
+                model_id=model_id,
+                service_func_name=service_func_name,
+                model_zip_stage_path=model_zip_stage_path,  # Pass down model_zip_stage_path for service spec file
+                deployment_stage_path=deployment_stage_path,
+                model_dir=temp_local_model_dir_path,
+                options=options,
+            )
+            ss_deployment.deploy()
+            meta = _model.load_model(model_dir_path=temp_local_model_dir_path, meta_only=True)
+            return meta
     finally:
         # Preserve the original logging level.
         snowpark_logger.setLevel(snowpark_log_level)
         snowflake_connector_logger.setLevel(snowflake_connector_log_level)
 
 
+def _get_or_create_image_repo(session: Session, *, image_repo: Optional[str]) -> str:
+    def _sanitize_dns_url(url: str) -> str:
+        # Align with existing SnowService image registry url standard.
+        return url.lower()
+
+    if image_repo:
+        return _sanitize_dns_url(image_repo)
+
+    try:
+        conn = session._conn._conn
+        org = conn.host.split(".")[1]
+        account = conn.account
+        db = conn._database
+        schema = conn._schema
+        subdomain = constants.PROD_IMAGE_REGISTRY_SUBDOMAIN
+        sanitized_url = _sanitize_dns_url(
+            f"{org}-{account}.{subdomain}.{constants.PROD_IMAGE_REGISTRY_DOMAIN}/{db}/"
+            f"{schema}/{constants.SNOWML_IMAGE_REPO}"
+        )
+        client = snowservice_client.SnowServiceClient(session)
+        client.create_image_repo(constants.SNOWML_IMAGE_REPO)
+        return sanitized_url
+    except Exception:
+        raise RuntimeError(
+            "Failed to construct image repo URL, please ensure the following connections"
+            "parameters are set in your session: ['host', 'account', 'database', 'schema']"
+        )
+
+
 class SnowServiceDeployment(ABC):
     """
     Class implementation that encapsulates image build and workflow deployment to SnowService
-
-    #TODO[shchen], SNOW-830093 GPU support on model deployment to SnowService
     """
 
     def __init__(
@@ -89,8 +141,9 @@ class SnowServiceDeployment(ABC):
         session: Session,
         model_id: str,
         service_func_name: str,
+        model_dir: str,
         model_zip_stage_path: str,
-        image_builder: base_image_builder.ImageBuilder,
+        deployment_stage_path: str,
         options: deploy_options.SnowServiceDeployOptions,
     ) -> None:
         """Initialization
@@ -100,8 +153,9 @@ class SnowServiceDeployment(ABC):
             model_id: Unique hex string of length 32, provided by model registry; if not provided, auto-generate one for
                         resource naming.The model_id serves as an idempotent key throughout the deployment workflow.
             service_func_name: The service function name in SnowService associated with the created service.
+            model_dir: Local model directory, downloaded form stage and extracted.
             model_zip_stage_path: Path to model zip file in stage.
-            image_builder: InferenceImageBuilder instance that handles image build and upload to image registry.
+            deployment_stage_path: Path to stage containing deployment artifacts.
             options: A SnowServiceDeployOptions object containing deployment options.
         """
 
@@ -109,11 +163,11 @@ class SnowServiceDeployment(ABC):
         self.id = model_id
         self.service_func_name = service_func_name
         self.model_zip_stage_path = model_zip_stage_path
-        self.image_builder = image_builder
+        self.model_dir = model_dir
         self.options = options
         self._service_name = f"service_{model_id}"
         # Spec file and future deployment related artifacts will be stored under {stage}/models/{model_id}
-        self._model_artifact_stage_location = posixpath.join(options.stage, "models", self.id)
+        self._model_artifact_stage_location = posixpath.join(deployment_stage_path, "models", self.id)
 
     def deploy(self) -> None:
         """
@@ -121,9 +175,18 @@ class SnowServiceDeployment(ABC):
         """
         if self.options.prebuilt_snowflake_image:
             image = self.options.prebuilt_snowflake_image
-            logging.info(f"Skipped image build. Use Snowflake prebuilt image: {self.options.prebuilt_snowflake_image}")
+            logging.warning(f"Skipped image build. Use prebuilt image: {self.options.prebuilt_snowflake_image}")
         else:
+            logging.warning(
+                "Building the Docker image and deploying to Snowpark Container Service. "
+                "This process may take a few minutes."
+            )
             image = self._build_and_upload_image()
+
+            logging.warning(
+                f"Image successfully built! To prevent the need for rebuilding the Docker image in future deployments, "
+                f"simply specify 'prebuilt_snowflake_image': '{image}' in the options field of the deploy() function"
+            )
         self._deploy_workflow(image)
 
     def _build_and_upload_image(self) -> str:
@@ -132,7 +195,15 @@ class SnowServiceDeployment(ABC):
         Returns:
             Path to the image in the remote image repository.
         """
-        return self.image_builder.build_and_upload_image()
+        image_repo = _get_or_create_image_repo(self.session, image_repo=self.options.image_repo)
+        image_builder = client_image_builder.ClientImageBuilder(
+            id=self.id,
+            image_repo=image_repo,
+            model_dir=self.model_dir,
+            session=self.session,
+            use_gpu=True if self.options.use_gpu else False,
+        )
+        return image_builder.build_and_upload_image()
 
     def _prepare_and_upload_artifacts_to_stage(self, image: str) -> None:
         """Constructs and upload service spec to stage.
@@ -152,7 +223,7 @@ class SnowServiceDeployment(ABC):
                     {
                         "image": image,
                         "predict_endpoint_name": constants.PREDICT,
-                        "stage": self.options.stage,
+                        "model_stage": self.model_zip_stage_path[1:].split("/")[0],  # Reserve only the stage name
                         "model_zip_stage_path": self.model_zip_stage_path[1:],  # Remove the @ prefix
                         "inference_server_container_name": constants.INFERENCE_SERVER_CONTAINER,
                     }

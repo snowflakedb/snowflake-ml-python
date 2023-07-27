@@ -80,7 +80,7 @@ def map_dataframe_by_column(
         else:
             if n_output_cols != len(mapped_df.columns):
                 raise Exception("All partitions must contain the same number of columns.")
-            mapped_df = mapped_df.with_column(partition_id_col, F.lit(partition_id))  # type: ignore
+            mapped_df = mapped_df.with_column(partition_id_col, F.lit(partition_id))
             unioned_df = mapped_df if unioned_df is None else unioned_df.union_all(mapped_df)
 
     # Store results in a list of size |n_partitions| x |n_rows| x |n_output_cols|

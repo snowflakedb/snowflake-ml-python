@@ -50,7 +50,6 @@
   dev_version: "1.24.28"
 - name_conda: conda-libmamba-solver
   dev_version_conda: "23.3.0"
-  version_requirements_conda: ">=23.1.0,<24"
 - name: cloudpickle
   dev_version: "2.0.0"
   version_requirements: ""
@@ -79,6 +78,11 @@
   version_requirements: "==3.3.5"
   requirements_extra_tags:
     - lightgbm
+- name: mlflow
+  dev_version: "2.3.1"
+  version_requirements: ">=2.1.0,<3"
+  requirements_extra_tags:
+    - mlflow
 - name: moto
   dev_version: "4.0.11"
 - name: mypy
@@ -128,8 +132,8 @@
   dev_version: "3.0.3"
   version_requirements: ">=3.0.3,<4"
 - name: snowflake-snowpark-python
-  dev_version: "1.4.0"
-  version_requirements: ">=1.4.0,<2"
+  dev_version: "1.5.1"
+  version_requirements: ">=1.5.1,<2"
   tags:
     - deployment_core
 - name: starlette

@@ -4,7 +4,8 @@ from absl.testing import absltest
 
 from snowflake import snowpark
 from snowflake.connector import connection
-from snowflake.ml.fileset import fileset, fileset_errors
+from snowflake.ml._internal.exceptions import fileset_errors
+from snowflake.ml.fileset import fileset
 from snowflake.snowpark import types
 
 MockResultMetaData = collections.namedtuple("MockResultMetaData", ["name", "type_code", "precision", "scale"])

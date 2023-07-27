@@ -6,7 +6,7 @@ import sys
 import tempfile
 import types
 import zipfile
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, cast
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union, cast
 from uuid import uuid1
 
 from absl import logging
@@ -614,7 +614,9 @@ class ModelRegistry:
         stage_path: str,
         signature: Dict[str, Any],
         target_method: str,
-        options: Optional[model_types.WarehouseDeployOptions] = None,
+        options: Optional[
+            Union[model_types.WarehouseDeployOptions, model_types.SnowparkContainerServiceDeployOptions]
+        ] = None,
     ) -> List[snowpark.Row]:
         """Insert a new row into the model deployment table.
 
@@ -660,9 +662,10 @@ class ModelRegistry:
         schema = self._fully_qualified_schema_name()
         fully_qualified_deployment_stage_name = f"{schema}.{self._permanent_deployment_stage}"
         statement_params = self._get_statement_params(inspect.currentframe())
-        self._session.sql(f"CREATE STAGE IF NOT EXISTS {fully_qualified_deployment_stage_name}").collect(
-            statement_params=statement_params
-        )
+        self._session.sql(
+            f"CREATE STAGE IF NOT EXISTS {fully_qualified_deployment_stage_name} "
+            f"ENCRYPTION = (TYPE= 'SNOWFLAKE_SSE')"
+        ).collect(statement_params=statement_params)
         return f"@{fully_qualified_deployment_stage_name}"
 
     def _prepare_model_stage(self, model_id: str) -> str:
@@ -691,21 +694,15 @@ class ModelRegistry:
         fully_qualified_model_stage_name = f"{schema}.{model_stage_name}"
         statement_params = self._get_statement_params(inspect.currentframe())
 
-        create_stage_result = self._session.sql(f"CREATE OR REPLACE STAGE {fully_qualified_model_stage_name}").collect(
-            statement_params=statement_params
-        )
+        create_stage_result = self._session.sql(
+            f"CREATE OR REPLACE STAGE {fully_qualified_model_stage_name} ENCRYPTION = (TYPE= 'SNOWFLAKE_SSE')"
+        ).collect(statement_params=statement_params)
         if not create_stage_result:
             raise connector.DatabaseError("Unable to create stage for model. Operation returned not result.")
         if len(create_stage_result) != 1:
             raise connector.DatabaseError(
                 "Unable to create stage for model. Creating the model stage returned unexpected result: {}.".format(
                     str(create_stage_result)
-                )
-            )
-        if create_stage_result[0]["status"] != f"Stage area {model_stage_name} successfully created.":
-            raise connector.DatabaseError(
-                "Unable to create stage for model. Return status of operation was: {}".format(
-                    create_stage_result[0]["status"]
                 )
             )
 
@@ -1471,7 +1468,7 @@ class ModelRegistry:
         signatures: Optional[Dict[str, model_signature.ModelSignature]] = None,
         sample_input_data: Optional[Any] = None,
         code_paths: Optional[List[str]] = None,
-        options: Optional[model_types.ModelSaveOption] = None,
+        options: Optional[model_types.BaseModelSaveOption] = None,
     ) -> str:
         """Uploads and register a model to the Model Registry.
 
@@ -1601,9 +1598,12 @@ class ModelRegistry:
         deployment_name: str,
         target_method: str,
         permanent: bool = False,
-        options: Optional[model_types.WarehouseDeployOptions] = None,
+        platform: _deployer.TargetPlatform = _deployer.TargetPlatform.WAREHOUSE,
+        options: Optional[
+            Union[model_types.WarehouseDeployOptions, model_types.SnowparkContainerServiceDeployOptions]
+        ] = None,
     ) -> None:
-        """Deploy the model with the the given deployment name.
+        """Deploy the model with the given deployment name.
 
         Args:
             model_name: Model Name string.
@@ -1611,41 +1611,67 @@ class ModelRegistry:
             deployment_name: name of the generated UDF.
             target_method: The method name to use in deployment.
             permanent: Whether the deployment is permanent or not. Permanent deployment will generate a permanent UDF.
+                (Only applicable for Warehouse deployment)
+            platform: Target platform to deploy the model to. Currently supported platforms are
+                ['warehouse', 'snowpark_container_service']
             options: Optional options for model deployment. Defaults to None.
-                The following keys are acceptable:
-                - "output_with_input_features": Whether or not preserve the input columns in the output when predicting.
-                    Defaults to False.
-                - "keep_order": Whether or not preserve the row order when predicting. Only available for dataframe has
-                    fewer than 2**64 rows. Defaults to True.
-                - "permanent_udf_stage_location": Customized Snowflake stage option where the UDF should be persisted.
-                - "relax_version": Whether or not relax the version constraints of the dependencies if unresolvable.
-                    Defaults to False.
+
+        Raises:
+            RuntimeError: Raised when parameters are not properly enabled when deploying to Warehouse with temporary UDF
         """
         if options is None:
             options = {}
 
         deployment_stage_path = ""
 
-        if permanent:
-            # Every deployment-generated UDF should reside in its own unique directory. As long as each deployment
-            # is allocated a distinct directory, multiple deployments can coexist within the same stage.
-            # Given that each permanent deployment possesses a unique deployment_name, sharing the same stage doesn't
-            # present any issues
-            deployment_stage_path = (
-                options.get("permanent_udf_stage_location") or f"{self._prepare_deployment_stage()}/{deployment_name}/"
-            )
-            options["permanent_udf_stage_location"] = deployment_stage_path
+        if platform == _deployer.TargetPlatform.SNOWPARK_CONTAINER_SERVICE:
+            permanent = True
+            options = cast(model_types.SnowparkContainerServiceDeployOptions, options)
+            deployment_stage_path = f"{self._prepare_deployment_stage()}/{deployment_name}/"
+        elif platform == _deployer.TargetPlatform.WAREHOUSE:
+            options = cast(model_types.WarehouseDeployOptions, options)
+            if permanent:
+                # Every deployment-generated UDF should reside in its own unique directory. As long as each deployment
+                # is allocated a distinct directory, multiple deployments can coexist within the same stage.
+                # Given that each permanent deployment possesses a unique deployment_name, sharing the same stage does
+                # not present any issues
+                deployment_stage_path = (
+                    options.get("permanent_udf_stage_location")
+                    or f"{self._prepare_deployment_stage()}/{deployment_name}/"
+                )
+                options["permanent_udf_stage_location"] = deployment_stage_path
 
         remote_model_path = "@" + self._get_model_path(model_name=model_name, model_version=model_version)
         model_id = self._get_model_id(model_name, model_version)
+
+        # https://snowflakecomputing.atlassian.net/browse/SNOW-858376
+        # During temporary deployment on the Warehouse, Snowpark creates an unencrypted temporary stage for UDF-related
+        # artifacts. However, UDF generation fails when importing from a mix of encrypted and unencrypted stages.
+        # The following workaround copies model between stages (PrPr as of July 7th, 2023) to transfer the SSE
+        # encrypted model zip from model stage to the temporary unencrypted stage.
+        if not permanent and platform == _deployer.TargetPlatform.WAREHOUSE:
+            schema = self._fully_qualified_schema_name()
+            unencrypted_stage = f"@{schema}.TEMP_UNENCRYPTED_{self._get_new_unique_identifier()}"
+            self._session.sql(f"CREATE TEMPORARY STAGE {unencrypted_stage[1:]}").collect()
+            try:
+                self._session.sql(f"COPY FILES INTO {unencrypted_stage} from {remote_model_path}").collect()
+            except Exception:
+                raise RuntimeError(
+                    "Please ensure parameters are enabled in your Snowflake account by running "
+                    "'ALTER ACCOUNT <ACCOUNT_NAME> SET ENABLE_COPY_FILES=TRUE, "
+                    "ENABLE_COPY_FILES_API_IN_STORAGE=TRUE'"
+                )
+            remote_model_path = f"{unencrypted_stage}/{os.path.basename(remote_model_path)}"
 
         # Step 1: Deploy to get the UDF
         deployment_info = _deployer.deploy(
             session=self._session,
             name=self._fully_qualified_deployment_name(deployment_name),
-            platform=_deployer.TargetPlatform.WAREHOUSE,
+            platform=platform,
             target_method=target_method,
             model_stage_file_path=remote_model_path,
+            deployment_stage_path=deployment_stage_path,
+            model_id=model_id,
             options=options,
         )
 
@@ -1839,8 +1865,8 @@ class ModelRegistry:
         if delete_artifact:
             if uri.is_snowflake_stage_uri(model_uri):
                 stage_path = self._get_fully_qualified_stage_name_from_uri(model_uri)
-                query_result_checker.SqlResultValidator(self._session, f"DROP STAGE {stage_path}").has_value_match(
-                    row_idx=0, col_idx=0, expected_value="successfully dropped."
+                query_result_checker.SqlResultValidator(self._session, f"DROP STAGE {stage_path}").has_dimensions(
+                    expected_rows=1, expected_cols=1
                 ).validate()
 
         # Step 3/3: Record the deletion event.
@@ -2029,7 +2055,13 @@ class ModelReference:
             platform = _deployer.TargetPlatform(deployment["TARGET_PLATFORM"])
             signature = model_signature.ModelSignature.from_dict(json.loads(deployment["SIGNATURE"]))
             options_dict = cast(Dict[str, Any], json.loads(deployment["OPTIONS"]))
-            options = model_types.WarehouseDeployOptions(options_dict)  # type: ignore
+            platform_options = {
+                _deployer.TargetPlatform.WAREHOUSE: model_types.WarehouseDeployOptions,
+                _deployer.TargetPlatform.SNOWPARK_CONTAINER_SERVICE: model_types.SnowparkContainerServiceDeployOptions,
+            }
+            if platform not in platform_options:
+                raise ValueError(f"Unsupported target Platform: {platform}")
+            options = platform_options[platform](options_dict)
             di = _deployer.Deployment(
                 name=self._registry._fully_qualified_deployment_name(deployment_name),
                 platform=platform,

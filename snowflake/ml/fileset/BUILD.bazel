@@ -7,8 +7,10 @@ py_library(
     name = "stage_fs",
     srcs = ["stage_fs.py"],
     deps = [
-        ":fileset_errors",
         "//snowflake/ml/_internal:telemetry",
+        "//snowflake/ml/_internal/exceptions:exceptions",
+        "//snowflake/ml/_internal/exceptions:fileset_errors",
+        "//snowflake/ml/_internal/exceptions:fileset_error_messages",
     ],
 )
 
@@ -27,10 +29,9 @@ py_library(
     name = "sfcfs",
     srcs = ["sfcfs.py"],
     deps = [
-        ":fileset_errors",
         ":stage_fs",
-        "//snowflake/ml/_internal/utils:identifier",
         "//snowflake/ml/_internal:telemetry",
+        "//snowflake/ml/_internal/utils:identifier",
     ],
 )
 
@@ -57,11 +58,13 @@ py_library(
     srcs = ["fileset.py"],
     compatible_with_snowpark = False,
     deps = [
-        ":fileset_errors",
         ":sfcfs",
         ":tf_dataset",
         ":torch_datapipe",
         "//snowflake/ml/_internal:telemetry",
+        "//snowflake/ml/_internal/exceptions:exceptions",
+        "//snowflake/ml/_internal/exceptions:fileset_errors",
+        "//snowflake/ml/_internal/exceptions:fileset_error_messages",
         "//snowflake/ml/_internal/utils:import_utils",
     ],
 )
@@ -71,6 +74,7 @@ py_test(
     srcs = ["fileset_test.py"],
     deps = [
         ":fileset",
+        "//snowflake/ml/_internal/exceptions:fileset_errors",
     ],
 )
 
@@ -119,11 +123,6 @@ py_test(
         ":parquet_test_util",
         ":tf_dataset",
     ],
-)
-
-py_library(
-    name = "fileset_errors",
-    srcs = ["fileset_errors.py"],
 )
 
 py_library(

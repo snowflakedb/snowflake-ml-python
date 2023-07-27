@@ -1,0 +1,42 @@
+load("//bazel:py_rules.bzl", "py_library", "py_test")
+
+package(default_visibility = ["//visibility:public"])
+
+py_library(
+    name = "exceptions",
+    srcs = [
+        "exceptions.py",
+        "error_codes.py",
+    ],
+)
+
+py_test(
+    name = "exceptions_test",
+    srcs = ["exceptions_test.py"],
+    deps = [":exceptions"],
+)
+
+py_library(
+    name = "error_messages",
+    srcs = ["error_messages.py"],
+)
+
+py_library(
+    name = "fileset_errors",
+    srcs = ["fileset_errors.py"],
+)
+
+py_library(
+    name = "fileset_error_messages",
+    srcs = ["fileset_error_messages.py"],
+)
+
+py_library(
+    name = "modeling_errors",
+    srcs = ["modeling_errors.py"],
+)
+
+py_library(
+    name = "modeling_error_messages",
+    srcs = ["modeling_error_messages.py"],
+)

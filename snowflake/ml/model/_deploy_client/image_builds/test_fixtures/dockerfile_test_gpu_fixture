@@ -1,0 +1,29 @@
+FROM mambaorg/micromamba:focal-cuda-11.7.1 as build
+
+COPY env/conda.yaml conda.yaml
+COPY env/requirements.txt requirements.txt
+ARG MAMBA_DOCKERFILE_ACTIVATE=1
+RUN --mount=type=cache,target=/opt/conda/pkgs micromamba install -y -n base -f conda.yaml && \
+	python -m pip install "uvicorn[standard]" gunicorn starlette==0.30.0 && \
+	python -m pip install -r requirements.txt
+
+FROM debian:buster-slim AS runtime
+
+ENV USER nonrootuser
+ENV UID 1000
+ENV HOME /home/$USER
+RUN adduser --disabled-password \
+	--gecos "A non-root user for running inference server" \
+	--uid $UID \
+	--home $HOME \
+	$USER
+
+COPY inference_server ./inference_server
+COPY gunicorn_run.sh ./gunicorn_run.sh
+RUN chmod +x /gunicorn_run.sh
+COPY --from=build /opt/conda /opt/conda
+EXPOSE 5000
+
+USER nonrootuser
+
+CMD ["/gunicorn_run.sh"]

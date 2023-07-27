@@ -10,8 +10,13 @@ from fsspec.implementations import http as httpfs
 from snowflake import snowpark
 from snowflake.connector import connection
 from snowflake.ml._internal import telemetry
-from snowflake.ml.fileset import fileset_errors
-from snowflake.snowpark import exceptions
+from snowflake.ml._internal.exceptions import (
+    error_codes,
+    exceptions as snowml_exceptions,
+    fileset_error_messages,
+    fileset_errors,
+)
+from snowflake.snowpark import exceptions as snowpark_exceptions
 
 # The default length of how long a presigned url stays active in seconds.
 # Presigned url here is used to fetch file objects from Snowflake when SFStageFileSystem.open() is called.
@@ -97,9 +102,9 @@ class SFStageFileSystem(fsspec.AbstractFileSystem):
             ValueError: An error occured when not exactly one of sf_connection and snowpark_session is given.
         """
         if sf_connection and snowpark_session:
-            raise ValueError("sf_connection and snowpark_session cannot be specified at the same time.")
+            raise ValueError(fileset_error_messages.BOTH_SF_CONNECTION_AND_SNOWPARK_SESSION_SPECIFIED)
         if not sf_connection and not snowpark_session:
-            raise ValueError("sf_connection or snowpark_session must be provided")
+            raise ValueError(fileset_error_messages.NO_SF_CONNECTION_OR_SNOWPARK_SESSION)
         if sf_connection:
             self._session = snowpark.Session.builder.config("connection", sf_connection).create()
         else:
@@ -148,17 +153,25 @@ class SFStageFileSystem(fsspec.AbstractFileSystem):
             A list of filename if `detail` is false, or a list of dict if `detail` is true.
 
         Raises:
-            StageNotFoundError: An error occured when the given path points to a stage that cannot be found.
-            FileSetError: An error occured when Snowflake cannot list files in the given stage path.
+            SnowflakeMLException: An error occured when the given path points to a stage that cannot be found.
+            SnowflakeMLException: An error occured when Snowflake cannot list files in the given stage path.
         """
         try:
             loc = self.stage_name
             objects = self._session.sql(f"LIST {loc}/{path}").collect()
-        except exceptions.SnowparkClientException as e:
+        except snowpark_exceptions.SnowparkClientException as e:
             if e.message.startswith(fileset_errors.ERRNO_DOMAIN_NOT_EXIST):
-                raise fileset_errors.StageNotFoundError(f"Stage {loc} does not exist or is not authorized.")
+                raise snowml_exceptions.SnowflakeMLException(
+                    error_code=error_codes.SNOWML_NOT_FOUND,
+                    original_exception=fileset_errors.StageNotFoundError(
+                        f"Stage {loc} does not exist or is not authorized."
+                    ),
+                )
             else:
-                raise fileset_errors.FileSetError(str(e))
+                raise snowml_exceptions.SnowflakeMLException(
+                    error_code=error_codes.INTERNAL_SNOWML_ERROR,
+                    original_exception=fileset_errors.FileSetError(str(e)),
+                )
         files = self._parse_list_result(objects, path)
         if detail:
             return files
@@ -211,7 +224,7 @@ class SFStageFileSystem(fsspec.AbstractFileSystem):
             A fsspec file-like object.
 
         Raises:
-            StageFileNotFoundError: An error occured when the given path points to a file that cannot be found.
+            SnowflakeMLException: An error occured when the given path points to a file that cannot be found.
         """
         path = path.lstrip("/")
         cached_presigned_url = self._url_cache.get(path, None)
@@ -229,7 +242,10 @@ class SFStageFileSystem(fsspec.AbstractFileSystem):
         try:
             return self._fs._open(url, mode=mode, **kwargs)
         except FileNotFoundError:
-            raise fileset_errors.StageFileNotFoundError(f"Stage file {path} doesn't exist.")
+            raise snowml_exceptions.SnowflakeMLException(
+                error_code=error_codes.SNOWML_NOT_FOUND,
+                original_exception=fileset_errors.StageFileNotFoundError(f"Stage file {path} doesn't exist."),
+            )
 
     def _parse_list_result(
         self, list_result: List[Tuple[str, int, str, str]], search_path: str
@@ -328,9 +344,17 @@ class SFStageFileSystem(fsspec.AbstractFileSystem):
                     api_calls=[snowpark.DataFrame.collect],
                 ),
             )
-        except exceptions.SnowparkClientException as e:
+        except snowpark_exceptions.SnowparkClientException as e:
             if e.message.startswith(fileset_errors.ERRNO_STAGE_NOT_EXIST):
-                raise fileset_errors.StageNotFoundError(f"Stage {self.stage_name} does not exist or is not authorized.")
+                raise snowml_exceptions.SnowflakeMLException(
+                    error_code=error_codes.SNOWML_NOT_FOUND,
+                    original_exception=fileset_errors.StageNotFoundError(
+                        f"Stage {self.stage_name} does not exist or is not authorized."
+                    ),
+                )
             else:
-                raise fileset_errors.FileSetError(str(e))
+                raise snowml_exceptions.SnowflakeMLException(
+                    error_code=error_codes.INTERNAL_SNOWML_ERROR,
+                    original_exception=fileset_errors.FileSetError(str(e)),
+                )
         return presigned_urls

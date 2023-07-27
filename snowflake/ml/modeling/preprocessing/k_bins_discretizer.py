@@ -15,6 +15,7 @@ from sklearn.preprocessing import KBinsDiscretizer as SK_KBinsDiscretizer
 
 from snowflake import snowpark
 from snowflake.ml._internal import telemetry
+from snowflake.ml._internal.exceptions import error_codes, exceptions
 from snowflake.ml.modeling.framework import base
 from snowflake.snowpark import functions as F, types as T
 from snowflake.snowpark._internal import utils as snowpark_utils
@@ -108,14 +109,28 @@ class KBinsDiscretizer(base.BaseTransformer):
     def _enforce_params(self) -> None:
         self.n_bins = self.n_bins if isinstance(self.n_bins, Iterable) else [self.n_bins] * len(self.input_cols)
         if len(self.n_bins) != len(self.input_cols):
-            raise ValueError(f"n_bins must have same size as input_cols, got: {self.n_bins} vs {self.input_cols}")
+            raise exceptions.SnowflakeMLException(
+                error_code=error_codes.INVALID_ATTRIBUTE,
+                original_exception=ValueError(
+                    f"n_bins must have same size as input_cols, got: {self.n_bins} vs {self.input_cols}"
+                ),
+            )
         for idx, b in enumerate(self.n_bins):
             if b < 2:
-                raise ValueError(f"n_bins cannot be less than 2, got: {b} at index {idx}")
+                raise exceptions.SnowflakeMLException(
+                    error_code=error_codes.INVALID_ATTRIBUTE,
+                    original_exception=ValueError(f"n_bins cannot be less than 2, got: {b} at index {idx}"),
+                )
         if self.encode not in _VALID_ENCODING_SCHEME:
-            raise ValueError(f"encode must be one of f{_VALID_ENCODING_SCHEME}, got: {self.encode}")
+            raise exceptions.SnowflakeMLException(
+                error_code=error_codes.INVALID_ATTRIBUTE,
+                original_exception=ValueError(f"encode must be one of f{_VALID_ENCODING_SCHEME}, got: {self.encode}"),
+            )
         if self.strategy not in _VALID_STRATEGY:
-            raise ValueError(f"strategy must be one of f{_VALID_STRATEGY}, got: {self.strategy}")
+            raise exceptions.SnowflakeMLException(
+                error_code=error_codes.INVALID_ATTRIBUTE,
+                original_exception=ValueError(f"strategy must be one of f{_VALID_STRATEGY}, got: {self.strategy}"),
+            )
 
     def _reset(self) -> None:
         super()._reset()
@@ -135,23 +150,16 @@ class KBinsDiscretizer(base.BaseTransformer):
 
         Returns:
             Fitted self instance.
-
-        Raises:
-            TypeError: If the input dataset is neither a pandas nor Snowpark DataFrame.
         """
         self._reset()
         self._enforce_params()
         super()._check_input_cols()
+        super()._check_dataset_type(dataset)
 
         if isinstance(dataset, pd.DataFrame):
             self._fit_sklearn(dataset)
-        elif isinstance(dataset, snowpark.DataFrame):
-            self._fit_snowpark(dataset)
         else:
-            raise TypeError(
-                f"Unexpected dataset type: {type(dataset)}."
-                "Supported dataset types: snowpark.DataFrame, pandas.DataFrame."
-            )
+            self._fit_snowpark(dataset)
 
         self._is_fitted = True
         return self
@@ -178,23 +186,16 @@ class KBinsDiscretizer(base.BaseTransformer):
             - If input is snowpark DataFrame, returns snowpark DataFrame
             - If input is a pd.DataFrame and 'self.encdoe=onehot', returns 'csr_matrix'
             - If input is a pd.DataFrame and 'self.encode in ['ordinal', 'onehot-dense']', returns 'pd.DataFrame'
-
-        Raises:
-            TypeError: If the input dataset is neither a pandas nor Snowpark DataFrame.
         """
-        self.enforce_fit()
+        self._enforce_fit()
         super()._check_input_cols()
         super()._check_output_cols()
+        super()._check_dataset_type(dataset)
 
         if isinstance(dataset, snowpark.DataFrame):
             output_df = self._transform_snowpark(dataset)
-        elif isinstance(dataset, pd.DataFrame):
-            output_df = self._transform_sklearn(dataset)
         else:
-            raise TypeError(
-                f"Unexpected dataset type: {type(dataset)}."
-                "Supported dataset types: snowpark.DataFrame, pandas.DataFrame."
-            )
+            output_df = self._transform_sklearn(dataset)
 
         return self._drop_input_columns(output_df) if self._drop_input_cols is True else output_df
 
@@ -204,7 +205,10 @@ class KBinsDiscretizer(base.BaseTransformer):
         elif self.strategy == "uniform":
             self._handle_uniform(dataset)
         elif self.strategy == "kmeans":
-            raise NotImplementedError("kmeans not supported yet")
+            raise exceptions.SnowflakeMLException(
+                error_code=error_codes.INVALID_ATTRIBUTE,
+                original_exception=NotImplementedError("kmeans not supported yet"),
+            )
 
     def _handle_quantile(self, dataset: snowpark.DataFrame) -> None:
         """
@@ -221,9 +225,7 @@ class KBinsDiscretizer(base.BaseTransformer):
         for idx, col_name in enumerate(self.input_cols):
             percentiles = np.linspace(0, 1, cast(List[int], self.n_bins)[idx] + 1)
             for i, pct in enumerate(percentiles.tolist()):
-                agg_queries.append(
-                    F.percentile_cont(pct).within_group(col_name).alias(f"{col_name}_pct_{i}")  # type: ignore[arg-type]
-                )
+                agg_queries.append(F.percentile_cont(pct).within_group(col_name).alias(f"{col_name}_pct_{i}"))
         state_df = dataset.agg(agg_queries)
         state = (
             state_df.to_pandas(
@@ -253,10 +255,7 @@ class KBinsDiscretizer(base.BaseTransformer):
         """
         # 1. Collect min and max for each feature column
         agg_queries = list(
-            chain.from_iterable(
-                (F.min(x).alias(f"{x}_min"), F.max(x).alias(f"{x}_max"))  # type: ignore[arg-type]
-                for x in self.input_cols
-            )
+            chain.from_iterable((F.min(x).alias(f"{x}_min"), F.max(x).alias(f"{x}_max")) for x in self.input_cols)
         )
         state_df = dataset.select(*agg_queries)
         state = (
@@ -310,7 +309,10 @@ class KBinsDiscretizer(base.BaseTransformer):
         elif self.encode == "onehot-dense":
             return self._handle_onehot_dense(dataset)
         else:
-            raise ValueError(f"{self.encode} is not a valid encoding scheme.")
+            raise exceptions.SnowflakeMLException(
+                error_code=error_codes.INVALID_ATTRIBUTE,
+                original_exception=ValueError(f"{self.encode} is not a valid encoding scheme."),
+            )
 
     def _handle_ordinal(self, dataset: snowpark.DataFrame) -> snowpark.DataFrame:
         """
@@ -345,12 +347,11 @@ class KBinsDiscretizer(base.BaseTransformer):
         # 2. compute bucket per feature column
         for idx, input_col in enumerate(self.input_cols):
             output_col = self.output_cols[idx]
-            boarders = [F.lit(float(x)) for x in self.bin_edges_[idx]]  # type: ignore[arg-type, index]
+            assert self.bin_edges_ is not None
+            boarders = [F.lit(float(x)) for x in self.bin_edges_[idx]]
             dataset = dataset.select(
                 *dataset.columns,
-                F.call_udf(udf_name, F.col(input_col), F.array_construct(*boarders)).alias(  # type: ignore[arg-type]
-                    output_col
-                ),
+                F.call_udf(udf_name, F.col(input_col), F.array_construct(*boarders)).alias(output_col),
             )
         # Reorder columns. Passthrough columns are added at the right to the output of the transformers.
         dataset = dataset[self.output_cols + passthrough_columns]
@@ -390,11 +391,12 @@ class KBinsDiscretizer(base.BaseTransformer):
             return pd.Series(res)
 
         for idx, input_col in enumerate(self.input_cols):
+            assert self.bin_edges_ is not None
             output_col = self.output_cols[idx]
-            boarders = [F.lit(float(x)) for x in self.bin_edges_[idx]]  # type: ignore[arg-type, index]
+            boarders = [F.lit(float(x)) for x in self.bin_edges_[idx]]
             dataset = dataset.select(
                 *dataset.columns,
-                F.call_udf(udf_name, F.col(input_col), F.array_construct(*boarders)).alias(output_col),  # type: ignore
+                F.call_udf(udf_name, F.col(input_col), F.array_construct(*boarders)).alias(output_col),
             )
         # Reorder columns. Passthrough columns are added at the right to the output of the transformers.
         dataset = dataset[self.output_cols + passthrough_columns]
@@ -437,11 +439,12 @@ class KBinsDiscretizer(base.BaseTransformer):
             return pd.Series(res)
 
         for idx, input_col in enumerate(self.input_cols):
+            assert self.bin_edges_ is not None
             output_col = self.output_cols[idx]
-            boarders = [F.lit(float(x)) for x in self.bin_edges_[idx]]  # type: ignore[arg-type, index]
+            boarders = [F.lit(float(x)) for x in self.bin_edges_[idx]]
             dataset = dataset.select(
                 *dataset.columns,
-                F.call_udf(udf_name, F.col(input_col), F.array_construct(*boarders)).alias(output_col),  # type: ignore
+                F.call_udf(udf_name, F.col(input_col), F.array_construct(*boarders)).alias(output_col),
             )
             dataset = dataset.with_columns(
                 [f"{output_col}_{i}" for i in range(len(boarders) - 1)],
@@ -464,7 +467,7 @@ class KBinsDiscretizer(base.BaseTransformer):
         Returns:
             Output dataset.
         """
-        self.enforce_fit()
+        self._enforce_fit()
         encoder_sklearn = self.to_sklearn()
 
         transformed_dataset = encoder_sklearn.transform(dataset[self.input_cols])

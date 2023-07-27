@@ -20,14 +20,17 @@ class SnowServiceClient:
         """
         self.session = session
 
+    def create_image_repo(self, repo_name: str) -> None:
+        self.session.sql(f"CREATE OR REPLACE IMAGE REPOSITORY {repo_name}").collect()
+
     def create_or_replace_service(
         self,
         service_name: str,
         compute_pool: str,
         spec_stage_location: str,
         *,
-        min_instances: int = 1,
-        max_instances: int = 1,
+        min_instances: Optional[int] = 1,
+        max_instances: Optional[int] = 1,
     ) -> None:
         """Create or replace service. Since SnowService doesn't support the CREATE OR REPLACE service syntax, we will
         first attempt to drop the service if it exists, and then create the service. Please note that this approach may
@@ -40,13 +43,14 @@ class SnowServiceClient:
             compute_pool: Name of the compute pool.
             spec_stage_location: Stage path for the service spec.
         """
+        assert spec_stage_location.startswith("@"), f"stage path should start with @, actual: {spec_stage_location}"
         self._drop_service_if_exists(service_name)
         sql = f"""
              CREATE SERVICE {service_name}
                  MIN_INSTANCES={min_instances}
                  MAX_INSTANCES={max_instances}
                  COMPUTE_POOL={compute_pool}
-                 SPEC=@{spec_stage_location}
+                 SPEC={spec_stage_location}
          """
         logging.info(f"Create service with SQL: \n {sql}")
         self.session.sql(sql).collect()
@@ -87,6 +91,7 @@ class SnowServiceClient:
             """
         logging.info(f"Create service function with SQL: \n {sql}")
         self.session.sql(sql).collect()
+        logging.info(f"Successfully created service function: {service_func_name}")
 
     def block_until_resource_is_ready(
         self,

@@ -12,6 +12,7 @@ from sklearn.preprocessing import _data as sklearn_preprocessing_data
 
 from snowflake import snowpark
 from snowflake.ml._internal import telemetry
+from snowflake.ml._internal.exceptions import error_codes, exceptions
 from snowflake.ml.modeling.framework import _utils, base
 
 
@@ -129,22 +130,15 @@ class RobustScaler(base.BaseTransformer):
 
         Returns:
             Return self as fitted scaler.
-
-        Raises:
-            TypeError: If the input dataset is neither a pandas nor Snowpark DataFrame.
         """
         super()._check_input_cols()
+        super()._check_dataset_type(dataset)
         self._reset()
 
         if isinstance(dataset, pd.DataFrame):
             self._fit_sklearn(dataset)
-        elif isinstance(dataset, snowpark.DataFrame):
-            self._fit_snowpark(dataset)
         else:
-            raise TypeError(
-                f"Unexpected dataset type: {type(dataset)}."
-                "Supported dataset types: snowpark.DataFrame, pandas.DataFrame."
-            )
+            self._fit_snowpark(dataset)
 
         self._is_fitted = True
         self._state_is_set = True
@@ -166,7 +160,10 @@ class RobustScaler(base.BaseTransformer):
 
         q_min, q_max = self.quantile_range
         if not 0 <= q_min <= q_max <= 100:
-            raise ValueError("Invalid quantile range: %s" % str(self.quantile_range))
+            raise exceptions.SnowflakeMLException(
+                error_code=error_codes.INVALID_ATTRIBUTE,
+                original_exception=ValueError("Invalid quantile range: %s" % str(self.quantile_range)),
+            )
 
         pcont_left = self.custom_states[1]
         pcont_right = self.custom_states[2]
@@ -206,25 +203,16 @@ class RobustScaler(base.BaseTransformer):
 
         Returns:
             Output dataset.
-
-        Raises:
-            RuntimeError: If transformer is not fitted first.
-            TypeError: If the input dataset is neither a pandas nor Snowpark DataFrame.
         """
-        if not self._is_fitted:
-            raise RuntimeError("Transformer not fitted before calling transform().")
+        self._enforce_fit()
         super()._check_input_cols()
         super()._check_output_cols()
+        super()._check_dataset_type(dataset)
 
         if isinstance(dataset, snowpark.DataFrame):
             output_df = self._transform_snowpark(dataset)
-        elif isinstance(dataset, pd.DataFrame):
-            output_df = self._transform_sklearn(dataset)
         else:
-            raise TypeError(
-                f"Unexpected dataset type: {type(dataset)}."
-                "Supported dataset types: snowpark.DataFrame, pandas.DataFrame."
-            )
+            output_df = self._transform_sklearn(dataset)
 
         return self._drop_input_columns(output_df) if self._drop_input_cols is True else output_df
 
@@ -268,13 +256,7 @@ class RobustScaler(base.BaseTransformer):
 
         Returns:
             Sklearn RobustScaler.
-
-        Raises:
-            RuntimeError: If transformer is not fitted first.
         """
-        if self.scale_ is None or self.center_ is None:
-            raise RuntimeError("Transformer not fitted before calling transform().")
-
         scaler = self._create_unfitted_sklearn_object()
         if self._is_fitted:
             scaler.scale_ = self._convert_attribute_dict_to_ndarray(self.scale_, np.float64)

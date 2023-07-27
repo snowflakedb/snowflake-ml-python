@@ -12,6 +12,7 @@ from sklearn import impute
 
 from snowflake import snowpark
 from snowflake.ml._internal import telemetry
+from snowflake.ml._internal.exceptions import error_codes, exceptions
 from snowflake.ml.modeling.framework import _utils, base
 from snowflake.snowpark import functions as F, types as T
 from snowflake.snowpark._internal import utils as snowpark_utils
@@ -124,17 +125,26 @@ class SimpleImputer(base.BaseTransformer):
             `snowflake.ml.impute.MissingIndicator` to be implemented.
 
         Raises:
-            ValueError: If strategy is invalid, or if fill value is specified for strategy that isn't "constant".
+            SnowflakeMLException: If strategy is invalid, or if fill value is specified for strategy that isn't
+                "constant".
         """
         super().__init__(drop_input_cols=drop_input_cols)
         if strategy in STRATEGY_TO_STATE_DICT:
             self.strategy = strategy
         else:
-            raise ValueError(f"Invalid strategy {strategy}. Strategy must be one of {STRATEGY_TO_STATE_DICT.keys()}")
+            raise exceptions.SnowflakeMLException(
+                error_code=error_codes.INVALID_ARGUMENT,
+                original_exception=ValueError(
+                    f"Invalid strategy {strategy}. Strategy must be one of {STRATEGY_TO_STATE_DICT.keys()}"
+                ),
+            )
 
         # Check that the strategy is "constant" if `fill_value` is specified.
         if fill_value is not None and strategy != "constant":
-            raise ValueError("fill_value may only be specified if the strategy is 'constant'.")
+            raise exceptions.SnowflakeMLException(
+                error_code=error_codes.INVALID_ARGUMENT,
+                original_exception=ValueError("fill_value may only be specified if the strategy is 'constant'."),
+            )
 
         self.fill_value = fill_value
         self.missing_values = missing_values
@@ -171,7 +181,8 @@ class SimpleImputer(base.BaseTransformer):
             The datatype of the input columns.
 
         Raises:
-            TypeError: If the input columns are not all the same datatype category or if the datatype is not supported.
+            SnowflakeMLException: If the input columns are not all the same datatype category or if the datatype is not
+                supported.
         """
 
         def check_type_consistency(col_types: Dict[str, T.DataType]) -> None:
@@ -180,9 +191,12 @@ class SimpleImputer(base.BaseTransformer):
                 if is_numeric_type is None:
                     is_numeric_type = True if col_type in _NUMERIC_TYPES else False
                 if (col_type in _NUMERIC_TYPES) ^ is_numeric_type:
-                    raise TypeError(
-                        f"Inconsistent input column types. Column {col_name} type {col_type} does not match previous"
-                        " type category."
+                    raise exceptions.SnowflakeMLException(
+                        error_code=error_codes.INVALID_DATA_TYPE,
+                        original_exception=TypeError(
+                            f"Inconsistent input column types. Column {col_name} type {col_type} does not match"
+                            " previous type category."
+                        ),
                     )
 
         input_col_datatypes = {}
@@ -192,7 +206,12 @@ class SimpleImputer(base.BaseTransformer):
                     isinstance(field.datatype, potential_type)
                     for potential_type in SNOWFLAKE_DATATYPE_TO_NUMPY_DTYPE_MAP.keys()
                 ):
-                    raise TypeError(f"Input column type {field.datatype} is not supported by the simple imputer.")
+                    raise exceptions.SnowflakeMLException(
+                        error_code=error_codes.INVALID_DATA_TYPE,
+                        original_exception=TypeError(
+                            f"Input column type {field.datatype} is not supported by the SimpleImputer."
+                        ),
+                    )
                 input_col_datatypes[field.name] = field.datatype
         if self.strategy != "most_frequent":
             check_type_consistency(input_col_datatypes)
@@ -249,7 +268,7 @@ class SimpleImputer(base.BaseTransformer):
             dataset_copy = copy.copy(dataset)
             if not pd.isna(self.missing_values):
                 # Replace `self.missing_values` with null to avoid including it when computing states.
-                dataset_copy = dataset_copy.na.replace(self.missing_values, None)  # type: ignore[arg-type]
+                dataset_copy = dataset_copy.na.replace(self.missing_values, None)
             _computed_states = self._compute(dataset_copy, self.input_cols, states=[state])
             for input_col in self.input_cols:
                 statistic = _computed_states[input_col][state]
@@ -287,25 +306,16 @@ class SimpleImputer(base.BaseTransformer):
 
         Returns:
             Output dataset.
-
-        Raises:
-            RuntimeError: If transformer is not fitted first.
-            TypeError: If the input dataset is neither a pandas nor Snowpark DataFrame.
         """
-        if not self._is_fitted:
-            raise RuntimeError("Transformer not fitted before calling transform().")
+        self._enforce_fit()
         super()._check_input_cols()
         super()._check_output_cols()
+        super()._check_dataset_type(dataset)
 
         if isinstance(dataset, snowpark.DataFrame):
             output_df = self._transform_snowpark(dataset)
-        elif isinstance(dataset, pd.DataFrame):
-            output_df = self._transform_sklearn(dataset)
         else:
-            raise TypeError(
-                f"Unexpected dataset type: {type(dataset)}."
-                "Supported dataset types: snowpark.DataFrame, pandas.DataFrame."
-            )
+            output_df = self._transform_sklearn(dataset)
 
         return self._drop_input_columns(output_df) if self._drop_input_cols is True else output_df
 
@@ -358,7 +368,7 @@ class SimpleImputer(base.BaseTransformer):
                 transformed_dataset = transformed_dataset.na.fill({output_col: statistic})
             else:
                 transformed_dataset = transformed_dataset.na.replace(
-                    self.missing_values,  # type: ignore[arg-type]
+                    self.missing_values,
                     fill_value,
                     subset=[output_col],
                 )

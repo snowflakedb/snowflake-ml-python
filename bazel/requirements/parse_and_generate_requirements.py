@@ -7,12 +7,14 @@ import os
 import sys
 from typing import (
     Generator,
+    List,
     Literal,
     MutableMapping,
     Optional,
     Sequence,
     Set,
     TypedDict,
+    Union,
     cast,
 )
 
@@ -80,7 +82,7 @@ def filter_by_extras(req_info: RequirementInfo, extras: bool, no_extras: bool) -
     )
 
 
-def get_req_name(req_info: RequirementInfo, env: Literal["conda", "pip"]) -> Optional[str]:
+def get_req_name(req_info: RequirementInfo, env: Literal["conda", "pip", "conda-only", "pip-only"]) -> Optional[str]:
     """Get the name of the requirement in the given env.
     For each env, env specific name will be chosen, if not presented, common name will be chosen.
 
@@ -96,13 +98,23 @@ def get_req_name(req_info: RequirementInfo, env: Literal["conda", "pip"]) -> Opt
     """
     if env == "conda":
         return req_info.get("name_conda", req_info.get("name", None))
+    elif env == "conda-only":
+        if "name_pypi" in req_info or "name" in req_info:
+            return None
+        return req_info.get("name_conda", None)
     elif env == "pip":
         return req_info.get("name_pypi", req_info.get("name", None))
+    elif env == "pip-only":
+        if "name_conda" in req_info or "name" in req_info:
+            return None
+        return req_info.get("name_pypi", None)
     else:
         raise ValueError("Unreachable")
 
 
-def generate_dev_pinned_string(req_info: RequirementInfo, env: Literal["conda", "pip"]) -> Optional[str]:
+def generate_dev_pinned_string(
+    req_info: RequirementInfo, env: Literal["conda", "pip", "conda-only", "pip-only"]
+) -> Optional[str]:
     """Get the pinned version for dev environment of the requirement in the given env.
     For each env, env specific pinned version will be chosen, if not presented, common pinned version will be chosen.
 
@@ -121,19 +133,27 @@ def generate_dev_pinned_string(req_info: RequirementInfo, env: Literal["conda", 
     name = get_req_name(req_info, env)
     if name is None:
         return None
-    if env == "conda":
+    if env.startswith("conda"):
         version = req_info.get("dev_version_conda", req_info.get("dev_version", None))
         if version is None:
             raise ValueError("No pinned version exists.")
         from_channel = req_info.get("from_channel", None)
+        if version == "":
+            version_str = ""
+        else:
+            version_str = f"=={version}"
         if from_channel:
-            return f"{from_channel}::{name}=={version}"
-        return f"{name}=={version}"
-    elif env == "pip":
+            return f"{from_channel}::{name}{version_str}"
+        return f"{name}{version_str}"
+    elif env.startswith("pip"):
         version = req_info.get("dev_version_pypi", req_info.get("dev_version", None))
         if version is None:
             raise ValueError("No pinned version exists.")
-        return f"{name}=={version}"
+        if version == "":
+            version_str = ""
+        else:
+            version_str = f"=={version}"
+        return f"{name}{version_str}"
     else:
         raise ValueError("Unreachable")
 
@@ -302,11 +322,17 @@ def generate_requirements(
             )
         )
     )
-    extended_env = list(
+    extended_env_conda = list(
         sorted(filter(None, map(lambda req_info: generate_dev_pinned_string(req_info, "conda"), requirements)))
     )
     resolve_conda_environment(snowflake_only_env, channels=channels_to_use)
-    resolve_conda_environment(extended_env, channels=channels_to_use)
+    resolve_conda_environment(extended_env_conda, channels=channels_to_use)
+    extended_env: List[Union[str, MutableMapping[str, Sequence[str]]]] = extended_env_conda  # type: ignore[assignment]
+    pip_only_reqs = list(
+        sorted(filter(None, map(lambda req_info: generate_dev_pinned_string(req_info, "pip-only"), requirements)))
+    )
+    if pip_only_reqs:
+        extended_env.extend(["pip", {"pip": pip_only_reqs}])
 
     if (mode, format) == ("dev_version", "text"):
         results = list(

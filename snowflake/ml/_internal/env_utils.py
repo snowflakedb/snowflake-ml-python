@@ -1,5 +1,6 @@
 import collections
 import copy
+import re
 import textwrap
 import warnings
 from importlib import metadata as importlib_metadata
@@ -15,6 +16,8 @@ from snowflake.snowpark import session
 _SNOWML_PKG_NAME = "snowflake-ml-python"
 _INFO_SCHEMA_PACKAGES_HAS_RUNTIME_VERSION: Optional[bool] = None
 _SNOWFLAKE_CONDA_PACKAGE_CACHE: Dict[str, List[version.Version]] = {}
+
+DEFAULT_CHANNEL_NAME = ""
 
 
 def _validate_pip_requirement_string(req_str: str) -> requirements.Requirement:
@@ -225,42 +228,6 @@ def relax_requirement_version(req: requirements.Requirement) -> requirements.Req
     return new_req
 
 
-def resolve_conda_environment(
-    packages: List[requirements.Requirement], channels: List[str], python_version: str
-) -> Optional[List[str]]:
-    """Use conda api to check if given packages are resolvable in given channels. Only work when conda is
-        locally installed.
-
-    Args:
-        packages: Packages to be installed.
-        channels: Anaconda channels (name or url) where conda should search into.
-        python_version: A string of python version where model is run.
-
-    Returns:
-        List of frozen dependencies represented in PEP 508 form if resolvable, None otherwise.
-    """
-    from conda import exceptions as conda_exceptions
-    from conda_libmamba_solver import solver
-
-    package_names = list(map(lambda x: x.name, packages))
-    specs = list(map(str, packages)) + [f"python=={python_version}"]
-
-    conda_solver = solver.LibMambaSolver("snow-env", channels=channels, specs_to_add=specs)
-    try:
-        solve_result = conda_solver.solve_final_state()
-    except (
-        conda_exceptions.ResolvePackageNotFound,
-        conda_exceptions.UnsatisfiableError,
-        conda_exceptions.PackagesNotFoundError,
-        solver.LibMambaUnsatisfiableError,
-    ):
-        return None
-
-    return sorted(
-        f"{pkg_record.name}=={pkg_record.version}" for pkg_record in solve_result if pkg_record.name in package_names
-    )
-
-
 def _check_runtime_version_column_existence(session: session.Session) -> bool:
     sql = textwrap.dedent(
         """
@@ -351,3 +318,24 @@ def validate_requirements_in_snowflake_conda_channel(
         else:
             ret_list.append(str(req))
     return sorted(ret_list)
+
+
+# We have to use re to support MLFlow generated python string, which use = rather than ==
+PYTHON_VERSION_PATTERN = re.compile(r"python(?:(?P<op>=|==|>|<|>=|<=|~=|===)(?P<ver>\d(?:\.\d+)+))?")
+
+
+def parse_python_version_string(dep: str) -> Optional[str]:
+    if dep.startswith("python"):
+        m = PYTHON_VERSION_PATTERN.search(dep)
+        if m is None:
+            return None
+        op = m.group("op")
+        if op and (op != "=" and op != "=="):
+            raise ValueError("Unsupported operator for python version specifier.")
+        ver = m.group("ver")
+        if ver:
+            return ver
+        else:
+            # "python" only, no specifier
+            return ""
+    return None

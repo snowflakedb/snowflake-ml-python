@@ -119,37 +119,9 @@ def cell_value_by_column_matcher(
     return True
 
 
-def cell_value_partial_matcher(
-    row_idx: int, col_idx: int, expected_value: Any, result: list[snowpark.Row], sql: str | None = None
-) -> bool:
-    """Returns true if `expected_value` is found in `result[row_idx, col_idx]` cell. Raise exception otherwise."""
-    if len(result) <= row_idx or len(result[row_idx]) <= col_idx:
-        raise connector.DataError(
-            formatting.unwrap(
-                f"""Query Result did not have required number of rows x col [{row_idx}][{col_idx}]. Result from
-                    operation was: {result}.{_query_log(sql)}"""
-            )
-        )
-    validated = False
-    if isinstance(expected_value, str):
-        validated = expected_value in result[row_idx][col_idx]
-    else:
-        validated = expected_value == result[row_idx][col_idx]
-    if not validated:
-        raise connector.DataError(
-            formatting.unwrap(
-                f"""Query Result did not have the expected value '{expected_value}' at expected position
-                [{row_idx}][{col_idx}]. Actual value at position [{row_idx}][{col_idx}] was
-                '{result[row_idx][col_idx]}'.{_query_log(sql)}"""
-            )
-        )
-    return True
-
-
 _DEFAULT_MATCHERS = [
     partial(result_dimension_matcher, 1, 1),
     partial(column_name_matcher, "status"),
-    partial(cell_value_partial_matcher, 0, 0, "successfully"),
 ]
 
 
@@ -197,21 +169,6 @@ class ResultValidator:
             ResultValidator object (self)
         """
         self._success_matchers.append(partial(column_name_matcher, expected_col_name))
-        return self
-
-    def has_value_match(self, row_idx: int, col_idx: int, expected_value: Any) -> ResultValidator:
-        """Validate that the a column with the name `expected_column_name` exists in the result.
-
-        Args:
-            row_idx: Row index of the cell that needs to match.
-            col_idx: Column index of the cell that needs to match.
-            expected_value: Value that the cell needs to match. For strings it is treated as a substring match, all
-                other types will expect an exact match.
-
-        Returns:
-            ResultValidator object (self)
-        """
-        self._success_matchers.append(partial(cell_value_partial_matcher, row_idx, col_idx, expected_value))
         return self
 
     def has_named_value_match(self, row_idx: int, col_name: str, expected_value: Any) -> ResultValidator:

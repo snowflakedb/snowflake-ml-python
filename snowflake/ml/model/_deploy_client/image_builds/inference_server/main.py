@@ -1,13 +1,18 @@
 import logging
 import os
+import sys
 import tempfile
 import zipfile
+from typing import List, cast
 
 import pandas as pd
 from starlette import applications, requests, responses, routing
 
 logger = logging.getLogger(__name__)
-loaded_model = None
+_LOADED_MODEL = None
+_LOADED_META = None
+TARGET_METHOD = "predict"
+MODEL_CODE_DIR = "code"
 
 
 def _run_setup() -> None:
@@ -17,9 +22,8 @@ def _run_setup() -> None:
     logger.handlers = gunicorn_logger.handlers
     logger.setLevel(gunicorn_logger.level)
 
-    from snowflake.ml.model import _model as model_api
-
-    global loaded_model
+    global _LOADED_MODEL
+    global _LOADED_META
 
     MODEL_ZIP_STAGE_PATH = os.getenv("MODEL_ZIP_STAGE_PATH")
     assert MODEL_ZIP_STAGE_PATH, "Missing environment variable MODEL_ZIP_STAGE_PATH"
@@ -36,7 +40,11 @@ def _run_setup() -> None:
         else:
             raise RuntimeError(f"No model zip found at stage path: {model_zip_stage_path}")
         logger.info(f"Loading model from {extracted_dir} into memory")
-        loaded_model, _ = model_api._load_model_for_deploy(model_dir_path=extracted_dir)
+
+        sys.path.insert(0, os.path.join(extracted_dir, MODEL_CODE_DIR))
+        from snowflake.ml.model import _model as model_api
+
+        _LOADED_MODEL, _LOADED_META = model_api._load_model_for_deploy(model_dir_path=extracted_dir)
         logger.info("Successfully loaded model into memory")
 
 
@@ -52,36 +60,54 @@ async def predict(request: requests.Request) -> responses.JSONResponse:
         request: The input data is expected to be in the following JSON format:
             {
                 "data": [
-                    [0, 5.1, 3.5, 4.2, 1.3],
-                    [1, 4.7, 3.2, 4.1, 4.2]
+                    [0, {'_ID': 0, 'input_feature_0': 0.0, 'input_feature_1': 1.0}],
+                    [1, {'_ID': 1, 'input_feature_0': 2.0, 'input_feature_1': 3.0}],
             }
             Each row is represented as a list, where the first element denotes the index of the row.
 
     Returns:
         Two possible responses:
-        For success, return a JSON response {"data": [[0, 1], [1, 2]]}, where the first element of each resulting list
-            denotes the index of the row, and the rest of the elements represent the prediction results for that row.
+        For success, return a JSON response
+            {
+                "data": [
+                    [0, {'_ID': 0, 'output': 1}],
+                    [1, {'_ID': 1, 'output': 2}]
+                ]
+            },
+            The first element of each resulting list denotes the index of the row, and the rest of the elements
+            represent the prediction results for that row.
         For an error, return {"error": error_message, "status_code": http_response_status_code}.
     """
+    assert _LOADED_MODEL, "model is not loaded"
+    assert _LOADED_META, "model metadata is not loaded"
+    from snowflake.ml.model.model_signature import FeatureSpec
+
     try:
         input = await request.json()
+        features = cast(List[FeatureSpec], _LOADED_META.signatures[TARGET_METHOD].inputs)
+        dtype_map = {feature.name: feature.as_dtype() for feature in features}
+        input_cols = [spec.name for spec in features]
+        output_cols = [spec.name for spec in _LOADED_META.signatures[TARGET_METHOD].outputs]
         assert "data" in input, "missing data field in the request input"
         # The expression x[1:] is used to exclude the index of the data row.
-        input_data = [x[1:] for x in input.get("data")]
-        x = pd.DataFrame(input_data)
+        input_data = [x[1] for x in input.get("data")]
+        df = pd.json_normalize(input_data).astype(dtype=dtype_map)
+        x = df[input_cols]
         assert len(input_data) != 0 and not all(not row for row in input_data), "empty data"
     except Exception as e:
         error_message = f"Input data malformed: {str(e)}"
         return responses.JSONResponse({"error": error_message}, status_code=400)
 
-    assert loaded_model
-
     try:
         # TODO(shchen): SNOW-835369, Support target method in inference server (Multi-task model).
         # Mypy ignore will be fixed along with the above ticket.
-        predictions = loaded_model.predict(x)  # type: ignore[attr-defined]
-        result = predictions.to_records(index=True).tolist()
-        response = {"data": result}
+        predictions_df = _LOADED_MODEL.predict(x)  # type: ignore[attr-defined]
+        predictions_df.columns = output_cols
+        # Use _ID to keep the order of prediction result and associated features.
+        _KEEP_ORDER_COL_NAME = "_ID"
+        if _KEEP_ORDER_COL_NAME in df.columns:
+            predictions_df[_KEEP_ORDER_COL_NAME] = df[_KEEP_ORDER_COL_NAME]
+        response = {"data": [[i, row] for i, row in enumerate(predictions_df.to_dict(orient="records"))]}
         return responses.JSONResponse(response)
     except Exception as e:
         error_message = f"Prediction failed: {str(e)}"

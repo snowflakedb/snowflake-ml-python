@@ -67,7 +67,7 @@ def d2_absolute_error_score(
     sklearn_release = version.parse(sklearn.__version__).release
     statement_params = telemetry.get_statement_params(_PROJECT, _SUBPROJECT)
     cols = metrics_utils.flatten_cols([y_true_col_names, y_pred_col_names, sample_weight_col_name])
-    query = df[cols].queries["queries"][-1]
+    queries = df[cols].queries["queries"]
 
     @F.sproc(  # type: ignore[misc]
         session=session,
@@ -81,7 +81,9 @@ def d2_absolute_error_score(
         statement_params=statement_params,
     )
     def d2_absolute_error_score_sproc(session: snowpark.Session) -> bytes:
-        df = session.sql(query).to_pandas(statement_params=statement_params)
+        for query in queries[:-1]:
+            _ = session.sql(query).collect(statement_params=statement_params)
+        df = session.sql(queries[-1]).to_pandas(statement_params=statement_params)
         y_true = df[y_true_col_names]
         y_pred = df[y_pred_col_names]
         sample_weight = df[sample_weight_col_name] if sample_weight_col_name else None
@@ -149,7 +151,7 @@ def d2_pinball_score(
     sklearn_release = version.parse(sklearn.__version__).release
     statement_params = telemetry.get_statement_params(_PROJECT, _SUBPROJECT)
     cols = metrics_utils.flatten_cols([y_true_col_names, y_pred_col_names, sample_weight_col_name])
-    query = df[cols].queries["queries"][-1]
+    queries = df[cols].queries["queries"]
 
     @F.sproc(  # type: ignore[misc]
         session=session,
@@ -163,7 +165,9 @@ def d2_pinball_score(
         statement_params=statement_params,
     )
     def d2_pinball_score_sproc(session: snowpark.Session) -> bytes:
-        df = session.sql(query).to_pandas(statement_params=statement_params)
+        for query in queries[:-1]:
+            _ = session.sql(query).collect(statement_params=statement_params)
+        df = session.sql(queries[-1]).to_pandas(statement_params=statement_params)
         y_true = df[y_true_col_names]
         y_pred = df[y_pred_col_names]
         sample_weight = df[sample_weight_col_name] if sample_weight_col_name else None
@@ -248,7 +252,7 @@ def explained_variance_score(
     sklearn_release = version.parse(sklearn.__version__).release
     statement_params = telemetry.get_statement_params(_PROJECT, _SUBPROJECT)
     cols = metrics_utils.flatten_cols([y_true_col_names, y_pred_col_names, sample_weight_col_name])
-    query = df[cols].queries["queries"][-1]
+    queries = df[cols].queries["queries"]
 
     @F.sproc(  # type: ignore[misc]
         session=session,
@@ -262,7 +266,9 @@ def explained_variance_score(
         statement_params=statement_params,
     )
     def explained_variance_score_sproc(session: snowpark.Session) -> bytes:
-        df = session.sql(query).to_pandas(statement_params=statement_params)
+        for query in queries[:-1]:
+            _ = session.sql(query).collect(statement_params=statement_params)
+        df = session.sql(queries[-1]).to_pandas(statement_params=statement_params)
         y_true = df[y_true_col_names]
         y_pred = df[y_pred_col_names]
         sample_weight = df[sample_weight_col_name] if sample_weight_col_name else None
@@ -326,7 +332,7 @@ def mean_absolute_error(
     sklearn_release = version.parse(sklearn.__version__).release
     statement_params = telemetry.get_statement_params(_PROJECT, _SUBPROJECT)
     cols = metrics_utils.flatten_cols([y_true_col_names, y_pred_col_names, sample_weight_col_name])
-    query = df[cols].queries["queries"][-1]
+    queries = df[cols].queries["queries"]
 
     @F.sproc(  # type: ignore[misc]
         session=session,
@@ -340,7 +346,9 @@ def mean_absolute_error(
         statement_params=statement_params,
     )
     def mean_absolute_error_sproc(session: snowpark.Session) -> bytes:
-        df = session.sql(query).to_pandas(statement_params=statement_params)
+        for query in queries[:-1]:
+            _ = session.sql(query).collect(statement_params=statement_params)
+        df = session.sql(queries[-1]).to_pandas(statement_params=statement_params)
         y_true = df[y_true_col_names]
         y_pred = df[y_pred_col_names]
         sample_weight = df[sample_weight_col_name] if sample_weight_col_name else None
@@ -412,7 +420,7 @@ def mean_absolute_percentage_error(
     sklearn_release = version.parse(sklearn.__version__).release
     statement_params = telemetry.get_statement_params(_PROJECT, _SUBPROJECT)
     cols = metrics_utils.flatten_cols([y_true_col_names, y_pred_col_names, sample_weight_col_name])
-    query = df[cols].queries["queries"][-1]
+    queries = df[cols].queries["queries"]
 
     @F.sproc(  # type: ignore[misc]
         session=session,
@@ -426,7 +434,9 @@ def mean_absolute_percentage_error(
         statement_params=statement_params,
     )
     def mean_absolute_percentage_error_sproc(session: snowpark.Session) -> bytes:
-        df = session.sql(query).to_pandas(statement_params=statement_params)
+        for query in queries[:-1]:
+            _ = session.sql(query).collect(statement_params=statement_params)
+        df = session.sql(queries[-1]).to_pandas(statement_params=statement_params)
         y_true = df[y_true_col_names]
         y_pred = df[y_pred_col_names]
         sample_weight = df[sample_weight_col_name] if sample_weight_col_name else None
@@ -487,7 +497,7 @@ def mean_squared_error(
     sklearn_release = version.parse(sklearn.__version__).release
     statement_params = telemetry.get_statement_params(_PROJECT, _SUBPROJECT)
     cols = metrics_utils.flatten_cols([y_true_col_names, y_pred_col_names, sample_weight_col_name])
-    query = df[cols].queries["queries"][-1]
+    queries = df[cols].queries["queries"]
 
     @F.sproc(  # type: ignore[misc]
         session=session,
@@ -501,7 +511,9 @@ def mean_squared_error(
         statement_params=statement_params,
     )
     def mean_squared_error_sproc(session: snowpark.Session) -> bytes:
-        df = session.sql(query).to_pandas(statement_params=statement_params)
+        for query in queries[:-1]:
+            _ = session.sql(query).collect(statement_params=statement_params)
+        df = session.sql(queries[-1]).to_pandas(statement_params=statement_params)
         y_true = df[y_true_col_names]
         y_pred = df[y_pred_col_names]
         sample_weight = df[sample_weight_col_name] if sample_weight_col_name else None
@@ -543,11 +555,11 @@ def r2_score(*, df: snowpark.DataFrame, y_true_col_name: str, y_pred_col_name: s
         R squared metric.
     """
 
-    df_avg = df.select(F.avg(y_true_col_name).as_("avg_y_true"))  # type: ignore[arg-type]
+    df_avg = df.select(F.avg(y_true_col_name).as_("avg_y_true"))
     df_r_square = df.join(df_avg).select(
-        F.lit(1)  # type: ignore[arg-type]
-        - F.sum((df[y_true_col_name] - df[y_pred_col_name]) ** 2)  # type: ignore[operator]
-        / F.sum((df[y_true_col_name] - df_avg["avg_y_true"]) ** 2)  # type: ignore[operator]
+        F.lit(1)
+        - F.sum((df[y_true_col_name] - df[y_pred_col_name]) ** 2)
+        / F.sum((df[y_true_col_name] - df_avg["avg_y_true"]) ** 2)
     )
 
     statement_params = telemetry.get_function_usage_statement_params(

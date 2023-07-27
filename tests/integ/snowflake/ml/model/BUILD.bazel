@@ -5,11 +5,11 @@ py_library(
     testonly = True,
     srcs = ["warehouse_model_integ_test_utils.py"],
     deps = [
-        "//tests/integ/snowflake/ml/test_utils:db_manager",
         "//snowflake/ml/model:_deployer",
         "//snowflake/ml/model:_model",
-        "//snowflake/ml/model:type_hints"
-    ]
+        "//snowflake/ml/model:type_hints",
+        "//tests/integ/snowflake/ml/test_utils:db_manager",
+    ],
 )
 
 py_test(
@@ -19,10 +19,10 @@ py_test(
     shard_count = 5,
     deps = [
         ":warehouse_model_integ_test_utils",
-        "//tests/integ/snowflake/ml/test_utils:db_manager",
         "//snowflake/ml/model:custom_model",
         "//snowflake/ml/model:type_hints",
         "//snowflake/ml/utils:connection_params",
+        "//tests/integ/snowflake/ml/test_utils:db_manager",
     ],
 )
 
@@ -33,13 +33,28 @@ py_test(
     shard_count = 4,
     deps = [
         ":warehouse_model_integ_test_utils",
-        "//tests/integ/snowflake/ml/test_utils:db_manager",
-        "//snowflake/ml/model:model_signature",
         "//snowflake/ml/model:type_hints",
+        "//snowflake/ml/model/_signatures:pytorch_handler",
+        "//snowflake/ml/model/_signatures:snowpark_handler",
         "//snowflake/ml/utils:connection_params",
+        "//tests/integ/snowflake/ml/test_utils:db_manager",
     ],
 )
 
+py_test(
+    name = "warehouse_tensorflow_model_integ_test",
+    timeout = "long",
+    srcs = ["warehouse_tensorflow_model_integ_test.py"],
+    shard_count = 4,
+    deps = [
+        ":warehouse_model_integ_test_utils",
+        "//snowflake/ml/model:type_hints",
+        "//snowflake/ml/model/_signatures:snowpark_handler",
+        "//snowflake/ml/model/_signatures:tensorflow_handler",
+        "//snowflake/ml/utils:connection_params",
+        "//tests/integ/snowflake/ml/test_utils:db_manager",
+    ],
+)
 
 py_test(
     name = "warehouse_sklearn_xgboost_model_integ_test",
@@ -48,9 +63,9 @@ py_test(
     shard_count = 3,
     deps = [
         ":warehouse_model_integ_test_utils",
-        "//tests/integ/snowflake/ml/test_utils:db_manager",
         "//snowflake/ml/model:type_hints",
         "//snowflake/ml/utils:connection_params",
+        "//tests/integ/snowflake/ml/test_utils:db_manager",
     ],
 )
 
@@ -61,12 +76,12 @@ py_test(
     shard_count = 2,
     deps = [
         ":warehouse_model_integ_test_utils",
-        "//tests/integ/snowflake/ml/test_utils:db_manager",
         "//snowflake/ml/model:type_hints",
         "//snowflake/ml/modeling/lightgbm:lgbm_regressor",
         "//snowflake/ml/modeling/linear_model:logistic_regression",
         "//snowflake/ml/modeling/xgboost:xgb_regressor",
         "//snowflake/ml/utils:connection_params",
+        "//tests/integ/snowflake/ml/test_utils:db_manager",
     ],
 )
 
@@ -76,25 +91,40 @@ py_test(
     srcs = ["model_badcase_integ_test.py"],
     deps = [
         ":warehouse_model_integ_test_utils",
-        "//tests/integ/snowflake/ml/test_utils:db_manager",
         "//snowflake/ml/model:_deployer",
         "//snowflake/ml/model:_model",
         "//snowflake/ml/model:custom_model",
         "//snowflake/ml/model:type_hints",
         "//snowflake/ml/utils:connection_params",
-    ]
+        "//tests/integ/snowflake/ml/test_utils:db_manager",
+    ],
 )
 
+py_test(
+    name = "warehouse_mlflow_model_integ_test",
+    timeout = "long",
+    srcs = ["warehouse_mlflow_model_integ_test.py"],
+    shard_count = 2,
+    deps = [
+        ":warehouse_model_integ_test_utils",
+        "//snowflake/ml/model:type_hints",
+        "//snowflake/ml/model/_signatures:numpy_handler",
+        "//snowflake/ml/utils:connection_params",
+        "//tests/integ/snowflake/ml/test_utils:db_manager",
+    ],
+)
 
-#py_test(
-#name = "deployment_to_snowservice_integ_test",
-#    timeout = "long",
-#    srcs = ["deployment_to_snowservice_integ_test.py"],
-#    deps = [
-#        "//tests/integ/snowflake/ml/test_utils:db_manager",
-#        "//snowflake/ml/model:_model",
-#        "//snowflake/ml/model:custom_model",
-#        "//snowflake/ml/model/_deploy_client/snowservice:deploy",
-#        "//snowflake/ml/utils:connection_params",
-#    ]
-#)
+py_test(
+    name = "deployment_to_snowservice_integ_test",
+    timeout = "long",
+    srcs = ["deployment_to_snowservice_integ_test.py"],
+    deps = [
+        "//snowflake/ml/model:_model",
+        "//snowflake/ml/model:custom_model",
+        "//snowflake/ml/model:type_hints",
+        "//snowflake/ml/model/_deploy_client/snowservice:deploy",
+        "//snowflake/ml/model/_deploy_client/utils:constants",
+        "//snowflake/ml/utils:connection_params",
+        "//tests/integ/snowflake/ml/test_utils:db_manager",
+    ],
+)

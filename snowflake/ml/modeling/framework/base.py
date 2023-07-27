@@ -14,6 +14,11 @@ import pandas as pd
 
 from snowflake import snowpark
 from snowflake.ml._internal import telemetry
+from snowflake.ml._internal.exceptions import (
+    error_codes,
+    exceptions,
+    modeling_error_messages,
+)
 from snowflake.ml._internal.utils import parallelize
 from snowflake.ml.modeling.framework import _utils
 from snowflake.snowpark import functions as F
@@ -29,12 +34,10 @@ def _process_cols(cols: Optional[Union[str, Iterable[str]]]) -> List[str]:
         return col_list
     elif type(cols) is list:
         col_list = cols
-    elif type(cols) in [range, set, tuple]:
-        col_list = list(cols)
     elif type(cols) is str:
         col_list = [cols]
     else:
-        raise TypeError(f"Could not convert {cols} to list")
+        col_list = list(cols)
 
     return col_list
 
@@ -132,24 +135,55 @@ class Base:
         Check if `self.input_cols` is set.
 
         Raises:
-            RuntimeError: If `self.input_cols` is not set.
+            SnowflakeMLException: `self.input_cols` is not set.
         """
         if not self.input_cols:
-            raise RuntimeError("input_cols is not set.")
+            raise exceptions.SnowflakeMLException(
+                error_code=error_codes.NOT_FOUND,
+                original_exception=RuntimeError(modeling_error_messages.ATTRIBUTE_NOT_SET.format("input_cols")),
+            )
 
     def _check_output_cols(self) -> None:
         """
         Check if `self.output_cols` is set.
 
         Raises:
-            RuntimeError: If `self.output_cols` is not set or if the size of `self.output_cols`
-                does not match that of `self.input_cols`.
+            SnowflakeMLException: `self.output_cols` is not set.
+            SnowflakeMLException: `self.output_cols` and `self.input_cols` are of different lengths.
         """
         if not self.output_cols:
-            raise RuntimeError("output_cols is not set.")
+            raise exceptions.SnowflakeMLException(
+                error_code=error_codes.NOT_FOUND,
+                original_exception=RuntimeError(modeling_error_messages.ATTRIBUTE_NOT_SET.format("output_cols")),
+            )
         if len(self.output_cols) != len(self.input_cols):
-            raise RuntimeError(
-                f"Size mismatch: input_cols: {len(self.input_cols)}, output_cols: {len(self.output_cols)}."
+            raise exceptions.SnowflakeMLException(
+                error_code=error_codes.INVALID_ATTRIBUTE,
+                original_exception=RuntimeError(
+                    modeling_error_messages.SIZE_MISMATCH.format(
+                        "input_cols", len(self.input_cols), "output_cols", len(self.output_cols)
+                    )
+                ),
+            )
+
+    @staticmethod
+    def _check_dataset_type(dataset: Any) -> None:
+        """
+        Check if the type of input dataset is supported.
+
+        Args:
+            dataset: Input dataset passed to an API.
+
+        Raises:
+            SnowflakeMLException: `self.input_cols` is not set.
+        """
+        if not (isinstance(dataset, snowpark.DataFrame) or isinstance(dataset, pd.DataFrame)):
+            raise exceptions.SnowflakeMLException(
+                error_code=error_codes.INVALID_ARGUMENT,
+                original_exception=TypeError(
+                    f"Unexpected dataset type: {type(dataset)}."
+                    f"Supported dataset types: {type(snowpark.DataFrame)}, {type(pd.DataFrame)}."
+                ),
             )
 
     @classmethod
@@ -169,12 +203,15 @@ class Base:
         parameters = [p for p in init_signature.parameters.values() if p.name != "self" and p.kind != p.VAR_KEYWORD]
         for p in parameters:
             if p.kind == p.VAR_POSITIONAL:
-                raise RuntimeError(
-                    "Transformers should always specify"
-                    " their parameters in the signature"
-                    " of their __init__ (no varargs)."
-                    " %s with constructor %s doesn't "
-                    " follow this convention." % (cls, init_signature)
+                raise exceptions.SnowflakeMLException(
+                    error_code=error_codes.INTERNAL_PYTHON_ERROR,
+                    original_exception=RuntimeError(
+                        "Models should always specify"
+                        " their parameters in the signature"
+                        " of their __init__ (no varargs)."
+                        f" {cls} with constructor {init_signature} doesn't "
+                        " follow this convention."
+                    ),
                 )
         # Extract and sort argument names excluding 'self'
         return sorted(p.name for p in parameters)
@@ -212,7 +249,7 @@ class Base:
             **params: Transformer parameter names mapped to their values.
 
         Raises:
-            ValueError: For invalid parameter keys.
+            SnowflakeMLException: Invalid parameter keys.
         """
         if not params:
             # simple optimization to gain speed (inspect is slow)
@@ -224,8 +261,13 @@ class Base:
             key, delim, sub_key = key.partition("__")
             if key not in valid_params:
                 local_valid_params = self._get_param_names()
-                raise ValueError(
-                    f"Invalid parameter {key} for transformer {self}. Valid parameters are: {local_valid_params}."
+                raise exceptions.SnowflakeMLException(
+                    error_code=error_codes.INVALID_ARGUMENT,
+                    original_exception=ValueError(
+                        modeling_error_messages.INVALID_MODEL_PARAM.format(
+                            key, self.__class__.__name__, local_valid_params
+                        )
+                    ),
                 )
 
             if delim:
@@ -359,9 +401,12 @@ class BaseEstimator(Base):
         input_cols = set(self.input_cols)
         dataset_cols = set(dataset.columns.to_list())
         if not input_cols.issubset(dataset_cols):
-            raise KeyError(
-                "The `input_cols` contains columns that do not match any of the columns in "
-                f"the dataframe: {input_cols - dataset_cols}."
+            raise exceptions.SnowflakeMLException(
+                error_code=error_codes.NOT_FOUND,
+                original_exception=KeyError(
+                    "input_cols contains columns that do not match any of the columns in "
+                    f"the pandas dataframe: {input_cols - dataset_cols}."
+                ),
             )
         return dataset[self.input_cols]
 
@@ -450,9 +495,14 @@ class BaseTransformer(BaseEstimator):
     def transform(self, dataset: Union[snowpark.DataFrame, pd.DataFrame]) -> Union[snowpark.DataFrame, pd.DataFrame]:
         raise NotImplementedError()
 
-    def enforce_fit(self) -> None:
+    def _enforce_fit(self) -> None:
         if not self._is_fitted:
-            raise RuntimeError("Transformer not fitted before calling transform().")
+            raise exceptions.SnowflakeMLException(
+                error_code=error_codes.METHOD_NOT_ALLOWED,
+                original_exception=RuntimeError(
+                    f"Model {self.__class__.__name__} not fitted before calling predict/transform."
+                ),
+            )
 
     def set_drop_input_cols(self, drop_input_cols: Optional[bool] = False) -> None:
         self._drop_input_cols = drop_input_cols
@@ -465,10 +515,20 @@ class BaseTransformer(BaseEstimator):
     # to_xgboost would be only used in XGB estimators
     # to_lightgbm would be only used in LightGBM estimators, but they function the same
     def to_xgboost(self) -> Any:
-        raise AttributeError("Object doesn't support to_xgboost. Please use to_sklearn()")
+        raise exceptions.SnowflakeMLException(
+            error_code=error_codes.METHOD_NOT_ALLOWED,
+            original_exception=AttributeError(
+                modeling_error_messages.UNSUPPORTED_MODEL_CONVERSION.format("to_xgboost", "to_sklearn")
+            ),
+        )
 
     def to_lightgbm(self) -> Any:
-        raise AttributeError("Object doesn't support to_lightgbm. Please use to_sklearn()")
+        raise exceptions.SnowflakeMLException(
+            error_code=error_codes.METHOD_NOT_ALLOWED,
+            original_exception=AttributeError(
+                modeling_error_messages.UNSUPPORTED_MODEL_CONVERSION.format("to_lightgbm", "to_sklearn")
+            ),
+        )
 
     def _reset(self) -> None:
         self._sklearn_object = None
@@ -520,17 +580,21 @@ class BaseTransformer(BaseEstimator):
             Transformed dataset
 
         Raises:
-            TypeError: If the supplied output columns don't match that of the transformed array.
+            SnowflakeMLException: If the supplied output columns don't match that of the transformed array.
         """
-        self.enforce_fit()
+        self._enforce_fit()
         dataset = dataset.copy()
         sklearn_transform = self.to_sklearn()
         transformed_data = sklearn_transform.transform(dataset[self.input_cols])
         shape = transformed_data.shape
         if (len(shape) == 1 and len(self.output_cols) != 1) or (len(shape) > 1 and shape[1] != len(self.output_cols)):
-            raise TypeError(
-                f"output_cols must be same length as transformed array. Got output_cols len: {len(self.output_cols)},"
-                f" transformed array shape: {shape}"
+            raise exceptions.SnowflakeMLException(
+                error_code=error_codes.INVALID_ATTRIBUTE,
+                original_exception=RuntimeError(
+                    modeling_error_messages.SIZE_MISMATCH.format(
+                        "output_cols", len(self.output_cols), "transformed array shape", shape
+                    )
+                ),
             )
 
         if len(shape) == 1:
@@ -546,13 +610,13 @@ class BaseTransformer(BaseEstimator):
             dataset: DataFrame to validate.
 
         Raises:
-            ValueError: If the dataset contains nulls in the input_cols.
+            SnowflakeMLException: If the dataset contains nulls in the input_cols.
         """
         self._check_input_cols()
 
         null_count_columns = []
         for input_col in self.input_cols:
-            col = F.count(F.lit("*")) - F.count(dataset[input_col])  # type:ignore[arg-type, operator]
+            col = F.count(F.lit("*")) - F.count(dataset[input_col])
             null_count_columns.append(col)
 
         null_counts = dataset.agg(*null_count_columns).collect(
@@ -563,9 +627,12 @@ class BaseTransformer(BaseEstimator):
         invalid_columns = {col: n for (col, n) in zip(self.input_cols, null_counts[0].as_dict().values()) if n > 0}
 
         if any(invalid_columns):
-            raise ValueError(
-                "Dataset may not contain nulls, but "
-                f"the following columns have a non-zero number of nulls: {invalid_columns}."
+            raise exceptions.SnowflakeMLException(
+                error_code=error_codes.INVALID_DATA,
+                original_exception=ValueError(
+                    "Dataset may not contain nulls."
+                    f"The following columns have non-zero numbers of nulls: {invalid_columns}."
+                ),
             )
 
     def _drop_input_columns(
@@ -581,21 +648,19 @@ class BaseTransformer(BaseEstimator):
             Return a dataset with input columns dropped.
 
         Raises:
-            TypeError: If the dataset is neither DataFrame or Pandas DataFrame.
-            RuntimeError: drop_input_cols flag must be true before calling this function.
+            SnowflakeMLException: drop_input_cols flag must be true before calling this function.
         """
         if not self._drop_input_cols:
-            raise RuntimeError("drop_input_cols must set true before calling.")
+            raise exceptions.SnowflakeMLException(
+                error_code=error_codes.INTERNAL_PYTHON_ERROR,
+                original_exception=RuntimeError("drop_input_cols must set true."),
+            )
 
         # In case of input_cols and output_cols are the same, compare with get_output_cols()
         input_subset = list(set(self.input_cols) - set(self.get_output_cols()))
 
+        super()._check_dataset_type(dataset)
         if isinstance(dataset, snowpark.DataFrame):
             return dataset.drop(input_subset)
-        elif isinstance(dataset, pd.DataFrame):
-            return dataset.drop(columns=input_subset)
         else:
-            raise TypeError(
-                f"Unexpected dataset type: {type(dataset)}."
-                "Supported dataset types: snowpark.DataFrame, pandas.DataFrame."
-            )
+            return dataset.drop(columns=input_subset)

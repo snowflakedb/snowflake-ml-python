@@ -78,7 +78,7 @@ def precision_recall_curve(
     sklearn_release = version.parse(sklearn.__version__).release
     statement_params = telemetry.get_statement_params(_PROJECT, _SUBPROJECT)
     cols = metrics_utils.flatten_cols([y_true_col_name, probas_pred_col_name, sample_weight_col_name])
-    query = df[cols].queries["queries"][-1]
+    queries = df[cols].queries["queries"]
 
     @F.sproc(  # type: ignore[misc]
         session=session,
@@ -92,7 +92,9 @@ def precision_recall_curve(
         statement_params=statement_params,
     )
     def precision_recall_curve_sproc(session: snowpark.Session) -> bytes:
-        df = session.sql(query).to_pandas(statement_params=statement_params)
+        for query in queries[:-1]:
+            _ = session.sql(query).collect(statement_params=statement_params)
+        df = session.sql(queries[-1]).to_pandas(statement_params=statement_params)
         y_true = df[y_true_col_name]
         probas_pred = df[probas_pred_col_name]
         sample_weight = df[sample_weight_col_name] if sample_weight_col_name else None
@@ -209,7 +211,7 @@ def roc_auc_score(
     sklearn_release = version.parse(sklearn.__version__).release
     statement_params = telemetry.get_statement_params(_PROJECT, _SUBPROJECT)
     cols = metrics_utils.flatten_cols([y_true_col_names, y_score_col_names, sample_weight_col_name])
-    query = df[cols].queries["queries"][-1]
+    queries = df[cols].queries["queries"]
 
     @F.sproc(  # type: ignore[misc]
         session=session,
@@ -223,7 +225,9 @@ def roc_auc_score(
         statement_params=statement_params,
     )
     def roc_auc_score_sproc(session: snowpark.Session) -> bytes:
-        df = session.sql(query).to_pandas(statement_params=statement_params)
+        for query in queries[:-1]:
+            _ = session.sql(query).collect(statement_params=statement_params)
+        df = session.sql(queries[-1]).to_pandas(statement_params=statement_params)
         y_true = df[y_true_col_names]
         y_score = df[y_score_col_names]
         sample_weight = df[sample_weight_col_name] if sample_weight_col_name else None
@@ -295,7 +299,7 @@ def roc_curve(
     sklearn_release = version.parse(sklearn.__version__).release
     statement_params = telemetry.get_statement_params(_PROJECT, _SUBPROJECT)
     cols = metrics_utils.flatten_cols([y_true_col_name, y_score_col_name, sample_weight_col_name])
-    query = df[cols].queries["queries"][-1]
+    queries = df[cols].queries["queries"]
 
     @F.sproc(  # type: ignore[misc]
         session=session,
@@ -309,7 +313,9 @@ def roc_curve(
         statement_params=statement_params,
     )
     def roc_curve_sproc(session: snowpark.Session) -> bytes:
-        df = session.sql(query).to_pandas(statement_params=statement_params)
+        for query in queries[:-1]:
+            _ = session.sql(query).collect(statement_params=statement_params)
+        df = session.sql(queries[-1]).to_pandas(statement_params=statement_params)
         y_true = df[y_true_col_name]
         y_score = df[y_score_col_name]
         sample_weight = df[sample_weight_col_name] if sample_weight_col_name else None

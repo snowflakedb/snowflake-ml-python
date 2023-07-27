@@ -21,6 +21,7 @@ py_library(
     deps = [
         ":init",
         "//snowflake/ml/_internal:telemetry",
+        "//snowflake/ml/_internal/exceptions:exceptions",
     ],
 )
 

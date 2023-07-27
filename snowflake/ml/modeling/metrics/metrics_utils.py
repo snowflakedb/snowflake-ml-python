@@ -267,15 +267,13 @@ def weighted_sum(
     """
     if normalize:
         if sample_weight_column is not None:
-            res = F.sum(sample_score_column * sample_weight_column) / F.sum(  # type: ignore[arg-type, operator]
-                sample_weight_column  # type: ignore[arg-type]
-            )
+            res = F.sum(sample_score_column * sample_weight_column) / F.sum(sample_weight_column)
         else:
-            res = F.avg(sample_score_column)  # type: ignore[arg-type]
+            res = F.avg(sample_score_column)
     elif sample_weight_column is not None:
-        res = F.sum(sample_score_column * sample_weight_column)  # type: ignore[arg-type, operator]
+        res = F.sum(sample_score_column * sample_weight_column)
     else:
-        res = F.sum(sample_score_column)  # type: ignore[arg-type]
+        res = F.sum(sample_score_column)
 
     return float(df.select(res).collect(statement_params=statement_params)[0][0])
 
@@ -306,7 +304,5 @@ def unique_labels(
 
     # append an index column dense ranking labels
     assert union_df is not None
-    res: snowpark.DataFrame = union_df.with_column(
-        INDEX, F.dense_rank().over(snowpark.Window.order_by(LABEL)) - 1  # type: ignore[arg-type, operator]
-    )
+    res: snowpark.DataFrame = union_df.with_column(INDEX, F.dense_rank().over(snowpark.Window.order_by(LABEL)) - 1)
     return res

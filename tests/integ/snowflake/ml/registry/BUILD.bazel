@@ -16,11 +16,19 @@ py_test(
     srcs = ["model_registry_integ_test.py"],
     deps = [
         "//tests/integ/snowflake/ml/test_utils:db_manager",
-        "//snowflake/ml/modeling/linear_model:logistic_regression",
-        "//snowflake/ml/modeling/pipeline",
-        "//snowflake/ml/modeling/preprocessing:min_max_scaler",
-        "//snowflake/ml/modeling/preprocessing:one_hot_encoder",
-        "//snowflake/ml/modeling/xgboost:xgb_classifier",
+        "//tests/integ/snowflake/ml/test_utils:model_factory",
+        "//snowflake/ml/registry:model_registry",
+        "//snowflake/ml/utils:connection_params",
+    ],
+)
+
+py_test(
+    name = "model_registry_integ_test_with_snowservice",
+    timeout = "eternal", # 3600s
+    srcs = ["model_registry_integ_test_with_snowservice.py"],
+    deps = [
+        "//tests/integ/snowflake/ml/test_utils:db_manager",
+        "//tests/integ/snowflake/ml/test_utils:model_factory",
         "//snowflake/ml/registry:model_registry",
         "//snowflake/ml/utils:connection_params",
     ],

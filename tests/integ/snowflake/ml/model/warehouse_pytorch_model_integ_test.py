@@ -10,7 +10,8 @@ import pandas as pd
 import torch
 from absl.testing import absltest, parameterized
 
-from snowflake.ml.model import model_signature, type_hints as model_types
+from snowflake.ml.model import type_hints as model_types
+from snowflake.ml.model._signatures import pytorch_handler, snowpark_handler
 from snowflake.ml.utils import connection_params
 from snowflake.snowpark import DataFrame as SnowparkDataFrame, Session
 from tests.integ.snowflake.ml.model import warehouse_model_integ_test_utils
@@ -121,7 +122,7 @@ class TestWarehousePytorchModelINteg(parameterized.TestCase):
         test_released_library: Optional[bool] = False,
     ) -> None:
         model, data_x, data_y = _prepare_torch_model()
-        x_df = model_signature._SeqOfPyTorchTensorHandler.convert_to_df(data_x, ensure_serializable=False)
+        x_df = pytorch_handler.SeqOfPyTorchTensorHandler.convert_to_df(data_x, ensure_serializable=False)
         y_pred = model.forward(data_x)[0].detach()
 
         self.base_test_case(
@@ -133,7 +134,7 @@ class TestWarehousePytorchModelINteg(parameterized.TestCase):
                 "forward": (
                     {},
                     lambda res: torch.testing.assert_close(  # type:ignore[attr-defined]
-                        model_signature._SeqOfPyTorchTensorHandler.convert_from_df(res)[0], y_pred, check_dtype=False
+                        pytorch_handler.SeqOfPyTorchTensorHandler.convert_from_df(res)[0], y_pred, check_dtype=False
                     ),
                 ),
             },
@@ -155,7 +156,7 @@ class TestWarehousePytorchModelINteg(parameterized.TestCase):
         test_released_library: Optional[bool] = False,
     ) -> None:
         model, data_x, data_y = _prepare_torch_model(torch.float64)
-        x_df = model_signature._SeqOfPyTorchTensorHandler.convert_to_df(data_x, ensure_serializable=False)
+        x_df = pytorch_handler.SeqOfPyTorchTensorHandler.convert_to_df(data_x, ensure_serializable=False)
         y_pred = model.forward(data_x)[0].detach()
 
         self.base_test_case(
@@ -167,7 +168,7 @@ class TestWarehousePytorchModelINteg(parameterized.TestCase):
                 "forward": (
                     {},
                     lambda res: torch.testing.assert_close(  # type:ignore[attr-defined]
-                        model_signature._SeqOfPyTorchTensorHandler.convert_from_df(res)[0], y_pred
+                        pytorch_handler.SeqOfPyTorchTensorHandler.convert_from_df(res)[0], y_pred
                     ),
                 ),
             },
@@ -189,10 +190,10 @@ class TestWarehousePytorchModelINteg(parameterized.TestCase):
         test_released_library: Optional[bool] = False,
     ) -> None:
         model, data_x, data_y = _prepare_torch_model(torch.float64)
-        x_df = model_signature._SeqOfPyTorchTensorHandler.convert_to_df(data_x, ensure_serializable=False)
+        x_df = pytorch_handler.SeqOfPyTorchTensorHandler.convert_to_df(data_x, ensure_serializable=False)
         x_df.columns = ["col_0"]
         y_pred = model.forward(data_x)[0].detach()
-        x_df_sp = model_signature._SnowparkDataFrameHandler.convert_from_df(self._session, x_df, keep_order=True)
+        x_df_sp = snowpark_handler.SnowparkDataFrameHandler.convert_from_df(self._session, x_df, keep_order=True)
 
         self.base_test_case(
             name="pytorch_model_sp",
@@ -203,8 +204,8 @@ class TestWarehousePytorchModelINteg(parameterized.TestCase):
                 "forward": (
                     {},
                     lambda res: torch.testing.assert_close(  # type:ignore[attr-defined]
-                        model_signature._SeqOfPyTorchTensorHandler.convert_from_df(
-                            model_signature._SnowparkDataFrameHandler.convert_to_df(res)
+                        pytorch_handler.SeqOfPyTorchTensorHandler.convert_from_df(
+                            snowpark_handler.SnowparkDataFrameHandler.convert_to_df(res)
                         )[0],
                         y_pred,
                     ),
@@ -228,7 +229,7 @@ class TestWarehousePytorchModelINteg(parameterized.TestCase):
         test_released_library: Optional[bool] = False,
     ) -> None:
         model, data_x, data_y = _prepare_torch_model()
-        x_df = model_signature._SeqOfPyTorchTensorHandler.convert_to_df(data_x, ensure_serializable=False)
+        x_df = pytorch_handler.SeqOfPyTorchTensorHandler.convert_to_df(data_x, ensure_serializable=False)
         model_script = torch.jit.script(model)  # type:ignore[attr-defined]
         y_pred = model_script.forward(data_x)[0].detach()
 
@@ -241,7 +242,7 @@ class TestWarehousePytorchModelINteg(parameterized.TestCase):
                 "forward": (
                     {},
                     lambda res: torch.testing.assert_close(  # type:ignore[attr-defined]
-                        model_signature._SeqOfPyTorchTensorHandler.convert_from_df(res)[0], y_pred, check_dtype=False
+                        pytorch_handler.SeqOfPyTorchTensorHandler.convert_from_df(res)[0], y_pred, check_dtype=False
                     ),
                 ),
             },
@@ -263,7 +264,7 @@ class TestWarehousePytorchModelINteg(parameterized.TestCase):
         test_released_library: Optional[bool] = False,
     ) -> None:
         model, data_x, data_y = _prepare_torch_model(torch.float64)
-        x_df = model_signature._SeqOfPyTorchTensorHandler.convert_to_df(data_x, ensure_serializable=False)
+        x_df = pytorch_handler.SeqOfPyTorchTensorHandler.convert_to_df(data_x, ensure_serializable=False)
         model_script = torch.jit.script(model)  # type:ignore[attr-defined]
         y_pred = model_script.forward(data_x)[0].detach()
 
@@ -276,7 +277,7 @@ class TestWarehousePytorchModelINteg(parameterized.TestCase):
                 "forward": (
                     {},
                     lambda res: torch.testing.assert_close(  # type:ignore[attr-defined]
-                        model_signature._SeqOfPyTorchTensorHandler.convert_from_df(res)[0], y_pred
+                        pytorch_handler.SeqOfPyTorchTensorHandler.convert_from_df(res)[0], y_pred
                     ),
                 ),
             },
@@ -298,11 +299,11 @@ class TestWarehousePytorchModelINteg(parameterized.TestCase):
         test_released_library: Optional[bool] = False,
     ) -> None:
         model, data_x, data_y = _prepare_torch_model(torch.float64)
-        x_df = model_signature._SeqOfPyTorchTensorHandler.convert_to_df(data_x, ensure_serializable=False)
+        x_df = pytorch_handler.SeqOfPyTorchTensorHandler.convert_to_df(data_x, ensure_serializable=False)
         x_df.columns = ["col_0"]
         model_script = torch.jit.script(model)  # type:ignore[attr-defined]
         y_pred = model_script.forward(data_x)[0].detach()
-        x_df_sp = model_signature._SnowparkDataFrameHandler.convert_from_df(self._session, x_df, keep_order=True)
+        x_df_sp = snowpark_handler.SnowparkDataFrameHandler.convert_from_df(self._session, x_df, keep_order=True)
 
         self.base_test_case(
             name="torch_script_model_sp",
@@ -313,8 +314,8 @@ class TestWarehousePytorchModelINteg(parameterized.TestCase):
                 "forward": (
                     {},
                     lambda res: torch.testing.assert_close(  # type:ignore[attr-defined]
-                        model_signature._SeqOfPyTorchTensorHandler.convert_from_df(
-                            model_signature._SnowparkDataFrameHandler.convert_to_df(res)
+                        pytorch_handler.SeqOfPyTorchTensorHandler.convert_from_df(
+                            snowpark_handler.SnowparkDataFrameHandler.convert_to_df(res)
                         )[0],
                         y_pred,
                     ),

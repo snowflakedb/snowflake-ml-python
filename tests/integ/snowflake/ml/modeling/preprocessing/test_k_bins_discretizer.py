@@ -68,43 +68,39 @@ class KBinsDiscretizerTest(TestCase):
         _, snowpark_df = utils.get_df(self._session, utils.DATA, utils.SCHEMA)
 
         # 1. Invalid n_bins
-        with self.assertRaises(ValueError) as ex:
+        with self.assertRaisesRegex(ValueError, "n_bins must have same size as input_cols"):
             discretizer = KBinsDiscretizer(
                 n_bins=[3],
                 encode="ordinal",
                 input_cols=INPUT_COLS,
             )
             discretizer.fit(snowpark_df)
-        self.assertTrue(str(ex.exception).startswith("n_bins must have same size as input_cols"))
 
-        with self.assertRaises(ValueError) as ex:
+        with self.assertRaisesRegex(ValueError, "n_bins cannot be less than 2"):
             discretizer = KBinsDiscretizer(
                 n_bins=[1, 3],
                 encode="ordinal",
                 input_cols=INPUT_COLS,
             )
             discretizer.fit(snowpark_df)
-        self.assertTrue(str(ex.exception).startswith("n_bins cannot be less than 2"))
 
         # 2. Invalid encode
-        with self.assertRaises(ValueError) as ex:
+        with self.assertRaisesRegex(ValueError, "encode must be one of"):
             discretizer = KBinsDiscretizer(
                 n_bins=[2, 3],
                 encode="foo",
                 input_cols=INPUT_COLS,
             )
             discretizer.fit(snowpark_df)
-        self.assertTrue(str(ex.exception).startswith("encode must be one of"))
 
         # 3. Invalid strategy
-        with self.assertRaises(ValueError) as ex:
+        with self.assertRaisesRegex(ValueError, "strategy must be one of"):
             discretizer = KBinsDiscretizer(
                 n_bins=[2, 3],
                 strategy="foo",
                 input_cols=INPUT_COLS,
             )
             discretizer.fit(snowpark_df)
-        self.assertTrue(str(ex.exception).startswith("strategy must be one of"))
 
     def test_fit(self) -> None:
         N_BINS = [3, 2]

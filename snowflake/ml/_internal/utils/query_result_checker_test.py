@@ -28,28 +28,18 @@ class SnowflakeQueryResultCheckerTest(TestCase):
         self.assertRaises(DataError, query_result_checker.column_name_matcher, "name1", [])
         self.assertRaises(DataError, query_result_checker.column_name_matcher, "name3", [row1, row2])
 
-    def test_cell_value_partial_matcher(self) -> None:
-        """Test cell_value_partial_matcher()."""
-        row1 = Row(name1=1, name2="foo")
-        row2 = Row(name1=2, name2="bar")
-        self.assertTrue(query_result_checker.cell_value_partial_matcher(0, 0, 1, [row1, row2]))
-        self.assertRaises(DataError, query_result_checker.cell_value_partial_matcher, 0, 0, 2, [row1, row2])
-        self.assertTrue(query_result_checker.cell_value_partial_matcher(0, 1, "foo", [row1, row2]))
-        self.assertRaises(DataError, query_result_checker.cell_value_partial_matcher, 1, 1, "foo", [row1, row2])
-
     def test_result_validator_dimensions_partial_ok(self) -> None:
-        """Use the base ResultValidator to verify the dimensions and value match of an operation result."""
+        """Use the base ResultValidator to verify the dimensions of an operation result."""
         expected_result = [Row("number of rows updated=1, number of multi-joined rows updated=0")]
         actual_result = (
             query_result_checker.ResultValidator(result=expected_result)
             .has_dimensions(expected_rows=1, expected_cols=1)
-            .has_value_match(row_idx=0, col_idx=0, expected_value="number of rows updated=1")
             .validate()
         )
         self.assertEqual(expected_result, actual_result)
 
     def test_sql_result_validator_dimensions_partial_ok(self) -> None:
-        """Use SqlResultValidator to check dimension and value match of the result."""
+        """Use SqlResultValidator to check dimension of the result."""
         session = mock_session.MockSession(conn=None, test_case=self)
         query = "UPDATE TABLE SET COL = 'value'"
         sql_result = [Row("number of rows updated=1, number of multi-joined rows updated=0")]
@@ -57,7 +47,6 @@ class SnowflakeQueryResultCheckerTest(TestCase):
         actual_result = (
             query_result_checker.SqlResultValidator(session=session, query=query)
             .has_dimensions(expected_rows=1, expected_cols=1)
-            .has_value_match(row_idx=0, col_idx=0, expected_value="number of rows updated=1")
             .validate()
         )
         self.assertEqual(sql_result, actual_result)
@@ -88,7 +77,7 @@ class SnowflakeQueryResultCheckerTest(TestCase):
             actual_result = (
                 query_result_checker.SqlResultValidator(session=session, query=query)
                 .has_dimensions(expected_rows=1, expected_cols=1)
-                .has_value_match(row_idx=0, col_idx=0, expected_value="number of rows updated=1")
+                .has_column(expected_col_name="fake_name")
                 .validate()
             )
             self.assertEqual(actual_result, sql_result)

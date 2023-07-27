@@ -1,4 +1,3 @@
-import importlib
 import os
 import shutil
 import string
@@ -22,7 +21,6 @@ class DockerContext(ABC):
         """
         self.context_dir = context_dir
         self.model_dir = model_dir
-        # TODO(shchen): SNOW-825995, Define dockerfile template used for model deployment. use_gpu will be used.
         self.use_gpu = use_gpu
 
     def build(self) -> None:
@@ -32,28 +30,19 @@ class DockerContext(ABC):
         """
         self._generate_inference_code()
         self._copy_entrypoint_script_to_docker_context()
-        self._copy_snowml_source_code_to_docker_context()
+        self._copy_model_env_dependency_to_docker_context()
         self._generate_docker_file()
-
-    def _copy_snowml_source_code_to_docker_context(self) -> None:
-        """Copy the entire snowflake/ml source code to docker context. This will be particularly useful for CI tests
-        against latest changes.
-
-        Note that we exclude the experimental directory mainly for development scenario; as experimental directory won't
-        be included in the release.
-        """
-        snow_ml_source_dir = list(importlib.import_module("snowflake.ml").__path__)[0]
-        shutil.copytree(
-            snow_ml_source_dir,
-            os.path.join(self.context_dir, "snowflake", "ml"),
-            ignore=shutil.ignore_patterns("*.pyc", "experimental"),
-        )
 
     def _copy_entrypoint_script_to_docker_context(self) -> None:
         """Copy gunicorn_run.sh entrypoint to docker context directory."""
         path = os.path.join(os.path.dirname(__file__), constants.ENTRYPOINT_SCRIPT)
         assert os.path.exists(path), f"Run script file missing at path: {path}"
         shutil.copy(path, os.path.join(self.context_dir, constants.ENTRYPOINT_SCRIPT))
+
+    def _copy_model_env_dependency_to_docker_context(self) -> None:
+        path = os.path.join(self.model_dir, constants.MODEL_ENV_FOLDER)
+        assert os.path.exists(path), f"Model env folder missing at path: {path}"
+        shutil.copytree(path, os.path.join(self.context_dir, constants.MODEL_ENV_FOLDER))
 
     def _generate_docker_file(self) -> None:
         """
@@ -71,7 +60,7 @@ class DockerContext(ABC):
                     "base_image": "mambaorg/micromamba:focal-cuda-11.7.1"
                     if self.use_gpu
                     else "mambaorg/micromamba:1.4.3",
-                    "model_dir": constants.MODEL_DIR,
+                    "model_env_folder": constants.MODEL_ENV_FOLDER,
                     "inference_server_dir": constants.INFERENCE_SERVER_DIR,
                     "entrypoint_script": constants.ENTRYPOINT_SCRIPT,
                 }

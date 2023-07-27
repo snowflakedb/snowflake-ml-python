@@ -7,6 +7,7 @@ import pandas as pd
 import pytest
 from absl.testing.absltest import TestCase, main
 
+from snowflake.ml._internal.exceptions.exceptions import SnowflakeMLException
 from snowflake.ml.modeling.framework.base import BaseTransformer, _process_cols
 from snowflake.ml.modeling.preprocessing import (  # type: ignore[attr-defined]
     MinMaxScaler,
@@ -136,15 +137,13 @@ class TestBaseFunctions(TestCase):
 
         # Assert that numeric data with null data raises
         transformer = TestTransformer().set_input_cols(input_cols)  # type: ignore[abstract]
-        with pytest.raises(ValueError) as excinfo:
+        with self.assertRaises(SnowflakeMLException):
             transformer._validate_data_has_no_nulls(df_with_nulls)  # type: ignore[attr-defined]
-        assert "Dataset may not contain nulls" in excinfo.value.args[0]
 
         # Assert that extra input columns raises
         transformer = TestTransformer().set_input_cols(input_cols + ["nonexistent_column"])  # type: ignore[abstract]
-        with pytest.raises(SnowparkColumnException) as excinfo:  # type: ignore[assignment]
+        with self.assertRaises(SnowparkColumnException):
             transformer._validate_data_has_no_nulls(df)  # type: ignore[attr-defined]
-        assert "The DataFrame does not contain the column" in excinfo.value.args[0]
 
     def test_base_double_quoted_identifiers(self) -> None:
         """

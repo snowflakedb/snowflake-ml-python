@@ -1,29 +1,47 @@
 #!/usr/bin/env bash
 
 {VERBOSE_BASH}
-set -u
+set -o errexit
+set -o nounset
 set -o pipefail
 
 main() {
+  local output
   local report_file
   local status
+  local root
   local mypy
 
   report_file="{OUTPUT}"
-  mypy="{MYPY_BIN}"
+  root="{MYPY_ROOT}/"
+  mypy="{MYPY_EXE}"
 
-  export MYPYPATH="$(pwd):{ADDITIONAL_MYPYPATH}"
+  # TODO(Jonathon): Consider UX improvements using https://mypy.readthedocs.io/en/stable/command_line.html#configuring-error-messages
 
-  # --enable-incomplete-features is specified to support unpacking features for precise TypedDict typing. Can be changed to --enable-incomplete-features=Unpack with mypy version >= 1.0
-  $mypy {VERBOSE_OPT} --bazel {PACKAGE_ROOTS} --config-file {MYPY_INI} --cache-map {CACHE_MAP_TRIPLES} --enable-incomplete-features -- {SRCS} > "${report_file}" 2>&1
+  export MYPYPATH="$(pwd):{MYPYPATH_PATH}"
+
+  # Workspace rules run in a different location from aspect rules. Here we
+  # normalize if the external source isn't found.
+  if [ ! -f $mypy ]; then
+    mypy=${mypy#${root}}
+  fi
+
+  set +o errexit
+  output=$($mypy {VERBOSE_OPT} --bazel {PACKAGE_ROOTS} --config-file {MYPY_INI_PATH} --enable-incomplete-features --cache-map {CACHE_MAP_TRIPLES} -- {SRCS} 2>&1)
   status=$?
+  set -o errexit
+
+  if [ ! -z "$report_file" ]; then
+    echo "${output}" > "${report_file}"
+  fi
 
   if [[ $status -ne 0 ]]; then
     printf "\033[0;31m======== BEGIN MYPY ERROR ========\033[0m\n"
-    cat "${report_file}" # Show MyPy's error to end-user via Bazel's console logging
+    echo "${output}" # Show MyPy's error to end-user via Bazel's console logging
     printf "\033[0;31m======== END   MYPY ERROR ========\033[0m\n"
     exit 1
   fi
+
 }
 
 main "$@"

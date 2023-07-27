@@ -3,6 +3,7 @@
 # Copyright (c) 2012-2022 Snowflake Computing Inc. All rights reserved.
 #
 import numbers
+import uuid
 from typing import Any, Dict, Iterable, List, Optional, Union
 
 import numpy as np
@@ -207,9 +208,10 @@ class OneHotEncoder(base.BaseTransformer):
         self.drop_idx_: Optional[npt.NDArray[np.int_]] = None
         self._drop_idx_after_grouping: Optional[npt.NDArray[np.int_]] = None
         self._n_features_outs: List[int] = []
-        self._dense_output_cols_mappings: Dict[
-            str, List[str]
-        ] = {}  # transform state when output columns are unset before fitting
+
+        # Fit state if output columns are set before fitting
+        self._dense_output_cols_mappings: Dict[str, List[str]] = {}
+        self._inferred_output_cols: List[str] = []
 
         self.set_input_cols(input_cols)
         self.set_output_cols(output_cols)
@@ -279,10 +281,13 @@ class OneHotEncoder(base.BaseTransformer):
                 f"Unexpected dataset type: {type(dataset)}."
                 "Supported dataset types: snowpark.DataFrame, pandas.DataFrame."
             )
-        if not self.sparse and self.output_cols:
-            self._get_dense_output_cols_mappings()
-
         self._is_fitted = True
+
+        if not self.sparse and self.output_cols:
+            self._handle_dense_output_cols()
+        if self.output_cols:
+            self._handle_inferred_output_cols(dataset)
+
         return self
 
     def _fit_sklearn(self, dataset: pd.DataFrame) -> None:
@@ -393,25 +398,21 @@ class OneHotEncoder(base.BaseTransformer):
         found_state_df: Optional[snowpark.DataFrame] = None
         for input_col in self.input_cols:
             state_columns = [
-                F.lit(input_col).alias(_COLUMN_NAME),  # type: ignore[arg-type]
+                F.lit(input_col).alias(_COLUMN_NAME),
                 F.col(input_col).cast(T.StringType()).alias(_CATEGORY),
                 F.iff(
                     # null or nan values
-                    F.col(input_col).is_null()  # type: ignore[arg-type]
-                    | (F.col(input_col).cast(T.StringType()).equal_nan()),
+                    F.col(input_col).is_null() | (F.col(input_col).cast(T.StringType()).equal_nan()),
                     # count null and nan values
-                    F.sum(  # type: ignore[arg-type]
-                        F.iff(  # type: ignore[arg-type]
-                            F.col(input_col).is_null()  # type: ignore[arg-type]
-                            | (F.col(input_col).cast(T.StringType()).equal_nan()),
-                            1,  # type: ignore[arg-type]
-                            0,  # type: ignore[arg-type]
+                    F.sum(
+                        F.iff(
+                            F.col(input_col).is_null() | (F.col(input_col).cast(T.StringType()).equal_nan()),
+                            1,
+                            0,
                         )
-                    ).over(
-                        snowpark.Window.partition_by(input_col)  # type: ignore[arg-type]
-                    ),
+                    ).over(snowpark.Window.partition_by(input_col)),
                     # count values that are not null or nan
-                    F.count(input_col).over(snowpark.Window.partition_by(input_col)),  # type: ignore[arg-type]
+                    F.count(input_col).over(snowpark.Window.partition_by(input_col)),
                 ).alias(_COUNT),
             ]
             temp_df = dataset.select(state_columns).distinct()
@@ -660,17 +661,15 @@ class OneHotEncoder(base.BaseTransformer):
                 - If input is a pd.DataFrame and `self.sparse=False`, returns `pd.DataFrame`
 
         Raises:
-            RuntimeError: If transformer is not fitted first.
             TypeError: If the input dataset is neither a pandas nor Snowpark DataFrame.
         """
-        if not self._is_fitted:
-            raise RuntimeError("Transformer not fitted before calling transform().")
+        self._enforce_fit()
         super()._check_input_cols()
         super()._check_output_cols()
 
         # output columns are unset before fitting
         if not self.sparse and not self._dense_output_cols_mappings:
-            self._get_dense_output_cols_mappings()
+            self._handle_dense_output_cols()
 
         if isinstance(dataset, snowpark.DataFrame):
             output_df = self._transform_snowpark(dataset)
@@ -734,9 +733,12 @@ class OneHotEncoder(base.BaseTransformer):
         assert dataset._session is not None, "dataset._session cannot be None"
         state_df = dataset._session.create_dataframe(state_pandas)
 
+        suffix = "_" + uuid.uuid4().hex.upper()
         transformed_dataset = dataset
-        origional_dataset_columns = transformed_dataset.columns[:]
+        original_dataset_cols = transformed_dataset.columns[:]
         all_output_cols = []
+        suffixed_input_cols = []
+        joined_input_cols = []
         for idx, input_col in enumerate(self.input_cols):
             output_col = self.output_cols[idx]
             all_output_cols += [output_col]
@@ -749,11 +751,24 @@ class OneHotEncoder(base.BaseTransformer):
                 input_col_state_df,
                 on=transformed_dataset[input_col].equal_null(input_col_state_df[_CATEGORY]),
                 how="left",
-            )[transformed_dataset.columns + [output_col]]
+                lsuffix=suffix,
+            ).drop(_CATEGORY)
 
-        transformed_dataset = self._handle_unknown_in_transform(transformed_dataset)
+            # handle identical input & output cols
+            if input_col == output_col:
+                col = identifier.concat_names([input_col, suffix])
+                suffixed_input_cols.append(col)
+                joined_input_cols.append(col)
+            else:
+                joined_input_cols.append(input_col)
+
+        if not self._inferred_output_cols:
+            self._inferred_output_cols = transformed_dataset[all_output_cols].columns
+
+        transformed_dataset = self._handle_unknown_in_transform(transformed_dataset, joined_input_cols)
         # Reorder columns. Passthrough columns are added at the right to the output of the transformers.
-        transformed_dataset = transformed_dataset[all_output_cols + origional_dataset_columns]
+        passthrough_cols = list(set(original_dataset_cols) - set(all_output_cols))
+        transformed_dataset = transformed_dataset.drop(suffixed_input_cols)[all_output_cols + passthrough_cols]
         return transformed_dataset
 
     def _transform_snowpark_dense(self, dataset: snowpark.DataFrame) -> snowpark.DataFrame:
@@ -815,6 +830,9 @@ class OneHotEncoder(base.BaseTransformer):
                 on=transformed_dataset[input_col].equal_null(input_col_state_df[_CATEGORY]),
                 how="left",
             )[transformed_dataset.columns + output_cols]
+
+        if not self._inferred_output_cols:
+            self._inferred_output_cols = transformed_dataset[all_output_cols].columns
 
         transformed_dataset = self._handle_unknown_in_transform(transformed_dataset)
         # Reorder columns. Passthrough columns are added at the right to the output of the transformers.
@@ -900,6 +918,9 @@ class OneHotEncoder(base.BaseTransformer):
         if self.sparse:
             return transformed_dataset
 
+        if not self._inferred_output_cols:
+            self._inferred_output_cols = self._get_inferred_output_cols()
+
         dataset = dataset.copy()
         dataset[self.get_output_cols()] = transformed_dataset
         return dataset
@@ -979,12 +1000,17 @@ class OneHotEncoder(base.BaseTransformer):
                 msg = "`min_frequency` must be an integer at least 1, a float in (0.0, 1.0), or None, " "got float {}"
                 raise ValueError(msg.format(self.min_frequency))
 
-    def _handle_unknown_in_transform(self, transformed_dataset: snowpark.DataFrame) -> snowpark.DataFrame:
+    def _handle_unknown_in_transform(
+        self,
+        transformed_dataset: snowpark.DataFrame,
+        input_cols: Optional[List[str]] = None,
+    ) -> snowpark.DataFrame:
         """
         Handle unknown values in the transformed dataset.
 
         Args:
             transformed_dataset: Transformed dataset without unknown values handled.
+            input_cols: Input columns (may be suffixed).
 
         Returns:
             Transformed dataset with unknown values handled.
@@ -997,17 +1023,21 @@ class OneHotEncoder(base.BaseTransformer):
             # dataframe with unknown values
             # columns: COLUMN_NAME, UNKNOWN_VALUE
             unknown_df: Optional[snowpark.DataFrame] = None
-            for idx, input_col in enumerate(self.input_cols):
+            cols = input_cols or self.input_cols
+            for idx, input_col in enumerate(cols):
                 output_col = self.output_cols[idx]
                 check_col = output_col
                 if not self.sparse:
-                    output_cat_cols = [x for x in transformed_dataset.columns if f"{output_col}_" in x]
+                    output_cat_cols = [
+                        identifier.quote_name_without_upper_casing(col)
+                        for col in self._dense_output_cols_mappings[input_col]
+                    ]
                     if not output_cat_cols:
                         continue
                     check_col = output_cat_cols[0]
 
                 unknown_columns = [
-                    F.lit(input_col),  # type: ignore[arg-type]
+                    F.lit(self.input_cols[idx]),
                     F.col(input_col),
                 ]
                 temp_df = (
@@ -1028,14 +1058,8 @@ class OneHotEncoder(base.BaseTransformer):
                 if not unknown_pandas.empty:
                     msg = f"Found unknown categories during transform:\n{unknown_pandas.to_string()}"
                     raise ValueError(msg)
-
         if self.handle_unknown == "ignore" and not self.sparse:
-            all_output_cat_cols = []
-            for idx, _ in enumerate(self.input_cols):
-                output_col = self.output_cols[idx]
-                output_cat_cols = [x for x in transformed_dataset.columns if f"{output_col}_" in x]
-                all_output_cat_cols.extend(output_cat_cols)
-            transformed_dataset = transformed_dataset.na.fill(0, all_output_cat_cols)  # type: ignore[arg-type]
+            transformed_dataset = transformed_dataset.na.fill(0, self._inferred_output_cols)
 
         # TODO(hayu): [SNOW-752263] Support OneHotEncoder handle_unknown="infrequent_if_exist".
         #  Add back when `handle_unknown="infrequent_if_exist"` is supported.
@@ -1329,25 +1353,25 @@ class OneHotEncoder(base.BaseTransformer):
         Returns:
             Output columns.
         """
-        if self.sparse:
-            return self.output_cols
+        return self._inferred_output_cols
 
-        output_cols = (
-            [
-                identifier.get_inferred_name(col)
-                for input_col in self.input_cols
-                for col in self._dense_output_cols_mappings[input_col]
-            ]
-            if self._dense_output_cols_mappings
-            else []
+    def _get_inferred_output_cols(self) -> List[str]:
+        """
+        Get output column names meeting Snowflake requirements.
+        Only useful when fitting a pandas dataframe.
+
+        Returns:
+            Inferred output columns.
+        """
+        cols = (
+            self.output_cols
+            if self.sparse
+            else [col for input_col in self.input_cols for col in self._dense_output_cols_mappings[input_col]]
         )
-        return output_cols
+        return [identifier.get_inferred_name(c) for c in cols]
 
-    def _get_dense_output_cols_mappings(self) -> None:
-        """
-        Get input column to dense output columns mappings and assign them to
-        `self._dense_output_cols_mappings`.
-        """
+    def _handle_dense_output_cols(self) -> None:
+        """Assign input column to dense output columns mappings to `self._dense_output_cols_mappings`."""
         for idx, input_col in enumerate(self.input_cols):
             output_col = self.output_cols[idx]
             n_features_out = self._n_features_outs[idx]
@@ -1392,6 +1416,22 @@ class OneHotEncoder(base.BaseTransformer):
                 if cat and isinstance(cat, str):
                     cat = cat.replace('"', "'")
                 self._dense_output_cols_mappings[input_col].append(f"{output_col}_{cat}")
+
+    def _handle_inferred_output_cols(self, dataset: Union[snowpark.DataFrame, pd.DataFrame]) -> None:
+        """
+        Assign output column names used to transform pandas dataframes to `self._inferred_output_cols`.
+        This ensures consistent (double quoted) column names in Snowpark and pandas transformed dataframes.
+
+        Args:
+            dataset: Input dataset.
+        """
+        if isinstance(dataset, snowpark.DataFrame):
+            temp = self.handle_unknown
+            self.handle_unknown = "ignore"
+            self.transform(dataset[self.input_cols].limit(0))
+            self.handle_unknown = temp
+        else:
+            self._inferred_output_cols = self._get_inferred_output_cols()
 
     def get_sklearn_args(
         self,

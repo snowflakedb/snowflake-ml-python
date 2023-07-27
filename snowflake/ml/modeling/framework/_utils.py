@@ -13,7 +13,14 @@ import sklearn
 from packaging import version
 
 from snowflake import snowpark
-from snowflake.snowpark import exceptions, functions as F
+from snowflake.ml._internal.exceptions import (
+    error_codes,
+    error_messages,
+    exceptions,
+    exceptions as snowml_exceptions,
+    modeling_error_messages,
+)
+from snowflake.snowpark import exceptions as snowpark_exceptions, functions as F
 from snowflake.snowpark._internal import utils
 
 DATETIME_FORMAT = "%Y-%m-%d %H:%M:%S.%f"
@@ -103,8 +110,8 @@ def get_filtered_valid_sklearn_args(
         Sklearn keyword arguments.
 
     Raises:
-        TypeError: If the input args contains an invalid key.
-        ImportError: If the scikit-learn package version does not meet the requirements
+        SnowflakeMLException: If the input args contains an invalid key.
+        SnowflakeMLException: If the scikit-learn package version does not meet the requirements
             for the keyword arguments.
     """
     # get args to be passed to sklearn
@@ -142,8 +149,10 @@ def get_filtered_valid_sklearn_args(
             continue
         # unknown keyword
         else:
-            msg = f"Unexpected keyword: {key}."
-            raise TypeError(msg)
+            raise snowml_exceptions.SnowflakeMLException(
+                error_code=error_codes.INVALID_ARGUMENT,
+                original_exception=ValueError(error_messages.UNEXPECTED_KEYWORD.format(key)),
+            )
 
     # validate sklearn version
     sklearn_version = sklearn.__version__
@@ -155,11 +164,14 @@ def get_filtered_valid_sklearn_args(
             and (version.parse(sklearn_version) < version.parse(sklearn_added_keyword_to_version_dict[key]))
         ):
             required_version = sklearn_added_keyword_to_version_dict[key]
-            msg = (
-                f"scikit-learn version mismatch: parameter '{key}' requires scikit-learn>={required_version}, "
-                f"but got an incompatible version: {sklearn_version}."
+            raise exceptions.SnowflakeMLException(
+                error_code=error_codes.DEPENDENCY_VERSION_ERROR,
+                original_exception=ImportError(
+                    modeling_error_messages.INCOMPATIBLE_NEW_SKLEARN_PARAM.format(
+                        key, required_version, sklearn_version
+                    )
+                ),
             )
-            raise ImportError(msg)
 
         # added keyword argument value
         if (
@@ -169,11 +181,14 @@ def get_filtered_valid_sklearn_args(
             and (version.parse(sklearn_version) < version.parse(sklearn_added_kwarg_value_to_version_dict[key][val]))
         ):
             required_version = sklearn_added_kwarg_value_to_version_dict[key][val]
-            msg = (
-                f"scikit-learn version mismatch: parameter '{key}={val}' requires "
-                f"scikit-learn>={required_version}, but got an incompatible version: {sklearn_version}."
+            raise exceptions.SnowflakeMLException(
+                error_code=error_codes.DEPENDENCY_VERSION_ERROR,
+                original_exception=ImportError(
+                    modeling_error_messages.INCOMPATIBLE_NEW_SKLEARN_PARAM.format(
+                        f"{key}={val}", required_version, sklearn_version
+                    )
+                ),
             )
-            raise ImportError(msg)
 
         # deprecated sklearn keyword
         if (
@@ -182,7 +197,7 @@ def get_filtered_valid_sklearn_args(
             and (version.parse(sklearn_version) >= version.parse(sklearn_deprecated_keyword_to_version_dict[key]))
         ):
             deprecated_version = sklearn_deprecated_keyword_to_version_dict[key]
-            msg = f"Parameter '{key}' deprecated since scikit-learn version {deprecated_version}."
+            msg = f"Incompatible scikit-learn version: '{key}' deprecated since scikit-learn={deprecated_version}.."
             warnings.warn(msg, DeprecationWarning)
 
         # removed sklearn keyword
@@ -192,8 +207,12 @@ def get_filtered_valid_sklearn_args(
             and (version.parse(sklearn_version) >= version.parse(sklearn_removed_keyword_to_version_dict[key]))
         ):
             removed_version = sklearn_removed_keyword_to_version_dict[key]
-            msg = f"Parameter '{key}' removed since scikit-learn version {removed_version}."
-            raise ImportError(msg)
+            raise exceptions.SnowflakeMLException(
+                error_code=error_codes.DEPENDENCY_VERSION_ERROR,
+                original_exception=ImportError(
+                    modeling_error_messages.REMOVED_SKLEARN_PARAM.format(key, removed_version, sklearn_version)
+                ),
+            )
 
     return sklearn_args
 
@@ -224,5 +243,5 @@ def table_exists(session: snowpark.Session, table_name: str, statement_params: D
     try:
         session.table(table_name).limit(0).collect(statement_params=statement_params)
         return True
-    except exceptions.SnowparkSQLException:
+    except snowpark_exceptions.SnowparkSQLException:
         return False

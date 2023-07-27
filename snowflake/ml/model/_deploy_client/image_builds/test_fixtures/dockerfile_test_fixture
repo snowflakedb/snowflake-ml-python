@@ -1,10 +1,10 @@
 FROM mambaorg/micromamba:1.4.3 as build
 
-COPY model_dir/env/conda.yaml conda.yaml
-COPY model_dir/env/requirements.txt requirements.txt
+COPY env/conda.yaml conda.yaml
+COPY env/requirements.txt requirements.txt
 ARG MAMBA_DOCKERFILE_ACTIVATE=1
 RUN --mount=type=cache,target=/opt/conda/pkgs micromamba install -y -n base -f conda.yaml && \
-	python -m pip install "uvicorn[standard]" gunicorn starlette && \
+	python -m pip install "uvicorn[standard]" gunicorn starlette==0.30.0 && \
 	python -m pip install -r requirements.txt
 
 FROM debian:buster-slim AS runtime
@@ -21,7 +21,6 @@ RUN adduser --disabled-password \
 COPY inference_server ./inference_server
 COPY gunicorn_run.sh ./gunicorn_run.sh
 RUN chmod +x /gunicorn_run.sh
-COPY snowflake ./snowflake
 COPY --from=build /opt/conda /opt/conda
 EXPOSE 5000
 

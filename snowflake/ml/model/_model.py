@@ -3,7 +3,7 @@ import posixpath
 import tempfile
 import warnings
 from types import ModuleType
-from typing import TYPE_CHECKING, Dict, List, Literal, Optional, Tuple, Union, overload
+from typing import Dict, List, Literal, Optional, Tuple, Union, overload
 
 from snowflake.ml._internal import file_utils, type_utils
 from snowflake.ml.model import (
@@ -16,9 +16,6 @@ from snowflake.ml.model import (
 )
 from snowflake.snowpark import FileOperation, Session
 
-if TYPE_CHECKING:
-    from snowflake.ml.modeling.framework import base
-
 MODEL_BLOBS_DIR = "models"
 
 
@@ -26,7 +23,7 @@ MODEL_BLOBS_DIR = "models"
 def save_model(
     *,
     name: str,
-    model: "base.BaseEstimator",
+    model: model_types.SupportedNoSignatureRequirementsModelType,
     model_dir_path: str,
     metadata: Optional[Dict[str, str]] = None,
     conda_dependencies: Optional[List[str]] = None,
@@ -36,11 +33,11 @@ def save_model(
     code_paths: Optional[List[str]] = None,
     options: Optional[model_types.ModelSaveOption] = None,
 ) -> _model_meta.ModelMetadata:
-    """Save a SnowML modeling model under `dir_path`.
+    """Save a model that does not require a signature under `dir_path`.
 
     Args:
         name: Name of the model.
-        model: SnowML modeling model object.
+        model: Model object.
         model_dir_path: Directory to save the model.
         metadata: Model metadata.
         conda_dependencies: List of Conda package specs. Use "[channel::]package [operator version]" syntax to specify
@@ -62,7 +59,7 @@ def save_model(
 def save_model(
     *,
     name: str,
-    model: model_types.SupportedLocalModelType,
+    model: model_types.SupportedRequireSignatureModelType,
     model_dir_path: str,
     signatures: Dict[str, model_signature.ModelSignature],
     metadata: Optional[Dict[str, str]] = None,
@@ -73,7 +70,7 @@ def save_model(
     code_paths: Optional[List[str]] = None,
     options: Optional[model_types.ModelSaveOption] = None,
 ) -> _model_meta.ModelMetadata:
-    """Save a local model with user provided signatures under `dir_path`.
+    """Save a model that requires a external signature with user provided signatures under `dir_path`.
 
     Args:
         name: Name of the model.
@@ -100,7 +97,7 @@ def save_model(
 def save_model(
     *,
     name: str,
-    model: model_types.SupportedLocalModelType,
+    model: model_types.SupportedRequireSignatureModelType,
     model_dir_path: str,
     sample_input: model_types.SupportedDataType,
     metadata: Optional[Dict[str, str]] = None,
@@ -111,7 +108,8 @@ def save_model(
     code_paths: Optional[List[str]] = None,
     options: Optional[model_types.ModelSaveOption] = None,
 ) -> _model_meta.ModelMetadata:
-    """Save a local model under `dir_path` with signature inferred from a sample_input_data.
+    """Save a model that requires a external signature under `dir_path` with signature
+        inferred from a sample_input_data.
 
     Args:
         name: Name of the model.
@@ -138,7 +136,7 @@ def save_model(
 def save_model(
     *,
     name: str,
-    model: "base.BaseEstimator",
+    model: model_types.SupportedNoSignatureRequirementsModelType,
     session: Session,
     model_stage_file_path: str,
     metadata: Optional[Dict[str, str]] = None,
@@ -149,11 +147,11 @@ def save_model(
     code_paths: Optional[List[str]] = None,
     options: Optional[model_types.ModelSaveOption] = None,
 ) -> _model_meta.ModelMetadata:
-    """Save a SnowML modeling model to a zip file whose path is the provided stage file path.
+    """Save a model that does not require a signature to a zip file whose path is the provided stage file path.
 
     Args:
         name: Name of the model.
-        model: SnowML modeling model object.
+        model: Model object.
         session: Snowpark connection session.
         model_stage_file_path: Path to the file in Snowflake stage where the function should put the saved model.
             Must be a file with .zip extension.
@@ -177,7 +175,7 @@ def save_model(
 def save_model(
     *,
     name: str,
-    model: model_types.SupportedLocalModelType,
+    model: model_types.SupportedRequireSignatureModelType,
     session: Session,
     model_stage_file_path: str,
     signatures: Dict[str, model_signature.ModelSignature],
@@ -189,7 +187,8 @@ def save_model(
     code_paths: Optional[List[str]] = None,
     options: Optional[model_types.ModelSaveOption] = None,
 ) -> _model_meta.ModelMetadata:
-    """Save a local model with user provided signatures to a zip file whose path is the provided stage file path.
+    """Save a model that requires a external signature with user provided signatures
+         to a zip file whose path is the provided stage file path.
 
     Args:
         name: Name of the model.
@@ -218,7 +217,7 @@ def save_model(
 def save_model(
     *,
     name: str,
-    model: model_types.SupportedLocalModelType,
+    model: model_types.SupportedRequireSignatureModelType,
     session: Session,
     model_stage_file_path: str,
     sample_input: model_types.SupportedDataType,
@@ -230,8 +229,8 @@ def save_model(
     code_paths: Optional[List[str]] = None,
     options: Optional[model_types.ModelSaveOption] = None,
 ) -> _model_meta.ModelMetadata:
-    """Save a local model to a zip file whose path is the provided stage file path with signature inferred from a
-        sample_input_data.
+    """Save a model that requires a external signature to a zip file whose path is the
+    provided stage file path with signature inferred from a sample_input_data.
 
     Args:
         name: Name of the model.
@@ -328,7 +327,10 @@ def save_model(
     if (
         (signatures is None)
         and (sample_input is None)
-        and not type_utils.LazyType("snowflake.ml.modeling.framework.base.BaseEstimator").isinstance(model)
+        and not (
+            type_utils.LazyType("snowflake.ml.modeling.framework.base.BaseEstimator").isinstance(model)
+            or type_utils.LazyType("mlflow.pyfunc.PyFuncModel").isinstance(model)
+        )
     ) or ((signatures is not None) and (sample_input is not None)):
         raise ValueError(
             "Signatures and sample_input both cannot be "
@@ -336,7 +338,7 @@ def save_model(
         )
 
     if not options:
-        options = {}
+        options = model_types.BaseModelSaveOption()
 
     if model_dir_path:
         if os.path.exists(model_dir_path):

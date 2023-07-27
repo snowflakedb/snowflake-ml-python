@@ -14,6 +14,7 @@ from sklearn.utils import metaestimators
 
 from snowflake import snowpark
 from snowflake.ml._internal import telemetry
+from snowflake.ml._internal.exceptions import error_codes, exceptions
 from snowflake.ml.model.model_signature import ModelSignature, _infer_signature
 from snowflake.ml.modeling.framework import _utils, base
 
@@ -58,7 +59,7 @@ def _get_column_indices(all_columns: List[str], target_columns: List[str]) -> Li
         Return the list of indices of target column in the original column array.
 
     Raises:
-        ValueError: If the target column is not present in the original column array.
+        SnowflakeMLException: If the target column is not present in the original column array.
     """
     column_indices = []
     for col in target_columns:
@@ -69,8 +70,11 @@ def _get_column_indices(all_columns: List[str], target_columns: List[str]) -> Li
                 found = True
                 break
         if not found:
-            raise ValueError(
-                f"Selected column {col} is not found in the input dataframe. Columns in the input df : {all_columns}"
+            raise exceptions.SnowflakeMLException(
+                error_code=error_codes.NOT_FOUND,
+                original_exception=ValueError(
+                    f"Selected column {col} is not found in the input dataframe. Columns in the input df: {all_columns}"
+                ),
             )
     return column_indices
 
@@ -130,10 +134,13 @@ class Pipeline(base.BaseTransformer):
     def _validate_steps(self) -> None:
         for name, t in self._get_transformers():
             if not Pipeline._is_transformer(t):
-                raise TypeError(
-                    "All intermediate steps should be "
-                    "transformers and implement both fit() and transform() methods, but"
-                    f"{name} (type {type(t)}) doesn't."
+                raise exceptions.SnowflakeMLException(
+                    error_code=error_codes.INVALID_ATTRIBUTE,
+                    original_exception=TypeError(
+                        "All intermediate steps should be "
+                        "transformers and implement both fit() and transform() methods, but"
+                        f"{name} (type {type(t)}) doesn't."
+                    ),
                 )
 
     def _reset(self) -> None:
@@ -262,13 +269,8 @@ class Pipeline(base.BaseTransformer):
 
         Returns:
             Transformed data. Output datatype will be same as input datatype.
-
-        Raises:
-            RuntimeError: If the pipeline is not fitted first.
         """
-
-        if not self._is_fitted:
-            raise RuntimeError("Pipeline is not fitted before calling transform().")
+        self._enforce_fit()
 
         transformed_dataset = self._transform_dataset(dataset=dataset)
         estimator = self._get_estimator()
@@ -439,13 +441,16 @@ class Pipeline(base.BaseTransformer):
             dataset: Input dataset.
 
         Raises:
-            RuntimeError: If the pipeline is not fitted first.
+            SnowflakeMLException: If the pipeline is not fitted first.
 
         Returns:
             Output dataset.
         """
         if not self._is_fitted:
-            raise RuntimeError(f"Pipeline is not fitted before calling {func_name}().")
+            raise exceptions.SnowflakeMLException(
+                error_code=error_codes.METHOD_NOT_ALLOWED,
+                original_exception=RuntimeError(f"Pipeline is not fitted before calling {func_name}()."),
+            )
 
         transformed_dataset = self._transform_dataset(dataset=dataset)
         estimator = self._get_estimator()
@@ -525,9 +530,12 @@ class Pipeline(base.BaseTransformer):
             return self._create_unfitted_sklearn_object()
 
         if not self._is_convertable_to_sklearn:
-            raise ValueError(
-                "The pipeline can't be converted to SKLearn equivalent because it processing label or sample_weight "
-                "columns as part of pipeline preprocessing steps which is not allowed in SKLearn."
+            raise exceptions.SnowflakeMLException(
+                error_code=error_codes.METHOD_NOT_ALLOWED,
+                original_exception=ValueError(
+                    "The pipeline can't be converted to SKLearn equivalent because it processing label or "
+                    "sample_weight columns as part of pipeline preprocessing steps which is not allowed in SKLearn."
+                ),
             )
 
         # Create a fitted sklearn pipeline object by translating each non-estimator step in pipeline with with
@@ -581,5 +589,8 @@ class Pipeline(base.BaseTransformer):
     @property
     def model_signatures(self) -> Dict[str, ModelSignature]:
         if self._model_signature_dict is None:
-            raise RuntimeError("Estimator not fitted before accessing property model_signatures! ")
+            raise exceptions.SnowflakeMLException(
+                error_code=error_codes.INVALID_ATTRIBUTE,
+                original_exception=RuntimeError("Estimator not fitted before accessing property model_signatures!"),
+            )
         return self._model_signature_dict

@@ -758,7 +758,8 @@ class ModelRegistryTest(absltest.TestCase):
         expected_stage_postfix = f"{self.model_id}".upper()
 
         self.add_session_mock_sql(
-            query=f"CREATE OR REPLACE STAGE {_DATABASE_NAME}.{_SCHEMA_NAME}.SNOWML_MODEL_{expected_stage_postfix}",
+            query=f"CREATE OR REPLACE STAGE {_DATABASE_NAME}.{_SCHEMA_NAME}.SNOWML_MODEL_{expected_stage_postfix} "
+            f"ENCRYPTION = (TYPE= 'SNOWFLAKE_SSE')",
             result=mock_data_frame.MockDataFrame(
                 [snowpark.Row(**{"status": f"Stage area SNOWML_MODEL_{expected_stage_postfix} successfully created."})]
             ),

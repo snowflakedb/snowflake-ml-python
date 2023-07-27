@@ -6,5 +6,21 @@ py_library(
     name = "db_manager",
     testonly = True,
     srcs = ["db_manager.py"],
-    deps = ["//snowflake/ml/_internal/utils:identifier"],
+    deps = [
+        "//snowflake/ml/_internal/utils:identifier",
+        "//snowflake/ml/model/_deploy_client/utils:constants"
+    ],
+)
+
+py_library(
+    name = "model_factory",
+    testonly = True,
+    srcs = ["model_factory.py"],
+    deps = [
+        "//snowflake/ml/modeling/linear_model:logistic_regression",
+        "//snowflake/ml/modeling/pipeline",
+        "//snowflake/ml/modeling/preprocessing:min_max_scaler",
+        "//snowflake/ml/modeling/preprocessing:one_hot_encoder",
+        "//snowflake/ml/modeling/xgboost:xgb_classifier",
+    ]
 )

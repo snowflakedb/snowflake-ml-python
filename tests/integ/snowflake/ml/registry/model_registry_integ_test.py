@@ -3,104 +3,19 @@
 #
 
 import uuid
-from typing import Dict, List, Tuple
+from typing import Dict
 
 import numpy as np
-import numpy.typing as npt
 import pandas as pd
 import pytest
 from absl.testing import absltest
-from sklearn import datasets, metrics, svm
+from sklearn import metrics
 
 from snowflake import connector
-from snowflake.ml.modeling.linear_model import LogisticRegression
-from snowflake.ml.modeling.pipeline import Pipeline
-from snowflake.ml.modeling.preprocessing import MinMaxScaler, OneHotEncoder
-from snowflake.ml.modeling.xgboost import XGBClassifier
 from snowflake.ml.registry import model_registry
 from snowflake.ml.utils import connection_params
-from snowflake.snowpark import DataFrame, Session
-from tests.integ.snowflake.ml.test_utils import db_manager
-
-
-def _prepare_sklearn_model() -> Tuple[svm.SVC, npt.ArrayLike, npt.ArrayLike]:
-    digits = datasets.load_digits()
-    target_digit = 6
-    num_training_examples = 10
-    svc_gamma = 0.001
-    svc_C = 10.0
-
-    clf = svm.SVC(gamma=svc_gamma, C=svc_C, probability=True)
-
-    def one_vs_all(dataset: npt.NDArray[np.float64], digit: int) -> List[bool]:
-        return [x == digit for x in dataset]
-
-    # Train a classifier using num_training_examples and use the last 100 examples for test.
-    train_features = digits.data[:num_training_examples]
-    train_labels = one_vs_all(digits.target[:num_training_examples], target_digit)
-    clf.fit(train_features, train_labels)
-
-    test_features = digits.data[-100:]
-    test_labels = one_vs_all(digits.target[-100:], target_digit)
-
-    return clf, test_features, test_labels
-
-
-def _prepare_snowml_model() -> Tuple[XGBClassifier, pd.DataFrame]:
-    iris = datasets.load_iris()
-    df = pd.DataFrame(data=np.c_[iris["data"], iris["target"]], columns=iris["feature_names"] + ["target"])
-    df.columns = [s.replace(" (CM)", "").replace(" ", "") for s in df.columns.str.upper()]
-
-    input_cols = ["SEPALLENGTH", "SEPALWIDTH", "PETALLENGTH", "PETALWIDTH"]
-    label_cols = "TARGET"
-    output_cols = "PREDICTED_TARGET"
-
-    clf_xgb = XGBClassifier(input_cols=input_cols, output_cols=output_cols, label_cols=label_cols, drop_input_cols=True)
-
-    clf_xgb.fit(df)
-
-    return clf_xgb, df.drop(columns=label_cols).head(10)
-
-
-def _prepare_snowml_pipeline(session: Session) -> Tuple[Pipeline, DataFrame]:
-    iris = datasets.load_iris()
-    df = pd.DataFrame(data=np.c_[iris["data"], iris["target"]], columns=iris["feature_names"] + ["target"])
-    df.columns = [s.replace(" (CM)", "").replace(" ", "") for s in df.columns.str.upper()]
-
-    def add_simple_category(df: pd.DataFrame) -> pd.DataFrame:
-        bins = (-1, 4, 5, 6, 10)
-        group_names = ["Unknown", "1_quartile", "2_quartile", "3_quartile"]
-        categories = pd.cut(df.SEPALLENGTH, bins, labels=group_names)
-        df["SIMPLE"] = categories
-        return df
-
-    df_cat = add_simple_category(df)
-    iris_df = session.create_dataframe(df_cat)
-
-    numeric_features = ["SEPALLENGTH", "SEPALWIDTH", "PETALLENGTH", "PETALWIDTH"]
-    categorical_features = ["SIMPLE"]
-    numeric_features_output = [x + "_O" for x in numeric_features]
-    label_cols = "TARGET"
-
-    pipeline = Pipeline(
-        steps=[
-            (
-                "OHEHOT",
-                OneHotEncoder(input_cols=categorical_features, output_cols="cat_output", drop_input_cols=True),
-            ),
-            (
-                "SCALER",
-                MinMaxScaler(
-                    clip=True, input_cols=numeric_features, output_cols=numeric_features_output, drop_input_cols=True
-                ),
-            ),
-            # TODO: Remove drop_input_cols=True after SNOW-853632 gets fixed.
-            ("CLASSIFIER", LogisticRegression(label_cols=label_cols, drop_input_cols=True)),
-        ]
-    )
-    pipeline.fit(iris_df)
-
-    return pipeline, iris_df.drop(label_cols).limit(10)
+from snowflake.snowpark import Session
+from tests.integ.snowflake.ml.test_utils import db_manager, model_factory
 
 
 class TestModelRegistryInteg(absltest.TestCase):
@@ -113,9 +28,7 @@ class TestModelRegistryInteg(absltest.TestCase):
         cls.registry_name = db_manager.TestObjectNameGenerator.get_snowml_test_object_name(cls.run_id, "registry_db")
         model_registry.create_model_registry(session=cls._session, database_name=cls.registry_name)
         cls.perm_stage = "@" + cls._db_manager.create_stage(
-            "model_registry_test_stage",
-            "PUBLIC",
-            cls.registry_name,
+            "model_registry_test_stage", "PUBLIC", cls.registry_name, sse_encrypted=True
         )
 
     @classmethod
@@ -129,7 +42,7 @@ class TestModelRegistryInteg(absltest.TestCase):
         # Prepare the model
         model_name = "basic_model"
         model_version = self.run_id
-        model, test_features, test_labels = _prepare_sklearn_model()
+        model, test_features, test_labels = model_factory.ModelFactory.prepare_sklearn_model()
 
         local_prediction = model.predict(test_features)
         local_prediction_proba = model.predict_proba(test_features)
@@ -331,7 +244,7 @@ class TestModelRegistryInteg(absltest.TestCase):
 
         model_name = "snowml_xgb_classifier"
         model_version = self.run_id
-        model, test_features = _prepare_snowml_model()
+        model, test_features = model_factory.ModelFactory.prepare_snowml_model()
 
         local_prediction = model.predict(test_features)
         local_prediction_proba = model.predict_proba(test_features)
@@ -378,7 +291,7 @@ class TestModelRegistryInteg(absltest.TestCase):
 
         model_name = "snowml_pipeline"
         model_version = self.run_id
-        model, test_features = _prepare_snowml_pipeline(self._session)
+        model, test_features = model_factory.ModelFactory.prepare_snowml_pipeline(self._session)
 
         local_prediction = model.predict(test_features)
 

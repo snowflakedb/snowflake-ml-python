@@ -24,6 +24,7 @@ py_test(
     shard_count = 5,
     deps = [
         ":fileset_integ_utils",
+        "//snowflake/ml/_internal/exceptions:fileset_errors",
         "//snowflake/ml/fileset",
         "//snowflake/ml/utils:connection_params",
     ],

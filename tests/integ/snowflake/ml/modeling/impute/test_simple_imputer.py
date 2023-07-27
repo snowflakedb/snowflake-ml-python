@@ -61,9 +61,8 @@ class SimpleImputerTest(TestCase):
 
         for strategy in ["mean", "constant", "median"]:
             simple_imputer = SimpleImputer(strategy=strategy, input_cols=input_cols, output_cols=output_cols)
-            with self.assertRaises(TypeError) as ex:
+            with self.assertRaisesRegex(TypeError, "Inconsistent input column types."):
                 simple_imputer.fit(df)
-            self.assertTrue(str(ex.exception).startswith("Inconsistent input column types."))
 
     def test_fit(self) -> None:
         """
