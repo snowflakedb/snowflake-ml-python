@@ -20,6 +20,7 @@ def get_build_rules_for_native_impl():
         deps = [
             ":init",
             "//snowflake/ml/_internal:telemetry",
+            "//snowflake/ml/_internal/exceptions:exceptions",
             "//snowflake/ml/modeling/framework",
         ],
     )
@@ -32,6 +33,7 @@ def get_build_rules_for_native_impl():
         deps = [
             ":init",
             "//snowflake/ml/_internal:telemetry",
+            "//snowflake/ml/_internal/exceptions:exceptions",
             "//snowflake/ml/modeling/framework",
         ],
     )
@@ -46,6 +48,7 @@ def get_build_rules_for_native_impl():
             ":ordinal_encoder",
             "//snowflake/ml/_internal:telemetry",
             "//snowflake/ml/_internal:type_utils",
+            "//snowflake/ml/_internal/exceptions:exceptions",
             "//snowflake/ml/modeling/framework",
         ],
     )
@@ -82,6 +85,7 @@ def get_build_rules_for_native_impl():
         deps = [
             ":init",
             "//snowflake/ml/_internal:telemetry",
+            "//snowflake/ml/_internal/exceptions:exceptions",
             "//snowflake/ml/modeling/framework",
         ],
     )
@@ -123,6 +127,7 @@ def get_build_rules_for_native_impl():
         deps = [
             ":init",
             "//snowflake/ml/_internal:telemetry",
+            "//snowflake/ml/_internal/exceptions:exceptions",
             "//snowflake/ml/modeling/framework",
         ],
     )

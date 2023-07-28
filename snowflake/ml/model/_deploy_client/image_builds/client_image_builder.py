@@ -2,14 +2,10 @@ import base64
 import json
 import logging
 import os
-import posixpath
 import subprocess
 import tempfile
-import zipfile
 from enum import Enum
 from typing import List
-
-import yaml
 
 from snowflake import snowpark
 from snowflake.ml._internal.utils import query_result_checker
@@ -17,7 +13,6 @@ from snowflake.ml.model._deploy_client.image_builds import (
     base_image_builder,
     docker_context,
 )
-from snowflake.ml.model._deploy_client.utils import constants
 
 
 class Platform(Enum):
@@ -36,20 +31,20 @@ class ClientImageBuilder(base_image_builder.ImageBuilder):
     """
 
     def __init__(
-        self, *, id: str, image_repo: str, model_zip_stage_path: str, session: snowpark.Session, use_gpu: bool = False
+        self, *, id: str, image_repo: str, model_dir: str, session: snowpark.Session, use_gpu: bool = False
     ) -> None:
         """Initialization
 
         Args:
             id: A hexadecimal string used for naming the image tag.
             image_repo: Path to image repository.
-            model_zip_stage_path: Path to model zip file in stage.
+            model_dir: Local model directory, downloaded form stage and extracted.
             use_gpu: Boolean flag for generating the CPU or GPU base image.
             session: Snowpark session
         """
         self.image_tag = "/".join([image_repo.rstrip("/"), id]) + ":latest"
         self.image_repo = image_repo
-        self.model_zip_stage_path = model_zip_stage_path
+        self.model_dir = model_dir
         self.use_gpu = use_gpu
         self.session = session
 
@@ -76,6 +71,20 @@ class ClientImageBuilder(base_image_builder.ImageBuilder):
             with open(config_path, "w", encoding="utf-8") as file:
                 json.dump(content, file)
 
+        def _cleanup_local_image() -> None:
+            try:
+                image_exist_command = f"docker image inspect {self.image_tag}"
+                subprocess.check_call(
+                    image_exist_command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, shell=True
+                )
+            except subprocess.CalledProcessError:
+                # Image does not exist, probably due to failed build step
+                pass
+            else:
+                commands = ["docker", "--config", config_dir, "rmi", self.image_tag]
+                logging.info(f"Removing local image: {self.image_tag}")
+                self._run_docker_commands(commands)
+
         self.validate_docker_client_env()
 
         query_result = (
@@ -95,12 +104,17 @@ class ClientImageBuilder(base_image_builder.ImageBuilder):
                 self.session.sql("ALTER SESSION SET PYTHON_CONNECTOR_QUERY_RESULT_FORMAT = 'json'").collect()
                 _setup_docker_config(config_dir)
                 self._build(config_dir)
-                self._upload(config_dir)
+            except Exception as e:
+                raise RuntimeError(f"Failed to build docker image: {str(e)}")
+            else:
+                try:
+                    self._upload(config_dir)
+                except Exception as e:
+                    raise RuntimeError(f"Failed to upload docker image to registry: {str(e)}")
+                finally:
+                    _cleanup_local_image()
             finally:
                 self.session.sql(f"ALTER SESSION SET PYTHON_CONNECTOR_QUERY_RESULT_FORMAT = '{prev_format}'").collect()
-                commands = ["docker", "--config", config_dir, "rmi", self.image_tag]
-                logging.info(f"Removing local image: {self.image_tag}")
-                self._run_docker_commands(commands)
         return self.image_tag
 
     def validate_docker_client_env(self) -> None:
@@ -129,40 +143,6 @@ class ClientImageBuilder(base_image_builder.ImageBuilder):
                 "https://docs.docker.com/build/buildkit/#getting-started"
             )
 
-    def _extract_model_zip(self, context_dir: str) -> str:
-        """Extract a zip file into the specified directory.
-
-        Args:
-            context_dir: Directory to extract the zip to.
-
-        Returns:
-            The extracted model directory.
-        """
-
-        local_model_zip_path = os.path.join(context_dir, posixpath.basename(self.model_zip_stage_path))
-        if zipfile.is_zipfile(local_model_zip_path):
-            extracted_model_dir = os.path.join(context_dir, constants.MODEL_DIR)
-            with zipfile.ZipFile(local_model_zip_path, "r") as model_zip:
-                if len(model_zip.namelist()) > 1:
-                    model_zip.extractall(extracted_model_dir)
-            conda_path = os.path.join(extracted_model_dir, "env", "conda.yaml")
-
-            def remove_snowml_from_conda() -> None:
-                with open(conda_path, encoding="utf-8") as file:
-                    conda_yaml = yaml.safe_load(file)
-
-                dependencies = conda_yaml["dependencies"]
-                dependencies = [dep for dep in dependencies if not dep.startswith("snowflake-ml-python")]
-
-                conda_yaml["dependencies"] = dependencies
-
-                with open(conda_path, "w", encoding="utf-8") as file:
-                    yaml.dump(conda_yaml, file)
-
-            # TODO(shchen): Remove once SNOW-840411 is landed.
-            remove_snowml_from_conda()
-        return extracted_model_dir
-
     def _build(self, docker_config_dir: str) -> None:
         """Constructs the Docker context directory and then builds a Docker image based on that context.
 
@@ -171,15 +151,7 @@ class ClientImageBuilder(base_image_builder.ImageBuilder):
         """
 
         with tempfile.TemporaryDirectory() as context_dir:
-            # Download the model zip file that is already uploaded to stage during model registry log_model step.
-            # This is needed in order to obtain the conda and requirement file inside the model zip.
-            self.session.file.get(self.model_zip_stage_path, context_dir)
-
-            extracted_model_dir = self._extract_model_zip(context_dir)
-
-            dc = docker_context.DockerContext(
-                context_dir=context_dir, model_dir=extracted_model_dir, use_gpu=self.use_gpu
-            )
+            dc = docker_context.DockerContext(context_dir=context_dir, model_dir=self.model_dir, use_gpu=self.use_gpu)
             dc.build()
             self._build_image_from_context(context_dir=context_dir, docker_config_dir=docker_config_dir)
 
@@ -201,7 +173,7 @@ class ClientImageBuilder(base_image_builder.ImageBuilder):
                 logging.info(line)
 
         if proc.wait():
-            raise RuntimeError(f"Docker build failed: {''.join(output_lines)}")
+            raise RuntimeError(f"Docker commands failed: \n {''.join(output_lines)}")
 
     def _build_image_from_context(
         self, context_dir: str, docker_config_dir: str, *, platform: Platform = Platform.LINUX_AMD64

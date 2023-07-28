@@ -64,9 +64,9 @@ def covariance(*, df: DataFrame, columns: Optional[Collection[str]] = None, ddof
     accumulator_udtf = F.table_function(accumulator)
 
     # Compute the confusion matrix.
-    temp_df1 = input_df.select(F.array_construct(*input_df.columns).alias("ARR_COL"))  # type: ignore[arg-type]
+    temp_df1 = input_df.select(F.array_construct(*input_df.columns).alias("ARR_COL"))
     temp_df2 = temp_df1.select(
-        sharded_dot_and_sum_computer_udtf(F.col("ARR_COL"), F.lit(count), F.lit(ddof))  # type: ignore[arg-type]
+        sharded_dot_and_sum_computer_udtf(F.col("ARR_COL"), F.lit(count), F.lit(ddof))
     ).with_column_renamed("RESULT", "RES")
     res_df = temp_df2.select(accumulator_udtf(F.col("RES")).over(partition_by="PART"), F.col("PART"))
     results = res_df.collect(statement_params=statement_params)

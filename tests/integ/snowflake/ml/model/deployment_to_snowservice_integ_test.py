@@ -11,11 +11,13 @@ import sklearn.datasets as datasets
 from absl.testing import absltest
 from sklearn import neighbors
 
-from snowflake.ml.model import _model as model_api, custom_model
-from snowflake.ml.model._deploy_client.snowservice import (
-    deploy as snowservice_api,
-    deploy_options,
+from snowflake.ml.model import (
+    _model as model_api,
+    custom_model,
+    type_hints as model_types,
 )
+from snowflake.ml.model._deploy_client.snowservice import deploy as snowservice_api
+from snowflake.ml.model._deploy_client.utils import constants
 from snowflake.ml.utils import connection_params
 from snowflake.snowpark import Session
 from tests.integ.snowflake.ml.test_utils import db_manager
@@ -50,12 +52,12 @@ class DeploymentToSnowServiceIntegTest(absltest.TestCase):
         except KeyError:
             raise SkipTest("SnowService connection parameters not present: skipping SnowServicesIntegTest.")
 
-        deployment_name = login_options["host"].split(".")[1]
-        registry_host = f"{deployment_name}-{login_options['account']}.registry-dev.snowflakecomputing.com"
-
-        cls.FULL_IMAGE_REPO_PATH = f"{registry_host}/{cls.TEST_DB}/{cls.TEST_SCHEMA}/{cls.TEST_IMAGE_REPO}/".lower()
-
-        cls._session = Session.builder.configs({**login_options}).create()
+        cls._session = Session.builder.configs(
+            {
+                **login_options,
+                **{"database": cls.TEST_DB, "schema": cls.TEST_SCHEMA},
+            }
+        ).create()
         cls._db_manager = db_manager.DBManager(cls._session)
         cls._db_manager.set_role(cls.TEST_ROLE)
         cls._db_manager.create_stage(cls.TEST_STAGE, cls.TEST_SCHEMA, cls.TEST_DB, sse_encrypted=True)
@@ -75,12 +77,13 @@ class DeploymentToSnowServiceIntegTest(absltest.TestCase):
 
     def _save_model_to_stage(self, model: custom_model.CustomModel, sample_input: pd.DataFrame) -> str:
         stage_path = f"@{self.TEST_STAGE}/{self.uid}/model.zip"
-        model_api.save_model(
+        model_api.save_model(  # type: ignore[call-overload]
             name="model",
             session=self._session,
             model_stage_file_path=stage_path,
             model=model,
             sample_input=sample_input,
+            options={"embed_local_ml_library": True},
         )
         return stage_path
 
@@ -89,16 +92,19 @@ class DeploymentToSnowServiceIntegTest(absltest.TestCase):
         service_func_name = db_manager.TestObjectNameGenerator.get_snowml_test_object_name(
             self._RUN_ID, f"func_{self.uid}"
         )
-        deployment_options: deploy_options.SnowServiceDeployOptionsTypedHint = {
-            "stage": self.TEST_STAGE,
+        deployment_options: model_types.SnowparkContainerServiceDeployOptions = {
             "compute_pool": self.TEST_COMPUTE_POOL,
-            "image_repo": self.FULL_IMAGE_REPO_PATH,
+            # image_repo is optional for user, pass in full image repo for test purposes only
+            "image_repo": self._db_manager.get_snowservice_image_repo(
+                subdomain=constants.DEV_IMAGE_REGISTRY_SUBDOMAIN, repo=self.TEST_IMAGE_REPO
+            ),
         }
         snowservice_api._deploy(
             self._session,
             model_id=uuid.uuid4().hex,
             service_func_name=service_func_name,
             model_zip_stage_path=model_stage_file_path,
+            deployment_stage_path=model_stage_file_path,  # use the same stage for testing
             **deployment_options,
         )
 

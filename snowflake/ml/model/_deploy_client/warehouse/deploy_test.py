@@ -1,9 +1,6 @@
-import sys
-import tempfile
 import textwrap
 from importlib import metadata as importlib_metadata
 from typing import Dict, List, cast
-from unittest import mock
 
 from absl.testing import absltest
 from packaging import requirements
@@ -37,10 +34,6 @@ _BASIC_DEPENDENCIES_FINAL_PACKAGES = list(
 class TestFinalPackagesWithoutConda(absltest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
-        cls._temp_conda = None
-        if sys.modules.get("conda"):
-            cls._temp_conda = sys.modules["conda"]
-        sys.modules["conda"] = None  # type: ignore[assignment]
         env_utils._INFO_SCHEMA_PACKAGES_HAS_RUNTIME_VERSION = None
         cls.m_session = mock_session.MockSession(conn=None, test_case=None)
         cls.m_session.add_mock_sql(
@@ -68,10 +61,7 @@ class TestFinalPackagesWithoutConda(absltest.TestCase):
 
     @classmethod
     def tearDownClass(cls) -> None:
-        if cls._temp_conda:
-            sys.modules["conda"] = cls._temp_conda
-        else:
-            del sys.modules["conda"]
+        pass
 
     def add_packages(self, packages_dicts: Dict[str, List[str]]) -> None:
         pkg_names_str = " OR ".join(f"package_name = '{pkg}'" for pkg in sorted(packages_dicts.keys()))
@@ -97,12 +87,9 @@ class TestFinalPackagesWithoutConda(absltest.TestCase):
         env_utils._SNOWFLAKE_CONDA_PACKAGE_CACHE = {}
         meta = _model_meta.ModelMetadata(name="model1", model_type="custom", signatures=_DUMMY_SIG)
         c_session = cast(session.Session, self.m_session)
-        with self.assertWarnsRegex(
-            RuntimeWarning,
-            "Cannot find conda resolver",
-        ):
-            final_packages = deploy._get_model_final_packages(meta, c_session)
-            self.assertListEqual(final_packages, list(map(str, _BASIC_DEPENDENCIES_FINAL_PACKAGES)))
+
+        final_packages = deploy._get_model_final_packages(meta, c_session)
+        self.assertListEqual(final_packages, list(map(str, _BASIC_DEPENDENCIES_FINAL_PACKAGES)))
 
     def test_get_model_final_packages_no_relax(self) -> None:
         env_utils._SNOWFLAKE_CONDA_PACKAGE_CACHE = {}
@@ -110,12 +97,8 @@ class TestFinalPackagesWithoutConda(absltest.TestCase):
             name="model1", model_type="custom", signatures=_DUMMY_SIG, conda_dependencies=["pandas==1.0.*"]
         )
         c_session = cast(session.Session, self.m_session)
-        with self.assertWarnsRegex(
-            RuntimeWarning,
-            "Cannot find conda resolver",
-        ):
-            with self.assertRaises(RuntimeError):
-                deploy._get_model_final_packages(meta, c_session)
+        with self.assertRaises(RuntimeError):
+            deploy._get_model_final_packages(meta, c_session)
 
     def test_get_model_final_packages_relax(self) -> None:
         env_utils._SNOWFLAKE_CONDA_PACKAGE_CACHE = {}
@@ -123,14 +106,9 @@ class TestFinalPackagesWithoutConda(absltest.TestCase):
             name="model1", model_type="custom", signatures=_DUMMY_SIG, conda_dependencies=["pandas==1.0.*"]
         )
         c_session = cast(session.Session, self.m_session)
-        with self.assertWarnsRegex(
-            RuntimeWarning,
-            "Cannot find conda resolver",
-        ):
-            final_packages = deploy._get_model_final_packages(meta, c_session, relax_version=True)
-            self.assertListEqual(
-                final_packages, sorted(list(map(lambda x: x.name, _BASIC_DEPENDENCIES_FINAL_PACKAGES)))
-            )
+
+        final_packages = deploy._get_model_final_packages(meta, c_session, relax_version=True)
+        self.assertListEqual(final_packages, sorted(list(map(lambda x: x.name, _BASIC_DEPENDENCIES_FINAL_PACKAGES))))
 
     def test_get_model_final_packages_with_pip(self) -> None:
         env_utils._SNOWFLAKE_CONDA_PACKAGE_CACHE = {}
@@ -170,120 +148,9 @@ class TestFinalPackagesWithoutConda(absltest.TestCase):
             name="model1", model_type="custom", signatures=_DUMMY_SIG, conda_dependencies=["python-package"]
         )
         c_session = cast(session.Session, self.m_session)
-        with self.assertWarnsRegex(
-            RuntimeWarning,
-            "Cannot find conda resolver",
-        ):
-            with self.assertRaises(RuntimeError):
-                deploy._get_model_final_packages(meta, c_session)
 
-
-class TestFinalPackagesWithCondaWIthoutSnowML(absltest.TestCase):
-    def setUp(self) -> None:
-        self.m_session = mock_session.MockSession(conn=None, test_case=self)
-
-    def tearDown(self) -> None:
-        pass
-
-    def test_get_model_final_packages_disable_conda(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            with _model_meta._create_model_metadata(
-                model_dir_path=tmpdir,
-                name="model1",
-                model_type="custom",
-                signatures=_DUMMY_SIG,
-                embed_local_ml_library=True,
-            ) as meta:
-                c_session = cast(session.Session, self.m_session)
-                with mock.patch.object(
-                    env_utils, "validate_requirements_in_snowflake_conda_channel", return_value=None
-                ) as mock_validate_requirements_in_snowflake_conda_channel:
-                    with self.assertRaises(RuntimeError):
-                        _ = deploy._get_model_final_packages(meta, c_session, disable_local_conda_resolver=True)
-                    mock_validate_requirements_in_snowflake_conda_channel.assert_called_once()
-
-    def test_get_model_final_packages(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            with _model_meta._create_model_metadata(
-                model_dir_path=tmpdir,
-                name="model1",
-                model_type="custom",
-                signatures=_DUMMY_SIG,
-                embed_local_ml_library=True,
-            ) as meta:
-                c_session = cast(session.Session, self.m_session)
-                final_packages = deploy._get_model_final_packages(meta, c_session, relax_version=True)
-                self.assertIsNotNone(final_packages)
-
-    def test_get_model_final_packages_no_relax(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            with _model_meta._create_model_metadata(
-                model_dir_path=tmpdir,
-                name="model1",
-                model_type="custom",
-                signatures=_DUMMY_SIG,
-                conda_dependencies=["pandas<1"],
-                embed_local_ml_library=True,
-            ) as meta:
-                c_session = cast(session.Session, self.m_session)
-                with self.assertRaises(RuntimeError):
-                    deploy._get_model_final_packages(meta, c_session)
-
-    def test_get_model_final_packages_relax(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            with _model_meta._create_model_metadata(
-                model_dir_path=tmpdir,
-                name="model1",
-                model_type="custom",
-                signatures=_DUMMY_SIG,
-                conda_dependencies=["pandas<1"],
-                embed_local_ml_library=True,
-            ) as meta:
-                c_session = cast(session.Session, self.m_session)
-                final_packages = deploy._get_model_final_packages(meta, c_session, relax_version=True)
-                self.assertIsNotNone(final_packages)
-
-    def test_get_model_final_packages_with_pip(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            with _model_meta._create_model_metadata(
-                model_dir_path=tmpdir,
-                name="model1",
-                model_type="custom",
-                signatures=_DUMMY_SIG,
-                pip_requirements=["python_package"],
-                embed_local_ml_library=True,
-            ) as meta:
-                c_session = cast(session.Session, self.m_session)
-                with self.assertRaises(RuntimeError):
-                    deploy._get_model_final_packages(meta, c_session)
-
-    def test_get_model_final_packages_with_other_channel(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            with _model_meta._create_model_metadata(
-                model_dir_path=tmpdir,
-                name="model1",
-                model_type="custom",
-                signatures=_DUMMY_SIG,
-                conda_dependencies=["conda-forge::python_package"],
-                embed_local_ml_library=True,
-            ) as meta:
-                c_session = cast(session.Session, self.m_session)
-                with self.assertRaises(RuntimeError):
-                    deploy._get_model_final_packages(meta, c_session)
-
-    def test_get_model_final_packages_with_non_exist_package(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            with _model_meta._create_model_metadata(
-                model_dir_path=tmpdir,
-                name="model1",
-                model_type="custom",
-                signatures=_DUMMY_SIG,
-                conda_dependencies=["python_package"],
-                embed_local_ml_library=True,
-            ) as meta:
-                c_session = cast(session.Session, self.m_session)
-                with self.assertRaises(RuntimeError):
-                    deploy._get_model_final_packages(meta, c_session)
+        with self.assertRaises(RuntimeError):
+            deploy._get_model_final_packages(meta, c_session)
 
 
 if __name__ == "__main__":

@@ -56,6 +56,8 @@ _DATA_QUOTES = [
     ["5", "''b''", "'g1ehQl''L80t", 2.5, -1.0],
     ["6", "'b\"", "''g1ehQlL80t", 4.0, 457946.23462],
     ["7", "'b", "\"'g1ehQl'L80t'", -10.0, -12.564],
+    ["8", "C", "zOyDvcyZ2s", 0.0, 0.0],
+    ["9", '"c"', "g1ehQlL80t", 0.0, 0.0],
 ]
 
 
@@ -627,7 +629,7 @@ class OneHotEncoderTest(parameterized.TestCase):
         id_col = ID_COL
         input_cols_extended = input_cols.copy()
         input_cols_extended.append(id_col)
-        df_pandas, df = framework_utils.get_df(self._session, _DATA_QUOTES, SCHEMA_BOOLEAN, np.nan)
+        df_pandas, df = framework_utils.get_df(self._session, _DATA_QUOTES, SCHEMA, np.nan)
 
         sparse = False
         encoder = OneHotEncoder(sparse=sparse).set_input_cols(input_cols).set_output_cols(output_cols)
@@ -1639,13 +1641,13 @@ class OneHotEncoderTest(parameterized.TestCase):
                 ("Y", np.float64),
                 ("Z", np.str_),
                 ("A", np.bool8),
-                ("B", np.bytes0),
+                # ("B", np.bytes0),
                 ("C", np.object0),
             ],
         )
         pd_df = pd.DataFrame(x)
         df = self._session.create_dataframe(pd_df)
-        input_cols = ["A", "B", "C", "X", "Y", "Z"]
+        input_cols = ["A", "C", "X", "Y", "Z"]
         output_cols = [f"OHE_{c}" for c in input_cols]
 
         ohe = OneHotEncoder(input_cols=input_cols, output_cols=output_cols)
@@ -1660,6 +1662,7 @@ class OneHotEncoderTest(parameterized.TestCase):
         np.testing.assert_allclose(actual_arr, sklearn_arr.toarray())
 
     def test_identical_snowpark_vs_pandas_output_column_names(self) -> None:
+        # UCI_BANK_MARKETING_20COLUMNS
         snow_df = self._session.sql(
             """SELECT *, IFF(Y = 'yes', 1.0, 0.0) as LABEL
             FROM ML_DATASETS.PUBLIC.UCI_BANK_MARKETING_20COLUMNS
@@ -1677,11 +1680,47 @@ class OneHotEncoderTest(parameterized.TestCase):
             "DURATION",
         ]
 
-        ohe = OneHotEncoder(input_cols=cols, output_cols=cols).fit(snow_df)
+        ohe = OneHotEncoder(input_cols=cols, output_cols=cols, sparse=False).fit(snow_df)
         snow_cols = ohe.transform(snow_df).columns
         pd_cols = ohe.transform(pd_df).columns.tolist()
-
         self.assertCountEqual(snow_cols, pd_cols)
+
+    def test_select_partial_cols(self) -> None:
+        snow_df = self._session.sql(
+            """SELECT AGE as AGE_1, *
+            FROM ML_DATASETS.PUBLIC.UCI_BANK_MARKETING_20COLUMNS
+            LIMIT 1000"""
+        ).drop("Y")
+        cols = [
+            "AGE",
+            "CAMPAIGN",
+            "CONTACT",
+            "DAY_OF_WEEK",
+            "EDUCATION",
+        ]
+
+        ohe = OneHotEncoder(input_cols=cols, output_cols=cols).fit(snow_df)
+        ohe.transform(snow_df)
+        # custom data
+        input_cols, output_cols = CATEGORICAL_COLS, OUTPUT_COLS
+        pd_df2, snow_df2 = framework_utils.get_df(self._session, _DATA_QUOTES, SCHEMA, np.nan)
+
+        ohe2 = OneHotEncoder(input_cols=input_cols, output_cols=output_cols, sparse=False).fit(snow_df2)
+        snow_cols2 = ohe2.transform(snow_df2).columns
+        pd_cols2 = ohe2.transform(pd_df2).columns.tolist()
+        self.assertCountEqual(snow_cols2, pd_cols2)
+
+    def test_get_output_cols_sparse(self) -> None:
+        output_cols = ["OUT1", '"Out2"', "Out3", "OUT 4", "Out5"]
+        input_cols = [f"COL_{i}" for i in range(len(output_cols))]
+        data = [[0 for _ in range(len(input_cols))]]
+        _, snow_df = framework_utils.get_df(self._session, data, input_cols, np.nan)
+
+        ohe = OneHotEncoder(input_cols=input_cols, output_cols=output_cols, sparse=True, drop_input_cols=True).fit(
+            snow_df
+        )
+        out_cols = ohe.transform(snow_df).columns
+        self.assertCountEqual(ohe.get_output_cols(), out_cols)
 
 
 if __name__ == "__main__":

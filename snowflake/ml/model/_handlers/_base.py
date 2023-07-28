@@ -43,7 +43,7 @@ class _ModelHandler(ABC, Generic[model_types._ModelType]):
         model_blobs_dir_path: str,
         sample_input: Optional[model_types.SupportedDataType] = None,
         is_sub_model: Optional[bool] = False,
-        **kwargs: Unpack[model_types.ModelSaveOption],
+        **kwargs: Unpack[model_types.BaseModelSaveOption],
     ) -> None:
         """Save the model.
 

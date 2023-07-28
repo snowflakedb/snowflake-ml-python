@@ -91,6 +91,7 @@ def autogen_estimators(module, estimator_info_list):
                 "//snowflake/ml/_internal/utils:pkg_version_utils",
                 "//snowflake/ml/_internal/utils:identifier",
                 "//snowflake/ml/model:model_signature",
+                "//snowflake/ml/model/_signatures:utils",
             ],
             tags = ["skip_mypy_check"],
         )

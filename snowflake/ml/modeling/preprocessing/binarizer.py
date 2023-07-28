@@ -9,6 +9,7 @@ from sklearn import preprocessing
 
 from snowflake import snowpark
 from snowflake.ml._internal import telemetry
+from snowflake.ml._internal.exceptions import error_codes, exceptions
 from snowflake.ml.modeling.framework import base
 from snowflake.snowpark import functions as F, types as T
 
@@ -83,10 +84,13 @@ class Binarizer(base.BaseTransformer):
             self
 
         Raises:
-            TypeError: If the threshold is not a float.
+            SnowflakeMLException: If the threshold is not a float.
         """
         if not isinstance(self.threshold, float):
-            raise TypeError(f"Binarizer threshold must be a float, but got {type(self.threshold)}.")
+            raise exceptions.SnowflakeMLException(
+                error_code=error_codes.INVALID_ATTRIBUTE,
+                original_exception=TypeError(f"Binarizer threshold must be a float, but got {type(self.threshold)}."),
+            )
 
         self._is_fitted = True
         return self
@@ -108,22 +112,15 @@ class Binarizer(base.BaseTransformer):
 
         Returns:
             Output dataset.
-
-        Raises:
-            TypeError: If the input dataset is neither a pandas nor Snowpark DataFrame.
         """
         super()._check_input_cols()
         super()._check_output_cols()
+        super()._check_dataset_type(dataset)
 
         if isinstance(dataset, snowpark.DataFrame):
             output_df = self._transform_snowpark(dataset)
-        elif isinstance(dataset, pd.DataFrame):
-            output_df = self._transform_sklearn(dataset)
         else:
-            raise TypeError(
-                f"Unexpected dataset type: {type(dataset)}."
-                "Supported dataset types: snowpark.DataFrame, pandas.DataFrame."
-            )
+            output_df = self._transform_sklearn(dataset)
 
         return self._drop_input_columns(output_df) if self._drop_input_cols is True else output_df
 
@@ -132,7 +129,7 @@ class Binarizer(base.BaseTransformer):
         self._validate_data_has_no_nulls(dataset)
         output_columns = []
         for input_col in self.input_cols:
-            col = F.iff(dataset[input_col] > self.threshold, 1.0, 0.0).cast(T.FloatType())  # type: ignore[arg-type]
+            col = F.iff(dataset[input_col] > self.threshold, 1.0, 0.0).cast(T.FloatType())
             output_columns.append(col)
 
         transformed_dataset: snowpark.DataFrame = dataset.with_columns(self.output_cols, output_columns)

@@ -58,6 +58,7 @@ py_library(
     srcs = ["telemetry.py"],
     deps = [
         "//snowflake/ml/_internal:env",
+        "//snowflake/ml/_internal/exceptions:exceptions",
     ],
 )
 
@@ -67,5 +68,6 @@ py_test(
     deps = [
         ":telemetry",
         "//snowflake/ml/_internal:env",
+        "//snowflake/ml/_internal/exceptions:exceptions",
     ],
 )

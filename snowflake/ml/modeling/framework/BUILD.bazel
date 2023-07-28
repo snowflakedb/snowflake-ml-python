@@ -11,6 +11,9 @@ py_library(
     deps = [
         "//snowflake/ml:version",
         "//snowflake/ml/_internal:telemetry",
+        "//snowflake/ml/_internal/exceptions:error_messages",
+        "//snowflake/ml/_internal/exceptions:exceptions",
+        "//snowflake/ml/_internal/exceptions:modeling_error_messages",
         "//snowflake/ml/_internal/utils:parallelize",
     ],
 )

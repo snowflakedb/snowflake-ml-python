@@ -28,8 +28,10 @@ help() {
 echo "Running ${PROG}"
 
 bazel="bazel"
-current_revision=$(git rev-parse HEAD)
-pr_revision=${current_revision}
+current_revision=$(git symbolic-ref --short -q HEAD \
+  || git describe --tags --exact-match 2> /dev/null \
+  || git rev-parse --short HEAD)
+pr_revision=$(git rev-parse HEAD)
 output_path="/tmp/affected_targets/targets"
 workspace_path=$(pwd)
 

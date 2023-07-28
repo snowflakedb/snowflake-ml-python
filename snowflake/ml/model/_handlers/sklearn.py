@@ -14,6 +14,7 @@ from snowflake.ml.model import (
     type_hints as model_types,
 )
 from snowflake.ml.model._handlers import _base
+from snowflake.ml.model._signatures import numpy_handler, utils as model_signature_utils
 
 if TYPE_CHECKING:
     import sklearn.base
@@ -161,11 +162,11 @@ class _SKLModelHandler(_base._ModelHandler[Union["sklearn.base.BaseEstimator", "
                     if isinstance(res, list) and len(res) > 0 and isinstance(res[0], np.ndarray):
                         # In case of multi-output estimators, predict_proba(), decision_function(), etc., functions
                         # return a list of ndarrays. We need to deal them seperately
-                        df = model_signature._SeqOfNumpyArrayHandler.convert_to_df(res)
+                        df = numpy_handler.SeqOfNumpyArrayHandler.convert_to_df(res)
                     else:
                         df = pd.DataFrame(res)
 
-                    return model_signature._rename_pandas_df(df, signature.outputs)
+                    return model_signature_utils.rename_pandas_df(df, signature.outputs)
 
                 return fn
 

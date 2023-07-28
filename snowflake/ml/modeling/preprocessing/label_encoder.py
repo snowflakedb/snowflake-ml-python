@@ -9,6 +9,7 @@ from sklearn import preprocessing
 
 from snowflake import snowpark
 from snowflake.ml._internal import telemetry, type_utils
+from snowflake.ml._internal.exceptions import error_codes, exceptions
 from snowflake.ml.modeling.framework import base
 from snowflake.ml.modeling.preprocessing import ordinal_encoder
 
@@ -81,14 +82,20 @@ class LabelEncoder(base.BaseTransformer):
             self
 
         Raises:
-            ValueError: If length of input_cols is not 1 or length of output_cols is greater than 1.
+            SnowflakeMLException: If length of input_cols is not 1 or length of output_cols is greater than 1.
         """
         if len(self.input_cols) != 1:
-            raise ValueError("Label encoder must specify one input column.")
+            raise exceptions.SnowflakeMLException(
+                error_code=error_codes.INVALID_ATTRIBUTE,
+                original_exception=ValueError("Label encoder must specify one input column."),
+            )
         input_col = self.input_cols[0]
 
         if len(self.output_cols) != 1:
-            raise ValueError("Label encoder must specify one output column.")
+            raise exceptions.SnowflakeMLException(
+                error_code=error_codes.INVALID_ATTRIBUTE,
+                original_exception=ValueError("Label encoder must specify one output column."),
+            )
 
         self._reset()
 
@@ -121,28 +128,20 @@ class LabelEncoder(base.BaseTransformer):
 
         Returns:
             Output dataset.
-
-        Raises:
-            RuntimeError: If transformer is not fitted first.
-            TypeError: If the input dataset is neither a pandas nor Snowpark DataFrame.
         """
-        if not self._is_fitted or self._ordinal_encoder is None or self.classes_ is None:
-            raise RuntimeError("Label encoder must be fitted before calling transform().")
+        self._enforce_fit()
+        super()._check_dataset_type(dataset)
 
         if isinstance(dataset, snowpark.DataFrame):
             # [SNOW-802691] Support for mypy type checking
+            assert self._ordinal_encoder is not None
             output_df = self._ordinal_encoder.transform(dataset).na.replace(
-                float("nan"),  # type: ignore[arg-type]
+                float("nan"),
                 len(self.classes_) - 1,  # type: ignore[arg-type]
                 subset=self.output_cols,
             )
-        elif isinstance(dataset, pd.DataFrame):
-            output_df = self._transform_sklearn(dataset)
         else:
-            raise TypeError(
-                f"Unexpected dataset type: {type(dataset)}."
-                "Supported dataset types: snowpark.DataFrame, pandas.DataFrame."
-            )
+            output_df = self._transform_sklearn(dataset)
 
         return self._drop_input_columns(output_df) if self._drop_input_cols is True else output_df
 

@@ -153,11 +153,15 @@ def hash_directory(directory: Union[str, pathlib.Path]) -> str:
     return _update_hash_from_dir(directory, hashlib.sha1()).hexdigest()
 
 
-def get_all_modules(dirname: str, prefix: str = "") -> List[pkgutil.ModuleInfo]:
+def get_all_modules(dirname: str, prefix: str = "") -> List[str]:
+    modules = [mod.name for mod in pkgutil.iter_modules([dirname], prefix=prefix)]
     subdirs = [f.path for f in os.scandir(dirname) if f.is_dir()]
-    modules = list(pkgutil.iter_modules(subdirs, prefix=prefix))
-    for dirname in subdirs:
-        modules.extend(get_all_modules(dirname, prefix=f"{prefix}.{dirname}" if prefix else dirname))
+    for sub_dirname in subdirs:
+        basename = os.path.basename(sub_dirname)
+        sub_dir_namespace = f"{prefix}{basename}"
+        if sub_dir_namespace not in modules:
+            modules.append(sub_dir_namespace)
+        modules.extend(get_all_modules(sub_dirname, prefix=f"{sub_dir_namespace}."))
     return modules
 
 

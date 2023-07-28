@@ -10,6 +10,7 @@ from snowflake.ml._internal.utils import formatting
 
 _CONDA_ENV_FILE_NAME = "conda.yaml"
 _SNOWFLAKE_CONDA_CHANNEL_URL = "https://repo.anaconda.com/pkgs/snowflake"
+_NODEFAULTS = "nodefaults"
 _REQUIREMENTS_FILE_NAME = "requirements.txt"
 
 
@@ -31,7 +32,11 @@ def save_conda_env_file(
     path = os.path.join(dir_path, _CONDA_ENV_FILE_NAME)
     env: Dict[str, Any] = dict()
     env["name"] = "snow-env"
-    env["channels"] = [_SNOWFLAKE_CONDA_CHANNEL_URL, "nodefaults"]
+    env["channels"] = (
+        [_SNOWFLAKE_CONDA_CHANNEL_URL]
+        + [channel_name for channel_name, channel_deps in deps.items() if len(channel_deps) == 0]
+        + [_NODEFAULTS]
+    )
     env["dependencies"] = [f"python=={python_version}"]
     for chan, reqs in deps.items():
         env["dependencies"].extend([f"{chan}::{str(req)}" if chan else str(req) for req in reqs])
@@ -78,16 +83,27 @@ def load_conda_env_file(path: str) -> Tuple[DefaultDict[str, List[requirements.R
 
     python_version = None
 
+    channels = env["channels"]
+    channels.remove(_SNOWFLAKE_CONDA_CHANNEL_URL)
+    channels.remove(_NODEFAULTS)
+
     for dep in env["dependencies"]:
         if isinstance(dep, str):
-            if dep.startswith("python=="):
-                hd, _, ver = dep.partition("==")
-                assert hd == "python"
-                python_version = ver
+            ver = env_utils.parse_python_version_string(dep)
+            # ver is None: not python, ver is "": python w/o specifier, ver is str: python w/ specifier
+            if ver is not None:
+                if ver:
+                    python_version = ver
             else:
                 deps.append(dep)
 
-    return env_utils.validate_conda_dependency_string_list(deps), python_version
+    conda_dep_dict = env_utils.validate_conda_dependency_string_list(deps)
+
+    if len(channels) > 0:
+        for channel in channels:
+            conda_dep_dict[channel] = []
+
+    return conda_dep_dict, python_version
 
 
 def load_requirements_file(path: str) -> List[requirements.Requirement]:

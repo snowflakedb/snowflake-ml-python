@@ -6,9 +6,15 @@ from typing import Any, Callable, List, Optional
 from snowflake import snowpark
 from snowflake.connector import connection
 from snowflake.ml._internal import telemetry
+from snowflake.ml._internal.exceptions import (
+    error_codes,
+    exceptions as snowml_exceptions,
+    fileset_error_messages,
+    fileset_errors,
+)
 from snowflake.ml._internal.utils import identifier, import_utils
-from snowflake.ml.fileset import fileset_errors, sfcfs
-from snowflake.snowpark import exceptions, functions, types
+from snowflake.ml.fileset import sfcfs
+from snowflake.snowpark import exceptions as snowpark_exceptions, functions, types
 
 # The max file size for data loading.
 TARGET_FILE_SIZE = 32 * 2**20
@@ -26,7 +32,10 @@ def _raise_if_deleted(func: Callable[..., Any]) -> Callable[..., Any]:
     @functools.wraps(func)
     def raise_if_deleted_helper(self: Any, *args: Any, **kwargs: Any) -> Any:
         if self._is_deleted:
-            raise fileset_errors.FileSetAlreadyDeletedError("The FileSet has already been deleted.")
+            raise snowml_exceptions.SnowflakeMLException(
+                error_code=error_codes.SNOWML_DELETE_FAILED,
+                original_exception=fileset_errors.FileSetAlreadyDeletedError("The FileSet has already been deleted."),
+            )
         return func(self, *args, **kwargs)
 
     return raise_if_deleted_helper
@@ -35,6 +44,7 @@ def _raise_if_deleted(func: Callable[..., Any]) -> Callable[..., Any]:
 class FileSet:
     """A FileSet represents an immutable snapshot of the result of a query in the form of files."""
 
+    @telemetry.send_api_usage_telemetry(project=_PROJECT)
     def __init__(
         self,
         *,
@@ -80,9 +90,9 @@ class FileSet:
         ['sfc://@mydb.myschema.mystage/mydir/helloworld/data_0_0_0.snappy.parquet']
         """
         if sf_connection and snowpark_session:
-            raise ValueError("sf_connection and snowpark_session cannot be specified at the same time.")
+            raise ValueError(fileset_error_messages.BOTH_SF_CONNECTION_AND_SNOWPARK_SESSION_SPECIFIED)
         if not sf_connection and not snowpark_session:
-            raise ValueError("sf_connection or snowpark_session must be provided")
+            raise ValueError(fileset_error_messages.NO_SF_CONNECTION_OR_SNOWPARK_SESSION)
         self._snowpark_session = (
             snowpark_session
             if snowpark_session
@@ -138,6 +148,8 @@ class FileSet:
             FileSetExistError: An error occured whern a FileSet with the same name exists in the given path.
             FileSetError: An error occured when the SQL query/dataframe is not able to get materialized.
 
+        # noqa: DAR401
+
         Note: During the generation of stage files, data casting will occur. The casting rules are as follows::
             - Data casting:
                 - DecimalType(NUMBER):
@@ -188,11 +200,11 @@ class FileSet:
         ['sfc://@mydb.myschema.mystage/helloworld/data_0_0_0.snappy.parquet']
         """
         if snowpark_dataframe and sf_connection:
-            raise ValueError("sf_connection and snowpark_session cannot be specified at the same time.")
+            raise ValueError(fileset_error_messages.BOTH_SF_CONNECTION_AND_SNOWPARK_SESSION_SPECIFIED)
 
         if not snowpark_dataframe:
             if not sf_connection:
-                raise ValueError("Either snowpark_dataframe or sf_connection should be non-empty.")
+                raise ValueError(fileset_error_messages.NO_SF_CONNECTION_OR_SNOWPARK_DATAFRAME)
             if not query:
                 raise ValueError("Please use non-empty query to generate meaningful result.")
             snowpark_session = snowpark.Session.builder.config("connection", sf_connection).create()
@@ -203,10 +215,13 @@ class FileSet:
         snowpark_session = snowpark_dataframe._session
         casted_df = _cast_snowpark_dataframe(snowpark_dataframe)
 
-        _validate_target_stage_loc(snowpark_session, target_stage_loc)
+        try:
+            _validate_target_stage_loc(snowpark_session, target_stage_loc)
+        except snowml_exceptions.SnowflakeMLException as e:
+            raise e.original_exception
         target_stage_exists = snowpark_session.sql(f"List {_fileset_absoluate_path(target_stage_loc, name)}").collect()
         if target_stage_exists:
-            raise fileset_errors.FileSetExistError(f"FileSet with name {name} has already existed.")
+            raise fileset_errors.FileSetExistError(fileset_error_messages.FILESET_ALREADY_EXISTS.format(name))
 
         if shuffle:
             casted_df = casted_df.order_by(functions.random())
@@ -232,10 +247,10 @@ class FileSet:
                     api_calls=[snowpark.DataFrameWriter.copy_into_location],
                 ),
             )
-        except exceptions.SnowparkClientException as e:
+        except snowpark_exceptions.SnowparkClientException as e:
             # Snowpark wraps the Python Connector error code in the head of the error message.
             if e.message.startswith(fileset_errors.ERRNO_FILE_EXIST_IN_STAGE):
-                raise fileset_errors.FileSetExistError(f"FileSet with name {name} has already existed.")
+                raise fileset_errors.FileSetExistError(fileset_error_messages.FILESET_ALREADY_EXISTS.format(name))
             else:
                 raise fileset_errors.FileSetError(str(e))
 
@@ -245,6 +260,17 @@ class FileSet:
     def name(self) -> str:
         """Get the name of the FileSet."""
         return self._name
+
+    def _list_files(self) -> List[str]:
+        """Private helper function that lists all files in this fileset and caches the results for subsequent use."""
+        if self._files:
+            return self._files
+        loc = self._fileset_absolute_path()
+
+        # TODO(zzhu)[SNOW-703491]: We could use manifest file to speed up file listing
+        files = self._fs.ls(loc)
+        self._files = [f"sfc://{file}" for file in files]
+        return self._files
 
     def _fileset_absolute_path(self) -> str:
         """Get the Snowflake absoluate path to this FileSet directory."""
@@ -270,14 +296,7 @@ class FileSet:
         ["sfc://@mydb.myschema.mystage/test/hello_world_0_0_0.snappy.parquet",
          "sfc://@mydb.myschema.mystage/test/hello_world_0_0_1.snappy.parquet"]
         """
-        if self._files:
-            return self._files
-        loc = self._fileset_absolute_path()
-
-        # TODO(zzhu)[SNOW-703491]: We could use manifest file to speed up file listing
-        files = self._fs.ls(loc)
-        self._files = [f"sfc://{file}" for file in files]
-        return self._files
+        return self._list_files()
 
     @telemetry.send_api_usage_telemetry(
         project=_PROJECT,
@@ -337,9 +356,9 @@ class FileSet:
         IterableWrapper, _ = import_utils.import_or_get_dummy("torchdata.datapipes.iter.IterableWrapper")
         torch_datapipe_module, _ = import_utils.import_or_get_dummy("snowflake.ml.fileset.torch_datapipe")
 
-        self._fs.optimize_read(self.files())
+        self._fs.optimize_read(self._list_files())
 
-        input_dp = IterableWrapper(self.files())
+        input_dp = IterableWrapper(self._list_files())
         return torch_datapipe_module.ReadAndParseParquet(input_dp, self._fs, batch_size, shuffle, drop_last_batch)
 
     @telemetry.send_api_usage_telemetry(
@@ -376,9 +395,11 @@ class FileSet:
         """
         tf_dataset_module, _ = import_utils.import_or_get_dummy("snowflake.ml.fileset.tf_dataset")
 
-        self._fs.optimize_read(self.files())
+        self._fs.optimize_read(self._list_files())
 
-        return tf_dataset_module.read_and_parse_parquet(self.files(), self._fs, batch_size, shuffle, drop_last_batch)
+        return tf_dataset_module.read_and_parse_parquet(
+            self._list_files(), self._fs, batch_size, shuffle, drop_last_batch
+        )
 
     @telemetry.send_api_usage_telemetry(
         project=_PROJECT,
@@ -399,7 +420,7 @@ class FileSet:
             - Unsupported types (see comments of :func:`~FileSet.fileset.make`) will not have any guarantee.
                 For example, an OBJECT column may be scanned back as a STRING column.
         """
-        query_id = _get_fileset_query_id_or_raise(self.files(), self._fileset_absolute_path())
+        query_id = _get_fileset_query_id_or_raise(self._list_files(), self._fileset_absolute_path())
         file_path_pattern = f".*data_{query_id}.*[.]parquet"
         df = self._snowpark_session.read.option("pattern", file_path_pattern).parquet(self._fileset_absolute_path())
         assert isinstance(df, snowpark.DataFrame)
@@ -416,7 +437,7 @@ class FileSet:
         If not called, the FileSet and all its stage files will stay in Snowflake stage.
 
         Raises:
-            FileSetCannotDeleteError: An error occured when the FileSet cannot get deleted.
+            SnowflakeMLException: An error occured when the FileSet cannot get deleted.
         """
         delete_sql = f"remove {self._fileset_absolute_path()}"
         try:
@@ -430,8 +451,11 @@ class FileSet:
             )
             self._files = []
             self._is_deleted = True
-        except exceptions.SnowparkClientException as e:
-            raise fileset_errors.FileSetCannotDeleteError(e)
+        except snowpark_exceptions.SnowparkClientException as e:
+            raise snowml_exceptions.SnowflakeMLException(
+                error_code=error_codes.SNOWML_DELETE_FAILED,
+                original_exception=fileset_errors.FileSetCannotDeleteError(str(e)),
+            )
         return
 
 
@@ -448,7 +472,7 @@ def _get_fileset_query_id_or_raise(files: List[str], fileset_absolute_path: str)
         The query id of the sql query which is used to generate the stage files.
 
     Raises:
-        MoreThanOneQuerySourceError: If the input files are not generated by the same query.
+        SnowflakeMLException: If the input files are not generated by the same query.
     """
     if not files:
         return None
@@ -471,7 +495,12 @@ def _get_fileset_query_id_or_raise(files: List[str], fileset_absolute_path: str)
             query_id = truncatred_filename[:idx]
 
     if not valid:
-        raise fileset_errors.MoreThanOneQuerySourceError("This FileSet contains files generated by the other queries.")
+        raise snowml_exceptions.SnowflakeMLException(
+            error_code=error_codes.SNOWML_INVALID_QUERY,
+            original_exception=fileset_errors.MoreThanOneQuerySourceError(
+                "This FileSet contains files generated by the other queries."
+            ),
+        )
     return query_id
 
 
@@ -490,23 +519,34 @@ def _validate_target_stage_loc(snowpark_session: snowpark.Session, target_stage_
         A Boolean value about whether the input target stage location is a valid path in an internal SSE stage.
 
     Raises:
-        FileSetLocationError: An error occured when the input stage path is invalid.
+        SnowflakeMLException: The input stage path does not start with '@'.
+        SnowflakeMLException: No valid stages found.
+        SnowflakeMLException: An error occured when the input stage path is invalid.
     """
     if not target_stage_loc.startswith("@"):
-        raise fileset_errors.FileSetLocationError('FileSet location should start with "@".')
+        raise snowml_exceptions.SnowflakeMLException(
+            error_code=error_codes.SNOWML_INVALID_STAGE,
+            original_exception=fileset_errors.FileSetLocationError('FileSet location should start with "@".'),
+        )
     try:
         db, schema, stage, _ = identifier.parse_schema_level_object_identifier(target_stage_loc[1:])
         df_stages = snowpark_session.sql(f"Show stages like '{stage}' in SCHEMA {db}.{schema}")
-        df_stages = df_stages.filter(functions.col('"type"').like(f"%{_FILESET_STAGE_TYPE}%"))  # type:ignore[arg-type]
+        df_stages = df_stages.filter(functions.col('"type"').like(f"%{_FILESET_STAGE_TYPE}%"))
         valid_stage = df_stages.collect()
         if not valid_stage:
-            raise fileset_errors.FileSetLocationError(
-                "A FileSet requires its location to be in an existing server-side-encrypted internal stage."
-                "See https://docs.snowflake.com/en/sql-reference/sql/create-stage#internal-stage-parameters-internalstageparams "  # noqa: E501
-                "on how to create such a stage."
+            raise snowml_exceptions.SnowflakeMLException(
+                error_code=error_codes.SNOWML_NOT_FOUND,
+                original_exception=fileset_errors.FileSetLocationError(
+                    "A FileSet requires its location to be in an existing server-side-encrypted internal stage."
+                    "See https://docs.snowflake.com/en/sql-reference/sql/create-stage#internal-stage-parameters-internalstageparams "  # noqa: E501
+                    "on how to create such a stage."
+                ),
             )
     except ValueError as e:
-        raise fileset_errors.FileSetLocationError(e)
+        raise snowml_exceptions.SnowflakeMLException(
+            error_code=error_codes.SNOWML_INVALID_STAGE,
+            original_exception=fileset_errors.FileSetLocationError(str(e)),
+        )
     return True
 
 
@@ -552,19 +592,19 @@ def _cast_snowpark_dataframe(df: snowpark.DataFrame) -> snowpark.DataFrame:
                 dest: types.DataType = types.FloatType()
             else:
                 dest = types.LongType()
-            selected_cols.append(functions.cast(functions.col(src), dest).alias(src))  # type:ignore[arg-type]
+            selected_cols.append(functions.cast(functions.col(src), dest).alias(src))
         elif isinstance(field.datatype, types.DoubleType):
             dest = types.FloatType()
-            selected_cols.append(functions.cast(functions.col(src), dest).alias(src))  # type:ignore[arg-type]
+            selected_cols.append(functions.cast(functions.col(src), dest).alias(src))
         elif isinstance(field.datatype, types.ByteType):
             # Snowpark maps ByteType to BYTEINT, which will not do the casting job when unloading to parquet files.
             # We will use SMALLINT instead until this issue got fixed.
             # Investigate JIRA filed: SNOW-725041
             dest = types.ShortType()
-            selected_cols.append(functions.cast(functions.col(src), dest).alias(src))  # type:ignore[arg-type]
+            selected_cols.append(functions.cast(functions.col(src), dest).alias(src))
         elif field.datatype in (types.ShortType(), types.IntegerType(), types.LongType()):
             dest = field.datatype
-            selected_cols.append(functions.cast(functions.col(src), dest).alias(src))  # type:ignore[arg-type]
+            selected_cols.append(functions.cast(functions.col(src), dest).alias(src))
         else:
             if field.datatype in (types.DateType(), types.TimestampType(), types.TimeType()):
                 logging.warning(

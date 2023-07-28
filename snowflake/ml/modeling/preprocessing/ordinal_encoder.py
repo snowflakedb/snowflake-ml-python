@@ -267,12 +267,9 @@ class OrdinalEncoder(base.BaseTransformer):
 
             # encode non-missing categories
             encoded_value_columns = [
-                F.lit(input_col).alias(_COLUMN_NAME),  # type: ignore[arg-type]
+                F.lit(input_col).alias(_COLUMN_NAME),
                 F.col(input_col).alias(_CATEGORY),
-                (
-                    F.dense_rank().over(snowpark.Window.order_by(input_col))  # type: ignore[arg-type]
-                    - 1  # type: ignore[operator]
-                )
+                (F.dense_rank().over(snowpark.Window.order_by(input_col)) - 1)
                 .cast(T.FloatType())
                 .alias(_INDEX),  # index categories
             ]
@@ -284,10 +281,10 @@ class OrdinalEncoder(base.BaseTransformer):
 
             # encode missing categories
             encoded_missing_value_columns = [
-                F.lit(input_col).alias(_COLUMN_NAME),  # type: ignore[arg-type]
+                F.lit(input_col).alias(_COLUMN_NAME),
                 F.col(input_col).alias(_CATEGORY),
                 # index missing categories
-                F.lit(self.encoded_missing_value).alias(_INDEX),  # type: ignore[arg-type]
+                F.lit(self.encoded_missing_value).alias(_INDEX),
             ]
             encoded_missing_value_df = distinct_dataset.filter(F.col(input_col).is_null()).select(
                 encoded_missing_value_columns
@@ -443,11 +440,9 @@ class OrdinalEncoder(base.BaseTransformer):
             Output dataset.
 
         Raises:
-            RuntimeError: If transformer is not fitted first.
             TypeError: If the input dataset is neither a pandas nor Snowpark DataFrame.
         """
-        if not self._is_fitted:
-            raise RuntimeError("Transformer not fitted before calling transform().")
+        self._enforce_fit()
         super()._check_input_cols()
         super()._check_output_cols()
 
@@ -487,7 +482,7 @@ class OrdinalEncoder(base.BaseTransformer):
 
         # replace NULL with nan
         null_category_state_df = state_df.filter(F.col(_CATEGORY).is_null()).with_column(
-            _INDEX, F.lit(self.encoded_missing_value)  # type: ignore[arg-type]
+            _INDEX, F.lit(self.encoded_missing_value)
         )
         state_df = state_df.filter(F.col(_CATEGORY).is_not_null()).union_by_name(null_category_state_df)
 
@@ -602,7 +597,7 @@ class OrdinalEncoder(base.BaseTransformer):
             for idx, input_col in enumerate(self.input_cols):
                 output_col = self.output_cols[idx]
                 unknown_columns = [
-                    F.lit(input_col),  # type: ignore[arg-type]
+                    F.lit(input_col),
                     F.col(input_col),
                 ]
                 temp_df = (
@@ -627,8 +622,6 @@ class OrdinalEncoder(base.BaseTransformer):
         if self.handle_unknown == "use_encoded_value":
             # left outer join has already filled unknown values with null
             if not (self.unknown_value is None or sklearn_utils.is_scalar_nan(self.unknown_value)):
-                transformed_dataset = transformed_dataset.na.fill(
-                    self.unknown_value, self.output_cols  # type: ignore[arg-type]
-                )
+                transformed_dataset = transformed_dataset.na.fill(self.unknown_value, self.output_cols)
 
         return transformed_dataset

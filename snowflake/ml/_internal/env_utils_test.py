@@ -274,42 +274,6 @@ class EnvUtilsTest(absltest.TestCase):
         self.assertEqual(env_utils.relax_requirement_version(r), requirements.Requirement("python-package"))
         self.assertIsNot(env_utils.relax_requirement_version(r), r)
 
-    def test_resolve_conda_environment(self) -> None:
-        _SNOWFLAKE_CONDA_CHANNEL_URL = "https://repo.anaconda.com/pkgs/snowflake"
-        rl = [requirements.Requirement("numpy")]
-        self.assertIsNotNone(
-            env_utils.resolve_conda_environment(
-                rl, [_SNOWFLAKE_CONDA_CHANNEL_URL], python_version=snowml_env.PYTHON_VERSION
-            )
-        )
-
-        rl = [requirements.Requirement("numpy==1.22.4")]
-        self.assertIsNone(
-            env_utils.resolve_conda_environment(
-                rl, [_SNOWFLAKE_CONDA_CHANNEL_URL], python_version=snowml_env.PYTHON_VERSION
-            )
-        )
-
-        rl = [requirements.Requirement(f"numpy=={importlib_metadata.version('numpy')}")]
-        self.assertListEqual(
-            env_utils.resolve_conda_environment(
-                rl,
-                ["defaults"],
-                python_version=snowml_env.PYTHON_VERSION,
-            ),
-            [f"numpy=={importlib_metadata.version('numpy')}"],
-        )
-
-        rl = [requirements.Requirement(f"numpy<={importlib_metadata.version('numpy')}")]
-        self.assertListEqual(
-            env_utils.resolve_conda_environment(
-                rl,
-                ["defaults"],
-                python_version=snowml_env.PYTHON_VERSION,
-            ),
-            [f"numpy=={importlib_metadata.version('numpy')}"],
-        )
-
     def test_validate_requirements_in_snowflake_conda_channel(self) -> None:
         m_session = mock_session.MockSession(conn=None, test_case=self)
         m_session.add_mock_sql(
@@ -612,6 +576,17 @@ class EnvUtilsTest(absltest.TestCase):
             ),
             sorted(["xgboost", "pytorch"]),
         )
+
+    def test_parse_python_version_string(self) -> None:
+        self.assertIsNone(env_utils.parse_python_version_string("not_python"))
+        self.assertEqual(env_utils.parse_python_version_string("python"), "")
+        self.assertEqual(env_utils.parse_python_version_string("python==3.8.13"), "3.8.13")
+        self.assertEqual(env_utils.parse_python_version_string("python=3.11"), "3.11")
+        with self.assertRaises(ValueError):
+            env_utils.parse_python_version_string("python<=3.11")
+
+        with self.assertRaises(ValueError):
+            env_utils.parse_python_version_string("python>2.7.16")
 
 
 if __name__ == "__main__":

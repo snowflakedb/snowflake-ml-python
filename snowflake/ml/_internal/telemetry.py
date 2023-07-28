@@ -25,7 +25,11 @@ from typing_extensions import ParamSpec
 from snowflake import connector
 from snowflake.connector import telemetry as connector_telemetry, time_util
 from snowflake.ml._internal import env
-from snowflake.snowpark import dataframe, exceptions, session
+from snowflake.ml._internal.exceptions import (
+    error_codes,
+    exceptions as snowml_exceptions,
+)
+from snowflake.snowpark import dataframe, exceptions as snowpark_exceptions, session
 from snowflake.snowpark._internal import utils
 
 _log_counter = 0
@@ -47,6 +51,7 @@ class TelemetryField(enum.Enum):
     KEY_FUNC_NAME = "func_name"
     KEY_FUNC_PARAMS = "func_params"
     KEY_ERROR_INFO = "error_info"
+    KEY_ERROR_CODE = "error_code"
     KEY_VERSION = "version"
     KEY_PYTHON_VERSION = "python_version"
     KEY_OS = "operating_system"
@@ -260,7 +265,7 @@ def send_api_usage_telemetry(
                 try:
                     active_session = next(iter(session._get_active_sessions()))
                 # server no default session
-                except exceptions.SnowparkSessionException:
+                except snowpark_exceptions.SnowparkSessionException:
                     try:
                         return func(*args, **kwargs)
                     except Exception as e:
@@ -299,9 +304,11 @@ def send_api_usage_telemetry(
             try:
                 res = func(*args, **kwargs)
             except Exception as e:
-                error = repr(e)
-                telemetry_args["error"] = error
-                raise
+                if not isinstance(e, snowml_exceptions.SnowflakeMLException):
+                    e = snowml_exceptions.SnowflakeMLException(error_code=error_codes.UNDEFINED, original_exception=e)
+                telemetry_args["error"] = repr(e)
+                telemetry_args["error_code"] = e.error_code
+                raise e.original_exception
             else:
                 return res
             finally:
@@ -525,6 +532,7 @@ class _SourceTelemetryClient:
         sfqids: Optional[List[Any]] = None,
         custom_tags: Optional[Dict[str, Union[bool, int, str, float]]] = None,
         error: Optional[str] = None,
+        error_code: Optional[str] = None,
     ) -> None:
         """
         Send function usage telemetry message.
@@ -537,6 +545,7 @@ class _SourceTelemetryClient:
             sfqids: Snowflake query IDs.
             custom_tags: Custom tags.
             error: Error.
+            error_code: Error code.
         """
         data: Dict[str, Any] = {
             TelemetryField.KEY_FUNC_NAME.value: func_name,
@@ -559,6 +568,7 @@ class _SourceTelemetryClient:
 
         if error:
             message[TelemetryField.KEY_ERROR_INFO.value] = error
+            message[TelemetryField.KEY_ERROR_CODE.value] = error_code
 
         self._send(message)
 

@@ -1,5 +1,17 @@
 # Release History
 
+## 1.0.4
+
+### New Features
+- Model Registry: Added support save/load/deploy Tensorflow models (`tensorflow.Module`).
+- Model Registry: Added support save/load/deploy MLFlow PyFunc models (`mlflow.pyfunc.PyFuncModel`).
+- Model Development: Input dataframes can now be joined against data loaded from staged files.
+- Model Development: Added support for non-English languages.
+
+### Bug Fixes
+
+- Model Registry: Fix an issue that model dependencies are incorrectly reported as unresolvable on certain platforms.
+
 ## 1.0.3 (2023-07-14)
 
 ### Behavior Changes

@@ -7,6 +7,7 @@ from typing import List, Optional
 
 from snowflake import snowpark
 from snowflake.ml._internal.utils import identifier
+from snowflake.ml.model._deploy_client.utils import constants
 
 _COMMON_PREFIX = "snowml_test_"
 
@@ -18,6 +19,9 @@ class DBManager:
 
     def set_role(self, role: str) -> None:
         self._session.sql(f"USE ROLE {role}").collect()
+
+    def set_warehouse(self, warehouse: str) -> None:
+        self._session.sql(f"USE WAREHOUSE {warehouse}").collect()
 
     def create_database(
         self,
@@ -261,6 +265,18 @@ class DBManager:
             func_argments = str(stale_func.arguments)
             func_def = func_argments.partition("RETURN")[0].strip()
             self.drop_function(function_def=func_def, schema_name=schema_name, db_name=db_name, if_exists=True)
+
+    def get_snowservice_image_repo(
+        self,
+        repo: str,
+        subdomain: str = constants.DEV_IMAGE_REGISTRY_SUBDOMAIN,
+    ) -> str:
+        conn = self._session._conn._conn
+        org = conn.host.split(".")[1]
+        account = conn.account
+        db = conn._database
+        schema = conn._schema
+        return f"{org}-{account}.{subdomain}.{constants.PROD_IMAGE_REGISTRY_DOMAIN}/{db}/{schema}/{repo}".lower()
 
 
 class TestObjectNameGenerator:

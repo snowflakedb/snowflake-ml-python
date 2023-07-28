@@ -59,11 +59,11 @@ def accuracy_score(
             if isinstance(y_true_col_names, str)
             else (y_true_col_names[0], y_pred_col_names[0])
         )
-        score_column = F.iff(df[y_true] == df[y_pred], 1, 0)  # type: ignore[arg-type]
+        score_column = F.iff(df[y_true] == df[y_pred], 1, 0)
     # multilabel
     else:
         expr = " and ".join([f"({y_true_col_names[i]} = {y_pred_col_names[i]})" for i in range(len(y_true_col_names))])
-        score_column = F.iff(expr, 1, 0)  # type: ignore[arg-type]
+        score_column = F.iff(expr, 1, 0)
     return metrics_utils.weighted_sum(
         df=df,
         sample_score_column=score_column,
@@ -143,7 +143,7 @@ def confusion_matrix(
     rand = snowpark_utils.generate_random_alphanumeric()
     if sample_weight_col_name is None:
         sample_weight_col_name = f'"_SAMPLE_WEIGHT_{rand}"'
-        df = df.with_column(sample_weight_col_name, F.lit(1))  # type: ignore[arg-type]
+        df = df.with_column(sample_weight_col_name, F.lit(1))
 
     if normalize not in ["true", "pred", "all", None]:
         raise ValueError("normalize must be one of {'true', 'pred', 'all', None}")
@@ -175,13 +175,11 @@ def confusion_matrix(
 
     # Compute the confusion matrix.
     temp_df1 = ind_df.select(
-        F.array_construct(sample_weight_col_name, y_true_index_col, y_pred_index_col).alias(  # type: ignore[arg-type]
-            "ARR_COL"
-        )
+        F.array_construct(sample_weight_col_name, y_true_index_col, y_pred_index_col).alias("ARR_COL")
     )
-    temp_df2 = temp_df1.select(
-        confusion_matrix_computer_udtf(F.col("ARR_COL"), F.lit(n_labels))  # type: ignore[arg-type]
-    ).with_column_renamed("RESULT", "RES")
+    temp_df2 = temp_df1.select(confusion_matrix_computer_udtf(F.col("ARR_COL"), F.lit(n_labels))).with_column_renamed(
+        "RESULT", "RES"
+    )
     res_df = temp_df2.select(accumulator_udtf(F.col("RES")).over(partition_by="PART"), F.col("PART"))
     results = res_df.collect(statement_params=statement_params)
 
@@ -514,7 +512,7 @@ def log_loss(
     sklearn_release = version.parse(sklearn.__version__).release
     statement_params = telemetry.get_statement_params(_PROJECT, _SUBPROJECT)
     cols = metrics_utils.flatten_cols([y_true_col_names, y_pred_col_names, sample_weight_col_name])
-    query = df[cols].queries["queries"][-1]
+    queries = df[cols].queries["queries"]
 
     @F.sproc(  # type: ignore[misc]
         session=session,
@@ -528,7 +526,9 @@ def log_loss(
         statement_params=statement_params,
     )
     def log_loss_sproc(session: snowpark.Session) -> float:
-        df = session.sql(query).to_pandas(statement_params=statement_params)
+        for query in queries[:-1]:
+            _ = session.sql(query).collect(statement_params=statement_params)
+        df = session.sql(queries[-1]).to_pandas(statement_params=statement_params)
         y_true = df[y_true_col_names]
         y_pred = df[y_pred_col_names]
         sample_weight = df[sample_weight_col_name] if sample_weight_col_name else None
@@ -652,7 +652,7 @@ def precision_recall_fscore_support(
     sklearn_release = version.parse(sklearn.__version__).release
     statement_params = telemetry.get_statement_params(_PROJECT, _SUBPROJECT)
     cols = metrics_utils.flatten_cols([y_true_col_names, y_pred_col_names, sample_weight_col_name])
-    query = df[cols].queries["queries"][-1]
+    queries = df[cols].queries["queries"]
 
     @F.sproc(  # type: ignore[misc]
         session=session,
@@ -666,7 +666,9 @@ def precision_recall_fscore_support(
         statement_params=statement_params,
     )
     def precision_recall_fscore_support_sproc(session: snowpark.Session) -> bytes:
-        df = session.sql(query).to_pandas(statement_params=statement_params)
+        for query in queries[:-1]:
+            _ = session.sql(query).collect(statement_params=statement_params)
+        df = session.sql(queries[-1]).to_pandas(statement_params=statement_params)
         y_true = df[y_true_col_names]
         y_pred = df[y_pred_col_names]
         sample_weight = df[sample_weight_col_name] if sample_weight_col_name else None

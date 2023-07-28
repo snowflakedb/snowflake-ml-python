@@ -11,7 +11,7 @@ spec:
         - name: vol1
           mountPath: /local/user/vol1
         - name: stage
-          mountPath: ${stage}
+          mountPath: ${model_stage}
   endpoint:
     - name: ${predict_endpoint_name}
       port: 5000
@@ -19,6 +19,6 @@ spec:
     - name: vol1
       source: local  # only local emptyDir volume is supported
     - name: stage
-      source: "@${stage}"
+      source: "@${model_stage}"
       uid: 1000
       gid: 1000

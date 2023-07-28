@@ -9,6 +9,7 @@ from sklearn import preprocessing
 
 from snowflake import snowpark
 from snowflake.ml._internal import telemetry
+from snowflake.ml._internal.exceptions import error_codes, exceptions
 from snowflake.ml.modeling.framework import base
 from snowflake.snowpark import functions as F, types as T
 
@@ -90,24 +91,22 @@ class Normalizer(base.BaseTransformer):
             transformed_dataset: Output dataset.
 
         Raises:
-            ValueError: If the dataset contains nulls, or if the supplied norm is invalid.
-            TypeError: If the input dataset is neither a pandas nor Snowpark DataFrame.
+            SnowflakeMLException: If the dataset contains nulls, or if the supplied norm is invalid.
         """
         if self.norm not in _VALID_NORMS:
-            raise ValueError(f"'{self.norm}' is not a supported norm.")
+            raise exceptions.SnowflakeMLException(
+                error_code=error_codes.INVALID_ATTRIBUTE,
+                original_exception=ValueError(f"'{self.norm}' is not a supported norm."),
+            )
 
         super()._check_input_cols()
         super()._check_output_cols()
+        super()._check_dataset_type(dataset)
 
         if isinstance(dataset, snowpark.DataFrame):
             output_df = self._transform_snowpark(dataset)
-        elif isinstance(dataset, pd.DataFrame):
-            output_df = self._transform_sklearn(dataset)
         else:
-            raise TypeError(
-                f"Unexpected dataset type: {type(dataset)}."
-                "Supported dataset types: snowpark.DataFrame, pandas.DataFrame."
-            )
+            output_df = self._transform_sklearn(dataset)
 
         return self._drop_input_columns(output_df) if self._drop_input_cols is True else output_df
 
@@ -115,31 +114,37 @@ class Normalizer(base.BaseTransformer):
         passthrough_columns = [c for c in dataset.columns if c not in self.output_cols]
         self._validate_data_has_no_nulls(dataset)
         if len(self.input_cols) == 0:
-            raise ValueError("Found array with 0 columns, but a minimum of 1 is required.")
+            raise exceptions.SnowflakeMLException(
+                error_code=error_codes.INVALID_ATTRIBUTE,
+                original_exception=ValueError("Found array with 0 columns, but a minimum of 1 is required."),
+            )
 
         if self.norm == "l1":
-            norm = F.lit("0")  # type: ignore[arg-type]
+            norm = F.lit("0")
             for input_col in self.input_cols:
-                norm += F.abs(dataset[input_col])  # type: ignore[operator]
+                norm += F.abs(dataset[input_col])
 
         elif self.norm == "l2":
-            norm = F.lit("0")  # type: ignore[arg-type]
+            norm = F.lit("0")
             for input_col in self.input_cols:
                 norm += dataset[input_col] * dataset[input_col]
-            norm = F.sqrt(norm)  # type: ignore[arg-type]
+            norm = F.sqrt(norm)
 
         elif self.norm == "max":
-            norm = F.greatest(*[F.abs(dataset[input_col]) for input_col in self.input_cols])  # type: ignore[arg-type]
+            norm = F.greatest(*[F.abs(dataset[input_col]) for input_col in self.input_cols])
 
         else:
-            raise ValueError(f"'{self.norm}' is not a supported norm.")
+            raise exceptions.SnowflakeMLException(
+                error_code=error_codes.INVALID_ATTRIBUTE,
+                original_exception=ValueError(f"'{self.norm}' is not a supported norm."),
+            )
 
         output_columns = []
         for input_col in self.input_cols:
             # Set the entry to 0 if the norm is 0, because the norm is 0 only when all entries are 0.
             output_column = F.div0(
                 dataset[input_col].cast(T.FloatType()),
-                norm,  # type: ignore[arg-type]
+                norm,
             )
             output_columns.append(output_column)
 

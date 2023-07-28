@@ -105,22 +105,15 @@ class MaxAbsScaler(base.BaseTransformer):
 
         Returns:
             Return self as fitted scaler.
-
-        Raises:
-            TypeError: If the input dataset is neither a pandas nor Snowpark DataFrame.
         """
         super()._check_input_cols()
+        super()._check_dataset_type(dataset)
         self._reset()
 
         if isinstance(dataset, pd.DataFrame):
             self._fit_sklearn(dataset)
-        elif isinstance(dataset, snowpark.DataFrame):
-            self._fit_snowpark(dataset)
         else:
-            raise TypeError(
-                f"Unexpected dataset type: {type(dataset)}."
-                "Supported dataset types: snowpark.DataFrame, pandas.DataFrame."
-            )
+            self._fit_snowpark(dataset)
 
         self._is_fitted = True
         return self
@@ -161,25 +154,16 @@ class MaxAbsScaler(base.BaseTransformer):
 
         Returns:
             Output dataset.
-
-        Raises:
-            RuntimeError: If transformer is not fitted first.
-            TypeError: If the input dataset is neither a pandas nor Snowpark DataFrame.
         """
-        if not self._is_fitted:
-            raise RuntimeError("Transformer not fitted before calling transform().")
+        self._enforce_fit()
         super()._check_input_cols()
         super()._check_output_cols()
+        super()._check_dataset_type(dataset)
 
         if isinstance(dataset, snowpark.DataFrame):
             output_df = self._transform_snowpark(dataset)
-        elif isinstance(dataset, pd.DataFrame):
-            output_df = self._transform_sklearn(dataset)
         else:
-            raise TypeError(
-                f"Unexpected dataset type: {type(dataset)}."
-                "Supported dataset types: snowpark.DataFrame, pandas.DataFrame."
-            )
+            output_df = self._transform_sklearn(dataset)
 
         return self._drop_input_columns(output_df) if self._drop_input_cols is True else output_df
 

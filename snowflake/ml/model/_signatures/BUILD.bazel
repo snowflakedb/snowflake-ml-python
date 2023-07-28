@@ -1,0 +1,168 @@
+load("//bazel:py_rules.bzl", "py_library", "py_test")
+
+package(default_visibility = ["//visibility:public"])
+
+py_library(
+    name = "base_handler",
+    srcs = ["base_handler.py"],
+    deps = [
+        ":core",
+        "//snowflake/ml/model:type_hints",
+    ],
+)
+
+py_library(
+    name = "core",
+    srcs = ["core.py"],
+)
+
+py_test(
+    name = "core_test",
+    srcs = ["core_test.py"],
+    deps = [
+        ":core",
+    ],
+)
+
+py_library(
+    name = "pandas_handler",
+    srcs = ["pandas_handler.py"],
+    deps = [
+        ":core",
+        ":base_handler",
+        ":utils",
+        "//snowflake/ml/model:type_hints",
+    ],
+)
+
+py_test(
+    name = "pandas_test",
+    srcs = ["pandas_test.py"],
+    deps = [
+        ":core",
+        ":pandas_handler",
+    ],
+)
+
+py_library(
+    name = "numpy_handler",
+    srcs = ["numpy_handler.py"],
+    deps = [
+        ":core",
+        ":base_handler",
+        "//snowflake/ml/model:type_hints",
+    ],
+)
+
+py_test(
+    name = "numpy_test",
+    srcs = ["numpy_test.py"],
+    deps = [
+        ":core",
+        ":numpy_handler",
+    ],
+)
+
+py_library(
+    name = "pytorch_handler",
+    srcs = ["pytorch_handler.py"],
+    deps = [
+        ":core",
+        ":base_handler",
+        "//snowflake/ml/_internal:type_utils",
+        "//snowflake/ml/model:type_hints",
+    ],
+)
+
+py_test(
+    name = "pytorch_test",
+    srcs = ["pytorch_test.py"],
+    deps = [
+        ":core",
+        ":pytorch_handler",
+        ":utils",
+    ],
+)
+
+py_library(
+    name = "tensorflow_handler",
+    srcs = ["tensorflow_handler.py"],
+    deps = [
+        ":core",
+        ":base_handler",
+        "//snowflake/ml/_internal:type_utils",
+        "//snowflake/ml/model:type_hints",
+    ],
+)
+
+py_test(
+    name = "tensorflow_test",
+    srcs = ["tensorflow_test.py"],
+    deps = [
+        ":core",
+        ":tensorflow_handler",
+        ":utils",
+    ],
+)
+
+py_library(
+    name = "builtins_handler",
+    srcs = ["builtins_handler.py"],
+    deps = [
+        ":core",
+        ":base_handler",
+        ":pandas_handler",
+        "//snowflake/ml/model:type_hints",
+    ],
+)
+
+py_test(
+    name = "builtins_test",
+    srcs = ["builtins_test.py"],
+    deps = [
+        ":core",
+        ":builtins_handler",
+    ],
+)
+
+py_library(
+    name = "utils",
+    srcs = ["utils.py"],
+    deps = [
+        ":core",
+    ],
+)
+
+py_test(
+    name = "utils_test",
+    srcs = ["utils_test.py"],
+    deps = [
+        ":core",
+        ":utils",
+    ],
+)
+
+
+py_library(
+    name = "snowpark_handler",
+    srcs = ["snowpark_handler.py"],
+    deps = [
+        ":core",
+        ":base_handler",
+        ":pandas_handler",
+        "//snowflake/ml/_internal/utils:identifier",
+        "//snowflake/ml/model/_deploy_client/warehouse:infer_template",
+        "//snowflake/ml/model:type_hints",
+    ],
+)
+
+py_test(
+    name = "snowpark_test",
+    srcs = ["snowpark_test.py"],
+    deps = [
+        ":core",
+        ":snowpark_handler",
+        "//snowflake/ml/model:model_signature",
+        "//snowflake/ml/utils:connection_params",
+    ],
+)

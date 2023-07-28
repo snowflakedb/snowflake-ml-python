@@ -1,7 +1,6 @@
 import os
 import posixpath
 import tempfile
-import warnings
 from types import ModuleType
 from typing import IO, List, Optional, Tuple, TypedDict, Union
 
@@ -9,12 +8,7 @@ from typing_extensions import Unpack
 
 from snowflake.ml._internal import env_utils, file_utils
 from snowflake.ml._internal.utils import identifier
-from snowflake.ml.model import (
-    _env as model_env,
-    _model,
-    _model_meta,
-    type_hints as model_types,
-)
+from snowflake.ml.model import _model, _model_meta, type_hints as model_types
 from snowflake.ml.model._deploy_client.warehouse import infer_template
 from snowflake.snowpark import session as snowpark_session, types as st
 
@@ -68,14 +62,10 @@ def _deploy_to_warehouse(
 
     relax_version = kwargs.get("relax_version", False)
 
-    disable_local_conda_resolver = kwargs.get("disable_local_conda_resolver", False)
-
     if target_method not in meta.signatures.keys():
         raise ValueError(f"Target method {target_method} does not exist in model.")
 
-    final_packages = _get_model_final_packages(
-        meta, session, relax_version=relax_version, disable_local_conda_resolver=disable_local_conda_resolver
-    )
+    final_packages = _get_model_final_packages(meta, session, relax_version=relax_version)
 
     stage_location = kwargs.get("permanent_udf_stage_location", None)
     if stage_location:
@@ -152,7 +142,6 @@ def _get_model_final_packages(
     meta: _model_meta.ModelMetadata,
     session: snowpark_session.Session,
     relax_version: Optional[bool] = False,
-    disable_local_conda_resolver: Optional[bool] = False,
 ) -> List[str]:
     """Generate final packages list of dependency of a model to be deployed to warehouse.
 
@@ -161,8 +150,6 @@ def _get_model_final_packages(
         session: Snowpark connection session.
         relax_version: Whether or not relax the version restriction when fail to resolve dependencies.
             Defaults to False.
-        disable_local_conda_resolver: Set to disable use local conda resolver to do pre-check on environment and rely on
-            the information schema only. Defaults to False.
 
     Raises:
         RuntimeError: Raised when PIP requirements and dependencies from non-Snowflake anaconda channel found.
@@ -173,49 +160,38 @@ def _get_model_final_packages(
     """
     final_packages = None
     if (
-        any(channel.lower() not in ["", "snowflake"] for channel in meta._conda_dependencies.keys())
+        any(
+            channel.lower() not in [env_utils.DEFAULT_CHANNEL_NAME, "snowflake"]
+            for channel in meta._conda_dependencies.keys()
+        )
         or meta.pip_requirements
     ):
         raise RuntimeError("PIP requirements and dependencies from non-Snowflake anaconda channel is not supported.")
 
-    deps = meta._conda_dependencies[""]
+    deps = meta._conda_dependencies[env_utils.DEFAULT_CHANNEL_NAME]
 
-    try:
-        if disable_local_conda_resolver:
-            raise ImportError("Raise to disable local conda resolver. Should be captured.")
-        final_packages = env_utils.resolve_conda_environment(
-            deps, [model_env._SNOWFLAKE_CONDA_CHANNEL_URL], python_version=meta.python_version
-        )
-        if final_packages is None and relax_version:
-            final_packages = env_utils.resolve_conda_environment(
-                list(map(env_utils.relax_requirement_version, deps)),
-                [model_env._SNOWFLAKE_CONDA_CHANNEL_URL],
-                python_version=meta.python_version,
-            )
-    except ImportError:
-        warnings.warn(
-            "Cannot find conda resolver, use Snowflake information schema for best-effort dependency pre-check.",
-            category=RuntimeWarning,
-        )
+    final_packages = env_utils.validate_requirements_in_snowflake_conda_channel(
+        session=session,
+        reqs=deps,
+        python_version=meta.python_version,
+    )
+    if final_packages is None and relax_version:
         final_packages = env_utils.validate_requirements_in_snowflake_conda_channel(
             session=session,
-            reqs=deps,
+            reqs=list(map(env_utils.relax_requirement_version, deps)),
             python_version=meta.python_version,
         )
-        if final_packages is None and relax_version:
-            final_packages = env_utils.validate_requirements_in_snowflake_conda_channel(
-                session=session,
-                reqs=list(map(env_utils.relax_requirement_version, deps)),
-                python_version=meta.python_version,
-            )
 
-    finally:
+    if final_packages is None:
+        relax_version_info_str = "" if relax_version else "Try to set relax_version as True in the options. "
+        required_deps = list(map(env_utils.relax_requirement_version, deps)) if relax_version else deps
         if final_packages is None:
             raise RuntimeError(
                 "The model's dependency cannot fit into Snowflake Warehouse. "
-                + "Trying to set relax_version as True in the options. Required packages are:\n"
-                + '"'
-                + " ".join(map(str, meta._conda_dependencies[""]))
-                + '"'
+                + relax_version_info_str
+                + "Required packages are:\n"
+                + " ".join(map(lambda x: f'"{x}"', required_deps))
+                + "\n Required Python version is: "
+                + meta.python_version
             )
     return final_packages

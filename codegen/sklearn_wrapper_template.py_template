@@ -29,8 +29,8 @@ from snowflake.ml.model.model_signature import (
     FeatureSpec,
     ModelSignature,
     _infer_signature,
-    _rename_features,
 )
+from snowflake.ml.model._signatures import utils as model_signature_utils
 
 _PROJECT = "ModelDevelopment"
 # Derive subproject from module name by removing "sklearn"
@@ -220,7 +220,7 @@ class {transform.original_class_name}(BaseTransformer):
             dataset = dataset.select(selected_cols)
 
         # Extract query that generated the datafrome. We will need to pass it to the fit procedure.
-        query = str(dataset.queries["queries"][0])
+        queries = dataset.queries["queries"]
 
         # Create a temp file and dump the transform to that file.
         local_transform_file_name = get_temp_file_path()
@@ -235,10 +235,6 @@ class {transform.original_class_name}(BaseTransformer):
             query=stage_creation_query
         ).has_dimensions(
             expected_rows=1, expected_cols=1
-        ).has_value_match(
-            row_idx=0,
-            col_idx=0,
-            expected_value=f"Stage area {{transform_stage_name}} successfully created."
         ).validate()
 
         # Use posixpath to construct stage paths
@@ -276,7 +272,7 @@ class {transform.original_class_name}(BaseTransformer):
         )
         def fit_wrapper_sproc(
             session: Session,
-            sql_query: str,
+            sql_queries: List[str],
             stage_transform_file_name: str,
             stage_result_file_name: str,
             input_cols: List[str],
@@ -292,9 +288,11 @@ class {transform.original_class_name}(BaseTransformer):
             import inspect
             {transform.fit_sproc_imports}
 
-            # Execute snowpark query and obtain the results as pandas dataframe
+            # Execute snowpark queries and obtain the results as pandas dataframe
             # NB: this implies that the result data must fit into memory.
-            df = session.sql(sql_query).to_pandas(statement_params=statement_params)
+            for query in sql_queries[:-1]:
+                _ = session.sql(query).collect(statement_params=statement_params)
+            df = session.sql(sql_queries[-1]).to_pandas(statement_params=statement_params)
 
             local_transform_file = tempfile.NamedTemporaryFile(delete=True)
             local_transform_file_name = local_transform_file.name
@@ -351,7 +349,7 @@ class {transform.original_class_name}(BaseTransformer):
         )
         sproc_export_file_name = fit_wrapper_sproc(
             session,
-            query,
+            queries,
             stage_transform_file_name,
             stage_result_file_name,
             identifier.get_unescaped_names(self.input_cols),
@@ -931,8 +929,8 @@ class {transform.original_class_name}(BaseTransformer):
         if len(selected_cols) > 0:
             dataset = dataset.select(selected_cols)
 
-        # Extract query that generated the dataframe. We will need to pass it to score procedure.
-        query = str(dataset.queries["queries"][0])
+        # Extract queries that generated the dataframe. We will need to pass it to score procedure.
+        queries = dataset.queries["queries"]
 
         # Create a temp file and dump the score to that file.
         local_score_file_name = get_temp_file_path()
@@ -948,10 +946,6 @@ class {transform.original_class_name}(BaseTransformer):
             query=stage_creation_query
         ).has_dimensions(
             expected_rows=1, expected_cols=1
-        ).has_value_match(
-            row_idx=0,
-            col_idx=0,
-            expected_value=f"Stage area {{score_stage_name}} successfully created."
         ).validate()
 
         # Use posixpath to construct stage paths
@@ -986,7 +980,7 @@ class {transform.original_class_name}(BaseTransformer):
         )
         def score_wrapper_sproc(
             session: Session,
-            sql_query: str,
+            sql_queries: List[str],
             stage_score_file_name: str,
             input_cols: List[str],
             label_cols: List[str],
@@ -1001,7 +995,9 @@ class {transform.original_class_name}(BaseTransformer):
             import inspect
             {transform.fit_sproc_imports}
 
-            df = session.sql(sql_query).to_pandas(statement_params=statement_params)
+            for query in sql_queries[:-1]:
+                _ = session.sql(query).collect(statement_params=statement_params)
+            df = session.sql(sql_queries[-1]).to_pandas(statement_params=statement_params)
 
             local_score_file = tempfile.NamedTemporaryFile(delete=True)
             local_score_file_name = local_score_file.name
@@ -1043,7 +1039,7 @@ class {transform.original_class_name}(BaseTransformer):
         )
         score = score_wrapper_sproc(
             session,
-            query,
+            queries,
             stage_score_file_name,
             identifier.get_unescaped_names(self.input_cols),
             identifier.get_unescaped_names(self.label_cols),
@@ -1065,7 +1061,7 @@ class {transform.original_class_name}(BaseTransformer):
             # For classifier, the type of predict is the same as the type of label
             if self._sklearn_object._estimator_type == 'classifier':
                 outputs = _infer_signature(dataset[self.label_cols], "output")  # label columns is the desired type for output
-                outputs = _rename_features(outputs, self.output_cols)  # rename the output columns
+                outputs = model_signature_utils.rename_features(outputs, self.output_cols)  # rename the output columns
                 self._model_signature_dict["predict"] = ModelSignature(inputs, 
                                                                        ([] if self._drop_input_cols else inputs) + outputs)
             # For regressor, the type of predict is float64

@@ -44,10 +44,12 @@ py_test(
     name = "docker_context_test",
     srcs = ["docker_context_test.py"],
     deps = [
-        ":docker_context"
+        ":docker_context",
+        "//snowflake/ml/model:_model"
     ],
     data = [
-        "test_fixtures/dockerfile_test_fixture"
+        "test_fixtures/dockerfile_test_fixture",
+        "test_fixtures/dockerfile_test_gpu_fixture"
     ]
 )
 

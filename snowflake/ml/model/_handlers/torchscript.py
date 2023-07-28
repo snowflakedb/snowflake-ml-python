@@ -12,6 +12,10 @@ from snowflake.ml.model import (
     type_hints as model_types,
 )
 from snowflake.ml.model._handlers import _base
+from snowflake.ml.model._signatures import (
+    pytorch_handler,
+    utils as model_signature_utils,
+)
 
 if TYPE_CHECKING:
     import torch
@@ -67,8 +71,8 @@ class _TorchScriptHandler(_base._ModelHandler["torch.jit.ScriptModule"]):  # typ
             def get_prediction(
                 target_method_name: str, sample_input: "model_types.SupportedLocalDataType"
             ) -> model_types.SupportedLocalDataType:
-                if not model_signature._SeqOfPyTorchTensorHandler.can_handle(sample_input):
-                    sample_input = model_signature._SeqOfPyTorchTensorHandler.convert_from_df(
+                if not pytorch_handler.SeqOfPyTorchTensorHandler.can_handle(sample_input):
+                    sample_input = pytorch_handler.SeqOfPyTorchTensorHandler.convert_from_df(
                         model_signature._convert_local_data_to_df(sample_input)
                     )
 
@@ -151,12 +155,12 @@ class _TorchScriptHandler(_base._ModelHandler["torch.jit.ScriptModule"]):  # typ
 
                     raw_model.eval()
 
-                    t = model_signature._SeqOfPyTorchTensorHandler.convert_from_df(X, signature.inputs)
+                    t = pytorch_handler.SeqOfPyTorchTensorHandler.convert_from_df(X, signature.inputs)
 
                     with torch.no_grad():
                         res = getattr(raw_model, target_method)(t)
-                    return model_signature._rename_pandas_df(
-                        data=model_signature._SeqOfPyTorchTensorHandler.convert_to_df(res), features=signature.outputs
+                    return model_signature_utils.rename_pandas_df(
+                        data=pytorch_handler.SeqOfPyTorchTensorHandler.convert_to_df(res), features=signature.outputs
                     )
 
                 return fn

@@ -22,7 +22,7 @@ class SnowServiceClientTest(absltest.TestCase):
         m_min_instances = 1
         m_max_instances = 2
         m_compute_pool = "mock_compute_pool"
-        m_spec_storgae_location = "mock_spec_storage_location"
+        m_spec_storgae_location = "@mock_spec_storage_location"
 
         self.m_session.add_mock_sql(
             query="drop service if exists mock_service_name", result=mock_data_frame.MockDataFrame(collect_result=[])

@@ -20,10 +20,13 @@ from snowflake.ml.model import (
     model_signature,
     type_hints as model_types,
 )
+from snowflake.ml.model._signatures import snowpark_handler
 from snowflake.snowpark import DataFrame as SnowparkDataFrame
 
 MODEL_METADATA_VERSION = 1
 _BASIC_DEPENDENCIES = _core_requirements.REQUIREMENTS
+_SNOWFLAKE_PKG_NAME = "snowflake"
+_SNOWFLAKE_ML_PKG_NAME = f"{_SNOWFLAKE_PKG_NAME}.ml"
 
 Dependency = namedtuple("Dependency", ["conda_name", "pip_name"])
 
@@ -81,13 +84,18 @@ def _create_model_metadata(
             current version would be captured. Defaults to None.
         **kwargs: Dict of attributes and values of the metadata. Used when loading from file.
 
+    Raises:
+        ValueError: Raised when the code path contains reserved file or directory.
+
     Yields:
         A model metadata object.
     """
     model_dir_path = os.path.normpath(model_dir_path)
     embed_local_ml_library = kwargs.pop("embed_local_ml_library", False)
+    # Use the last one which is loaded first, that is mean, it is loaded from site-packages.
+    # We could make sure that user does not overwrite our library with their code follow the same naming.
+    snowml_path = list(importlib.import_module(_SNOWFLAKE_ML_PKG_NAME).__path__)[-1]
     if embed_local_ml_library:
-        snowml_path = list(importlib.import_module("snowflake.ml").__path__)[0]
         kwargs["local_ml_library_version"] = f"{snowml_env.VERSION}+{file_utils.hash_directory(snowml_path)}"
 
     model_meta = ModelMetadata(
@@ -100,18 +108,24 @@ def _create_model_metadata(
         signatures=signatures,
         **kwargs,
     )
-    if code_paths:
-        code_dir_path = os.path.join(model_dir_path, ModelMetadata.MODEL_CODE_DIR)
+
+    code_dir_path = os.path.join(model_dir_path, ModelMetadata.MODEL_CODE_DIR)
+    if embed_local_ml_library or code_paths:
         os.makedirs(code_dir_path, exist_ok=True)
-        for code_path in code_paths:
-            file_utils.copy_file_or_tree(code_path, code_dir_path)
 
     if embed_local_ml_library:
-        code_dir_path = os.path.join(model_dir_path, ModelMetadata.MODEL_CODE_DIR)
-        snowml_path = list(importlib.import_module("snowflake.ml").__path__)[0]
-        snowml_path_in_code = os.path.join(code_dir_path, "snowflake")
+        snowml_path_in_code = os.path.join(code_dir_path, _SNOWFLAKE_PKG_NAME)
         os.makedirs(snowml_path_in_code, exist_ok=True)
         file_utils.copy_file_or_tree(snowml_path, snowml_path_in_code)
+
+    if code_paths:
+        for code_path in code_paths:
+            # This part is to prevent users from providing code following our naming and overwrite our code.
+            if (
+                os.path.isfile(code_path) and os.path.splitext(os.path.basename(code_path))[0] == _SNOWFLAKE_PKG_NAME
+            ) or (os.path.isdir(code_path) and os.path.basename(code_path) == _SNOWFLAKE_PKG_NAME):
+                raise ValueError("`snowflake` is a reserved name and you cannot contain that into code path.")
+            file_utils.copy_file_or_tree(code_path, code_dir_path)
 
     try:
         imported_modules = []
@@ -146,9 +160,23 @@ def _load_model_metadata(model_dir_path: str) -> "ModelMetadata":
         if code_path in sys.path:
             sys.path.remove(code_path)
         sys.path.insert(0, code_path)
-        modules = file_utils.get_all_modules(code_path)
-        for module in modules:
-            sys.modules.pop(module.name, None)
+        module_names = file_utils.get_all_modules(code_path)
+        # If the module_name starts with snowflake, then do not replace it.
+        # When deploying, we would add them beforehand.
+        # When in the local, they should not be added. We already prevent user from overwriting us.
+        module_names = [
+            module_name
+            for module_name in module_names
+            if not (module_name.startswith(f"{_SNOWFLAKE_PKG_NAME}.") or module_name == _SNOWFLAKE_PKG_NAME)
+        ]
+        for module_name in module_names:
+            actual_module = sys.modules.pop(module_name, None)
+            if actual_module is not None:
+                sys.modules[module_name] = importlib.import_module(module_name)
+
+        assert code_path in sys.path
+        sys.path.remove(code_path)
+
     return meta
 
 
@@ -244,7 +272,7 @@ class ModelMetadata:
         pip_reqs = env_utils.validate_pip_requirement_string_list(list(pip_reqs_str))
         conda_reqs = env_utils.validate_conda_dependency_string_list(list(conda_reqs_str))
 
-        for conda_req, pip_req in zip(conda_reqs[""], pip_reqs):
+        for conda_req, pip_req in zip(conda_reqs[env_utils.DEFAULT_CHANNEL_NAME], pip_reqs):
             req_to_add = env_utils.get_local_installed_version_of_pip_package(pip_req)
             req_to_add.name = conda_req.name
             for added_pip_req in self._pip_requirements:
@@ -257,7 +285,9 @@ class ModelMetadata:
                         category=UserWarning,
                     )
             try:
-                env_utils.append_conda_dependency(self._conda_dependencies, ("", req_to_add))
+                env_utils.append_conda_dependency(
+                    self._conda_dependencies, (env_utils.DEFAULT_CHANNEL_NAME, req_to_add)
+                )
             except env_utils.DuplicateDependencyError:
                 pass
             except env_utils.DuplicateDependencyInMultipleChannelsError:
@@ -373,12 +403,12 @@ class ModelMetadata:
         return meta
 
 
-def _is_callable(model: model_types.SupportedLocalModelType, method_name: str) -> bool:
+def _is_callable(model: model_types.SupportedModelType, method_name: str) -> bool:
     return callable(getattr(model, method_name, None))
 
 
 def _validate_signature(
-    model: model_types.SupportedLocalModelType,
+    model: model_types.SupportedRequireSignatureModelType,
     model_meta: ModelMetadata,
     target_methods: Sequence[str],
     sample_input: Optional[model_types.SupportedDataType],
@@ -397,7 +427,7 @@ def _validate_signature(
     if isinstance(sample_input, SnowparkDataFrame):
         # Added because of Any from missing stubs.
         trunc_sample_input = cast(SnowparkDataFrame, trunc_sample_input)
-        local_sample_input = model_signature._SnowparkDataFrameHandler.convert_to_df(trunc_sample_input)
+        local_sample_input = snowpark_handler.SnowparkDataFrameHandler.convert_to_df(trunc_sample_input)
     else:
         local_sample_input = trunc_sample_input
     for target_method in target_methods:
@@ -408,7 +438,7 @@ def _validate_signature(
 
 
 def _get_target_methods(
-    model: model_types.SupportedLocalModelType,
+    model: model_types.SupportedModelType,
     target_methods: Optional[Sequence[str]],
     default_target_methods: Sequence[str],
 ) -> Sequence[str]:

@@ -141,7 +141,7 @@ if [ "${ENV}" = "pip" ]; then
         python3.8 -m pip install -U pip setuptools wheel
         echo "Building snowpark wheel from main:$(git rev-parse HEAD)."
         pip wheel . --no-deps
-        cp snowflake_snowpark_python-*.whl "${WORKSPACE}"
+        cp "$(find . -maxdepth 1 -iname 'snowflake_snowpark_python-*.whl')" "${WORKSPACE}"
         deactivate
         popd
     fi
@@ -149,7 +149,7 @@ if [ "${ENV}" = "pip" ]; then
     # Build SnowML
     pushd ${SNOWML_DIR}
     "${BAZEL}" build //snowflake/ml:wheel
-    cp bazel-bin/snowflake/ml/snowflake_ml_python-*.whl "${WORKSPACE}"
+    cp "$(${BAZEL} info bazel-bin)/snowflake/ml/snowflake_ml_python-${VERSION}-py3-none-any.whl" "${WORKSPACE}"
     popd
 else
     which conda
@@ -194,7 +194,7 @@ if [ "${ENV}" = "pip" ]; then
     python3.8 -m pip list
     python3.8 -m pip install "snowflake_ml_python-${VERSION}-py3-none-any.whl[all]" pytest-xdist inflection --no-cache-dir --force-reinstall
     if [ "${WITH_SNOWPARK}" = true ]; then
-        cp "${WORKSPACE}/snowflake_snowpark_python-*.whl" "${TEMP_TEST_DIR}"
+        cp "$(find "${WORKSPACE}" -maxdepth 1 -iname 'snowflake_snowpark_python-*.whl')" "${TEMP_TEST_DIR}"
         python3.8 -m pip install "$(find . -maxdepth 1 -iname 'snowflake_snowpark_python-*.whl')" --force-reinstall
     fi
     python3.8 -m pip list

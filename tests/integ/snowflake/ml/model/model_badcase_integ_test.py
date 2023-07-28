@@ -75,7 +75,7 @@ class TestModelBadCaseInteg(absltest.TestCase):
                 sample_input=pd_df,
                 metadata={"author": "halu", "version": "1"},
                 conda_dependencies=["invalidnumpy==1.22.4"],
-                options={"embed_local_ml_library": True},
+                options=model_types.CustomModelSaveOption({"embed_local_ml_library": True}),
             )
             function_name = db_manager.TestObjectNameGenerator.get_snowml_test_object_name(
                 self.run_id, "custom_bad_model"
@@ -101,7 +101,7 @@ class TestModelBadCaseInteg(absltest.TestCase):
                 model=lm,
                 sample_input=pd_df,
                 metadata={"author": "halu", "version": "1"},
-                options={"embed_local_ml_library": True},
+                options=model_types.CustomModelSaveOption({"embed_local_ml_library": True}),
             )
             function_name = db_manager.TestObjectNameGenerator.get_snowml_test_object_name(
                 self.run_id, "custom_demo_model"
