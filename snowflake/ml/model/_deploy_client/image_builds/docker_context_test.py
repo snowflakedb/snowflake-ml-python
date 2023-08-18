@@ -35,8 +35,7 @@ class DockerContextTest(absltest.TestCase):
             sample_input=_IRIS_X,
         )
 
-        self.use_gpu = False
-        self.docker_context = docker_context.DockerContext(self.context_dir, model_dir=self.model_dir, use_gpu=False)
+        self.docker_context = docker_context.DockerContext(self.context_dir, model_dir=self.model_dir)
 
     def tearDown(self) -> None:
         shutil.rmtree(self.model_dir)
@@ -71,12 +70,10 @@ class DockerContextTest(absltest.TestCase):
             self.assertEqual(actual, expected, "Generated dockerfile is not aligned with the docker template")
 
     def test_docker_file_content_with_gpu(self) -> None:
-        gpu_context = docker_context.DockerContext(self.context_dir, model_dir=self.model_dir, use_gpu=True)
+        gpu_context = docker_context.DockerContext(self.context_dir, model_dir=self.model_dir)
         gpu_context.build()
         dockerfile_path = os.path.join(self.context_dir, "Dockerfile")
-        dockerfile_fixture_path = os.path.join(
-            os.path.dirname(__file__), "test_fixtures", "dockerfile_test_gpu_fixture"
-        )
+        dockerfile_fixture_path = os.path.join(os.path.dirname(__file__), "test_fixtures", "dockerfile_test_fixture")
         with open(dockerfile_path) as dockerfile, open(dockerfile_fixture_path) as expected_dockerfile:
             actual = dockerfile.read()
             expected = expected_dockerfile.read()

@@ -7,7 +7,6 @@ from typing import IO, List, Optional, Tuple, TypedDict, Union
 from typing_extensions import Unpack
 
 from snowflake.ml._internal import env_utils, file_utils
-from snowflake.ml._internal.utils import identifier
 from snowflake.ml.model import _model, _model_meta, type_hints as model_types
 from snowflake.ml.model._deploy_client.warehouse import infer_template
 from snowflake.snowpark import session as snowpark_session, types as st
@@ -92,7 +91,7 @@ def _deploy_to_warehouse(
         params = _UDFParams(
             file_path=f.name,
             func_name="infer",
-            name=identifier.get_inferred_name(udf_name),
+            name=udf_name,
             return_type=st.PandasSeriesType(st.MapType(st.StringType(), st.VariantType())),
             input_types=[st.PandasDataFrameType([st.MapType()])],
             imports=list(imports),

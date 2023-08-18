@@ -1,8 +1,22 @@
 # Release History
 
+## 1.0.5
+
+### New Features
+
+- Model Registry: Added support save/load/deploy xgboost Booster model.
+- Model Registry: Added support to get the model name and the model version from model references.
+
+### Bug Fixes
+
+- Model Registry: Restore the db/schema back to the session after `create_model_registry()`.
+- Model Registry: Fixed an issue that the UDF name created when deploying a model is not identical to what is provided and cannot be correctly dropped when deployment getting dropped.
+- connection_params.SnowflakeLoginOptions(): Added support for `private_key_path`.
+
 ## 1.0.4
 
 ### New Features
+
 - Model Registry: Added support save/load/deploy Tensorflow models (`tensorflow.Module`).
 - Model Registry: Added support save/load/deploy MLFlow PyFunc models (`mlflow.pyfunc.PyFuncModel`).
 - Model Development: Input dataframes can now be joined against data loaded from staged files.
@@ -15,9 +29,11 @@
 ## 1.0.3 (2023-07-14)
 
 ### Behavior Changes
+
 - Model Registry: When predicting a model whose output is a list of NumPy ndarray, the output would not be flattened, instead, every ndarray will act as a feature(column) in the output.
 
 ### New Features
+
 - Model Registry: Added support save/load/deploy PyTorch models (`torch.nn.Module` and `torch.jit.ScriptModule`).
 
 ### Bug Fixes
@@ -33,11 +49,13 @@
 ## 1.0.2 (2023-06-22)
 
 ### Behavior Changes
+
 - Model Registry: Prohibit non-snowflake-native models from being logged.
 - Model Registry: `_use_local_snowml` parameter in options of `deploy()` has been removed.
 - Model Registry: A default `False` `embed_local_ml_library` parameter has been added to the options of `log_model()`. With this set to `False` (default), the version of the local snowflake-ml-python library will be recorded and used when deploying the model. With this set to `True`, local snowflake-ml-python library will be embedded into the logged model, and will be used when you load or deploy the model.
 
 ### New Features
+
 - Model Registry: A new optional argument named `code_paths` has been added to the arguments of `log_model()` for users to specify additional code paths to be imported when loading and deploying the model.
 - Model Registry: A new optional argument named `options` has been added to the arguments of `log_model()` to specify any additional options when saving the model.
 - Model Development: Added metrics:
@@ -52,8 +70,8 @@
 
 - Model Development: `accuracy_score()` now works when given label column names are lists of a single value.
 
-
 ## 1.0.1 (2023-06-16)
+
 ### Behavior Changes
 
 - Model Development: Changed Metrics APIs to imitate sklearn metrics modules:

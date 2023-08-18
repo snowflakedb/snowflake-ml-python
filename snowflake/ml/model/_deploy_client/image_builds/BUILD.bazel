@@ -49,7 +49,6 @@ py_test(
     ],
     data = [
         "test_fixtures/dockerfile_test_fixture",
-        "test_fixtures/dockerfile_test_gpu_fixture"
     ]
 )
 

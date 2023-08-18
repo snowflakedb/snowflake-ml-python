@@ -11,7 +11,6 @@ from starlette import applications, requests, responses, routing
 logger = logging.getLogger(__name__)
 _LOADED_MODEL = None
 _LOADED_META = None
-TARGET_METHOD = "predict"
 MODEL_CODE_DIR = "code"
 
 
@@ -27,6 +26,7 @@ def _run_setup() -> None:
 
     MODEL_ZIP_STAGE_PATH = os.getenv("MODEL_ZIP_STAGE_PATH")
     assert MODEL_ZIP_STAGE_PATH, "Missing environment variable MODEL_ZIP_STAGE_PATH"
+
     root_path = os.path.abspath(os.sep)
     model_zip_stage_path = os.path.join(root_path, MODEL_ZIP_STAGE_PATH)
 
@@ -80,6 +80,10 @@ async def predict(request: requests.Request) -> responses.JSONResponse:
     """
     assert _LOADED_MODEL, "model is not loaded"
     assert _LOADED_META, "model metadata is not loaded"
+
+    TARGET_METHOD = os.getenv("TARGET_METHOD")
+    assert TARGET_METHOD, "Missing environment variable TARGET_METHOD"
+
     from snowflake.ml.model.model_signature import FeatureSpec
 
     try:
@@ -99,9 +103,7 @@ async def predict(request: requests.Request) -> responses.JSONResponse:
         return responses.JSONResponse({"error": error_message}, status_code=400)
 
     try:
-        # TODO(shchen): SNOW-835369, Support target method in inference server (Multi-task model).
-        # Mypy ignore will be fixed along with the above ticket.
-        predictions_df = _LOADED_MODEL.predict(x)  # type: ignore[attr-defined]
+        predictions_df = getattr(_LOADED_MODEL, TARGET_METHOD)(x)
         predictions_df.columns = output_cols
         # Use _ID to keep the order of prediction result and associated features.
         _KEEP_ORDER_COL_NAME = "_ID"

@@ -65,11 +65,13 @@
                     "type": "array",
                     "items": [
                         {
-                            "type": "string"
+                            "type": "string",
+                            "enum": ["deployment_core", "build_essential"]
                         }
                     ]
                 }
             },
+            "additionalProperties":false,
             "allOf": [
                 {
                     "anyOf": [

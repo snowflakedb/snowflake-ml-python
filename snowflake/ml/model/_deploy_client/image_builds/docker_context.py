@@ -11,17 +11,15 @@ class DockerContext(ABC):
     Constructs the Docker context directory required for image building.
     """
 
-    def __init__(self, context_dir: str, model_dir: str, *, use_gpu: bool = False) -> None:
+    def __init__(self, context_dir: str, model_dir: str) -> None:
         """Initialization
 
         Args:
             context_dir: Path to context directory.
             model_dir: Path to local model directory.
-            use_gpu: Boolean flag for generating the CPU or GPU base image.
         """
         self.context_dir = context_dir
         self.model_dir = model_dir
-        self.use_gpu = use_gpu
 
     def build(self) -> None:
         """
@@ -57,9 +55,7 @@ class DockerContext(ABC):
             dockerfile_content = string.Template(template.read()).safe_substitute(
                 {
                     # TODO(shchen): SNOW-835411, Support overwriting base image
-                    "base_image": "mambaorg/micromamba:focal-cuda-11.7.1"
-                    if self.use_gpu
-                    else "mambaorg/micromamba:1.4.3",
+                    "base_image": "mambaorg/micromamba:1.4.3",
                     "model_env_folder": constants.MODEL_ENV_FOLDER,
                     "inference_server_dir": constants.INFERENCE_SERVER_DIR,
                     "entrypoint_script": constants.ENTRYPOINT_SCRIPT,

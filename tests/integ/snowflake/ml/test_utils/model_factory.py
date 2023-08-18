@@ -1,20 +1,32 @@
 #
 # Copyright (c) 2012-2022 Snowflake Computing Inc. All rights reserved.
 #
-
+from enum import Enum
 from typing import List, Tuple
 
 import numpy as np
 import numpy.typing as npt
 import pandas as pd
+import tensorflow as tf
+import torch
 from sklearn import datasets, svm
 
 from snowflake.ml.model import custom_model
-from snowflake.ml.modeling.linear_model import LogisticRegression
-from snowflake.ml.modeling.pipeline import Pipeline
-from snowflake.ml.modeling.preprocessing import MinMaxScaler, OneHotEncoder
-from snowflake.ml.modeling.xgboost import XGBClassifier
+from snowflake.ml.modeling.linear_model import (  # type: ignore[attr-defined]
+    LogisticRegression,
+)
+from snowflake.ml.modeling.pipeline import Pipeline  # type: ignore[attr-defined]
+from snowflake.ml.modeling.preprocessing import (  # type: ignore[attr-defined]
+    MinMaxScaler,
+    OneHotEncoder,
+)
+from snowflake.ml.modeling.xgboost import XGBClassifier  # type: ignore[attr-defined]
 from snowflake.snowpark import DataFrame, Session
+
+
+class DEVICE(Enum):
+    CUDA = "cuda"
+    CPU = "cpu"
 
 
 class ModelFactory:
@@ -42,7 +54,7 @@ class ModelFactory:
         return clf, test_features, test_labels
 
     @staticmethod
-    def prepare_snowml_model() -> Tuple[XGBClassifier, pd.DataFrame]:
+    def prepare_snowml_model_xgb() -> Tuple[XGBClassifier, pd.DataFrame]:
         iris = datasets.load_iris()
         df = pd.DataFrame(data=np.c_[iris["data"], iris["target"]], columns=iris["feature_names"] + ["target"])
         df.columns = [s.replace(" (CM)", "").replace(" ", "") for s in df.columns.str.upper()]
@@ -158,3 +170,110 @@ class ModelFactory:
         test_data = pd.DataFrame(["Hello, how are you?", "Once upon a time"])
 
         return gpt2_model, test_data
+
+    @staticmethod
+    def prepare_torch_model(
+        dtype: torch.dtype = torch.float32, force_remote_gpu_inference: bool = False
+    ) -> Tuple[torch.nn.Module, List[torch.Tensor], List[torch.Tensor]]:
+        class TorchModel(torch.nn.Module):
+            def __init__(self, n_input: int, n_hidden: int, n_out: int, dtype: torch.dtype = torch.float32) -> None:
+                super().__init__()
+                self.model = torch.nn.Sequential(
+                    torch.nn.Linear(n_input, n_hidden, dtype=dtype),
+                    torch.nn.ReLU(),
+                    torch.nn.Linear(n_hidden, n_out, dtype=dtype),
+                    torch.nn.Sigmoid(),
+                )
+
+            def forward_training(self, tensors: List[torch.Tensor]) -> List[torch.Tensor]:
+                return [self.model(tensors[0])]
+
+            def forward(self, tensors: List[torch.Tensor]) -> List[torch.Tensor]:
+                device = DEVICE.CUDA if force_remote_gpu_inference else DEVICE.CPU
+                return self.predict_with_device(tensors, device)
+
+            def predict_with_device(self, tensors: List[torch.Tensor], device: DEVICE) -> List[torch.Tensor]:
+                self.model.eval()
+                self.model.to(device.value)
+                with torch.no_grad():
+                    tensors = [tensor.to(device.value) for tensor in tensors]
+                    return [self.model(tensors[0])]
+
+        n_input, n_hidden, n_out, batch_size, learning_rate = 10, 15, 1, 100, 0.01
+        x = np.random.rand(batch_size, n_input)
+        data_x = [torch.from_numpy(x).to(dtype=dtype)]
+        data_y = [(torch.rand(size=(batch_size, 1)) < 0.5).to(dtype=dtype)]
+
+        model = TorchModel(n_input, n_hidden, n_out, dtype=dtype)
+        loss_function = torch.nn.MSELoss()
+        optimizer = torch.optim.SGD(model.parameters(), lr=learning_rate)
+        for _epoch in range(100):
+            pred_y = model.forward_training(data_x)
+            loss = loss_function(pred_y[0], data_y[0])
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+        return model, data_x, data_y
+
+    def prepare_jittable_torch_model(
+        dtype: torch.dtype = torch.float32, force_remote_gpu_inference: bool = False
+    ) -> Tuple[torch.nn.Module, List[torch.Tensor], List[torch.Tensor]]:
+        class TorchModel(torch.nn.Module):
+            def __init__(self, n_input: int, n_hidden: int, n_out: int, dtype: torch.dtype = torch.float32) -> None:
+                super().__init__()
+                self.model = torch.nn.Sequential(
+                    torch.nn.Linear(n_input, n_hidden, dtype=dtype),
+                    torch.nn.ReLU(),
+                    torch.nn.Linear(n_hidden, n_out, dtype=dtype),
+                    torch.nn.Sigmoid(),
+                )
+
+            def forward(self, tensors: List[torch.Tensor]) -> List[torch.Tensor]:
+                return [self.model(tensors[0])]
+
+        n_input, n_hidden, n_out, batch_size, learning_rate = 10, 15, 1, 100, 0.01
+        x = np.random.rand(batch_size, n_input)
+        data_x = [torch.from_numpy(x).to(dtype=dtype)]
+        data_y = [(torch.rand(size=(batch_size, 1)) < 0.5).to(dtype=dtype)]
+
+        model = TorchModel(n_input, n_hidden, n_out, dtype=dtype)
+        loss_function = torch.nn.MSELoss()
+        optimizer = torch.optim.SGD(model.parameters(), lr=learning_rate)
+        for _epoch in range(100):
+            pred_y = model(data_x)
+            loss = loss_function(pred_y[0], data_y[0])
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+        return model, data_x, data_y
+
+    @staticmethod
+    def prepare_keras_model(
+        dtype: tf.dtypes.DType = tf.float32,
+    ) -> Tuple[tf.keras.Model, List[tf.Tensor], List[tf.Tensor]]:
+        class KerasModel(tf.keras.Model):
+            def __init__(self, n_hidden: int, n_out: int) -> None:
+                super().__init__()
+                self.fc_1 = tf.keras.layers.Dense(n_hidden, activation="relu")
+                self.fc_2 = tf.keras.layers.Dense(n_out, activation="sigmoid")
+
+            def call(self, tensors: List[tf.Tensor]) -> List[tf.Tensor]:
+                input = tensors[0]
+                x = self.fc_1(input)
+                x = self.fc_2(x)
+                return [x]
+
+        n_input, n_hidden, n_out, batch_size, learning_rate = 10, 15, 1, 100, 0.01
+        x = np.random.rand(batch_size, n_input)
+        data_x = [tf.convert_to_tensor(x, dtype=dtype)]
+        raw_data_y = tf.random.uniform((batch_size, 1))
+        raw_data_y = tf.where(raw_data_y > 0.5, tf.ones_like(raw_data_y), tf.zeros_like(raw_data_y))
+        data_y = [tf.cast(raw_data_y, dtype=dtype)]
+
+        def loss_fn(y_true: List[tf.Tensor], y_pred: List[tf.Tensor]) -> tf.Tensor:
+            return tf.keras.losses.mse(y_true[0], y_pred[0])
+
+        model = KerasModel(n_hidden, n_out)
+        model.compile(optimizer=tf.keras.optimizers.SGD(learning_rate=learning_rate), loss=loss_fn)
+        model.fit(data_x, data_y, batch_size=batch_size, epochs=100)
+        return model, data_x, data_y

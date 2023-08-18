@@ -6,7 +6,7 @@ import sys
 import tempfile
 import types
 import zipfile
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union, cast
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Set, Union, cast
 from uuid import uuid1
 
 from absl import logging
@@ -22,6 +22,7 @@ from snowflake.ml._internal.utils import (
 from snowflake.ml.model import (
     _deployer,
     _model as model_api,
+    deploy_platforms,
     model_signature,
     type_hints as model_types,
 )
@@ -82,6 +83,9 @@ def create_model_registry(
         True if the creation of the model registry internal data structures was successful,
         False otherwise.
     """
+    # Get the db & schema of the current session
+    old_db = session.get_current_database()
+    old_schema = session.get_current_schema()
 
     # These might be exposed as parameters in the future.
     database_name = identifier.get_inferred_name(database_name)
@@ -94,27 +98,33 @@ def create_model_registry(
         subproject=_TELEMETRY_SUBPROJECT,
         function_name=telemetry.get_statement_params_full_func_name(inspect.currentframe(), ""),
     )
-
-    _create_registry_database(session, database_name, statement_params)
-    _create_registry_schema(session, database_name, schema_name, statement_params)
-    _create_registry_tables(
-        session,
-        database_name,
-        schema_name,
-        registry_table_name,
-        metadata_table_name,
-        deployment_table_name,
-        statement_params,
-    )
-    _create_registry_views(
-        session,
-        database_name,
-        schema_name,
-        registry_table_name,
-        metadata_table_name,
-        deployment_table_name,
-        statement_params,
-    )
+    try:
+        _create_registry_database(session, database_name, statement_params)
+        _create_registry_schema(session, database_name, schema_name, statement_params)
+        _create_registry_tables(
+            session,
+            database_name,
+            schema_name,
+            registry_table_name,
+            metadata_table_name,
+            deployment_table_name,
+            statement_params,
+        )
+        _create_registry_views(
+            session,
+            database_name,
+            schema_name,
+            registry_table_name,
+            metadata_table_name,
+            deployment_table_name,
+            statement_params,
+        )
+    finally:
+        # Restore the db & schema to the original ones
+        if old_db is not None:
+            session.use_database(old_db)
+        if old_schema is not None:
+            session.use_schema(old_schema)
     return True
 
 
@@ -457,6 +467,8 @@ class ModelRegistry:
             ),
         ).has_dimensions(expected_rows=1).validate()
 
+        self._validate_registry_table_schema(add_if_not_exists=set())
+
         query_result_checker.SqlResultValidator(
             self._session,
             query=formatting.unwrap(
@@ -475,7 +487,40 @@ class ModelRegistry:
             ),
         ).has_dimensions(expected_rows=1).validate()
 
-        # TODO(zzhu): Also check validity of views. Consider checking schema as well.
+        # TODO(zzhu): Also check validity of views.
+
+    # TODO checks type as well. note type in _schema doesn't match with it appears in 'DESC TABLE'.
+    # We need another layer of mapping. This function can also be extended to other tables as well.
+    def _validate_registry_table_schema(self, add_if_not_exists: Set[str]) -> None:
+        """Validate the table schema to check for any missing columns.
+
+        Args:
+            add_if_not_exists: column names that will be created if not found in existing tables.
+
+        Raises:
+            TypeError: required column not exists in schema table and not defined in add_if_not_exists.
+        """
+
+        for k in add_if_not_exists:
+            assert k in _schema._REGISTRY_TABLE_SCHEMA
+
+        actual_table_rows = self._session.sql(f"DESC TABLE {self._fully_qualified_registry_table_name()}").collect()
+        actual_schema_dict = {}
+        for row in actual_table_rows:
+            actual_schema_dict[row["name"]] = row["type"]
+
+        for col_name, col_type in _schema._REGISTRY_TABLE_SCHEMA.items():
+            if col_name not in actual_schema_dict:
+                if col_name not in add_if_not_exists:
+                    raise TypeError(
+                        f"Registry table:{self._fully_qualified_registry_table_name()}"
+                        f" doesn't have required column:'{col_name}'."
+                    )
+                else:
+                    self._session.sql(
+                        f"""ALTER TABLE {self._fully_qualified_registry_table_name()}
+                                ADD COLUMN {col_name} {col_type}"""
+                    ).collect()
 
     def _get_statement_params(self, frame: Optional[types.FrameType]) -> Dict[str, Any]:
         return telemetry.get_function_usage_statement_params(
@@ -1598,7 +1643,7 @@ class ModelRegistry:
         deployment_name: str,
         target_method: str,
         permanent: bool = False,
-        platform: _deployer.TargetPlatform = _deployer.TargetPlatform.WAREHOUSE,
+        platform: deploy_platforms.TargetPlatform = deploy_platforms.TargetPlatform.WAREHOUSE,
         options: Optional[
             Union[model_types.WarehouseDeployOptions, model_types.SnowparkContainerServiceDeployOptions]
         ] = None,
@@ -1613,7 +1658,7 @@ class ModelRegistry:
             permanent: Whether the deployment is permanent or not. Permanent deployment will generate a permanent UDF.
                 (Only applicable for Warehouse deployment)
             platform: Target platform to deploy the model to. Currently supported platforms are
-                ['warehouse', 'snowpark_container_service']
+                ['warehouse', 'SNOWPARK_CONTAINER_SERVICES']
             options: Optional options for model deployment. Defaults to None.
 
         Raises:
@@ -1624,11 +1669,11 @@ class ModelRegistry:
 
         deployment_stage_path = ""
 
-        if platform == _deployer.TargetPlatform.SNOWPARK_CONTAINER_SERVICE:
+        if platform == deploy_platforms.TargetPlatform.SNOWPARK_CONTAINER_SERVICES:
             permanent = True
             options = cast(model_types.SnowparkContainerServiceDeployOptions, options)
             deployment_stage_path = f"{self._prepare_deployment_stage()}/{deployment_name}/"
-        elif platform == _deployer.TargetPlatform.WAREHOUSE:
+        elif platform == deploy_platforms.TargetPlatform.WAREHOUSE:
             options = cast(model_types.WarehouseDeployOptions, options)
             if permanent:
                 # Every deployment-generated UDF should reside in its own unique directory. As long as each deployment
@@ -1649,7 +1694,7 @@ class ModelRegistry:
         # artifacts. However, UDF generation fails when importing from a mix of encrypted and unencrypted stages.
         # The following workaround copies model between stages (PrPr as of July 7th, 2023) to transfer the SSE
         # encrypted model zip from model stage to the temporary unencrypted stage.
-        if not permanent and platform == _deployer.TargetPlatform.WAREHOUSE:
+        if not permanent and platform == deploy_platforms.TargetPlatform.WAREHOUSE:
             schema = self._fully_qualified_schema_name()
             unencrypted_stage = f"@{schema}.TEMP_UNENCRYPTED_{self._get_new_unique_identifier()}"
             self._session.sql(f"CREATE TEMPORARY STAGE {unencrypted_stage[1:]}").collect()
@@ -1657,9 +1702,8 @@ class ModelRegistry:
                 self._session.sql(f"COPY FILES INTO {unencrypted_stage} from {remote_model_path}").collect()
             except Exception:
                 raise RuntimeError(
-                    "Please ensure parameters are enabled in your Snowflake account by running "
-                    "'ALTER ACCOUNT <ACCOUNT_NAME> SET ENABLE_COPY_FILES=TRUE, "
-                    "ENABLE_COPY_FILES_API_IN_STORAGE=TRUE'"
+                    "Temporary deployment to the warehouse is currently not supported. Please use "
+                    "permanent deployment by setting the 'permanent' parameter to True"
                 )
             remote_model_path = f"{unencrypted_stage}/{os.path.basename(remote_model_path)}"
 
@@ -1824,6 +1868,14 @@ class ModelRegistry:
             operation=_DROP_METADATA_OPERATION,
         )
 
+        # Optional Step 5: Delete Snowpark container service.
+        if deployment["TARGET_PLATFORM"] == deploy_platforms.TargetPlatform.SNOWPARK_CONTAINER_SERVICES.value:
+            service_name = f"service_{deployment['MODEL_ID']}"
+            query_result_checker.SqlResultValidator(
+                self._session,
+                f"DROP SERVICE IF EXISTS {service_name}",
+            ).validate()
+
     @telemetry.send_api_usage_telemetry(
         project=_TELEMETRY_PROJECT,
         subproject=_TELEMETRY_SUBPROJECT,
@@ -1876,13 +1928,6 @@ class ModelRegistry:
             value={"delete_artifact": True, "URI": model_uri},
             enable_model_presence_check=False,
         )
-
-
-_TEMPLATE_MODEL_REF_METHOD_DEFN = """
-@telemetry.send_api_usage_telemetry(project='{project}', subproject='{subproject}')
-def {name}{signature}:
-    return self._registry.{name}({arguments})
-"""
 
 
 class ModelReference:
@@ -1984,42 +2029,34 @@ class ModelReference:
             # Ensure that we are not silently overwriting existing functions.
             assert not hasattr(self.__class__, name)
 
-            # logging.info("TEST: Adding function: " + name)
-            old_sig = inspect.signature(obj)
-            removed_none_type = map(
-                lambda x: x.replace(annotation=str(x.annotation)),
-                filter(lambda p: p.name not in ["model_name", "model_version"], old_sig.parameters.values()),
-            )
-            new_sig = old_sig.replace(
-                parameters=list(removed_none_type), return_annotation=str(old_sig.return_annotation)
-            )
-            arguments = ", ".join(
-                ["model_name=self._model_name"]
-                + ["model_version=self._model_version"]
-                + [
-                    "{p.name}={p.name}".format(p=p)
-                    for p in filter(
-                        lambda p: p.name not in ["id", "model_name", "model_version", "self"],
-                        old_sig.parameters.values(),
-                    )
-                ]
-            )
+            def build_method(m: Callable[..., Any]) -> Callable[..., Any]:
+                return lambda self, *args, **kwargs: m(
+                    self._registry, self._model_name, self._model_version, *args, **kwargs
+                )
+
+            method = build_method(m=obj)
+            setattr(self.__class__, name, method)
+
             docstring = self._remove_arg_from_docstring("model_name", obj.__doc__)
             if docstring and "model_version" in docstring:
                 docstring = self._remove_arg_from_docstring("model_version", docstring)
-            exec(
-                _TEMPLATE_MODEL_REF_METHOD_DEFN.format(
-                    name=name,
-                    signature=new_sig,
-                    arguments=arguments,
-                    project=_TELEMETRY_PROJECT,
-                    subproject=_TELEMETRY_SUBPROJECT,
-                )
-            )
-            setattr(self.__class__, name, locals()[name])
             setattr(self.__class__.__dict__[name], "__doc__", docstring)  # NoQA
 
         setattr(self.__class__, "init_complete", True)  # NoQA
+
+    @telemetry.send_api_usage_telemetry(
+        project=_TELEMETRY_PROJECT,
+        subproject=_TELEMETRY_SUBPROJECT,
+    )
+    def get_name(self) -> str:
+        return self._model_name
+
+    @telemetry.send_api_usage_telemetry(
+        project=_TELEMETRY_PROJECT,
+        subproject=_TELEMETRY_SUBPROJECT,
+    )
+    def get_version(self) -> str:
+        return self._model_version
 
     @telemetry.send_api_usage_telemetry(
         project=_TELEMETRY_PROJECT,
@@ -2052,13 +2089,16 @@ class ModelReference:
             deployment = self._registry.get_deployment(
                 self._model_name, self._model_version, deployment_name=deployment_name
             ).collect()[0]
-            platform = _deployer.TargetPlatform(deployment["TARGET_PLATFORM"])
+            platform = deploy_platforms.TargetPlatform(deployment["TARGET_PLATFORM"])
             signature = model_signature.ModelSignature.from_dict(json.loads(deployment["SIGNATURE"]))
             options_dict = cast(Dict[str, Any], json.loads(deployment["OPTIONS"]))
             platform_options = {
-                _deployer.TargetPlatform.WAREHOUSE: model_types.WarehouseDeployOptions,
-                _deployer.TargetPlatform.SNOWPARK_CONTAINER_SERVICE: model_types.SnowparkContainerServiceDeployOptions,
+                deploy_platforms.TargetPlatform.WAREHOUSE: model_types.WarehouseDeployOptions,
+                deploy_platforms.TargetPlatform.SNOWPARK_CONTAINER_SERVICES: (
+                    model_types.SnowparkContainerServiceDeployOptions
+                ),
             }
+
             if platform not in platform_options:
                 raise ValueError(f"Unsupported target Platform: {platform}")
             options = platform_options[platform](options_dict)

@@ -4,6 +4,7 @@ import tensorflow as tf
 from absl.testing import absltest
 
 from snowflake.ml.model._signatures import core, tensorflow_handler, utils
+from snowflake.ml.test_utils import exception_utils
 
 
 class SeqOfTensorflowTensorHandlerTest(absltest.TestCase):
@@ -25,39 +26,57 @@ class SeqOfTensorflowTensorHandlerTest(absltest.TestCase):
 
     def test_validate_tf_tensor(self) -> None:
         t = [tf.constant([])]
-        with self.assertRaisesRegex(ValueError, "Empty data is found."):
+        with exception_utils.assert_snowml_exceptions(
+            self, expected_original_error_type=ValueError, expected_regex="Empty data is found."
+        ):
             tensorflow_handler.SeqOfTensorflowTensorHandler.validate(t)
 
         t = [tf.Variable([1, 2], shape=tf.TensorShape(None))]
-        with self.assertRaisesRegex(ValueError, "Unknown shape data is found."):
+        with exception_utils.assert_snowml_exceptions(
+            self, expected_original_error_type=ValueError, expected_regex="Unknown shape data is found."
+        ):
             tensorflow_handler.SeqOfTensorflowTensorHandler.validate(t)
 
         t = [tf.Variable([[1, 2]], shape=tf.TensorShape([None, 2]))]
-        with self.assertRaisesRegex(ValueError, "Unknown shape data is found."):
+        with exception_utils.assert_snowml_exceptions(
+            self, expected_original_error_type=ValueError, expected_regex="Unknown shape data is found."
+        ):
             tensorflow_handler.SeqOfTensorflowTensorHandler.validate(t)
 
         t = [tf.Variable([[1, 2]], shape=tf.TensorShape([1, None]))]
-        with self.assertRaisesRegex(ValueError, "Unknown shape data is found."):
+        with exception_utils.assert_snowml_exceptions(
+            self, expected_original_error_type=ValueError, expected_regex="Unknown shape data is found."
+        ):
             tensorflow_handler.SeqOfTensorflowTensorHandler.validate(t)
 
         t = [tf.constant(1)]
-        with self.assertRaisesRegex(ValueError, "Scalar data is found."):
+        with exception_utils.assert_snowml_exceptions(
+            self, expected_original_error_type=ValueError, expected_regex="Scalar data is found."
+        ):
             tensorflow_handler.SeqOfTensorflowTensorHandler.validate(t)
 
         t = [tf.constant([1])]
-        with self.assertRaisesRegex(ValueError, "Scalar data is found."):
+        with exception_utils.assert_snowml_exceptions(
+            self, expected_original_error_type=ValueError, expected_regex="Scalar data is found."
+        ):
             tensorflow_handler.SeqOfTensorflowTensorHandler.validate(t)
 
         t = [tf.Variable(1)]
-        with self.assertRaisesRegex(ValueError, "Scalar data is found."):
+        with exception_utils.assert_snowml_exceptions(
+            self, expected_original_error_type=ValueError, expected_regex="Scalar data is found."
+        ):
             tensorflow_handler.SeqOfTensorflowTensorHandler.validate(t)
 
         t = [tf.Variable([1])]
-        with self.assertRaisesRegex(ValueError, "Scalar data is found."):
+        with exception_utils.assert_snowml_exceptions(
+            self, expected_original_error_type=ValueError, expected_regex="Scalar data is found."
+        ):
             tensorflow_handler.SeqOfTensorflowTensorHandler.validate(t)
 
         t = [tf.constant([1, 2]), tf.constant(1)]
-        with self.assertRaisesRegex(ValueError, "Scalar data is found."):
+        with exception_utils.assert_snowml_exceptions(
+            self, expected_original_error_type=ValueError, expected_regex="Scalar data is found."
+        ):
             tensorflow_handler.SeqOfTensorflowTensorHandler.validate(t)
 
     def test_count_tf_tensor(self) -> None:
@@ -71,11 +90,15 @@ class SeqOfTensorflowTensorHandlerTest(absltest.TestCase):
         self.assertEqual(tensorflow_handler.SeqOfTensorflowTensorHandler.count(t), 2)
 
         t = [tf.Variable([1, 2], shape=tf.TensorShape(None))]
-        with self.assertRaisesRegex(ValueError, "Unknown shape data is found."):
+        with exception_utils.assert_snowml_exceptions(
+            self, expected_original_error_type=ValueError, expected_regex="Unknown shape data is found."
+        ):
             tensorflow_handler.SeqOfTensorflowTensorHandler.validate(t)
 
         t = [tf.Variable([[1, 2]], shape=tf.TensorShape([None, 2]))]
-        with self.assertRaisesRegex(ValueError, "Unknown shape data is found."):
+        with exception_utils.assert_snowml_exceptions(
+            self, expected_original_error_type=ValueError, expected_regex="Unknown shape data is found."
+        ):
             tensorflow_handler.SeqOfTensorflowTensorHandler.validate(t)
 
         t = [tf.Variable([[1, 2]], shape=tf.TensorShape([1, None]))]

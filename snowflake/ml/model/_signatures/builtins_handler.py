@@ -3,6 +3,10 @@ from typing import Literal, Sequence
 import pandas as pd
 from typing_extensions import TypeGuard
 
+from snowflake.ml._internal.exceptions import (
+    error_codes,
+    exceptions as snowml_exceptions,
+)
 from snowflake.ml.model import type_hints as model_types
 from snowflake.ml.model._signatures import base_handler, core, pandas_handler
 
@@ -27,10 +31,18 @@ class ListOfBuiltinHandler(base_handler.BaseDataHandler[model_types._SupportedBu
     @staticmethod
     def validate(data: model_types._SupportedBuiltinsList) -> None:
         if not all(isinstance(data_row, type(data[0])) for data_row in data):
-            raise ValueError(f"Data Validation Error: Inconsistent type of object found in data {data}.")
+            raise snowml_exceptions.SnowflakeMLException(
+                error_code=error_codes.INVALID_DATA,
+                original_exception=ValueError(
+                    f"Data Validation Error: Inconsistent type of object found in data {data}."
+                ),
+            )
         df = pd.DataFrame(data)
         if df.isnull().values.any():
-            raise ValueError(f"Data Validation Error: Ill-shaped list data {data} confronted.")
+            raise snowml_exceptions.SnowflakeMLException(
+                error_code=error_codes.INVALID_DATA,
+                original_exception=ValueError(f"Data Validation Error: Ill-shaped list data {data} confronted."),
+            )
 
     @staticmethod
     def infer_signature(

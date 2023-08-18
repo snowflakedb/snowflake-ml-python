@@ -454,7 +454,7 @@ class Pipeline(base.BaseTransformer):
 
         transformed_dataset = self._transform_dataset(dataset=dataset)
         estimator = self._get_estimator()
-        assert estimator is not None, "estimator cannot be None"
+        assert estimator is not None
         res: snowpark.DataFrame = getattr(estimator[1], func_name)(transformed_dataset)
         return res
 

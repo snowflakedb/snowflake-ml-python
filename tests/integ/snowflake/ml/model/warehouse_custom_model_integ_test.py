@@ -111,7 +111,7 @@ class TestWarehouseCustomModelInteg(parameterized.TestCase):
         deploy_params: Dict[str, Tuple[Dict[str, Any], Callable[[Union[pd.DataFrame, SnowparkDataFrame]], Any]]],
         model_in_stage: Optional[bool] = False,
         permanent_deploy: Optional[bool] = False,
-        test_released_library: Optional[bool] = False,
+        test_released_version: Optional[str] = None,
     ) -> None:
         warehouse_model_integ_test_utils.base_test_case(
             self._db_manager,
@@ -124,20 +124,20 @@ class TestWarehouseCustomModelInteg(parameterized.TestCase):
             deploy_params=deploy_params,
             model_in_stage=model_in_stage,
             permanent_deploy=permanent_deploy,
-            test_released_library=test_released_library,
+            test_released_version=test_released_version,
         )
 
     @parameterized.parameters(  # type: ignore[misc]
-        {"model_in_stage": True, "permanent_deploy": True, "test_released_library": False},
-        {"model_in_stage": False, "permanent_deploy": False, "test_released_library": False},
-        # {"model_in_stage": True, "permanent_deploy": False, "test_released_library": True},
-        # {"model_in_stage": False, "permanent_deploy": True, "test_released_library": True},
+        {"model_in_stage": True, "permanent_deploy": True, "test_released_version": None},
+        {"model_in_stage": False, "permanent_deploy": False, "test_released_version": None},
+        {"model_in_stage": True, "permanent_deploy": False, "test_released_version": "1.0.3"},
+        {"model_in_stage": False, "permanent_deploy": True, "test_released_version": "1.0.3"},
     )
     def test_async_model_composition(
         self,
         model_in_stage: Optional[bool] = False,
         permanent_deploy: Optional[bool] = False,
-        test_released_library: Optional[bool] = False,
+        test_released_version: Optional[str] = None,
     ) -> None:
         async def _test(self: "TestWarehouseCustomModelInteg") -> None:
             arr = np.random.randint(100, size=(10000, 3))
@@ -166,22 +166,22 @@ class TestWarehouseCustomModelInteg(parameterized.TestCase):
                 },
                 model_in_stage=model_in_stage,
                 permanent_deploy=permanent_deploy,
-                test_released_library=test_released_library,
+                test_released_version=test_released_version,
             )
 
         asyncio.get_event_loop().run_until_complete(_test(self))
 
     @parameterized.parameters(  # type: ignore[misc]
-        {"model_in_stage": True, "permanent_deploy": True, "test_released_library": False},
-        {"model_in_stage": False, "permanent_deploy": False, "test_released_library": False},
-        # {"model_in_stage": True, "permanent_deploy": False, "test_released_library": True},
-        # {"model_in_stage": False, "permanent_deploy": True, "test_released_library": True},
+        {"model_in_stage": True, "permanent_deploy": True, "test_released_version": None},
+        {"model_in_stage": False, "permanent_deploy": False, "test_released_version": None},
+        {"model_in_stage": True, "permanent_deploy": False, "test_released_version": "1.0.3"},
+        {"model_in_stage": False, "permanent_deploy": True, "test_released_version": "1.0.3"},
     )
     def test_custom_demo_model_sp(
         self,
         model_in_stage: Optional[bool] = False,
         permanent_deploy: Optional[bool] = False,
-        test_released_library: Optional[bool] = False,
+        test_released_version: Optional[str] = None,
     ) -> None:
         lm = DemoModel(custom_model.ModelContext())
         arr = [[1, 2, 3], [4, 2, 5]]
@@ -202,20 +202,20 @@ class TestWarehouseCustomModelInteg(parameterized.TestCase):
             },
             model_in_stage=model_in_stage,
             permanent_deploy=permanent_deploy,
-            test_released_library=test_released_library,
+            test_released_version=test_released_version,
         )
 
     @parameterized.parameters(  # type: ignore[misc]
-        {"model_in_stage": True, "permanent_deploy": True, "test_released_library": False},
-        {"model_in_stage": False, "permanent_deploy": False, "test_released_library": False},
-        # {"model_in_stage": True, "permanent_deploy": False, "test_released_library": True},
-        # {"model_in_stage": False, "permanent_deploy": True, "test_released_library": True},
+        {"model_in_stage": True, "permanent_deploy": True, "test_released_version": None},
+        {"model_in_stage": False, "permanent_deploy": False, "test_released_version": None},
+        {"model_in_stage": True, "permanent_deploy": False, "test_released_version": "1.0.3"},
+        {"model_in_stage": False, "permanent_deploy": True, "test_released_version": "1.0.3"},
     )
     def test_custom_demo_model_sp_quote(
         self,
         model_in_stage: Optional[bool] = False,
         permanent_deploy: Optional[bool] = False,
-        test_released_library: Optional[bool] = False,
+        test_released_version: Optional[str] = None,
     ) -> None:
         lm = DemoModelSPQuote(custom_model.ModelContext())
         arr = [[1, 2, 3], [4, 2, 5]]
@@ -237,20 +237,20 @@ class TestWarehouseCustomModelInteg(parameterized.TestCase):
             },
             model_in_stage=model_in_stage,
             permanent_deploy=permanent_deploy,
-            test_released_library=test_released_library,
+            test_released_version=test_released_version,
         )
 
     @parameterized.parameters(  # type: ignore[misc]
-        {"model_in_stage": True, "permanent_deploy": True, "test_released_library": False},
-        {"model_in_stage": False, "permanent_deploy": False, "test_released_library": False},
-        # {"model_in_stage": True, "permanent_deploy": False, "test_released_library": True},
-        # {"model_in_stage": False, "permanent_deploy": True, "test_released_library": True},
+        {"model_in_stage": True, "permanent_deploy": True, "test_released_version": None},
+        {"model_in_stage": False, "permanent_deploy": False, "test_released_version": None},
+        {"model_in_stage": True, "permanent_deploy": False, "test_released_version": "1.0.3"},
+        {"model_in_stage": False, "permanent_deploy": True, "test_released_version": "1.0.3"},
     )
     def test_custom_demo_model_sp_mix_1(
         self,
         model_in_stage: Optional[bool] = False,
         permanent_deploy: Optional[bool] = False,
-        test_released_library: Optional[bool] = False,
+        test_released_version: Optional[str] = None,
     ) -> None:
         lm = DemoModel(custom_model.ModelContext())
         arr = [[1, 2, 3], [4, 2, 5]]
@@ -272,20 +272,20 @@ class TestWarehouseCustomModelInteg(parameterized.TestCase):
             },
             model_in_stage=model_in_stage,
             permanent_deploy=permanent_deploy,
-            test_released_library=test_released_library,
+            test_released_version=test_released_version,
         )
 
     @parameterized.parameters(  # type: ignore[misc]
-        {"model_in_stage": True, "permanent_deploy": True, "test_released_library": False},
-        {"model_in_stage": False, "permanent_deploy": False, "test_released_library": False},
-        # {"model_in_stage": True, "permanent_deploy": False, "test_released_library": True},
-        # {"model_in_stage": False, "permanent_deploy": True, "test_released_library": True},
+        {"model_in_stage": True, "permanent_deploy": True, "test_released_version": None},
+        {"model_in_stage": False, "permanent_deploy": False, "test_released_version": None},
+        {"model_in_stage": True, "permanent_deploy": False, "test_released_version": "1.0.3"},
+        {"model_in_stage": False, "permanent_deploy": True, "test_released_version": "1.0.3"},
     )
     def test_custom_demo_model_sp_mix_2(
         self,
         model_in_stage: Optional[bool] = False,
         permanent_deploy: Optional[bool] = False,
-        test_released_library: Optional[bool] = False,
+        test_released_version: Optional[str] = None,
     ) -> None:
         lm = DemoModel(custom_model.ModelContext())
         arr = [[1, 2, 3], [4, 2, 5]]
@@ -307,20 +307,20 @@ class TestWarehouseCustomModelInteg(parameterized.TestCase):
             },
             model_in_stage=model_in_stage,
             permanent_deploy=permanent_deploy,
-            test_released_library=test_released_library,
+            test_released_version=test_released_version,
         )
 
     @parameterized.parameters(  # type: ignore[misc]
-        {"model_in_stage": True, "permanent_deploy": True, "test_released_library": False},
-        {"model_in_stage": False, "permanent_deploy": False, "test_released_library": False},
-        # {"model_in_stage": True, "permanent_deploy": False, "test_released_library": True},
-        # {"model_in_stage": False, "permanent_deploy": True, "test_released_library": True},
+        {"model_in_stage": True, "permanent_deploy": True, "test_released_version": None},
+        {"model_in_stage": False, "permanent_deploy": False, "test_released_version": None},
+        {"model_in_stage": True, "permanent_deploy": False, "test_released_version": "1.0.3"},
+        {"model_in_stage": False, "permanent_deploy": True, "test_released_version": "1.0.3"},
     )
     def test_custom_demo_model_array(
         self,
         model_in_stage: Optional[bool] = False,
         permanent_deploy: Optional[bool] = False,
-        test_released_library: Optional[bool] = False,
+        test_released_version: Optional[str] = None,
     ) -> None:
         lm = DemoModelArray(custom_model.ModelContext())
         arr = np.array([[1, 2, 3], [4, 2, 5]])
@@ -341,20 +341,20 @@ class TestWarehouseCustomModelInteg(parameterized.TestCase):
             },
             model_in_stage=model_in_stage,
             permanent_deploy=permanent_deploy,
-            test_released_library=test_released_library,
+            test_released_version=test_released_version,
         )
 
     @parameterized.parameters(  # type: ignore[misc]
-        {"model_in_stage": True, "permanent_deploy": True, "test_released_library": False},
-        {"model_in_stage": False, "permanent_deploy": False, "test_released_library": False},
-        # {"model_in_stage": True, "permanent_deploy": False, "test_released_library": True},
-        # {"model_in_stage": False, "permanent_deploy": True, "test_released_library": True},
+        {"model_in_stage": True, "permanent_deploy": True, "test_released_version": None},
+        {"model_in_stage": False, "permanent_deploy": False, "test_released_version": None},
+        {"model_in_stage": True, "permanent_deploy": False, "test_released_version": "1.0.3"},
+        {"model_in_stage": False, "permanent_deploy": True, "test_released_version": "1.0.3"},
     )
     def test_custom_demo_model_str(
         self,
         model_in_stage: Optional[bool] = False,
         permanent_deploy: Optional[bool] = False,
-        test_released_library: Optional[bool] = False,
+        test_released_version: Optional[str] = None,
     ) -> None:
         lm = DemoModel(custom_model.ModelContext())
         pd_df = pd.DataFrame([["Yogiri", "Civia", "Echo"], ["Artia", "Doris", "Rosalyn"]], columns=["c1", "c2", "c3"])
@@ -374,20 +374,20 @@ class TestWarehouseCustomModelInteg(parameterized.TestCase):
             },
             model_in_stage=model_in_stage,
             permanent_deploy=permanent_deploy,
-            test_released_library=test_released_library,
+            test_released_version=test_released_version,
         )
 
     @parameterized.parameters(  # type: ignore[misc]
-        {"model_in_stage": True, "permanent_deploy": True, "test_released_library": False},
-        {"model_in_stage": False, "permanent_deploy": False, "test_released_library": False},
-        # {"model_in_stage": True, "permanent_deploy": False, "test_released_library": True},
-        # {"model_in_stage": False, "permanent_deploy": True, "test_released_library": True},
+        {"model_in_stage": True, "permanent_deploy": True, "test_released_version": None},
+        {"model_in_stage": False, "permanent_deploy": False, "test_released_version": None},
+        {"model_in_stage": True, "permanent_deploy": False, "test_released_version": "1.0.3"},
+        {"model_in_stage": False, "permanent_deploy": True, "test_released_version": "1.0.3"},
     )
     def test_custom_demo_model_array_sp(
         self,
         model_in_stage: Optional[bool] = False,
         permanent_deploy: Optional[bool] = False,
-        test_released_library: Optional[bool] = False,
+        test_released_version: Optional[str] = None,
     ) -> None:
         lm = DemoModelArray(custom_model.ModelContext())
         arr = np.array([[1, 2, 3], [4, 2, 5]])
@@ -409,20 +409,20 @@ class TestWarehouseCustomModelInteg(parameterized.TestCase):
             },
             model_in_stage=model_in_stage,
             permanent_deploy=permanent_deploy,
-            test_released_library=test_released_library,
+            test_released_version=test_released_version,
         )
 
     @parameterized.parameters(  # type: ignore[misc]
-        {"model_in_stage": True, "permanent_deploy": True, "test_released_library": False},
-        {"model_in_stage": False, "permanent_deploy": False, "test_released_library": False},
-        # {"model_in_stage": True, "permanent_deploy": False, "test_released_library": True},
-        # {"model_in_stage": False, "permanent_deploy": True, "test_released_library": True},
+        {"model_in_stage": True, "permanent_deploy": True, "test_released_version": None},
+        {"model_in_stage": False, "permanent_deploy": False, "test_released_version": None},
+        {"model_in_stage": True, "permanent_deploy": False, "test_released_version": "1.0.3"},
+        {"model_in_stage": False, "permanent_deploy": True, "test_released_version": "1.0.3"},
     )
     def test_custom_demo_model_str_sp(
         self,
         model_in_stage: Optional[bool] = False,
         permanent_deploy: Optional[bool] = False,
-        test_released_library: Optional[bool] = False,
+        test_released_version: Optional[str] = None,
     ) -> None:
         lm = DemoModel(custom_model.ModelContext())
         pd_df = pd.DataFrame([["Yogiri", "Civia", "Echo"], ["Artia", "Doris", "Rosalyn"]], columns=["c1", "c2", "c3"])
@@ -443,20 +443,20 @@ class TestWarehouseCustomModelInteg(parameterized.TestCase):
             },
             model_in_stage=model_in_stage,
             permanent_deploy=permanent_deploy,
-            test_released_library=test_released_library,
+            test_released_version=test_released_version,
         )
 
     @parameterized.parameters(  # type: ignore[misc]
-        {"model_in_stage": True, "permanent_deploy": True, "test_released_library": False},
-        {"model_in_stage": False, "permanent_deploy": False, "test_released_library": False},
-        # {"model_in_stage": True, "permanent_deploy": False, "test_released_library": True},
-        # {"model_in_stage": False, "permanent_deploy": True, "test_released_library": True},
+        {"model_in_stage": True, "permanent_deploy": True, "test_released_version": None},
+        {"model_in_stage": False, "permanent_deploy": False, "test_released_version": None},
+        {"model_in_stage": True, "permanent_deploy": False, "test_released_version": "1.0.3"},
+        {"model_in_stage": False, "permanent_deploy": True, "test_released_version": "1.0.3"},
     )
     def test_custom_demo_model_array_str(
         self,
         model_in_stage: Optional[bool] = False,
         permanent_deploy: Optional[bool] = False,
-        test_released_library: Optional[bool] = False,
+        test_released_version: Optional[str] = None,
     ) -> None:
         lm = DemoModelArray(custom_model.ModelContext())
         pd_df = pd.DataFrame([["Yogiri", "Civia", "Echo"], ["Artia", "Doris", "Rosalyn"]], columns=["c1", "c2", "c3"])
@@ -476,20 +476,20 @@ class TestWarehouseCustomModelInteg(parameterized.TestCase):
             },
             model_in_stage=model_in_stage,
             permanent_deploy=permanent_deploy,
-            test_released_library=test_released_library,
+            test_released_version=test_released_version,
         )
 
     @parameterized.parameters(  # type: ignore[misc]
-        {"model_in_stage": True, "permanent_deploy": True, "test_released_library": False},
-        {"model_in_stage": False, "permanent_deploy": False, "test_released_library": False},
-        # {"model_in_stage": True, "permanent_deploy": False, "test_released_library": True},
-        # {"model_in_stage": False, "permanent_deploy": True, "test_released_library": True},
+        {"model_in_stage": True, "permanent_deploy": True, "test_released_version": None},
+        {"model_in_stage": False, "permanent_deploy": False, "test_released_version": None},
+        {"model_in_stage": True, "permanent_deploy": False, "test_released_version": "1.0.3"},
+        {"model_in_stage": False, "permanent_deploy": True, "test_released_version": "1.0.3"},
     )
     def test_custom_demo_model_with_input_no_keep_order(
         self,
         model_in_stage: Optional[bool] = False,
         permanent_deploy: Optional[bool] = False,
-        test_released_library: Optional[bool] = False,
+        test_released_version: Optional[str] = None,
     ) -> None:
         lm = DemoModel(custom_model.ModelContext())
         arr = np.random.randint(100, size=(10000, 3))
@@ -509,20 +509,20 @@ class TestWarehouseCustomModelInteg(parameterized.TestCase):
             },
             model_in_stage=model_in_stage,
             permanent_deploy=permanent_deploy,
-            test_released_library=test_released_library,
+            test_released_version=test_released_version,
         )
 
     @parameterized.parameters(  # type: ignore[misc]
-        {"model_in_stage": True, "permanent_deploy": True, "test_released_library": False},
-        {"model_in_stage": False, "permanent_deploy": False, "test_released_library": False},
-        # {"model_in_stage": True, "permanent_deploy": False, "test_released_library": True},
-        # {"model_in_stage": False, "permanent_deploy": True, "test_released_library": True},
+        {"model_in_stage": True, "permanent_deploy": True, "test_released_version": None},
+        {"model_in_stage": False, "permanent_deploy": False, "test_released_version": None},
+        {"model_in_stage": True, "permanent_deploy": False, "test_released_version": "1.0.3"},
+        {"model_in_stage": False, "permanent_deploy": True, "test_released_version": "1.0.3"},
     )
     def test_custom_demo_model_with_input(
         self,
         model_in_stage: Optional[bool] = False,
         permanent_deploy: Optional[bool] = False,
-        test_released_library: Optional[bool] = False,
+        test_released_version: Optional[str] = None,
     ) -> None:
         lm = DemoModel(custom_model.ModelContext())
         arr = np.random.randint(100, size=(10000, 3))
@@ -547,20 +547,20 @@ class TestWarehouseCustomModelInteg(parameterized.TestCase):
             deploy_params={"predict": ({"output_with_input_features": True}, check_res)},
             model_in_stage=model_in_stage,
             permanent_deploy=permanent_deploy,
-            test_released_library=test_released_library,
+            test_released_version=test_released_version,
         )
 
     @parameterized.parameters(  # type: ignore[misc]
-        {"model_in_stage": True, "permanent_deploy": True, "test_released_library": False},
-        {"model_in_stage": False, "permanent_deploy": False, "test_released_library": False},
-        # {"model_in_stage": True, "permanent_deploy": False, "test_released_library": True},
-        # {"model_in_stage": False, "permanent_deploy": True, "test_released_library": True},
+        {"model_in_stage": True, "permanent_deploy": True, "test_released_version": None},
+        {"model_in_stage": False, "permanent_deploy": False, "test_released_version": None},
+        {"model_in_stage": True, "permanent_deploy": False, "test_released_version": "1.0.3"},
+        {"model_in_stage": False, "permanent_deploy": True, "test_released_version": "1.0.3"},
     )
     def test_custom_model_with_artifacts(
         self,
         model_in_stage: Optional[bool] = False,
         permanent_deploy: Optional[bool] = False,
-        test_released_library: Optional[bool] = False,
+        test_released_version: Optional[str] = None,
     ) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             with open(os.path.join(tmpdir, "bias"), "w", encoding="utf-8") as f:
@@ -586,20 +586,20 @@ class TestWarehouseCustomModelInteg(parameterized.TestCase):
                 },
                 model_in_stage=model_in_stage,
                 permanent_deploy=permanent_deploy,
-                test_released_library=test_released_library,
+                test_released_version=test_released_version,
             )
 
     @parameterized.parameters(  # type: ignore[misc]
-        {"model_in_stage": True, "permanent_deploy": True, "test_released_library": False},
-        {"model_in_stage": False, "permanent_deploy": False, "test_released_library": False},
-        # {"model_in_stage": True, "permanent_deploy": False, "test_released_library": True},
-        # {"model_in_stage": False, "permanent_deploy": True, "test_released_library": True},
+        {"model_in_stage": True, "permanent_deploy": True, "test_released_version": None},
+        {"model_in_stage": False, "permanent_deploy": False, "test_released_version": None},
+        {"model_in_stage": True, "permanent_deploy": False, "test_released_version": "1.0.3"},
+        {"model_in_stage": False, "permanent_deploy": True, "test_released_version": "1.0.3"},
     )
     def test_custom_model_bool_sp(
         self,
         model_in_stage: Optional[bool] = False,
         permanent_deploy: Optional[bool] = False,
-        test_released_library: Optional[bool] = False,
+        test_released_version: Optional[str] = None,
     ) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             with open(os.path.join(tmpdir, "bias"), "w", encoding="utf-8") as f:
@@ -626,7 +626,7 @@ class TestWarehouseCustomModelInteg(parameterized.TestCase):
                 },
                 model_in_stage=model_in_stage,
                 permanent_deploy=permanent_deploy,
-                test_released_library=test_released_library,
+                test_released_version=test_released_version,
             )
 
 

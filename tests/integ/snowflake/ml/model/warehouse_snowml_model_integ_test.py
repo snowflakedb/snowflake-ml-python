@@ -62,7 +62,7 @@ class TestWarehouseSnowMLModelInteg(parameterized.TestCase):
         deploy_params: Dict[str, Tuple[Dict[str, Any], Callable[[Union[pd.DataFrame, SnowparkDataFrame]], Any]]],
         model_in_stage: Optional[bool] = False,
         permanent_deploy: Optional[bool] = False,
-        test_released_library: Optional[bool] = False,
+        test_released_version: Optional[str] = None,
     ) -> None:
         warehouse_model_integ_test_utils.base_test_case(
             self._db_manager,
@@ -75,21 +75,21 @@ class TestWarehouseSnowMLModelInteg(parameterized.TestCase):
             deploy_params=deploy_params,
             model_in_stage=model_in_stage,
             permanent_deploy=permanent_deploy,
-            test_released_library=test_released_library,
+            test_released_version=test_released_version,
         )
 
     @pytest.mark.pip_incompatible
     @parameterized.parameters(  # type: ignore[misc]
-        {"model_in_stage": True, "permanent_deploy": True, "test_released_library": False},
-        {"model_in_stage": False, "permanent_deploy": False, "test_released_library": False},
-        # {"model_in_stage": True, "permanent_deploy": False, "test_released_library": True},
-        # {"model_in_stage": False, "permanent_deploy": True, "test_released_library": True},
+        {"model_in_stage": True, "permanent_deploy": True, "test_released_version": None},
+        {"model_in_stage": False, "permanent_deploy": False, "test_released_version": None},
+        {"model_in_stage": True, "permanent_deploy": False, "test_released_version": "1.0.5"},
+        {"model_in_stage": False, "permanent_deploy": True, "test_released_version": "1.0.5"},
     )
     def test_snowml_model_deploy_snowml_sklearn(
         self,
         model_in_stage: Optional[bool] = False,
         permanent_deploy: Optional[bool] = False,
-        test_released_library: Optional[bool] = False,
+        test_released_version: Optional[str] = None,
     ) -> None:
         iris_X = datasets.load_iris(as_frame=True).frame
         iris_X.columns = [s.replace(" (CM)", "").replace(" ", "") for s in iris_X.columns.str.upper()]
@@ -116,21 +116,21 @@ class TestWarehouseSnowMLModelInteg(parameterized.TestCase):
             },
             model_in_stage=model_in_stage,
             permanent_deploy=permanent_deploy,
-            test_released_library=test_released_library,
+            test_released_version=test_released_version,
         )
 
     @pytest.mark.pip_incompatible
     @parameterized.parameters(  # type: ignore[misc]
-        {"model_in_stage": True, "permanent_deploy": True, "test_released_library": False},
-        {"model_in_stage": False, "permanent_deploy": False, "test_released_library": False},
-        # {"model_in_stage": True, "permanent_deploy": False, "test_released_library": True},
-        # {"model_in_stage": False, "permanent_deploy": True, "test_released_library": True},
+        {"model_in_stage": True, "permanent_deploy": True, "test_released_version": None},
+        {"model_in_stage": False, "permanent_deploy": False, "test_released_version": None},
+        {"model_in_stage": True, "permanent_deploy": False, "test_released_version": "1.0.5"},
+        {"model_in_stage": False, "permanent_deploy": True, "test_released_version": "1.0.5"},
     )
     def test_snowml_model_deploy_xgboost(
         self,
         model_in_stage: Optional[bool] = False,
         permanent_deploy: Optional[bool] = False,
-        test_released_library: Optional[bool] = False,
+        test_released_version: Optional[str] = None,
     ) -> None:
         iris_X = datasets.load_iris(as_frame=True).frame
         iris_X.columns = [s.replace(" (CM)", "").replace(" ", "") for s in iris_X.columns.str.upper()]
@@ -157,21 +157,21 @@ class TestWarehouseSnowMLModelInteg(parameterized.TestCase):
             },
             model_in_stage=model_in_stage,
             permanent_deploy=permanent_deploy,
-            test_released_library=test_released_library,
+            test_released_version=test_released_version,
         )
 
     @pytest.mark.pip_incompatible
     @parameterized.parameters(  # type: ignore[misc]
-        {"model_in_stage": True, "permanent_deploy": True, "test_released_library": False},
-        {"model_in_stage": False, "permanent_deploy": False, "test_released_library": False},
-        # {"model_in_stage": True, "permanent_deploy": False, "test_released_library": True},
-        # {"model_in_stage": False, "permanent_deploy": True, "test_released_library": True},
+        {"model_in_stage": True, "permanent_deploy": True, "test_released_version": None},
+        {"model_in_stage": False, "permanent_deploy": False, "test_released_version": None},
+        {"model_in_stage": True, "permanent_deploy": False, "test_released_version": "1.0.5"},
+        {"model_in_stage": False, "permanent_deploy": True, "test_released_version": "1.0.5"},
     )
     def test_snowml_model_deploy_lightgbm(
         self,
         model_in_stage: Optional[bool] = False,
         permanent_deploy: Optional[bool] = False,
-        test_released_library: Optional[bool] = False,
+        test_released_version: Optional[str] = None,
     ) -> None:
         iris_X = datasets.load_iris(as_frame=True).frame
         iris_X.columns = [s.replace(" (CM)", "").replace(" ", "") for s in iris_X.columns.str.upper()]
@@ -198,7 +198,7 @@ class TestWarehouseSnowMLModelInteg(parameterized.TestCase):
             },
             model_in_stage=model_in_stage,
             permanent_deploy=permanent_deploy,
-            test_released_library=test_released_library,
+            test_released_version=test_released_version,
         )
 
 

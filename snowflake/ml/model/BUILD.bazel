@@ -1,15 +1,17 @@
-load("//bazel:py_rules.bzl", "py_library", "py_test")
+load("//bazel:py_rules.bzl", "py_library", "py_test", "py_genrule")
 
 package(default_visibility = ["//visibility:public"])
 
-genrule(
+GEN_CORE_REQ_CMD = "$(location //bazel/requirements:parse_and_generate_requirements) $(location //:requirements.yml) --schema $(location //bazel/requirements:requirements.schema.json) --mode version_requirements --format python --filter_by_tag deployment_core > $@"
+
+py_genrule(
     name = "gen_core_requirements",
     srcs = [
         "//:requirements.yml",
         "//bazel/requirements:requirements.schema.json",
     ],
     outs = ["_core_requirements.py"],
-    cmd = "$(location //bazel/requirements:parse_and_generate_requirements) $(location //:requirements.yml) --schema $(location //bazel/requirements:requirements.schema.json) --mode version_requirements --format python --filter_by_tag deployment_core > $@",
+    cmd = GEN_CORE_REQ_CMD,
     tools = ["//bazel/requirements:parse_and_generate_requirements"],
 )
 
@@ -27,17 +29,23 @@ py_library(
 )
 
 py_library(
+    name = "deploy_platforms",
+    srcs = ["deploy_platforms.py"],
+)
+
+py_library(
     name = "model_signature",
     srcs = ["model_signature.py"],
     deps = [
         ":type_hints",
         "//snowflake/ml/_internal:type_utils",
+        "//snowflake/ml/_internal/exceptions",
         "//snowflake/ml/_internal/utils:formatting",
         "//snowflake/ml/_internal/utils:identifier",
         "//snowflake/ml/model/_deploy_client/warehouse:infer_template",
         "//snowflake/ml/model/_signatures:base_handler",
-        "//snowflake/ml/model/_signatures:core",
         "//snowflake/ml/model/_signatures:builtins_handler",
+        "//snowflake/ml/model/_signatures:core",
         "//snowflake/ml/model/_signatures:numpy_handler",
         "//snowflake/ml/model/_signatures:pandas_handler",
         "//snowflake/ml/model/_signatures:pytorch_handler",
@@ -86,6 +94,7 @@ py_library(
     deps = [
         ":model_signature",
         ":type_hints",
+        ":deploy_platforms",
         "//snowflake/ml/_internal/utils:identifier",
         "//snowflake/ml/model/_deploy_client/snowservice:deploy",
         "//snowflake/ml/model/_deploy_client/warehouse:deploy",
@@ -149,6 +158,7 @@ py_test(
     srcs = ["model_signature_test.py"],
     deps = [
         ":model_signature",
+        "//snowflake/ml/test_utils:exception_utils",
     ],
 )
 
@@ -174,10 +184,10 @@ py_test(
         ":custom_model",
         ":model_signature",
         ":type_hints",
-        "//snowflake/ml/modeling/linear_model:linear_regression",
-        "//snowflake/ml/test_utils:mock_session",
-        "//snowflake/ml/model/_signatures:utils",
         "//snowflake/ml/model/_signatures:pytorch_handler",
         "//snowflake/ml/model/_signatures:tensorflow_handler",
+        "//snowflake/ml/model/_signatures:utils",
+        "//snowflake/ml/modeling/linear_model:linear_regression",
+        "//snowflake/ml/test_utils:mock_session",
     ],
 )

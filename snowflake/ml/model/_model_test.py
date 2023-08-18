@@ -28,7 +28,9 @@ from snowflake.ml.model._signatures import (
     tensorflow_handler,
     utils as model_signature_utils,
 )
-from snowflake.ml.modeling.linear_model import LinearRegression
+from snowflake.ml.modeling.linear_model import (  # type:ignore[attr-defined]
+    LinearRegression,
+)
 from snowflake.ml.test_utils import mock_session
 from snowflake.snowpark import FileOperation, Session
 
@@ -776,6 +778,62 @@ class ModelTest(absltest.TestCase):
             assert callable(predict_method)
             np.testing.assert_allclose(np.array([[-0.08254936]]), predict_method(iris_X_df[:1]))
 
+    def test_xgb_booster(self) -> None:
+        cal_data = datasets.load_breast_cancer()
+        cal_X = pd.DataFrame(cal_data.data, columns=cal_data.feature_names)
+        cal_y = pd.Series(cal_data.target)
+        cal_X_train, cal_X_test, cal_y_train, cal_y_test = model_selection.train_test_split(cal_X, cal_y)
+        params = dict(n_estimators=100, reg_lambda=1, gamma=0, max_depth=3, objective="binary:logistic")
+        regressor = xgboost.train(params, xgboost.DMatrix(data=cal_X_train, label=cal_y_train))
+        y_pred = regressor.predict(xgboost.DMatrix(data=cal_X_test))
+        with tempfile.TemporaryDirectory() as tmpdir:
+            s = {"predict": model_signature.infer_signature(cal_X_test, y_pred)}
+            with self.assertRaises(ValueError):
+                model_api.save_model(
+                    name="model1",
+                    model_dir_path=os.path.join(tmpdir, "model1"),
+                    model=regressor,
+                    signatures={**s, "another_predict": s["predict"]},
+                    metadata={"author": "halu", "version": "1"},
+                )
+
+            model_api.save_model(
+                name="model1",
+                model_dir_path=os.path.join(tmpdir, "model1"),
+                model=regressor,
+                signatures=s,
+                metadata={"author": "halu", "version": "1"},
+            )
+
+            with warnings.catch_warnings():
+                warnings.simplefilter("error")
+
+                m, _ = model_api.load_model(model_dir_path=os.path.join(tmpdir, "model1"))
+                assert isinstance(m, xgboost.Booster)
+                np.testing.assert_allclose(m.predict(xgboost.DMatrix(data=cal_X_test)), y_pred)
+                m_udf, _ = model_api._load_model_for_deploy(os.path.join(tmpdir, "model1"))
+                predict_method = getattr(m_udf, "predict", None)
+                assert callable(predict_method)
+                np.testing.assert_allclose(predict_method(cal_X_test), np.expand_dims(y_pred, axis=1))
+
+            model_api.save_model(
+                name="model1_no_sig",
+                model_dir_path=os.path.join(tmpdir, "model1_no_sig"),
+                model=regressor,
+                sample_input=cal_X_test,
+                metadata={"author": "halu", "version": "1"},
+            )
+
+            m, meta = model_api.load_model(model_dir_path=os.path.join(tmpdir, "model1_no_sig"))
+            assert isinstance(m, xgboost.Booster)
+            np.testing.assert_allclose(m.predict(xgboost.DMatrix(data=cal_X_test)), y_pred)
+            self.assertEqual(s["predict"], meta.signatures["predict"])
+
+            m_udf, _ = model_api._load_model_for_deploy(os.path.join(tmpdir, "model1_no_sig"))
+            predict_method = getattr(m_udf, "predict", None)
+            assert callable(predict_method)
+            np.testing.assert_allclose(predict_method(cal_X_test), np.expand_dims(y_pred, axis=1))
+
     def test_xgb(self) -> None:
         cal_data = datasets.load_breast_cancer()
         cal_X = pd.DataFrame(cal_data.data, columns=cal_data.feature_names)
@@ -1062,11 +1120,11 @@ class ModelTest(absltest.TestCase):
 
                 m, _ = model_api.load_model(model_dir_path=os.path.join(tmpdir, "model1"))
                 assert isinstance(m, torch.nn.Module)
-                torch.testing.assert_close(m.forward(data_x)[0], y_pred)  # type:ignore[attr-defined]
+                torch.testing.assert_close(m.forward(data_x)[0], y_pred)
                 m_udf, _ = model_api._load_model_for_deploy(os.path.join(tmpdir, "model1"))
                 predict_method = getattr(m_udf, "forward", None)
                 assert callable(predict_method)
-                torch.testing.assert_close(  # type:ignore[attr-defined]
+                torch.testing.assert_close(
                     pytorch_handler.SeqOfPyTorchTensorHandler.convert_from_df(
                         predict_method(x_df), s["forward"].outputs
                     )[0],
@@ -1083,13 +1141,13 @@ class ModelTest(absltest.TestCase):
 
             m, meta = model_api.load_model(model_dir_path=os.path.join(tmpdir, "model1_no_sig_1"))
             assert isinstance(m, torch.nn.Module)
-            torch.testing.assert_close(m.forward(data_x)[0], y_pred)  # type:ignore[attr-defined]
+            torch.testing.assert_close(m.forward(data_x)[0], y_pred)
             self.assertEqual(s["forward"], meta.signatures["forward"])
 
             m_udf, _ = model_api._load_model_for_deploy(os.path.join(tmpdir, "model1_no_sig_1"))
             predict_method = getattr(m_udf, "forward", None)
             assert callable(predict_method)
-            torch.testing.assert_close(  # type:ignore[attr-defined]
+            torch.testing.assert_close(
                 pytorch_handler.SeqOfPyTorchTensorHandler.convert_from_df(predict_method(x_df), s["forward"].outputs)[
                     0
                 ],
@@ -1132,11 +1190,11 @@ class ModelTest(absltest.TestCase):
 
                 m, _ = model_api.load_model(model_dir_path=os.path.join(tmpdir, "model1"))
                 assert isinstance(m, torch.jit.ScriptModule)  # type:ignore[attr-defined]
-                torch.testing.assert_close(m.forward(data_x)[0], y_pred)  # type:ignore[attr-defined]
+                torch.testing.assert_close(m.forward(data_x)[0], y_pred)
                 m_udf, _ = model_api._load_model_for_deploy(os.path.join(tmpdir, "model1"))
                 predict_method = getattr(m_udf, "forward", None)
                 assert callable(predict_method)
-                torch.testing.assert_close(  # type:ignore[attr-defined]
+                torch.testing.assert_close(
                     pytorch_handler.SeqOfPyTorchTensorHandler.convert_from_df(
                         predict_method(x_df), s["forward"].outputs
                     )[0],
@@ -1153,13 +1211,13 @@ class ModelTest(absltest.TestCase):
 
             m, meta = model_api.load_model(model_dir_path=os.path.join(tmpdir, "model1_no_sig_1"))
             assert isinstance(m, torch.jit.ScriptModule)  # type:ignore[attr-defined]
-            torch.testing.assert_close(m.forward(data_x)[0], y_pred)  # type:ignore[attr-defined]
+            torch.testing.assert_close(m.forward(data_x)[0], y_pred)
             self.assertEqual(s["forward"], meta.signatures["forward"])
 
             m_udf, _ = model_api._load_model_for_deploy(os.path.join(tmpdir, "model1_no_sig_1"))
             predict_method = getattr(m_udf, "forward", None)
             assert callable(predict_method)
-            torch.testing.assert_close(  # type:ignore[attr-defined]
+            torch.testing.assert_close(
                 pytorch_handler.SeqOfPyTorchTensorHandler.convert_from_df(predict_method(x_df), s["forward"].outputs)[
                     0
                 ],
@@ -1189,12 +1247,12 @@ class ModelTest(absltest.TestCase):
 
             m, meta = model_api.load_model(model_dir_path=os.path.join(tmpdir, "model1_no_sig_1"))
             assert isinstance(m, torch.nn.Module)
-            torch.testing.assert_close(m.forward(data_x)[0], y_pred)  # type:ignore[attr-defined]
+            torch.testing.assert_close(m.forward(data_x)[0], y_pred)
 
             m_udf, _ = model_api._load_model_for_deploy(os.path.join(tmpdir, "model1_no_sig_1"))
             predict_method = getattr(m_udf, "forward", None)
             assert callable(predict_method)
-            torch.testing.assert_close(  # type:ignore[attr-defined]
+            torch.testing.assert_close(
                 pytorch_handler.SeqOfPyTorchTensorHandler.convert_from_df(predict_method(x_df))[0], y_pred
             )
 
@@ -1211,12 +1269,12 @@ class ModelTest(absltest.TestCase):
 
             m, meta = model_api.load_model(model_dir_path=os.path.join(tmpdir, "model1_no_sig_2"))
             assert isinstance(m, torch.jit.ScriptModule)  # type:ignore[attr-defined]
-            torch.testing.assert_close(m.forward(data_x)[0], y_pred)  # type:ignore[attr-defined]
+            torch.testing.assert_close(m.forward(data_x)[0], y_pred)
 
             m_udf, _ = model_api._load_model_for_deploy(os.path.join(tmpdir, "model1_no_sig_2"))
             predict_method = getattr(m_udf, "forward", None)
             assert callable(predict_method)
-            torch.testing.assert_close(  # type:ignore[attr-defined]
+            torch.testing.assert_close(
                 pytorch_handler.SeqOfPyTorchTensorHandler.convert_from_df(predict_method(x_df))[0], y_pred
             )
 

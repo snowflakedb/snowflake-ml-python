@@ -1,4 +1,4 @@
-load(":utils.bzl", "CONDA_EXT_MAP", "EXECUTE_TIMEOUT", "PYTHON_EXT_MAP", "get_os", "get_path_envar")
+load(":utils.bzl", "CONDA_EXT_MAP", "ENV_VAR_SEPARATOR_MAP", "EXECUTE_TIMEOUT", "PYTHON_EXT_MAP", "get_os", "get_path_envar")
 
 # This excluded violating file is from arrow-cpp 10.0.1 in Snowflake Anaconda Channel.
 
@@ -23,25 +23,34 @@ filegroup(
 
 def _conda_cmd(rctx, conda_args, environment = {}):
     path_envar = get_path_envar(rctx)
+    os = get_os(rctx)
+    python_executable = "python{}".format(PYTHON_EXT_MAP[os])
+    interpreter_path = python_executable if os == "Windows" else "bin/{}".format(python_executable)
     conda_entrypoint = Label("@{}//:{}/condabin/conda{}".format(
         rctx.attr.conda_repo,
         rctx.attr.conda_dir,
-        CONDA_EXT_MAP[get_os(rctx)],
+        CONDA_EXT_MAP[os],
     ))
-    python = Label("@{}//:{}/bin/python".format(
+    python = Label("@{}//:{}/{}".format(
         rctx.attr.conda_repo,
         rctx.attr.conda_dir,
+        interpreter_path,
     ))
-    actual_environment = {"PATH": "{}:{}".format(rctx.path(python).dirname, path_envar)}
+
+    additional_paths = [str(rctx.path(python).dirname)]
+    if os == "Windows":
+        additional_paths = additional_paths + [str(rctx.path("{}/Library/bin".format(rctx.attr.conda_repo, rctx.attr.conda_dir)))]
+    additional_paths = additional_paths + [path_envar]
+    actual_environment = {"PATH": ENV_VAR_SEPARATOR_MAP[os].join(additional_paths)}
     actual_environment.update(environment)
-    environment_args = ["{}={}".format(env, val) for env, val in actual_environment.items()]
 
     return rctx.execute(
         # all environment variables are stripped. PATH and environment variables passed in are
         # added above. this is to prevent the conda_entrypoint from recognizing the conda
         # environment (if any) where bazel was invoked.
-        ["env", "-i"] + environment_args + [conda_entrypoint] + conda_args,
+        [conda_entrypoint] + conda_args,
         quiet = rctx.attr.quiet,
+        environment = actual_environment,
         timeout = rctx.attr.timeout,
     )
 

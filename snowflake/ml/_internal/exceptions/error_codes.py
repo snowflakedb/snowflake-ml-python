@@ -40,6 +40,9 @@ NOT_FOUND = "2101"
 # The method is known but is not supported by the target resource. For example, calling `to_xgboost` is not allowed by
 # Snowpark ML models based on scikit-learn.
 METHOD_NOT_ALLOWED = "2102"
+# Not implemented.
+NOT_IMPLEMENTED = "2103"
+
 # Calling an API with unsupported keywords/values.
 INVALID_ARGUMENT = "2110"
 # Object has invalid attributes caused by invalid/unsupported value, unsupported data type, size mismatch, etc.
@@ -48,6 +51,8 @@ INVALID_ATTRIBUTE = "2111"
 INVALID_DATA = "2112"
 # Invalid data type in the processed data. For example, an API handling numeric columns gets a string column.
 INVALID_DATA_TYPE = "2113"
+# Calling an API with unsupported value type, or perform actions on objects with incorrect types.
+INVALID_TYPE = "2114"
 
 # Indicates the creation of underlying resources (files, stages, tables, etc) failed, which can be caused by duplicated
 # name, invalid permission, etc.

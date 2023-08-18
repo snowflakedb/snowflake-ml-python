@@ -14,7 +14,8 @@ class SnowServiceDeployOptions:
         max_instances: Optional[int] = 1,
         endpoint: Optional[str] = constants.PREDICT,
         prebuilt_snowflake_image: Optional[str] = None,
-        use_gpu: Optional[bool] = False,
+        num_gpus: Optional[int] = 0,
+        num_workers: Optional[int] = None,
     ) -> None:
         """Initialization
 
@@ -33,8 +34,10 @@ class SnowServiceDeployOptions:
                 Snowflake is used as is. This option is for users who consistently use the same image for multiple use
                 cases, allowing faster deployment. The snowflake image used for deployment is logged to the console for
                 future use. Default to None.
-            use_gpu: When set to True, a CUDA-enabled Docker image will be used to provide a runtime CUDA environment.
-                Default to False.
+            num_gpus: Number of GPUs to be used for the service. Default to 0.
+            num_workers: Number of workers used for model inference. Please ensure that the number of workers is set
+                lower than the total available memory divided by the size of model to prevent memory-related issues.
+                Default is number of CPU cores * 2 + 1.
         """
 
         self.compute_pool = compute_pool
@@ -43,7 +46,8 @@ class SnowServiceDeployOptions:
         self.max_instances = max_instances
         self.endpoint = endpoint
         self.prebuilt_snowflake_image = prebuilt_snowflake_image
-        self.use_gpu = use_gpu
+        self.num_gpus = num_gpus
+        self.num_workers = num_workers
 
     @classmethod
     def from_dict(cls, options_dict: Dict[str, Any]) -> "SnowServiceDeployOptions":

@@ -1,8 +1,10 @@
 import configparser
 import os
-from typing import Dict, Optional
+from typing import Dict, Optional, Union
 
 from absl import logging
+from cryptography.hazmat import backends
+from cryptography.hazmat.primitives import serialization
 
 from snowflake import snowpark
 
@@ -32,23 +34,73 @@ def _read_token(token_file: str = "") -> str:
     return token
 
 
+_ENCRYPTED_PKCS8_PK_HEADER = b"-----BEGIN ENCRYPTED PRIVATE KEY-----"
+_UNENCRYPTED_PKCS8_PK_HEADER = b"-----BEGIN PRIVATE KEY-----"
+
+
+def _load_pem_to_der(private_key_path: str) -> bytes:
+    """Given a private key file path (in PEM format), decode key data into DER format."""
+    with open(private_key_path, "rb") as f:
+        private_key_pem = f.read()
+    private_key_passphrase: Optional[str] = os.getenv("SNOWFLAKE_PRIVATE_KEY_PASSPHRASE", None)
+
+    # Only PKCS#8 format key will be accepted. However, openssl
+    # transparently handle PKCS#8 and PKCS#1 format (by some fallback
+    # logic) and their is no function to distinguish between them. By
+    # reading openssl source code, apparently they also relies on header
+    # to determine if give bytes is PKCS#8 format or not
+    if not private_key_pem.startswith(_ENCRYPTED_PKCS8_PK_HEADER) and not private_key_pem.startswith(
+        _UNENCRYPTED_PKCS8_PK_HEADER
+    ):
+        raise Exception("Private key provided is not in PKCS#8 format. Please use correct format.")
+
+    if private_key_pem.startswith(_ENCRYPTED_PKCS8_PK_HEADER) and private_key_passphrase is None:
+        raise Exception(
+            "Private key is encrypted but passphrase could not be found. "
+            "Please set SNOWFLAKE_PRIVATE_KEY_PASSPHRASE env variable."
+        )
+
+    if private_key_pem.startswith(_UNENCRYPTED_PKCS8_PK_HEADER):
+        private_key_passphrase = None
+
+    private_key = serialization.load_pem_private_key(
+        private_key_pem,
+        str.encode(private_key_passphrase) if private_key_passphrase is not None else private_key_passphrase,
+        backends.default_backend(),
+    )
+
+    return private_key.private_bytes(
+        encoding=serialization.Encoding.DER,
+        format=serialization.PrivateFormat.PKCS8,
+        encryption_algorithm=serialization.NoEncryption(),
+    )
+
+
 def _connection_properties_from_env() -> Dict[str, str]:
     """Returns a dict with all possible login related env variables."""
     sf_conn_prop = {
         # Mandatory fields
         "account": os.environ["SNOWFLAKE_ACCOUNT"],
-        "user": os.getenv("SNOWFLAKE_USER", ""),
         "database": os.environ["SNOWFLAKE_DATABASE"],
-        # With empty default value
-        "authenticator": os.getenv("SNOWFLAKE_AUTHENTICATOR", ""),
-        "password": os.getenv("SNOWFLAKE_PASSWORD", ""),
+        # With a default value
         "token_file": os.getenv("SNOWFLAKE_TOKEN_FILE", "/snowflake/session/token"),
-        "host": os.getenv("SNOWFLAKE_HOST", ""),
-        "port": os.getenv("SNOWFLAKE_PORT", ""),
-        "schema": os.getenv("SNOWFLAKE_SCHEMA", "basic"),
-        "warehouse": os.getenv("SNOWFLAKE_WAREHOUSE", ""),
         "ssl": os.getenv("SNOWFLAKE_SSL", "on"),
+        "protocol": os.getenv("SNOWFLAKE_PROTOCOL", "https"),
     }
+    # With empty default value
+    for key, env_var in {
+        "user": "SNOWFLAKE_USER",
+        "authenticator": "SNOWFLAKE_AUTHENTICATOR",
+        "password": "SNOWFLAKE_PASSWORD",
+        "host": "SNOWFLAKE_HOST",
+        "port": "SNOWFLAKE_PORT",
+        "schema": "SNOWFLAKE_SCHEMA",
+        "warehouse": "SNOWFLAKE_WAREHOUSE",
+        "private_key_path": "SNOWFLAKE_PRIVATE_KEY_PATH",
+    }.items():
+        value = os.getenv(env_var, "")
+        if value:
+            sf_conn_prop[key] = value
     return sf_conn_prop
 
 
@@ -81,7 +133,7 @@ def _load_from_snowsql_config_file(connection_name: str, login_file: str = "") -
 
 
 @snowpark._internal.utils.private_preview(version="0.2.0")
-def SnowflakeLoginOptions(connection_name: str = "", login_file: Optional[str] = None) -> Dict[str, str]:
+def SnowflakeLoginOptions(connection_name: str = "", login_file: Optional[str] = None) -> Dict[str, Union[str, bytes]]:
     """Returns a dict that can be used directly into snowflake python connector or Snowpark session config.
 
     NOTE: Token/Auth information is sideloaded in all cases above, if provided in following order:
@@ -112,40 +164,30 @@ def SnowflakeLoginOptions(connection_name: str = "", login_file: Optional[str] =
     Raises:
         Exception: if none of config file and environment variable are present.
     """
-    conn_prop = {}
+    conn_prop: Dict[str, Union[str, bytes]] = {}
     login_file = login_file or os.path.expanduser(_DEFAULT_CONNECTION_FILE)
     # If login file exists, use this exclusively.
     if os.path.exists(login_file):
-        conn_prop = _load_from_snowsql_config_file(connection_name, login_file)
+        conn_prop = {**(_load_from_snowsql_config_file(connection_name, login_file))}
     else:
         # If environment exists for SNOWFLAKE_ACCOUNT, assume everything
         # comes from environment. Mixing it not allowed.
         account = os.getenv("SNOWFLAKE_ACCOUNT", "")
         if account:
-            conn_prop = _connection_properties_from_env()
+            conn_prop = {**_connection_properties_from_env()}
         else:
             raise Exception("Snowflake credential is neither set in env nor a login file was provided.")
 
     # Token, if specified, is always side-loaded in all cases.
-    conn_prop["token"] = _read_token(conn_prop["token_file"] if "token_file" in conn_prop else "")
-    data = {
-        "account": conn_prop["account"],
-    }
-    for field in ["database", "schema", "warehouse", "host", "port", "role", "session_parameters"]:
-        if field in conn_prop and conn_prop[field]:
-            data[field] = conn_prop[field]
-
-    if "authenticator" in conn_prop and conn_prop["authenticator"] == "externalbrowser":
-        data["authenticator"] = conn_prop["authenticator"]
-        data["user"] = conn_prop["user"]
-    elif conn_prop["token"]:
-        data["token"] = conn_prop["token"]
-        data["authenticator"] = "oauth"
-    else:
-        data["user"] = conn_prop["user"]
-        data["password"] = conn_prop["password"]
+    token = _read_token(str(conn_prop["token_file"]) if "token_file" in conn_prop else "")
+    if token:
+        conn_prop["token"] = token
+        if "authenticator" not in conn_prop or conn_prop["authenticator"]:
+            conn_prop["authenticator"] = "oauth"
+    elif "private_key_path" in conn_prop and "private_key" not in conn_prop:
+        conn_prop["private_key"] = _load_pem_to_der(str(conn_prop["private_key_path"]))
 
     if "ssl" in conn_prop and conn_prop["ssl"].lower() == "off":
-        data["protocol"] = "http"
+        conn_prop["protocol"] = "http"
 
-    return data
+    return conn_prop

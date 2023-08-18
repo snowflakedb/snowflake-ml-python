@@ -77,6 +77,9 @@ class _XGBModelHandler(_base._ModelHandler[Union["xgboost.Booster", "xgboost.XGB
                 if not isinstance(sample_input, (pd.DataFrame, np.ndarray)):
                     sample_input = model_signature._convert_local_data_to_df(sample_input)
 
+                if isinstance(model, xgboost.Booster):
+                    sample_input = xgboost.DMatrix(sample_input)
+
                 target_method = getattr(model, target_method_name, None)
                 assert callable(target_method)
                 predictions_df = target_method(sample_input)
@@ -145,6 +148,8 @@ class _XGBModelHandler(_base._ModelHandler[Union["xgboost.Booster", "xgboost.XGB
         Returns:
             The model object as a custom model.
         """
+        import xgboost
+
         from snowflake.ml.model import custom_model
 
         def _create_custom_model(
@@ -158,6 +163,9 @@ class _XGBModelHandler(_base._ModelHandler[Union["xgboost.Booster", "xgboost.XGB
             ) -> Callable[[custom_model.CustomModel, pd.DataFrame], pd.DataFrame]:
                 @custom_model.inference_api
                 def fn(self: custom_model.CustomModel, X: pd.DataFrame) -> pd.DataFrame:
+                    if isinstance(raw_model, xgboost.Booster):
+                        X = xgboost.DMatrix(X)
+
                     res = getattr(raw_model, target_method)(X)
 
                     if isinstance(res, list) and len(res) > 0 and isinstance(res[0], np.ndarray):

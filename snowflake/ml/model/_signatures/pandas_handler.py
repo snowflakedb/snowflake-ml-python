@@ -4,6 +4,10 @@ import numpy as np
 import pandas as pd
 from typing_extensions import TypeGuard
 
+from snowflake.ml._internal.exceptions import (
+    error_codes,
+    exceptions as snowml_exceptions,
+)
 from snowflake.ml.model import type_hints as model_types
 from snowflake.ml.model._signatures import base_handler, core, utils
 
@@ -26,12 +30,22 @@ class PandasDataFrameHandler(base_handler.BaseDataHandler[pd.DataFrame]):
         df_cols = data.columns
 
         if df_cols.has_duplicates:  # Rule out categorical index with duplicates
-            raise ValueError("Data Validation Error: Duplicate column index is found.")
+            raise snowml_exceptions.SnowflakeMLException(
+                error_code=error_codes.INVALID_DATA,
+                original_exception=ValueError("Data Validation Error: Duplicate column index is found."),
+            )
 
-        assert all(hasattr(data[col], "dtype") for col in data.columns), f"Unknown column confronted in {data}"
+        if not all(hasattr(data[col], "dtype") for col in data.columns):
+            raise snowml_exceptions.SnowflakeMLException(
+                error_code=error_codes.INVALID_DATA,
+                original_exception=ValueError(f"Unknown column confronted in {data}"),
+            )
 
         if len(df_cols) == 0:
-            raise ValueError("Data Validation Error: Empty data is found.")
+            raise snowml_exceptions.SnowflakeMLException(
+                error_code=error_codes.INVALID_DATA,
+                original_exception=ValueError("Data Validation Error: Empty data is found."),
+            )
 
         if df_cols.dtype not in [
             np.int64,
@@ -39,15 +53,21 @@ class PandasDataFrameHandler(base_handler.BaseDataHandler[pd.DataFrame]):
             np.float64,
             np.object_,
         ]:  # To keep compatibility with Pandas 2.x and 1.x
-            raise ValueError("Data Validation Error: Unsupported column index type is found.")
+            raise snowml_exceptions.SnowflakeMLException(
+                error_code=error_codes.INVALID_DATA,
+                original_exception=ValueError("Data Validation Error: Unsupported column index type is found."),
+            )
 
         df_col_dtypes = [data[col].dtype for col in data.columns]
         for df_col, df_col_dtype in zip(df_cols, df_col_dtypes):
             if df_col_dtype == np.dtype("O"):
                 # Check if all objects have the same type
                 if not all(isinstance(data_row, type(data[df_col][0])) for data_row in data[df_col]):
-                    raise ValueError(
-                        f"Data Validation Error: Inconsistent type of object found in column data {data[df_col]}."
+                    raise snowml_exceptions.SnowflakeMLException(
+                        error_code=error_codes.INVALID_DATA,
+                        original_exception=ValueError(
+                            f"Data Validation Error: Inconsistent type of object found in column data {data[df_col]}."
+                        ),
                     )
 
                 if isinstance(data[df_col][0], list):
@@ -60,21 +80,32 @@ class PandasDataFrameHandler(base_handler.BaseDataHandler[pd.DataFrame]):
                         core.DataType.from_numpy_type(converted_data.dtype) == arr_dtype
                         for converted_data in converted_data_list
                     ):
-                        raise ValueError(
-                            "Data Validation Error: "
-                            + f"Inconsistent type of element in object found in column data {data[df_col]}."
+                        raise snowml_exceptions.SnowflakeMLException(
+                            error_code=error_codes.INVALID_DATA,
+                            original_exception=ValueError(
+                                "Data Validation Error: "
+                                + f"Inconsistent type of element in object found in column data {data[df_col]}."
+                            ),
                         )
 
                 elif isinstance(data[df_col][0], np.ndarray):
                     arr_dtype = core.DataType.from_numpy_type(data[df_col][0].dtype)
 
                     if not all(core.DataType.from_numpy_type(data_row.dtype) == arr_dtype for data_row in data[df_col]):
-                        raise ValueError(
-                            "Data Validation Error: "
-                            + f"Inconsistent type of element in object found in column data {data[df_col]}."
+                        raise snowml_exceptions.SnowflakeMLException(
+                            error_code=error_codes.INVALID_DATA,
+                            original_exception=ValueError(
+                                "Data Validation Error: "
+                                + f"Inconsistent type of element in object found in column data {data[df_col]}."
+                            ),
                         )
                 elif not isinstance(data[df_col][0], (str, bytes)):
-                    raise ValueError(f"Data Validation Error: Unsupported type confronted in {data[df_col]}")
+                    raise snowml_exceptions.SnowflakeMLException(
+                        error_code=error_codes.INVALID_DATA,
+                        original_exception=ValueError(
+                            f"Data Validation Error: Unsupported type confronted in {data[df_col]}"
+                        ),
+                    )
 
     @staticmethod
     def infer_signature(data: pd.DataFrame, role: Literal["input", "output"]) -> Sequence[core.BaseFeatureSpec]:

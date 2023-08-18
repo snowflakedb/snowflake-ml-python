@@ -19,17 +19,33 @@ py_test(
         "//tests/integ/snowflake/ml/test_utils:model_factory",
         "//snowflake/ml/registry:model_registry",
         "//snowflake/ml/utils:connection_params",
+        "//tests/integ/snowflake/ml/test_utils:test_env_utils",
     ],
 )
 
 py_test(
-    name = "model_registry_integ_test_with_snowservice",
-    timeout = "eternal", # 3600s
-    srcs = ["model_registry_integ_test_with_snowservice.py"],
+    name = "model_registry_integ_test_snowservice_base",
+    srcs = ["model_registry_integ_test_snowservice_base.py"],
     deps = [
         "//tests/integ/snowflake/ml/test_utils:db_manager",
         "//tests/integ/snowflake/ml/test_utils:model_factory",
+        "//tests/integ/snowflake/ml/test_utils:test_env_utils",
+        "//snowflake/ml/model:deploy_platforms",
         "//snowflake/ml/registry:model_registry",
         "//snowflake/ml/utils:connection_params",
     ],
+)
+
+py_test(
+    name = "model_registry_integ_test_snowservice",
+    timeout = "eternal", # 3600s
+    srcs = ["model_registry_integ_test_snowservice.py"],
+    deps = [":model_registry_integ_test_snowservice_base"],
+)
+
+py_test(
+    name = "model_registry_integ_test_snowservice_merge_gate",
+    timeout = "eternal", # 3600s
+    srcs = ["model_registry_integ_test_snowservice_merge_gate.py"],
+    deps = [":model_registry_integ_test_snowservice_base"],
 )

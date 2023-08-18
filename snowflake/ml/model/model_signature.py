@@ -6,6 +6,10 @@ import pandas as pd
 
 import snowflake.snowpark
 import snowflake.snowpark.types as spt
+from snowflake.ml._internal.exceptions import (
+    error_codes,
+    exceptions as snowml_exceptions,
+)
 from snowflake.ml._internal.utils import formatting, identifier
 from snowflake.ml.model import type_hints as model_types
 from snowflake.ml.model._signatures import (
@@ -56,8 +60,11 @@ def _truncate_data(data: model_types.SupportedDataType) -> model_types.Supported
                 category=UserWarning,
             )
             return handler.truncate(data)
-    raise NotImplementedError(
-        f"Unable to infer model signature: Un-supported type provided {type(data)} for data truncate."
+    raise snowml_exceptions.SnowflakeMLException(
+        error_code=error_codes.NOT_IMPLEMENTED,
+        original_exception=NotImplementedError(
+            f"Unable to infer model signature: Un-supported type provided {type(data)} for data truncate."
+        ),
     )
 
 
@@ -73,7 +80,7 @@ def _infer_signature(
         role: a flag indicating that if this is to infer an input or output feature.
 
     Raises:
-        NotImplementedError: Raised when an unsupported data type is provided.
+        SnowflakeMLException: NotImplementedError: Raised when an unsupported data type is provided.
 
     Returns:
         A sequence of feature specifications and feature group specifications.
@@ -82,8 +89,11 @@ def _infer_signature(
         if handler.can_handle(data):
             handler.validate(data)
             return handler.infer_signature(data, role)
-    raise NotImplementedError(
-        f"Unable to infer model signature: Un-supported type provided {type(data)} for X type inference."
+    raise snowml_exceptions.SnowflakeMLException(
+        error_code=error_codes.NOT_IMPLEMENTED,
+        original_exception=NotImplementedError(
+            f"Unable to infer model signature: Un-supported type provided {type(data)} for X type inference."
+        ),
     )
 
 
@@ -95,48 +105,63 @@ def _validate_pandas_df(data: pd.DataFrame, features: Sequence[core.BaseFeatureS
         features: A sequence of feature specifications and feature group specifications, where the dataframe should fit.
 
     Raises:
-        NotImplementedError: FeatureGroupSpec is not supported.
-        ValueError: Raised when a feature cannot be found.
-        ValueError: Raised when feature is scalar but confront list element.
-        ValueError: Raised when feature type is not aligned in list element.
-        ValueError: Raised when feature shape is not aligned in list element.
-        ValueError: Raised when feature is scalar but confront array element.
-        ValueError: Raised when feature type is not aligned in numpy array element.
-        ValueError: Raised when feature shape is not aligned in numpy array element.
-        ValueError: Raised when feature type is not aligned in string element.
-        ValueError: Raised when feature type is not aligned in bytes element.
+        SnowflakeMLException: NotImplementedError: FeatureGroupSpec is not supported.
+        SnowflakeMLException: ValueError: Raised when a feature cannot be found.
+        SnowflakeMLException: ValueError: Raised when feature is scalar but confront list element.
+        SnowflakeMLException: ValueError: Raised when feature type is not aligned in list element.
+        SnowflakeMLException: ValueError: Raised when feature shape is not aligned in list element.
+        SnowflakeMLException: ValueError: Raised when feature is scalar but confront array element.
+        SnowflakeMLException: ValueError: Raised when feature type is not aligned in numpy array element.
+        SnowflakeMLException: ValueError: Raised when feature shape is not aligned in numpy array element.
+        SnowflakeMLException: ValueError: Raised when feature type is not aligned in string element.
+        SnowflakeMLException: ValueError: Raised when feature type is not aligned in bytes element.
     """
     for feature in features:
         ft_name = feature.name
         try:
             data_col = data[ft_name]
         except KeyError:
-            raise ValueError(f"Data Validation Error: feature {ft_name} does not exist in data.")
+            raise snowml_exceptions.SnowflakeMLException(
+                error_code=error_codes.INVALID_DATA,
+                original_exception=ValueError(f"Data Validation Error: feature {ft_name} does not exist in data."),
+            )
 
         df_col_dtype = data_col.dtype
         if isinstance(feature, core.FeatureGroupSpec):
-            raise NotImplementedError("FeatureGroupSpec is not supported.")
+            raise snowml_exceptions.SnowflakeMLException(
+                error_code=error_codes.NOT_IMPLEMENTED,
+                original_exception=NotImplementedError("FeatureGroupSpec is not supported."),
+            )
 
-        assert isinstance(feature, core.FeatureSpec), "Invalid feature kind."
+        assert isinstance(feature, core.FeatureSpec)  # assert for mypy.
         ft_type = feature._dtype
         ft_shape = feature._shape
         if df_col_dtype != np.dtype("O"):
             if ft_type != core.DataType.from_numpy_type(df_col_dtype):
-                raise ValueError(
-                    f"Data Validation Error in feature {ft_name}: "
-                    + f"Feature type {ft_type} is not met by all elements in {data_col}."
+                raise snowml_exceptions.SnowflakeMLException(
+                    error_code=error_codes.INVALID_DATA,
+                    original_exception=ValueError(
+                        f"Data Validation Error in feature {ft_name}: "
+                        + f"Feature type {ft_type} is not met by all elements in {data_col}."
+                    ),
                 )
             elif ft_shape is not None:
-                raise ValueError(
-                    f"Data Validation Error in feature {ft_name}: "
-                    + "Feature is a array type feature while scalar data is provided."
+                raise snowml_exceptions.SnowflakeMLException(
+                    error_code=error_codes.INVALID_DATA,
+                    original_exception=ValueError(
+                        f"Data Validation Error in feature {ft_name}: "
+                        + "Feature is a array type feature while scalar data is provided."
+                    ),
                 )
         else:
             if isinstance(data_col[0], list):
                 if not ft_shape:
-                    raise ValueError(
-                        f"Data Validation Error in feature {ft_name}: "
-                        + "Feature is a scalar feature while list data is provided."
+                    raise snowml_exceptions.SnowflakeMLException(
+                        error_code=error_codes.INVALID_DATA,
+                        original_exception=ValueError(
+                            f"Data Validation Error in feature {ft_name}: "
+                            + "Feature is a scalar feature while list data is provided."
+                        ),
                     )
 
                 converted_data_list = [utils.convert_list_to_ndarray(data_row) for data_row in data_col]
@@ -145,59 +170,91 @@ def _validate_pandas_df(data: pd.DataFrame, features: Sequence[core.BaseFeatureS
                     core.DataType.from_numpy_type(converted_data.dtype) == ft_type
                     for converted_data in converted_data_list
                 ):
-                    raise ValueError(
-                        f"Data Validation Error in feature {ft_name}: "
-                        + f"Feature type {ft_type} is not met by all elements in {data_col}."
+                    raise snowml_exceptions.SnowflakeMLException(
+                        error_code=error_codes.INVALID_DATA,
+                        original_exception=ValueError(
+                            f"Data Validation Error in feature {ft_name}: "
+                            + f"Feature type {ft_type} is not met by all elements in {data_col}."
+                        ),
                     )
 
                 if ft_shape and ft_shape != (-1,):
                     if not all(np.shape(converted_data) == ft_shape for converted_data in converted_data_list):
-                        raise ValueError(
-                            f"Data Validation Error in feature {ft_name}: "
-                            + f"Feature shape {ft_shape} is not met by all elements in {data_col}."
+                        raise snowml_exceptions.SnowflakeMLException(
+                            error_code=error_codes.INVALID_DATA,
+                            original_exception=ValueError(
+                                f"Data Validation Error in feature {ft_name}: "
+                                + f"Feature shape {ft_shape} is not met by all elements in {data_col}."
+                            ),
                         )
+
             elif isinstance(data_col[0], np.ndarray):
                 if not ft_shape:
-                    raise ValueError(
-                        f"Data Validation Error in feature {ft_name}: "
-                        + "Feature is a scalar feature while array data is provided."
+                    raise snowml_exceptions.SnowflakeMLException(
+                        error_code=error_codes.INVALID_DATA,
+                        original_exception=ValueError(
+                            f"Data Validation Error in feature {ft_name}: "
+                            + "Feature is a scalar feature while array data is provided."
+                        ),
                     )
 
                 if not all(core.DataType.from_numpy_type(data_row.dtype) == ft_type for data_row in data_col):
-                    raise ValueError(
-                        f"Data Validation Error in feature {ft_name}: "
-                        + f"Feature type {ft_type} is not met by all elements in {data_col}."
+                    raise snowml_exceptions.SnowflakeMLException(
+                        error_code=error_codes.INVALID_DATA,
+                        original_exception=ValueError(
+                            f"Data Validation Error in feature {ft_name}: "
+                            + f"Feature type {ft_type} is not met by all elements in {data_col}."
+                        ),
                     )
 
                 ft_shape = feature._shape
                 if ft_shape and ft_shape != (-1,):
                     if not all(np.shape(data_row) == ft_shape for data_row in data_col):
                         ft_shape = (-1,)
-                        raise ValueError(
-                            f"Data Validation Error in feature {ft_name}: "
-                            + f"Feature shape {ft_shape} is not met by all elements in {data_col}."
+                        raise snowml_exceptions.SnowflakeMLException(
+                            error_code=error_codes.INVALID_DATA,
+                            original_exception=ValueError(
+                                f"Data Validation Error in feature {ft_name}: "
+                                + f"Feature shape {ft_shape} is not met by all elements in {data_col}."
+                            ),
                         )
+
             elif isinstance(data_col[0], str):
                 if ft_shape is not None:
-                    raise ValueError(
-                        f"Data Validation Error in feature {ft_name}: "
-                        + "Feature is a array type feature while scalar data is provided."
+                    raise snowml_exceptions.SnowflakeMLException(
+                        error_code=error_codes.INVALID_DATA,
+                        original_exception=ValueError(
+                            f"Data Validation Error in feature {ft_name}: "
+                            + "Feature is a array type feature while scalar data is provided."
+                        ),
                     )
+
                 if ft_type != core.DataType.STRING:
-                    raise ValueError(
-                        f"Data Validation Error in feature {ft_name}: "
-                        + f"Feature type {ft_type} is not met by all elements in {data_col}."
+                    raise snowml_exceptions.SnowflakeMLException(
+                        error_code=error_codes.INVALID_DATA,
+                        original_exception=ValueError(
+                            f"Data Validation Error in feature {ft_name}: "
+                            + f"Feature type {ft_type} is not met by all elements in {data_col}."
+                        ),
                     )
+
             elif isinstance(data_col[0], bytes):
                 if ft_shape is not None:
-                    raise ValueError(
-                        f"Data Validation Error in feature {ft_name}: "
-                        + "Feature is a array type feature while scalar data is provided."
+                    raise snowml_exceptions.SnowflakeMLException(
+                        error_code=error_codes.INVALID_DATA,
+                        original_exception=ValueError(
+                            f"Data Validation Error in feature {ft_name}: "
+                            + "Feature is a array type feature while scalar data is provided."
+                        ),
                     )
+
                 if ft_type != core.DataType.BYTES:
-                    raise ValueError(
-                        f"Data Validation Error in feature {ft_name}: "
-                        + f"Feature type {ft_type} is not met by all elements in {data_col}."
+                    raise snowml_exceptions.SnowflakeMLException(
+                        error_code=error_codes.INVALID_DATA,
+                        original_exception=ValueError(
+                            f"Data Validation Error in feature {ft_name}: "
+                            + f"Feature type {ft_type} is not met by all elements in {data_col}."
+                        ),
                     )
 
 
@@ -209,9 +266,9 @@ def _validate_snowpark_data(data: snowflake.snowpark.DataFrame, features: Sequen
         features: A sequence of feature specifications and feature group specifications, where the dataframe should fit.
 
     Raises:
-        NotImplementedError: FeatureGroupSpec is not supported.
-        ValueError: Raised when confronting invalid feature.
-        ValueError: Raised when a feature cannot be found.
+        SnowflakeMLException: NotImplementedError: FeatureGroupSpec is not supported.
+        SnowflakeMLException: ValueError: Raised when confronting invalid feature.
+        SnowflakeMLException: ValueError: Raised when a feature cannot be found.
     """
     schema = data.schema
     for feature in features:
@@ -228,33 +285,48 @@ def _validate_snowpark_data(data: snowflake.snowpark.DataFrame, features: Sequen
                         category=RuntimeWarning,
                     )
                 if isinstance(feature, core.FeatureGroupSpec):
-                    raise NotImplementedError("FeatureGroupSpec is not supported.")
-                assert isinstance(feature, core.FeatureSpec), "Invalid feature kind."
+                    raise snowml_exceptions.SnowflakeMLException(
+                        error_code=error_codes.NOT_IMPLEMENTED,
+                        original_exception=NotImplementedError("FeatureGroupSpec is not supported."),
+                    )
+                assert isinstance(feature, core.FeatureSpec)  # mypy
                 ft_type = feature._dtype
                 field_data_type = field.datatype
                 if isinstance(field_data_type, spt.ArrayType):
                     if feature._shape is None:
-                        raise ValueError(
-                            f"Data Validation Error in feature {ft_name}: "
-                            + f"Feature is a array feature, while {field.name} is not."
+                        raise snowml_exceptions.SnowflakeMLException(
+                            error_code=error_codes.INVALID_DATA,
+                            original_exception=ValueError(
+                                f"Data Validation Error in feature {ft_name}: "
+                                + f"Feature is a array feature, while {field.name} is not."
+                            ),
                         )
                     warnings.warn(
-                        f"Warn in feature {ft_name}: Feature is a array feature," + " type validation cannot happen.",
+                        f"Warn in feature {ft_name}: Feature is a array feature, type validation cannot happen.",
                         category=RuntimeWarning,
                     )
                 else:
                     if feature._shape:
-                        raise ValueError(
-                            f"Data Validation Error in feature {ft_name}: "
-                            + f"Feature is a scalar feature, while {field.name} is not."
+                        raise snowml_exceptions.SnowflakeMLException(
+                            error_code=error_codes.INVALID_DATA,
+                            original_exception=ValueError(
+                                f"Data Validation Error in feature {ft_name}: "
+                                + f"Feature is a scalar feature, while {field.name} is not."
+                            ),
                         )
                     if not ft_type.is_same_snowpark_type(field_data_type):
-                        raise ValueError(
-                            f"Data Validation Error in feature {ft_name}: "
-                            + f"Feature type {ft_type} is not met by column {field.name}."
+                        raise snowml_exceptions.SnowflakeMLException(
+                            error_code=error_codes.INVALID_DATA,
+                            original_exception=ValueError(
+                                f"Data Validation Error in feature {ft_name}: "
+                                + f"Feature type {ft_type} is not met by column {field.name}."
+                            ),
                         )
         if not found:
-            raise ValueError(f"Data Validation Error: feature {ft_name} does not exist in data.")
+            raise snowml_exceptions.SnowflakeMLException(
+                error_code=error_codes.INVALID_DATA,
+                original_exception=ValueError(f"Data Validation Error: feature {ft_name} does not exist in data."),
+            )
 
 
 def _convert_local_data_to_df(data: model_types.SupportedLocalDataType) -> pd.DataFrame:
@@ -264,7 +336,7 @@ def _convert_local_data_to_df(data: model_types.SupportedLocalDataType) -> pd.Da
         data: The provided data.
 
     Raises:
-        ValueError: Raised when data cannot be handled by any data handler.
+        SnowflakeMLException: NotImplementedError: Raised when data cannot be handled by any data handler.
 
     Returns:
         The converted dataframe with renamed column index.
@@ -276,7 +348,11 @@ def _convert_local_data_to_df(data: model_types.SupportedLocalDataType) -> pd.Da
             df = handler.convert_to_df(data, ensure_serializable=False)
             break
     if df is None:
-        raise ValueError(f"Data Validation Error: Un-supported type {type(data)} provided.")
+        raise snowml_exceptions.SnowflakeMLException(
+            error_code=error_codes.NOT_IMPLEMENTED,
+            original_exception=NotImplementedError(f"Data Validation Error: Un-supported type {type(data)} provided."),
+        )
+
     return df
 
 

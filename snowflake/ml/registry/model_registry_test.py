@@ -57,9 +57,18 @@ class ModelRegistryTest(absltest.TestCase):
         self.model_version = "abc"
         self.datetime = datetime.datetime(2022, 11, 4, 17, 1, 30, 153000)
 
+        self._setup_mock_session()
+
     def tearDown(self) -> None:
         """Complete test case. Ensure all expected operations have been observed."""
         self._session.finalize()
+
+    def _setup_mock_session(self) -> None:
+        """Equip the mock session with mock variable/methods just for model registry."""
+        self._session.get_current_database = absltest.mock.MagicMock(return_value=_DATABASE_NAME)
+        self._session.get_current_schema = absltest.mock.MagicMock(return_value=_SCHEMA_NAME)
+        self._session.use_database = absltest.mock.MagicMock()
+        self._session.use_schema = absltest.mock.MagicMock()
 
     def add_session_mock_sql(self, query: str, result: Any) -> None:
         self._session.add_mock_sql(query=query, result=result)
@@ -130,6 +139,23 @@ class ModelRegistryTest(absltest.TestCase):
             )
         ]
 
+    def get_desc_registry_table_success(self) -> List[snowpark.Row]:
+        """Helper method that returns a DataFrame that looks like the response of from a successful desc table."""
+        return [
+            snowpark.Row(name="CREATION_CONTEXT", type="VARCHAR"),
+            snowpark.Row(name="CREATION_ENVIRONMENT_SPEC", type="OBJECT"),
+            snowpark.Row(name="CREATION_ROLE", type="VARCHAR"),
+            snowpark.Row(name="CREATION_TIME", type="TIMESTAMP_TZ"),
+            snowpark.Row(name="ID", type="VARCHAR PRIMARY KEY RELY"),
+            snowpark.Row(name="INPUT_SPEC", type="OBJECT"),
+            snowpark.Row(name="NAME", type="VARCHAR"),
+            snowpark.Row(name="OUTPUT_SPEC", type="OBJECT"),
+            snowpark.Row(name="RUNTIME_ENVIRONMENT_SPEC", type="OBJECT"),
+            snowpark.Row(name="TYPE", type="VARCHAR"),
+            snowpark.Row(name="URI", type="VARCHAR"),
+            snowpark.Row(name="VERSION", type="VARCHAR"),
+        ]
+
     def setup_open_call(self) -> None:
         self.add_session_mock_sql(
             query=f"SHOW DATABASES LIKE '{_DATABASE_NAME}'",
@@ -148,6 +174,12 @@ class ModelRegistryTest(absltest.TestCase):
             result=mock_data_frame.MockDataFrame(
                 self.get_show_tables_success(name=_REGISTRY_TABLE_NAME)
             ).add_collect_result(self.get_show_tables_success(name=_REGISTRY_TABLE_NAME)),
+        )
+        self.add_session_mock_sql(
+            query=f"DESC TABLE {_FULLY_QUALIFIED_REGISTRY_TABLE_NAME}",
+            result=mock_data_frame.MockDataFrame(self.get_desc_registry_table_success()).add_collect_result(
+                self.get_desc_registry_table_success()
+            ),
         )
         self.add_session_mock_sql(
             query=f"SHOW TABLES LIKE '{_METADATA_TABLE_NAME}' IN {_DATABASE_NAME}.{_SCHEMA_NAME}",
@@ -475,6 +507,12 @@ class ModelRegistryTest(absltest.TestCase):
         self.add_session_mock_sql(
             query=f"SHOW TABLES LIKE '{_REGISTRY_TABLE_NAME}' IN {_DATABASE_NAME}.{_SCHEMA_NAME}",
             result=mock_data_frame.MockDataFrame(self.get_show_tables_success(name=_REGISTRY_TABLE_NAME)),
+        )
+        self.add_session_mock_sql(
+            query=f"DESC TABLE {_FULLY_QUALIFIED_REGISTRY_TABLE_NAME}",
+            result=mock_data_frame.MockDataFrame(self.get_desc_registry_table_success()).add_collect_result(
+                self.get_desc_registry_table_success()
+            ),
         )
         self.add_session_mock_sql(
             query=f"SHOW TABLES LIKE '{_METADATA_TABLE_NAME}' IN {_DATABASE_NAME}.{_SCHEMA_NAME}",

@@ -206,7 +206,7 @@ class KBinsDiscretizer(base.BaseTransformer):
             self._handle_uniform(dataset)
         elif self.strategy == "kmeans":
             raise exceptions.SnowflakeMLException(
-                error_code=error_codes.INVALID_ATTRIBUTE,
+                error_code=error_codes.NOT_IMPLEMENTED,
                 original_exception=NotImplementedError("kmeans not supported yet"),
             )
 

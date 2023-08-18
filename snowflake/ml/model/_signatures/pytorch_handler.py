@@ -5,6 +5,10 @@ import pandas as pd
 from typing_extensions import TypeGuard
 
 from snowflake.ml._internal import type_utils
+from snowflake.ml._internal.exceptions import (
+    error_codes,
+    exceptions as snowml_exceptions,
+)
 from snowflake.ml.model import type_hints as model_types
 from snowflake.ml.model._signatures import base_handler, core
 
@@ -41,11 +45,17 @@ class SeqOfPyTorchTensorHandler(base_handler.BaseDataHandler[Sequence["torch.Ten
         for data_col in data:
             if data_col.shape == torch.Size([0]):
                 # Empty array
-                raise ValueError("Data Validation Error: Empty data is found.")
+                raise snowml_exceptions.SnowflakeMLException(
+                    error_code=error_codes.INVALID_DATA,
+                    original_exception=ValueError("Data Validation Error: Empty data is found."),
+                )
 
             if data_col.shape == torch.Size([1]):
                 # scalar
-                raise ValueError("Data Validation Error: Scalar data is found.")
+                raise snowml_exceptions.SnowflakeMLException(
+                    error_code=error_codes.INVALID_DATA,
+                    original_exception=ValueError("Data Validation Error: Scalar data is found."),
+                )
 
     @staticmethod
     def infer_signature(
@@ -86,7 +96,10 @@ class SeqOfPyTorchTensorHandler(base_handler.BaseDataHandler[Sequence["torch.Ten
         if features:
             for feature in features:
                 if isinstance(feature, core.FeatureGroupSpec):
-                    raise NotImplementedError("FeatureGroupSpec is not supported.")
+                    raise snowml_exceptions.SnowflakeMLException(
+                        error_code=error_codes.NOT_IMPLEMENTED,
+                        original_exception=NotImplementedError("FeatureGroupSpec is not supported."),
+                    )
                 assert isinstance(feature, core.FeatureSpec), "Invalid feature kind."
                 res.append(torch.from_numpy(np.stack(df[feature.name].to_numpy()).astype(feature._dtype._numpy_type)))
             return res

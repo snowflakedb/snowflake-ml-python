@@ -12,6 +12,7 @@ from sklearn import preprocessing, utils as sklearn_utils
 
 from snowflake import snowpark
 from snowflake.ml._internal import telemetry, type_utils
+from snowflake.ml._internal.exceptions import error_codes, exceptions
 from snowflake.ml._internal.utils import identifier
 from snowflake.ml.modeling.framework import _utils, base
 from snowflake.snowpark import functions as F, types as T
@@ -158,23 +159,16 @@ class OrdinalEncoder(base.BaseTransformer):
 
         Returns:
             Fitted encoder.
-
-        Raises:
-            TypeError: If the input dataset is neither a pandas nor Snowpark DataFrame.
         """
         self._reset()
         self._validate_keywords()
         super()._check_input_cols()
+        super()._check_dataset_type(dataset)
 
         if isinstance(dataset, pd.DataFrame):
             self._fit_sklearn(dataset)
-        elif isinstance(dataset, snowpark.DataFrame):
-            self._fit_snowpark(dataset)
         else:
-            raise TypeError(
-                f"Unexpected dataset type: {type(dataset)}."
-                "Supported dataset types: snowpark.DataFrame, pandas.DataFrame."
-            )
+            self._fit_snowpark(dataset)
         self._validate_unknown_value()
         self._check_missing_categories()
 
@@ -187,10 +181,6 @@ class OrdinalEncoder(base.BaseTransformer):
         sklearn_encoder.fit(dataset[self.input_cols])
 
         self._categories_list = sklearn_encoder.categories_
-
-        # Set `categories_` and `_state_pandas`
-        if len(self.input_cols) != len(self._categories_list):
-            raise ValueError("The derived categories mismatch the supplied input columns.")
 
         _state_pandas_ordinals: List[pd.DataFrame] = []
         for idx, input_col in enumerate(sorted(self.input_cols)):
@@ -257,7 +247,7 @@ class OrdinalEncoder(base.BaseTransformer):
             State dataframe with columns [COLUMN_NAME, CATEGORY, INDEX].
 
         Raises:
-            ValueError: If `self.categories` is provided, `self.handle_unknown="error"`,
+            SnowflakeMLException: If `self.categories` is provided, `self.handle_unknown="error"`,
                 and unknown categories exist in dataset.
         """
         # states of categories found in dataset
@@ -295,15 +285,15 @@ class OrdinalEncoder(base.BaseTransformer):
                 found_state_df.union(all_encoded_value_df) if found_state_df is not None else all_encoded_value_df
             )
 
-        assert found_state_df is not None, "found_state_df cannot be None"
+        assert found_state_df is not None
         if self.categories != "auto":
             state_data = []
-            assert isinstance(self.categories, dict), "self.categories must be dict"
+            assert isinstance(self.categories, dict)
             for input_col, cats in self.categories.items():
                 for idx, cat in enumerate(cats.tolist()):
                     state_data.append([input_col, cat, idx])
             # states of given categories
-            assert dataset._session is not None, "dataset._session cannot be None"
+            assert dataset._session is not None
             given_state_df = dataset._session.create_dataframe(
                 data=state_data, schema=[_COLUMN_NAME, _CATEGORY, _INDEX]
             )
@@ -322,23 +312,18 @@ class OrdinalEncoder(base.BaseTransformer):
                 )
                 if not unknown_pandas.empty:
                     msg = f"Found unknown categories during fit:\n{unknown_pandas.to_string()}"
-                    raise ValueError(msg)
+                    raise exceptions.SnowflakeMLException(
+                        error_code=error_codes.INVALID_DATA,
+                        original_exception=ValueError(msg),
+                    )
 
             return given_state_df
 
         return found_state_df
 
     def _assign_categories(self) -> None:
-        """
-        Assign the categories to the object.
-
-        Raises:
-            ValueError: If `self.categories` is an unsupported value.
-        """
+        """Assign the categories to the object."""
         if isinstance(self.categories, str):
-            if self.categories != "auto":
-                raise ValueError(f"Unsupported value {self.categories} for parameter `categories`.")
-
             partial_state_arr = self._state_pandas[[_COLUMN_NAME, _CATEGORY]].to_numpy()
             column_names_arr = partial_state_arr[:, 0]
             categories_arr = partial_state_arr[:, 1]
@@ -368,16 +353,19 @@ class OrdinalEncoder(base.BaseTransformer):
         `self.unknown_value` is not used to encode any known category.
 
         Raises:
-            ValueError: If unknown categories exist in the fitted dataset.
+            SnowflakeMLException: If unknown categories exist in the fitted dataset.
         """
         if self.handle_unknown == "use_encoded_value":
             for feature_cats in self._categories_list:
                 if isinstance(self.unknown_value, numbers.Integral) and 0 <= self.unknown_value < len(feature_cats):
-                    raise ValueError(
-                        "The used value for unknown_value "
-                        f"{self.unknown_value} is one of the "
-                        "values already used for encoding the "
-                        "seen categories."
+                    raise exceptions.SnowflakeMLException(
+                        error_code=error_codes.INVALID_ATTRIBUTE,
+                        original_exception=ValueError(
+                            "The used value for unknown_value "
+                            f"{self.unknown_value} is one of the "
+                            "values already used for encoding the "
+                            "seen categories."
+                        ),
                     )
 
     def _check_missing_categories(self) -> None:
@@ -400,7 +388,7 @@ class OrdinalEncoder(base.BaseTransformer):
         is not used to encode any known category.
 
         Raises:
-            ValueError: If missing categories exist and `self.encoded_missing_value` is already
+            SnowflakeMLException: If missing categories exist and `self.encoded_missing_value` is already
                 used to encode a known category.
         """
         if self._missing_indices:
@@ -415,10 +403,12 @@ class OrdinalEncoder(base.BaseTransformer):
                 ]
 
                 if invalid_features:
-                    raise ValueError(
-                        f"encoded_missing_value ({self.encoded_missing_value}) "
-                        "is already used to encode a known category in features: "
-                        f"{invalid_features}"
+                    raise exceptions.SnowflakeMLException(
+                        error_code=error_codes.INVALID_ATTRIBUTE,
+                        original_exception=ValueError(
+                            f"encoded_missing_value ({self.encoded_missing_value}) is already used to encode a known "
+                            f"category in features: {invalid_features}."
+                        ),
                     )
 
     @telemetry.send_api_usage_telemetry(
@@ -438,23 +428,16 @@ class OrdinalEncoder(base.BaseTransformer):
 
         Returns:
             Output dataset.
-
-        Raises:
-            TypeError: If the input dataset is neither a pandas nor Snowpark DataFrame.
         """
         self._enforce_fit()
         super()._check_input_cols()
         super()._check_output_cols()
+        super()._check_dataset_type(dataset)
 
         if isinstance(dataset, snowpark.DataFrame):
             output_df = self._transform_snowpark(dataset)
-        elif isinstance(dataset, pd.DataFrame):
-            output_df = self._transform_sklearn(dataset)
         else:
-            raise TypeError(
-                f"Unexpected dataset type: {type(dataset)}."
-                "Supported dataset types: snowpark.DataFrame, pandas.DataFrame."
-            )
+            output_df = self._transform_sklearn(dataset)
 
         return self._drop_input_columns(output_df) if self._drop_input_cols is True else output_df
 
@@ -469,7 +452,7 @@ class OrdinalEncoder(base.BaseTransformer):
             Output dataset.
         """
         passthrough_columns = [c for c in dataset.columns if c not in self.output_cols]
-        assert dataset._session is not None, "dataset._session cannot be None"
+        assert dataset._session is not None
         state_df = (
             dataset._session.table(self._vocab_table_name)
             if _utils.table_exists(
@@ -548,32 +531,53 @@ class OrdinalEncoder(base.BaseTransformer):
 
     def _validate_keywords(self) -> None:
         if isinstance(self.categories, str) and self.categories != "auto":
-            raise ValueError(f"Unsupported value {self.categories} for parameter `categories`.")
+            raise exceptions.SnowflakeMLException(
+                error_code=error_codes.INVALID_ATTRIBUTE,
+                original_exception=ValueError(f"Unsupported `categories` value: {self.categories}."),
+            )
         elif isinstance(self.categories, dict):
             if len(self.categories) != len(self.input_cols):
-                raise ValueError("The number of categories mismatches the number of input columns.")
+                raise exceptions.SnowflakeMLException(
+                    error_code=error_codes.INVALID_ATTRIBUTE,
+                    original_exception=ValueError(
+                        f"The number of categories ({len(self.categories)}) mismatches the number of input columns "
+                        f"({len(self.input_cols)})."
+                    ),
+                )
             elif set(self.categories.keys()) != set(self.input_cols):
-                raise ValueError("The column names of categories mismatch the column names of input columns.")
+                raise exceptions.SnowflakeMLException(
+                    error_code=error_codes.INVALID_ATTRIBUTE,
+                    original_exception=ValueError(
+                        "The column names of categories mismatch the column names of input columns."
+                    ),
+                )
 
         if self.handle_unknown not in {"error", "use_encoded_value"}:
-            msg = "handle_unknown should be one of 'error', 'use_encoded_value' " f"got {self.handle_unknown}."
-            raise ValueError(msg)
+            raise exceptions.SnowflakeMLException(
+                error_code=error_codes.INVALID_ATTRIBUTE,
+                original_exception=ValueError(
+                    f"`handle_unknown` must be one of 'error', 'use_encoded_value', got {self.handle_unknown}."
+                ),
+            )
 
         if self.handle_unknown == "use_encoded_value":
             if not (
                 sklearn_utils.is_scalar_nan(self.unknown_value) or isinstance(self.unknown_value, numbers.Integral)
             ):
-                raise TypeError(
-                    "unknown_value should be an integer or "
-                    "np.nan when "
-                    "handle_unknown is 'use_encoded_value', "
-                    f"got {self.unknown_value}."
+                raise exceptions.SnowflakeMLException(
+                    error_code=error_codes.INVALID_ATTRIBUTE,
+                    original_exception=TypeError(
+                        "`unknown_value` must be an integer or np.nan when `handle_unknown` is 'use_encoded_value', "
+                        f"got {self.unknown_value}."
+                    ),
                 )
         elif self.unknown_value is not None:
-            raise TypeError(
-                "unknown_value should only be set when "
-                "handle_unknown is 'use_encoded_value', "
-                f"got {self.unknown_value}."
+            raise exceptions.SnowflakeMLException(
+                error_code=error_codes.INVALID_ATTRIBUTE,
+                original_exception=TypeError(
+                    "`unknown_value` must only be set when `handle_unknown` is 'use_encoded_value', "
+                    f"got {self.unknown_value}."
+                ),
             )
 
     def _handle_unknown_in_transform(self, transformed_dataset: snowpark.DataFrame) -> snowpark.DataFrame:
@@ -587,7 +591,7 @@ class OrdinalEncoder(base.BaseTransformer):
             Transformed dataset with unknown values handled.
 
         Raises:
-            ValueError: If `self.handle_unknown="error"` and unknown values exist in the
+            SnowflakeMLException: If `self.handle_unknown="error"` and unknown values exist in the
                 transformed dataset.
         """
         if self.handle_unknown == "error":
@@ -610,14 +614,23 @@ class OrdinalEncoder(base.BaseTransformer):
                 unknown_df = unknown_df.union_by_name(temp_df) if unknown_df is not None else temp_df
 
             if unknown_df is None:
-                raise ValueError("snowml internal error caused by handle_unknown='error': empty input columns")
+                raise exceptions.SnowflakeMLException(
+                    error_code=error_codes.INTERNAL_PYTHON_ERROR,
+                    original_exception=ValueError(
+                        "Internal error caused by handle_unknown='error': empty input columns."
+                    ),
+                )
 
             unknown_pandas = unknown_df.to_pandas(
                 statement_params=telemetry.get_statement_params(base.PROJECT, base.SUBPROJECT, self.__class__.__name__)
             )
             if not unknown_pandas.empty:
-                msg = f"Found unknown categories during transform:\n{unknown_pandas.to_string()}"
-                raise ValueError(msg)
+                raise exceptions.SnowflakeMLException(
+                    error_code=error_codes.INVALID_DATA,
+                    original_exception=ValueError(
+                        f"Found unknown categories during transform:\n{unknown_pandas.to_string()}"
+                    ),
+                )
 
         if self.handle_unknown == "use_encoded_value":
             # left outer join has already filled unknown values with null

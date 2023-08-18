@@ -6,6 +6,8 @@ from typing import Optional
 from snowflake.ml.model._deploy_client.utils import constants
 from snowflake.snowpark import Session
 
+logger = logging.getLogger(__name__)
+
 
 class SnowServiceClient:
     """
@@ -52,7 +54,7 @@ class SnowServiceClient:
                  COMPUTE_POOL={compute_pool}
                  SPEC={spec_stage_location}
          """
-        logging.info(f"Create service with SQL: \n {sql}")
+        logger.debug(f"Create service with SQL: \n {sql}")
         self.session.sql(sql).collect()
 
     def _drop_service_if_exists(self, service_name: str) -> None:
@@ -89,9 +91,9 @@ class SnowServiceClient:
                 ENDPOINT={endpoint_name}
                 AS '/{path_at_service_endpoint}'
             """
-        logging.info(f"Create service function with SQL: \n {sql}")
+        logger.debug(f"Create service function with SQL: \n {sql}")
         self.session.sql(sql).collect()
-        logging.info(f"Successfully created service function: {service_func_name}")
+        logger.debug(f"Successfully created service function: {service_func_name}")
 
     def block_until_resource_is_ready(
         self,
@@ -99,7 +101,7 @@ class SnowServiceClient:
         resource_type: constants.ResourceType,
         *,
         max_retries: int = 60,
-        retry_interval_secs: int = 5,
+        retry_interval_secs: int = 10,
     ) -> None:
         """Blocks execution until the specified resource is ready.
         Note that this is a best-effort approach because when launching a service, it's possible for it to initially
@@ -110,7 +112,7 @@ class SnowServiceClient:
             resource_name: Name of the resource.
             resource_type: Type of the resource.
             max_retries: The maximum number of retries to check the resource readiness (default: 60).
-            retry_interval_secs: The number of seconds to wait between each retry (default: 5).
+            retry_interval_secs: The number of seconds to wait between each retry (default: 10).
 
         Raises:
             RuntimeError: If the resource received the following status [failed, not_found, internal_error, deleting]
@@ -173,11 +175,11 @@ class SnowServiceClient:
         except Exception as e:
             raise RuntimeError(f"Error while querying the {resource_type} {resource_name} status: {str(e)}")
         resource_metadata = json.loads(row[0][status_func])[0]
-        logging.info(f"Resource status metadata: {resource_metadata}")
+        logger.debug(f"Resource status metadata: {resource_metadata}")
         if resource_metadata and resource_metadata["status"]:
             try:
                 status = resource_metadata["status"]
                 return constants.ResourceStatus(status)
             except ValueError:
-                logging.warning(f"Unknown status returned: {status}")
+                logger.warning(f"Unknown status returned: {status}")
         return None

@@ -749,7 +749,7 @@ class WrapperGeneratorBase:
         self.test_estimator_imports_list.extend(
             [
                 f"from {self.root_module_name} import {self.original_class_name} as Sk{self.original_class_name}",
-                f"from {snow_ml_module_name} import {self.original_class_name}",
+                f"from {snow_ml_module_name} import {self.original_class_name}  # type: ignore[attr-defined]",
                 f"from sklearn.datasets import {self.test_dataset_func}",
             ]
         )

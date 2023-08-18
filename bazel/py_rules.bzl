@@ -34,6 +34,14 @@ load(
 load("@rules_python//python:packaging.bzl", native_py_wheel = "py_wheel")
 load(":repo_paths.bzl", "check_for_experimental_dependencies", "check_for_tests_dependencies")
 
+def py_genrule(**attrs):
+    orginal_cmd = attrs["cmd"]
+    attrs["cmd"] = select({
+        "@bazel_tools//src/conditions:windows": "CONDA_DLL_SEARCH_MODIFICATION_ENABLE=1 " + orginal_cmd,
+        "//conditions:default": orginal_cmd,
+    })
+    native.genrule(**attrs)
+
 _COMPATIBLE_WITH_SNOWPARK_TAG = "wheel_compatible_with_snowpark"
 
 def _add_target_compatiblity_labels(compatible_with_snowpark, attrs):
@@ -68,6 +76,10 @@ def py_binary(compatible_with_snowpark = True, **attrs):
     # * https://bazel.build/reference/be/python#py_test.legacy_create_init
     # * https://github.com/bazelbuild/rules_python/issues/55
     attrs["legacy_create_init"] = 0
+    attrs["env"] = select({
+        "@bazel_tools//src/conditions:windows": {"CONDA_DLL_SEARCH_MODIFICATION_ENABLE": "1"},
+        "//conditions:default": {},
+    })
     native_py_binary(**attrs)
 
 def py_library(compatible_with_snowpark = True, **attrs):

@@ -14,6 +14,9 @@ py_library(
 py_library(
     name = "core",
     srcs = ["core.py"],
+    deps = [
+        "//snowflake/ml/_internal/exceptions",
+    ],
 )
 
 py_test(
@@ -21,6 +24,7 @@ py_test(
     srcs = ["core_test.py"],
     deps = [
         ":core",
+        "//snowflake/ml/test_utils:exception_utils",
     ],
 )
 
@@ -28,9 +32,10 @@ py_library(
     name = "pandas_handler",
     srcs = ["pandas_handler.py"],
     deps = [
-        ":core",
         ":base_handler",
+        ":core",
         ":utils",
+        "//snowflake/ml/_internal/exceptions",
         "//snowflake/ml/model:type_hints",
     ],
 )
@@ -41,6 +46,7 @@ py_test(
     deps = [
         ":core",
         ":pandas_handler",
+        "//snowflake/ml/test_utils:exception_utils",
     ],
 )
 
@@ -48,8 +54,9 @@ py_library(
     name = "numpy_handler",
     srcs = ["numpy_handler.py"],
     deps = [
-        ":core",
         ":base_handler",
+        ":core",
+        "//snowflake/ml/_internal/exceptions",
         "//snowflake/ml/model:type_hints",
     ],
 )
@@ -60,6 +67,7 @@ py_test(
     deps = [
         ":core",
         ":numpy_handler",
+        "//snowflake/ml/test_utils:exception_utils",
     ],
 )
 
@@ -67,9 +75,10 @@ py_library(
     name = "pytorch_handler",
     srcs = ["pytorch_handler.py"],
     deps = [
-        ":core",
         ":base_handler",
+        ":core",
         "//snowflake/ml/_internal:type_utils",
+        "//snowflake/ml/_internal/exceptions",
         "//snowflake/ml/model:type_hints",
     ],
 )
@@ -81,6 +90,7 @@ py_test(
         ":core",
         ":pytorch_handler",
         ":utils",
+        "//snowflake/ml/test_utils:exception_utils",
     ],
 )
 
@@ -88,9 +98,10 @@ py_library(
     name = "tensorflow_handler",
     srcs = ["tensorflow_handler.py"],
     deps = [
-        ":core",
         ":base_handler",
+        ":core",
         "//snowflake/ml/_internal:type_utils",
+        "//snowflake/ml/_internal/exceptions",
         "//snowflake/ml/model:type_hints",
     ],
 )
@@ -102,6 +113,7 @@ py_test(
         ":core",
         ":tensorflow_handler",
         ":utils",
+        "//snowflake/ml/test_utils:exception_utils",
     ],
 )
 
@@ -109,9 +121,10 @@ py_library(
     name = "builtins_handler",
     srcs = ["builtins_handler.py"],
     deps = [
-        ":core",
         ":base_handler",
+        ":core",
         ":pandas_handler",
+        "//snowflake/ml/_internal/exceptions",
         "//snowflake/ml/model:type_hints",
     ],
 )
@@ -120,8 +133,9 @@ py_test(
     name = "builtins_test",
     srcs = ["builtins_test.py"],
     deps = [
-        ":core",
         ":builtins_handler",
+        ":core",
+        "//snowflake/ml/test_utils:exception_utils",
     ],
 )
 
@@ -130,6 +144,7 @@ py_library(
     srcs = ["utils.py"],
     deps = [
         ":core",
+        "//snowflake/ml/_internal/exceptions",
     ],
 )
 
@@ -139,20 +154,21 @@ py_test(
     deps = [
         ":core",
         ":utils",
+        "//snowflake/ml/test_utils:exception_utils",
     ],
 )
-
 
 py_library(
     name = "snowpark_handler",
     srcs = ["snowpark_handler.py"],
     deps = [
-        ":core",
         ":base_handler",
+        ":core",
         ":pandas_handler",
+        "//snowflake/ml/_internal/exceptions",
         "//snowflake/ml/_internal/utils:identifier",
-        "//snowflake/ml/model/_deploy_client/warehouse:infer_template",
         "//snowflake/ml/model:type_hints",
+        "//snowflake/ml/model/_deploy_client/warehouse:infer_template",
     ],
 )
 
@@ -162,6 +178,7 @@ py_test(
     deps = [
         ":core",
         ":snowpark_handler",
+        "//snowflake/ml/test_utils:exception_utils",
         "//snowflake/ml/model:model_signature",
         "//snowflake/ml/utils:connection_params",
     ],

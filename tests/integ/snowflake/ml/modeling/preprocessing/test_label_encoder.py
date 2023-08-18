@@ -6,6 +6,7 @@ import os
 import pickle
 import sys
 import tempfile
+from typing import List
 from unittest import TestCase
 
 import cloudpickle
@@ -14,8 +15,8 @@ import numpy as np
 from absl.testing.absltest import main
 from sklearn.preprocessing import LabelEncoder as SklearnLabelEncoder
 
-from snowflake.ml.modeling.preprocessing import (
-    LabelEncoder,  # type: ignore[attr-defined]
+from snowflake.ml.modeling.preprocessing import (  # type: ignore[attr-defined]
+    LabelEncoder,
 )
 from snowflake.ml.utils.connection_params import SnowflakeLoginOptions
 from snowflake.snowpark import Session
@@ -39,7 +40,7 @@ class LabelEncoderTest(TestCase):
     def setUp(self) -> None:
         """Creates Snowpark and Snowflake environments for testing."""
         self._session = Session.builder.configs(SnowflakeLoginOptions()).create()
-        self._to_be_deleted_files = []
+        self._to_be_deleted_files: List[str] = []
 
     def tearDown(self) -> None:
         self._session.close()

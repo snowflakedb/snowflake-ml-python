@@ -72,7 +72,7 @@ def main(argv: List[str]) -> None:
         expected_suffix = AutogenTool.module_root_dir(module_name=FLAGS.module)
         expected_suffix = os.path.normpath(os.path.join(actual_output_path, expected_suffix))
 
-        bazel_out_dir = FLAGS.bazel_out_dir
+        bazel_out_dir = os.path.normpath(FLAGS.bazel_out_dir)
         if not bazel_out_dir.endswith(expected_suffix):
             raise AssertionError(
                 f"genrule output dir $(RULEDIR) {bazel_out_dir} is expected to end with suffix {expected_suffix}"

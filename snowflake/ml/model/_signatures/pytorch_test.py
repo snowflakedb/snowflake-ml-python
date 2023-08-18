@@ -4,6 +4,7 @@ import torch
 from absl.testing import absltest
 
 from snowflake.ml.model._signatures import core, pytorch_handler, utils
+from snowflake.ml.test_utils import exception_utils
 
 
 class SeqOfPyTorchTensorHandlerTest(absltest.TestCase):
@@ -19,36 +20,42 @@ class SeqOfPyTorchTensorHandlerTest(absltest.TestCase):
 
     def test_validate_torch_tensor(self) -> None:
         t = [torch.Tensor([])]
-        with self.assertRaisesRegex(ValueError, "Empty data is found."):
+        with exception_utils.assert_snowml_exceptions(
+            self, expected_original_error_type=ValueError, expected_regex="Empty data is found."
+        ):
             pytorch_handler.SeqOfPyTorchTensorHandler.validate(t)
 
         t = [torch.Tensor(1)]
-        with self.assertRaisesRegex(ValueError, "Scalar data is found."):
+        with exception_utils.assert_snowml_exceptions(
+            self, expected_original_error_type=ValueError, expected_regex="Scalar data is found."
+        ):
             pytorch_handler.SeqOfPyTorchTensorHandler.validate(t)
 
         t = [torch.Tensor([1, 2]), torch.Tensor(1)]
-        with self.assertRaisesRegex(ValueError, "Scalar data is found."):
+        with exception_utils.assert_snowml_exceptions(
+            self, expected_original_error_type=ValueError, expected_regex="Scalar data is found."
+        ):
             pytorch_handler.SeqOfPyTorchTensorHandler.validate(t)
 
     def test_trunc_torch_tensor(self) -> None:
         t = [torch.Tensor([1] * (pytorch_handler.SeqOfPyTorchTensorHandler.SIG_INFER_ROWS_COUNT_LIMIT + 1))]
 
         for ts in pytorch_handler.SeqOfPyTorchTensorHandler.truncate(t):
-            torch.testing.assert_close(  # type:ignore[attr-defined]
+            torch.testing.assert_close(
                 torch.Tensor([1] * (pytorch_handler.SeqOfPyTorchTensorHandler.SIG_INFER_ROWS_COUNT_LIMIT)), ts
             )
 
         t = [torch.Tensor([1] * (pytorch_handler.SeqOfPyTorchTensorHandler.SIG_INFER_ROWS_COUNT_LIMIT - 1))]
 
         for ts in pytorch_handler.SeqOfPyTorchTensorHandler.truncate(t):
-            torch.testing.assert_close(  # type:ignore[attr-defined]
+            torch.testing.assert_close(
                 torch.Tensor([1] * (pytorch_handler.SeqOfPyTorchTensorHandler.SIG_INFER_ROWS_COUNT_LIMIT - 1)), ts
             )
 
         t = [torch.Tensor([1] * (pytorch_handler.SeqOfPyTorchTensorHandler.SIG_INFER_ROWS_COUNT_LIMIT + 1))] * 2
 
         for ts in pytorch_handler.SeqOfPyTorchTensorHandler.truncate(t):
-            torch.testing.assert_close(  # type:ignore[attr-defined]
+            torch.testing.assert_close(
                 torch.Tensor([1] * (pytorch_handler.SeqOfPyTorchTensorHandler.SIG_INFER_ROWS_COUNT_LIMIT)), ts
             )
 
@@ -58,9 +65,7 @@ class SeqOfPyTorchTensorHandlerTest(absltest.TestCase):
         ]
 
         for ts in pytorch_handler.SeqOfPyTorchTensorHandler.truncate(t):
-            torch.testing.assert_close(  # type:ignore[attr-defined]
-                torch.Tensor([1]), ts
-            )
+            torch.testing.assert_close(torch.Tensor([1]), ts)
 
     def test_infer_schema_torch_tensor(self) -> None:
         t1 = [torch.IntTensor([1, 2, 3, 4])]
@@ -224,7 +229,7 @@ class SeqOfPyTorchTensorHandlerTest(absltest.TestCase):
                 pytorch_handler.SeqOfPyTorchTensorHandler.convert_to_df(t1)
             )
         ):
-            torch.testing.assert_close(t, t1[idx])  # type:ignore[attr-defined]
+            torch.testing.assert_close(t, t1[idx])
 
         t2 = [torch.DoubleTensor([1, 2, 3, 4])]
         for idx, t in enumerate(
@@ -232,7 +237,7 @@ class SeqOfPyTorchTensorHandlerTest(absltest.TestCase):
                 pytorch_handler.SeqOfPyTorchTensorHandler.convert_to_df(t2)
             )
         ):
-            torch.testing.assert_close(t, t2[idx])  # type:ignore[attr-defined]
+            torch.testing.assert_close(t, t2[idx])
 
         t3 = [torch.LongTensor([[1, 1], [2, 2], [3, 3], [4, 4]])]
         for idx, t in enumerate(
@@ -240,7 +245,7 @@ class SeqOfPyTorchTensorHandlerTest(absltest.TestCase):
                 pytorch_handler.SeqOfPyTorchTensorHandler.convert_to_df(t3)
             )
         ):
-            torch.testing.assert_close(t, t3[idx])  # type:ignore[attr-defined]
+            torch.testing.assert_close(t, t3[idx])
 
         t4 = [torch.LongTensor([[[1, 1], [2, 2]], [[3, 3], [4, 4]]])]
         for idx, t in enumerate(
@@ -248,7 +253,7 @@ class SeqOfPyTorchTensorHandlerTest(absltest.TestCase):
                 pytorch_handler.SeqOfPyTorchTensorHandler.convert_to_df(t4)
             )
         ):
-            torch.testing.assert_close(t, t4[idx])  # type:ignore[attr-defined]
+            torch.testing.assert_close(t, t4[idx])
 
         t5 = [torch.LongTensor([1, 2]), torch.LongTensor([3, 4])]
         for idx, t in enumerate(
@@ -256,7 +261,7 @@ class SeqOfPyTorchTensorHandlerTest(absltest.TestCase):
                 pytorch_handler.SeqOfPyTorchTensorHandler.convert_to_df(t5)
             )
         ):
-            torch.testing.assert_close(t, t5[idx])  # type:ignore[attr-defined]
+            torch.testing.assert_close(t, t5[idx])
 
         t6 = [torch.DoubleTensor([1.2, 2.4]), torch.LongTensor([3, 4])]
         for idx, t in enumerate(
@@ -264,7 +269,7 @@ class SeqOfPyTorchTensorHandlerTest(absltest.TestCase):
                 pytorch_handler.SeqOfPyTorchTensorHandler.convert_to_df(t6)
             )
         ):
-            torch.testing.assert_close(t, t6[idx])  # type:ignore[attr-defined]
+            torch.testing.assert_close(t, t6[idx])
 
         t7 = [torch.LongTensor([[1, 1], [2, 2]]), torch.LongTensor([[3, 3], [4, 4]])]
         for idx, t in enumerate(
@@ -272,7 +277,7 @@ class SeqOfPyTorchTensorHandlerTest(absltest.TestCase):
                 pytorch_handler.SeqOfPyTorchTensorHandler.convert_to_df(t7)
             )
         ):
-            torch.testing.assert_close(t, t7[idx])  # type:ignore[attr-defined]
+            torch.testing.assert_close(t, t7[idx])
 
         t8 = [torch.LongTensor([[1, 1], [2, 2]]), torch.DoubleTensor([[1.5, 6.8], [2.9, 9.2]])]
         for idx, t in enumerate(
@@ -280,7 +285,7 @@ class SeqOfPyTorchTensorHandlerTest(absltest.TestCase):
                 pytorch_handler.SeqOfPyTorchTensorHandler.convert_to_df(t8)
             )
         ):
-            torch.testing.assert_close(t, t8[idx])  # type:ignore[attr-defined]
+            torch.testing.assert_close(t, t8[idx])
 
         t9 = [torch.IntTensor([1, 2, 3, 4])]
         fts = pytorch_handler.SeqOfPyTorchTensorHandler.infer_signature(t9, role="input")
@@ -290,7 +295,7 @@ class SeqOfPyTorchTensorHandlerTest(absltest.TestCase):
                 fts,
             )
         ):
-            torch.testing.assert_close(t, t9[idx])  # type:ignore[attr-defined]
+            torch.testing.assert_close(t, t9[idx])
 
         t10 = [torch.tensor([1.2, 3.4])]
         fts = pytorch_handler.SeqOfPyTorchTensorHandler.infer_signature(t10, role="input")
@@ -300,7 +305,7 @@ class SeqOfPyTorchTensorHandlerTest(absltest.TestCase):
                 fts,
             )
         ):
-            torch.testing.assert_close(t, t10[idx])  # type:ignore[attr-defined]
+            torch.testing.assert_close(t, t10[idx])
 
         t11 = [torch.tensor([[1, 1], [2, 2], [3, 3], [4, 4]])]
         fts = pytorch_handler.SeqOfPyTorchTensorHandler.infer_signature(t11, role="input")
@@ -310,7 +315,7 @@ class SeqOfPyTorchTensorHandlerTest(absltest.TestCase):
                 fts,
             )
         ):
-            torch.testing.assert_close(t, t11[idx])  # type:ignore[attr-defined]
+            torch.testing.assert_close(t, t11[idx])
 
         t12 = [torch.tensor([[[1, 1], [2, 2]], [[3, 3], [4, 4]]])]
         fts = pytorch_handler.SeqOfPyTorchTensorHandler.infer_signature(t12, role="input")
@@ -320,7 +325,7 @@ class SeqOfPyTorchTensorHandlerTest(absltest.TestCase):
                 fts,
             )
         ):
-            torch.testing.assert_close(t, t12[idx])  # type:ignore[attr-defined]
+            torch.testing.assert_close(t, t12[idx])
 
         t13 = [torch.tensor([1, 2]), torch.tensor([3, 4])]
         fts = pytorch_handler.SeqOfPyTorchTensorHandler.infer_signature(t13, role="input")
@@ -330,7 +335,7 @@ class SeqOfPyTorchTensorHandlerTest(absltest.TestCase):
                 fts,
             )
         ):
-            torch.testing.assert_close(t, t13[idx])  # type:ignore[attr-defined]
+            torch.testing.assert_close(t, t13[idx])
 
         t14 = [torch.tensor([1.2, 2.4]), torch.tensor([3, 4])]
         fts = pytorch_handler.SeqOfPyTorchTensorHandler.infer_signature(t14, role="input")
@@ -340,7 +345,7 @@ class SeqOfPyTorchTensorHandlerTest(absltest.TestCase):
                 fts,
             )
         ):
-            torch.testing.assert_close(t, t14[idx])  # type:ignore[attr-defined]
+            torch.testing.assert_close(t, t14[idx])
 
         t15 = [torch.tensor([[1, 1], [2, 2]]), torch.tensor([[3, 3], [4, 4]])]
         fts = pytorch_handler.SeqOfPyTorchTensorHandler.infer_signature(t15, role="input")
@@ -350,7 +355,7 @@ class SeqOfPyTorchTensorHandlerTest(absltest.TestCase):
                 fts,
             )
         ):
-            torch.testing.assert_close(t, t15[idx])  # type:ignore[attr-defined]
+            torch.testing.assert_close(t, t15[idx])
 
         t16 = [torch.tensor([[1, 1], [2, 2]]), torch.tensor([[1.5, 6.8], [2.9, 9.2]])]
         fts = pytorch_handler.SeqOfPyTorchTensorHandler.infer_signature(t16, role="input")
@@ -360,7 +365,7 @@ class SeqOfPyTorchTensorHandlerTest(absltest.TestCase):
                 fts,
             )
         ):
-            torch.testing.assert_close(t, t16[idx])  # type:ignore[attr-defined]
+            torch.testing.assert_close(t, t16[idx])
 
 
 if __name__ == "__main__":

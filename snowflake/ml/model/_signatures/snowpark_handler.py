@@ -7,6 +7,10 @@ from typing_extensions import TypeGuard
 
 import snowflake.snowpark
 import snowflake.snowpark.types as spt
+from snowflake.ml._internal.exceptions import (
+    error_codes,
+    exceptions as snowml_exceptions,
+)
 from snowflake.ml._internal.utils import identifier
 from snowflake.ml.model import type_hints as model_types
 from snowflake.ml.model._deploy_client.warehouse import infer_template
@@ -36,8 +40,11 @@ class SnowparkDataFrameHandler(base_handler.BaseDataHandler[snowflake.snowpark.D
             else:
                 actual_data_type = data_type
             if not any(type.is_same_snowpark_type(actual_data_type) for type in core.DataType):
-                raise ValueError(
-                    f"Data Validation Error: Unsupported data type {field.datatype} in column {field.name}."
+                raise snowml_exceptions.SnowflakeMLException(
+                    error_code=error_codes.INVALID_DATA,
+                    original_exception=ValueError(
+                        f"Data Validation Error: Unsupported data type {field.datatype} in column {field.name}."
+                    ),
                 )
 
     @staticmethod
@@ -49,7 +56,12 @@ class SnowparkDataFrameHandler(base_handler.BaseDataHandler[snowflake.snowpark.D
         for field in schema.fields:
             name = identifier.get_unescaped_names(field.name)
             if isinstance(field.datatype, spt.ArrayType):
-                raise NotImplementedError("Cannot infer model signature from Snowpark DataFrame with Array Type.")
+                raise snowml_exceptions.SnowflakeMLException(
+                    error_code=error_codes.NOT_IMPLEMENTED,
+                    original_exception=NotImplementedError(
+                        "Cannot infer model signature from Snowpark DataFrame with Array Type."
+                    ),
+                )
             else:
                 features.append(core.FeatureSpec(name=name, dtype=core.DataType.from_snowpark_type(field.datatype)))
         return features
@@ -65,7 +77,10 @@ class SnowparkDataFrameHandler(base_handler.BaseDataHandler[snowflake.snowpark.D
         if features:
             for feature in features:
                 if isinstance(feature, core.FeatureGroupSpec):
-                    raise NotImplementedError("FeatureGroupSpec is not supported.")
+                    raise snowml_exceptions.SnowflakeMLException(
+                        error_code=error_codes.NOT_IMPLEMENTED,
+                        original_exception=NotImplementedError("FeatureGroupSpec is not supported."),
+                    )
                 assert isinstance(feature, core.FeatureSpec), "Invalid feature kind."
                 dtype_map[feature.name] = feature.as_dtype()
         df_local = data.to_pandas()
@@ -98,13 +113,19 @@ class SnowparkDataFrameHandler(base_handler.BaseDataHandler[snowflake.snowpark.D
         df = pandas_handler.PandasDataFrameHandler.convert_to_df(df)
         df_cols = df.columns
         if df_cols.dtype != np.object_:
-            raise ValueError("Cannot convert a Pandas DataFrame whose column index is not a string")
+            raise snowml_exceptions.SnowflakeMLException(
+                error_code=error_codes.NOT_IMPLEMENTED,
+                original_exception=ValueError("Cannot convert a Pandas DataFrame whose column index is not a string"),
+            )
         features = pandas_handler.PandasDataFrameHandler.infer_signature(df, role="input")
         # Role will be no effect on the column index. That is to say, the feature name is the actual column name.
         schema_list = []
         for feature in features:
             if isinstance(feature, core.FeatureGroupSpec):
-                raise NotImplementedError("FeatureGroupSpec is not supported.")
+                raise snowml_exceptions.SnowflakeMLException(
+                    error_code=error_codes.NOT_IMPLEMENTED,
+                    original_exception=NotImplementedError("FeatureGroupSpec is not supported."),
+                )
             assert isinstance(feature, core.FeatureSpec), "Invalid feature kind."
             schema_list.append(
                 spt.StructField(

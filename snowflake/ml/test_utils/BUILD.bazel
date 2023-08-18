@@ -3,6 +3,15 @@ load("//bazel:py_rules.bzl", "py_library", "py_test")
 package(default_visibility = ["//visibility:public"])
 
 py_library(
+    name = "exception_utils",
+    testonly = True,
+    srcs = ["exception_utils.py"],
+    deps = [
+        "//snowflake/ml/_internal/exceptions:exceptions",
+    ],
+)
+
+py_library(
     name = "mock_snowml_base",
     testonly = True,
     srcs = ["mock_snowml_base.py"],

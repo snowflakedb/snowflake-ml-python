@@ -31,9 +31,9 @@ _SupportedNumpyDtype = Union[
     "np.uint16",
     "np.uint32",
     "np.uint64",
-    "np.bool8",
-    "np.str0",
-    "np.bytes0",
+    "np.bool_",
+    "np.str_",
+    "np.bytes_",
 ]
 _SupportedNumpyArray = npt.NDArray[_SupportedNumpyDtype]
 _SupportedBuiltinsList = Sequence[_SupportedBuiltins]
@@ -132,8 +132,10 @@ class SnowparkContainerServiceDeployOptions(DeployOptions):
         Snowflake is used as is. This option is for users who consistently use the same image for multiple use
         cases, allowing faster deployment. The snowflake image used for deployment is logged to the console for
         future use. Default to None.
-    use_gpu: When set to True, a CUDA-enabled Docker image will be used to provide a runtime CUDA environment.
-        Default to False.
+    num_gpus: Number of GPUs to be used for the service. Default to 0.
+    num_workers: Number of workers used for model inference. Please ensure that the number of workers is set lower than
+        the total available memory divided by the size of model to prevent memory-related issues. Default is number of
+        CPU cores * 2 + 1.
     """
 
     compute_pool: str
@@ -142,7 +144,8 @@ class SnowparkContainerServiceDeployOptions(DeployOptions):
     max_instances: NotRequired[int]
     endpoint: NotRequired[str]
     prebuilt_snowflake_image: NotRequired[str]
-    use_gpu: NotRequired[bool]
+    num_gpus: NotRequired[int]
+    num_workers: NotRequired[int]
 
 
 class BaseModelSaveOption(TypedDict):
