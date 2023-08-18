@@ -3,6 +3,7 @@ import os
 import posixpath
 import string
 import tempfile
+import time
 from abc import ABC
 from typing import Any, Dict, Optional, cast
 
@@ -10,9 +11,14 @@ import yaml
 from typing_extensions import Unpack
 
 from snowflake.ml._internal import file_utils
+from snowflake.ml._internal.utils import query_result_checker
 from snowflake.ml.model import _model, _model_meta, type_hints
-from snowflake.ml.model._deploy_client.image_builds import client_image_builder
-from snowflake.ml.model._deploy_client.snowservice import deploy_options
+from snowflake.ml.model._deploy_client.image_builds import (
+    base_image_builder,
+    client_image_builder,
+    server_image_builder,
+)
+from snowflake.ml.model._deploy_client.snowservice import deploy_options, instance_types
 from snowflake.ml.model._deploy_client.utils import constants, snowservice_client
 from snowflake.snowpark import FileOperation, Session
 
@@ -79,6 +85,9 @@ def _deploy(
         assert deployment_stage_path.startswith("@"), f"stage path should start with @, actual: {deployment_stage_path}"
         options = deploy_options.SnowServiceDeployOptions.from_dict(cast(Dict[str, Any], kwargs))
 
+        if options.num_gpus is not None and options.num_gpus > 0:
+            _validate_requested_gpus(session, request_gpus=options.num_gpus, compute_pool=options.compute_pool)
+
         # TODO[shchen]: SNOW-863701, Explore ways to prevent entire model zip being downloaded during deploy step
         #  (for both warehouse and snowservice deployment)
         # One alternative is for model registry to duplicate the model metadata and env dependency storage from model
@@ -106,6 +115,31 @@ def _deploy(
         # Preserve the original logging level.
         snowpark_logger.setLevel(snowpark_log_level)
         snowflake_connector_logger.setLevel(snowflake_connector_log_level)
+
+
+def _validate_requested_gpus(session: Session, *, request_gpus: int, compute_pool: str) -> None:
+    # Remove full qualified name to avoid double quotes, which does not work well in desc compute pool syntax.
+    compute_pool = compute_pool.replace('"', "")
+    sql = f"DESC COMPUTE POOL {compute_pool}"
+    result = (
+        query_result_checker.SqlResultValidator(
+            session=session,
+            query=sql,
+        )
+        .has_column("instance_family")
+        .has_dimensions(expected_rows=1)
+        .validate()
+    )
+    instance_family = result[0]["instance_family"]
+    if instance_family in instance_types.INSTANCE_TYPE_TO_GPU_COUNT:
+        gpu_capacity = instance_types.INSTANCE_TYPE_TO_GPU_COUNT[instance_family]
+        if request_gpus > gpu_capacity:
+            raise RuntimeError(
+                f"GPU request exceeds instance capability; {instance_family} instance type has total "
+                f"capacity of {gpu_capacity} GPU, yet a request was made for {request_gpus} GPUs."
+            )
+    else:
+        logger.warning(f"Unknown instance type: {instance_family}, skipping GPU validation")
 
 
 def _get_or_create_image_repo(session: Session, *, image_repo: Optional[str]) -> str:
@@ -190,7 +224,10 @@ class SnowServiceDeployment(ABC):
                 "Building the Docker image and deploying to Snowpark Container Service. "
                 "This process may take a few minutes."
             )
+            start = time.time()
             image = self._build_and_upload_image()
+            end = time.time()
+            logger.info(f"Time taken to build and upload image to registry: {end-start:.2f} seconds")
 
             logger.warning(
                 f"Image successfully built! To prevent the need for rebuilding the Docker image in future deployments, "
@@ -205,12 +242,20 @@ class SnowServiceDeployment(ABC):
             Path to the image in the remote image repository.
         """
         image_repo = _get_or_create_image_repo(self.session, image_repo=self.options.image_repo)
-        image_builder = client_image_builder.ClientImageBuilder(
-            id=self.id,
-            image_repo=image_repo,
-            model_dir=self.model_dir,
-            session=self.session,
-        )
+        image_builder: base_image_builder.ImageBuilder
+        if self.options.enable_remote_image_build:
+            image_builder = server_image_builder.ServerImageBuilder(
+                id=self.id,
+                image_repo=image_repo,
+                model_dir=self.model_dir,
+                session=self.session,
+                artifact_stage_location=self._model_artifact_stage_location,
+                compute_pool=self.options.compute_pool,
+            )
+        else:
+            image_builder = client_image_builder.ClientImageBuilder(
+                id=self.id, image_repo=image_repo, model_dir=self.model_dir, session=self.session
+            )
         return image_builder.build_and_upload_image()
 
     def _prepare_and_upload_artifacts_to_stage(self, image: str) -> None:

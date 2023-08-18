@@ -10,8 +10,8 @@ from snowflake.ml.model._deploy_client.snowservice.deploy import (
     _get_or_create_image_repo,
 )
 from snowflake.ml.model._deploy_client.utils import constants
-from snowflake.ml.test_utils import mock_session
-from snowflake.snowpark import FileOperation, session
+from snowflake.ml.test_utils import mock_data_frame, mock_session
+from snowflake.snowpark import FileOperation, row, session
 
 
 class Connection:
@@ -25,7 +25,7 @@ class Connection:
 class DeployTestCase(absltest.TestCase):
     def setUp(self) -> None:
         super().setUp()
-        self.m_session = cast(session.Session, mock_session.MockSession(conn=None, test_case=self))
+        self.m_session = mock_session.MockSession(conn=None, test_case=self)
         self.options: Dict[str, Any] = {
             "compute_pool": "mock_compute_pool",
             "image_repo": "mock_image_repo",
@@ -47,7 +47,7 @@ class DeployTestCase(absltest.TestCase):
         with mock.patch.object(FileOperation, "get_stream", return_value=None):
             with mock.patch.object(m_file_utils, "unzip_stream_in_temp_dir", return_value=m_extracted_model_dir):
                 _deploy(
-                    session=self.m_session,
+                    session=cast(session.Session, self.m_session),
                     model_id="provided_model_id",
                     service_func_name="mock_service_func",
                     model_zip_stage_path=m_model_zip_stage_path,
@@ -75,7 +75,7 @@ class DeployTestCase(absltest.TestCase):
     def test_deploy_with_empty_model_id(self, m_deployment_class: mock.MagicMock) -> None:
         with self.assertRaises(ValueError):
             _deploy(
-                session=self.m_session,
+                session=cast(session.Session, self.m_session),
                 service_func_name="mock_service_func",
                 model_id="",
                 model_zip_stage_path="@mock_model_zip_stage_path/model.zip",
@@ -91,7 +91,7 @@ class DeployTestCase(absltest.TestCase):
         with self.assertRaisesRegex(ValueError, "compute_pool"):
             options: Dict[str, Any] = {}
             _deploy(
-                session=self.m_session,
+                session=cast(session.Session, self.m_session),
                 service_func_name="mock_service_func",
                 model_id="mock_model_id",
                 model_zip_stage_path="@mock_model_zip_stage_path/model.zip",
@@ -101,6 +101,75 @@ class DeployTestCase(absltest.TestCase):
             )
         m_deployment_class.assert_not_called()
 
+    @mock.patch("snowflake.ml.model._deploy_client.snowservice.deploy.SnowServiceDeployment")  # type: ignore
+    def test_deploy_with_over_requested_gpus(self, m_deployment_class: mock.MagicMock) -> None:
+        with self.assertRaisesRegex(RuntimeError, "GPU request exceeds instance capability"):
+
+            self.m_session.add_mock_sql(
+                query=f"DESC COMPUTE POOL {self.options['compute_pool']}",
+                result=mock_data_frame.MockDataFrame(
+                    [row.Row(name="MY_GPU_POOL", state="IDLE", min_nodes=1, max_nodes=1, instance_family="GPU_3")]
+                ),
+            )
+
+            _deploy(
+                session=cast(session.Session, self.m_session),
+                service_func_name="mock_service_func",
+                model_id="mock_model_id",
+                model_zip_stage_path="@mock_model_zip_stage_path/model.zip",
+                deployment_stage_path="@mock_model_deployment_stage_path",
+                target_method=constants.PREDICT,
+                num_gpus=2,
+                **self.options,
+            )
+        m_deployment_class.assert_not_called()
+
+    @mock.patch("snowflake.ml.model._deploy_client.snowservice.deploy._model")  # type: ignore
+    @mock.patch("snowflake.ml.model._deploy_client.snowservice.deploy.file_utils")  # type: ignore
+    @mock.patch("snowflake.ml.model._deploy_client.snowservice.deploy.SnowServiceDeployment")  # type: ignore
+    def test_deploy_with_gpu_validation_and_unknown_instance_type(
+        self, m_deployment_class: mock.MagicMock, m_file_utils_class: mock.MagicMock, m_model_class: mock.MagicMock
+    ) -> None:
+        m_deployment = m_deployment_class.return_value
+        m_file_utils = m_file_utils_class.return_value
+
+        m_extracted_model_dir = "mock_extracted_model_dir"
+        m_model_zip_stage_path = "@mock_model_zip_stage_path/model.zip"
+        m_deployment_stage_path = "@mock_model_deployment_stage_path"
+
+        unknown_instance_type = "GPU_UNKNOWN"
+        self.m_session.add_mock_sql(
+            query=f"DESC COMPUTE POOL {self.options['compute_pool']}",
+            result=mock_data_frame.MockDataFrame(
+                [row.Row(name="MY_GPU_POOL", state="IDLE", instance_family=unknown_instance_type)]
+            ),
+        )
+
+        with mock.patch.object(FileOperation, "get_stream", return_value=None):
+            with mock.patch.object(m_file_utils, "unzip_stream_in_temp_dir", return_value=m_extracted_model_dir):
+                _deploy(
+                    session=cast(session.Session, self.m_session),
+                    model_id="provided_model_id",
+                    service_func_name="mock_service_func",
+                    model_zip_stage_path=m_model_zip_stage_path,
+                    deployment_stage_path=m_deployment_stage_path,
+                    target_method=constants.PREDICT,
+                    num_gpus=2,
+                    **self.options,
+                )
+
+                m_deployment_class.assert_called_once_with(
+                    session=self.m_session,
+                    model_id="provided_model_id",
+                    service_func_name="mock_service_func",
+                    model_zip_stage_path=m_model_zip_stage_path,
+                    deployment_stage_path=m_deployment_stage_path,
+                    model_dir=mock.ANY,
+                    target_method=constants.PREDICT,
+                    options=mock.ANY,
+                )
+                m_deployment.deploy.assert_called_once()
+
     @mock.patch(
         "snowflake.ml.model._deploy_client.snowservice.deploy." "snowservice_client.SnowServiceClient"
     )  # type: ignore
@@ -108,24 +177,27 @@ class DeployTestCase(absltest.TestCase):
         # Test when image repo url is provided.
         self.assertEqual(
             _get_or_create_image_repo(
-                self.m_session, image_repo="org-account.registry-dev.snowflakecomputing.com/DB/SCHEMA/REPO"
+                session=cast(session.Session, self.m_session),
+                image_repo="org-account.registry-dev.snowflakecomputing.com/DB/SCHEMA/REPO",
             ),
             "org-account.registry-dev.snowflakecomputing.com/db/schema/repo",
         )
 
         # Test when session is missing component(db/schema etc) in order to construct image repo url
         with self.assertRaises(RuntimeError):
-            _get_or_create_image_repo(self.m_session, image_repo=None)
+            _get_or_create_image_repo(session=cast(session.Session, self.m_session), image_repo=None)
 
         # Test constructing image repo from session object
         self.m_session._conn = mock.MagicMock()
         self.m_session._conn._conn = Connection(
             host="account.org.us-west-2.aws.snowflakecomputing.com", account="account", database="DB", schema="SCHEMA"
-        )  # type: ignore
+        )
 
         m_snowservice_client = m_snowservice_client_class.return_value
         expected = f"org-account.registry.snowflakecomputing.com/db/schema/{constants.SNOWML_IMAGE_REPO}"
-        self.assertEqual(_get_or_create_image_repo(self.m_session, image_repo=None), expected)
+        self.assertEqual(
+            _get_or_create_image_repo(session=cast(session.Session, self.m_session), image_repo=None), expected
+        )
         m_snowservice_client.create_image_repo.assert_called_with(constants.SNOWML_IMAGE_REPO)
 
 

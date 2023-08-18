@@ -16,6 +16,7 @@ class SnowServiceDeployOptions:
         prebuilt_snowflake_image: Optional[str] = None,
         num_gpus: Optional[int] = 0,
         num_workers: Optional[int] = None,
+        enable_remote_image_build: Optional[bool] = False,
     ) -> None:
         """Initialization
 
@@ -38,6 +39,8 @@ class SnowServiceDeployOptions:
             num_workers: Number of workers used for model inference. Please ensure that the number of workers is set
                 lower than the total available memory divided by the size of model to prevent memory-related issues.
                 Default is number of CPU cores * 2 + 1.
+            enable_remote_image_build: When set to True, will enable image build on a remote SnowService job.
+                Default is False.
         """
 
         self.compute_pool = compute_pool
@@ -48,6 +51,7 @@ class SnowServiceDeployOptions:
         self.prebuilt_snowflake_image = prebuilt_snowflake_image
         self.num_gpus = num_gpus
         self.num_workers = num_workers
+        self.enable_remote_image_build = enable_remote_image_build
 
     @classmethod
     def from_dict(cls, options_dict: Dict[str, Any]) -> "SnowServiceDeployOptions":

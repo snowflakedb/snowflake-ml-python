@@ -136,6 +136,7 @@ class SnowparkContainerServiceDeployOptions(DeployOptions):
     num_workers: Number of workers used for model inference. Please ensure that the number of workers is set lower than
         the total available memory divided by the size of model to prevent memory-related issues. Default is number of
         CPU cores * 2 + 1.
+    enable_remote_image_build: When set to True, will enable image build on a remote SnowService job. Default is False.
     """
 
     compute_pool: str
@@ -146,6 +147,7 @@ class SnowparkContainerServiceDeployOptions(DeployOptions):
     prebuilt_snowflake_image: NotRequired[str]
     num_gpus: NotRequired[int]
     num_workers: NotRequired[int]
+    enable_remote_image_build: NotRequired[bool]
 
 
 class BaseModelSaveOption(TypedDict):

@@ -1,0 +1,22 @@
+spec:
+  container:
+    - name: $container_name
+      image: $base_image
+      command:
+        - sh
+      args:
+        - -c
+        - >-
+          while [ ! -f "$script_path" ]; do sleep 1; done;
+          chmod +x $script_path;
+          sh $script_path;
+      volumeMounts:
+        - name: vol1
+          mountPath: /local/user/vol1
+        - name: stagemount
+          mountPath: /$stage
+  volume:
+    - name: vol1
+      source: local  # only local emptyDir volume is supported
+    - name: stagemount
+      source: "@$stage"

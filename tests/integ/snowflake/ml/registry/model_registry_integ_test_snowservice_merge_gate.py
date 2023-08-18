@@ -31,6 +31,7 @@ class TestModelRegistryIntegWithSnowServiceDeployment(TestModelRegistryIntegSnow
                 "options": {
                     "compute_pool": self._TEST_CPU_COMPUTE_POOL,
                     "image_repo": self._db_manager.get_snowservice_image_repo(repo=self._TEST_IMAGE_REPO),
+                    "enable_remote_image_build": True,
                 },
             },
         )

@@ -4,8 +4,9 @@ import logging
 import os
 import subprocess
 import tempfile
+import time
 from enum import Enum
-from typing import List
+from typing import List, Optional
 
 from snowflake import snowpark
 from snowflake.ml._internal.utils import query_result_checker
@@ -28,11 +29,11 @@ class ClientImageBuilder(base_image_builder.ImageBuilder):
     Usage requirements:
     Requires prior installation and running of Docker with BuildKit. See installation instructions in
         https://docs.docker.com/engine/install/
-
-
     """
 
-    def __init__(self, *, id: str, image_repo: str, model_dir: str, session: snowpark.Session) -> None:
+    def __init__(
+        self, *, id: str, image_repo: str, model_dir: str, session: snowpark.Session, image_tag: Optional[str] = None
+    ) -> None:
         """Initialization
 
         Args:
@@ -40,15 +41,26 @@ class ClientImageBuilder(base_image_builder.ImageBuilder):
             image_repo: Path to image repository.
             model_dir: Local model directory, downloaded form stage and extracted.
             session: Snowpark session
+            image_tag: Optional image tag name; when not provided, will use model id as the tag name.
         """
-        self.image_tag = "/".join([image_repo.rstrip("/"), id]) + ":latest"
+        self.image_tag = image_tag or "/".join([image_repo.rstrip("/"), id]) + ":latest"
         self.image_repo = image_repo
         self.model_dir = model_dir
         self.session = session
 
-    def build_and_upload_image(self) -> str:
-        """
-        Builds and uploads an image to the model registry.
+    def build_and_upload_image(self, image_to_pull: str = None) -> str:
+        """Builds and uploads an image to the model registry.
+
+        Args:
+            image_to_pull: When set, skips building image locally; instead, pull image directly from public
+                repo. This is more of a workaround to support non-spcs-registry images.
+                TODO[shchen] remove such logic when first-party-image is supported on snowservice registry.
+
+        Returns:
+            Snowservice registry image tag.
+
+        Raises:
+            RuntimeError: Occurs when failed to build image or push to image registry.
         """
 
         def _setup_docker_config(docker_config_dir: str) -> None:
@@ -101,12 +113,22 @@ class ClientImageBuilder(base_image_builder.ImageBuilder):
                 # Snowpark. Need to temporarily set the json query format in order to process GS token response.
                 self.session.sql("ALTER SESSION SET PYTHON_CONNECTOR_QUERY_RESULT_FORMAT = 'json'").collect()
                 _setup_docker_config(config_dir)
-                self._build(config_dir)
+
+                if not image_to_pull:
+                    start = time.time()
+                    self._build_and_tag(config_dir)
+                    end = time.time()
+                    logger.info(f"Time taken to build the image on the client: {end - start:.2f} seconds")
+                else:
+                    self._pull_and_tag(image_to_pull=image_to_pull)
             except Exception as e:
                 raise RuntimeError(f"Failed to build docker image: {str(e)}")
             else:
                 try:
+                    start = time.time()
                     self._upload(config_dir)
+                    end = time.time()
+                    logger.info(f"Time taken to upload the image to image registry: {end - start:.2f} seconds")
                 except Exception as e:
                     raise RuntimeError(f"Failed to upload docker image to registry: {str(e)}")
                 finally:
@@ -141,7 +163,7 @@ class ClientImageBuilder(base_image_builder.ImageBuilder):
                 "https://docs.docker.com/build/buildkit/#getting-started"
             )
 
-    def _build(self, docker_config_dir: str) -> None:
+    def _build_and_tag(self, docker_config_dir: str) -> None:
         """Constructs the Docker context directory and then builds a Docker image based on that context.
 
         Args:
@@ -152,6 +174,22 @@ class ClientImageBuilder(base_image_builder.ImageBuilder):
             dc = docker_context.DockerContext(context_dir=context_dir, model_dir=self.model_dir)
             dc.build()
             self._build_image_from_context(context_dir=context_dir, docker_config_dir=docker_config_dir)
+
+    def _pull_and_tag(self, image_to_pull: str, platform: Platform = Platform.LINUX_AMD64) -> None:
+        """Pull image from public docker hub repo. Then tag it with the specified image tag
+
+        Args:
+            image_to_pull: Name of image to download.
+            platform: Specifies the target platform that matches the image to be downloaded
+        """
+
+        commands = ["docker", "pull", "--platform", platform.value, image_to_pull]
+        logger.debug(f"Running {str(commands)}")
+        self._run_docker_commands(commands)
+
+        commands = ["docker", "tag", image_to_pull, self.image_tag]
+        logger.debug(f"Running {str(commands)}")
+        self._run_docker_commands(commands)
 
     def _run_docker_commands(self, commands: List[str]) -> None:
         """Run docker commands in a new child process.

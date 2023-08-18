@@ -32,6 +32,7 @@ class SnowflakeMLException(Exception):
 
         self.error_code = error_code
         self.original_exception = type(original_exception)(f"({self.error_code}) {str(original_exception)}")
+        self.original_exception._snowflake_ml_handled = True  # type: ignore[attr-defined]
         self._pretty_msg = repr(self.original_exception)
 
     def __repr__(self) -> str:

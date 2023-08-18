@@ -5,6 +5,7 @@ import os
 import pathlib
 import pkgutil
 import shutil
+import tarfile
 import tempfile
 import zipfile
 from typing import IO, Generator, List, Optional, Union
@@ -171,3 +172,23 @@ def _able_ascii_encode(s: str) -> bool:
         return True
     except UnicodeEncodeError:
         return False
+
+
+@contextlib.contextmanager
+def _create_tar_gz_stream(source_dir: str, arcname: str = None) -> Generator[io.BytesIO, None, None]:
+    """
+    Create a compressed tarball (.tar.gz) of the source directory and return an input stream as a context
+    manager.
+
+    Args:
+        source_dir (str): The path to the directory to compress.
+        arcname: Alternative name for a file in the archive
+
+    Yields:
+        io.BytesIO: An input stream containing the compressed tarball.
+    """
+    with io.BytesIO() as output_stream:
+        with tarfile.open(fileobj=output_stream, mode="w:gz") as tar:
+            tar.add(source_dir, arcname=arcname)
+        output_stream.seek(0)
+        yield output_stream

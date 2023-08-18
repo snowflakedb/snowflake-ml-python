@@ -1,6 +1,17 @@
 # Release History
 
-## 1.0.5
+## 1.0.6
+
+### New Features
+
+
+### Bug Fixes
+
+
+### Behavior Changes
+
+
+## 1.0.5 (2023-08-17)
 
 ### New Features
 
@@ -13,7 +24,7 @@
 - Model Registry: Fixed an issue that the UDF name created when deploying a model is not identical to what is provided and cannot be correctly dropped when deployment getting dropped.
 - connection_params.SnowflakeLoginOptions(): Added support for `private_key_path`.
 
-## 1.0.4
+## 1.0.4 (2023-07-28)
 
 ### New Features
 

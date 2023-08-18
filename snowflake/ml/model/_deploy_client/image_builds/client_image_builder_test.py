@@ -46,7 +46,7 @@ class ClientImageBuilderTestCase(absltest.TestCase):
         with mock.patch.object(m_docker_context, "build") as m_build, mock.patch.object(
             self.client_image_builder, "_build_image_from_context"
         ) as m_build_image_from_context:
-            self.client_image_builder._build(m_docker_config_dir)
+            self.client_image_builder._build_and_tag(m_docker_config_dir)
             m_docker_context_class.assert_called_once_with(context_dir=m_context_dir, model_dir=self.model_dir)
             m_build.assert_called_once()
             m_build_image_from_context.assert_called_once_with(

@@ -61,3 +61,18 @@ def get_uri_from_snowflake_stage_path(path: str) -> str:
             fragment="",
         )
     )
+
+
+def remove_prefix(s: str, prefix: str) -> str:
+    """Remove prefix from a string.
+
+    Args:
+        s: string to remove prefix from.
+        prefix: prefix to match.
+
+    Returns:
+        string with the prefix removed.
+    """
+    if s.startswith(prefix):
+        return s[len(prefix) :]
+    return s

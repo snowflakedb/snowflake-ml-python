@@ -69,21 +69,6 @@ class DockerContextTest(absltest.TestCase):
             actual = re.sub(comment_pattern, "", actual, flags=re.MULTILINE)
             self.assertEqual(actual, expected, "Generated dockerfile is not aligned with the docker template")
 
-    def test_docker_file_content_with_gpu(self) -> None:
-        gpu_context = docker_context.DockerContext(self.context_dir, model_dir=self.model_dir)
-        gpu_context.build()
-        dockerfile_path = os.path.join(self.context_dir, "Dockerfile")
-        dockerfile_fixture_path = os.path.join(os.path.dirname(__file__), "test_fixtures", "dockerfile_test_fixture")
-        with open(dockerfile_path) as dockerfile, open(dockerfile_fixture_path) as expected_dockerfile:
-            actual = dockerfile.read()
-            expected = expected_dockerfile.read()
-
-            # Define a regular expression pattern to match comment lines
-            comment_pattern = r"\s*#.*$"
-            # Remove comments
-            actual = re.sub(comment_pattern, "", actual, flags=re.MULTILINE)
-            self.assertEqual(actual, expected, "Generated dockerfile is not aligned with the docker template")
-
 
 if __name__ == "__main__":
     absltest.main()
