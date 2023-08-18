@@ -6,6 +6,7 @@ import tempfile
 from abc import ABC
 from typing import Any, Dict, Optional, cast
 
+import yaml
 from typing_extensions import Unpack
 
 from snowflake.ml._internal import file_utils
@@ -15,6 +16,8 @@ from snowflake.ml.model._deploy_client.snowservice import deploy_options
 from snowflake.ml.model._deploy_client.utils import constants, snowservice_client
 from snowflake.snowpark import FileOperation, Session
 
+logger = logging.getLogger(__name__)
+
 
 def _deploy(
     session: Session,
@@ -23,6 +26,7 @@ def _deploy(
     service_func_name: str,
     model_zip_stage_path: str,
     deployment_stage_path: str,
+    target_method: str,
     **kwargs: Unpack[type_hints.SnowparkContainerServiceDeployOptions],
 ) -> _model_meta.ModelMetadata:
     """Entrypoint for model deployment to SnowService. This function will trigger a docker image build followed by
@@ -34,6 +38,7 @@ def _deploy(
         service_func_name: The service function name in SnowService associated with the created service.
         model_zip_stage_path: Path to model zip file in stage. Note that this path has a "@" prefix.
         deployment_stage_path: Path to stage containing deployment artifacts.
+        target_method: The name of the target method to be deployed.
         **kwargs: various SnowService deployment options.
 
     Raises:
@@ -91,6 +96,7 @@ def _deploy(
                 model_zip_stage_path=model_zip_stage_path,  # Pass down model_zip_stage_path for service spec file
                 deployment_stage_path=deployment_stage_path,
                 model_dir=temp_local_model_dir_path,
+                target_method=target_method,
                 options=options,
             )
             ss_deployment.deploy()
@@ -144,6 +150,7 @@ class SnowServiceDeployment(ABC):
         model_dir: str,
         model_zip_stage_path: str,
         deployment_stage_path: str,
+        target_method: str,
         options: deploy_options.SnowServiceDeployOptions,
     ) -> None:
         """Initialization
@@ -156,6 +163,7 @@ class SnowServiceDeployment(ABC):
             model_dir: Local model directory, downloaded form stage and extracted.
             model_zip_stage_path: Path to model zip file in stage.
             deployment_stage_path: Path to stage containing deployment artifacts.
+            target_method: The name of the target method to be deployed.
             options: A SnowServiceDeployOptions object containing deployment options.
         """
 
@@ -165,6 +173,7 @@ class SnowServiceDeployment(ABC):
         self.model_zip_stage_path = model_zip_stage_path
         self.model_dir = model_dir
         self.options = options
+        self.target_method = target_method
         self._service_name = f"service_{model_id}"
         # Spec file and future deployment related artifacts will be stored under {stage}/models/{model_id}
         self._model_artifact_stage_location = posixpath.join(deployment_stage_path, "models", self.id)
@@ -175,15 +184,15 @@ class SnowServiceDeployment(ABC):
         """
         if self.options.prebuilt_snowflake_image:
             image = self.options.prebuilt_snowflake_image
-            logging.warning(f"Skipped image build. Use prebuilt image: {self.options.prebuilt_snowflake_image}")
+            logger.warning(f"Skipped image build. Use prebuilt image: {self.options.prebuilt_snowflake_image}")
         else:
-            logging.warning(
+            logger.warning(
                 "Building the Docker image and deploying to Snowpark Container Service. "
                 "This process may take a few minutes."
             )
             image = self._build_and_upload_image()
 
-            logging.warning(
+            logger.warning(
                 f"Image successfully built! To prevent the need for rebuilding the Docker image in future deployments, "
                 f"simply specify 'prebuilt_snowflake_image': '{image}' in the options field of the deploy() function"
             )
@@ -201,7 +210,6 @@ class SnowServiceDeployment(ABC):
             image_repo=image_repo,
             model_dir=self.model_dir,
             session=self.session,
-            use_gpu=True if self.options.use_gpu else False,
         )
         return image_builder.build_and_upload_image()
 
@@ -217,7 +225,7 @@ class SnowServiceDeployment(ABC):
             spec_file_path = os.path.join(tempdir, f"{constants.SERVICE_SPEC}.yaml")
 
             with open(spec_template_path, encoding="utf-8") as template, open(
-                spec_file_path, "w", encoding="utf-8"
+                spec_file_path, "w+", encoding="utf-8"
             ) as spec_file:
                 content = string.Template(template.read()).substitute(
                     {
@@ -226,10 +234,23 @@ class SnowServiceDeployment(ABC):
                         "model_stage": self.model_zip_stage_path[1:].split("/")[0],  # Reserve only the stage name
                         "model_zip_stage_path": self.model_zip_stage_path[1:],  # Remove the @ prefix
                         "inference_server_container_name": constants.INFERENCE_SERVER_CONTAINER,
+                        "target_method": self.target_method,
+                        "num_workers": self.options.num_workers,
                     }
                 )
-                spec_file.write(content)
-                logging.info(f"Create service spec: \n {content}")
+                content_dict = yaml.safe_load(content)
+                if self.options.num_gpus is not None and self.options.num_gpus > 0:
+                    container = content_dict["spec"]["container"][0]
+                    # TODO[shchen]: SNOW-871538, external dependency that only single GPU is supported on SnowService.
+                    # GPU limit has to be specified in order to trigger the workload to be run on GPU in SnowService.
+                    container["resources"] = {
+                        "limits": {"nvidia.com/gpu": self.options.num_gpus},
+                        "requests": {"nvidia.com/gpu": self.options.num_gpus},
+                    }
+
+                yaml.dump(content_dict, spec_file)
+                spec_file.seek(0)
+                logger.debug(f"Create service spec: \n {spec_file.read()}")
 
             self.session.file.put(
                 local_file_name=spec_file_path,
@@ -237,7 +258,7 @@ class SnowServiceDeployment(ABC):
                 auto_compress=False,
                 overwrite=True,
             )
-            logging.info(
+            logger.debug(
                 f"Uploaded spec file {os.path.basename(spec_file_path)} " f"to {self._model_artifact_stage_location}"
             )
 

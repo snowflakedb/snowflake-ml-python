@@ -15,7 +15,11 @@ from snowflake import connector
 from snowflake.ml.registry import model_registry
 from snowflake.ml.utils import connection_params
 from snowflake.snowpark import Session
-from tests.integ.snowflake.ml.test_utils import db_manager, model_factory
+from tests.integ.snowflake.ml.test_utils import (
+    db_manager,
+    model_factory,
+    test_env_utils,
+)
 
 
 class TestModelRegistryInteg(absltest.TestCase):
@@ -62,6 +66,9 @@ class TestModelRegistryInteg(absltest.TestCase):
             model_version=model_version,
             model=model,
             tags=model_tags,
+            conda_dependencies=[
+                test_env_utils.get_latest_package_versions_in_server(self._session, "snowflake-snowpark-python")
+            ],
             sample_input_data=test_features,
             options={"embed_local_ml_library": True},
         )
@@ -74,11 +81,18 @@ class TestModelRegistryInteg(absltest.TestCase):
                 model_version=model_version,
                 model=model,
                 tags={"stage": "testing", "classifier_type": "svm.SVC"},
+                conda_dependencies=[
+                    test_env_utils.get_latest_package_versions_in_server(self._session, "snowflake-snowpark-python")
+                ],
                 sample_input_data=test_features,
                 options={"embed_local_ml_library": True},
             )
 
         model_ref = model_registry.ModelReference(registry=registry, model_name=model_name, model_version=model_version)
+
+        # Test getting model name and model version
+        self.assertEqual(model_ref.get_name(), model_name)
+        self.assertEqual(model_ref.get_version(), model_version)
 
         # Test metrics
         test_accuracy = metrics.accuracy_score(test_labels, local_prediction)
@@ -183,7 +197,7 @@ class TestModelRegistryInteg(absltest.TestCase):
             deployment_name=permanent_deployment_name,
             target_method="predict",
             permanent=True,
-            options={"relax_version": True},
+            options={"relax_version": test_env_utils.is_in_pip_env()},
         )
         remote_prediction_perm = model_ref.predict(permanent_deployment_name, test_features)
         np.testing.assert_allclose(remote_prediction_perm.to_numpy(), np.expand_dims(local_prediction, axis=1))
@@ -193,7 +207,7 @@ class TestModelRegistryInteg(absltest.TestCase):
             deployment_name=custom_permanent_deployment_name,
             target_method="predict_proba",
             permanent=True,
-            options={"permanent_udf_stage_location": self.perm_stage, "relax_version": True},
+            options={"permanent_udf_stage_location": self.perm_stage, "relax_version": test_env_utils.is_in_pip_env()},
         )
         remote_prediction_proba_perm = model_ref.predict(custom_permanent_deployment_name, test_features)
         np.testing.assert_allclose(remote_prediction_proba_perm.to_numpy(), local_prediction_proba)
@@ -211,6 +225,13 @@ class TestModelRegistryInteg(absltest.TestCase):
         self.assertEqual(filtered_model_deployment_list["MODEL_VERSION"][0], second=model_version)
         self.assertEqual(filtered_model_deployment_list["STAGE_PATH"][0], second=self.perm_stage)
 
+        self.assertEqual(
+            self._session.sql(
+                f"SHOW USER FUNCTIONS LIKE '%{custom_permanent_deployment_name}' IN DATABASE \"{self.registry_name}\";"
+            ).count(),
+            1,
+        )
+
         model_ref.delete_deployment(deployment_name=custom_permanent_deployment_name)  # type: ignore[attr-defined]
 
         model_deployment_list = model_ref.list_deployments().to_pandas()  # type: ignore[attr-defined]
@@ -219,13 +240,20 @@ class TestModelRegistryInteg(absltest.TestCase):
         self.assertEqual(model_deployment_list["MODEL_VERSION"][0], second=model_version)
         self.assertEqual(model_deployment_list["DEPLOYMENT_NAME"][0], second=permanent_deployment_name)
 
+        self.assertEqual(
+            self._session.sql(
+                f"SHOW USER FUNCTIONS LIKE '%{custom_permanent_deployment_name}' IN DATABASE \"{self.registry_name}\";"
+            ).count(),
+            0,
+        )
+
         # Test temp deployment
         temp_deployment_name = f"{model_name}_{model_version}_temp_deploy"
         model_ref.deploy(  # type: ignore[attr-defined]
             deployment_name=temp_deployment_name,
             target_method="predict",
             permanent=False,
-            options={"relax_version": True},
+            options={"relax_version": test_env_utils.is_in_pip_env()},
         )
         remote_prediction_temp = model_ref.predict(temp_deployment_name, test_features)
         np.testing.assert_allclose(remote_prediction_temp.to_numpy(), np.expand_dims(local_prediction, axis=1))
@@ -244,7 +272,7 @@ class TestModelRegistryInteg(absltest.TestCase):
 
         model_name = "snowml_xgb_classifier"
         model_version = self.run_id
-        model, test_features = model_factory.ModelFactory.prepare_snowml_model()
+        model, test_features = model_factory.ModelFactory.prepare_snowml_model_xgb()
 
         local_prediction = model.predict(test_features)
         local_prediction_proba = model.predict_proba(test_features)
@@ -253,6 +281,9 @@ class TestModelRegistryInteg(absltest.TestCase):
             model_name=model_name,
             model_version=model_version,
             model=model,
+            conda_dependencies=[
+                test_env_utils.get_latest_package_versions_in_server(self._session, "snowflake-snowpark-python")
+            ],
             options={"embed_local_ml_library": True},
         )
 
@@ -299,6 +330,9 @@ class TestModelRegistryInteg(absltest.TestCase):
             model_name=model_name,
             model_version=model_version,
             model=model,
+            conda_dependencies=[
+                test_env_utils.get_latest_package_versions_in_server(self._session, "snowflake-snowpark-python")
+            ],
             options={"embed_local_ml_library": True},
         )
 

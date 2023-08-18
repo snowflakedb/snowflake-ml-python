@@ -9,7 +9,7 @@ import json
 import random
 import pytest
 
-from typing import Optional, Any
+from typing import Optional, Any, Tuple, List
 from absl.testing.absltest import TestCase, main
 {transform.test_estimator_imports}
 from snowflake.ml.utils.connection_params import SnowflakeLoginOptions
@@ -18,14 +18,16 @@ from snowflake.snowpark import Session, DataFrame
 
 @pytest.mark.pip_incompatible
 class {transform.test_class_name}(TestCase):
-    def setUp(self):
+    def setUp(self) -> None:
         """Creates Snowpark and Snowflake environments for testing."""
         self._session = Session.builder.configs(SnowflakeLoginOptions()).create()
 
-    def tearDown(self):
+    def tearDown(self) -> None:
         self._session.close()
 
-    def _get_test_dataset(self, sklearn_obj: Optional[Any] = None, add_sample_weight_col: bool = False):
+    def _get_test_dataset(
+            self, sklearn_obj: Optional[Any] = None, add_sample_weight_col: bool = False
+            ) -> Tuple[pd.DataFrame, List[str], List[str]]:
         """ Constructs input dataset to be used in the integration test.
 
         Args:
@@ -34,13 +36,14 @@ class {transform.test_class_name}(TestCase):
             add_sample_weight_col: If true and addiptional column named "SAMPLE_WEIGHT" will be added to the dataset
             representing the weight of each sample.
 
-        Retrurns:
+        Returns:
             A tuple containing pandas dataframe, list of input columns names, and list of lable column names.
         """
         input_df_pandas = {transform.test_dataset_func}(as_frame=True).frame
 
         # Some of the estimators inherit from MultiOutputMixin class but don't actually support multi task learning.
         # Those estimators can be identified by calling _is_multitask() method or checking "multioutput" tag.
+        assert sklearn_obj is not None
         if (
             {transform._is_multioutput}
             and (
@@ -106,6 +109,9 @@ class {transform.test_class_name}(TestCase):
         reg.set_output_cols(output_cols)
         reg.set_label_cols(label_col)
 
+        # Assert that we will filter on the correct columns
+        self.assertCountEqual(reg._get_active_columns(), input_cols + label_col)
+
         args = {{
             'X':input_df_pandas[input_cols],
             'y':input_df_pandas[label_col].squeeze()
@@ -113,6 +119,7 @@ class {transform.test_class_name}(TestCase):
         if use_weighted_dataset:
             reg.set_sample_weight_col("SAMPLE_WEIGHT")
             args['sample_weight'] = input_df_pandas["SAMPLE_WEIGHT"].squeeze()
+            self.assertCountEqual(reg._get_active_columns(), input_cols + label_col + ["SAMPLE_WEIGHT"])
 
         if fit_with_sproc:
             reg.fit(input_df)
@@ -222,7 +229,7 @@ class {transform.test_class_name}(TestCase):
             if inference_with_udf:
                 actual_score = getattr(reg, "score")(dataset=input_df)
                 if isinstance(actual_score, DataFrame):
-                    actual_score.to_pandas().sort_values(by="INDEX")[output_cols].to_numpy(dtype=np.float).squeeze()
+                    actual_score.to_pandas().sort_values(by="INDEX")[output_cols].to_numpy(dtype=np.float_).squeeze()
             else:
                 actual_score = getattr(reg, "score")(dataset=input_df_pandas)
                 if isinstance(actual_score, pd.DataFrame):
@@ -230,23 +237,23 @@ class {transform.test_class_name}(TestCase):
                         c for c in actual_score.columns 
                         if any([c.find(colName) >= 0 for colName in output_cols])
                     ]
-                    actual_score = actual_score[actual_output_cols].to_numpy(dtype=np.float).squeeze()
+                    actual_score = actual_score[actual_output_cols].to_numpy(dtype=np.float_).squeeze()
 
             sklearn_score = getattr(sklearn_reg, "score")(**args)
 
             np.testing.assert_allclose(actual_score, sklearn_score, rtol=1.e-1, atol=1.e-2)
 
 
-    def test_fit_with_sproc_infer_with_udf_non_weighted_datasets(self):
+    def test_fit_with_sproc_infer_with_udf_non_weighted_datasets(self) -> None:
         self._fit_and_compare_results(use_weighted_dataset=False, fit_with_sproc = True, inference_with_udf = True)
 
-    def test_fit_with_sproc_infer_with_pandas_non_weighted_datasets(self):
+    def test_fit_with_sproc_infer_with_pandas_non_weighted_datasets(self) -> None:
         self._fit_and_compare_results(use_weighted_dataset=False, fit_with_sproc = True, inference_with_udf = False)
 
-    def test_fit_with_pandas_infer_with_pandas_non_weighted_datasets(self):
+    def test_fit_with_pandas_infer_with_pandas_non_weighted_datasets(self) -> None:
         self._fit_and_compare_results(use_weighted_dataset=False, fit_with_sproc = False, inference_with_udf = False)
 
-    def test_fit_with_pandas_infer_with_udf_non_weighted_datasets(self):
+    def test_fit_with_pandas_infer_with_udf_non_weighted_datasets(self) -> None:
         self._fit_and_compare_results(use_weighted_dataset=False, fit_with_sproc = False, inference_with_udf = True)
 
     def _is_weighted_dataset_supported(self, klass: type) -> bool:
@@ -257,19 +264,19 @@ class {transform.test_class_name}(TestCase):
                 is_weighted_dataset_supported = True if "sample_weight" in argspec.args else False
         return is_weighted_dataset_supported
 
-    def test_fit_with_sproc_infer_with_udf_weighted_datasets(self):
+    def test_fit_with_sproc_infer_with_udf_weighted_datasets(self) -> None:
         if self._is_weighted_dataset_supported(Sk{transform.original_class_name}):
             self._fit_and_compare_results(use_weighted_dataset=True, fit_with_sproc = True, inference_with_udf = True)
 
-    def test_fit_with_sproc_infer_with_pandas_weighted_datasets(self):
+    def test_fit_with_sproc_infer_with_pandas_weighted_datasets(self) -> None:
         if self._is_weighted_dataset_supported(Sk{transform.original_class_name}):
             self._fit_and_compare_results(use_weighted_dataset=True, fit_with_sproc = True, inference_with_udf = False)
 
-    def test_fit_with_pandas_infer_with_pandas_weighted_datasets(self):
+    def test_fit_with_pandas_infer_with_pandas_weighted_datasets(self) -> None:
         if self._is_weighted_dataset_supported(Sk{transform.original_class_name}):
             self._fit_and_compare_results(use_weighted_dataset=True, fit_with_sproc = False, inference_with_udf = False)
 
-    def test_fit_with_pandas_infer_with_udf_weighted_datasets(self):
+    def test_fit_with_pandas_infer_with_udf_weighted_datasets(self) -> None:
         if self._is_weighted_dataset_supported(Sk{transform.original_class_name}):
             self._fit_and_compare_results(use_weighted_dataset=True, fit_with_sproc = False, inference_with_udf = True)
 

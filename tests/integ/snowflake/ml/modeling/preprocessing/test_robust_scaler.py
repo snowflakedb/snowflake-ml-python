@@ -17,8 +17,8 @@ from absl.testing import parameterized
 from absl.testing.absltest import main
 from sklearn.preprocessing import RobustScaler as SklearnRobustScaler
 
-from snowflake.ml.modeling.preprocessing import (
-    RobustScaler,  # type: ignore[attr-defined]
+from snowflake.ml.modeling.preprocessing import (  # type: ignore[attr-defined]
+    RobustScaler,
 )
 from snowflake.ml.utils.connection_params import SnowflakeLoginOptions
 from snowflake.snowpark import Session

@@ -3,16 +3,21 @@ import pandas as pd
 from absl.testing import absltest
 
 from snowflake.ml.model._signatures import core, numpy_handler
+from snowflake.ml.test_utils import exception_utils
 
 
 class NumpyArrayHandlerTest(absltest.TestCase):
     def test_validate_np_ndarray(self) -> None:
         arr = np.array([])
-        with self.assertRaisesRegex(ValueError, "Empty data is found."):
+        with exception_utils.assert_snowml_exceptions(
+            self, expected_original_error_type=ValueError, expected_regex="Empty data is found."
+        ):
             numpy_handler.NumpyArrayHandler.validate(arr)
 
         arr = np.array(1)
-        with self.assertRaisesRegex(ValueError, "Scalar data is found."):
+        with exception_utils.assert_snowml_exceptions(
+            self, expected_original_error_type=ValueError, expected_regex="Scalar data is found."
+        ):
             numpy_handler.NumpyArrayHandler.validate(arr)
 
     def test_trunc_np_ndarray(self) -> None:

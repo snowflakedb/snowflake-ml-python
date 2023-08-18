@@ -1640,9 +1640,9 @@ class OneHotEncoderTest(parameterized.TestCase):
                 ("X", np.uint8),
                 ("Y", np.float64),
                 ("Z", np.str_),
-                ("A", np.bool8),
-                # ("B", np.bytes0),
-                ("C", np.object0),
+                ("A", np.bool_),
+                ("B", np.bytes_),
+                ("C", np.object_),
             ],
         )
         pd_df = pd.DataFrame(x)
@@ -1721,6 +1721,28 @@ class OneHotEncoderTest(parameterized.TestCase):
         )
         out_cols = ohe.transform(snow_df).columns
         self.assertCountEqual(ohe.get_output_cols(), out_cols)
+
+    def test_column_insensitivity(self) -> None:
+        # UCI_BANK_MARKETING_20COLUMNS
+        snow_df = self._session.sql(
+            """SELECT *, IFF(Y = 'yes', 1.0, 0.0) as LABEL
+            FROM ML_DATASETS.PUBLIC.UCI_BANK_MARKETING_20COLUMNS
+            LIMIT 1000"""
+        ).drop("Y")
+        cols = [
+            "AGE",
+            "CAMPAIGN",
+            "CONTACT",
+            "DAY_OF_WEEK",
+            "EDUCATION",
+            "JOB",
+            "MONTH",
+            "DURATION",
+        ]
+        lower_cols = [c.lower() for c in cols]
+
+        ohe = OneHotEncoder(input_cols=lower_cols, output_cols=cols, sparse=False).fit(snow_df)
+        ohe.transform(snow_df)
 
 
 if __name__ == "__main__":

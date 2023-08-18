@@ -1,7 +1,7 @@
 from __future__ import annotations  # for return self methods
 
 from functools import partial
-from typing import Any, Callable
+from typing import Any, Callable, Optional
 
 from snowflake import connector, snowpark
 from snowflake.ml._internal.utils import formatting
@@ -13,7 +13,7 @@ def _query_log(sql: str | None) -> str:
 
 
 def result_dimension_matcher(
-    expected_rows: int, expected_cols: int, result: list[snowpark.Row], sql: str | None = None
+    expected_rows: Optional[int], expected_cols: Optional[int], result: list[snowpark.Row], sql: str | None = None
 ) -> bool:
     """Check result dimensions of the collected result dataframe of a Snowflake SQL operation.
 
@@ -32,7 +32,7 @@ def result_dimension_matcher(
         DataError: In case the validation failed.
     """
     actual_rows = len(result)
-    if expected_rows and actual_rows != expected_rows:
+    if expected_rows is not None and actual_rows != expected_rows:
         raise connector.DataError(
             formatting.unwrap(
                 f"""Query Result did not match expected number of rows. Expected {expected_rows} rows, found:
@@ -40,7 +40,7 @@ def result_dimension_matcher(
             )
         )
 
-    if expected_cols:
+    if expected_cols is not None:
         if not result:
             raise connector.DataError(
                 formatting.unwrap(

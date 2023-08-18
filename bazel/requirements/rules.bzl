@@ -1,6 +1,7 @@
 load("@bazel_skylib//rules:diff_test.bzl", "diff_test")
 load("@bazel_skylib//rules:write_file.bzl", "write_file")
 load("@aspect_bazel_lib//lib:yq.bzl", "yq")
+load("//bazel:py_rules.bzl", "py_genrule")
 
 _AUTOGEN_HEADERS = """# DO NOT EDIT!
 # Generate by running '{generation_cmd}'
@@ -23,7 +24,7 @@ def generate_requirement_file(
         cmd,
         src_requirement_file,
         generation_cmd):
-    native.genrule(
+    py_genrule(
         name = "gen_{name}_body".format(name = name),
         srcs = [
             src_requirement_file,
@@ -41,12 +42,11 @@ def generate_requirement_file(
         outs = [generated_file],
         cmd = "(echo -e \"" + _AUTOGEN_HEADERS.format(generation_cmd = generation_cmd) + "\" ; cat $(location :{generated}.body) ) > $@".format(
             generated = generated_file,
-        ),
-        tools = [_GENERATE_TOOL],
+        )
     )
     diff_test(
         name = "check_{name}".format(name = name),
-        failure_message = "Please run:  bazel run {generation_cmd}".format(generation_cmd = generation_cmd),
+        failure_message = "Please run:  bazel run --config=pre_build {generation_cmd}".format(generation_cmd = generation_cmd),
         file1 = ":{generated}".format(generated = generated_file),
         file2 = target,
     )
@@ -59,7 +59,7 @@ def generate_requirement_file_yaml(
         cmd,
         src_requirement_file,
         generation_cmd):
-    native.genrule(
+    py_genrule(
         name = "gen_{name}_body".format(name = name),
         srcs = [
             src_requirement_file,
@@ -91,7 +91,7 @@ def generate_requirement_file_yaml(
 
     diff_test(
         name = "check_{name}".format(name = name),
-        failure_message = "Please run:  bazel run {generation_cmd}".format(generation_cmd = generation_cmd),
+        failure_message = "Please run:  bazel run --config=pre_build {generation_cmd}".format(generation_cmd = generation_cmd),
         file1 = ":{generated}".format(generated = generated_file),
         file2 = target,
     )

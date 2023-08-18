@@ -16,14 +16,12 @@ class ClientImageBuilderTestCase(absltest.TestCase):
         self.unique_id = "mock_id"
         self.image_repo = "mock_image_repo"
         self.model_dir = "local/dir/model.zip"
-        self.use_gpu = True
 
         self.client_image_builder = client_image_builder.ClientImageBuilder(
             id=self.unique_id,
             image_repo=self.image_repo,
             model_dir=self.model_dir,
             session=self.m_session,
-            use_gpu=self.use_gpu,
         )
 
     @mock.patch(
@@ -49,9 +47,7 @@ class ClientImageBuilderTestCase(absltest.TestCase):
             self.client_image_builder, "_build_image_from_context"
         ) as m_build_image_from_context:
             self.client_image_builder._build(m_docker_config_dir)
-            m_docker_context_class.assert_called_once_with(
-                context_dir=m_context_dir, model_dir=self.model_dir, use_gpu=True
-            )
+            m_docker_context_class.assert_called_once_with(context_dir=m_context_dir, model_dir=self.model_dir)
             m_build.assert_called_once()
             m_build_image_from_context.assert_called_once_with(
                 context_dir=m_context_dir, docker_config_dir=m_docker_config_dir

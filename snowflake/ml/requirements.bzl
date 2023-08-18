@@ -1,5 +1,5 @@
 # DO NOT EDIT!
-# Generate by running 'bazel run //bazel/requirements:sync_requirements'
+# Generate by running 'bazel run --config=pre_build //bazel/requirements:sync_requirements'
 
 EXTRA_REQUIREMENTS={'lightgbm': ['lightgbm==3.3.5'], 'mlflow': ['mlflow>=2.1.0,<3'], 'tensorflow': ['tensorflow>=2.9,<3'], 'torch': ['torchdata>=0.4,<1'], 'all': ['lightgbm==3.3.5', 'mlflow>=2.1.0,<3', 'tensorflow>=2.9,<3', 'torchdata>=0.4,<1']}
 

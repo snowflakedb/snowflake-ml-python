@@ -16,6 +16,12 @@ PYTHON_EXT_MAP = {
     "Linux": "",
 }
 
+ENV_VAR_SEPARATOR_MAP = {
+    "Windows": ";",
+    "MacOSX": ":",
+    "Linux": ":",
+}
+
 EXECUTE_TIMEOUT = 3600
 
 def get_os(rctx):
@@ -90,9 +96,27 @@ def execute_waitable_windows(rctx, args, environment = {}, tmp_script = "tmp.bat
 def windowsify(path):
     return str(path).replace("/", "\\")
 
+PATH_SCRIPT = """
+@echo off
+call echo %PATH%
+set "EXITCODE=%ERRORLEVEL%"
+if "%OS%"=="Windows_NT" ( endlocal & exit /b "%EXITCODE%" )
+exit /b "%EXITCODE%""
+"""
+
 # Returns a clean PATH environment variable sufficient for conda installer and commands.
 def get_path_envar(rctx):
-    getconf_result = rctx.execute(["getconf", "PATH"])
+    os = get_os(rctx)
+    if os == "Windows":
+        tmp_script = "tmp.bat"
+        rctx.file(
+            tmp_script,
+            content = PATH_SCRIPT,
+        )
+        getconf_result = rctx.execute([rctx.path(tmp_script)])
+        rctx.delete(tmp_script)
+    else:
+        getconf_result = rctx.execute(["getconf", "PATH"])
     if getconf_result.return_code:
         fail("Unable to get PATH.\nstderr: {}".format(getconf_result.stderr))
     return getconf_result.stdout.strip()

@@ -5,6 +5,10 @@ import pandas as pd
 from typing_extensions import TypeGuard
 
 from snowflake.ml._internal import type_utils
+from snowflake.ml._internal.exceptions import (
+    error_codes,
+    exceptions as snowml_exceptions,
+)
 from snowflake.ml.model import type_hints as model_types
 from snowflake.ml.model._signatures import base_handler, core
 
@@ -42,7 +46,10 @@ class SeqOfTensorflowTensorHandler(
             shapes = data_col.shape.as_list()
             if data_col.shape == tf.TensorShape(None) or (not shapes) or (shapes[0] is None):
                 # Unknown shape array
-                raise ValueError("Data Validation Error: Unknown shape data is found.")
+                raise snowml_exceptions.SnowflakeMLException(
+                    error_code=error_codes.INVALID_DATA,
+                    original_exception=ValueError("Data Validation Error: Unknown shape data is found."),
+                )
             # Make mypy happy
             assert isinstance(shapes[0], int)
 
@@ -68,15 +75,24 @@ class SeqOfTensorflowTensorHandler(
         for data_col in data:
             if data_col.shape == tf.TensorShape(None) or any(dim is None for dim in data_col.shape.as_list()):
                 # Unknown shape array
-                raise ValueError("Data Validation Error: Unknown shape data is found.")
+                raise snowml_exceptions.SnowflakeMLException(
+                    error_code=error_codes.INVALID_DATA,
+                    original_exception=ValueError("Data Validation Error: Unknown shape data is found."),
+                )
 
             if data_col.shape == tf.TensorShape([0]):
                 # Empty array
-                raise ValueError("Data Validation Error: Empty data is found.")
+                raise snowml_exceptions.SnowflakeMLException(
+                    error_code=error_codes.INVALID_DATA,
+                    original_exception=ValueError("Data Validation Error: Empty data is found."),
+                )
 
             if data_col.shape == tf.TensorShape([1]) or data_col.shape == tf.TensorShape([]):
                 # scalar
-                raise ValueError("Data Validation Error: Scalar data is found.")
+                raise snowml_exceptions.SnowflakeMLException(
+                    error_code=error_codes.INVALID_DATA,
+                    original_exception=ValueError("Data Validation Error: Scalar data is found."),
+                )
 
     @staticmethod
     def infer_signature(
@@ -116,7 +132,10 @@ class SeqOfTensorflowTensorHandler(
         if features:
             for feature in features:
                 if isinstance(feature, core.FeatureGroupSpec):
-                    raise NotImplementedError("FeatureGroupSpec is not supported.")
+                    raise snowml_exceptions.SnowflakeMLException(
+                        error_code=error_codes.NOT_IMPLEMENTED,
+                        original_exception=NotImplementedError("FeatureGroupSpec is not supported."),
+                    )
                 assert isinstance(feature, core.FeatureSpec), "Invalid feature kind."
                 res.append(
                     tf.convert_to_tensor(np.stack(df[feature.name].to_numpy()).astype(feature._dtype._numpy_type))

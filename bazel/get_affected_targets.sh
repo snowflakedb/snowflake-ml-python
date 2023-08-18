@@ -71,21 +71,22 @@ final_hashes_json="${working_dir}/final_hashes.json"
 impacted_targets_path="${working_dir}/impacted_targets.txt"
 bazel_diff="${working_dir}/bazel_diff"
 
-"${bazel}" run :bazel-diff --script_path="${bazel_diff}"
+"${bazel}" run --config=pre_build :bazel-diff --script_path="${bazel_diff}"
 
 git -C "${workspace_path}" checkout "${pr_revision}" --quiet
 
 echo "Generating Hashes for Revision '${pr_revision}'"
 
-"${bazel_diff}" generate-hashes -w "$workspace_path" -b "${bazel}" "${starting_hashes_json}"
+"${bazel_diff}" generate-hashes -w "$workspace_path" -b "${bazel}" "${final_hashes_json}"
 
 MERGE_BASE_MAIN=$(git merge-base "${pr_revision}" main)
 git -C "${workspace_path}" checkout "${MERGE_BASE_MAIN}" --quiet
 
 echo "Generating Hashes for merge base ${MERGE_BASE_MAIN}"
 
-$bazel_diff generate-hashes -w "${workspace_path}" -b "${bazel}" "${final_hashes_json}"
+$bazel_diff generate-hashes -w "${workspace_path}" -b "${bazel}" "${starting_hashes_json}"
 
+git -C "${workspace_path}" checkout "${pr_revision}" --quiet
 echo "Determining Impacted Targets and output to ${output_path}"
 $bazel_diff get-impacted-targets -sh "${starting_hashes_json}" -fh "${final_hashes_json}" -o "${impacted_targets_path}"
 

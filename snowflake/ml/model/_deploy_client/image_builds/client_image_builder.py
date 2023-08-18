@@ -14,6 +14,8 @@ from snowflake.ml.model._deploy_client.image_builds import (
     docker_context,
 )
 
+logger = logging.getLogger(__name__)
+
 
 class Platform(Enum):
     LINUX_AMD64 = "linux/amd64"
@@ -30,22 +32,18 @@ class ClientImageBuilder(base_image_builder.ImageBuilder):
 
     """
 
-    def __init__(
-        self, *, id: str, image_repo: str, model_dir: str, session: snowpark.Session, use_gpu: bool = False
-    ) -> None:
+    def __init__(self, *, id: str, image_repo: str, model_dir: str, session: snowpark.Session) -> None:
         """Initialization
 
         Args:
             id: A hexadecimal string used for naming the image tag.
             image_repo: Path to image repository.
             model_dir: Local model directory, downloaded form stage and extracted.
-            use_gpu: Boolean flag for generating the CPU or GPU base image.
             session: Snowpark session
         """
         self.image_tag = "/".join([image_repo.rstrip("/"), id]) + ":latest"
         self.image_repo = image_repo
         self.model_dir = model_dir
-        self.use_gpu = use_gpu
         self.session = session
 
     def build_and_upload_image(self) -> str:
@@ -82,7 +80,7 @@ class ClientImageBuilder(base_image_builder.ImageBuilder):
                 pass
             else:
                 commands = ["docker", "--config", config_dir, "rmi", self.image_tag]
-                logging.info(f"Removing local image: {self.image_tag}")
+                logger.debug(f"Removing local image: {self.image_tag}")
                 self._run_docker_commands(commands)
 
         self.validate_docker_client_env()
@@ -151,7 +149,7 @@ class ClientImageBuilder(base_image_builder.ImageBuilder):
         """
 
         with tempfile.TemporaryDirectory() as context_dir:
-            dc = docker_context.DockerContext(context_dir=context_dir, model_dir=self.model_dir, use_gpu=self.use_gpu)
+            dc = docker_context.DockerContext(context_dir=context_dir, model_dir=self.model_dir)
             dc.build()
             self._build_image_from_context(context_dir=context_dir, docker_config_dir=docker_config_dir)
 
@@ -170,7 +168,7 @@ class ClientImageBuilder(base_image_builder.ImageBuilder):
         if proc.stdout:
             for line in iter(proc.stdout.readline, ""):
                 output_lines.append(line)
-                logging.info(line)
+                logger.debug(line)
 
         if proc.wait():
             raise RuntimeError(f"Docker commands failed: \n {''.join(output_lines)}")
@@ -226,6 +224,6 @@ class ClientImageBuilder(base_image_builder.ImageBuilder):
         commands = ["docker", "--config", docker_config_dir, "login", self.image_tag]
         self._run_docker_commands(commands)
 
-        logging.info(f"Pushing image to image repo {self.image_tag}")
+        logger.debug(f"Pushing image to image repo {self.image_tag}")
         commands = ["docker", "--config", docker_config_dir, "push", self.image_tag]
         self._run_docker_commands(commands)

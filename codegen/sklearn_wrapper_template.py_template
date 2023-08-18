@@ -5,6 +5,7 @@ import inspect
 import os
 import posixpath
 from typing import Iterable, Optional, Union, List, Any, Dict, Callable, Set
+from typing_extensions import TypeGuard
 from uuid import uuid4
 
 import cloudpickle as cp
@@ -16,6 +17,7 @@ from sklearn.utils.metaestimators import available_if
 from snowflake.ml.modeling.framework.base import BaseTransformer
 from snowflake.ml.modeling.framework._utils import to_native_format
 from snowflake.ml._internal import telemetry
+from snowflake.ml._internal.exceptions import error_codes, exceptions, modeling_error_messages
 from snowflake.ml._internal.utils.query_result_checker import SqlResultValidator
 from snowflake.ml._internal.utils import pkg_version_utils, identifier
 from snowflake.ml._internal.utils.temp_file_utils import cleanup_temp_files, get_temp_file_path
@@ -29,6 +31,7 @@ from snowflake.ml.model.model_signature import (
     FeatureSpec,
     ModelSignature,
     _infer_signature,
+    BaseFeatureSpec,
 )
 from snowflake.ml.model._signatures import utils as model_signature_utils
 
@@ -48,7 +51,7 @@ def _original_estimator_has_callable(attr : str) -> Callable[[Any], bool]:
     Returns:
         A function which checks for the existance of callable `attr` on the given object.
     """
-    def check(self) -> bool:
+    def check(self: BaseTransformer) -> TypeGuard[Callable[..., object]]:
         """ Check for the existance of callable `attr` in self.
 
         Returns:
@@ -57,6 +60,7 @@ def _original_estimator_has_callable(attr : str) -> Callable[[Any], bool]:
         return callable(getattr(self._sklearn_object, attr, None))
 
     return check
+
 
 def _gather_dependencies(obj: Any) -> Set[str]:
     """ Gethers dependencies from the SnowML Estimator and Transformer objects.
@@ -77,6 +81,7 @@ def _gather_dependencies(obj: Any) -> Set[str]:
         return set(obj._get_dependencies())
     else:
         return set()
+
 
 def _transform_snowml_obj_to_sklearn_obj(obj: Any) -> Any:
     """Converts SnowML Estimator and Transformer objects to equivalent SKLearn objects.
@@ -113,7 +118,7 @@ def _validate_sklearn_args(args: Dict[str, Any], klass: type) -> Dict[str, Any]:
         Raises an expception if a user specified arg is not supported by current version of sklearn/xgboost.
     """
     result = {{}}
-    signature = inspect.signature(klass.__init__)
+    signature = inspect.signature(klass.__init__)  # type: ignore
     for k, v in args.items():
         if k not in signature.parameters.keys():  # Arg is not supported.
             if (
@@ -122,7 +127,12 @@ def _validate_sklearn_args(args: Dict[str, Any], klass: type) -> Dict[str, Any]:
                     v[0] != v[1]  # Value is not same as default.
                     and not (isinstance(v[0], float) and np.isnan(v[0]) and np.isnan(v[1])))  # both are not NANs
             ):
-                raise RuntimeError(f"Arg {{k}} is not supported by current version of SKLearn/XGBoost.")
+                raise exceptions.SnowflakeMLException(
+                    error_code=error_codes.DEPENDENCY_VERSION_ERROR,
+                    original_exception=RuntimeError(
+                        f"Arg {{k}} is not supported by current version of SKLearn/XGBoost."
+                    ),
+                )
         else:
             result[k] = v[0]
     return result
@@ -132,7 +142,7 @@ class {transform.original_class_name}(BaseTransformer):
     r"""{transform.estimator_class_docstring}
     """
 
-    def __init__(
+    def __init__(  # type: ignore
         {transform.estimator_init_signature}
     ) -> None:
         super().__init__()
@@ -148,7 +158,7 @@ class {transform.original_class_name}(BaseTransformer):
         self._sklearn_object = {transform.root_module_name}.{transform.original_class_name}(
             {transform.sklearn_init_arguments}
         )
-        self._model_signature_dict = None
+        self._model_signature_dict: Optional[Dict[str, ModelSignature]] = None
         {transform.estimator_init_member_args}
 
     def _get_rand_id(self) -> str:
@@ -178,6 +188,15 @@ class {transform.original_class_name}(BaseTransformer):
             cols = [identifier.concat_names(ids=['OUTPUT_', c]) for c in self.label_cols]
             self.set_output_cols(output_cols=cols)
 
+    def _get_active_columns(self) -> List[str]:
+        """"Get the list of columns that are relevant to the transformer."""
+        selected_cols = (
+            self.input_cols +
+            self.label_cols +
+            ([self.sample_weight_col] if self.sample_weight_col is not None else [])
+        )
+        return selected_cols
+
     @telemetry.send_api_usage_telemetry(
         project=_PROJECT,
         subproject=_SUBPROJECT,
@@ -205,20 +224,17 @@ class {transform.original_class_name}(BaseTransformer):
 
     def _fit_snowpark(self, dataset: DataFrame) -> None:
         session = dataset._session
+        assert session is not None # keep mypy happy
         # Validate that key package version in user workspace are supported in snowflake conda channel
         # If customer doesn't have package in conda channel, replace the ones have the closest versions
         self._deps = pkg_version_utils.get_valid_pkg_versions_supported_in_snowflake_conda_channel(
             pkg_versions=self._get_dependencies(), session=session, subproject=_SUBPROJECT)
-
+        
         # Specify input columns so column pruing will be enforced
-        selected_cols = (
-            self.input_cols +
-            self.label_cols +
-            [self.sample_weight_col] if self.sample_weight_col is not None else []
-        )
+        selected_cols = self._get_active_columns()
         if len(selected_cols) > 0:
             dataset = dataset.select(selected_cols)
-
+        
         # Extract query that generated the datafrome. We will need to pass it to the fit procedure.
         queries = dataset.queries["queries"]
 
@@ -261,10 +277,10 @@ class {transform.original_class_name}(BaseTransformer):
             statement_params=statement_params
         )
 
-        @sproc(
+        @sproc(  # type: ignore
             is_permanent=False,
             name=fit_sproc_name,
-            packages=["snowflake-snowpark-python"] + self._get_dependencies(),
+            packages=["snowflake-snowpark-python"] + self._get_dependencies(),  # type: ignore
             replace=True,
             session=session,
             statement_params=statement_params,
@@ -375,6 +391,7 @@ class {transform.original_class_name}(BaseTransformer):
         cleanup_temp_files([local_transform_file_name, local_result_file_name])
 
     def _fit_pandas(self, dataset: pd.DataFrame) -> None:
+        assert self._sklearn_object is not None and hasattr(self._sklearn_object, "fit") # keep mypy happy
         argspec = inspect.getfullargspec(self._sklearn_object.fit)
         args = {{'X': dataset[self.input_cols]}}
         if self.label_cols:
@@ -402,9 +419,21 @@ class {transform.original_class_name}(BaseTransformer):
         """Util method to create UDF and run batch inference.
         """
         if not self._is_fitted:
-            raise RuntimeError(f"Estimator not fitted before calling {{inference_method}} method.")
+            raise exceptions.SnowflakeMLException(
+                error_code=error_codes.METHOD_NOT_ALLOWED,
+                original_exception=RuntimeError(
+                    f"Estimator {{self.__class__.__name__}} not fitted before calling {{inference_method}} method."
+                ),
+            )
 
         session = dataset._session
+        if session is None:
+            raise exceptions.SnowflakeMLException(
+                error_code=error_codes.NOT_FOUND,
+                original_exception=ValueError(
+                    "Session must not specified for snowpark dataset."
+                ),
+            )
         # Validate that key package version in user workspace are supported in snowflake conda channel
         pkg_version_utils.get_valid_pkg_versions_supported_in_snowflake_conda_channel(
             pkg_versions=self._get_dependencies(), session=session, subproject=_SUBPROJECT)
@@ -432,15 +461,15 @@ class {transform.original_class_name}(BaseTransformer):
             custom_tags=dict([("autogen", True)]),
         )
 
-        @pandas_udf(
+        @pandas_udf(  # type: ignore
             is_permanent=False,
             name=batch_inference_udf_name,
-            packages= self._get_dependencies(),
+            packages=self._get_dependencies(),  # type: ignore
             replace=True,
             session=session,
             statement_params=statement_params,
         )
-        def vec_batch_infer(ds: PandasSeries[dict]) -> PandasSeries[dict]:
+        def vec_batch_infer(ds: PandasSeries[dict]) -> PandasSeries[dict]:  # type: ignore
             import pandas as pd
             import numpy as np
 
@@ -494,13 +523,15 @@ class {transform.original_class_name}(BaseTransformer):
                 # So, to avoid that we are packing the results into a dataframe of shape (n_samples, 1) with
                 # each element being a list.
                 if len(expected_output_cols_list) != 1:
-                    raise TypeError("expected_output_cols_list must be same length as transformed array or "
-                            "should be of length 1")
+                    raise TypeError(
+                        "expected_output_cols_list must be same length as transformed array or "
+                        "should be of length 1"
+                    )
                 series = pd.Series(transformed_numpy_array.tolist())
                 transformed_pandas_df = pd.DataFrame(series, columns=expected_output_cols_list)
             else:
                 transformed_pandas_df = pd.DataFrame(transformed_numpy_array, columns=expected_output_cols_list)
-            return transformed_pandas_df.to_dict("records")
+            return transformed_pandas_df.to_dict("records")  # type: ignore
 
         batch_inference_table_name = "SNOWML_BATCH_INFERENCE_INPUT_TABLE_{{safe_id}}".format(
             safe_id=self._get_rand_id()
@@ -570,9 +601,9 @@ class {transform.original_class_name}(BaseTransformer):
         for i, f in enumerate(features_required_by_estimator):
             if (
                     i >= len(input_cols)
-                or (input_cols[i] != f and unquoted_input_cols[i] != f and quoted_input_cols[i] != f)
-                or (input_cols[i] not in features_in_dataset and unquoted_input_cols[i] not in features_in_dataset 
-                    and quoted_input_cols[i] not in features_in_dataset)
+                    or (input_cols[i] != f and unquoted_input_cols[i] != f and quoted_input_cols[i] != f)
+                    or (input_cols[i] not in features_in_dataset and unquoted_input_cols[i] not in features_in_dataset 
+                        and quoted_input_cols[i] not in features_in_dataset)
                 ):
                 missing_features.append(f)
             elif input_cols[i] in features_in_dataset:
@@ -583,10 +614,13 @@ class {transform.original_class_name}(BaseTransformer):
                 columns_to_select.append(quoted_input_cols[i])
 
         if len(missing_features) > 0:
-            raise ValueError(
-                "The feature names should match with those that were passed during fit.\n"
-                f"Features seen during fit call but not present in the input: {{missing_features}}\n"
-                f"Features in the input dataframe : {{input_cols}}\n"
+            raise exceptions.SnowflakeMLException(
+                error_code=error_codes.NOT_FOUND,
+                original_exception=ValueError(
+                    "The feature names should match with those that were passed during fit.\n"
+                    f"Features seen during fit call but not present in the input: {{missing_features}}\n"
+                    f"Features in the input dataframe : {{input_cols}}\n"
+                ),
             )
         input_df = dataset[columns_to_select]
         input_df.columns = features_required_by_estimator
@@ -626,9 +660,12 @@ class {transform.original_class_name}(BaseTransformer):
         shape = transformed_numpy_array.shape
         if shape[1] != len(output_cols):
             if len(output_cols) != 1:
-                raise TypeError(
-                    "expected_output_cols_list must be same length as transformed array or "
-                    "should be of length 1 or should be of length number of label columns"
+                raise exceptions.SnowflakeMLException(
+                    error_code=error_codes.INVALID_ARGUMENT,
+                    original_exception=TypeError(
+                        "expected_output_cols_list must be same length as transformed array or "
+                        "should be of length 1"
+                    ),
                 )
             actual_output_cols = []
             for i in range(shape[1]):
@@ -642,7 +679,7 @@ class {transform.original_class_name}(BaseTransformer):
             dataset[output_cols] = transformed_numpy_array
         return dataset
 
-    @available_if(_original_estimator_has_callable("predict"))
+    @available_if(_original_estimator_has_callable("predict"))  # type: ignore
     @telemetry.send_api_usage_telemetry(
         project=_PROJECT,
         subproject=_SUBPROJECT,
@@ -659,6 +696,7 @@ class {transform.original_class_name}(BaseTransformer):
         Returns:
             Transformed dataset.
         """
+        super()._check_dataset_type(dataset)
         if isinstance(dataset, DataFrame):
             expected_type_inferred = "{transform.udf_datatype}"
             # when it is classifier, infer the datatype from label columns
@@ -678,15 +716,10 @@ class {transform.original_class_name}(BaseTransformer):
                 dataset=dataset,
                 inference_method="predict",
                 expected_output_cols_list=self.output_cols,)
-        else:
-            raise TypeError(
-                f"Unexpected dataset type: {{type(dataset)}}."
-                "Supported dataset types: snowpark.DataFrame, pandas.DataFrame."
-            )
 
         return output_df
 
-    @available_if(_original_estimator_has_callable("transform"))
+    @available_if(_original_estimator_has_callable("transform"))  # type: ignore
     @telemetry.send_api_usage_telemetry(
         project=_PROJECT,
         subproject=_SUBPROJECT,
@@ -703,6 +736,7 @@ class {transform.original_class_name}(BaseTransformer):
         Returns:
             Transformed dataset.
         """
+        super()._check_dataset_type(dataset)
         if isinstance(dataset, DataFrame):
             expected_dtype = "{transform.udf_datatype}"
             if {transform._is_heterogeneous_ensemble}:  # is child of _BaseHeterogeneousEnsemble
@@ -724,11 +758,6 @@ class {transform.original_class_name}(BaseTransformer):
                 inference_method="transform",
                 expected_output_cols_list=self.output_cols,
             )
-        else:
-            raise TypeError(
-                f"Unexpected dataset type: {{type(dataset)}}."
-                "Supported dataset types: snowpark.DataFrame, pandas.DataFrame."
-            )
 
         return output_df
 
@@ -739,6 +768,7 @@ class {transform.original_class_name}(BaseTransformer):
         if getattr(self._sklearn_object, "classes_", None) is None:
             return [output_cols_prefix]
 
+        assert self._sklearn_object is not None # keep mypy happy
         classes = self._sklearn_object.classes_
         if isinstance(classes, numpy.ndarray):
             return [f'{{output_cols_prefix}}{{c}}' for c in classes.tolist()]
@@ -757,7 +787,7 @@ class {transform.original_class_name}(BaseTransformer):
             return output_cols
         return []
 
-    @available_if(_original_estimator_has_callable("predict_proba"))
+    @available_if(_original_estimator_has_callable("predict_proba"))  # type: ignore
     @telemetry.send_api_usage_telemetry(
         project=_PROJECT,
         subproject=_SUBPROJECT,
@@ -777,6 +807,7 @@ class {transform.original_class_name}(BaseTransformer):
         Returns:
             Output dataset with probability of the sample for each class in the model.
         """
+        super()._check_dataset_type(dataset)
         if isinstance(dataset, DataFrame):
             output_df = self._batch_inference(
                 dataset=dataset,
@@ -790,15 +821,10 @@ class {transform.original_class_name}(BaseTransformer):
                 inference_method="predict_proba",
                 expected_output_cols_list=self._get_output_column_names(output_cols_prefix),
             )
-        else:
-            raise TypeError(
-                f"Unexpected dataset type: {{type(dataset)}}."
-                "Supported dataset types: snowpark.DataFrame, pandas.DataFrame."
-            )
-
+        
         return output_df
 
-    @available_if(_original_estimator_has_callable("predict_log_proba"))
+    @available_if(_original_estimator_has_callable("predict_log_proba"))  # type: ignore
     @telemetry.send_api_usage_telemetry(
         project=_PROJECT,
         subproject=_SUBPROJECT,
@@ -819,6 +845,7 @@ class {transform.original_class_name}(BaseTransformer):
         Returns:
             Output dataset with log probability of the sample for each class in the model.
         """
+        super()._check_dataset_type(dataset)
         if isinstance(dataset, DataFrame):
             output_df = self._batch_inference(
                 dataset=dataset,
@@ -832,15 +859,10 @@ class {transform.original_class_name}(BaseTransformer):
                 inference_method="predict_log_proba",
                 expected_output_cols_list=self._get_output_column_names(output_cols_prefix),
             )
-        else:
-            raise TypeError(
-                f"Unexpected dataset type: {{type(dataset)}}."
-                "Supported dataset types: snowpark.DataFrame, pandas.DataFrame."
-            )
 
         return output_df
 
-    @available_if(_original_estimator_has_callable("decision_function"))
+    @available_if(_original_estimator_has_callable("decision_function"))  # type: ignore
     @telemetry.send_api_usage_telemetry(
         project=_PROJECT,
         subproject=_SUBPROJECT,
@@ -861,6 +883,7 @@ class {transform.original_class_name}(BaseTransformer):
         Returns:
             Output dataset with results of the decision function for the samples in input dataset.
         """
+        super()._check_dataset_type(dataset)
         if isinstance(dataset, DataFrame):
             output_df = self._batch_inference(
                 dataset=dataset,
@@ -874,15 +897,10 @@ class {transform.original_class_name}(BaseTransformer):
                 inference_method="decision_function",
                 expected_output_cols_list=self._get_output_column_names(output_cols_prefix),
             )
-        else:
-            raise TypeError(
-                f"Unexpected dataset type: {{type(dataset)}}."
-                "Supported dataset types: snowpark.DataFrame, pandas.DataFrame."
-            )
 
         return output_df
 
-    @available_if(_original_estimator_has_callable("score"))
+    @available_if(_original_estimator_has_callable("score"))  # type: ignore
     def score(self, dataset: Union[DataFrame, pd.DataFrame]) -> float:
         """{transform.score_docstring}
 
@@ -890,24 +908,27 @@ class {transform.original_class_name}(BaseTransformer):
             Score.
         """
         self._infer_input_output_cols(dataset)
+        super()._check_dataset_type(dataset)
         if isinstance(dataset, pd.DataFrame):
-            return self._score_sklearn(dataset)
+            output_score = self._score_sklearn(dataset)
         elif isinstance(dataset, DataFrame):
-            return self._score_snowpark(dataset)
-        else:
-            raise TypeError(
-                f"Unexpected dataset type: {{type(dataset)}}."
-                "Supported dataset types: snowpark.DataFrame, pandas.DataFrame."
-            )
+            output_score = self._score_snowpark(dataset)
+        return output_score
 
     def _score_sklearn(self, dataset: pd.DataFrame) -> float:
+        assert self._sklearn_object is not None and hasattr(self._sklearn_object, "score") # make type checker happy
         argspec = inspect.getfullargspec(self._sklearn_object.score)
         if "X" in argspec.args:
             args = {{'X': dataset[self.input_cols]}}
         elif "X_test" in argspec.args:
             args = {{'X_test': dataset[self.input_cols]}}
         else:
-            raise RuntimeError("Neither 'X' or 'X_test' exist in argument")
+            raise exceptions.SnowflakeMLException(
+                error_code=error_codes.INVALID_ATTRIBUTE,
+                original_exception=RuntimeError(
+                    "Neither 'X' or 'X_test' exist in argument"
+                ),
+            )
         
         if self.label_cols:
             label_arg_name = "Y" if "Y" in argspec.args else "y"
@@ -921,11 +942,7 @@ class {transform.original_class_name}(BaseTransformer):
 
     def _score_snowpark(self, dataset: DataFrame) -> float:
         # Specify input columns so column pruing will be enforced
-        selected_cols = (
-            self.input_cols + self.label_cols + [self.sample_weight_col]
-            if self.sample_weight_col is not None
-            else []
-        )
+        selected_cols = self._get_active_columns()
         if len(selected_cols) > 0:
             dataset = dataset.select(selected_cols)
 
@@ -940,6 +957,7 @@ class {transform.original_class_name}(BaseTransformer):
         # Create temp stage to run score.
         score_stage_name = "SNOWML_SCORE_{{safe_id}}".format(safe_id=self._get_rand_id())
         session = dataset._session
+        assert session is not None # keep mypy happy
         stage_creation_query = f"CREATE OR REPLACE TEMPORARY STAGE {{score_stage_name}};"
         SqlResultValidator(
             session=session,
@@ -972,7 +990,7 @@ class {transform.original_class_name}(BaseTransformer):
         @sproc(
             is_permanent=False,
             name=score_sproc_name,
-            packages=["snowflake-snowpark-python"] + self._get_dependencies(),
+            packages=["snowflake-snowpark-python"] + self._get_dependencies(),  # type: ignore
             replace=True,
             session=session,
             statement_params=statement_params,
@@ -1024,7 +1042,7 @@ class {transform.original_class_name}(BaseTransformer):
             if sample_weight_col is not None and "sample_weight" in argspec.args:
                 args['sample_weight'] = df[sample_weight_col].squeeze()
 
-            result = estimator.score(**args)
+            result: float = estimator.score(**args)
             return result
 
         # Call score sproc
@@ -1037,7 +1055,7 @@ class {transform.original_class_name}(BaseTransformer):
             api_calls=[Session.call],
             custom_tags=dict([("autogen", True)]),
         )
-        score = score_wrapper_sproc(
+        score: float = score_wrapper_sproc(
             session,
             queries,
             stage_score_file_name,
@@ -1052,35 +1070,54 @@ class {transform.original_class_name}(BaseTransformer):
         return score
 
     def _get_model_signatures(self, dataset: Union[DataFrame, pd.DataFrame]) -> None:
-        self._model_signature_dict: Dict[str, ModelSignature] = dict()
+        self._model_signature_dict = dict()
 
         PROB_FUNCTIONS = ["predict_log_proba", "predict_proba", "decision_function"]
 
-        inputs = _infer_signature(dataset[self.input_cols], "input")
+        inputs = list(_infer_signature(dataset[self.input_cols], "input"))
+        outputs: List[BaseFeatureSpec] = []
         if hasattr(self, "predict"):
+            # keep mypy happy
+            assert self._sklearn_object is not None and hasattr(self._sklearn_object, "_estimator_type") 
             # For classifier, the type of predict is the same as the type of label
             if self._sklearn_object._estimator_type == 'classifier':
-                outputs = _infer_signature(dataset[self.label_cols], "output")  # label columns is the desired type for output
-                outputs = model_signature_utils.rename_features(outputs, self.output_cols)  # rename the output columns
-                self._model_signature_dict["predict"] = ModelSignature(inputs, 
-                                                                       ([] if self._drop_input_cols else inputs) + outputs)
+                 # label columns is the desired type for output
+                outputs = _infer_signature(dataset[self.label_cols], "output")
+                # rename the output columns
+                outputs = model_signature_utils.rename_features(outputs, self.output_cols)
+                self._model_signature_dict["predict"] = ModelSignature(inputs,
+                                                                       ([] if self._drop_input_cols else inputs)
+                                                                       + outputs)
             # For regressor, the type of predict is float64
             elif self._sklearn_object._estimator_type == 'regressor':
                 outputs = [FeatureSpec(dtype=DataType.DOUBLE, name=c) for c in self.output_cols]
-                self._model_signature_dict["predict"] = ModelSignature(inputs, 
-                                                                       ([] if self._drop_input_cols else inputs) + outputs)
+                self._model_signature_dict["predict"] = ModelSignature(inputs,
+                                                                       ([] if self._drop_input_cols else inputs)
+                                                                       + outputs)
         for prob_func in PROB_FUNCTIONS:
             if hasattr(self, prob_func):
                 output_cols_prefix: str = f"{{prob_func}}_"
                 output_column_names = self._get_output_column_names(output_cols_prefix)
                 outputs = [FeatureSpec(dtype=DataType.DOUBLE, name=c) for c in output_column_names]
-                self._model_signature_dict[prob_func] = ModelSignature(inputs, 
-                                                                       ([] if self._drop_input_cols else inputs) + outputs)
+                self._model_signature_dict[prob_func] = ModelSignature(inputs,
+                                                                       ([] if self._drop_input_cols else inputs)
+                                                                       + outputs)
 
     @property
     def model_signatures(self) -> Dict[str, ModelSignature]:
+        """Returns model signature of current class.
+
+        Raises:
+            exceptions.SnowflakeMLException: If estimator is not fitted, then model signature cannot be inferred
+
+        Returns:
+            Dict[str, ModelSignature]: each method and its input output signature
+        """
         if self._model_signature_dict is None:
-            raise RuntimeError("Estimator not fitted before accessing property model_signatures! ")
+            raise exceptions.SnowflakeMLException(
+                error_code=error_codes.INVALID_ATTRIBUTE,
+                original_exception=RuntimeError("Estimator not fitted before accessing property model_signatures!"),
+            )
         return self._model_signature_dict
 
     def {transform.supported_export_method}(self) -> Any:
@@ -1089,10 +1126,26 @@ class {transform.original_class_name}(BaseTransformer):
         return self._sklearn_object
 
     def {transform.unsupported_export_methods[0]}(self) -> Any:
-        raise AttributeError("Estimator doesn't support {transform.unsupported_export_methods[0]}(). Please use {transform.supported_export_method}()")
+        raise exceptions.SnowflakeMLException(
+            error_code=error_codes.METHOD_NOT_ALLOWED,
+            original_exception=AttributeError(
+                modeling_error_messages.UNSUPPORTED_MODEL_CONVERSION.format(
+                    "{transform.unsupported_export_methods[0]}()", 
+                    "{transform.supported_export_method}()"
+                )
+            ),
+        )
 
     def {transform.unsupported_export_methods[1]}(self) -> Any:
-        raise AttributeError("Estimator doesn't support {transform.unsupported_export_methods[1]}(). Please use {transform.supported_export_method}()")
+        raise exceptions.SnowflakeMLException(
+            error_code=error_codes.METHOD_NOT_ALLOWED,
+            original_exception=AttributeError(
+                modeling_error_messages.UNSUPPORTED_MODEL_CONVERSION.format(
+                    "{transform.unsupported_export_methods[1]}()", 
+                    "{transform.supported_export_method}()"
+                )
+            ),
+        )
 
     def _get_dependencies(self) -> List[str]:
         return self._deps

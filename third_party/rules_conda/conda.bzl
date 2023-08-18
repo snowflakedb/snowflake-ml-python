@@ -1,4 +1,4 @@
-load(":utils.bzl", "CONDA_EXT_MAP", "EXECUTE_TIMEOUT", "INSTALLER_SCRIPT_EXT_MAP", "execute_waitable_windows", "get_arch", "get_os", "get_path_envar", "windowsify")
+load(":utils.bzl", "CONDA_EXT_MAP", "EXECUTE_TIMEOUT", "INSTALLER_SCRIPT_EXT_MAP", "ENV_VAR_SEPARATOR_MAP", "PYTHON_EXT_MAP", "execute_waitable_windows", "get_arch", "get_os", "get_path_envar", "windowsify")
 
 # libmamba version
 LIBMAMBA_SOLVER_VERSION = "23.1.0"
@@ -79,20 +79,26 @@ def _install_conda(rctx, installer):
 
     path_envar = get_path_envar(rctx)
 
+    args = [rctx.path(installer)] + installer_flags
+
     # Strip environment variables when installing conda to make sure
     # any activated conda environment would not affect the installer.
     # Also, since the installer writes to $HOME which breaks hermecity, we make it
     # write to the repo dir.
-    args = ["env", "-i", "HOME={}".format(rctx.attr.conda_dir), "PATH={}".format(path_envar), rctx.path(installer)] + installer_flags
+    install_conda_env = {
+        "HOME": rctx.attr.conda_dir,
+        "PATH": path_envar
+    }
 
     # execute installer with flags adjusted to OS
     if os == "Windows":
+        install_conda_env.update({"CONDA_DLL_SEARCH_MODIFICATION_ENABLE": ""})
         # TODO: fix always returning 0
         # it seems that either miniconda installer returns 0 even on failure or the wrapper does something wrong
         # also stdout and stderr are always empty
-        result = execute_waitable_windows(rctx, args, quiet = rctx.attr.quiet, environment = {"CONDA_DLL_SEARCH_MODIFICATION_ENABLE": ""}, timeout = rctx.attr.timeout)
+        result = execute_waitable_windows(rctx, args, quiet = rctx.attr.quiet, environment = install_conda_env, timeout = rctx.attr.timeout)
     else:
-        result = rctx.execute(args, quiet = rctx.attr.quiet, timeout = rctx.attr.timeout)
+        result = rctx.execute(args, quiet = rctx.attr.quiet, environment = install_conda_env, timeout = rctx.attr.timeout)
 
     if result.return_code:
         fail("Failure installing conda.\nstdout: {}\nstderr: {}".format(result.stdout, result.stderr))
@@ -103,17 +109,21 @@ def _install_conda(rctx, installer):
     # Therefore, we expose the python interpreter (thus the right bin/ path) so that later invocations
     # of the conda command can setup the right PATH env.
     conda_entrypoint = rctx.path("{}/condabin/conda{}".format(rctx.attr.conda_dir, CONDA_EXT_MAP[os]))
-    conda_base_python = rctx.path("{}/bin/python".format(rctx.attr.conda_dir))
+    python_executable = "python{}".format(PYTHON_EXT_MAP[os])
+    interpreter_path = python_executable if os == "Windows" else "bin/{}".format(python_executable)
+    python = rctx.path("{}/{}".format(
+        rctx.attr.conda_dir,
+        interpreter_path,
+    ))
+    additional_paths = [str(rctx.path(python).dirname)]
+    if os == "Windows":
+        additional_paths = additional_paths + [str(rctx.path("{}/Library/bin".format(rctx.attr.conda_dir)))]
+    additional_paths = additional_paths + [path_envar]
+    actual_environment = {"HOME": rctx.attr.conda_dir, "PATH": ENV_VAR_SEPARATOR_MAP[os].join(additional_paths)}
 
     # install mamba solver.
     install_mamba_result = rctx.execute(
         [
-            # strip all environment variables except for PATH.
-            # this is to prevent the conda_entrypoint from recognizing the conda environment (if any)
-            # where bazel was invoked.
-            "env",
-            "-i",
-            "PATH={}:{}".format(conda_base_python.dirname, path_envar),
             conda_entrypoint,
             "install",
             "-n",
@@ -122,15 +132,18 @@ def _install_conda(rctx, installer):
             "-y",
         ],
         quiet = rctx.attr.quiet,
+        working_directory = rctx.attr.conda_dir,
+        environment = actual_environment,
         timeout = rctx.attr.timeout,
     )
+
     if install_mamba_result.return_code:
         print("Failure installing conda-libmamba-solver.")
         print("stdout: \n", result.stdout)
         print("stderr: \n", result.stderr)
         fail("Failure installing conda-libmamba-solver.")
 
-    return conda_entrypoint, conda_base_python
+    return conda_entrypoint, python
 
 # create BUILD file with exposed conda binary
 def _create_conda_build_file(rctx, conda_entrypoint, conda_base_python):

@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Usage
-# build_and_run_tests.sh <workspace> [-b <bazel path>] [--env pip|conda] [--mode diff-only|standard|release] [--with-snowpark]
+# build_and_run_tests.sh <workspace> [-b <bazel path>] [--env pip|conda] [--mode merge_gate|continuous_run|release] [--with-snowpark]
 #
 # Args
 # workspace: path to the workspace, SnowML code should be in snowml directory.
@@ -10,8 +10,8 @@
 # b: specify path to bazel
 # env: Set the environment, choose from pip and conda
 # mode: Set the tests set to be run.
-#   diff-only: run affected tests only. (For merge gate)
-#   standard (default): run all tests except auto-generated tests. (For nightly run.)
+#   merge_gate: run affected tests only.
+#   continuous_run (default): run all tests except auto-generated tests. (For nightly run.)
 #   release: run all tests including auto-generated tests. (For releasing)
 # with-snowpark: Build and test with snowpark in snowpark-python directory in the workspace.
 #
@@ -21,12 +21,13 @@
 
 set -o pipefail
 set -u
+set -e
 
 PROG=$0
 
 help() {
     local exit_code=$1
-    echo "Usage: ${PROG} <workspace> [-b <bazel path>] [--env pip|conda] [--mode diff-only|standard|release] [--with-snowpark]"
+    echo "Usage: ${PROG} <workspace> [-b <bazel path>] [--env pip|conda] [--mode merge_gate|continuous_run|release] [--with-snowpark]"
     exit "${exit_code}"
 }
 
@@ -34,7 +35,7 @@ WORKSPACE=$1 && shift || help 1
 BAZEL="bazel"
 ENV="pip"
 WITH_SNOWPARK=false
-MODE="standard"
+MODE="continuous_run"
 SNOWML_DIR="snowml"
 SNOWPARK_DIR="snowpark-python"
 
@@ -57,7 +58,7 @@ while (($#)); do
         ;;
     --mode)
         shift
-        if [[ $1 = "diff-only" || $1 = "standard" || $1 = "release" ]]; then
+        if [[ $1 = "merge_gate" || $1 = "continuous_run" || $1 = "release" ]]; then
             MODE=$1
         else
             help 1
@@ -116,9 +117,9 @@ fi
 
 # Compare test required dependencies with wheel pkg dependencies and exclude tests if necessary
 EXCLUDE_TESTS=$(mktemp "${TEMP_TEST_DIR}/exclude_tests_XXXXX")
-if [[ ${MODE} = "standard" ]]; then
+if [[ ${MODE} = "continuous_run" ]]; then
     ./ci/get_excluded_tests.sh -f "${EXCLUDE_TESTS}" -m unused -b "${BAZEL}"
-elif [[ ${MODE} = "diff-only" ]]; then
+elif [[ ${MODE} = "merge_gate" ]]; then
     ./ci/get_excluded_tests.sh -f "${EXCLUDE_TESTS}" -m all -b "${BAZEL}"
 fi
 # Copy tests into temp directory
@@ -153,6 +154,9 @@ if [ "${ENV}" = "pip" ]; then
     popd
 else
     which conda
+
+    # Clean conda cache
+    conda clean --all --force-pkgs-dirs -y
 
     # Clean conda build workspace
     rm -rf "${WORKSPACE}/conda-bld"
@@ -199,13 +203,9 @@ if [ "${ENV}" = "pip" ]; then
     fi
     python3.8 -m pip list
 
-    # Set up pip specific pytest flags
-    PIP_PYTEST_FLAG=()
-    PIP_PYTEST_FLAG+=(-m "not pip_incompatible") # Filter out those pip incompatible tests.
-
     # Run the tests
     set +e
-    TEST_SRCDIR="${TEMP_TEST_DIR}" python3.8 -m pytest "${COMMON_PYTEST_FLAG[@]}" "${PIP_PYTEST_FLAG[@]}" tests/
+    TEST_SRCDIR="${TEMP_TEST_DIR}" python3.8 -m pytest "${COMMON_PYTEST_FLAG[@]}" -m "not pip_incompatible" tests/integ/
     TEST_RETCODE=$?
     set -e
 else
@@ -219,9 +219,9 @@ else
     conda create -y -p testenv -c "file://${WORKSPACE}/conda-bld" -c "https://repo.anaconda.com/pkgs/snowflake/" --override-channels "python=3.8" snowflake-ml-python pytest-xdist inflection "${OPTIONAL_REQUIREMENTS[@]}"
     conda list -p testenv
 
-    # Run the tests
+    # Run integration tests
     set +e
-    TEST_SRCDIR="${TEMP_TEST_DIR}" conda run -p testenv --no-capture-output python3.8 -m pytest "${COMMON_PYTEST_FLAG[@]}" tests/
+    TEST_SRCDIR="${TEMP_TEST_DIR}" conda run -p testenv --no-capture-output python3.8 -m pytest "${COMMON_PYTEST_FLAG[@]}" tests/integ/
     TEST_RETCODE=$?
     set -e
 
@@ -236,7 +236,7 @@ echo "Done running ${PROG}"
 #   0: Success;
 #   5: no tests found
 # See https://docs.pytest.org/en/7.1.x/reference/exit-codes.html
-if [[ ${MODE} = "diff-only" && ${TEST_RETCODE} -eq 5 ]] ; then
-  exit 0
+if [[ ${MODE} = "merge_gate" && ${TEST_RETCODE} -eq 5 ]]; then
+    exit 0
 fi
 exit ${TEST_RETCODE}

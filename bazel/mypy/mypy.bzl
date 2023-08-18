@@ -1,13 +1,18 @@
 "Public API"
 
-load("@bazel_skylib//lib:shell.bzl", "shell")
-load("@bazel_skylib//lib:sets.bzl", "sets")
 load("//bazel/mypy:rules.bzl", "MyPyStubsInfo")
 
 MyPyAspectInfo = provider(
-    "TODO: documentation",
+    """This is an aspect attaching to the original Python build graph to type-checking Python source files.
+    For every target it collects all transitive dependencies as well as direct sources and use symbol link to create
+    a folder ends with .mypy_runfiles. Mypy will be invoked to check the direct sources.
+
+    This aspect uses persistent worker to make full use of mypy's cache which is defined in main.py in the same
+    directory. The mypy cache will be put into bazel's execroot/SnowML/,mypy_cache .""",
     fields = {
         "exe": "Used to pass the rule implementation built exe back to calling aspect.",
+        "args": "Used to pass the arguments sent to mypy executable.",
+        "runfiles": "Used to pass the inputs file for mypy executable.",
         "out": "Used to pass the dummy output file back to calling aspect.",
     },
 )
@@ -19,10 +24,6 @@ DEBUG = False
 VALID_EXTENSIONS = ["py", "pyi"]
 
 DEFAULT_ATTRS = {
-    "_template": attr.label(
-        default = Label("//bazel/mypy:mypy.sh.tpl"),
-        allow_single_file = True,
-    ),
     "_mypy_cli": attr.label(
         default = Label("//bazel/mypy:mypy"),
         executable = True,
@@ -33,17 +34,6 @@ DEFAULT_ATTRS = {
         allow_single_file = True,
     ),
 }
-
-def _sources_to_cache_map_triples(srcs):
-    triples_as_flat_list = []
-    for f in srcs:
-        f_path = f.path
-        triples_as_flat_list.extend([
-            shell.quote(f_path),
-            shell.quote("{}.meta.json".format(f_path)),
-            shell.quote("{}.data.json".format(f_path)),
-        ])
-    return triples_as_flat_list
 
 def _is_external_dep(dep):
     return dep.label.workspace_root.startswith("external/")
@@ -78,26 +68,11 @@ def _extract_stub_deps(deps):
                         stub_files.append(src_f)
     return stub_files
 
-def _extract_imports(imports, label):
-    # NOTE: Bazel's implementation of this for py_binary, py_test is at
-    # src/main/java/com/google/devtools/build/lib/bazel/rules/python/BazelPythonSemantics.java
-    mypypath_parts = []
-    for import_ in imports:
-        if import_.startswith("/"):
-            # buildifier: disable=print
-            print("ignoring invalid absolute path '{}'".format(import_))
-        elif import_ in ["", "."]:
-            mypypath_parts.append(label.package)
-        else:
-            mypypath_parts.append("{}/{}".format(label.package, import_))
-    return mypypath_parts
-
 def _mypy_rule_impl(ctx):
     base_rule = ctx.rule
 
     mypy_config_file = ctx.file._mypy_config
 
-    mypypath_parts = []
     direct_src_files = []
     transitive_srcs_depsets = []
     stub_files = []
@@ -109,82 +84,82 @@ def _mypy_rule_impl(ctx):
         transitive_srcs_depsets = _extract_transitive_deps(base_rule.attr.deps)
         stub_files = _extract_stub_deps(base_rule.attr.deps)
 
-    if hasattr(base_rule.attr, "imports"):
-        mypypath_parts = _extract_imports(base_rule.attr.imports, ctx.label)
-
     final_srcs_depset = depset(transitive = transitive_srcs_depsets +
                                             [depset(direct = direct_src_files)])
     src_files = [f for f in final_srcs_depset.to_list() if not _is_external_src(f)]
     if not src_files:
         return None
 
-    mypypath_parts += [src_f.dirname for src_f in stub_files]
-    mypypath = ":".join(mypypath_parts)
-
     out = ctx.actions.declare_file("%s_dummy_out" % ctx.rule.attr.name)
-    exe = ctx.actions.declare_file(
-        "%s_mypy_exe" % ctx.rule.attr.name,
-    )
+    runfiles_name = "%s.mypy_runfiles" % ctx.rule.attr.name
 
     # Compose a list of the files needed for use. Note that aspect rules can use
     # the project version of mypy however, other rules should fall back on their
     # relative runfiles.
-    runfiles = ctx.runfiles(files = src_files + stub_files + [mypy_config_file])
 
-    src_root_paths = sets.to_list(
-        sets.make([f.root.path for f in src_files]),
+    src_run_files = []
+    direct_src_run_files = []
+    stub_run_files = []
+
+    for f in src_files + stub_files:
+        run_file_path = runfiles_name + "/" + f.short_path
+        run_file = ctx.actions.declare_file(run_file_path)
+        ctx.actions.symlink(
+            output = run_file,
+            target_file = f,
+        )
+        if f in src_files:
+            src_run_files.append(run_file)
+        if f in direct_src_files:
+            direct_src_run_files.append(run_file)
+        if f in stub_files:
+            stub_run_files.append(run_file)
+
+    src_root_path = src_run_files[0].path
+    src_root_path = src_root_path[0:(src_root_path.find(runfiles_name) + len(runfiles_name))]
+
+    # arguments sent to mypy
+    args = [
+        "--enable-incomplete-features",
+    ] + ["--package-root", src_root_path, "--config-file", mypy_config_file.path] + [f.path for f in direct_src_run_files]
+
+    worker_arg_file = ctx.actions.declare_file(ctx.rule.attr.name + ".worker_args")
+    ctx.actions.write(
+        output = worker_arg_file,
+        content = "\n".join(args),
     )
 
-    ctx.actions.expand_template(
-        template = ctx.file._template,
-        output = exe,
-        substitutions = {
-            "{MYPY_EXE}": ctx.executable._mypy_cli.path,
-            "{MYPY_ROOT}": ctx.executable._mypy_cli.root.path,
-            "{CACHE_MAP_TRIPLES}": " ".join(_sources_to_cache_map_triples(src_files)),
-            "{PACKAGE_ROOTS}": " ".join([
-                "--package-root " + shell.quote(path or ".")
-                for path in src_root_paths
-            ]),
-            "{SRCS}": " ".join([
-                shell.quote(f.path)
-                for f in src_files
-            ]),
-            "{VERBOSE_OPT}": "--verbose" if DEBUG else "",
-            "{VERBOSE_BASH}": "set -x" if DEBUG else "",
-            "{OUTPUT}": out.path if out else "",
-            "{MYPYPATH_PATH}": mypypath if mypypath else "",
-            "{MYPY_INI_PATH}": mypy_config_file.path,
-        },
-        is_executable = True,
+    return MyPyAspectInfo(
+        exe = ctx.executable._mypy_cli,
+        args = worker_arg_file,
+        runfiles = src_run_files + stub_run_files + [mypy_config_file, worker_arg_file],
+        out = out,
     )
-
-    return [
-        DefaultInfo(executable = exe, runfiles = runfiles),
-        MyPyAspectInfo(exe = exe, out = out),
-    ]
 
 def _mypy_aspect_impl(_, ctx):
     if (ctx.rule.kind not in ["py_binary", "py_library", "py_test", "mypy_test"] or
         ctx.label.workspace_root.startswith("external")):
         return []
 
-    providers = _mypy_rule_impl(
-        ctx
+    aspect_info = _mypy_rule_impl(
+        ctx,
     )
-    if not providers:
+    if not aspect_info:
         return []
-
-    info = providers[0]
-    aspect_info = providers[1]
 
     ctx.actions.run(
         outputs = [aspect_info.out],
-        inputs = info.default_runfiles.files,
-        tools = [ctx.executable._mypy_cli],
+        inputs = aspect_info.runfiles,
+        tools = [aspect_info.exe],
         executable = aspect_info.exe,
         mnemonic = "MyPy",
         progress_message = "Type-checking %s" % ctx.label,
+        execution_requirements = {
+            "supports-workers": "1",
+            "requires-worker-protocol": "json",
+        },
+        # out is required for worker to write the output.
+        arguments = ["--out", aspect_info.out.path, "@" + aspect_info.args.path],
         use_default_shell_env = True,
     )
     return [

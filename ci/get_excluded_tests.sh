@@ -115,7 +115,7 @@ esac
 
 excluded_test_source_rule_file=${working_dir}/excluded_test_source_rule
 
-printf "kind('source file', set(%s)" "$(<"${targets_to_exclude_file}"))" > "${excluded_test_source_rule_file}"
+printf "kind('source file', set(%s) + set($(<ci/skip_merge_gate_targets))" "$(<"${targets_to_exclude_file}"))" > "${excluded_test_source_rule_file}"
 
 ${bazel} query --query_file="${excluded_test_source_rule_file}" \
     --output location |

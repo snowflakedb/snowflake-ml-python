@@ -14,11 +14,12 @@ from snowflake.ml.model import (
     _deployer,
     _model as model_api,
     custom_model,
+    deploy_platforms,
     type_hints as model_types,
 )
 from snowflake.ml.utils import connection_params
 from snowflake.snowpark import Session
-from tests.integ.snowflake.ml.test_utils import db_manager
+from tests.integ.snowflake.ml.test_utils import db_manager, test_env_utils
 
 
 class DemoModel(custom_model.CustomModel):
@@ -85,7 +86,7 @@ class TestModelBadCaseInteg(absltest.TestCase):
                     session=self._session,
                     name=function_name,
                     model_dir_path=os.path.join(tmpdir, "custom_bad_model"),
-                    platform=_deployer.TargetPlatform.WAREHOUSE,
+                    platform=deploy_platforms.TargetPlatform.WAREHOUSE,
                     target_method="predict",
                     options=model_types.WarehouseDeployOptions({"relax_version": False}),
                 )
@@ -99,6 +100,9 @@ class TestModelBadCaseInteg(absltest.TestCase):
                 name="custom_demo_model",
                 model_dir_path=os.path.join(tmpdir, "custom_demo_model"),
                 model=lm,
+                conda_dependencies=[
+                    test_env_utils.get_latest_package_versions_in_server(self._session, "snowflake-snowpark-python")
+                ],
                 sample_input=pd_df,
                 metadata={"author": "halu", "version": "1"},
                 options=model_types.CustomModelSaveOption({"embed_local_ml_library": True}),
@@ -111,11 +115,11 @@ class TestModelBadCaseInteg(absltest.TestCase):
                     session=self._session,
                     name=function_name,
                     model_dir_path=os.path.join(tmpdir, "custom_demo_model"),
-                    platform=_deployer.TargetPlatform.WAREHOUSE,
+                    platform=deploy_platforms.TargetPlatform.WAREHOUSE,
                     target_method="predict",
                     options=model_types.WarehouseDeployOptions(
                         {
-                            "relax_version": True,
+                            "relax_version": test_env_utils.is_in_pip_env(),
                             "permanent_udf_stage_location": f"{self.full_qual_stage}/",
                             # Test stage location validation
                         }
@@ -126,11 +130,11 @@ class TestModelBadCaseInteg(absltest.TestCase):
                 session=self._session,
                 name=function_name,
                 model_dir_path=os.path.join(tmpdir, "custom_demo_model", ""),  # Test sanitizing user path input.
-                platform=_deployer.TargetPlatform.WAREHOUSE,
+                platform=deploy_platforms.TargetPlatform.WAREHOUSE,
                 target_method="predict",
                 options=model_types.WarehouseDeployOptions(
                     {
-                        "relax_version": True,
+                        "relax_version": test_env_utils.is_in_pip_env(),
                         "permanent_udf_stage_location": f"@{self.full_qual_stage}/",
                     }
                 ),
@@ -148,11 +152,11 @@ class TestModelBadCaseInteg(absltest.TestCase):
                     session=self._session,
                     name=function_name,
                     model_dir_path=os.path.join(tmpdir, "custom_demo_model"),
-                    platform=_deployer.TargetPlatform.WAREHOUSE,
+                    platform=deploy_platforms.TargetPlatform.WAREHOUSE,
                     target_method="predict",
                     options=model_types.WarehouseDeployOptions(
                         {
-                            "relax_version": True,
+                            "relax_version": test_env_utils.is_in_pip_env(),
                             "permanent_udf_stage_location": f"@{self.full_qual_stage}/",
                         }
                     ),
@@ -164,11 +168,11 @@ class TestModelBadCaseInteg(absltest.TestCase):
                 session=self._session,
                 name=function_name,
                 model_dir_path=os.path.join(tmpdir, "custom_demo_model"),
-                platform=_deployer.TargetPlatform.WAREHOUSE,
+                platform=deploy_platforms.TargetPlatform.WAREHOUSE,
                 target_method="predict",
                 options=model_types.WarehouseDeployOptions(
                     {
-                        "relax_version": True,
+                        "relax_version": test_env_utils.is_in_pip_env(),
                         "permanent_udf_stage_location": f"@{self.full_qual_stage}/",
                         "replace_udf": True,
                     }

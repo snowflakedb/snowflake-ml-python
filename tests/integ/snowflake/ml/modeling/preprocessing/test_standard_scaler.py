@@ -15,8 +15,8 @@ import numpy as np
 from absl.testing.absltest import TestCase, main
 from sklearn.preprocessing import StandardScaler as SklearnStandardScaler
 
-from snowflake.ml.modeling.preprocessing import (
-    StandardScaler,  # type: ignore[attr-defined]
+from snowflake.ml.modeling.preprocessing import (  # type: ignore[attr-defined]
+    StandardScaler,
 )
 from snowflake.ml.utils.connection_params import SnowflakeLoginOptions
 from snowflake.snowpark import Session

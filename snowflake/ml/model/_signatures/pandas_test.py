@@ -3,60 +3,91 @@ import pandas as pd
 from absl.testing import absltest
 
 from snowflake.ml.model._signatures import core, pandas_handler
+from snowflake.ml.test_utils import exception_utils
 
 
 class PandasDataFrameHandlerTest(absltest.TestCase):
     def test_validate_pd_DataFrame(self) -> None:
         df = pd.DataFrame([])
-        with self.assertRaisesRegex(ValueError, "Empty data is found."):
+        with exception_utils.assert_snowml_exceptions(
+            self, expected_original_error_type=ValueError, expected_regex="Empty data is found."
+        ):
             pandas_handler.PandasDataFrameHandler.validate(df)
 
         df = pd.DataFrame([[1, 2], [2, 4]], columns=["a", "a"])
-        with self.assertRaisesRegex(ValueError, "Duplicate column index is found"):
+        with exception_utils.assert_snowml_exceptions(
+            self, expected_original_error_type=ValueError, expected_regex="Duplicate column index is found"
+        ):
             pandas_handler.PandasDataFrameHandler.validate(df)
 
         sub_df = pd.DataFrame([2.5, 6.8])
         df = pd.DataFrame([[1, sub_df], [2, sub_df]], columns=["a", "b"])
-        with self.assertRaisesRegex(ValueError, "Unsupported type confronted in"):
+        with exception_utils.assert_snowml_exceptions(
+            self, expected_original_error_type=ValueError, expected_regex="Unsupported type confronted in"
+        ):
             pandas_handler.PandasDataFrameHandler.validate(df)
 
         df = pd.DataFrame(
             [[1, 2.0, 1, 2.0, 1, 2.0], [2, 4.0, 2, 4.0, 2, 4.0]],
             columns=pd.CategoricalIndex(["a", "b", "c", "a", "b", "c"]),
         )
-        with self.assertRaisesRegex(ValueError, "Duplicate column index is found"):
+        with exception_utils.assert_snowml_exceptions(
+            self, expected_original_error_type=ValueError, expected_regex="Duplicate column index is found"
+        ):
             pandas_handler.PandasDataFrameHandler.validate(df)
 
         df = pd.DataFrame([[1, 2], [2, 4]], columns=["a", "a"])
-        with self.assertRaisesRegex(ValueError, "Duplicate column index is found"):
+        with exception_utils.assert_snowml_exceptions(
+            self, expected_original_error_type=ValueError, expected_regex="Duplicate column index is found"
+        ):
             pandas_handler.PandasDataFrameHandler.validate(df)
 
         df = pd.DataFrame([[1, "Hello"], [2, [2, 6]]], columns=["a", "b"])
-        with self.assertRaisesRegex(ValueError, "Inconsistent type of object"):
+        with exception_utils.assert_snowml_exceptions(
+            self, expected_original_error_type=ValueError, expected_regex="Inconsistent type of object"
+        ):
             pandas_handler.PandasDataFrameHandler.validate(df)
 
         df = pd.DataFrame([[1, 2], [2, [2, 6]]], columns=["a", "b"])
-        with self.assertRaisesRegex(ValueError, "Inconsistent type of object"):
+        with exception_utils.assert_snowml_exceptions(
+            self, expected_original_error_type=ValueError, expected_regex="Inconsistent type of object"
+        ):
             pandas_handler.PandasDataFrameHandler.validate(df)
 
         df = pd.DataFrame([[1, [2, [6]]], [2, [2, 6]]], columns=["a", "b"])
-        with self.assertRaisesRegex(ValueError, "Ragged nested or Unsupported list-like data"):
+        with exception_utils.assert_snowml_exceptions(
+            self, expected_original_error_type=ValueError, expected_regex="Ragged nested or Unsupported list-like data"
+        ):
             pandas_handler.PandasDataFrameHandler.validate(df)
 
         df = pd.DataFrame([[1, [2, 6]], [2, [2, [6]]]], columns=["a", "b"])
-        with self.assertRaisesRegex(ValueError, "Ragged nested or Unsupported list-like data"):
+        with exception_utils.assert_snowml_exceptions(
+            self, expected_original_error_type=ValueError, expected_regex="Ragged nested or Unsupported list-like data"
+        ):
             pandas_handler.PandasDataFrameHandler.validate(df)
 
         df = pd.DataFrame([[1, [2.5, 6.8]], [2, [2, 6]]], columns=["a", "b"])
-        with self.assertRaisesRegex(ValueError, "Inconsistent type of element in object found in column data"):
+        with exception_utils.assert_snowml_exceptions(
+            self,
+            expected_original_error_type=ValueError,
+            expected_regex="Inconsistent type of element in object found in column data",
+        ):
             pandas_handler.PandasDataFrameHandler.validate(df)
 
         df = pd.DataFrame([[1, np.array([2.5, 6.8])], [2, np.array([2, 6])]], columns=["a", "b"])
-        with self.assertRaisesRegex(ValueError, "Inconsistent type of element in object found in column data"):
+        with exception_utils.assert_snowml_exceptions(
+            self,
+            expected_original_error_type=ValueError,
+            expected_regex="Inconsistent type of element in object found in column data",
+        ):
             pandas_handler.PandasDataFrameHandler.validate(df)
 
         df = pd.DataFrame([[1, np.array([2.5, 6.8])], [2, 6]], columns=["a", "b"])
-        with self.assertRaisesRegex(ValueError, "Inconsistent type of object found in column data"):
+        with exception_utils.assert_snowml_exceptions(
+            self,
+            expected_original_error_type=ValueError,
+            expected_regex="Inconsistent type of object found in column data",
+        ):
             pandas_handler.PandasDataFrameHandler.validate(df)
 
     def test_trunc_pd_DataFrame(self) -> None:

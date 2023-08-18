@@ -54,10 +54,10 @@ class DBManager:
         if_exists_sql = " IF EXISTS" if if_exists else ""
         self._session.sql(f"DROP DATABASE{if_exists_sql} {actual_db_name}").collect()
 
-    def cleanup_databases(self, expire_days: int = 3) -> None:
+    def cleanup_databases(self, expire_hours: int = 72) -> None:
         databases_df = self.show_databases(f"{_COMMON_PREFIX}%")
         stale_databases = databases_df.filter(
-            f"\"created_on\" < dateadd('day', {-expire_days}, current_timestamp())"
+            f"\"created_on\" < dateadd('hour', {-expire_hours}, current_timestamp())"
         ).collect()
         for stale_db in stale_databases:
             self.drop_database(stale_db.name, if_exists=True)

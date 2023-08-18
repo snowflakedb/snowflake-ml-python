@@ -7,7 +7,7 @@ Helper functions to autogenerate genrules and build rules for the following
 """
 
 load("@rules_python//python:packaging.bzl", native_py_package = "py_package")
-load("//bazel:py_rules.bzl", "py_library", "py_test")
+load("//bazel:py_rules.bzl", "py_library", "py_test", "py_genrule")
 
 AUTO_GEN_TOOL_BAZEL_PATH = "//codegen:estimator_autogen_tool"
 ESTIMATOR_TEMPLATE_BAZEL_PATH = "//codegen:sklearn_wrapper_template.py_template"
@@ -29,7 +29,7 @@ def autogen_init_file_for_module(module):
         module (str) : Name of the module to auto-generate init file for.
     """
 
-    native.genrule(
+    py_genrule(
         name = "generate_init_file",
         outs = ["__init__.py"],
         tools = [AUTO_GEN_TOOL_BAZEL_PATH],
@@ -42,7 +42,6 @@ def autogen_init_file_for_module(module):
         name = "init",
         srcs = [":generate_init_file"],
         deps = ["//snowflake/ml/_internal:init_utils"],
-        tags = ["skip_mypy_check"],
     )
 
 def get_genrule_cmd(gen_mode, template_path, module, output_path):
@@ -70,7 +69,7 @@ def autogen_estimators(module, estimator_info_list):
     )
 
     for e in estimator_info_list:
-        native.genrule(
+        py_genrule(
             name = "generate_{}".format(e.normalized_class_name),
             outs = ["{}.py".format(e.normalized_class_name)],
             tools = [AUTO_GEN_TOOL_BAZEL_PATH],
@@ -86,6 +85,7 @@ def autogen_estimators(module, estimator_info_list):
                 ":init",
                 "//snowflake/ml/modeling/framework:framework",
                 "//snowflake/ml/_internal:telemetry",
+                "//snowflake/ml/_internal/exceptions:exceptions",
                 "//snowflake/ml/_internal/utils:temp_file_utils",
                 "//snowflake/ml/_internal/utils:query_result_checker",
                 "//snowflake/ml/_internal/utils:pkg_version_utils",
@@ -93,7 +93,6 @@ def autogen_estimators(module, estimator_info_list):
                 "//snowflake/ml/model:model_signature",
                 "//snowflake/ml/model/_signatures:utils",
             ],
-            tags = ["skip_mypy_check"],
         )
 
     native_py_package(
@@ -103,7 +102,6 @@ def autogen_estimators(module, estimator_info_list):
             ":{}".format(e.normalized_class_name)
             for e in estimator_info_list
         ],
-        tags = ["skip_mypy_check"],
     )
 
 def autogen_tests_for_estimators(module, module_root_dir, estimator_info_list):
@@ -122,7 +120,7 @@ def autogen_tests_for_estimators(module, module_root_dir, estimator_info_list):
     )
 
     for e in estimator_info_list:
-        native.genrule(
+        py_genrule(
             name = "generate_test_{}".format(e.normalized_class_name),
             outs = ["test_{}.py".format(e.normalized_class_name)],
             tools = [AUTO_GEN_TOOL_BAZEL_PATH],
@@ -141,5 +139,5 @@ def autogen_tests_for_estimators(module, module_root_dir, estimator_info_list):
             timeout = "long",
             legacy_create_init = 0,
             shard_count = 5,
-            tags = ["autogen", "skip_mypy_check"],
+            tags = ["autogen"],
         )

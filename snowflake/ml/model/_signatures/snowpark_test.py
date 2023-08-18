@@ -5,6 +5,7 @@ from absl.testing import absltest
 import snowflake.snowpark.types as spt
 from snowflake.ml.model import model_signature
 from snowflake.ml.model._signatures import core, snowpark_handler
+from snowflake.ml.test_utils import exception_utils
 from snowflake.ml.utils import connection_params
 from snowflake.snowpark import Session
 
@@ -21,7 +22,9 @@ class SnowParkDataFrameHandlerTest(absltest.TestCase):
     def test_validate_snowpark_df(self) -> None:
         schema = spt.StructType([spt.StructField('"a"', spt.VariantType()), spt.StructField('"b"', spt.StringType())])
         df = self._session.create_dataframe([[1, "snow"], [3, "flake"]], schema)
-        with self.assertRaisesRegex(ValueError, "Unsupported data type"):
+        with exception_utils.assert_snowml_exceptions(
+            self, expected_original_error_type=ValueError, expected_regex="Unsupported data type"
+        ):
             snowpark_handler.SnowparkDataFrameHandler.validate(df)
 
     def test_infer_schema_snowpark_df(self) -> None:
@@ -47,7 +50,11 @@ class SnowParkDataFrameHandlerTest(absltest.TestCase):
 
         schema = spt.StructType([spt.StructField('"""a"""', spt.ArrayType(spt.LongType()))])
         df = self._session.create_dataframe([[[1, 3]]], schema)
-        with self.assertRaises(NotImplementedError):
+        with exception_utils.assert_snowml_exceptions(
+            self,
+            expected_original_error_type=NotImplementedError,
+            expected_regex="Cannot infer model signature from Snowpark DataFrame with Array Type.",
+        ):
             snowpark_handler.SnowparkDataFrameHandler.infer_signature(df, role="input"),
 
     def test_validate_data_with_features(self) -> None:
@@ -69,16 +76,22 @@ class SnowParkDataFrameHandlerTest(absltest.TestCase):
 
         schema = spt.StructType([spt.StructField('"a"', spt.LongType()), spt.StructField('"b"', spt.IntegerType())])
         df = self._session.create_dataframe([[1, 3], [3, 9]], schema)
-        with self.assertRaisesRegex(ValueError, "Feature type [^\\s]* is not met by column"):
+        with exception_utils.assert_snowml_exceptions(
+            self, expected_original_error_type=ValueError, expected_regex="Feature type [^\\s]* is not met by column"
+        ):
             model_signature._validate_snowpark_data(df, fts)
 
         schema = spt.StructType([spt.StructField('"a1"', spt.LongType()), spt.StructField('"b"', spt.StringType())])
         df = self._session.create_dataframe([[1, "snow"], [3, "flake"]], schema)
-        with self.assertRaisesRegex(ValueError, "feature [^\\s]* does not exist in data."):
+        with exception_utils.assert_snowml_exceptions(
+            self, expected_original_error_type=ValueError, expected_regex="feature [^\\s]* does not exist in data."
+        ):
             model_signature._validate_snowpark_data(df, fts)
 
         df = self._session.create_dataframe([{'"a"': 1}, {'"b"': 2}])
-        with self.assertRaisesRegex(ValueError, "Feature type [^\\s]* is not met by column"):
+        with exception_utils.assert_snowml_exceptions(
+            self, expected_original_error_type=ValueError, expected_regex="Feature type [^\\s]* is not met by column"
+        ):
             model_signature._validate_snowpark_data(df, fts)
 
         fts = [

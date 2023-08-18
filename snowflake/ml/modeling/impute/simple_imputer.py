@@ -264,7 +264,7 @@ class SimpleImputer(base.BaseTransformer):
                     self.statistics_[input_col] = self.fill_value
         else:
             state = STRATEGY_TO_STATE_DICT[self.strategy]
-            assert state is not None, "state cannot be None"
+            assert state is not None
             dataset_copy = copy.copy(dataset)
             if not pd.isna(self.missing_values):
                 # Replace `self.missing_values` with null to avoid including it when computing states.

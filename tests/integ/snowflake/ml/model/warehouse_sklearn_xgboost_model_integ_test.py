@@ -59,7 +59,7 @@ class TestWarehouseSKLearnXGBoostModelInteg(parameterized.TestCase):
         deploy_params: Dict[str, Tuple[Dict[str, Any], Callable[[Union[pd.DataFrame, SnowparkDataFrame]], Any]]],
         model_in_stage: Optional[bool] = False,
         permanent_deploy: Optional[bool] = False,
-        test_released_library: Optional[bool] = False,
+        test_released_version: Optional[str] = None,
     ) -> None:
         warehouse_model_integ_test_utils.base_test_case(
             self._db_manager,
@@ -72,20 +72,20 @@ class TestWarehouseSKLearnXGBoostModelInteg(parameterized.TestCase):
             deploy_params=deploy_params,
             model_in_stage=model_in_stage,
             permanent_deploy=permanent_deploy,
-            test_released_library=test_released_library,
+            test_released_version=test_released_version,
         )
 
     @parameterized.parameters(  # type: ignore[misc]
-        {"model_in_stage": True, "permanent_deploy": True, "test_released_library": False},
-        {"model_in_stage": False, "permanent_deploy": False, "test_released_library": False},
-        # {"model_in_stage": True, "permanent_deploy": False, "test_released_library": True},
-        # {"model_in_stage": False, "permanent_deploy": True, "test_released_library": True},
+        {"model_in_stage": True, "permanent_deploy": True, "test_released_version": None},
+        {"model_in_stage": False, "permanent_deploy": False, "test_released_version": None},
+        {"model_in_stage": True, "permanent_deploy": False, "test_released_version": "1.0.3"},
+        {"model_in_stage": False, "permanent_deploy": True, "test_released_version": "1.0.3"},
     )
     def test_skl_model_deploy(
         self,
         model_in_stage: Optional[bool] = False,
         permanent_deploy: Optional[bool] = False,
-        test_released_library: Optional[bool] = False,
+        test_released_version: Optional[str] = None,
     ) -> None:
         iris_X, iris_y = datasets.load_iris(return_X_y=True)
         # LogisticRegression is for classfication task, such as iris
@@ -104,20 +104,20 @@ class TestWarehouseSKLearnXGBoostModelInteg(parameterized.TestCase):
             },
             model_in_stage=model_in_stage,
             permanent_deploy=permanent_deploy,
-            test_released_library=test_released_library,
+            test_released_version=test_released_version,
         )
 
     @parameterized.parameters(  # type: ignore[misc]
-        {"model_in_stage": True, "permanent_deploy": True, "test_released_library": False},
-        {"model_in_stage": False, "permanent_deploy": False, "test_released_library": False},
-        # {"model_in_stage": True, "permanent_deploy": False, "test_released_library": True},
-        # {"model_in_stage": False, "permanent_deploy": True, "test_released_library": True},
+        {"model_in_stage": True, "permanent_deploy": True, "test_released_version": None},
+        {"model_in_stage": False, "permanent_deploy": False, "test_released_version": None},
+        {"model_in_stage": True, "permanent_deploy": False, "test_released_version": "1.0.3"},
+        {"model_in_stage": False, "permanent_deploy": True, "test_released_version": "1.0.3"},
     )
     def test_skl_model_proba_deploy(
         self,
         model_in_stage: Optional[bool] = False,
         permanent_deploy: Optional[bool] = False,
-        test_released_library: Optional[bool] = False,
+        test_released_version: Optional[str] = None,
     ) -> None:
         iris_X, iris_y = datasets.load_iris(return_X_y=True)
         model = ensemble.RandomForestClassifier(random_state=42)
@@ -139,20 +139,20 @@ class TestWarehouseSKLearnXGBoostModelInteg(parameterized.TestCase):
             },
             model_in_stage=model_in_stage,
             permanent_deploy=permanent_deploy,
-            test_released_library=test_released_library,
+            test_released_version=test_released_version,
         )
 
     @parameterized.parameters(  # type: ignore[misc]
-        {"model_in_stage": True, "permanent_deploy": True, "test_released_library": False},
-        {"model_in_stage": False, "permanent_deploy": False, "test_released_library": False},
-        # {"model_in_stage": True, "permanent_deploy": False, "test_released_library": True},
-        # {"model_in_stage": False, "permanent_deploy": True, "test_released_library": True},
+        {"model_in_stage": True, "permanent_deploy": True, "test_released_version": None},
+        {"model_in_stage": False, "permanent_deploy": False, "test_released_version": None},
+        {"model_in_stage": True, "permanent_deploy": False, "test_released_version": "1.0.3"},
+        {"model_in_stage": False, "permanent_deploy": True, "test_released_version": "1.0.3"},
     )
     def test_skl_multiple_output_model_proba_deploy(
         self,
         model_in_stage: Optional[bool] = False,
         permanent_deploy: Optional[bool] = False,
-        test_released_library: Optional[bool] = False,
+        test_released_version: Optional[str] = None,
     ) -> None:
         iris_X, iris_y = datasets.load_iris(return_X_y=True)
         target2 = np.random.randint(0, 6, size=iris_y.shape)
@@ -179,20 +179,20 @@ class TestWarehouseSKLearnXGBoostModelInteg(parameterized.TestCase):
             },
             model_in_stage=model_in_stage,
             permanent_deploy=permanent_deploy,
-            test_released_library=test_released_library,
+            test_released_version=test_released_version,
         )
 
     @parameterized.parameters(  # type: ignore[misc]
-        {"model_in_stage": True, "permanent_deploy": True, "test_released_library": False},
-        {"model_in_stage": False, "permanent_deploy": False, "test_released_library": False},
-        # {"model_in_stage": True, "permanent_deploy": False, "test_released_library": True},
-        # {"model_in_stage": False, "permanent_deploy": True, "test_released_library": True},
+        {"model_in_stage": True, "permanent_deploy": True, "test_released_version": None},
+        {"model_in_stage": False, "permanent_deploy": False, "test_released_version": None},
+        {"model_in_stage": True, "permanent_deploy": False, "test_released_version": "1.0.3"},
+        {"model_in_stage": False, "permanent_deploy": True, "test_released_version": "1.0.3"},
     )
     def test_xgb(
         self,
         model_in_stage: Optional[bool] = False,
         permanent_deploy: Optional[bool] = False,
-        test_released_library: Optional[bool] = False,
+        test_released_version: Optional[str] = None,
     ) -> None:
         cal_data = datasets.load_breast_cancer(as_frame=True)
         cal_X = cal_data.data
@@ -215,20 +215,20 @@ class TestWarehouseSKLearnXGBoostModelInteg(parameterized.TestCase):
             },
             model_in_stage=model_in_stage,
             permanent_deploy=permanent_deploy,
-            test_released_library=test_released_library,
+            test_released_version=test_released_version,
         )
 
     @parameterized.parameters(  # type: ignore[misc]
-        {"model_in_stage": True, "permanent_deploy": True, "test_released_library": False},
-        {"model_in_stage": False, "permanent_deploy": False, "test_released_library": False},
-        # {"model_in_stage": True, "permanent_deploy": False, "test_released_library": True},
-        # {"model_in_stage": False, "permanent_deploy": True, "test_released_library": True},
+        {"model_in_stage": True, "permanent_deploy": True, "test_released_version": None},
+        {"model_in_stage": False, "permanent_deploy": False, "test_released_version": None},
+        {"model_in_stage": True, "permanent_deploy": False, "test_released_version": "1.0.3"},
+        {"model_in_stage": False, "permanent_deploy": True, "test_released_version": "1.0.3"},
     )
     def test_xgb_sp(
         self,
         model_in_stage: Optional[bool] = False,
         permanent_deploy: Optional[bool] = False,
-        test_released_library: Optional[bool] = False,
+        test_released_version: Optional[str] = None,
     ) -> None:
         cal_data = datasets.load_breast_cancer(as_frame=True)
         cal_data_sp_df = self._session.create_dataframe(cal_data.frame)
@@ -253,7 +253,84 @@ class TestWarehouseSKLearnXGBoostModelInteg(parameterized.TestCase):
             },
             model_in_stage=model_in_stage,
             permanent_deploy=permanent_deploy,
-            test_released_library=test_released_library,
+            test_released_version=test_released_version,
+        )
+
+    @parameterized.parameters(  # type: ignore[misc]
+        {"model_in_stage": True, "permanent_deploy": True, "test_released_version": None},
+        {"model_in_stage": False, "permanent_deploy": False, "test_released_version": None},
+        {"model_in_stage": True, "permanent_deploy": False, "test_released_version": "1.0.5"},
+        {"model_in_stage": False, "permanent_deploy": True, "test_released_version": "1.0.5"},
+    )
+    def test_xgb_booster(
+        self,
+        model_in_stage: Optional[bool] = False,
+        permanent_deploy: Optional[bool] = False,
+        test_released_version: Optional[str] = None,
+    ) -> None:
+        cal_data = datasets.load_breast_cancer(as_frame=True)
+        cal_X = cal_data.data
+        cal_y = cal_data.target
+        cal_X_train, cal_X_test, cal_y_train, cal_y_test = model_selection.train_test_split(cal_X, cal_y)
+        params = dict(n_estimators=100, reg_lambda=1, gamma=0, max_depth=3, objective="binary:logistic")
+        regressor = xgboost.train(params, xgboost.DMatrix(data=cal_X_train, label=cal_y_train))
+        y_pred = regressor.predict(xgboost.DMatrix(data=cal_X_test))
+        self.base_test_case(
+            name="xgb_booster",
+            model=regressor,
+            sample_input=cal_X_test,
+            test_input=cal_X_test,
+            deploy_params={
+                "predict": (
+                    {},
+                    lambda res: np.testing.assert_allclose(res.values, np.expand_dims(y_pred, axis=1)),
+                ),
+            },
+            model_in_stage=model_in_stage,
+            permanent_deploy=permanent_deploy,
+            test_released_version=test_released_version,
+        )
+
+    @parameterized.parameters(  # type: ignore[misc]
+        {"model_in_stage": True, "permanent_deploy": True, "test_released_version": None},
+        {"model_in_stage": False, "permanent_deploy": False, "test_released_version": None},
+        {"model_in_stage": True, "permanent_deploy": False, "test_released_version": "1.0.5"},
+        {"model_in_stage": False, "permanent_deploy": True, "test_released_version": "1.0.5"},
+    )
+    def test_xgb_booster_sp(
+        self,
+        model_in_stage: Optional[bool] = False,
+        permanent_deploy: Optional[bool] = False,
+        test_released_version: Optional[str] = None,
+    ) -> None:
+        cal_data = datasets.load_breast_cancer(as_frame=True)
+        cal_data_sp_df = self._session.create_dataframe(cal_data.frame)
+        cal_data_sp_df_train, cal_data_sp_df_test = tuple(cal_data_sp_df.random_split([0.25, 0.75], seed=2568))
+        cal_data_pd_df_train = cal_data_sp_df_train.to_pandas()
+        params = dict(n_estimators=100, reg_lambda=1, gamma=0, max_depth=3, objective="binary:logistic")
+        regressor = xgboost.train(
+            params,
+            xgboost.DMatrix(data=cal_data_pd_df_train.drop(columns=["target"]), label=cal_data_pd_df_train["target"]),
+        )
+        cal_data_sp_df_test_X = cal_data_sp_df_test.drop('"target"')
+        y_pred = regressor.predict(xgboost.DMatrix(data=cal_data_sp_df_test_X.to_pandas()))
+        self.base_test_case(
+            name="xgb_booster_sp",
+            model=regressor,
+            sample_input=cal_data_sp_df_train.drop('"target"'),
+            test_input=cal_data_sp_df_test_X,
+            deploy_params={
+                "predict": (
+                    {},
+                    lambda res: np.testing.assert_allclose(
+                        res.to_pandas().values,
+                        np.expand_dims(y_pred, axis=1),
+                    ),
+                ),
+            },
+            model_in_stage=model_in_stage,
+            permanent_deploy=permanent_deploy,
+            test_released_version=test_released_version,
         )
 
 

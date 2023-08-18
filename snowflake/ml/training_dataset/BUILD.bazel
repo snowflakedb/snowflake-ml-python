@@ -1,0 +1,13 @@
+load("//bazel:py_rules.bzl", "py_library")
+
+package(default_visibility = ["//visibility:public"])
+
+py_library(
+    name = "training_dataset",
+    srcs = [
+        "training_dataset.py",
+    ],
+    deps = [
+        "//snowflake/ml/_internal/utils:query_result_checker",
+    ],
+)

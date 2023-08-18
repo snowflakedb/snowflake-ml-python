@@ -333,7 +333,7 @@ class TelemetryTest(parameterized.TestCase):
             utils_telemetry.TelemetryField.KEY_CUSTOM_TAGS.value: {"custom_tag": "tag"},
         }
         self.assertIsNotNone(actual_statement_params)
-        assert actual_statement_params is not None, "actual_statement_params cannot be None"  # mypy
+        assert actual_statement_params is not None  # mypy
         self.assertLessEqual(expected_statement_params.items(), actual_statement_params.items())
         self.assertIn("DummyObject.foo", actual_statement_params[utils_telemetry.TelemetryField.KEY_FUNC_NAME.value])
         self.assertFalse(hasattr(test_obj.foo2(), "_statement_params"))

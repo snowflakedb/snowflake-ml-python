@@ -2,6 +2,7 @@ import pandas as pd
 from absl.testing import absltest
 
 from snowflake.ml.model._signatures import core, utils
+from snowflake.ml.test_utils import exception_utils
 
 
 class ModelSignatureMiscTest(absltest.TestCase):
@@ -23,7 +24,11 @@ class ModelSignatureMiscTest(absltest.TestCase):
         fts = [core.FeatureSpec("a", core.DataType.INT64, shape=(2,))]
         utils.rename_features(fts)
 
-        with self.assertRaises(ValueError):
+        with exception_utils.assert_snowml_exceptions(
+            self,
+            expected_original_error_type=ValueError,
+            expected_regex="\\d+ feature names are provided, while there are \\d+ features.",
+        ):
             fts = [core.FeatureSpec("a", core.DataType.INT64, shape=(2,))]
             utils.rename_features(fts, ["b", "c"])
 

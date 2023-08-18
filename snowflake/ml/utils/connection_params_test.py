@@ -1,9 +1,12 @@
 import configparser
 import os
 import tempfile
+from typing import Optional
 
 import connection_params
 from absl.testing import absltest
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import rsa
 
 
 class SnowflakeLoginOptionsTest(absltest.TestCase):  # # type: ignore
@@ -95,12 +98,29 @@ class SnowflakeLoginOptionsTest(absltest.TestCase):  # # type: ignore
             "schema": "public",
             "user": "admin2",
             "warehouse": "env_warehouse",
+            # Default
+            "protocol": "https",
+            "ssl": "on",
+            "token_file": "/snowflake/session/token",
         }
 
         # Default token file
         self._token_file = tempfile.NamedTemporaryFile()
         self._token_file.write(b"login_file_token")
         self._token_file.flush()
+
+    @staticmethod
+    def genPrivateRsaKey(key_password: Optional[bytes] = None) -> bytes:
+        "Generate a new RSA private key and return."
+        private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+        encryption_algorithm: serialization.KeySerializationEncryption = serialization.NoEncryption()
+        if key_password:
+            encryption_algorithm = serialization.BestAvailableEncryption(key_password)
+        return private_key.private_bytes(
+            encoding=serialization.Encoding.PEM,
+            format=serialization.PrivateFormat.PKCS8,
+            encryption_algorithm=encryption_algorithm,
+        )
 
     def testReadInvalidSnowSQLConfigFile(self) -> None:
         """Tests if given snowsql config file is invalid, it raises exception."""
@@ -117,57 +137,30 @@ class SnowflakeLoginOptionsTest(absltest.TestCase):  # # type: ignore
         connection_params._DEFAULT_CONNECTION_FILE = "/does/not/exist"
         with absltest.mock.patch.dict(os.environ, self._default_env_variable_dict):
             params = connection_params.SnowflakeLoginOptions()
+            # TODO - SUMIT
             self.assertEqual(params, self._connection_dict_from_env)
 
-    def testTokenOverrideUserPasswordAsWellAsTokenFile(self) -> None:
-        """Tests if token overrides user/password & token_file from environment."""
-        connection_params._DEFAULT_CONNECTION_FILE = "/does/not/exist"
-        env_vars = self._default_env_variable_dict
-        env_vars["SNOWFLAKE_TOKEN"] = "env_token"
-        env_vars["SNOWFLAKE_TOKEN_FILE"] = self._token_file.name
-        with absltest.mock.patch.dict(os.environ, env_vars):
-            params = connection_params.SnowflakeLoginOptions()
-            expected = self._connection_dict_from_env
-            del expected["user"]
-            del expected["password"]
-            expected["token"] = "env_token"
-            expected["authenticator"] = "oauth"
-            self.assertEqual(params, expected)
-
-    def testTokenFileOverrideEnvUserPassword(self) -> None:
-        """Tests if token file overrides user/password from environment."""
+    def testOptionalEmptyEnvVarRemoved(self) -> None:
+        """Tests that empty optional env variables are skipped."""
         connection_params._DEFAULT_CONNECTION_FILE = "/does/not/exist"
         env_vars = self._default_env_variable_dict
         env_vars["SNOWFLAKE_TOKEN_FILE"] = self._token_file.name
-        with absltest.mock.patch.dict(os.environ, self._default_env_variable_dict):
+        env_vars["SNOWFLAKE_USER"] = ""  # Optional field empty env var => will not come in result
+        del env_vars["SNOWFLAKE_PASSWORD"]  # Removing env var for password => will not come in result
+        with absltest.mock.patch.dict(os.environ, env_vars, clear=True):
             params = connection_params.SnowflakeLoginOptions()
             expected = self._connection_dict_from_env
             del expected["user"]
-            del expected["password"]
+            del expected["password"]  # No env var => will not come in result
+            expected["token_file"] = self._token_file.name
             expected["token"] = "login_file_token"
             expected["authenticator"] = "oauth"
             self.assertEqual(params, expected)
 
-    @absltest.mock.patch.dict(  # type: ignore
-        os.environ,
-        {"SNOWFLAKE_ACCOUNT": "", "SNOWFLAKE_TOKEN": "env_token"},
-        clear=True,
-    )
-    def testTokenFileOverridesLoginFile(self) -> None:
-        """Tests if token overrides user/password from file."""
-        connection_params._DEFAULT_CONNECTION_FILE = self._login_file_toml.name
-        params = connection_params.SnowflakeLoginOptions("foo")
-        expected = self._connection_dict_from_toml_foo
-        del expected["user"]
-        del expected["password"]
-        expected["token"] = "env_token"
-        expected["authenticator"] = "oauth"
-        self.assertEqual(params, expected)
-
     def testAllOptionalFieldsMissing(self) -> None:
         """Tests if ommitting all optional fields parses correctly."""
-        self._minimal_login_file = tempfile.NamedTemporaryFile(suffix=".config")
-        self._minimal_login_file.write(
+        minimal_login_file = tempfile.NamedTemporaryFile(suffix=".config")
+        minimal_login_file.write(
             bytes(
                 """
                 [connections]
@@ -178,8 +171,8 @@ class SnowflakeLoginOptionsTest(absltest.TestCase):  # # type: ignore
                 "utf-8",
             )
         )
-        self._minimal_login_file.flush()
-        connection_params._DEFAULT_CONNECTION_FILE = self._minimal_login_file.name
+        minimal_login_file.flush()
+        connection_params._DEFAULT_CONNECTION_FILE = minimal_login_file.name
         params = connection_params.SnowflakeLoginOptions()
         expected = {
             "account": "snowflake",
@@ -190,8 +183,8 @@ class SnowflakeLoginOptionsTest(absltest.TestCase):  # # type: ignore
 
     def testExternalBrowser(self) -> None:
         """Tests that using external browser authentication is correctly passed on."""
-        self._minimal_login_file = tempfile.NamedTemporaryFile(suffix=".json")
-        self._minimal_login_file.write(
+        minimal_login_file = tempfile.NamedTemporaryFile(suffix=".json")
+        minimal_login_file.write(
             bytes(
                 """
                 [connections]
@@ -202,13 +195,127 @@ class SnowflakeLoginOptionsTest(absltest.TestCase):  # # type: ignore
                 "utf-8",
             )
         )
-        self._minimal_login_file.flush()
-        connection_params._DEFAULT_CONNECTION_FILE = self._minimal_login_file.name
+        minimal_login_file.flush()
+        connection_params._DEFAULT_CONNECTION_FILE = minimal_login_file.name
         params = connection_params.SnowflakeLoginOptions()
         expected = {
             "account": "snowflake",
             "user": "admin",
             "authenticator": "externalbrowser",
+        }
+        self.assertEqual(params, expected)
+
+    def testUnencryptedPrivateKeyPath(self) -> None:
+        """Tests unencrypted private key path populates private key."""
+        unencrypted_pem_private_key = self.genPrivateRsaKey()
+        private_key_path = tempfile.NamedTemporaryFile(suffix=".pk8")
+        private_key_path.write(unencrypted_pem_private_key)
+        private_key_path.flush()
+        minimal_login_file = tempfile.NamedTemporaryFile(suffix=".config")
+        minimal_login_file.write(
+            bytes(
+                """
+                [connections]
+                accountname = "snowflake"
+                user = "admin"
+                private_key_path = "{private_key_path}"
+                """.format(
+                    private_key_path=private_key_path.name
+                ),
+                "utf-8",
+            )
+        )
+        minimal_login_file.flush()
+
+        connection_params._DEFAULT_CONNECTION_FILE = minimal_login_file.name
+        params = connection_params.SnowflakeLoginOptions()
+
+        # Check private_key is set and not empty - aka deserialization worked
+        self.assertNotEqual(params["private_key"], "")
+        # No need to validate the value. So resetting it.
+        del params["private_key"]
+
+        expected = {
+            "account": "snowflake",
+            "user": "admin",
+            "private_key_path": private_key_path.name,  # We do not remove it, connect() does not use it
+        }
+        self.assertEqual(params, expected)
+
+    def testUnencryptedPrivateKeyPathWithEmptyEnvPassword(self) -> None:
+        """Tests unencrypted private key path populates private key where empty env var for passphrase."""
+        unencrypted_pem_private_key = self.genPrivateRsaKey()
+        private_key_path = tempfile.NamedTemporaryFile(suffix=".pk8")
+        private_key_path.write(unencrypted_pem_private_key)
+        private_key_path.flush()
+        minimal_login_file = tempfile.NamedTemporaryFile(suffix=".config")
+        minimal_login_file.write(
+            bytes(
+                """
+                [connections]
+                accountname = "snowflake"
+                user = "admin"
+                private_key_path = "{private_key_path}"
+                """.format(
+                    private_key_path=private_key_path.name
+                ),
+                "utf-8",
+            )
+        )
+        minimal_login_file.flush()
+
+        connection_params._DEFAULT_CONNECTION_FILE = minimal_login_file.name
+        with absltest.mock.patch.dict(os.environ, {"SNOWFLAKE_PRIVATE_KEY_PASSPHRASE": ""}):
+            params = connection_params.SnowflakeLoginOptions()
+
+        # Check private_key is set and not empty - aka deserialization worked
+        self.assertNotEqual(params["private_key"], "")
+        # No need to validate the value. So resetting it.
+        del params["private_key"]
+
+        expected = {
+            "account": "snowflake",
+            "user": "admin",
+            "private_key_path": private_key_path.name,  # We do not remove it, connect() does not use it
+        }
+        self.assertEqual(params, expected)
+
+    def testEncryptedPrivateKeyPath(self) -> None:
+        """Tests unencrypted private key path populates private key."""
+        key_password = "foo"
+        unencrypted_pem_private_key = self.genPrivateRsaKey(bytes(key_password, "utf-8"))
+        private_key_path = tempfile.NamedTemporaryFile(suffix=".pk8")
+        private_key_path.write(unencrypted_pem_private_key)
+        private_key_path.flush()
+        minimal_login_file = tempfile.NamedTemporaryFile(suffix=".config")
+        minimal_login_file.write(
+            bytes(
+                """
+                [connections]
+                accountname = "snowflake"
+                user = "admin"
+                private_key_path = "{private_key_path}"
+                """.format(
+                    private_key_path=private_key_path.name
+                ),
+                "utf-8",
+            )
+        )
+        minimal_login_file.flush()
+
+        connection_params._DEFAULT_CONNECTION_FILE = minimal_login_file.name
+        with absltest.mock.patch.dict(os.environ, {"SNOWFLAKE_PRIVATE_KEY_PASSPHRASE": key_password}):
+            params = connection_params.SnowflakeLoginOptions()
+
+        # Check private_key is set and not empty - aka deserialization worked
+        self.assertNotEqual(params["private_key"], "")
+        # No need to validate the value. So resetting it.
+        del params["private_key"]
+
+        expected = {
+            "account": "snowflake",
+            "user": "admin",
+            "private_key_path": private_key_path.name,  # We do not remove it, connect() does not use it
         }
         self.assertEqual(params, expected)
 

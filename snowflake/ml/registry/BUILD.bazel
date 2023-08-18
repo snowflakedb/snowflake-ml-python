@@ -16,6 +16,7 @@ py_library(
         "//snowflake/ml/_internal:telemetry",
         "//snowflake/ml/model:_model",
         "//snowflake/ml/model:_deployer",
+        "//snowflake/ml/model:deploy_platforms",
         "//snowflake/ml/modeling/framework:framework"
     ],
 )

@@ -5,6 +5,7 @@ import torch
 from absl.testing import absltest
 
 from snowflake.ml.model import model_signature
+from snowflake.ml.test_utils import exception_utils
 
 
 class ModelSignatureMiscTest(absltest.TestCase):
@@ -91,16 +92,26 @@ class ModelSignatureMiscTest(absltest.TestCase):
 
         df = pd.DataFrame([1, 2, 3, 4])
         lt = [df, arr]
-        with self.assertRaises(NotImplementedError):
+        with exception_utils.assert_snowml_exceptions(
+            self, expected_original_error_type=NotImplementedError, expected_regex="Un-supported type provided"
+        ):
             model_signature._infer_signature(lt, role="input")
 
-        with self.assertRaises(ValueError):
+        with exception_utils.assert_snowml_exceptions(
+            self,
+            expected_original_error_type=ValueError,
+            expected_regex="Inconsistent type of object found in data",
+        ):
             model_signature._infer_signature([True, 1], role="input")
 
-        with self.assertRaises(NotImplementedError):
+        with exception_utils.assert_snowml_exceptions(
+            self, expected_original_error_type=NotImplementedError, expected_regex="Un-supported type provided"
+        ):
             model_signature._infer_signature(1, role="input")
 
-        with self.assertRaises(NotImplementedError):
+        with exception_utils.assert_snowml_exceptions(
+            self, expected_original_error_type=NotImplementedError, expected_regex="Un-supported type provided"
+        ):
             model_signature._infer_signature([], role="input")
 
     def test_validate_pandas_df(self) -> None:
@@ -111,18 +122,30 @@ class ModelSignatureMiscTest(absltest.TestCase):
 
         model_signature._validate_pandas_df(pd.DataFrame([[2, 5], [6, 8]], columns=["a", "b"]), fts)
 
-        with self.assertRaisesRegex(ValueError, "Feature type [^\\s]* is not met by all elements"):
+        with exception_utils.assert_snowml_exceptions(
+            self,
+            expected_original_error_type=ValueError,
+            expected_regex="Feature type [^\\s]* is not met by all elements",
+        ):
             model_signature._validate_pandas_df(pd.DataFrame([[2.5, 5], [6.8, 8]], columns=["a", "b"]), fts)
 
-        with self.assertRaisesRegex(ValueError, "feature [^\\s]* does not exist in data."):
+        with exception_utils.assert_snowml_exceptions(
+            self, expected_original_error_type=ValueError, expected_regex="feature [^\\s]* does not exist in data."
+        ):
             model_signature._validate_pandas_df(pd.DataFrame([5, 6], columns=["a"]), fts)
 
         model_signature._validate_pandas_df(pd.DataFrame([5, 6], columns=["a"]), fts[:1])
 
-        with self.assertRaisesRegex(ValueError, "feature [^\\s]* does not exist in data."):
+        with exception_utils.assert_snowml_exceptions(
+            self, expected_original_error_type=ValueError, expected_regex="feature [^\\s]* does not exist in data."
+        ):
             model_signature._validate_pandas_df(pd.DataFrame([[2, 5], [6, 8]], columns=["c", "d"]), fts)
 
-        with self.assertRaisesRegex(ValueError, "Feature is a scalar feature while list data is provided."):
+        with exception_utils.assert_snowml_exceptions(
+            self,
+            expected_original_error_type=ValueError,
+            expected_regex="Feature is a scalar feature while list data is provided.",
+        ):
             model_signature._validate_pandas_df(
                 pd.DataFrame([[1, [2.5, 6.8]], [2, [2.5, 6.8]]], columns=["a", "b"]), fts
             )
@@ -134,47 +157,83 @@ class ModelSignatureMiscTest(absltest.TestCase):
 
         model_signature._validate_pandas_df(pd.DataFrame([[1, [2.5, 6.8]], [2, [2.5, 6.8]]], columns=["a", "b"]), fts)
 
-        with self.assertRaisesRegex(ValueError, "Feature is a array type feature while scalar data is provided."):
+        with exception_utils.assert_snowml_exceptions(
+            self,
+            expected_original_error_type=ValueError,
+            expected_regex="Feature is a array type feature while scalar data is provided.",
+        ):
             model_signature._validate_pandas_df(pd.DataFrame([[2, 2.5], [6, 6.8]], columns=["a", "b"]), fts)
 
-        with self.assertRaisesRegex(ValueError, "Feature shape [\\(\\)0-9,\\s-]* is not met by all elements"):
+        with exception_utils.assert_snowml_exceptions(
+            self,
+            expected_original_error_type=ValueError,
+            expected_regex="Feature shape [\\(\\)0-9,\\s-]* is not met by all elements",
+        ):
             model_signature._validate_pandas_df(
                 pd.DataFrame([[1, [2.5, 6.8, 6.8]], [2, [2.5, 6.8, 6.8]]], columns=["a", "b"]), fts
             )
 
-        with self.assertRaisesRegex(ValueError, "Feature shape [\\(\\)0-9,\\s-]* is not met by all elements"):
+        with exception_utils.assert_snowml_exceptions(
+            self,
+            expected_original_error_type=ValueError,
+            expected_regex="Feature shape [\\(\\)0-9,\\s-]* is not met by all elements",
+        ):
             model_signature._validate_pandas_df(
                 pd.DataFrame([[1, [2.5, 6.8]], [2, [2.5, 6.8, 6.8]]], columns=["a", "b"]), fts
             )
 
-        with self.assertRaisesRegex(ValueError, "Feature type [^\\s]* is not met by all elements"):
+        with exception_utils.assert_snowml_exceptions(
+            self,
+            expected_original_error_type=ValueError,
+            expected_regex="Feature type [^\\s]* is not met by all elements",
+        ):
             model_signature._validate_pandas_df(pd.DataFrame([[1, [2, 5]], [2, [6, 8]]], columns=["a", "b"]), fts)
 
         model_signature._validate_pandas_df(
             pd.DataFrame([[1, np.array([2.5, 6.8])], [2, np.array([2.5, 6.8])]], columns=["a", "b"]), fts
         )
 
-        with self.assertRaisesRegex(ValueError, "Feature shape [\\(\\)0-9,\\s-]* is not met by all elements"):
+        with exception_utils.assert_snowml_exceptions(
+            self,
+            expected_original_error_type=ValueError,
+            expected_regex="Feature shape [\\(\\)0-9,\\s-]* is not met by all elements",
+        ):
             model_signature._validate_pandas_df(
                 pd.DataFrame([[1, np.array([2.5, 6.8, 6.8])], [2, np.array([2.5, 6.8, 6.8])]], columns=["a", "b"]), fts
             )
 
-        with self.assertRaisesRegex(ValueError, "Feature shape [\\(\\)0-9,\\s-]* is not met by all elements"):
+        with exception_utils.assert_snowml_exceptions(
+            self,
+            expected_original_error_type=ValueError,
+            expected_regex="Feature shape [\\(\\)0-9,\\s-]* is not met by all elements",
+        ):
             model_signature._validate_pandas_df(
                 pd.DataFrame([[1, np.array([2.5, 6.8])], [2, np.array([2.5, 6.8, 6.8])]], columns=["a", "b"]), fts
             )
 
-        with self.assertRaisesRegex(ValueError, "Feature type [^\\s]* is not met by all elements"):
+        with exception_utils.assert_snowml_exceptions(
+            self,
+            expected_original_error_type=ValueError,
+            expected_regex="Feature type [^\\s]* is not met by all elements",
+        ):
             model_signature._validate_pandas_df(
                 pd.DataFrame([[1, np.array([2, 5])], [2, np.array([6, 8])]], columns=["a", "b"]), fts
             )
 
-        with self.assertRaisesRegex(ValueError, "Feature is a array type feature while scalar data is provided."):
+        with exception_utils.assert_snowml_exceptions(
+            self,
+            expected_original_error_type=ValueError,
+            expected_regex="Feature is a array type feature while scalar data is provided.",
+        ):
             model_signature._validate_pandas_df(
                 pd.DataFrame([ele.encode() for ele in ["a", "b", "c", "d"]], columns=["b"]), fts[-1:]
             )
 
-        with self.assertRaisesRegex(ValueError, "Feature is a array type feature while scalar data is provided."):
+        with exception_utils.assert_snowml_exceptions(
+            self,
+            expected_original_error_type=ValueError,
+            expected_regex="Feature is a array type feature while scalar data is provided.",
+        ):
             model_signature._validate_pandas_df(pd.DataFrame(["a", "b", "c", "d"], columns=["b"]), fts[-1:])
 
         fts = [
@@ -192,7 +251,11 @@ class ModelSignatureMiscTest(absltest.TestCase):
             pd.DataFrame([[1, [2.5, 6.8]], [2, [2.5, 6.8, 6.8]]], columns=["a", "b"]), fts
         )
 
-        with self.assertRaisesRegex(ValueError, "Feature type [^\\s]* is not met by all elements"):
+        with exception_utils.assert_snowml_exceptions(
+            self,
+            expected_original_error_type=ValueError,
+            expected_regex="Feature type [^\\s]* is not met by all elements",
+        ):
             model_signature._validate_pandas_df(pd.DataFrame([[1, [2, 5]], [2, [6, 8]]], columns=["a", "b"]), fts)
 
         model_signature._validate_pandas_df(
@@ -207,7 +270,11 @@ class ModelSignatureMiscTest(absltest.TestCase):
             pd.DataFrame([[1, np.array([2.5, 6.8])], [2, np.array([2.5, 6.8, 6.8])]], columns=["a", "b"]), fts
         )
 
-        with self.assertRaisesRegex(ValueError, "Feature type [^\\s]* is not met by all elements"):
+        with exception_utils.assert_snowml_exceptions(
+            self,
+            expected_original_error_type=ValueError,
+            expected_regex="Feature type [^\\s]* is not met by all elements",
+        ):
             model_signature._validate_pandas_df(
                 pd.DataFrame([[1, np.array([2, 5])], [2, np.array([6, 8])]], columns=["a", "b"]), fts
             )
@@ -221,17 +288,29 @@ class ModelSignatureMiscTest(absltest.TestCase):
             pd.DataFrame([[1, [[2.5], [6.8]]], [2, [[2.5], [6.8]]]], columns=["a", "b"]), fts
         )
 
-        with self.assertRaisesRegex(ValueError, "Feature shape [\\(\\)0-9,\\s-]* is not met by all elements"):
+        with exception_utils.assert_snowml_exceptions(
+            self,
+            expected_original_error_type=ValueError,
+            expected_regex="Feature shape [\\(\\)0-9,\\s-]* is not met by all elements",
+        ):
             model_signature._validate_pandas_df(
                 pd.DataFrame([[1, [[2.5], [6.8]]], [2, [[2.5], [6.8], [6.8]]]], columns=["a", "b"]), fts
             )
 
-        with self.assertRaisesRegex(ValueError, "Feature shape [\\(\\)0-9,\\s-]* is not met by all elements"):
+        with exception_utils.assert_snowml_exceptions(
+            self,
+            expected_original_error_type=ValueError,
+            expected_regex="Feature shape [\\(\\)0-9,\\s-]* is not met by all elements",
+        ):
             model_signature._validate_pandas_df(
                 pd.DataFrame([[1, [2.5, 6.8]], [2, [2.5, 6.8]]], columns=["a", "b"]), fts
             )
 
-        with self.assertRaisesRegex(ValueError, "Feature type [^\\s]* is not met by all elements"):
+        with exception_utils.assert_snowml_exceptions(
+            self,
+            expected_original_error_type=ValueError,
+            expected_regex="Feature type [^\\s]* is not met by all elements",
+        ):
             model_signature._validate_pandas_df(
                 pd.DataFrame([[1, [[2], [5]]], [2, [[6], [8]]]], columns=["a", "b"]), fts
             )
@@ -240,18 +319,30 @@ class ModelSignatureMiscTest(absltest.TestCase):
             pd.DataFrame([[1, np.array([[2.5], [6.8]])], [2, np.array([[2.5], [6.8]])]], columns=["a", "b"]), fts
         )
 
-        with self.assertRaisesRegex(ValueError, "Feature shape [\\(\\)0-9,\\s-]* is not met by all elements"):
+        with exception_utils.assert_snowml_exceptions(
+            self,
+            expected_original_error_type=ValueError,
+            expected_regex="Feature shape [\\(\\)0-9,\\s-]* is not met by all elements",
+        ):
             model_signature._validate_pandas_df(
                 pd.DataFrame([[1, np.array([[2.5], [6.8]])], [2, np.array([[2.5], [6.8], [6.8]])]], columns=["a", "b"]),
                 fts,
             )
 
-        with self.assertRaisesRegex(ValueError, "Feature shape [\\(\\)0-9,\\s-]* is not met by all elements"):
+        with exception_utils.assert_snowml_exceptions(
+            self,
+            expected_original_error_type=ValueError,
+            expected_regex="Feature shape [\\(\\)0-9,\\s-]* is not met by all elements",
+        ):
             model_signature._validate_pandas_df(
                 pd.DataFrame([[1, np.array([2.5, 6.8])], [2, np.array([2.5, 6.8])]], columns=["a", "b"]), fts
             )
 
-        with self.assertRaisesRegex(ValueError, "Feature type [^\\s]* is not met by all elements"):
+        with exception_utils.assert_snowml_exceptions(
+            self,
+            expected_original_error_type=ValueError,
+            expected_regex="Feature type [^\\s]* is not met by all elements",
+        ):
             model_signature._validate_pandas_df(
                 pd.DataFrame([[1, np.array([[2], [5]])], [2, np.array([[6], [8]])]], columns=["a", "b"]), fts
             )
@@ -259,15 +350,27 @@ class ModelSignatureMiscTest(absltest.TestCase):
         fts = [model_signature.FeatureSpec("a", model_signature.DataType.STRING)]
         model_signature._validate_pandas_df(pd.DataFrame(["a", "b", "c", "d"], columns=["a"]), fts)
 
-        with self.assertRaisesRegex(ValueError, "Feature type [^\\s]* is not met by all elements"):
+        with exception_utils.assert_snowml_exceptions(
+            self,
+            expected_original_error_type=ValueError,
+            expected_regex="Feature type [^\\s]* is not met by all elements",
+        ):
             model_signature._validate_pandas_df(
                 pd.DataFrame([ele.encode() for ele in ["a", "b", "c", "d"]], columns=["a"]), fts
             )
 
-        with self.assertRaisesRegex(ValueError, "Feature is a scalar feature while list data is provided."):
+        with exception_utils.assert_snowml_exceptions(
+            self,
+            expected_original_error_type=ValueError,
+            expected_regex="Feature is a scalar feature while list data is provided.",
+        ):
             model_signature._validate_pandas_df(pd.DataFrame(data={"a": [[1, 2]]}), fts)
 
-        with self.assertRaisesRegex(ValueError, "Feature is a scalar feature while array data is provided."):
+        with exception_utils.assert_snowml_exceptions(
+            self,
+            expected_original_error_type=ValueError,
+            expected_regex="Feature is a scalar feature while array data is provided.",
+        ):
             model_signature._validate_pandas_df(pd.DataFrame(data={"a": [np.array([1, 2])]}), fts)
 
         fts = [model_signature.FeatureSpec("a", model_signature.DataType.BYTES)]
@@ -275,13 +378,25 @@ class ModelSignatureMiscTest(absltest.TestCase):
             pd.DataFrame([ele.encode() for ele in ["a", "b", "c", "d"]], columns=["a"]), fts
         )
 
-        with self.assertRaisesRegex(ValueError, "Feature type [^\\s]* is not met by all elements"):
+        with exception_utils.assert_snowml_exceptions(
+            self,
+            expected_original_error_type=ValueError,
+            expected_regex="Feature type [^\\s]* is not met by all elements",
+        ):
             model_signature._validate_pandas_df(pd.DataFrame(["a", "b", "c", "d"], columns=["a"]), fts)
 
-        with self.assertRaisesRegex(ValueError, "Feature is a scalar feature while list data is provided."):
+        with exception_utils.assert_snowml_exceptions(
+            self,
+            expected_original_error_type=ValueError,
+            expected_regex="Feature is a scalar feature while list data is provided.",
+        ):
             model_signature._validate_pandas_df(pd.DataFrame(data={"a": [[1, 2]]}), fts)
 
-        with self.assertRaisesRegex(ValueError, "Feature is a scalar feature while array data is provided."):
+        with exception_utils.assert_snowml_exceptions(
+            self,
+            expected_original_error_type=ValueError,
+            expected_regex="Feature is a scalar feature while array data is provided.",
+        ):
             model_signature._validate_pandas_df(pd.DataFrame(data={"a": [np.array([1, 2])]}), fts)
 
     def test_validate_data_with_features(self) -> None:
@@ -290,37 +405,73 @@ class ModelSignatureMiscTest(absltest.TestCase):
             model_signature.FeatureSpec("input_feature_1", model_signature.DataType.INT64),
         ]
 
-        with self.assertRaisesRegex(ValueError, "Empty data is found."):
+        with exception_utils.assert_snowml_exceptions(
+            self, expected_original_error_type=ValueError, expected_regex="Empty data is found."
+        ):
             model_signature._convert_and_validate_local_data(np.array([]), fts)
 
-        with self.assertRaisesRegex(ValueError, "Scalar data is found."):
+        with exception_utils.assert_snowml_exceptions(
+            self, expected_original_error_type=ValueError, expected_regex="Scalar data is found."
+        ):
             model_signature._convert_and_validate_local_data(np.array(5), fts)
 
-        with self.assertRaisesRegex(ValueError, "Feature type [^\\s]* is not met by all elements"):
+        with exception_utils.assert_snowml_exceptions(
+            self,
+            expected_original_error_type=ValueError,
+            expected_regex="Feature type [^\\s]* is not met by all elements",
+        ):
             model_signature._convert_and_validate_local_data(np.array([[2.5, 5], [6.8, 8]]), fts)
 
-        with self.assertRaisesRegex(ValueError, "Un-supported type <class 'list'> provided."):
+        with exception_utils.assert_snowml_exceptions(
+            self,
+            expected_original_error_type=ValueError,
+            expected_regex="Un-supported type <class 'list'> provided.",
+        ):
             model_signature._convert_and_validate_local_data([], fts)
 
-        with self.assertRaisesRegex(ValueError, "Inconsistent type of object found in data"):
+        with exception_utils.assert_snowml_exceptions(
+            self,
+            expected_original_error_type=ValueError,
+            expected_regex="Inconsistent type of object found in data",
+        ):
             model_signature._convert_and_validate_local_data([1, [1, 1]], fts)
 
-        with self.assertRaisesRegex(ValueError, "Ill-shaped list data"):
+        with exception_utils.assert_snowml_exceptions(
+            self, expected_original_error_type=ValueError, expected_regex="Ill-shaped list data"
+        ):
             model_signature._convert_and_validate_local_data([[1], [1, 1]], fts)
 
-        with self.assertRaisesRegex(ValueError, "Feature type [^\\s]* is not met by all elements"):
+        with exception_utils.assert_snowml_exceptions(
+            self,
+            expected_original_error_type=ValueError,
+            expected_regex="Feature type [^\\s]* is not met by all elements",
+        ):
             model_signature._convert_and_validate_local_data([[2.1, 5.0], [6.8, 8.0]], fts)
 
-        with self.assertRaisesRegex(ValueError, "Feature type [^\\s]* is not met by all elements"):
+        with exception_utils.assert_snowml_exceptions(
+            self,
+            expected_original_error_type=ValueError,
+            expected_regex="Feature type [^\\s]* is not met by all elements",
+        ):
             model_signature._convert_and_validate_local_data(pd.DataFrame([[2.5, 5], [6.8, 8]]), fts)
 
-        with self.assertRaisesRegex(ValueError, "Data does not have the same number of features as signature"):
+        with exception_utils.assert_snowml_exceptions(
+            self,
+            expected_original_error_type=ValueError,
+            expected_regex="Data does not have the same number of features as signature",
+        ):
             model_signature._convert_and_validate_local_data(pd.DataFrame([5, 6]), fts)
 
-        with self.assertRaisesRegex(ValueError, "Data does not have the same number of features as signature."):
+        with exception_utils.assert_snowml_exceptions(
+            self,
+            expected_original_error_type=ValueError,
+            expected_regex="Data does not have the same number of features as signature.",
+        ):
             model_signature._convert_and_validate_local_data(np.array([5, 6]), fts)
 
-        with self.assertRaisesRegex(ValueError, "feature [^\\s]* does not exist in data."):
+        with exception_utils.assert_snowml_exceptions(
+            self, expected_original_error_type=ValueError, expected_regex="feature [^\\s]* does not exist in data."
+        ):
             model_signature._convert_and_validate_local_data(pd.DataFrame([[2, 5], [6, 8]], columns=["a", "b"]), fts)
 
         df = model_signature._convert_and_validate_local_data(np.array([5, 6]), fts[:1])

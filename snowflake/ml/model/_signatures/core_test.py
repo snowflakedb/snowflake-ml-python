@@ -3,6 +3,7 @@ from absl.testing import absltest
 
 import snowflake.snowpark.types as spt
 from snowflake.ml.model._signatures import core
+from snowflake.ml.test_utils import exception_utils
 
 
 class DataTypeTest(absltest.TestCase):
@@ -24,7 +25,11 @@ class DataTypeTest(absltest.TestCase):
         self.assertEqual(core.DataType.FLOAT, core.DataType.from_snowpark_type(spt.FloatType()))
         self.assertEqual(core.DataType.DOUBLE, core.DataType.from_snowpark_type(spt.DoubleType()))
 
-        with self.assertRaises(NotImplementedError):
+        with exception_utils.assert_snowml_exceptions(
+            self,
+            expected_original_error_type=NotImplementedError,
+            expected_regex="Type .+ is not supported as a DataType.",
+        ):
             core.DataType.from_snowpark_type(spt.DecimalType(38, 6))
 
         self.assertEqual(core.DataType.BOOL, core.DataType.from_snowpark_type(spt.BooleanType()))
@@ -62,21 +67,35 @@ class FeatureSpecTest(absltest.TestCase):
 
 class FeatureGroupSpecTest(absltest.TestCase):
     def test_feature_group_spec(self) -> None:
-        with self.assertRaisesRegex(ValueError, "No children feature specs."):
+        with exception_utils.assert_snowml_exceptions(
+            self, expected_original_error_type=ValueError, expected_regex="No children feature specs."
+        ):
             _ = core.FeatureGroupSpec(name="features", specs=[])
 
-        with self.assertRaisesRegex(ValueError, "All children feature specs have to have name."):
+        with exception_utils.assert_snowml_exceptions(
+            self,
+            expected_original_error_type=ValueError,
+            expected_regex="All children feature specs have to have name.",
+        ):
             ft1 = core.FeatureSpec(name="feature1", dtype=core.DataType.INT64)
             ft2 = core.FeatureSpec(name="feature2", dtype=core.DataType.INT64)
             ft2._name = None  # type: ignore[assignment]
             _ = core.FeatureGroupSpec(name="features", specs=[ft1, ft2])
 
-        with self.assertRaisesRegex(ValueError, "All children feature specs have to have same type."):
+        with exception_utils.assert_snowml_exceptions(
+            self,
+            expected_original_error_type=ValueError,
+            expected_regex="All children feature specs have to have same type.",
+        ):
             ft1 = core.FeatureSpec(name="feature1", dtype=core.DataType.INT64)
             ft2 = core.FeatureSpec(name="feature2", dtype=core.DataType.FLOAT)
             _ = core.FeatureGroupSpec(name="features", specs=[ft1, ft2])
 
-        with self.assertRaisesRegex(ValueError, "All children feature specs have to have same shape."):
+        with exception_utils.assert_snowml_exceptions(
+            self,
+            expected_original_error_type=ValueError,
+            expected_regex="All children feature specs have to have same shape.",
+        ):
             ft1 = core.FeatureSpec(name="feature1", dtype=core.DataType.INT64)
             ft2 = core.FeatureSpec(name="feature2", dtype=core.DataType.INT64, shape=(2,))
             fts = core.FeatureGroupSpec(name="features", specs=[ft1, ft2])

@@ -200,6 +200,21 @@ def get_unescaped_names(ids: Optional[Union[str, List[str]]]) -> Optional[Union[
         raise ValueError("Unsupported type. Only string or list of string are supported for selecting columns.")
 
 
+@overload
+def get_escaped_names(ids: None) -> None:
+    ...
+
+
+@overload
+def get_escaped_names(ids: str) -> str:
+    ...
+
+
+@overload
+def get_escaped_names(ids: List[str]) -> List[str]:
+    ...
+
+
 def get_escaped_names(ids: Optional[Union[str, List[str]]]) -> Optional[Union[str, List[str]]]:
     """Given a user provided identifier(s), this method will compute the equivalent column name identifier(s)
     in case of column name contains special characters, and maintains case-sensitivity

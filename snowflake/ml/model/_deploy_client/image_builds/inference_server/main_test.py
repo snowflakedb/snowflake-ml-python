@@ -88,16 +88,21 @@ class MainTest(absltest.TestCase):
             ]
         }
 
-        with mock.patch("main._LOADED_MODEL", loaded_model), mock.patch("main._LOADED_META", loaded_meta):
+        with mock.patch.dict(os.environ, {"TARGET_METHOD": "predict"}, clear=True), mock.patch(
+            "main._LOADED_MODEL", loaded_model
+        ), mock.patch("main._LOADED_META", loaded_meta):
             response = self.client.post("/predict", json=data)
-        self.assertEqual(response.status_code, 200)
-        expected_response = {"data": [[0, {"output_feature_0": 1, "_ID": 0}], [1, {"output_feature_0": 2, "_ID": 1}]]}
-        self.assertEqual(response.json(), expected_response)
+            self.assertEqual(response.status_code, 200)
+            expected_response = {
+                "data": [[0, {"output_feature_0": 1, "_ID": 0}], [1, {"output_feature_0": 2, "_ID": 1}]]
+            }
+            self.assertEqual(response.json(), expected_response)
 
-    #
     def test_predict_endpoint_with_invalid_input(self) -> None:
         loaded_model, loaded_meta = self.get_custom_sklearn_model()
-        with mock.patch("main._LOADED_MODEL", loaded_model), mock.patch("main._LOADED_META", loaded_meta):
+        with mock.patch.dict(os.environ, {"TARGET_METHOD": "predict"}, clear=True), mock.patch(
+            "main._LOADED_MODEL", loaded_model
+        ), mock.patch("main._LOADED_META", loaded_meta):
             response = self.client.post("/predict", json={})
             self.assertEqual(response.status_code, 400)
             self.assertRegex(response.text, "Input data malformed: missing data field in the request input")
@@ -150,7 +155,9 @@ class MainTest(absltest.TestCase):
             ]
         }
 
-        with mock.patch("main._LOADED_MODEL", loaded_model), mock.patch("main._LOADED_META", loaded_meta):
+        with mock.patch.dict(os.environ, {"TARGET_METHOD": "predict"}, clear=True), mock.patch(
+            "main._LOADED_MODEL", loaded_model
+        ), mock.patch("main._LOADED_META", loaded_meta):
             response = self.client.post("/predict", json=data)
             self.assertEqual(response.status_code, 400)
             self.assertRegex(response.text, r"Input data malformed: .*dtype mappings argument.*")
@@ -172,7 +179,9 @@ class MainTest(absltest.TestCase):
             ]
         }
 
-        with mock.patch("main._LOADED_MODEL", loaded_model), mock.patch("main._LOADED_META", loaded_meta):
+        with mock.patch.dict(os.environ, {"TARGET_METHOD": "predict"}, clear=True), mock.patch(
+            "main._LOADED_MODEL", loaded_model
+        ), mock.patch("main._LOADED_META", loaded_meta):
             response = self.client.post("/predict", json=data)
             self.assertEqual(response.status_code, 400)
             self.assertRegex(response.text, "Input data malformed: could not convert string to float")

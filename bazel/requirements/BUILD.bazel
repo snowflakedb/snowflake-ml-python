@@ -17,7 +17,7 @@ _CURRENT_PATH = "bazel/requirements"
 
 _SYNC_RULE_NAME = "sync_requirements"
 
-_SYNC_BAZEL_CMD = "bazel run //{current_path}:{sync_rule}".format(
+_SYNC_BAZEL_CMD = "bazel run --config=pre_build //{current_path}:{sync_rule}".format(
     current_path = _CURRENT_PATH,
     sync_rule = _SYNC_RULE_NAME,
 )
@@ -31,12 +31,17 @@ _GENERATED_REQUIREMENTS_FILES = {
     "conda_env_yml": {
         "cmd": "--mode dev_version --format conda_env",
         "generated": "conda-env.yml",
-        "target": "//:conda-env.yml",
+        "target": "//bazel/environments:conda-env.yml",
+    },
+    "conda_env_build_yml": {
+        "cmd": "--mode dev_version --format conda_env --filter_by_tag build_essential",
+        "generated": "conda-env-build.yml",
+        "target": "//bazel/environments:conda-env-build.yml",
     },
     "conda_env_snowflake_yml": {
         "cmd": "--mode dev_version --format conda_env --snowflake_channel_only",
         "generated": "conda-env-snowflake.yml",
-        "target": "//:conda-env-snowflake.yml",
+        "target": "//bazel/environments:conda-env-snowflake.yml",
     },
     "conda_meta": {
         "cmd": "--mode version_requirements --format conda_meta --version " + VERSION,
@@ -80,4 +85,12 @@ sync_target(
     name = _SYNC_RULE_NAME,
     root_path = _CURRENT_PATH,
     targets = _GENERATED_REQUIREMENTS_FILES.values(),
+)
+
+
+sh_test(
+    name = "changelog_version_check",
+    srcs = ["changelog_version_check.sh"],
+    args = [VERSION, "$(location //:CHANGELOG.md)"],
+    data = ["//:CHANGELOG.md"],
 )

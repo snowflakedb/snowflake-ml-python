@@ -5,10 +5,10 @@ load("@bazel_tools//tools/build_defs/repo:git.bzl", "git_repository")
 
 http_jar(
     name = "bazel_diff",
+    sha256 = "9c4546623a8b9444c06370165ea79a897fcb9881573b18fa5c9ee5c8ba0867e2",
     urls = [
         "https://github.com/Tinder/bazel-diff/releases/download/4.3.0/bazel-diff_deploy.jar",
     ],
-    sha256 = "9c4546623a8b9444c06370165ea79a897fcb9881573b18fa5c9ee5c8ba0867e2",
 )
 
 http_archive(
@@ -27,9 +27,9 @@ bazel_skylib_workspace()
 # Latest @ 2023-06-20
 # Replace with released version once newer version released.
 git_repository(
-    name="rules_python",
-    commit="0d59fcf561f6d2c4705924bc17c151fb4b998841",
-    remote="https://github.com/bazelbuild/rules_python.git"
+    name = "rules_python",
+    commit = "0d59fcf561f6d2c4705924bc17c151fb4b998841",
+    remote = "https://github.com/bazelbuild/rules_python.git",
 )
 
 load("//third_party/rules_conda:defs.bzl", "conda_create", "load_conda", "register_toolchain")
@@ -44,6 +44,7 @@ http_archive(
 load("@aspect_bazel_lib//lib:repositories.bzl", "aspect_bazel_lib_dependencies", "register_yq_toolchains")
 
 aspect_bazel_lib_dependencies()
+
 register_yq_toolchains()
 
 # Below two conda environments (toolchains) are created and they require different
@@ -58,40 +59,28 @@ register_yq_toolchains()
 # The default platform when --platforms flag is not set, is specified in
 # .bazelrc .
 
-load_conda(conda_repo_name = "snowflake_conda", quiet = True)
+load("@SnowML//bazel/environments:fetch_conda_env_config.bzl", "fetch_conda_env_config")
+fetch_conda_env_config(name = "fetch_conda_env_config_repo")
+load("@fetch_conda_env_config_repo//:config.bzl", "NAME", "ENVIRONMENT", "COMPATIBLE_TARGET")
+
+load_conda(
+    conda_repo_name = "{}_conda".format(NAME),
+    quiet = True,
+)
 
 conda_create(
-    name = "py3_env_snowflake_conda_only",
-    conda_repo_name = "snowflake_conda",
+    name = "{}_env".format(NAME),
     timeout = 3600,
     clean = False,
-    environment = "@//:conda-env-snowflake.yml",
+    conda_repo_name = "{}_conda".format(NAME),
     coverage_tool = "@//bazel/coverage_tool:coverage_tool.py",
+    environment = ENVIRONMENT,
     quiet = True,
 )
 
 register_toolchain(
-    name = "py3_env_snowflake_conda_only_repo",
-    env = "py3_env_snowflake_conda_only",
-    target_compatible_with=["@SnowML//bazel/platforms:snowflake_conda_channel"],
-    toolchain_name = "py3_toolchain_snowflake_conda_only",
-)
-
-load_conda(conda_repo_name = "extended_conda", quiet = True)
-
-conda_create(
-    name = "py3_env_extended_channels",
-    conda_repo_name = "extended_conda",
-    timeout = 3600,
-    clean = False,
-    environment = "@//:conda-env.yml",
-    coverage_tool = "@//bazel/coverage_tool:coverage_tool.py",
-    quiet = True,
-)
-
-register_toolchain(
-    name = "py3_env_extended_channels_repo",
-    env = "py3_env_extended_channels",
-    target_compatible_with=["@SnowML//bazel/platforms:extended_conda_channels"],
-    toolchain_name = "py3_toolchain_extended_channels",
+    name = "{}_env_repo".format(NAME),
+    env = "{}_env".format(NAME),
+    target_compatible_with = COMPATIBLE_TARGET,
+    toolchain_name = "py3_toolchain_{}_env".format(NAME),
 )

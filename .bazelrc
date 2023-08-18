@@ -1,12 +1,17 @@
 # Make the target platform and the host platform the same
-build --platforms //bazel/platforms:extended_conda_env --host_platform //bazel/platforms:extended_conda_env
-test --platforms //bazel/platforms:extended_conda_env --host_platform //bazel/platforms:extended_conda_env --run_under='//bazel:test_wrapper'
-run --platforms //bazel/platforms:extended_conda_env --host_platform //bazel/platforms:extended_conda_env
-cquery --platforms //bazel/platforms:extended_conda_env --host_platform //bazel/platforms:extended_conda_env
+build --platforms //bazel/platforms:extended_conda_env --host_platform //bazel/platforms:extended_conda_env --repo_env=BUILD_CONDA_ENV=build
+test --platforms //bazel/platforms:extended_conda_env --host_platform //bazel/platforms:extended_conda_env --run_under='//bazel:test_wrapper' --repo_env=BUILD_CONDA_ENV=extended
+run --platforms //bazel/platforms:extended_conda_env --host_platform //bazel/platforms:extended_conda_env --repo_env=BUILD_CONDA_ENV=extended
+cquery --platforms //bazel/platforms:extended_conda_env --host_platform //bazel/platforms:extended_conda_env --repo_env=BUILD_CONDA_ENV=extended
 
-build:typecheck --aspects //bazel/mypy:mypy.bzl%mypy_aspect --output_groups=mypy
+run:pre_build --platforms //bazel/platforms:extended_conda_env --host_platform //bazel/platforms:extended_conda_env --repo_env=BUILD_CONDA_ENV=build
+build:typecheck --aspects //bazel/mypy:mypy.bzl%mypy_aspect --output_groups=mypy --repo_env=BUILD_CONDA_ENV=extended
 
 # Since integration tests are located in different packages than code under test,
 # the default instrumentation filter would exclude the code under test. This
 # makes bazel consider all the source code in our repo for coverage.
 coverage --instrumentation_filter="-//tests[/:]"
+
+test:sf_only --platforms //bazel/platforms:snowflake_conda_env --host_platform //bazel/platforms:snowflake_conda_env --run_under='//bazel:test_wrapper' --repo_env=BUILD_CONDA_ENV=sf_only
+run:sf_only --platforms //bazel/platforms:snowflake_conda_env --host_platform //bazel/platforms:snowflake_conda_env --repo_env=BUILD_CONDA_ENV=sf_only
+cquery:sf_only --platforms //bazel/platforms:snowflake_conda_env --host_platform //bazel/platforms:snowflake_conda_env --repo_env=BUILD_CONDA_ENV=sf_only

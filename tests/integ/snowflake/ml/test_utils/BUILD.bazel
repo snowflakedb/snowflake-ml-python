@@ -24,3 +24,13 @@ py_library(
         "//snowflake/ml/modeling/xgboost:xgb_classifier",
     ]
 )
+
+py_library(
+    name = "test_env_utils",
+    testonly = True,
+    srcs = ["test_env_utils.py"],
+    deps = [
+        "//snowflake/ml/_internal/utils:query_result_checker",
+        "//snowflake/ml/_internal:env",
+    ],
+)

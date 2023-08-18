@@ -4,6 +4,8 @@ spec:
       image: ${image}
       env:
         MODEL_ZIP_STAGE_PATH: ${model_zip_stage_path}
+        TARGET_METHOD: ${target_method}
+        NUM_WORKERS: ${num_workers}
       readinessProbe:
         port: 5000
         path: /health

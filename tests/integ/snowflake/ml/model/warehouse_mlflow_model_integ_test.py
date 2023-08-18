@@ -60,7 +60,7 @@ class TestWarehouseMLFlowModelInteg(parameterized.TestCase):
         deploy_params: Dict[str, Tuple[Dict[str, Any], Callable[[Union[pd.DataFrame, SnowparkDataFrame]], Any]]],
         model_in_stage: Optional[bool] = False,
         permanent_deploy: Optional[bool] = False,
-        test_released_library: Optional[bool] = False,
+        test_released_version: Optional[str] = None,
     ) -> None:
         warehouse_model_integ_test_utils.base_test_case(
             self._db_manager,
@@ -73,20 +73,20 @@ class TestWarehouseMLFlowModelInteg(parameterized.TestCase):
             deploy_params=deploy_params,
             model_in_stage=model_in_stage,
             permanent_deploy=permanent_deploy,
-            test_released_library=test_released_library,
+            test_released_version=test_released_version,
         )
 
     @parameterized.parameters(  # type: ignore[misc]
-        {"model_in_stage": True, "permanent_deploy": True, "test_released_library": False},
-        {"model_in_stage": False, "permanent_deploy": False, "test_released_library": False},
-        # {"model_in_stage": True, "permanent_deploy": False, "test_released_library": True},
-        # {"model_in_stage": False, "permanent_deploy": True, "test_released_library": True},
+        {"model_in_stage": True, "permanent_deploy": True, "test_released_version": None},
+        {"model_in_stage": False, "permanent_deploy": False, "test_released_version": None},
+        {"model_in_stage": True, "permanent_deploy": False, "test_released_version": "1.0.4"},
+        {"model_in_stage": False, "permanent_deploy": True, "test_released_version": "1.0.4"},
     )
     def test_mlflow_model_deploy_sklearn_df(
         self,
         model_in_stage: Optional[bool] = False,
         permanent_deploy: Optional[bool] = False,
-        test_released_library: Optional[bool] = False,
+        test_released_version: Optional[str] = None,
     ) -> None:
         db = datasets.load_diabetes(as_frame=True)
         X_train, X_test, y_train, y_test = model_selection.train_test_split(db.data, db.target)
@@ -132,20 +132,20 @@ class TestWarehouseMLFlowModelInteg(parameterized.TestCase):
             },
             model_in_stage=model_in_stage,
             permanent_deploy=permanent_deploy,
-            test_released_library=test_released_library,
+            test_released_version=test_released_version,
         )
 
     @parameterized.parameters(  # type: ignore[misc]
-        {"model_in_stage": True, "permanent_deploy": True, "test_released_library": False},
-        {"model_in_stage": False, "permanent_deploy": False, "test_released_library": False},
-        # {"model_in_stage": True, "permanent_deploy": False, "test_released_library": True},
-        # {"model_in_stage": False, "permanent_deploy": True, "test_released_library": True},
+        {"model_in_stage": True, "permanent_deploy": True, "test_released_version": None},
+        {"model_in_stage": False, "permanent_deploy": False, "test_released_version": None},
+        {"model_in_stage": True, "permanent_deploy": False, "test_released_version": "1.0.4"},
+        {"model_in_stage": False, "permanent_deploy": True, "test_released_version": "1.0.4"},
     )
     def test_mlflow_model_deploy_sklearn(
         self,
         model_in_stage: Optional[bool] = False,
         permanent_deploy: Optional[bool] = False,
-        test_released_library: Optional[bool] = False,
+        test_released_version: Optional[str] = None,
     ) -> None:
         db = datasets.load_diabetes()
         X_train, X_test, y_train, y_test = model_selection.train_test_split(db.data, db.target)
@@ -193,7 +193,7 @@ class TestWarehouseMLFlowModelInteg(parameterized.TestCase):
             },
             model_in_stage=model_in_stage,
             permanent_deploy=permanent_deploy,
-            test_released_library=test_released_library,
+            test_released_version=test_released_version,
         )
 
 

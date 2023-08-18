@@ -23,8 +23,8 @@ def is_relaxed() -> bool:
 
 def get_valid_pkg_versions_supported_in_snowflake_conda_channel(
     pkg_versions: List[str], session: Session, subproject: Optional[str] = None
-) -> List[Optional[str]]:
-    pkg_version_conda_list: List[Optional[str]] = []
+) -> List[str]:
+    pkg_version_conda_list: List[str] = []
     pkg_version_warning_list: List[List[str]] = []
     for pkg_version in pkg_versions:
         conda_pkg_version = _validate_pkg_version_supported_in_snowflake_conda_channel(
@@ -39,6 +39,7 @@ def get_valid_pkg_versions_supported_in_snowflake_conda_channel(
                     f"python runtime {_RUNTIME_VERSION}."
                 )
         else:
+
             tokens = pkg_version.split("==")
             pkg_name = tokens[0]
             pkg_version_conda_list.append(f"{pkg_name}=={conda_pkg_version}")

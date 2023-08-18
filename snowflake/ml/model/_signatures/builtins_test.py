@@ -2,16 +2,21 @@ import pandas as pd
 from absl.testing import absltest
 
 from snowflake.ml.model._signatures import builtins_handler, core
+from snowflake.ml.test_utils import exception_utils
 
 
 class ListOfBuiltinsHandlerTest(absltest.TestCase):
     def test_validate_list_builtins(self) -> None:
         lt6 = ["Hello", [2, 3]]
-        with self.assertRaisesRegex(ValueError, "Inconsistent type of object found in data"):
+        with exception_utils.assert_snowml_exceptions(
+            self, expected_original_error_type=ValueError, expected_regex="Inconsistent type of object found in data"
+        ):
             builtins_handler.ListOfBuiltinHandler.validate(lt6)  # type:ignore[arg-type]
 
         lt7 = [[1], [2, 3]]
-        with self.assertRaisesRegex(ValueError, "Ill-shaped list data"):
+        with exception_utils.assert_snowml_exceptions(
+            self, expected_original_error_type=ValueError, expected_regex="Ill-shaped list data"
+        ):
             builtins_handler.ListOfBuiltinHandler.validate(lt7)
 
         lt8 = [pd.DataFrame([1]), pd.DataFrame([2, 3])]

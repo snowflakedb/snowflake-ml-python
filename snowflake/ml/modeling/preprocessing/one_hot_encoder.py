@@ -16,6 +16,7 @@ from sklearn import preprocessing, utils as sklearn_utils
 
 from snowflake import snowpark
 from snowflake.ml._internal import telemetry, type_utils
+from snowflake.ml._internal.exceptions import error_codes, exceptions
 from snowflake.ml._internal.utils import identifier
 from snowflake.ml.model import model_signature
 from snowflake.ml.modeling.framework import _utils, base
@@ -208,6 +209,7 @@ class OneHotEncoder(base.BaseTransformer):
         self.drop_idx_: Optional[npt.NDArray[np.int_]] = None
         self._drop_idx_after_grouping: Optional[npt.NDArray[np.int_]] = None
         self._n_features_outs: List[int] = []
+        self._snowpark_cols: Dict[str, List[str]] = dict()
 
         # Fit state if output columns are set before fitting
         self._dense_output_cols_mappings: Dict[str, List[str]] = {}
@@ -264,23 +266,16 @@ class OneHotEncoder(base.BaseTransformer):
 
         Returns:
             Fitted encoder.
-
-        Raises:
-            TypeError: If the input dataset is neither a pandas nor Snowpark DataFrame.
         """
         self._reset()
         self._validate_keywords()
         super()._check_input_cols()
+        super()._check_dataset_type(dataset)
 
         if isinstance(dataset, pd.DataFrame):
             self._fit_sklearn(dataset)
-        elif isinstance(dataset, snowpark.DataFrame):
-            self._fit_snowpark(dataset)
         else:
-            raise TypeError(
-                f"Unexpected dataset type: {type(dataset)}."
-                "Supported dataset types: snowpark.DataFrame, pandas.DataFrame."
-            )
+            self._fit_snowpark(dataset)
         self._is_fitted = True
 
         if not self.sparse and self.output_cols:
@@ -302,10 +297,6 @@ class OneHotEncoder(base.BaseTransformer):
         else:
             self._drop_idx_after_grouping = sklearn_encoder.drop_idx_
         self._n_features_outs = sklearn_encoder._n_features_outs
-
-        # Set `categories_`
-        if len(self.input_cols) != len(self._categories_list):
-            raise ValueError("The derived categories mismatch the supplied input columns.")
 
         _state_pandas_counts: List[pd.DataFrame] = []
         for idx, input_col in enumerate(self.input_cols):
@@ -331,6 +322,8 @@ class OneHotEncoder(base.BaseTransformer):
     def _fit_snowpark(self, dataset: snowpark.DataFrame) -> None:
         # StructType[[StructField(COLUMN, TYPE, nullable=True), ...]
         self._dataset_schema = dataset.schema
+        self._snowpark_cols["input_cols"] = dataset.select(self.input_cols).columns
+        self._snowpark_cols["sorted_input_cols"] = dataset.select(sorted(self.input_cols)).columns
         fit_results = self._fit_category_state(dataset, return_counts=self._infrequent_enabled)
         if self._infrequent_enabled:
             self._fit_infrequent_category_mapping(fit_results["n_samples"], fit_results["category_counts"])
@@ -351,7 +344,7 @@ class OneHotEncoder(base.BaseTransformer):
             Dict with `n_samples` and (optionally) `category_counts` of the dataset.
 
         Raises:
-            ValueError: Empty data.
+            SnowflakeMLException: Empty data.
         """
         # columns: COLUMN_NAME, CATEGORY, COUNT
         state_df = self._get_category_count_state_df(dataset)
@@ -359,7 +352,10 @@ class OneHotEncoder(base.BaseTransformer):
             statement_params=telemetry.get_statement_params(base.PROJECT, base.SUBPROJECT, self.__class__.__name__)
         )
         if self._state_pandas.empty:
-            raise ValueError("Empty data while a minimum of 1 sample is required.")
+            raise exceptions.SnowflakeMLException(
+                error_code=error_codes.INVALID_DATA,
+                original_exception=ValueError("Empty data while a minimum of 1 sample is required."),
+            )
 
         # columns: COLUMN_NAME, STATE
         # state object: {category: count}
@@ -391,7 +387,7 @@ class OneHotEncoder(base.BaseTransformer):
             State dataframe with columns [COLUMN_NAME, CATEGORY, COUNT].
 
         Raises:
-            ValueError: If `self.categories` is provided, `self.handle_unknown="error"`,
+            SnowflakeMLException: If `self.categories` is provided, `self.handle_unknown="error"`,
                 and unknown categories exist in dataset.
         """
         # states of categories found in dataset
@@ -418,15 +414,15 @@ class OneHotEncoder(base.BaseTransformer):
             temp_df = dataset.select(state_columns).distinct()
             found_state_df = found_state_df.union_by_name(temp_df) if found_state_df is not None else temp_df
 
-        assert found_state_df is not None, "found_state_df cannot be None"
+        assert found_state_df is not None
         if self.categories != "auto":
             state_data = []
-            assert isinstance(self.categories, dict), "self.categories must be dict"
+            assert isinstance(self.categories, dict)
             for input_col, cats in self.categories.items():
                 for cat in cats.tolist():
                     state_data.append([input_col, cat])
             # states of given categories
-            assert dataset._session is not None, "dataset._session cannot be None"
+            assert dataset._session is not None
             given_state_df = dataset._session.create_dataframe(data=state_data, schema=[_COLUMN_NAME, _CATEGORY])
             given_state_df = (
                 given_state_df.join(
@@ -456,8 +452,12 @@ class OneHotEncoder(base.BaseTransformer):
                     )
                 )
                 if not unknown_pandas.empty:
-                    msg = f"Found unknown categories during fit:\n{unknown_pandas.to_string()}"
-                    raise ValueError(msg)
+                    raise exceptions.SnowflakeMLException(
+                        error_code=error_codes.INVALID_DATA,
+                        original_exception=ValueError(
+                            f"Found unknown categories during fit:\n{unknown_pandas.to_string()}"
+                        ),
+                    )
 
             return given_state_df
 
@@ -488,11 +488,14 @@ class OneHotEncoder(base.BaseTransformer):
                 where STATE contains state objects: {category: count}.
 
         Raises:
-            ValueError: If `self.categories` is an unsupported value.
+            SnowflakeMLException: If `self.categories` is an unsupported value.
         """
         if isinstance(self.categories, str):
             if self.categories != "auto":
-                raise ValueError(f"Unsupported value {self.categories} for parameter `categories`.")
+                raise exceptions.SnowflakeMLException(
+                    error_code=error_codes.INVALID_ATTRIBUTE,
+                    original_exception=ValueError(f"Unsupported value {self.categories} for parameter `categories`."),
+                )
 
             categories_col = "CATEGORIES"
 
@@ -511,8 +514,15 @@ class OneHotEncoder(base.BaseTransformer):
                 categories_col
             ]
             # Giving the original type back to categories.
-            for k, v in categories.items():
-                snowml_type = model_signature.DataType.from_snowpark_type(self._dataset_schema[k].datatype)
+            for idx, k in enumerate(categories.keys()):
+                v = categories[k]
+                # Schema column names are case insensitive. Using snowpark's dataset to maintain schema's
+                # column name consistency. Because the key of categories_pandas is sorted, we need sorted
+                # input cols from snowpark as well.
+                _dataset_schema_key = self._snowpark_cols["sorted_input_cols"][idx]
+                snowml_type = model_signature.DataType.from_snowpark_type(
+                    self._dataset_schema[_dataset_schema_key].datatype
+                )
                 # Don't convert the boolean type, numpy is unable to switch from string to boolean.
                 # Boolean types would be treated as string
                 if snowml_type not in [model_signature.DataType.BOOL]:
@@ -602,7 +612,10 @@ class OneHotEncoder(base.BaseTransformer):
             cat = row[_CATEGORY]
             if hasattr(self, "_dataset_schema") and not pd.isnull(cat):  # Do not convert when it is null
                 row_element = np.array([row[_CATEGORY]])
-                snowml_type = model_signature.DataType.from_snowpark_type(self._dataset_schema[input_col].datatype)
+                _dataset_schema_key = self._snowpark_cols["input_cols"][col_idx]
+                snowml_type = model_signature.DataType.from_snowpark_type(
+                    self._dataset_schema[_dataset_schema_key].datatype
+                )
                 # Don't convert the boolean type, it would be treated as string
                 if snowml_type not in [model_signature.DataType.BOOL]:
                     cat = row_element.astype(snowml_type._numpy_type)[0]
@@ -617,10 +630,13 @@ class OneHotEncoder(base.BaseTransformer):
             )
             if has_infrequent_categories:
                 if self._default_to_infrequent_mappings[col_idx] is None:
-                    msg = (
-                        "`self._default_to_infrequent_mappings[{}]` is None while infrequent categories exist in '{}'."
+                    raise exceptions.SnowflakeMLException(
+                        error_code=error_codes.INTERNAL_PYTHON_ERROR,
+                        original_exception=RuntimeError(
+                            f"`self._default_to_infrequent_mappings[{col_idx}]` is None while infrequent categories "
+                            f"exist in '{input_col}'."
+                        ),
                     )
-                    raise RuntimeError(msg.format(col_idx, input_col))
                 encoding: int = self._default_to_infrequent_mappings[col_idx][cat_idx]
             else:
                 encoding = cat_idx
@@ -659,13 +675,11 @@ class OneHotEncoder(base.BaseTransformer):
                 - If input is DataFrame, returns DataFrame
                 - If input is a pd.DataFrame and `self.sparse=True`, returns `csr_matrix`
                 - If input is a pd.DataFrame and `self.sparse=False`, returns `pd.DataFrame`
-
-        Raises:
-            TypeError: If the input dataset is neither a pandas nor Snowpark DataFrame.
         """
         self._enforce_fit()
         super()._check_input_cols()
         super()._check_output_cols()
+        super()._check_dataset_type(dataset)
 
         # output columns are unset before fitting
         if not self.sparse and not self._dense_output_cols_mappings:
@@ -673,13 +687,8 @@ class OneHotEncoder(base.BaseTransformer):
 
         if isinstance(dataset, snowpark.DataFrame):
             output_df = self._transform_snowpark(dataset)
-        elif isinstance(dataset, pd.DataFrame):
-            output_df = self._transform_sklearn(dataset)
         else:
-            raise TypeError(
-                f"Unexpected dataset type: {type(dataset)}."
-                "Supported dataset types: snowpark.DataFrame, pandas.DataFrame."
-            )
+            output_df = self._transform_sklearn(dataset)
 
         return self._drop_input_columns(output_df) if self._drop_input_cols is True else output_df
 
@@ -730,7 +739,7 @@ class OneHotEncoder(base.BaseTransformer):
         state_pandas[_ENCODED_VALUE] = state_pandas.apply(lambda x: map_encoded_value(x), axis=1)
 
         # columns: COLUMN_NAME, CATEGORY, COUNT, FITTED_CATEGORY, ENCODING, N_FEATURES_OUT, ENCODED_VALUE
-        assert dataset._session is not None, "dataset._session cannot be None"
+        assert dataset._session is not None
         state_df = dataset._session.create_dataframe(state_pandas)
 
         suffix = "_" + uuid.uuid4().hex.upper()
@@ -811,7 +820,7 @@ class OneHotEncoder(base.BaseTransformer):
             state_pandas = state_pandas.merge(split_pandas, on=[_COLUMN_NAME, _CATEGORY], how="left")
 
         # columns: COLUMN_NAME, CATEGORY, COUNT, FITTED_CATEGORY, ENCODING, N_FEATURES_OUT, ENCODED_VALUE, OUTPUT_CATs
-        assert dataset._session is not None, "dataset._session cannot be None"
+        assert dataset._session is not None
         state_df = dataset._session.create_dataframe(state_pandas)
 
         transformed_dataset = dataset
@@ -963,22 +972,36 @@ class OneHotEncoder(base.BaseTransformer):
     def _validate_keywords(self) -> None:
         # categories
         if isinstance(self.categories, str) and self.categories != "auto":
-            msg = "`categories` must be 'auto' or a dictionary, got {}."
-            raise ValueError(msg.format(self.categories))
+            raise exceptions.SnowflakeMLException(
+                error_code=error_codes.INVALID_ATTRIBUTE,
+                original_exception=ValueError(f"Unsupported `categories` value: {self.categories}."),
+            )
         elif isinstance(self.categories, dict):
             if len(self.categories) != len(self.input_cols):
-                msg = "`categories` must have length equal to the number of input columns ({}), got {}."
-                raise ValueError(msg.format(len(self.input_cols), len(self.categories)))
+                raise exceptions.SnowflakeMLException(
+                    error_code=error_codes.INVALID_ATTRIBUTE,
+                    original_exception=ValueError(
+                        f"The number of categories ({len(self.categories)}) mismatches the number of input columns "
+                        f"({len(self.input_cols)})."
+                    ),
+                )
             elif set(self.categories.keys()) != set(self.input_cols):
-                msg = "`categories` must have keys equal to input columns."
-                raise ValueError(msg)
+                raise exceptions.SnowflakeMLException(
+                    error_code=error_codes.INVALID_ATTRIBUTE,
+                    original_exception=ValueError(
+                        "The column names of categories mismatch the column names of input columns."
+                    ),
+                )
 
         # drop: array-like object is validated in `_compute_drop_idx`
         if isinstance(self.drop, str) and self.drop not in {"first", "if_binary"}:
-            msg = (
-                "`drop` must be one of 'first', 'if_binary', an array-like of shape (n_features,), or None, " "got {}."
+            raise exceptions.SnowflakeMLException(
+                error_code=error_codes.INVALID_ATTRIBUTE,
+                original_exception=ValueError(
+                    "`drop` must be one of 'first', 'if_binary', an array-like of shape (n_features,), or None, "
+                    f"got {self.drop}."
+                ),
             )
-            raise ValueError(msg.format(self.drop))
 
         # handle_unknown
         # TODO(hayu): [SNOW-752263] Support OneHotEncoder handle_unknown="infrequent_if_exist".
@@ -987,18 +1010,32 @@ class OneHotEncoder(base.BaseTransformer):
         #     msg = "`handle_unknown` must be one of 'error', 'ignore', 'infrequent_if_exist', got {}."
         #     raise ValueError(msg.format(self.handle_unknown))
         if self.handle_unknown not in {"error", "ignore"}:
-            msg = "`handle_unknown` must be one of 'error', 'ignore', got {}."
-            raise ValueError(msg.format(self.handle_unknown))
+            raise exceptions.SnowflakeMLException(
+                error_code=error_codes.INVALID_ATTRIBUTE,
+                original_exception=ValueError(
+                    f"`handle_unknown` must be one of 'error', 'ignore', got {self.handle_unknown}."
+                ),
+            )
 
         # min_frequency
         if isinstance(self.min_frequency, numbers.Integral):
             if not int(self.min_frequency) >= 1:
-                msg = "`min_frequency` must be an integer at least 1, a float in (0.0, 1.0), or None, " "got integer {}"
-                raise ValueError(msg.format(self.min_frequency))
+                raise exceptions.SnowflakeMLException(
+                    error_code=error_codes.INVALID_ATTRIBUTE,
+                    original_exception=ValueError(
+                        "`min_frequency` must be an integer at least 1, a float in (0.0, 1.0), or None, "
+                        f"got integer {self.min_frequency}."
+                    ),
+                )
         elif isinstance(self.min_frequency, numbers.Real):
             if not (0.0 < float(self.min_frequency) < 1.0):
-                msg = "`min_frequency` must be an integer at least 1, a float in (0.0, 1.0), or None, " "got float {}"
-                raise ValueError(msg.format(self.min_frequency))
+                raise exceptions.SnowflakeMLException(
+                    error_code=error_codes.INVALID_ATTRIBUTE,
+                    original_exception=ValueError(
+                        "`min_frequency` must be an integer at least 1, a float in (0.0, 1.0), or None, "
+                        f"got float {self.min_frequency}."
+                    ),
+                )
 
     def _handle_unknown_in_transform(
         self,
@@ -1016,7 +1053,7 @@ class OneHotEncoder(base.BaseTransformer):
             Transformed dataset with unknown values handled.
 
         Raises:
-            ValueError: If `self.handle_unknown="error"` and unknown values exist in the
+            SnowflakeMLException: If `self.handle_unknown="error"` and unknown values exist in the
                 transformed dataset.
         """
         if self.handle_unknown == "error":
@@ -1056,8 +1093,12 @@ class OneHotEncoder(base.BaseTransformer):
                     )
                 )
                 if not unknown_pandas.empty:
-                    msg = f"Found unknown categories during transform:\n{unknown_pandas.to_string()}"
-                    raise ValueError(msg)
+                    raise exceptions.SnowflakeMLException(
+                        error_code=error_codes.INVALID_DATA,
+                        original_exception=ValueError(
+                            f"Found unknown categories during transform:\n{unknown_pandas.to_string()}"
+                        ),
+                    )
         if self.handle_unknown == "ignore" and not self.sparse:
             transformed_dataset = transformed_dataset.na.fill(0, self._inferred_output_cols)
 
@@ -1099,7 +1140,7 @@ class OneHotEncoder(base.BaseTransformer):
             Converted drop index with infrequent encoding considered.
 
         Raises:
-            ValueError: If the category to drop is infrequent.
+            SnowflakeMLException: If the category to drop is infrequent.
         """
         if not self._infrequent_enabled:
             return drop_idx
@@ -1112,9 +1153,12 @@ class OneHotEncoder(base.BaseTransformer):
         infrequent_indices = self._infrequent_indices[feature_idx]
         if infrequent_indices is not None and drop_idx in infrequent_indices:
             categories = self._categories_list[feature_idx]
-            raise ValueError(
-                f"Unable to drop category {categories[drop_idx]!r} from feature"
-                f" {feature_idx} because it is infrequent"
+            raise exceptions.SnowflakeMLException(
+                error_code=error_codes.INVALID_DATA,
+                original_exception=ValueError(
+                    f"Unable to drop category {categories[drop_idx]!r} from feature "
+                    f"{feature_idx} because it is infrequent."
+                ),
             )
         return default_to_infrequent[drop_idx]
 
@@ -1147,7 +1191,7 @@ class OneHotEncoder(base.BaseTransformer):
         `drop_idx_=_drop_idx_after_grouping`.
 
         Raises:
-            ValueError: If `self.drop` is array-like:
+            SnowflakeMLException: If `self.drop` is array-like:
                 - `self.drop` cannot be converted to a ndarray.
                 - The length of `self.drop` is not equal to the number of input columns.
                 - The categories to drop are not found.
@@ -1174,14 +1218,21 @@ class OneHotEncoder(base.BaseTransformer):
                 drop_array = np.asarray(self.drop, dtype=object)
                 droplen = len(drop_array)
             except (ValueError, TypeError):
-                msg = (
-                    "`drop` must be one of 'first', 'if_binary', an array-like of shape (n_features,), or None, "
-                    "got {}."
+                raise exceptions.SnowflakeMLException(
+                    error_code=error_codes.INVALID_ATTRIBUTE,
+                    original_exception=ValueError(
+                        "`drop` must be one of 'first', 'if_binary', an array-like of "  # type: ignore[str-bytes-safe]
+                        f"shape (n_features,), or None, got {self.drop}."
+                    ),
                 )
-                raise ValueError(msg.format(self.drop))
             if droplen != len(self._categories_list):
-                msg = "`drop` must have length equal to the number of features ({}), got {}."
-                raise ValueError(msg.format(len(self._categories_list), droplen))
+                raise exceptions.SnowflakeMLException(
+                    error_code=error_codes.INVALID_ATTRIBUTE,
+                    original_exception=ValueError(
+                        f"`drop` must have length equal to the number of features ({len(self._categories_list)}), "
+                        f"got {droplen}."
+                    ),
+                )
             missing_drops = []
             drop_indices = []
             for feature_idx, (drop_val, cat_list) in enumerate(zip(drop_array, self._categories_list)):
@@ -1207,7 +1258,10 @@ class OneHotEncoder(base.BaseTransformer):
                     "dropped, but were not found in the training "
                     "data.\n{}".format("\n".join([f"Category: {c}, Feature: {v}" for c, v in missing_drops]))
                 )
-                raise ValueError(msg)
+                raise exceptions.SnowflakeMLException(
+                    error_code=error_codes.INVALID_DATA,
+                    original_exception=ValueError(msg),
+                )
             drop_idx_after_grouping = np.array(drop_indices, dtype=object)
 
         # `_drop_idx_after_grouping` are the categories to drop *after* the infrequent

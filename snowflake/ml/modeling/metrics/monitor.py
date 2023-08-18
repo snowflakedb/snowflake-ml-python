@@ -7,9 +7,10 @@ from typing_extensions import TypedDict
 
 from snowflake import snowpark
 from snowflake.ml._internal import telemetry
+from snowflake.snowpark import functions
 
 _PROJECT = "ModelDevelopment"
-_SUBPROJECT = "Metrics"
+_SUBPROJECT = "Monitor"
 
 
 class BucketConfig(TypedDict):
@@ -94,6 +95,98 @@ def get_basic_stats(df: snowpark.DataFrame) -> Tuple[Dict[str, int], Dict[str, i
         d1[stat] = resDf.iloc[0][f"{col1}_{stat}"]
         d2[stat] = resDf.iloc[0][f"{col2}_{stat}"]
     return d1, d2
+
+
+@telemetry.send_api_usage_telemetry(
+    project=_PROJECT,
+    subproject=_SUBPROJECT,
+)
+def jensenshannon(df1: snowpark.DataFrame, colname1: str, df2: snowpark.DataFrame, colname2: str) -> float:
+    """
+    Similar to scipy implementation:
+    https://github.com/scipy/scipy/blob/e4dec2c5993faa381bb4f76dce551d0d79734f8f/scipy/spatial/distance.py#L1174
+    It's server solution, all computing being in Snowflake warehouse, so will be significantly faster than client.
+
+    Args:
+        df1: 1st Snowpark Dataframe;
+        colname1: the col to be selected in df1
+        df2: 2nd Snowpark Dataframe;
+        colname2: the col to be selected in df2
+            Supported data Tyte: any data type that Snowflake supports, including VARIANT, OBJECT...etc.
+
+    Returns:
+        a jensenshannon value
+    """
+    df1 = df1.select(colname1)
+    df1 = (
+        df1.group_by(colname1)
+        .agg(functions.count(colname1).alias("c1"))
+        .select(functions.col(colname1).alias("d1"), "c1")
+    )
+    df2 = df2.select(colname2)
+    df2 = (
+        df2.group_by(colname2)
+        .agg(functions.count(colname2).alias("c2"))
+        .select(functions.col(colname2).alias("d2"), "c2")
+    )
+
+    dfsum = df1.select("c1").agg(functions.sum("c1").alias("SUM1"))
+    sum1 = dfsum.collect()[0].as_dict()["SUM1"]
+    dfsum = df2.select("c2").agg(functions.sum("c2").alias("SUM2"))
+    sum2 = dfsum.collect()[0].as_dict()["SUM2"]
+
+    df1 = df1.select("d1", functions.sql_expr("c1 / " + str(sum1)).alias("p"))
+    minp = df1.select(functions.min("P").alias("MINP")).collect()[0].as_dict()["MINP"]
+    df2 = df2.select("d2", functions.sql_expr("c2 / " + str(sum2)).alias("q"))
+    minq = df2.select(functions.min("Q").alias("MINQ")).collect()[0].as_dict()["MINQ"]
+
+    DECAY_FACTOR = 0.5
+    df = df1.join(df2, df1.d1 == df2.d2, "fullouter").select(
+        "d1",
+        "d2",
+        functions.sql_expr(
+            """
+            CASE
+                WHEN p is NULL THEN {}*{}
+                ELSE p
+            END
+            """.format(
+                minp, DECAY_FACTOR
+            )
+        ).alias("p"),
+        functions.sql_expr(
+            """
+            CASE
+                WHEN q is NULL THEN {}*{}
+                ELSE q
+            END
+            """.format(
+                minq, DECAY_FACTOR
+            )
+        ).alias("q"),
+    )
+
+    df = df.select("p", "q", functions.sql_expr("(p+q)/2.0").alias("m"))
+    df = df.select(
+        functions.sql_expr(
+            """
+            CASE
+                WHEN p > 0 AND m > 0 THEN p * LOG(2, p/m)
+                ELSE 0
+            END
+            """
+        ).alias("left"),
+        functions.sql_expr(
+            """
+            CASE
+                WHEN q > 0 AND m > 0 THEN q * LOG(2, q/m)
+                ELSE 0
+            END
+            """
+        ).alias("right"),
+    )
+    resdf = df.select(functions.sql_expr("sqrt((sum(left) + sum(right)) / 2.0)").alias("JS"))
+    return float(resdf.collect()[0].as_dict()["JS"])
 
 
 def _get_udf_query_str(name: str, col: str, df: snowpark.DataFrame, bucket_config: BucketConfig = None) -> str:

@@ -1,12 +1,15 @@
 import traceback
-from enum import Enum
 from typing import Optional, TypedDict, Union, cast, overload
 
 import pandas as pd
 from typing_extensions import Required
 
 from snowflake.ml._internal.utils import identifier
-from snowflake.ml.model import model_signature, type_hints as model_types
+from snowflake.ml.model import (
+    deploy_platforms,
+    model_signature,
+    type_hints as model_types,
+)
 from snowflake.ml.model._deploy_client.snowservice import deploy as snowservice_deploy
 from snowflake.ml.model._deploy_client.utils import constants as snowservice_constants
 from snowflake.ml.model._deploy_client.warehouse import (
@@ -15,23 +18,6 @@ from snowflake.ml.model._deploy_client.warehouse import (
 )
 from snowflake.ml.model._signatures import snowpark_handler
 from snowflake.snowpark import DataFrame as SnowparkDataFrame, Session, functions as F
-
-
-class TargetPlatform(Enum):
-    WAREHOUSE = "warehouse"
-    SNOWPARK_CONTAINER_SERVICE = "snowpark_container_service"
-
-    def __repr__(self) -> str:
-        """Construct a string format that works with the "ModelReference" in model_registry.py. Fundamentally,
-        ModelReference uses the TargetPlatform enum type when constructing the "deploy" function through exec().
-        Since "exec" in Python takes input as a string, we need to dynamically construct a full path so that the
-        enum can be loaded successfully.
-
-        Returns:
-            A enum string representation.
-        """
-
-        return f"{__name__.split('.')[-1]}.{self.__class__.__name__}.{self.name}"
 
 
 class Deployment(TypedDict):
@@ -45,7 +31,7 @@ class Deployment(TypedDict):
     """
 
     name: Required[str]
-    platform: Required[TargetPlatform]
+    platform: Required[deploy_platforms.TargetPlatform]
     signature: model_signature.ModelSignature
     options: Required[model_types.DeployOptions]
 
@@ -55,7 +41,7 @@ def deploy(
     session: Session,
     *,
     name: str,
-    platform: TargetPlatform,
+    platform: deploy_platforms.TargetPlatform,
     target_method: str,
     model_dir_path: str,
     options: Optional[model_types.DeployOptions],
@@ -79,7 +65,7 @@ def deploy(
     session: Session,
     *,
     name: str,
-    platform: TargetPlatform,
+    platform: deploy_platforms.TargetPlatform,
     target_method: str,
     model_stage_file_path: str,
     options: Optional[model_types.DeployOptions],
@@ -104,7 +90,7 @@ def deploy(
     *,
     model_id: str,
     name: str,
-    platform: TargetPlatform,
+    platform: deploy_platforms.TargetPlatform,
     target_method: str,
     model_stage_file_path: str,
     deployment_stage_path: str,
@@ -130,7 +116,7 @@ def deploy(
     session: Session,
     *,
     name: str,
-    platform: TargetPlatform,
+    platform: deploy_platforms.TargetPlatform,
     target_method: str,
     model_dir_path: Optional[str] = None,
     model_stage_file_path: Optional[str] = None,
@@ -172,7 +158,7 @@ def deploy(
     if not options:
         options = {}
 
-    if platform == TargetPlatform.WAREHOUSE:
+    if platform == deploy_platforms.TargetPlatform.WAREHOUSE:
         try:
             meta = warehouse_deploy._deploy_to_warehouse(
                 session=session,
@@ -185,7 +171,7 @@ def deploy(
         except Exception:
             raise RuntimeError("Error happened when deploying to the warehouse: " + traceback.format_exc())
 
-    elif platform == TargetPlatform.SNOWPARK_CONTAINER_SERVICE:
+    elif platform == deploy_platforms.TargetPlatform.SNOWPARK_CONTAINER_SERVICES:
         options = cast(model_types.SnowparkContainerServiceDeployOptions, options)
         assert model_id, "Require 'model_id' for Snowpark container service deployment"
         assert model_stage_file_path, "Require 'model_stage_file_path' for Snowpark container service deployment"
@@ -199,6 +185,7 @@ def deploy(
                 service_func_name=name,
                 model_zip_stage_path=model_stage_file_path,
                 deployment_stage_path=deployment_stage_path,
+                target_method=target_method,
                 **options,
             )
         except Exception:
@@ -260,7 +247,6 @@ def predict(
     sig = deployment["signature"]
     keep_order = deployment["options"].get("keep_order", True)
     output_with_input_features = deployment["options"].get("output_with_input_features", False)
-    platform = deployment["platform"]
 
     # Validate and prepare input
     if not isinstance(X, SnowparkDataFrame):
@@ -292,11 +278,7 @@ def predict(
 
     # TODO[shchen]: SNOW-870032, For SnowService, external function name cannot be double quoted, else it results in
     # external function no found.
-    udf_name = (
-        deployment["name"]
-        if platform == TargetPlatform.SNOWPARK_CONTAINER_SERVICE
-        else identifier.get_inferred_name(deployment["name"])
-    )
+    udf_name = deployment["name"]
     output_obj = F.call_udf(udf_name, F.object_construct(*input_cols))
 
     if output_with_input_features:

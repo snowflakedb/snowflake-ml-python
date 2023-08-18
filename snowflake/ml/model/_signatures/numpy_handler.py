@@ -4,6 +4,10 @@ import numpy as np
 import pandas as pd
 from typing_extensions import TypeGuard
 
+from snowflake.ml._internal.exceptions import (
+    error_codes,
+    exceptions as snowml_exceptions,
+)
 from snowflake.ml.model import type_hints as model_types
 from snowflake.ml.model._signatures import base_handler, core
 
@@ -25,11 +29,17 @@ class NumpyArrayHandler(base_handler.BaseDataHandler[model_types._SupportedNumpy
     def validate(data: model_types._SupportedNumpyArray) -> None:
         if data.shape == (0,):
             # Empty array
-            raise ValueError("Data Validation Error: Empty data is found.")
+            raise snowml_exceptions.SnowflakeMLException(
+                error_code=error_codes.INVALID_DATA,
+                original_exception=ValueError("Data Validation Error: Empty data is found."),
+            )
 
         if data.shape == ():
             # scalar
-            raise ValueError("Data Validation Error: Scalar data is found.")
+            raise snowml_exceptions.SnowflakeMLException(
+                error_code=error_codes.INVALID_DATA,
+                original_exception=ValueError("Data Validation Error: Scalar data is found."),
+            )
 
     @staticmethod
     def infer_signature(

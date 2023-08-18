@@ -52,6 +52,7 @@ class DeployTestCase(absltest.TestCase):
                     service_func_name="mock_service_func",
                     model_zip_stage_path=m_model_zip_stage_path,
                     deployment_stage_path=m_deployment_stage_path,
+                    target_method=constants.PREDICT,
                     **self.options,
                 )
 
@@ -65,6 +66,7 @@ class DeployTestCase(absltest.TestCase):
                     model_zip_stage_path=m_model_zip_stage_path,
                     deployment_stage_path=m_deployment_stage_path,
                     model_dir=mock.ANY,
+                    target_method=constants.PREDICT,
                     options=mock.ANY,
                 )
                 m_deployment.deploy.assert_called_once()
@@ -78,6 +80,7 @@ class DeployTestCase(absltest.TestCase):
                 model_id="",
                 model_zip_stage_path="@mock_model_zip_stage_path/model.zip",
                 deployment_stage_path="@mock_model_deployment_stage_path",
+                target_method=constants.PREDICT,
                 **self.options,
             )
 
@@ -93,6 +96,7 @@ class DeployTestCase(absltest.TestCase):
                 model_id="mock_model_id",
                 model_zip_stage_path="@mock_model_zip_stage_path/model.zip",
                 deployment_stage_path="@mock_model_deployment_stage_path",
+                target_method=constants.PREDICT,
                 **options,
             )
         m_deployment_class.assert_not_called()
@@ -147,6 +151,7 @@ class SnowServiceDeploymentTestCase(absltest.TestCase):
             model_dir=self.m_model_dir,
             model_zip_stage_path=self.m_model_zip_stage_path,
             deployment_stage_path=self.m_deployment_stage_path,
+            target_method=constants.PREDICT,
             options=deploy_options.SnowServiceDeployOptions.from_dict(self.m_options),
         )
 

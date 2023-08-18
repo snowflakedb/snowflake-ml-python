@@ -19,6 +19,10 @@ import numpy as np
 import numpy.typing as npt
 
 import snowflake.snowpark.types as spt
+from snowflake.ml._internal.exceptions import (
+    error_codes,
+    exceptions as snowml_exceptions,
+)
 
 if TYPE_CHECKING:
     import mlflow
@@ -67,7 +71,7 @@ class DataType(Enum):
             np_type: The numpy dtype.
 
         Raises:
-            NotImplementedError: Raised when the given numpy type is not supported.
+            SnowflakeMLException: NotImplementedError: Raised when the given numpy type is not supported.
 
         Returns:
             Corresponding DataType.
@@ -77,7 +81,10 @@ class DataType(Enum):
             if np.can_cast(np_type, potential_type, casting="no"):
                 # This is used since the same dtype might represented in different ways.
                 return np_to_snowml_type_mapping[potential_type]
-        raise NotImplementedError(f"Type {np_type} is not supported as a DataType.")
+        raise snowml_exceptions.SnowflakeMLException(
+            error_code=error_codes.NOT_IMPLEMENTED,
+            original_exception=NotImplementedError(f"Type {np_type} is not supported as a DataType."),
+        )
 
     @classmethod
     def from_torch_type(cls, torch_type: "torch.dtype") -> "DataType":
@@ -111,7 +118,7 @@ class DataType(Enum):
             snowpark_type: The snowpark type.
 
         Raises:
-            NotImplementedError: Raised when the given numpy type is not supported.
+            SnowflakeMLException: NotImplementedError: Raised when the given numpy type is not supported.
 
         Returns:
             Corresponding DataType.
@@ -134,7 +141,10 @@ class DataType(Enum):
         if isinstance(snowpark_type, spt.DecimalType):
             if snowpark_type.scale == 0:
                 return DataType.INT64
-        raise NotImplementedError(f"Type {snowpark_type} is not supported as a DataType.")
+        raise snowml_exceptions.SnowflakeMLException(
+            error_code=error_codes.NOT_IMPLEMENTED,
+            original_exception=NotImplementedError(f"Type {snowpark_type} is not supported as a DataType."),
+        )
 
     def is_same_snowpark_type(self, incoming_snowpark_type: spt.DataType) -> bool:
         """Check if provided snowpark type is the same as Data Type.
@@ -143,7 +153,7 @@ class DataType(Enum):
             incoming_snowpark_type: The snowpark type.
 
         Raises:
-            NotImplementedError: Raised when the given numpy type is not supported.
+            SnowflakeMLException: NotImplementedError: Raised when the given numpy type is not supported.
 
         Returns:
             If the provided snowpark type is the same as the DataType.
@@ -152,7 +162,12 @@ class DataType(Enum):
         if isinstance(incoming_snowpark_type, spt.DecimalType):
             if incoming_snowpark_type.scale == 0:
                 return self == DataType.INT64 or self == DataType.UINT64
-            raise NotImplementedError(f"Type {incoming_snowpark_type} is not supported as a DataType.")
+            raise snowml_exceptions.SnowflakeMLException(
+                error_code=error_codes.NOT_IMPLEMENTED,
+                original_exception=NotImplementedError(
+                    f"Type {incoming_snowpark_type} is not supported as a DataType."
+                ),
+            )
 
         return isinstance(incoming_snowpark_type, self._snowpark_type)
 
@@ -210,17 +225,23 @@ class FeatureSpec(BaseFeatureSpec):
                 (d1, d2, d3): 3d tensor.
 
         Raises:
-            TypeError: Raised when the dtype input type is incorrect.
-            TypeError: Raised when the shape input type is incorrect.
+            SnowflakeMLException: TypeError: Raised when the dtype input type is incorrect.
+            SnowflakeMLException: TypeError: Raised when the shape input type is incorrect.
         """
         super().__init__(name=name)
 
         if not isinstance(dtype, DataType):
-            raise TypeError("dtype should be a model signature datatype.")
+            raise snowml_exceptions.SnowflakeMLException(
+                error_code=error_codes.INVALID_TYPE,
+                original_exception=TypeError("dtype should be a model signature datatype."),
+            )
         self._dtype = dtype
 
         if shape and not isinstance(shape, tuple):
-            raise TypeError("Shape should be a tuple if presented.")
+            raise snowml_exceptions.SnowflakeMLException(
+                error_code=error_codes.INVALID_TYPE,
+                original_exception=TypeError("Shape should be a tuple if presented."),
+            )
         self._shape = shape
 
     def as_snowpark_type(self) -> spt.DataType:
@@ -300,7 +321,10 @@ class FeatureSpec(BaseFeatureSpec):
                 name = feature_name
             return FeatureSpec(name=name, dtype=DataType.from_numpy_type(input_spec.type), shape=shape)
         else:
-            raise NotImplementedError(f"MLFlow schema type {type(input_spec)} is not supported.")
+            raise snowml_exceptions.SnowflakeMLException(
+                error_code=error_codes.NOT_IMPLEMENTED,
+                original_exception=NotImplementedError(f"MLFlow schema type {type(input_spec)} is not supported."),
+            )
 
 
 class FeatureGroupSpec(BaseFeatureSpec):
@@ -320,15 +344,26 @@ class FeatureGroupSpec(BaseFeatureSpec):
 
     def _validate(self) -> None:
         if len(self._specs) == 0:
-            raise ValueError("No children feature specs.")
+            raise snowml_exceptions.SnowflakeMLException(
+                error_code=error_codes.INVALID_ARGUMENT, original_exception=ValueError("No children feature specs.")
+            )
         # each has to have name, and same type
         if not all(s._name is not None for s in self._specs):
-            raise ValueError("All children feature specs have to have name.")
+            raise snowml_exceptions.SnowflakeMLException(
+                error_code=error_codes.INVALID_ARGUMENT,
+                original_exception=ValueError("All children feature specs have to have name."),
+            )
         if not (all(s._shape is None for s in self._specs) or all(s._shape is not None for s in self._specs)):
-            raise ValueError("All children feature specs have to have same shape.")
+            raise snowml_exceptions.SnowflakeMLException(
+                error_code=error_codes.INVALID_ARGUMENT,
+                original_exception=ValueError("All children feature specs have to have same shape."),
+            )
         first_type = self._specs[0]._dtype
         if not all(s._dtype == first_type for s in self._specs):
-            raise ValueError("All children feature specs have to have same type.")
+            raise snowml_exceptions.SnowflakeMLException(
+                error_code=error_codes.INVALID_ARGUMENT,
+                original_exception=ValueError("All children feature specs have to have same type."),
+            )
 
     def as_snowpark_type(self) -> spt.DataType:
         first_type = self._specs[0].as_snowpark_type()
