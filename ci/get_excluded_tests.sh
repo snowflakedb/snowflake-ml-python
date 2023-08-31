@@ -8,7 +8,7 @@
 # -f: specify output file path
 # -m: specify the mode from the following options
 #       unused: exclude integration tests whose dependency is not part of the wheel package.
-#               The missing dependency cuold happen when a new operator is being developed,
+#               The missing dependency could happen when a new operator is being developed,
 #               but not yet released.
 #       unaffected: exclude integration tests whose dependency is not part of the affected targets
 #                   compare to the the merge base to main of current revision.

@@ -99,15 +99,9 @@ def d2_absolute_error_score(
             multioutput=multioutput,
         )
         result_module = cloudpickle.loads(pickled_snowflake_result)
-        result_object = result_module.SnowflakeResult(session, score)
+        return result_module.serialize(session, score)  # type: ignore[no-any-return]
 
-        return result_object.serialize()  # type: ignore[no-any-return]
-
-    sproc_result = d2_absolute_error_score_anon_sproc(session)
-    result_object, result_object_filepath = cloudpickle.loads(sproc_result)
-    if result_object_filepath is not None:
-        result_object = result.SnowflakeResult.load_result_from_filepath(session, result_object_filepath)
-
+    result_object = result.deserialize(session, d2_absolute_error_score_anon_sproc(session))
     score: Union[float, npt.NDArray[np.float_]] = result_object
     return score
 
@@ -192,14 +186,9 @@ def d2_pinball_score(
             multioutput=multioutput,
         )
         result_module = cloudpickle.loads(pickled_result_module)
-        result_object = result_module.SnowflakeResult(session, score)
+        return result_module.serialize(session, score)  # type: ignore[no-any-return]
 
-        return result_object.serialize()  # type: ignore[no-any-return]
-
-    sproc_result = d2_pinball_score_anon_sproc(session)
-    result_object, result_object_filepath = cloudpickle.loads(sproc_result)
-    if result_object_filepath is not None:
-        result_object = result.SnowflakeResult.load_result_from_filepath(session, result_object_filepath)
+    result_object = result.deserialize(session, d2_pinball_score_anon_sproc(session))
 
     score: Union[float, npt.NDArray[np.float_]] = result_object
     return score
@@ -301,15 +290,9 @@ def explained_variance_score(
             force_finite=force_finite,
         )
         result_module = cloudpickle.loads(pickled_result_module)
-        result_object = result_module.SnowflakeResult(session, score)
+        return result_module.serialize(session, score)  # type: ignore[no-any-return]
 
-        return result_object.serialize()  # type: ignore[no-any-return]
-
-    sproc_result = explained_variance_score_anon_sproc(session)
-    result_object, result_object_filepath = cloudpickle.loads(sproc_result)
-    if result_object_filepath is not None:
-        result_object = result.SnowflakeResult.load_result_from_filepath(session, result_object_filepath)
-
+    result_object = result.deserialize(session, explained_variance_score_anon_sproc(session))
     score: Union[float, npt.NDArray[np.float_]] = result_object
     return score
 
@@ -389,15 +372,9 @@ def mean_absolute_error(
         )
 
         result_module = cloudpickle.loads(pickled_result_module)
-        result_object = result_module.SnowflakeResult(session, loss)
+        return result_module.serialize(session, loss)  # type: ignore[no-any-return]
 
-        return result_object.serialize()  # type: ignore[no-any-return]
-
-    sproc_result = mean_absolute_error_anon_sproc(session)
-    result_object, result_object_filepath = cloudpickle.loads(sproc_result)
-    if result_object_filepath is not None:
-        result_object = result.SnowflakeResult.load_result_from_filepath(session, result_object_filepath)
-
+    result_object = result.deserialize(session, mean_absolute_error_anon_sproc(session))
     loss: Union[float, npt.NDArray[np.float_]] = result_object
     return loss
 
@@ -485,15 +462,9 @@ def mean_absolute_percentage_error(
             multioutput=multioutput,
         )
         result_module = cloudpickle.loads(pickled_result_module)
-        result_object = result_module.SnowflakeResult(session, loss)
+        return result_module.serialize(session, loss)  # type: ignore[no-any-return]
 
-        return result_object.serialize()  # type: ignore[no-any-return]
-
-    sproc_result = mean_absolute_percentage_error_anon_sproc(session)
-    result_object, result_object_filepath = cloudpickle.loads(sproc_result)
-    if result_object_filepath is not None:
-        result_object = result.SnowflakeResult.load_result_from_filepath(session, result_object_filepath)
-
+    result_object = result.deserialize(session, mean_absolute_percentage_error_anon_sproc(session))
     loss: Union[float, npt.NDArray[np.float_]] = result_object
     return loss
 
@@ -571,15 +542,9 @@ def mean_squared_error(
             squared=squared,
         )
         result_module = cloudpickle.loads(pickled_result_module)
-        result_object = result_module.SnowflakeResult(session, loss)
+        return result_module.serialize(session, loss)  # type: ignore[no-any-return]
 
-        return result_object.serialize()  # type: ignore[no-any-return]
-
-    sproc_result = mean_squared_error_anon_sproc(session)
-    result_object, result_object_filepath = cloudpickle.loads(sproc_result)
-    if result_object_filepath is not None:
-        result_object = result.SnowflakeResult.load_result_from_filepath(session, result_object_filepath)
-
+    result_object = result.deserialize(session, mean_squared_error_anon_sproc(session))
     loss: Union[float, npt.NDArray[np.float_]] = result_object
     return loss
 

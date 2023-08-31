@@ -81,7 +81,7 @@ def precision_recall_curve(
     statement_params = telemetry.get_statement_params(_PROJECT, _SUBPROJECT)
     cols = metrics_utils.flatten_cols([y_true_col_name, probas_pred_col_name, sample_weight_col_name])
     queries = df[cols].queries["queries"]
-    pickled_snowflake_result = cloudpickle.dumps(result)
+    pickled_result_module = cloudpickle.dumps(result)
 
     @F.sproc(  # type: ignore[misc]
         is_permanent=False,
@@ -109,16 +109,10 @@ def precision_recall_curve(
             pos_label=pos_label,
             sample_weight=sample_weight,
         )
-        result_module = cloudpickle.loads(pickled_snowflake_result)
-        result_object = result_module.SnowflakeResult(session, (precision, recall, thresholds))
+        result_module = cloudpickle.loads(pickled_result_module)
+        return result_module.serialize(session, (precision, recall, thresholds))  # type: ignore[no-any-return]
 
-        return result_object.serialize()  # type: ignore[no-any-return]
-
-    sproc_result = precision_recall_curve_anon_sproc(session)
-    result_object, result_object_filepath = cloudpickle.loads(sproc_result)
-    if result_object_filepath is not None:
-        result_object = result.SnowflakeResult.load_result_from_filepath(session, result_object_filepath)
-
+    result_object = result.deserialize(session, precision_recall_curve_anon_sproc(session))
     res: Tuple[npt.NDArray[np.float_], npt.NDArray[np.float_], npt.NDArray[np.float_]] = result_object
     return res
 
@@ -223,7 +217,7 @@ def roc_auc_score(
     statement_params = telemetry.get_statement_params(_PROJECT, _SUBPROJECT)
     cols = metrics_utils.flatten_cols([y_true_col_names, y_score_col_names, sample_weight_col_name])
     queries = df[cols].queries["queries"]
-    pickled_snowflake_result = cloudpickle.dumps(result)
+    pickled_result_module = cloudpickle.dumps(result)
 
     @F.sproc(  # type: ignore[misc]
         is_permanent=False,
@@ -254,16 +248,10 @@ def roc_auc_score(
             multi_class=multi_class,
             labels=labels,
         )
-        result_module = cloudpickle.loads(pickled_snowflake_result)
-        result_object = result_module.SnowflakeResult(session, auc)
+        result_module = cloudpickle.loads(pickled_result_module)
+        return result_module.serialize(session, auc)  # type: ignore[no-any-return]
 
-        return result_object.serialize()  # type: ignore[no-any-return]
-
-    sproc_result = roc_auc_score_anon_sproc(session)
-    result_object, result_object_filepath = cloudpickle.loads(sproc_result)
-    if result_object_filepath is not None:
-        result_object = result.SnowflakeResult.load_result_from_filepath(session, result_object_filepath)
-
+    result_object = result.deserialize(session, roc_auc_score_anon_sproc(session))
     auc: Union[float, npt.NDArray[np.float_]] = result_object
     return auc
 
@@ -320,7 +308,7 @@ def roc_curve(
     statement_params = telemetry.get_statement_params(_PROJECT, _SUBPROJECT)
     cols = metrics_utils.flatten_cols([y_true_col_name, y_score_col_name, sample_weight_col_name])
     queries = df[cols].queries["queries"]
-    pickled_snowflake_result = cloudpickle.dumps(result)
+    pickled_result_module = cloudpickle.dumps(result)
 
     @F.sproc(  # type: ignore[misc]
         is_permanent=False,
@@ -350,16 +338,10 @@ def roc_curve(
             drop_intermediate=drop_intermediate,
         )
 
-        result_module = cloudpickle.loads(pickled_snowflake_result)
-        result_object = result_module.SnowflakeResult(session, (fpr, tpr, thresholds))
+        result_module = cloudpickle.loads(pickled_result_module)
+        return result_module.serialize(session, (fpr, tpr, thresholds))  # type: ignore[no-any-return]
 
-        return result_object.serialize()  # type: ignore[no-any-return]
-
-    sproc_result = roc_curve_anon_sproc(session)
-    result_object, result_object_filepath = cloudpickle.loads(sproc_result)
-    if result_object_filepath is not None:
-        result_object = result.SnowflakeResult.load_result_from_filepath(session, result_object_filepath)
-
+    result_object = result.deserialize(session, roc_curve_anon_sproc(session))
     res: Tuple[npt.NDArray[np.float_], npt.NDArray[np.float_], npt.NDArray[np.float_]] = result_object
 
     return res
