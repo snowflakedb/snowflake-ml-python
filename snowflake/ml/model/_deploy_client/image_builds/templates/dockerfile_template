@@ -1,37 +1,44 @@
-FROM $base_image as build
+FROM ${base_image} as build
 
-COPY $model_env_folder/conda.yaml conda.yaml
-COPY $model_env_folder/requirements.txt requirements.txt
+COPY ${model_env_folder}/conda.yaml conda.yaml
+COPY ${model_env_folder}/requirements.txt requirements.txt
 
 # Set MAMBA_DOCKERFILE_ACTIVATE=1 to activate the conda environment during build time.
 ARG MAMBA_DOCKERFILE_ACTIVATE=1
 
 # The micromamba image comes with an empty environment named base.
-RUN --mount=type=cache,target=/opt/conda/pkgs micromamba install -y -n base -f conda.yaml && \
+# CONDA_OVERRIDE_CUDA ref https://conda.io/projects/conda/en/latest/user-guide/tasks/manage-virtual.html
+RUN --mount=type=cache,target=/opt/conda/pkgs CONDA_OVERRIDE_CUDA="${cuda_override_env}" \
+    micromamba install -y -n base -f conda.yaml && \
 	python -m pip install "uvicorn[standard]" gunicorn starlette==0.30.0 && \
-	python -m pip install -r requirements.txt
+	python -m pip install -r requirements.txt && \
+    micromamba clean -afy
 
-FROM debian:buster-slim AS runtime
+# Bitsandbytes uses this ENVVAR to determine CUDA library location
+ENV CONDA_PREFIX=/opt/conda
 
-ENV USER nonrootuser
-ENV UID 1000
-ENV HOME /home/$USER
-RUN adduser --disabled-password \
-	--gecos "A non-root user for running inference server" \
-	--uid $UID \
-	--home $HOME \
-	$USER
+COPY ${inference_server_dir} ./${inference_server_dir}
+COPY ${entrypoint_script} ./${entrypoint_script}
 
-COPY $inference_server_dir ./$inference_server_dir
-COPY $entrypoint_script ./$entrypoint_script
-RUN chmod +x /$entrypoint_script
-
-# The mamba root prefix by default is set to /opt/conda, in which the base conda environment is built at.
-COPY --from=build /opt/conda /opt/conda
+USER root
+RUN if id mambauser >/dev/null 2>&1; then \
+        echo "mambauser already exists."; \
+    else \
+        # Set environment variables
+        export USER=mambauser && \
+        export UID=1000 && \
+        export HOME=/home/$USER && \
+        echo "Creating $USER user..." && \
+        adduser --disabled-password \
+            --gecos "A non-root user for running inference server" \
+            --uid $UID \
+            --home $HOME \
+            $USER; \
+    fi
+RUN chmod +x ./${entrypoint_script}
+USER mambauser
 
 # Expose the port on which the Starlette app will run.
 EXPOSE 5000
 
-USER nonrootuser
-
-CMD ["/$entrypoint_script"]
+CMD ["./${entrypoint_script}"]

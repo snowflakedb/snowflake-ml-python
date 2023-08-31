@@ -12,11 +12,12 @@ import sklearn
 from packaging import version
 from sklearn import metrics
 
+import snowflake.snowpark._internal.utils as snowpark_utils
 from snowflake import snowpark
 from snowflake.ml._internal import telemetry
+from snowflake.ml._internal.utils import result
 from snowflake.ml.modeling.metrics import metrics_utils
 from snowflake.snowpark import functions as F
-from snowflake.snowpark._internal import utils as snowpark_utils
 
 _PROJECT = "ModelDevelopment"
 _SUBPROJECT = "Metrics"
@@ -63,13 +64,15 @@ def d2_absolute_error_score(
 
     session = df._session
     assert session is not None
-    sproc_name = f"d2_absolute_error_score_{snowpark_utils.generate_random_alphanumeric()}"
+    sproc_name = snowpark_utils.random_name_for_temp_object(snowpark_utils.TempObjectType.PROCEDURE)
     sklearn_release = version.parse(sklearn.__version__).release
     statement_params = telemetry.get_statement_params(_PROJECT, _SUBPROJECT)
     cols = metrics_utils.flatten_cols([y_true_col_names, y_pred_col_names, sample_weight_col_name])
     queries = df[cols].queries["queries"]
+    pickled_snowflake_result = cloudpickle.dumps(result)
 
     @F.sproc(  # type: ignore[misc]
+        is_permanent=False,
         session=session,
         name=sproc_name,
         replace=True,
@@ -79,8 +82,9 @@ def d2_absolute_error_score(
             "snowflake-snowpark-python",
         ],
         statement_params=statement_params,
+        anonymous=True,
     )
-    def d2_absolute_error_score_sproc(session: snowpark.Session) -> bytes:
+    def d2_absolute_error_score_anon_sproc(session: snowpark.Session) -> bytes:
         for query in queries[:-1]:
             _ = session.sql(query).collect(statement_params=statement_params)
         df = session.sql(queries[-1]).to_pandas(statement_params=statement_params)
@@ -94,12 +98,17 @@ def d2_absolute_error_score(
             sample_weight=sample_weight,
             multioutput=multioutput,
         )
+        result_module = cloudpickle.loads(pickled_snowflake_result)
+        result_object = result_module.SnowflakeResult(session, score)
 
-        return cloudpickle.dumps(score)  # type: ignore[no-any-return]
+        return result_object.serialize()  # type: ignore[no-any-return]
 
-    score: Union[float, npt.NDArray[np.float_]] = cloudpickle.loads(
-        session.call(sproc_name, statement_params=statement_params)
-    )
+    sproc_result = d2_absolute_error_score_anon_sproc(session)
+    result_object, result_object_filepath = cloudpickle.loads(sproc_result)
+    if result_object_filepath is not None:
+        result_object = result.SnowflakeResult.load_result_from_filepath(session, result_object_filepath)
+
+    score: Union[float, npt.NDArray[np.float_]] = result_object
     return score
 
 
@@ -147,13 +156,15 @@ def d2_pinball_score(
 
     session = df._session
     assert session is not None
-    sproc_name = f"d2_pinball_score_{snowpark_utils.generate_random_alphanumeric()}"
+    sproc_name = snowpark_utils.random_name_for_temp_object(snowpark_utils.TempObjectType.PROCEDURE)
     sklearn_release = version.parse(sklearn.__version__).release
     statement_params = telemetry.get_statement_params(_PROJECT, _SUBPROJECT)
     cols = metrics_utils.flatten_cols([y_true_col_names, y_pred_col_names, sample_weight_col_name])
     queries = df[cols].queries["queries"]
+    pickled_result_module = cloudpickle.dumps(result)
 
     @F.sproc(  # type: ignore[misc]
+        is_permanent=False,
         session=session,
         name=sproc_name,
         replace=True,
@@ -163,8 +174,9 @@ def d2_pinball_score(
             "snowflake-snowpark-python",
         ],
         statement_params=statement_params,
+        anonymous=True,
     )
-    def d2_pinball_score_sproc(session: snowpark.Session) -> bytes:
+    def d2_pinball_score_anon_sproc(session: snowpark.Session) -> bytes:
         for query in queries[:-1]:
             _ = session.sql(query).collect(statement_params=statement_params)
         df = session.sql(queries[-1]).to_pandas(statement_params=statement_params)
@@ -179,12 +191,17 @@ def d2_pinball_score(
             alpha=alpha,
             multioutput=multioutput,
         )
+        result_module = cloudpickle.loads(pickled_result_module)
+        result_object = result_module.SnowflakeResult(session, score)
 
-        return cloudpickle.dumps(score)  # type: ignore[no-any-return]
+        return result_object.serialize()  # type: ignore[no-any-return]
 
-    score: Union[float, npt.NDArray[np.float_]] = cloudpickle.loads(
-        session.call(sproc_name, statement_params=statement_params)
-    )
+    sproc_result = d2_pinball_score_anon_sproc(session)
+    result_object, result_object_filepath = cloudpickle.loads(sproc_result)
+    if result_object_filepath is not None:
+        result_object = result.SnowflakeResult.load_result_from_filepath(session, result_object_filepath)
+
+    score: Union[float, npt.NDArray[np.float_]] = result_object
     return score
 
 
@@ -248,13 +265,15 @@ def explained_variance_score(
 
     session = df._session
     assert session is not None
-    sproc_name = f"explained_variance_score_{snowpark_utils.generate_random_alphanumeric()}"
+    sproc_name = snowpark_utils.random_name_for_temp_object(snowpark_utils.TempObjectType.PROCEDURE)
     sklearn_release = version.parse(sklearn.__version__).release
     statement_params = telemetry.get_statement_params(_PROJECT, _SUBPROJECT)
     cols = metrics_utils.flatten_cols([y_true_col_names, y_pred_col_names, sample_weight_col_name])
     queries = df[cols].queries["queries"]
+    pickled_result_module = cloudpickle.dumps(result)
 
     @F.sproc(  # type: ignore[misc]
+        is_permanent=False,
         session=session,
         name=sproc_name,
         replace=True,
@@ -264,8 +283,9 @@ def explained_variance_score(
             "snowflake-snowpark-python",
         ],
         statement_params=statement_params,
+        anonymous=True,
     )
-    def explained_variance_score_sproc(session: snowpark.Session) -> bytes:
+    def explained_variance_score_anon_sproc(session: snowpark.Session) -> bytes:
         for query in queries[:-1]:
             _ = session.sql(query).collect(statement_params=statement_params)
         df = session.sql(queries[-1]).to_pandas(statement_params=statement_params)
@@ -280,12 +300,17 @@ def explained_variance_score(
             multioutput=multioutput,
             force_finite=force_finite,
         )
+        result_module = cloudpickle.loads(pickled_result_module)
+        result_object = result_module.SnowflakeResult(session, score)
 
-        return cloudpickle.dumps(score)  # type: ignore[no-any-return]
+        return result_object.serialize()  # type: ignore[no-any-return]
 
-    score: Union[float, npt.NDArray[np.float_]] = cloudpickle.loads(
-        session.call(sproc_name, statement_params=statement_params)
-    )
+    sproc_result = explained_variance_score_anon_sproc(session)
+    result_object, result_object_filepath = cloudpickle.loads(sproc_result)
+    if result_object_filepath is not None:
+        result_object = result.SnowflakeResult.load_result_from_filepath(session, result_object_filepath)
+
+    score: Union[float, npt.NDArray[np.float_]] = result_object
     return score
 
 
@@ -328,13 +353,15 @@ def mean_absolute_error(
 
     session = df._session
     assert session is not None
-    sproc_name = f"mean_absolute_error_{snowpark_utils.generate_random_alphanumeric()}"
+    sproc_name = snowpark_utils.random_name_for_temp_object(snowpark_utils.TempObjectType.PROCEDURE)
     sklearn_release = version.parse(sklearn.__version__).release
     statement_params = telemetry.get_statement_params(_PROJECT, _SUBPROJECT)
     cols = metrics_utils.flatten_cols([y_true_col_names, y_pred_col_names, sample_weight_col_name])
     queries = df[cols].queries["queries"]
+    pickled_result_module = cloudpickle.dumps(result)
 
     @F.sproc(  # type: ignore[misc]
+        is_permanent=False,
         session=session,
         name=sproc_name,
         replace=True,
@@ -344,8 +371,9 @@ def mean_absolute_error(
             "snowflake-snowpark-python",
         ],
         statement_params=statement_params,
+        anonymous=True,
     )
-    def mean_absolute_error_sproc(session: snowpark.Session) -> bytes:
+    def mean_absolute_error_anon_sproc(session: snowpark.Session) -> bytes:
         for query in queries[:-1]:
             _ = session.sql(query).collect(statement_params=statement_params)
         df = session.sql(queries[-1]).to_pandas(statement_params=statement_params)
@@ -360,11 +388,17 @@ def mean_absolute_error(
             multioutput=multioutput,
         )
 
-        return cloudpickle.dumps(loss)  # type: ignore[no-any-return]
+        result_module = cloudpickle.loads(pickled_result_module)
+        result_object = result_module.SnowflakeResult(session, loss)
 
-    loss: Union[float, npt.NDArray[np.float_]] = cloudpickle.loads(
-        session.call(sproc_name, statement_params=statement_params)
-    )
+        return result_object.serialize()  # type: ignore[no-any-return]
+
+    sproc_result = mean_absolute_error_anon_sproc(session)
+    result_object, result_object_filepath = cloudpickle.loads(sproc_result)
+    if result_object_filepath is not None:
+        result_object = result.SnowflakeResult.load_result_from_filepath(session, result_object_filepath)
+
+    loss: Union[float, npt.NDArray[np.float_]] = result_object
     return loss
 
 
@@ -416,13 +450,15 @@ def mean_absolute_percentage_error(
 
     session = df._session
     assert session is not None
-    sproc_name = f"mean_absolute_percentage_error_{snowpark_utils.generate_random_alphanumeric()}"
+    sproc_name = snowpark_utils.random_name_for_temp_object(snowpark_utils.TempObjectType.PROCEDURE)
     sklearn_release = version.parse(sklearn.__version__).release
     statement_params = telemetry.get_statement_params(_PROJECT, _SUBPROJECT)
     cols = metrics_utils.flatten_cols([y_true_col_names, y_pred_col_names, sample_weight_col_name])
     queries = df[cols].queries["queries"]
+    pickled_result_module = cloudpickle.dumps(result)
 
     @F.sproc(  # type: ignore[misc]
+        is_permanent=False,
         session=session,
         name=sproc_name,
         replace=True,
@@ -432,8 +468,9 @@ def mean_absolute_percentage_error(
             "snowflake-snowpark-python",
         ],
         statement_params=statement_params,
+        anonymous=True,
     )
-    def mean_absolute_percentage_error_sproc(session: snowpark.Session) -> bytes:
+    def mean_absolute_percentage_error_anon_sproc(session: snowpark.Session) -> bytes:
         for query in queries[:-1]:
             _ = session.sql(query).collect(statement_params=statement_params)
         df = session.sql(queries[-1]).to_pandas(statement_params=statement_params)
@@ -447,12 +484,17 @@ def mean_absolute_percentage_error(
             sample_weight=sample_weight,
             multioutput=multioutput,
         )
+        result_module = cloudpickle.loads(pickled_result_module)
+        result_object = result_module.SnowflakeResult(session, loss)
 
-        return cloudpickle.dumps(loss)  # type: ignore[no-any-return]
+        return result_object.serialize()  # type: ignore[no-any-return]
 
-    loss: Union[float, npt.NDArray[np.float_]] = cloudpickle.loads(
-        session.call(sproc_name, statement_params=statement_params)
-    )
+    sproc_result = mean_absolute_percentage_error_anon_sproc(session)
+    result_object, result_object_filepath = cloudpickle.loads(sproc_result)
+    if result_object_filepath is not None:
+        result_object = result.SnowflakeResult.load_result_from_filepath(session, result_object_filepath)
+
+    loss: Union[float, npt.NDArray[np.float_]] = result_object
     return loss
 
 
@@ -493,13 +535,15 @@ def mean_squared_error(
 
     session = df._session
     assert session is not None
-    sproc_name = f"mean_squared_error_{snowpark_utils.generate_random_alphanumeric()}"
+    sproc_name = snowpark_utils.random_name_for_temp_object(snowpark_utils.TempObjectType.PROCEDURE)
     sklearn_release = version.parse(sklearn.__version__).release
     statement_params = telemetry.get_statement_params(_PROJECT, _SUBPROJECT)
     cols = metrics_utils.flatten_cols([y_true_col_names, y_pred_col_names, sample_weight_col_name])
     queries = df[cols].queries["queries"]
+    pickled_result_module = cloudpickle.dumps(result)
 
     @F.sproc(  # type: ignore[misc]
+        is_permanent=False,
         session=session,
         name=sproc_name,
         replace=True,
@@ -509,8 +553,9 @@ def mean_squared_error(
             "snowflake-snowpark-python",
         ],
         statement_params=statement_params,
+        anonymous=True,
     )
-    def mean_squared_error_sproc(session: snowpark.Session) -> bytes:
+    def mean_squared_error_anon_sproc(session: snowpark.Session) -> bytes:
         for query in queries[:-1]:
             _ = session.sql(query).collect(statement_params=statement_params)
         df = session.sql(queries[-1]).to_pandas(statement_params=statement_params)
@@ -525,12 +570,17 @@ def mean_squared_error(
             multioutput=multioutput,
             squared=squared,
         )
+        result_module = cloudpickle.loads(pickled_result_module)
+        result_object = result_module.SnowflakeResult(session, loss)
 
-        return cloudpickle.dumps(loss)  # type: ignore[no-any-return]
+        return result_object.serialize()  # type: ignore[no-any-return]
 
-    loss: Union[float, npt.NDArray[np.float_]] = cloudpickle.loads(
-        session.call(sproc_name, statement_params=statement_params)
-    )
+    sproc_result = mean_squared_error_anon_sproc(session)
+    result_object, result_object_filepath = cloudpickle.loads(sproc_result)
+    if result_object_filepath is not None:
+        result_object = result.SnowflakeResult.load_result_from_filepath(session, result_object_filepath)
+
+    loss: Union[float, npt.NDArray[np.float_]] = result_object
     return loss
 
 

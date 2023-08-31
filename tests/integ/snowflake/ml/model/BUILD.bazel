@@ -11,6 +11,7 @@ py_library(
         "//snowflake/ml/model:type_hints",
         "//tests/integ/snowflake/ml/test_utils:db_manager",
         "//tests/integ/snowflake/ml/test_utils:test_env_utils",
+        "//snowflake/ml/model/_signatures:snowpark_handler",
     ],
 )
 
@@ -113,6 +114,7 @@ py_test(
     shard_count = 4,
     deps = [
         ":warehouse_model_integ_test_utils",
+        "//snowflake/ml/_internal:env",
         "//snowflake/ml/model:type_hints",
         "//snowflake/ml/model/_signatures:numpy_handler",
         "//snowflake/ml/utils:connection_params",
@@ -133,5 +135,18 @@ py_test(
         "//snowflake/ml/utils:connection_params",
         "//tests/integ/snowflake/ml/test_utils:db_manager",
         "//tests/integ/snowflake/ml/test_utils:test_env_utils",
+    ],
+)
+
+py_test(
+    name = "warehouse_huggingface_pipeline_model_integ_test",
+    timeout = "long",
+    srcs = ["warehouse_huggingface_pipeline_model_integ_test.py"],
+    shard_count = 8,
+    deps = [
+        ":warehouse_model_integ_test_utils",
+        "//snowflake/ml/model:type_hints",
+        "//snowflake/ml/utils:connection_params",
+        "//tests/integ/snowflake/ml/test_utils:db_manager",
     ],
 )

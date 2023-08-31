@@ -1,6 +1,41 @@
 # Release History
 
-## 1.0.5
+## 1.0.6
+
+### New Features
+- Model Registry: add `create_if_not_exists` parameter in constructor.
+- Model Registry: Added get_or_create_model_registry API.
+- Model Registry: Added support for using GPU inference when deploying XGBoost (`xgboost.XGBModel` and `xgboost.Booster`), PyTorch (`torch.nn.Module` and `torch.jit.ScriptModule`) and TensorFlow (`tensorflow.Module` and `tensorflow.keras.Model`) models to Snowpark Container Services.
+- Model Registry: When inferring model signature, `Sequence` of built-in types, `Sequence` of `numpy.ndarray`, `Sequence` of `torch.Tensor`, `Sequence` of `tensorflow.Tensor` and `Sequence` of `tensorflow.Tensor` can be used instead of only `List` of them.
+- Model Registry: Added `get_training_dataset` API.
+- Model Development: Size of metrics result can exceed previous 8MB limit.
+- Model Registry: Added support save/load/deploy HuggingFace pipeline object (`transformers.Pipeline`) and our wrapper (`snowflake.ml.model.models.huggingface_pipeline.HuggingFacePipelineModel`) to it. Using the wrapper to specify configurations and the model for the pipeline will be loaded dynamically when deploying. Currently, following tasks are supported to log without manually specifying model signatures:
+    - "conversational"
+    - "fill-mask"
+    - "question-answering"
+    - "summarization"
+    - "table-question-answering"
+    - "text2text-generation"
+    - "text-classification" (alias "sentiment-analysis" available)
+    - "text-generation"
+    - "token-classification" (alias "ner" available)
+    - "translation"
+    - "translation_xx_to_yy"
+    - "zero-shot-classification"
+
+### Bug Fixes
+- Model Development: Fixed a bug when using simple imputer with numpy >= 1.25.
+- Model Development: Fixed a bug when inferring the type of label columns.
+
+### Behavior Changes
+- Model Registry: `log_model()` now return a `ModelReference` object instead of a model ID.
+- Model Registry: When deploying a model with 1 `target method` only, the `target_method` argument can be omitted.
+- Model Registry: When using the snowflake-ml-python with version newer than what is available in Snowflake Anaconda Channel, `embed_local_ml_library` option will be set as `True` automatically if not.
+- Model Registry: When deploying a model to Snowpark Container Services and using GPU, the default value of num_workers will be 1.
+- Model Registry: `keep_order` and `output_with_input_features` in the deploy options have been removed. Now the behavior is controlled by the type of the input when calling `model.predict()`. If the input is a `pandas.DataFrame`, the behavior will be the same as `keep_order=True` and `output_with_input_features=False` before. If the input is a `snowpark.DataFrame`, the behavior will be the same as `keep_order=False` and `output_with_input_features=True` before.
+- Model Registry: When logging and deploying PyTorch (`torch.nn.Module` and `torch.jit.ScriptModule`) and TensorFlow (`tensorflow.Module` and `tensorflow.keras.Model`) models, we no longer accept models whose input is a list of tensor and output is a list of tensors. Instead, now we accept models whose input is 1 or more tensors as positional arguments, and output is a tensor or a tuple of tensors. The input and output dataframe when predicting keep the same as before, that is every column is an array feature and contains a tensor.
+
+## 1.0.5 (2023-08-17)
 
 ### New Features
 
@@ -13,7 +48,7 @@
 - Model Registry: Fixed an issue that the UDF name created when deploying a model is not identical to what is provided and cannot be correctly dropped when deployment getting dropped.
 - connection_params.SnowflakeLoginOptions(): Added support for `private_key_path`.
 
-## 1.0.4
+## 1.0.4 (2023-07-28)
 
 ### New Features
 

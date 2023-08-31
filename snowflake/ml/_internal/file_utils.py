@@ -5,6 +5,7 @@ import os
 import pathlib
 import pkgutil
 import shutil
+import tarfile
 import tempfile
 import zipfile
 from typing import IO, Generator, List, Optional, Union
@@ -128,29 +129,43 @@ def unzip_stream_in_temp_dir(stream: IO[bytes], temp_root: Optional[str] = None)
         yield tempdir
 
 
-def hash_directory(directory: Union[str, pathlib.Path]) -> str:
+def hash_directory(
+    directory: Union[str, pathlib.Path], *, ignore_hidden: bool = False, excluded_files: List[str] = None
+) -> str:
     """Hash the **content** of a folder recursively using SHA-1.
 
     Args:
         directory: The path to the directory to be hashed.
+        ignore_hidden: Whether to ignore hidden file. Defaults to False.
+        excluded_files: List of file names to be excluded from the hashing.
 
     Returns:
         The hexdigest form of the hash result.
     """
+    if not excluded_files:
+        excluded_files = []
 
-    def _update_hash_from_dir(directory: Union[str, pathlib.Path], hash: "hashlib._Hash") -> "hashlib._Hash":
+    def _update_hash_from_dir(
+        directory: Union[str, pathlib.Path], hash: "hashlib._Hash", *, ignore_hidden: bool, excluded_files: List[str]
+    ) -> "hashlib._Hash":
         assert pathlib.Path(directory).is_dir(), "Provided path is not a directory."
         for path in sorted(pathlib.Path(directory).iterdir(), key=lambda p: str(p).lower()):
+            if ignore_hidden and path.name.startswith("."):
+                continue
+            if path.name in excluded_files:
+                continue
             hash.update(path.name.encode())
             if path.is_file():
                 with open(path, "rb") as f:
                     for chunk in iter(lambda: f.read(64 * 1024), b""):
                         hash.update(chunk)
             elif path.is_dir():
-                hash = _update_hash_from_dir(path, hash)
+                hash = _update_hash_from_dir(path, hash, ignore_hidden=ignore_hidden, excluded_files=excluded_files)
         return hash
 
-    return _update_hash_from_dir(directory, hashlib.sha1()).hexdigest()
+    return _update_hash_from_dir(
+        directory, hashlib.sha1(), ignore_hidden=ignore_hidden, excluded_files=excluded_files
+    ).hexdigest()
 
 
 def get_all_modules(dirname: str, prefix: str = "") -> List[str]:
@@ -171,3 +186,23 @@ def _able_ascii_encode(s: str) -> bool:
         return True
     except UnicodeEncodeError:
         return False
+
+
+@contextlib.contextmanager
+def _create_tar_gz_stream(source_dir: str, arcname: str = None) -> Generator[io.BytesIO, None, None]:
+    """
+    Create a compressed tarball (.tar.gz) of the source directory and return an input stream as a context
+    manager.
+
+    Args:
+        source_dir (str): The path to the directory to compress.
+        arcname: Alternative name for a file in the archive
+
+    Yields:
+        io.BytesIO: An input stream containing the compressed tarball.
+    """
+    with io.BytesIO() as output_stream:
+        with tarfile.open(fileobj=output_stream, mode="w:gz") as tar:
+            tar.add(source_dir, arcname=arcname)
+        output_stream.seek(0)
+        yield output_stream

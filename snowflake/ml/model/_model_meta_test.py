@@ -273,6 +273,25 @@ class ModelMetaTest(absltest.TestCase):
             with self.assertRaises(NotImplementedError):
                 _ = _model_meta.ModelMetadata.load_model_metadata(tmpdir)
 
+    def test_model_meta_cuda(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with _model_meta._create_model_metadata(
+                model_dir_path=tmpdir, name="model1", model_type="custom", signatures=_DUMMY_SIG
+            ) as meta:
+                with self.assertRaisesRegex(ValueError, "Cannot set CUDA version as a non-str object."):
+                    meta.cuda_version = None
+
+                meta.cuda_version = "11.7"
+
+                meta_dict = meta.to_dict()
+
+                laoded_meta = _model_meta.ModelMetadata.from_dict(meta_dict)
+
+                self.assertEqual(laoded_meta.cuda_version, "11.7")
+
+                with self.assertRaisesRegex(ValueError, "Different CUDA version .+ and .+ found in the same model!"):
+                    laoded_meta.cuda_version = "12.0"
+
 
 if __name__ == "__main__":
     absltest.main()

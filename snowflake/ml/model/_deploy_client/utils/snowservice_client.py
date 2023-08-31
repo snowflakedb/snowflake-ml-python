@@ -23,7 +23,7 @@ class SnowServiceClient:
         self.session = session
 
     def create_image_repo(self, repo_name: str) -> None:
-        self.session.sql(f"CREATE OR REPLACE IMAGE REPOSITORY {repo_name}").collect()
+        self.session.sql(f"CREATE IMAGE REPOSITORY IF NOT EXISTS {repo_name}").collect()
 
     def create_or_replace_service(
         self,
@@ -57,6 +57,24 @@ class SnowServiceClient:
         logger.debug(f"Create service with SQL: \n {sql}")
         self.session.sql(sql).collect()
 
+    def create_job(self, compute_pool: str, spec_stage_location: str) -> str:
+        """
+        Return the newly created Job ID.
+
+        Args:
+            compute_pool: name of the compute pool
+            spec_stage_location: path to the stage location where the spec is located at.
+
+        Returns:
+            job id in string format.
+        """
+        assert spec_stage_location.startswith("@"), f"stage path should start with @, actual: {spec_stage_location}"
+        sql = f"execute service compute_pool={compute_pool} spec={spec_stage_location}"
+        logger.debug(f"Create job with SQL: \n {sql}")
+        res = self.session.sql(sql).collect()
+        job_id = res[0].status.split(" ")[-1].strip(".")
+        return str(job_id)
+
     def _drop_service_if_exists(self, service_name: str) -> None:
         """Drop service if it already exists.
 
@@ -72,6 +90,7 @@ class SnowServiceClient:
         *,
         endpoint_name: str = constants.PREDICT,
         path_at_service_endpoint: str = constants.PREDICT,
+        max_batch_rows: Optional[int] = None,
     ) -> None:
         """Create or replace service function.
 
@@ -82,13 +101,19 @@ class SnowServiceClient:
             path_at_service_endpoint: Specify the path/route at the service endpoint. Multiple paths can exist for a
                 given endpoint. For example, an inference server listening on port 5000 may have paths like "/predict"
                 and "/monitoring
+            max_batch_rows: Specify the MAX_BATCH_ROWS property of the service function, if None, leave unset
 
         """
+        max_batch_rows_sql = ""
+        if max_batch_rows:
+            max_batch_rows_sql = f"MAX_BATCH_ROWS = {max_batch_rows}"
+
         sql = f"""
             CREATE OR REPLACE FUNCTION {service_func_name}(input OBJECT)
                 RETURNS OBJECT
                 SERVICE={service_name}
                 ENDPOINT={endpoint_name}
+                {max_batch_rows_sql}
                 AS '/{path_at_service_endpoint}'
             """
         logger.debug(f"Create service function with SQL: \n {sql}")
@@ -100,7 +125,8 @@ class SnowServiceClient:
         resource_name: str,
         resource_type: constants.ResourceType,
         *,
-        max_retries: int = 60,
+        max_retries: int = 180,
+        container_name: str = constants.INFERENCE_SERVER_CONTAINER,
         retry_interval_secs: int = 10,
     ) -> None:
         """Blocks execution until the specified resource is ready.
@@ -111,6 +137,7 @@ class SnowServiceClient:
         Args:
             resource_name: Name of the resource.
             resource_type: Type of the resource.
+            container_name: The container to query the log from.
             max_retries: The maximum number of retries to check the resource readiness (default: 60).
             retry_interval_secs: The number of seconds to wait between each retry (default: 10).
 
@@ -120,7 +147,15 @@ class SnowServiceClient:
         """
         for _ in range(max_retries):
             status = self.get_resource_status(resource_name=resource_name, resource_type=resource_type)
-            if status in [constants.ResourceStatus.READY, constants.ResourceStatus.DONE]:
+            if resource_type == constants.ResourceType.JOB and status == constants.ResourceStatus.DONE:
+                full_job_log = self.get_resource_log(
+                    resource_name=resource_name,
+                    resource_type=resource_type,
+                    container_name=container_name,
+                )
+                logger.debug(full_job_log)
+                return
+            elif resource_type == constants.ResourceType.SERVICE and status == constants.ResourceStatus.READY:
                 return
             elif status in [
                 constants.ResourceStatus.FAILED,
@@ -131,25 +166,31 @@ class SnowServiceClient:
                 error_log = self.get_resource_log(
                     resource_name=resource_name,
                     resource_type=resource_type,
-                    container_name=constants.INFERENCE_SERVER_CONTAINER,
+                    container_name=container_name,
                 )
                 raise RuntimeError(f"{resource_type} {resource_name} failed. \n {error_log if error_log else ''}")
             time.sleep(retry_interval_secs)
-
         raise RuntimeError("Resource never reached the ready/done state.")
 
     def get_resource_log(
         self, resource_name: str, resource_type: constants.ResourceType, container_name: str
     ) -> Optional[str]:
-        if resource_type != constants.ResourceType.SERVICE:
+        if resource_type == constants.ResourceType.SERVICE:
+            try:
+                row = self.session.sql(
+                    f"CALL SYSTEM$GET_SNOWSERVICE_LOGS('{resource_name}', '0', '{container_name}')"
+                ).collect()
+                return str(row[0]["SYSTEM$GET_SNOWSERVICE_LOGS"])
+            except Exception:
+                return None
+        elif resource_type == constants.ResourceType.JOB:
+            try:
+                row = self.session.sql(f"CALL SYSTEM$GET_JOB_LOGS('{resource_name}', '{container_name}')").collect()
+                return str(row[0]["SYSTEM$GET_JOB_LOGS"])
+            except Exception:
+                return None
+        else:
             raise NotImplementedError(f"{resource_type.name} is not yet supported in get_resource_log function")
-        try:
-            row = self.session.sql(
-                f"CALL SYSTEM$GET_SNOWSERVICE_LOGS('{resource_name}', '0', '{container_name}')"
-            ).collect()
-            return str(row[0]["SYSTEM$GET_SNOWSERVICE_LOGS"])
-        except Exception:
-            return None
 
     def get_resource_status(
         self, resource_name: str, resource_type: constants.ResourceType

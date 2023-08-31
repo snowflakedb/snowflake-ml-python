@@ -1,4 +1,3 @@
-import os
 import posixpath
 import tempfile
 from types import ModuleType
@@ -7,7 +6,7 @@ from typing import IO, List, Optional, Tuple, TypedDict, Union
 from typing_extensions import Unpack
 
 from snowflake.ml._internal import env_utils, file_utils
-from snowflake.ml.model import _model, _model_meta, type_hints as model_types
+from snowflake.ml.model import _model_meta, type_hints as model_types
 from snowflake.ml.model._deploy_client.warehouse import infer_template
 from snowflake.snowpark import session as snowpark_session, types as st
 
@@ -15,18 +14,18 @@ from snowflake.snowpark import session as snowpark_session, types as st
 def _deploy_to_warehouse(
     session: snowpark_session.Session,
     *,
-    model_dir_path: Optional[str] = None,
-    model_stage_file_path: Optional[str] = None,
+    model_stage_file_path: str,
+    model_meta: _model_meta.ModelMetadata,
     udf_name: str,
     target_method: str,
     **kwargs: Unpack[model_types.WarehouseDeployOptions],
-) -> _model_meta.ModelMetadata:
+) -> None:
     """Deploy the model to warehouse as UDF.
 
     Args:
         session: Snowpark session.
-        model_dir_path: Path to model directory. Exclusive with model_stage_file_path.
-        model_stage_file_path: Path to the stored model zip file in the stage. Exclusive with model_dir_path.
+        model_stage_file_path: Path to the stored model zip file in the stage.
+        model_meta: Model Metadata.
         udf_name: Name of the UDF.
         target_method: The name of the target method to be deployed.
         **kwargs: Options that control some features in generated udf code.
@@ -37,34 +36,18 @@ def _deploy_to_warehouse(
         ValueError: Raised when target method does not exist in model.
         ValueError: Raised when confronting invalid stage location.
 
-    Returns:
-        The metadata of the model deployed.
     """
     # TODO(SNOW-862576): Should remove check on ASCII encoding after SNOW-862576 fixed.
-    if model_dir_path:
-        model_dir_path = os.path.normpath(model_dir_path)
-        model_dir_name = os.path.basename(model_dir_path)
-        if not file_utils._able_ascii_encode(model_dir_name):
-            raise ValueError(f"Model file name {model_dir_name} cannot be encoded using ASCII. Please rename.")
-        extract_model_code = infer_template._EXTRACT_LOCAL_MODEL_CODE.format(model_dir_name=model_dir_name)
-        meta = _model.load_model(model_dir_path=model_dir_path, meta_only=True)
-    else:
-        assert model_stage_file_path is not None, "Unreachable assertion error."
-        model_stage_file_name = posixpath.basename(model_stage_file_path)
-        if not file_utils._able_ascii_encode(model_stage_file_name):
-            raise ValueError(f"Model file name {model_stage_file_name} cannot be encoded using ASCII. Please rename.")
-
-        extract_model_code = infer_template._EXTRACT_STAGE_MODEL_CODE.format(
-            model_stage_file_name=model_stage_file_name
-        )
-        meta = _model.load_model(session=session, model_stage_file_path=model_stage_file_path, meta_only=True)
+    model_stage_file_name = posixpath.basename(model_stage_file_path)
+    if not file_utils._able_ascii_encode(model_stage_file_name):
+        raise ValueError(f"Model file name {model_stage_file_name} cannot be encoded using ASCII. Please rename.")
 
     relax_version = kwargs.get("relax_version", False)
 
-    if target_method not in meta.signatures.keys():
+    if target_method not in model_meta.signatures.keys():
         raise ValueError(f"Target method {target_method} does not exist in model.")
 
-    final_packages = _get_model_final_packages(meta, session, relax_version=relax_version)
+    final_packages = _get_model_final_packages(model_meta, session, relax_version=relax_version)
 
     stage_location = kwargs.get("permanent_udf_stage_location", None)
     if stage_location:
@@ -73,11 +56,8 @@ def _deploy_to_warehouse(
             raise ValueError(f"Invalid stage location {stage_location}.")
 
     with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False, encoding="utf-8") as f:
-        _write_UDF_py_file(f.file, extract_model_code, target_method, **kwargs)
+        _write_UDF_py_file(f.file, model_stage_file_name=model_stage_file_name, target_method=target_method, **kwargs)
         print(f"Generated UDF file is persisted at: {f.name}")
-        imports = ([model_dir_path] if model_dir_path else []) + (
-            [model_stage_file_path] if model_stage_file_path else []
-        )
 
         class _UDFParams(TypedDict):
             file_path: str
@@ -94,7 +74,7 @@ def _deploy_to_warehouse(
             name=udf_name,
             return_type=st.PandasSeriesType(st.MapType(st.StringType(), st.VariantType())),
             input_types=[st.PandasDataFrameType([st.MapType()])],
-            imports=list(imports),
+            imports=[model_stage_file_path],
             packages=list(final_packages),
         )
         if stage_location is None:  # Temporary UDF
@@ -108,12 +88,11 @@ def _deploy_to_warehouse(
             )
 
     print(f"{udf_name} is deployed to warehouse.")
-    return meta
 
 
 def _write_UDF_py_file(
     f: IO[str],
-    extract_model_code: str,
+    model_stage_file_name: str,
     target_method: str,
     **kwargs: Unpack[model_types.WarehouseDeployOptions],
 ) -> None:
@@ -121,15 +100,13 @@ def _write_UDF_py_file(
 
     Args:
         f: File descriptor to write the python code.
-        extract_model_code: Code to extract the model.
+        model_stage_file_name: Model zip file name.
         target_method: The name of the target method to be deployed.
         **kwargs: Options that control some features in generated udf code.
     """
-    keep_order = kwargs.get("keep_order", True)
-
     udf_code = infer_template._UDF_CODE_TEMPLATE.format(
-        extract_model_code=extract_model_code,
-        keep_order_code=infer_template._KEEP_ORDER_CODE_TEMPLATE if keep_order else "",
+        model_stage_file_name=model_stage_file_name,
+        _KEEP_ORDER_COL_NAME=infer_template._KEEP_ORDER_COL_NAME,
         target_method=target_method,
         code_dir_name=_model_meta.ModelMetadata.MODEL_CODE_DIR,
     )

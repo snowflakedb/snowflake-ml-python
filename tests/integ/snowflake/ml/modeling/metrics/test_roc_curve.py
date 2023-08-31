@@ -4,6 +4,7 @@
 import os
 import tempfile
 from typing import Any, Dict
+from unittest import mock
 
 import numpy as np
 import pandas as pd
@@ -149,6 +150,26 @@ class RocCurveTest(parameterized.TestCase):
         sklearn_fpr, sklearn_tpr, sklearn_thresholds = sklearn_metrics.roc_curve(
             pd_df[_Y_TRUE_COL],
             pd_df[_Y_SCORE_COL],
+        )
+        np.testing.assert_allclose(
+            np.array((actual_fpr, actual_tpr, actual_thresholds)),
+            np.array((sklearn_fpr, sklearn_tpr, sklearn_thresholds)),
+        )
+
+    @mock.patch("snowflake.ml.modeling.metrics.ranking.result._RESULT_SIZE_THRESHOLD", 0)
+    def test_metric_size_threshold(self) -> None:
+        # TODO: somehow confirm that the stage upload code path was taken.
+        pandas_df = pd.DataFrame(_BINARY_DATA, columns=_SCHEMA)
+        input_df = self._session.create_dataframe(pandas_df)
+
+        actual_fpr, actual_tpr, actual_thresholds = snowml_metrics.roc_curve(
+            df=input_df,
+            y_true_col_name=_Y_TRUE_COL,
+            y_score_col_name=_Y_SCORE_COL,
+        )
+        sklearn_fpr, sklearn_tpr, sklearn_thresholds = sklearn_metrics.roc_curve(
+            pandas_df[_Y_TRUE_COL],
+            pandas_df[_Y_SCORE_COL],
         )
         np.testing.assert_allclose(
             np.array((actual_fpr, actual_tpr, actual_thresholds)),

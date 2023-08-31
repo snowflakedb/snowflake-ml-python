@@ -1,14 +1,16 @@
+import functools
 import importlib
 import os
 import pkgutil
 from types import ModuleType
-from typing import Dict, Optional, Type
+from typing import Any, Callable, Dict, Optional, Type, TypeVar, cast
 
 from snowflake.ml.model import type_hints as model_types
 from snowflake.ml.model._handlers import _base
 
 _HANDLERS_BASE = "_handlers"
 _MODEL_HANDLER_REGISTRY: Dict[str, Type[_base._ModelHandler[model_types.SupportedModelType]]] = dict()
+_IS_HANDLER_LOADED = False
 
 
 def _register_handlers() -> None:
@@ -34,29 +36,43 @@ def _register_handlers() -> None:
                     _MODEL_HANDLER_REGISTRY[k_class.handler_type] = k_class
 
 
+F = TypeVar("F", bound=Callable[..., Any])
+
+
+def ensure_handlers_registration(fn: F) -> F:
+    @functools.wraps(fn)
+    def wrapper(*args: Any, **kwargs: Any) -> Any:
+        global _IS_HANDLER_LOADED
+        if not _IS_HANDLER_LOADED:
+            _register_handlers()
+            _IS_HANDLER_LOADED = True
+
+        return fn(*args, **kwargs)
+
+    return cast(F, wrapper)
+
+
+@ensure_handlers_registration
 def _find_handler(
     model: model_types.SupportedModelType,
 ) -> Optional[Type[_base._ModelHandler[model_types.SupportedModelType]]]:
-    retried = False
-    while True:
-        for handler in _MODEL_HANDLER_REGISTRY.values():
-            if handler.can_handle(model):
-                return handler
-        if retried:
-            return None
-        else:
-            _register_handlers()
-            retried = True
+    for handler in _MODEL_HANDLER_REGISTRY.values():
+        if handler.can_handle(model):
+            return handler
+    return None
 
 
+@ensure_handlers_registration
 def _load_handler(target_model_type: str) -> Optional[Type[_base._ModelHandler[model_types.SupportedModelType]]]:
-    retried = False
-    while True:
-        for model_type, handler in _MODEL_HANDLER_REGISTRY.items():
-            if target_model_type == model_type:
-                return handler
-        if retried:
-            return None
-        else:
-            _register_handlers()
-            retried = True
+    for model_type, handler in _MODEL_HANDLER_REGISTRY.items():
+        if target_model_type == model_type:
+            return handler
+    return None
+
+
+@ensure_handlers_registration
+def is_auto_signature_model(model: model_types.SupportedModelType) -> bool:
+    for handler in _MODEL_HANDLER_REGISTRY.values():
+        if handler.can_handle(model):
+            return handler.is_auto_signature
+    return False

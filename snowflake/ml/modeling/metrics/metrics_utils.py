@@ -8,6 +8,7 @@ from uuid import uuid4
 import cloudpickle
 import numpy as np
 
+import snowflake.snowpark._internal.utils as snowpark_utils
 from snowflake import snowpark
 from snowflake.snowpark import Session, functions as F, types as T
 
@@ -159,7 +160,10 @@ def register_sharded_dot_sum_computer(*, session: Session, statement_params: Dic
                 rows_by_count_d = self._batched_rows / (self._count - self._ddof)
                 self._sum_by_countd += np.sum(rows_by_count_d[0 : self._cur_count, :], axis=0)
 
-    sharded_dot_and_sum_computer = "ShardedDotAndSumComputer_{}".format(str(uuid4()).replace("-", "_").upper())
+    sharded_dot_and_sum_computer = snowpark_utils.random_name_for_temp_object(
+        snowpark_utils.TempObjectType.TABLE_FUNCTION
+    )
+    # TODO (SNOW-897239): make this an anonymous temp UDTF for it to work in a SPROC
     session.udtf.register(
         ShardedDotAndSumComputer,
         output_schema=T.StructType(

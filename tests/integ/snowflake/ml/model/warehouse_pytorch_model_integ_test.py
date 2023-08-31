@@ -56,7 +56,6 @@ class TestWarehousePytorchModelINteg(parameterized.TestCase):
         sample_input: model_types.SupportedDataType,
         test_input: model_types.SupportedDataType,
         deploy_params: Dict[str, Tuple[Dict[str, Any], Callable[[Union[pd.DataFrame, SnowparkDataFrame]], Any]]],
-        model_in_stage: Optional[bool] = False,
         permanent_deploy: Optional[bool] = False,
         test_released_version: Optional[str] = None,
     ) -> None:
@@ -69,60 +68,46 @@ class TestWarehousePytorchModelINteg(parameterized.TestCase):
             sample_input=sample_input,
             test_input=test_input,
             deploy_params=deploy_params,
-            model_in_stage=model_in_stage,
             permanent_deploy=permanent_deploy,
             test_released_version=test_released_version,
         )
 
-    @parameterized.parameters(  # type: ignore[misc]
-        {"model_in_stage": True, "permanent_deploy": True, "test_released_version": None},
-        {"model_in_stage": False, "permanent_deploy": False, "test_released_version": None},
-        {"model_in_stage": True, "permanent_deploy": False, "test_released_version": "1.0.3"},
-        {"model_in_stage": False, "permanent_deploy": True, "test_released_version": "1.0.3"},
-    )
+    @parameterized.product(permanent_deploy=[True, False], test_released_version=[None, "1.0.6"])  # type: ignore[misc]
     def test_pytorch_tensor_as_sample(
         self,
-        model_in_stage: Optional[bool] = False,
         permanent_deploy: Optional[bool] = False,
         test_released_version: Optional[str] = None,
     ) -> None:
         model, data_x, data_y = model_factory.ModelFactory.prepare_torch_model()
-        x_df = pytorch_handler.SeqOfPyTorchTensorHandler.convert_to_df(data_x, ensure_serializable=False)
-        y_pred = model.forward(data_x)[0].detach()
+        x_df = pytorch_handler.SeqOfPyTorchTensorHandler.convert_to_df([data_x], ensure_serializable=False)
+        y_pred = model.forward(data_x).detach()
 
         self.base_test_case(
             name="pytorch_model_tensor_as_sample",
             model=model,
-            sample_input=data_x,
+            sample_input=[data_x],
             test_input=x_df,
             deploy_params={
-                "forward": (
+                "": (
                     {},
                     lambda res: torch.testing.assert_close(
                         pytorch_handler.SeqOfPyTorchTensorHandler.convert_from_df(res)[0], y_pred, check_dtype=False
                     ),
                 ),
             },
-            model_in_stage=model_in_stage,
             permanent_deploy=permanent_deploy,
             test_released_version=test_released_version,
         )
 
-    @parameterized.parameters(  # type: ignore[misc]
-        {"model_in_stage": True, "permanent_deploy": True, "test_released_version": None},
-        {"model_in_stage": False, "permanent_deploy": False, "test_released_version": None},
-        {"model_in_stage": True, "permanent_deploy": False, "test_released_version": "1.0.3"},
-        {"model_in_stage": False, "permanent_deploy": True, "test_released_version": "1.0.3"},
-    )
+    @parameterized.product(permanent_deploy=[True, False], test_released_version=[None, "1.0.6"])  # type: ignore[misc]
     def test_pytorch_df_as_sample(
         self,
-        model_in_stage: Optional[bool] = False,
         permanent_deploy: Optional[bool] = False,
         test_released_version: Optional[str] = None,
     ) -> None:
         model, data_x, data_y = model_factory.ModelFactory.prepare_torch_model(torch.float64)
-        x_df = pytorch_handler.SeqOfPyTorchTensorHandler.convert_to_df(data_x, ensure_serializable=False)
-        y_pred = model.forward(data_x)[0].detach()
+        x_df = pytorch_handler.SeqOfPyTorchTensorHandler.convert_to_df([data_x], ensure_serializable=False)
+        y_pred = model.forward(data_x).detach()
 
         self.base_test_case(
             name="pytorch_model_df_as_sample",
@@ -130,35 +115,31 @@ class TestWarehousePytorchModelINteg(parameterized.TestCase):
             sample_input=x_df,
             test_input=x_df,
             deploy_params={
-                "forward": (
+                "": (
                     {},
                     lambda res: torch.testing.assert_close(
                         pytorch_handler.SeqOfPyTorchTensorHandler.convert_from_df(res)[0], y_pred
                     ),
                 ),
             },
-            model_in_stage=model_in_stage,
             permanent_deploy=permanent_deploy,
             test_released_version=test_released_version,
         )
 
-    @parameterized.parameters(  # type: ignore[misc]
-        {"model_in_stage": True, "permanent_deploy": True, "test_released_version": None},
-        {"model_in_stage": False, "permanent_deploy": False, "test_released_version": None},
-        {"model_in_stage": True, "permanent_deploy": False, "test_released_version": "1.0.3"},
-        {"model_in_stage": False, "permanent_deploy": True, "test_released_version": "1.0.3"},
-    )
+    @parameterized.product(permanent_deploy=[True, False], test_released_version=[None, "1.0.6"])  # type: ignore[misc]
     def test_pytorch_sp(
         self,
-        model_in_stage: Optional[bool] = False,
         permanent_deploy: Optional[bool] = False,
         test_released_version: Optional[str] = None,
     ) -> None:
         model, data_x, data_y = model_factory.ModelFactory.prepare_torch_model(torch.float64)
-        x_df = pytorch_handler.SeqOfPyTorchTensorHandler.convert_to_df(data_x, ensure_serializable=False)
+        x_df = pytorch_handler.SeqOfPyTorchTensorHandler.convert_to_df([data_x], ensure_serializable=False)
         x_df.columns = ["col_0"]
-        y_pred = model.forward(data_x)[0].detach()
-        x_df_sp = snowpark_handler.SnowparkDataFrameHandler.convert_from_df(self._session, x_df, keep_order=True)
+        y_pred = model.forward(data_x)
+        x_df_sp = snowpark_handler.SnowparkDataFrameHandler.convert_from_df(self._session, x_df)
+        y_pred_df = pytorch_handler.SeqOfPyTorchTensorHandler.convert_to_df([y_pred])
+        y_pred_df.columns = ["output_feature_0"]
+        y_df_expected = pd.concat([x_df, y_pred_df], axis=1)
 
         self.base_test_case(
             name="pytorch_model_sp",
@@ -166,72 +147,53 @@ class TestWarehousePytorchModelINteg(parameterized.TestCase):
             sample_input=x_df,
             test_input=x_df_sp,
             deploy_params={
-                "forward": (
+                "": (
                     {},
-                    lambda res: torch.testing.assert_close(
-                        pytorch_handler.SeqOfPyTorchTensorHandler.convert_from_df(
-                            snowpark_handler.SnowparkDataFrameHandler.convert_to_df(res)
-                        )[0],
-                        y_pred,
-                    ),
+                    lambda res: warehouse_model_integ_test_utils.check_sp_df_res(res, y_df_expected),
                 ),
             },
-            model_in_stage=model_in_stage,
             permanent_deploy=permanent_deploy,
             test_released_version=test_released_version,
         )
 
-    @parameterized.parameters(  # type: ignore[misc]
-        {"model_in_stage": True, "permanent_deploy": True, "test_released_version": None},
-        {"model_in_stage": False, "permanent_deploy": False, "test_released_version": None},
-        {"model_in_stage": True, "permanent_deploy": False, "test_released_version": "1.0.3"},
-        {"model_in_stage": False, "permanent_deploy": True, "test_released_version": "1.0.3"},
-    )
+    @parameterized.product(permanent_deploy=[True, False], test_released_version=[None, "1.0.6"])  # type: ignore[misc]
     def test_torchscript_tensor_as_sample(
         self,
-        model_in_stage: Optional[bool] = False,
         permanent_deploy: Optional[bool] = False,
         test_released_version: Optional[str] = None,
     ) -> None:
         model, data_x, data_y = model_factory.ModelFactory.prepare_jittable_torch_model()
-        x_df = pytorch_handler.SeqOfPyTorchTensorHandler.convert_to_df(data_x, ensure_serializable=False)
+        x_df = pytorch_handler.SeqOfPyTorchTensorHandler.convert_to_df([data_x], ensure_serializable=False)
         model_script = torch.jit.script(model)  # type:ignore[attr-defined]
-        y_pred = model_script.forward(data_x)[0].detach()
+        y_pred = model_script.forward(data_x).detach()
 
         self.base_test_case(
             name="torch_script_model_tensor_as_sample",
             model=model_script,
-            sample_input=data_x,
+            sample_input=[data_x],
             test_input=x_df,
             deploy_params={
-                "forward": (
+                "": (
                     {},
                     lambda res: torch.testing.assert_close(
                         pytorch_handler.SeqOfPyTorchTensorHandler.convert_from_df(res)[0], y_pred, check_dtype=False
                     ),
                 ),
             },
-            model_in_stage=model_in_stage,
             permanent_deploy=permanent_deploy,
             test_released_version=test_released_version,
         )
 
-    @parameterized.parameters(  # type: ignore[misc]
-        {"model_in_stage": True, "permanent_deploy": True, "test_released_version": None},
-        {"model_in_stage": False, "permanent_deploy": False, "test_released_version": None},
-        {"model_in_stage": True, "permanent_deploy": False, "test_released_version": "1.0.3"},
-        {"model_in_stage": False, "permanent_deploy": True, "test_released_version": "1.0.3"},
-    )
+    @parameterized.product(permanent_deploy=[True, False], test_released_version=[None, "1.0.6"])  # type: ignore[misc]
     def test_torchscript_df_as_sample(
         self,
-        model_in_stage: Optional[bool] = False,
         permanent_deploy: Optional[bool] = False,
         test_released_version: Optional[str] = None,
     ) -> None:
         model, data_x, data_y = model_factory.ModelFactory.prepare_jittable_torch_model(torch.float64)
-        x_df = pytorch_handler.SeqOfPyTorchTensorHandler.convert_to_df(data_x, ensure_serializable=False)
+        x_df = pytorch_handler.SeqOfPyTorchTensorHandler.convert_to_df([data_x], ensure_serializable=False)
         model_script = torch.jit.script(model)  # type:ignore[attr-defined]
-        y_pred = model_script.forward(data_x)[0].detach()
+        y_pred = model_script.forward(data_x).detach()
 
         self.base_test_case(
             name="torch_script_model_df_as_sample",
@@ -239,36 +201,32 @@ class TestWarehousePytorchModelINteg(parameterized.TestCase):
             sample_input=x_df,
             test_input=x_df,
             deploy_params={
-                "forward": (
+                "": (
                     {},
                     lambda res: torch.testing.assert_close(
                         pytorch_handler.SeqOfPyTorchTensorHandler.convert_from_df(res)[0], y_pred
                     ),
                 ),
             },
-            model_in_stage=model_in_stage,
             permanent_deploy=permanent_deploy,
             test_released_version=test_released_version,
         )
 
-    @parameterized.parameters(  # type: ignore[misc]
-        {"model_in_stage": True, "permanent_deploy": True, "test_released_version": None},
-        {"model_in_stage": False, "permanent_deploy": False, "test_released_version": None},
-        {"model_in_stage": True, "permanent_deploy": False, "test_released_version": "1.0.3"},
-        {"model_in_stage": False, "permanent_deploy": True, "test_released_version": "1.0.3"},
-    )
+    @parameterized.product(permanent_deploy=[True, False], test_released_version=[None, "1.0.6"])  # type: ignore[misc]
     def test_torchscript_sp(
         self,
-        model_in_stage: Optional[bool] = False,
         permanent_deploy: Optional[bool] = False,
         test_released_version: Optional[str] = None,
     ) -> None:
         model, data_x, data_y = model_factory.ModelFactory.prepare_jittable_torch_model(torch.float64)
-        x_df = pytorch_handler.SeqOfPyTorchTensorHandler.convert_to_df(data_x, ensure_serializable=False)
+        x_df = pytorch_handler.SeqOfPyTorchTensorHandler.convert_to_df([data_x], ensure_serializable=False)
         x_df.columns = ["col_0"]
         model_script = torch.jit.script(model)  # type:ignore[attr-defined]
-        y_pred = model_script.forward(data_x)[0].detach()
-        x_df_sp = snowpark_handler.SnowparkDataFrameHandler.convert_from_df(self._session, x_df, keep_order=True)
+        y_pred = model_script.forward(data_x)
+        x_df_sp = snowpark_handler.SnowparkDataFrameHandler.convert_from_df(self._session, x_df)
+        y_pred_df = pytorch_handler.SeqOfPyTorchTensorHandler.convert_to_df([y_pred])
+        y_pred_df.columns = ["output_feature_0"]
+        y_df_expected = pd.concat([x_df, y_pred_df], axis=1)
 
         self.base_test_case(
             name="torch_script_model_sp",
@@ -276,17 +234,11 @@ class TestWarehousePytorchModelINteg(parameterized.TestCase):
             sample_input=x_df,
             test_input=x_df_sp,
             deploy_params={
-                "forward": (
+                "": (
                     {},
-                    lambda res: torch.testing.assert_close(
-                        pytorch_handler.SeqOfPyTorchTensorHandler.convert_from_df(
-                            snowpark_handler.SnowparkDataFrameHandler.convert_to_df(res)
-                        )[0],
-                        y_pred,
-                    ),
+                    lambda res: warehouse_model_integ_test_utils.check_sp_df_res(res, y_df_expected),
                 ),
             },
-            model_in_stage=model_in_stage,
             permanent_deploy=permanent_deploy,
             test_released_version=test_released_version,
         )

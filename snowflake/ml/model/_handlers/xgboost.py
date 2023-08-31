@@ -110,9 +110,14 @@ class _XGBModelHandler(_base._ModelHandler[Union["xgboost.Booster", "xgboost.XGB
             ]
         )
 
+        model_meta.cuda_version = kwargs.get("cuda_version", model_meta_api._DEFAULT_CUDA_VERSION)
+
     @staticmethod
     def _load_model(
-        name: str, model_meta: model_meta_api.ModelMetadata, model_blobs_dir_path: str
+        name: str,
+        model_meta: model_meta_api.ModelMetadata,
+        model_blobs_dir_path: str,
+        **kwargs: Unpack[model_types.ModelLoadOption],
     ) -> Union["xgboost.Booster", "xgboost.XGBModel"]:
         import xgboost
 
@@ -128,14 +133,24 @@ class _XGBModelHandler(_base._ModelHandler[Union["xgboost.Booster", "xgboost.XGB
         if not xgb_estimator_type or not hasattr(xgboost, xgb_estimator_type):
             raise ValueError("Type of XGB estimator unknown or illegal.")
         m = getattr(xgboost, xgb_estimator_type)()
+        m.load_model(os.path.join(model_blob_path, model_blob_filename))
+
+        if kwargs.get("use_gpu", False):
+            gpu_params = {"tree_method": "gpu_hist", "predictor": "gpu_predictor"}
+            if isinstance(m, xgboost.Booster):
+                m.set_param(gpu_params)
+            elif isinstance(m, xgboost.XGBModel):
+                m.set_params(**gpu_params)
 
         assert isinstance(m, xgboost.Booster) or isinstance(m, xgboost.XGBModel)
-        m.load_model(os.path.join(model_blob_path, model_blob_filename))
         return m
 
     @staticmethod
     def _load_as_custom_model(
-        name: str, model_meta: model_meta_api.ModelMetadata, model_blobs_dir_path: str
+        name: str,
+        model_meta: model_meta_api.ModelMetadata,
+        model_blobs_dir_path: str,
+        **kwargs: Unpack[model_types.ModelLoadOption],
     ) -> custom_model.CustomModel:
         """Create a custom model class wrap for unified interface when being deployed. The predict method will be
         re-targeted based on target_method metadata.
@@ -144,6 +159,7 @@ class _XGBModelHandler(_base._ModelHandler[Union["xgboost.Booster", "xgboost.XGB
             name: Name of the model.
             model_meta: The model metadata.
             model_blobs_dir_path: Directory path to the whole model.
+            kwargs: Options when loading the model.
 
         Returns:
             The model object as a custom model.
@@ -191,7 +207,7 @@ class _XGBModelHandler(_base._ModelHandler[Union["xgboost.Booster", "xgboost.XGB
 
             return _XGBModel
 
-        raw_model = _XGBModelHandler._load_model(name, model_meta, model_blobs_dir_path)
+        raw_model = _XGBModelHandler._load_model(name, model_meta, model_blobs_dir_path, **kwargs)
         _XGBModel = _create_custom_model(raw_model, model_meta)
         xgb_model = _XGBModel(custom_model.ModelContext())
 

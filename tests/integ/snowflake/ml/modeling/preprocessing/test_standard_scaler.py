@@ -373,45 +373,45 @@ class StandardScalerTest(TestCase):
 
         scaler = StandardScaler().set_input_cols(input_cols).set_output_cols(output_cols)
         scaler.fit(df1)
-        filepath = os.path.join(tempfile.gettempdir(), "test_standard_scaler.pkl")
-        self._to_be_deleted_files.append(filepath)
-        scaler_dump_cloudpickle = cloudpickle.dumps(scaler)
-        scaler_dump_pickle = pickle.dumps(scaler)
-        joblib.dump(scaler, filepath)
+        with tempfile.NamedTemporaryFile(suffix=".pkl", delete=False) as file:
+            self._to_be_deleted_files.append(file.name)
+            scaler_dump_cloudpickle = cloudpickle.dumps(scaler)
+            scaler_dump_pickle = pickle.dumps(scaler)
+            joblib.dump(scaler, file.name)
 
-        self._session.close()
+            self._session.close()
 
-        # transform in session 2
-        self._session = Session.builder.configs(SnowflakeLoginOptions()).create()
-        _, df2 = framework_utils.get_df(self._session, data, schema, np.nan)
-        input_cols_extended = input_cols.copy()
-        input_cols_extended.append(id_col)
+            # transform in session 2
+            self._session = Session.builder.configs(SnowflakeLoginOptions()).create()
+            _, df2 = framework_utils.get_df(self._session, data, schema, np.nan)
+            input_cols_extended = input_cols.copy()
+            input_cols_extended.append(id_col)
 
-        importlib.reload(sys.modules["snowflake.ml.modeling.preprocessing.standard_scaler"])
+            importlib.reload(sys.modules["snowflake.ml.modeling.preprocessing.standard_scaler"])
 
-        # cloudpickle
-        scaler_load_cloudpickle = cloudpickle.loads(scaler_dump_cloudpickle)
-        transformed_df_cloudpickle = scaler_load_cloudpickle.transform(df2[input_cols_extended])
-        actual_arr_cloudpickle = transformed_df_cloudpickle.sort(id_col)[output_cols].to_pandas().to_numpy()
+            # cloudpickle
+            scaler_load_cloudpickle = cloudpickle.loads(scaler_dump_cloudpickle)
+            transformed_df_cloudpickle = scaler_load_cloudpickle.transform(df2[input_cols_extended])
+            actual_arr_cloudpickle = transformed_df_cloudpickle.sort(id_col)[output_cols].to_pandas().to_numpy()
 
-        # pickle
-        scaler_load_pickle = pickle.loads(scaler_dump_pickle)
-        transformed_df_pickle = scaler_load_pickle.transform(df2[input_cols_extended])
-        actual_arr_pickle = transformed_df_pickle.sort(id_col)[output_cols].to_pandas().to_numpy()
+            # pickle
+            scaler_load_pickle = pickle.loads(scaler_dump_pickle)
+            transformed_df_pickle = scaler_load_pickle.transform(df2[input_cols_extended])
+            actual_arr_pickle = transformed_df_pickle.sort(id_col)[output_cols].to_pandas().to_numpy()
 
-        # joblib
-        scaler_load_joblib = joblib.load(filepath)
-        transformed_df_joblib = scaler_load_joblib.transform(df2[input_cols_extended])
-        actual_arr_joblib = transformed_df_joblib.sort(id_col)[output_cols].to_pandas().to_numpy()
+            # joblib
+            scaler_load_joblib = joblib.load(file.name)
+            transformed_df_joblib = scaler_load_joblib.transform(df2[input_cols_extended])
+            actual_arr_joblib = transformed_df_joblib.sort(id_col)[output_cols].to_pandas().to_numpy()
 
-        # sklearn
-        scaler_sklearn = SklearnStandardScaler()
-        scaler_sklearn.fit(df_pandas[input_cols])
-        sklearn_arr = scaler_sklearn.transform(df_pandas[input_cols])
+            # sklearn
+            scaler_sklearn = SklearnStandardScaler()
+            scaler_sklearn.fit(df_pandas[input_cols])
+            sklearn_arr = scaler_sklearn.transform(df_pandas[input_cols])
 
-        np.testing.assert_allclose(actual_arr_cloudpickle, sklearn_arr)
-        np.testing.assert_allclose(actual_arr_pickle, sklearn_arr)
-        np.testing.assert_allclose(actual_arr_joblib, sklearn_arr)
+            np.testing.assert_allclose(actual_arr_cloudpickle, sklearn_arr)
+            np.testing.assert_allclose(actual_arr_pickle, sklearn_arr)
+            np.testing.assert_allclose(actual_arr_joblib, sklearn_arr)
 
 
 if __name__ == "__main__":

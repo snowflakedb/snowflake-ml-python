@@ -132,3 +132,19 @@ py_library(
         "//snowflake/ml/model/_signatures:utils",
     ],
 )
+
+py_library(
+    name = "huggingface_pipeline",
+    srcs = ["huggingface_pipeline.py"],
+    deps = [
+        ":_base",
+        "//snowflake/ml/_internal:type_utils",
+        "//snowflake/ml/model:_model_meta",
+        "//snowflake/ml/model:custom_model",
+        "//snowflake/ml/model:model_signature",
+        "//snowflake/ml/model:type_hints",
+        "//snowflake/ml/model/models:huggingface_pipeline",
+        "//snowflake/ml/model/_signatures:utils",
+        "//snowflake/ml/model/_signatures:builtins_handler",
+    ],
+)

@@ -87,7 +87,11 @@ class _TensorFlowHandler(_base._ModelHandler["tensorflow.Module"]):
                 assert callable(target_method)
                 for tensor in sample_input:
                     tensorflow.stop_gradient(tensor)
-                predictions_df = target_method(sample_input)
+                predictions_df = target_method(*sample_input)
+
+                if isinstance(predictions_df, (tensorflow.Tensor, tensorflow.Variable, np.ndarray)):
+                    predictions_df = [predictions_df]
+
                 return predictions_df
 
             model_meta = model_meta_api._validate_signature(
@@ -111,9 +115,14 @@ class _TensorFlowHandler(_base._ModelHandler["tensorflow.Module"]):
         model_meta.models[name] = base_meta
         model_meta._include_if_absent([model_meta_api.Dependency(conda_name="tensorflow", pip_name="tensorflow")])
 
+        model_meta.cuda_version = kwargs.get("cuda_version", model_meta_api._DEFAULT_CUDA_VERSION)
+
     @staticmethod
     def _load_model(
-        name: str, model_meta: model_meta_api.ModelMetadata, model_blobs_dir_path: str
+        name: str,
+        model_meta: model_meta_api.ModelMetadata,
+        model_blobs_dir_path: str,
+        **kwargs: Unpack[model_types.ModelLoadOption],
     ) -> "tensorflow.Module":
         import tensorflow
 
@@ -132,7 +141,10 @@ class _TensorFlowHandler(_base._ModelHandler["tensorflow.Module"]):
 
     @staticmethod
     def _load_as_custom_model(
-        name: str, model_meta: model_meta_api.ModelMetadata, model_blobs_dir_path: str
+        name: str,
+        model_meta: model_meta_api.ModelMetadata,
+        model_blobs_dir_path: str,
+        **kwargs: Unpack[model_types.ModelLoadOption],
     ) -> custom_model.CustomModel:
         """Create a custom model class wrap for unified interface when being deployed. The predict method will be
         re-targeted based on target_method metadata.
@@ -141,6 +153,7 @@ class _TensorFlowHandler(_base._ModelHandler["tensorflow.Module"]):
             name: Name of the model.
             model_meta: The model metadata.
             model_blobs_dir_path: Directory path to the whole model.
+            kwargs: Options when loading the model.
 
         Returns:
             The model object as a custom model.
@@ -167,7 +180,11 @@ class _TensorFlowHandler(_base._ModelHandler["tensorflow.Module"]):
 
                     for tensor in t:
                         tensorflow.stop_gradient(tensor)
-                    res = getattr(raw_model, target_method)(t)
+                    res = getattr(raw_model, target_method)(*t)
+
+                    if isinstance(res, (tensorflow.Tensor, tensorflow.Variable, np.ndarray)):
+                        res = [res]
+
                     if isinstance(res, list) and len(res) > 0 and isinstance(res[0], np.ndarray):
                         # In case of running on CPU, it will return numpy array
                         df = numpy_handler.SeqOfNumpyArrayHandler.convert_to_df(res)
@@ -189,7 +206,7 @@ class _TensorFlowHandler(_base._ModelHandler["tensorflow.Module"]):
 
             return _TensorFlowModel
 
-        raw_model = _TensorFlowHandler()._load_model(name, model_meta, model_blobs_dir_path)
+        raw_model = _TensorFlowHandler()._load_model(name, model_meta, model_blobs_dir_path, **kwargs)
         _TensorFlowModel = _create_custom_model(raw_model, model_meta)
         tf_model = _TensorFlowModel(custom_model.ModelContext())
 

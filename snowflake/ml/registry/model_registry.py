@@ -3,20 +3,29 @@ import json
 import os
 import posixpath
 import sys
-import tempfile
 import types
-import zipfile
-from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Set, Union, cast
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Callable,
+    Dict,
+    List,
+    Optional,
+    Tuple,
+    Union,
+    cast,
+)
 from uuid import uuid1
 
 from absl import logging
 
 from snowflake import connector, snowpark
-from snowflake.ml._internal import file_utils, telemetry
+from snowflake.ml._internal import telemetry
 from snowflake.ml._internal.utils import (
     formatting,
     identifier,
     query_result_checker,
+    table_manager,
     uri,
 )
 from snowflake.ml.model import (
@@ -26,8 +35,8 @@ from snowflake.ml.model import (
     model_signature,
     type_hints as model_types,
 )
-from snowflake.ml.modeling.framework import base
-from snowflake.ml.registry import _schema
+from snowflake.ml.registry import _ml_artifact, _schema
+from snowflake.ml.training_dataset import training_dataset
 
 if TYPE_CHECKING:
     import pandas as pd
@@ -51,7 +60,7 @@ _METADATA_ATTRIBUTE_TAGS: str = "TAGS"
 _METADATA_ATTRIBUTE_DEPLOYMENT: str = "DEPLOYMENTS"
 _METADATA_ATTRIBUTE_DELETION: str = "DELETION"
 
-# Leaving out REGISTRATION/DEPLOYMENT evnts as they will be handled differently from all mutable attributes.
+# Leaving out REGISTRATION/DEPLOYMENT events as they will be handled differently from all mutable attributes.
 _LIST_METADATA_ATTRIBUTE: List[str] = [
     _METADATA_ATTRIBUTE_DESCRIPTION,
     _METADATA_ATTRIBUTE_METRICS,
@@ -60,72 +69,7 @@ _LIST_METADATA_ATTRIBUTE: List[str] = [
 _TELEMETRY_PROJECT = "MLOps"
 _TELEMETRY_SUBPROJECT = "ModelRegistry"
 
-
-@telemetry.send_api_usage_telemetry(
-    project=_TELEMETRY_PROJECT,
-    subproject=_TELEMETRY_SUBPROJECT,
-)
-@snowpark._internal.utils.private_preview(version="0.2.0")
-def create_model_registry(
-    *,
-    session: snowpark.Session,
-    database_name: str = _DEFAULT_REGISTRY_NAME,
-    schema_name: str = _DEFAULT_SCHEMA_NAME,
-) -> bool:
-    """Setup a new model registry. This should be run once per model registry by an administrator role.
-
-    Args:
-        session: Session object to communicate with Snowflake.
-        database_name: Desired name of the model registry database.
-        schema_name: Desired name of the schema used by this model registry inside the database.
-
-    Returns:
-        True if the creation of the model registry internal data structures was successful,
-        False otherwise.
-    """
-    # Get the db & schema of the current session
-    old_db = session.get_current_database()
-    old_schema = session.get_current_schema()
-
-    # These might be exposed as parameters in the future.
-    database_name = identifier.get_inferred_name(database_name)
-    schema_name = identifier.get_inferred_name(schema_name)
-    registry_table_name = identifier.get_inferred_name(_MODELS_TABLE_NAME)
-    metadata_table_name = identifier.get_inferred_name(_METADATA_TABLE_NAME)
-    deployment_table_name = identifier.get_inferred_name(_DEPLOYMENT_TABLE_NAME)
-    statement_params = telemetry.get_function_usage_statement_params(
-        project=_TELEMETRY_PROJECT,
-        subproject=_TELEMETRY_SUBPROJECT,
-        function_name=telemetry.get_statement_params_full_func_name(inspect.currentframe(), ""),
-    )
-    try:
-        _create_registry_database(session, database_name, statement_params)
-        _create_registry_schema(session, database_name, schema_name, statement_params)
-        _create_registry_tables(
-            session,
-            database_name,
-            schema_name,
-            registry_table_name,
-            metadata_table_name,
-            deployment_table_name,
-            statement_params,
-        )
-        _create_registry_views(
-            session,
-            database_name,
-            schema_name,
-            registry_table_name,
-            metadata_table_name,
-            deployment_table_name,
-            statement_params,
-        )
-    finally:
-        # Restore the db & schema to the original ones
-        if old_db is not None:
-            session.use_database(old_db)
-        if old_schema is not None:
-            session.use_schema(old_schema)
-    return True
+_STAGE_PREFIX = "@"
 
 
 def _create_registry_database(
@@ -172,26 +116,13 @@ def _create_registry_schema(
 
     if len(registry_schemas) > 0:
         logging.warning(
-            f"The schema {_get_fully_qualified_schema_name(database_name, schema_name)}already exists. "
+            f"The schema {table_manager.get_fully_qualified_schema_name(database_name, schema_name)}already exists. "
             + "Skipping creation."
         )
         return
 
-    session.sql(f"CREATE SCHEMA {_get_fully_qualified_schema_name(database_name, schema_name)}").collect(
+    session.sql(f"CREATE SCHEMA {table_manager.get_fully_qualified_schema_name(database_name, schema_name)}").collect(
         statement_params=statement_params
-    )
-
-
-def _get_fully_qualified_schema_name(database_name: str, schema_name: str) -> str:
-    return ".".join([database_name, schema_name])
-
-
-def _get_fully_qualified_table_name(database_name: str, schema_name: str, table_name: str) -> str:
-    return ".".join(
-        [
-            _get_fully_qualified_schema_name(database_name, schema_name),
-            table_name,
-        ]
     )
 
 
@@ -202,6 +133,7 @@ def _create_registry_tables(
     registry_table_name: str,
     metadata_table_name: str,
     deployment_table_name: str,
+    artifact_table_name: str,
     statement_params: Dict[str, Any],
 ) -> None:
     """Private helper to create the model registry required tables.
@@ -213,64 +145,54 @@ def _create_registry_tables(
         registry_table_name: Name for the main model registry table.
         metadata_table_name: Name for the metadata table used by the model registry.
         deployment_table_name: Name for the deployment event table.
+        artifact_table_name: Name for the artifact table.
         statement_params: Function usage statement parameters used in sql query executions.
     """
 
     # Create model registry table to store immutable properties of models
-    registry_table_schema_string = ", ".join([f"{k} {v}" for k, v in _schema._REGISTRY_TABLE_SCHEMA.items()])
-    fully_qualified_registry_table_name = _create_single_registry_table(
-        session, database_name, schema_name, registry_table_name, registry_table_schema_string, statement_params
+    fully_qualified_registry_table_name = table_manager.create_single_registry_table(
+        session=session,
+        database_name=database_name,
+        schema_name=schema_name,
+        table_name=registry_table_name,
+        table_schema=_schema._REGISTRY_TABLE_SCHEMA,
+        statement_params=statement_params,
     )
 
     # Create model metadata table to store mutable properties of models
-    metadata_table_schema_string = ", ".join(
-        [
-            f"{k} {v.format(registry_table_name=fully_qualified_registry_table_name)}"
-            for k, v in _schema._METADATA_TABLE_SCHEMA.items()
-        ]
-    )
-    _create_single_registry_table(
-        session, database_name, schema_name, metadata_table_name, metadata_table_schema_string, statement_params
+    metadata_table_schema = [
+        (k, v.format(registry_table_name=fully_qualified_registry_table_name))
+        for k, v in _schema._METADATA_TABLE_SCHEMA
+    ]
+    table_manager.create_single_registry_table(
+        session=session,
+        database_name=database_name,
+        schema_name=schema_name,
+        table_name=metadata_table_name,
+        table_schema=metadata_table_schema,
+        statement_params=statement_params,
     )
 
     # Create model deployment table to store deployment events of models
-    deployment_table_schema_string = ", ".join(
-        [
-            f"{k} {v.format(registry_table_name=fully_qualified_registry_table_name)}"
-            for k, v in _schema._DEPLOYMENTS_TABLE_SCHEMA.items()
-        ]
+    deployment_table_schema = [
+        (k, v.format(registry_table_name=fully_qualified_registry_table_name))
+        for k, v in _schema._DEPLOYMENTS_TABLE_SCHEMA
+    ]
+    table_manager.create_single_registry_table(
+        session=session,
+        database_name=database_name,
+        schema_name=schema_name,
+        table_name=deployment_table_name,
+        table_schema=deployment_table_schema,
+        statement_params=statement_params,
     )
-    _create_single_registry_table(
-        session, database_name, schema_name, deployment_table_name, deployment_table_schema_string, statement_params
+
+    _ml_artifact.create_ml_artifact_table(
+        session=session,
+        database_name=database_name,
+        schema_name=schema_name,
+        statement_params=statement_params,
     )
-
-
-def _create_single_registry_table(
-    session: snowpark.Session,
-    database_name: str,
-    schema_name: str,
-    table_name: str,
-    table_schema_string: str,
-    statement_params: Dict[str, Any],
-) -> str:
-    """Creates a single table for registry and returns the fully qualified name of the table.
-
-    Args:
-        session: Session object to communicate with Snowflake.
-        database_name: Desired name of the model registry database.
-        schema_name: Desired name of the schema used by this model registry inside the database.
-        table_name: Name of the target table.
-        table_schema_string: The SQL expression of the desired table schema.
-        statement_params: Function usage statement parameters used in sql query executions.
-
-    Returns:
-        A string which is the name of the created table.
-    """
-    fully_qualified_table_name = _get_fully_qualified_table_name(database_name, schema_name, table_name)
-    session.sql(f"CREATE TABLE IF NOT EXISTS {fully_qualified_table_name} ({table_schema_string})").collect(
-        statement_params=statement_params
-    )
-    return fully_qualified_table_name
 
 
 def _create_registry_views(
@@ -280,6 +202,7 @@ def _create_registry_views(
     registry_table_name: str,
     metadata_table_name: str,
     deployment_table_name: str,
+    artifact_table_name: str,
     statement_params: Dict[str, Any],
 ) -> None:
     """Create views on underlying ModelRegistry tables.
@@ -287,13 +210,14 @@ def _create_registry_views(
     Args:
         session: Session object to communicate with Snowflake.
         database_name: Desired name of the model registry database.
-        schema_name: Desired name of the schema used by this model registry inside the databse.
+        schema_name: Desired name of the schema used by this model registry inside the database.
         registry_table_name: Name for the main model registry table.
         metadata_table_name: Name for the metadata table used by the model registry.
         deployment_table_name: Name for the deployment event table.
+        artifact_table_name: Name for the artifact table.
         statement_params: Function usage statement parameters used in sql query executions.
     """
-    fully_qualified_schema_name = _get_fully_qualified_schema_name(database_name, schema_name)
+    fully_qualified_schema_name = table_manager.get_fully_qualified_schema_name(database_name, schema_name)
 
     # From the documentation: Each DDL statement executes as a separate transaction. Races should not be an issue.
     # https://docs.snowflake.com/en/sql-reference/transactions.html#ddl
@@ -365,6 +289,21 @@ def _create_registry_views(
                 FROM {registry_table_name} {metadata_views_join}"""
     ).collect(statement_params=statement_params)
 
+    # Create artifact view. it joins artifact tables with registry table on model id.
+    artifact_view_name = identifier.concat_names([artifact_table_name, "_VIEW"])
+    session.sql(
+        f"""CREATE OR REPLACE VIEW {fully_qualified_schema_name}.{artifact_view_name} COPY GRANTS AS
+                SELECT
+                    {registry_table_name}.NAME AS MODEL_NAME,
+                    {registry_table_name}.VERSION AS MODEL_VERSION,
+                    {artifact_table_name}.*
+                FROM {registry_table_name}
+                LEFT JOIN {artifact_table_name}
+                ON ({registry_table_name}.TRAINING_DATASET_ID = {artifact_table_name}.ID)
+                WHERE {artifact_table_name}.TYPE = 'TRAINING_DATASET'
+        """
+    ).collect(statement_params=statement_params)
+
 
 def _create_active_permanent_deployment_view(
     session: snowpark.Session,
@@ -417,6 +356,7 @@ class ModelRegistry:
         session: snowpark.Session,
         database_name: str = _DEFAULT_REGISTRY_NAME,
         schema_name: str = _DEFAULT_SCHEMA_NAME,
+        create_if_not_exists: bool = False,
     ) -> None:
         """
         Opens an already-created registry.
@@ -425,7 +365,11 @@ class ModelRegistry:
             session: Session object to communicate with Snowflake.
             database_name: Desired name of the model registry database.
             schema_name: Desired name of the schema used by this model registry inside the database.
+            create_if_not_exists: create model registry if it's not exists already.
         """
+        if create_if_not_exists:
+            create_model_registry(session=session, database_name=database_name, schema_name=schema_name)
+
         self._name = identifier.get_inferred_name(database_name)
         self._schema = identifier.get_inferred_name(schema_name)
         self._registry_table = identifier.get_inferred_name(_MODELS_TABLE_NAME)
@@ -434,7 +378,8 @@ class ModelRegistry:
         self._deployment_table = identifier.get_inferred_name(_DEPLOYMENT_TABLE_NAME)
         self._permanent_deployment_view = identifier.concat_names([self._deployment_table, "_VIEW"])
         self._permanent_deployment_stage = identifier.concat_names([self._deployment_table, "_STAGE"])
-
+        self._artifact_table = identifier.get_inferred_name(_ml_artifact._ARTIFACT_TABLE_NAME)
+        self._artifact_view = identifier.concat_names([self._artifact_table, "_VIEW"])
         self._session = session
 
         # A in-memory deployment info cache to store information of temporary deployments
@@ -458,40 +403,24 @@ class ModelRegistry:
             query=f"SHOW SCHEMAS LIKE '{identifier.get_unescaped_names(self._schema)}' IN DATABASE {self._name}",
         ).has_dimensions(expected_rows=1).validate()
 
-        query_result_checker.SqlResultValidator(
-            self._session,
-            query=formatting.unwrap(
-                f"""
-            SHOW TABLES LIKE '{identifier.get_unescaped_names(self._registry_table)}'
-            IN {self._fully_qualified_schema_name()}"""
-            ),
-        ).has_dimensions(expected_rows=1).validate()
+        table_manager.validate_table_exist(
+            self._session, identifier.get_unescaped_names(self._registry_table), self._fully_qualified_schema_name()
+        )
+        self._validate_registry_table_schema(add_if_not_exists=["TRAINING_DATASET_ID"])
 
-        self._validate_registry_table_schema(add_if_not_exists=set())
+        table_manager.validate_table_exist(
+            self._session, identifier.get_unescaped_names(self._metadata_table), self._fully_qualified_schema_name()
+        )
 
-        query_result_checker.SqlResultValidator(
-            self._session,
-            query=formatting.unwrap(
-                f"""
-            SHOW TABLES LIKE '{identifier.get_unescaped_names(self._metadata_table)}'
-            IN {self._fully_qualified_schema_name()}"""
-            ),
-        ).has_dimensions(expected_rows=1).validate()
-
-        query_result_checker.SqlResultValidator(
-            self._session,
-            query=formatting.unwrap(
-                f"""
-            SHOW TABLES LIKE '{identifier.get_unescaped_names(self._deployment_table)}'
-            IN {self._fully_qualified_schema_name()}"""
-            ),
-        ).has_dimensions(expected_rows=1).validate()
+        table_manager.validate_table_exist(
+            self._session, identifier.get_unescaped_names(self._deployment_table), self._fully_qualified_schema_name()
+        )
 
         # TODO(zzhu): Also check validity of views.
 
     # TODO checks type as well. note type in _schema doesn't match with it appears in 'DESC TABLE'.
     # We need another layer of mapping. This function can also be extended to other tables as well.
-    def _validate_registry_table_schema(self, add_if_not_exists: Set[str]) -> None:
+    def _validate_registry_table_schema(self, add_if_not_exists: List[str]) -> None:
         """Validate the table schema to check for any missing columns.
 
         Args:
@@ -501,15 +430,16 @@ class ModelRegistry:
             TypeError: required column not exists in schema table and not defined in add_if_not_exists.
         """
 
+        valid_cols = [t[0] for t in _schema._REGISTRY_TABLE_SCHEMA]
         for k in add_if_not_exists:
-            assert k in _schema._REGISTRY_TABLE_SCHEMA
+            assert k in valid_cols
 
         actual_table_rows = self._session.sql(f"DESC TABLE {self._fully_qualified_registry_table_name()}").collect()
         actual_schema_dict = {}
         for row in actual_table_rows:
             actual_schema_dict[row["name"]] = row["type"]
 
-        for col_name, col_type in _schema._REGISTRY_TABLE_SCHEMA.items():
+        for col_name, col_type in _schema._REGISTRY_TABLE_SCHEMA:
             if col_name not in actual_schema_dict:
                 if col_name not in add_if_not_exists:
                     raise TypeError(
@@ -538,50 +468,30 @@ class ModelRegistry:
 
     def _fully_qualified_registry_table_name(self) -> str:
         """Get the fully qualified name to the current registry table."""
-        return _get_fully_qualified_table_name(self._name, self._schema, self._registry_table)
+        return table_manager.get_fully_qualified_table_name(self._name, self._schema, self._registry_table)
 
     def _fully_qualified_metadata_table_name(self) -> str:
         """Get the fully qualified name to the current metadata table."""
-        return _get_fully_qualified_table_name(self._name, self._schema, self._metadata_table)
+        return table_manager.get_fully_qualified_table_name(self._name, self._schema, self._metadata_table)
 
     def _fully_qualified_deployment_table_name(self) -> str:
         """Get the fully qualified name to the current deployment table."""
-        return _get_fully_qualified_table_name(self._name, self._schema, self._deployment_table)
+        return table_manager.get_fully_qualified_table_name(self._name, self._schema, self._deployment_table)
 
     def _fully_qualified_permanent_deployment_view_name(self) -> str:
         """Get the fully qualified name to the permanent deployment view."""
-        return _get_fully_qualified_table_name(self._name, self._schema, self._permanent_deployment_view)
+        return table_manager.get_fully_qualified_table_name(self._name, self._schema, self._permanent_deployment_view)
+
+    def _fully_qualified_artifact_view_name(self) -> str:
+        return table_manager.get_fully_qualified_table_name(self._name, self._schema, self._artifact_view)
 
     def _fully_qualified_schema_name(self) -> str:
         """Get the fully qualified name to the current registry schema."""
-        return _get_fully_qualified_schema_name(self._name, self._schema)
+        return table_manager.get_fully_qualified_schema_name(self._name, self._schema)
 
     def _fully_qualified_deployment_name(self, deployment_name: str) -> str:
         """Get the fully qualified name to the given deployment."""
-        return _get_fully_qualified_table_name(self._name, self._schema, deployment_name)
-
-    def _insert_table_entry(self, *, table: str, columns: Dict[str, Any]) -> List[snowpark.Row]:
-        """Insert an entry into an internal Model Registry table.
-
-        Args:
-            table: Name of the table to insert into.
-            columns: Key-value pairs of columns and values to be inserted into the table.
-
-        Returns:
-            Result of the operation as returned by the Snowpark session (snowpark.DataFrame).
-        """
-        sorted_columns = sorted(columns.items())
-
-        sql = "INSERT INTO {table} ( {columns} ) SELECT {values}".format(
-            table=table,
-            columns=",".join([x[0] for x in sorted_columns]),
-            values=",".join([formatting.format_value_for_select(x[1]) for x in sorted_columns]),
-        )
-        return (
-            query_result_checker.SqlResultValidator(self._session, sql)
-            .insertion_success(expected_num_rows=1)
-            .validate()
-        )
+        return table_manager.get_fully_qualified_table_name(self._name, self._schema, deployment_name)
 
     def _insert_registry_entry(
         self, *, id: str, name: str, version: str, properties: Dict[str, Any]
@@ -619,7 +529,9 @@ class ModelRegistry:
         # [CON] Code logic becomes messy depending on which fields are set.
         # [CON] Harder to re-use existing methods like set_model_name.
         # Context: https://docs.snowflake.com/en/sql-reference/sql/insert-multi-table.html
-        return self._insert_table_entry(table=self._fully_qualified_registry_table_name(), columns=properties)
+        return table_manager.insert_table_entry(
+            self._session, table=self._fully_qualified_registry_table_name(), columns=properties
+        )
 
     def _insert_metadata_entry(self, *, id: str, attribute: str, value: Any, operation: str) -> List[snowpark.Row]:
         """Insert a new row into the model metadata table.
@@ -648,7 +560,9 @@ class ModelRegistry:
         columns["ATTRIBUTE_NAME"] = attribute
         columns["VALUE"] = value
 
-        return self._insert_table_entry(table=self._fully_qualified_metadata_table_name(), columns=columns)
+        return table_manager.insert_table_entry(
+            self._session, table=self._fully_qualified_metadata_table_name(), columns=columns
+        )
 
     def _insert_deployment_entry(
         self,
@@ -696,7 +610,9 @@ class ModelRegistry:
         columns["TARGET_METHOD"] = target_method
         columns["OPTIONS"] = options
 
-        return self._insert_table_entry(table=self._fully_qualified_deployment_table_name(), columns=columns)
+        return table_manager.insert_table_entry(
+            self._session, table=self._fully_qualified_deployment_table_name(), columns=columns
+        )
 
     def _prepare_deployment_stage(self) -> str:
         """Create a stage in the model registry for storing all permanent deployments.
@@ -716,7 +632,7 @@ class ModelRegistry:
     def _prepare_model_stage(self, model_id: str) -> str:
         """Create a stage in the model registry for storing the model with the given id.
 
-        Creating a permanent stage here since we do not have a way to swtich a stage from temporary to permanent.
+        Creating a permanent stage here since we do not have a way to switch a stage from temporary to permanent.
         This can result in orphaned stages in case the process fails. It might be better to try to create a
         temporary stage, attempt to perform all operations and convert the temp stage into permanent once the
         operation is complete.
@@ -732,7 +648,7 @@ class ModelRegistry:
         """
         schema = self._fully_qualified_schema_name()
 
-        # Uppercasing the model_stage_name to avoid having to quote the the stage name.
+        # Uppercase the model_stage_name to avoid having to quote the the stage name.
         stage_name = model_id.upper()
 
         model_stage_name = f"SNOWML_MODEL_{stage_name}"
@@ -763,12 +679,11 @@ class ModelRegistry:
             The fully qualified Snowflake stage location encoded by the given URI. Returns None if the URI is not
                 pointing to a Snowflake stage.
         """
-        raw_stage_name = uri.get_snowflake_stage_path_from_uri(model_uri)
-        if not raw_stage_name:
+        raw_stage_path = uri.get_snowflake_stage_path_from_uri(model_uri)
+        if not raw_stage_path:
             return None
-        model_stage_name = raw_stage_name.split(".")[-1]
-        qualified_stage_path = f"{self._fully_qualified_schema_name()}.{model_stage_name}"
-        return qualified_stage_path
+        (db, schema, stage, _) = identifier.parse_schema_level_object_identifier(raw_stage_path)
+        return identifier.get_schema_level_object_identifier(db, schema, stage)
 
     def _list_selected_models(
         self, *, id: Optional[str] = None, model_name: Optional[str] = None, model_version: Optional[str] = None
@@ -869,7 +784,7 @@ class ModelRegistry:
         operation: str = _SET_METADATA_OPERATION,
         enable_model_presence_check: bool = True,
     ) -> None:
-        """Set the value of the given metadata attribute for targat model with given (model name + model version) or id.
+        """Set the value of the given metadata attribute for target model with given (model name + model version) or id.
 
         Args:
             attribute: Name of the attribute to set.
@@ -978,64 +893,23 @@ class ModelRegistry:
         self,
         model_name: str,
         model_version: str,
-        *,
-        path: str,
-        type: str,
-        description: Optional[str] = None,
-        tags: Optional[Dict[Any, Any]] = None,
-    ) -> str:
-        """Uploads and register a model to the Model Registry from a local file path.
-
-        If `path` is a directory all files will be uploaded recursively, preserving the relative directory structure.
-        Symbolic links will be followed.
-
-        NOTE: If any symlinks under `path` point to a parent directory, this can lead to infinite recursion.
+    ) -> Tuple[str, str]:
+        """Generate a path in the Model Registry to store a model.
 
         Args:
             model_name: The given name for the model.
             model_version: Version string to be set for the model.
-            path: Local file path to be uploaded.
-            type: Type of the model to be added.
-            description: A desription for the model. The description can be changed later.
-            tags: string-to-string dictonary of tag names and values to be set for the model.
 
         Returns:
-            String of the auto-generate unique model identifier.
+            String of the auto-generate unique model identifier and path to store it.
         """
-        self._model_identifier_is_nonempty_or_raise(model_name, model_version)
-        id = self._get_new_unique_identifier()
+        model_id = self._get_new_unique_identifier()
 
         # Copy model from local disk to remote stage.
         # TODO(zhe): Check if we could use the same stage for multiple models.
-        fully_qualified_model_stage_name = self._prepare_model_stage(model_id=id)
+        fully_qualified_model_stage_name = self._prepare_model_stage(model_id=model_id)
 
-        # Check if directory or file and adapt accordingly.
-        # TODO: Unify and explicit about compression for both file and directory.
-        if os.path.isfile(path):
-            self._session.file.put(path, posixpath.join(fully_qualified_model_stage_name, "data"))
-        elif os.path.isdir(path):
-            with file_utils.zip_file_or_directory_to_stream(path, path) as input_stream:
-                self._session._conn.upload_stream(
-                    input_stream=input_stream,
-                    stage_location=fully_qualified_model_stage_name,
-                    dest_filename=f"{posixpath.basename(path)}.zip",
-                    dest_prefix="",
-                    source_compression="DEFLATE",
-                    compress_data=False,
-                    overwrite=True,
-                    is_in_udf=True,
-                )
-        self._register_model_with_id(
-            model_name=model_name,
-            model_version=model_version,
-            model_id=id,
-            type=type,
-            uri=uri.get_uri_from_snowflake_stage_path(fully_qualified_model_stage_name),
-            description=description,
-            tags=tags,
-        )
-
-        return id
+        return model_id, fully_qualified_model_stage_name
 
     def _register_model_with_id(
         self,
@@ -1049,6 +923,7 @@ class ModelRegistry:
         output_spec: Optional[Dict[str, str]] = None,
         description: Optional[str] = None,
         tags: Optional[Dict[str, str]] = None,
+        training_dataset: Optional[training_dataset.TrainingDataset] = None,
     ) -> None:
         """Helper function to register model metadata.
 
@@ -1065,9 +940,10 @@ class ModelRegistry:
                 expected column names and the values are the value types.
             output_spec: The expected output schema of the model. Dictionary where the keys
                 are expected column names and the values are the value types.
-            description: A desription for the model. The description can be changed later.
+            description: A description for the model. The description can be changed later.
             tags: Key-value pairs of tags to be set for this model. Tags can be modified
                 after model registration.
+            training_dataset: An object contains training dataset metadata.
 
         Raises:
             DataError: The given model already exists.
@@ -1084,6 +960,20 @@ class ModelRegistry:
         new_model["CREATION_TIME"] = formatting.SqlStr("CURRENT_TIMESTAMP()")
         new_model["CREATION_ROLE"] = self._session.get_current_role()
         new_model["CREATION_ENVIRONMENT_SPEC"] = {"python": ".".join(map(str, sys.version_info[:3]))}
+        if training_dataset is not None:
+            _ml_artifact.add_artifact(
+                session=self._session,
+                database_name=self._name,
+                schema_name=self._schema,
+                artifact_id=training_dataset.id(),
+                artifact_type=_ml_artifact.ArtifactType.TRAINING_DATASET,
+                artifact_name=training_dataset.id(),
+                artifact_version="",
+                artifact_spec=training_dataset.to_dict(),
+            )
+            new_model["TRAINING_DATASET_ID"] = training_dataset.id()
+        else:
+            new_model["TRAINING_DATASET_ID"] = None
 
         existing_model_nums = self._list_selected_models(model_name=model_name, model_version=model_version).count()
         if existing_model_nums:
@@ -1256,7 +1146,7 @@ class ModelRegistry:
         Returns:
             String-to-string dictionary containing all tags and values. The resulting dictionary can be empty.
         """
-        # Snowpark snowpark.dataframes returns dictionary objects as strings. We need to convert it back to a dictionary
+        # Snowpark snowpark.dataframe returns dictionary objects as strings. We need to convert it back to a dictionary
         # here.
         result = self._get_metadata_attribute(
             _METADATA_ATTRIBUTE_TAGS, model_name=model_name, model_version=model_version
@@ -1281,7 +1171,7 @@ class ModelRegistry:
             model_version: Model Version string.
 
         Returns:
-            Descrption of the model or None.
+            Description of the model or None.
         """
         result = self._get_metadata_attribute(
             _METADATA_ATTRIBUTE_DESCRIPTION, model_name=model_name, model_version=model_version
@@ -1482,7 +1372,7 @@ class ModelRegistry:
         Returns:
             String-to-float dictionary containing all metrics and values. The resulting dictionary can be empty.
         """
-        # Snowpark snowpark.dataframes returns dictionary objects as strings. We need to convert it back to a dictionary
+        # Snowpark snowpark.dataframe returns dictionary objects as strings. We need to convert it back to a dictionary
         # here.
         result = self._get_metadata_attribute(
             _METADATA_ATTRIBUTE_METRICS, model_name=model_name, model_version=model_version
@@ -1512,9 +1402,10 @@ class ModelRegistry:
         pip_requirements: Optional[List[str]] = None,
         signatures: Optional[Dict[str, model_signature.ModelSignature]] = None,
         sample_input_data: Optional[Any] = None,
+        training_dataset: Optional[training_dataset.TrainingDataset] = None,
         code_paths: Optional[List[str]] = None,
         options: Optional[model_types.BaseModelSaveOption] = None,
-    ) -> str:
+    ) -> Optional["ModelReference"]:
         """Uploads and register a model to the Model Registry.
 
         Args:
@@ -1522,8 +1413,8 @@ class ModelRegistry:
             model_version: Version string to be set for the model. The combination (name + version) must be unique for
                 each model.
             model: Local model object in a supported format.
-            description: A desription for the model. The description can be changed later.
-            tags: string-to-string dictonary of tag names and values to be set for the model.
+            description: A description for the model. The description can be changed later.
+            tags: string-to-string dictionary of tag names and values to be set for the model.
             conda_dependencies: List of Conda package specs. Use "[channel::]package [operator version]" syntax to
                 specify a dependency. It is a recommended way to specify your dependencies using conda. When channel is
                 not specified, defaults channel will be used. When deploying to Snowflake Warehouse, defaults channel
@@ -1531,73 +1422,81 @@ class ModelRegistry:
             pip_requirements: List of PIP package specs. Model will not be able to deploy to the warehouse if there is
                 pip requirements.
             signatures: Signatures of the model, which is a mapping from target method name to signatures of input and
-                output, which could be inferred by calling `infer_signature` method with sample input data.
+                output, which could be inferred by calling `infer_signature` method with sample input data or training
+                dataset.
             sample_input_data: Sample of the input data for the model.
+            training_dataset: A training dataset metadata object.
             code_paths: Directory of code to import when loading and deploying the model.
             options: Additional options when saving the model.
 
         Raises:
-            TypeError: Raised when both signatures and sample_input_data is not presented. Will be captured locally.
             DataError: Raised when the given model exists.
+            ValueError: Raised in following cases:
+                1) both sample_input_data and training_dataset are provided;
+                2) signatures and sample_input_data/training_dataset are both not provided and
+                    model is not a snowflake estimator.
+            Exception: Raised when there is any error raised when saving the model.
 
         Returns:
-            String of the auto-generate unique model identifier. None if failed.
+            Model Reference . None if failed.
         """
         # Ideally, the whole operation should be a single transaction. Currently, transactions do not support stage
         # operations.
 
         self._model_identifier_is_nonempty_or_raise(model_name, model_version)
 
+        if sample_input_data is not None and training_dataset is not None:
+            raise ValueError("Only one of sample_input_data and training_dataset should be provided.")
+
+        if training_dataset is not None:
+            sample_input_data = training_dataset.df
+            if training_dataset.timestamp_col is not None:
+                sample_input_data = sample_input_data.drop(training_dataset.timestamp_col)
+            if training_dataset.label_cols is not None:
+                sample_input_data = sample_input_data.drop(training_dataset.label_cols)
+
         existing_model_nums = self._list_selected_models(model_name=model_name, model_version=model_version).count()
         if existing_model_nums:
             raise connector.DataError(f"Model {model_name}/{model_version} already exists. Unable to log the model.")
-        with tempfile.TemporaryDirectory() as tmpdir:
-            model = cast(model_types.SupportedModelType, model)
-            if signatures:
-                model_metadata = model_api.save_model(
-                    name=model_name,
-                    model_dir_path=tmpdir,
-                    model=model,
-                    signatures=signatures,
-                    metadata=tags,
-                    conda_dependencies=conda_dependencies,
-                    pip_requirements=pip_requirements,
-                    code_paths=code_paths,
-                    options=options,
-                )
-            elif sample_input_data is not None:
-                model_metadata = model_api.save_model(
-                    name=model_name,
-                    model_dir_path=tmpdir,
-                    model=model,
-                    metadata=tags,
-                    conda_dependencies=conda_dependencies,
-                    pip_requirements=pip_requirements,
-                    sample_input=sample_input_data,
-                    code_paths=code_paths,
-                    options=options,
-                )
-            elif isinstance(model, base.BaseEstimator):
-                model_metadata = model_api.save_model(
-                    name=model_name,
-                    model_dir_path=tmpdir,
-                    model=model,
-                    metadata=tags,
-                    conda_dependencies=conda_dependencies,
-                    pip_requirements=pip_requirements,
-                    code_paths=code_paths,
-                    options=options,
-                )
-            else:
-                raise TypeError("Either signature or sample input data should exist for native model packaging.")
-            return self._log_model_path(
-                model_name=model_name,
-                model_version=model_version,
-                path=tmpdir,
-                type=model_metadata.model_type,
-                description=description,
-                tags=tags,  # TODO: Inherent model type enum.
+        model_id, fully_qualified_model_stage_name = self._log_model_path(
+            model_name=model_name,
+            model_version=model_version,
+        )
+        model_stage_file_path = posixpath.join(f"{_STAGE_PREFIX}{fully_qualified_model_stage_name}", f"{model_id}.zip")
+        model = cast(model_types.SupportedModelType, model)
+        try:
+            model_metadata = model_api.save_model(  # type: ignore[call-overload, misc]
+                name=model_name,
+                session=self._session,
+                model_stage_file_path=model_stage_file_path,
+                model=model,
+                signatures=signatures,
+                metadata=tags,
+                conda_dependencies=conda_dependencies,
+                pip_requirements=pip_requirements,
+                sample_input=sample_input_data,
+                code_paths=code_paths,
+                options=options,
             )
+        except Exception:
+            # When model saving fails, clean up the model stage.
+            query_result_checker.SqlResultValidator(
+                self._session, f"DROP STAGE {fully_qualified_model_stage_name}"
+            ).has_dimensions(expected_rows=1, expected_cols=1).validate()
+            raise
+
+        self._register_model_with_id(
+            model_name=model_name,
+            model_version=model_version,
+            model_id=model_id,
+            type=model_metadata.model_type,
+            uri=uri.get_uri_from_snowflake_stage_path(model_stage_file_path),
+            description=description,
+            tags=tags,
+            training_dataset=training_dataset,
+        )
+
+        return ModelReference(registry=self, model_name=model_name, model_version=model_version)
 
     @telemetry.send_api_usage_telemetry(
         project=_TELEMETRY_PROJECT,
@@ -1616,15 +1515,8 @@ class ModelRegistry:
         """
         remote_model_path = self._get_model_path(model_name=model_name, model_version=model_version)
         restored_model = None
-        with tempfile.TemporaryDirectory() as local_model_directory:
-            self._session.file.get(remote_model_path, local_model_directory)
-            local_path = os.path.join(local_model_directory, posixpath.basename(remote_model_path))
-            if zipfile.is_zipfile(local_path):
-                extracted_dir = os.path.join(local_model_directory, "extracted")
-                with zipfile.ZipFile(local_path, "r") as myzip:
-                    if len(myzip.namelist()) > 1:
-                        myzip.extractall(extracted_dir)
-                        restored_model, _ = model_api.load_model(model_dir_path=extracted_dir)
+
+        restored_model, _ = model_api.load_model(session=self._session, model_stage_file_path=remote_model_path)
 
         return restored_model
 
@@ -1641,7 +1533,7 @@ class ModelRegistry:
         model_version: str,
         *,
         deployment_name: str,
-        target_method: str,
+        target_method: Optional[str] = None,
         permanent: bool = False,
         platform: deploy_platforms.TargetPlatform = deploy_platforms.TargetPlatform.WAREHOUSE,
         options: Optional[
@@ -1654,7 +1546,7 @@ class ModelRegistry:
             model_name: Model Name string.
             model_version: Model Version string.
             deployment_name: name of the generated UDF.
-            target_method: The method name to use in deployment.
+            target_method: The method name to use in deployment. Can be omitted if only 1 method in the model.
             permanent: Whether the deployment is permanent or not. Permanent deployment will generate a permanent UDF.
                 (Only applicable for Warehouse deployment)
             platform: Target platform to deploy the model to. Currently supported platforms are
@@ -1730,7 +1622,7 @@ class ModelRegistry:
                 platform=deployment_info["platform"].value,
                 stage_path=deployment_stage_path,
                 signature=deployment_info["signature"].to_dict(),
-                target_method=target_method,
+                target_method=deployment_info["target_method"],
                 options=options,
             )
 
@@ -1761,7 +1653,7 @@ class ModelRegistry:
             model_version: Model Version string.
 
         Returns:
-            A snowpark dataframe that contains all deployments that assoicated with the given model.
+            A snowpark dataframe that contains all deployments that associated with the given model.
         """
         deployments_df = (
             self._session.sql(f"SELECT * FROM {self._fully_qualified_permanent_deployment_view_name()}")
@@ -1782,6 +1674,24 @@ class ModelRegistry:
         )
         return cast(snowpark.DataFrame, res)
 
+    @snowpark._internal.utils.private_preview(version="1.0.1")
+    def list_artifacts(self, model_name: str, model_version: str) -> snowpark.DataFrame:
+        """List all artifacts that associated with given model.
+
+        Args:
+            model_name: Model Name string.
+            model_version: Model Version string.
+
+        Returns:
+            A snowpark dataframe that contains all artifacts that assoicated with the given model.
+        """
+        artifacts = (
+            self._session.sql(f"SELECT * FROM {self._fully_qualified_artifact_view_name()}")
+            .filter(snowpark.Column("MODEL_NAME") == model_name)
+            .filter(snowpark.Column("MODEL_VERSION") == model_version)
+        )
+        return cast(snowpark.DataFrame, artifacts)
+
     @telemetry.send_api_usage_telemetry(
         project=_TELEMETRY_PROJECT,
         subproject=_TELEMETRY_SUBPROJECT,
@@ -1798,7 +1708,7 @@ class ModelRegistry:
             deployment_name: Deployment name string.
 
         Returns:
-            A snowpark dataframe that contains the information of thetarget deployment.
+            A snowpark dataframe that contains the information of the target deployment.
 
         Raises:
             KeyError: Raised if the target deployment is not found.
@@ -1817,11 +1727,38 @@ class ModelRegistry:
         subproject=_TELEMETRY_SUBPROJECT,
     )
     @snowpark._internal.utils.private_preview(version="1.0.1")
+    def get_training_dataset(self, model_name: str, model_version: str) -> Optional[training_dataset.TrainingDataset]:
+        """Get training dataset of the model with the given (model name + model version).
+
+        Args:
+            model_name: Model Name string.
+            model_version: Model Version string.
+
+        Returns:
+            Training dataset of the model or none if not found.
+        """
+        artifacts = (
+            self.list_artifacts(model_name, model_version)
+            .filter(snowpark.Column("TYPE") == _ml_artifact.ArtifactType.TRAINING_DATASET.value)
+            .collect()
+        )
+
+        return (
+            training_dataset.TrainingDataset.from_json(artifacts[0]["ARTIFACT_SPEC"], self._session)
+            if len(artifacts) != 0
+            else None
+        )
+
+    @telemetry.send_api_usage_telemetry(
+        project=_TELEMETRY_PROJECT,
+        subproject=_TELEMETRY_SUBPROJECT,
+    )
+    @snowpark._internal.utils.private_preview(version="1.0.1")
     def delete_deployment(self, model_name: str, model_version: str, *, deployment_name: str) -> None:
         """Delete the target permanent deployment of the given model.
 
         Deleting temporary deployment are currently not supported.
-        Temporart deployment will get cleaned automatically when the current session closed.
+        Temporary deployment will get cleaned automatically when the current session closed.
 
         Args:
             model_name: Model Name string.
@@ -2090,6 +2027,7 @@ class ModelReference:
                 self._model_name, self._model_version, deployment_name=deployment_name
             ).collect()[0]
             platform = deploy_platforms.TargetPlatform(deployment["TARGET_PLATFORM"])
+            target_method = deployment["TARGET_METHOD"]
             signature = model_signature.ModelSignature.from_dict(json.loads(deployment["SIGNATURE"]))
             options_dict = cast(Dict[str, Any], json.loads(deployment["OPTIONS"]))
             platform_options = {
@@ -2105,9 +2043,81 @@ class ModelReference:
             di = _deployer.Deployment(
                 name=self._registry._fully_qualified_deployment_name(deployment_name),
                 platform=platform,
+                target_method=target_method,
                 signature=signature,
                 options=options,
             )
             return _deployer.predict(session=self._registry._session, deployment=di, X=data)
         except KeyError:
             raise ValueError(f"The deployment with name {deployment_name} haven't been deployed")
+
+
+@telemetry.send_api_usage_telemetry(
+    project=_TELEMETRY_PROJECT,
+    subproject=_TELEMETRY_SUBPROJECT,
+)
+@snowpark._internal.utils.private_preview(version="0.2.0")
+def create_model_registry(
+    *,
+    session: snowpark.Session,
+    database_name: str = _DEFAULT_REGISTRY_NAME,
+    schema_name: str = _DEFAULT_SCHEMA_NAME,
+) -> bool:
+    """Setup a new model registry. This should be run once per model registry by an administrator role.
+
+    Args:
+        session: Session object to communicate with Snowflake.
+        database_name: Desired name of the model registry database.
+        schema_name: Desired name of the schema used by this model registry inside the database.
+
+    Returns:
+        True if the creation of the model registry internal data structures was successful,
+        False otherwise.
+    """
+    # Get the db & schema of the current session
+    old_db = session.get_current_database()
+    old_schema = session.get_current_schema()
+
+    # These might be exposed as parameters in the future.
+    database_name = identifier.get_inferred_name(database_name)
+    schema_name = identifier.get_inferred_name(schema_name)
+    registry_table_name = identifier.get_inferred_name(_MODELS_TABLE_NAME)
+    metadata_table_name = identifier.get_inferred_name(_METADATA_TABLE_NAME)
+    deployment_table_name = identifier.get_inferred_name(_DEPLOYMENT_TABLE_NAME)
+    artifact_table_name = identifier.get_inferred_name(_ml_artifact._ARTIFACT_TABLE_NAME)
+
+    statement_params = telemetry.get_function_usage_statement_params(
+        project=_TELEMETRY_PROJECT,
+        subproject=_TELEMETRY_SUBPROJECT,
+        function_name=telemetry.get_statement_params_full_func_name(inspect.currentframe(), ""),
+    )
+    try:
+        _create_registry_database(session, database_name, statement_params)
+        _create_registry_schema(session, database_name, schema_name, statement_params)
+        _create_registry_tables(
+            session,
+            database_name,
+            schema_name,
+            registry_table_name,
+            metadata_table_name,
+            deployment_table_name,
+            artifact_table_name,
+            statement_params,
+        )
+        _create_registry_views(
+            session,
+            database_name,
+            schema_name,
+            registry_table_name,
+            metadata_table_name,
+            deployment_table_name,
+            artifact_table_name,
+            statement_params,
+        )
+    finally:
+        # Restore the db & schema to the original ones
+        if old_db is not None:
+            session.use_database(old_db)
+        if old_schema is not None:
+            session.use_schema(old_schema)
+    return True

@@ -4,6 +4,7 @@ import shutil
 import sys
 import tempfile
 import warnings
+from datetime import datetime
 
 from absl.testing import absltest
 
@@ -153,6 +154,63 @@ class FileUtilsTest(absltest.TestCase):
         self.assertNotEqual(hash_0, hash_4)
         self.assertEqual(hash_0, hash_5)
         self.assertNotEqual(hash_0, hash_6)
+
+    def test_hash_directory_with_excluded_files(self) -> None:
+        def _populate_tmpdir(tmpdir: str) -> None:
+            with open(os.path.join(tmpdir, "Dockerfile"), "w", encoding="utf-8") as f:
+                f.write("FROM focal-cuda-11.6.2")
+                f.flush()
+
+            os.mkdir(os.path.join(tmpdir, "env"))
+            with open(os.path.join(tmpdir, "env", "conda.yaml"), "w", encoding="utf-8") as f:
+                f.write("python==3.8.13")
+                f.flush()
+
+            os.mkdir(os.path.join(tmpdir, "server"))
+            with open(os.path.join(tmpdir, "server", "main.py"), "w", encoding="utf-8") as f:
+                f.write("import os")
+                f.flush()
+
+            with open(os.path.join(tmpdir, "model.yaml"), "w", encoding="utf-8") as f:
+                f.write(f"creation_timestamp: {datetime.now().time().strftime('%H:%M:%S.%f')}")
+                f.flush()
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            _populate_tmpdir(tmpdir)
+            hash_0 = file_utils.hash_directory(tmpdir)
+            hash_0_with_exclude = file_utils.hash_directory(tmpdir, excluded_files=["model.yaml"])
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            _populate_tmpdir(tmpdir)
+            hash_1 = file_utils.hash_directory(tmpdir)
+            hash_1_with_exclude = file_utils.hash_directory(tmpdir, excluded_files=["model.yaml"])
+
+        self.assertNotEqual(hash_0, hash_1)
+        self.assertNotEqual(hash_0, hash_0_with_exclude)
+        self.assertEqual(hash_0_with_exclude, hash_1_with_exclude)
+
+    def test_hash_directory_with_ignore_hidden_file(self) -> None:
+        def _populate_tmpdir(tmpdir: str) -> None:
+            with open(os.path.join(tmpdir, "Dockerfile"), "w", encoding="utf-8") as f:
+                f.write("FROM focal-cuda-11.6.2")
+                f.flush()
+            with open(os.path.join(tmpdir, ".DS_Store"), "w", encoding="utf-8") as f:
+                f.write(f"creation_timestamp: {datetime.now().time().strftime('%H:%M:%S.%f')}")
+                f.flush()
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            _populate_tmpdir(tmpdir)
+            hash_0 = file_utils.hash_directory(tmpdir)
+            hash_0_ignore_hidden = file_utils.hash_directory(tmpdir, ignore_hidden=True)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            _populate_tmpdir(tmpdir)
+            hash_1 = file_utils.hash_directory(tmpdir)
+            hash_1_ignore_hidden = file_utils.hash_directory(tmpdir, ignore_hidden=True)
+
+        self.assertNotEqual(hash_0, hash_1)
+        self.assertNotEqual(hash_0, hash_0_ignore_hidden)
+        self.assertEqual(hash_0_ignore_hidden, hash_1_ignore_hidden)
 
     def test_able_ascii_encode(self) -> None:
         self.assertTrue(file_utils._able_ascii_encode("abc"))

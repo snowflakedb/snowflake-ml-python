@@ -9,6 +9,7 @@ dependencies:
 - aiohttp==3.8.3
 - anyio==3.5.0
 - boto3==1.24.28
+- cachetools==4.2.2
 - cloudpickle==2.0.0
 - conda-libmamba-solver==23.3.0
 - coverage==6.3.2
@@ -23,6 +24,7 @@ dependencies:
 - lightgbm==3.3.5
 - mlflow==2.3.1
 - moto==4.0.11
+- multipledispatch==0.6.0
 - mypy==0.981
 - networkx==2.8.4
 - numpy==1.24.3
@@ -36,7 +38,7 @@ dependencies:
 - requests==2.29.0
 - ruamel.yaml==0.17.21
 - s3fs==2022.11.0
-- scikit-learn==1.2.2
+- scikit-learn==1.3.0
 - scipy==1.9.3
 - snowflake-connector-python==3.0.3
 - snowflake-snowpark-python==1.5.1
@@ -44,5 +46,6 @@ dependencies:
 - tensorflow==2.10.0
 - transformers==4.29.2
 - types-protobuf==4.23.0.1
+- types-requests==2.30.0.0
 - typing-extensions==4.5.0
 - xgboost==1.7.3

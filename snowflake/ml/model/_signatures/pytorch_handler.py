@@ -1,3 +1,4 @@
+from collections import abc
 from typing import TYPE_CHECKING, List, Literal, Optional, Sequence
 
 import numpy as np
@@ -19,7 +20,7 @@ if TYPE_CHECKING:
 class SeqOfPyTorchTensorHandler(base_handler.BaseDataHandler[Sequence["torch.Tensor"]]):
     @staticmethod
     def can_handle(data: model_types.SupportedDataType) -> TypeGuard[Sequence["torch.Tensor"]]:
-        if not isinstance(data, list):
+        if not isinstance(data, abc.Sequence):
             return False
         if len(data) == 0:
             return False

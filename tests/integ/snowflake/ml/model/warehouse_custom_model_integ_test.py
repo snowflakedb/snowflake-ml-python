@@ -3,7 +3,6 @@
 #
 
 import asyncio
-import json
 import os
 import tempfile
 import uuid
@@ -109,7 +108,6 @@ class TestWarehouseCustomModelInteg(parameterized.TestCase):
         sample_input: model_types.SupportedDataType,
         test_input: model_types.SupportedDataType,
         deploy_params: Dict[str, Tuple[Dict[str, Any], Callable[[Union[pd.DataFrame, SnowparkDataFrame]], Any]]],
-        model_in_stage: Optional[bool] = False,
         permanent_deploy: Optional[bool] = False,
         test_released_version: Optional[str] = None,
     ) -> None:
@@ -122,20 +120,13 @@ class TestWarehouseCustomModelInteg(parameterized.TestCase):
             sample_input=sample_input,
             test_input=test_input,
             deploy_params=deploy_params,
-            model_in_stage=model_in_stage,
             permanent_deploy=permanent_deploy,
             test_released_version=test_released_version,
         )
 
-    @parameterized.parameters(  # type: ignore[misc]
-        {"model_in_stage": True, "permanent_deploy": True, "test_released_version": None},
-        {"model_in_stage": False, "permanent_deploy": False, "test_released_version": None},
-        {"model_in_stage": True, "permanent_deploy": False, "test_released_version": "1.0.3"},
-        {"model_in_stage": False, "permanent_deploy": True, "test_released_version": "1.0.3"},
-    )
+    @parameterized.product(permanent_deploy=[True, False], test_released_version=[None, "1.0.3"])  # type: ignore[misc]
     def test_async_model_composition(
         self,
-        model_in_stage: Optional[bool] = False,
         permanent_deploy: Optional[bool] = False,
         test_released_version: Optional[str] = None,
     ) -> None:
@@ -156,7 +147,7 @@ class TestWarehouseCustomModelInteg(parameterized.TestCase):
                 sample_input=pd_df,
                 test_input=pd_df,
                 deploy_params={
-                    "predict": (
+                    "": (
                         {},
                         lambda res: pd.testing.assert_frame_equal(
                             res,
@@ -164,56 +155,40 @@ class TestWarehouseCustomModelInteg(parameterized.TestCase):
                         ),
                     ),
                 },
-                model_in_stage=model_in_stage,
                 permanent_deploy=permanent_deploy,
                 test_released_version=test_released_version,
             )
 
         asyncio.get_event_loop().run_until_complete(_test(self))
 
-    @parameterized.parameters(  # type: ignore[misc]
-        {"model_in_stage": True, "permanent_deploy": True, "test_released_version": None},
-        {"model_in_stage": False, "permanent_deploy": False, "test_released_version": None},
-        {"model_in_stage": True, "permanent_deploy": False, "test_released_version": "1.0.3"},
-        {"model_in_stage": False, "permanent_deploy": True, "test_released_version": "1.0.3"},
-    )
+    @parameterized.product(permanent_deploy=[True, False], test_released_version=[None, "1.0.3"])  # type: ignore[misc]
     def test_custom_demo_model_sp(
         self,
-        model_in_stage: Optional[bool] = False,
         permanent_deploy: Optional[bool] = False,
         test_released_version: Optional[str] = None,
     ) -> None:
         lm = DemoModel(custom_model.ModelContext())
         arr = [[1, 2, 3], [4, 2, 5]]
         sp_df = self._session.create_dataframe(arr, schema=['"c1"', '"c2"', '"c3"'])
+        y_df_expected = pd.DataFrame([[1, 2, 3, 1], [4, 2, 5, 4]], columns=["c1", "c2", "c3", "output"])
         self.base_test_case(
             name="custom_demo_model_sp0",
             model=lm,
             sample_input=sp_df,
             test_input=sp_df,
             deploy_params={
-                "predict": (
+                "": (
                     {},
-                    lambda res: pd.testing.assert_frame_equal(
-                        res.to_pandas(),
-                        pd.DataFrame([1, 4], columns=["output"], dtype=np.int8),
-                    ),
+                    lambda res: warehouse_model_integ_test_utils.check_sp_df_res(res, y_df_expected, check_dtype=False),
                 ),
             },
-            model_in_stage=model_in_stage,
             permanent_deploy=permanent_deploy,
             test_released_version=test_released_version,
         )
 
-    @parameterized.parameters(  # type: ignore[misc]
-        {"model_in_stage": True, "permanent_deploy": True, "test_released_version": None},
-        {"model_in_stage": False, "permanent_deploy": False, "test_released_version": None},
-        {"model_in_stage": True, "permanent_deploy": False, "test_released_version": "1.0.3"},
-        {"model_in_stage": False, "permanent_deploy": True, "test_released_version": "1.0.3"},
-    )
+    @parameterized.product(permanent_deploy=[True, False], test_released_version=[None, "1.0.3"])  # type: ignore[misc]
     def test_custom_demo_model_sp_quote(
         self,
-        model_in_stage: Optional[bool] = False,
         permanent_deploy: Optional[bool] = False,
         test_released_version: Optional[str] = None,
     ) -> None:
@@ -227,7 +202,7 @@ class TestWarehouseCustomModelInteg(parameterized.TestCase):
             sample_input=sp_df,
             test_input=pd_df,
             deploy_params={
-                "predict": (
+                "": (
                     {},
                     lambda res: pd.testing.assert_frame_equal(
                         res,
@@ -235,20 +210,13 @@ class TestWarehouseCustomModelInteg(parameterized.TestCase):
                     ),
                 ),
             },
-            model_in_stage=model_in_stage,
             permanent_deploy=permanent_deploy,
             test_released_version=test_released_version,
         )
 
-    @parameterized.parameters(  # type: ignore[misc]
-        {"model_in_stage": True, "permanent_deploy": True, "test_released_version": None},
-        {"model_in_stage": False, "permanent_deploy": False, "test_released_version": None},
-        {"model_in_stage": True, "permanent_deploy": False, "test_released_version": "1.0.3"},
-        {"model_in_stage": False, "permanent_deploy": True, "test_released_version": "1.0.3"},
-    )
+    @parameterized.product(permanent_deploy=[True, False], test_released_version=[None, "1.0.3"])  # type: ignore[misc]
     def test_custom_demo_model_sp_mix_1(
         self,
-        model_in_stage: Optional[bool] = False,
         permanent_deploy: Optional[bool] = False,
         test_released_version: Optional[str] = None,
     ) -> None:
@@ -256,34 +224,25 @@ class TestWarehouseCustomModelInteg(parameterized.TestCase):
         arr = [[1, 2, 3], [4, 2, 5]]
         pd_df = pd.DataFrame(arr, columns=["c1", "c2", "c3"])
         sp_df = self._session.create_dataframe(arr, schema=['"c1"', '"c2"', '"c3"'])
+        y_df_expected = pd.concat([pd_df, pd_df[["c1"]].rename(columns={"c1": "output"})], axis=1)
         self.base_test_case(
             name="custom_demo_model_sp1",
             model=lm,
             sample_input=pd_df,
             test_input=sp_df,
             deploy_params={
-                "predict": (
+                "": (
                     {},
-                    lambda res: pd.testing.assert_frame_equal(
-                        res.to_pandas(),
-                        pd.DataFrame([1, 4], columns=["output"], dtype=np.int8),
-                    ),
+                    lambda res: warehouse_model_integ_test_utils.check_sp_df_res(res, y_df_expected, check_dtype=False),
                 ),
             },
-            model_in_stage=model_in_stage,
             permanent_deploy=permanent_deploy,
             test_released_version=test_released_version,
         )
 
-    @parameterized.parameters(  # type: ignore[misc]
-        {"model_in_stage": True, "permanent_deploy": True, "test_released_version": None},
-        {"model_in_stage": False, "permanent_deploy": False, "test_released_version": None},
-        {"model_in_stage": True, "permanent_deploy": False, "test_released_version": "1.0.3"},
-        {"model_in_stage": False, "permanent_deploy": True, "test_released_version": "1.0.3"},
-    )
+    @parameterized.product(permanent_deploy=[True, False], test_released_version=[None, "1.0.3"])  # type: ignore[misc]
     def test_custom_demo_model_sp_mix_2(
         self,
-        model_in_stage: Optional[bool] = False,
         permanent_deploy: Optional[bool] = False,
         test_released_version: Optional[str] = None,
     ) -> None:
@@ -297,7 +256,7 @@ class TestWarehouseCustomModelInteg(parameterized.TestCase):
             sample_input=sp_df,
             test_input=pd_df,
             deploy_params={
-                "predict": (
+                "": (
                     {},
                     lambda res: pd.testing.assert_frame_equal(
                         res,
@@ -305,20 +264,13 @@ class TestWarehouseCustomModelInteg(parameterized.TestCase):
                     ),
                 ),
             },
-            model_in_stage=model_in_stage,
             permanent_deploy=permanent_deploy,
             test_released_version=test_released_version,
         )
 
-    @parameterized.parameters(  # type: ignore[misc]
-        {"model_in_stage": True, "permanent_deploy": True, "test_released_version": None},
-        {"model_in_stage": False, "permanent_deploy": False, "test_released_version": None},
-        {"model_in_stage": True, "permanent_deploy": False, "test_released_version": "1.0.3"},
-        {"model_in_stage": False, "permanent_deploy": True, "test_released_version": "1.0.3"},
-    )
+    @parameterized.product(permanent_deploy=[True, False], test_released_version=[None, "1.0.3"])  # type: ignore[misc]
     def test_custom_demo_model_array(
         self,
-        model_in_stage: Optional[bool] = False,
         permanent_deploy: Optional[bool] = False,
         test_released_version: Optional[str] = None,
     ) -> None:
@@ -331,7 +283,7 @@ class TestWarehouseCustomModelInteg(parameterized.TestCase):
             sample_input=pd_df,
             test_input=pd_df,
             deploy_params={
-                "predict": (
+                "": (
                     {},
                     lambda res: pd.testing.assert_frame_equal(
                         res,
@@ -339,20 +291,13 @@ class TestWarehouseCustomModelInteg(parameterized.TestCase):
                     ),
                 ),
             },
-            model_in_stage=model_in_stage,
             permanent_deploy=permanent_deploy,
             test_released_version=test_released_version,
         )
 
-    @parameterized.parameters(  # type: ignore[misc]
-        {"model_in_stage": True, "permanent_deploy": True, "test_released_version": None},
-        {"model_in_stage": False, "permanent_deploy": False, "test_released_version": None},
-        {"model_in_stage": True, "permanent_deploy": False, "test_released_version": "1.0.3"},
-        {"model_in_stage": False, "permanent_deploy": True, "test_released_version": "1.0.3"},
-    )
+    @parameterized.product(permanent_deploy=[True, False], test_released_version=[None, "1.0.3"])  # type: ignore[misc]
     def test_custom_demo_model_str(
         self,
-        model_in_stage: Optional[bool] = False,
         permanent_deploy: Optional[bool] = False,
         test_released_version: Optional[str] = None,
     ) -> None:
@@ -364,7 +309,7 @@ class TestWarehouseCustomModelInteg(parameterized.TestCase):
             sample_input=pd_df,
             test_input=pd_df,
             deploy_params={
-                "predict": (
+                "": (
                     {},
                     lambda res: pd.testing.assert_frame_equal(
                         res,
@@ -372,20 +317,13 @@ class TestWarehouseCustomModelInteg(parameterized.TestCase):
                     ),
                 ),
             },
-            model_in_stage=model_in_stage,
             permanent_deploy=permanent_deploy,
             test_released_version=test_released_version,
         )
 
-    @parameterized.parameters(  # type: ignore[misc]
-        {"model_in_stage": True, "permanent_deploy": True, "test_released_version": None},
-        {"model_in_stage": False, "permanent_deploy": False, "test_released_version": None},
-        {"model_in_stage": True, "permanent_deploy": False, "test_released_version": "1.0.3"},
-        {"model_in_stage": False, "permanent_deploy": True, "test_released_version": "1.0.3"},
-    )
+    @parameterized.product(permanent_deploy=[True, False], test_released_version=[None, "1.0.3"])  # type: ignore[misc]
     def test_custom_demo_model_array_sp(
         self,
-        model_in_stage: Optional[bool] = False,
         permanent_deploy: Optional[bool] = False,
         test_released_version: Optional[str] = None,
     ) -> None:
@@ -393,68 +331,50 @@ class TestWarehouseCustomModelInteg(parameterized.TestCase):
         arr = np.array([[1, 2, 3], [4, 2, 5]])
         pd_df = pd.DataFrame(arr, columns=["c1", "c2", "c3"])
         sp_df = self._session.create_dataframe(pd_df)
+        y_df_expected = pd.concat([pd_df, pd.DataFrame(data={"output": [[1, 2, 3], [4, 2, 5]]})], axis=1)
         self.base_test_case(
             name="custom_demo_model_array_sp",
             model=lm,
             sample_input=sp_df,
             test_input=sp_df,
             deploy_params={
-                "predict": (
+                "": (
                     {},
-                    lambda res: pd.testing.assert_frame_equal(
-                        res.to_pandas().applymap(json.loads),
-                        pd.DataFrame(data={"output": [[1, 2, 3], [4, 2, 5]]}),
-                    ),
+                    lambda res: warehouse_model_integ_test_utils.check_sp_df_res(res, y_df_expected, check_dtype=False),
                 )
             },
-            model_in_stage=model_in_stage,
             permanent_deploy=permanent_deploy,
             test_released_version=test_released_version,
         )
 
-    @parameterized.parameters(  # type: ignore[misc]
-        {"model_in_stage": True, "permanent_deploy": True, "test_released_version": None},
-        {"model_in_stage": False, "permanent_deploy": False, "test_released_version": None},
-        {"model_in_stage": True, "permanent_deploy": False, "test_released_version": "1.0.3"},
-        {"model_in_stage": False, "permanent_deploy": True, "test_released_version": "1.0.3"},
-    )
+    @parameterized.product(permanent_deploy=[True, False], test_released_version=[None, "1.0.3"])  # type: ignore[misc]
     def test_custom_demo_model_str_sp(
         self,
-        model_in_stage: Optional[bool] = False,
         permanent_deploy: Optional[bool] = False,
         test_released_version: Optional[str] = None,
     ) -> None:
         lm = DemoModel(custom_model.ModelContext())
         pd_df = pd.DataFrame([["Yogiri", "Civia", "Echo"], ["Artia", "Doris", "Rosalyn"]], columns=["c1", "c2", "c3"])
         sp_df = self._session.create_dataframe(pd_df)
+        y_df_expected = pd.concat([pd_df, pd.DataFrame(data={"output": ["Yogiri", "Artia"]})], axis=1)
         self.base_test_case(
             name="custom_demo_model_str_sp",
             model=lm,
             sample_input=sp_df,
             test_input=sp_df,
             deploy_params={
-                "predict": (
+                "": (
                     {},
-                    lambda res: pd.testing.assert_frame_equal(
-                        res.to_pandas(),
-                        pd.DataFrame(data={"output": ["Yogiri", "Artia"]}),
-                    ),
+                    lambda res: warehouse_model_integ_test_utils.check_sp_df_res(res, y_df_expected),
                 )
             },
-            model_in_stage=model_in_stage,
             permanent_deploy=permanent_deploy,
             test_released_version=test_released_version,
         )
 
-    @parameterized.parameters(  # type: ignore[misc]
-        {"model_in_stage": True, "permanent_deploy": True, "test_released_version": None},
-        {"model_in_stage": False, "permanent_deploy": False, "test_released_version": None},
-        {"model_in_stage": True, "permanent_deploy": False, "test_released_version": "1.0.3"},
-        {"model_in_stage": False, "permanent_deploy": True, "test_released_version": "1.0.3"},
-    )
+    @parameterized.product(permanent_deploy=[True, False], test_released_version=[None, "1.0.3"])  # type: ignore[misc]
     def test_custom_demo_model_array_str(
         self,
-        model_in_stage: Optional[bool] = False,
         permanent_deploy: Optional[bool] = False,
         test_released_version: Optional[str] = None,
     ) -> None:
@@ -466,7 +386,7 @@ class TestWarehouseCustomModelInteg(parameterized.TestCase):
             sample_input=pd_df,
             test_input=pd_df,
             deploy_params={
-                "predict": (
+                "": (
                     {},
                     lambda res: pd.testing.assert_frame_equal(
                         res,
@@ -474,91 +394,13 @@ class TestWarehouseCustomModelInteg(parameterized.TestCase):
                     ),
                 )
             },
-            model_in_stage=model_in_stage,
             permanent_deploy=permanent_deploy,
             test_released_version=test_released_version,
         )
 
-    @parameterized.parameters(  # type: ignore[misc]
-        {"model_in_stage": True, "permanent_deploy": True, "test_released_version": None},
-        {"model_in_stage": False, "permanent_deploy": False, "test_released_version": None},
-        {"model_in_stage": True, "permanent_deploy": False, "test_released_version": "1.0.3"},
-        {"model_in_stage": False, "permanent_deploy": True, "test_released_version": "1.0.3"},
-    )
-    def test_custom_demo_model_with_input_no_keep_order(
-        self,
-        model_in_stage: Optional[bool] = False,
-        permanent_deploy: Optional[bool] = False,
-        test_released_version: Optional[str] = None,
-    ) -> None:
-        lm = DemoModel(custom_model.ModelContext())
-        arr = np.random.randint(100, size=(10000, 3))
-        pd_df = pd.DataFrame(arr, columns=["c1", "c2", "c3"])
-        self.base_test_case(
-            name="custom_demo_model_with_input_no_keep_order",
-            model=lm,
-            sample_input=pd_df,
-            test_input=pd_df,
-            deploy_params={
-                "predict": (
-                    {"output_with_input_features": True, "keep_order": False},
-                    lambda res: pd.testing.assert_series_equal(
-                        res["output"], res["c1"], check_dtype=False, check_names=False
-                    ),
-                )
-            },
-            model_in_stage=model_in_stage,
-            permanent_deploy=permanent_deploy,
-            test_released_version=test_released_version,
-        )
-
-    @parameterized.parameters(  # type: ignore[misc]
-        {"model_in_stage": True, "permanent_deploy": True, "test_released_version": None},
-        {"model_in_stage": False, "permanent_deploy": False, "test_released_version": None},
-        {"model_in_stage": True, "permanent_deploy": False, "test_released_version": "1.0.3"},
-        {"model_in_stage": False, "permanent_deploy": True, "test_released_version": "1.0.3"},
-    )
-    def test_custom_demo_model_with_input(
-        self,
-        model_in_stage: Optional[bool] = False,
-        permanent_deploy: Optional[bool] = False,
-        test_released_version: Optional[str] = None,
-    ) -> None:
-        lm = DemoModel(custom_model.ModelContext())
-        arr = np.random.randint(100, size=(10000, 3))
-        pd_df = pd.DataFrame(arr, columns=["c1", "c2", "c3"])
-
-        def check_res(res: pd.DataFrame) -> Any:
-            pd.testing.assert_series_equal(res["output"], res["c1"], check_dtype=False, check_names=False)
-            pd.testing.assert_frame_equal(
-                res,
-                pd.DataFrame(
-                    np.concatenate([arr, np.expand_dims(arr[:, 0], axis=1)], axis=1),
-                    columns=["c1", "c2", "c3", "output"],
-                ),
-                check_dtype=False,
-            )
-
-        self.base_test_case(
-            name="custom_demo_model_with_input",
-            model=lm,
-            sample_input=pd_df,
-            test_input=pd_df,
-            deploy_params={"predict": ({"output_with_input_features": True}, check_res)},
-            model_in_stage=model_in_stage,
-            permanent_deploy=permanent_deploy,
-            test_released_version=test_released_version,
-        )
-
-    @parameterized.parameters(  # type: ignore[misc]
-        {"model_in_stage": True, "permanent_deploy": True, "test_released_version": None},
-        {"model_in_stage": False, "permanent_deploy": False, "test_released_version": None},
-        {"model_in_stage": True, "permanent_deploy": False, "test_released_version": "1.0.3"},
-        {"model_in_stage": False, "permanent_deploy": True, "test_released_version": "1.0.3"},
-    )
+    @parameterized.product(permanent_deploy=[True, False], test_released_version=[None, "1.0.3"])  # type: ignore[misc]
     def test_custom_model_with_artifacts(
         self,
-        model_in_stage: Optional[bool] = False,
         permanent_deploy: Optional[bool] = False,
         test_released_version: Optional[str] = None,
     ) -> None:
@@ -576,7 +418,7 @@ class TestWarehouseCustomModelInteg(parameterized.TestCase):
                 sample_input=pd_df,
                 test_input=pd_df,
                 deploy_params={
-                    "predict": (
+                    "": (
                         {},
                         lambda res: pd.testing.assert_frame_equal(
                             res,
@@ -584,20 +426,13 @@ class TestWarehouseCustomModelInteg(parameterized.TestCase):
                         ),
                     )
                 },
-                model_in_stage=model_in_stage,
                 permanent_deploy=permanent_deploy,
                 test_released_version=test_released_version,
             )
 
-    @parameterized.parameters(  # type: ignore[misc]
-        {"model_in_stage": True, "permanent_deploy": True, "test_released_version": None},
-        {"model_in_stage": False, "permanent_deploy": False, "test_released_version": None},
-        {"model_in_stage": True, "permanent_deploy": False, "test_released_version": "1.0.3"},
-        {"model_in_stage": False, "permanent_deploy": True, "test_released_version": "1.0.3"},
-    )
+    @parameterized.product(permanent_deploy=[True, False], test_released_version=[None, "1.0.3"])  # type: ignore[misc]
     def test_custom_model_bool_sp(
         self,
-        model_in_stage: Optional[bool] = False,
         permanent_deploy: Optional[bool] = False,
         test_released_version: Optional[str] = None,
     ) -> None:
@@ -610,21 +445,20 @@ class TestWarehouseCustomModelInteg(parameterized.TestCase):
             arr = np.array([[1, 2, 3], [4, 2, 5]])
             pd_df = pd.DataFrame(arr, columns=["c1", "c2", "c3"])
             sp_df = self._session.create_dataframe(pd_df)
+            y_df_expected = pd.concat([pd_df, pd.DataFrame([False, True], columns=["output"])], axis=1)
             self.base_test_case(
                 name="custom_model_bool_sp",
                 model=lm,
                 sample_input=sp_df,
                 test_input=sp_df,
                 deploy_params={
-                    "predict": (
+                    "": (
                         {},
-                        lambda res: pd.testing.assert_frame_equal(
-                            res.to_pandas(),
-                            pd.DataFrame([False, True], columns=["output"]),
+                        lambda res: warehouse_model_integ_test_utils.check_sp_df_res(
+                            res, y_df_expected, check_dtype=False
                         ),
                     )
                 },
-                model_in_stage=model_in_stage,
                 permanent_deploy=permanent_deploy,
                 test_released_version=test_released_version,
             )

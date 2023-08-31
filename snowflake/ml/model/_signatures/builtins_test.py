@@ -6,21 +6,52 @@ from snowflake.ml.test_utils import exception_utils
 
 
 class ListOfBuiltinsHandlerTest(absltest.TestCase):
+    def test_can_handle_list_builtins(self) -> None:
+        lt1 = [(2, 3), [2, 3]]
+        self.assertTrue(builtins_handler.ListOfBuiltinHandler.can_handle(lt1))
+
+        lt2 = (2, 3)
+        self.assertTrue(builtins_handler.ListOfBuiltinHandler.can_handle(lt2))
+
+        lt3 = ([3, 3], 3)
+        self.assertTrue(builtins_handler.ListOfBuiltinHandler.can_handle(lt3))
+
+        lt4 = ({"a": 1}, 3)
+        self.assertFalse(builtins_handler.ListOfBuiltinHandler.can_handle(lt4))
+
+        lt5 = [({"a": 1}, 3)]
+        self.assertFalse(builtins_handler.ListOfBuiltinHandler.can_handle(lt5))
+
+        lt6 = "abcd"
+        self.assertFalse(builtins_handler.ListOfBuiltinHandler.can_handle(lt6))
+
+        lt7 = ["abcd", "abcd"]
+        self.assertTrue(builtins_handler.ListOfBuiltinHandler.can_handle(lt7))
+
+        lt8 = [("ab", "ab"), "ab"]
+        self.assertTrue(builtins_handler.ListOfBuiltinHandler.can_handle(lt8))
+
+        lt9 = [pd.DataFrame([1]), pd.DataFrame([2, 3])]
+        self.assertFalse(builtins_handler.ListOfBuiltinHandler.can_handle(lt9))
+
     def test_validate_list_builtins(self) -> None:
-        lt6 = ["Hello", [2, 3]]
+        lt1 = ["Hello", [2, 3]]
         with exception_utils.assert_snowml_exceptions(
             self, expected_original_error_type=ValueError, expected_regex="Inconsistent type of object found in data"
         ):
-            builtins_handler.ListOfBuiltinHandler.validate(lt6)  # type:ignore[arg-type]
+            builtins_handler.ListOfBuiltinHandler.validate(lt1)  # type:ignore[arg-type]
 
-        lt7 = [[1], [2, 3]]
+        lt2 = [[1], [2, 3]]
         with exception_utils.assert_snowml_exceptions(
             self, expected_original_error_type=ValueError, expected_regex="Ill-shaped list data"
         ):
-            builtins_handler.ListOfBuiltinHandler.validate(lt7)
+            builtins_handler.ListOfBuiltinHandler.validate(lt2)
 
-        lt8 = [pd.DataFrame([1]), pd.DataFrame([2, 3])]
-        self.assertFalse(builtins_handler.ListOfBuiltinHandler.can_handle(lt8))
+        lt3 = [("ab", "ab"), "ab"]
+        with exception_utils.assert_snowml_exceptions(
+            self, expected_original_error_type=ValueError, expected_regex="Inconsistent type of object found in data"
+        ):
+            builtins_handler.ListOfBuiltinHandler.validate(lt3)
 
     def test_infer_signature_list_builtins(self) -> None:
         lt1 = [1, 2, 3, 4]

@@ -28,21 +28,27 @@ class DockerContextTest(absltest.TestCase):
         self.context_dir = tempfile.mkdtemp()
         self.model_dir = tempfile.mkdtemp()
 
-        model_api.save_model(
+        self.model_meta = model_api._save(
             name="model",
-            model_dir_path=self.model_dir,
+            local_dir_path=self.model_dir,
             model=_get_sklearn_model(),
             sample_input=_IRIS_X,
         )
 
-        self.docker_context = docker_context.DockerContext(self.context_dir, model_dir=self.model_dir)
+        self.docker_context = docker_context.DockerContext(self.context_dir, model_meta=self.model_meta)
 
     def tearDown(self) -> None:
         shutil.rmtree(self.model_dir)
         shutil.rmtree(self.context_dir)
 
     def test_build_results_in_correct_docker_context_file_structure(self) -> None:
-        expected_files = ["Dockerfile", constants.INFERENCE_SERVER_DIR, constants.ENTRYPOINT_SCRIPT, "env"]
+        expected_files = [
+            "Dockerfile",
+            constants.INFERENCE_SERVER_DIR,
+            constants.ENTRYPOINT_SCRIPT,
+            "env",
+            "model.yaml",
+        ]
         self.docker_context.build()
         generated_files = os.listdir(self.context_dir)
         self.assertCountEqual(expected_files, generated_files)
@@ -69,12 +75,54 @@ class DockerContextTest(absltest.TestCase):
             actual = re.sub(comment_pattern, "", actual, flags=re.MULTILINE)
             self.assertEqual(actual, expected, "Generated dockerfile is not aligned with the docker template")
 
-    def test_docker_file_content_with_gpu(self) -> None:
-        gpu_context = docker_context.DockerContext(self.context_dir, model_dir=self.model_dir)
-        gpu_context.build()
+
+class DockerContextTestCuda(absltest.TestCase):
+    def setUp(self) -> None:
+        self.context_dir = tempfile.mkdtemp()
+        self.model_dir = tempfile.mkdtemp()
+
+        self.model_meta = model_api._save(
+            name="model",
+            local_dir_path=self.model_dir,
+            model=_get_sklearn_model(),
+            sample_input=_IRIS_X,
+        )
+
+        self.model_meta.cuda_version = "11.7.1"
+
+        self.docker_context = docker_context.DockerContext(self.context_dir, model_meta=self.model_meta)
+
+    def tearDown(self) -> None:
+        shutil.rmtree(self.model_dir)
+        shutil.rmtree(self.context_dir)
+
+    def test_build_results_in_correct_docker_context_file_structure(self) -> None:
+        expected_files = [
+            "Dockerfile",
+            constants.INFERENCE_SERVER_DIR,
+            constants.ENTRYPOINT_SCRIPT,
+            "env",
+            "model.yaml",
+        ]
+        self.docker_context.build()
+        generated_files = os.listdir(self.context_dir)
+        self.assertCountEqual(expected_files, generated_files)
+
+        actual_inference_files = os.listdir(os.path.join(self.context_dir, constants.INFERENCE_SERVER_DIR))
+        self.assertCountEqual(["main.py"], actual_inference_files)
+
+        model_env_dir = os.path.join(self.context_dir, "env")
+        self.assertTrue(os.path.exists(model_env_dir))
+
+    def test_docker_file_content(self) -> None:
+        self.docker_context.build()
         dockerfile_path = os.path.join(self.context_dir, "Dockerfile")
-        dockerfile_fixture_path = os.path.join(os.path.dirname(__file__), "test_fixtures", "dockerfile_test_fixture")
-        with open(dockerfile_path) as dockerfile, open(dockerfile_fixture_path) as expected_dockerfile:
+        dockerfile_fixture_path = os.path.join(
+            os.path.dirname(__file__), "test_fixtures", "dockerfile_test_fixture_with_CUDA"
+        )
+        with open(dockerfile_path, encoding="utf-8") as dockerfile, open(
+            dockerfile_fixture_path, encoding="utf-8"
+        ) as expected_dockerfile:
             actual = dockerfile.read()
             expected = expected_dockerfile.read()
 

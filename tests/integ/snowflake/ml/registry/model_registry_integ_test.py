@@ -12,7 +12,9 @@ from absl.testing import absltest
 from sklearn import metrics
 
 from snowflake import connector
-from snowflake.ml.registry import model_registry
+from snowflake.ml._internal.utils import identifier
+from snowflake.ml.registry import _ml_artifact, model_registry
+from snowflake.ml.training_dataset import training_dataset
 from snowflake.ml.utils import connection_params
 from snowflake.snowpark import Session
 from tests.integ.snowflake.ml.test_utils import (
@@ -61,7 +63,7 @@ class TestModelRegistryInteg(absltest.TestCase):
                 registry=registry, model_name=model_name, model_version=model_version
             )
 
-        model_id = registry.log_model(
+        model_ref = registry.log_model(
             model_name=model_name,
             model_version=model_version,
             model=model,
@@ -154,7 +156,7 @@ class TestModelRegistryInteg(absltest.TestCase):
         # Test list models
         model_list = registry.list_models().to_pandas()
 
-        filtered_model_list = model_list.loc[model_list["ID"] == model_id].reset_index(drop=True)
+        filtered_model_list = model_list.loc[model_list["ID"] == model_ref._id].reset_index(drop=True)
 
         self.assertEqual(filtered_model_list.shape[0], 1)
         self.assertEqual(filtered_model_list["NAME"][0], second=model_name)
@@ -263,7 +265,7 @@ class TestModelRegistryInteg(absltest.TestCase):
 
         registry.delete_model(model_name=model_name, model_version=model_version, delete_artifact=True)
         model_list = registry.list_models().to_pandas()
-        filtered_model_list = model_list.loc[model_list["ID"] == model_id].reset_index(drop=True)
+        filtered_model_list = model_list.loc[model_list["ID"] == model_ref._id].reset_index(drop=True)
         self.assertEqual(filtered_model_list.shape[0], 0)
 
     @pytest.mark.pip_incompatible
@@ -272,7 +274,7 @@ class TestModelRegistryInteg(absltest.TestCase):
 
         model_name = "snowml_xgb_classifier"
         model_version = self.run_id
-        model, test_features = model_factory.ModelFactory.prepare_snowml_model_xgb()
+        model, test_features, _ = model_factory.ModelFactory.prepare_snowml_model_xgb()
 
         local_prediction = model.predict(test_features)
         local_prediction_proba = model.predict_proba(test_features)
@@ -348,11 +350,89 @@ class TestModelRegistryInteg(absltest.TestCase):
             target_method="predict",
             permanent=False,
         )
-        remote_prediction_temp = model_ref.predict(temp_predict_deployment_name, test_features)
+        remote_prediction_temp = model_ref.predict(temp_predict_deployment_name, test_features.to_pandas())
         # TODO: Remove .astype(dtype={"OUTPUT_TARGET": np.float64} after SNOW-853638 gets fixed.
         pd.testing.assert_frame_equal(
-            remote_prediction_temp.to_pandas(), local_prediction.to_pandas().astype(dtype={"OUTPUT_TARGET": np.float64})
+            remote_prediction_temp,
+            local_prediction.to_pandas().astype(dtype={"OUTPUT_TARGET": np.float64}),
         )
+
+    @pytest.mark.pip_incompatible
+    def test_log_model_with_traing_dataset(self) -> None:
+        registry = model_registry.ModelRegistry(session=self._session, database_name=self.registry_name)
+
+        model_name = "snowml_test_training_dataset"
+        model_version = self.run_id
+        model, test_features, training_data_df = model_factory.ModelFactory.prepare_snowml_model_xgb()
+
+        database_name = identifier.get_unescaped_names(self._session.get_current_database())
+        schema_name = identifier.get_unescaped_names(self._session.get_current_schema())
+        dummy_materialized_table_full_path = f"{database_name}.{schema_name}.dummy_materialized_table"
+        dummy_snapshot_table_full_path = f"{dummy_materialized_table_full_path}_SNAPSHOT"
+        self._session.create_dataframe(training_data_df).write.mode("overwrite").save_as_table(
+            f"{dummy_snapshot_table_full_path}"
+        )
+
+        spine_query = f"SELECT * FROM {dummy_materialized_table_full_path}"
+
+        fs_metadata = training_dataset.FeatureStoreMetadata(
+            spine_query=spine_query,
+            connection_params={
+                "database": "test_db",
+                "schema": "test_schema",
+                "default_warehouse": "test_warehouse",
+            },
+            features=[],
+        )
+        dummy_training_dataset = training_dataset.TrainingDataset(
+            df=self._session.sql(spine_query),
+            materialized_table=dummy_materialized_table_full_path,
+            snapshot_table=dummy_snapshot_table_full_path,
+            timestamp_col="ts",
+            label_cols=["TARGET"],
+            feature_store_metadata=fs_metadata,
+            desc="a dummy training dataset metadata",
+        )
+
+        with self.assertRaisesRegex(
+            ValueError,
+            "Only one of sample_input_data and training_dataset should be provided.",
+        ):
+            registry.log_model(
+                model_name=model_name,
+                model_version=model_version,
+                model=model,
+                conda_dependencies=[
+                    test_env_utils.get_latest_package_versions_in_server(self._session, "snowflake-snowpark-python")
+                ],
+                sample_input_data=test_features,
+                training_dataset=dummy_training_dataset,
+                options={"embed_local_ml_library": True},
+            )
+
+        registry.log_model(
+            model_name=model_name,
+            model_version=model_version,
+            model=model,
+            conda_dependencies=[
+                test_env_utils.get_latest_package_versions_in_server(self._session, "snowflake-snowpark-python")
+            ],
+            options={"embed_local_ml_library": True},
+            training_dataset=dummy_training_dataset,
+        )
+
+        # test deserialized training dataset from get_training_dataset
+        des_ds_0 = registry.get_training_dataset(model_name, model_version)
+        self.assertIsNotNone(des_ds_0)
+        self.assertEqual(des_ds_0, dummy_training_dataset)
+
+        # test deserialized training dataset from list_artifacts
+        rows_list = registry.list_artifacts(model_name, model_version).collect()
+        self.assertEqual(len(rows_list), 1)
+        self.assertEqual(rows_list[0]["ID"], dummy_training_dataset.id())
+        self.assertEqual(_ml_artifact.ArtifactType[rows_list[0]["TYPE"]], _ml_artifact.ArtifactType.TRAINING_DATASET)
+        des_ds_1 = training_dataset.TrainingDataset.from_json(rows_list[0]["ARTIFACT_SPEC"], self._session)
+        self.assertEqual(des_ds_1, dummy_training_dataset)
 
 
 if __name__ == "__main__":

@@ -78,6 +78,9 @@ py_test(
 py_library(
     name = "uri",
     srcs = ["uri.py"],
+    deps = [
+        "//snowflake/ml/_internal/utils:identifier",
+    ]
 )
 
 py_test(
@@ -136,4 +139,34 @@ py_test(
 py_library(
     name = "parallelize",
     srcs = ["parallelize.py"],
+)
+
+py_library(
+    name = "result",
+    srcs = ["result.py"],
+)
+
+py_library(
+    name = "spcs_image_registry",
+    srcs = ["spcs_image_registry.py"],
+    deps = [":query_result_checker"]
+)
+
+py_library(
+    name = "table_manager",
+    srcs = [
+        "table_manager.py",
+        "//snowflake/ml/_internal/utils:formatting",
+        "//snowflake/ml/_internal/utils:query_result_checker",
+    ],
+)
+
+py_test(
+    name = "table_manager_test",
+    srcs = ["table_manager_test.py"],
+    deps = [
+        ":table_manager",
+        "//snowflake/ml/test_utils:mock_data_frame",
+        "//snowflake/ml/test_utils:mock_session",
+    ],
 )

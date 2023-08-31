@@ -27,6 +27,7 @@ MODEL_METADATA_VERSION = 1
 _BASIC_DEPENDENCIES = _core_requirements.REQUIREMENTS
 _SNOWFLAKE_PKG_NAME = "snowflake"
 _SNOWFLAKE_ML_PKG_NAME = f"{_SNOWFLAKE_PKG_NAME}.ml"
+_DEFAULT_CUDA_VERSION = "11.7"
 
 Dependency = namedtuple("Dependency", ["conda_name", "pip_name"])
 
@@ -153,8 +154,18 @@ def _load_model_metadata(model_dir_path: str) -> "ModelMetadata":
         A model metadata object.
     """
     model_dir_path = os.path.normpath(model_dir_path)
-
     meta = ModelMetadata.load_model_metadata(model_dir_path)
+    return meta
+
+
+def _load_code_path(model_dir_path: str) -> None:
+    """Load custom code in the code path into memory.
+
+    Args:
+        model_dir_path: Path to the directory containing the model to be loaded.
+
+    """
+    model_dir_path = os.path.normpath(model_dir_path)
     code_path = os.path.join(model_dir_path, ModelMetadata.MODEL_CODE_DIR)
     if os.path.exists(code_path):
         if code_path in sys.path:
@@ -177,8 +188,6 @@ def _load_model_metadata(model_dir_path: str) -> "ModelMetadata":
         assert code_path in sys.path
         sys.path.remove(code_path)
 
-    return meta
-
 
 class ModelMetadata:
     """Model metadata for Snowflake native model packaged model.
@@ -188,6 +197,7 @@ class ModelMetadata:
         model_type: Type of the model.
         creation_timestamp: Unix timestamp when the model metadata is created.
         python_version: String 'major.minor.patchlevel' showing the python version where the model runs.
+        cuda_version: CUDA version to be used, if None then the model cannot be deployed to instance with GPUs.
     """
 
     MANIFEST_FILE = "MANIFEST"
@@ -250,6 +260,7 @@ class ModelMetadata:
             self._include_if_absent(
                 [Dependency(conda_name=dep, pip_name=dep) for dep in _BASIC_DEPENDENCIES + [env_utils._SNOWML_PKG_NAME]]
             )
+        self._cuda_version: Optional[str] = None
 
         self.__dict__.update(kwargs)
 
@@ -300,6 +311,22 @@ class ModelMetadata:
                 )
 
     @property
+    def cuda_version(self) -> Optional[str]:
+        return self._cuda_version
+
+    @cuda_version.setter
+    def cuda_version(self, _cuda_version: str) -> None:
+        if not isinstance(_cuda_version, str):
+            raise ValueError("Cannot set CUDA version as a non-str object.")
+        if self._cuda_version is None:
+            self._cuda_version = _cuda_version
+        else:
+            if self._cuda_version != _cuda_version:
+                raise ValueError(
+                    f"Different CUDA version {self._cuda_version} and {_cuda_version} found in the same model!"
+                )
+
+    @property
     def signatures(self) -> Dict[str, model_signature.ModelSignature]:
         """Signatures of the model.
 
@@ -334,6 +361,7 @@ class ModelMetadata:
         res["models"] = {name: dataclasses.asdict(blob_meta) for name, blob_meta in self._models.items()}
         res["pip_requirements"] = self.pip_requirements
         res["conda_dependencies"] = self.conda_dependencies
+        res["cuda_version"] = self._cuda_version
         return res
 
     @classmethod
@@ -353,6 +381,7 @@ class ModelMetadata:
         model_dict["_models"] = {
             name: _ModelBlobMetadata(**blob_meta) for name, blob_meta in model_dict.pop("models").items()
         }
+        model_dict["_cuda_version"] = model_dict.pop("cuda_version", None)
         return cls(**model_dict)
 
     def save_model_metadata(self, path: str) -> None:

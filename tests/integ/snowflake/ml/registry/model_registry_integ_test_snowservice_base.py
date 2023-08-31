@@ -69,16 +69,20 @@ class TestModelRegistryIntegSnowServiceBase(parameterized.TestCase):
         self,
         model_name: str,
         model_version: str,
-        prepare_model_and_feature_fn: Callable[[], Tuple[Any, Any]],
+        prepare_model_and_feature_fn: Callable[[], Tuple[Any, Any, Any]],
         deployment_options: Dict[str, Any],
         prediction_assert_fn: Callable[[Any, Union[pd.DataFrame, SnowparkDataFrame]], Any],
         pip_requirements: Optional[List[str]] = None,
         conda_dependencies: Optional[List[str]] = None,
         embed_local_ml_library: Optional[bool] = True,
-    ):
+        omit_target_method_when_deploy: bool = False,
+    ) -> None:
 
         model, test_features, *_ = prepare_model_and_feature_fn()
-        target_method = deployment_options["target_method"]
+        if omit_target_method_when_deploy:
+            target_method = deployment_options.pop("target_method")
+        else:
+            target_method = deployment_options["target_method"]
 
         if hasattr(model, "predict_with_device"):
             local_prediction = model.predict_with_device(test_features, model_factory.DEVICE.CPU)
@@ -89,9 +93,7 @@ class TestModelRegistryIntegSnowServiceBase(parameterized.TestCase):
         # Instead we rely on snowpark version on information.schema table. Note that this will not affect end user
         # as by the time they use it, the latest snowpark should be available in conda already.
         conda_dependencies = conda_dependencies or []
-        conda_dependencies.append(
-            test_env_utils.get_latest_package_versions_in_server(self._session, "snowflake-snowpark-python")
-        )
+        conda_dependencies.append(test_env_utils.get_latest_package_versions_in_conda("snowflake-snowpark-python"))
 
         self.registry.log_model(
             model_name=model_name,
@@ -109,7 +111,7 @@ class TestModelRegistryIntegSnowServiceBase(parameterized.TestCase):
 
         deployment_name = f"{model_name}_{model_version}_deployment"
         deployment_options["deployment_name"] = deployment_name
-        model_ref.deploy(**deployment_options)
+        model_ref.deploy(**deployment_options)  # type: ignore[attr-defined]
 
         remote_prediction = model_ref.predict(deployment_name, test_features)
         prediction_assert_fn(local_prediction, remote_prediction)

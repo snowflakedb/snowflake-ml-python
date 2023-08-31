@@ -9,6 +9,7 @@ from sklearn import metrics
 
 from snowflake import snowpark
 from snowflake.ml._internal import telemetry
+from snowflake.ml._internal.utils import result
 from snowflake.ml.modeling.metrics import metrics_utils
 from snowflake.snowpark import functions as F
 from snowflake.snowpark._internal import utils as snowpark_utils
@@ -62,25 +63,28 @@ def precision_recall_curve(
         sample_weight_col_name: Column name representing sample weights.
 
     Returns:
-        precision: ndarray of shape (n_thresholds + 1,)
-            Precision values such that element i is the precision of
-            predictions with score >= thresholds[i] and the last element is 1.
-        recall: ndarray of shape (n_thresholds + 1,)
-            Decreasing recall values such that element i is the recall of
-            predictions with score >= thresholds[i] and the last element is 0.
-        thresholds: ndarray of shape (n_thresholds,)
-            Increasing thresholds on the decision function used to compute
-            precision and recall.
+        Tuple containing following items
+            precision - ndarray of shape (n_thresholds + 1,)
+                Precision values such that element i is the precision of
+                predictions with score >= thresholds[i] and the last element is 1.
+            recall - ndarray of shape (n_thresholds + 1,)
+                Decreasing recall values such that element i is the recall of
+                predictions with score >= thresholds[i] and the last element is 0.
+            thresholds - ndarray of shape (n_thresholds,)
+                Increasing thresholds on the decision function used to compute
+                precision and recall.
     """
     session = df._session
     assert session is not None
-    sproc_name = f"precision_recall_curve_{snowpark_utils.generate_random_alphanumeric()}"
+    sproc_name = snowpark_utils.random_name_for_temp_object(snowpark_utils.TempObjectType.PROCEDURE)
     sklearn_release = version.parse(sklearn.__version__).release
     statement_params = telemetry.get_statement_params(_PROJECT, _SUBPROJECT)
     cols = metrics_utils.flatten_cols([y_true_col_name, probas_pred_col_name, sample_weight_col_name])
     queries = df[cols].queries["queries"]
+    pickled_snowflake_result = cloudpickle.dumps(result)
 
     @F.sproc(  # type: ignore[misc]
+        is_permanent=False,
         session=session,
         name=sproc_name,
         replace=True,
@@ -90,8 +94,9 @@ def precision_recall_curve(
             "snowflake-snowpark-python",
         ],
         statement_params=statement_params,
+        anonymous=True,
     )
-    def precision_recall_curve_sproc(session: snowpark.Session) -> bytes:
+    def precision_recall_curve_anon_sproc(session: snowpark.Session) -> bytes:
         for query in queries[:-1]:
             _ = session.sql(query).collect(statement_params=statement_params)
         df = session.sql(queries[-1]).to_pandas(statement_params=statement_params)
@@ -104,11 +109,17 @@ def precision_recall_curve(
             pos_label=pos_label,
             sample_weight=sample_weight,
         )
+        result_module = cloudpickle.loads(pickled_snowflake_result)
+        result_object = result_module.SnowflakeResult(session, (precision, recall, thresholds))
 
-        return cloudpickle.dumps((precision, recall, thresholds))  # type: ignore[no-any-return]
+        return result_object.serialize()  # type: ignore[no-any-return]
 
-    loaded_data = cloudpickle.loads(session.call(sproc_name, statement_params=statement_params))
-    res: Tuple[npt.NDArray[np.float_], npt.NDArray[np.float_], npt.NDArray[np.float_]] = loaded_data
+    sproc_result = precision_recall_curve_anon_sproc(session)
+    result_object, result_object_filepath = cloudpickle.loads(sproc_result)
+    if result_object_filepath is not None:
+        result_object = result.SnowflakeResult.load_result_from_filepath(session, result_object_filepath)
+
+    res: Tuple[npt.NDArray[np.float_], npt.NDArray[np.float_], npt.NDArray[np.float_]] = result_object
     return res
 
 
@@ -164,16 +175,16 @@ def roc_auc_score(
             'weighted' averages. For multiclass targets, `average=None` is only
             implemented for `multi_class='ovr'` and `average='micro'` is only
             implemented for `multi_class='ovr'`.
-            ``'micro'``:
+            ``'micro'``
                 Calculate metrics globally by considering each element of the label
                 indicator matrix as a label.
-            ``'macro'``:
+            ``'macro'``
                 Calculate metrics for each label, and find their unweighted
                 mean.  This does not take label imbalance into account.
-            ``'weighted'``:
+            ``'weighted'``
                 Calculate metrics for each label, and find their average, weighted
                 by support (the number of true instances for each label).
-            ``'samples'``:
+            ``'samples'``
                 Calculate metrics for each instance, and find their average.
             Will be ignored when ``y_true`` is binary.
         sample_weight_col_name: Column name representing sample weights.
@@ -186,14 +197,14 @@ def roc_auc_score(
             Only used for multiclass targets. Determines the type of configuration
             to use. The default value raises an error, so either
             ``'ovr'`` or ``'ovo'`` must be passed explicitly.
-            ``'ovr'``:
+            ``'ovr'``
                 Stands for One-vs-rest. Computes the AUC of each class
                 against the rest [3]_ [4]_. This
                 treats the multiclass case in the same way as the multilabel case.
                 Sensitive to class imbalance even when ``average == 'macro'``,
                 because class imbalance affects the composition of each of the
                 'rest' groupings.
-            ``'ovo'``:
+            ``'ovo'``
                 Stands for One-vs-one. Computes the average AUC of all
                 possible pairwise combinations of classes [5]_.
                 Insensitive to class imbalance when
@@ -203,17 +214,19 @@ def roc_auc_score(
             order of the labels in ``y_true`` is used.
 
     Returns:
-        auc: Area Under the Curve score.
+        Area Under the Curve score.
     """
     session = df._session
     assert session is not None
-    sproc_name = f"roc_auc_score_{snowpark_utils.generate_random_alphanumeric()}"
+    sproc_name = snowpark_utils.random_name_for_temp_object(snowpark_utils.TempObjectType.PROCEDURE)
     sklearn_release = version.parse(sklearn.__version__).release
     statement_params = telemetry.get_statement_params(_PROJECT, _SUBPROJECT)
     cols = metrics_utils.flatten_cols([y_true_col_names, y_score_col_names, sample_weight_col_name])
     queries = df[cols].queries["queries"]
+    pickled_snowflake_result = cloudpickle.dumps(result)
 
     @F.sproc(  # type: ignore[misc]
+        is_permanent=False,
         session=session,
         name=sproc_name,
         replace=True,
@@ -223,8 +236,9 @@ def roc_auc_score(
             "snowflake-snowpark-python",
         ],
         statement_params=statement_params,
+        anonymous=True,
     )
-    def roc_auc_score_sproc(session: snowpark.Session) -> bytes:
+    def roc_auc_score_anon_sproc(session: snowpark.Session) -> bytes:
         for query in queries[:-1]:
             _ = session.sql(query).collect(statement_params=statement_params)
         df = session.sql(queries[-1]).to_pandas(statement_params=statement_params)
@@ -240,12 +254,17 @@ def roc_auc_score(
             multi_class=multi_class,
             labels=labels,
         )
+        result_module = cloudpickle.loads(pickled_snowflake_result)
+        result_object = result_module.SnowflakeResult(session, auc)
 
-        return cloudpickle.dumps(auc)  # type: ignore[no-any-return]
+        return result_object.serialize()  # type: ignore[no-any-return]
 
-    auc: Union[float, npt.NDArray[np.float_]] = cloudpickle.loads(
-        session.call(sproc_name, statement_params=statement_params)
-    )
+    sproc_result = roc_auc_score_anon_sproc(session)
+    result_object, result_object_filepath = cloudpickle.loads(sproc_result)
+    if result_object_filepath is not None:
+        result_object = result.SnowflakeResult.load_result_from_filepath(session, result_object_filepath)
+
+    auc: Union[float, npt.NDArray[np.float_]] = result_object
     return auc
 
 
@@ -282,26 +301,29 @@ def roc_curve(
             lighter ROC curves.
 
     Returns:
-        fpr: ndarray of shape (>2,)
-            Increasing false positive rates such that element i is the false
-            positive rate of predictions with score >= `thresholds[i]`.
-        tpr: ndarray of shape (>2,)
-            Increasing true positive rates such that element `i` is the true
-            positive rate of predictions with score >= `thresholds[i]`.
-        thresholds: ndarray of shape = (n_thresholds,)
-            Decreasing thresholds on the decision function used to compute
-            fpr and tpr. `thresholds[0]` represents no instances being predicted
-            and is arbitrarily set to `max(y_score) + 1`.
+        Tuple containing following items
+            fpr - ndarray of shape (>2,)
+                Increasing false positive rates such that element i is the false
+                positive rate of predictions with score >= `thresholds[i]`.
+            tpr - ndarray of shape (>2,)
+                Increasing true positive rates such that element `i` is the true
+                positive rate of predictions with score >= `thresholds[i]`.
+            thresholds - ndarray of shape = (n_thresholds,)
+                Decreasing thresholds on the decision function used to compute
+                fpr and tpr. `thresholds[0]` represents no instances being predicted
+                and is arbitrarily set to `max(y_score) + 1`.
     """
     session = df._session
     assert session is not None
-    sproc_name = f"roc_curve_{snowpark_utils.generate_random_alphanumeric()}"
+    sproc_name = snowpark_utils.random_name_for_temp_object(snowpark_utils.TempObjectType.PROCEDURE)
     sklearn_release = version.parse(sklearn.__version__).release
     statement_params = telemetry.get_statement_params(_PROJECT, _SUBPROJECT)
     cols = metrics_utils.flatten_cols([y_true_col_name, y_score_col_name, sample_weight_col_name])
     queries = df[cols].queries["queries"]
+    pickled_snowflake_result = cloudpickle.dumps(result)
 
     @F.sproc(  # type: ignore[misc]
+        is_permanent=False,
         session=session,
         name=sproc_name,
         replace=True,
@@ -311,8 +333,9 @@ def roc_curve(
             "snowflake-snowpark-python",
         ],
         statement_params=statement_params,
+        anonymous=True,
     )
-    def roc_curve_sproc(session: snowpark.Session) -> bytes:
+    def roc_curve_anon_sproc(session: snowpark.Session) -> bytes:
         for query in queries[:-1]:
             _ = session.sql(query).collect(statement_params=statement_params)
         df = session.sql(queries[-1]).to_pandas(statement_params=statement_params)
@@ -327,8 +350,16 @@ def roc_curve(
             drop_intermediate=drop_intermediate,
         )
 
-        return cloudpickle.dumps((fpr, tpr, thresholds))  # type: ignore[no-any-return]
+        result_module = cloudpickle.loads(pickled_snowflake_result)
+        result_object = result_module.SnowflakeResult(session, (fpr, tpr, thresholds))
 
-    loaded_data = cloudpickle.loads(session.call(sproc_name, statement_params=statement_params))
-    res: Tuple[npt.NDArray[np.float_], npt.NDArray[np.float_], npt.NDArray[np.float_]] = loaded_data
+        return result_object.serialize()  # type: ignore[no-any-return]
+
+    sproc_result = roc_curve_anon_sproc(session)
+    result_object, result_object_filepath = cloudpickle.loads(sproc_result)
+    if result_object_filepath is not None:
+        result_object = result.SnowflakeResult.load_result_from_filepath(session, result_object_filepath)
+
+    res: Tuple[npt.NDArray[np.float_], npt.NDArray[np.float_], npt.NDArray[np.float_]] = result_object
+
     return res

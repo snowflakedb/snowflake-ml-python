@@ -1,3 +1,4 @@
+from collections import abc
 from typing import TYPE_CHECKING, List, Literal, Optional, Sequence, Union
 
 import numpy as np
@@ -23,7 +24,7 @@ class SeqOfTensorflowTensorHandler(
     def can_handle(
         data: model_types.SupportedDataType,
     ) -> TypeGuard[Sequence[Union["tensorflow.Tensor", "tensorflow.Variable"]]]:
-        if not isinstance(data, list):
+        if not isinstance(data, abc.Sequence):
             return False
         if len(data) == 0:
             return False

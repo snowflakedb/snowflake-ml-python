@@ -2,8 +2,7 @@
 # Copyright (c) 2012-2022 Snowflake Computing Inc. All rights reserved.
 #
 
-import os
-import tempfile
+import posixpath
 import uuid
 
 import numpy as np
@@ -65,71 +64,94 @@ class TestModelBadCaseInteg(absltest.TestCase):
         self._session.close()
 
     def test_bad_model_deploy(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            lm = DemoModel(custom_model.ModelContext())
-            arr = np.array([[1, 2, 3], [4, 2, 5]])
-            pd_df = pd.DataFrame(arr, columns=["c1", "c2", "c3"])
-            model_api.save_model(
-                name="custom_bad_model",
-                model_dir_path=os.path.join(tmpdir, "custom_bad_model"),
-                model=lm,
-                sample_input=pd_df,
-                metadata={"author": "halu", "version": "1"},
-                conda_dependencies=["invalidnumpy==1.22.4"],
-                options=model_types.CustomModelSaveOption({"embed_local_ml_library": True}),
+        lm = DemoModel(custom_model.ModelContext())
+        arr = np.array([[1, 2, 3], [4, 2, 5]])
+        pd_df = pd.DataFrame(arr, columns=["c1", "c2", "c3"])
+        tmp_stage = self._session.get_session_stage()
+        model_api.save_model(
+            name="custom_bad_model",
+            session=self._session,
+            model_stage_file_path=posixpath.join(tmp_stage, "custom_bad_model.zip"),
+            model=lm,
+            sample_input=pd_df,
+            metadata={"author": "halu", "version": "1"},
+            conda_dependencies=["invalidnumpy==1.22.4"],
+            options=model_types.CustomModelSaveOption({"embed_local_ml_library": True}),
+        )
+        function_name = db_manager.TestObjectNameGenerator.get_snowml_test_object_name(self.run_id, "custom_bad_model")
+        with self.assertRaises(RuntimeError):
+            _ = _deployer.deploy(
+                session=self._session,
+                name=function_name,
+                model_stage_file_path=posixpath.join(tmp_stage, "custom_bad_model.zip"),
+                platform=deploy_platforms.TargetPlatform.WAREHOUSE,
+                target_method="predict",
+                options=model_types.WarehouseDeployOptions({"relax_version": False}),
             )
-            function_name = db_manager.TestObjectNameGenerator.get_snowml_test_object_name(
-                self.run_id, "custom_bad_model"
-            )
-            with self.assertRaises(RuntimeError):
-                _ = _deployer.deploy(
-                    session=self._session,
-                    name=function_name,
-                    model_dir_path=os.path.join(tmpdir, "custom_bad_model"),
-                    platform=deploy_platforms.TargetPlatform.WAREHOUSE,
-                    target_method="predict",
-                    options=model_types.WarehouseDeployOptions({"relax_version": False}),
-                )
 
     def test_custom_demo_model(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            lm = DemoModel(custom_model.ModelContext())
-            arr = np.random.randint(100, size=(10000, 3))
-            pd_df = pd.DataFrame(arr, columns=["c1", "c2", "c3"])
-            model_api.save_model(
-                name="custom_demo_model",
-                model_dir_path=os.path.join(tmpdir, "custom_demo_model"),
-                model=lm,
-                conda_dependencies=[
-                    test_env_utils.get_latest_package_versions_in_server(self._session, "snowflake-snowpark-python")
-                ],
-                sample_input=pd_df,
-                metadata={"author": "halu", "version": "1"},
-                options=model_types.CustomModelSaveOption({"embed_local_ml_library": True}),
-            )
-            function_name = db_manager.TestObjectNameGenerator.get_snowml_test_object_name(
-                self.run_id, "custom_demo_model"
-            )
-            with self.assertRaises(RuntimeError):
-                deploy_info = _deployer.deploy(
-                    session=self._session,
-                    name=function_name,
-                    model_dir_path=os.path.join(tmpdir, "custom_demo_model"),
-                    platform=deploy_platforms.TargetPlatform.WAREHOUSE,
-                    target_method="predict",
-                    options=model_types.WarehouseDeployOptions(
-                        {
-                            "relax_version": test_env_utils.is_in_pip_env(),
-                            "permanent_udf_stage_location": f"{self.full_qual_stage}/",
-                            # Test stage location validation
-                        }
-                    ),
-                )
+        tmp_stage = self._session.get_session_stage()
+        lm = DemoModel(custom_model.ModelContext())
+        arr = np.random.randint(100, size=(10000, 3))
+        pd_df = pd.DataFrame(arr, columns=["c1", "c2", "c3"])
 
+        model_metadata = model_api.save_model(
+            name="custom_demo_model",
+            session=self._session,
+            model_stage_file_path=posixpath.join(tmp_stage, "custom_demo_model.zip"),
+            model=lm,
+            conda_dependencies=[
+                test_env_utils.get_latest_package_versions_in_server(self._session, "snowflake-snowpark-python")
+            ],
+            sample_input=pd_df,
+            metadata={"author": "halu", "version": "1"},
+        )
+
+        self.assertTrue(hasattr(model_metadata, "local_ml_library_version"))
+
+        function_name = db_manager.TestObjectNameGenerator.get_snowml_test_object_name(self.run_id, "custom_demo_model")
+        with self.assertRaises(RuntimeError):
             deploy_info = _deployer.deploy(
                 session=self._session,
                 name=function_name,
-                model_dir_path=os.path.join(tmpdir, "custom_demo_model", ""),  # Test sanitizing user path input.
+                model_stage_file_path=posixpath.join(tmp_stage, "custom_demo_model.zip"),
+                platform=deploy_platforms.TargetPlatform.WAREHOUSE,
+                target_method="predict",
+                options=model_types.WarehouseDeployOptions(
+                    {
+                        "relax_version": test_env_utils.is_in_pip_env(),
+                        "permanent_udf_stage_location": f"{self.full_qual_stage}/",
+                        # Test stage location validation
+                    }
+                ),
+            )
+
+        deploy_info = _deployer.deploy(
+            session=self._session,
+            name=function_name,
+            model_stage_file_path=posixpath.join(tmp_stage, "custom_demo_model.zip"),
+            platform=deploy_platforms.TargetPlatform.WAREHOUSE,
+            target_method="predict",
+            options=model_types.WarehouseDeployOptions(
+                {
+                    "relax_version": test_env_utils.is_in_pip_env(),
+                    "permanent_udf_stage_location": f"@{self.full_qual_stage}/",
+                }
+            ),
+        )
+        assert deploy_info is not None
+        res = _deployer.predict(session=self._session, deployment=deploy_info, X=pd_df)
+
+        pd.testing.assert_frame_equal(
+            res,
+            pd.DataFrame(arr[:, 0], columns=["output"]),
+        )
+
+        with self.assertRaises(RuntimeError):
+            deploy_info = _deployer.deploy(
+                session=self._session,
+                name=function_name,
+                model_stage_file_path=posixpath.join(tmp_stage, "custom_demo_model.zip"),
                 platform=deploy_platforms.TargetPlatform.WAREHOUSE,
                 target_method="predict",
                 options=model_types.WarehouseDeployOptions(
@@ -139,47 +161,25 @@ class TestModelBadCaseInteg(absltest.TestCase):
                     }
                 ),
             )
-            assert deploy_info is not None
-            res = _deployer.predict(session=self._session, deployment=deploy_info, X=pd_df)
 
-            pd.testing.assert_frame_equal(
-                res,
-                pd.DataFrame(arr[:, 0], columns=["output"]),
-            )
+        self._db_manager.drop_function(function_name=function_name, args=["OBJECT"])
 
-            with self.assertRaises(RuntimeError):
-                deploy_info = _deployer.deploy(
-                    session=self._session,
-                    name=function_name,
-                    model_dir_path=os.path.join(tmpdir, "custom_demo_model"),
-                    platform=deploy_platforms.TargetPlatform.WAREHOUSE,
-                    target_method="predict",
-                    options=model_types.WarehouseDeployOptions(
-                        {
-                            "relax_version": test_env_utils.is_in_pip_env(),
-                            "permanent_udf_stage_location": f"@{self.full_qual_stage}/",
-                        }
-                    ),
-                )
+        deploy_info = _deployer.deploy(
+            session=self._session,
+            name=function_name,
+            model_stage_file_path=posixpath.join(tmp_stage, "custom_demo_model.zip"),
+            platform=deploy_platforms.TargetPlatform.WAREHOUSE,
+            target_method="predict",
+            options=model_types.WarehouseDeployOptions(
+                {
+                    "relax_version": test_env_utils.is_in_pip_env(),
+                    "permanent_udf_stage_location": f"@{self.full_qual_stage}/",
+                    "replace_udf": True,
+                }
+            ),
+        )
 
-            self._db_manager.drop_function(function_name=function_name, args=["OBJECT"])
-
-            deploy_info = _deployer.deploy(
-                session=self._session,
-                name=function_name,
-                model_dir_path=os.path.join(tmpdir, "custom_demo_model"),
-                platform=deploy_platforms.TargetPlatform.WAREHOUSE,
-                target_method="predict",
-                options=model_types.WarehouseDeployOptions(
-                    {
-                        "relax_version": test_env_utils.is_in_pip_env(),
-                        "permanent_udf_stage_location": f"@{self.full_qual_stage}/",
-                        "replace_udf": True,
-                    }
-                ),
-            )
-
-            self._db_manager.drop_function(function_name=function_name, args=["OBJECT"])
+        self._db_manager.drop_function(function_name=function_name, args=["OBJECT"])
 
 
 if __name__ == "__main__":

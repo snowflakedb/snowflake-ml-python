@@ -1,4 +1,5 @@
 import inspect
+import logging
 from typing import Any, Dict, Optional
 
 from snowflake.ml.model._deploy_client.utils import constants
@@ -12,10 +13,10 @@ class SnowServiceDeployOptions:
         image_repo: Optional[str] = None,
         min_instances: Optional[int] = 1,
         max_instances: Optional[int] = 1,
-        endpoint: Optional[str] = constants.PREDICT,
         prebuilt_snowflake_image: Optional[str] = None,
         num_gpus: Optional[int] = 0,
         num_workers: Optional[int] = None,
+        enable_remote_image_build: Optional[bool] = False,
     ) -> None:
         """Initialization
 
@@ -28,8 +29,6 @@ class SnowServiceDeployOptions:
                 inferred based on session information.
             min_instances: Minimum number of service replicas. Default to 1.
             max_instances: Maximum number of service replicas. Default to 1.
-            endpoint: The specific name of the endpoint that the service function will communicate with. This option is
-                useful when the service has multiple endpoints. Default to “predict”.
             prebuilt_snowflake_image: When provided, the image-building step is skipped, and the pre-built image from
                 Snowflake is used as is. This option is for users who consistently use the same image for multiple use
                 cases, allowing faster deployment. The snowflake image used for deployment is logged to the console for
@@ -38,16 +37,26 @@ class SnowServiceDeployOptions:
             num_workers: Number of workers used for model inference. Please ensure that the number of workers is set
                 lower than the total available memory divided by the size of model to prevent memory-related issues.
                 Default is number of CPU cores * 2 + 1.
+            enable_remote_image_build: When set to True, will enable image build on a remote SnowService job.
+                Default is False.
         """
 
         self.compute_pool = compute_pool
         self.image_repo = image_repo
         self.min_instances = min_instances
         self.max_instances = max_instances
-        self.endpoint = endpoint
         self.prebuilt_snowflake_image = prebuilt_snowflake_image
         self.num_gpus = num_gpus
         self.num_workers = num_workers
+        self.enable_remote_image_build = enable_remote_image_build
+
+        if self.num_workers is None and self.use_gpu:
+            logging.info("num_workers has been defaulted to 1 when using GPU.")
+            self.num_workers = 1
+
+    @property
+    def use_gpu(self) -> bool:
+        return self.num_gpus is not None and self.num_gpus > 0
 
     @classmethod
     def from_dict(cls, options_dict: Dict[str, Any]) -> "SnowServiceDeployOptions":

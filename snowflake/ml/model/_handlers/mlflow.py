@@ -136,6 +136,7 @@ class _MLFlowHandler(_base._ModelHandler["mlflow.pyfunc.PyFuncModel"]):
     MODEL_BLOB_FILE = "model"
     _DEFAULT_TARGET_METHOD = "predict"
     DEFAULT_TARGET_METHODS = [_DEFAULT_TARGET_METHOD]
+    is_auto_signature = True
 
     @staticmethod
     def can_handle(
@@ -220,7 +221,10 @@ class _MLFlowHandler(_base._ModelHandler["mlflow.pyfunc.PyFuncModel"]):
 
     @staticmethod
     def _load_model(
-        name: str, model_meta: model_meta_api.ModelMetadata, model_blobs_dir_path: str
+        name: str,
+        model_meta: model_meta_api.ModelMetadata,
+        model_blobs_dir_path: str,
+        **kwargs: Unpack[model_types.ModelLoadOption],
     ) -> "mlflow.pyfunc.PyFuncModel":
         import mlflow
 
@@ -252,7 +256,10 @@ class _MLFlowHandler(_base._ModelHandler["mlflow.pyfunc.PyFuncModel"]):
 
     @staticmethod
     def _load_as_custom_model(
-        name: str, model_meta: model_meta_api.ModelMetadata, model_blobs_dir_path: str
+        name: str,
+        model_meta: model_meta_api.ModelMetadata,
+        model_blobs_dir_path: str,
+        **kwargs: Unpack[model_types.ModelLoadOption],
     ) -> custom_model.CustomModel:
         """Create a custom model class wrap for unified interface when being deployed. The predict method will be
         re-targeted based on target_method metadata.
@@ -261,6 +268,7 @@ class _MLFlowHandler(_base._ModelHandler["mlflow.pyfunc.PyFuncModel"]):
             name: Name of the model.
             model_meta: The model metadata.
             model_blobs_dir_path: Directory path to the whole model.
+            kwargs: Options when loading the model.
 
         Returns:
             The model object as a custom model.
@@ -303,7 +311,7 @@ class _MLFlowHandler(_base._ModelHandler["mlflow.pyfunc.PyFuncModel"]):
 
             return _MLFlowModel
 
-        raw_model = _MLFlowHandler._load_model(name, model_meta, model_blobs_dir_path)
+        raw_model = _MLFlowHandler._load_model(name, model_meta, model_blobs_dir_path, **kwargs)
         _MLFlowModel = _create_custom_model(raw_model, model_meta)
         mlflow_model = _MLFlowModel(custom_model.ModelContext())
 

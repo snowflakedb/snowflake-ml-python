@@ -3,14 +3,17 @@
 #
 
 import uuid
+from importlib import metadata as importlib_metadata
 from typing import Any, Callable, Dict, Optional, Tuple, Union
 
 import mlflow
 import numpy as np
 import pandas as pd
+import pytest
 from absl.testing import absltest, parameterized
 from sklearn import datasets, ensemble, model_selection
 
+from snowflake.ml._internal import env
 from snowflake.ml.model import type_hints as model_types
 from snowflake.ml.model._signatures import numpy_handler
 from snowflake.ml.utils import connection_params
@@ -19,6 +22,7 @@ from tests.integ.snowflake.ml.model import warehouse_model_integ_test_utils
 from tests.integ.snowflake.ml.test_utils import db_manager
 
 
+@pytest.mark.pip_incompatible
 class TestWarehouseMLFlowModelInteg(parameterized.TestCase):
     @classmethod
     def setUpClass(self) -> None:
@@ -58,7 +62,6 @@ class TestWarehouseMLFlowModelInteg(parameterized.TestCase):
         sample_input: model_types.SupportedDataType,
         test_input: model_types.SupportedDataType,
         deploy_params: Dict[str, Tuple[Dict[str, Any], Callable[[Union[pd.DataFrame, SnowparkDataFrame]], Any]]],
-        model_in_stage: Optional[bool] = False,
         permanent_deploy: Optional[bool] = False,
         test_released_version: Optional[str] = None,
     ) -> None:
@@ -71,20 +74,13 @@ class TestWarehouseMLFlowModelInteg(parameterized.TestCase):
             sample_input=sample_input,
             test_input=test_input,
             deploy_params=deploy_params,
-            model_in_stage=model_in_stage,
             permanent_deploy=permanent_deploy,
             test_released_version=test_released_version,
         )
 
-    @parameterized.parameters(  # type: ignore[misc]
-        {"model_in_stage": True, "permanent_deploy": True, "test_released_version": None},
-        {"model_in_stage": False, "permanent_deploy": False, "test_released_version": None},
-        {"model_in_stage": True, "permanent_deploy": False, "test_released_version": "1.0.4"},
-        {"model_in_stage": False, "permanent_deploy": True, "test_released_version": "1.0.4"},
-    )
+    @parameterized.product(permanent_deploy=[True, False], test_released_version=[None, "1.0.6"])  # type: ignore[misc]
     def test_mlflow_model_deploy_sklearn_df(
         self,
-        model_in_stage: Optional[bool] = False,
         permanent_deploy: Optional[bool] = False,
         test_released_version: Optional[str] = None,
     ) -> None:
@@ -103,16 +99,20 @@ class TestWarehouseMLFlowModelInteg(parameterized.TestCase):
                 signature=signature,
                 metadata={"author": "halu", "version": "1"},
                 conda_env={
-                    "dependencies": [
-                        "python=3.8.13",
-                        "mlflow==2.3.1",
-                        "cloudpickle==2.0.0",
-                        "numpy==1.23.4",
-                        "psutil==5.9.0",
-                        "scikit-learn==1.2.2",
-                        "scipy==1.9.3",
-                        "typing-extensions==4.5.0",
-                    ],
+                    "dependencies": [f"python=={env.PYTHON_VERSION}"]
+                    + list(
+                        map(
+                            lambda pkg: f"{pkg}=={importlib_metadata.distribution(pkg).version}",
+                            [
+                                "mlflow",
+                                "cloudpickle",
+                                "numpy",
+                                "scikit-learn",
+                                "scipy",
+                                "typing-extensions",
+                            ],
+                        )
+                    ),
                     "name": "mlflow-env",
                 },
             )
@@ -125,25 +125,18 @@ class TestWarehouseMLFlowModelInteg(parameterized.TestCase):
             sample_input=None,
             test_input=X_test,
             deploy_params={
-                "predict": (
+                "": (
                     {},
                     lambda res: np.testing.assert_allclose(np.expand_dims(predictions, axis=1), res.to_numpy()),
                 ),
             },
-            model_in_stage=model_in_stage,
             permanent_deploy=permanent_deploy,
             test_released_version=test_released_version,
         )
 
-    @parameterized.parameters(  # type: ignore[misc]
-        {"model_in_stage": True, "permanent_deploy": True, "test_released_version": None},
-        {"model_in_stage": False, "permanent_deploy": False, "test_released_version": None},
-        {"model_in_stage": True, "permanent_deploy": False, "test_released_version": "1.0.4"},
-        {"model_in_stage": False, "permanent_deploy": True, "test_released_version": "1.0.4"},
-    )
+    @parameterized.product(permanent_deploy=[True, False], test_released_version=[None, "1.0.6"])  # type: ignore[misc]
     def test_mlflow_model_deploy_sklearn(
         self,
-        model_in_stage: Optional[bool] = False,
         permanent_deploy: Optional[bool] = False,
         test_released_version: Optional[str] = None,
     ) -> None:
@@ -162,16 +155,20 @@ class TestWarehouseMLFlowModelInteg(parameterized.TestCase):
                 signature=signature,
                 metadata={"author": "halu", "version": "1"},
                 conda_env={
-                    "dependencies": [
-                        "python=3.8.13",
-                        "mlflow==2.3.1",
-                        "cloudpickle==2.0.0",
-                        "numpy==1.23.4",
-                        "psutil==5.9.0",
-                        "scikit-learn==1.2.2",
-                        "scipy==1.9.3",
-                        "typing-extensions==4.5.0",
-                    ],
+                    "dependencies": [f"python=={env.PYTHON_VERSION}"]
+                    + list(
+                        map(
+                            lambda pkg: f"{pkg}=={importlib_metadata.distribution(pkg).version}",
+                            [
+                                "mlflow",
+                                "cloudpickle",
+                                "numpy",
+                                "scikit-learn",
+                                "scipy",
+                                "typing-extensions",
+                            ],
+                        )
+                    ),
                     "name": "mlflow-env",
                 },
             )
@@ -186,12 +183,11 @@ class TestWarehouseMLFlowModelInteg(parameterized.TestCase):
             sample_input=None,
             test_input=X_test_df,
             deploy_params={
-                "predict": (
+                "": (
                     {},
                     lambda res: np.testing.assert_allclose(np.expand_dims(predictions, axis=1), res.to_numpy()),
                 ),
             },
-            model_in_stage=model_in_stage,
             permanent_deploy=permanent_deploy,
             test_released_version=test_released_version,
         )

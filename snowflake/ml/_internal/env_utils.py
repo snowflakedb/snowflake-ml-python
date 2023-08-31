@@ -339,3 +339,142 @@ def parse_python_version_string(dep: str) -> Optional[str]:
             # "python" only, no specifier
             return ""
     return None
+
+
+def _find_conda_dep_spec(
+    conda_chan_deps: DefaultDict[str, List[requirements.Requirement]], pkg_name: str
+) -> Optional[Tuple[str, requirements.Requirement]]:
+    for channel in conda_chan_deps:
+        spec = next(filter(lambda req: req.name == pkg_name, conda_chan_deps[channel]), None)
+        if spec:
+            return channel, spec
+    return None
+
+
+def _find_pip_req_spec(pip_reqs: List[requirements.Requirement], pkg_name: str) -> Optional[requirements.Requirement]:
+    spec = next(filter(lambda req: req.name == pkg_name, pip_reqs), None)
+    return spec
+
+
+def _find_dep_spec(
+    conda_chan_deps: DefaultDict[str, List[requirements.Requirement]],
+    pip_reqs: List[requirements.Requirement],
+    conda_pkg_name: str,
+    pip_pkg_name: Optional[str] = None,
+    remove_spec: bool = False,
+) -> Tuple[
+    DefaultDict[str, List[requirements.Requirement]], List[requirements.Requirement], Optional[requirements.Requirement]
+]:
+    if pip_pkg_name is None:
+        pip_pkg_name = conda_pkg_name
+    spec_conda = _find_conda_dep_spec(conda_chan_deps, conda_pkg_name)
+    if spec_conda:
+        channel, spec = spec_conda
+        if remove_spec:
+            conda_chan_deps[channel].remove(spec)
+        return conda_chan_deps, pip_reqs, spec
+    else:
+        spec_pip = _find_pip_req_spec(pip_reqs, pip_pkg_name)
+        if spec_pip:
+            if remove_spec:
+                pip_reqs.remove(spec_pip)
+            return conda_chan_deps, pip_reqs, spec_pip
+    return conda_chan_deps, pip_reqs, None
+
+
+def generate_env_for_cuda(
+    conda_chan_deps: DefaultDict[str, List[requirements.Requirement]],
+    pip_reqs: List[requirements.Requirement],
+    cuda_version: str,
+) -> Tuple[DefaultDict[str, List[requirements.Requirement]], List[requirements.Requirement]]:
+    conda_chan_deps_cuda = copy.deepcopy(conda_chan_deps)
+    pip_reqs_cuda = copy.deepcopy(pip_reqs)
+
+    cuda_version_obj = version.parse(cuda_version)
+    cuda_version_spec_str = f"{cuda_version_obj.major}.{cuda_version_obj.minor}.*"
+
+    try:
+        append_conda_dependency(
+            conda_chan_deps_cuda,
+            ("nvidia", requirements.Requirement(f"cuda=={cuda_version_spec_str}")),
+        )
+    except (DuplicateDependencyError, DuplicateDependencyInMultipleChannelsError):
+        pass
+
+    conda_chan_deps_cuda, pip_reqs_cuda, xgboost_spec = _find_dep_spec(
+        conda_chan_deps_cuda, pip_reqs, conda_pkg_name="xgboost", remove_spec=True
+    )
+    if xgboost_spec:
+        xgboost_spec.name = "py-xgboost-gpu"
+        try:
+            append_conda_dependency(
+                conda_chan_deps_cuda,
+                ("conda-forge", xgboost_spec),
+            )
+        except (DuplicateDependencyError, DuplicateDependencyInMultipleChannelsError):
+            pass
+
+    conda_chan_deps_cuda, pip_reqs_cuda, pytorch_spec = _find_dep_spec(
+        conda_chan_deps_cuda, pip_reqs, conda_pkg_name="pytorch", pip_pkg_name="torch", remove_spec=True
+    )
+    if pytorch_spec:
+        pytorch_spec.name = "pytorch"
+        try:
+            append_conda_dependency(
+                conda_chan_deps_cuda,
+                ("pytorch", pytorch_spec),
+            )
+        except (DuplicateDependencyError, DuplicateDependencyInMultipleChannelsError):
+            pass
+
+        try:
+            append_conda_dependency(
+                conda_chan_deps_cuda,
+                p_chan_dep=("pytorch", requirements.Requirement(f"pytorch-cuda=={cuda_version_spec_str}")),
+            )
+        except (DuplicateDependencyError, DuplicateDependencyInMultipleChannelsError):
+            pass
+
+    conda_chan_deps_cuda, pip_reqs_cuda, tf_spec = _find_dep_spec(
+        conda_chan_deps_cuda, pip_reqs, conda_pkg_name="tensorflow", remove_spec=True
+    )
+    if tf_spec:
+        tf_spec.name = "tensorflow-gpu"
+        try:
+            append_conda_dependency(
+                conda_chan_deps_cuda,
+                ("conda-forge", tf_spec),
+            )
+        except (DuplicateDependencyError, DuplicateDependencyInMultipleChannelsError):
+            pass
+
+    conda_chan_deps_cuda, pip_reqs_cuda, transformers_spec = _find_dep_spec(
+        conda_chan_deps_cuda, pip_reqs, conda_pkg_name="transformers", remove_spec=False
+    )
+    if transformers_spec:
+        try:
+            append_conda_dependency(
+                conda_chan_deps_cuda,
+                ("conda-forge", requirements.Requirement("accelerate>=0.22.0")),
+            )
+        except (DuplicateDependencyError, DuplicateDependencyInMultipleChannelsError):
+            pass
+
+        # Required by bitsandbytes
+        try:
+            append_conda_dependency(
+                conda_chan_deps_cuda,
+                (DEFAULT_CHANNEL_NAME, get_local_installed_version_of_pip_package(requirements.Requirement("scipy"))),
+            )
+        except (DuplicateDependencyError, DuplicateDependencyInMultipleChannelsError):
+            pass
+
+        try:
+            append_requirement_list(
+                pip_reqs_cuda,
+                requirements.Requirement("bitsandbytes>=0.41.0"),
+            )
+        except DuplicateDependencyError:
+            pass
+
+    return conda_chan_deps_cuda, pip_reqs_cuda

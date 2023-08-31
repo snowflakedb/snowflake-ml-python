@@ -2,6 +2,8 @@ import posixpath
 from typing import Optional
 from urllib.parse import ParseResult, urlparse, urlunparse
 
+from snowflake.ml._internal.utils import identifier
+
 _LOCAL_URI_SCHEMES = ["", "file"]
 _HTTP_URI_SCHEMES = ["http", "https"]
 _SNOWFLAKE_STAGE_URI_SCHEMES = ["sfc", "sfstage"]
@@ -48,14 +50,17 @@ def get_uri_scheme(uri: str) -> str:
     return urlparse(uri).scheme
 
 
-def get_uri_from_snowflake_stage_path(path: str) -> str:
+def get_uri_from_snowflake_stage_path(stage_path: str) -> str:
     """Generates a URI from Snowflake stage path."""
-    clean_path = path.replace('"', "").replace("'", "").lstrip("@")
+    assert stage_path.startswith("@")
+    (db, schema, stage, path) = identifier.parse_schema_level_object_identifier(
+        posixpath.normpath(identifier.remove_prefix(stage_path, "@"))
+    )
     return urlunparse(
         ParseResult(
             scheme=_SNOWFLAKE_STAGE_URI_SCHEMES[0],
-            netloc="",
-            path=clean_path,
+            netloc=identifier.get_schema_level_object_identifier(db, schema, stage),
+            path=path,
             params="",
             query="",
             fragment="",

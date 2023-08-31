@@ -14,7 +14,27 @@ py_library(
     deps = [
         ":base_image_builder",
         ":docker_context",
+        "//snowflake/ml/model:_model_meta",
         "//snowflake/ml/_internal/utils:query_result_checker",
+        "//snowflake/ml/_internal/utils:spcs_image_registry",
+    ]
+)
+
+py_library(
+    name = "server_image_builder",
+    srcs = ["server_image_builder.py"],
+    deps = [
+        ":base_image_builder",
+        ":docker_context",
+        ":client_image_builder",
+        "//snowflake/ml/model/_deploy_client/utils:constants",
+        "//snowflake/ml/model/_deploy_client/utils:snowservice_client",
+        "//snowflake/ml/_internal/utils:identifier",
+        "//snowflake/ml/_internal:file_utils",
+    ],
+    data = [
+        "templates/image_build_job_spec_template",
+        "templates/kaniko_shell_script_template",
     ]
 )
 
@@ -22,7 +42,8 @@ py_library(
     name = "docker_context",
     srcs = ["docker_context.py"],
     deps = [
-        "//snowflake/ml/model/_deploy_client/utils:constants"
+        "//snowflake/ml/model/_deploy_client/utils:constants",
+        "//snowflake/ml/model:_model_meta",
     ],
     data = [
         "gunicorn_run.sh",
@@ -41,6 +62,18 @@ py_test(
 )
 
 py_test(
+    name = "server_image_builder_test",
+    srcs = ["server_image_builder_test.py"],
+    deps = [
+        ":server_image_builder",
+        "//snowflake/ml/test_utils:mock_session",
+    ],
+    data = [
+        "test_fixtures/kaniko_shell_script_fixture.sh",
+    ]
+)
+
+py_test(
     name = "docker_context_test",
     srcs = ["docker_context_test.py"],
     deps = [
@@ -49,6 +82,7 @@ py_test(
     ],
     data = [
         "test_fixtures/dockerfile_test_fixture",
+        "test_fixtures/dockerfile_test_fixture_with_CUDA",
     ]
 )
 

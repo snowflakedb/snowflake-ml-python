@@ -62,7 +62,7 @@ class EnvTest(absltest.TestCase):
                 writed_yaml,
                 {
                     "name": "snow-env",
-                    "channels": ["https://repo.anaconda.com/pkgs/snowflake", "apple", "nodefaults"],
+                    "channels": ["https://repo.anaconda.com/pkgs/snowflake", "conda-forge", "apple", "nodefaults"],
                     "dependencies": [
                         f"python=={snowml_env.PYTHON_VERSION}",
                         "numpy>=1.22.4",

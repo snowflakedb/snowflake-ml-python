@@ -99,7 +99,7 @@ class SnowparkDataFrameHandler(base_handler.BaseDataHandler[snowflake.snowpark.D
 
     @staticmethod
     def convert_from_df(
-        session: snowflake.snowpark.Session, df: pd.DataFrame, keep_order: bool = True
+        session: snowflake.snowpark.Session, df: pd.DataFrame, keep_order: bool = False
     ) -> snowflake.snowpark.DataFrame:
         # This method is necessary to create the Snowpark Dataframe in correct schema.
         # Snowpark ignore the schema argument when providing a pandas DataFrame.

@@ -1,0 +1,33 @@
+load("//bazel:py_rules.bzl", "py_library", "py_test")
+
+package(default_visibility = ["//visibility:public"])
+
+py_library(
+    name = "init",
+    srcs = [
+        "__init__.py",
+    ],
+    deps = [
+        "//snowflake/ml/_internal:init_utils"
+    ],
+)
+
+py_library(
+    name = "_grid_search_cv",
+    srcs = ["_grid_search_cv.py"],
+    deps = [
+        ":init",
+        "//snowflake/ml/_internal:telemetry",
+        "//snowflake/ml/_internal/exceptions:exceptions",
+    ]
+)
+
+py_library(
+    name = "_randomized_search_cv",
+    srcs = ["_randomized_search_cv.py"],
+    deps = [
+        ":init",
+        "//snowflake/ml/_internal:telemetry",
+        "//snowflake/ml/_internal/exceptions:exceptions",
+    ]
+)

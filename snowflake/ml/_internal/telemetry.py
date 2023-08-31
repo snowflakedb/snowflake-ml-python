@@ -305,9 +305,20 @@ def send_api_usage_telemetry(
                 res = func(*args, **kwargs)
             except Exception as e:
                 if not isinstance(e, snowml_exceptions.SnowflakeMLException):
-                    e = snowml_exceptions.SnowflakeMLException(error_code=error_codes.UNDEFINED, original_exception=e)
+                    # already handled via a nested decorated function
+                    if hasattr(e, "_snowflake_ml_handled") and e._snowflake_ml_handled:  # type: ignore[attr-defined]
+                        raise e
+                    if isinstance(e, snowpark_exceptions.SnowparkClientException):
+                        e = snowml_exceptions.SnowflakeMLException(
+                            error_code=error_codes.INTERNAL_SNOWPARK_ERROR, original_exception=e
+                        )
+                    else:
+                        e = snowml_exceptions.SnowflakeMLException(
+                            error_code=error_codes.UNDEFINED, original_exception=e
+                        )
                 telemetry_args["error"] = repr(e)
                 telemetry_args["error_code"] = e.error_code
+                e.original_exception._snowflake_ml_handled = True  # type: ignore[attr-defined]
                 raise e.original_exception
             else:
                 return res

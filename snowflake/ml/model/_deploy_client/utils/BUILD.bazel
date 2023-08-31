@@ -15,11 +15,28 @@ py_library(
     ]
 )
 
+py_library(
+    name = "image_registry_client",
+    srcs = ["image_registry_client.py"],
+    deps = [
+        "//snowflake/ml/_internal/utils:spcs_image_registry",
+    ]
+)
+
 py_test(
     name = "snowservice_client_test",
     srcs = ["snowservice_client_test.py"],
     deps = [
         ":snowservice_client",
+        "//snowflake/ml/test_utils:mock_session",
+    ]
+)
+
+py_test(
+    name = "image_registry_client_test",
+    srcs = ["image_registry_client_test.py"],
+    deps = [
+        ":image_registry_client",
         "//snowflake/ml/test_utils:mock_session",
     ]
 )

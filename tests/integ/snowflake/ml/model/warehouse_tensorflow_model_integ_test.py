@@ -3,7 +3,7 @@
 #
 
 import uuid
-from typing import Any, Callable, Dict, List, Optional, Tuple, Union
+from typing import Any, Callable, Dict, Optional, Tuple, Union
 
 import numpy as np
 import pandas as pd
@@ -11,7 +11,11 @@ import tensorflow as tf
 from absl.testing import absltest, parameterized
 
 from snowflake.ml.model import type_hints as model_types
-from snowflake.ml.model._signatures import snowpark_handler, tensorflow_handler
+from snowflake.ml.model._signatures import (
+    numpy_handler,
+    snowpark_handler,
+    tensorflow_handler,
+)
 from snowflake.ml.utils import connection_params
 from snowflake.snowpark import DataFrame as SnowparkDataFrame, Session
 from tests.integ.snowflake.ml.model import warehouse_model_integ_test_utils
@@ -24,22 +28,9 @@ class SimpleModule(tf.Module):
         self.a_variable = tf.Variable(5.0, name="train_me")
         self.non_trainable_variable = tf.Variable(5.0, trainable=False, name="do_not_train_me")
 
-    @tf.function(input_signature=[[tf.TensorSpec(shape=(None, 1), dtype=tf.float32)]])  # type: ignore[misc]
-    def __call__(self, tensors: List[tf.Tensor]) -> List[tf.Tensor]:
-        return [self.a_variable * tensors[0] + self.non_trainable_variable]
-
-
-class KerasModel(tf.keras.Model):
-    def __init__(self, n_hidden: int, n_out: int) -> None:
-        super().__init__()
-        self.fc_1 = tf.keras.layers.Dense(n_hidden, activation="relu")
-        self.fc_2 = tf.keras.layers.Dense(n_out, activation="sigmoid")
-
-    def call(self, tensors: List[tf.Tensor]) -> List[tf.Tensor]:
-        input = tensors[0]
-        x = self.fc_1(input)
-        x = self.fc_2(x)
-        return [x]
+    @tf.function(input_signature=[tf.TensorSpec(shape=(None, 1), dtype=tf.float32)])  # type: ignore[misc]
+    def __call__(self, tensor: tf.Tensor) -> tf.Tensor:
+        return self.a_variable * tensor + self.non_trainable_variable
 
 
 class TestWarehouseTensorflowModelInteg(parameterized.TestCase):
@@ -81,7 +72,6 @@ class TestWarehouseTensorflowModelInteg(parameterized.TestCase):
         sample_input: model_types.SupportedDataType,
         test_input: model_types.SupportedDataType,
         deploy_params: Dict[str, Tuple[Dict[str, Any], Callable[[Union[pd.DataFrame, SnowparkDataFrame]], Any]]],
-        model_in_stage: Optional[bool] = False,
         permanent_deploy: Optional[bool] = False,
         test_released_version: Optional[str] = None,
     ) -> None:
@@ -94,62 +84,48 @@ class TestWarehouseTensorflowModelInteg(parameterized.TestCase):
             sample_input=sample_input,
             test_input=test_input,
             deploy_params=deploy_params,
-            model_in_stage=model_in_stage,
             permanent_deploy=permanent_deploy,
             test_released_version=test_released_version,
         )
 
-    @parameterized.parameters(  # type: ignore[misc]
-        {"model_in_stage": True, "permanent_deploy": True, "test_released_version": None},
-        {"model_in_stage": False, "permanent_deploy": False, "test_released_version": None},
-        {"model_in_stage": True, "permanent_deploy": False, "test_released_version": "1.0.4"},
-        {"model_in_stage": False, "permanent_deploy": True, "test_released_version": "1.0.4"},
-    )
+    @parameterized.product(permanent_deploy=[True, False], test_released_version=[None, "1.0.6"])  # type: ignore[misc]
     def test_tf_tensor_as_sample(
         self,
-        model_in_stage: Optional[bool] = False,
         permanent_deploy: Optional[bool] = False,
         test_released_version: Optional[str] = None,
     ) -> None:
         model = SimpleModule(name="simple")
-        data_x = [tf.constant([[5.0], [10.0]])]
-        x_df = tensorflow_handler.SeqOfTensorflowTensorHandler.convert_to_df(data_x, ensure_serializable=False)
+        data_x = tf.constant([[5.0], [10.0]])
+        x_df = tensorflow_handler.SeqOfTensorflowTensorHandler.convert_to_df([data_x], ensure_serializable=False)
         y_pred = model(data_x)
 
         self.base_test_case(
             name="tf_model_tensor_as_sample",
             model=model,
-            sample_input=data_x,
+            sample_input=[data_x],
             test_input=x_df,
             deploy_params={
-                "__call__": (
+                "": (
                     {},
                     lambda res: np.testing.assert_allclose(
                         tensorflow_handler.SeqOfTensorflowTensorHandler.convert_from_df(res)[0].numpy(),
-                        y_pred[0].numpy(),
+                        y_pred.numpy(),
                     ),
                 ),
             },
-            model_in_stage=model_in_stage,
             permanent_deploy=permanent_deploy,
             test_released_version=test_released_version,
         )
 
-    @parameterized.parameters(  # type: ignore[misc]
-        {"model_in_stage": True, "permanent_deploy": True, "test_released_version": None},
-        {"model_in_stage": False, "permanent_deploy": False, "test_released_version": None},
-        {"model_in_stage": True, "permanent_deploy": False, "test_released_version": "1.0.4"},
-        {"model_in_stage": False, "permanent_deploy": True, "test_released_version": "1.0.4"},
-    )
+    @parameterized.product(permanent_deploy=[True, False], test_released_version=[None, "1.0.6"])  # type: ignore[misc]
     def test_tf_df_as_sample(
         self,
-        model_in_stage: Optional[bool] = False,
         permanent_deploy: Optional[bool] = False,
         test_released_version: Optional[str] = None,
     ) -> None:
         model = SimpleModule(name="simple")
-        data_x = [tf.constant([[5.0], [10.0]])]
-        x_df = tensorflow_handler.SeqOfTensorflowTensorHandler.convert_to_df(data_x, ensure_serializable=False)
+        data_x = tf.constant([[5.0], [10.0]])
+        x_df = tensorflow_handler.SeqOfTensorflowTensorHandler.convert_to_df([data_x], ensure_serializable=False)
         y_pred = model(data_x)
 
         self.base_test_case(
@@ -158,41 +134,36 @@ class TestWarehouseTensorflowModelInteg(parameterized.TestCase):
             sample_input=x_df,
             test_input=x_df,
             deploy_params={
-                "__call__": (
+                "": (
                     {},
                     lambda res: np.testing.assert_allclose(
                         tensorflow_handler.SeqOfTensorflowTensorHandler.convert_from_df(res)[0].numpy(),
-                        y_pred[0].numpy(),
+                        y_pred.numpy(),
                     ),
                 ),
             },
-            model_in_stage=model_in_stage,
             permanent_deploy=permanent_deploy,
             test_released_version=test_released_version,
         )
 
-    @parameterized.parameters(  # type: ignore[misc]
-        {"model_in_stage": True, "permanent_deploy": True, "test_released_version": None},
-        {"model_in_stage": False, "permanent_deploy": False, "test_released_version": None},
-        {"model_in_stage": True, "permanent_deploy": False, "test_released_version": "1.0.4"},
-        {"model_in_stage": False, "permanent_deploy": True, "test_released_version": "1.0.4"},
-    )
+    @parameterized.product(permanent_deploy=[True, False], test_released_version=[None, "1.0.6"])  # type: ignore[misc]
     def test_tf_sp(
         self,
-        model_in_stage: Optional[bool] = False,
         permanent_deploy: Optional[bool] = False,
         test_released_version: Optional[str] = None,
     ) -> None:
         model = SimpleModule(name="simple")
-        data_x = [tf.constant([[5.0], [10.0]])]
-        x_df = tensorflow_handler.SeqOfTensorflowTensorHandler.convert_to_df(data_x, ensure_serializable=False)
+        data_x = tf.constant([[5.0], [10.0]])
+        x_df = tensorflow_handler.SeqOfTensorflowTensorHandler.convert_to_df([data_x], ensure_serializable=False)
         x_df.columns = ["col_0"]
         y_pred = model(data_x)
         x_df_sp = snowpark_handler.SnowparkDataFrameHandler.convert_from_df(
             self._session,
             x_df,
-            keep_order=True,
         )
+        y_pred_df = tensorflow_handler.SeqOfTensorflowTensorHandler.convert_to_df([y_pred])
+        y_pred_df.columns = ["output_feature_0"]
+        y_df_expected = pd.concat([x_df, y_pred_df], axis=1)
 
         self.base_test_case(
             name="tf_model_sp",
@@ -200,44 +171,32 @@ class TestWarehouseTensorflowModelInteg(parameterized.TestCase):
             sample_input=x_df,
             test_input=x_df_sp,
             deploy_params={
-                "__call__": (
+                "": (
                     {},
-                    lambda res: np.testing.assert_allclose(
-                        tensorflow_handler.SeqOfTensorflowTensorHandler.convert_from_df(
-                            snowpark_handler.SnowparkDataFrameHandler.convert_to_df(res)
-                        )[0].numpy(),
-                        y_pred[0].numpy(),
-                    ),
+                    lambda res: warehouse_model_integ_test_utils.check_sp_df_res(res, y_df_expected),
                 ),
             },
-            model_in_stage=model_in_stage,
             permanent_deploy=permanent_deploy,
             test_released_version=test_released_version,
         )
 
-    @parameterized.parameters(  # type: ignore[misc]
-        {"model_in_stage": True, "permanent_deploy": True, "test_released_version": None},
-        {"model_in_stage": False, "permanent_deploy": False, "test_released_version": None},
-        {"model_in_stage": True, "permanent_deploy": False, "test_released_version": "1.0.4"},
-        {"model_in_stage": False, "permanent_deploy": True, "test_released_version": "1.0.4"},
-    )
+    @parameterized.product(permanent_deploy=[True, False], test_released_version=[None, "1.0.6"])  # type: ignore[misc]
     def test_keras_tensor_as_sample(
         self,
-        model_in_stage: Optional[bool] = False,
         permanent_deploy: Optional[bool] = False,
         test_released_version: Optional[str] = None,
     ) -> None:
         model, data_x, data_y = model_factory.ModelFactory.prepare_keras_model()
-        x_df = tensorflow_handler.SeqOfTensorflowTensorHandler.convert_to_df(data_x, ensure_serializable=False)
-        y_pred = model.predict(data_x)[0]
+        x_df = tensorflow_handler.SeqOfTensorflowTensorHandler.convert_to_df([data_x], ensure_serializable=False)
+        y_pred = model.predict(data_x)
 
         self.base_test_case(
             name="keras_model_tensor_as_sample",
             model=model,
-            sample_input=data_x,
+            sample_input=[data_x],
             test_input=x_df,
             deploy_params={
-                "predict": (
+                "": (
                     {},
                     lambda res: np.testing.assert_allclose(
                         tensorflow_handler.SeqOfTensorflowTensorHandler.convert_from_df(res)[0].numpy(),
@@ -246,26 +205,19 @@ class TestWarehouseTensorflowModelInteg(parameterized.TestCase):
                     ),
                 ),
             },
-            model_in_stage=model_in_stage,
             permanent_deploy=permanent_deploy,
             test_released_version=test_released_version,
         )
 
-    @parameterized.parameters(  # type: ignore[misc]
-        {"model_in_stage": True, "permanent_deploy": True, "test_released_version": None},
-        {"model_in_stage": False, "permanent_deploy": False, "test_released_version": None},
-        {"model_in_stage": True, "permanent_deploy": False, "test_released_version": "1.0.4"},
-        {"model_in_stage": False, "permanent_deploy": True, "test_released_version": "1.0.4"},
-    )
+    @parameterized.product(permanent_deploy=[True, False], test_released_version=[None, "1.0.6"])  # type: ignore[misc]
     def test_keras_df_as_sample(
         self,
-        model_in_stage: Optional[bool] = False,
         permanent_deploy: Optional[bool] = False,
         test_released_version: Optional[str] = None,
     ) -> None:
         model, data_x, data_y = model_factory.ModelFactory.prepare_keras_model()
-        x_df = tensorflow_handler.SeqOfTensorflowTensorHandler.convert_to_df(data_x, ensure_serializable=False)
-        y_pred = model.predict(data_x)[0]
+        x_df = tensorflow_handler.SeqOfTensorflowTensorHandler.convert_to_df([data_x], ensure_serializable=False)
+        y_pred = model.predict(data_x)
 
         self.base_test_case(
             name="keras_model_df_as_sample",
@@ -273,7 +225,7 @@ class TestWarehouseTensorflowModelInteg(parameterized.TestCase):
             sample_input=x_df,
             test_input=x_df,
             deploy_params={
-                "predict": (
+                "": (
                     {},
                     lambda res: np.testing.assert_allclose(
                         tensorflow_handler.SeqOfTensorflowTensorHandler.convert_from_df(res)[0].numpy(),
@@ -282,32 +234,27 @@ class TestWarehouseTensorflowModelInteg(parameterized.TestCase):
                     ),
                 ),
             },
-            model_in_stage=model_in_stage,
             permanent_deploy=permanent_deploy,
             test_released_version=test_released_version,
         )
 
-    @parameterized.parameters(  # type: ignore[misc]
-        {"model_in_stage": True, "permanent_deploy": True, "test_released_version": None},
-        {"model_in_stage": False, "permanent_deploy": False, "test_released_version": None},
-        {"model_in_stage": True, "permanent_deploy": False, "test_released_version": "1.0.4"},
-        {"model_in_stage": False, "permanent_deploy": True, "test_released_version": "1.0.4"},
-    )
+    @parameterized.product(permanent_deploy=[True, False], test_released_version=[None, "1.0.6"])  # type: ignore[misc]
     def test_keras_sp(
         self,
-        model_in_stage: Optional[bool] = False,
         permanent_deploy: Optional[bool] = False,
         test_released_version: Optional[str] = None,
     ) -> None:
         model, data_x, data_y = model_factory.ModelFactory.prepare_keras_model()
-        x_df = tensorflow_handler.SeqOfTensorflowTensorHandler.convert_to_df(data_x, ensure_serializable=False)
+        x_df = tensorflow_handler.SeqOfTensorflowTensorHandler.convert_to_df([data_x], ensure_serializable=False)
         x_df.columns = ["col_0"]
-        y_pred = model.predict(data_x)[0]
+        y_pred = model.predict(data_x)
         x_df_sp = snowpark_handler.SnowparkDataFrameHandler.convert_from_df(
             self._session,
             x_df,
-            keep_order=True,
         )
+        y_pred_df = numpy_handler.SeqOfNumpyArrayHandler.convert_to_df([y_pred])
+        y_pred_df.columns = ["output_feature_0"]
+        y_df_expected = pd.concat([x_df, y_pred_df], axis=1)
 
         self.base_test_case(
             name="keras_model_sp",
@@ -315,18 +262,11 @@ class TestWarehouseTensorflowModelInteg(parameterized.TestCase):
             sample_input=x_df,
             test_input=x_df_sp,
             deploy_params={
-                "predict": (
+                "": (
                     {},
-                    lambda res: np.testing.assert_allclose(
-                        tensorflow_handler.SeqOfTensorflowTensorHandler.convert_from_df(
-                            snowpark_handler.SnowparkDataFrameHandler.convert_to_df(res)
-                        )[0].numpy(),
-                        y_pred,
-                        atol=1e-6,
-                    ),
+                    lambda res: warehouse_model_integ_test_utils.check_sp_df_res(res, y_df_expected),
                 ),
             },
-            model_in_stage=model_in_stage,
             permanent_deploy=permanent_deploy,
             test_released_version=test_released_version,
         )

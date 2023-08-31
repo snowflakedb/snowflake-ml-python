@@ -18,7 +18,10 @@ from snowflake.ml._internal import telemetry
 from snowflake.ml._internal.exceptions import error_codes, exceptions
 from snowflake.ml.modeling.framework import base
 from snowflake.snowpark import functions as F, types as T
-from snowflake.snowpark._internal import utils as snowpark_utils
+from snowflake.snowpark._internal.utils import (
+    TempObjectType,
+    random_name_for_temp_object,
+)
 
 # constants used to validate the compatibility of the kwargs passed to the sklearn
 # transformer with the sklearn version
@@ -328,17 +331,18 @@ class KBinsDiscretizer(base.BaseTransformer):
         # NB: the reason we need to generate a random UDF name each time is because the UDF registration
         # is centralized per database, so if there are multiple sessions with same UDF name, there might be
         # a conflict and some parties could fail to fetch the UDF.
-        udf_name = f"vec_bucketize_{snowpark_utils.generate_random_alphanumeric()}"
+        udf_name = random_name_for_temp_object(TempObjectType.FUNCTION)
 
         # 1. Register vec_bucketize UDF
         @F.pandas_udf(  # type: ignore[arg-type, misc]
+            is_permanent=False,
             name=udf_name,
             replace=True,
             packages=["numpy"],
             session=dataset._session,
             statement_params=telemetry.get_statement_params(base.PROJECT, base.SUBPROJECT, self.__class__.__name__),
         )
-        def vec_bucketize(x: T.PandasSeries[float], boarders: T.PandasSeries[List[float]]) -> T.PandasSeries[int]:
+        def vec_bucketize_temp(x: T.PandasSeries[float], boarders: T.PandasSeries[List[float]]) -> T.PandasSeries[int]:
             # NB: vectorized udf doesn't work well with const array arg, so we pass it in as a list via PandasSeries
             boarders = boarders[0]
             res = np.searchsorted(boarders[1:-1], x, side="right")
@@ -369,16 +373,17 @@ class KBinsDiscretizer(base.BaseTransformer):
             Output dataset in sparse representation.
         """
         passthrough_columns = [c for c in dataset.columns if c not in self.output_cols]
-        udf_name = f"vec_bucketize_sparse_{snowpark_utils.generate_random_alphanumeric()}"
+        udf_name = random_name_for_temp_object(TempObjectType.FUNCTION)
 
         @F.pandas_udf(  # type: ignore[arg-type, misc]
+            is_permanent=False,
             name=udf_name,
             replace=True,
             packages=["numpy"],
             session=dataset._session,
             statement_params=telemetry.get_statement_params(base.PROJECT, base.SUBPROJECT, self.__class__.__name__),
         )
-        def vec_bucketize_sparse_output(
+        def vec_bucketize_sparse_output_temp(
             x: T.PandasSeries[float], boarders: T.PandasSeries[List[float]]
         ) -> T.PandasSeries[Dict[str, int]]:
             res: List[Dict[str, int]] = []
@@ -416,7 +421,7 @@ class KBinsDiscretizer(base.BaseTransformer):
         origional_dataset_columns = dataset.columns[:]
         all_output_cols = []
 
-        udf_name = f"vec_bucketize_dense_{snowpark_utils.generate_random_alphanumeric()}"
+        udf_name = random_name_for_temp_object(TempObjectType.FUNCTION)
 
         @F.pandas_udf(  # type: ignore[arg-type, misc]
             name=udf_name,
@@ -425,7 +430,7 @@ class KBinsDiscretizer(base.BaseTransformer):
             session=dataset._session,
             statement_params=telemetry.get_statement_params(base.PROJECT, base.SUBPROJECT, self.__class__.__name__),
         )
-        def vec_bucketize_dense_output(
+        def vec_bucketize_dense_output_temp(
             x: T.PandasSeries[float], boarders: T.PandasSeries[List[float]]
         ) -> T.PandasSeries[List[int]]:
             res: List[npt.NDArray[np.int32]] = []

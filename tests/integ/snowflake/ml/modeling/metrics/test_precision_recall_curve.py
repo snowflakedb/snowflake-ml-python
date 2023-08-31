@@ -2,6 +2,7 @@
 # Copyright (c) 2012-2022 Snowflake Computing Inc. All rights reserved.
 #
 from typing import Any, Dict
+from unittest import mock
 
 import numpy as np
 import pandas as pd
@@ -83,6 +84,24 @@ class PrecisionRecallCurveTest(parameterized.TestCase):
             np.testing.assert_allclose(actual_precision, sklearn_precision)
             np.testing.assert_allclose(actual_recall, sklearn_recall)
             np.testing.assert_allclose(actual_thresholds, sklearn_thresholds)
+
+    @mock.patch("snowflake.ml.modeling.metrics.ranking.result._RESULT_SIZE_THRESHOLD", 0)
+    def test_metric_size_threshold(self) -> None:
+        pandas_df = pd.DataFrame(_BINARY_DATA, columns=_SCHEMA)
+        input_df = self._session.create_dataframe(pandas_df)
+
+        actual_precision, actual_recall, actual_thresholds = snowml_metrics.precision_recall_curve(
+            df=input_df,
+            y_true_col_name=_Y_TRUE_COL,
+            probas_pred_col_name=_PROBAS_PRED_COL,
+        )
+        sklearn_precision, sklearn_recall, sklearn_thresholds = sklearn_metrics.precision_recall_curve(
+            pandas_df[_Y_TRUE_COL],
+            pandas_df[_PROBAS_PRED_COL],
+        )
+        np.testing.assert_allclose(actual_precision, sklearn_precision)
+        np.testing.assert_allclose(actual_recall, sklearn_recall)
+        np.testing.assert_allclose(actual_thresholds, sklearn_thresholds)
 
 
 if __name__ == "__main__":

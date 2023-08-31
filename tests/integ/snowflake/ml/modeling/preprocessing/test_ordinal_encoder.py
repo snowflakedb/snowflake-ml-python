@@ -797,45 +797,45 @@ class OrdinalEncoderTest(parameterized.TestCase):
 
         encoder = OrdinalEncoder().set_input_cols(input_cols).set_output_cols(output_cols)
         encoder.fit(df1)
-        filepath = os.path.join(tempfile.gettempdir(), "test_ordinal_encoder.pkl")
-        self._to_be_deleted_files.append(filepath)
-        encoder_dump_cloudpickle = cloudpickle.dumps(encoder)
-        encoder_dump_pickle = pickle.dumps(encoder)
-        joblib.dump(encoder, filepath)
+        with tempfile.NamedTemporaryFile(suffix=".pkl", delete=False) as file:
+            self._to_be_deleted_files.append(file.name)
+            encoder_dump_cloudpickle = cloudpickle.dumps(encoder)
+            encoder_dump_pickle = pickle.dumps(encoder)
+            joblib.dump(encoder, file.name)
 
-        self._session.close()
+            self._session.close()
 
-        # transform in session 2
-        self._session = Session.builder.configs(SnowflakeLoginOptions()).create()
-        _, df2 = framework_utils.get_df(self._session, data, schema, np.nan)
-        input_cols_extended = input_cols.copy()
-        input_cols_extended.append(id_col)
+            # transform in session 2
+            self._session = Session.builder.configs(SnowflakeLoginOptions()).create()
+            _, df2 = framework_utils.get_df(self._session, data, schema, np.nan)
+            input_cols_extended = input_cols.copy()
+            input_cols_extended.append(id_col)
 
-        importlib.reload(sys.modules["snowflake.ml.modeling.preprocessing.ordinal_encoder"])
+            importlib.reload(sys.modules["snowflake.ml.modeling.preprocessing.ordinal_encoder"])
 
-        # cloudpickle
-        encoder_load_cloudpickle = cloudpickle.loads(encoder_dump_cloudpickle)
-        transformed_df_cloudpickle = encoder_load_cloudpickle.transform(df2[input_cols_extended])
-        actual_arr_cloudpickle = transformed_df_cloudpickle.sort(id_col)[output_cols].to_pandas().to_numpy()
+            # cloudpickle
+            encoder_load_cloudpickle = cloudpickle.loads(encoder_dump_cloudpickle)
+            transformed_df_cloudpickle = encoder_load_cloudpickle.transform(df2[input_cols_extended])
+            actual_arr_cloudpickle = transformed_df_cloudpickle.sort(id_col)[output_cols].to_pandas().to_numpy()
 
-        # pickle
-        encoder_load_pickle = pickle.loads(encoder_dump_pickle)
-        transformed_df_pickle = encoder_load_pickle.transform(df2[input_cols_extended])
-        actual_arr_pickle = transformed_df_pickle.sort(id_col)[output_cols].to_pandas().to_numpy()
+            # pickle
+            encoder_load_pickle = pickle.loads(encoder_dump_pickle)
+            transformed_df_pickle = encoder_load_pickle.transform(df2[input_cols_extended])
+            actual_arr_pickle = transformed_df_pickle.sort(id_col)[output_cols].to_pandas().to_numpy()
 
-        # joblib
-        encoder_load_joblib = joblib.load(filepath)
-        transformed_df_joblib = encoder_load_joblib.transform(df2[input_cols_extended])
-        actual_arr_joblib = transformed_df_joblib.sort(id_col)[output_cols].to_pandas().to_numpy()
+            # joblib
+            encoder_load_joblib = joblib.load(file.name)
+            transformed_df_joblib = encoder_load_joblib.transform(df2[input_cols_extended])
+            actual_arr_joblib = transformed_df_joblib.sort(id_col)[output_cols].to_pandas().to_numpy()
 
-        # sklearn
-        encoder_sklearn = SklearnOrdinalEncoder()
-        encoder_sklearn.fit(df_pandas[input_cols])
-        sklearn_arr = encoder_sklearn.transform(df_pandas[input_cols])
+            # sklearn
+            encoder_sklearn = SklearnOrdinalEncoder()
+            encoder_sklearn.fit(df_pandas[input_cols])
+            sklearn_arr = encoder_sklearn.transform(df_pandas[input_cols])
 
-        np.testing.assert_allclose(actual_arr_cloudpickle, sklearn_arr, equal_nan=True)
-        np.testing.assert_allclose(actual_arr_pickle, sklearn_arr, equal_nan=True)
-        np.testing.assert_allclose(actual_arr_joblib, sklearn_arr, equal_nan=True)
+            np.testing.assert_allclose(actual_arr_cloudpickle, sklearn_arr, equal_nan=True)
+            np.testing.assert_allclose(actual_arr_pickle, sklearn_arr, equal_nan=True)
+            np.testing.assert_allclose(actual_arr_joblib, sklearn_arr, equal_nan=True)
 
     def test_same_input_output_cols(self) -> None:
         """

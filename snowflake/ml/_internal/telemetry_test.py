@@ -375,6 +375,32 @@ class TelemetryTest(parameterized.TestCase):
             test_obj.foo()
         self.assertIn(error_codes.INTERNAL_TEST, str(ex.exception))
 
+    @mock.patch("snowflake.snowpark.session._get_active_sessions")
+    def test_snowml_nested_error(self, mock_get_active_sessions: mock.MagicMock) -> None:
+        mock_get_active_sessions.return_value = {self.mock_session}
+
+        class DummyObject:
+            @utils_telemetry.send_api_usage_telemetry(
+                project=_PROJECT,
+            )
+            def foo(self) -> None:
+                self.nested_foo()
+
+            @utils_telemetry.send_api_usage_telemetry(
+                project=_PROJECT,
+            )
+            def nested_foo(self) -> None:
+                raise exceptions.SnowflakeMLException(
+                    error_code=error_codes.INTERNAL_TEST,
+                    original_exception=RuntimeError("foo error"),
+                )
+
+        test_obj = DummyObject()
+        with self.assertRaises(RuntimeError) as ex:
+            test_obj.foo()
+        self.assertIn(error_codes.INTERNAL_TEST, str(ex.exception))
+        self.assertNotIn(error_codes.UNDEFINED, str(ex.exception))
+
 
 if __name__ == "__main__":
     absltest.main()
