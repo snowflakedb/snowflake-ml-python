@@ -10,17 +10,21 @@ from snowflake.ml.test_utils import mock_session
 
 
 class ClientImageBuilderTestCase(absltest.TestCase):
-    def setUp(self) -> None:
+    @mock.patch(
+        "snowflake.ml.model._deploy_client.image_builds.client_image_builder._model_meta.ModelMetadata"
+    )  # type: ignore
+    def setUp(self, m_model_meta_class: mock.MagicMock) -> None:
+        m_model_meta = m_model_meta_class.return_value
         super().setUp()
         self.m_session = cast(snowpark.session.Session, mock_session.MockSession(conn=None, test_case=self))
         self.unique_id = "mock_id"
         self.image_repo = "mock_image_repo"
-        self.model_dir = "local/dir/model.zip"
+        self.model_meta = m_model_meta
 
         self.client_image_builder = client_image_builder.ClientImageBuilder(
             id=self.unique_id,
             image_repo=self.image_repo,
-            model_dir=self.model_dir,
+            model_meta=self.model_meta,
             session=self.m_session,
         )
 
@@ -46,8 +50,8 @@ class ClientImageBuilderTestCase(absltest.TestCase):
         with mock.patch.object(m_docker_context, "build") as m_build, mock.patch.object(
             self.client_image_builder, "_build_image_from_context"
         ) as m_build_image_from_context:
-            self.client_image_builder._build(m_docker_config_dir)
-            m_docker_context_class.assert_called_once_with(context_dir=m_context_dir, model_dir=self.model_dir)
+            self.client_image_builder._build_and_tag(m_docker_config_dir)
+            m_docker_context_class.assert_called_once_with(context_dir=m_context_dir, model_meta=self.model_meta)
             m_build.assert_called_once()
             m_build_image_from_context.assert_called_once_with(
                 context_dir=m_context_dir, docker_config_dir=m_docker_config_dir

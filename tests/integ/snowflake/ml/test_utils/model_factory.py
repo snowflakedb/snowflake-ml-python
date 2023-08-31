@@ -2,7 +2,7 @@
 # Copyright (c) 2012-2022 Snowflake Computing Inc. All rights reserved.
 #
 from enum import Enum
-from typing import List, Tuple
+from typing import List, Tuple, cast
 
 import numpy as np
 import numpy.typing as npt
@@ -54,7 +54,14 @@ class ModelFactory:
         return clf, test_features, test_labels
 
     @staticmethod
-    def prepare_snowml_model_xgb() -> Tuple[XGBClassifier, pd.DataFrame]:
+    def prepare_snowml_model_xgb() -> Tuple[XGBClassifier, pd.DataFrame, pd.DataFrame]:
+        """Prepare SnowML XGBClassifier model.
+
+        Returns:
+            a XGB classifier.
+            a dataframe of test features.
+            a dataframe of training dataset.
+        """
         iris = datasets.load_iris()
         df = pd.DataFrame(data=np.c_[iris["data"], iris["target"]], columns=iris["feature_names"] + ["target"])
         df.columns = [s.replace(" (CM)", "").replace(" ", "") for s in df.columns.str.upper()]
@@ -69,7 +76,7 @@ class ModelFactory:
 
         clf_xgb.fit(df)
 
-        return clf_xgb, df.drop(columns=label_cols).head(10)
+        return (clf_xgb, df.drop(columns=label_cols).head(10), df)
 
     @staticmethod
     def prepare_snowml_pipeline(session: Session) -> Tuple[Pipeline, DataFrame]:
@@ -174,7 +181,7 @@ class ModelFactory:
     @staticmethod
     def prepare_torch_model(
         dtype: torch.dtype = torch.float32, force_remote_gpu_inference: bool = False
-    ) -> Tuple[torch.nn.Module, List[torch.Tensor], List[torch.Tensor]]:
+    ) -> Tuple[torch.nn.Module, torch.Tensor, torch.Tensor]:
         class TorchModel(torch.nn.Module):
             def __init__(self, n_input: int, n_hidden: int, n_out: int, dtype: torch.dtype = torch.float32) -> None:
                 super().__init__()
@@ -185,39 +192,40 @@ class ModelFactory:
                     torch.nn.Sigmoid(),
                 )
 
-            def forward_training(self, tensors: List[torch.Tensor]) -> List[torch.Tensor]:
-                return [self.model(tensors[0])]
+            def forward_training(self, tensor: torch.Tensor) -> torch.Tensor:
+                return cast(torch.Tensor, self.model(tensor))
 
-            def forward(self, tensors: List[torch.Tensor]) -> List[torch.Tensor]:
+            def forward(self, tensor: torch.Tensor) -> torch.Tensor:
                 device = DEVICE.CUDA if force_remote_gpu_inference else DEVICE.CPU
-                return self.predict_with_device(tensors, device)
+                return self.predict_with_device(tensor, device)
 
-            def predict_with_device(self, tensors: List[torch.Tensor], device: DEVICE) -> List[torch.Tensor]:
+            def predict_with_device(self, tensor: torch.Tensor, device: DEVICE) -> torch.Tensor:
                 self.model.eval()
                 self.model.to(device.value)
                 with torch.no_grad():
-                    tensors = [tensor.to(device.value) for tensor in tensors]
-                    return [self.model(tensors[0])]
+                    tensor = tensor.to(device.value)
+                    return cast(torch.Tensor, self.model(tensor))
 
         n_input, n_hidden, n_out, batch_size, learning_rate = 10, 15, 1, 100, 0.01
         x = np.random.rand(batch_size, n_input)
-        data_x = [torch.from_numpy(x).to(dtype=dtype)]
-        data_y = [(torch.rand(size=(batch_size, 1)) < 0.5).to(dtype=dtype)]
+        data_x = torch.from_numpy(x).to(dtype=dtype)
+        data_y = (torch.rand(size=(batch_size, 1)) < 0.5).to(dtype=dtype)
 
         model = TorchModel(n_input, n_hidden, n_out, dtype=dtype)
         loss_function = torch.nn.MSELoss()
         optimizer = torch.optim.SGD(model.parameters(), lr=learning_rate)
         for _epoch in range(100):
             pred_y = model.forward_training(data_x)
-            loss = loss_function(pred_y[0], data_y[0])
+            loss = loss_function(pred_y, data_y)
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
         return model, data_x, data_y
 
+    @staticmethod
     def prepare_jittable_torch_model(
         dtype: torch.dtype = torch.float32, force_remote_gpu_inference: bool = False
-    ) -> Tuple[torch.nn.Module, List[torch.Tensor], List[torch.Tensor]]:
+    ) -> Tuple[torch.nn.Module, torch.Tensor, torch.Tensor]:
         class TorchModel(torch.nn.Module):
             def __init__(self, n_input: int, n_hidden: int, n_out: int, dtype: torch.dtype = torch.float32) -> None:
                 super().__init__()
@@ -228,20 +236,20 @@ class ModelFactory:
                     torch.nn.Sigmoid(),
                 )
 
-            def forward(self, tensors: List[torch.Tensor]) -> List[torch.Tensor]:
-                return [self.model(tensors[0])]
+            def forward(self, tensor: torch.Tensor) -> torch.Tensor:
+                return self.model(tensor)  # type: ignore[no-any-return]
 
         n_input, n_hidden, n_out, batch_size, learning_rate = 10, 15, 1, 100, 0.01
         x = np.random.rand(batch_size, n_input)
-        data_x = [torch.from_numpy(x).to(dtype=dtype)]
-        data_y = [(torch.rand(size=(batch_size, 1)) < 0.5).to(dtype=dtype)]
+        data_x = torch.from_numpy(x).to(dtype=dtype)
+        data_y = (torch.rand(size=(batch_size, 1)) < 0.5).to(dtype=dtype)
 
         model = TorchModel(n_input, n_hidden, n_out, dtype=dtype)
         loss_function = torch.nn.MSELoss()
         optimizer = torch.optim.SGD(model.parameters(), lr=learning_rate)
         for _epoch in range(100):
             pred_y = model(data_x)
-            loss = loss_function(pred_y[0], data_y[0])
+            loss = loss_function(pred_y, data_y)
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
@@ -250,30 +258,29 @@ class ModelFactory:
     @staticmethod
     def prepare_keras_model(
         dtype: tf.dtypes.DType = tf.float32,
-    ) -> Tuple[tf.keras.Model, List[tf.Tensor], List[tf.Tensor]]:
+    ) -> Tuple[tf.keras.Model, tf.Tensor, tf.Tensor]:
         class KerasModel(tf.keras.Model):
             def __init__(self, n_hidden: int, n_out: int) -> None:
                 super().__init__()
                 self.fc_1 = tf.keras.layers.Dense(n_hidden, activation="relu")
                 self.fc_2 = tf.keras.layers.Dense(n_out, activation="sigmoid")
 
-            def call(self, tensors: List[tf.Tensor]) -> List[tf.Tensor]:
-                input = tensors[0]
+            def call(self, tensor: tf.Tensor) -> tf.Tensor:
+                input = tensor
                 x = self.fc_1(input)
                 x = self.fc_2(x)
-                return [x]
+                return x
 
         n_input, n_hidden, n_out, batch_size, learning_rate = 10, 15, 1, 100, 0.01
         x = np.random.rand(batch_size, n_input)
-        data_x = [tf.convert_to_tensor(x, dtype=dtype)]
+        data_x = tf.convert_to_tensor(x, dtype=dtype)
         raw_data_y = tf.random.uniform((batch_size, 1))
         raw_data_y = tf.where(raw_data_y > 0.5, tf.ones_like(raw_data_y), tf.zeros_like(raw_data_y))
-        data_y = [tf.cast(raw_data_y, dtype=dtype)]
-
-        def loss_fn(y_true: List[tf.Tensor], y_pred: List[tf.Tensor]) -> tf.Tensor:
-            return tf.keras.losses.mse(y_true[0], y_pred[0])
+        data_y = tf.cast(raw_data_y, dtype=dtype)
 
         model = KerasModel(n_hidden, n_out)
-        model.compile(optimizer=tf.keras.optimizers.SGD(learning_rate=learning_rate), loss=loss_fn)
+        model.compile(
+            optimizer=tf.keras.optimizers.SGD(learning_rate=learning_rate), loss=tf.keras.losses.MeanSquaredError()
+        )
         model.fit(data_x, data_y, batch_size=batch_size, epochs=100)
         return model, data_x, data_y

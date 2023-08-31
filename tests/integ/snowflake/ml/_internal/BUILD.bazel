@@ -10,3 +10,25 @@ py_test(
         "//snowflake/ml/utils:connection_params"
     ],
 )
+
+py_test(
+    name = "grid_search_integ_test",
+    srcs = ["grid_search_integ_test.py"],
+    timeout = "long",
+    deps = [
+        "//snowflake/ml/modeling/model_selection/_internal:_grid_search_cv",
+        "//snowflake/ml/modeling/svm:svr",
+        "//snowflake/ml/utils:connection_params"
+    ],
+)
+
+py_test(
+    name = "randomized_search_integ_test",
+    srcs = ["randomized_search_integ_test.py"],
+    timeout = "long",
+    deps = [
+        "//snowflake/ml/modeling/model_selection/_internal:_randomized_search_cv",
+        "//snowflake/ml/modeling/ensemble:random_forest_classifier",
+        "//snowflake/ml/utils:connection_params"
+    ],
+)

@@ -105,9 +105,24 @@ class NumpyArrayHandlerTest(absltest.TestCase):
 
 
 class SeqOfNumpyArrayHandlerTest(absltest.TestCase):
-    def test_validate_list_of_numpy_array(self) -> None:
-        lt8 = [pd.DataFrame([1]), pd.DataFrame([2, 3])]
-        self.assertFalse(numpy_handler.SeqOfNumpyArrayHandler.can_handle(lt8))
+    def test_can_handle_list_of_numpy_array(self) -> None:
+        lt1 = [np.array([1, 2, 3, 4]), np.array([1, 2, 3, 4])]
+        self.assertTrue(numpy_handler.SeqOfNumpyArrayHandler.can_handle(lt1))
+
+        lt2 = (np.array([1, 2, 3, 4]), np.array([1, 2, 3, 4]))
+        self.assertTrue(numpy_handler.SeqOfNumpyArrayHandler.can_handle(lt2))
+
+        lt3 = (np.array([1, 2, 3, 4]), 3)
+        self.assertFalse(numpy_handler.SeqOfNumpyArrayHandler.can_handle(lt3))
+
+        lt4 = ({"a": np.array([1, 2, 3, 4])}, 3)
+        self.assertFalse(numpy_handler.SeqOfNumpyArrayHandler.can_handle(lt4))
+
+        lt5 = [np.array([1, 2, 3, 4]), 3]
+        self.assertFalse(numpy_handler.SeqOfNumpyArrayHandler.can_handle(lt5))
+
+        lt6 = [pd.DataFrame([1]), pd.DataFrame([2, 3])]
+        self.assertFalse(numpy_handler.SeqOfNumpyArrayHandler.can_handle(lt6))
 
     def test_trunc_np_ndarray(self) -> None:
         arrs = [np.array([1] * (numpy_handler.SeqOfNumpyArrayHandler.SIG_INFER_ROWS_COUNT_LIMIT + 1))] * 2

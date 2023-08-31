@@ -486,45 +486,45 @@ class SimpleImputerTest(TestCase):
 
         simple_imputer = SimpleImputer().set_input_cols(input_cols).set_output_cols(output_cols)
         simple_imputer.fit(df1)
-        filepath = os.path.join(tempfile.gettempdir(), "test_simple_imputer.pkl")
-        self._to_be_deleted_files.append(filepath)
-        simple_imputer_dump_cloudpickle = cloudpickle.dumps(simple_imputer)
-        simple_imputer_dump_pickle = pickle.dumps(simple_imputer)
-        joblib.dump(simple_imputer, filepath)
+        with tempfile.NamedTemporaryFile(suffix=".pkl", delete=False) as file:
+            self._to_be_deleted_files.append(file.name)
+            simple_imputer_dump_cloudpickle = cloudpickle.dumps(simple_imputer)
+            simple_imputer_dump_pickle = pickle.dumps(simple_imputer)
+            joblib.dump(simple_imputer, file.name)
 
-        self._session.close()
+            self._session.close()
 
-        # transform in session 2
-        self._session = Session.builder.configs(SnowflakeLoginOptions()).create()
-        _, df2 = framework_utils.get_df(self._session, data, schema, np.nan)
-        input_cols_extended = input_cols.copy()
-        input_cols_extended.append(id_col)
+            # transform in session 2
+            self._session = Session.builder.configs(SnowflakeLoginOptions()).create()
+            _, df2 = framework_utils.get_df(self._session, data, schema, np.nan)
+            input_cols_extended = input_cols.copy()
+            input_cols_extended.append(id_col)
 
-        importlib.reload(sys.modules["snowflake.ml.modeling.impute.simple_imputer"])
+            importlib.reload(sys.modules["snowflake.ml.modeling.impute.simple_imputer"])
 
-        # cloudpickle
-        simple_imputer_load_cloudpickle = cloudpickle.loads(simple_imputer_dump_cloudpickle)
-        transformed_df_cloudpickle = simple_imputer_load_cloudpickle.transform(df2[input_cols_extended])
-        actual_arr_cloudpickle = transformed_df_cloudpickle.sort(id_col)[output_cols].to_pandas().to_numpy()
+            # cloudpickle
+            simple_imputer_load_cloudpickle = cloudpickle.loads(simple_imputer_dump_cloudpickle)
+            transformed_df_cloudpickle = simple_imputer_load_cloudpickle.transform(df2[input_cols_extended])
+            actual_arr_cloudpickle = transformed_df_cloudpickle.sort(id_col)[output_cols].to_pandas().to_numpy()
 
-        # pickle
-        simple_imputer_load_pickle = pickle.loads(simple_imputer_dump_pickle)
-        transformed_df_pickle = simple_imputer_load_pickle.transform(df2[input_cols_extended])
-        actual_arr_pickle = transformed_df_pickle.sort(id_col)[output_cols].to_pandas().to_numpy()
+            # pickle
+            simple_imputer_load_pickle = pickle.loads(simple_imputer_dump_pickle)
+            transformed_df_pickle = simple_imputer_load_pickle.transform(df2[input_cols_extended])
+            actual_arr_pickle = transformed_df_pickle.sort(id_col)[output_cols].to_pandas().to_numpy()
 
-        # joblib
-        simple_imputer_load_joblib = joblib.load(filepath)
-        transformed_df_joblib = simple_imputer_load_joblib.transform(df2[input_cols_extended])
-        actual_arr_joblib = transformed_df_joblib.sort(id_col)[output_cols].to_pandas().to_numpy()
+            # joblib
+            simple_imputer_load_joblib = joblib.load(file.name)
+            transformed_df_joblib = simple_imputer_load_joblib.transform(df2[input_cols_extended])
+            actual_arr_joblib = transformed_df_joblib.sort(id_col)[output_cols].to_pandas().to_numpy()
 
-        # sklearn
-        simple_imputer_sklearn = SklearnSimpleImputer()
-        simple_imputer_sklearn.fit(df_pandas[input_cols])
-        sklearn_arr = simple_imputer_sklearn.transform(df_pandas[input_cols])
+            # sklearn
+            simple_imputer_sklearn = SklearnSimpleImputer()
+            simple_imputer_sklearn.fit(df_pandas[input_cols])
+            sklearn_arr = simple_imputer_sklearn.transform(df_pandas[input_cols])
 
-        np.testing.assert_allclose(actual_arr_cloudpickle, sklearn_arr)
-        np.testing.assert_allclose(actual_arr_pickle, sklearn_arr)
-        np.testing.assert_allclose(actual_arr_joblib, sklearn_arr)
+            np.testing.assert_allclose(actual_arr_cloudpickle, sklearn_arr)
+            np.testing.assert_allclose(actual_arr_pickle, sklearn_arr)
+            np.testing.assert_allclose(actual_arr_joblib, sklearn_arr)
 
 
 if __name__ == "__main__":

@@ -8,7 +8,10 @@ _SF_UNQUOTED_CASE_INSENSITIVE_IDENTIFIER = "[A-Za-z_][A-Za-z0-9_$]*"
 _SF_UNQUOTED_CASE_SENSITIVE_IDENTIFIER = "[A-Z_][A-Z0-9_$]*"
 SF_QUOTED_IDENTIFIER = '"(?:[^"]|"")*"'
 _SF_IDENTIFIER = f"({_SF_UNQUOTED_CASE_INSENSITIVE_IDENTIFIER}|{SF_QUOTED_IDENTIFIER})"
-_SF_SCHEMA_LEVEL_OBJECT = rf"{_SF_IDENTIFIER}\.{_SF_IDENTIFIER}\.{_SF_IDENTIFIER}(.*)"
+SF_IDENTIFIER_RE = re.compile(_SF_IDENTIFIER)
+_SF_SCHEMA_LEVEL_OBJECT = (
+    rf"(?:(?:(?P<db>{_SF_IDENTIFIER})\.)?(?P<schema>{_SF_IDENTIFIER})\.)?(?P<object>{_SF_IDENTIFIER})(?P<others>.*)"
+)
 _SF_SCHEMA_LEVEL_OBJECT_RE = re.compile(_SF_SCHEMA_LEVEL_OBJECT)
 
 UNQUOTED_CASE_INSENSITIVE_RE = re.compile(f"^({_SF_UNQUOTED_CASE_INSENSITIVE_IDENTIFIER})$")
@@ -154,10 +157,35 @@ def parse_schema_level_object_identifier(
     res = _SF_SCHEMA_LEVEL_OBJECT_RE.fullmatch(path)
     if not res:
         raise ValueError(f"Invalid identifier. It should start with database.schema.stage. Getting {path}")
-    identifiers = res.groups()
-    if len(identifiers) != 4:
-        raise ValueError(f"Failed to parse the identifier. Identifiers parsed: {identifiers}")
-    return identifiers[0], identifiers[1], identifiers[2], identifiers[3]
+    return res.group("db"), res.group("schema"), res.group("object"), res.group("others")
+
+
+def get_schema_level_object_identifier(
+    db: Optional[str], schema: Optional[str], object_name: str, others: Optional[str] = None
+) -> str:
+    """The reverse operation of parse_schema_level_object_identifier
+
+    Args:
+        db: Database level object name.
+        schema: Schema level object name.
+        object_name: stage/table level object name. Must be not None.
+        others: All other part attached.
+
+    Returns:
+        A string in format '<db>.<schema>.<object_name><others>'
+
+    Raises:
+        ValueError: If the identifiers is invalid.
+    """
+
+    for identifier in (db, schema, object_name):
+        if identifier is not None and SF_IDENTIFIER_RE.match(identifier) is None:
+            raise ValueError(f"Invalid identifier {identifier}")
+
+    if others is None:
+        others = ""
+
+    return ".".join(filter(None, (db, schema, object_name))) + others
 
 
 @overload
@@ -238,3 +266,18 @@ def get_escaped_names(ids: Optional[Union[str, List[str]]]) -> Optional[Union[st
         return _get_escaped_name(ids)
     else:
         raise ValueError("Unsupported type. Only string or list of string are supported for selecting columns.")
+
+
+def remove_prefix(s: str, prefix: str) -> str:
+    """Remove prefix from a string.
+
+    Args:
+        s: string to remove prefix from.
+        prefix: prefix to match.
+
+    Returns:
+        string with the prefix removed.
+    """
+    if s.startswith(prefix):
+        return s[len(prefix) :]
+    return s

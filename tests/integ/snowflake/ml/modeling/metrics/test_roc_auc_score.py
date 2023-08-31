@@ -2,6 +2,7 @@
 # Copyright (c) 2012-2022 Snowflake Computing Inc. All rights reserved.
 #
 from typing import Any, Dict
+from unittest import mock
 
 import numpy as np
 import pandas as pd
@@ -208,6 +209,22 @@ class RocAucScoreTest(parameterized.TestCase):
             self.assertAlmostEqual(sklearn_auc, actual_auc)
 
     def test_multilabel(self) -> None:
+        pandas_df = pd.DataFrame(_MULTILABEL_DATA, columns=_MULTILABEL_SCHEMA)
+        input_df = self._session.create_dataframe(pandas_df)
+
+        actual_auc = snowml_metrics.roc_auc_score(
+            df=input_df,
+            y_true_col_names=_MULTILABEL_Y_TRUE_COLS,
+            y_score_col_names=_MULTILABEL_Y_SCORE_COLS,
+        )
+        sklearn_auc = sklearn_metrics.roc_auc_score(
+            pandas_df[_MULTILABEL_Y_TRUE_COLS],
+            pandas_df[_MULTILABEL_Y_SCORE_COLS],
+        )
+        self.assertAlmostEqual(sklearn_auc, actual_auc)
+
+    @mock.patch("snowflake.ml.modeling.metrics.ranking.result._RESULT_SIZE_THRESHOLD", 0)
+    def test_metric_size_threshold(self) -> None:
         pandas_df = pd.DataFrame(_MULTILABEL_DATA, columns=_MULTILABEL_SCHEMA)
         input_df = self._session.create_dataframe(pandas_df)
 

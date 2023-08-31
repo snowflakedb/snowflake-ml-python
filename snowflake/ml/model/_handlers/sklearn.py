@@ -110,7 +110,10 @@ class _SKLModelHandler(_base._ModelHandler[Union["sklearn.base.BaseEstimator", "
 
     @staticmethod
     def _load_model(
-        name: str, model_meta: model_meta_api.ModelMetadata, model_blobs_dir_path: str
+        name: str,
+        model_meta: model_meta_api.ModelMetadata,
+        model_blobs_dir_path: str,
+        **kwargs: Unpack[model_types.ModelLoadOption],
     ) -> Union["sklearn.base.BaseEstimator", "sklearn.pipeline.Pipeline"]:
         model_blob_path = os.path.join(model_blobs_dir_path, name)
         if not hasattr(model_meta, "models"):
@@ -131,7 +134,10 @@ class _SKLModelHandler(_base._ModelHandler[Union["sklearn.base.BaseEstimator", "
 
     @staticmethod
     def _load_as_custom_model(
-        name: str, model_meta: model_meta_api.ModelMetadata, model_blobs_dir_path: str
+        name: str,
+        model_meta: model_meta_api.ModelMetadata,
+        model_blobs_dir_path: str,
+        **kwargs: Unpack[model_types.ModelLoadOption],
     ) -> custom_model.CustomModel:
         """Create a custom model class wrap for unified interface when being deployed. The predict method will be
         re-targeted based on target_method metadata.
@@ -140,6 +146,7 @@ class _SKLModelHandler(_base._ModelHandler[Union["sklearn.base.BaseEstimator", "
             name: Name of the model.
             model_meta: The model metadata.
             model_blobs_dir_path: Directory path to the whole model.
+            kwargs: Options when loading the model.
 
         Returns:
             The model object as a custom model.
@@ -182,7 +189,7 @@ class _SKLModelHandler(_base._ModelHandler[Union["sklearn.base.BaseEstimator", "
 
             return _SKLModel
 
-        raw_model = _SKLModelHandler._load_model(name, model_meta, model_blobs_dir_path)
+        raw_model = _SKLModelHandler._load_model(name, model_meta, model_blobs_dir_path, **kwargs)
         _SKLModel = _create_custom_model(raw_model, model_meta)
         skl_model = _SKLModel(custom_model.ModelContext())
 

@@ -17,7 +17,7 @@ build:
   noarch: python
 package:
   name: snowflake-ml-python
-  version: 1.0.5
+  version: 1.0.6
 requirements:
   build:
     - python
@@ -34,7 +34,7 @@ requirements:
     - python
     - pyyaml>=6.0,<7
     - requests
-    - scikit-learn>=1.2.1,<1.3
+    - scikit-learn>=1.2.1,<1.4
     - scipy>=1.9,<2
     - snowflake-connector-python>=3.0.3,<4
     - snowflake-snowpark-python>=1.5.1,<2
@@ -43,8 +43,9 @@ requirements:
     - xgboost>=1.7.3,<2
   run_constrained:
     - lightgbm==3.3.5
-    - mlflow>=2.1.0,<3
+    - mlflow>=2.1.0,<2.4
     - tensorflow>=2.9,<3
     - torchdata>=0.4,<1
+    - transformers>=4.29.2,<5
 source:
   path: ../../

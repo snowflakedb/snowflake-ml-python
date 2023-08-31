@@ -32,11 +32,11 @@ def save_conda_env_file(
     path = os.path.join(dir_path, _CONDA_ENV_FILE_NAME)
     env: Dict[str, Any] = dict()
     env["name"] = "snow-env"
-    env["channels"] = (
-        [_SNOWFLAKE_CONDA_CHANNEL_URL]
-        + [channel_name for channel_name, channel_deps in deps.items() if len(channel_deps) == 0]
-        + [_NODEFAULTS]
-    )
+    # Get all channels in the dependencies, ordered by the number of the packages which belongs to
+    channels = list(dict(sorted(deps.items(), key=lambda item: len(item[1]), reverse=True)).keys())
+    if env_utils.DEFAULT_CHANNEL_NAME in channels:
+        channels.remove(env_utils.DEFAULT_CHANNEL_NAME)
+    env["channels"] = [_SNOWFLAKE_CONDA_CHANNEL_URL] + channels + [_NODEFAULTS]
     env["dependencies"] = [f"python=={python_version}"]
     for chan, reqs in deps.items():
         env["dependencies"].extend([f"{chan}::{str(req)}" if chan else str(req) for req in reqs])
@@ -101,7 +101,8 @@ def load_conda_env_file(path: str) -> Tuple[DefaultDict[str, List[requirements.R
 
     if len(channels) > 0:
         for channel in channels:
-            conda_dep_dict[channel] = []
+            if channel not in conda_dep_dict:
+                conda_dep_dict[channel] = []
 
     return conda_dep_dict, python_version
 

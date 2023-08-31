@@ -13,7 +13,11 @@ from snowflake import snowpark
 from snowflake.ml._internal import telemetry
 from snowflake.ml.modeling.metrics import metrics_utils
 from snowflake.snowpark import functions as F, types as T
-from snowflake.snowpark._internal import utils as snowpark_utils
+from snowflake.snowpark._internal.utils import (
+    TempObjectType,
+    generate_random_alphanumeric,
+    random_name_for_temp_object,
+)
 
 _PROJECT = "ModelDevelopment"
 _SUBPROJECT = "Metrics"
@@ -140,7 +144,7 @@ def confusion_matrix(
         elif df[[y_true_col_name]].join(label_df, df[y_true_col_name] == label_df[metrics_utils.LABEL]).count() == 0:
             raise ValueError("At least one label specified must be in the y true column")
 
-    rand = snowpark_utils.generate_random_alphanumeric()
+    rand = generate_random_alphanumeric()
     if sample_weight_col_name is None:
         sample_weight_col_name = f'"_SAMPLE_WEIGHT_{rand}"'
         df = df.with_column(sample_weight_col_name, F.lit(1))
@@ -264,6 +268,7 @@ def _register_confusion_matrix_computer(*, session: snowpark.Session, statement_
                 self._batched_rows[:, 0],
             )
 
+    # TODO(SNANDAMURI): Should we convert it to temp anonymous UDTF for it to work in Sproc?
     confusion_matrix_computer = "ConfusionMatrixComputer_{}".format(str(uuid.uuid4()).replace("-", "_").upper())
     session.udtf.register(
         ConfusionMatrixComputer,
@@ -328,24 +333,24 @@ def f1_score(
             This parameter is required for multiclass/multilabel targets.
             If ``None``, the scores for each class are returned. Otherwise, this
             determines the type of averaging performed on the data:
-            ``'binary'``:
+            ``'binary'``
                 Only report results for the class specified by ``pos_label``.
                 This is applicable only if targets (y true, y pred) are binary.
-            ``'micro'``:
+            ``'micro'``
                 Calculate metrics globally by counting the total true positives,
                 false negatives and false positives.
-            ``'macro'``:
+            ``'macro'``
                 Calculate metrics for each label, and find their unweighted
                 mean.  This does not take label imbalance into account.
-            ``'weighted'``:
+            ``'weighted'``
                 Calculate metrics for each label, and find their average weighted
                 by support (the number of true instances for each label). This
                 alters 'macro' to account for label imbalance; it can result in an
                 F-score that is not between precision and recall.
-            ``'samples'``:
+            ``'samples'``
                 Calculate metrics for each instance, and find their average (only
                 meaningful for multilabel classification where this differs from
-                :func:`accuracy_score`).
+                func`accuracy_score`).
         sample_weight_col_name: Column name representing sample weights.
         zero_division: "warn", 0 or 1, default="warn"
             Sets the value to return when there is a zero division, i.e. when all
@@ -353,7 +358,7 @@ def f1_score(
             but warnings are also raised.
 
     Returns:
-        f1_score: float or array of float, shape = [n_unique_labels]
+        f1_score - float or array of float, shape = [n_unique_labels]
             F1 score of the positive class in binary classification or weighted
             average of the F1 scores of each class for the multiclass task.
     """
@@ -414,24 +419,24 @@ def fbeta_score(
             This parameter is required for multiclass/multilabel targets.
             If ``None``, the scores for each class are returned. Otherwise, this
             determines the type of averaging performed on the data:
-            ``'binary'``:
+            ``'binary'``
                 Only report results for the class specified by ``pos_label``.
                 This is applicable only if targets (y true, y pred) are binary.
-            ``'micro'``:
+            ``'micro'``
                 Calculate metrics globally by counting the total true positives,
                 false negatives and false positives.
-            ``'macro'``:
+            ``'macro'``
                 Calculate metrics for each label, and find their unweighted
                 mean.  This does not take label imbalance into account.
-            ``'weighted'``:
+            ``'weighted'``
                 Calculate metrics for each label, and find their average weighted
                 by support (the number of true instances for each label). This
                 alters 'macro' to account for label imbalance; it can result in an
                 F-score that is not between precision and recall.
-            ``'samples'``:
+            ``'samples'``
                 Calculate metrics for each instance, and find their average (only
                 meaningful for multilabel classification where this differs from
-                :func:`accuracy_score`).
+                func`accuracy_score`).
         sample_weight_col_name: Column name representing sample weights.
         zero_division: "warn", 0 or 1, default="warn"
             Sets the value to return when there is a zero division, i.e. when all
@@ -439,7 +444,7 @@ def fbeta_score(
             but warnings are also raised.
 
     Returns:
-        fbeta_score: float (if average is not None) or array of float, shape = [n_unique_labels]
+        fbeta_score - float (if average is not None) or array of float, shape = [n_unique_labels]
             F-beta score of the positive class in binary classification or weighted
             average of the F-beta score of each class for the multiclass task.
     """
@@ -508,13 +513,14 @@ def log_loss(
     """
     session = df._session
     assert session is not None
-    sproc_name = f"log_loss_{snowpark_utils.generate_random_alphanumeric()}"
+    sproc_name = random_name_for_temp_object(TempObjectType.PROCEDURE)
     sklearn_release = version.parse(sklearn.__version__).release
     statement_params = telemetry.get_statement_params(_PROJECT, _SUBPROJECT)
     cols = metrics_utils.flatten_cols([y_true_col_names, y_pred_col_names, sample_weight_col_name])
     queries = df[cols].queries["queries"]
 
     @F.sproc(  # type: ignore[misc]
+        is_permanent=False,
         session=session,
         name=sproc_name,
         replace=True,
@@ -524,8 +530,9 @@ def log_loss(
             "snowflake-snowpark-python",
         ],
         statement_params=statement_params,
+        anonymous=True,
     )
-    def log_loss_sproc(session: snowpark.Session) -> float:
+    def log_loss_anon_sproc(session: snowpark.Session) -> float:
         for query in queries[:-1]:
             _ = session.sql(query).collect(statement_params=statement_params)
         df = session.sql(queries[-1]).to_pandas(statement_params=statement_params)
@@ -541,7 +548,7 @@ def log_loss(
             labels=labels,
         )
 
-    loss: float = session.call(sproc_name, statement_params=statement_params)
+    loss: float = log_loss_anon_sproc(session)
     return loss
 
 
@@ -606,21 +613,21 @@ def precision_recall_fscore_support(
         average: {'binary', 'micro', 'macro', 'samples', 'weighted'}, default=None
             If ``None``, the scores for each class are returned. Otherwise, this
             determines the type of averaging performed on the data:
-            ``'binary'``:
+            ``'binary'``
                 Only report results for the class specified by ``pos_label``.
                 This is applicable only if targets (y true, y pred) are binary.
-            ``'micro'``:
+            ``'micro'``
                 Calculate metrics globally by counting the total true positives,
                 false negatives and false positives.
-            ``'macro'``:
+            ``'macro'``
                 Calculate metrics for each label, and find their unweighted
                 mean.  This does not take label imbalance into account.
-            ``'weighted'``:
+            ``'weighted'``
                 Calculate metrics for each label, and find their average weighted
                 by support (the number of true instances for each label). This
                 alters 'macro' to account for label imbalance; it can result in an
                 F-score that is not between precision and recall.
-            ``'samples'``:
+            ``'samples'``
                 Calculate metrics for each instance, and find their average (only
                 meaningful for multilabel classification where this differs from
                 :func:`accuracy_score`).
@@ -629,32 +636,34 @@ def precision_recall_fscore_support(
         sample_weight_col_name: Column name representing sample weights.
         zero_division: "warn", 0 or 1, default="warn"
             Sets the value to return when there is a zero division:
-               - recall: when there are no positive labels
-               - precision: when there are no positive predictions
-               - f-score: both
+               * recall - when there are no positive labels
+               * precision - when there are no positive predictions
+               * f-score - both
             If set to "warn", this acts as 0, but warnings are also raised.
 
     Returns:
-        precision: float (if average is not None) or array of float, shape = [n_unique_labels]
-            Precision score.
-        recall: float (if average is not None) or array of float, shape = [n_unique_labels]
-            Recall score.
-        fbeta_score: float (if average is not None) or array of float, shape = [n_unique_labels]
-            F-beta score.
-        support: None (if average is not None) or array of int, shape = [n_unique_labels]
-            The number of occurrences of each label in the y true column(s).
+        Tuple containing following items
+            precision - float (if average is not None) or array of float, shape = [n_unique_labels]
+                Precision score.
+            recall - float (if average is not None) or array of float, shape = [n_unique_labels]
+                Recall score.
+            fbeta_score - float (if average is not None) or array of float, shape = [n_unique_labels]
+                F-beta score.
+            support - None (if average is not None) or array of int, shape = [n_unique_labels]
+                The number of occurrences of each label in the y true column(s).
     """
     metrics_utils.check_label_columns(y_true_col_names, y_pred_col_names)
 
     session = df._session
     assert session is not None
-    sproc_name = f"precision_recall_fscore_support_{snowpark_utils.generate_random_alphanumeric()}"
+    sproc_name = random_name_for_temp_object(TempObjectType.PROCEDURE)
     sklearn_release = version.parse(sklearn.__version__).release
     statement_params = telemetry.get_statement_params(_PROJECT, _SUBPROJECT)
     cols = metrics_utils.flatten_cols([y_true_col_names, y_pred_col_names, sample_weight_col_name])
     queries = df[cols].queries["queries"]
 
     @F.sproc(  # type: ignore[misc]
+        is_permanent=False,
         session=session,
         name=sproc_name,
         replace=True,
@@ -664,8 +673,9 @@ def precision_recall_fscore_support(
             "snowflake-snowpark-python",
         ],
         statement_params=statement_params,
+        anonymous=True,
     )
-    def precision_recall_fscore_support_sproc(session: snowpark.Session) -> bytes:
+    def precision_recall_fscore_support_anon_sproc(session: snowpark.Session) -> bytes:
         for query in queries[:-1]:
             _ = session.sql(query).collect(statement_params=statement_params)
         df = session.sql(queries[-1]).to_pandas(statement_params=statement_params)
@@ -693,7 +703,7 @@ def precision_recall_fscore_support(
 
         return cloudpickle.dumps((p, r, f, s, warning))  # type: ignore[no-any-return]
 
-    loaded_data = cloudpickle.loads(session.call(sproc_name, statement_params=statement_params))
+    loaded_data = cloudpickle.loads(precision_recall_fscore_support_anon_sproc(session))
     res: Union[
         Tuple[float, float, float, None],
         Tuple[npt.NDArray[np.float_], npt.NDArray[np.float_], npt.NDArray[np.float_], npt.NDArray[np.float_]],
@@ -744,31 +754,31 @@ def precision_score(
         average: {'micro', 'macro', 'samples', 'weighted', 'binary'} or None, default='binary'
             If ``None``, the scores for each class are returned. Otherwise, this
             determines the type of averaging performed on the data:
-            ``'binary'``:
+            ``'binary'``
                 Only report results for the class specified by ``pos_label``.
                 This is applicable only if targets (y true, y pred) are binary.
-            ``'micro'``:
+            ``'micro'``
                 Calculate metrics globally by counting the total true positives,
                 false negatives and false positives.
-            ``'macro'``:
+            ``'macro'``
                 Calculate metrics for each label, and find their unweighted
                 mean.  This does not take label imbalance into account.
-            ``'weighted'``:
+            ``'weighted'``
                 Calculate metrics for each label, and find their average weighted
                 by support (the number of true instances for each label). This
                 alters 'macro' to account for label imbalance; it can result in an
                 F-score that is not between precision and recall.
-            ``'samples'``:
+            ``'samples'``
                 Calculate metrics for each instance, and find their average (only
                 meaningful for multilabel classification where this differs from
-                :func:`accuracy_score`).
+                func`accuracy_score`).
         sample_weight_col_name: Column name representing sample weights.
         zero_division: "warn", 0 or 1, default="warn"
             Sets the value to return when there is a zero division. If set to
             "warn", this acts as 0, but warnings are also raised.
 
     Returns:
-        precision: float (if average is not None) or array of float, shape = (n_unique_labels,)
+        precision - float (if average is not None) or array of float, shape = (n_unique_labels,)
             Precision of the positive class in binary classification or weighted
             average of the precision of each class for the multiclass task.
     """
@@ -826,32 +836,32 @@ def recall_score(
             This parameter is required for multiclass/multilabel targets.
             If ``None``, the scores for each class are returned. Otherwise, this
             determines the type of averaging performed on the data:
-            ``'binary'``:
+            ``'binary'``
                 Only report results for the class specified by ``pos_label``.
                 This is applicable only if targets (y true, y pred) are binary.
-            ``'micro'``:
+            ``'micro'``
                 Calculate metrics globally by counting the total true positives,
                 false negatives and false positives.
-            ``'macro'``:
+            ``'macro'``
                 Calculate metrics for each label, and find their unweighted
                 mean.  This does not take label imbalance into account.
-            ``'weighted'``:
+            ``'weighted'``
                 Calculate metrics for each label, and find their average weighted
                 by support (the number of true instances for each label). This
                 alters 'macro' to account for label imbalance; it can result in an
                 F-score that is not between precision and recall. Weighted recall
                 is equal to accuracy.
-            ``'samples'``:
+            ``'samples'``
                 Calculate metrics for each instance, and find their average (only
                 meaningful for multilabel classification where this differs from
-                :func:`accuracy_score`).
+                func`accuracy_score`).
         sample_weight_col_name: Column name representing sample weights.
         zero_division: "warn", 0 or 1, default="warn"
             Sets the value to return when there is a zero division. If set to
             "warn", this acts as 0, but warnings are also raised.
 
     Returns:
-        recall: float (if average is not None) or array of float of shape (n_unique_labels,)
+        recall - float (if average is not None) or array of float of shape (n_unique_labels,)
             Recall of the positive class in binary classification or weighted
             average of the recall of each class for the multiclass task.
     """

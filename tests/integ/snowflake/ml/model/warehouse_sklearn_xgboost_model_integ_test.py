@@ -57,7 +57,6 @@ class TestWarehouseSKLearnXGBoostModelInteg(parameterized.TestCase):
         sample_input: model_types.SupportedDataType,
         test_input: model_types.SupportedDataType,
         deploy_params: Dict[str, Tuple[Dict[str, Any], Callable[[Union[pd.DataFrame, SnowparkDataFrame]], Any]]],
-        model_in_stage: Optional[bool] = False,
         permanent_deploy: Optional[bool] = False,
         test_released_version: Optional[str] = None,
     ) -> None:
@@ -70,20 +69,13 @@ class TestWarehouseSKLearnXGBoostModelInteg(parameterized.TestCase):
             sample_input=sample_input,
             test_input=test_input,
             deploy_params=deploy_params,
-            model_in_stage=model_in_stage,
             permanent_deploy=permanent_deploy,
             test_released_version=test_released_version,
         )
 
-    @parameterized.parameters(  # type: ignore[misc]
-        {"model_in_stage": True, "permanent_deploy": True, "test_released_version": None},
-        {"model_in_stage": False, "permanent_deploy": False, "test_released_version": None},
-        {"model_in_stage": True, "permanent_deploy": False, "test_released_version": "1.0.3"},
-        {"model_in_stage": False, "permanent_deploy": True, "test_released_version": "1.0.3"},
-    )
+    @parameterized.product(permanent_deploy=[True, False], test_released_version=[None, "1.0.6"])  # type: ignore[misc]
     def test_skl_model_deploy(
         self,
-        model_in_stage: Optional[bool] = False,
         permanent_deploy: Optional[bool] = False,
         test_released_version: Optional[str] = None,
     ) -> None:
@@ -102,20 +94,13 @@ class TestWarehouseSKLearnXGBoostModelInteg(parameterized.TestCase):
                     lambda res: np.testing.assert_allclose(res["output_feature_0"].values, regr.predict(iris_X)),
                 ),
             },
-            model_in_stage=model_in_stage,
             permanent_deploy=permanent_deploy,
             test_released_version=test_released_version,
         )
 
-    @parameterized.parameters(  # type: ignore[misc]
-        {"model_in_stage": True, "permanent_deploy": True, "test_released_version": None},
-        {"model_in_stage": False, "permanent_deploy": False, "test_released_version": None},
-        {"model_in_stage": True, "permanent_deploy": False, "test_released_version": "1.0.3"},
-        {"model_in_stage": False, "permanent_deploy": True, "test_released_version": "1.0.3"},
-    )
+    @parameterized.product(permanent_deploy=[True, False], test_released_version=[None, "1.0.6"])  # type: ignore[misc]
     def test_skl_model_proba_deploy(
         self,
-        model_in_stage: Optional[bool] = False,
         permanent_deploy: Optional[bool] = False,
         test_released_version: Optional[str] = None,
     ) -> None:
@@ -137,20 +122,13 @@ class TestWarehouseSKLearnXGBoostModelInteg(parameterized.TestCase):
                     lambda res: np.testing.assert_allclose(res.values, model.predict_proba(iris_X[:10])),
                 ),
             },
-            model_in_stage=model_in_stage,
             permanent_deploy=permanent_deploy,
             test_released_version=test_released_version,
         )
 
-    @parameterized.parameters(  # type: ignore[misc]
-        {"model_in_stage": True, "permanent_deploy": True, "test_released_version": None},
-        {"model_in_stage": False, "permanent_deploy": False, "test_released_version": None},
-        {"model_in_stage": True, "permanent_deploy": False, "test_released_version": "1.0.3"},
-        {"model_in_stage": False, "permanent_deploy": True, "test_released_version": "1.0.3"},
-    )
+    @parameterized.product(permanent_deploy=[True, False], test_released_version=[None, "1.0.6"])  # type: ignore[misc]
     def test_skl_multiple_output_model_proba_deploy(
         self,
-        model_in_stage: Optional[bool] = False,
         permanent_deploy: Optional[bool] = False,
         test_released_version: Optional[str] = None,
     ) -> None:
@@ -177,20 +155,13 @@ class TestWarehouseSKLearnXGBoostModelInteg(parameterized.TestCase):
                     ),
                 ),
             },
-            model_in_stage=model_in_stage,
             permanent_deploy=permanent_deploy,
             test_released_version=test_released_version,
         )
 
-    @parameterized.parameters(  # type: ignore[misc]
-        {"model_in_stage": True, "permanent_deploy": True, "test_released_version": None},
-        {"model_in_stage": False, "permanent_deploy": False, "test_released_version": None},
-        {"model_in_stage": True, "permanent_deploy": False, "test_released_version": "1.0.3"},
-        {"model_in_stage": False, "permanent_deploy": True, "test_released_version": "1.0.3"},
-    )
+    @parameterized.product(permanent_deploy=[True, False], test_released_version=[None, "1.0.6"])  # type: ignore[misc]
     def test_xgb(
         self,
-        model_in_stage: Optional[bool] = False,
         permanent_deploy: Optional[bool] = False,
         test_released_version: Optional[str] = None,
     ) -> None:
@@ -213,20 +184,13 @@ class TestWarehouseSKLearnXGBoostModelInteg(parameterized.TestCase):
                     ),
                 ),
             },
-            model_in_stage=model_in_stage,
             permanent_deploy=permanent_deploy,
             test_released_version=test_released_version,
         )
 
-    @parameterized.parameters(  # type: ignore[misc]
-        {"model_in_stage": True, "permanent_deploy": True, "test_released_version": None},
-        {"model_in_stage": False, "permanent_deploy": False, "test_released_version": None},
-        {"model_in_stage": True, "permanent_deploy": False, "test_released_version": "1.0.3"},
-        {"model_in_stage": False, "permanent_deploy": True, "test_released_version": "1.0.3"},
-    )
+    @parameterized.product(permanent_deploy=[True, False], test_released_version=[None, "1.0.6"])  # type: ignore[misc]
     def test_xgb_sp(
         self,
-        model_in_stage: Optional[bool] = False,
         permanent_deploy: Optional[bool] = False,
         test_released_version: Optional[str] = None,
     ) -> None:
@@ -237,6 +201,14 @@ class TestWarehouseSKLearnXGBoostModelInteg(parameterized.TestCase):
         cal_data_pd_df_train = cal_data_sp_df_train.to_pandas()
         regressor.fit(cal_data_pd_df_train.drop(columns=["target"]), cal_data_pd_df_train["target"])
         cal_data_sp_df_test_X = cal_data_sp_df_test.drop('"target"')
+
+        y_df_expected = pd.concat(
+            [
+                cal_data_sp_df_test_X.to_pandas(),
+                pd.DataFrame(regressor.predict(cal_data_sp_df_test_X.to_pandas()), columns=["output_feature_0"]),
+            ],
+            axis=1,
+        )
         self.base_test_case(
             name="xgb_model_sp",
             model=regressor,
@@ -245,26 +217,16 @@ class TestWarehouseSKLearnXGBoostModelInteg(parameterized.TestCase):
             deploy_params={
                 "predict": (
                     {},
-                    lambda res: np.testing.assert_allclose(
-                        res.to_pandas().values,
-                        np.expand_dims(regressor.predict(cal_data_sp_df_test_X.to_pandas()), axis=1),
-                    ),
+                    lambda res: warehouse_model_integ_test_utils.check_sp_df_res(res, y_df_expected, check_dtype=False),
                 ),
             },
-            model_in_stage=model_in_stage,
             permanent_deploy=permanent_deploy,
             test_released_version=test_released_version,
         )
 
-    @parameterized.parameters(  # type: ignore[misc]
-        {"model_in_stage": True, "permanent_deploy": True, "test_released_version": None},
-        {"model_in_stage": False, "permanent_deploy": False, "test_released_version": None},
-        {"model_in_stage": True, "permanent_deploy": False, "test_released_version": "1.0.5"},
-        {"model_in_stage": False, "permanent_deploy": True, "test_released_version": "1.0.5"},
-    )
+    @parameterized.product(permanent_deploy=[True, False], test_released_version=[None, "1.0.6"])  # type: ignore[misc]
     def test_xgb_booster(
         self,
-        model_in_stage: Optional[bool] = False,
         permanent_deploy: Optional[bool] = False,
         test_released_version: Optional[str] = None,
     ) -> None:
@@ -283,23 +245,16 @@ class TestWarehouseSKLearnXGBoostModelInteg(parameterized.TestCase):
             deploy_params={
                 "predict": (
                     {},
-                    lambda res: np.testing.assert_allclose(res.values, np.expand_dims(y_pred, axis=1)),
+                    lambda res: np.testing.assert_allclose(res.values, np.expand_dims(y_pred, axis=1), rtol=1e-6),
                 ),
             },
-            model_in_stage=model_in_stage,
             permanent_deploy=permanent_deploy,
             test_released_version=test_released_version,
         )
 
-    @parameterized.parameters(  # type: ignore[misc]
-        {"model_in_stage": True, "permanent_deploy": True, "test_released_version": None},
-        {"model_in_stage": False, "permanent_deploy": False, "test_released_version": None},
-        {"model_in_stage": True, "permanent_deploy": False, "test_released_version": "1.0.5"},
-        {"model_in_stage": False, "permanent_deploy": True, "test_released_version": "1.0.5"},
-    )
+    @parameterized.product(permanent_deploy=[True, False], test_released_version=[None, "1.0.6"])  # type: ignore[misc]
     def test_xgb_booster_sp(
         self,
-        model_in_stage: Optional[bool] = False,
         permanent_deploy: Optional[bool] = False,
         test_released_version: Optional[str] = None,
     ) -> None:
@@ -313,7 +268,16 @@ class TestWarehouseSKLearnXGBoostModelInteg(parameterized.TestCase):
             xgboost.DMatrix(data=cal_data_pd_df_train.drop(columns=["target"]), label=cal_data_pd_df_train["target"]),
         )
         cal_data_sp_df_test_X = cal_data_sp_df_test.drop('"target"')
-        y_pred = regressor.predict(xgboost.DMatrix(data=cal_data_sp_df_test_X.to_pandas()))
+        y_df_expected = pd.concat(
+            [
+                cal_data_sp_df_test_X.to_pandas(),
+                pd.DataFrame(
+                    regressor.predict(xgboost.DMatrix(data=cal_data_sp_df_test_X.to_pandas())),
+                    columns=["output_feature_0"],
+                ),
+            ],
+            axis=1,
+        )
         self.base_test_case(
             name="xgb_booster_sp",
             model=regressor,
@@ -322,13 +286,9 @@ class TestWarehouseSKLearnXGBoostModelInteg(parameterized.TestCase):
             deploy_params={
                 "predict": (
                     {},
-                    lambda res: np.testing.assert_allclose(
-                        res.to_pandas().values,
-                        np.expand_dims(y_pred, axis=1),
-                    ),
+                    lambda res: warehouse_model_integ_test_utils.check_sp_df_res(res, y_df_expected, check_dtype=False),
                 ),
             },
-            model_in_stage=model_in_stage,
             permanent_deploy=permanent_deploy,
             test_released_version=test_released_version,
         )

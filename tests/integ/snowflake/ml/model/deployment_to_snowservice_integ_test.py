@@ -3,12 +3,11 @@
 #
 
 # TODO[shchen], SNOW-889081, re-enable once server-side image build is supported.
-# #
-# # Copyright (c) 2012-2022 Snowflake Computing Inc. All rights reserved.
-# #
+
 # import uuid
 # from unittest import SkipTest
-#
+# from typing import Tuple
+
 # import pandas as pd
 # import pytest
 # import sklearn.base
@@ -16,9 +15,10 @@
 from absl.testing import absltest
 
 # from sklearn import neighbors
-#
+
 # from snowflake.ml.model import (
 #     _model as model_api,
+#     _model_meta,
 #     custom_model,
 #     type_hints as model_types,
 # )
@@ -27,18 +27,18 @@ from absl.testing import absltest
 # from snowflake.ml.utils import connection_params
 # from snowflake.snowpark import Session
 # from tests.integ.snowflake.ml.test_utils import db_manager
-#
+
 # _IRIS = datasets.load_iris(as_frame=True)
 # _IRIS_X = _IRIS.data
 # _IRIS_Y = _IRIS.target
-#
-#
+
+
 # def _get_sklearn_model() -> "sklearn.base.BaseEstimator":
 #     knn_model = neighbors.KNeighborsClassifier()
 #     knn_model.fit(_IRIS_X, _IRIS_Y)
 #     return knn_model
-#
-#
+
+
 # @pytest.mark.pip_incompatible
 # class DeploymentToSnowServiceIntegTest(absltest.TestCase):
 #     _RUN_ID = uuid.uuid4().hex[:2]
@@ -50,14 +50,14 @@ from absl.testing import absltest
 #     TEST_ROLE = "SYSADMIN"
 #     TEST_COMPUTE_POOL = "MODEL_DEPLOYMENT_INTEG_TEST_POOL_STANDARD_2"  # PRE-CREATED
 #     CONNECTION_NAME = "snowservice"  # PRE-CREATED AND STORED IN KEY VAULT
-#
+
 #     @classmethod
 #     def setUpClass(cls) -> None:
 #         try:
 #             login_options = connection_params.SnowflakeLoginOptions(connection_name=cls.CONNECTION_NAME)
 #         except KeyError:
 #             raise SkipTest("SnowService connection parameters not present: skipping SnowServicesIntegTest.")
-#
+
 #         cls._session = Session.builder.configs(
 #             {
 #                 **login_options,
@@ -69,22 +69,24 @@ from absl.testing import absltest
 #         cls._db_manager.create_stage(cls.TEST_STAGE, cls.TEST_SCHEMA, cls.TEST_DB, sse_encrypted=True)
 #         cls._db_manager.create_image_repo(cls.TEST_IMAGE_REPO)
 #         cls._db_manager.cleanup_databases(expire_hours=6)
-#
+
 #     @classmethod
 #     def tearDownClass(cls) -> None:
 #         cls._db_manager.drop_image_repo(cls.TEST_IMAGE_REPO)
 #         # Dropping the db/schema will implicitly terminate the service function and snowservice as well.
 #         cls._db_manager.drop_database(cls.TEST_DB)
 #         cls._session.close()
-#
+
 #     def setUp(self) -> None:
 #         # Set up a unique id for each artifact, in addition to the class-level prefix. This is particularly useful
-#         when differentiating artifacts generated between different test cases, such as service function names.
+#         # when differentiating artifacts generated between different test cases, such as service function names.
 #         self.uid = uuid.uuid4().hex[:4]
-#
-#     def _save_model_to_stage(self, model: custom_model.CustomModel, sample_input: pd.DataFrame) -> str:
+
+#     def _save_model_to_stage(
+#         self, model: custom_model.CustomModel, sample_input: pd.DataFrame
+#     ) -> Tuple[str, _model_meta.ModelMetadata]:
 #         stage_path = f"@{self.TEST_STAGE}/{self.uid}/model.zip"
-#         model_api.save_model(  # type: ignore[call-overload]
+#         meta = model_api.save_model(  # type: ignore[call-overload]
 #             name="model",
 #             session=self._session,
 #             model_stage_file_path=stage_path,
@@ -92,10 +94,10 @@ from absl.testing import absltest
 #             sample_input=sample_input,
 #             options={"embed_local_ml_library": True},
 #         )
-#         return stage_path
-#
+#         return stage_path, meta
+
 #     def test_deployment_workflow(self) -> None:
-#         model_stage_file_path = self._save_model_to_stage(model=_get_sklearn_model(), sample_input=_IRIS_X)
+#         model_stage_file_path, meta = self._save_model_to_stage(model=_get_sklearn_model(), sample_input=_IRIS_X)
 #         service_func_name = db_manager.TestObjectNameGenerator.get_snowml_test_object_name(
 #             self._RUN_ID, f"func_{self.uid}"
 #         )
@@ -109,13 +111,14 @@ from absl.testing import absltest
 #         snowservice_api._deploy(
 #             self._session,
 #             model_id=uuid.uuid4().hex,
+#             model_meta=meta,
 #             service_func_name=service_func_name,
 #             model_zip_stage_path=model_stage_file_path,
 #             deployment_stage_path=model_stage_file_path,  # use the same stage for testing
 #             target_method="predict",
 #             **deployment_options,
 #         )
-#
-#
+
+
 if __name__ == "__main__":
     absltest.main()

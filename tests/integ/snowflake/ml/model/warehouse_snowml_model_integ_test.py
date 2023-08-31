@@ -21,6 +21,7 @@ from tests.integ.snowflake.ml.model import warehouse_model_integ_test_utils
 from tests.integ.snowflake.ml.test_utils import db_manager
 
 
+@pytest.mark.pip_incompatible
 class TestWarehouseSnowMLModelInteg(parameterized.TestCase):
     @classmethod
     def setUpClass(self) -> None:
@@ -60,7 +61,6 @@ class TestWarehouseSnowMLModelInteg(parameterized.TestCase):
         sample_input: model_types.SupportedDataType,
         test_input: model_types.SupportedDataType,
         deploy_params: Dict[str, Tuple[Dict[str, Any], Callable[[Union[pd.DataFrame, SnowparkDataFrame]], Any]]],
-        model_in_stage: Optional[bool] = False,
         permanent_deploy: Optional[bool] = False,
         test_released_version: Optional[str] = None,
     ) -> None:
@@ -73,21 +73,13 @@ class TestWarehouseSnowMLModelInteg(parameterized.TestCase):
             sample_input=sample_input,
             test_input=test_input,
             deploy_params=deploy_params,
-            model_in_stage=model_in_stage,
             permanent_deploy=permanent_deploy,
             test_released_version=test_released_version,
         )
 
-    @pytest.mark.pip_incompatible
-    @parameterized.parameters(  # type: ignore[misc]
-        {"model_in_stage": True, "permanent_deploy": True, "test_released_version": None},
-        {"model_in_stage": False, "permanent_deploy": False, "test_released_version": None},
-        {"model_in_stage": True, "permanent_deploy": False, "test_released_version": "1.0.5"},
-        {"model_in_stage": False, "permanent_deploy": True, "test_released_version": "1.0.5"},
-    )
+    @parameterized.product(permanent_deploy=[True, False], test_released_version=[None, "1.0.5"])  # type: ignore[misc]
     def test_snowml_model_deploy_snowml_sklearn(
         self,
-        model_in_stage: Optional[bool] = False,
         permanent_deploy: Optional[bool] = False,
         test_released_version: Optional[str] = None,
     ) -> None:
@@ -114,21 +106,13 @@ class TestWarehouseSnowMLModelInteg(parameterized.TestCase):
                     ),
                 ),
             },
-            model_in_stage=model_in_stage,
             permanent_deploy=permanent_deploy,
             test_released_version=test_released_version,
         )
 
-    @pytest.mark.pip_incompatible
-    @parameterized.parameters(  # type: ignore[misc]
-        {"model_in_stage": True, "permanent_deploy": True, "test_released_version": None},
-        {"model_in_stage": False, "permanent_deploy": False, "test_released_version": None},
-        {"model_in_stage": True, "permanent_deploy": False, "test_released_version": "1.0.5"},
-        {"model_in_stage": False, "permanent_deploy": True, "test_released_version": "1.0.5"},
-    )
+    @parameterized.product(permanent_deploy=[True, False], test_released_version=[None, "1.0.5"])  # type: ignore[misc]
     def test_snowml_model_deploy_xgboost(
         self,
-        model_in_stage: Optional[bool] = False,
         permanent_deploy: Optional[bool] = False,
         test_released_version: Optional[str] = None,
     ) -> None:
@@ -155,21 +139,13 @@ class TestWarehouseSnowMLModelInteg(parameterized.TestCase):
                     ),
                 ),
             },
-            model_in_stage=model_in_stage,
             permanent_deploy=permanent_deploy,
             test_released_version=test_released_version,
         )
 
-    @pytest.mark.pip_incompatible
-    @parameterized.parameters(  # type: ignore[misc]
-        {"model_in_stage": True, "permanent_deploy": True, "test_released_version": None},
-        {"model_in_stage": False, "permanent_deploy": False, "test_released_version": None},
-        {"model_in_stage": True, "permanent_deploy": False, "test_released_version": "1.0.5"},
-        {"model_in_stage": False, "permanent_deploy": True, "test_released_version": "1.0.5"},
-    )
+    @parameterized.product(permanent_deploy=[True, False], test_released_version=[None, "1.0.5"])  # type: ignore[misc]
     def test_snowml_model_deploy_lightgbm(
         self,
-        model_in_stage: Optional[bool] = False,
         permanent_deploy: Optional[bool] = False,
         test_released_version: Optional[str] = None,
     ) -> None:
@@ -196,7 +172,6 @@ class TestWarehouseSnowMLModelInteg(parameterized.TestCase):
                     ),
                 ),
             },
-            model_in_stage=model_in_stage,
             permanent_deploy=permanent_deploy,
             test_released_version=test_released_version,
         )

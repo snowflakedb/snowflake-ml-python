@@ -1,6 +1,8 @@
+import http
 import os
 from typing import Tuple
 
+import main
 import pandas as pd
 import sklearn.datasets as datasets
 import sklearn.neighbors as neighbors
@@ -22,9 +24,7 @@ class MainTest(absltest.TestCase):
 
     def setUp(self) -> None:
         super().setUp()
-        from main import app
-
-        self.client = testclient.TestClient(app)
+        self.client = testclient.TestClient(main.app)
         self.loaded_sklearn_model, self.loaded_sklearn_meta = self.get_custom_sklearn_model()
 
     def get_custom_sklearn_model(self) -> Tuple[custom_model.CustomModel, _model_meta.ModelMetadata]:
@@ -45,19 +45,32 @@ class MainTest(absltest.TestCase):
         model = TestCustomModel(custom_model.ModelContext())
         tmpdir = self.create_tempdir()
         model_name = "model_name"
-        model_api.save_model(
+        model_api._save(
             name=model_name,
-            model_dir_path=os.path.join(tmpdir.full_path, model_name),
+            local_dir_path=os.path.join(tmpdir.full_path, model_name),
             model=model,
             sample_input=x,
             metadata={"author": "halu", "version": "1"},
         )
-        return model_api._load_model_for_deploy(model_dir_path=os.path.join(tmpdir, model_name))
+        return model_api._load(local_dir_path=os.path.join(tmpdir, model_name), as_custom_model=True)
 
-    def test_ready_endpoint(self) -> None:
-        response = self.client.get("/health")
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json(), {"status": "ready"})
+    def test_ready_endpoint_after_model_successfully_loaded(self) -> None:
+        with mock.patch("main._MODEL_LOADING_STATE", main._ModelLoadingState.SUCCEEDED):
+            response = self.client.get("/health")
+            self.assertEqual(response.status_code, http.HTTPStatus.OK)
+            self.assertEqual(response.json(), {"status": "ready"})
+
+    def test_ready_endpoint_during_model_loading(self) -> None:
+        with mock.patch("main._MODEL_LOADING_STATE", main._ModelLoadingState.LOADING):
+            response = self.client.get("/health")
+            self.assertEqual(response.status_code, http.HTTPStatus.SERVICE_UNAVAILABLE)
+            self.assertEqual(response.json(), {"status": "not ready"})
+
+    def test_ready_endpoint_after_model_loading_failed(self) -> None:
+        with mock.patch("main._MODEL_LOADING_STATE", main._ModelLoadingState.FAILED):
+            response = self.client.get("/health")
+            self.assertEqual(response.status_code, http.HTTPStatus.SERVICE_UNAVAILABLE)
+            self.assertEqual(response.json(), {"status": "not ready"})
 
     def test_predict_endpoint_happy_path(self) -> None:
         loaded_model, loaded_meta = self.get_custom_sklearn_model()
@@ -88,11 +101,11 @@ class MainTest(absltest.TestCase):
             ]
         }
 
-        with mock.patch.dict(os.environ, {"TARGET_METHOD": "predict"}, clear=True), mock.patch(
-            "main._LOADED_MODEL", loaded_model
-        ), mock.patch("main._LOADED_META", loaded_meta):
+        with mock.patch("main.TARGET_METHOD", "predict"), mock.patch("main._LOADED_MODEL", loaded_model), mock.patch(
+            "main._LOADED_META", loaded_meta
+        ):
             response = self.client.post("/predict", json=data)
-            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.status_code, http.HTTPStatus.OK)
             expected_response = {
                 "data": [[0, {"output_feature_0": 1, "_ID": 0}], [1, {"output_feature_0": 2, "_ID": 1}]]
             }
@@ -100,20 +113,20 @@ class MainTest(absltest.TestCase):
 
     def test_predict_endpoint_with_invalid_input(self) -> None:
         loaded_model, loaded_meta = self.get_custom_sklearn_model()
-        with mock.patch.dict(os.environ, {"TARGET_METHOD": "predict"}, clear=True), mock.patch(
-            "main._LOADED_MODEL", loaded_model
-        ), mock.patch("main._LOADED_META", loaded_meta):
+        with mock.patch("main.TARGET_METHOD", "predict"), mock.patch("main._LOADED_MODEL", loaded_model), mock.patch(
+            "main._LOADED_META", loaded_meta
+        ):
             response = self.client.post("/predict", json={})
-            self.assertEqual(response.status_code, 400)
+            self.assertEqual(response.status_code, http.HTTPStatus.BAD_REQUEST)
             self.assertRegex(response.text, "Input data malformed: missing data field in the request input")
 
             response = self.client.post("/predict", json={"data": []})
-            self.assertEqual(response.status_code, 400)
+            self.assertEqual(response.status_code, http.HTTPStatus.BAD_REQUEST)
             self.assertRegex(response.text, "Input data malformed")
 
             # Input data with indexes only.
             response = self.client.post("/predict", json={"data": [[0], [1]]})
-            self.assertEqual(response.status_code, 400)
+            self.assertEqual(response.status_code, http.HTTPStatus.BAD_REQUEST)
             self.assertRegex(response.text, "Input data malformed")
 
             response = self.client.post(
@@ -125,7 +138,7 @@ class MainTest(absltest.TestCase):
                     ]
                 },
             )
-            self.assertEqual(response.status_code, 400)
+            self.assertEqual(response.status_code, http.HTTPStatus.BAD_REQUEST)
             self.assertRegex(response.text, "Input data malformed: missing data field in the request input")
 
     #
@@ -155,11 +168,11 @@ class MainTest(absltest.TestCase):
             ]
         }
 
-        with mock.patch.dict(os.environ, {"TARGET_METHOD": "predict"}, clear=True), mock.patch(
-            "main._LOADED_MODEL", loaded_model
-        ), mock.patch("main._LOADED_META", loaded_meta):
+        with mock.patch("main.TARGET_METHOD", "predict"), mock.patch("main._LOADED_MODEL", loaded_model), mock.patch(
+            "main._LOADED_META", loaded_meta
+        ):
             response = self.client.post("/predict", json=data)
-            self.assertEqual(response.status_code, 400)
+            self.assertEqual(response.status_code, http.HTTPStatus.BAD_REQUEST)
             self.assertRegex(response.text, r"Input data malformed: .*dtype mappings argument.*")
 
     def test_predict_with_incorrect_data_type(self) -> None:
@@ -179,11 +192,11 @@ class MainTest(absltest.TestCase):
             ]
         }
 
-        with mock.patch.dict(os.environ, {"TARGET_METHOD": "predict"}, clear=True), mock.patch(
-            "main._LOADED_MODEL", loaded_model
-        ), mock.patch("main._LOADED_META", loaded_meta):
+        with mock.patch("main.TARGET_METHOD", "predict"), mock.patch("main._LOADED_MODEL", loaded_model), mock.patch(
+            "main._LOADED_META", loaded_meta
+        ):
             response = self.client.post("/predict", json=data)
-            self.assertEqual(response.status_code, 400)
+            self.assertEqual(response.status_code, http.HTTPStatus.BAD_REQUEST)
             self.assertRegex(response.text, "Input data malformed: could not convert string to float")
 
 

@@ -1,3 +1,4 @@
+from collections import abc
 from typing import Literal, Sequence
 
 import pandas as pd
@@ -14,11 +15,19 @@ from snowflake.ml.model._signatures import base_handler, core, pandas_handler
 class ListOfBuiltinHandler(base_handler.BaseDataHandler[model_types._SupportedBuiltinsList]):
     @staticmethod
     def can_handle(data: model_types.SupportedDataType) -> TypeGuard[model_types._SupportedBuiltinsList]:
-        return (
-            isinstance(data, list)
-            and len(data) > 0
-            and all(isinstance(data_col, (int, float, bool, str, bytes, list)) for data_col in data)
-        )
+        if not isinstance(data, abc.Sequence) or isinstance(data, str):
+            return False
+        if len(data) == 0:
+            return False
+        can_handle = True
+        for element in data:
+            # String is a Sequence but we take them as an whole
+            if isinstance(element, abc.Sequence) and not isinstance(element, str):
+                can_handle = ListOfBuiltinHandler.can_handle(element)
+            elif not isinstance(element, (int, float, bool, str)):
+                can_handle = False
+                break
+        return can_handle
 
     @staticmethod
     def count(data: model_types._SupportedBuiltinsList) -> int:

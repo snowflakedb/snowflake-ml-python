@@ -21,7 +21,11 @@ from snowflake.ml._internal.utils import identifier
 from snowflake.ml.model import model_signature
 from snowflake.ml.modeling.framework import _utils, base
 from snowflake.snowpark import functions as F, types as T
-from snowflake.snowpark._internal import utils as snowpark_utils
+from snowflake.snowpark._internal.utils import (
+    TempObjectType,
+    generate_random_alphanumeric,
+    random_name_for_temp_object,
+)
 
 _INFREQUENT_CATEGORY = "_INFREQUENT"
 _COLUMN_NAME = "_COLUMN_NAME"
@@ -864,9 +868,11 @@ class OneHotEncoder(base.BaseTransformer):
             Output dataset in the sparse representation.
         """
         encoder_sklearn = self.to_sklearn()
+        udf_name = random_name_for_temp_object(TempObjectType.FUNCTION)
 
         @F.pandas_udf(  # type: ignore
             is_permanent=False,
+            name=udf_name,
             replace=True,
             return_type=T.PandasSeriesType(T.ArrayType(T.MapType(T.FloatType(), T.FloatType()))),
             input_types=[T.PandasDataFrameType([T.StringType() for _ in range(len(self.input_cols))])],
@@ -897,7 +903,7 @@ class OneHotEncoder(base.BaseTransformer):
             return transformed_vals
 
         # encoded column returned by `one_hot_encoder_sparse_transform`
-        encoded_output_col = f"'ENCODED_OUTPUT_{snowpark_utils.generate_random_alphanumeric()}'"
+        encoded_output_col = f"'ENCODED_OUTPUT_{generate_random_alphanumeric()}'"
         encoded_column = one_hot_encoder_sparse_transform(self.input_cols)  # type: ignore
         encoded_dataset = dataset.with_column(encoded_output_col, encoded_column)
 

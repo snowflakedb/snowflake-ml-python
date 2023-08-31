@@ -2,6 +2,7 @@
 # Copyright (c) 2012-2022 Snowflake Computing Inc. All rights reserved.
 #
 from typing import Any, Dict
+from unittest import mock
 
 import numpy as np
 import pandas as pd
@@ -154,6 +155,22 @@ class MeanSquaredErrorTest(parameterized.TestCase):
         sklearn_loss = sklearn_metrics.mean_squared_error(
             pandas_df[_MULTILABEL_Y_TRUE_COLS],
             pandas_df[_MULTILABEL_Y_PRED_COLS],
+        )
+        self.assertAlmostEqual(sklearn_loss, actual_loss)
+
+    @mock.patch("snowflake.ml.modeling.metrics.regression.result._RESULT_SIZE_THRESHOLD", 0)
+    def test_metric_size_threshold(self) -> None:
+        pandas_df = pd.DataFrame(_BINARY_DATA, columns=_SCHEMA)
+        input_df = self._session.create_dataframe(pandas_df)
+
+        actual_loss = snowml_metrics.mean_squared_error(
+            df=input_df,
+            y_true_col_names=_Y_TRUE_COL,
+            y_pred_col_names=_Y_PRED_COL,
+        )
+        sklearn_loss = sklearn_metrics.mean_squared_error(
+            pandas_df[_Y_TRUE_COL],
+            pandas_df[_Y_PRED_COL],
         )
         self.assertAlmostEqual(sklearn_loss, actual_loss)
 

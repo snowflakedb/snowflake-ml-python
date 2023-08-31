@@ -80,7 +80,11 @@ class _TorchScriptHandler(_base._ModelHandler["torch.jit.ScriptModule"]):  # typ
                 target_method = getattr(model, target_method_name, None)
                 assert callable(target_method)
                 with torch.no_grad():
-                    predictions_df = target_method(sample_input)
+                    predictions_df = target_method(*sample_input)
+
+                if isinstance(predictions_df, torch.Tensor):
+                    predictions_df = [predictions_df]
+
                 return predictions_df
 
             model_meta = model_meta_api._validate_signature(
@@ -101,9 +105,14 @@ class _TorchScriptHandler(_base._ModelHandler["torch.jit.ScriptModule"]):  # typ
         model_meta.models[name] = base_meta
         model_meta._include_if_absent([model_meta_api.Dependency(conda_name="pytorch", pip_name="torch")])
 
+        model_meta.cuda_version = kwargs.get("cuda_version", model_meta_api._DEFAULT_CUDA_VERSION)
+
     @staticmethod
     def _load_model(
-        name: str, model_meta: model_meta_api.ModelMetadata, model_blobs_dir_path: str
+        name: str,
+        model_meta: model_meta_api.ModelMetadata,
+        model_blobs_dir_path: str,
+        **kwargs: Unpack[model_types.ModelLoadOption],
     ) -> "torch.jit.ScriptModule":  # type:ignore[name-defined]
         import torch
 
@@ -118,11 +127,18 @@ class _TorchScriptHandler(_base._ModelHandler["torch.jit.ScriptModule"]):  # typ
         with open(os.path.join(model_blob_path, model_blob_filename), "rb") as f:
             m = torch.jit.load(f)  # type:ignore[attr-defined]
         assert isinstance(m, torch.jit.ScriptModule)  # type:ignore[attr-defined]
+
+        if kwargs.get("use_gpu", False):
+            m = m.cuda()
+
         return m
 
     @staticmethod
     def _load_as_custom_model(
-        name: str, model_meta: model_meta_api.ModelMetadata, model_blobs_dir_path: str
+        name: str,
+        model_meta: model_meta_api.ModelMetadata,
+        model_blobs_dir_path: str,
+        **kwargs: Unpack[model_types.ModelLoadOption],
     ) -> custom_model.CustomModel:
         """Create a custom model class wrap for unified interface when being deployed. The predict method will be
         re-targeted based on target_method metadata.
@@ -131,6 +147,7 @@ class _TorchScriptHandler(_base._ModelHandler["torch.jit.ScriptModule"]):  # typ
             name: Name of the model.
             model_meta: The model metadata.
             model_blobs_dir_path: Directory path to the whole model.
+            kwargs: Options when loading the model.
 
         Returns:
             The model object as a custom model.
@@ -157,8 +174,15 @@ class _TorchScriptHandler(_base._ModelHandler["torch.jit.ScriptModule"]):  # typ
 
                     t = pytorch_handler.SeqOfPyTorchTensorHandler.convert_from_df(X, signature.inputs)
 
+                    if kwargs.get("use_gpu", False):
+                        t = [element.cuda() for element in t]
+
                     with torch.no_grad():
-                        res = getattr(raw_model, target_method)(t)
+                        res = getattr(raw_model, target_method)(*t)
+
+                    if isinstance(res, torch.Tensor):
+                        res = [res]
+
                     return model_signature_utils.rename_pandas_df(
                         data=pytorch_handler.SeqOfPyTorchTensorHandler.convert_to_df(res), features=signature.outputs
                     )
@@ -177,7 +201,7 @@ class _TorchScriptHandler(_base._ModelHandler["torch.jit.ScriptModule"]):  # typ
 
             return _TorchScriptModel
 
-        raw_model = _TorchScriptHandler._load_model(name, model_meta, model_blobs_dir_path)
+        raw_model = _TorchScriptHandler._load_model(name, model_meta, model_blobs_dir_path, **kwargs)
         _TorchScriptModel = _create_custom_model(raw_model, model_meta)
         torchscript_model = _TorchScriptModel(custom_model.ModelContext())
 

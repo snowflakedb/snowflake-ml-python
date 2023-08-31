@@ -1,13 +1,13 @@
 #
 # Copyright (c) 2012-2022 Snowflake Computing Inc. All rights reserved.
 #
-
+import json
 import uuid
 from typing import Optional
 
 from absl.testing import absltest, parameterized
 
-from snowflake.ml.registry import _schema, model_registry
+from snowflake.ml.registry import _ml_artifact, _schema, model_registry
 from snowflake.ml.utils import connection_params
 from snowflake.snowpark import Session
 from tests.integ.snowflake.ml.test_utils import db_manager
@@ -178,11 +178,102 @@ class TestModelRegistryBasicInteg(parameterized.TestCase):
             self._db_manager.drop_database(broken_registry)
             raise Exception(f"Test failed with exception:{e}")
 
-        _schema._REGISTRY_TABLE_SCHEMA["new_column"] = "VARCHAR"
-        with self.assertRaisesRegex(TypeError, "Registry table:.* doesn't have required column:.*"):
-            model_registry.ModelRegistry(session=self._session, database_name=broken_registry)
+        try:
+            _schema._REGISTRY_TABLE_SCHEMA.append(("new_column", "VARCHAR"))
+            with self.assertRaisesRegex(TypeError, "Registry table:.* doesn't have required column:.*"):
+                model_registry.ModelRegistry(session=self._session, database_name=broken_registry)
+        finally:
+            _schema._REGISTRY_TABLE_SCHEMA.pop()
+            self._db_manager.drop_database(broken_registry)
 
-        _schema._REGISTRY_TABLE_SCHEMA.pop("new_column")
+    def test_add_and_delete_ml_artifacts(self) -> None:
+        """Test add_artifact() and delete_artifact() in `_ml_artifact.py` works as expected."""
+
+        artifact_registry = db_manager.TestObjectNameGenerator.get_snowml_test_object_name(
+            _RUN_ID, "artifact_registry"
+        ).upper()
+        artifact_registry_schema = "PUBLIC"
+
+        try:
+            model_registry.create_model_registry(
+                session=self._session, database_name=artifact_registry, schema_name=artifact_registry_schema
+            )
+        except Exception as e:
+            self._db_manager.drop_database(artifact_registry)
+            raise Exception(f"Test failed with exception:{e}")
+
+        artifact_id = "123"
+        artifact_type = _ml_artifact.ArtifactType.TESTTYPE
+        artifact_name = "test_artifact"
+        artifact_version = "test_artifact_version"
+        artifact_spec = {"test_property": "test_value"}
+
+        try:
+            self.assertTrue(
+                _ml_artifact.if_artifact_table_exists(self._session, artifact_registry, artifact_registry_schema)
+            )
+
+            # Validate `add_artifact()` can insert entry into the artifact table
+            self.assertFalse(
+                _ml_artifact.if_artifact_exists(
+                    self._session,
+                    artifact_registry,
+                    artifact_registry_schema,
+                    artifact_id=artifact_id,
+                    artifact_type=artifact_type,
+                )
+            )
+            _ml_artifact.add_artifact(
+                self._session,
+                artifact_registry,
+                artifact_registry_schema,
+                artifact_id=artifact_id,
+                artifact_type=artifact_type,
+                artifact_name=artifact_name,
+                artifact_version=artifact_version,
+                artifact_spec=artifact_spec,
+            )
+            self.assertTrue(
+                _ml_artifact.if_artifact_exists(
+                    self._session,
+                    artifact_registry,
+                    artifact_registry_schema,
+                    artifact_id=artifact_id,
+                    artifact_type=artifact_type,
+                )
+            )
+
+            # Validate the artifact_spec can be parsed as expected
+            artifact_df = _ml_artifact._get_artifact(
+                self._session,
+                artifact_registry,
+                artifact_registry_schema,
+                artifact_id=artifact_id,
+                artifact_type=artifact_type,
+            )
+            actual_artifact_spec_str = artifact_df.collect()[0]["ARTIFACT_SPEC"]
+            actual_artifact_spec_dict = json.loads(actual_artifact_spec_str)
+            self.assertDictEqual(artifact_spec, actual_artifact_spec_dict)
+
+            # Validate that `delete_artifact` can remove entries from the artifact table.
+            _ml_artifact.delete_artifact(
+                self._session,
+                artifact_registry,
+                artifact_registry_schema,
+                artifact_id=artifact_id,
+                artifact_type=artifact_type,
+            )
+            self.assertFalse(
+                _ml_artifact.if_artifact_exists(
+                    self._session,
+                    artifact_registry,
+                    artifact_registry_schema,
+                    artifact_id=artifact_id,
+                    artifact_type=artifact_type,
+                )
+            )
+        finally:
+            self._db_manager.drop_database(artifact_registry, if_exists=True)
 
 
 if __name__ == "__main__":

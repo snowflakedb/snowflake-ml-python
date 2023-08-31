@@ -1,3 +1,4 @@
+from collections import abc
 from typing import List, Literal, Sequence
 
 import numpy as np
@@ -80,7 +81,7 @@ class NumpyArrayHandler(base_handler.BaseDataHandler[model_types._SupportedNumpy
 class SeqOfNumpyArrayHandler(base_handler.BaseDataHandler[Sequence[model_types._SupportedNumpyArray]]):
     @staticmethod
     def can_handle(data: model_types.SupportedDataType) -> TypeGuard[Sequence[model_types._SupportedNumpyArray]]:
-        if not isinstance(data, list):
+        if not isinstance(data, abc.Sequence):
             return False
         if len(data) == 0:
             return False

@@ -71,6 +71,35 @@ class SnowServiceClientTest(absltest.TestCase):
             path_at_service_endpoint=m_path_at_endpoint,
         )
 
+    def test_create_service_function_max_batch_rows(self) -> None:
+        m_service_func_name = "mock_service_func_name"
+        m_service_name = "mock_service_name"
+        m_endpoint_name = "mock_endpoint_name"
+        m_path_at_endpoint = "mock_route"
+        m_max_batch_rows = 1
+
+        m_sql = f"""
+        CREATE OR REPLACE FUNCTION {m_service_func_name}(input OBJECT)
+            RETURNS OBJECT
+            SERVICE={m_service_name}
+            ENDPOINT={m_endpoint_name}
+            MAX_BATCH_ROWS={m_max_batch_rows}
+            AS '/{m_path_at_endpoint}'
+        """
+
+        self.m_session.add_mock_sql(
+            query=m_sql,
+            result=mock_data_frame.MockDataFrame(collect_result=[]),
+        )
+
+        self.client.create_or_replace_service_function(
+            service_func_name=m_service_func_name,
+            service_name=m_service_name,
+            endpoint_name=m_endpoint_name,
+            path_at_service_endpoint=m_path_at_endpoint,
+            max_batch_rows=m_max_batch_rows,
+        )
+
     def test_get_service_status(self) -> None:
         row = snowpark.Row(
             **{

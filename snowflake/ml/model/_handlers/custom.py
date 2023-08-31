@@ -116,9 +116,17 @@ class _CustomModelHandler(_base._ModelHandler["custom_model.CustomModel"]):
             },
         )
 
+        # For Custom we set only when user set it.
+        cuda_version = kwargs.get("cuda_version", None)
+        if cuda_version:
+            model_meta.cuda_version = cuda_version
+
     @staticmethod
     def _load_model(
-        name: str, model_meta: model_meta_api.ModelMetadata, model_blobs_dir_path: str
+        name: str,
+        model_meta: model_meta_api.ModelMetadata,
+        model_blobs_dir_path: str,
+        **kwargs: Unpack[model_types.ModelLoadOption],
     ) -> "custom_model.CustomModel":
         from snowflake.ml.model import custom_model
 

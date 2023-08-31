@@ -8,6 +8,25 @@ from snowflake.ml.test_utils import exception_utils
 
 
 class SeqOfTensorflowTensorHandlerTest(absltest.TestCase):
+    def test_can_handle_list_tf_tensor(self) -> None:
+        lt1 = [tf.constant([1, 2]), tf.constant([1, 2])]
+        self.assertTrue(tensorflow_handler.SeqOfTensorflowTensorHandler.can_handle(lt1))
+
+        lt2 = (tf.constant([1, 2]), tf.Variable([1, 2]))
+        self.assertTrue(tensorflow_handler.SeqOfTensorflowTensorHandler.can_handle(lt2))
+
+        lt3 = (tf.constant([1, 2]), 3)
+        self.assertFalse(tensorflow_handler.SeqOfTensorflowTensorHandler.can_handle(lt3))
+
+        lt4 = ({"a": tf.constant([1, 2])}, 3)
+        self.assertFalse(tensorflow_handler.SeqOfTensorflowTensorHandler.can_handle(lt4))
+
+        lt5 = [tf.constant([1, 2]), 3]
+        self.assertFalse(tensorflow_handler.SeqOfTensorflowTensorHandler.can_handle(lt5))
+
+        lt6 = [np.array([1, 2, 3, 4]), tf.constant([1, 2])]
+        self.assertFalse(tensorflow_handler.SeqOfTensorflowTensorHandler.can_handle(lt6))
+
     def test_validate_list_of_tf_tensor(self) -> None:
         lt1 = [np.array([1, 4]), np.array([2, 3])]
         self.assertFalse(tensorflow_handler.SeqOfTensorflowTensorHandler.can_handle(lt1))

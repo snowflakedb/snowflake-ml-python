@@ -410,10 +410,6 @@ class BaseEstimator(Base):
             )
         return dataset[self.input_cols]
 
-    @telemetry.send_api_usage_telemetry(
-        project=PROJECT,
-        subproject=SUBPROJECT,
-    )
     def _compute(
         self, dataset: snowpark.DataFrame, cols: List[str], states: List[str]
     ) -> Dict[str, Dict[str, Union[int, float, str]]]:

@@ -8,6 +8,25 @@ from snowflake.ml.test_utils import exception_utils
 
 
 class SeqOfPyTorchTensorHandlerTest(absltest.TestCase):
+    def test_can_handle_list_pytorch_tensor(self) -> None:
+        lt1 = [torch.Tensor([1, 2]), torch.Tensor([1, 2])]
+        self.assertTrue(pytorch_handler.SeqOfPyTorchTensorHandler.can_handle(lt1))
+
+        lt2 = (torch.Tensor([1, 2]), torch.Tensor([1, 2]))
+        self.assertTrue(pytorch_handler.SeqOfPyTorchTensorHandler.can_handle(lt2))
+
+        lt3 = (torch.Tensor([1, 2]), 3)
+        self.assertFalse(pytorch_handler.SeqOfPyTorchTensorHandler.can_handle(lt3))
+
+        lt4 = ({"a": torch.Tensor([1, 2])}, 3)
+        self.assertFalse(pytorch_handler.SeqOfPyTorchTensorHandler.can_handle(lt4))
+
+        lt5 = [torch.Tensor([1, 2]), 3]
+        self.assertFalse(pytorch_handler.SeqOfPyTorchTensorHandler.can_handle(lt5))
+
+        lt6 = [np.array([1, 2, 3, 4]), torch.Tensor([1, 2])]
+        self.assertFalse(pytorch_handler.SeqOfPyTorchTensorHandler.can_handle(lt6))
+
     def test_validate_list_of_pytorch_tensor(self) -> None:
         lt1 = [np.array([1, 4]), np.array([2, 3])]
         self.assertFalse(pytorch_handler.SeqOfPyTorchTensorHandler.can_handle(lt1))

@@ -14,18 +14,24 @@ py_library(
     name = "deploy",
     srcs = ["deploy.py"],
     deps = [
-        "//snowflake/ml/model:_model",
         "//snowflake/ml/model:_model_meta",
         "//snowflake/ml/model:type_hints",
         "//snowflake/ml/model/_deploy_client/image_builds:base_image_builder",
         "//snowflake/ml/model/_deploy_client/image_builds:client_image_builder",
-        ":deploy_options",
+        "//snowflake/ml/model/_deploy_client/image_builds:server_image_builder",
         "//snowflake/ml/model/_deploy_client/utils:snowservice_client",
-        "//snowflake/ml/_internal:file_utils"
+        "//snowflake/ml/_internal/utils:identifier",
+        ":deploy_options",
+        ":instance_types"
     ],
     data = [
         "templates/service_spec_template"
     ]
+)
+
+py_library(
+    name = "instance_types",
+    srcs = ["instance_types.py"]
 )
 
 py_test(

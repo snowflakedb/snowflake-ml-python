@@ -47,6 +47,7 @@ py_library(
     deps = [
         ":init",
         ":metrics_utils",
+        "//snowflake/ml/_internal/utils:result",
         "//snowflake/ml/_internal:telemetry",
     ],
 )
@@ -59,6 +60,7 @@ py_library(
     deps = [
         ":init",
         ":metrics_utils",
+        "//snowflake/ml/_internal/utils:result",
         "//snowflake/ml/_internal:telemetry",
     ],
 )
@@ -100,6 +102,7 @@ py_library(
     ],
     deps = [
         "//snowflake/ml/_internal:init_utils",
+        "//snowflake/ml/_internal/utils:result",
     ],
 )
 

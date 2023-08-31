@@ -2,7 +2,7 @@
 from typing import TYPE_CHECKING, Sequence, TypedDict, TypeVar, Union
 
 import numpy.typing as npt
-from typing_extensions import NotRequired, TypeAlias
+from typing_extensions import NotRequired
 
 if TYPE_CHECKING:
     import mlflow
@@ -12,9 +12,11 @@ if TYPE_CHECKING:
     import sklearn.pipeline
     import tensorflow
     import torch
+    import transformers
     import xgboost
 
     import snowflake.ml.model.custom_model
+    import snowflake.ml.model.models.huggingface_pipeline
     import snowflake.snowpark
     from snowflake.ml.modeling.framework import base  # noqa: F401
 
@@ -60,7 +62,12 @@ SupportedRequireSignatureModelType = Union[
     "tensorflow.Module",
 ]
 
-SupportedNoSignatureRequirementsModelType: TypeAlias = Union["base.BaseEstimator", "mlflow.pyfunc.PyFuncModel"]
+SupportedNoSignatureRequirementsModelType = Union[
+    "base.BaseEstimator",
+    "mlflow.pyfunc.PyFuncModel",
+    "transformers.Pipeline",
+    "snowflake.ml.model.models.huggingface_pipeline.HuggingFacePipelineModel",
+]
 
 SupportedModelType = Union[
     SupportedRequireSignatureModelType,
@@ -80,6 +87,9 @@ Here is all acceptable types of Snowflake native model packaging and its handler
 | torch.nn.Module      | pytroch.py   | _PyTorchHandler    |
 | torch.jit.ScriptModule      | torchscript.py   | _TorchScriptHandler    |
 | tensorflow.Module     | tensorflow.py   | _TensorFlowHandler    |
+| mlflow.pyfunc.PyFuncModel | mlflow.py   | _MLFlowHandler |
+| transformers.Pipeline | huggingface_pipeline.py | _HuggingFacePipelineHandler |
+| huggingface_pipeline.HuggingFacePipelineModel | huggingface_pipeline.py | _HuggingFacePipelineHandler |
 """
 
 
@@ -87,16 +97,9 @@ _ModelType = TypeVar("_ModelType", bound=SupportedModelType)
 
 
 class DeployOptions(TypedDict):
-    """Common Options for deploying to Snowflake.
+    """Common Options for deploying to Snowflake."""
 
-    keep_order: Whether or not preserve the row order when predicting. Only available for dataframe has fewer than 2**64
-        rows. Defaults to True.
-    output_with_input_features: Whether or not preserve the input columns in the output when predicting.
-        Defaults to False.
-    """
-
-    keep_order: NotRequired[bool]
-    output_with_input_features: NotRequired[bool]
+    ...
 
 
 class WarehouseDeployOptions(DeployOptions):
@@ -126,8 +129,6 @@ class SnowparkContainerServiceDeployOptions(DeployOptions):
         inferred based on session information.
     min_instances: Minimum number of service replicas. Default to 1.
     max_instances: Maximum number of service replicas. Default to 1.
-    endpoint: The specific name of the endpoint that the service function will communicate with. This option is
-        useful when the service has multiple endpoints. Default to “predict”.
     prebuilt_snowflake_image: When provided, the image-building step is skipped, and the pre-built image from
         Snowflake is used as is. This option is for users who consistently use the same image for multiple use
         cases, allowing faster deployment. The snowflake image used for deployment is logged to the console for
@@ -136,16 +137,17 @@ class SnowparkContainerServiceDeployOptions(DeployOptions):
     num_workers: Number of workers used for model inference. Please ensure that the number of workers is set lower than
         the total available memory divided by the size of model to prevent memory-related issues. Default is number of
         CPU cores * 2 + 1.
+    enable_remote_image_build: When set to True, will enable image build on a remote SnowService job. Default is False.
     """
 
     compute_pool: str
     image_repo: NotRequired[str]
     min_instances: NotRequired[int]
     max_instances: NotRequired[int]
-    endpoint: NotRequired[str]
     prebuilt_snowflake_image: NotRequired[str]
     num_gpus: NotRequired[int]
     num_workers: NotRequired[int]
+    enable_remote_image_build: NotRequired[bool]
 
 
 class BaseModelSaveOption(TypedDict):
@@ -161,7 +163,7 @@ class BaseModelSaveOption(TypedDict):
 
 
 class CustomModelSaveOption(BaseModelSaveOption):
-    ...
+    cuda_version: NotRequired[str]
 
 
 class SKLModelSaveOptions(BaseModelSaveOption):
@@ -170,6 +172,7 @@ class SKLModelSaveOptions(BaseModelSaveOption):
 
 class XGBModelSaveOptions(BaseModelSaveOption):
     target_methods: NotRequired[Sequence[str]]
+    cuda_version: NotRequired[str]
 
 
 class SNOWModelSaveOptions(BaseModelSaveOption):
@@ -178,20 +181,29 @@ class SNOWModelSaveOptions(BaseModelSaveOption):
 
 class PyTorchSaveOptions(BaseModelSaveOption):
     target_methods: NotRequired[Sequence[str]]
+    cuda_version: NotRequired[str]
 
 
 class TorchScriptSaveOptions(BaseModelSaveOption):
     target_methods: NotRequired[Sequence[str]]
+    cuda_version: NotRequired[str]
 
 
 class TensorflowSaveOptions(BaseModelSaveOption):
     target_methods: NotRequired[Sequence[str]]
+    cuda_version: NotRequired[str]
 
 
 class MLFlowSaveOptions(BaseModelSaveOption):
     model_uri: NotRequired[str]
     ignore_mlflow_metadata: NotRequired[bool]
     ignore_mlflow_dependencies: NotRequired[bool]
+
+
+class HuggingFaceSaveOptions(BaseModelSaveOption):
+    target_methods: NotRequired[Sequence[str]]
+    cuda_version: NotRequired[str]
+    accelerate_mix_precision_config: NotRequired[str]
 
 
 ModelSaveOption = Union[
@@ -204,4 +216,14 @@ ModelSaveOption = Union[
     TorchScriptSaveOptions,
     TensorflowSaveOptions,
     MLFlowSaveOptions,
+    HuggingFaceSaveOptions,
 ]
+
+
+class ModelLoadOption(TypedDict):
+    """Options for loading the model.
+
+    use_gpu: Enable GPU-specific loading logic.
+    """
+
+    use_gpu: NotRequired[bool]

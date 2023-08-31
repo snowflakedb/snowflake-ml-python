@@ -7,12 +7,22 @@ from snowflake.ml.model import _model_meta, type_hints as model_types
 
 
 class _ModelHandler(ABC, Generic[model_types._ModelType]):
-    """Provides handling for a given type of model defined by `type` class property."""
+    """
+    Provides handling for a given type of model defined by `type` class property.
+
+    handler_type: The string type that identify the handler. Should be unique in the library.
+    MODEL_BLOB_FILE: Relative path of the model blob file in the model subdir.
+    MODEL_ARTIFACTS_DIR: Relative path of the model artifacts dir in the model subdir.
+    DEFAULT_TARGET_METHODS: Default target methods to be logged if not specified in this kind of model.
+    is_auto_signature: Set to True if the model could get model signature automatically and do not require user
+        inputting sample data or model signature.
+    """
 
     handler_type = "_base"
     MODEL_BLOB_FILE = "model.pkl"
     MODEL_ARTIFACTS_DIR = "artifacts"
     DEFAULT_TARGET_METHODS = ["predict"]
+    is_auto_signature = False
 
     @staticmethod
     @abstractmethod
@@ -61,7 +71,10 @@ class _ModelHandler(ABC, Generic[model_types._ModelType]):
     @staticmethod
     @abstractmethod
     def _load_model(
-        name: str, model_meta: _model_meta.ModelMetadata, model_blobs_dir_path: str
+        name: str,
+        model_meta: _model_meta.ModelMetadata,
+        model_blobs_dir_path: str,
+        **kwargs: Unpack[model_types.ModelLoadOption],
     ) -> model_types._ModelType:
         """Load the model into memory.
 
@@ -69,5 +82,6 @@ class _ModelHandler(ABC, Generic[model_types._ModelType]):
             name: Name of the model.
             model_meta: The model metadata.
             model_blobs_dir_path: Directory path to the whole model.
+            kwargs: Options when loading the model.
         """
         ...

@@ -30,6 +30,9 @@ INTERNAL_PYTHON_ERROR = "1100"
 # Indicates an internal failure raising a Snowpark ML error with an ambiguous cause, such as invoking an unexpected
 # private API, catching an error with an unknown cause, etc.
 INTERNAL_SNOWML_ERROR = "1200"
+# Indicates an internal failure raising a Snowpark error with an ambiguous cause, such as invalid queries, invalid
+# permission, catching an error with an unknown cause, etc.
+INTERNAL_SNOWPARK_ERROR = "1300"
 
 # USER
 # Indicates the incompatibility of local dependency versions with the target requirements. For example, an API added in

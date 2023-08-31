@@ -33,4 +33,4 @@ echo "Setting number of workers to $FINAL_NUM_WORKERS"
 
 # Exclude preload option as it won't work with non-thread-safe model, and no easy way to detect whether model is
 # thread-safe or not. Defer the optimization later.
-exec /opt/conda/bin/gunicorn -w "$FINAL_NUM_WORKERS" -k uvicorn.workers.UvicornWorker -b 0.0.0.0:5000 inference_server.main:app
+exec /opt/conda/bin/gunicorn -w "$FINAL_NUM_WORKERS" -k uvicorn.workers.UvicornWorker -b 0.0.0.0:5000 --timeout 600 inference_server.main:app

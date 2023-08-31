@@ -6,6 +6,7 @@ from typing_extensions import Required
 
 from snowflake.ml._internal.utils import identifier
 from snowflake.ml.model import (
+    _model,
     deploy_platforms,
     model_signature,
     type_hints as model_types,
@@ -26,12 +27,14 @@ class Deployment(TypedDict):
     Attributes:
         name: Name of the deployment.
         platform: Target platform to deploy the model.
+        target_method: Target method name.
         signature: The signature of the model method.
         options: Additional options when deploying the model.
     """
 
     name: Required[str]
     platform: Required[deploy_platforms.TargetPlatform]
+    target_method: Required[str]
     signature: model_signature.ModelSignature
     options: Required[model_types.DeployOptions]
 
@@ -42,31 +45,7 @@ def deploy(
     *,
     name: str,
     platform: deploy_platforms.TargetPlatform,
-    target_method: str,
-    model_dir_path: str,
-    options: Optional[model_types.DeployOptions],
-) -> Optional[Deployment]:
-    """Create a deployment from a model in a local directory and deploy it to remote platform.
-
-    Args:
-        session: Snowpark Connection Session.
-        name: Name of the deployment for the model.
-        platform: Target platform to deploy the model.
-        target_method: The name of the target method to be deployed.
-        model_dir_path: Directory of the model.
-        options: Additional options when deploying the model.
-            Each target platform will have their own specifications of options.
-    """
-    ...
-
-
-@overload
-def deploy(
-    session: Session,
-    *,
-    name: str,
-    platform: deploy_platforms.TargetPlatform,
-    target_method: str,
+    target_method: Optional[str],
     model_stage_file_path: str,
     options: Optional[model_types.DeployOptions],
 ) -> Optional[Deployment]:
@@ -76,7 +55,8 @@ def deploy(
         session: Snowpark Connection Session.
         name: Name of the deployment for the model.
         platform: Target platform to deploy the model.
-        target_method: The name of the target method to be deployed.
+        target_method: The name of the target method to be deployed. Can be omitted if there is only 1 target method in
+            the model.
         model_stage_file_path: Model file in the stage to be deployed. Must be a file with .zip extension.
         options: Additional options when deploying the model.
             Each target platform will have their own specifications of options.
@@ -91,7 +71,7 @@ def deploy(
     model_id: str,
     name: str,
     platform: deploy_platforms.TargetPlatform,
-    target_method: str,
+    target_method: Optional[str],
     model_stage_file_path: str,
     deployment_stage_path: str,
     options: Optional[model_types.DeployOptions],
@@ -103,7 +83,8 @@ def deploy(
         model_id: Internal model ID string.
         name: Name of the deployment for the model.
         platform: Target platform to deploy the model.
-        target_method: The name of the target method to be deployed.
+        target_method: The name of the target method to be deployed. Can be omitted if there is only 1 target method in
+            the model.
         model_stage_file_path: Model file in the stage to be deployed. Must be a file with .zip extension.
         deployment_stage_path: Path to stage containing snowpark container service deployment artifacts.
         options: Additional options when deploying the model.
@@ -117,9 +98,8 @@ def deploy(
     *,
     name: str,
     platform: deploy_platforms.TargetPlatform,
-    target_method: str,
-    model_dir_path: Optional[str] = None,
-    model_stage_file_path: Optional[str] = None,
+    model_stage_file_path: str,
+    target_method: Optional[str] = None,
     deployment_stage_path: Optional[str] = None,
     model_id: Optional[str] = None,
     options: Optional[model_types.DeployOptions],
@@ -131,8 +111,8 @@ def deploy(
         model_id: Internal model ID string.
         name: Name of the deployment for the model.
         platform: Target platform to deploy the model.
-        target_method: The name of the target method to be deployed.
-        model_dir_path: Directory of the model. Exclusive with `model_stage_dir_path`.
+        target_method: The name of the target method to be deployed. Can be omitted if there is only 1 target method in
+            the model.
         model_stage_file_path: Model file in the stage to be deployed. Exclusive with `model_dir_path`.
             Must be a file with .zip extension.
         deployment_stage_path: Path to stage containing deployment artifacts.
@@ -147,23 +127,26 @@ def deploy(
     Returns:
         The deployment information.
     """
-    if not ((model_stage_file_path is None) ^ (model_dir_path is None)):
-        raise ValueError(
-            "model_dir_path and model_stage_file_path both cannot be "
-            + f"{'None' if model_stage_file_path is None else 'specified'} at the same time."
-        )
 
     info = None
 
     if not options:
         options = {}
 
+    meta = _model.load_model(session=session, model_stage_file_path=model_stage_file_path, meta_only=True)
+
+    if target_method is None:
+        if len(meta.signatures.keys()) == 1:
+            target_method = list(meta.signatures.keys())[0]
+        else:
+            raise ValueError("Only when the model has 1 target methods can target_method be omitted when deploying.")
+
     if platform == deploy_platforms.TargetPlatform.WAREHOUSE:
         try:
-            meta = warehouse_deploy._deploy_to_warehouse(
+            warehouse_deploy._deploy_to_warehouse(
                 session=session,
-                model_dir_path=model_dir_path,
                 model_stage_file_path=model_stage_file_path,
+                model_meta=meta,
                 udf_name=name,
                 target_method=target_method,
                 **options,
@@ -179,9 +162,10 @@ def deploy(
         if snowservice_constants.COMPUTE_POOL not in options:
             raise ValueError("Missing 'compute_pool' in options field for Snowpark container service deployment")
         try:
-            meta = snowservice_deploy._deploy(
+            snowservice_deploy._deploy(
                 session=session,
                 model_id=model_id,
+                model_meta=meta,
                 service_func_name=name,
                 model_zip_stage_path=model_stage_file_path,
                 deployment_stage_path=deployment_stage_path,
@@ -196,7 +180,7 @@ def deploy(
     signature = meta.signatures.get(target_method, None)
     if not signature:
         raise ValueError(f"Target method {target_method} does not exist in model.")
-    info = Deployment(name=name, platform=platform, signature=signature, options=options)
+    info = Deployment(name=name, platform=platform, target_method=target_method, signature=signature, options=options)
     return info
 
 
@@ -235,9 +219,6 @@ def predict(
         deployment: The deployment info to use for predict.
         X: The input dataframe.
 
-    Raises:
-        ValueError: Raised when the input is too large to use keep_order option.
-
     Returns:
         The output dataframe.
     """
@@ -245,25 +226,18 @@ def predict(
     # Get options
     INTERMEDIATE_OBJ_NAME = "tmp_result"
     sig = deployment["signature"]
-    keep_order = deployment["options"].get("keep_order", True)
-    output_with_input_features = deployment["options"].get("output_with_input_features", False)
 
     # Validate and prepare input
     if not isinstance(X, SnowparkDataFrame):
+        keep_order = True
+        output_with_input_features = False
         df = model_signature._convert_and_validate_local_data(X, sig.inputs)
         s_df = snowpark_handler.SnowparkDataFrameHandler.convert_from_df(session, df, keep_order=keep_order)
     else:
+        keep_order = False
+        output_with_input_features = True
         model_signature._validate_snowpark_data(X, sig.inputs)
         s_df = X
-
-        if keep_order:
-            # ID is UINT64 type, this we should limit.
-            if s_df.count() > 2**64:
-                raise ValueError("Unable to keep order of a DataFrame with more than 2 ** 64 rows.")
-            s_df = s_df.with_column(
-                infer_template._KEEP_ORDER_COL_NAME,
-                F.monotonically_increasing_id(),
-            )
 
     # Infer and get intermediate result
     input_cols = []
@@ -291,8 +265,6 @@ def predict(
             F.col(INTERMEDIATE_OBJ_NAME)[infer_template._KEEP_ORDER_COL_NAME],
             ascending=True,
         )
-        if output_with_input_features:
-            df_res = df_res.drop(infer_template._KEEP_ORDER_COL_NAME)
 
     # Prepare the output
     output_cols = []

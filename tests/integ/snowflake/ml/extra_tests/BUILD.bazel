@@ -91,3 +91,12 @@ py_test(
         "//snowflake/ml/utils:connection_params",
     ]
 )
+
+py_test(
+    name="test_non_numeric_target",
+    srcs = ["test_non_numeric_target.py"],
+    deps = [
+        "//snowflake/ml/modeling/ensemble:random_forest_classifier",
+        "//snowflake/ml/utils:connection_params",
+    ]
+)

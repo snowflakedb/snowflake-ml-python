@@ -6,7 +6,7 @@ import copy
 from typing import Any, Dict, Iterable, Optional, Type, Union
 
 import numpy as np
-import numpy._typing as _npt
+import numpy.typing as npt
 import pandas as pd
 from sklearn import impute
 
@@ -26,7 +26,7 @@ STRATEGY_TO_STATE_DICT = {
     "most_frequent": _utils.BasicStatistics.MODE,
 }
 
-SNOWFLAKE_DATATYPE_TO_NUMPY_DTYPE_MAP: Dict[Type[T.DataType], _npt._DType[Any]] = {
+SNOWFLAKE_DATATYPE_TO_NUMPY_DTYPE_MAP: Dict[Type[T.DataType], npt.DTypeLike] = {
     T.ByteType: np.dtype("int8"),
     T.ShortType: np.dtype("int16"),
     T.IntegerType: np.dtype("int32"),
@@ -288,7 +288,7 @@ class SimpleImputer(base.BaseTransformer):
         # This attribute is set during `fit` by sklearn objects. In order to avoid fitting
         # the sklearn object directly when creating the sklearn simple imputer, we have to
         # set this property.
-        self._sklearn_fit_dtype = max(
+        self._sklearn_fit_dtype = max(  # type:ignore[type-var]
             SNOWFLAKE_DATATYPE_TO_NUMPY_DTYPE_MAP[type(input_col_datatypes[input_col])] for input_col in self.input_cols
         )
 

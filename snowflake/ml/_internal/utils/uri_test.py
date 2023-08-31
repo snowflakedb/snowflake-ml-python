@@ -26,6 +26,38 @@ class UriTest(TestCase):
             uri.get_snowflake_stage_path_from_uri("sfc://SNOWFLAKE_STAGE/content"), "SNOWFLAKE_STAGE/content"
         )
 
+        self.assertEqual(
+            uri.get_uri_from_snowflake_stage_path("@SNOWFLAKE_STAGE/content"), "sfc://SNOWFLAKE_STAGE/content"
+        )
+
+        self.assertEqual(
+            uri.get_snowflake_stage_path_from_uri("sfc://SNOWFLAKE_STAGE/content/"), "SNOWFLAKE_STAGE/content"
+        )
+
+        self.assertEqual(
+            uri.get_uri_from_snowflake_stage_path("@SNOWFLAKE_STAGE/content/"), "sfc://SNOWFLAKE_STAGE/content"
+        )
+
+        self.assertEqual(uri.get_snowflake_stage_path_from_uri("sfc://SNOWFLAKE_STAGE"), "SNOWFLAKE_STAGE")
+
+        self.assertEqual(uri.get_uri_from_snowflake_stage_path("@SNOWFLAKE_STAGE"), "sfc://SNOWFLAKE_STAGE")
+
+        self.assertEqual(uri.get_snowflake_stage_path_from_uri("sfc://SNOWFLAKE_STAGE/"), "SNOWFLAKE_STAGE")
+
+        self.assertEqual(uri.get_uri_from_snowflake_stage_path("@SNOWFLAKE_STAGE/"), "sfc://SNOWFLAKE_STAGE")
+
+        self.assertEqual(
+            uri.get_uri_from_snowflake_stage_path("@SNOWFLAKE_DB.SNOWFLAKE_SCHEMA.SNOWFLAKE_STAGE/content"),
+            "sfc://SNOWFLAKE_DB.SNOWFLAKE_SCHEMA.SNOWFLAKE_STAGE/content",
+        )
+
+        self.assertEqual(
+            uri.get_uri_from_snowflake_stage_path(
+                stage_path='@"SNOWFLAKE_DB"."SNOWFLAKE_SCHEMA".SNOWFLAKE_STAGE/content'
+            ),
+            'sfc://"SNOWFLAKE_DB"."SNOWFLAKE_SCHEMA".SNOWFLAKE_STAGE/content',
+        )
+
         self.assertEqual(uri.get_snowflake_stage_path_from_uri("sfc://SNOWFLAKE_STAGE"), "SNOWFLAKE_STAGE")
 
         # No stage path from invalid scheme.
@@ -33,7 +65,7 @@ class UriTest(TestCase):
 
         # Assembling URIs
         self.assertEqual(
-            uri.get_uri_from_snowflake_stage_path("SNOWFLAKE_STAGE/content"), "sfc:SNOWFLAKE_STAGE/content"
+            uri.get_uri_from_snowflake_stage_path("@SNOWFLAKE_STAGE/content"), "sfc://SNOWFLAKE_STAGE/content"
         )
 
     def test_non_snowflake_uris(self) -> None:

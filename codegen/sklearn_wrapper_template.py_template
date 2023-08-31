@@ -25,6 +25,10 @@ from snowflake.snowpark import DataFrame, Session
 from snowflake.snowpark.functions import pandas_udf, sproc
 from snowflake.snowpark.types import PandasSeries
 from snowflake.snowpark._internal.type_utils import convert_sp_to_sf_type
+from snowflake.snowpark._internal.utils import (
+    TempObjectType,
+    random_name_for_temp_object,
+)
 
 from snowflake.ml.model.model_signature import (
     DataType,
@@ -244,7 +248,7 @@ class {transform.original_class_name}(BaseTransformer):
             cp.dump(self._sklearn_object, local_transform_file)
 
         # Create temp stage to run fit.
-        transform_stage_name = "SNOWML_TRANSFORM_{{safe_id}}".format(safe_id=self._get_rand_id())
+        transform_stage_name = random_name_for_temp_object(TempObjectType.STAGE)
         stage_creation_query = f"CREATE OR REPLACE TEMPORARY STAGE {{transform_stage_name}};"
         SqlResultValidator(
             session=session,
@@ -258,7 +262,7 @@ class {transform.original_class_name}(BaseTransformer):
         stage_result_file_name = posixpath.join(transform_stage_name, os.path.basename(local_transform_file_name))
         local_result_file_name = get_temp_file_path()
 
-        fit_sproc_name = "SNOWML_FIT_{{safe_id}}".format(safe_id=self._get_rand_id())
+        fit_sproc_name = random_name_for_temp_object(TempObjectType.PROCEDURE)
         statement_params = telemetry.get_function_usage_statement_params(
             project=_PROJECT,
             subproject=_SUBPROJECT,
@@ -439,8 +443,7 @@ class {transform.original_class_name}(BaseTransformer):
             pkg_versions=self._get_dependencies(), session=session, subproject=_SUBPROJECT)
 
         # Register vectorized UDF for batch inference
-        batch_inference_udf_name = "SNOWML_BATCH_INFERENCE_{{safe_id}}_{{method}}".format(
-                safe_id=self._get_rand_id(), method=inference_method)
+        batch_inference_udf_name = random_name_for_temp_object(TempObjectType.FUNCTION)
 
         # Need to do this since if we use self._sklearn_object directly in the UDF, Snowpark
         # will try to pickle all of self which fails.
@@ -701,8 +704,17 @@ class {transform.original_class_name}(BaseTransformer):
             expected_type_inferred = "{transform.udf_datatype}"
             # when it is classifier, infer the datatype from label columns
             if expected_type_inferred == "" and 'predict' in self.model_signatures:
+                # Batch inference takes a single expected output column type. Use the first columns type for now.
+                # TODO: Handle varying output column types.
+                label_cols_signatures = [row for row in self.model_signatures['predict'].outputs if row.name in self.output_cols]
+                if len(label_cols_signatures) == 0:
+                    error_str = f"Output columns {{self.output_cols}} do not match model signatures {{self.model_signatures['predict'].outputs}}."
+                    raise exceptions.SnowflakeMLException(
+                        error_code=error_codes.INVALID_ATTRIBUTE,
+                        original_exception=ValueError(error_str),
+                    )
                 expected_type_inferred = convert_sp_to_sf_type(
-                    self.model_signatures['predict'].outputs[0].as_snowpark_type()
+                    label_cols_signatures[0].as_snowpark_type()
                 )
             
             output_df = self._batch_inference(
@@ -955,7 +967,7 @@ class {transform.original_class_name}(BaseTransformer):
             cp.dump(self._sklearn_object, local_score_file)
 
         # Create temp stage to run score.
-        score_stage_name = "SNOWML_SCORE_{{safe_id}}".format(safe_id=self._get_rand_id())
+        score_stage_name = random_name_for_temp_object(TempObjectType.STAGE)
         session = dataset._session
         assert session is not None # keep mypy happy
         stage_creation_query = f"CREATE OR REPLACE TEMPORARY STAGE {{score_stage_name}};"
@@ -968,7 +980,7 @@ class {transform.original_class_name}(BaseTransformer):
 
         # Use posixpath to construct stage paths
         stage_score_file_name = posixpath.join(score_stage_name, os.path.basename(local_score_file_name))
-        score_sproc_name = "SNOWML_SCORE_{{safe_id}}".format(safe_id=self._get_rand_id())
+        score_sproc_name = random_name_for_temp_object(TempObjectType.PROCEDURE)
         statement_params = telemetry.get_function_usage_statement_params(
             project=_PROJECT,
             subproject=_SUBPROJECT,

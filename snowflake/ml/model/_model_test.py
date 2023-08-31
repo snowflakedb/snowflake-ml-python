@@ -5,7 +5,7 @@ import sys
 import tempfile
 import uuid
 import warnings
-from typing import List, Tuple, cast
+from typing import Tuple, cast
 from unittest import mock
 
 import mlflow
@@ -17,6 +17,7 @@ import xgboost
 from absl.testing import absltest
 from sklearn import datasets, ensemble, linear_model, model_selection, multioutput
 
+from snowflake.ml._internal import env as snowml_env, env_utils
 from snowflake.ml.model import (
     _model as model_api,
     custom_model,
@@ -113,24 +114,24 @@ class TorchModel(torch.nn.Module):
             torch.nn.Sigmoid(),
         )
 
-    def forward(self, tensors: List[torch.Tensor]) -> List[torch.Tensor]:
-        return [self.model(tensors[0])]
+    def forward(self, tensor: torch.Tensor) -> torch.Tensor:
+        return self.model(tensor)  # type: ignore[no-any-return]
 
 
 def _prepare_torch_model(
     dtype: torch.dtype = torch.float32,
-) -> Tuple[torch.nn.Module, List[torch.Tensor], List[torch.Tensor]]:
+) -> Tuple[torch.nn.Module, torch.Tensor, torch.Tensor]:
     n_input, n_hidden, n_out, batch_size, learning_rate = 10, 15, 1, 100, 0.01
     x = np.random.rand(batch_size, n_input)
-    data_x = [torch.from_numpy(x).to(dtype=dtype)]
-    data_y = [(torch.rand(size=(batch_size, 1)) < 0.5).to(dtype=dtype)]
+    data_x = torch.from_numpy(x).to(dtype=dtype)
+    data_y = (torch.rand(size=(batch_size, 1)) < 0.5).to(dtype=dtype)
 
     model = TorchModel(n_input, n_hidden, n_out, dtype=dtype)
     loss_function = torch.nn.MSELoss()
     optimizer = torch.optim.SGD(model.parameters(), lr=learning_rate)
     for _epoch in range(100):
         pred_y = model(data_x)
-        loss = loss_function(pred_y[0], data_y[0])
+        loss = loss_function(pred_y, data_y)
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
@@ -144,8 +145,8 @@ class SimpleModule(tf.Module):
         self.non_trainable_variable = tf.Variable(5.0, trainable=False, name="do_not_train_me")
 
     @tf.function  # type: ignore[misc]
-    def __call__(self, tensors: List[tf.Tensor]) -> List[tf.Tensor]:
-        return [self.a_variable * tensors[0] + self.non_trainable_variable]
+    def __call__(self, tensor: tf.Tensor) -> tf.Tensor:
+        return self.a_variable * tensor + self.non_trainable_variable
 
 
 class KerasModel(tf.keras.Model):
@@ -154,28 +155,27 @@ class KerasModel(tf.keras.Model):
         self.fc_1 = tf.keras.layers.Dense(n_hidden, activation="relu")
         self.fc_2 = tf.keras.layers.Dense(n_out, activation="sigmoid")
 
-    def call(self, tensors: List[tf.Tensor]) -> List[tf.Tensor]:
-        input = tensors[0]
+    def call(self, tensors: tf.Tensor) -> tf.Tensor:
+        input = tensors
         x = self.fc_1(input)
         x = self.fc_2(x)
-        return [x]
+        return x
 
 
 def _prepare_keras_model(
     dtype: tf.dtypes.DType = tf.float32,
-) -> Tuple[tf.keras.Model, List[tf.Tensor], List[tf.Tensor]]:
+) -> Tuple[tf.keras.Model, tf.Tensor, tf.Tensor]:
     n_input, n_hidden, n_out, batch_size, learning_rate = 10, 15, 1, 100, 0.01
     x = np.random.rand(batch_size, n_input)
-    data_x = [tf.convert_to_tensor(x, dtype=dtype)]
+    data_x = tf.convert_to_tensor(x, dtype=dtype)
     raw_data_y = tf.random.uniform((batch_size, 1))
     raw_data_y = tf.where(raw_data_y > 0.5, tf.ones_like(raw_data_y), tf.zeros_like(raw_data_y))
-    data_y = [tf.cast(raw_data_y, dtype=dtype)]
-
-    def loss_fn(y_true: List[tf.Tensor], y_pred: List[tf.Tensor]) -> tf.Tensor:
-        return tf.keras.losses.mse(y_true[0], y_pred[0])
+    data_y = tf.cast(raw_data_y, dtype=dtype)
 
     model = KerasModel(n_hidden, n_out)
-    model.compile(optimizer=tf.keras.optimizers.SGD(learning_rate=learning_rate), loss=loss_fn)
+    model.compile(
+        optimizer=tf.keras.optimizers.SGD(learning_rate=learning_rate), loss=tf.keras.losses.MeanSquaredError()
+    )
     model.fit(data_x, data_y, batch_size=batch_size, epochs=100)
     return model, data_x, data_y
 
@@ -209,17 +209,16 @@ class ModelLoadHygieneTest(absltest.TestCase):
                 lm = DemoModel(context=custom_model.ModelContext(models={}, artifacts={}))
                 arr = np.array([[1, 2, 3], [4, 2, 5]])
                 d = pd.DataFrame(arr, columns=["c1", "c2", "c3"])
-                model_api.save_model(
+                model_api._save(
                     name="model1",
-                    model_dir_path=os.path.join(workspace, "model1"),
+                    local_dir_path=os.path.join(workspace, "model1"),
                     model=lm,
                     sample_input=d,
                     metadata={"author": "halu", "version": "1"},
                     code_paths=[os.path.join(src_path, "fake")],
                 )
 
-                print(list(os.walk(os.path.join(workspace, "model1"))))
-                _ = model_api.load_model(model_dir_path=os.path.join(workspace, "model1"))
+                _ = model_api._load(local_dir_path=os.path.join(workspace, "model1"))
                 from fake.fake_module import p
 
                 self.assertEqual(p.__file__, os.path.join(workspace, "model1", "code", "fake", "fake_module", "p.py"))
@@ -243,9 +242,9 @@ class ModelLoadHygieneTest(absltest.TestCase):
                 arr = np.array([[1, 2, 3], [4, 2, 5]])
                 d = pd.DataFrame(arr, columns=["c1", "c2", "c3"])
                 with self.assertRaises(ValueError):
-                    model_api.save_model(
+                    model_api._save(
                         name="model1",
-                        model_dir_path=os.path.join(workspace, "model1"),
+                        local_dir_path=os.path.join(workspace, "model1"),
                         model=lm,
                         sample_input=d,
                         metadata={"author": "halu", "version": "1"},
@@ -262,9 +261,9 @@ class ModelLoadHygieneTest(absltest.TestCase):
                 arr = np.array([[1, 2, 3], [4, 2, 5]])
                 d = pd.DataFrame(arr, columns=["c1", "c2", "c3"])
                 with self.assertRaises(ValueError):
-                    model_api.save_model(
+                    model_api._save(
                         name="model1",
-                        model_dir_path=os.path.join(workspace, "model1"),
+                        local_dir_path=os.path.join(workspace, "model1"),
                         model=lm,
                         sample_input=d,
                         metadata={"author": "halu", "version": "1"},
@@ -277,120 +276,59 @@ class ModelInterfaceTest(absltest.TestCase):
         m_session = mock_session.MockSession(conn=None, test_case=self)
         c_session = cast(Session, m_session)
 
-        local_dir = "path/to/local/model/dir"
         stage_path = '@"db"."schema"."stage"/model.zip'
 
         arr = np.array([[1, 2, 3], [4, 2, 5]])
         d = pd.DataFrame(arr, columns=["c1", "c2", "c3"])
 
         with self.assertRaisesRegex(
-            ValueError, "model_dir_path and model_stage_file_path both cannot be None at the same time."
-        ):
-            model_api.save_model(name="model", model=linear_model.LinearRegression())  # type:ignore[call-overload]
-
-        with self.assertRaisesRegex(
-            ValueError, "Session and model_stage_file_path must be specified at the same time."
-        ):
-            model_api.save_model(
-                name="model", model=linear_model.LinearRegression(), session=c_session, sample_input=d
-            )  # type:ignore[call-overload]
-
-        with self.assertRaisesRegex(ValueError, "Session and model_stage_file_path must be None at the same time."):
-            model_api.save_model(
-                name="model", model=linear_model.LinearRegression(), model_stage_file_path=stage_path, sample_input=d
-            )  # type:ignore[call-overload]
-
-        with self.assertRaisesRegex(
-            ValueError, "Session and model_stage_file_path must be specified at the same time."
-        ):
-            model_api.save_model(
-                name="model",
-                model=linear_model.LinearRegression(),
-                session=c_session,
-                model_dir_path=local_dir,
-                sample_input=d,
-            )  # type:ignore[call-overload]
-
-        with self.assertRaisesRegex(ValueError, "Session and model_stage_file_path must be None at the same time."):
-            model_api.save_model(
-                name="model",
-                model=linear_model.LinearRegression(),
-                model_stage_file_path=stage_path,
-                model_dir_path=local_dir,
-                sample_input=d,
-            )  # type:ignore[call-overload]
-
-        with self.assertRaisesRegex(
-            ValueError, "model_dir_path and model_stage_file_path both cannot be specified at the same time."
-        ):
-            model_api.save_model(
-                name="model",
-                model=linear_model.LinearRegression(),
-                session=c_session,
-                model_stage_file_path=stage_path,
-                model_dir_path=local_dir,
-                sample_input=d,
-            )  # type:ignore[call-overload]
-
-        with self.assertRaisesRegex(
-            ValueError, "Signatures and sample_input both cannot be None for local model at the same time."
-        ):
-            model_api.save_model(
-                name="model1",
-                model_dir_path=local_dir,
-                model=linear_model.LinearRegression(),
-            )
-
-        with self.assertRaisesRegex(
             ValueError, "Signatures and sample_input both cannot be specified at the same time."
         ):
             model_api.save_model(  # type:ignore[call-overload]
                 name="model1",
-                model_dir_path=local_dir,
+                session=c_session,
+                model_stage_file_path=stage_path,
                 model=linear_model.LinearRegression(),
                 sample_input=d,
                 signatures={"predict": model_signature.ModelSignature(inputs=[], outputs=[])},
             )
 
         with self.assertRaisesRegex(
-            ValueError, "Signatures and sample_input both cannot be specified at the same time."
+            ValueError, "Signatures and sample_input both cannot be None at the same time for this kind of model."
         ):
-            model_api.save_model(  # type:ignore[call-overload]
+            model_api.save_model(
                 name="model1",
-                model_dir_path=local_dir,
-                model=LinearRegression(),
-                sample_input=d,
-                signatures={"predict": model_signature.ModelSignature(inputs=[], outputs=[])},
+                session=c_session,
+                model_stage_file_path=stage_path,
+                model=linear_model.LinearRegression(),
             )
 
         with mock.patch.object(model_api, "_save", return_value=None) as mock_save:
-            model_api.save_model(
-                name="model1",
-                model_dir_path=local_dir,
-                model=LinearRegression(),
-            )
-
-        with tempfile.TemporaryDirectory() as tempdir:
-            with open(os.path.join(tempdir, "some_file"), "w", encoding="utf-8") as f:
-                f.write("Hi Ciyana!")
-
-            with self.assertRaisesRegex(ValueError, "Provided model directory [^\\s]* is not a directory."):
-                model_api.save_model(
-                    name="model1",
-                    model_dir_path=os.path.join(tempdir, "some_file"),
-                    model=linear_model.LinearRegression(),
-                    sample_input=d,
-                )
-
-            with self.assertWarnsRegex(UserWarning, "Provided model directory [^\\s]* is not an empty directory."):
-                with mock.patch.object(model_api, "_save", return_value=None) as mock_save:
+            with mock.patch.object(FileOperation, "put_stream", return_value=None) as mock_put_stream:
+                with mock.patch.object(
+                    env_utils, "validate_requirements_in_snowflake_conda_channel", return_value=[""]
+                ):
                     model_api.save_model(
                         name="model1",
-                        model_dir_path=tempdir,
-                        model=linear_model.LinearRegression(),
-                        sample_input=d,
+                        session=c_session,
+                        model_stage_file_path=stage_path,
+                        model=LinearRegression(),
                     )
-                    mock_save.assert_called_once()
+            mock_save.assert_called_once()
+
+        with mock.patch.object(model_api, "_save", return_value=None) as mock_save:
+            with mock.patch.object(FileOperation, "put_stream", return_value=None) as mock_put_stream:
+                with mock.patch.object(
+                    env_utils, "validate_requirements_in_snowflake_conda_channel", return_value=[""]
+                ):
+                    model_api.save_model(
+                        name="model1",
+                        session=c_session,
+                        model_stage_file_path=stage_path,
+                        model=LinearRegression(),
+                    )
+
+            mock_save.assert_called_once()
 
         with self.assertRaisesRegex(
             ValueError, "Provided model path in the stage [^\\s]* must be a path to a zip file."
@@ -403,55 +341,62 @@ class ModelInterfaceTest(absltest.TestCase):
                 sample_input=d,
             )
 
-        with mock.patch.object(model_api, "_save", return_value=None) as mock_save:
+        with mock.patch.object(model_api, "_save", return_value=None):
+            with mock.patch.object(FileOperation, "put_stream", return_value=None):
+                with mock.patch.object(
+                    env_utils, "validate_requirements_in_snowflake_conda_channel", return_value=None
+                ):
+                    with self.assertLogs(level="INFO") as cm:
+                        model_api.save_model(
+                            name="model1",
+                            model=linear_model.LinearRegression(),
+                            session=c_session,
+                            model_stage_file_path=stage_path,
+                            sample_input=d,
+                        )
+                        self.assertListEqual(
+                            cm.output,
+                            [
+                                (
+                                    f"INFO:absl:Local snowflake-ml-python library has version {snowml_env.VERSION},"
+                                    " which is not available in the Snowflake server, embedding local ML "
+                                    "library automatically."
+                                )
+                            ],
+                        )
+
+        with mock.patch.object(model_api, "_save", return_value=None):
             with mock.patch.object(FileOperation, "put_stream", return_value=None) as mock_put_stream:
-                model_api.save_model(
-                    name="model1",
-                    model=linear_model.LinearRegression(),
-                    session=c_session,
-                    model_stage_file_path=stage_path,
-                    sample_input=d,
-                )
+                with mock.patch.object(
+                    env_utils, "validate_requirements_in_snowflake_conda_channel", return_value=[""]
+                ):
+                    model_api.save_model(
+                        name="model1",
+                        model=linear_model.LinearRegression(),
+                        session=c_session,
+                        model_stage_file_path=stage_path,
+                        sample_input=d,
+                    )
             mock_put_stream.assert_called_once_with(mock.ANY, stage_path, auto_compress=False, overwrite=False)
 
-        with mock.patch.object(model_api, "_save", return_value=None) as mock_save:
+        with mock.patch.object(model_api, "_save", return_value=None):
             with mock.patch.object(FileOperation, "put_stream", return_value=None) as mock_put_stream:
-                model_api.save_model(  # type:ignore[call-overload]
-                    name="model1",
-                    model=linear_model.LinearRegression(),
-                    session=c_session,
-                    model_stage_file_path=stage_path,
-                    sample_input=d,
-                    options={"allow_overwritten_stage_file": True},
-                )
+                with mock.patch.object(
+                    env_utils, "validate_requirements_in_snowflake_conda_channel", return_value=[""]
+                ):
+                    model_api.save_model(  # type:ignore[call-overload]
+                        name="model1",
+                        model=linear_model.LinearRegression(),
+                        session=c_session,
+                        model_stage_file_path=stage_path,
+                        sample_input=d,
+                        options={"allow_overwritten_stage_file": True},
+                    )
             mock_put_stream.assert_called_once_with(mock.ANY, stage_path, auto_compress=False, overwrite=True)
 
     def test_load_interface(self) -> None:
         m_session = mock_session.MockSession(conn=None, test_case=self)
         c_session = cast(Session, m_session)
-
-        local_dir = "path/to/local/model/dir"
-        stage_path = '@"db"."schema"."stage"/model.zip'
-
-        with self.assertRaisesRegex(
-            ValueError, "Session and model_stage_file_path must be specified at the same time."
-        ):
-            model_api.load_model(session=c_session)  # type:ignore[call-overload]
-
-        with self.assertRaisesRegex(
-            ValueError, "model_dir_path and model_stage_file_path both cannot be None at the same time."
-        ):
-            model_api.load_model()  # type:ignore[call-overload]
-
-        with self.assertRaisesRegex(ValueError, "Session and model_stage_file_path must be None at the same time."):
-            model_api.load_model(model_stage_file_path=stage_path)  # type:ignore[call-overload]
-
-        with self.assertRaisesRegex(
-            ValueError, "model_dir_path and model_stage_file_path both cannot be specified at the same time."
-        ):
-            model_api.load_model(
-                session=c_session, model_stage_file_path=stage_path, model_dir_path=local_dir
-            )  # type:ignore[call-overload]
 
         with self.assertRaisesRegex(
             ValueError, "Provided model path in the stage [^\\s]* must be a path to a zip file."
@@ -475,27 +420,27 @@ class ModelTest(absltest.TestCase):
         s = {"predict": model_signature.infer_signature(d, lm.predict(d))}
 
         with self.assertRaises(ValueError):
-            model_api.save_model(
+            model_api._save(
                 name="model1",
-                model_dir_path=os.path.join(tmpdir.full_path, "model1"),
+                local_dir_path=os.path.join(tmpdir.full_path, "model1"),
                 model=lm,
                 signatures={**s, "another_predict": s["predict"]},
                 metadata={"author": "halu", "version": "1"},
             )
 
-        model_api.save_model(
+        model_api._save(
             name="model1",
-            model_dir_path=os.path.join(tmpdir.full_path, "model1"),
+            local_dir_path=os.path.join(tmpdir.full_path, "model1"),
             model=lm,
             signatures=s,
             metadata={"author": "halu", "version": "1"},
             python_version="3.5.2",
         )
 
-        _ = model_api.load_model(model_dir_path=os.path.join(tmpdir, "model1"), meta_only=True)
+        _ = model_api._load(local_dir_path=os.path.join(tmpdir, "model1"), meta_only=True)
 
         with self.assertRaises(RuntimeError):
-            m, meta = model_api.load_model(model_dir_path=os.path.join(tmpdir, "model1"))
+            m, meta = model_api._load(local_dir_path=os.path.join(tmpdir, "model1"))
 
     def test_custom_model_with_multiple_artifacts(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -512,9 +457,9 @@ class ModelTest(absltest.TestCase):
             arr = np.array([[1, 2, 3], [4, 2, 5]])
             d = pd.DataFrame(arr, columns=["c1", "c2", "c3"])
             s = {"predict": model_signature.infer_signature(d, lm.predict(d))}
-            model_api.save_model(
+            model_api._save(
                 name="model1",
-                model_dir_path=os.path.join(tmpdir, "model1"),
+                local_dir_path=os.path.join(tmpdir, "model1"),
                 model=lm,
                 signatures=s,
                 metadata={"author": "halu", "version": "1"},
@@ -522,26 +467,26 @@ class ModelTest(absltest.TestCase):
             with warnings.catch_warnings():
                 warnings.simplefilter("error")
 
-                m, meta = model_api.load_model(model_dir_path=os.path.join(tmpdir, "model1"))
+                m, meta = model_api._load(local_dir_path=os.path.join(tmpdir, "model1"))
                 assert isinstance(m, DemoModelWithManyArtifacts)
                 res = m.predict(d)
                 np.testing.assert_allclose(res["output"], pd.Series(np.array([94, 97])))
 
-                m_UDF, meta = model_api._load_model_for_deploy(os.path.join(tmpdir, "model1"))
+                m_UDF, meta = model_api._load(local_dir_path=os.path.join(tmpdir, "model1"), as_custom_model=True)
                 assert isinstance(m_UDF, DemoModelWithManyArtifacts)
                 res = m_UDF.predict(d)
                 np.testing.assert_allclose(res["output"], pd.Series(np.array([94, 97])))
                 self.assertEqual(meta.metadata["author"] if meta.metadata else None, "halu")
 
-                model_api.save_model(
+                model_api._save(
                     name="model1_no_sig",
-                    model_dir_path=os.path.join(tmpdir, "model1_no_sig"),
+                    local_dir_path=os.path.join(tmpdir, "model1_no_sig"),
                     model=lm,
                     sample_input=d,
                     metadata={"author": "halu", "version": "1"},
                 )
 
-                m, meta = model_api.load_model(model_dir_path=os.path.join(tmpdir, "model1_no_sig"))
+                m, meta = model_api._load(local_dir_path=os.path.join(tmpdir, "model1_no_sig"))
                 assert isinstance(m, DemoModelWithManyArtifacts)
                 res = m.predict(d)
                 np.testing.assert_allclose(res["output"], pd.Series(np.array([94, 97])))
@@ -563,18 +508,18 @@ class ModelTest(absltest.TestCase):
         p2 = acm.predict(d)
         s = {"predict": model_signature.infer_signature(d, p2)}
         with tempfile.TemporaryDirectory() as tmpdir:
-            model_api.save_model(
+            model_api._save(
                 name="model1",
-                model_dir_path=os.path.join(tmpdir, "model1"),
+                local_dir_path=os.path.join(tmpdir, "model1"),
                 model=acm,
                 signatures=s,
                 metadata={"author": "halu", "version": "1"},
             )
-            lm, _ = model_api.load_model(model_dir_path=os.path.join(tmpdir, "model1"))
+            lm, _ = model_api._load(local_dir_path=os.path.join(tmpdir, "model1"))
             assert isinstance(lm, ComposeModel)
             p3 = lm.predict(d)
 
-            m_UDF, _ = model_api._load_model_for_deploy(model_dir_path=os.path.join(tmpdir, "model1"))
+            m_UDF, _ = model_api._load(local_dir_path=os.path.join(tmpdir, "model1"), as_custom_model=True)
             assert isinstance(m_UDF, ComposeModel)
             p4 = m_UDF.predict(d)
             np.testing.assert_allclose(p1, p2)
@@ -597,18 +542,18 @@ class ModelTest(absltest.TestCase):
             p2 = await acm.predict(d)
             s = {"predict": model_signature.infer_signature(d, p2)}
             with tempfile.TemporaryDirectory() as tmpdir:
-                model_api.save_model(
+                model_api._save(
                     name="model1",
-                    model_dir_path=os.path.join(tmpdir, "model1"),
+                    local_dir_path=os.path.join(tmpdir, "model1"),
                     model=acm,
                     signatures=s,
                     metadata={"author": "halu", "version": "1"},
                 )
-                lm, _ = model_api.load_model(model_dir_path=os.path.join(tmpdir, "model1"))
+                lm, _ = model_api._load(local_dir_path=os.path.join(tmpdir, "model1"))
                 assert isinstance(lm, AsyncComposeModel)
                 p3 = await lm.predict(d)  # type: ignore[misc]
 
-                m_UDF, _ = model_api._load_model_for_deploy(os.path.join(tmpdir, "model1"))
+                m_UDF, _ = model_api._load(local_dir_path=os.path.join(tmpdir, "model1"), as_custom_model=True)
                 assert isinstance(m_UDF, AsyncComposeModel)
                 p4 = await m_UDF.predict(d)
                 np.testing.assert_allclose(p1, p2)
@@ -627,15 +572,15 @@ class ModelTest(absltest.TestCase):
             arr = np.array([[1, 2, 3], [4, 2, 5]])
             d = pd.DataFrame(arr, columns=["c1", "c2", "c3"])
             s = {"predict": model_signature.infer_signature(d, lm.predict(d))}
-            model_api.save_model(
+            model_api._save(
                 name="model1",
-                model_dir_path=os.path.join(tmpdir, "model1"),
+                local_dir_path=os.path.join(tmpdir, "model1"),
                 model=lm,
                 signatures=s,
                 metadata={"author": "halu", "version": "1"},
             )
 
-            m, meta = model_api.load_model(model_dir_path=os.path.join(tmpdir, "model1"))
+            m, meta = model_api._load(local_dir_path=os.path.join(tmpdir, "model1"))
             assert isinstance(m, DemoModelWithArtifacts)
             res = m.predict(d)
             np.testing.assert_allclose(res["output"], pd.Series(np.array([11, 14])))
@@ -646,7 +591,7 @@ class ModelTest(absltest.TestCase):
             ) as f:
                 f.write("20")
 
-            m_UDF, meta = model_api._load_model_for_deploy(os.path.join(tmpdir, "model1"))
+            m_UDF, meta = model_api._load(local_dir_path=os.path.join(tmpdir, "model1"), as_custom_model=True)
             assert isinstance(m_UDF, DemoModelWithArtifacts)
             res = m_UDF.predict(d)
 
@@ -662,9 +607,9 @@ class ModelTest(absltest.TestCase):
         model.fit(iris_X_df[:-10], dual_target[:-10])
         with tempfile.TemporaryDirectory() as tmpdir:
             s = {"predict_proba": model_signature.infer_signature(iris_X_df, model.predict_proba(iris_X_df))}
-            model_api.save_model(
+            model_api._save(
                 name="model1",
-                model_dir_path=os.path.join(tmpdir, "model1"),
+                local_dir_path=os.path.join(tmpdir, "model1"),
                 model=model,
                 signatures=s,
                 metadata={"author": "halu", "version": "1"},
@@ -674,12 +619,12 @@ class ModelTest(absltest.TestCase):
             orig_res = model.predict_proba(iris_X_df[-10:])
 
             m: multioutput.MultiOutputClassifier
-            m, _ = model_api.load_model(model_dir_path=os.path.join(tmpdir, "model1"))
+            m, _ = model_api._load(local_dir_path=os.path.join(tmpdir, "model1"))
 
             loaded_res = m.predict_proba(iris_X_df[-10:])
             np.testing.assert_allclose(np.hstack(orig_res), np.hstack(loaded_res))
 
-            m_udf, _ = model_api._load_model_for_deploy(os.path.join(tmpdir, "model1"))
+            m_udf, _ = model_api._load(local_dir_path=os.path.join(tmpdir, "model1"), as_custom_model=True)
             predict_method = getattr(m_udf, "predict_proba", None)
             assert callable(predict_method)
             udf_res = predict_method(iris_X_df[-10:])
@@ -688,31 +633,31 @@ class ModelTest(absltest.TestCase):
             )
 
             with self.assertRaises(ValueError):
-                model_api.save_model(
+                model_api._save(
                     name="model1_no_sig_bad",
-                    model_dir_path=os.path.join(tmpdir, "model1_no_sig_bad"),
+                    local_dir_path=os.path.join(tmpdir, "model1_no_sig_bad"),
                     model=model,
                     sample_input=iris_X_df,
                     metadata={"author": "halu", "version": "1"},
                     options=model_types.SKLModelSaveOptions({"target_methods": ["random"]}),
                 )
 
-            model_api.save_model(
+            model_api._save(
                 name="model1_no_sig",
-                model_dir_path=os.path.join(tmpdir, "model1_no_sig"),
+                local_dir_path=os.path.join(tmpdir, "model1_no_sig"),
                 model=model,
                 sample_input=iris_X_df,
                 metadata={"author": "halu", "version": "1"},
             )
 
-            m, meta = model_api.load_model(model_dir_path=os.path.join(tmpdir, "model1_no_sig"))
+            m, meta = model_api._load(local_dir_path=os.path.join(tmpdir, "model1_no_sig"))
             np.testing.assert_allclose(
                 np.hstack(model.predict_proba(iris_X_df[-10:])), np.hstack(m.predict_proba(iris_X_df[-10:]))
             )
             np.testing.assert_allclose(model.predict(iris_X_df[-10:]), m.predict(iris_X_df[-10:]))
             self.assertEqual(s["predict_proba"], meta.signatures["predict_proba"])
 
-            m_udf, _ = model_api._load_model_for_deploy(os.path.join(tmpdir, "model1_no_sig"))
+            m_udf, _ = model_api._load(local_dir_path=os.path.join(tmpdir, "model1_no_sig"), as_custom_model=True)
 
             predict_method = getattr(m_udf, "predict_proba", None)
             assert callable(predict_method)
@@ -734,17 +679,17 @@ class ModelTest(absltest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             s = {"predict": model_signature.infer_signature(iris_X_df, regr.predict(iris_X_df))}
             with self.assertRaises(ValueError):
-                model_api.save_model(
+                model_api._save(
                     name="model1",
-                    model_dir_path=os.path.join(tmpdir, "model1"),
+                    local_dir_path=os.path.join(tmpdir, "model1"),
                     model=regr,
                     signatures={**s, "another_predict": s["predict"]},
                     metadata={"author": "halu", "version": "1"},
                 )
 
-            model_api.save_model(
+            model_api._save(
                 name="model1",
-                model_dir_path=os.path.join(tmpdir, "model1"),
+                local_dir_path=os.path.join(tmpdir, "model1"),
                 model=regr,
                 signatures=s,
                 metadata={"author": "halu", "version": "1"},
@@ -754,26 +699,26 @@ class ModelTest(absltest.TestCase):
                 warnings.simplefilter("error")
 
                 m: linear_model.LinearRegression
-                m, _ = model_api.load_model(model_dir_path=os.path.join(tmpdir, "model1"))
+                m, _ = model_api._load(local_dir_path=os.path.join(tmpdir, "model1"))
                 np.testing.assert_allclose(np.array([-0.08254936]), m.predict(iris_X_df[:1]))
-                m_udf, _ = model_api._load_model_for_deploy(os.path.join(tmpdir, "model1"))
+                m_udf, _ = model_api._load(local_dir_path=os.path.join(tmpdir, "model1"), as_custom_model=True)
                 predict_method = getattr(m_udf, "predict", None)
                 assert callable(predict_method)
                 np.testing.assert_allclose(np.array([[-0.08254936]]), predict_method(iris_X_df[:1]))
 
-            model_api.save_model(
+            model_api._save(
                 name="model1_no_sig",
-                model_dir_path=os.path.join(tmpdir, "model1_no_sig"),
+                local_dir_path=os.path.join(tmpdir, "model1_no_sig"),
                 model=regr,
                 sample_input=iris_X_df,
                 metadata={"author": "halu", "version": "1"},
             )
 
-            m, meta = model_api.load_model(model_dir_path=os.path.join(tmpdir, "model1_no_sig"))
+            m, meta = model_api._load(local_dir_path=os.path.join(tmpdir, "model1_no_sig"))
             np.testing.assert_allclose(np.array([-0.08254936]), m.predict(iris_X_df[:1]))
             self.assertEqual(s["predict"], meta.signatures["predict"])
 
-            m_udf, _ = model_api._load_model_for_deploy(os.path.join(tmpdir, "model1_no_sig"))
+            m_udf, _ = model_api._load(local_dir_path=os.path.join(tmpdir, "model1_no_sig"), as_custom_model=True)
             predict_method = getattr(m_udf, "predict", None)
             assert callable(predict_method)
             np.testing.assert_allclose(np.array([[-0.08254936]]), predict_method(iris_X_df[:1]))
@@ -789,17 +734,17 @@ class ModelTest(absltest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             s = {"predict": model_signature.infer_signature(cal_X_test, y_pred)}
             with self.assertRaises(ValueError):
-                model_api.save_model(
+                model_api._save(
                     name="model1",
-                    model_dir_path=os.path.join(tmpdir, "model1"),
+                    local_dir_path=os.path.join(tmpdir, "model1"),
                     model=regressor,
                     signatures={**s, "another_predict": s["predict"]},
                     metadata={"author": "halu", "version": "1"},
                 )
 
-            model_api.save_model(
+            model_api._save(
                 name="model1",
-                model_dir_path=os.path.join(tmpdir, "model1"),
+                local_dir_path=os.path.join(tmpdir, "model1"),
                 model=regressor,
                 signatures=s,
                 metadata={"author": "halu", "version": "1"},
@@ -808,28 +753,28 @@ class ModelTest(absltest.TestCase):
             with warnings.catch_warnings():
                 warnings.simplefilter("error")
 
-                m, _ = model_api.load_model(model_dir_path=os.path.join(tmpdir, "model1"))
+                m, _ = model_api._load(local_dir_path=os.path.join(tmpdir, "model1"))
                 assert isinstance(m, xgboost.Booster)
                 np.testing.assert_allclose(m.predict(xgboost.DMatrix(data=cal_X_test)), y_pred)
-                m_udf, _ = model_api._load_model_for_deploy(os.path.join(tmpdir, "model1"))
+                m_udf, _ = model_api._load(local_dir_path=os.path.join(tmpdir, "model1"), as_custom_model=True)
                 predict_method = getattr(m_udf, "predict", None)
                 assert callable(predict_method)
                 np.testing.assert_allclose(predict_method(cal_X_test), np.expand_dims(y_pred, axis=1))
 
-            model_api.save_model(
+            model_api._save(
                 name="model1_no_sig",
-                model_dir_path=os.path.join(tmpdir, "model1_no_sig"),
+                local_dir_path=os.path.join(tmpdir, "model1_no_sig"),
                 model=regressor,
                 sample_input=cal_X_test,
                 metadata={"author": "halu", "version": "1"},
             )
 
-            m, meta = model_api.load_model(model_dir_path=os.path.join(tmpdir, "model1_no_sig"))
+            m, meta = model_api._load(local_dir_path=os.path.join(tmpdir, "model1_no_sig"))
             assert isinstance(m, xgboost.Booster)
             np.testing.assert_allclose(m.predict(xgboost.DMatrix(data=cal_X_test)), y_pred)
             self.assertEqual(s["predict"], meta.signatures["predict"])
 
-            m_udf, _ = model_api._load_model_for_deploy(os.path.join(tmpdir, "model1_no_sig"))
+            m_udf, _ = model_api._load(local_dir_path=os.path.join(tmpdir, "model1_no_sig"), as_custom_model=True)
             predict_method = getattr(m_udf, "predict", None)
             assert callable(predict_method)
             np.testing.assert_allclose(predict_method(cal_X_test), np.expand_dims(y_pred, axis=1))
@@ -846,17 +791,17 @@ class ModelTest(absltest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             s = {"predict": model_signature.infer_signature(cal_X_test, y_pred)}
             with self.assertRaises(ValueError):
-                model_api.save_model(
+                model_api._save(
                     name="model1",
-                    model_dir_path=os.path.join(tmpdir, "model1"),
+                    local_dir_path=os.path.join(tmpdir, "model1"),
                     model=regressor,
                     signatures={**s, "another_predict": s["predict"]},
                     metadata={"author": "halu", "version": "1"},
                 )
 
-            model_api.save_model(
+            model_api._save(
                 name="model1",
-                model_dir_path=os.path.join(tmpdir, "model1"),
+                local_dir_path=os.path.join(tmpdir, "model1"),
                 model=regressor,
                 signatures=s,
                 metadata={"author": "halu", "version": "1"},
@@ -865,29 +810,29 @@ class ModelTest(absltest.TestCase):
             with warnings.catch_warnings():
                 warnings.simplefilter("error")
 
-                m, _ = model_api.load_model(model_dir_path=os.path.join(tmpdir, "model1"))
+                m, _ = model_api._load(local_dir_path=os.path.join(tmpdir, "model1"))
                 assert isinstance(m, xgboost.XGBClassifier)
                 np.testing.assert_allclose(m.predict(cal_X_test), y_pred)
-                m_udf, _ = model_api._load_model_for_deploy(os.path.join(tmpdir, "model1"))
+                m_udf, _ = model_api._load(local_dir_path=os.path.join(tmpdir, "model1"), as_custom_model=True)
                 predict_method = getattr(m_udf, "predict", None)
                 assert callable(predict_method)
                 np.testing.assert_allclose(predict_method(cal_X_test), np.expand_dims(y_pred, axis=1))
 
-            model_api.save_model(
+            model_api._save(
                 name="model1_no_sig",
-                model_dir_path=os.path.join(tmpdir, "model1_no_sig"),
+                local_dir_path=os.path.join(tmpdir, "model1_no_sig"),
                 model=regressor,
                 sample_input=cal_X_test,
                 metadata={"author": "halu", "version": "1"},
             )
 
-            m, meta = model_api.load_model(model_dir_path=os.path.join(tmpdir, "model1_no_sig"))
+            m, meta = model_api._load(local_dir_path=os.path.join(tmpdir, "model1_no_sig"))
             assert isinstance(m, xgboost.XGBClassifier)
             np.testing.assert_allclose(m.predict(cal_X_test), y_pred)
             np.testing.assert_allclose(m.predict_proba(cal_X_test), y_pred_proba)
             self.assertEqual(s["predict"], meta.signatures["predict"])
 
-            m_udf, _ = model_api._load_model_for_deploy(os.path.join(tmpdir, "model1_no_sig"))
+            m_udf, _ = model_api._load(local_dir_path=os.path.join(tmpdir, "model1_no_sig"), as_custom_model=True)
             predict_method = getattr(m_udf, "predict", None)
             assert callable(predict_method)
             np.testing.assert_allclose(predict_method(cal_X_test), np.expand_dims(y_pred, axis=1))
@@ -913,17 +858,17 @@ class ModelTest(absltest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             s = {"predict": model_signature.infer_signature(df[INPUT_COLUMNS], regr.predict(df)[[OUTPUT_COLUMNS]])}
             with self.assertRaises(ValueError):
-                model_api.save_model(
+                model_api._save(
                     name="model1",
-                    model_dir_path=os.path.join(tmpdir, "model1"),
+                    local_dir_path=os.path.join(tmpdir, "model1"),
                     model=regr,
                     signatures={**s, "another_predict": s["predict"]},
                     metadata={"author": "halu", "version": "1"},
                 )
 
-            model_api.save_model(
+            model_api._save(
                 name="model1",
-                model_dir_path=os.path.join(tmpdir, "model1"),
+                local_dir_path=os.path.join(tmpdir, "model1"),
                 model=regr,
                 signatures=s,
                 metadata={"author": "halu", "version": "1"},
@@ -933,27 +878,27 @@ class ModelTest(absltest.TestCase):
                 warnings.simplefilter("error")
 
                 m: LinearRegression
-                m, _ = model_api.load_model(model_dir_path=os.path.join(tmpdir, "model1"))
+                m, _ = model_api._load(local_dir_path=os.path.join(tmpdir, "model1"))
                 np.testing.assert_allclose(predictions, m.predict(df[:1])[[OUTPUT_COLUMNS]])
-                m_udf, _ = model_api._load_model_for_deploy(os.path.join(tmpdir, "model1"))
+                m_udf, _ = model_api._load(local_dir_path=os.path.join(tmpdir, "model1"), as_custom_model=True)
                 predict_method = getattr(m_udf, "predict", None)
                 assert callable(predict_method)
                 np.testing.assert_allclose(predictions, predict_method(df[:1])[[OUTPUT_COLUMNS]])
 
-            model_api.save_model(
+            model_api._save(
                 name="model1_no_sig",
-                model_dir_path=os.path.join(tmpdir, "model1_no_sig"),
+                local_dir_path=os.path.join(tmpdir, "model1_no_sig"),
                 model=regr,
                 sample_input=df[INPUT_COLUMNS],
                 metadata={"author": "halu", "version": "1"},
             )
 
-            m, meta = model_api.load_model(model_dir_path=os.path.join(tmpdir, "model1_no_sig"))
+            m, meta = model_api._load(local_dir_path=os.path.join(tmpdir, "model1_no_sig"))
             np.testing.assert_allclose(np.array([[-0.08254936]]), m.predict(df[:1])[[OUTPUT_COLUMNS]])
             s = regr.model_signatures
             self.assertEqual(s["predict"], meta.signatures["predict"])
 
-            m_udf, _ = model_api._load_model_for_deploy(os.path.join(tmpdir, "model1_no_sig"))
+            m_udf, _ = model_api._load(local_dir_path=os.path.join(tmpdir, "model1_no_sig"), as_custom_model=True)
             predict_method = getattr(m_udf, "predict", None)
             assert callable(predict_method)
             np.testing.assert_allclose(np.array([[-0.08254936]]), predict_method(df[:1])[[OUTPUT_COLUMNS]])
@@ -975,17 +920,17 @@ class ModelTest(absltest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             s = {"predict": model_signature.infer_signature(df[INPUT_COLUMNS], regr.predict(df)[[OUTPUT_COLUMNS]])}
             with self.assertRaises(ValueError):
-                model_api.save_model(
+                model_api._save(
                     name="model1",
-                    model_dir_path=os.path.join(tmpdir, "model1"),
+                    local_dir_path=os.path.join(tmpdir, "model1"),
                     model=regr,
                     signatures={**s, "another_predict": s["predict"]},
                     metadata={"author": "halu", "version": "1"},
                 )
 
-            model_api.save_model(
+            model_api._save(
                 name="model1",
-                model_dir_path=os.path.join(tmpdir, "model1"),
+                local_dir_path=os.path.join(tmpdir, "model1"),
                 model=regr,
                 signatures=s,
                 metadata={"author": "halu", "version": "1"},
@@ -995,28 +940,28 @@ class ModelTest(absltest.TestCase):
                 warnings.simplefilter("error")
 
                 m: LinearRegression
-                m, _ = model_api.load_model(model_dir_path=os.path.join(tmpdir, "model1"))
+                m, _ = model_api._load(local_dir_path=os.path.join(tmpdir, "model1"))
                 np.testing.assert_allclose(predictions, m.predict(df[:1])[[OUTPUT_COLUMNS]])
-                m_udf, _ = model_api._load_model_for_deploy(os.path.join(tmpdir, "model1"))
+                m_udf, _ = model_api._load(local_dir_path=os.path.join(tmpdir, "model1"), as_custom_model=True)
                 predict_method = getattr(m_udf, "predict", None)
                 assert callable(predict_method)
                 np.testing.assert_allclose(predictions, predict_method(df[:1])[[OUTPUT_COLUMNS]])
 
-            model_api.save_model(
+            model_api._save(
                 name="model1_no_sig",
-                model_dir_path=os.path.join(tmpdir, "model1_no_sig"),
+                local_dir_path=os.path.join(tmpdir, "model1_no_sig"),
                 model=regr,
                 sample_input=df,
                 metadata={"author": "halu", "version": "1"},
             )
 
-            m, meta = model_api.load_model(model_dir_path=os.path.join(tmpdir, "model1_no_sig"))
+            m, meta = model_api._load(local_dir_path=os.path.join(tmpdir, "model1_no_sig"))
             np.testing.assert_allclose(np.array([[0.17150434]]), m.predict(df[:1])[[OUTPUT_COLUMNS]])
             s = regr.model_signatures
             # Compare the Model Signature without indexing
             self.assertItemsEqual(s["predict"].to_dict(), meta.signatures["predict"].to_dict())
 
-            m_udf, _ = model_api._load_model_for_deploy(os.path.join(tmpdir, "model1_no_sig"))
+            m_udf, _ = model_api._load(local_dir_path=os.path.join(tmpdir, "model1_no_sig"), as_custom_model=True)
             predict_method = getattr(m_udf, "predict", None)
             assert callable(predict_method)
             np.testing.assert_allclose(np.array([[0.17150434]]), predict_method(df[:1])[[OUTPUT_COLUMNS]])
@@ -1040,17 +985,17 @@ class ModelTest(absltest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             s = {"predict": model_signature.infer_signature(df[INPUT_COLUMNS], regr.predict(df)[[OUTPUT_COLUMNS]])}
             with self.assertRaises(ValueError):
-                model_api.save_model(
+                model_api._save(
                     name="model1",
-                    model_dir_path=os.path.join(tmpdir, "model1"),
+                    local_dir_path=os.path.join(tmpdir, "model1"),
                     model=regr,
                     signatures={**s, "another_predict": s["predict"]},
                     metadata={"author": "halu", "version": "1"},
                 )
 
-            model_api.save_model(
+            model_api._save(
                 name="model1",
-                model_dir_path=os.path.join(tmpdir, "model1"),
+                local_dir_path=os.path.join(tmpdir, "model1"),
                 model=regr,
                 signatures=s,
                 metadata={"author": "halu", "version": "1"},
@@ -1060,28 +1005,28 @@ class ModelTest(absltest.TestCase):
                 warnings.simplefilter("error")
 
                 m: LinearRegression
-                m, _ = model_api.load_model(model_dir_path=os.path.join(tmpdir, "model1"))
+                m, _ = model_api._load(local_dir_path=os.path.join(tmpdir, "model1"))
                 np.testing.assert_allclose(predictions, m.predict(df[:1])[[OUTPUT_COLUMNS]])
-                m_udf, _ = model_api._load_model_for_deploy(os.path.join(tmpdir, "model1"))
+                m_udf, _ = model_api._load(local_dir_path=os.path.join(tmpdir, "model1"), as_custom_model=True)
                 predict_method = getattr(m_udf, "predict", None)
                 assert callable(predict_method)
                 np.testing.assert_allclose(predictions, predict_method(df[:1])[[OUTPUT_COLUMNS]])
 
-            model_api.save_model(
+            model_api._save(
                 name="model1_no_sig",
-                model_dir_path=os.path.join(tmpdir, "model1_no_sig"),
+                local_dir_path=os.path.join(tmpdir, "model1_no_sig"),
                 model=regr,
                 sample_input=df,
                 metadata={"author": "halu", "version": "1"},
             )
 
-            m, meta = model_api.load_model(model_dir_path=os.path.join(tmpdir, "model1_no_sig"))
+            m, meta = model_api._load(local_dir_path=os.path.join(tmpdir, "model1_no_sig"))
             np.testing.assert_allclose(np.array([[-0.08254936]]), m.predict(df[:1])[[OUTPUT_COLUMNS]])
             s = regr.model_signatures
             # Compare the Model Signature without indexing
             self.assertItemsEqual(s["predict"].to_dict(), meta.signatures["predict"].to_dict())
 
-            m_udf, _ = model_api._load_model_for_deploy(os.path.join(tmpdir, "model1_no_sig"))
+            m_udf, _ = model_api._load(local_dir_path=os.path.join(tmpdir, "model1_no_sig"), as_custom_model=True)
             predict_method = getattr(m_udf, "predict", None)
             assert callable(predict_method)
             np.testing.assert_allclose(np.array([[-0.08254936]]), predict_method(df[:1])[[OUTPUT_COLUMNS]])
@@ -1089,39 +1034,43 @@ class ModelTest(absltest.TestCase):
     def test_pytorch(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             model, data_x, data_y = _prepare_torch_model()
-            s = {"forward": model_signature.infer_signature(data_x, data_y)}
+            s = {"forward": model_signature.infer_signature([data_x], [data_y])}
             with self.assertRaises(ValueError):
-                model_api.save_model(
+                model_api._save(
                     name="model1",
-                    model_dir_path=os.path.join(tmpdir, "model1"),
+                    local_dir_path=os.path.join(tmpdir, "model1"),
                     model=model,
                     signatures={**s, "another_forward": s["forward"]},
                     metadata={"author": "halu", "version": "1"},
                 )
 
-            model_api.save_model(
+            model_api._save(
                 name="model1",
-                model_dir_path=os.path.join(tmpdir, "model1"),
+                local_dir_path=os.path.join(tmpdir, "model1"),
                 model=model,
                 signatures=s,
                 metadata={"author": "halu", "version": "1"},
             )
 
             model.eval()
-            y_pred = model.forward(data_x)[0].detach()
+            y_pred = model.forward(data_x).detach()
 
             x_df = model_signature_utils.rename_pandas_df(
-                pytorch_handler.SeqOfPyTorchTensorHandler.convert_to_df(data_x, ensure_serializable=False),
+                pytorch_handler.SeqOfPyTorchTensorHandler.convert_to_df([data_x], ensure_serializable=False),
                 s["forward"].inputs,
             )
 
             with warnings.catch_warnings():
                 warnings.simplefilter("error")
 
-                m, _ = model_api.load_model(model_dir_path=os.path.join(tmpdir, "model1"))
+                m, _ = model_api._load(local_dir_path=os.path.join(tmpdir, "model1"))
                 assert isinstance(m, torch.nn.Module)
-                torch.testing.assert_close(m.forward(data_x)[0], y_pred)
-                m_udf, _ = model_api._load_model_for_deploy(os.path.join(tmpdir, "model1"))
+                torch.testing.assert_close(m.forward(data_x), y_pred)
+
+                with self.assertRaisesRegex(AssertionError, "Torch not compiled with CUDA enabled"):
+                    _, _ = model_api._load(local_dir_path=os.path.join(tmpdir, "model1"), options={"use_gpu": True})
+
+                m_udf, _ = model_api._load(local_dir_path=os.path.join(tmpdir, "model1"), as_custom_model=True)
                 predict_method = getattr(m_udf, "forward", None)
                 assert callable(predict_method)
                 torch.testing.assert_close(
@@ -1131,20 +1080,20 @@ class ModelTest(absltest.TestCase):
                     y_pred,
                 )
 
-            model_api.save_model(
+            model_api._save(
                 name="model1_no_sig_1",
-                model_dir_path=os.path.join(tmpdir, "model1_no_sig_1"),
+                local_dir_path=os.path.join(tmpdir, "model1_no_sig_1"),
                 model=model,
-                sample_input=data_x,
+                sample_input=[data_x],
                 metadata={"author": "halu", "version": "1"},
             )
 
-            m, meta = model_api.load_model(model_dir_path=os.path.join(tmpdir, "model1_no_sig_1"))
+            m, meta = model_api._load(local_dir_path=os.path.join(tmpdir, "model1_no_sig_1"))
             assert isinstance(m, torch.nn.Module)
-            torch.testing.assert_close(m.forward(data_x)[0], y_pred)
+            torch.testing.assert_close(m.forward(data_x), y_pred)
             self.assertEqual(s["forward"], meta.signatures["forward"])
 
-            m_udf, _ = model_api._load_model_for_deploy(os.path.join(tmpdir, "model1_no_sig_1"))
+            m_udf, _ = model_api._load(local_dir_path=os.path.join(tmpdir, "model1_no_sig_1"), as_custom_model=True)
             predict_method = getattr(m_udf, "forward", None)
             assert callable(predict_method)
             torch.testing.assert_close(
@@ -1159,39 +1108,43 @@ class ModelTest(absltest.TestCase):
         model_script = torch.jit.script(model)  # type:ignore[attr-defined]
 
         with tempfile.TemporaryDirectory() as tmpdir:
-            s = {"forward": model_signature.infer_signature(data_x, data_y)}
+            s = {"forward": model_signature.infer_signature([data_x], [data_y])}
             with self.assertRaises(ValueError):
-                model_api.save_model(
+                model_api._save(
                     name="model1",
-                    model_dir_path=os.path.join(tmpdir, "model1"),
+                    local_dir_path=os.path.join(tmpdir, "model1"),
                     model=model_script,
                     signatures={**s, "another_forward": s["forward"]},
                     metadata={"author": "halu", "version": "1"},
                 )
 
-            model_api.save_model(
+            model_api._save(
                 name="model1",
-                model_dir_path=os.path.join(tmpdir, "model1"),
+                local_dir_path=os.path.join(tmpdir, "model1"),
                 model=model_script,
                 signatures=s,
                 metadata={"author": "halu", "version": "1"},
             )
 
             model_script.eval()
-            y_pred = model_script.forward(data_x)[0].detach()
+            y_pred = model_script.forward(data_x).detach()
 
             x_df = model_signature_utils.rename_pandas_df(
-                pytorch_handler.SeqOfPyTorchTensorHandler.convert_to_df(data_x, ensure_serializable=False),
+                pytorch_handler.SeqOfPyTorchTensorHandler.convert_to_df([data_x], ensure_serializable=False),
                 s["forward"].inputs,
             )
 
             with warnings.catch_warnings():
                 warnings.simplefilter("error")
 
-                m, _ = model_api.load_model(model_dir_path=os.path.join(tmpdir, "model1"))
+                m, _ = model_api._load(local_dir_path=os.path.join(tmpdir, "model1"))
                 assert isinstance(m, torch.jit.ScriptModule)  # type:ignore[attr-defined]
-                torch.testing.assert_close(m.forward(data_x)[0], y_pred)
-                m_udf, _ = model_api._load_model_for_deploy(os.path.join(tmpdir, "model1"))
+                torch.testing.assert_close(m.forward(data_x), y_pred)
+
+                with self.assertRaisesRegex(AssertionError, "Torch not compiled with CUDA enabled"):
+                    _, _ = model_api._load(local_dir_path=os.path.join(tmpdir, "model1"), options={"use_gpu": True})
+
+                m_udf, _ = model_api._load(local_dir_path=os.path.join(tmpdir, "model1"), as_custom_model=True)
                 predict_method = getattr(m_udf, "forward", None)
                 assert callable(predict_method)
                 torch.testing.assert_close(
@@ -1201,20 +1154,20 @@ class ModelTest(absltest.TestCase):
                     y_pred,
                 )
 
-            model_api.save_model(
+            model_api._save(
                 name="model1_no_sig_1",
-                model_dir_path=os.path.join(tmpdir, "model1_no_sig_1"),
+                local_dir_path=os.path.join(tmpdir, "model1_no_sig_1"),
                 model=model_script,
-                sample_input=data_x,
+                sample_input=[data_x],
                 metadata={"author": "halu", "version": "1"},
             )
 
-            m, meta = model_api.load_model(model_dir_path=os.path.join(tmpdir, "model1_no_sig_1"))
+            m, meta = model_api._load(local_dir_path=os.path.join(tmpdir, "model1_no_sig_1"))
             assert isinstance(m, torch.jit.ScriptModule)  # type:ignore[attr-defined]
-            torch.testing.assert_close(m.forward(data_x)[0], y_pred)
+            torch.testing.assert_close(m.forward(data_x), y_pred)
             self.assertEqual(s["forward"], meta.signatures["forward"])
 
-            m_udf, _ = model_api._load_model_for_deploy(os.path.join(tmpdir, "model1_no_sig_1"))
+            m_udf, _ = model_api._load(local_dir_path=os.path.join(tmpdir, "model1_no_sig_1"), as_custom_model=True)
             predict_method = getattr(m_udf, "forward", None)
             assert callable(predict_method)
             torch.testing.assert_close(
@@ -1227,29 +1180,29 @@ class ModelTest(absltest.TestCase):
     def test_torch_df_sample_input(self) -> None:
         model, data_x, data_y = _prepare_torch_model(torch.float64)
         model_script = torch.jit.script(model)  # type:ignore[attr-defined]
-        s = {"forward": model_signature.infer_signature(data_x, data_y)}
+        s = {"forward": model_signature.infer_signature([data_x], [data_y])}
 
         with tempfile.TemporaryDirectory() as tmpdir:
             model.eval()
-            y_pred = model.forward(data_x)[0].detach()
+            y_pred = model.forward(data_x).detach()
 
             x_df = model_signature_utils.rename_pandas_df(
-                pytorch_handler.SeqOfPyTorchTensorHandler.convert_to_df(data_x, ensure_serializable=False),
+                pytorch_handler.SeqOfPyTorchTensorHandler.convert_to_df([data_x], ensure_serializable=False),
                 s["forward"].inputs,
             )
-            model_api.save_model(
+            model_api._save(
                 name="model1_no_sig_1",
-                model_dir_path=os.path.join(tmpdir, "model1_no_sig_1"),
+                local_dir_path=os.path.join(tmpdir, "model1_no_sig_1"),
                 model=model,
                 sample_input=x_df,
                 metadata={"author": "halu", "version": "1"},
             )
 
-            m, meta = model_api.load_model(model_dir_path=os.path.join(tmpdir, "model1_no_sig_1"))
+            m, meta = model_api._load(local_dir_path=os.path.join(tmpdir, "model1_no_sig_1"))
             assert isinstance(m, torch.nn.Module)
-            torch.testing.assert_close(m.forward(data_x)[0], y_pred)
+            torch.testing.assert_close(m.forward(data_x), y_pred)
 
-            m_udf, _ = model_api._load_model_for_deploy(os.path.join(tmpdir, "model1_no_sig_1"))
+            m_udf, _ = model_api._load(local_dir_path=os.path.join(tmpdir, "model1_no_sig_1"), as_custom_model=True)
             predict_method = getattr(m_udf, "forward", None)
             assert callable(predict_method)
             torch.testing.assert_close(
@@ -1257,21 +1210,21 @@ class ModelTest(absltest.TestCase):
             )
 
             model_script.eval()
-            y_pred = model_script.forward(data_x)[0].detach()
+            y_pred = model_script.forward(data_x).detach()
 
-            model_api.save_model(
+            model_api._save(
                 name="model1_no_sig_2",
-                model_dir_path=os.path.join(tmpdir, "model1_no_sig_2"),
+                local_dir_path=os.path.join(tmpdir, "model1_no_sig_2"),
                 model=model_script,
                 sample_input=x_df,
                 metadata={"author": "halu", "version": "1"},
             )
 
-            m, meta = model_api.load_model(model_dir_path=os.path.join(tmpdir, "model1_no_sig_2"))
+            m, meta = model_api._load(local_dir_path=os.path.join(tmpdir, "model1_no_sig_2"))
             assert isinstance(m, torch.jit.ScriptModule)  # type:ignore[attr-defined]
-            torch.testing.assert_close(m.forward(data_x)[0], y_pred)
+            torch.testing.assert_close(m.forward(data_x), y_pred)
 
-            m_udf, _ = model_api._load_model_for_deploy(os.path.join(tmpdir, "model1_no_sig_2"))
+            m_udf, _ = model_api._load(local_dir_path=os.path.join(tmpdir, "model1_no_sig_2"), as_custom_model=True)
             predict_method = getattr(m_udf, "forward", None)
             assert callable(predict_method)
             torch.testing.assert_close(
@@ -1281,114 +1234,114 @@ class ModelTest(absltest.TestCase):
     def test_tensorflow(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             simple_module = SimpleModule(name="simple")
-            x = [tf.constant([[5.0], [10.0]])]
+            x = tf.constant([[5.0], [10.0]])
             y_pred = simple_module(x)
-            s = {"__call__": model_signature.infer_signature(x, y_pred)}
+            s = {"__call__": model_signature.infer_signature([x], [y_pred])}
             with self.assertRaises(ValueError):
-                model_api.save_model(
+                model_api._save(
                     name="model1",
-                    model_dir_path=os.path.join(tmpdir, "model1"),
+                    local_dir_path=os.path.join(tmpdir, "model1"),
                     model=simple_module,
                     signatures={**s, "another_forward": s["__call__"]},
                     metadata={"author": "halu", "version": "1"},
                 )
 
-            model_api.save_model(
+            model_api._save(
                 name="model1",
-                model_dir_path=os.path.join(tmpdir, "model1"),
+                local_dir_path=os.path.join(tmpdir, "model1"),
                 model=simple_module,
                 signatures=s,
                 metadata={"author": "halu", "version": "1"},
             )
 
             x_df = model_signature_utils.rename_pandas_df(
-                tensorflow_handler.SeqOfTensorflowTensorHandler.convert_to_df(x, ensure_serializable=False),
+                tensorflow_handler.SeqOfTensorflowTensorHandler.convert_to_df(data=[x], ensure_serializable=False),
                 s["__call__"].inputs,
             )
 
             with warnings.catch_warnings():
                 warnings.simplefilter("error")
 
-                m, _ = model_api.load_model(model_dir_path=os.path.join(tmpdir, "model1"))
+                m, _ = model_api._load(local_dir_path=os.path.join(tmpdir, "model1"))
                 assert callable(m)
-                tf.assert_equal(m.__call__(x)[0], y_pred[0])
-                m_udf, _ = model_api._load_model_for_deploy(os.path.join(tmpdir, "model1"))
+                tf.assert_equal(m.__call__(x), y_pred)
+                m_udf, _ = model_api._load(local_dir_path=os.path.join(tmpdir, "model1"), as_custom_model=True)
                 assert callable(m_udf)
                 tf.assert_equal(
                     tensorflow_handler.SeqOfTensorflowTensorHandler.convert_from_df(m_udf(x_df), s["__call__"].outputs)[
                         0
                     ],
-                    y_pred[0],
+                    y_pred,
                 )
 
-            model_api.save_model(
+            model_api._save(
                 name="model1_no_sig_1",
-                model_dir_path=os.path.join(tmpdir, "model1_no_sig_1"),
+                local_dir_path=os.path.join(tmpdir, "model1_no_sig_1"),
                 model=simple_module,
-                sample_input=x,
+                sample_input=[x],
                 metadata={"author": "halu", "version": "1"},
             )
 
-            m, _ = model_api.load_model(model_dir_path=os.path.join(tmpdir, "model1_no_sig_1"))
+            m, _ = model_api._load(local_dir_path=os.path.join(tmpdir, "model1_no_sig_1"))
             assert callable(m)
-            tf.assert_equal(m(x)[0], y_pred[0])
-            m_udf, _ = model_api._load_model_for_deploy(os.path.join(tmpdir, "model1_no_sig_1"))
+            tf.assert_equal(m(x), y_pred)
+            m_udf, _ = model_api._load(local_dir_path=os.path.join(tmpdir, "model1_no_sig_1"), as_custom_model=True)
             assert callable(m_udf)
             tf.assert_equal(
                 tensorflow_handler.SeqOfTensorflowTensorHandler.convert_from_df(m_udf(x_df), s["__call__"].outputs)[0],
-                y_pred[0],
+                y_pred,
             )
 
-            model_api.save_model(
+            model_api._save(
                 name="model1_no_sig_2",
-                model_dir_path=os.path.join(tmpdir, "model1_no_sig_2"),
+                local_dir_path=os.path.join(tmpdir, "model1_no_sig_2"),
                 model=simple_module,
                 sample_input=x_df,
                 metadata={"author": "halu", "version": "1"},
             )
 
-            m_udf, _ = model_api._load_model_for_deploy(os.path.join(tmpdir, "model1_no_sig_2"))
+            m_udf, _ = model_api._load(local_dir_path=os.path.join(tmpdir, "model1_no_sig_2"), as_custom_model=True)
             assert callable(m_udf)
             tf.assert_equal(
                 tensorflow_handler.SeqOfTensorflowTensorHandler.convert_from_df(m_udf(x_df), s["__call__"].outputs)[0],
-                y_pred[0],
+                y_pred,
             )
 
     def test_tensorflow_keras(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             model, data_x, data_y = _prepare_keras_model()
-            s = {"predict": model_signature.infer_signature(data_x, data_y)}
+            s = {"predict": model_signature.infer_signature([data_x], [data_y])}
             with self.assertRaises(ValueError):
-                model_api.save_model(
+                model_api._save(
                     name="model1",
-                    model_dir_path=os.path.join(tmpdir, "model1"),
+                    local_dir_path=os.path.join(tmpdir, "model1"),
                     model=model,
                     signatures={**s, "another_forward": s["predict"]},
                     metadata={"author": "halu", "version": "1"},
                 )
 
-            model_api.save_model(
+            model_api._save(
                 name="model1",
-                model_dir_path=os.path.join(tmpdir, "model1"),
+                local_dir_path=os.path.join(tmpdir, "model1"),
                 model=model,
                 signatures=s,
                 metadata={"author": "halu", "version": "1"},
             )
 
-            y_pred = model.predict(data_x)[0]
+            y_pred = model.predict(data_x)
 
             x_df = model_signature_utils.rename_pandas_df(
-                tensorflow_handler.SeqOfTensorflowTensorHandler.convert_to_df(data_x, ensure_serializable=False),
+                tensorflow_handler.SeqOfTensorflowTensorHandler.convert_to_df([data_x], ensure_serializable=False),
                 s["predict"].inputs,
             )
 
             with warnings.catch_warnings():
                 warnings.simplefilter("error")
 
-                m, _ = model_api.load_model(model_dir_path=os.path.join(tmpdir, "model1"))
+                m, _ = model_api._load(local_dir_path=os.path.join(tmpdir, "model1"))
                 assert isinstance(m, tf.keras.Model)
-                tf.debugging.assert_near(m.predict(data_x)[0], y_pred)
-                m_udf, _ = model_api._load_model_for_deploy(os.path.join(tmpdir, "model1"))
+                tf.debugging.assert_near(m.predict(data_x), y_pred)
+                m_udf, _ = model_api._load(local_dir_path=os.path.join(tmpdir, "model1"), as_custom_model=True)
                 predict_method = getattr(m_udf, "predict", None)
                 assert callable(predict_method)
                 tf.debugging.assert_near(
@@ -1398,20 +1351,20 @@ class ModelTest(absltest.TestCase):
                     y_pred,
                 )
 
-            model_api.save_model(
+            model_api._save(
                 name="model1_no_sig_1",
-                model_dir_path=os.path.join(tmpdir, "model1_no_sig_1"),
+                local_dir_path=os.path.join(tmpdir, "model1_no_sig_1"),
                 model=model,
-                sample_input=data_x,
+                sample_input=[data_x],
                 metadata={"author": "halu", "version": "1"},
             )
 
-            m, meta = model_api.load_model(model_dir_path=os.path.join(tmpdir, "model1_no_sig_1"))
+            m, meta = model_api._load(local_dir_path=os.path.join(tmpdir, "model1_no_sig_1"))
             assert isinstance(m, tf.keras.Model)
-            tf.debugging.assert_near(m.predict(data_x)[0], y_pred)
+            tf.debugging.assert_near(m.predict(data_x), y_pred)
             self.assertEqual(s["predict"], meta.signatures["predict"])
 
-            m_udf, _ = model_api._load_model_for_deploy(os.path.join(tmpdir, "model1_no_sig_1"))
+            m_udf, _ = model_api._load(local_dir_path=os.path.join(tmpdir, "model1_no_sig_1"), as_custom_model=True)
             predict_method = getattr(m_udf, "predict", None)
             assert callable(predict_method)
             tf.debugging.assert_near(
@@ -1461,9 +1414,9 @@ class ModelTest(absltest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmpdir:
             mlflow_pyfunc_model = mlflow.pyfunc.load_model(f"runs:/{run_id}/model")
-            saved_meta = model_api.save_model(
+            saved_meta = model_api._save(
                 name="model1",
-                model_dir_path=os.path.join(tmpdir, "model1"),
+                local_dir_path=os.path.join(tmpdir, "model1"),
                 model=mlflow_pyfunc_model,
             )
 
@@ -1500,13 +1453,13 @@ class ModelTest(absltest.TestCase):
             )
             self.assertIn("pip<=23.0.1", saved_meta.conda_dependencies)
 
-            m, meta = model_api.load_model(model_dir_path=os.path.join(tmpdir, "model1"))
+            m, meta = model_api._load(local_dir_path=os.path.join(tmpdir, "model1"))
             assert isinstance(m, mlflow.pyfunc.PyFuncModel)
             self.assertNotEqual(m.metadata.run_id, run_id)
 
-            _ = model_api.save_model(
+            _ = model_api._save(
                 name="model1_again",
-                model_dir_path=os.path.join(tmpdir, "model1_again"),
+                local_dir_path=os.path.join(tmpdir, "model1_again"),
                 model=m,
             )
 
@@ -1545,7 +1498,7 @@ class ModelTest(absltest.TestCase):
 
             np.testing.assert_allclose(predictions, m.predict(X_test))
 
-            m_udf, _ = model_api._load_model_for_deploy(os.path.join(tmpdir, "model1"))
+            m_udf, _ = model_api._load(local_dir_path=os.path.join(tmpdir, "model1"), as_custom_model=True)
             predict_method = getattr(m_udf, "predict", None)
             assert callable(predict_method)
             X_df = pd.DataFrame(X_test)
@@ -1571,19 +1524,19 @@ class ModelTest(absltest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmpdir:
             mlflow_pyfunc_model = mlflow.pyfunc.load_model(f"runs:/{run_id}/model")
-            _ = model_api.save_model(
+            _ = model_api._save(
                 name="model1",
-                model_dir_path=os.path.join(tmpdir, "model1"),
+                local_dir_path=os.path.join(tmpdir, "model1"),
                 model=mlflow_pyfunc_model,
             )
 
-            m, meta = model_api.load_model(model_dir_path=os.path.join(tmpdir, "model1"))
+            m, meta = model_api._load(local_dir_path=os.path.join(tmpdir, "model1"))
             assert isinstance(m, mlflow.pyfunc.PyFuncModel)
             self.assertNotEqual(m.metadata.run_id, run_id)
 
             np.testing.assert_allclose(predictions, m.predict(X_test))
 
-            m_udf, _ = model_api._load_model_for_deploy(os.path.join(tmpdir, "model1"))
+            m_udf, _ = model_api._load(local_dir_path=os.path.join(tmpdir, "model1"), as_custom_model=True)
             predict_method = getattr(m_udf, "predict", None)
             assert callable(predict_method)
             np.testing.assert_allclose(np.expand_dims(predictions, axis=1), predict_method(X_test).to_numpy())
@@ -1612,16 +1565,16 @@ class ModelTest(absltest.TestCase):
             mlflow_pyfunc_model = mlflow.pyfunc.load_model(local_path)
             mlflow_pyfunc_model.metadata.run_id = uuid.uuid4().hex.lower()
             with self.assertRaisesRegex(ValueError, "Cannot load MLFlow model artifacts."):
-                _ = model_api.save_model(
+                _ = model_api._save(
                     name="model1",
-                    model_dir_path=os.path.join(tmpdir, "model1"),
+                    local_dir_path=os.path.join(tmpdir, "model1"),
                     model=mlflow_pyfunc_model,
                     options={"ignore_mlflow_dependencies": True},
                 )
 
-            saved_meta = model_api.save_model(
+            saved_meta = model_api._save(
                 name="model1",
-                model_dir_path=os.path.join(tmpdir, "model1"),
+                local_dir_path=os.path.join(tmpdir, "model1"),
                 model=mlflow_pyfunc_model,
                 options={"model_uri": local_path, "ignore_mlflow_dependencies": True},
             )
@@ -1629,34 +1582,34 @@ class ModelTest(absltest.TestCase):
             self.assertEmpty(saved_meta.pip_requirements)
 
             with self.assertRaisesRegex(ValueError, "Cannot load MLFlow model dependencies."):
-                _ = model_api.save_model(
+                _ = model_api._save(
                     name="model1",
-                    model_dir_path=os.path.join(tmpdir, "model1"),
+                    local_dir_path=os.path.join(tmpdir, "model1"),
                     model=mlflow_pyfunc_model,
                 )
 
-            saved_meta = model_api.save_model(
+            saved_meta = model_api._save(
                 name="model2",
-                model_dir_path=os.path.join(tmpdir, "model2"),
+                local_dir_path=os.path.join(tmpdir, "model2"),
                 model=mlflow_pyfunc_model,
                 options={"model_uri": local_path, "ignore_mlflow_metadata": True},
             )
 
             self.assertIsNone(saved_meta.metadata)
 
-            m, meta = model_api.load_model(model_dir_path=os.path.join(tmpdir, "model2"))
+            m, meta = model_api._load(local_dir_path=os.path.join(tmpdir, "model2"))
             assert isinstance(m, mlflow.pyfunc.PyFuncModel)
             self.assertNotEqual(m.metadata.run_id, run_id)
 
             np.testing.assert_allclose(predictions, m.predict(X_test))
 
-            _ = model_api.save_model(
+            _ = model_api._save(
                 name="model2_again",
-                model_dir_path=os.path.join(tmpdir, "model2_again"),
+                local_dir_path=os.path.join(tmpdir, "model2_again"),
                 model=m,
             )
 
-            m_udf, _ = model_api._load_model_for_deploy(os.path.join(tmpdir, "model2"))
+            m_udf, _ = model_api._load(local_dir_path=os.path.join(tmpdir, "model2"), as_custom_model=True)
             predict_method = getattr(m_udf, "predict", None)
             assert callable(predict_method)
             np.testing.assert_allclose(np.expand_dims(predictions, axis=1), predict_method(X_test).to_numpy())
@@ -1688,18 +1641,18 @@ class ModelTest(absltest.TestCase):
         predictions = pytorch_pyfunc.predict(input_x)
 
         with tempfile.TemporaryDirectory() as tmpdir:
-            _ = model_api.save_model(
+            _ = model_api._save(
                 name="model1",
-                model_dir_path=os.path.join(tmpdir, "model1"),
+                local_dir_path=os.path.join(tmpdir, "model1"),
                 model=pytorch_pyfunc,
             )
 
-            m, meta = model_api.load_model(model_dir_path=os.path.join(tmpdir, "model1"))
+            m, meta = model_api._load(local_dir_path=os.path.join(tmpdir, "model1"))
             assert isinstance(m, mlflow.pyfunc.PyFuncModel)
 
             np.testing.assert_allclose(predictions, m.predict(input_x))
 
-            m_udf, _ = model_api._load_model_for_deploy(os.path.join(tmpdir, "model1"))
+            m_udf, _ = model_api._load(local_dir_path=os.path.join(tmpdir, "model1"), as_custom_model=True)
             predict_method = getattr(m_udf, "predict", None)
             assert callable(predict_method)
             np.testing.assert_allclose(
