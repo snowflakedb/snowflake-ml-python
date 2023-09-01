@@ -117,7 +117,7 @@ fi
 
 # Compare test required dependencies with wheel pkg dependencies and exclude tests if necessary
 EXCLUDE_TESTS=$(mktemp "${TEMP_TEST_DIR}/exclude_tests_XXXXX")
-if [[ ${MODE} = "continuous_run" ]]; then
+if [[ ${MODE} = "continuous_run" || ${MODE} = "release" ]]; then
     ./ci/get_excluded_tests.sh -f "${EXCLUDE_TESTS}" -m unused -b "${BAZEL}"
 elif [[ ${MODE} = "merge_gate" ]]; then
     ./ci/get_excluded_tests.sh -f "${EXCLUDE_TESTS}" -m all -b "${BAZEL}"

@@ -13,49 +13,54 @@ from snowflake import snowpark
 _RESULT_SIZE_THRESHOLD = 5 * (1024**2)  # 5MB
 
 
-class SnowflakeResult:
+# This module handles serialization, uploading, downloading, and deserialization of stored
+# procedure results. If the results are too large to be returned from a stored procedure,
+# the result will be uploaded. The client can then retrieve and deserialize the result if
+# it was uploaded.
+
+
+def serialize(session: snowpark.Session, result: Any) -> bytes:
     """
-    Handles serialization, uploading, downloading, and deserialization of stored procedure results. If the results
-    are too large to be returned from a stored procedure, the result will be uploaded. The client can then retrieve
-    and deserialize the result if it was uploaded.
+    Serialize a tuple containing the result (or None) and the result object filepath
+    if the result was uploaded to a stage (or None).
+
+    Args:
+        session: Snowpark session.
+        result: Object to be serialized.
+
+    Returns:
+        Cloudpickled string of bytes of the result tuple.
     """
+    result_object_filepath = None
+    result_bytes = cloudpickle.dumps(result)
+    if sys.getsizeof(result_bytes) > _RESULT_SIZE_THRESHOLD:
+        stage_name = snowpark_utils.random_name_for_temp_object(snowpark_utils.TempObjectType.STAGE)
+        session.sql(f"CREATE TEMPORARY STAGE {stage_name}").collect()
+        result_object_filepath = f"@{stage_name}/{snowpark_utils.generate_random_alphanumeric()}"
+        session.file.put_stream(BytesIO(result_bytes), result_object_filepath)
+        result_object_filepath = f"{result_object_filepath}.gz"
 
-    def __init__(self, session: snowpark.Session, result: Any) -> None:
-        self.result = result
-        self.session = session
-        self.result_object_filepath = None
-        result_bytes = cloudpickle.dumps(self.result)
-        if sys.getsizeof(result_bytes) > _RESULT_SIZE_THRESHOLD:
-            stage_name = snowpark_utils.random_name_for_temp_object(snowpark_utils.TempObjectType.STAGE)
-            session.sql(f"CREATE TEMPORARY STAGE {stage_name}").collect()
-            result_object_filepath = f"@{stage_name}/{snowpark_utils.generate_random_alphanumeric()}"
-            session.file.put_stream(BytesIO(result_bytes), result_object_filepath)
-            self.result_object_filepath = f"{result_object_filepath}.gz"
+    if result_object_filepath is not None:
+        return cloudpickle.dumps((None, result_object_filepath))  # type: ignore[no-any-return]
 
-    def serialize(self) -> bytes:
-        """
-        Serialize a tuple containing the result (or None) and the result object filepath
-        if the result was uploaded to a stage (or None).
+    return cloudpickle.dumps((result, None))  # type: ignore[no-any-return]
 
-        Returns:
-            Cloudpickled string of bytes of the result tuple.
-        """
-        if self.result_object_filepath is not None:
-            return cloudpickle.dumps((None, self.result_object_filepath))  # type: ignore[no-any-return]
-        return cloudpickle.dumps((self.result, None))  # type: ignore[no-any-return]
 
-    @staticmethod
-    def load_result_from_filepath(session: snowpark.Session, result_object_filepath: str) -> Any:
-        """
-        Loads and deserializes the uploaded result.
+def deserialize(session: snowpark.Session, result_bytes: bytes) -> Any:
+    """
+    Loads and/or deserializes the (maybe uploaded) result.
 
-        Args:
-            session: Snowpark session.
-            result_object_filepath: Stage filepath of the result object returned by serialize method.
+    Args:
+        session: Snowpark session.
+        result_bytes: String of bytes returned by serialize method.
 
-        Returns:
-            The original serialized result (any type).
-        """
+    Returns:
+        The deserialized result (any type).
+    """
+    result_object, result_object_filepath = cloudpickle.loads(result_bytes)
+    if result_object_filepath is not None:
         result_object_bytes_io = session.file.get_stream(result_object_filepath, decompress=True)
         result_bytes = result_object_bytes_io.read()
-        return cloudpickle.loads(result_bytes)
+        result_object = cloudpickle.loads(result_bytes)
+
+    return result_object
