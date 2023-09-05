@@ -2,11 +2,7 @@ import os
 from typing import Dict, List
 
 import boto3
-
-# library `requests` has known stubs but is not installed.
-# TODO(zpeng): we may need to install as many mypy stubs as possible. However that
-# would require installing mypy when initializing the bazel conda environment.
-import requests  # type: ignore
+import requests
 import stage_fs
 from absl.testing import absltest
 from moto import server

@@ -124,45 +124,47 @@ class TestPipeline(TestCase):
         mms = MinMaxScaler(input_cols=output_cols, output_cols=pipeline_output_cols)
         pipeline = snowml_pipeline.Pipeline([("ss", ss), ("mms", mms)])
         pipeline.fit(df1)
-        filepath = os.path.join(tempfile.gettempdir(), "test_pipeline.pkl")
-        self._to_be_deleted_files.append(filepath)
-        pipeline_dump_cloudpickle = cloudpickle.dumps(pipeline)
-        pipeline_dump_pickle = pickle.dumps(pipeline)
-        joblib.dump(pipeline, filepath)
+        with tempfile.NamedTemporaryFile(suffix=".pkl", delete=False) as file:
+            self._to_be_deleted_files.append(file.name)
+            pipeline_dump_cloudpickle = cloudpickle.dumps(pipeline)
+            pipeline_dump_pickle = pickle.dumps(pipeline)
+            joblib.dump(pipeline, file.name)
 
-        self._session.close()
+            self._session.close()
 
-        # transform in session 2
-        self._session = Session.builder.configs(SnowflakeLoginOptions()).create()
-        _, df2 = framework_utils.get_df(self._session, data, schema, np.nan)
-        input_cols_extended = input_cols.copy()
-        input_cols_extended.append(id_col)
+            # transform in session 2
+            self._session = Session.builder.configs(SnowflakeLoginOptions()).create()
+            _, df2 = framework_utils.get_df(self._session, data, schema, np.nan)
+            input_cols_extended = input_cols.copy()
+            input_cols_extended.append(id_col)
 
-        importlib.reload(sys.modules["snowflake.ml.modeling.pipeline"])
+            importlib.reload(sys.modules["snowflake.ml.modeling.pipeline"])
 
-        # cloudpickle
-        pipeline_load_cloudpickle = cloudpickle.loads(pipeline_dump_cloudpickle)
-        transformed_df_cloudpickle = pipeline_load_cloudpickle.transform(df2[input_cols_extended])
-        actual_arr_cloudpickle = transformed_df_cloudpickle.sort(id_col)[pipeline_output_cols].to_pandas().to_numpy()
+            # cloudpickle
+            pipeline_load_cloudpickle = cloudpickle.loads(pipeline_dump_cloudpickle)
+            transformed_df_cloudpickle = pipeline_load_cloudpickle.transform(df2[input_cols_extended])
+            actual_arr_cloudpickle = (
+                transformed_df_cloudpickle.sort(id_col)[pipeline_output_cols].to_pandas().to_numpy()
+            )
 
-        # pickle
-        pipeline_load_pickle = pickle.loads(pipeline_dump_pickle)
-        transformed_df_pickle = pipeline_load_pickle.transform(df2[input_cols_extended])
-        actual_arr_pickle = transformed_df_pickle.sort(id_col)[pipeline_output_cols].to_pandas().to_numpy()
+            # pickle
+            pipeline_load_pickle = pickle.loads(pipeline_dump_pickle)
+            transformed_df_pickle = pipeline_load_pickle.transform(df2[input_cols_extended])
+            actual_arr_pickle = transformed_df_pickle.sort(id_col)[pipeline_output_cols].to_pandas().to_numpy()
 
-        # joblib
-        pipeline_load_joblib = joblib.load(filepath)
-        transformed_df_joblib = pipeline_load_joblib.transform(df2[input_cols_extended])
-        actual_arr_joblib = transformed_df_joblib.sort(id_col)[pipeline_output_cols].to_pandas().to_numpy()
+            # joblib
+            pipeline_load_joblib = joblib.load(file.name)
+            transformed_df_joblib = pipeline_load_joblib.transform(df2[input_cols_extended])
+            actual_arr_joblib = transformed_df_joblib.sort(id_col)[pipeline_output_cols].to_pandas().to_numpy()
 
-        # sklearn
-        skpipeline = SkPipeline([("ss", SklearnStandardScaler()), ("mms", SklearnMinMaxScaler())])
-        skpipeline.fit(df_pandas[input_cols])
-        sklearn_arr = skpipeline.transform(df_pandas[input_cols])
+            # sklearn
+            skpipeline = SkPipeline([("ss", SklearnStandardScaler()), ("mms", SklearnMinMaxScaler())])
+            skpipeline.fit(df_pandas[input_cols])
+            sklearn_arr = skpipeline.transform(df_pandas[input_cols])
 
-        assert np.allclose(actual_arr_cloudpickle, sklearn_arr)
-        assert np.allclose(actual_arr_pickle, sklearn_arr)
-        assert np.allclose(actual_arr_joblib, sklearn_arr)
+            np.testing.assert_allclose(actual_arr_cloudpickle, sklearn_arr)
+            np.testing.assert_allclose(actual_arr_pickle, sklearn_arr)
+            np.testing.assert_allclose(actual_arr_joblib, sklearn_arr)
 
     def test_pipeline_with_regression_estimators(self) -> None:
         input_df_pandas = load_diabetes(as_frame=True).frame

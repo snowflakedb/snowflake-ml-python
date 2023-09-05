@@ -493,7 +493,6 @@ class GridSearchCV(BaseTransformer):
         ]
         target_locations = []
         for param_chunk in param_chunks:
-
             param_chunk_dist: Any = defaultdict(set)
             for d in param_chunk:
                 for k, v in d.items():
@@ -675,9 +674,9 @@ class GridSearchCV(BaseTransformer):
             import numpy as np
             import pandas as pd
 
-            input_df = pd.io.json.json_normalize(ds)
+            input_df = pd.json_normalize(ds)
 
-            # pd.io.json.json_normalize() doesn't remove quotes around quoted identifiers like snowpakr_df.to_pandas().
+            # pd.json_normalize() doesn't remove quotes around quoted identifiers like snowpakr_df.to_pandas().
             # But trained models have unquoted input column names saved in internal state if trained using snowpark_df
             # or quoted input column names saved in internal state if trained using pandas_df.
             # Model expects exact same columns names in the input df for predict call.

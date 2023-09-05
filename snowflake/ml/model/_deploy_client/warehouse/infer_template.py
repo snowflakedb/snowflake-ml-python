@@ -52,7 +52,7 @@ dtype_map = {{feature.name: feature.as_dtype() for feature in features}}
 # TODO(halu): Avoid per batch async detection branching.
 @vectorized(input=pd.DataFrame, max_batch_size=10)
 def infer(df):
-    input_df = pd.io.json.json_normalize(df[0]).astype(dtype=dtype_map)
+    input_df = pd.json_normalize(df[0]).astype(dtype=dtype_map)
     if inspect.iscoroutinefunction(model.{target_method}):
         predictions_df = anyio.run(model.{target_method}, input_df[input_cols])
     else:

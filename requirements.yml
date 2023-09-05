@@ -101,8 +101,8 @@
   dev_version: "2.1.3"
 - name_pypi: fsspec[http]
   name_conda: fsspec
-  dev_version: "2022.11.0"
-  version_requirements: ">=2022.11,<=2023.1"
+  dev_version: "2023.3.0"
+  version_requirements: ">=2022.11,<2024"
 - name: httpx
   dev_version: "0.23.0"
 - name: inflection
@@ -158,7 +158,7 @@
   dev_version: "7.1.2"
 - name_conda: python
   dev_version_conda: "3.8.13"
-  version_requirements_conda: ""
+  version_requirements_conda: ">=3.8.13, <3.11"
 - name_pypi: torch
   name_conda: pytorch
   dev_version: "2.0.1"
@@ -175,7 +175,8 @@
 - name: ruamel.yaml
   dev_version: "0.17.21"
 - name: s3fs
-  dev_version: "2022.11.0"
+  dev_version: "2023.3.0"
+  version_requirements: ">=2022.11,<2024"
 - name: scikit-learn
   dev_version: "1.3.0"
   version_requirements: ">=1.2.1,<1.4"
