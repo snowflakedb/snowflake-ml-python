@@ -122,6 +122,8 @@ def get_build_rules_for_native_impl():
     py_test(
         name = "test_drop_input_cols",
         srcs = ["test_drop_input_cols.py"],
+        shard_count = SHARD_COUNT,
+        timeout = TIMEOUT,
         deps = [
             "//snowflake/ml/modeling/impute:simple_imputer",
             "//snowflake/ml/modeling/pipeline:pipeline",

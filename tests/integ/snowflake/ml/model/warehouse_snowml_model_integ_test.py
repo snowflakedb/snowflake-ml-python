@@ -77,7 +77,7 @@ class TestWarehouseSnowMLModelInteg(parameterized.TestCase):
             test_released_version=test_released_version,
         )
 
-    @parameterized.product(permanent_deploy=[True, False], test_released_version=[None, "1.0.5"])  # type: ignore[misc]
+    @parameterized.product(permanent_deploy=[True, False], test_released_version=[None, "1.0.7"])  # type: ignore[misc]
     def test_snowml_model_deploy_snowml_sklearn(
         self,
         permanent_deploy: Optional[bool] = False,
@@ -110,7 +110,7 @@ class TestWarehouseSnowMLModelInteg(parameterized.TestCase):
             test_released_version=test_released_version,
         )
 
-    @parameterized.product(permanent_deploy=[True, False], test_released_version=[None, "1.0.5"])  # type: ignore[misc]
+    @parameterized.product(permanent_deploy=[True, False], test_released_version=[None, "1.0.7"])  # type: ignore[misc]
     def test_snowml_model_deploy_xgboost(
         self,
         permanent_deploy: Optional[bool] = False,
@@ -143,7 +143,7 @@ class TestWarehouseSnowMLModelInteg(parameterized.TestCase):
             test_released_version=test_released_version,
         )
 
-    @parameterized.product(permanent_deploy=[True, False], test_released_version=[None, "1.0.5"])  # type: ignore[misc]
+    @parameterized.product(permanent_deploy=[True, False], test_released_version=[None, "1.0.7"])  # type: ignore[misc]
     def test_snowml_model_deploy_lightgbm(
         self,
         permanent_deploy: Optional[bool] = False,

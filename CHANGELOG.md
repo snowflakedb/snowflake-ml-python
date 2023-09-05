@@ -1,6 +1,18 @@
 # Release History
 
-## 1.0.6
+## 1.0.7
+
+### Behavior Changes
+
+
+### New Features
+
+
+### Bug Fixes
+
+- Model Development & Model Registry: Fix an error related to `pandas.io.json.json_normalize`.
+
+## 1.0.6 (2023-09-01)
 
 ### New Features
 - Model Registry: add `create_if_not_exists` parameter in constructor.
