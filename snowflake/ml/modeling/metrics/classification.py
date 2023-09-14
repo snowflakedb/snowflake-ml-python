@@ -68,7 +68,7 @@ def accuracy_score(
     else:
         expr = " and ".join([f"({y_true_col_names[i]} = {y_pred_col_names[i]})" for i in range(len(y_true_col_names))])
         score_column = F.iff(expr, 1, 0)
-    return metrics_utils.weighted_sum(
+    return _weighted_sum(
         df=df,
         sample_score_column=score_column,
         sample_weight_column=df[sample_weight_col_name] if sample_weight_col_name else None,
@@ -877,3 +877,38 @@ def recall_score(
         zero_division=zero_division,
     )
     return r
+
+
+def _weighted_sum(
+    *,
+    df: snowpark.DataFrame,
+    sample_score_column: snowpark.Column,
+    sample_weight_column: Optional[snowpark.Column] = None,
+    normalize: bool = False,
+    statement_params: Dict[str, str],
+) -> float:
+    """Weighted sum of the sample score column.
+
+    Args:
+        df: Input dataframe.
+        sample_score_column: Sample score column.
+        sample_weight_column: Sample weight column.
+        normalize: If ``False``, return the weighted sum.
+            Otherwise, return the fraction of weighted sum.
+        statement_params: Dictionary used for tagging queries for tracking purposes.
+
+    Returns:
+        If ``normalize == True``, return the fraction of weighted sum (float),
+        else returns the weighted sum (int).
+    """
+    if normalize:
+        if sample_weight_column is not None:
+            res = F.sum(sample_score_column * sample_weight_column) / F.sum(sample_weight_column)
+        else:
+            res = F.avg(sample_score_column)
+    elif sample_weight_column is not None:
+        res = F.sum(sample_score_column * sample_weight_column)
+    else:
+        res = F.sum(sample_score_column)
+
+    return float(df.select(res).collect(statement_params=statement_params)[0][0])

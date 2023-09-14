@@ -1,7 +1,4 @@
 #!/usr/bin/env python3
-#
-# Copyright (c) 2012-2022 Snowflake Computing Inc. All rights reserved.
-#
 import copy
 from typing import Any, Dict, Iterable, Optional, Type, Union
 
@@ -114,7 +111,7 @@ class SimpleImputer(base.BaseTransformer):
 
         Attributes:
         statistics_: dict {input_col: stats_value}
-            Dict contaning the imputation fill value for each feature. Computing statistics can result in `np.nan`
+            Dict containing the imputation fill value for each feature. Computing statistics can result in `np.nan`
             values. During `transform`, features corresponding to `np.nan` statistics will be discarded.
         n_features_in_: int
             Number of features seen during `fit`.
@@ -276,7 +273,7 @@ class SimpleImputer(base.BaseTransformer):
                 if self.strategy == "mean":
                     self.statistics_[input_col] = float(self.statistics_[input_col])
                 elif self.strategy == "most_frequent":
-                    # Check if there is only one occurrence of the value. If so, the statistic should be the mininum
+                    # Check if there is only one occurrence of the value. If so, the statistic should be the minimum
                     # value in the dataset.
                     if dataset.filter(F.col(input_col) == statistic).count(statement_params=statement_params) == 1:
                         statistic_min = self._compute(dataset, [input_col], states=[_utils.NumericStatistics.MIN])

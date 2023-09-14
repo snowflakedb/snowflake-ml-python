@@ -415,13 +415,13 @@ class ModelMetadata:
         """
         model_yaml_path = os.path.join(path, ModelMetadata.MODEL_METADATA_FILE)
         with open(model_yaml_path, encoding="utf-8") as f:
-            loaded_mata = yaml.safe_load(f.read())
+            loaded_meta = yaml.safe_load(f.read())
 
-        loaded_mata_version = loaded_mata.pop("version", None)
-        if not loaded_mata_version or loaded_mata_version != MODEL_METADATA_VERSION:
+        loaded_meta_version = loaded_meta.pop("version", None)
+        if not loaded_meta_version or loaded_meta_version != MODEL_METADATA_VERSION:
             raise NotImplementedError("Unknown or unsupported model metadata file found.")
 
-        meta = ModelMetadata.from_dict(loaded_mata)
+        meta = ModelMetadata.from_dict(loaded_meta)
         env_dir_path = os.path.join(path, ModelMetadata.ENV_DIR)
         meta._conda_dependencies, python_version = _env.load_conda_env_file(
             os.path.join(env_dir_path, _env._CONDA_ENV_FILE_NAME)

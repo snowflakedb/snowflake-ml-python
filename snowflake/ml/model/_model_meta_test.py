@@ -49,13 +49,13 @@ class ModelMetaTest(absltest.TestCase):
 
                 meta_dict = meta.to_dict()
 
-                laoded_meta = _model_meta.ModelMetadata.from_dict(meta_dict)
+                loaded_meta = _model_meta.ModelMetadata.from_dict(meta_dict)
 
-                self.assertListEqual(laoded_meta.pip_requirements, [])
-                self.assertListEqual(laoded_meta.conda_dependencies, _BASIC_DEPENDENCIES_TARGET_WITH_SNOWML)
+                self.assertListEqual(loaded_meta.pip_requirements, [])
+                self.assertListEqual(loaded_meta.conda_dependencies, _BASIC_DEPENDENCIES_TARGET_WITH_SNOWML)
                 self.assertFalse(hasattr(meta, "local_ml_library_version"))
 
-    def test_model_meta_dependencies_no_packages_embeded_snowml(self) -> None:
+    def test_model_meta_dependencies_no_packages_embedded_snowml(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             with _model_meta._create_model_metadata(
                 model_dir_path=tmpdir,
@@ -70,10 +70,10 @@ class ModelMetaTest(absltest.TestCase):
 
                 meta_dict = meta.to_dict()
 
-                laoded_meta = _model_meta.ModelMetadata.from_dict(meta_dict)
+                loaded_meta = _model_meta.ModelMetadata.from_dict(meta_dict)
 
-                self.assertListEqual(laoded_meta.pip_requirements, [])
-                self.assertListEqual(laoded_meta.conda_dependencies, _BASIC_DEPENDENCIES_TARGET)
+                self.assertListEqual(loaded_meta.pip_requirements, [])
+                self.assertListEqual(loaded_meta.conda_dependencies, _BASIC_DEPENDENCIES_TARGET)
                 self.assertTrue(hasattr(meta, "local_ml_library_version"))
 
     def test_model_meta_dependencies_dup_basic_dep(self) -> None:
@@ -95,10 +95,10 @@ class ModelMetaTest(absltest.TestCase):
 
                 meta_dict = meta.to_dict()
 
-                laoded_meta = _model_meta.ModelMetadata.from_dict(meta_dict)
+                loaded_meta = _model_meta.ModelMetadata.from_dict(meta_dict)
 
-                self.assertListEqual(laoded_meta.pip_requirements, [])
-                self.assertListEqual(laoded_meta.conda_dependencies, dep_target)
+                self.assertListEqual(loaded_meta.pip_requirements, [])
+                self.assertListEqual(loaded_meta.conda_dependencies, dep_target)
 
     def test_model_meta_dependencies_dup_basic_dep_other_channel(self) -> None:
         with self.assertWarns(UserWarning):
@@ -121,10 +121,10 @@ class ModelMetaTest(absltest.TestCase):
                     meta_dict = meta.to_dict()
 
                     with self.assertWarns(UserWarning):
-                        laoded_meta = _model_meta.ModelMetadata.from_dict(meta_dict)
+                        loaded_meta = _model_meta.ModelMetadata.from_dict(meta_dict)
 
-                    self.assertListEqual(laoded_meta.pip_requirements, [])
-                    self.assertListEqual(laoded_meta.conda_dependencies, dep_target)
+                    self.assertListEqual(loaded_meta.pip_requirements, [])
+                    self.assertListEqual(loaded_meta.conda_dependencies, dep_target)
 
     def test_model_meta_dependencies_dup_basic_dep_pip(self) -> None:
         with self.assertWarns(UserWarning):
@@ -145,10 +145,10 @@ class ModelMetaTest(absltest.TestCase):
                     meta_dict = meta.to_dict()
 
                     with self.assertWarns(UserWarning):
-                        laoded_meta = _model_meta.ModelMetadata.from_dict(meta_dict)
+                        loaded_meta = _model_meta.ModelMetadata.from_dict(meta_dict)
 
-                    self.assertListEqual(laoded_meta.pip_requirements, ["pandas"])
-                    self.assertListEqual(laoded_meta.conda_dependencies, dep_target)
+                    self.assertListEqual(loaded_meta.pip_requirements, ["pandas"])
+                    self.assertListEqual(loaded_meta.conda_dependencies, dep_target)
 
     def test_model_meta_dependencies_conda(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -168,10 +168,10 @@ class ModelMetaTest(absltest.TestCase):
 
                 meta_dict = meta.to_dict()
 
-                laoded_meta = _model_meta.ModelMetadata.from_dict(meta_dict)
+                loaded_meta = _model_meta.ModelMetadata.from_dict(meta_dict)
 
-                self.assertListEqual(laoded_meta.pip_requirements, [])
-                self.assertListEqual(laoded_meta.conda_dependencies, dep_target)
+                self.assertListEqual(loaded_meta.pip_requirements, [])
+                self.assertListEqual(loaded_meta.conda_dependencies, dep_target)
 
     def test_model_meta_dependencies_pip(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -190,10 +190,10 @@ class ModelMetaTest(absltest.TestCase):
 
                 meta_dict = meta.to_dict()
 
-                laoded_meta = _model_meta.ModelMetadata.from_dict(meta_dict)
+                loaded_meta = _model_meta.ModelMetadata.from_dict(meta_dict)
 
-                self.assertListEqual(laoded_meta.pip_requirements, ["torch"])
-                self.assertListEqual(laoded_meta.conda_dependencies, dep_target)
+                self.assertListEqual(loaded_meta.pip_requirements, ["torch"])
+                self.assertListEqual(loaded_meta.conda_dependencies, dep_target)
 
     def test_model_meta_dependencies_both(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -214,10 +214,10 @@ class ModelMetaTest(absltest.TestCase):
 
                 meta_dict = meta.to_dict()
 
-                laoded_meta = _model_meta.ModelMetadata.from_dict(meta_dict)
+                loaded_meta = _model_meta.ModelMetadata.from_dict(meta_dict)
 
-                self.assertListEqual(laoded_meta.pip_requirements, ["torch"])
-                self.assertListEqual(laoded_meta.conda_dependencies, dep_target)
+                self.assertListEqual(loaded_meta.pip_requirements, ["torch"])
+                self.assertListEqual(loaded_meta.conda_dependencies, dep_target)
 
     def test_model_meta_override_py_version(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -228,9 +228,9 @@ class ModelMetaTest(absltest.TestCase):
 
                 meta_dict = meta.to_dict()
 
-                laoded_meta = _model_meta.ModelMetadata.from_dict(meta_dict)
+                loaded_meta = _model_meta.ModelMetadata.from_dict(meta_dict)
 
-                self.assertEqual(laoded_meta.python_version, "2.7")
+                self.assertEqual(loaded_meta.python_version, "2.7")
 
             with self.assertRaises(ValueError):
                 meta = _model_meta.ModelMetadata(
@@ -285,12 +285,12 @@ class ModelMetaTest(absltest.TestCase):
 
                 meta_dict = meta.to_dict()
 
-                laoded_meta = _model_meta.ModelMetadata.from_dict(meta_dict)
+                loaded_meta = _model_meta.ModelMetadata.from_dict(meta_dict)
 
-                self.assertEqual(laoded_meta.cuda_version, "11.7")
+                self.assertEqual(loaded_meta.cuda_version, "11.7")
 
                 with self.assertRaisesRegex(ValueError, "Different CUDA version .+ and .+ found in the same model!"):
-                    laoded_meta.cuda_version = "12.0"
+                    loaded_meta.cuda_version = "12.0"
 
 
 if __name__ == "__main__":

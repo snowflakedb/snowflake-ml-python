@@ -1,7 +1,7 @@
 from __future__ import annotations  # for return self methods
 
 from functools import partial
-from typing import Any, Callable, Optional
+from typing import Any, Callable, Dict, Optional
 
 from snowflake import connector, snowpark
 from snowflake.ml._internal.utils import formatting
@@ -172,7 +172,7 @@ class ResultValidator:
         return self
 
     def has_named_value_match(self, row_idx: int, col_name: str, expected_value: Any) -> ResultValidator:
-        """Validate that the column `col_name` in row `row_idx` of ther results exists and matches `expected_value`.
+        """Validate that the column `col_name` in row `row_idx` of the results exists and matches `expected_value`.
 
         Args:
             row_idx: Row index of the cell that needs to match.
@@ -240,6 +240,7 @@ class SqlResultValidator(ResultValidator):
             SqlResultValidator(
                 session=self._session,
                 query="UPDATE table SET NAME = 'name'",
+                statement_params=statement_params,
             )
             .has_dimensions(expected_rows=1, expected_cols=1)
             .has_partial_match(row_idx=0, col_idx=0, expected_value="number of rows updated=1")
@@ -247,11 +248,14 @@ class SqlResultValidator(ResultValidator):
         )
     """
 
-    def __init__(self, session: snowpark.Session, query: str) -> None:
+    def __init__(
+        self, session: snowpark.Session, query: str, statement_params: Optional[Dict[str, Any]] = None
+    ) -> None:
         self._session: snowpark.Session = session
         self._query: str = query
         self._success_matchers: list[Callable[[list[snowpark.Row], str], bool]] = []
+        self._statement_params: Optional[Dict[str, Any]] = statement_params
 
     def _get_result(self) -> list[snowpark.Row]:
         """Collect the result of the given SQL query."""
-        return self._session.sql(self._query).collect()
+        return self._session.sql(self._query).collect(statement_params=self._statement_params)

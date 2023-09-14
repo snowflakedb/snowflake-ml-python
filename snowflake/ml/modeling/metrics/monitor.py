@@ -1,7 +1,4 @@
-#
-# Copyright (c) 2012-2022 Snowflake Computing Inc. All rights reserved.
-#
-from typing import Dict, Tuple
+from typing import Dict, Optional, Tuple
 
 from typing_extensions import TypedDict
 
@@ -26,7 +23,10 @@ class BucketConfig(TypedDict):
     subproject=_SUBPROJECT,
 )
 def compare_udfs_outputs(
-    base_udf_name: str, test_udf_name: str, input_data_df: snowpark.DataFrame, bucket_config: BucketConfig = None
+    base_udf_name: str,
+    test_udf_name: str,
+    input_data_df: snowpark.DataFrame,
+    bucket_config: Optional[BucketConfig] = None,
 ) -> snowpark.DataFrame:
     """Compare outputs of 2 UDFs. Outputs are bucketized the based on bucketConfig.
     This is useful when someone retrain a Model and deploy as UDF to compare against earlier UDF as ground truth.
@@ -189,7 +189,9 @@ def jensenshannon(df1: snowpark.DataFrame, colname1: str, df2: snowpark.DataFram
     return float(resdf.collect()[0].as_dict()["JS"])
 
 
-def _get_udf_query_str(name: str, col: str, df: snowpark.DataFrame, bucket_config: BucketConfig = None) -> str:
+def _get_udf_query_str(
+    name: str, col: str, df: snowpark.DataFrame, bucket_config: Optional[BucketConfig] = None
+) -> str:
     if bucket_config:
         return "select count(1) as {}, width_bucket({}, {}, {}, {}) bucket from ({}) group by bucket".format(
             name, col, bucket_config["min"], bucket_config["max"], bucket_config["size"], df.queries["queries"][0]

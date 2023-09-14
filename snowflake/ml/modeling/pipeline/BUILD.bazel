@@ -1,5 +1,5 @@
-load("//bazel:py_rules.bzl", "py_library")
 load("@rules_python//python:packaging.bzl", "py_package")
+load("//bazel:py_rules.bzl", "py_library")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -9,7 +9,7 @@ py_library(
         "__init__.py",
     ],
     deps = [
-        "//snowflake/ml/_internal:init_utils"
+        "//snowflake/ml/_internal:init_utils",
     ],
 )
 
@@ -21,7 +21,7 @@ py_library(
     deps = [
         ":init",
         "//snowflake/ml/_internal:telemetry",
-        "//snowflake/ml/_internal/exceptions:exceptions",
+        "//snowflake/ml/_internal/exceptions",
     ],
 )
 

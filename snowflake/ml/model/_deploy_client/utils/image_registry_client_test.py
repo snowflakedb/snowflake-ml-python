@@ -4,7 +4,7 @@ from absl.testing import absltest
 from absl.testing.absltest import mock
 
 from snowflake.ml.model._deploy_client.utils import image_registry_client
-from snowflake.ml.test_utils import mock_session
+from snowflake.ml.test_utils import exception_utils, mock_session
 from snowflake.snowpark import session
 
 
@@ -42,7 +42,7 @@ class ImageRegistryClientTest(absltest.TestCase):
         repo_url = "https://org-account.registry-dev.snowflakecomputing.com/v2/db/schema/repo"
         registry_cred = "dummy_credentials"
 
-        with self.assertRaises(RuntimeError):
+        with exception_utils.assert_snowml_exceptions(self, expected_original_error_type=RuntimeError):
             self.client.login(repo_url, registry_cred)
 
         mock_get.assert_called_once_with(

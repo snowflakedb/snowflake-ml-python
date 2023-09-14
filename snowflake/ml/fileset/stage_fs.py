@@ -99,7 +99,7 @@ class SFStageFileSystem(fsspec.AbstractFileSystem):
                 See more information in https://filesystem-spec.readthedocs.io/en/latest/features.html
 
         Raises:
-            ValueError: An error occured when not exactly one of sf_connection and snowpark_session is given.
+            ValueError: An error occurred when not exactly one of sf_connection and snowpark_session is given.
         """
         if sf_connection and snowpark_session:
             raise ValueError(fileset_error_messages.BOTH_SF_CONNECTION_AND_SNOWPARK_SESSION_SPECIFIED)
@@ -126,7 +126,7 @@ class SFStageFileSystem(fsspec.AbstractFileSystem):
         """Get the Snowflake path to this stage.
 
         Returns:
-            String in the format of "@{databse}.{schema}.{stage}".
+            String in the format of "@{database}.{schema}.{stage}".
                 Example: @mydb.myschema.mystage
         """
         return f"@{self._db}.{self._schema}.{self._stage}"
@@ -153,8 +153,8 @@ class SFStageFileSystem(fsspec.AbstractFileSystem):
             A list of filename if `detail` is false, or a list of dict if `detail` is true.
 
         Raises:
-            SnowflakeMLException: An error occured when the given path points to a stage that cannot be found.
-            SnowflakeMLException: An error occured when Snowflake cannot list files in the given stage path.
+            SnowflakeMLException: An error occurred when the given path points to a stage that cannot be found.
+            SnowflakeMLException: An error occurred when Snowflake cannot list files in the given stage path.
         """
         try:
             loc = self.stage_name
@@ -224,7 +224,7 @@ class SFStageFileSystem(fsspec.AbstractFileSystem):
             A fsspec file-like object.
 
         Raises:
-            SnowflakeMLException: An error occured when the given path points to a file that cannot be found.
+            SnowflakeMLException: An error occurred when the given path points to a file that cannot be found.
         """
         path = path.lstrip("/")
         cached_presigned_url = self._url_cache.get(path, None)
@@ -280,7 +280,7 @@ class SFStageFileSystem(fsspec.AbstractFileSystem):
                 # If the path doesn't start with "<search_path>/", the object is not under the <search_path> directory.
                 continue
 
-            # Now we want to distingush whether the object is in a subdirecotry of the given search path.
+            # Now we want to distinguish whether the object is in a subdirecotry of the given search path.
             rel_file_path = obj_path[len(search_path) :].lstrip("/")
             slash_idx = rel_file_path.find("/")
             if slash_idx == -1:

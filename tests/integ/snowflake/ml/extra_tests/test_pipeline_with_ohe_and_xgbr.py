@@ -1,6 +1,3 @@
-#
-# Copyright (c) 2012-2022 Snowflake Computing Inc. All rights reserved.
-#
 import numpy as np
 import pytest
 from absl.testing import absltest
@@ -186,7 +183,7 @@ class GridSearchCVTest(absltest.TestCase):
         sk_results = sk_pipeline.predict(pd_df)
         np.testing.assert_allclose(snow_results.flatten(), sk_results.flatten(), rtol=1.0e-1, atol=1.0e-2)
 
-    def test_pipeline_with_limitted_number_of_columns_in_estimator_export(self) -> None:
+    def test_pipeline_with_limited_number_of_columns_in_estimator_export(self) -> None:
         snow_df = (
             self._session.sql(
                 """SELECT *, IFF(Y = 'yes', 1.0, 0.0) as LABEL

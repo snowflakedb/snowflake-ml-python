@@ -32,16 +32,8 @@ class FeatureStoreMetadata:
     features: List[str]
 
     def to_json(self) -> str:
-        return json.dumps(self.to_dict())
-
-    @classmethod
-    def from_json(cls, json_str: str) -> "FeatureStoreMetadata":
-        json_dict = json.loads(json_str)
-        return FeatureStoreMetadata.from_dict(json_dict)
-
-    def to_dict(self) -> Dict[str, str]:
-        return {
-            # TODO(zhe): Additonal wrap is needed because ml_.artifact.ad_artifact takes a dict
+        state_dict = {
+            # TODO(zhe): Additional wrap is needed because ml_.artifact.ad_artifact takes a dict
             # but we retrieve it as an object. Snowpark serialization is inconsistent with
             # our deserialization. A fix is let artifact table stores string and callers
             # handles both serialization and deserialization.
@@ -49,9 +41,11 @@ class FeatureStoreMetadata:
             "connection_params": _wrap_embedded_str(json.dumps(self.connection_params)),
             "features": _wrap_embedded_str(json.dumps(self.features)),
         }
+        return json.dumps(state_dict)
 
     @classmethod
-    def from_dict(cls, json_dict: Dict[str, str]) -> "FeatureStoreMetadata":
+    def from_json(cls, json_str: str) -> "FeatureStoreMetadata":
+        json_dict = json.loads(json_str)
         return cls(
             spine_query=json_dict["spine_query"],
             connection_params=json.loads(json_dict["connection_params"]),
@@ -70,7 +64,7 @@ class TrainingDataset:
         snapshot_table: A snapshot table name on the materialized table.
         timestamp_col: Name of timestamp column in spine_df that will be used to join time-series features.
             If spine_timestamp_col is not none, the input features also must have timestamp_col.
-        label_cols: Name of colum(s) in materialized_table that contains training labels.
+        label_cols: Name of column(s) in materialized_table that contains training labels.
         feature_store_metadata: A feature store metadata object.
         desc: A description about this training dataset.
     """
@@ -83,7 +77,13 @@ class TrainingDataset:
     feature_store_metadata: Optional[FeatureStoreMetadata]
     desc: str
 
-    def to_dict(self) -> Dict[str, str]:
+    def load_features(self) -> Optional[List[str]]:
+        if self.feature_store_metadata is not None:
+            return self.feature_store_metadata.features
+        else:
+            return None
+
+    def to_json(self) -> str:
         if len(self.df.queries["queries"]) != 1:
             raise ValueError(
                 f"""df dataframe must contain only 1 query.
@@ -91,7 +91,7 @@ Got {len(self.df.queries['queries'])}: {self.df.queries['queries']}
 """
             )
 
-        return {
+        state_dict = {
             "df_query": self.df.queries["queries"][0],
             "materialized_table": _get_val_or_null(self.materialized_table),
             "snapshot_table": _get_val_or_null(self.snapshot_table),
@@ -102,24 +102,17 @@ Got {len(self.df.queries['queries'])}: {self.df.queries['queries']}
             else "null",
             "desc": self.desc,
         }
+        return json.dumps(state_dict)
 
     @classmethod
-    def from_dict(cls, json_dict: Dict[str, Any], session: Session) -> "TrainingDataset":
+    def from_json(cls, json_str: str, session: Session) -> "TrainingDataset":
+        json_dict = json.loads(json_str)
         json_dict["df"] = session.sql(json_dict["df_query"])
         json_dict.pop("df_query")
 
         fs_meta_json = json_dict["feature_store_metadata"]
         json_dict["feature_store_metadata"] = FeatureStoreMetadata.from_json(fs_meta_json)
         return cls(**json_dict)
-
-    def to_json(self) -> str:
-        d = self.to_dict()
-        return json.dumps(d)
-
-    @classmethod
-    def from_json(cls, json_str: str, session: Session) -> "TrainingDataset":
-        json_dict = json.loads(json_str)
-        return cls.from_dict(json_dict, session)
 
     def __eq__(self, other: object) -> bool:
         return isinstance(other, TrainingDataset) and self.to_json() == other.to_json()

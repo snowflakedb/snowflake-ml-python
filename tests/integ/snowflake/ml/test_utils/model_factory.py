@@ -1,8 +1,5 @@
-#
-# Copyright (c) 2012-2022 Snowflake Computing Inc. All rights reserved.
-#
 from enum import Enum
-from typing import List, Tuple, cast
+from typing import List, Optional, Tuple, cast
 
 import numpy as np
 import numpy.typing as npt
@@ -139,7 +136,7 @@ class ModelFactory:
         return estimator, df.drop(columns=label_cols).head(10)
 
     @staticmethod
-    def prepare_gpt2_model(local_cache_dir: str = None) -> Tuple[custom_model.CustomModel, pd.DataFrame]:
+    def prepare_gpt2_model(local_cache_dir: Optional[str] = None) -> Tuple[custom_model.CustomModel, pd.DataFrame]:
         """
         Pretrained GPT2 model from huggingface.
         """

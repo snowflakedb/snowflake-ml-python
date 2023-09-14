@@ -15,9 +15,9 @@
 ENTRY_FILE="$1"
 
 # Follow how bazel generated entry file works
-RUNFILES_DIR=$(dirname $(pwd))
+RUNFILES_DIR=$(dirname "$(pwd)")
 # Get the actual main file by searching in bazel generated file.
-MAIN_REL_PATH=$(cat ${ENTRY_FILE} | grep -o "  main_rel_path = '[^']*" | sed "s/  main_rel_path = '//g")
+MAIN_REL_PATH=$(< "${ENTRY_FILE}" grep -o "  main_rel_path = '[^']*" | sed "s/  main_rel_path = '//g")
 
 # If not a python test then this is empty
 if [[ "$MAIN_REL_PATH" ]]; then
@@ -33,4 +33,4 @@ if [[ "$MAIN_REL_PATH" ]]; then
 fi
 
 # Execute the actual target
-$@
+"$@"

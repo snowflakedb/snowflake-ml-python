@@ -1,7 +1,4 @@
 #!/usr/bin/env python3
-#
-# Copyright (c) 2012-2022 Snowflake Computing Inc. All rights reserved.
-#
 import inspect
 from abc import abstractmethod
 from collections import defaultdict
@@ -420,7 +417,7 @@ class BaseEstimator(Base):
             dataset: Input dataset.
             cols: Columns to compute.
             states: States to compute. Arguments are appended. For example, "min" represents
-                getting min value of the column, and "percentile_cont:0.25" represents gettting
+                getting min value of the column, and "percentile_cont:0.25" represents getting
                 the 25th percentile disc value of the column.
 
         Returns:

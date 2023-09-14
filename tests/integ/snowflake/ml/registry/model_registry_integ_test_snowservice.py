@@ -1,8 +1,5 @@
 # TODO[shchen], SNOW-889081, re-enable once server-side image build is supported.
 #
-# Copyright (c) 2012-2022 Snowflake Computing Inc. All rights reserved.
-#
-#
 # import functools
 # import tempfile
 # import uuid

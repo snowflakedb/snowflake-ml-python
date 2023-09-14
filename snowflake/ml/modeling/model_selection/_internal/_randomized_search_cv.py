@@ -1,17 +1,11 @@
 import copy
 import inspect
-import os
-import posixpath
-import sys
-from collections import defaultdict
-from math import ceil
-from typing import Any, Callable, Dict, Iterable, List, Optional, Set, Tuple, Union
+from typing import Any, Callable, Dict, Iterable, List, Optional, Set, Union
 from uuid import uuid4
 
 import cachetools
-import cloudpickle
 import cloudpickle as cp
-import numpy
+import fsspec
 import numpy as np
 import pandas as pd
 import sklearn
@@ -23,11 +17,6 @@ from typing_extensions import TypeGuard
 from snowflake.ml._internal import telemetry
 from snowflake.ml._internal.exceptions import error_codes, exceptions
 from snowflake.ml._internal.utils import identifier, pkg_version_utils
-from snowflake.ml._internal.utils.query_result_checker import SqlResultValidator
-from snowflake.ml._internal.utils.temp_file_utils import (
-    cleanup_temp_files,
-    get_temp_file_path,
-)
 from snowflake.ml.model._signatures import utils as model_signature_utils
 from snowflake.ml.model.model_signature import (
     BaseFeatureSpec,
@@ -36,22 +25,14 @@ from snowflake.ml.model.model_signature import (
     ModelSignature,
     _infer_signature,
 )
+from snowflake.ml.modeling._internal.estimator_protocols import CVHandlers
+from snowflake.ml.modeling._internal.snowpark_handlers import (
+    SnowparkHandlers as HandlersImpl,
+)
 from snowflake.ml.modeling.framework._utils import to_native_format
 from snowflake.ml.modeling.framework.base import BaseTransformer
-from snowflake.snowpark import DataFrame, Session, functions as F
+from snowflake.snowpark import DataFrame
 from snowflake.snowpark._internal.type_utils import convert_sp_to_sf_type
-from snowflake.snowpark._internal.utils import (
-    TempObjectType,
-    random_name_for_temp_object,
-)
-from snowflake.snowpark.functions import col, pandas_udf, sproc, udtf
-from snowflake.snowpark.types import (
-    BinaryType,
-    PandasSeries,
-    StringType,
-    StructField,
-    StructType,
-)
 
 _PROJECT = "ModelDevelopment"
 # Derive subproject from module name by removing "sklearn"
@@ -68,11 +49,11 @@ def _original_estimator_has_callable(attr: str) -> Callable[[Any], bool]:
         attr: Attribute to check for.
 
     Returns:
-        A function which checks for the existance of callable `attr` on the given object.
+        A function which checks for the existence of callable `attr` on the given object.
     """
 
     def check(self: BaseTransformer) -> TypeGuard[Callable[..., object]]:
-        """Check for the existance of callable `attr` in self.
+        """Check for the existence of callable `attr` in self.
 
         Args:
             self: BaseTransformer object
@@ -86,7 +67,7 @@ def _original_estimator_has_callable(attr: str) -> Callable[[Any], bool]:
 
 
 def _gather_dependencies(obj: Any) -> Set[str]:
-    """Gethers dependencies from the SnowML Estimator and Transformer objects.
+    """Gathers dependencies from the SnowML Estimator and Transformer objects.
 
     Args:
         obj: Source object to collect dependencies from. Source object could of any type, example, lists, tuples, etc.
@@ -360,6 +341,7 @@ class RandomizedSearchCV(BaseTransformer):
             f"scikit-learn=={sklearn.__version__}",
             f"cloudpickle=={cp.__version__}",
             f"cachetools=={cachetools.__version__}",  # type: ignore
+            f"fsspec=={fsspec.__version__}",
         }
         deps = deps | _gather_dependencies(estimator)
         self._deps = list(deps)
@@ -388,6 +370,7 @@ class RandomizedSearchCV(BaseTransformer):
         self.set_label_cols(label_cols)
         self.set_drop_input_cols(drop_input_cols)
         self.set_sample_weight_col(sample_weight_col)
+        self._handlers: CVHandlers = HandlersImpl(class_name=self.__class__.__name__, subproject=_SUBPROJECT)
 
     def _get_rand_id(self) -> str:
         """
@@ -457,151 +440,49 @@ class RandomizedSearchCV(BaseTransformer):
 
     def _fit_snowpark(self, dataset: DataFrame) -> None:
         session = dataset._session
-        assert session is not None
+        assert session is not None  # keep mypy happy
         # Validate that key package version in user workspace are supported in snowflake conda channel
         # If customer doesn't have package in conda channel, replace the ones have the closest versions
         self._deps = pkg_version_utils.get_valid_pkg_versions_supported_in_snowflake_conda_channel(
             pkg_versions=self._get_dependencies(), session=session, subproject=_SUBPROJECT
         )
 
-        # Create two stages - one for data and one for estimators.
-        temp_stage_name = random_name_for_temp_object(TempObjectType.STAGE)
-        temp_stage_creation_query = f"CREATE OR REPLACE TEMP STAGE {temp_stage_name};"
-        session.sql(temp_stage_creation_query).collect()
-
-        # Stage data.
-        data_name = temp_stage_name
         selected_cols = self._get_active_columns()
         if len(selected_cols) > 0:
             dataset = dataset.select(selected_cols)
-        # TODO: add index column to the staged data
-        dataset.write.save_as_table(f"{data_name}", table_type="temp")
-
-        # TODO: explore using Fileset.make()
-        file_format_name = "parquet_file_format"
-        file_format_query = f"CREATE OR REPLACE FILE FORMAT {file_format_name} TYPE = 'PARQUET';"
-        session.sql(file_format_query).collect()
-
-        file_format = f"FILE_FORMAT = (FORMAT_NAME = '{file_format_name}')"
-        stage_load_query = f"COPY INTO @{temp_stage_name}/{data_name} FROM {data_name} {file_format} header = true"
-        session.sql(stage_load_query).collect()
-
-        imports = [f"@{row.name}" for row in session.sql(f"LIST @{temp_stage_name}").collect()]
-
-        # Create estimators with subset of param grid.
-        # TODO: Decide how to choose parallelization factor.
-        parallel_factor = 16
 
         assert self._sklearn_object is not None
-        params_to_evaluate = list(
-            ParameterSampler(self._sklearn_object.param_distributions, n_iter=self._sklearn_object.n_iter)
+        self._sklearn_object.refit = False
+        result_dict = self._handlers._fit_search_snowpark(
+            param_list=ParameterSampler(self._sklearn_object.param_distributions, n_iter=self._sklearn_object.n_iter),
+            dataset=dataset,
+            session=session,
+            estimator=self._sklearn_object,
+            dependencies=self._get_dependencies(),
+            udf_imports=["sklearn"],
+            input_cols=self.input_cols,
+            label_cols=self.label_cols,
+            sample_weight_col=self.sample_weight_col,
         )
-        max_params_per_estimator = ceil(len(params_to_evaluate) / parallel_factor)
-        param_chunks = [
-            params_to_evaluate[x : x + max_params_per_estimator]
-            for x in range(0, len(params_to_evaluate), max_params_per_estimator)
-        ]
-        target_locations = []
-        for param_chunk in param_chunks:
-            param_chunk_dist: Any = defaultdict(set)
-            for d in param_chunk:
-                for k, v in d.items():
-                    param_chunk_dist[k].add(v)
-            for k, v in param_chunk_dist.items():
-                param_chunk_dist[k] = list(v)
 
-            estimator = copy.deepcopy(self._sklearn_object)
-            estimator.param_distributions = param_chunk_dist
+        self._sklearn_object.best_params_ = result_dict["best_param"]
+        self._sklearn_object.best_score_ = result_dict["best_score"]
+        self._sklearn_object.cv_results_ = result_dict["cv_results"]
 
-            # Create a temp file and dump the transform to that file.
-            local_transform_file_name = get_temp_file_path()
-            with open(local_transform_file_name, mode="w+b") as local_transform_file:
-                cp.dump(estimator, local_transform_file)
-
-            # Put locally serialized transform on stage and add it to the list of imports.
-            # TODO: Add statement params.
-            put_result = session.file.put(
-                local_transform_file_name,
-                temp_stage_name,
-                auto_compress=False,
-                overwrite=True,
-            )
-            target_location = put_result[0].target
-            target_locations.append(target_location)
-            imports.append(f"@{temp_stage_name}/{target_location}")
-
-        input_cols = copy.deepcopy(self.input_cols)
-        label_cols = copy.deepcopy(self.label_cols)
-
-        @cachetools.cached(cache={})
-        def _load_data_into_udtf() -> Tuple[pd.DataFrame, pd.DataFrame]:
-            data_files = [
-                filename
-                for filename in os.listdir(sys._xoptions["snowflake_import_directory"])
-                if filename.startswith(data_name)
-            ]
-            partial_df = [
-                pd.read_parquet(os.path.join(sys._xoptions["snowflake_import_directory"], file_name))
-                for file_name in data_files
-            ]
-            df = pd.concat(partial_df, ignore_index=True)
-
-            for column in df:
-                df[column] = pd.to_numeric(df[column])
-
-            dfx = df[input_cols]
-            dfy = df[label_cols]
-
-            return dfx, dfy
-
-        # TODO: set refit = False, and fit after retrieving the resultf from udtf
-        @udtf(
-            output_schema=StructType(
-                [
-                    StructField("ESTIMATOR_LOCATION", StringType()),
-                    StructField("BEST_SCORE", StringType()),
-                    StructField("ESTIMATOR", BinaryType()),
-                ]
-            ),
-            input_types=[StringType()],
-            name="hyperparameter_tuning",
-            packages=["snowflake-snowpark-python"] + self._get_dependencies(),
-            replace=True,
-            imports=imports,
+        self._sklearn_object.best_estimator_ = copy.deepcopy(
+            copy.deepcopy(self._sklearn_object.estimator).set_params(**self._sklearn_object.best_params_)
         )
-        class SearchCV:
-            def __init__(self) -> None:
-                dfx, dfy = _load_data_into_udtf()
-                self._dfx = dfx
-                self._dfy = dfy
-
-            def process(self, estimator_location):
-                local_transform_file_path = os.path.join(
-                    sys._xoptions["snowflake_import_directory"], f"{estimator_location}"
-                )
-                with open(local_transform_file_path, mode="rb") as local_transform_file_obj:
-                    estimator = cp.load(local_transform_file_obj)
-
-                # TODO: handle sample weights.
-                fit_estimator = estimator.fit(self._dfx, self._dfy)
-
-                # TODO: handle the case of estimator size > maximum column size or to just serialize and return score.
-                yield (estimator_location, fit_estimator.best_score_, cloudpickle.dumps(fit_estimator))
-
-            def end_partition(self) -> None:
-                ...
-
-        # TODO: Check partitioning to ensure that partitions are uniformly distributed over UDTF intances
-        # Set parallelism to 16 and ensure that one partion goes to one instance of UDTF
-        HP_TUNING = F.table_function("hyperparameter_tuning")
-
-        df = session.create_dataframe(target_locations, schema=["estimator_location"])
-        results = df.select(HP_TUNING(df["estimator_location"]).over(partition_by=df["estimator_location"])).sort(
-            col("BEST_SCORE").desc()
+        self._sklearn_object.refit = True
+        self._sklearn_object.best_estimator_ = self._handlers.fit_snowpark(
+            dataset=dataset,
+            session=session,
+            estimator=self._sklearn_object.best_estimator_,
+            dependencies=["snowflake-snowpark-python"] + self._get_dependencies(),
+            fit_sproc_imports=["sklearn"],
+            input_cols=self.input_cols,
+            label_cols=self.label_cols,
+            sample_weight_col=self.sample_weight_col,
         )
-        # TODO: check cv_results
-        best_estimator = cloudpickle.loads(results.select("ESTIMATOR").first()[0])
-        self._sklearn_object = best_estimator
 
     def _fit_pandas(self, dataset: pd.DataFrame) -> None:
         assert self._sklearn_object is not None
@@ -649,146 +530,17 @@ class RandomizedSearchCV(BaseTransformer):
             pkg_versions=self._get_dependencies(), session=session, subproject=_SUBPROJECT
         )
 
-        # Register vectorized UDF for batch inference
-        batch_inference_udf_name = random_name_for_temp_object(TempObjectType.FUNCTION)
-
-        # Need to do this since if we use self._sklearn_object directly in the UDF, Snowpark
-        # will try to pickle all of self which fails.
-        estimator = self._sklearn_object
-
-        # Input columns for UDF are sorted by column names.
-        # We need actual order of input cols to reorder dataframe before calling inference methods.
-        input_cols = self.input_cols
-        unquoted_input_cols = identifier.get_unescaped_names(self.input_cols)
-
-        statement_params = telemetry.get_function_usage_statement_params(
-            project=_PROJECT,
-            subproject=_SUBPROJECT,
-            function_name=telemetry.get_statement_params_full_func_name(
-                inspect.currentframe(), self.__class__.__name__
-            ),
-            api_calls=[pandas_udf],
-            custom_tags=dict([("autogen", True)]),
+        return self._handlers.batch_inference(
+            dataset,
+            session,
+            self._sklearn_object,
+            self._get_dependencies(),
+            inference_method,
+            self.input_cols,
+            self._get_pass_through_columns(dataset),
+            expected_output_cols_list,
+            expected_output_cols_type,
         )
-
-        @pandas_udf(  # type: ignore
-            is_permanent=False,
-            name=batch_inference_udf_name,
-            packages=self._get_dependencies(),  # type: ignore
-            replace=True,
-            session=session,
-            statement_params=statement_params,
-        )
-        def vec_batch_infer(ds: PandasSeries[dict]) -> PandasSeries[dict]:  # type: ignore
-            import numpy as np
-            import pandas as pd
-
-            input_df = pd.json_normalize(ds)
-
-            # pd.json_normalize() doesn't remove quotes around quoted identifiers like snowpakr_df.to_pandas().
-            # But trained models have unquoted input column names saved in internal state if trained using snowpark_df
-            # or quoted input column names saved in internal state if trained using pandas_df.
-            # Model expects exact same columns names in the input df for predict call.
-
-            input_df = input_df[input_cols]  # Select input columns with quoted column names.
-            if hasattr(estimator, "feature_names_in_"):
-                assert estimator is not None
-                missing_features = []
-                for i, f in enumerate(estimator.feature_names_in_):
-                    if i >= len(input_cols) or (input_cols[i] != f and unquoted_input_cols[i] != f):
-                        missing_features.append(f)
-
-                if len(missing_features) > 0:
-                    raise ValueError(
-                        "The feature names should match with those that were passed during fit.\n"
-                        f"Features seen during fit call but not present in the input: {missing_features}\n"
-                        f"Features in the input dataframe : {input_cols}\n"
-                    )
-                input_df.columns = estimator.feature_names_in_
-            else:
-                # Just rename the column names to unquoted identifiers.
-                input_df.columns = (
-                    unquoted_input_cols  # Replace the quoted columns identifier with unquoted column ids.
-                )
-            transformed_numpy_array = getattr(estimator, inference_method)(input_df)
-            if (
-                isinstance(transformed_numpy_array, list)
-                and len(transformed_numpy_array) > 0
-                and isinstance(transformed_numpy_array[0], np.ndarray)
-            ):
-                # In case of multioutput estimators, predict_proba(), decision_function(), etc., functions return
-                # a list of ndarrays. We need to concatenate them.
-                transformed_numpy_array = np.concatenate(transformed_numpy_array, axis=1)
-
-            if len(transformed_numpy_array.shape) == 3:
-                # VotingClassifier will return results of shape (n_classifiers, n_samples, n_classes)
-                # when voting = "soft" and flatten_transform = False. We can't handle unflatten transforms,
-                # so we ignore flatten_transform flag and flatten the results.
-                transformed_numpy_array = np.hstack(transformed_numpy_array)
-
-            if len(transformed_numpy_array.shape) > 1 and transformed_numpy_array.shape[1] != len(
-                expected_output_cols_list
-            ):
-                # HeterogeneousEnsemble's transfrom method produce results with variying shapes
-                # from (n_samples, n_estimators) to (n_samples, n_estimators * n_classes).
-                # It is hard to predict the response shape without using fragile introspection logic.
-                # So, to avoid that we are packing the results into a dataframe of shape (n_samples, 1) with
-                # each element being a list.
-                if len(expected_output_cols_list) != 1:
-                    raise TypeError(
-                        "expected_output_cols_list must be same length as transformed array or " "should be of length 1"
-                    )
-                series = pd.Series(transformed_numpy_array.tolist())
-                transformed_pandas_df = pd.DataFrame(series, columns=expected_output_cols_list)
-            else:
-                transformed_pandas_df = pd.DataFrame(transformed_numpy_array, columns=expected_output_cols_list)
-            return transformed_pandas_df.to_dict("records")  # type: ignore
-
-        batch_inference_table_name = f"SNOWML_BATCH_INFERENCE_INPUT_TABLE_{self._get_rand_id()}"
-
-        pass_through_columns = self._get_pass_through_columns(dataset)
-        # Run Transform
-        query_from_df = str(dataset.queries["queries"][0])
-
-        outer_select_list = pass_through_columns[:]
-        inner_select_list = pass_through_columns[:]
-
-        outer_select_list.extend(
-            [
-                "{object_name}:{column_name}{udf_datatype} as {column_name}".format(
-                    object_name=batch_inference_udf_name,
-                    column_name=c,
-                    udf_datatype=(f"::{expected_output_cols_type}" if expected_output_cols_type else ""),
-                )
-                for c in expected_output_cols_list
-            ]
-        )
-
-        inner_select_list.extend(
-            [
-                "{udf_name}(object_construct_keep_null({input_cols_dict})) AS {udf_name}".format(
-                    udf_name=batch_inference_udf_name,
-                    input_cols_dict=", ".join([f"'{c}', {c}" for c in self.input_cols]),
-                )
-            ]
-        )
-
-        sql = """WITH {input_table_name} AS ({query})
-                    SELECT
-                      {outer_select_stmt}
-                    FROM (
-                      SELECT
-                        {inner_select_stmt}
-                      FROM {input_table_name}
-                    )
-               """.format(
-            input_table_name=batch_inference_table_name,
-            query=query_from_df,
-            outer_select_stmt=", ".join(outer_select_list),
-            inner_select_stmt=", ".join(inner_select_list),
-        )
-
-        return session.sql(sql)
 
     def _sklearn_inference(
         self, dataset: pd.DataFrame, inference_method: str, expected_output_cols_list: List[str]
@@ -1002,9 +754,9 @@ class RandomizedSearchCV(BaseTransformer):
 
         assert self._sklearn_object is not None  # keep mypy happy
         classes = self._sklearn_object.classes_
-        if isinstance(classes, numpy.ndarray):
+        if isinstance(classes, np.ndarray):
             return [f"{output_cols_prefix}{c}" for c in classes.tolist()]
-        elif isinstance(classes, list) and len(classes) > 0 and isinstance(classes[0], numpy.ndarray):
+        elif isinstance(classes, list) and len(classes) > 0 and isinstance(classes[0], np.ndarray):
             # If the estimator is a multioutput estimator, classes_ will be a list of ndarrays.
             output_cols = []
             for i, cl in enumerate(classes):
@@ -1195,124 +947,19 @@ class RandomizedSearchCV(BaseTransformer):
         if len(selected_cols) > 0:
             dataset = dataset.select(selected_cols)
 
-        # Extract queries that generated the dataframe. We will need to pass it to score procedure.
-        queries = dataset.queries["queries"]
-
-        # Create a temp file and dump the score to that file.
-        local_score_file_name = get_temp_file_path()
-        with open(local_score_file_name, mode="w+b") as local_score_file:
-            cp.dump(self._sklearn_object, local_score_file)
-
-        # Create temp stage to run score.
-        score_stage_name = random_name_for_temp_object(TempObjectType.STAGE)
         session = dataset._session
         assert session is not None  # keep mypy happy
-        stage_creation_query = f"CREATE OR REPLACE TEMPORARY STAGE {score_stage_name};"
-        SqlResultValidator(session=session, query=stage_creation_query).has_dimensions(
-            expected_rows=1, expected_cols=1
-        ).validate()
 
-        # Use posixpath to construct stage paths
-        stage_score_file_name = posixpath.join(score_stage_name, os.path.basename(local_score_file_name))
-        score_sproc_name = random_name_for_temp_object(TempObjectType.PROCEDURE)
-        statement_params = telemetry.get_function_usage_statement_params(
-            project=_PROJECT,
-            subproject=_SUBPROJECT,
-            function_name=telemetry.get_statement_params_full_func_name(
-                inspect.currentframe(), self.__class__.__name__
-            ),
-            api_calls=[sproc],
-            custom_tags=dict([("autogen", True)]),
-        )
-        # Put locally serialized score on stage.
-        session.file.put(
-            local_score_file_name,
-            stage_score_file_name,
-            auto_compress=False,
-            overwrite=True,
-            statement_params=statement_params,
-        )
-
-        @sproc(
-            is_permanent=False,
-            name=score_sproc_name,
-            packages=["snowflake-snowpark-python"] + self._get_dependencies(),  # type: ignore
-            replace=True,
-            session=session,
-            statement_params=statement_params,
-            anonymous=True,
-        )
-        def score_wrapper_sproc(
-            session: Session,
-            sql_queries: List[str],
-            stage_score_file_name: str,
-            input_cols: List[str],
-            label_cols: List[str],
-            sample_weight_col: Optional[str],
-            statement_params: Dict[str, str],
-        ) -> float:
-            import inspect
-            import os
-            import tempfile
-
-            import cloudpickle as cp
-            import numpy as np  # noqa: F401
-            import pandas  # noqa: F401
-            import sklearn  # noqa: F401
-
-            for query in sql_queries[:-1]:
-                _ = session.sql(query).collect(statement_params=statement_params)
-            df = session.sql(sql_queries[-1]).to_pandas(statement_params=statement_params)
-
-            local_score_file = tempfile.NamedTemporaryFile(delete=True)
-            local_score_file_name = local_score_file.name
-            local_score_file.close()
-
-            session.file.get(stage_score_file_name, local_score_file_name, statement_params=statement_params)
-
-            local_score_file_name_path = os.path.join(local_score_file_name, os.listdir(local_score_file_name)[0])
-            with open(local_score_file_name_path, mode="r+b") as local_score_file_obj:
-                estimator = cp.load(local_score_file_obj)
-
-            argspec = inspect.getfullargspec(estimator.score)
-            if "X" in argspec.args:
-                args = {"X": df[input_cols]}
-            elif "X_test" in argspec.args:
-                args = {"X_test": df[input_cols]}
-            else:
-                raise RuntimeError("Neither 'X' or 'X_test' exist in argument")
-
-            if label_cols:
-                label_arg_name = "Y" if "Y" in argspec.args else "y"
-                args[label_arg_name] = df[label_cols].squeeze()
-
-            if sample_weight_col is not None and "sample_weight" in argspec.args:
-                args["sample_weight"] = df[sample_weight_col].squeeze()
-
-            result: float = estimator.score(**args)
-            return result
-
-        # Call score sproc
-        statement_params = telemetry.get_function_usage_statement_params(
-            project=_PROJECT,
-            subproject=_SUBPROJECT,
-            function_name=telemetry.get_statement_params_full_func_name(
-                inspect.currentframe(), self.__class__.__name__
-            ),
-            api_calls=[Session.call],
-            custom_tags=dict([("autogen", True)]),
-        )
-        score: float = score_wrapper_sproc(
+        score = self._handlers.score_snowpark(
+            dataset,
             session,
-            queries,
-            stage_score_file_name,
+            self._sklearn_object,
+            ["snowflake-snowpark-python"] + self._get_dependencies(),
+            ["sklearn"],
             identifier.get_unescaped_names(self.input_cols),
             identifier.get_unescaped_names(self.label_cols),
             identifier.get_unescaped_names(self.sample_weight_col),
-            statement_params,
         )
-
-        cleanup_temp_files([local_score_file_name])
 
         return score
 

@@ -130,7 +130,7 @@ def unzip_stream_in_temp_dir(stream: IO[bytes], temp_root: Optional[str] = None)
 
 
 def hash_directory(
-    directory: Union[str, pathlib.Path], *, ignore_hidden: bool = False, excluded_files: List[str] = None
+    directory: Union[str, pathlib.Path], *, ignore_hidden: bool = False, excluded_files: Optional[List[str]] = None
 ) -> str:
     """Hash the **content** of a folder recursively using SHA-1.
 
@@ -189,7 +189,7 @@ def _able_ascii_encode(s: str) -> bool:
 
 
 @contextlib.contextmanager
-def _create_tar_gz_stream(source_dir: str, arcname: str = None) -> Generator[io.BytesIO, None, None]:
+def _create_tar_gz_stream(source_dir: str, arcname: Optional[str] = None) -> Generator[io.BytesIO, None, None]:
     """
     Create a compressed tarball (.tar.gz) of the source directory and return an input stream as a context
     manager.

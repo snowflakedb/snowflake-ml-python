@@ -1,4 +1,5 @@
 load("@rules_python//python:defs.bzl", native_py_test = "py_test")
+
 package(default_visibility = ["//visibility:public"])
 
 native_py_test(
@@ -11,5 +12,5 @@ native_py_test(
 
 sh_binary(
     name = "test_wrapper",
-    srcs = ["test_wrapper.sh"]
+    srcs = ["test_wrapper.sh"],
 )

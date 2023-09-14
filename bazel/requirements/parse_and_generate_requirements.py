@@ -1,4 +1,5 @@
 import argparse
+import collections
 import contextlib
 import functools
 import itertools
@@ -19,11 +20,18 @@ from typing import (
 )
 
 import jsonschema
-import yaml
 from conda_libmamba_solver import solver
 from packaging import requirements as packaging_requirements
+from ruamel.yaml import YAML
 
 SNOWFLAKE_CONDA_CHANNEL = "https://repo.anaconda.com/pkgs/snowflake"
+
+yaml = YAML()
+yaml.default_flow_style = False
+yaml.map_indent = 2  # type: ignore[assignment]
+yaml.sequence_dash_offset = 2
+yaml.sequence_indent = 4  # type: ignore[assignment]
+yaml.width = 120  # type: ignore[assignment]
 
 
 class RequirementInfo(TypedDict, total=False):
@@ -290,7 +298,7 @@ def generate_requirements(
     with open(schema_file_path, encoding="utf-8") as f:
         schema = json.load(f)
     with open(req_file_path, encoding="utf-8") as f:
-        requirements = yaml.safe_load(f)
+        requirements = yaml.load(f)
 
     jsonschema.validate(requirements, schema=schema)
 
@@ -304,7 +312,11 @@ def generate_requirements(
     reqs_pypi = list(filter(None, map(lambda req_info: get_req_name(req_info, "pip"), requirements)))
     reqs_conda = list(filter(None, map(lambda req_info: get_req_name(req_info, "conda"), requirements)))
     if len(reqs_pypi) != len(set(reqs_pypi)) or len(reqs_conda) != len(set(reqs_conda)):
-        raise ValueError("Duplicate Requirements found!")
+        # TODO: Remove this after snowpandas is released and is no longer a CI internal requirement.
+        counter = collections.Counter(reqs_pypi)
+        duplicates = {item for item, count in counter.items() if count > 1}
+        if duplicates and duplicates != {"snowflake-snowpark-python"}:
+            raise ValueError(f"Duplicate Requirements: {duplicates}")
 
     channels_to_use = [SNOWFLAKE_CONDA_CHANNEL, "nodefaults"]
     snowflake_only_env = list(
@@ -368,6 +380,7 @@ def generate_requirements(
                 )
             )
         extras_results["all"] = sorted(list(set(itertools.chain(*extras_results.values()))))
+        extras_results = {k: extras_results[k] for k in sorted(extras_results)}
         results = list(
             sorted(
                 filter(
@@ -380,8 +393,8 @@ def generate_requirements(
             )
         )
         sys.stdout.write(
-            "EXTRA_REQUIREMENTS={extra_requirements}\n\nREQUIREMENTS={requirements}\n".format(
-                extra_requirements=repr(extras_results), requirements=repr(results)
+            "EXTRA_REQUIREMENTS = {extra_requirements}\n\nREQUIREMENTS = {requirements}\n".format(
+                extra_requirements=json.dumps(extras_results), requirements=json.dumps(results)
             )
         )
     elif (mode, format) == ("version_requirements", "python"):
@@ -390,13 +403,13 @@ def generate_requirements(
                 filter(None, map(lambda req_info: generate_user_requirements_string(req_info, "conda"), requirements)),
             )
         )
-        sys.stdout.writelines(f"REQUIREMENTS={repr(results)}\n")
+        sys.stdout.writelines(f"REQUIREMENTS = {repr(results)}\n")
     elif (mode, format) == ("dev_version", "conda_env"):
         env_result = {
             "channels": channels_to_use,
             "dependencies": snowflake_only_env if snowflake_channel_only else extended_env,
         }
-        yaml.safe_dump(env_result, sys.stdout, default_flow_style=False)
+        yaml.dump(env_result, sys.stdout)
     elif (mode, format) == ("version_requirements", "conda_meta"):
         if version is None:
             raise ValueError("Version must be specified when generate conda meta.")
@@ -426,7 +439,7 @@ def generate_requirements(
             "package": {"version": version},
             "requirements": {"run": run_results, "run_constrained": run_constrained_results},
         }
-        yaml.safe_dump(meta_result, sys.stdout, default_flow_style=False)
+        yaml.dump(meta_result, sys.stdout)
     else:
         raise ValueError("Unreachable")
 

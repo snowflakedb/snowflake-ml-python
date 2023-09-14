@@ -1,7 +1,3 @@
-#
-# Copyright (c) 2012-2022 Snowflake Computing Inc. All rights reserved.
-#
-
 import fsspec
 from absl.testing import absltest
 
@@ -66,7 +62,7 @@ class TestSnowflakeFileSystem(absltest.TestCase):
         """Test if an object of Snowflake FS can be created."""
         # Create fs object with snowflake python connection via fssepc interface
         sffs3 = fsspec.filesystem("sfc", sf_connection=self.sf_connection)
-        # Create fs obect with snowpark session via fssepc interface
+        # Create fs object with snowpark session via fssepc interface
         sffs4 = fsspec.filesystem("sfc", snowpark_session=self.snowpark_session)
 
         # Due to instance caching, the object created directly should be the same object createrd via fsspec
@@ -164,7 +160,7 @@ class TestSnowflakeFileSystem(absltest.TestCase):
                     self.assertEqual(actual, self._get_content(stage))
 
     def test_open_not_existing_file(self) -> None:
-        """Test if opne() can raise error when the given file cannot be found."""
+        """Test if open() can raise error when the given file cannot be found."""
         for fs in [self.sffs1, self.sffs2]:
             with self.assertRaises(fileset_errors.StageFileNotFoundError):
                 with fs.open(f"@{self.stage1}/random_file_not_found") as f:

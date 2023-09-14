@@ -8,6 +8,10 @@ import yaml
 
 from snowflake import snowpark
 from snowflake.ml._internal import file_utils
+from snowflake.ml._internal.exceptions import (
+    error_codes,
+    exceptions as snowml_exceptions,
+)
 from snowflake.ml._internal.utils import identifier
 from snowflake.ml.model import _model_meta
 from snowflake.ml.model._deploy_client.image_builds import (
@@ -164,9 +168,12 @@ class ServerImageBuilder(base_image_builder.ImageBuilder):
                     overwrite=True,
                 )
         except Exception as e:
-            raise RuntimeError(
-                "Exception occurred when compressing docker context dir as tarball and upload to stage", e
-            )
+            raise snowml_exceptions.SnowflakeMLException(
+                error_code=error_codes.INTERNAL_SNOWPARK_ERROR,
+                original_exception=RuntimeError(
+                    "Exception occurred when compressing docker context dir as tarball and upload to stage."
+                ),
+            ) from e
 
     def _construct_and_upload_job_spec(
         self, base_image: str, context_dir: str, kaniko_shell_script_stage_location: str

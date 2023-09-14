@@ -25,7 +25,7 @@ SCHEMA_LEVEL_OBJECT_TEST_CASES = [
     ('testdb$."test""s""chema"._f1oo', "testdb$", '"test""s""chema"', "_f1oo", ""),
     ("test1db.test$schema.foo1/nytrain/", "test1db", "test$schema", "foo1", "/nytrain/"),
     ("test_db.test_schema.foo.nytrain.1.txt", "test_db", "test_schema", "foo", ".nytrain.1.txt"),
-    ('test_d$b."test.schema".fo$_o/nytrain/', "test_d$b", '"test.schema"', "fo$_o", "/nytrain/"),
+    ('test_d$b."test.schema".foo$_o/nytrain/', "test_d$b", '"test.schema"', "foo$_o", "/nytrain/"),
     (
         '"идентификатор"."test schema"."f.o_o1"',
         '"идентификатор"',
@@ -74,7 +74,7 @@ class SnowflakeIdentifierTest(absltest.TestCase):
         """Test vanilla concat with no quotes."""
         self.assertEqual("demo__task1", identifier.concat_names(["demo__", "task1"]))
 
-    def test_user_specificed_quotes(self) -> None:
+    def test_user_specified_quotes(self) -> None:
         """Test use of double quote in case of specified quoted ids."""
         self.assertEqual('"demo__task1"', identifier.concat_names(['"demo__"', "task1"]))
         self.assertEqual('"demo__task1"', identifier.concat_names(["demo__", '"task1"']))

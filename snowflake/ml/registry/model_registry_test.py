@@ -51,7 +51,7 @@ class ModelRegistryTest(absltest.TestCase):
     """Testing ModelRegistry functions."""
 
     def setUp(self) -> None:
-        """Creates Snowpark and Snowflake environemnts for testing."""
+        """Creates Snowpark and Snowflake environments for testing."""
         self.maxDiff = None
         self._session = mock_session.MockSession(conn=None, test_case=self)
         self.event_id = "fedcba9876543210fedcba9876543210"

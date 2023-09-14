@@ -1,9 +1,12 @@
 import json
 from urllib.parse import urlparse, urlunparse
 
-# library `requests` has known stubs but is not installed.
-import requests  # type: ignore
+import requests
 
+from snowflake.ml._internal.exceptions import (
+    error_codes,
+    exceptions as snowml_exceptions,
+)
 from snowflake.ml._internal.utils import spcs_image_registry
 from snowflake.snowpark import Session
 
@@ -33,7 +36,7 @@ class ImageRegistryClient:
             Bearer token when login succeeded.
 
         Raises:
-            RuntimeError: when login failed.
+            SnowflakeMLException: when login failed.
         """
         parsed_url = urlparse(repo_url)
         scheme = parsed_url.scheme
@@ -45,7 +48,10 @@ class ImageRegistryClient:
 
         resp = requests.get(login_url, headers={"Authorization": f"Basic {registry_cred}"})
         if resp.status_code != 200:
-            raise RuntimeError("Failed to login to the repository", resp.text)
+            raise snowml_exceptions.SnowflakeMLException(
+                error_code=error_codes.INTERNAL_SNOWFLAKE_IMAGE_REGISTRY_ERROR,
+                original_exception=RuntimeError("Failed to login to the repository", resp.text),
+            )
 
         return str(json.loads(resp.text)["token"])
 

@@ -17,7 +17,7 @@ class ReadAndParseParquet(IterDataPipe):
         batch_size: Specifies the size of each batch that will be yield
         shuffle: Whether the data in the file will be shuffled. If set to be true, it will first randomly shuffle
             the order of files, and then shuflle the order of rows in each file.
-        drop_last_batch: Whehter the last batch of data should be dropped. If set to be true, then the last batch will
+        drop_last_batch: Whether the last batch of data should be dropped. If set to be true, then the last batch will
             get dropped if its size is smaller than the given batch_size.
 
     Returns:

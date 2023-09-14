@@ -6,32 +6,34 @@ py_library(
     name = "deploy_options",
     srcs = ["deploy_options.py"],
     deps = [
-        "//snowflake/ml/model/_deploy_client/utils:constants"
-    ]
+        "//snowflake/ml/_internal/exceptions",
+        "//snowflake/ml/model/_deploy_client/utils:constants",
+    ],
 )
 
 py_library(
     name = "deploy",
     srcs = ["deploy.py"],
+    data = [
+        "templates/service_spec_template",
+    ],
     deps = [
+        ":deploy_options",
+        ":instance_types",
+        "//snowflake/ml/_internal/exceptions",
+        "//snowflake/ml/_internal/utils:identifier",
         "//snowflake/ml/model:_model_meta",
         "//snowflake/ml/model:type_hints",
         "//snowflake/ml/model/_deploy_client/image_builds:base_image_builder",
         "//snowflake/ml/model/_deploy_client/image_builds:client_image_builder",
         "//snowflake/ml/model/_deploy_client/image_builds:server_image_builder",
         "//snowflake/ml/model/_deploy_client/utils:snowservice_client",
-        "//snowflake/ml/_internal/utils:identifier",
-        ":deploy_options",
-        ":instance_types"
     ],
-    data = [
-        "templates/service_spec_template"
-    ]
 )
 
 py_library(
     name = "instance_types",
-    srcs = ["instance_types.py"]
+    srcs = ["instance_types.py"],
 )
 
 py_test(
@@ -39,6 +41,7 @@ py_test(
     srcs = ["deploy_test.py"],
     deps = [
         ":deploy",
-        "//snowflake/ml/test_utils:mock_session"
-    ]
+        "//snowflake/ml/test_utils:exception_utils",
+        "//snowflake/ml/test_utils:mock_session",
+    ],
 )

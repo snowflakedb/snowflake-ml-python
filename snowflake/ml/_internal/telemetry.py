@@ -1,7 +1,4 @@
 #!/usr/bin/env python3
-#
-# Copyright (c) 2012-2022 Snowflake Computing Inc. All rights reserved.
-#
 import enum
 import functools
 import inspect
@@ -64,7 +61,9 @@ class TelemetryField(enum.Enum):
     FUNC_CAT_USAGE = "usage"
 
 
-def get_statement_params(project: str, subproject: str, class_name: Optional[str] = None) -> Dict[str, Any]:
+def get_statement_params(
+    project: str, subproject: Optional[str] = None, class_name: Optional[str] = None
+) -> Dict[str, Any]:
     """
     Get telemetry statement parameters.
 
@@ -269,11 +268,17 @@ def send_api_usage_telemetry(
                     try:
                         return func(*args, **kwargs)
                     except Exception as e:
+                        if isinstance(e, snowml_exceptions.SnowflakeMLException):
+                            e = e.original_exception
                         # suppress SnowparkSessionException from telemetry in the stack trace
                         raise e from None
+
                 conn = active_session._conn._conn
-                if conn is None:
-                    return func(*args, **kwargs)
+                if (not active_session.telemetry_enabled) or (conn is None):
+                    try:
+                        return func(*args, **kwargs)
+                    except snowml_exceptions.SnowflakeMLException as e:
+                        raise e.original_exception from e
 
             api_calls: List[Dict[str, Any]] = []
             if api_calls_extractor:
@@ -306,7 +311,7 @@ def send_api_usage_telemetry(
             except Exception as e:
                 if not isinstance(e, snowml_exceptions.SnowflakeMLException):
                     # already handled via a nested decorated function
-                    if hasattr(e, "_snowflake_ml_handled") and e._snowflake_ml_handled:  # type: ignore[attr-defined]
+                    if hasattr(e, "_snowflake_ml_handled") and e._snowflake_ml_handled:
                         raise e
                     if isinstance(e, snowpark_exceptions.SnowparkClientException):
                         e = snowml_exceptions.SnowflakeMLException(
@@ -319,7 +324,7 @@ def send_api_usage_telemetry(
                 telemetry_args["error"] = repr(e)
                 telemetry_args["error_code"] = e.error_code
                 e.original_exception._snowflake_ml_handled = True  # type: ignore[attr-defined]
-                raise e.original_exception
+                raise e.original_exception from e
             else:
                 return res
             finally:

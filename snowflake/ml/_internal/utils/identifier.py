@@ -34,7 +34,7 @@ def _is_quoted(id: str) -> bool:
         id: The string to be checked
 
     Returns:
-        True if the `id` is quoted with double-quote to preserve case. Retruns False otherwise.
+        True if the `id` is quoted with double-quote to preserve case. Returns False otherwise.
 
     Raises:
         ValueError: If the id is invalid.

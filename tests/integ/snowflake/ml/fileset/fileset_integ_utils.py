@@ -1,6 +1,3 @@
-#
-# Copyright (c) 2012-2022 Snowflake Computing Inc. All rights reserved.
-#
 import os
 import posixpath
 import tempfile
@@ -78,7 +75,7 @@ def create_tmp_snowflake_stage_if_not_exists(
 
 
 def get_fileset_query(row_number: int) -> str:
-    """Return a SQL query which could generate an arbitary resultset with the given number of rows."""
+    """Return a SQL query which could generate an arbitrary resultset with the given number of rows."""
     root_col = "row_num"
     inner_table = (
         f"select (row_number() over (order by 1) + 0.11) as {root_col} "
@@ -93,7 +90,7 @@ def get_fileset_query(row_number: int) -> str:
 
 
 def get_column_min(col_name: str) -> Union[int, float]:
-    """Return the expected minimum value of the given column in the arbitary resultset."""
+    """Return the expected minimum value of the given column in the arbitrary resultset."""
     if col_name == "NUMBER_FIXED_POINT_COL":
         return 1.1
     if col_name in ["FLOAT_COL", "DOUBLE_COL"]:
@@ -102,7 +99,7 @@ def get_column_min(col_name: str) -> Union[int, float]:
 
 
 def get_column_max(col_name: str, row_number: int) -> Union[int, float]:
-    """Return the expected maximum value of the given column in the arbitary resultset."""
+    """Return the expected maximum value of the given column in the arbitrary resultset."""
     if col_name == "NUMBER_FIXED_POINT_COL":
         return 0.1 + row_number
     if col_name in ["FLOAT_COL", "DOUBLE_COL"]:
@@ -111,7 +108,7 @@ def get_column_max(col_name: str, row_number: int) -> Union[int, float]:
 
 
 def get_column_avg(col_name: str, row_number: int) -> Union[int, float]:
-    """Return the expected average value of the given column in the arbitary resultset."""
+    """Return the expected average value of the given column in the arbitrary resultset."""
     if col_name == "NUMBER_FIXED_POINT_COL":
         return (1.2 + row_number) / 2
     if col_name in ["FLOAT_COL", "DOUBLE_COL"]:

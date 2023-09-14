@@ -1,7 +1,4 @@
 #!/usr/bin/env python3
-#
-# Copyright (c) 2012-2022 Snowflake Computing Inc. All rights reserved.
-#
 # TODO(hayu): [SNOW-750748] Rename/split framework/utils to constants.py, extract_args.py, etc.
 import inspect
 import warnings

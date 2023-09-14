@@ -1,4 +1,4 @@
-"""py_{binary|libary|test} rules for snowml repository.
+"""py_{binary|library|test} rules for snowml repository.
 
 Overriding default implementation of py_{binary|library|test} to add additional features:
 1. Codebase is split between 'src' & 'tests' top-level directories. We did not want python import with
@@ -28,27 +28,27 @@ load("//bazel:py_rules.bzl", "py_binary", "py_library", "py_test")
 load(
     "@rules_python//python:defs.bzl",
     native_py_binary = "py_binary",
-    native_py_libary = "py_library",
+    native_py_library = "py_library",
     native_py_test = "py_test",
 )
 load("@rules_python//python:packaging.bzl", native_py_wheel = "py_wheel")
 load(":repo_paths.bzl", "check_for_experimental_dependencies", "check_for_tests_dependencies")
 
 def py_genrule(**attrs):
-    orginal_cmd = attrs["cmd"]
+    original_cmd = attrs["cmd"]
     attrs["cmd"] = select({
-        "@bazel_tools//src/conditions:windows": "CONDA_DLL_SEARCH_MODIFICATION_ENABLE=1 " + orginal_cmd,
-        "//conditions:default": orginal_cmd,
+        "@bazel_tools//src/conditions:windows": "CONDA_DLL_SEARCH_MODIFICATION_ENABLE=1 " + original_cmd,
+        "//conditions:default": original_cmd,
     })
     native.genrule(**attrs)
 
 _COMPATIBLE_WITH_SNOWPARK_TAG = "wheel_compatible_with_snowpark"
 
-def _add_target_compatiblity_labels(compatible_with_snowpark, attrs):
+def _add_target_compatibility_labels(compatible_with_snowpark, attrs):
     if compatible_with_snowpark:
         attrs["target_compatible_with"] = select({
-            "//bazel/platforms:snowflake_conda_channel": [],
             "//bazel/platforms:extended_conda_channels": [],
+            "//bazel/platforms:snowflake_conda_channel": [],
             "//conditions:default": ["@platforms//:incompatible"],
         })
     else:
@@ -70,7 +70,7 @@ def py_binary(compatible_with_snowpark = True, **attrs):
         fail("A target in src cannot depend on packages in tests!")
     if not check_for_experimental_dependencies(native.package_name(), attrs):
         fail("Non Experimental Target cannot depend on experimental library!")
-    _add_target_compatiblity_labels(compatible_with_snowpark, attrs)
+    _add_target_compatibility_labels(compatible_with_snowpark, attrs)
 
     # Disable bazel's behavior to add __init__.py files to modules by default. This causes import errors. Context:
     # * https://bazel.build/reference/be/python#py_test.legacy_create_init
@@ -87,10 +87,10 @@ def py_library(compatible_with_snowpark = True, **attrs):
 
     See the Bazel core [py_library](https://docs.bazel.build/versions/master/be/python.html#py_library) documentation.
 
-    Additional import is necessary to expose a libray outside of top-level src directory. For example,
+    Additional import is necessary to expose a library outside of top-level src directory. For example,
     by defining `//src/snowflake/ml/utils:connection_params` as follows:
     ```
-    py_libary(
+    py_library(
         name = "connection_params",
         srcs = ["connection_params.py"],
         imports = ["../../.."],
@@ -109,9 +109,9 @@ def py_library(compatible_with_snowpark = True, **attrs):
         fail("A target in src cannot depend on packages in tests!")
     if not check_for_experimental_dependencies(native.package_name(), attrs):
         fail("Non Experimental Target cannot depend on experimental library!")
-    _add_target_compatiblity_labels(compatible_with_snowpark, attrs)
+    _add_target_compatibility_labels(compatible_with_snowpark, attrs)
 
-    native_py_libary(**attrs)
+    native_py_library(**attrs)
 
 def py_test(compatible_with_snowpark = True, **attrs):
     """Modified version of core py_binary to add check for experimental dependencies.
@@ -126,7 +126,7 @@ def py_test(compatible_with_snowpark = True, **attrs):
         fail("A target in src cannot depend on packages in tests!")
     if not check_for_experimental_dependencies(native.package_name(), attrs):
         fail("Non Experimental Target cannot depend on experimental library!")
-    _add_target_compatiblity_labels(compatible_with_snowpark, attrs)
+    _add_target_compatibility_labels(compatible_with_snowpark, attrs)
 
     # Disable bazel's behavior to add __init__.py files to modules by default. This causes import errors. Context:
     # * https://bazel.build/reference/be/python#py_test.legacy_create_init

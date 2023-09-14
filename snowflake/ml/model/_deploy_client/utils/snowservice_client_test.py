@@ -7,7 +7,7 @@ from absl.testing.absltest import mock
 from snowflake import snowpark
 from snowflake.ml.model._deploy_client.utils import constants
 from snowflake.ml.model._deploy_client.utils.snowservice_client import SnowServiceClient
-from snowflake.ml.test_utils import mock_data_frame, mock_session
+from snowflake.ml.test_utils import exception_utils, mock_data_frame, mock_session
 from snowflake.snowpark import session
 
 
@@ -103,7 +103,7 @@ class SnowServiceClientTest(absltest.TestCase):
     def test_get_service_status(self) -> None:
         row = snowpark.Row(
             **{
-                "SYSTEM$GET_SNOWSERVICE_STATUS": json.dumps(
+                "SYSTEM$GET_SERVICE_STATUS": json.dumps(
                     [
                         {
                             "status": "READY",
@@ -119,7 +119,7 @@ class SnowServiceClientTest(absltest.TestCase):
             }
         )
         self.m_session.add_mock_sql(
-            query="call system$get_snowservice_status('mock_service_name');",
+            query="call system$GET_SERVICE_STATUS('mock_service_name');",
             result=mock_data_frame.MockDataFrame(collect_result=[row]),
         )
 
@@ -130,7 +130,7 @@ class SnowServiceClientTest(absltest.TestCase):
 
         row = snowpark.Row(
             **{
-                "SYSTEM$GET_SNOWSERVICE_STATUS": json.dumps(
+                "SYSTEM$GET_SERVICE_STATUS": json.dumps(
                     [
                         {
                             "status": "FAILED",
@@ -146,7 +146,7 @@ class SnowServiceClientTest(absltest.TestCase):
             }
         )
         self.m_session.add_mock_sql(
-            query="call system$get_snowservice_status('mock_service_name');",
+            query="call system$GET_SERVICE_STATUS('mock_service_name');",
             result=mock_data_frame.MockDataFrame(collect_result=[row]),
         )
 
@@ -157,7 +157,7 @@ class SnowServiceClientTest(absltest.TestCase):
 
         row = snowpark.Row(
             **{
-                "SYSTEM$GET_SNOWSERVICE_STATUS": json.dumps(
+                "SYSTEM$GET_SERVICE_STATUS": json.dumps(
                     [
                         {
                             "status": "",
@@ -173,7 +173,7 @@ class SnowServiceClientTest(absltest.TestCase):
             }
         )
         self.m_session.add_mock_sql(
-            query="call system$get_snowservice_status('mock_service_name');",
+            query="call system$GET_SERVICE_STATUS('mock_service_name');",
             result=mock_data_frame.MockDataFrame(collect_result=[row]),
         )
         self.assertEqual(self.client.get_resource_status(self.m_service_name, constants.ResourceType.SERVICE), None)
@@ -185,7 +185,22 @@ class SnowServiceClientTest(absltest.TestCase):
             )
 
     def test_block_until_service_is_ready_timeout(self) -> None:
-        with self.assertRaises(RuntimeError):
+        test_log = "service fails because of xyz."
+        self.m_session.add_mock_sql(
+            query=f"CALL SYSTEM$GET_SERVICE_LOGS('{self.m_service_name}', '0',"
+            f"'{constants.INFERENCE_SERVER_CONTAINER}')",
+            result=mock_data_frame.MockDataFrame(
+                collect_result=[snowpark.Row(**{"SYSTEM$GET_SERVICE_LOGS": test_log})]
+            ),
+        )
+        self.m_session.add_mock_sql(
+            query=f"DROP SERVICE IF EXISTS {self.m_service_name}",
+            result=mock_data_frame.MockDataFrame(collect_result=[]),
+        )
+
+        with exception_utils.assert_snowml_exceptions(
+            self, expected_original_error_type=RuntimeError, expected_regex=test_log
+        ):
             with mock.patch.object(self.client, "get_resource_status", side_effect=[None, None, None, "READY"]):
                 self.client.block_until_resource_is_ready(
                     self.m_service_name, constants.ResourceType.SERVICE, max_retries=1, retry_interval_secs=1
@@ -201,8 +216,23 @@ class SnowServiceClientTest(absltest.TestCase):
             )
 
     def test_block_until_service_is_ready_retries_and_fail(self) -> None:
+        test_log = "service fails because of abc."
+        self.m_session.add_mock_sql(
+            query=f"CALL SYSTEM$GET_SERVICE_LOGS('{self.m_service_name}', '0',"
+            f"'{constants.INFERENCE_SERVER_CONTAINER}')",
+            result=mock_data_frame.MockDataFrame(
+                collect_result=[snowpark.Row(**{"SYSTEM$GET_SERVICE_LOGS": test_log})]
+            ),
+        )
+        self.m_session.add_mock_sql(
+            query=f"DROP SERVICE IF EXISTS {self.m_service_name}",
+            result=mock_data_frame.MockDataFrame(collect_result=[]),
+        )
+
         # Service show failure status on 2nd retry.
-        with self.assertRaises(RuntimeError):
+        with exception_utils.assert_snowml_exceptions(
+            self, expected_original_error_type=RuntimeError, expected_regex=test_log
+        ):
             with mock.patch.object(
                 self.client, "get_resource_status", side_effect=[None, constants.ResourceStatus("FAILED")]
             ):

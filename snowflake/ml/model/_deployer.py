@@ -1,9 +1,12 @@
-import traceback
-from typing import Optional, TypedDict, Union, cast, overload
+from typing import Any, Dict, Optional, TypedDict, Union, cast, overload
 
 import pandas as pd
 from typing_extensions import Required
 
+from snowflake.ml._internal.exceptions import (
+    error_codes,
+    exceptions as snowml_exceptions,
+)
 from snowflake.ml._internal.utils import identifier
 from snowflake.ml.model import (
     _model,
@@ -120,9 +123,8 @@ def deploy(
             Each target platform will have their own specifications of options.
 
     Raises:
-        ValueError: Raised when target platform is unsupported.
-        RuntimeError: Raised when running into errors when deploying to the warehouse.
-        ValueError: Raised when target method does not exist in model.
+        SnowflakeMLException: Raised when target platform is unsupported.
+        SnowflakeMLException: Raised when target method does not exist in model.
 
     Returns:
         The deployment information.
@@ -139,20 +141,22 @@ def deploy(
         if len(meta.signatures.keys()) == 1:
             target_method = list(meta.signatures.keys())[0]
         else:
-            raise ValueError("Only when the model has 1 target methods can target_method be omitted when deploying.")
+            raise snowml_exceptions.SnowflakeMLException(
+                error_code=error_codes.INVALID_ARGUMENT,
+                original_exception=ValueError(
+                    "Only when the model has 1 target methods can target_method be omitted when deploying."
+                ),
+            )
 
     if platform == deploy_platforms.TargetPlatform.WAREHOUSE:
-        try:
-            warehouse_deploy._deploy_to_warehouse(
-                session=session,
-                model_stage_file_path=model_stage_file_path,
-                model_meta=meta,
-                udf_name=name,
-                target_method=target_method,
-                **options,
-            )
-        except Exception:
-            raise RuntimeError("Error happened when deploying to the warehouse: " + traceback.format_exc())
+        warehouse_deploy._deploy_to_warehouse(
+            session=session,
+            model_stage_file_path=model_stage_file_path,
+            model_meta=meta,
+            udf_name=name,
+            target_method=target_method,
+            **options,
+        )
 
     elif platform == deploy_platforms.TargetPlatform.SNOWPARK_CONTAINER_SERVICES:
         options = cast(model_types.SnowparkContainerServiceDeployOptions, options)
@@ -160,32 +164,47 @@ def deploy(
         assert model_stage_file_path, "Require 'model_stage_file_path' for Snowpark container service deployment"
         assert deployment_stage_path, "Require 'deployment_stage_path' for Snowpark container service deployment"
         if snowservice_constants.COMPUTE_POOL not in options:
-            raise ValueError("Missing 'compute_pool' in options field for Snowpark container service deployment")
-        try:
-            snowservice_deploy._deploy(
-                session=session,
-                model_id=model_id,
-                model_meta=meta,
-                service_func_name=name,
-                model_zip_stage_path=model_stage_file_path,
-                deployment_stage_path=deployment_stage_path,
-                target_method=target_method,
-                **options,
+            raise snowml_exceptions.SnowflakeMLException(
+                error_code=error_codes.INVALID_ARGUMENT,
+                original_exception=ValueError(
+                    "Missing 'compute_pool' in options field for Snowpark container service deployment"
+                ),
             )
-        except Exception:
-            raise RuntimeError(f"Failed to deploy to Snowpark Container Service: {traceback.format_exc()}")
+
+        snowservice_deploy._deploy(
+            session=session,
+            model_id=model_id,
+            model_meta=meta,
+            service_func_name=name,
+            model_zip_stage_path=model_stage_file_path,
+            deployment_stage_path=deployment_stage_path,
+            target_method=target_method,
+            **options,
+        )
 
     else:
-        raise ValueError(f"Unsupported target Platform: {platform}")
+        raise snowml_exceptions.SnowflakeMLException(
+            error_code=error_codes.INVALID_TYPE,
+            original_exception=ValueError(f"Unsupported target Platform: {platform}"),
+        )
     signature = meta.signatures.get(target_method, None)
     if not signature:
-        raise ValueError(f"Target method {target_method} does not exist in model.")
+        raise snowml_exceptions.SnowflakeMLException(
+            error_code=error_codes.INVALID_ARGUMENT,
+            original_exception=ValueError(f"Target method {target_method} does not exist in model."),
+        )
     info = Deployment(name=name, platform=platform, target_method=target_method, signature=signature, options=options)
     return info
 
 
 @overload
-def predict(session: Session, *, deployment: Deployment, X: model_types.SupportedLocalDataType) -> pd.DataFrame:
+def predict(
+    session: Session,
+    *,
+    deployment: Deployment,
+    X: model_types.SupportedLocalDataType,
+    statement_params: Optional[Dict[str, Any]] = None,
+) -> pd.DataFrame:
     """Execute batch inference of a model remotely on local data. Can be any supported data type. Return a local
         Pandas Dataframe.
 
@@ -193,24 +212,36 @@ def predict(session: Session, *, deployment: Deployment, X: model_types.Supporte
         session: Snowpark Connection Session.
         deployment: The deployment info to use for predict.
         X: The input data.
+        statement_params: Statement Parameters for telemetry.
     """
     ...
 
 
 @overload
-def predict(session: Session, *, deployment: Deployment, X: SnowparkDataFrame) -> SnowparkDataFrame:
+def predict(
+    session: Session,
+    *,
+    deployment: Deployment,
+    X: SnowparkDataFrame,
+    statement_params: Optional[Dict[str, Any]] = None,
+) -> SnowparkDataFrame:
     """Execute batch inference of a model remotely on a Snowpark DataFrame. Return a Snowpark DataFrame.
 
     Args:
         session: Snowpark Connection Session.
         deployment: The deployment info to use for predict.
         X: The input Snowpark dataframe.
-
+        statement_params: Statement Parameters for telemetry.
     """
+    ...
 
 
 def predict(
-    session: Session, *, deployment: Deployment, X: Union[model_types.SupportedDataType, SnowparkDataFrame]
+    session: Session,
+    *,
+    deployment: Deployment,
+    X: Union[model_types.SupportedDataType, SnowparkDataFrame],
+    statement_params: Optional[Dict[str, Any]] = None,
 ) -> Union[pd.DataFrame, SnowparkDataFrame]:
     """Execute batch inference of a model remotely.
 
@@ -218,6 +249,7 @@ def predict(
         session: Snowpark Connection Session.
         deployment: The deployment info to use for predict.
         X: The input dataframe.
+        statement_params: Statement Parameters for telemetry.
 
     Returns:
         The output dataframe.
@@ -238,6 +270,12 @@ def predict(
         output_with_input_features = True
         model_signature._validate_snowpark_data(X, sig.inputs)
         s_df = X
+
+    if statement_params:
+        if s_df._statement_params is not None:
+            s_df._statement_params.update(statement_params)
+        else:
+            s_df._statement_params = statement_params  # type: ignore[assignment]
 
     # Infer and get intermediate result
     input_cols = []

@@ -1,7 +1,3 @@
-#
-# Copyright (c) 2012-2022 Snowflake Computing Inc. All rights reserved.
-#
-
 import posixpath
 import uuid
 
@@ -9,6 +5,7 @@ import numpy as np
 import pandas as pd
 from absl.testing import absltest
 
+from snowflake.ml._internal.exceptions import exceptions as snowml_exceptions
 from snowflake.ml.model import (
     _deployer,
     _model as model_api,
@@ -17,7 +14,7 @@ from snowflake.ml.model import (
     type_hints as model_types,
 )
 from snowflake.ml.utils import connection_params
-from snowflake.snowpark import Session
+from snowflake.snowpark import Session, exceptions as snowpark_exceptions
 from tests.integ.snowflake.ml.test_utils import db_manager, test_env_utils
 
 
@@ -79,7 +76,7 @@ class TestModelBadCaseInteg(absltest.TestCase):
             options=model_types.CustomModelSaveOption({"embed_local_ml_library": True}),
         )
         function_name = db_manager.TestObjectNameGenerator.get_snowml_test_object_name(self.run_id, "custom_bad_model")
-        with self.assertRaises(RuntimeError):
+        with self.assertRaises(snowml_exceptions.SnowflakeMLException) as e:
             _ = _deployer.deploy(
                 session=self._session,
                 name=function_name,
@@ -88,6 +85,7 @@ class TestModelBadCaseInteg(absltest.TestCase):
                 target_method="predict",
                 options=model_types.WarehouseDeployOptions({"relax_version": False}),
             )
+            self.assertIsInstance(e.exception.original_exception, RuntimeError)
 
     def test_custom_demo_model(self) -> None:
         tmp_stage = self._session.get_session_stage()
@@ -110,7 +108,7 @@ class TestModelBadCaseInteg(absltest.TestCase):
         self.assertTrue(hasattr(model_metadata, "local_ml_library_version"))
 
         function_name = db_manager.TestObjectNameGenerator.get_snowml_test_object_name(self.run_id, "custom_demo_model")
-        with self.assertRaises(RuntimeError):
+        with self.assertRaises(snowml_exceptions.SnowflakeMLException) as e:
             deploy_info = _deployer.deploy(
                 session=self._session,
                 name=function_name,
@@ -125,6 +123,7 @@ class TestModelBadCaseInteg(absltest.TestCase):
                     }
                 ),
             )
+            self.assertIsInstance(e.exception.original_exception, ValueError)
 
         deploy_info = _deployer.deploy(
             session=self._session,
@@ -147,7 +146,7 @@ class TestModelBadCaseInteg(absltest.TestCase):
             pd.DataFrame(arr[:, 0], columns=["output"]),
         )
 
-        with self.assertRaises(RuntimeError):
+        with self.assertRaises(snowpark_exceptions.SnowparkSQLException):
             deploy_info = _deployer.deploy(
                 session=self._session,
                 name=function_name,

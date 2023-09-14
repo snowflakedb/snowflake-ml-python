@@ -102,8 +102,9 @@ class _CustomModelHandler(_base._ModelHandler["custom_model.CustomModel"]):
 
         # Make sure that the module where the model is defined get pickled by value as well.
         cloudpickle.register_pickle_by_value(sys.modules[model.__module__])
+        picked_obj = (model.__class__, model.context)
         with open(os.path.join(model_blob_path, _CustomModelHandler.MODEL_BLOB_FILE), "wb") as f:
-            cloudpickle.dump(model, f)
+            cloudpickle.dump(picked_obj, f)
         model_meta.models[name] = model_meta_api._ModelBlobMetadata(
             name=name,
             model_type=_CustomModelHandler.handler_type,
@@ -140,10 +141,11 @@ class _CustomModelHandler(_base._ModelHandler["custom_model.CustomModel"]):
         model_blob_metadata = model_blobs_metadata[name]
         model_blob_filename = model_blob_metadata.path
         with open(os.path.join(model_blob_path, model_blob_filename), "rb") as f:
-            m = cloudpickle.load(f)
-        ModelClass = type(m)
+            picked_obj = cloudpickle.load(f)
+        ModelClass, context = picked_obj
 
         assert issubclass(ModelClass, custom_model.CustomModel)
+        assert isinstance(context, custom_model.ModelContext)
 
         artifacts_meta = model_blob_metadata.artifacts
         artifacts = {
@@ -151,7 +153,7 @@ class _CustomModelHandler(_base._ModelHandler["custom_model.CustomModel"]):
             for name, rel_path in artifacts_meta.items()
         }
         models: Dict[str, model_types.SupportedModelType] = dict()
-        for sub_model_name, _ref in m.context.model_refs.items():
+        for sub_model_name, _ref in context.model_refs.items():
             model_type = model_meta.models[sub_model_name].model_type
             handler = _model_handler._load_handler(model_type)
             assert handler
@@ -161,6 +163,8 @@ class _CustomModelHandler(_base._ModelHandler["custom_model.CustomModel"]):
                 model_blobs_dir_path=model_blobs_dir_path,
             )
             models[sub_model_name] = sub_model
-        ctx = custom_model.ModelContext(artifacts=artifacts, models=models)
-        model = ModelClass(ctx)
+        reconstructed_context = custom_model.ModelContext(artifacts=artifacts, models=models)
+        model = ModelClass(reconstructed_context)
+
+        assert isinstance(model, custom_model.CustomModel)
         return model

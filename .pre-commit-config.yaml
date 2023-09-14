@@ -1,11 +1,15 @@
-exclude: '^(.*egg.info.*|docs/.*|.*/parameters.py$|docs/.*|.*\.py_template|.*/experimental/.*)'
+---
+exclude: ^(.*egg.info.*|docs/.*|.*/parameters.py$|docs/.*|.*\.py_template|.*/experimental/.*)
+minimum_pre_commit_version: 3.4.0
 repos:
   - repo: https://github.com/asottile/pyupgrade
     rev: v2.31.1
     hooks:
       - id: pyupgrade
-        args: [--py38-plus, --keep-runtime-typing]
-  - repo: https://github.com/PyCQA/isort # config: .isort.cfg
+        args:
+          - --py38-plus
+          - --keep-runtime-typing
+  - repo: https://github.com/PyCQA/isort  # config: .isort.cfg
     rev: 5.12.0
     hooks:
       - id: isort
@@ -28,33 +32,17 @@ repos:
               tests/resources/.*|
           )$
       - id: check-yaml
-        # The first two lines of meta.yaml does not work with check-yaml
-        exclude: >
-          (?x)^(
-              ci/conda_recipe/meta.yaml|
-              .github/repo_meta.yaml|
-          )$
       - id: debug-statements
       - id: check-ast
-  - repo: https://github.com/Lucas-C/pre-commit-hooks.git
-    rev: v1.1.13
-    hooks:
-      - id: insert-license
-        name: insert-py-license
-        files: >
-          (?x)^(
-              src/snowflake/snowml/.*\.py|
-              tests/.*\.py|
-          )$
-        exclude: >
-          (?x)^(
-              src/snowflake/snowml/version.py|
-              tests/resources/.*\.py|
-          )$
+      - id: check-json
+        exclude: (?x)^(\.vscode\-bootstrap/.*\.json)$
+      - id: pretty-format-json
         args:
-          - --license-filepath
-          - license_header.txt
-  - repo: https://github.com/pycqa/flake8 # config: .flake8
+          - --autofix
+        exclude_types:
+          - jupyter
+        exclude: (?x)^(\.vscode\-bootstrap/.*\.json)$
+  - repo: https://github.com/pycqa/flake8  # config: .flake8
     rev: 3.9.2
     hooks:
       - id: flake8
@@ -68,3 +56,36 @@ repos:
         language_version: python3
         # Exclude test files.
         exclude: ^.*(_test.py)$
+  - repo: https://github.com/igorshubovych/markdownlint-cli  # config: .markdownlint.yaml
+    rev: v0.36.0
+    hooks:
+      - id: markdownlint-fix
+  - repo: https://github.com/keith/pre-commit-buildifier
+    rev: 6.0.0
+    hooks:
+      - id: buildifier
+        args:
+          - --warnings=all
+      # - id: buildifier-lint
+      #   args: *args
+  - repo: https://github.com/crate-ci/typos  # config: _typos.toml
+    rev: v1.16.10
+    hooks:
+      - id: typos
+  - repo: https://github.com/lyz-code/yamlfix
+    rev: 1.13.0
+    hooks:
+      - id: yamlfix
+        args:
+          - --config-file
+          - yamlfix.toml
+  - repo: https://github.com/pappasam/toml-sort
+    rev: v0.23.1
+    hooks:
+      - id: toml-sort-fix
+  - repo: https://github.com/shellcheck-py/shellcheck-py
+    rev: v0.9.0.5
+    hooks:
+      - id: shellcheck
+        args:
+          - --severity=warning

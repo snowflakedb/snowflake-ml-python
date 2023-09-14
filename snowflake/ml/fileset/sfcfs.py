@@ -7,6 +7,10 @@ import fsspec
 from snowflake import snowpark
 from snowflake.connector import connection
 from snowflake.ml._internal import telemetry
+from snowflake.ml._internal.exceptions import (
+    error_codes,
+    exceptions as snowml_exceptions,
+)
 from snowflake.ml._internal.utils import identifier
 from snowflake.ml.fileset import stage_fs
 
@@ -68,7 +72,7 @@ class SFFileSystem(fsspec.AbstractFileSystem):
                 See more information of these options in https://filesystem-spec.readthedocs.io/en/latest/features.html
 
         Raises:
-            ValueError: An error occured when not exactly one of sf_connection and snowpark_session is given.
+            ValueError: An error occurred when not exactly one of sf_connection and snowpark_session is given.
         """
         if sf_connection:
             self._conn = sf_connection
@@ -242,18 +246,26 @@ def _parse_sfc_file_path(path: str) -> _SFFilePath:
         A namedtuple consists of database name, schema name, stage name and path.
 
     Raises:
-        ValueError: An error occured when invalid path is given.
+        SnowflakeMLException: An error occurred when invalid path is given.
     """
     sfc_prefix = f"{PROTOCOL_NAME}://"
     if path.startswith(sfc_prefix):
         path = path[len(sfc_prefix) :]
     if not path.startswith("@"):
-        raise ValueError(
-            'Invalid path. Expected path to start with "@". Example: @database.schema.stage/optional_path.'
+        raise snowml_exceptions.SnowflakeMLException(
+            error_code=error_codes.SNOWML_INVALID_STAGE,
+            original_exception=ValueError(
+                'Invalid path. Expected path to start with "@". Example: @database.schema.stage/optional_path.'
+            ),
         )
     try:
         res = identifier.parse_schema_level_object_identifier(path[1:])
         logging.debug(f"Parsed path: {res}")
         return _SFFilePath(res[0], res[1], res[2], res[3][1:])
     except ValueError:
-        raise ValueError(f"Invalid path. Expected format: @database.schema.stage/optional_path. Getting {path}")
+        raise snowml_exceptions.SnowflakeMLException(
+            error_code=error_codes.SNOWML_INVALID_STAGE,
+            original_exception=ValueError(
+                f"Invalid path. Expected format: @database.schema.stage/optional_path. Getting {path}"
+            ),
+        )

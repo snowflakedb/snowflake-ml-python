@@ -1,7 +1,3 @@
-#
-# Copyright (c) 2012-2022 Snowflake Computing Inc. All rights reserved.
-#
-
 import inflection
 import pytest
 from absl.testing.absltest import TestCase, main

@@ -12,7 +12,7 @@ cleanup() {
 }
 
 generate_registry_cred() {
-  AUTH_TOKEN=$(echo -n "0auth2accesstoken:$(cat ${SESSION_TOKEN_PATH})" | base64);
+  AUTH_TOKEN=$(printf '0auth2accesstoken:%s' "$(cat ${SESSION_TOKEN_PATH})" | base64);
   echo '{"auths":{"$image_repo":{"auth":"'"$AUTH_TOKEN"'"}}}' | tr -d '\n' > $REGISTRY_CRED_PATH;
 }
 

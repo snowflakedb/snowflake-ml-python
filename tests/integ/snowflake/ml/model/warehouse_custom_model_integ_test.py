@@ -1,7 +1,3 @@
-#
-# Copyright (c) 2012-2022 Snowflake Computing Inc. All rights reserved.
-#
-
 import asyncio
 import os
 import tempfile
@@ -124,7 +120,7 @@ class TestWarehouseCustomModelInteg(parameterized.TestCase):
             test_released_version=test_released_version,
         )
 
-    @parameterized.product(permanent_deploy=[True, False], test_released_version=[None, "1.0.3"])  # type: ignore[misc]
+    @parameterized.product(permanent_deploy=[True, False], test_released_version=[None, "1.0.8"])  # type: ignore[misc]
     def test_async_model_composition(
         self,
         permanent_deploy: Optional[bool] = False,
@@ -161,7 +157,7 @@ class TestWarehouseCustomModelInteg(parameterized.TestCase):
 
         asyncio.get_event_loop().run_until_complete(_test(self))
 
-    @parameterized.product(permanent_deploy=[True, False], test_released_version=[None, "1.0.3"])  # type: ignore[misc]
+    @parameterized.product(permanent_deploy=[True, False], test_released_version=[None, "1.0.8"])  # type: ignore[misc]
     def test_custom_demo_model_sp(
         self,
         permanent_deploy: Optional[bool] = False,
@@ -186,7 +182,7 @@ class TestWarehouseCustomModelInteg(parameterized.TestCase):
             test_released_version=test_released_version,
         )
 
-    @parameterized.product(permanent_deploy=[True, False], test_released_version=[None, "1.0.3"])  # type: ignore[misc]
+    @parameterized.product(permanent_deploy=[True, False], test_released_version=[None, "1.0.8"])  # type: ignore[misc]
     def test_custom_demo_model_sp_quote(
         self,
         permanent_deploy: Optional[bool] = False,
@@ -214,7 +210,7 @@ class TestWarehouseCustomModelInteg(parameterized.TestCase):
             test_released_version=test_released_version,
         )
 
-    @parameterized.product(permanent_deploy=[True, False], test_released_version=[None, "1.0.3"])  # type: ignore[misc]
+    @parameterized.product(permanent_deploy=[True, False], test_released_version=[None, "1.0.8"])  # type: ignore[misc]
     def test_custom_demo_model_sp_mix_1(
         self,
         permanent_deploy: Optional[bool] = False,
@@ -240,7 +236,7 @@ class TestWarehouseCustomModelInteg(parameterized.TestCase):
             test_released_version=test_released_version,
         )
 
-    @parameterized.product(permanent_deploy=[True, False], test_released_version=[None, "1.0.3"])  # type: ignore[misc]
+    @parameterized.product(permanent_deploy=[True, False], test_released_version=[None, "1.0.8"])  # type: ignore[misc]
     def test_custom_demo_model_sp_mix_2(
         self,
         permanent_deploy: Optional[bool] = False,
@@ -268,7 +264,7 @@ class TestWarehouseCustomModelInteg(parameterized.TestCase):
             test_released_version=test_released_version,
         )
 
-    @parameterized.product(permanent_deploy=[True, False], test_released_version=[None, "1.0.3"])  # type: ignore[misc]
+    @parameterized.product(permanent_deploy=[True, False], test_released_version=[None, "1.0.8"])  # type: ignore[misc]
     def test_custom_demo_model_array(
         self,
         permanent_deploy: Optional[bool] = False,
@@ -295,7 +291,7 @@ class TestWarehouseCustomModelInteg(parameterized.TestCase):
             test_released_version=test_released_version,
         )
 
-    @parameterized.product(permanent_deploy=[True, False], test_released_version=[None, "1.0.3"])  # type: ignore[misc]
+    @parameterized.product(permanent_deploy=[True, False], test_released_version=[None, "1.0.8"])  # type: ignore[misc]
     def test_custom_demo_model_str(
         self,
         permanent_deploy: Optional[bool] = False,
@@ -321,7 +317,7 @@ class TestWarehouseCustomModelInteg(parameterized.TestCase):
             test_released_version=test_released_version,
         )
 
-    @parameterized.product(permanent_deploy=[True, False], test_released_version=[None, "1.0.3"])  # type: ignore[misc]
+    @parameterized.product(permanent_deploy=[True, False], test_released_version=[None, "1.0.8"])  # type: ignore[misc]
     def test_custom_demo_model_array_sp(
         self,
         permanent_deploy: Optional[bool] = False,
@@ -347,7 +343,7 @@ class TestWarehouseCustomModelInteg(parameterized.TestCase):
             test_released_version=test_released_version,
         )
 
-    @parameterized.product(permanent_deploy=[True, False], test_released_version=[None, "1.0.3"])  # type: ignore[misc]
+    @parameterized.product(permanent_deploy=[True, False], test_released_version=[None, "1.0.8"])  # type: ignore[misc]
     def test_custom_demo_model_str_sp(
         self,
         permanent_deploy: Optional[bool] = False,
@@ -372,7 +368,7 @@ class TestWarehouseCustomModelInteg(parameterized.TestCase):
             test_released_version=test_released_version,
         )
 
-    @parameterized.product(permanent_deploy=[True, False], test_released_version=[None, "1.0.3"])  # type: ignore[misc]
+    @parameterized.product(permanent_deploy=[True, False], test_released_version=[None, "1.0.8"])  # type: ignore[misc]
     def test_custom_demo_model_array_str(
         self,
         permanent_deploy: Optional[bool] = False,
@@ -398,7 +394,7 @@ class TestWarehouseCustomModelInteg(parameterized.TestCase):
             test_released_version=test_released_version,
         )
 
-    @parameterized.product(permanent_deploy=[True, False], test_released_version=[None, "1.0.3"])  # type: ignore[misc]
+    @parameterized.product(permanent_deploy=[True, False], test_released_version=[None, "1.0.8"])  # type: ignore[misc]
     def test_custom_model_with_artifacts(
         self,
         permanent_deploy: Optional[bool] = False,
@@ -430,7 +426,7 @@ class TestWarehouseCustomModelInteg(parameterized.TestCase):
                 test_released_version=test_released_version,
             )
 
-    @parameterized.product(permanent_deploy=[True, False], test_released_version=[None, "1.0.3"])  # type: ignore[misc]
+    @parameterized.product(permanent_deploy=[True, False], test_released_version=[None, "1.0.8"])  # type: ignore[misc]
     def test_custom_model_bool_sp(
         self,
         permanent_deploy: Optional[bool] = False,

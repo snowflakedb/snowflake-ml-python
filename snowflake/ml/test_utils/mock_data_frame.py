@@ -1,11 +1,19 @@
 from __future__ import annotations  # for return self methods
 
-from typing import Any
+from typing import Any, Dict, List, Optional, Union
 
 from snowflake import snowpark
 from snowflake.ml._internal.utils import formatting
 from snowflake.ml._internal.utils.string_matcher import StringMatcherIgnoreWhitespace
 from snowflake.ml.test_utils import mock_snowml_base
+
+
+class MockAsyncJob:
+    def __init__(self, result: Any) -> None:
+        self._result = result
+
+    def result(self) -> Any:
+        return self._result
 
 
 class MockDataFrame(mock_snowml_base.MockSnowMLBase):
@@ -22,12 +30,13 @@ class MockDataFrame(mock_snowml_base.MockSnowMLBase):
 
     def __init__(
         self,
-        collect_result: list[snowpark.Row] | None = None,
+        collect_result: Union[list[snowpark.Row], MockAsyncJob] | None = None,
         count_result: int | None = None,
         collect_statement_params: dict[str, str] | None = None,
         count_statement_params: dict[str, str] | None = None,
         check_call_sequence_completion: bool = True,
         columns: list[str] | None = None,
+        collect_block: Optional[bool] = None,
     ) -> None:
         """Initializes MockDataFrame.
 
@@ -38,7 +47,8 @@ class MockDataFrame(mock_snowml_base.MockSnowMLBase):
             count_statement_params: It will check if the same `statement_params` specified during collect() call.
             check_call_sequence_completion: If True (default), we will check the completion of all expected operation
                 calls in the finalize() call and when leaving a `with MockDataFrame()` context.
-            columns: List of columns avaialble in the mock dataframe. This value is exposed as a propery.
+            columns: List of columns available in the mock dataframe. This value is exposed as a property.
+            collect_block: It will check if the same `block` parameter is specified during collect() call.
         """
         super().__init__(
             check_call_sequence_completion,
@@ -50,11 +60,11 @@ class MockDataFrame(mock_snowml_base.MockSnowMLBase):
         # If collect_statement_params given, collect_result must be present.
         assert not collect_statement_params or collect_result
 
-        # We need to differenciate between None and empty list. Empty list is a valid response to collect call.
+        # We need to differentiate between None and empty list. Empty list is a valid response to collect call.
         if collect_result is not None:
-            self.add_collect_result(collect_result, collect_statement_params)
+            self.add_collect_result(collect_result, collect_statement_params, collect_block)
 
-        # Similarly we need to differenciate between None and 0. Dataframe with result count 0 is a valid scenario.
+        # Similarly we need to differentiate between None and 0. Dataframe with result count 0 is a valid scenario.
         if count_result is not None:
             self.add_count_result(count_result, count_statement_params)
 
@@ -77,16 +87,21 @@ class MockDataFrame(mock_snowml_base.MockSnowMLBase):
 
     def add_collect_result(
         self,
-        result: list[snowpark.Row],
-        statement_params: dict[str, str] | None = None,
+        result: Union[List[snowpark.Row], MockAsyncJob],
+        statement_params: Optional[Dict[str, Any]] = None,
+        block: Optional[bool] = None,
     ) -> mock_snowml_base.MockSnowMLBase:
         """Convenience helper to set the expected result of a `collect()` operation."""
         check_statement_params = False
-        kwargs = None
+        kwargs: Optional[Dict[str, Any]] = None
         if statement_params:
             kwargs = {}
             kwargs["statement_params"] = statement_params
             check_statement_params = True
+        if block is not None:
+            kwargs = kwargs or {}
+            kwargs["block"] = block
+
         return self.add_operation(
             operation="collect", kwargs=kwargs, result=result, check_statement_params=check_statement_params
         )

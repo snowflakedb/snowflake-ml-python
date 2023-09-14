@@ -1,6 +1,3 @@
-#
-# Copyright (c) 2012-2022 Snowflake Computing Inc. All rights reserved.
-#
 import importlib
 import os
 import pickle
@@ -105,9 +102,9 @@ class LabelEncoderTest(TestCase):
         sklearn_input_ndarray = df_pandas[INPUT_COL]
         sklearn_encoder = SklearnLabelEncoder()
         sklearn_encoder.fit(sklearn_input_ndarray)
-        sklearn_tranformed_dataset = sklearn_encoder.transform(sklearn_input_ndarray)
+        sklearn_transformed_dataset = sklearn_encoder.transform(sklearn_input_ndarray)
 
-        np.testing.assert_equal(sklearn_tranformed_dataset, transformed_dataset_output_col)
+        np.testing.assert_equal(sklearn_transformed_dataset, transformed_dataset_output_col)
 
     def test_transform_snowpark_none(self) -> None:
         """
@@ -117,7 +114,7 @@ class LabelEncoderTest(TestCase):
         ------
         AssertionError
             If `None` is not included in classes.
-            If snowpark label encoder tranformation does not match the equivalent sklearn transformation.
+            If snowpark label encoder transformation does not match the equivalent sklearn transformation.
         """
         df_none_nan_pandas, df_none_nan = framework_utils.get_df(self._session, DATA_NONE_NAN, SCHEMA)
         encoder = LabelEncoder(input_cols=INPUT_COL, output_cols=OUTPUT_COL)
@@ -148,7 +145,7 @@ class LabelEncoderTest(TestCase):
         Raises
         ------
         AssertionError
-            If snowpark label encoder tranformation does not match the equivalent sklearn transformation.
+            If snowpark label encoder transformation does not match the equivalent sklearn transformation.
         """
         input_col = SCHEMA_BOOLEAN[3]
         df_pandas, df = framework_utils.get_df(self._session, DATA_BOOLEAN, SCHEMA_BOOLEAN, np.nan)

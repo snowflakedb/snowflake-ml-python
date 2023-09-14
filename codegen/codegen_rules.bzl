@@ -1,13 +1,13 @@
 """autogen_{init_file_for_module|estimators|tests_for_estimators} rules for snowml repository.
 
 Helper functions to autogenerate genrules and build rules for the following
-1. Snowflake wrappers for estimators from a given modue.
+1. Snowflake wrappers for estimators from a given module.
 2. Integration tests for wrapper classes.
 3. Init file for the auto-generated wrappers module.
 """
 
 load("@rules_python//python:packaging.bzl", native_py_package = "py_package")
-load("//bazel:py_rules.bzl", "py_library", "py_test", "py_genrule")
+load("//bazel:py_rules.bzl", "py_genrule", "py_library", "py_test")
 
 AUTO_GEN_TOOL_BAZEL_PATH = "//codegen:estimator_autogen_tool"
 ESTIMATOR_TEMPLATE_BAZEL_PATH = "//codegen:sklearn_wrapper_template.py_template"

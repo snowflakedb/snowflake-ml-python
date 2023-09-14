@@ -8,6 +8,10 @@ from enum import Enum
 from typing import List, Optional
 
 from snowflake import snowpark
+from snowflake.ml._internal.exceptions import (
+    error_codes,
+    exceptions as snowml_exceptions,
+)
 from snowflake.ml._internal.utils import spcs_image_registry
 from snowflake.ml.model import _model_meta
 from snowflake.ml.model._deploy_client.image_builds import (
@@ -54,7 +58,7 @@ class ClientImageBuilder(base_image_builder.ImageBuilder):
         self.model_meta = model_meta
         self.session = session
 
-    def build_and_upload_image(self, image_to_pull: str = None) -> str:
+    def build_and_upload_image(self, image_to_pull: Optional[str] = None) -> str:
         """Builds and uploads an image to the model registry.
 
         Args:
@@ -66,7 +70,7 @@ class ClientImageBuilder(base_image_builder.ImageBuilder):
             Snowservice registry image tag.
 
         Raises:
-            RuntimeError: Occurs when failed to build image or push to image registry.
+            SnowflakeMLException: Occurs when failed to build image or push to image registry.
         """
 
         def _setup_docker_config(docker_config_dir: str, registry_cred: str) -> None:
@@ -91,11 +95,9 @@ class ClientImageBuilder(base_image_builder.ImageBuilder):
 
         def _cleanup_local_image(docker_config_dir: str) -> None:
             try:
-                image_exist_command = f"docker image inspect {self.image_tag}"
-                subprocess.check_call(
-                    image_exist_command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, shell=True
-                )
-            except subprocess.CalledProcessError:
+                image_exist_command = ["docker", "image", "inspect", self.image_tag]
+                self._run_docker_commands(image_exist_command)
+            except Exception:
                 # Image does not exist, probably due to failed build step
                 pass
             else:
@@ -117,7 +119,10 @@ class ClientImageBuilder(base_image_builder.ImageBuilder):
                 else:
                     self._pull_and_tag(image_to_pull=image_to_pull)
             except Exception as e:
-                raise RuntimeError(f"Failed to build docker image: {str(e)}")
+                raise snowml_exceptions.SnowflakeMLException(
+                    error_code=error_codes.INTERNAL_DOCKER_ERROR,
+                    original_exception=RuntimeError("Failed to build docker image."),
+                ) from e
             else:
                 try:
                     start = time.time()
@@ -125,7 +130,10 @@ class ClientImageBuilder(base_image_builder.ImageBuilder):
                     end = time.time()
                     logger.info(f"Time taken to upload the image to image registry: {end - start:.2f} seconds")
                 except Exception as e:
-                    raise RuntimeError(f"Failed to upload docker image to registry: {str(e)}")
+                    raise snowml_exceptions.SnowflakeMLException(
+                        error_code=error_codes.INTERNAL_DOCKER_ERROR,
+                        original_exception=RuntimeError("Failed to upload docker image to registry."),
+                    ) from e
                 finally:
                     _cleanup_local_image(docker_config_dir)
         return self.image_tag
@@ -137,23 +145,28 @@ class ClientImageBuilder(base_image_builder.ImageBuilder):
         - Ensure BuildKit is enabled by checking "docker buildx version".
 
         Raises:
-            ConnectionError: Occurs when Docker is not installed or is not running.
+            SnowflakeMLException: Occurs when Docker is not installed or is not running.
 
         """
-        info_command = "docker info"
-        buildx_command = "docker buildx version"
+        try:
+            self._run_docker_commands(["docker", "info"])
+        except Exception:
+            raise snowml_exceptions.SnowflakeMLException(
+                error_code=error_codes.CLIENT_DEPENDENCY_MISSING_ERROR,
+                original_exception=ConnectionError(
+                    "Failed to initialize Docker client. Please ensure Docker is installed and running."
+                ),
+            )
 
         try:
-            subprocess.check_call(info_command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, shell=True)
-        except subprocess.CalledProcessError:
-            raise ConnectionError("Failed to initialize Docker client. Please ensure Docker is installed and running.")
-
-        try:
-            subprocess.check_call(buildx_command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, shell=True)
-        except subprocess.CalledProcessError:
-            raise ConnectionError(
-                "Please ensured Docker is installed with BuildKit by following "
-                "https://docs.docker.com/build/buildkit/#getting-started"
+            self._run_docker_commands(["docker", "buildx", "version"])
+        except Exception:
+            raise snowml_exceptions.SnowflakeMLException(
+                error_code=error_codes.CLIENT_DEPENDENCY_MISSING_ERROR,
+                original_exception=ConnectionError(
+                    "Please ensured Docker is installed with BuildKit by following "
+                    "https://docs.docker.com/build/buildkit/#getting-started"
+                ),
             )
 
     def _build_and_tag(self, docker_config_dir: str) -> None:
@@ -191,9 +204,11 @@ class ClientImageBuilder(base_image_builder.ImageBuilder):
             commands: List of commands to run.
 
         Raises:
-            RuntimeError: Occurs when docker commands failed to execute.
+            SnowflakeMLException: Occurs when docker commands failed to execute.
         """
-        proc = subprocess.Popen(commands, cwd=os.getcwd(), stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        proc = subprocess.Popen(
+            commands, cwd=os.getcwd(), stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, shell=False
+        )
         output_lines = []
 
         if proc.stdout:
@@ -202,7 +217,10 @@ class ClientImageBuilder(base_image_builder.ImageBuilder):
                 logger.debug(line)
 
         if proc.wait():
-            raise RuntimeError(f"Docker commands failed: \n {''.join(output_lines)}")
+            raise snowml_exceptions.SnowflakeMLException(
+                error_code=error_codes.INTERNAL_DOCKER_ERROR,
+                original_exception=RuntimeError(f"Docker commands failed: \n {''.join(output_lines)}"),
+            )
 
     def _build_image_from_context(
         self, context_dir: str, docker_config_dir: str, *, platform: Platform = Platform.LINUX_AMD64

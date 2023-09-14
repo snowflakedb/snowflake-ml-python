@@ -1,6 +1,3 @@
-#
-# Copyright (c) 2012-2022 Snowflake Computing Inc. All rights reserved.
-#
 import math
 from typing import Any, Collection, Dict, Iterable, List, Optional, Tuple, Union
 from uuid import uuid4
@@ -245,41 +242,6 @@ def flatten_cols(cols: List[Optional[Union[str, List[str]]]]) -> List[str]:
         if isinstance(col, list):
             res.extend(col)
     return res
-
-
-def weighted_sum(
-    *,
-    df: snowpark.DataFrame,
-    sample_score_column: snowpark.Column,
-    sample_weight_column: Optional[snowpark.Column] = None,
-    normalize: bool = False,
-    statement_params: Dict[str, str],
-) -> float:
-    """Weighted sum of the sample score column.
-
-    Args:
-        df: Input dataframe.
-        sample_score_column: Sample score column.
-        sample_weight_column: Sample weight column.
-        normalize: If ``False``, return the weighted sum.
-            Otherwise, return the fraction of weighted sum.
-        statement_params: Dictionary used for tagging queries for tracking purposes.
-
-    Returns:
-        If ``normalize == True``, return the fraction of weighted sum (float),
-        else returns the weighted sum (int).
-    """
-    if normalize:
-        if sample_weight_column is not None:
-            res = F.sum(sample_score_column * sample_weight_column) / F.sum(sample_weight_column)
-        else:
-            res = F.avg(sample_score_column)
-    elif sample_weight_column is not None:
-        res = F.sum(sample_score_column * sample_weight_column)
-    else:
-        res = F.sum(sample_score_column)
-
-    return float(df.select(res).collect(statement_params=statement_params)[0][0])
 
 
 def unique_labels(

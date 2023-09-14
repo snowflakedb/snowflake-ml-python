@@ -6,7 +6,10 @@ import yaml
 from packaging import requirements, version
 
 from snowflake.ml._internal import env as snowml_env, env_utils
-from snowflake.ml._internal.utils import formatting
+from snowflake.ml._internal.exceptions import (
+    error_codes,
+    exceptions as snowml_exceptions,
+)
 
 _CONDA_ENV_FILE_NAME = "conda.yaml"
 _SNOWFLAKE_CONDA_CHANNEL_URL = "https://repo.anaconda.com/pkgs/snowflake"
@@ -130,18 +133,19 @@ def validate_py_runtime_version(provided_py_version_str: str) -> None:
             provided_py_version.major != current_py_version.major
             or provided_py_version.minor != current_py_version.minor
         ):
-            raise RuntimeError(
-                formatting.unwrap(
-                    f"""Unable to load model which is saved with Python {provided_py_version_str}
-                    while current Python version is {snowml_env.PYTHON_VERSION}.
-                    To load model metadata only, set meta_only to True."""
-                )
+            raise snowml_exceptions.SnowflakeMLException(
+                error_code=error_codes.LOCAL_ENVIRONMENT_ERROR,
+                original_exception=RuntimeError(
+                    f"Unable to load model which is saved with Python {provided_py_version_str} "
+                    f"while current Python version is {snowml_env.PYTHON_VERSION}. "
+                    "To load model metadata only, set meta_only to True."
+                ),
             )
         warnings.warn(
-            formatting.unwrap(
-                f"""Model is saved with Python {provided_py_version_str}
-                while current Python version is {snowml_env.PYTHON_VERSION}.
-                There might be some issues when using loaded model."""
+            (
+                f"Model is saved with Python {provided_py_version_str} "
+                f"while current Python version is {snowml_env.PYTHON_VERSION}. "
+                "There might be some issues when using loaded model."
             ),
             category=RuntimeWarning,
         )

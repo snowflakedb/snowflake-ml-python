@@ -149,8 +149,12 @@ def _conda_create_impl(rctx):
 conda_create_rule = repository_rule(
     _conda_create_impl,
     attrs = {
-        "conda_repo": attr.string(mandatory = True),
+        "clean": attr.bool(
+            default = False,
+            doc = "True if conda cache should be cleaned",
+        ),
         "conda_dir": attr.string(mandatory = True),
+        "conda_repo": attr.string(mandatory = True),
         "coverage_tool": attr.label(
             allow_single_file = True,
             doc = "The label of the coverage_tool.py file.",
@@ -167,10 +171,6 @@ conda_create_rule = repository_rule(
         "timeout": attr.int(
             default = EXECUTE_TIMEOUT,
             doc = "Timeout in seconds for each execute action",
-        ),
-        "clean": attr.bool(
-            default = False,
-            doc = "True if conda cache should be cleaned",
         ),
     },
 )

@@ -1,12 +1,15 @@
-import subprocess
 from typing import cast
 
 from absl.testing import absltest
 from absl.testing.absltest import mock
 
 from snowflake import snowpark
+from snowflake.ml._internal.exceptions import (
+    error_codes,
+    exceptions as snowml_exceptions,
+)
 from snowflake.ml.model._deploy_client.image_builds import client_image_builder
-from snowflake.ml.test_utils import mock_session
+from snowflake.ml.test_utils import exception_utils, mock_session
 
 
 class ClientImageBuilderTestCase(absltest.TestCase):
@@ -28,13 +31,14 @@ class ClientImageBuilderTestCase(absltest.TestCase):
             session=self.m_session,
         )
 
-    @mock.patch(
-        "snowflake.ml.model._deploy_client.image_builds.client_image_builder.subprocess.check_call"
-    )  # type: ignore
-    def test_throw_exception_when_docker_is_not_running(self, m_check_call: mock.MagicMock) -> None:
-        m_check_call.side_effect = subprocess.CalledProcessError(1, "docker info")
-        with self.assertRaises(ConnectionError):
-            self.client_image_builder.build_and_upload_image()
+    def test_throw_exception_when_docker_is_not_running(self) -> None:
+        with mock.patch.object(self.client_image_builder, "_run_docker_commands") as m_run_docker_commands:
+            m_run_docker_commands.side_effect = snowml_exceptions.SnowflakeMLException(
+                error_code=error_codes.INTERNAL_DOCKER_ERROR, original_exception=ConnectionError()
+            )
+            with exception_utils.assert_snowml_exceptions(self, expected_original_error_type=ConnectionError):
+                self.client_image_builder.build_and_upload_image()
+            m_run_docker_commands.assert_called_once_with(["docker", "info"])
 
     @mock.patch(
         "snowflake.ml.model._deploy_client.image_builds.client_image_builder" ".docker_context.DockerContext"

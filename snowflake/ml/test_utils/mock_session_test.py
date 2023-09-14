@@ -35,7 +35,7 @@ class MockSessionTest(TestCase):
             self.assertEqual(session.get_current_role(), "SuperAdmin")
 
     def test_generic_operation_success(self) -> None:
-        """Test the successfull validation of a dynamically added function call."""
+        """Test the successful validation of a dynamically added function call."""
         with mock_session.MockSession(conn=None, test_case=self) as session:
             session.add_operation(
                 operation="unknown_operation", args=("nkw",), kwargs={"kw": "v"}, result="unknown_result"

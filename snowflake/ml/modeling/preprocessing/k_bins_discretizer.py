@@ -1,7 +1,4 @@
 #!/usr/bin/env python3
-#
-# Copyright (c) 2012-2022 Snowflake Computing Inc. All rights reserved.
-#
 from __future__ import annotations
 
 from itertools import chain
@@ -52,7 +49,7 @@ def decimal_to_float(data: npt.NDArray[np.generic]) -> npt.NDArray[np.float32]:
     return np.array([float(x) for x in data])
 
 
-# TODO(tbao): suport kmeans with snowpark if needed
+# TODO(tbao): support kmeans with snowpark if needed
 class KBinsDiscretizer(base.BaseTransformer):
     """
     Bin continuous data into intervals.
@@ -418,7 +415,7 @@ class KBinsDiscretizer(base.BaseTransformer):
         Returns:
             Output dataset in dense representation.
         """
-        origional_dataset_columns = dataset.columns[:]
+        original_dataset_columns = dataset.columns[:]
         all_output_cols = []
 
         udf_name = random_name_for_temp_object(TempObjectType.FUNCTION)
@@ -458,7 +455,7 @@ class KBinsDiscretizer(base.BaseTransformer):
             all_output_cols += [f"{output_col}_{i}" for i in range(len(boarders) - 1)]
 
         # Reorder columns. Passthrough columns are added at the right to the output of the transformers.
-        dataset = dataset[all_output_cols + origional_dataset_columns]
+        dataset = dataset[all_output_cols + original_dataset_columns]
         return dataset
 
     def _transform_sklearn(self, dataset: pd.DataFrame) -> Union[pd.DataFrame, sparse.csr_matrix]:

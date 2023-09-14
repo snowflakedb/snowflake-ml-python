@@ -6,6 +6,10 @@ from typing import IO, List, Optional, Tuple, TypedDict, Union
 from typing_extensions import Unpack
 
 from snowflake.ml._internal import env_utils, file_utils
+from snowflake.ml._internal.exceptions import (
+    error_codes,
+    exceptions as snowml_exceptions,
+)
 from snowflake.ml.model import _model_meta, type_hints as model_types
 from snowflake.ml.model._deploy_client.warehouse import infer_template
 from snowflake.snowpark import session as snowpark_session, types as st
@@ -31,21 +35,29 @@ def _deploy_to_warehouse(
         **kwargs: Options that control some features in generated udf code.
 
     Raises:
-        ValueError: Raised when model file name is unable to encoded using ASCII.
-        ValueError: Raised when incompatible model.
-        ValueError: Raised when target method does not exist in model.
-        ValueError: Raised when confronting invalid stage location.
+        SnowflakeMLException: Raised when model file name is unable to encoded using ASCII.
+        SnowflakeMLException: Raised when incompatible model.
+        SnowflakeMLException: Raised when target method does not exist in model.
+        SnowflakeMLException: Raised when confronting invalid stage location.
 
     """
     # TODO(SNOW-862576): Should remove check on ASCII encoding after SNOW-862576 fixed.
     model_stage_file_name = posixpath.basename(model_stage_file_path)
     if not file_utils._able_ascii_encode(model_stage_file_name):
-        raise ValueError(f"Model file name {model_stage_file_name} cannot be encoded using ASCII. Please rename.")
+        raise snowml_exceptions.SnowflakeMLException(
+            error_code=error_codes.INVALID_ARGUMENT,
+            original_exception=ValueError(
+                f"Model file name {model_stage_file_name} cannot be encoded using ASCII. Please rename."
+            ),
+        )
 
     relax_version = kwargs.get("relax_version", False)
 
     if target_method not in model_meta.signatures.keys():
-        raise ValueError(f"Target method {target_method} does not exist in model.")
+        raise snowml_exceptions.SnowflakeMLException(
+            error_code=error_codes.INVALID_ARGUMENT,
+            original_exception=ValueError(f"Target method {target_method} does not exist in model."),
+        )
 
     final_packages = _get_model_final_packages(model_meta, session, relax_version=relax_version)
 
@@ -53,7 +65,10 @@ def _deploy_to_warehouse(
     if stage_location:
         stage_location = posixpath.normpath(stage_location.strip())
         if not stage_location.startswith("@"):
-            raise ValueError(f"Invalid stage location {stage_location}.")
+            raise snowml_exceptions.SnowflakeMLException(
+                error_code=error_codes.INVALID_ARGUMENT,
+                original_exception=ValueError(f"Invalid stage location {stage_location}."),
+            )
 
     with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False, encoding="utf-8") as f:
         _write_UDF_py_file(f.file, model_stage_file_name=model_stage_file_name, target_method=target_method, **kwargs)
@@ -128,8 +143,8 @@ def _get_model_final_packages(
             Defaults to False.
 
     Raises:
-        RuntimeError: Raised when PIP requirements and dependencies from non-Snowflake anaconda channel found.
-        RuntimeError: Raised when not all packages are available in snowflake conda channel.
+        SnowflakeMLException: Raised when PIP requirements and dependencies from non-Snowflake anaconda channel found.
+        SnowflakeMLException: Raised when not all packages are available in snowflake conda channel.
 
     Returns:
         List of final packages string that is accepted by Snowpark register UDF call.
@@ -142,7 +157,12 @@ def _get_model_final_packages(
         )
         or meta.pip_requirements
     ):
-        raise RuntimeError("PIP requirements and dependencies from non-Snowflake anaconda channel is not supported.")
+        raise snowml_exceptions.SnowflakeMLException(
+            error_code=error_codes.DEPENDENCY_VERSION_ERROR,
+            original_exception=RuntimeError(
+                "PIP requirements and dependencies from non-Snowflake anaconda channel is not supported."
+            ),
+        )
 
     deps = meta._conda_dependencies[env_utils.DEFAULT_CHANNEL_NAME]
 
@@ -162,12 +182,15 @@ def _get_model_final_packages(
         relax_version_info_str = "" if relax_version else "Try to set relax_version as True in the options. "
         required_deps = list(map(env_utils.relax_requirement_version, deps)) if relax_version else deps
         if final_packages is None:
-            raise RuntimeError(
-                "The model's dependency cannot fit into Snowflake Warehouse. "
-                + relax_version_info_str
-                + "Required packages are:\n"
-                + " ".join(map(lambda x: f'"{x}"', required_deps))
-                + "\n Required Python version is: "
-                + meta.python_version
+            raise snowml_exceptions.SnowflakeMLException(
+                error_code=error_codes.DEPENDENCY_VERSION_ERROR,
+                original_exception=RuntimeError(
+                    "The model's dependency cannot fit into Snowflake Warehouse. "
+                    + relax_version_info_str
+                    + "Required packages are:\n"
+                    + " ".join(map(lambda x: f'"{x}"', required_deps))
+                    + "\n Required Python version is: "
+                    + meta.python_version
+                ),
             )
     return final_packages

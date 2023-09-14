@@ -33,7 +33,7 @@ toolchain_rule = repository_rule(
     _toolchain_impl,
     attrs = {
         "runtime": attr.label(mandatory = True),
-        "toolchain_name": attr.string(mandatory = True),
         "target_compatible_with": attr.label_list(),
+        "toolchain_name": attr.string(mandatory = True),
     },
 )

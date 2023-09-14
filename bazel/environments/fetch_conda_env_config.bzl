@@ -7,17 +7,17 @@ def _fetch_conda_env_config_impl(rctx):
     rctx.file("BUILD")
 
     conda_env_map = {
-        "build":{
+        "build": {
+            "compatible_target": ["@SnowML//bazel/platforms:snowflake_conda_channel"],
             "environment": "@//bazel/environments:conda-env-build.yml",
-            "compatible_target": ["@SnowML//bazel/platforms:extended_conda_channels"]
         },
-        "sf_only":{
-            "environment": "@//bazel/environments:conda-env-snowflake.yml",
-            "compatible_target": ["@SnowML//bazel/platforms:snowflake_conda_channel"]
-        },
-        "extended":{
+        "extended": {
+            "compatible_target": ["@SnowML//bazel/platforms:extended_conda_channels"],
             "environment": "@//bazel/environments:conda-env.yml",
-            "compatible_target": ["@SnowML//bazel/platforms:extended_conda_channels"]
+        },
+        "sf_only": {
+            "compatible_target": ["@SnowML//bazel/platforms:snowflake_conda_channel"],
+            "environment": "@//bazel/environments:conda-env-snowflake.yml",
         },
     }
 
@@ -26,15 +26,16 @@ def _fetch_conda_env_config_impl(rctx):
 
     # create a temporary file called config.bzl to be loaded into WORKSPACE
     # passing in any desired information from this rule implementation
-    rctx.file("config.bzl", content = """
+    rctx.file(
+        "config.bzl",
+        content = """
 NAME = {}
 ENVIRONMENT = {}
 COMPATIBLE_TARGET = {}
-""".format(repr(config), repr(conda_env_map[config]["environment"]), repr(conda_env_map[config]["compatible_target"]))
+""".format(repr(config), repr(conda_env_map[config]["environment"]), repr(conda_env_map[config]["compatible_target"])),
     )
 
-
 fetch_conda_env_config = repository_rule(
-    implementation=_fetch_conda_env_config_impl,
-    environ = ["BUILD_CONDA_ENV"]
+    implementation = _fetch_conda_env_config_impl,
+    environ = ["BUILD_CONDA_ENV"],
 )

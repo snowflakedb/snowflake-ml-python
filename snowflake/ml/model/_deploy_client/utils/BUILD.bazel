@@ -4,23 +4,25 @@ package(default_visibility = ["//visibility:public"])
 
 py_library(
     name = "constants",
-    srcs = ["constants.py"]
+    srcs = ["constants.py"],
 )
 
 py_library(
     name = "snowservice_client",
     srcs = ["snowservice_client.py"],
     deps = [
-        ":constants"
-    ]
+        ":constants",
+        "//snowflake/ml/_internal/exceptions",
+    ],
 )
 
 py_library(
     name = "image_registry_client",
     srcs = ["image_registry_client.py"],
     deps = [
+        "//snowflake/ml/_internal/exceptions",
         "//snowflake/ml/_internal/utils:spcs_image_registry",
-    ]
+    ],
 )
 
 py_test(
@@ -28,8 +30,9 @@ py_test(
     srcs = ["snowservice_client_test.py"],
     deps = [
         ":snowservice_client",
+        "//snowflake/ml/test_utils:exception_utils",
         "//snowflake/ml/test_utils:mock_session",
-    ]
+    ],
 )
 
 py_test(
@@ -37,6 +40,7 @@ py_test(
     srcs = ["image_registry_client_test.py"],
     deps = [
         ":image_registry_client",
+        "//snowflake/ml/test_utils:exception_utils",
         "//snowflake/ml/test_utils:mock_session",
-    ]
+    ],
 )

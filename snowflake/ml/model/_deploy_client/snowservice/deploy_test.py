@@ -10,13 +10,12 @@ from snowflake.ml.model._deploy_client.snowservice.deploy import (
     _get_or_create_image_repo,
 )
 from snowflake.ml.model._deploy_client.utils import constants
-from snowflake.ml.test_utils import mock_data_frame, mock_session
+from snowflake.ml.test_utils import exception_utils, mock_data_frame, mock_session
 from snowflake.snowpark import row, session
 
 
 class Connection:
-    def __init__(self, host: str, account: str, database: str, schema: str) -> None:
-        self.host = host
+    def __init__(self, account: str, database: str, schema: str) -> None:
         self.account = account
         self._database = database
         self._schema = schema
@@ -69,7 +68,7 @@ class DeployTestCase(absltest.TestCase):
         self, m_deployment_class: mock.MagicMock, m_model_meta_class: mock.MagicMock
     ) -> None:
         m_model_meta = m_model_meta_class.return_value
-        with self.assertRaises(ValueError):
+        with exception_utils.assert_snowml_exceptions(self, expected_original_error_type=ValueError):
             _deploy(
                 session=cast(session.Session, self.m_session),
                 service_func_name="mock_service_func",
@@ -89,7 +88,9 @@ class DeployTestCase(absltest.TestCase):
         self, m_deployment_class: mock.MagicMock, m_model_meta_class: mock.MagicMock
     ) -> None:
         m_model_meta = m_model_meta_class.return_value
-        with self.assertRaisesRegex(ValueError, "compute_pool"):
+        with exception_utils.assert_snowml_exceptions(
+            self, expected_original_error_type=ValueError, expected_regex="compute_pool"
+        ):
             options: Dict[str, Any] = {}
             _deploy(
                 session=cast(session.Session, self.m_session),
@@ -109,7 +110,9 @@ class DeployTestCase(absltest.TestCase):
         self, m_deployment_class: mock.MagicMock, m_model_meta_class: mock.MagicMock
     ) -> None:
         m_model_meta = m_model_meta_class.return_value
-        with self.assertRaisesRegex(RuntimeError, "GPU request exceeds instance capability"):
+        with exception_utils.assert_snowml_exceptions(
+            self, expected_original_error_type=RuntimeError, expected_regex="GPU request exceeds instance capability"
+        ):
             self.m_session.add_mock_sql(
                 query=f"DESC COMPUTE POOL {self.options['compute_pool']}",
                 result=mock_data_frame.MockDataFrame(
@@ -137,8 +140,10 @@ class DeployTestCase(absltest.TestCase):
     ) -> None:
         m_model_meta = m_model_meta_class.return_value
         m_model_meta.cuda_version = None
-        with self.assertRaisesRegex(
-            ValueError, "You are requesting GPUs for models that do not use a GPU or does not have CUDA version set"
+        with exception_utils.assert_snowml_exceptions(
+            self,
+            expected_original_error_type=ValueError,
+            expected_regex="You are requesting GPUs for models that do not use a GPU or does not have CUDA version set",
         ):
             self.m_session.add_mock_sql(
                 query=f"DESC COMPUTE POOL {self.options['compute_pool']}",
@@ -219,53 +224,68 @@ class DeployTestCase(absltest.TestCase):
         "snowflake.ml.model._deploy_client.snowservice.deploy." "snowservice_client.SnowServiceClient"
     )  # type: ignore
     def test_get_or_create_image_repo(self, m_snowservice_client_class: mock.MagicMock) -> None:
+        db = "mock_db"
+        schema = "mock_schema"
+        session_db = "session_db"
+        session_schema = "session_schema"
+        repo_url = f"org-account.registry.snowflakecomputing.com/{db}/{schema}/{constants.SNOWML_IMAGE_REPO}"
+        session_repo_url = (
+            f"org-account.registry-dev.snowflakecomputing.com"
+            f"/{session_db}/{session_schema}/{constants.SNOWML_IMAGE_REPO}"
+        )
+        self.m_session.add_mock_sql(
+            query=f"SHOW IMAGE REPOSITORIES LIKE '{constants.SNOWML_IMAGE_REPO}' IN SCHEMA {'.'.join([db, schema])}",
+            result=mock_data_frame.MockDataFrame([row.Row(name=constants.SNOWML_IMAGE_REPO, repository_url=repo_url)]),
+        )
+        self.m_session.add_mock_sql(
+            query=f"SHOW IMAGE REPOSITORIES LIKE '{constants.SNOWML_IMAGE_REPO}' "
+            f"IN SCHEMA {'.'.join([session_db, session_schema])}",
+            result=mock_data_frame.MockDataFrame(
+                [row.Row(name=constants.SNOWML_IMAGE_REPO, repository_url=session_repo_url)]
+            ),
+        )
+        self.m_session._conn = mock.MagicMock()
+        self.m_session._conn._conn = Connection(account="account", database=session_db, schema=session_schema)
+
         # Test when image repo url is provided.
         self.assertEqual(
             _get_or_create_image_repo(
                 session=cast(session.Session, self.m_session),
                 service_func_name="func",
-                image_repo="org-account.registry-dev.snowflakecomputing.com/DB/SCHEMA/REPO",
+                image_repo="dummy.dummy.snowflakecomputing.com/DB/SCHEMA/REPO",
             ),
-            "org-account.registry-dev.snowflakecomputing.com/db/schema/repo",
+            "dummy.dummy.snowflakecomputing.com/db/schema/repo",
         )
 
-        # Test when session is missing component(db/schema etc) in order to construct image repo url
-        with self.assertRaises(RuntimeError):
-            _get_or_create_image_repo(
-                session=cast(session.Session, self.m_session), service_func_name="func", image_repo=None
-            )
-
-        # Test constructing image repo from session object
-        self.m_session._conn = mock.MagicMock()
-        self.m_session._conn._conn = Connection(
-            host="account.org.us-west-2.aws.snowflakecomputing.com", account="account", database="DB", schema="SCHEMA"
-        )
-
-        m_snowservice_client = m_snowservice_client_class.return_value
-        expected = f"org-account.registry.snowflakecomputing.com/db/schema/{constants.SNOWML_IMAGE_REPO}"
+        # Test when image repo is constructed from db/schema inferred from the service func.
         self.assertEqual(
             _get_or_create_image_repo(
-                session=cast(session.Session, self.m_session), service_func_name="func", image_repo=None
+                session=cast(session.Session, self.m_session), service_func_name=f"{db}.{schema}.func"
             ),
-            expected,
+            repo_url,
         )
-        m_snowservice_client.create_image_repo.assert_called_with(f"DB.SCHEMA.{constants.SNOWML_IMAGE_REPO}")
-
         m_snowservice_client = m_snowservice_client_class.return_value
-        expected = (
-            f"org-account.registry.snowflakecomputing.com/another_db/another_schema/{constants.SNOWML_IMAGE_REPO}"
-        )
+        m_snowservice_client.create_image_repo.assert_called_with(f"{db}.{schema}.{constants.SNOWML_IMAGE_REPO}")
+
+        # Test constructing image repo from session object, this happens when service func is missing db and/or schema.
         self.assertEqual(
-            _get_or_create_image_repo(
-                session=cast(session.Session, self.m_session),
-                service_func_name="another_db.another_schema.func",
-                image_repo=None,
-            ),
-            expected,
+            _get_or_create_image_repo(session=cast(session.Session, self.m_session), service_func_name="func"),
+            session_repo_url,
         )
         m_snowservice_client.create_image_repo.assert_called_with(
-            f"another_db.another_schema.{constants.SNOWML_IMAGE_REPO}"
+            f"{session_db}.{session_schema}.{constants.SNOWML_IMAGE_REPO}"
         )
+
+        with exception_utils.assert_snowml_exceptions(self, expected_original_error_type=RuntimeError):
+            # Cannot find image repo in the given db/schema.
+            self.m_session.add_mock_sql(
+                query=f"SHOW IMAGE REPOSITORIES LIKE "
+                f"'{constants.SNOWML_IMAGE_REPO}' IN SCHEMA {'.'.join([db, schema])}",
+                result=mock_data_frame.MockDataFrame([]),
+            )
+            _get_or_create_image_repo(
+                session=cast(session.Session, self.m_session), service_func_name=f"{db}.{schema}.func"
+            )
 
 
 class SnowServiceDeploymentTestCase(absltest.TestCase):

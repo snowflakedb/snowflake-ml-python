@@ -1,25 +1,25 @@
 INSTALLER_SCRIPT_EXT_MAP = {
-    "Windows": ".exe",
-    "MacOSX": ".sh",
     "Linux": ".sh",
+    "MacOSX": ".sh",
+    "Windows": ".exe",
 }
 
 CONDA_EXT_MAP = {
-    "Windows": ".bat",
-    "MacOSX": "",
     "Linux": "",
+    "MacOSX": "",
+    "Windows": ".bat",
 }
 
 PYTHON_EXT_MAP = {
-    "Windows": ".exe",
-    "MacOSX": "",
     "Linux": "",
+    "MacOSX": "",
+    "Windows": ".exe",
 }
 
 ENV_VAR_SEPARATOR_MAP = {
-    "Windows": ";",
-    "MacOSX": ":",
     "Linux": ":",
+    "MacOSX": ":",
+    "Windows": ";",
 }
 
 EXECUTE_TIMEOUT = 3600

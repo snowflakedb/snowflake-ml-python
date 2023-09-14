@@ -1,5 +1,5 @@
-load("//bazel:py_rules.bzl", "py_library", "py_test", "snowml_wheel")
 load("@rules_python//python:packaging.bzl", "py_package")
+load("//bazel:py_rules.bzl", "py_library", "py_test", "snowml_wheel")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -8,16 +8,15 @@ py_library(
     srcs = ["stage_fs.py"],
     deps = [
         "//snowflake/ml/_internal:telemetry",
-        "//snowflake/ml/_internal/exceptions:exceptions",
-        "//snowflake/ml/_internal/exceptions:fileset_errors",
+        "//snowflake/ml/_internal/exceptions",
         "//snowflake/ml/_internal/exceptions:fileset_error_messages",
+        "//snowflake/ml/_internal/exceptions:fileset_errors",
     ],
 )
 
 py_test(
     name = "stage_fs_test",
     srcs = ["stage_fs_test.py"],
-    compatible_with_snowpark = False,
     deps = [
         ":stage_fs",
         "//snowflake/ml/test_utils:mock_data_frame",
@@ -56,15 +55,14 @@ py_package(
 py_library(
     name = "fileset",
     srcs = ["fileset.py"],
-    compatible_with_snowpark = False,
     deps = [
         ":sfcfs",
         ":tf_dataset",
         ":torch_datapipe",
         "//snowflake/ml/_internal:telemetry",
-        "//snowflake/ml/_internal/exceptions:exceptions",
-        "//snowflake/ml/_internal/exceptions:fileset_errors",
+        "//snowflake/ml/_internal/exceptions",
         "//snowflake/ml/_internal/exceptions:fileset_error_messages",
+        "//snowflake/ml/_internal/exceptions:fileset_errors",
         "//snowflake/ml/_internal/utils:import_utils",
     ],
 )
@@ -95,14 +93,12 @@ py_test(
 py_library(
     name = "torch_datapipe",
     srcs = ["torch_datapipe.py"],
-    compatible_with_snowpark = False,
     deps = [":parquet_parser"],
 )
 
 py_test(
     name = "torch_datapipe_test",
     srcs = ["torch_datapipe_test.py"],
-    compatible_with_snowpark = False,
     deps = [
         ":parquet_test_util",
         ":torch_datapipe",
@@ -112,13 +108,15 @@ py_test(
 py_library(
     name = "tf_dataset",
     srcs = ["tf_dataset.py"],
-    deps = [":parquet_parser"],
+    deps = [
+        ":parquet_parser",
+        "//snowflake/ml/_internal/exceptions",
+    ],
 )
 
 py_test(
     name = "tf_dataset_test",
     srcs = ["tf_dataset_test.py"],
-    compatible_with_snowpark = False,
     deps = [
         ":parquet_test_util",
         ":tf_dataset",
@@ -142,9 +140,9 @@ snowml_wheel(
     compatible_with_snowpark = False,
     development_status = "PrPr",
     extra_requires = {
-        "tensorflow": _TENSORFLOW_REQUIRES,
-        "pytorch": _PYTORCH_REQUIRES,
         "all": _ALL_REQUIRES,
+        "pytorch": _PYTORCH_REQUIRES,
+        "tensorflow": _TENSORFLOW_REQUIRES,
     },
     # TODO(zhuo): consider adding a check to make sure what's listed
     # here is a subset that is compatible with what is specified in conda-env.yml.

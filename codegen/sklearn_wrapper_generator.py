@@ -139,7 +139,7 @@ class WrapperGeneratorFactory:
 
     @staticmethod
     def _is_regressor_obj(class_object: Tuple[str, type]) -> bool:
-        """Check if the given estimator object can learn and predict continious numerical lable values
+        """Check if the given estimator object can learn and predict continuous numerical label values
         (typically float label values).
 
         Args:
@@ -387,7 +387,7 @@ class WrapperGeneratorFactory:
             module_name: Root module name of the estimator object.
 
         Returns:
-            Generator object with appropriate fileds to fill in wrapper and test templates.
+            Generator object with appropriate fields to fill in wrapper and test templates.
         """
         if WrapperGeneratorFactory._is_xgboost(module_name=module_name):
             generator: WrapperGeneratorBase = XGBoostWrapperGenerator(
@@ -596,7 +596,7 @@ class WrapperGeneratorBase:
             else (class_docstring, "----------\n")
         )
 
-        # Extract the first sentence fo teh class description
+        # Extract the first sentence of the class description
         class_description = class_description.split(".", 1)[0]
         # Add link to original source
         class_description += (
@@ -605,14 +605,14 @@ class WrapperGeneratorBase:
             f"]\n({self.get_doc_link()})"
         )
 
-        # Add SnowML specific param desriptions.
+        # Add SnowML specific param descriptions.
         param_description = "Parameters\n" + param_description.strip()
         param_description += ADDITIONAL_PARAM_DESCRIPTIONS
 
         class_docstring = f"{class_description}\n\n{param_description}"
         class_docstring = textwrap.indent(class_docstring, "    ").strip()
 
-        # Filter out versioned and depricated notes from SKLearn documentation
+        # Filter out versioned and deprecated notes from SKLearn documentation
         paragraphs = class_docstring.split("\n\n")
         class_docstring = "\n\n".join([p for p in paragraphs if not p.lstrip().startswith("..")])
 
@@ -818,7 +818,7 @@ class SklearnWrapperGenerator(WrapperGeneratorBase):
 
         # Populate SKLearn specific values
         self.estimator_imports_list.extend(["import sklearn", f"import {self.root_module_name}"])
-        self.fit_sproc_imports = "import sklearn"
+        self.fit_sproc_imports = ["sklearn"]
 
         if "random_state" in self.original_init_signature.parameters.keys():
             self.test_estimator_input_args_list.append("random_state=0")
@@ -943,7 +943,7 @@ class XGBoostWrapperGenerator(WrapperGeneratorBase):
         # Populate XGBoost specific values
         self.estimator_imports_list.append("import xgboost")
         self.test_estimator_input_args_list.extend(["random_state=0", "subsample=1.0", "colsample_bynode=1.0"])
-        self.fit_sproc_imports = "import xgboost"
+        self.fit_sproc_imports = ["xgboost"]
         # TODO(snandamuri): Replace cloudpickle with joblib after latest version of joblib is added to snowflake conda.
         self.supported_export_method = "to_xgboost"
         self.unsupported_export_methods = ["to_sklearn", "to_lightgbm"]
@@ -972,7 +972,7 @@ class LightGBMWrapperGenerator(WrapperGeneratorBase):
         # Populate LightGBM specific values
         self.estimator_imports_list.append("import lightgbm")
         self.test_estimator_input_args_list.extend(["random_state=0"])
-        self.fit_sproc_imports = "import lightgbm"
+        self.fit_sproc_imports = ["lightgbm"]
         # TODO(snandamuri): Replace cloudpickle with joblib after latest version of joblib is added to snowflake conda.
         self.deps = "f'numpy=={np.__version__}', f'lightgbm=={lightgbm.__version__}', f'cloudpickle=={cp.__version__}'"
         self.supported_export_method = "to_lightgbm"

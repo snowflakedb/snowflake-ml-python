@@ -1,7 +1,7 @@
 workspace(name = "SnowML")
 
-load("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive", "http_jar")
 load("@bazel_tools//tools/build_defs/repo:git.bzl", "git_repository")
+load("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive", "http_jar")
 
 http_jar(
     name = "bazel_diff",
@@ -36,9 +36,9 @@ load("//third_party/rules_conda:defs.bzl", "conda_create", "load_conda", "regist
 
 http_archive(
     name = "aspect_bazel_lib",
-    sha256 = "e3151d87910f69cf1fc88755392d7c878034a69d6499b287bcfc00b1cf9bb415",
-    strip_prefix = "bazel-lib-1.32.1",
-    url = "https://github.com/aspect-build/bazel-lib/releases/download/v1.32.1/bazel-lib-v1.32.1.tar.gz",
+    sha256 = "b44310bef17d33d0e34a624dbbc74de595d37adc16546bd612d6f178eac426e7",
+    strip_prefix = "bazel-lib-1.34.2",
+    url = "https://github.com/aspect-build/bazel-lib/releases/download/v1.34.2/bazel-lib-v1.34.2.tar.gz",
 )
 
 load("@aspect_bazel_lib//lib:repositories.bzl", "aspect_bazel_lib_dependencies", "register_yq_toolchains")
@@ -60,8 +60,10 @@ register_yq_toolchains()
 # .bazelrc .
 
 load("@SnowML//bazel/environments:fetch_conda_env_config.bzl", "fetch_conda_env_config")
+
 fetch_conda_env_config(name = "fetch_conda_env_config_repo")
-load("@fetch_conda_env_config_repo//:config.bzl", "NAME", "ENVIRONMENT", "COMPATIBLE_TARGET")
+
+load("@fetch_conda_env_config_repo//:config.bzl", "COMPATIBLE_TARGET", "ENVIRONMENT", "NAME")
 
 load_conda(
     conda_repo_name = "{}_conda".format(NAME),

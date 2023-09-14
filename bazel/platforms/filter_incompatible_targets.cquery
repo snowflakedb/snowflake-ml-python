@@ -1,0 +1,4 @@
+def format(target):
+  if "IncompatiblePlatformProvider" in providers(target):
+    return "//" + target.label.package + ":" + target.label.name
+  return ""

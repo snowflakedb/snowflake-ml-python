@@ -1,6 +1,6 @@
 load("//bazel:py_rules.bzl", "py_binary")
-load("//snowflake/ml:version.bzl", "VERSION")
 load("//bazel/requirements:rules.bzl", "generate_requirement_file", "generate_requirement_file_yaml", "sync_target")
+load("//snowflake/ml:version.bzl", "VERSION")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -23,16 +23,6 @@ _SYNC_BAZEL_CMD = "bazel run --config=pre_build //{current_path}:{sync_rule}".fo
 )
 
 _GENERATED_REQUIREMENTS_FILES = {
-    "requirements_txt": {
-        "cmd": "--mode dev_version --format text",
-        "generated": "requirements.txt",
-        "target": "//:requirements.txt",
-    },
-    "conda_env_yml": {
-        "cmd": "--mode dev_version --format conda_env",
-        "generated": "conda-env.yml",
-        "target": "//bazel/environments:conda-env.yml",
-    },
     "conda_env_build_yml": {
         "cmd": "--mode dev_version --format conda_env --filter_by_tag build_essential",
         "generated": "conda-env-build.yml",
@@ -43,6 +33,11 @@ _GENERATED_REQUIREMENTS_FILES = {
         "generated": "conda-env-snowflake.yml",
         "target": "//bazel/environments:conda-env-snowflake.yml",
     },
+    "conda_env_yml": {
+        "cmd": "--mode dev_version --format conda_env",
+        "generated": "conda-env.yml",
+        "target": "//bazel/environments:conda-env.yml",
+    },
     "conda_meta": {
         "cmd": "--mode version_requirements --format conda_meta --version " + VERSION,
         "generated": "meta.yaml",
@@ -52,6 +47,11 @@ _GENERATED_REQUIREMENTS_FILES = {
         "cmd": "--mode version_requirements --format bzl",
         "generated": "requirements.bzl",
         "target": "//snowflake/ml:requirements.bzl",
+    },
+    "requirements_txt": {
+        "cmd": "--mode dev_version --format text",
+        "generated": "requirements.txt",
+        "target": "//:requirements.txt",
     },
 }
 
@@ -87,10 +87,12 @@ sync_target(
     targets = _GENERATED_REQUIREMENTS_FILES.values(),
 )
 
-
 sh_test(
     name = "changelog_version_check",
     srcs = ["changelog_version_check.sh"],
-    args = [VERSION, "$(location //:CHANGELOG.md)"],
+    args = [
+        VERSION,
+        "$(location //:CHANGELOG.md)",
+    ],
     data = ["//:CHANGELOG.md"],
 )

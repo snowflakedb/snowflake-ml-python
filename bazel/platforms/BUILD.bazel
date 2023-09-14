@@ -1,4 +1,4 @@
-package(default_visibility=["//visibility:public"])
+package(default_visibility = ["//visibility:public"])
 
 constraint_setting(name = "conda_env")
 
@@ -14,12 +14,12 @@ constraint_value(
 
 platform(
     name = "snowflake_conda_env",
-    parents = ["@local_config_platform//:host"],
     constraint_values = [":snowflake_conda_channel"],
+    parents = ["@local_config_platform//:host"],
 )
 
 platform(
     name = "extended_conda_env",
-    parents = ["@local_config_platform//:host"],
     constraint_values = [":extended_conda_channels"],
+    parents = ["@local_config_platform//:host"],
 )

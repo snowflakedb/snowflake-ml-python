@@ -1,7 +1,4 @@
 #!/usr/bin/env python3
-#
-# Copyright (c) 2012-2022 Snowflake Computing Inc. All rights reserved.
-#
 import numbers
 import uuid
 from typing import Dict, Iterable, List, Optional, Union
@@ -258,7 +255,7 @@ class OrdinalEncoder(base.BaseTransformer):
             # encode non-missing categories
             encoded_value_columns = [
                 F.lit(input_col).alias(_COLUMN_NAME),
-                F.col(input_col).alias(_CATEGORY),
+                F.col(input_col).cast(T.StringType()).alias(_CATEGORY),
                 (F.dense_rank().over(snowpark.Window.order_by(input_col)) - 1)
                 .cast(T.FloatType())
                 .alias(_INDEX),  # index categories
@@ -272,7 +269,7 @@ class OrdinalEncoder(base.BaseTransformer):
             # encode missing categories
             encoded_missing_value_columns = [
                 F.lit(input_col).alias(_COLUMN_NAME),
-                F.col(input_col).alias(_CATEGORY),
+                F.col(input_col).cast(T.StringType()).alias(_CATEGORY),
                 # index missing categories
                 F.lit(self.encoded_missing_value).alias(_INDEX),
             ]
@@ -483,7 +480,7 @@ class OrdinalEncoder(base.BaseTransformer):
             transformed_dataset = (
                 transformed_dataset.join(
                     input_col_state_df,
-                    on=transformed_dataset[input_col].equal_null(input_col_state_df[_CATEGORY]),
+                    on=transformed_dataset[input_col].cast(T.StringType()).equal_null(input_col_state_df[_CATEGORY]),
                     how="left",
                     lsuffix=suffix,
                 )

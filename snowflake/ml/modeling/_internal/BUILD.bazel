@@ -1,0 +1,27 @@
+load("//bazel:py_rules.bzl", "py_library", "py_test")
+
+package(default_visibility = ["//visibility:public"])
+
+py_library(
+    name = "snowpark_handlers",
+    srcs = ["snowpark_handlers.py"],
+    deps = [
+        "//snowflake/ml/_internal:telemetry",
+        "//snowflake/ml/_internal/utils:query_result_checker",
+        "//snowflake/ml/_internal/utils:temp_file_utils",
+        "//snowflake/ml/fileset",
+    ],
+)
+
+py_library(
+    name = "estimator_protocols",
+    srcs = ["estimator_protocols.py"],
+)
+
+py_test(
+    name = "estimator_protocols_test",
+    srcs = ["estimator_protocols_test.py"],
+    deps = [
+        ":estimator_protocols",
+    ],
+)

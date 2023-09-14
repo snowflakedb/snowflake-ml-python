@@ -48,7 +48,7 @@ class MockDataFrameTest(TestCase):
         self.assertEqual(mock_df.filter(col("NAME") == Literal("name")).count(), 5)
 
     def test_missing_filter_operation(self) -> None:
-        """Test that if don't execure an operation in the sequence, an assertion fails."""
+        """Test that if don't execute an operation in the sequence, an assertion fails."""
         mock_df = mock_data_frame.MockDataFrame(check_call_sequence_completion=False)
         mock_df.add_operation(operation="filter")
         mock_df.add_count_result(5)
