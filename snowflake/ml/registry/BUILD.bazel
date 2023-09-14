@@ -1,5 +1,5 @@
-load("//bazel:py_rules.bzl", "py_library", "py_test")
 load("@rules_python//python:packaging.bzl", "py_package")
+load("//bazel:py_rules.bzl", "py_library", "py_test")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -7,19 +7,19 @@ py_library(
     name = "model_registry",
     srcs = ["model_registry.py"],
     deps = [
-        ":_schema",
         ":_ml_artifact",
-        "//snowflake/ml/_internal/utils:formatting",
-        "//snowflake/ml/_internal/utils:query_result_checker",
-        "//snowflake/ml/_internal/utils:uri",
-        "//snowflake/ml/_internal/utils:identifier",
-        "//snowflake/ml/_internal/utils:table_manager",
+        ":_schema",
         "//snowflake/ml/_internal:telemetry",
-        "//snowflake/ml/model:_model",
+        "//snowflake/ml/_internal/utils:formatting",
+        "//snowflake/ml/_internal/utils:identifier",
+        "//snowflake/ml/_internal/utils:query_result_checker",
+        "//snowflake/ml/_internal/utils:table_manager",
+        "//snowflake/ml/_internal/utils:uri",
         "//snowflake/ml/model:_deployer",
+        "//snowflake/ml/model:_model",
         "//snowflake/ml/model:deploy_platforms",
-        "//snowflake/ml/training_dataset:training_dataset",
-        "//snowflake/ml/modeling/framework:framework"
+        "//snowflake/ml/modeling/framework",
+        "//snowflake/ml/training_dataset",
     ],
 )
 
@@ -45,8 +45,8 @@ py_library(
     srcs = ["_ml_artifact.py"],
     deps = [
         ":_schema",
-        "//snowflake/ml/_internal/utils:table_manager",
         "//snowflake/ml/_internal/utils:formatting",
+        "//snowflake/ml/_internal/utils:table_manager",
     ],
 )
 

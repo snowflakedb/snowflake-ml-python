@@ -10,7 +10,8 @@
     - X2XX: snowml (e.g. FileSetError)
     - X3XX: Snowpark (e.g. SnowparkClientException)
     - X4XX: Python connector (e.g. DatabaseError)
-    - X5XX: 3p dependency
+    - X5XX: Snowflake API (e.g. HTTP Error with Snowflake Image Repo)
+    - X9XX: 3p dependency
 - XX**: cause
 """
 
@@ -33,6 +34,18 @@ INTERNAL_SNOWML_ERROR = "1200"
 # Indicates an internal failure raising a Snowpark error with an ambiguous cause, such as invalid queries, invalid
 # permission, catching an error with an unknown cause, etc.
 INTERNAL_SNOWPARK_ERROR = "1300"
+# Indicates an internal failure raising a error when using SPCS with an ambiguous cause, such as invalid queries,
+# invalid permission, catching an error with an unknown cause, etc.
+INTERNAL_SNOWPARK_CONTAINER_SERVICE_ERROR = "1301"
+# Indicates an internal failure raising a Snowflake API error with an ambiguous cause, such as invalid queries, invalid
+# permission, catching an error with an unknown cause, etc.
+INTERNAL_SNOWFLAKE_API_ERROR = "1500"
+# Indicates an internal HTTP or non-HTTP failure raising a error when interacting with Snowflake Container Services
+INTERNAL_SNOWFLAKE_IMAGE_REGISTRY_ERROR = "1501"
+
+# Indicates an internal failure raising a error when using docker with an ambiguous cause, such as invalid queries,
+# invalid permission, catching an error with an unknown cause, etc.
+INTERNAL_DOCKER_ERROR = "1901"
 
 # USER
 # Indicates the incompatibility of local dependency versions with the target requirements. For example, an API added in
@@ -56,6 +69,8 @@ INVALID_DATA = "2112"
 INVALID_DATA_TYPE = "2113"
 # Calling an API with unsupported value type, or perform actions on objects with incorrect types.
 INVALID_TYPE = "2114"
+# Trying to create an object already exists.
+OBJECT_ALREADY_EXISTS = "2115"
 
 # Indicates the creation of underlying resources (files, stages, tables, etc) failed, which can be caused by duplicated
 # name, invalid permission, etc.
@@ -75,3 +90,14 @@ SNOWML_NOT_FOUND = "2204"
 SNOWML_INVALID_STAGE = "2210"
 # Invalid query caused by syntax error, invalid source, etc.
 SNOWML_INVALID_QUERY = "2211"
+
+# Invalid Snowpark Session (Missing information) in Snowpark Session that is required.
+INVALID_SNOWPARK_SESSION = "2301"
+
+# Incorrect local Python environment when trying to do some actions that require specific dependency or versions.
+LOCAL_ENVIRONMENT_ERROR = "2501"
+# Unfeasible dependencies requirement when trying to do some actions that require specific environments.
+UNFEASIBLE_ENVIRONMENT_ERROR = "2502"
+
+# Missing required client side dependency.
+CLIENT_DEPENDENCY_MISSING_ERROR = "2511"

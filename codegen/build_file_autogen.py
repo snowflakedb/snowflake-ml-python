@@ -100,11 +100,11 @@ TEST_OUTPUT_PATH = "tests/integ"
 
 
 def indent(baseString: str, spaces: int = 0) -> str:
-    """Prepend specified number of space charecters to the source string.
+    """Prepend specified number of space characters to the source string.
 
     Args:
         baseString: Source string.
-        spaces: Number of space charecters to be prepended to the source string.
+        spaces: Number of space characters to be prepended to the source string.
 
     Returns:
         Result of prepending #`spaces` number of space chars to the `baseString`.
@@ -113,20 +113,20 @@ def indent(baseString: str, spaces: int = 0) -> str:
 
 
 def get_src_build_file_content(module: ModuleInfo, module_root_dir: str) -> str:
-    """Generates the conent of BUILD.bazel file for source directory of the given module.
+    """Generates the content of BUILD.bazel file for source directory of the given module.
 
     Args:
         module: Module information.
         module_root_dir: Relative directory path of the module source code.
 
     Returns:
-        Returns conent of the BUILD.bazel file for module source directory.
+        Returns content of the BUILD.bazel file for module source directory.
     """
     # Source dir has bazel rules for native implementation of estimator or transformers?
     src_build_native_file_path = os.path.join(SRC_OUTPUT_PATH, module_root_dir, "BUILD_NATIVE.bzl")
     src_build_native_file_exists = os.path.isfile(src_build_native_file_path)
 
-    # Check if init file is alread preset in the source dir
+    # Check if init file is already preset in the source dir
     src_init_file_path = os.path.join(SRC_OUTPUT_PATH, module_root_dir, "__init__.py")
     src_init_file_exists = os.path.isfile(src_init_file_path)
 
@@ -142,14 +142,14 @@ def get_src_build_file_content(module: ModuleInfo, module_root_dir: str) -> str:
 
 
 def get_test_build_file_content(module: ModuleInfo, module_root_dir: str) -> str:
-    """Generates the conent of BUILD.bazel file for test directory of the given module.
+    """Generates the content of BUILD.bazel file for test directory of the given module.
 
     Args:
         module: Module information.
         module_root_dir: Relative directory path of the module source code.
 
     Returns:
-        Returns conent of the BUILD.bazel file for module test directory.
+        Returns content of the BUILD.bazel file for module test directory.
     """
 
     # Test dir has bazel rules for native implementation of estimator or transformers?
@@ -175,7 +175,7 @@ def main(argv: List[str]) -> None:
     # For each module
     for module in MODULES:
         if len(module.exclude_list) > 0 and len(module.include_list) > 0:
-            raise ValueError(f"Both inlcude_list and exclude_list can't be specified for module {module.module_name}!")
+            raise ValueError(f"Both include_list and exclude_list can't be specified for module {module.module_name}!")
 
         module_root_dir = AutogenTool.module_root_dir(module.module_name)
         estimators_info_file_path = os.path.join(module_root_dir, "estimators_info.bzl")

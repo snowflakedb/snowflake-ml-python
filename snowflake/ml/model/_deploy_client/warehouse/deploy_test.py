@@ -8,7 +8,7 @@ from packaging import requirements
 from snowflake.ml._internal import env as snowml_env, env_utils
 from snowflake.ml.model import _model_meta, model_signature
 from snowflake.ml.model._deploy_client.warehouse import deploy
-from snowflake.ml.test_utils import mock_data_frame, mock_session
+from snowflake.ml.test_utils import exception_utils, mock_data_frame, mock_session
 from snowflake.snowpark import row, session
 
 _DUMMY_SIG = {
@@ -97,7 +97,7 @@ class TestFinalPackagesWithoutConda(absltest.TestCase):
             name="model1", model_type="custom", signatures=_DUMMY_SIG, conda_dependencies=["pandas==1.0.*"]
         )
         c_session = cast(session.Session, self.m_session)
-        with self.assertRaises(RuntimeError):
+        with exception_utils.assert_snowml_exceptions(self, expected_original_error_type=RuntimeError):
             deploy._get_model_final_packages(meta, c_session)
 
     def test_get_model_final_packages_relax(self) -> None:
@@ -116,7 +116,7 @@ class TestFinalPackagesWithoutConda(absltest.TestCase):
             name="model1", model_type="custom", signatures=_DUMMY_SIG, pip_requirements=["python-package"]
         )
         c_session = cast(session.Session, self.m_session)
-        with self.assertRaises(RuntimeError):
+        with exception_utils.assert_snowml_exceptions(self, expected_original_error_type=RuntimeError):
             deploy._get_model_final_packages(meta, c_session)
 
     def test_get_model_final_packages_with_other_channel(self) -> None:
@@ -128,7 +128,7 @@ class TestFinalPackagesWithoutConda(absltest.TestCase):
             conda_dependencies=["conda-forge::python_package"],
         )
         c_session = cast(session.Session, self.m_session)
-        with self.assertRaises(RuntimeError):
+        with exception_utils.assert_snowml_exceptions(self, expected_original_error_type=RuntimeError):
             deploy._get_model_final_packages(meta, c_session)
 
     def test_get_model_final_packages_with_non_exist_package(self) -> None:
@@ -149,7 +149,7 @@ class TestFinalPackagesWithoutConda(absltest.TestCase):
         )
         c_session = cast(session.Session, self.m_session)
 
-        with self.assertRaises(RuntimeError):
+        with exception_utils.assert_snowml_exceptions(self, expected_original_error_type=RuntimeError):
             deploy._get_model_final_packages(meta, c_session)
 
 

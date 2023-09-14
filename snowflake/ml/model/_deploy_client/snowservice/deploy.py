@@ -12,6 +12,10 @@ import yaml
 from typing_extensions import Unpack
 
 from snowflake.ml._internal import env_utils
+from snowflake.ml._internal.exceptions import (
+    error_codes,
+    exceptions as snowml_exceptions,
+)
 from snowflake.ml._internal.utils import identifier, query_result_checker
 from snowflake.ml.model import _model_meta, type_hints
 from snowflake.ml.model._deploy_client.image_builds import (
@@ -51,9 +55,9 @@ def _deploy(
         **kwargs: various SnowService deployment options.
 
     Raises:
-        ValueError: Raised when model_id is empty.
-        ValueError: Raised when service_func_name is empty.
-        ValueError: Raised when model_stage_file_path is empty.
+        SnowflakeMLException: Raised when model_id is empty.
+        SnowflakeMLException: Raised when service_func_name is empty.
+        SnowflakeMLException: Raised when model_stage_file_path is empty.
     """
     snowpark_logger = logging.getLogger("snowflake.snowpark")
     snowflake_connector_logger = logging.getLogger("snowflake.connector")
@@ -65,16 +69,35 @@ def _deploy(
         snowpark_logger.setLevel(logging.WARNING)
         snowflake_connector_logger.setLevel(logging.WARNING)
         if not model_id:
-            raise ValueError('Must provide a non-empty string for "model_id" when deploying to SnowService')
+            raise snowml_exceptions.SnowflakeMLException(
+                error_code=error_codes.INVALID_ARGUMENT,
+                original_exception=ValueError(
+                    'Must provide a non-empty string for "model_id" when deploying to Snowpark Container Services'
+                ),
+            )
         if not service_func_name:
-            raise ValueError('Must provide a non-empty string for "service_func_name" when deploying to SnowService')
+            raise snowml_exceptions.SnowflakeMLException(
+                error_code=error_codes.INVALID_ARGUMENT,
+                original_exception=ValueError(
+                    'Must provide a non-empty string for "service_func_name"'
+                    " when deploying to Snowpark Container Services"
+                ),
+            )
         if not model_zip_stage_path:
-            raise ValueError(
-                'Must provide a non-empty string for "model_stage_file_path" when deploying to SnowService'
+            raise snowml_exceptions.SnowflakeMLException(
+                error_code=error_codes.INVALID_ARGUMENT,
+                original_exception=ValueError(
+                    'Must provide a non-empty string for "model_stage_file_path"'
+                    " when deploying to Snowpark Container Services"
+                ),
             )
         if not deployment_stage_path:
-            raise ValueError(
-                'Must provide a non-empty string for "deployment_stage_path" when deploying to SnowService'
+            raise snowml_exceptions.SnowflakeMLException(
+                error_code=error_codes.INVALID_ARGUMENT,
+                original_exception=ValueError(
+                    'Must provide a non-empty string for "deployment_stage_path"'
+                    " when deploying to Snowpark Container Services"
+                ),
             )
 
         # Remove full qualified name to avoid double quotes corrupting the service spec
@@ -90,8 +113,11 @@ def _deploy(
             # Make mypy happy
             assert options.num_gpus is not None
             if model_meta.cuda_version is None:
-                raise ValueError(
-                    "You are requesting GPUs for models that do not use a GPU or does not have CUDA version set."
+                raise snowml_exceptions.SnowflakeMLException(
+                    error_code=error_codes.INVALID_ARGUMENT,
+                    original_exception=ValueError(
+                        "You are requesting GPUs for models that do not use a GPU or does not have CUDA version set."
+                    ),
                 )
             _validate_requested_gpus(session, request_gpus=options.num_gpus, compute_pool=options.compute_pool)
             if model_meta.cuda_version:
@@ -148,15 +174,18 @@ def _validate_requested_gpus(session: Session, *, request_gpus: int, compute_poo
     if instance_family in instance_types.INSTANCE_TYPE_TO_GPU_COUNT:
         gpu_capacity = instance_types.INSTANCE_TYPE_TO_GPU_COUNT[instance_family]
         if request_gpus > gpu_capacity:
-            raise RuntimeError(
-                f"GPU request exceeds instance capability; {instance_family} instance type has total "
-                f"capacity of {gpu_capacity} GPU, yet a request was made for {request_gpus} GPUs."
+            raise snowml_exceptions.SnowflakeMLException(
+                error_code=error_codes.INVALID_ARGUMENT,
+                original_exception=RuntimeError(
+                    f"GPU request exceeds instance capability; {instance_family} instance type has total "
+                    f"capacity of {gpu_capacity} GPU, yet a request was made for {request_gpus} GPUs."
+                ),
             )
     else:
         logger.warning(f"Unknown instance type: {instance_family}, skipping GPU validation")
 
 
-def _get_or_create_image_repo(session: Session, *, service_func_name: str, image_repo: Optional[str]) -> str:
+def _get_or_create_image_repo(session: Session, *, service_func_name: str, image_repo: Optional[str] = None) -> str:
     def _sanitize_dns_url(url: str) -> str:
         # Align with existing SnowService image registry url standard.
         return url.lower()
@@ -166,30 +195,32 @@ def _get_or_create_image_repo(session: Session, *, service_func_name: str, image
 
     try:
         conn = session._conn._conn
-        org = conn.host.split(".")[1]
-        account = conn.account
         # We try to use the same db and schema as the service function locates, as we could retrieve those information
         # if that is a fully qualified one. If not we use the current session one.
         (_db, _schema, _, _) = identifier.parse_schema_level_object_identifier(service_func_name)
         db = _db if _db is not None else conn._database
         schema = _schema if _schema is not None else conn._schema
-        if db is None or schema is None:
-            # Will be captured in L180
-            raise ValueError()
         assert isinstance(db, str) and isinstance(schema, str)
-        subdomain = constants.PROD_IMAGE_REGISTRY_SUBDOMAIN
-        sanitized_url = _sanitize_dns_url(
-            f"{org}-{account}.{subdomain}.{constants.PROD_IMAGE_REGISTRY_DOMAIN}/{db}/"
-            f"{schema}/{constants.SNOWML_IMAGE_REPO}"
-        )
+
         client = snowservice_client.SnowServiceClient(session)
         client.create_image_repo(identifier.get_schema_level_object_identifier(db, schema, constants.SNOWML_IMAGE_REPO))
-        return sanitized_url
-    except Exception:
-        raise RuntimeError(
-            "Failed to construct image repo URL, please ensure the following connections"
-            "parameters are set in your session: ['host', 'account', 'database', 'schema']"
+        sql = f"SHOW IMAGE REPOSITORIES LIKE '{constants.SNOWML_IMAGE_REPO}' IN SCHEMA {'.'.join([db, schema])}"
+        result = (
+            query_result_checker.SqlResultValidator(
+                session=session,
+                query=sql,
+            )
+            .has_column("repository_url")
+            .has_dimensions(expected_rows=1)
+            .validate()
         )
+        repository_url = result[0]["repository_url"]
+        return str(repository_url)
+    except Exception as e:
+        raise snowml_exceptions.SnowflakeMLException(
+            error_code=error_codes.INTERNAL_SNOWPARK_CONTAINER_SERVICE_ERROR,
+            original_exception=RuntimeError("Failed to retrieve image repo URL"),
+        ) from e
 
 
 class SnowServiceDeployment(ABC):

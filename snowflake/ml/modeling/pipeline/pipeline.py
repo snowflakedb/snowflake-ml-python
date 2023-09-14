@@ -1,7 +1,4 @@
 #!/usr/bin/env python3
-#
-# Copyright (c) 2012-2022 Snowflake Computing Inc. All rights reserved.
-#
 from itertools import chain
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple, Union
 
@@ -49,7 +46,7 @@ def has_callable_attr(obj: object, attr: str) -> bool:
 
 def _get_column_indices(all_columns: List[str], target_columns: List[str]) -> List[int]:
     """
-    Extract the indices of the taget_columns from all_columns.
+    Extract the indices of the target_columns from all_columns.
 
     Args:
         all_columns: List of all the columns in a dataframe.
@@ -106,7 +103,7 @@ class Pipeline(base.BaseTransformer):
         self._feature_names_in: List[np.ndarray[Any, np.dtype[Any]]] = []
         self._n_features_in: List[int] = []
         self._transformers_to_input_indices: Dict[str, List[int]] = {}
-        self._is_convertable_to_sklearn = True
+        self._is_convertible_to_sklearn = True
 
         self._model_signature_dict: Optional[Dict[str, ModelSignature]] = None
 
@@ -176,7 +173,7 @@ class Pipeline(base.BaseTransformer):
             columns: List if input columns for a transformer step.
 
         Returns:
-            Returns a list of columns without lable and sample_weight columns.
+            Returns a list of columns without label and sample_weight columns.
         """
         estimator_step = self._get_estimator()
         if not estimator_step:
@@ -190,7 +187,7 @@ class Pipeline(base.BaseTransformer):
         return [c for c in columns if c not in target_cols]
 
     def _append_step_feature_consumption_info(self, step_name: str, all_cols: List[str], input_cols: List[str]) -> None:
-        if self._is_convertable_to_sklearn:
+        if self._is_convertible_to_sklearn:
             all_cols = self._get_sanitized_list_of_columns(all_cols)
             self._feature_names_in.append(np.asarray(all_cols, dtype=object))
             self._n_features_in.append(len(all_cols))
@@ -210,7 +207,7 @@ class Pipeline(base.BaseTransformer):
         self, dataset: Union[snowpark.DataFrame, pd.DataFrame]
     ) -> Union[snowpark.DataFrame, pd.DataFrame]:
         self._reset()
-        self._is_convertable_to_sklearn = not self._is_pipeline_modifying_label_or_sample_weight()
+        self._is_convertible_to_sklearn = not self._is_pipeline_modifying_label_or_sample_weight()
         transformed_dataset = dataset
         for name, trans in self._get_transformers():
             self._append_step_feature_consumption_info(
@@ -479,7 +476,7 @@ class Pipeline(base.BaseTransformer):
         Constructs a fitted column transformer object with one step.
 
         Args:
-            step_name_in_pipeline: Name of the step in origional pipeline.
+            step_name_in_pipeline: Name of the step in original pipeline.
             step_index_in_pipeline: Index of the step in the original pipeline.
             step_name_in_ct: Name of the step in column transformer.
             step_transformer_obj: SKLearn object for the transformer or "passthrough".
@@ -529,7 +526,7 @@ class Pipeline(base.BaseTransformer):
         if not self._is_fitted:
             return self._create_unfitted_sklearn_object()
 
-        if not self._is_convertable_to_sklearn:
+        if not self._is_convertible_to_sklearn:
             raise exceptions.SnowflakeMLException(
                 error_code=error_codes.METHOD_NOT_ALLOWED,
                 original_exception=ValueError(

@@ -3,6 +3,10 @@ import logging
 import time
 from typing import Optional
 
+from snowflake.ml._internal.exceptions import (
+    error_codes,
+    exceptions as snowml_exceptions,
+)
 from snowflake.ml.model._deploy_client.utils import constants
 from snowflake.snowpark import Session
 
@@ -142,10 +146,12 @@ class SnowServiceClient:
             retry_interval_secs: The number of seconds to wait between each retry (default: 10).
 
         Raises:
-            RuntimeError: If the resource received the following status [failed, not_found, internal_error, deleting]
-            RuntimeError: If the resource does not reach the ready/done state within the specified number of retries.
+            SnowflakeMLException: If the resource received the following status [failed, not_found, internal_error,
+                deleting]
+            SnowflakeMLException: If the resource does not reach the ready/done state within the specified number
+                of retries.
         """
-        for _ in range(max_retries):
+        for attempt_idx in range(max_retries + 1):
             status = self.get_resource_status(resource_name=resource_name, resource_type=resource_type)
             if resource_type == constants.ResourceType.JOB and status == constants.ResourceStatus.DONE:
                 full_job_log = self.get_resource_log(
@@ -157,20 +163,33 @@ class SnowServiceClient:
                 return
             elif resource_type == constants.ResourceType.SERVICE and status == constants.ResourceStatus.READY:
                 return
-            elif status in [
-                constants.ResourceStatus.FAILED,
-                constants.ResourceStatus.NOT_FOUND,
-                constants.ResourceStatus.INTERNAL_ERROR,
-                constants.ResourceStatus.DELETING,
-            ]:
+            elif (
+                status
+                in [
+                    constants.ResourceStatus.FAILED,
+                    constants.ResourceStatus.NOT_FOUND,
+                    constants.ResourceStatus.INTERNAL_ERROR,
+                    constants.ResourceStatus.DELETING,
+                ]
+                or attempt_idx >= max_retries
+            ):
+                error_message = "failed"
+                if attempt_idx >= max_retries:
+                    error_message = "does not reach ready/done status"
                 error_log = self.get_resource_log(
-                    resource_name=resource_name,
-                    resource_type=resource_type,
-                    container_name=container_name,
+                    resource_name=resource_name, resource_type=resource_type, container_name=container_name
                 )
-                raise RuntimeError(f"{resource_type} {resource_name} failed. \n {error_log if error_log else ''}")
+                if resource_type == constants.ResourceType.SERVICE:
+                    self._drop_service_if_exists(service_name=resource_name)
+                raise snowml_exceptions.SnowflakeMLException(
+                    error_code=error_codes.INTERNAL_SNOWPARK_CONTAINER_SERVICE_ERROR,
+                    original_exception=RuntimeError(
+                        f"{resource_type} {resource_name} {error_message}."
+                        f"\nStatus: {status if status else ''}"
+                        rf"\Log: {error_log if error_log else ''}"
+                    ),
+                )
             time.sleep(retry_interval_secs)
-        raise RuntimeError("Resource never reached the ready/done state.")
 
     def get_resource_log(
         self, resource_name: str, resource_type: constants.ResourceType, container_name: str
@@ -178,9 +197,9 @@ class SnowServiceClient:
         if resource_type == constants.ResourceType.SERVICE:
             try:
                 row = self.session.sql(
-                    f"CALL SYSTEM$GET_SNOWSERVICE_LOGS('{resource_name}', '0', '{container_name}')"
+                    f"CALL SYSTEM$GET_SERVICE_LOGS('{resource_name}', '0', '{container_name}')"
                 ).collect()
-                return str(row[0]["SYSTEM$GET_SNOWSERVICE_LOGS"])
+                return str(row[0]["SYSTEM$GET_SERVICE_LOGS"])
             except Exception:
                 return None
         elif resource_type == constants.ResourceType.JOB:
@@ -190,7 +209,12 @@ class SnowServiceClient:
             except Exception:
                 return None
         else:
-            raise NotImplementedError(f"{resource_type.name} is not yet supported in get_resource_log function")
+            raise snowml_exceptions.SnowflakeMLException(
+                error_code=error_codes.NOT_IMPLEMENTED,
+                original_exception=NotImplementedError(
+                    f"{resource_type.name} is not yet supported in get_resource_log function"
+                ),
+            )
 
     def get_resource_status(
         self, resource_name: str, resource_type: constants.ResourceType
@@ -202,19 +226,27 @@ class SnowServiceClient:
             resource_type: Type of the resource.
 
         Raises:
-            ValueError: If resource type does not have a corresponding system function for querying status.
-            RuntimeError: If corresponding status call failed.
+            SnowflakeMLException: If resource type does not have a corresponding system function for querying status.
+            SnowflakeMLException: If corresponding status call failed.
 
         Returns:
             Optional[constants.ResourceStatus]: The status of the resource, or None if the resource status is empty.
         """
         if resource_type not in constants.RESOURCE_TO_STATUS_FUNCTION_MAPPING:
-            raise ValueError(f"Status querying is not supported for resources of type '{resource_type}'.")
+            raise snowml_exceptions.SnowflakeMLException(
+                error_code=error_codes.INVALID_ARGUMENT,
+                original_exception=ValueError(
+                    f"Status querying is not supported for resources of type '{resource_type}'."
+                ),
+            )
         status_func = constants.RESOURCE_TO_STATUS_FUNCTION_MAPPING[resource_type]
         try:
             row = self.session.sql(f"CALL {status_func}('{resource_name}');").collect()
         except Exception as e:
-            raise RuntimeError(f"Error while querying the {resource_type} {resource_name} status: {str(e)}")
+            raise snowml_exceptions.SnowflakeMLException(
+                error_code=error_codes.INTERNAL_SNOWFLAKE_API_ERROR,
+                original_exception=RuntimeError(f"Error while querying the {resource_type} {resource_name} status."),
+            ) from e
         resource_metadata = json.loads(row[0][status_func])[0]
         logger.debug(f"Resource status metadata: {resource_metadata}")
         if resource_metadata and resource_metadata["status"]:

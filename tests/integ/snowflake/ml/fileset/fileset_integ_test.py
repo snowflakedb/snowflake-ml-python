@@ -1,6 +1,3 @@
-#
-# Copyright (c) 2012-2022 Snowflake Computing Inc. All rights reserved.
-#
 import os
 import random
 import tempfile
@@ -184,7 +181,7 @@ class TestSnowflakeFileSet(parameterized.TestCase):
             actual_avg_counter[key] = value / actual_num_rows
 
         if not drop_last_batch:
-            # We can only get the whole set of data for comparision if drop_last_batch is False.
+            # We can only get the whole set of data for comparison if drop_last_batch is False.
             for key in ["NUMBER_INT_COL", "NUMBER_FIXED_POINT_COL"]:
                 self.assertAlmostEqual(fileset_integ_utils.get_column_min(key), actual_min_counter[key], 1)
                 self.assertAlmostEqual(

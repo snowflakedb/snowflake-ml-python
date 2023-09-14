@@ -80,7 +80,7 @@ py_library(
     srcs = ["uri.py"],
     deps = [
         "//snowflake/ml/_internal/utils:identifier",
-    ]
+    ],
 )
 
 py_test(
@@ -149,7 +149,7 @@ py_library(
 py_library(
     name = "spcs_image_registry",
     srcs = ["spcs_image_registry.py"],
-    deps = [":query_result_checker"]
+    deps = [":query_result_checker"],
 )
 
 py_library(

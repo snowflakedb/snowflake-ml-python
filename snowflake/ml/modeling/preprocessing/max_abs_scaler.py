@@ -1,7 +1,4 @@
 #!/usr/bin/env python3
-#
-# Copyright (c) 2012-2022 Snowflake Computing Inc. All rights reserved.
-#
 from typing import Dict, Iterable, List, Optional, Union
 
 import numpy as np
@@ -17,7 +14,7 @@ from snowflake.ml.modeling.framework import base
 class MaxAbsScaler(base.BaseTransformer):
     r"""Scale each feature by its maximum absolute value.
 
-    This transfomer scales and translates each feature individually such
+    This transformer scales and translates each feature individually such
     that the maximal absolute value of each feature in the
     training set will be 1.0. It does not shift/center the data, and
     thus does not destroy any sparsity.
@@ -50,7 +47,7 @@ class MaxAbsScaler(base.BaseTransformer):
         """
         Scale each feature by its maximum absolute value.
 
-        This transfomer scales and translates each feature individually such
+        This transformer scales and translates each feature individually such
         that the maximal absolute value of each feature in the
         training set will be 1.0. It does not shift/center the data, and
         thus does not destroy any sparsity.

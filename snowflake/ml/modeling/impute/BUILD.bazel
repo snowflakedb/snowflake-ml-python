@@ -1,7 +1,12 @@
-load("//codegen:codegen_rules.bzl", "autogen_estimators", "autogen_init_file_for_module")
-load(":estimators_info.bzl", "estimator_info_list")
+load("//codegen:codegen_rules.bzl", "autogen_estimators")
 load(":BUILD_NATIVE.bzl", "get_build_rules_for_native_impl")
+load(":estimators_info.bzl", "estimator_info_list")
+
 package(default_visibility = ["//visibility:public"])
 
-autogen_estimators(module="sklearn.impute", estimator_info_list=estimator_info_list)
+autogen_estimators(
+    estimator_info_list = estimator_info_list,
+    module = "sklearn.impute",
+)
+
 get_build_rules_for_native_impl()

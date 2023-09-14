@@ -65,7 +65,7 @@ class FileSet:
             name: The name of the FileSet. It is the name of the directory which holds result stage files.
 
         Raises:
-            ValueError: An error occured when not exactly one of sf_connection and snowpark_session is given.
+            SnowflakeMLException: An error occurred when not exactly one of sf_connection and snowpark_session is given.
 
         Example:
         >>> # Create a new FileSet using Snowflake Python connection
@@ -90,9 +90,15 @@ class FileSet:
         ['sfc://@mydb.myschema.mystage/mydir/helloworld/data_0_0_0.snappy.parquet']
         """
         if sf_connection and snowpark_session:
-            raise ValueError(fileset_error_messages.BOTH_SF_CONNECTION_AND_SNOWPARK_SESSION_SPECIFIED)
+            raise snowml_exceptions.SnowflakeMLException(
+                error_code=error_codes.INVALID_ARGUMENT,
+                original_exception=ValueError(fileset_error_messages.BOTH_SF_CONNECTION_AND_SNOWPARK_SESSION_SPECIFIED),
+            )
         if not sf_connection and not snowpark_session:
-            raise ValueError(fileset_error_messages.NO_SF_CONNECTION_OR_SNOWPARK_SESSION)
+            raise snowml_exceptions.SnowflakeMLException(
+                error_code=error_codes.INVALID_ARGUMENT,
+                original_exception=ValueError(fileset_error_messages.NO_SF_CONNECTION_OR_SNOWPARK_SESSION),
+            )
         self._snowpark_session = (
             snowpark_session
             if snowpark_session
@@ -144,9 +150,9 @@ class FileSet:
             A FileSet object.
 
         Raises:
-            ValueError: An error occured when not exactly one of sf_connection and snowpark_session is given.
-            FileSetExistError: An error occured whern a FileSet with the same name exists in the given path.
-            FileSetError: An error occured when the SQL query/dataframe is not able to get materialized.
+            ValueError: An error occurred when not exactly one of sf_connection and snowpark_session is given.
+            FileSetExistError: An error occurred whern a FileSet with the same name exists in the given path.
+            FileSetError: An error occurred when the SQL query/dataframe is not able to get materialized.
 
         # noqa: DAR401
 
@@ -219,7 +225,7 @@ class FileSet:
             _validate_target_stage_loc(snowpark_session, target_stage_loc)
         except snowml_exceptions.SnowflakeMLException as e:
             raise e.original_exception
-        target_stage_exists = snowpark_session.sql(f"List {_fileset_absoluate_path(target_stage_loc, name)}").collect()
+        target_stage_exists = snowpark_session.sql(f"List {_fileset_absolute_path(target_stage_loc, name)}").collect()
         if target_stage_exists:
             raise fileset_errors.FileSetExistError(fileset_error_messages.FILESET_ALREADY_EXISTS.format(name))
 
@@ -273,8 +279,8 @@ class FileSet:
         return self._files
 
     def _fileset_absolute_path(self) -> str:
-        """Get the Snowflake absoluate path to this FileSet directory."""
-        return _fileset_absoluate_path(self._target_stage_loc, self.name)
+        """Get the Snowflake absolute path to this FileSet directory."""
+        return _fileset_absolute_path(self._target_stage_loc, self.name)
 
     @telemetry.send_api_usage_telemetry(
         project=_PROJECT,
@@ -335,7 +341,7 @@ class FileSet:
                 yield in the result datapipe
             shuffle: It specifies whether the data will be shuffled. If True, files will be shuffled, and
                 rows in each file will also be shuffled.
-            drop_last_batch: Whehter the last batch of data should be dropped. If set to be true,
+            drop_last_batch: Whether the last batch of data should be dropped. If set to be true,
                 then the last batch will get dropped if its size is smaller than the given batch_size.
 
         Returns:
@@ -375,7 +381,7 @@ class FileSet:
                 yield in the result datapipe
             shuffle: It specifies whether the data will be shuffled. If True, files will be shuffled, and
                 rows in each file will also be shuffled.
-            drop_last_batch: Whehter the last batch of data should be dropped. If set to be true,
+            drop_last_batch: Whether the last batch of data should be dropped. If set to be true,
                 then the last batch will get dropped if its size is smaller than the given batch_size.
 
         Returns:
@@ -437,7 +443,7 @@ class FileSet:
         If not called, the FileSet and all its stage files will stay in Snowflake stage.
 
         Raises:
-            SnowflakeMLException: An error occured when the FileSet cannot get deleted.
+            SnowflakeMLException: An error occurred when the FileSet cannot get deleted.
         """
         delete_sql = f"remove {self._fileset_absolute_path()}"
         try:
@@ -466,7 +472,7 @@ def _get_fileset_query_id_or_raise(files: List[str], fileset_absolute_path: str)
 
     Args:
         files: A list of stage file paths follows sfc protocol
-        fileset_absolute_path: the Snowflake absoluate path to this FileSet directory
+        fileset_absolute_path: the Snowflake absolute path to this FileSet directory
 
     Returns:
         The query id of the sql query which is used to generate the stage files.
@@ -521,7 +527,7 @@ def _validate_target_stage_loc(snowpark_session: snowpark.Session, target_stage_
     Raises:
         SnowflakeMLException: The input stage path does not start with '@'.
         SnowflakeMLException: No valid stages found.
-        SnowflakeMLException: An error occured when the input stage path is invalid.
+        SnowflakeMLException: An error occurred when the input stage path is invalid.
     """
     if not target_stage_loc.startswith("@"):
         raise snowml_exceptions.SnowflakeMLException(
@@ -552,8 +558,8 @@ def _validate_target_stage_loc(snowpark_session: snowpark.Session, target_stage_
     return True
 
 
-def _fileset_absoluate_path(target_stage_loc: str, fileset_name: str) -> str:
-    """Get the Snowflake absoluate path to a FileSet.
+def _fileset_absolute_path(target_stage_loc: str, fileset_name: str) -> str:
+    """Get the Snowflake absolute path to a FileSet.
 
     Args:
         target_stage_loc: A string of the location where the FileSet lives in. It should be in the form of

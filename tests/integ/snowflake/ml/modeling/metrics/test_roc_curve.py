@@ -1,6 +1,3 @@
-#
-# Copyright (c) 2012-2022 Snowflake Computing Inc. All rights reserved.
-#
 import os
 import tempfile
 from typing import Any, Dict

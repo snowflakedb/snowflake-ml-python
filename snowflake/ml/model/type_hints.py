@@ -203,7 +203,6 @@ class MLFlowSaveOptions(BaseModelSaveOption):
 class HuggingFaceSaveOptions(BaseModelSaveOption):
     target_methods: NotRequired[Sequence[str]]
     cuda_version: NotRequired[str]
-    accelerate_mix_precision_config: NotRequired[str]
 
 
 ModelSaveOption = Union[

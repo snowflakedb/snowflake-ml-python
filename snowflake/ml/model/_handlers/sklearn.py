@@ -168,7 +168,7 @@ class _SKLModelHandler(_base._ModelHandler[Union["sklearn.base.BaseEstimator", "
 
                     if isinstance(res, list) and len(res) > 0 and isinstance(res[0], np.ndarray):
                         # In case of multi-output estimators, predict_proba(), decision_function(), etc., functions
-                        # return a list of ndarrays. We need to deal them seperately
+                        # return a list of ndarrays. We need to deal them separately
                         df = numpy_handler.SeqOfNumpyArrayHandler.convert_to_df(res)
                     else:
                         df = pd.DataFrame(res)

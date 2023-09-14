@@ -1,11 +1,13 @@
 import warnings
 from typing import Any, Dict, Optional
 
+from packaging import version
+
 
 class HuggingFacePipelineModel:
     def __init__(
         self,
-        task: str = None,
+        task: Optional[str] = None,
         model: Optional[str] = None,
         *,
         revision: Optional[str] = None,
@@ -61,7 +63,8 @@ class HuggingFacePipelineModel:
         use_auth_token = model_kwargs.pop("use_auth_token", None)
         if use_auth_token is not None:
             warnings.warn(
-                "The `use_auth_token` argument is deprecated and will be removed in v5 of Transformers.", FutureWarning
+                "The `use_auth_token` argument is deprecated and will be removed in v5 of Transformers.",
+                FutureWarning,
             )
             if token is not None:
                 raise ValueError(
@@ -76,6 +79,12 @@ class HuggingFacePipelineModel:
             "_commit_hash": None,
         }
 
+        # Backward compatibility since HF interface change.
+        if version.parse(transformers.__version__) < version.parse("4.32.0"):
+            # Backward compatibility since HF interface change.
+            hub_kwargs["use_auth_token"] = hub_kwargs["token"]
+            del hub_kwargs["token"]
+
         if task is None and model is None:
             raise RuntimeError(
                 "Impossible to instantiate a pipeline without either a task or a model being specified. "
@@ -89,7 +98,7 @@ class HuggingFacePipelineModel:
             )
         if model is None and feature_extractor is not None:
             raise RuntimeError(
-                "Impossible to instantiate a pipeline with feature_extractor specified but not the model as the"
+                "Impossible to instantiate a pipeline with feature_extractor specified but not the model as the "
                 "provided feature_extractor may not be compatible with the default model. Please provide an identifier"
                 " to a pretrained model when providing feature_extractor."
             )
@@ -108,18 +117,20 @@ class HuggingFacePipelineModel:
 
         # Config is the primordial information item.
         # Instantiate config if needed
+        config_obj = None
+
         if isinstance(config, str):
             config_obj = transformers.AutoConfig.from_pretrained(
                 config, _from_pipeline=task, **hub_kwargs, **model_kwargs
             )
             hub_kwargs["_commit_hash"] = config_obj._commit_hash
-        elif config is None:
+        elif config is None and isinstance(model, str):
             config_obj = transformers.AutoConfig.from_pretrained(
                 model, _from_pipeline=task, **hub_kwargs, **model_kwargs
             )
             hub_kwargs["_commit_hash"] = config_obj._commit_hash
         # We only support string as config argument.
-        else:
+        elif config is not None and not isinstance(config, str):
             raise RuntimeError(
                 "Impossible to use non-string config as input for HuggingFacePipelineModel. Use transformers.Pipeline"
                 " object if required."
@@ -140,11 +151,6 @@ class HuggingFacePipelineModel:
                     )
 
         if task is None and model is not None:
-            if not isinstance(model, str):
-                raise RuntimeError(
-                    "Inferring the task automatically requires to check the hub with a model_id defined as a `str`."
-                    f"{model} is not a valid model_id."
-                )
             task = transformers.pipelines.get_task(model, token)
 
         # Retrieve the task
@@ -158,16 +164,21 @@ class HuggingFacePipelineModel:
                     " set the option `trust_remote_code=True` to remove this error."
                 )
         else:
-            normalized_task, targeted_task, task_options = transformers.pipelines.check_task(task)
+            (
+                normalized_task,
+                targeted_task,
+                task_options,
+            ) = transformers.pipelines.check_task(task)
 
         # ==== Start pipeline logic (Model) from transformers ====
 
         # Use default model/config/tokenizer for the task if no model is provided
         if model is None:
             # At that point framework might still be undetermined
-            model, default_revision = transformers.pipelines.get_default_model_and_revision(
-                targeted_task, framework, task_options
-            )
+            (
+                model,
+                default_revision,
+            ) = transformers.pipelines.get_default_model_and_revision(targeted_task, framework, task_options)
             revision = revision if revision is not None else default_revision
             warnings.warn(
                 f"No model was supplied, defaulted to {model} and revision"

@@ -15,7 +15,7 @@ from snowflake.ml.test_utils import mock_data_frame, mock_session
 class SFStageFileSystemTest(absltest.TestCase):
     """Testing SFStageFileSystem class."""
 
-    # Arbitary bucket name and path comes from the mocked GS GET response
+    # Arbitrary bucket name and path comes from the mocked GS GET response
     bucket_name = "sfc-dev1"
 
     file1 = "helloworld1"
@@ -129,7 +129,7 @@ class SFStageFileSystemTest(absltest.TestCase):
             )
 
     def test_ls(self) -> None:
-        """Test fsspec overrided method ls() could list objects."""
+        """Test fsspec overridden method ls() could list objects."""
         test_cases = [
             ("", ["helloworld1", "helloworld2", "mydir/"]),
             ("hello", []),
@@ -188,7 +188,7 @@ class SFStageFileSystemTest(absltest.TestCase):
         self.assertListEqual(self.file_list, actual)
 
     def test_open(self) -> None:
-        """Test fsspec overrided method open() could return a Python file-like object."""
+        """Test fsspec overridden method open() could return a Python file-like object."""
         with absltest.mock.patch.object(
             stage_fs.SFStageFileSystem, "_fetch_presigned_urls", new=self._mock_presigned_url_fetcher
         ):

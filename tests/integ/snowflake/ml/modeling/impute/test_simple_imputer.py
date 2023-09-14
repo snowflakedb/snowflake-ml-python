@@ -1,6 +1,3 @@
-#
-# Copyright (c) 2012-2022 Snowflake Computing Inc. All rights reserved.
-#
 import importlib
 import os
 import pickle
@@ -231,7 +228,7 @@ class SimpleImputerTest(TestCase):
 
     def test_transform_snowpark(self) -> None:
         """
-        Verify the tranformed results for an imputation of mean values in numeric columns.
+        Verify the transformed results for an imputation of mean values in numeric columns.
 
         Raises
         ------
@@ -256,7 +253,7 @@ class SimpleImputerTest(TestCase):
 
     def test_transform_snowpark_output_columns_same_as_input_columns(self) -> None:
         """
-        Verify the tranformed results for an imputation of mean values in numeric columns.
+        Verify the transformed results for an imputation of mean values in numeric columns.
 
         Raises
         ------
@@ -281,7 +278,7 @@ class SimpleImputerTest(TestCase):
 
     def test_transform_snowpark_output_columns_one_equal_to_input_column(self) -> None:
         """
-        Verify the tranformed results for an imputation of mean values in numeric columns.
+        Verify the transformed results for an imputation of mean values in numeric columns.
 
         Raises
         ------

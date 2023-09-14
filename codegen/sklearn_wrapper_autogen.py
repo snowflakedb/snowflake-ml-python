@@ -27,7 +27,7 @@ class AutogenTool:
             wrappers or integration tests for generated estimator wrappers based on the selected mode.
         template_path: Path to file containing estimator wrapper or test template code.
         output_path : Path to the root of the destination folder to write auto-generated code.
-        class_list: Allow list of estimator classes. If specified, wappers or tests will be generated for only
+        class_list: Allow list of estimator classes. If specified, wrappers or tests will be generated for only
             the classes in the allow list.
     """
 
@@ -196,7 +196,7 @@ class AutogenTool:
         """Removes TODO lines from the generated code.
 
         Args:
-            generated_code: Genreated code.
+            generated_code: Generated code.
 
         Returns:
             Code with TODO lines removed.
@@ -209,7 +209,7 @@ class AutogenTool:
         """Prepend a warning statement to dicourage modifying auto generated code.
 
         Args:
-            generated_code: Genreated code.
+            generated_code: Generated code.
             is_src_file: True if source file, False is it is test file.
 
         Returns:
@@ -221,7 +221,7 @@ class AutogenTool:
         comment = (
             "#\n"
             + f"# This code is auto-generated using the {template_name} template.\n"
-            + "# Do not modify the auto-generated code(except automatic reformating by precommit hooks).\n"
+            + "# Do not modify the auto-generated code(except automatic reformatting by precommit hooks).\n"
             + "#\n"
         )
         return comment + generated_code

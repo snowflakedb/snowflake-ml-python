@@ -1,6 +1,11 @@
 load("//codegen:codegen_rules.bzl", "autogen_estimators", "autogen_init_file_for_module")
 load(":estimators_info.bzl", "estimator_info_list")
+
 package(default_visibility = ["//visibility:public"])
 
-autogen_init_file_for_module(module="sklearn.multiclass")
-autogen_estimators(module="sklearn.multiclass", estimator_info_list=estimator_info_list)
+autogen_init_file_for_module(module = "sklearn.multiclass")
+
+autogen_estimators(
+    estimator_info_list = estimator_info_list,
+    module = "sklearn.multiclass",
+)

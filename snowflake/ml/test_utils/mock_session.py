@@ -38,7 +38,7 @@ class MockSession(mock_snowml_base.MockSnowMLBase):
     TODOs:
         * Create a robust SQL string matcher that closely models actual query equivalence.
           * Criteria should be: whitespace independence, accurate treatment of case, including quoted identifiers, ...
-            If the query change does not create different results, it should not failt the assertion (within limits).
+            If the query change does not create different results, it should not fail the assertion (within limits).
         * Cover more functionality e.g. get_current_(account|database|...),  (add|clear|get)_(imports|packages),
           create_dataframe, etc.
         * Allow a test mode with unordered result matching (i.e. use internal dict not list, both should be possible).

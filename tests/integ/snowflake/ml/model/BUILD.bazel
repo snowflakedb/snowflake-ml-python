@@ -6,12 +6,12 @@ py_library(
     srcs = ["warehouse_model_integ_test_utils.py"],
     deps = [
         "//snowflake/ml/model:_deployer",
-        "//snowflake/ml/model:deploy_platforms",
         "//snowflake/ml/model:_model",
+        "//snowflake/ml/model:deploy_platforms",
         "//snowflake/ml/model:type_hints",
+        "//snowflake/ml/model/_signatures:snowpark_handler",
         "//tests/integ/snowflake/ml/test_utils:db_manager",
         "//tests/integ/snowflake/ml/test_utils:test_env_utils",
-        "//snowflake/ml/model/_signatures:snowpark_handler",
     ],
 )
 
@@ -22,8 +22,8 @@ py_test(
     shard_count = 6,
     deps = [
         ":warehouse_model_integ_test_utils",
-        "//snowflake/ml/model:deploy_platforms",
         "//snowflake/ml/model:custom_model",
+        "//snowflake/ml/model:deploy_platforms",
         "//snowflake/ml/model:type_hints",
         "//snowflake/ml/utils:connection_params",
         "//tests/integ/snowflake/ml/test_utils:db_manager",
@@ -98,6 +98,7 @@ py_test(
     srcs = ["model_badcase_integ_test.py"],
     deps = [
         ":warehouse_model_integ_test_utils",
+        "//snowflake/ml/_internal/exceptions",
         "//snowflake/ml/model:_deployer",
         "//snowflake/ml/model:_model",
         "//snowflake/ml/model:custom_model",
@@ -145,6 +146,7 @@ py_test(
     shard_count = 8,
     deps = [
         ":warehouse_model_integ_test_utils",
+        "//snowflake/ml/_internal:env_utils",
         "//snowflake/ml/model:type_hints",
         "//snowflake/ml/utils:connection_params",
         "//tests/integ/snowflake/ml/test_utils:db_manager",

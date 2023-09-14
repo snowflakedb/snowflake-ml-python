@@ -91,7 +91,7 @@ def unwrap(text: str, keep_newlines: bool = False) -> str:
         # Three stages:
         # 1. (innermost) Normalize all non-newline whitespace to spaces.
         # 2. (middle)    Collapse any sequence of newline plus any non-newline whitespace into just newline.
-        # 3. (outter)    Strip leading and trailing whitespace.
+        # 3. (outer)    Strip leading and trailing whitespace.
         return _WHITESPACE_COMPACT_KEEP_NEWLINE_RE.sub("\n", _WHITESPACE_NO_NEWLINE_RE.sub(" ", text)).strip()
     else:
         # Normalize all whitespace into single spaces and strip leading and trailing whitespace.

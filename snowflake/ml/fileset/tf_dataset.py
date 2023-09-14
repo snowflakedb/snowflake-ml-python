@@ -6,6 +6,10 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 import tensorflow as tf
 
+from snowflake.ml._internal.exceptions import (
+    error_codes,
+    exceptions as snowml_exceptions,
+)
 from snowflake.ml.fileset import parquet_parser
 
 
@@ -27,7 +31,7 @@ def read_and_parse_parquet(
         shuffle: Whether the data in the file will be shuffled. If set to be true, it will first randomly shuffle
             the order of files, and then shuflle the order of rows in each file. It is preferred
             to shuffle the data this way than dataset.unbatch().shuffle().rebatch().
-        drop_last_batch: Whehter the last batch of data should be dropped. If set to be true, then the last batch will
+        drop_last_batch: Whether the last batch of data should be dropped. If set to be true, then the last batch will
             get dropped if its size is smaller than the given batch_size.
 
     Returns:
@@ -35,7 +39,7 @@ def read_and_parse_parquet(
         the parquet files.
 
     Raises:
-        ValueError: if `files` is empty.
+        SnowflakeMLException: if `files` is empty.
 
     Example:
         >>> from snowflake.ml.fileset import sfcfs, tf_dataset
@@ -50,7 +54,10 @@ def read_and_parse_parquet(
      '_COL_2': <tf.Tensor: shape=(2,), dtype=float32, numpy=[-73.9542, -73.9875]>}
     """
     if not files:
-        raise ValueError("At least one file is needed to create a TF dataset.")
+        raise snowml_exceptions.SnowflakeMLException(
+            error_code=error_codes.SNOWML_READ_FAILED,
+            original_exception=ValueError("At least one file is needed to create a TF dataset."),
+        )
 
     def generator() -> Generator[Dict[str, npt.NDArray[Any]], None, None]:
         yield from parquet_parser.ParquetParser(list(files), filesystem, batch_size, shuffle, drop_last_batch)
@@ -62,7 +69,10 @@ def _arrow_type_to_tensor_spec(field: pa.Field) -> tf.TensorSpec:
     try:
         dtype = tf.dtypes.as_dtype(field.type.to_pandas_dtype())
     except TypeError:
-        raise TypeError(f"Column {field.name} has unsupportd type {field.type}.")
+        raise snowml_exceptions.SnowflakeMLException(
+            error_code=error_codes.INVALID_DATA_TYPE,
+            original_exception=TypeError(f"Column {field.name} has unsupportd type {field.type}."),
+        )
     # First dimension is batch dimension.
     return tf.TensorSpec(shape=(None,), dtype=dtype)
 

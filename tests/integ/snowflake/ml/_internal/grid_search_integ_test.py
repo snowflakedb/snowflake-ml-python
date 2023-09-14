@@ -1,7 +1,3 @@
-#
-# Copyright (c) 2012-2022 Snowflake Computing Inc. All rights reserved.
-#
-
 import inflection
 import numpy as np
 import pytest
@@ -25,6 +21,21 @@ class GridSearchCVTest(TestCase):
     def tearDown(self):
         self._session.close()
 
+    def _compare_cv_results(self, cv_result_1, cv_result_2) -> None:
+        # compare the keys
+        self.assertEqual(cv_result_1.keys(), cv_result_2.keys())
+        print(cv_result_1, cv_result_2)
+        # compare the values
+        for k, v in cv_result_1.items():
+            if isinstance(v, np.ndarray):
+                if k.startswith("param_"):  # compare the masked array
+                    np.ma.allequal(v, cv_result_2[k])
+                elif k == "params":  # compare the parameter combination
+                    self.assertEqual(v.tolist(), cv_result_2[k])
+                elif k.endswith("test_score"):  # compare the test score
+                    np.testing.assert_allclose(v, cv_result_2[k], rtol=1.0e-1, atol=1.0e-2)
+                # Do not compare the fit time
+
     def test_fit_and_compare_results(self) -> None:
         input_df_pandas = load_diabetes(as_frame=True).frame
         input_df_pandas.columns = [inflection.parameterize(c, "_").upper() for c in input_df_pandas.columns]
@@ -47,6 +58,8 @@ class GridSearchCVTest(TestCase):
         sklearn_numpy_arr = sklearn_reg.predict(input_df_pandas[input_cols])
 
         assert reg._sklearn_object.best_params_ == sklearn_reg.best_params_
+        np.testing.assert_allclose(reg._sklearn_object.best_score_, sklearn_reg.best_score_)
+        self._compare_cv_results(reg._sklearn_object.cv_results_, sklearn_reg.cv_results_)
 
         np.testing.assert_allclose(actual_arr.flatten(), sklearn_numpy_arr.flatten(), rtol=1.0e-1, atol=1.0e-2)
 

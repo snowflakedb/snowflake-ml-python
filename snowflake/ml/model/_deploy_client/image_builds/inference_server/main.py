@@ -5,9 +5,10 @@ import os
 import sys
 import tempfile
 import threading
+import traceback
 import zipfile
 from enum import Enum
-from typing import Dict, List, cast
+from typing import Dict, List, Optional, cast
 
 import pandas as pd
 from gunicorn import arbiter
@@ -40,8 +41,8 @@ class CustomThread(threading.Thread):
     def run(self) -> None:
         try:
             super().run()
-        except Exception as e:
-            logger.error(str(e))
+        except Exception:
+            logger.error(traceback.format_exc())
             os._exit(arbiter.Arbiter.APP_LOAD_ERROR)
 
 
@@ -51,7 +52,7 @@ _LOADED_META = None
 _MODEL_CODE_DIR = "code"
 _MODEL_LOADING_STATE = _ModelLoadingState.LOADING
 _MODEL_LOADING_EVENT = threading.Event()
-_CONCURRENT_REQUESTS_MAX = None
+_CONCURRENT_REQUESTS_MAX: Optional[int] = None
 _CONCURRENT_COUNTER = 0
 _CONCURRENT_COUNTER_LOCK = asyncio.Lock()
 TARGET_METHOD = None
@@ -79,7 +80,9 @@ def _run_setup() -> None:
 
         TARGET_METHOD = os.getenv("TARGET_METHOD")
 
-        _CONCURRENT_REQUESTS_MAX = os.getenv("_CONCURRENT_REQUESTS_MAX", None)
+        _concurrent_requests_max_env = os.getenv("_CONCURRENT_REQUESTS_MAX", None)
+
+        _CONCURRENT_REQUESTS_MAX = int(_concurrent_requests_max_env) if _concurrent_requests_max_env else None
 
         root_path = os.path.abspath(os.sep)
         model_zip_stage_path = os.path.join(root_path, MODEL_ZIP_STAGE_PATH)
@@ -103,9 +106,7 @@ def _run_setup() -> None:
 
             # Backward for <= 1.0.5
             if hasattr(model_api, "_load_model_for_deploy"):
-                _LOADED_MODEL, _LOADED_META = model_api._load_model_for_deploy(  # type:ignore[attr-defined]
-                    extracted_dir
-                )
+                _LOADED_MODEL, _LOADED_META = model_api._load_model_for_deploy(extracted_dir)
             else:
                 _LOADED_MODEL, _LOADED_META = model_api._load(
                     local_dir_path=extracted_dir,
@@ -120,7 +121,7 @@ def _run_setup() -> None:
             _MODEL_LOADING_EVENT.set()
     except Exception as e:
         _MODEL_LOADING_STATE = _ModelLoadingState.FAILED
-        raise RuntimeError(e)
+        raise e
 
 
 async def ready(request: requests.Request) -> responses.JSONResponse:
@@ -165,7 +166,7 @@ def _do_predict(input_json: Dict[str, List[List[object]]]) -> responses.JSONResp
         x = df[input_cols]
         assert len(input_data) != 0 and not all(not row for row in input_data), "empty data"
     except Exception as e:
-        error_message = f"Input data malformed: {str(e)}"
+        error_message = f"Input data malformed: {str(e)}\n{traceback.format_exc()}"
         return responses.JSONResponse({"error": error_message}, status_code=http.HTTPStatus.BAD_REQUEST)
 
     try:
@@ -178,7 +179,7 @@ def _do_predict(input_json: Dict[str, List[List[object]]]) -> responses.JSONResp
         response = {"data": [[i, row] for i, row in enumerate(predictions_df.to_dict(orient="records"))]}
         return responses.JSONResponse(response)
     except Exception as e:
-        error_message = f"Prediction failed: {str(e)}"
+        error_message = f"Prediction failed: {str(e)}\n{traceback.format_exc()}"
         return responses.JSONResponse({"error": error_message}, status_code=http.HTTPStatus.BAD_REQUEST)
 
 

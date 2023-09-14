@@ -1,4 +1,4 @@
-load("//bazel:py_rules.bzl", "py_library", "py_test", "py_genrule")
+load("//bazel:py_rules.bzl", "py_genrule", "py_library", "py_test")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -61,7 +61,7 @@ py_library(
     deps = [
         "//snowflake/ml/_internal:env",
         "//snowflake/ml/_internal:env_utils",
-        "//snowflake/ml/_internal/utils:formatting",
+        "//snowflake/ml/_internal/exceptions",
     ],
 )
 
@@ -92,10 +92,11 @@ py_library(
     name = "_deployer",
     srcs = ["_deployer.py"],
     deps = [
+        ":_model",
+        ":deploy_platforms",
         ":model_signature",
         ":type_hints",
-        ":deploy_platforms",
-        ":_model",
+        "//snowflake/ml/_internal/exceptions",
         "//snowflake/ml/_internal/utils:identifier",
         "//snowflake/ml/model/_deploy_client/snowservice:deploy",
         "//snowflake/ml/model/_deploy_client/warehouse:deploy",
@@ -125,7 +126,9 @@ py_library(
         ":type_hints",
         "//snowflake/ml/_internal:env_utils",
         "//snowflake/ml/_internal:file_utils",
+        "//snowflake/ml/_internal/exceptions",
         "//snowflake/ml/model/_handlers:custom",
+        "//snowflake/ml/model/_handlers:huggingface_pipeline",
         "//snowflake/ml/model/_handlers:mlflow",
         "//snowflake/ml/model/_handlers:pytorch",
         "//snowflake/ml/model/_handlers:sklearn",
@@ -133,7 +136,6 @@ py_library(
         "//snowflake/ml/model/_handlers:tensorflow",
         "//snowflake/ml/model/_handlers:torchscript",
         "//snowflake/ml/model/_handlers:xgboost",
-        "//snowflake/ml/model/_handlers:huggingface_pipeline",
         "//snowflake/ml/modeling/framework",
     ],
 )
@@ -176,21 +178,15 @@ py_test(
 
 py_test(
     name = "_model_test",
-    timeout = "long",
     srcs = ["_model_test.py"],
-    shard_count = 5,
     deps = [
         ":_model",
-        ":_model_handler",
-        ":_model_meta",
         ":custom_model",
         ":model_signature",
-        ":type_hints",
+        "//snowflake/ml/_internal:env",
         "//snowflake/ml/_internal:env_utils",
-        "//snowflake/ml/model/_signatures:pytorch_handler",
-        "//snowflake/ml/model/_signatures:tensorflow_handler",
-        "//snowflake/ml/model/_signatures:utils",
         "//snowflake/ml/modeling/linear_model:linear_regression",
+        "//snowflake/ml/test_utils:exception_utils",
         "//snowflake/ml/test_utils:mock_session",
     ],
 )

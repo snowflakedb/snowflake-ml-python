@@ -386,4 +386,7 @@ user.bazelrc
 .ipynb_checkpoints
 
 # Bazel code coverage html report
-genhtml
+html_coverage_report/
+
+# VSCode configuration
+.vscode/

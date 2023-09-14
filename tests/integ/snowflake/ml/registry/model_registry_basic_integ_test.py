@@ -1,6 +1,3 @@
-#
-# Copyright (c) 2012-2022 Snowflake Computing Inc. All rights reserved.
-#
 import json
 import uuid
 from typing import Optional
@@ -185,6 +182,47 @@ class TestModelRegistryBasicInteg(parameterized.TestCase):
         finally:
             _schema._REGISTRY_TABLE_SCHEMA.pop()
             self._db_manager.drop_database(broken_registry)
+
+    def test_add_new_registry_table_column_with_allowlist(self) -> None:
+        registry_name = db_manager.TestObjectNameGenerator.get_snowml_test_object_name(
+            _RUN_ID, "registry_with_legacy_db_schema"
+        )
+
+        try:
+            model_registry.create_model_registry(session=self._session, database_name=registry_name)
+            reg_1 = model_registry.ModelRegistry(session=self._session, database_name=registry_name)
+
+            target_col_name = "TRAINING_DATASET_ID"
+            self._session.sql(
+                f"""
+                ALTER TABLE {reg_1._fully_qualified_registry_table_name()}
+                DROP COLUMN {target_col_name}"""
+            ).collect()
+
+            # confirm column is indeed dropped
+            res_1 = self._session.sql(f"DESC TABLE {reg_1._fully_qualified_registry_table_name()}").collect()
+            col_names_1 = [row["name"] for row in res_1]
+            self.assertTrue(target_col_name not in col_names_1)
+
+            self._session.sql(f"DROP VIEW {reg_1._fully_qualified_registry_view_name()}").collect()
+
+            # target column is expected to be added and related schema will be updated
+            reg_2 = model_registry.ModelRegistry(session=self._session, database_name=registry_name)
+
+            # check new column is added back to table
+            res_2_1 = self._session.sql(f"DESC TABLE {reg_2._fully_qualified_registry_table_name()}").collect()
+            col_names_2_1 = [row["name"] for row in res_2_1]
+            self.assertTrue(target_col_name in col_names_2_1)
+
+            # check view is also updated with new col
+            res_2_2 = self._session.sql(f"DESC VIEW {reg_2._fully_qualified_registry_view_name()}").collect()
+            col_names_2_2 = [row["name"] for row in res_2_2]
+            self.assertTrue(target_col_name in col_names_2_2)
+
+        except Exception as e:
+            raise Exception(f"Test failed with exception:{e}")
+        finally:
+            self._db_manager.drop_database(registry_name)
 
     def test_add_and_delete_ml_artifacts(self) -> None:
         """Test add_artifact() and delete_artifact() in `_ml_artifact.py` works as expected."""

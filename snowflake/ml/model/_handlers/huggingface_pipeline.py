@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, Callable, Dict, List, Optional, Type, Union
 import cloudpickle
 import numpy as np
 import pandas as pd
+from packaging import version
 from typing_extensions import TypeGuard, Unpack
 
 from snowflake.ml._internal import type_utils
@@ -136,14 +137,23 @@ class _HuggingFacePipelineHandler(
             )
 
             if model_meta._signatures is not None:
-                model_meta_api._validate_target_methods(model, list(model_meta.signatures.keys()))
+                if type_utils.LazyType("transformers.Pipeline").isinstance(model):
+                    model_meta_api._validate_target_methods(model, list(model_meta.signatures.keys()))
+                else:
+                    warnings.warn(
+                        "It is impossible to validate your model signatures when using a"
+                        " `snowflake.ml.model.models.huggingface_pipeline.HuggingFacePipelineModel` object. "
+                        "Please make sure you are providing correct model signatures.",
+                        UserWarning,
+                    )
             else:
                 model_meta_api._validate_target_methods(model, target_methods)
                 if sample_input is not None:
                     warnings.warn(
                         "Inferring model signature from sample input for hugggingface pipeline is not supported. "
                         + "Model signature will automatically be inferred from pipeline task. "
-                        + "Or, you could specify model signature manually."
+                        + "Or, you could specify model signature manually.",
+                        UserWarning,
                     )
                 if inferred_pipe_sig is None:
                     raise NotImplementedError(f"Cannot auto infer the signature of pipeline for task {task}")
@@ -174,7 +184,10 @@ class _HuggingFacePipelineHandler(
             ) as f:
                 cloudpickle.dump(pipeline_params, f)
         else:
-            with open(os.path.join(model_blob_path, _HuggingFacePipelineHandler.MODEL_BLOB_FILE), "wb") as f:
+            with open(
+                os.path.join(model_blob_path, _HuggingFacePipelineHandler.MODEL_BLOB_FILE),
+                "wb",
+            ) as f:
                 cloudpickle.dump(model, f)
         model_meta.cuda_version = kwargs.get("cuda_version", model_meta_api._DEFAULT_CUDA_VERSION)
 
@@ -184,8 +197,7 @@ class _HuggingFacePipelineHandler(
             path=_HuggingFacePipelineHandler.MODEL_BLOB_FILE,
             options={
                 "task": task,
-                "accelerate_mixed_precision_config": kwargs.get("accelerate_mix_precision_config", "fp16"),
-                "batch_size": batch_size if batch_size is not None else 1,
+                "batch_size": batch_size if batch_size is not None else "1",
             },
         )
         model_meta.models[name] = base_meta
@@ -200,11 +212,11 @@ class _HuggingFacePipelineHandler(
         model_meta._include_if_absent(pkgs_requirements)
 
     @staticmethod
-    def _get_device_config(mixed_precision: str = "fp16") -> Dict[str, str]:
+    def _get_device_config() -> Dict[str, str]:
         from accelerate import utils
 
         device_config = {}
-        utils.write_basic_config(mixed_precision=mixed_precision)
+        utils.write_basic_config(mixed_precision="fp16")
         device_config["device_map"] = "auto"
 
         return device_config
@@ -234,18 +246,24 @@ class _HuggingFacePipelineHandler(
                 raise ValueError("`task` must be specified in options.")
 
             with open(
-                os.path.join(model_blob_file_or_dir_path, _HuggingFacePipelineHandler.ADDITIONAL_CONFIG_FILE), "rb"
+                os.path.join(
+                    model_blob_file_or_dir_path,
+                    _HuggingFacePipelineHandler.ADDITIONAL_CONFIG_FILE,
+                ),
+                "rb",
             ) as f:
                 pipeline_params = cloudpickle.load(f)
 
             if kwargs.get("use_gpu", False):
-                device_config = _HuggingFacePipelineHandler._get_device_config(
-                    model_blob_metadata.options["accelerate_mixed_precision_config"]
-                )
+                device_config = _HuggingFacePipelineHandler._get_device_config()
             else:
                 device_config = {}
 
-            m = transformers.pipeline(model_blob_options["task"], model=model_blob_file_or_dir_path, **device_config)
+            m = transformers.pipeline(
+                model_blob_options["task"],
+                model=model_blob_file_or_dir_path,
+                **device_config,
+            )
 
             m.__dict__.update(pipeline_params)
 
@@ -259,11 +277,7 @@ class _HuggingFacePipelineHandler(
                 and getattr(m, "device_map", None) is None
                 and kwargs.get("use_gpu", False)
             ):
-                m.__dict__.update(
-                    _HuggingFacePipelineHandler._get_device_config(
-                        model_blob_metadata.options["accelerate_mixed_precision_config"]
-                    )
-                )
+                m.__dict__.update(_HuggingFacePipelineHandler._get_device_config())
 
             if getattr(m, "torch_dtype", None) is None and kwargs.get("use_gpu", False):
                 m.__dict__.update(torch_dtype="auto")
@@ -350,7 +364,13 @@ class _HuggingFacePipelineHandler(
                         # When it omit outer list, it becomes list of dict instead of list of list of dict.
                         # We need to distinguish them from those pipelines that designed to output a dict per input
                         # So we need to check the pipeline type.
-                        isinstance(raw_model, (transformers.FillMaskPipeline, transformers.QuestionAnsweringPipeline))
+                        isinstance(
+                            raw_model,
+                            (
+                                transformers.FillMaskPipeline,
+                                transformers.QuestionAnsweringPipeline,
+                            ),
+                        )
                         and X.shape[0] == 1
                         and isinstance(temp_res[0], dict)
                     ):
@@ -390,6 +410,10 @@ class _HuggingFacePipelineHandler(
 
         raw_model = _HuggingFacePipelineHandler._load_model(name, model_meta, model_blobs_dir_path, **kwargs)
         if isinstance(raw_model, huggingface_pipeline.HuggingFacePipelineModel):
+            if version.parse(transformers.__version__) < version.parse("4.32.0"):
+                # Backward compatibility since HF interface change.
+                raw_model.__dict__["use_auth_token"] = raw_model.__dict__["token"]
+                del raw_model.__dict__["token"]
             pipe = transformers.pipeline(**raw_model.__dict__)
         else:
             pipe = raw_model
@@ -397,7 +421,8 @@ class _HuggingFacePipelineHandler(
         pipe.binary_output = False
 
         # To enable batch_size > 1 for LLM
-        if hasattr(pipe, "tokenizer") and pipe.tokenizer.pad_token_id is None:
+        # Pipe might not have tokenizer, but should always have a model, and model should always have a config.
+        if getattr(pipe, "tokenizer", None) is not None and pipe.tokenizer.pad_token_id is None:
             pipe.tokenizer.pad_token_id = pipe.model.config.eos_token_id
 
         _HFPipelineModel = _create_custom_model(pipe, model_meta)

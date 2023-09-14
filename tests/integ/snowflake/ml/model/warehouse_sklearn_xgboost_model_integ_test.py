@@ -1,7 +1,3 @@
-#
-# Copyright (c) 2012-2022 Snowflake Computing Inc. All rights reserved.
-#
-
 import uuid
 from typing import Any, Callable, Dict, Optional, Tuple, Union, cast
 

@@ -1,7 +1,3 @@
-#
-# Copyright (c) 2012-2022 Snowflake Computing Inc. All rights reserved.
-#
-
 import inflection
 import pytest
 from absl.testing.absltest import TestCase, main
@@ -32,20 +28,20 @@ class RandomizedSearchCVTest(TestCase):
         label_col = [c for c in input_df_pandas.columns if c.startswith("TARGET")]
         input_df_pandas["INDEX"] = input_df_pandas.reset_index().index
         input_df = self._session.create_dataframe(input_df_pandas)
-        pararm_distribution = {
+        param_distribution = {
             "n_estimators": randint(50, 200),
             "max_depth": randint(3, 8),
         }
 
         sklearn_reg = SkRandomizedSearchCV(
             estimator=SkRandomForestClassifier(random_state=0),
-            param_distributions=pararm_distribution,
+            param_distributions=param_distribution,
             random_state=0,
         )
 
         reg = RandomizedSearchCV(
             estimator=RandomForestClassifier(random_state=0),
-            param_distributions=pararm_distribution,
+            param_distributions=param_distribution,
             random_state=0,
         )
         reg.set_input_cols(input_cols)

@@ -19,7 +19,7 @@ class TempFileUtilsTest(TestCase):
         cleanup_temp_files(file_name)
         self.assertFalse(os.path.exists(file_name))
 
-    def test_delete_non_existant_file(self) -> None:
+    def test_delete_non_existent_file(self) -> None:
         file_name = get_temp_file_path()
         self.assertFalse(os.path.exists(file_name))
         cleanup_temp_files(file_name)

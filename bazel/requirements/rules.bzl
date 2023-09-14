@@ -1,6 +1,6 @@
+load("@aspect_bazel_lib//lib:yq.bzl", "yq")
 load("@bazel_skylib//rules:diff_test.bzl", "diff_test")
 load("@bazel_skylib//rules:write_file.bzl", "write_file")
-load("@aspect_bazel_lib//lib:yq.bzl", "yq")
 load("//bazel:py_rules.bzl", "py_genrule")
 
 _AUTOGEN_HEADERS = """# DO NOT EDIT!
@@ -34,15 +34,21 @@ def generate_requirement_file(
         cmd = _GENERATE_COMMAND.format(src_requirement_file = src_requirement_file, options = cmd),
         tools = [_GENERATE_TOOL],
     )
+    if "yml" in target:
+        cmd = "(echo \"" + _YAML_START_DOCUMENT_MARKER + "\" ; echo -e \"" + _AUTOGEN_HEADERS.format(generation_cmd = generation_cmd) + "\" ; cat $(location :{generated}.body) ) > $@".format(
+            generated = generated_file,
+        )
+    else:
+        cmd = "(echo -e \"" + _AUTOGEN_HEADERS.format(generation_cmd = generation_cmd) + "\" ; cat $(location :{generated}.body) ) > $@".format(
+            generated = generated_file,
+        )
     native.genrule(
         name = "gen_{name}".format(name = name),
         srcs = [
             "{generated}.body".format(generated = generated_file),
         ],
         outs = [generated_file],
-        cmd = "(echo -e \"" + _AUTOGEN_HEADERS.format(generation_cmd = generation_cmd) + "\" ; cat $(location :{generated}.body) ) > $@".format(
-            generated = generated_file,
-        )
+        cmd = cmd,
     )
     diff_test(
         name = "check_{name}".format(name = name),
@@ -86,7 +92,7 @@ def generate_requirement_file_yaml(
             ":{generated_file}.body.formatted.yaml".format(generated_file = generated_file),
         ],
         outs = [generated_file],
-        cmd = "(echo -e \"" + _AUTOGEN_HEADERS.format(generation_cmd = generation_cmd) + "\" ; echo \"" + _YAML_START_DOCUMENT_MARKER + "\"; cat $(location :{generated_file}.body.formatted.yaml) ) > $@".format(generated_file = generated_file),
+        cmd = "(echo \"" + _YAML_START_DOCUMENT_MARKER + "\" ; echo -e \"" + _AUTOGEN_HEADERS.format(generation_cmd = generation_cmd) + "\"; cat $(location :{generated_file}.body.formatted.yaml) ) > $@".format(generated_file = generated_file),
     )
 
     diff_test(

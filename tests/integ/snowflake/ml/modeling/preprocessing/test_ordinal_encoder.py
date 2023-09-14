@@ -1,7 +1,4 @@
 #!/usr/bin/env python3
-#
-# Copyright (c) 2012-2022 Snowflake Computing Inc. All rights reserved.
-#
 import importlib
 import os
 import pickle
@@ -864,6 +861,37 @@ class OrdinalEncoderTest(parameterized.TestCase):
 
     def test_double_quoted_same_input_output_cols(self) -> None:
         data = [["a", "b"]]
+        schema = ["col1", "col2"]
+        cat_cols = ['"col1"', '"col2"']
+        df_pandas, df = framework_utils.get_df(self._session, data, schema)
+
+        encoder = OrdinalEncoder(drop_input_cols=True).set_input_cols(cat_cols).set_output_cols(cat_cols)
+        transformed_df = encoder.fit(df).transform(df)
+
+        self.assertEqual(cat_cols, transformed_df.columns)
+
+    def test_mixed_column_types(self) -> None:
+        data = [["a", 1]]
+        schema = ["col1", "col2"]
+        cat_cols = ['"col1"', '"col2"']
+        df_pandas, df = framework_utils.get_df(self._session, data, schema)
+
+        encoder = OrdinalEncoder(drop_input_cols=True).set_input_cols(cat_cols).set_output_cols(cat_cols)
+        transformed_df = encoder.fit(df).transform(df)
+
+        self.assertEqual(cat_cols, transformed_df.columns)
+
+        data = [[1.0, True]]
+        schema = ["col1", "col2"]
+        cat_cols = ['"col1"', '"col2"']
+        df_pandas, df = framework_utils.get_df(self._session, data, schema)
+
+        encoder = OrdinalEncoder(drop_input_cols=True).set_input_cols(cat_cols).set_output_cols(cat_cols)
+        transformed_df = encoder.fit(df).transform(df)
+
+        self.assertEqual(cat_cols, transformed_df.columns)
+
+        data = [[True, "a"]]
         schema = ["col1", "col2"]
         cat_cols = ['"col1"', '"col2"']
         df_pandas, df = framework_utils.get_df(self._session, data, schema)

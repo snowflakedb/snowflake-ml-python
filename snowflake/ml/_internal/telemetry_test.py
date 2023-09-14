@@ -401,6 +401,28 @@ class TelemetryTest(parameterized.TestCase):
         self.assertIn(error_codes.INTERNAL_TEST, str(ex.exception))
         self.assertNotIn(error_codes.UNDEFINED, str(ex.exception))
 
+    @mock.patch("snowflake.snowpark.session._get_active_sessions")
+    def test_disable_telemetry(self, mock_get_active_sessions: mock.MagicMock) -> None:
+        mock_session = absltest.mock.MagicMock(spec=session.Session)
+        mock_server_conn = absltest.mock.MagicMock(spec=server_connection.ServerConnection)
+        mock_session._conn = mock_server_conn
+        mock_server_conn._conn = None
+        mock_get_active_sessions.return_value = {mock_session}
+
+        mock_session.telemetry_enabled = False
+
+        class DummyObject:
+            @utils_telemetry.send_api_usage_telemetry(
+                project=_PROJECT,
+            )
+            def foo(self) -> None:
+                raise exceptions.SnowflakeMLException(error_codes.INTERNAL_TEST, RuntimeError("Message"))
+
+        test_obj = DummyObject()
+        with self.assertRaises(RuntimeError):
+            test_obj.foo()
+        self.mock_telemetry.try_add_log_to_batch.assert_not_called()
+
 
 if __name__ == "__main__":
     absltest.main()

@@ -1,9 +1,6 @@
 #
 # This code is auto-generated using the sklearn_wrapper_template.py_template template.
-# Do not modify the auto-generated code(except automatic reformating by precommit hooks).
-#
-#
-# Copyright (c) 2012-2022 Snowflake Computing Inc. All rights reserved.
+# Do not modify the auto-generated code(except automatic reformatting by precommit hooks).
 #
 import inflection
 import numpy as np

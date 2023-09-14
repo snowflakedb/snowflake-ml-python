@@ -5,15 +5,17 @@ package(default_visibility = ["//visibility:public"])
 py_library(
     name = "framework",
     srcs = [
+        "_utils.py",
         "base.py",
-        "_utils.py"
     ],
     deps = [
         "//snowflake/ml:version",
         "//snowflake/ml/_internal:telemetry",
+        "//snowflake/ml/_internal/exceptions",
         "//snowflake/ml/_internal/exceptions:error_messages",
-        "//snowflake/ml/_internal/exceptions:exceptions",
         "//snowflake/ml/_internal/exceptions:modeling_error_messages",
         "//snowflake/ml/_internal/utils:parallelize",
+        "//snowflake/ml/modeling/_internal:estimator_protocols",
+        "//snowflake/ml/modeling/_internal:snowpark_handlers",
     ],
 )

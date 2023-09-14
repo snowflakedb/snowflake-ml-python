@@ -84,19 +84,39 @@ py_test(
 )
 
 py_test(
-    name="test_method_chaining",
+    name = "test_method_chaining",
     srcs = ["test_method_chaining.py"],
     deps = [
         "//snowflake/ml/modeling/linear_model:logistic_regression",
         "//snowflake/ml/utils:connection_params",
-    ]
+    ],
 )
 
 py_test(
-    name="test_non_numeric_target",
+    name = "test_non_numeric_target",
     srcs = ["test_non_numeric_target.py"],
     deps = [
         "//snowflake/ml/modeling/ensemble:random_forest_classifier",
         "//snowflake/ml/utils:connection_params",
-    ]
+    ],
+)
+
+py_test(
+    name = "test_quoted_identifier",
+    timeout = "long",
+    srcs = ["test_quoted_identifier.py"],
+    shard_count = 4,
+    deps = [
+        "//snowflake/ml/modeling/compose:column_transformer",
+        "//snowflake/ml/modeling/ensemble:random_forest_classifier",
+        "//snowflake/ml/modeling/framework",
+        "//snowflake/ml/modeling/impute:simple_imputer",
+        "//snowflake/ml/modeling/model_selection:randomized_search_cv",
+        "//snowflake/ml/modeling/pipeline",
+        "//snowflake/ml/modeling/preprocessing:min_max_scaler",
+        "//snowflake/ml/modeling/preprocessing:one_hot_encoder",
+        "//snowflake/ml/modeling/preprocessing:ordinal_encoder",
+        "//snowflake/ml/modeling/preprocessing:standard_scaler",
+        "//snowflake/ml/utils:connection_params",
+    ],
 )

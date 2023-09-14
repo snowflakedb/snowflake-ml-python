@@ -1,6 +1,3 @@
-#
-# Copyright (c) 2012-2022 Snowflake Computing Inc. All rights reserved.
-#
 import pytest
 from absl.testing.absltest import TestCase, main
 from snowflake.ml.modeling.linear_model.logistic_regression import LogisticRegression

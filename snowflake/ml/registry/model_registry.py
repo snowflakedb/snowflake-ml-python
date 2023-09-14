@@ -37,6 +37,7 @@ from snowflake.ml.model import (
 )
 from snowflake.ml.registry import _ml_artifact, _schema
 from snowflake.ml.training_dataset import training_dataset
+from snowflake.snowpark._internal import utils as snowpark_utils
 
 if TYPE_CHECKING:
     import pandas as pd
@@ -116,7 +117,7 @@ def _create_registry_schema(
 
     if len(registry_schemas) > 0:
         logging.warning(
-            f"The schema {table_manager.get_fully_qualified_schema_name(database_name, schema_name)}already exists. "
+            f"The schema {table_manager.get_fully_qualified_schema_name(database_name, schema_name)} already exists. "
             + "Skipping creation."
         )
         return
@@ -367,6 +368,8 @@ class ModelRegistry:
             schema_name: Desired name of the schema used by this model registry inside the database.
             create_if_not_exists: create model registry if it's not exists already.
         """
+        statement_params = self._get_statement_params(inspect.currentframe())
+
         if create_if_not_exists:
             create_model_registry(session=session, database_name=database_name, schema_name=schema_name)
 
@@ -386,11 +389,11 @@ class ModelRegistry:
         # TODO(zhe): Use a temporary table to replace the in-memory cache.
         self._temporary_deployments: Dict[str, _deployer.Deployment] = {}
 
-        self._check_access()
+        self._check_access(statement_params)
 
     # Private methods
 
-    def _check_access(self) -> None:
+    def _check_access(self, statement_params: Dict[str, Any]) -> None:
         """Check access db/schema/tables."""
         # Check that the required tables exist and are accessible by the current role.
 
@@ -406,7 +409,19 @@ class ModelRegistry:
         table_manager.validate_table_exist(
             self._session, identifier.get_unescaped_names(self._registry_table), self._fully_qualified_schema_name()
         )
-        self._validate_registry_table_schema(add_if_not_exists=["TRAINING_DATASET_ID"])
+
+        schema_remains_same = self._validate_registry_table_schema(add_if_not_exists=["TRAINING_DATASET_ID"])
+        if not schema_remains_same:
+            _create_registry_views(
+                self._session,
+                self._name,
+                self._schema,
+                self._registry_table,
+                self._metadata_table,
+                self._deployment_table,
+                self._artifact_table,
+                statement_params,
+            )
 
         table_manager.validate_table_exist(
             self._session, identifier.get_unescaped_names(self._metadata_table), self._fully_qualified_schema_name()
@@ -420,11 +435,14 @@ class ModelRegistry:
 
     # TODO checks type as well. note type in _schema doesn't match with it appears in 'DESC TABLE'.
     # We need another layer of mapping. This function can also be extended to other tables as well.
-    def _validate_registry_table_schema(self, add_if_not_exists: List[str]) -> None:
-        """Validate the table schema to check for any missing columns.
+    def _validate_registry_table_schema(self, add_if_not_exists: List[str]) -> bool:
+        """Validate the table schema and check for any missing columns.
 
         Args:
             add_if_not_exists: column names that will be created if not found in existing tables.
+
+        Returns:
+            True if table schema remains, False otherwise.
 
         Raises:
             TypeError: required column not exists in schema table and not defined in add_if_not_exists.
@@ -439,6 +457,7 @@ class ModelRegistry:
         for row in actual_table_rows:
             actual_schema_dict[row["name"]] = row["type"]
 
+        schema_remains_same = True
         for col_name, col_type in _schema._REGISTRY_TABLE_SCHEMA:
             if col_name not in actual_schema_dict:
                 if col_name not in add_if_not_exists:
@@ -451,6 +470,9 @@ class ModelRegistry:
                         f"""ALTER TABLE {self._fully_qualified_registry_table_name()}
                                 ADD COLUMN {col_name} {col_type}"""
                     ).collect()
+                    schema_remains_same = False
+
+        return schema_remains_same
 
     def _get_statement_params(self, frame: Optional[types.FrameType]) -> Dict[str, Any]:
         return telemetry.get_function_usage_statement_params(
@@ -469,6 +491,10 @@ class ModelRegistry:
     def _fully_qualified_registry_table_name(self) -> str:
         """Get the fully qualified name to the current registry table."""
         return table_manager.get_fully_qualified_table_name(self._name, self._schema, self._registry_table)
+
+    def _fully_qualified_registry_view_name(self) -> str:
+        """Get the fully qualified name to the current registry view."""
+        return table_manager.get_fully_qualified_table_name(self._name, self._schema, self._registry_table_view)
 
     def _fully_qualified_metadata_table_name(self) -> str:
         """Get the fully qualified name to the current metadata table."""
@@ -969,7 +995,7 @@ class ModelRegistry:
                 artifact_type=_ml_artifact.ArtifactType.TRAINING_DATASET,
                 artifact_name=training_dataset.id(),
                 artifact_version="",
-                artifact_spec=training_dataset.to_dict(),
+                artifact_spec=json.loads(training_dataset.to_json()),
             )
             new_model["TRAINING_DATASET_ID"] = training_dataset.id()
         else:
@@ -1136,7 +1162,7 @@ class ModelRegistry:
         subproject=_TELEMETRY_SUBPROJECT,
     )
     @snowpark._internal.utils.private_preview(version="0.2.0")
-    def get_tags(self, model_name: str = None, model_version: str = None) -> Dict[str, Any]:
+    def get_tags(self, model_name: Optional[str] = None, model_version: Optional[str] = None) -> Dict[str, Any]:
         """Get all tags and values stored for the target model.
 
         Args:
@@ -1588,7 +1614,9 @@ class ModelRegistry:
         # encrypted model zip from model stage to the temporary unencrypted stage.
         if not permanent and platform == deploy_platforms.TargetPlatform.WAREHOUSE:
             schema = self._fully_qualified_schema_name()
-            unencrypted_stage = f"@{schema}.TEMP_UNENCRYPTED_{self._get_new_unique_identifier()}"
+            unencrypted_stage = (
+                f"@{schema}.{snowpark_utils.random_name_for_temp_object(snowpark_utils.TempObjectType.STAGE)}"
+            )
             self._session.sql(f"CREATE TEMPORARY STAGE {unencrypted_stage[1:]}").collect()
             try:
                 self._session.sql(f"COPY FILES INTO {unencrypted_stage} from {remote_model_path}").collect()
@@ -1683,7 +1711,7 @@ class ModelRegistry:
             model_version: Model Version string.
 
         Returns:
-            A snowpark dataframe that contains all artifacts that assoicated with the given model.
+            A snowpark dataframe that contains all artifacts that associated with the given model.
         """
         artifacts = (
             self._session.sql(f"SELECT * FROM {self._fully_qualified_artifact_view_name()}")
@@ -2018,14 +2046,24 @@ class ModelReference:
         # If there is no hit, we try to search the remote deployment table.
         di = self._registry._temporary_deployments.get(deployment_name)
 
+        statement_params = telemetry.get_function_usage_statement_params(
+            project=_TELEMETRY_PROJECT,
+            subproject=_TELEMETRY_SUBPROJECT,
+            function_name=telemetry.get_statement_params_full_func_name(
+                inspect.currentframe(), self.__class__.__name__
+            ),
+        )
+
         if di:
-            return _deployer.predict(session=self._registry._session, deployment=di, X=data)
+            return _deployer.predict(
+                session=self._registry._session, deployment=di, X=data, statement_params=statement_params
+            )
 
         try:
             # Mypy enforce to refer to the registry for calling the function
             deployment = self._registry.get_deployment(
                 self._model_name, self._model_version, deployment_name=deployment_name
-            ).collect()[0]
+            ).collect(statement_params=statement_params)[0]
             platform = deploy_platforms.TargetPlatform(deployment["TARGET_PLATFORM"])
             target_method = deployment["TARGET_METHOD"]
             signature = model_signature.ModelSignature.from_dict(json.loads(deployment["SIGNATURE"]))
@@ -2047,7 +2085,9 @@ class ModelReference:
                 signature=signature,
                 options=options,
             )
-            return _deployer.predict(session=self._registry._session, deployment=di, X=data)
+            return _deployer.predict(
+                session=self._registry._session, deployment=di, X=data, statement_params=statement_params
+            )
         except KeyError:
             raise ValueError(f"The deployment with name {deployment_name} haven't been deployed")
 

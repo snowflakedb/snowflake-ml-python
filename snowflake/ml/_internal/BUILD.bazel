@@ -5,7 +5,7 @@ package(default_visibility = ["//visibility:public"])
 py_library(
     name = "env",
     srcs = ["env.py"],
-    deps = ["//snowflake/ml:version"]
+    deps = ["//snowflake/ml:version"],
 )
 
 py_library(
@@ -37,8 +37,8 @@ py_library(
     name = "env_utils",
     srcs = ["env_utils.py"],
     deps = [
-        "//snowflake/ml/_internal/utils:query_result_checker",
         ":env",
+        "//snowflake/ml/_internal/utils:query_result_checker",
     ],
 )
 
@@ -46,8 +46,8 @@ py_test(
     name = "env_utils_test",
     srcs = ["env_utils_test.py"],
     deps = [
-        ":env_utils",
         ":env",
+        ":env_utils",
         "//snowflake/ml/test_utils:mock_data_frame",
         "//snowflake/ml/test_utils:mock_session",
     ],
@@ -58,7 +58,7 @@ py_library(
     srcs = ["telemetry.py"],
     deps = [
         "//snowflake/ml/_internal:env",
-        "//snowflake/ml/_internal/exceptions:exceptions",
+        "//snowflake/ml/_internal/exceptions",
     ],
 )
 
@@ -68,6 +68,6 @@ py_test(
     deps = [
         ":telemetry",
         "//snowflake/ml/_internal:env",
-        "//snowflake/ml/_internal/exceptions:exceptions",
+        "//snowflake/ml/_internal/exceptions",
     ],
 )

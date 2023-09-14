@@ -7,7 +7,7 @@ py_library(
     testonly = True,
     srcs = ["exception_utils.py"],
     deps = [
-        "//snowflake/ml/_internal/exceptions:exceptions",
+        "//snowflake/ml/_internal/exceptions",
     ],
 )
 

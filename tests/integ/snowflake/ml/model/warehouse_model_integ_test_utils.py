@@ -1,10 +1,6 @@
-#
-# Copyright (c) 2012-2022 Snowflake Computing Inc. All rights reserved.
-#
-
 import posixpath
 import unittest
-from typing import Any, Callable, Dict, Literal, Optional, Tuple, Union
+from typing import Any, Callable, Dict, List, Literal, Optional, Tuple, Union
 
 import numpy as np
 import numpy.typing as npt
@@ -33,12 +29,15 @@ def base_test_case(
     deploy_params: Dict[str, Tuple[Dict[str, Any], Callable[[Union[pd.DataFrame, SnowparkDataFrame]], Any]]],
     permanent_deploy: Optional[bool] = False,
     test_released_version: Optional[str] = None,
+    additional_dependencies: Optional[List[str]] = None,
 ) -> None:
     version_args: Dict[str, Any] = {}
     tmp_stage = db._session.get_session_stage()
     conda_dependencies = [
         test_env_utils.get_latest_package_versions_in_server(db._session, "snowflake-snowpark-python")
     ]
+    if additional_dependencies:
+        conda_dependencies.extend(additional_dependencies)
     # We only test when the test is added before the current version available in the server.
     snowml_req_str = test_env_utils.get_latest_package_versions_in_server(db._session, "snowflake-ml-python")
 

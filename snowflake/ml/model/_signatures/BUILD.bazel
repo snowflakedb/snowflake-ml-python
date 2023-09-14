@@ -178,8 +178,8 @@ py_test(
     deps = [
         ":core",
         ":snowpark_handler",
-        "//snowflake/ml/test_utils:exception_utils",
         "//snowflake/ml/model:model_signature",
+        "//snowflake/ml/test_utils:exception_utils",
         "//snowflake/ml/utils:connection_params",
     ],
 )

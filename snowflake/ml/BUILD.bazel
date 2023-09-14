@@ -1,6 +1,7 @@
 load("//bazel:py_rules.bzl", "py_library", "snowml_wheel")
-load(":version.bzl", "VERSION")
 load(":requirements.bzl", "EXTRA_REQUIREMENTS", "REQUIREMENTS")
+load(":version.bzl", "VERSION")
+
 package(default_visibility = ["//visibility:public"])
 
 exports_files(["requirements.bzl"])

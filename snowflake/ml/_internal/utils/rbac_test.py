@@ -13,7 +13,7 @@ class RbacTest(absltest.TestCase):
     """Testing RBAC utils."""
 
     def setUp(self) -> None:
-        """Creates Snowpark and Snowflake environemnts for testing."""
+        """Creates Snowpark and Snowflake environments for testing."""
         self._session = mock_session.MockSession(conn=None, test_case=self)
 
     def tearDown(self) -> None:

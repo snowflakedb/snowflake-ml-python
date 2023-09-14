@@ -1,8 +1,14 @@
-load("//bazel:py_rules.bzl", "py_library")
+load("//bazel:py_rules.bzl", "py_library", "py_test")
 
 package(default_visibility = ["//visibility:public"])
 
 py_library(
     name = "huggingface_pipeline",
     srcs = ["huggingface_pipeline.py"],
+)
+
+py_test(
+    name = "huggingface_pipeline_test",
+    srcs = ["huggingface_pipeline_test.py"],
+    deps = [":huggingface_pipeline"],
 )

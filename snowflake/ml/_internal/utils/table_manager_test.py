@@ -11,7 +11,7 @@ class TableManagerTest(absltest.TestCase):
     """Testing table manager util functions."""
 
     def setUp(self) -> None:
-        """Creates Snowpark environemnts for testing."""
+        """Creates Snowpark environments for testing."""
         self._session = mock_session.MockSession(conn=None, test_case=self)
 
     def tearDown(self) -> None:

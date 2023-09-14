@@ -1,23 +1,23 @@
-load("//bazel:py_rules.bzl", "py_library", "py_binary")
+load("//bazel:py_rules.bzl", "py_binary", "py_library")
 
 package(default_visibility = ["//visibility:public"])
 
 filegroup(
     name = "templates",
     srcs = [
+        "init_template.py_template",
         "sklearn_wrapper_template.py_template",
         "transformer_autogen_test_template.py_template",
-        "init_template.py_template",
     ],
 )
 
 py_library(
     name = "codegen_lib",
     srcs = [
-        "sklearn_wrapper_generator.py",
         "sklearn_wrapper_autogen.py",
+        "sklearn_wrapper_generator.py",
     ],
-    deps = []
+    deps = [],
 )
 
 py_binary(
@@ -25,8 +25,8 @@ py_binary(
     srcs = [
         "estimator_autogen_tool.py",
     ],
-    deps = [":codegen_lib"],
     data = [
-        ":templates"
-    ]
+        ":templates",
+    ],
+    deps = [":codegen_lib"],
 )

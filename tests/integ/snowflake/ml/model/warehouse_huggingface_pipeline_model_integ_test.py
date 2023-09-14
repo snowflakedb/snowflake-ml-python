@@ -1,17 +1,15 @@
-#
-# Copyright (c) 2012-2022 Snowflake Computing Inc. All rights reserved.
-#
-
 import json
 import os
 import tempfile
 import uuid
-from typing import Any, Callable, Dict, Optional, Tuple, Union
+from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 import numpy as np
 import pandas as pd
 from absl.testing import absltest, parameterized
+from packaging import requirements
 
+from snowflake.ml._internal import env_utils
 from snowflake.ml.model import type_hints as model_types
 from snowflake.ml.utils import connection_params
 from snowflake.snowpark import DataFrame as SnowparkDataFrame, Session
@@ -46,7 +44,9 @@ class TestWarehouseHuggingFacehModelInteg(parameterized.TestCase):
             self.run_id, "deployment_stage"
         )
         self.full_qual_stage = self._db_manager.create_stage(
-            self.deploy_stage_name, schema_name=self._test_schema_name, sse_encrypted=False
+            self.deploy_stage_name,
+            schema_name=self._test_schema_name,
+            sse_encrypted=False,
         )
 
     @classmethod
@@ -63,9 +63,13 @@ class TestWarehouseHuggingFacehModelInteg(parameterized.TestCase):
         name: str,
         model: model_types.SupportedModelType,
         test_input: model_types.SupportedDataType,
-        deploy_params: Dict[str, Tuple[Dict[str, Any], Callable[[Union[pd.DataFrame, SnowparkDataFrame]], Any]]],
+        deploy_params: Dict[
+            str,
+            Tuple[Dict[str, Any], Callable[[Union[pd.DataFrame, SnowparkDataFrame]], Any]],
+        ],
         permanent_deploy: Optional[bool] = False,
         test_released_version: Optional[str] = None,
+        additional_dependencies: Optional[List[str]] = None,
     ) -> None:
         warehouse_model_integ_test_utils.base_test_case(
             self._db_manager,
@@ -78,9 +82,10 @@ class TestWarehouseHuggingFacehModelInteg(parameterized.TestCase):
             deploy_params=deploy_params,
             permanent_deploy=permanent_deploy,
             test_released_version=test_released_version,
+            additional_dependencies=additional_dependencies,
         )
 
-    @parameterized.product(permanent_deploy=[True], test_released_version=[None])  # type: ignore[misc]
+    @parameterized.product(permanent_deploy=[True, False], test_released_version=[None, "1.0.6"])  # type: ignore[misc]
     def test_conversational_pipeline(
         self,
         permanent_deploy: Optional[bool] = False,
@@ -126,7 +131,7 @@ class TestWarehouseHuggingFacehModelInteg(parameterized.TestCase):
             test_released_version=test_released_version,
         )
 
-    @parameterized.product(permanent_deploy=[True], test_released_version=[None])  # type: ignore[misc]
+    @parameterized.product(permanent_deploy=[True, False], test_released_version=[None, "1.0.6"])  # type: ignore[misc]
     def test_fill_mask_pipeline(
         self,
         permanent_deploy: Optional[bool] = False,
@@ -134,7 +139,11 @@ class TestWarehouseHuggingFacehModelInteg(parameterized.TestCase):
     ) -> None:
         import transformers
 
-        model = transformers.pipeline(task="fill-mask", model="distilroberta-base", top_k=1)
+        model = transformers.pipeline(
+            task="fill-mask",
+            model="sshleifer/tiny-distilroberta-base",
+            top_k=1,
+        )
 
         x_df = pd.DataFrame(
             [
@@ -168,7 +177,7 @@ class TestWarehouseHuggingFacehModelInteg(parameterized.TestCase):
             test_released_version=test_released_version,
         )
 
-    @parameterized.product(permanent_deploy=[True], test_released_version=[None])  # type: ignore[misc]
+    @parameterized.product(permanent_deploy=[True, False], test_released_version=[None, "1.0.6"])  # type: ignore[misc]
     def test_ner_pipeline(
         self,
         permanent_deploy: Optional[bool] = False,
@@ -176,7 +185,7 @@ class TestWarehouseHuggingFacehModelInteg(parameterized.TestCase):
     ) -> None:
         import transformers
 
-        model = transformers.pipeline(task="ner", model="dslim/bert-base-NER")
+        model = transformers.pipeline(task="ner", model="hf-internal-testing/tiny-bert-for-token-classification")
 
         x_df = pd.DataFrame(
             [
@@ -212,7 +221,7 @@ class TestWarehouseHuggingFacehModelInteg(parameterized.TestCase):
             test_released_version=test_released_version,
         )
 
-    @parameterized.product(permanent_deploy=[True], test_released_version=[None])  # type: ignore[misc]
+    @parameterized.product(permanent_deploy=[True, False], test_released_version=[None, "1.0.6"])  # type: ignore[misc]
     def test_question_answering_pipeline(
         self,
         permanent_deploy: Optional[bool] = False,
@@ -220,7 +229,11 @@ class TestWarehouseHuggingFacehModelInteg(parameterized.TestCase):
     ) -> None:
         import transformers
 
-        model = transformers.pipeline(task="question-answering", model="deepset/tinyroberta-squad2", top_k=1)
+        model = transformers.pipeline(
+            task="question-answering",
+            model="sshleifer/tiny-distilbert-base-cased-distilled-squad",
+            top_k=1,
+        )
 
         x_df = pd.DataFrame(
             [
@@ -257,7 +270,7 @@ class TestWarehouseHuggingFacehModelInteg(parameterized.TestCase):
             test_released_version=test_released_version,
         )
 
-    @parameterized.product(permanent_deploy=[True], test_released_version=[None])  # type: ignore[misc]
+    @parameterized.product(permanent_deploy=[True, False], test_released_version=[None, "1.0.6"])  # type: ignore[misc]
     def test_question_answering_pipeline_multiple_output(
         self,
         permanent_deploy: Optional[bool] = False,
@@ -265,7 +278,11 @@ class TestWarehouseHuggingFacehModelInteg(parameterized.TestCase):
     ) -> None:
         import transformers
 
-        model = transformers.pipeline(task="question-answering", model="deepset/tinyroberta-squad2", top_k=3)
+        model = transformers.pipeline(
+            task="question-answering",
+            model="sshleifer/tiny-distilbert-base-cased-distilled-squad",
+            top_k=3,
+        )
 
         x_df = pd.DataFrame(
             [
@@ -306,7 +323,7 @@ class TestWarehouseHuggingFacehModelInteg(parameterized.TestCase):
             test_released_version=test_released_version,
         )
 
-    @parameterized.product(permanent_deploy=[True], test_released_version=[None])  # type: ignore[misc]
+    @parameterized.product(permanent_deploy=[True, False], test_released_version=[None, "1.0.6"])  # type: ignore[misc]
     def test_summarization_pipeline(
         self,
         permanent_deploy: Optional[bool] = False,
@@ -314,7 +331,7 @@ class TestWarehouseHuggingFacehModelInteg(parameterized.TestCase):
     ) -> None:
         import transformers
 
-        model = transformers.pipeline(task="summarization", model="JulesBelveze/t5-small-headline-generator")
+        model = transformers.pipeline(task="summarization", model="sshleifer/tiny-mbart")
 
         x_df = pd.DataFrame(
             [
@@ -349,9 +366,12 @@ class TestWarehouseHuggingFacehModelInteg(parameterized.TestCase):
             },
             permanent_deploy=permanent_deploy,
             test_released_version=test_released_version,
+            additional_dependencies=[
+                str(env_utils.get_local_installed_version_of_pip_package(requirements.Requirement("sentencepiece")))
+            ],
         )
 
-    @parameterized.product(permanent_deploy=[True], test_released_version=[None])  # type: ignore[misc]
+    @parameterized.product(permanent_deploy=[True, False], test_released_version=[None, "1.0.6"])  # type: ignore[misc]
     def test_table_question_answering_pipeline(
         self,
         permanent_deploy: Optional[bool] = False,
@@ -359,7 +379,7 @@ class TestWarehouseHuggingFacehModelInteg(parameterized.TestCase):
     ) -> None:
         import transformers
 
-        model = transformers.pipeline(task="table-question-answering", model="google/tapas-small-finetuned-wtq")
+        model = transformers.pipeline(task="table-question-answering", model="google/tapas-tiny-finetuned-wtq")
 
         x_df = pd.DataFrame(
             [
@@ -367,10 +387,25 @@ class TestWarehouseHuggingFacehModelInteg(parameterized.TestCase):
                     "query": "Which channel has the most subscribers?",
                     "table": json.dumps(
                         {
-                            "Channel": ["A.I.Channel", "Kaguya Luna", "Mirai Akari", "Siro"],
-                            "Subscribers": ["3,020,000", "872,000", "694,000", "660,000"],
+                            "Channel": [
+                                "A.I.Channel",
+                                "Kaguya Luna",
+                                "Mirai Akari",
+                                "Siro",
+                            ],
+                            "Subscribers": [
+                                "3,020,000",
+                                "872,000",
+                                "694,000",
+                                "660,000",
+                            ],
                             "Videos": ["1,200", "113", "639", "1,300"],
-                            "Created At": ["Jun 30 2016", "Dec 4 2017", "Feb 28 2014", "Jun 23 2017"],
+                            "Created At": [
+                                "Jun 30 2016",
+                                "Dec 4 2017",
+                                "Feb 28 2014",
+                                "Jun 23 2017",
+                            ],
                         }
                     ),
                 }
@@ -401,7 +436,7 @@ class TestWarehouseHuggingFacehModelInteg(parameterized.TestCase):
             test_released_version=test_released_version,
         )
 
-    @parameterized.product(permanent_deploy=[True], test_released_version=[None])  # type: ignore[misc]
+    @parameterized.product(permanent_deploy=[True, False], test_released_version=[None, "1.0.6"])  # type: ignore[misc]
     def test_text_classification_pair_pipeline(
         self,
         permanent_deploy: Optional[bool] = False,
@@ -420,7 +455,6 @@ class TestWarehouseHuggingFacehModelInteg(parameterized.TestCase):
 
             self.assertEqual(res["label"].dtype.type, np.object_)
             self.assertEqual(res["score"].dtype.type, np.float64)
-            self.assertGreaterEqual(res["score"][0], 0.9)
 
         self.base_test_case(
             name="huggingface_text_classification_pair_pipeline",
@@ -436,7 +470,7 @@ class TestWarehouseHuggingFacehModelInteg(parameterized.TestCase):
             test_released_version=test_released_version,
         )
 
-    @parameterized.product(permanent_deploy=[True], test_released_version=[None])  # type: ignore[misc]
+    @parameterized.product(permanent_deploy=[True, False], test_released_version=[None, "1.0.6"])  # type: ignore[misc]
     def test_text_classification_pipeline(
         self,
         permanent_deploy: Optional[bool] = False,
@@ -444,10 +478,19 @@ class TestWarehouseHuggingFacehModelInteg(parameterized.TestCase):
     ) -> None:
         import transformers
 
-        model = transformers.pipeline(task="text-classification", model="SamLowe/roberta-base-go_emotions", top_k=1)
+        model = transformers.pipeline(
+            task="text-classification",
+            model="hf-internal-testing/tiny-random-distilbert",
+            top_k=1,
+        )
 
         x_df = pd.DataFrame(
-            [{"text": "I am wondering if I should have udon or rice for lunch", "text_pair": ""}],
+            [
+                {
+                    "text": "I am wondering if I should have udon or rice for lunch",
+                    "text_pair": "",
+                }
+            ],
         )
 
         def check_res(res: pd.DataFrame) -> None:
@@ -474,7 +517,7 @@ class TestWarehouseHuggingFacehModelInteg(parameterized.TestCase):
             test_released_version=test_released_version,
         )
 
-    @parameterized.product(permanent_deploy=[True], test_released_version=[None])  # type: ignore[misc]
+    @parameterized.product(permanent_deploy=[True, False], test_released_version=[None, "1.0.6"])  # type: ignore[misc]
     def test_text_generation_pipeline(
         self,
         permanent_deploy: Optional[bool] = False,
@@ -482,7 +525,10 @@ class TestWarehouseHuggingFacehModelInteg(parameterized.TestCase):
     ) -> None:
         import transformers
 
-        model = transformers.pipeline(task="text-generation", model="distilgpt2")
+        model = transformers.pipeline(
+            task="text-generation",
+            model="sshleifer/tiny-ctrl",
+        )
 
         x_df = pd.DataFrame(
             [['A descendant of the Lost City of Atlantis, who swam to Earth while saying, "']],
@@ -511,7 +557,7 @@ class TestWarehouseHuggingFacehModelInteg(parameterized.TestCase):
             test_released_version=test_released_version,
         )
 
-    @parameterized.product(permanent_deploy=[True], test_released_version=[None])  # type: ignore[misc]
+    @parameterized.product(permanent_deploy=[True, False], test_released_version=[None, "1.0.6"])  # type: ignore[misc]
     def test_text2text_generation_pipeline(
         self,
         permanent_deploy: Optional[bool] = False,
@@ -519,7 +565,10 @@ class TestWarehouseHuggingFacehModelInteg(parameterized.TestCase):
     ) -> None:
         import transformers
 
-        model = transformers.pipeline(task="text2text-generation", model="google/flan-t5-small")
+        model = transformers.pipeline(
+            task="text2text-generation",
+            model="patrickvonplaten/t5-tiny-random",
+        )
 
         x_df = pd.DataFrame(
             [['A descendant of the Lost City of Atlantis, who swam to Earth while saying, "']],
@@ -543,7 +592,7 @@ class TestWarehouseHuggingFacehModelInteg(parameterized.TestCase):
             test_released_version=test_released_version,
         )
 
-    @parameterized.product(permanent_deploy=[True], test_released_version=[None])  # type: ignore[misc]
+    @parameterized.product(permanent_deploy=[True, False], test_released_version=[None, "1.0.6"])  # type: ignore[misc]
     def test_translation_pipeline(
         self,
         permanent_deploy: Optional[bool] = False,
@@ -551,7 +600,7 @@ class TestWarehouseHuggingFacehModelInteg(parameterized.TestCase):
     ) -> None:
         import transformers
 
-        model = transformers.pipeline(task="translation_en_to_ja", model="t5-small")
+        model = transformers.pipeline(task="translation_en_to_ja", model="patrickvonplaten/t5-tiny-random")
 
         x_df = pd.DataFrame(
             [
@@ -588,7 +637,7 @@ class TestWarehouseHuggingFacehModelInteg(parameterized.TestCase):
             test_released_version=test_released_version,
         )
 
-    @parameterized.product(permanent_deploy=[True], test_released_version=[None])  # type: ignore[misc]
+    @parameterized.product(permanent_deploy=[True, False], test_released_version=[None, "1.0.6"])  # type: ignore[misc]
     def test_zero_shot_classification_pipeline(
         self,
         permanent_deploy: Optional[bool] = False,
@@ -596,7 +645,10 @@ class TestWarehouseHuggingFacehModelInteg(parameterized.TestCase):
     ) -> None:
         import transformers
 
-        model = transformers.pipeline(task="zero-shot-classification", model="cross-encoder/nli-distilroberta-base")
+        model = transformers.pipeline(
+            task="zero-shot-classification",
+            model="sshleifer/tiny-distilbert-base-cased-distilled-squad",
+        )
 
         x_df = pd.DataFrame(
             [
@@ -614,11 +666,17 @@ class TestWarehouseHuggingFacehModelInteg(parameterized.TestCase):
         def check_res(res: pd.DataFrame) -> None:
             pd.testing.assert_index_equal(res.columns, pd.Index(["sequence", "labels", "scores"]))
             self.assertEqual(res["sequence"].dtype.type, np.object_)
-            self.assertEqual(res["sequence"][0], "I have a problem with Snowflake that needs to be resolved asap!!")
-            self.assertEqual(res["sequence"][1], "I have a problem with Snowflake that needs to be resolved asap!!")
+            self.assertEqual(
+                res["sequence"][0],
+                "I have a problem with Snowflake that needs to be resolved asap!!",
+            )
+            self.assertEqual(
+                res["sequence"][1],
+                "I have a problem with Snowflake that needs to be resolved asap!!",
+            )
             self.assertEqual(res["labels"].dtype.type, np.object_)
-            self.assertListEqual(res["labels"][0], ["urgent", "not urgent"])
-            self.assertListEqual(res["labels"][1], ["English", "Japanese"])
+            self.assertListEqual(sorted(res["labels"][0]), sorted(["urgent", "not urgent"]))
+            self.assertListEqual(sorted(res["labels"][1]), sorted(["English", "Japanese"]))
             self.assertEqual(res["scores"].dtype.type, np.object_)
             self.assertIsInstance(res["labels"][0], list)
             self.assertIsInstance(res["labels"][1], list)

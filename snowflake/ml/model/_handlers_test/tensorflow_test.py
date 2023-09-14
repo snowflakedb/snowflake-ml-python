@@ -1,0 +1,205 @@
+import os
+import tempfile
+import warnings
+from typing import Optional, Tuple
+
+import numpy as np
+import tensorflow as tf
+from absl.testing import absltest
+
+from snowflake.ml.model import _model as model_api, model_signature
+from snowflake.ml.model._signatures import (
+    tensorflow_handler,
+    utils as model_signature_utils,
+)
+
+
+class SimpleModule(tf.Module):
+    def __init__(self, name: Optional[str] = None) -> None:
+        super().__init__(name=name)
+        self.a_variable = tf.Variable(5.0, name="train_me")
+        self.non_trainable_variable = tf.Variable(5.0, trainable=False, name="do_not_train_me")
+
+    @tf.function  # type: ignore[misc]
+    def __call__(self, tensor: tf.Tensor) -> tf.Tensor:
+        return self.a_variable * tensor + self.non_trainable_variable
+
+
+class KerasModel(tf.keras.Model):
+    def __init__(self, n_hidden: int, n_out: int) -> None:
+        super().__init__()
+        self.fc_1 = tf.keras.layers.Dense(n_hidden, activation="relu")
+        self.fc_2 = tf.keras.layers.Dense(n_out, activation="sigmoid")
+
+    def call(self, tensors: tf.Tensor) -> tf.Tensor:
+        input = tensors
+        x = self.fc_1(input)
+        x = self.fc_2(x)
+        return x
+
+
+def _prepare_keras_model(
+    dtype: tf.dtypes.DType = tf.float32,
+) -> Tuple[tf.keras.Model, tf.Tensor, tf.Tensor]:
+    n_input, n_hidden, n_out, batch_size, learning_rate = 10, 15, 1, 100, 0.01
+    x = np.random.rand(batch_size, n_input)
+    data_x = tf.convert_to_tensor(x, dtype=dtype)
+    raw_data_y = tf.random.uniform((batch_size, 1))
+    raw_data_y = tf.where(raw_data_y > 0.5, tf.ones_like(raw_data_y), tf.zeros_like(raw_data_y))
+    data_y = tf.cast(raw_data_y, dtype=dtype)
+
+    model = KerasModel(n_hidden, n_out)
+    model.compile(
+        optimizer=tf.keras.optimizers.SGD(learning_rate=learning_rate), loss=tf.keras.losses.MeanSquaredError()
+    )
+    model.fit(data_x, data_y, batch_size=batch_size, epochs=100)
+    return model, data_x, data_y
+
+
+class TensorflowHandlerTest(absltest.TestCase):
+    def test_tensorflow(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            simple_module = SimpleModule(name="simple")
+            x = tf.constant([[5.0], [10.0]])
+            y_pred = simple_module(x)
+            s = {"__call__": model_signature.infer_signature([x], [y_pred])}
+            with self.assertRaises(ValueError):
+                model_api._save(
+                    name="model1",
+                    local_dir_path=os.path.join(tmpdir, "model1"),
+                    model=simple_module,
+                    signatures={**s, "another_forward": s["__call__"]},
+                    metadata={"author": "halu", "version": "1"},
+                )
+
+            model_api._save(
+                name="model1",
+                local_dir_path=os.path.join(tmpdir, "model1"),
+                model=simple_module,
+                signatures=s,
+                metadata={"author": "halu", "version": "1"},
+            )
+
+            x_df = model_signature_utils.rename_pandas_df(
+                tensorflow_handler.SeqOfTensorflowTensorHandler.convert_to_df(data=[x], ensure_serializable=False),
+                s["__call__"].inputs,
+            )
+
+            with warnings.catch_warnings():
+                warnings.simplefilter("error")
+
+                m, _ = model_api._load(local_dir_path=os.path.join(tmpdir, "model1"))
+                assert callable(m)
+                tf.assert_equal(m.__call__(x), y_pred)
+                m_udf, _ = model_api._load(local_dir_path=os.path.join(tmpdir, "model1"), as_custom_model=True)
+                assert callable(m_udf)
+                tf.assert_equal(
+                    tensorflow_handler.SeqOfTensorflowTensorHandler.convert_from_df(m_udf(x_df), s["__call__"].outputs)[
+                        0
+                    ],
+                    y_pred,
+                )
+
+            model_api._save(
+                name="model1_no_sig_1",
+                local_dir_path=os.path.join(tmpdir, "model1_no_sig_1"),
+                model=simple_module,
+                sample_input=[x],
+                metadata={"author": "halu", "version": "1"},
+            )
+
+            m, _ = model_api._load(local_dir_path=os.path.join(tmpdir, "model1_no_sig_1"))
+            assert callable(m)
+            tf.assert_equal(m(x), y_pred)
+            m_udf, _ = model_api._load(local_dir_path=os.path.join(tmpdir, "model1_no_sig_1"), as_custom_model=True)
+            assert callable(m_udf)
+            tf.assert_equal(
+                tensorflow_handler.SeqOfTensorflowTensorHandler.convert_from_df(m_udf(x_df), s["__call__"].outputs)[0],
+                y_pred,
+            )
+
+            model_api._save(
+                name="model1_no_sig_2",
+                local_dir_path=os.path.join(tmpdir, "model1_no_sig_2"),
+                model=simple_module,
+                sample_input=x_df,
+                metadata={"author": "halu", "version": "1"},
+            )
+
+            m_udf, _ = model_api._load(local_dir_path=os.path.join(tmpdir, "model1_no_sig_2"), as_custom_model=True)
+            assert callable(m_udf)
+            tf.assert_equal(
+                tensorflow_handler.SeqOfTensorflowTensorHandler.convert_from_df(m_udf(x_df), s["__call__"].outputs)[0],
+                y_pred,
+            )
+
+    def test_tensorflow_keras(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            model, data_x, data_y = _prepare_keras_model()
+            s = {"predict": model_signature.infer_signature([data_x], [data_y])}
+            with self.assertRaises(ValueError):
+                model_api._save(
+                    name="model1",
+                    local_dir_path=os.path.join(tmpdir, "model1"),
+                    model=model,
+                    signatures={**s, "another_forward": s["predict"]},
+                    metadata={"author": "halu", "version": "1"},
+                )
+
+            model_api._save(
+                name="model1",
+                local_dir_path=os.path.join(tmpdir, "model1"),
+                model=model,
+                signatures=s,
+                metadata={"author": "halu", "version": "1"},
+            )
+
+            y_pred = model.predict(data_x)
+
+            x_df = model_signature_utils.rename_pandas_df(
+                tensorflow_handler.SeqOfTensorflowTensorHandler.convert_to_df([data_x], ensure_serializable=False),
+                s["predict"].inputs,
+            )
+
+            with warnings.catch_warnings():
+                warnings.simplefilter("error")
+
+                m, _ = model_api._load(local_dir_path=os.path.join(tmpdir, "model1"))
+                assert isinstance(m, tf.keras.Model)
+                tf.debugging.assert_near(m.predict(data_x), y_pred)
+                m_udf, _ = model_api._load(local_dir_path=os.path.join(tmpdir, "model1"), as_custom_model=True)
+                predict_method = getattr(m_udf, "predict", None)
+                assert callable(predict_method)
+                tf.debugging.assert_near(
+                    tensorflow_handler.SeqOfTensorflowTensorHandler.convert_from_df(
+                        predict_method(x_df), s["predict"].outputs
+                    )[0],
+                    y_pred,
+                )
+
+            model_api._save(
+                name="model1_no_sig_1",
+                local_dir_path=os.path.join(tmpdir, "model1_no_sig_1"),
+                model=model,
+                sample_input=[data_x],
+                metadata={"author": "halu", "version": "1"},
+            )
+
+            m, meta = model_api._load(local_dir_path=os.path.join(tmpdir, "model1_no_sig_1"))
+            assert isinstance(m, tf.keras.Model)
+            tf.debugging.assert_near(m.predict(data_x), y_pred)
+            self.assertEqual(s["predict"], meta.signatures["predict"])
+
+            m_udf, _ = model_api._load(local_dir_path=os.path.join(tmpdir, "model1_no_sig_1"), as_custom_model=True)
+            predict_method = getattr(m_udf, "predict", None)
+            assert callable(predict_method)
+            tf.debugging.assert_near(
+                tensorflow_handler.SeqOfTensorflowTensorHandler.convert_from_df(
+                    predict_method(x_df), s["predict"].outputs
+                )[0],
+                y_pred,
+            )
+
+
+if __name__ == "__main__":
+    absltest.main()

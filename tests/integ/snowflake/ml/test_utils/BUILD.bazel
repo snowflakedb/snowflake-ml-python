@@ -8,7 +8,7 @@ py_library(
     srcs = ["db_manager.py"],
     deps = [
         "//snowflake/ml/_internal/utils:identifier",
-        "//snowflake/ml/model/_deploy_client/utils:constants"
+        "//snowflake/ml/model/_deploy_client/utils:constants",
     ],
 )
 
@@ -22,7 +22,7 @@ py_library(
         "//snowflake/ml/modeling/preprocessing:min_max_scaler",
         "//snowflake/ml/modeling/preprocessing:one_hot_encoder",
         "//snowflake/ml/modeling/xgboost:xgb_classifier",
-    ]
+    ],
 )
 
 py_library(
@@ -30,7 +30,7 @@ py_library(
     testonly = True,
     srcs = ["test_env_utils.py"],
     deps = [
-        "//snowflake/ml/_internal/utils:query_result_checker",
         "//snowflake/ml/_internal:env",
+        "//snowflake/ml/_internal/utils:query_result_checker",
     ],
 )

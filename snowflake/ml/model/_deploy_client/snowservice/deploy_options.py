@@ -2,6 +2,10 @@ import inspect
 import logging
 from typing import Any, Dict, Optional
 
+from snowflake.ml._internal.exceptions import (
+    error_codes,
+    exceptions as snowml_exceptions,
+)
 from snowflake.ml.model._deploy_client.utils import constants
 
 
@@ -66,7 +70,7 @@ class SnowServiceDeployOptions:
             options_dict: The dict containing various deployment options.
 
         Raises:
-            ValueError: When required option is missing.
+            SnowflakeMLException: When required option is missing.
 
         Returns:
             A SnowServiceDeployOptions object
@@ -74,7 +78,12 @@ class SnowServiceDeployOptions:
         required_options = [constants.COMPUTE_POOL]
         missing_keys = [key for key in required_options if options_dict.get(key) is None]
         if missing_keys:
-            raise ValueError(f"Must provide options when deploying to SnowService: {', '.join(missing_keys)}")
+            raise snowml_exceptions.SnowflakeMLException(
+                error_code=error_codes.INVALID_ARGUMENT,
+                original_exception=ValueError(
+                    f"Must provide options when deploying to Snowpark Container Services: {', '.join(missing_keys)}"
+                ),
+            )
         supported_options_keys = inspect.signature(cls.__init__).parameters.keys()
         filtered_options = {k: v for k, v in options_dict.items() if k in supported_options_keys}
         return cls(**filtered_options)

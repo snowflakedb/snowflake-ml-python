@@ -13,7 +13,7 @@ class SFFileSystemTest(absltest.TestCase):
         self.mock_connection._session_parameters = absltest.mock.Mock()
 
     def test_init_sf_file_system(self) -> None:
-        """Test if the FS could be initilized with a snowpark session or a snowflake python connection."""
+        """Test if the FS could be initialized with a snowpark session or a snowflake python connection."""
 
         # Manually add some missing artifacts to make sure the success of creating the snowpark session
         self.mock_connection.is_closed.return_value = False
@@ -33,7 +33,7 @@ class SFFileSystemTest(absltest.TestCase):
             ('@testdb$."test""s""chema"._foo/', "testdb$", '"test""s""chema"', "_foo", ""),
             ("@test1db.test$schema.foo/nytrain/", "test1db", "test$schema", "foo", "nytrain/"),
             ("@test_db.test_schema.foo/nytrain/1.txt", "test_db", "test_schema", "foo", "nytrain/1.txt"),
-            ('@test_d$b."test.schema".fo$_o/nytrain/', "test_d$b", '"test.schema"', "fo$_o", "nytrain/"),
+            ('@test_d$b."test.schema".foo$_o/nytrain/', "test_d$b", '"test.schema"', "foo$_o", "nytrain/"),
             (
                 '@"идентификатор"."test schema"."f.o_o1"/nytrain/',
                 '"идентификатор"',

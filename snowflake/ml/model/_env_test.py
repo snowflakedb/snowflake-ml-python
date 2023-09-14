@@ -57,9 +57,9 @@ class EnvTest(absltest.TestCase):
             )
             env_file_path = _env.save_conda_env_file(tmpdir, cd)
             with open(env_file_path, encoding="utf-8") as f:
-                writed_yaml = yaml.safe_load(f)
+                written_yaml = yaml.safe_load(f)
             self.assertDictEqual(
-                writed_yaml,
+                written_yaml,
                 {
                     "name": "snow-env",
                     "channels": ["https://repo.anaconda.com/pkgs/snowflake", "conda-forge", "apple", "nodefaults"],

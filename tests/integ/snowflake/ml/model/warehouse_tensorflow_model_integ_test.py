@@ -1,7 +1,3 @@
-#
-# Copyright (c) 2012-2022 Snowflake Computing Inc. All rights reserved.
-#
-
 import uuid
 from typing import Any, Callable, Dict, Optional, Tuple, Union
 
@@ -23,7 +19,7 @@ from tests.integ.snowflake.ml.test_utils import db_manager, model_factory
 
 
 class SimpleModule(tf.Module):
-    def __init__(self, name: str = None) -> None:
+    def __init__(self, name: Optional[str] = None) -> None:
         super().__init__(name=name)
         self.a_variable = tf.Variable(5.0, name="train_me")
         self.non_trainable_variable = tf.Variable(5.0, trainable=False, name="do_not_train_me")

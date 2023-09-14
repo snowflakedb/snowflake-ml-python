@@ -158,7 +158,7 @@ class SnowflakeLoginOptionsTest(absltest.TestCase):  # # type: ignore
             self.assertEqual(params, expected)
 
     def testAllOptionalFieldsMissing(self) -> None:
-        """Tests if ommitting all optional fields parses correctly."""
+        """Tests if omitting all optional fields parses correctly."""
         minimal_login_file = tempfile.NamedTemporaryFile(suffix=".config")
         minimal_login_file.write(
             bytes(

@@ -30,9 +30,9 @@ class _RecordBatchesBuffer:
         self.num_rows += rb.num_rows
 
     def popleft(self) -> pa.RecordBatch:
-        poped = self.buffer.popleft()
-        self.num_rows -= poped.num_rows
-        return poped
+        popped = self.buffer.popleft()
+        self.num_rows -= popped.num_rows
+        return popped
 
 
 class ParquetParser:
@@ -44,7 +44,7 @@ class ParquetParser:
         batch_size: Specifies the size of each batch that will be yield
         shuffle: Whether the data in the file will be shuffled. If set to be true, it will first randomly shuffle
             the order of files, and then shuflle the order of rows in each file.
-        drop_last_batch: Whehter the last batch of data should be dropped. If set to be true, then the last batch will
+        drop_last_batch: Whether the last batch of data should be dropped. If set to be true, then the last batch will
             get dropped if its size is smaller than the given batch_size.
 
     Returns:
@@ -131,7 +131,7 @@ def _merge_record_batches(record_batches: List[pa.RecordBatch]) -> pa.RecordBatc
 
 
 def _record_batch_to_arrays(rb: pa.RecordBatch) -> Dict[str, npt.NDArray[Any]]:
-    """Transfrom the record batch to a (string, numpy array) dict."""
+    """Transform the record batch to a (string, numpy array) dict."""
     batch_dict = {}
     for column, column_schema in zip(rb, rb.schema):
         # zero_copy_only=False because of nans. Ideally nans should have been imputed in feature engineering.

@@ -2,33 +2,59 @@ load("//bazel:py_rules.bzl", "py_test")
 
 py_test(
     name = "env_utils_integ_test",
-    srcs = ["env_utils_integ_test.py"],
     timeout = "long",
+    srcs = ["env_utils_integ_test.py"],
     deps = [
-        "//snowflake/ml/_internal:env_utils",
         "//snowflake/ml/_internal:env",
-        "//snowflake/ml/utils:connection_params"
+        "//snowflake/ml/_internal:env_utils",
+        "//snowflake/ml/utils:connection_params",
     ],
 )
 
 py_test(
     name = "grid_search_integ_test",
-    srcs = ["grid_search_integ_test.py"],
     timeout = "long",
+    srcs = ["grid_search_integ_test.py"],
     deps = [
+        "//snowflake/ml/modeling/ensemble:random_forest_classifier",
         "//snowflake/ml/modeling/model_selection/_internal:_grid_search_cv",
         "//snowflake/ml/modeling/svm:svr",
-        "//snowflake/ml/utils:connection_params"
+        "//snowflake/ml/utils:connection_params",
     ],
 )
 
 py_test(
     name = "randomized_search_integ_test",
-    srcs = ["randomized_search_integ_test.py"],
     timeout = "long",
+    srcs = ["randomized_search_integ_test.py"],
     deps = [
-        "//snowflake/ml/modeling/model_selection/_internal:_randomized_search_cv",
         "//snowflake/ml/modeling/ensemble:random_forest_classifier",
-        "//snowflake/ml/utils:connection_params"
+        "//snowflake/ml/modeling/model_selection/_internal:_randomized_search_cv",
+        "//snowflake/ml/utils:connection_params",
+    ],
+)
+
+py_test(
+    name = "snowpark_handlers_test",
+    timeout = "long",
+    srcs = ["snowpark_handlers_test.py"],
+    deps = [
+        "//snowflake/ml/modeling/_internal:snowpark_handlers",
+        "//snowflake/ml/utils:connection_params",
+    ],
+)
+
+py_test(
+    name = "grid_search_pipeline_test",
+    srcs = ["grid_search_pipeline_test.py"],
+    deps = [
+        "//snowflake/ml/modeling/compose:column_transformer",
+        "//snowflake/ml/modeling/linear_model:logistic_regression",
+        "//snowflake/ml/modeling/model_selection/_internal:_grid_search_cv",
+        "//snowflake/ml/modeling/pipeline",
+        "//snowflake/ml/modeling/preprocessing:label_encoder",
+        "//snowflake/ml/modeling/preprocessing:min_max_scaler",
+        "//snowflake/ml/modeling/preprocessing:one_hot_encoder",
+        "//snowflake/ml/utils:connection_params",
     ],
 )

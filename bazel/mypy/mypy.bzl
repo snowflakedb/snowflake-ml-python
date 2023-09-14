@@ -10,10 +10,10 @@ MyPyAspectInfo = provider(
     This aspect uses persistent worker to make full use of mypy's cache which is defined in main.py in the same
     directory. The mypy cache will be put into bazel's execroot/SnowML/,mypy_cache .""",
     fields = {
-        "exe": "Used to pass the rule implementation built exe back to calling aspect.",
         "args": "Used to pass the arguments sent to mypy executable.",
-        "runfiles": "Used to pass the inputs file for mypy executable.",
+        "exe": "Used to pass the rule implementation built exe back to calling aspect.",
         "out": "Used to pass the dummy output file back to calling aspect.",
+        "runfiles": "Used to pass the inputs file for mypy executable.",
     },
 )
 
@@ -119,9 +119,7 @@ def _mypy_rule_impl(ctx):
     src_root_path = src_root_path[0:(src_root_path.find(runfiles_name) + len(runfiles_name))]
 
     # arguments sent to mypy
-    args = [
-        "--enable-incomplete-features",
-    ] + ["--package-root", src_root_path, "--config-file", mypy_config_file.path] + [f.path for f in direct_src_run_files]
+    args = ["--cache-dir", ctx.bin_dir.path + "/.mypy_cache", "--package-root", src_root_path, "--config-file", mypy_config_file.path] + [f.path for f in direct_src_run_files]
 
     worker_arg_file = ctx.actions.declare_file(ctx.rule.attr.name + ".worker_args")
     ctx.actions.write(
@@ -155,8 +153,8 @@ def _mypy_aspect_impl(_, ctx):
         mnemonic = "MyPy",
         progress_message = "Type-checking %s" % ctx.label,
         execution_requirements = {
-            "supports-workers": "1",
             "requires-worker-protocol": "json",
+            "supports-workers": "1",
         },
         # out is required for worker to write the output.
         arguments = ["--out", aspect_info.out.path, "@" + aspect_info.args.path],

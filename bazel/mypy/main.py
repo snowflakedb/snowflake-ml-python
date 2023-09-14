@@ -1,6 +1,5 @@
 import argparse
 import json
-import os
 import subprocess
 import sys
 import tempfile
@@ -20,8 +19,6 @@ if __name__ == "__main__":
 
 """
 
-MYPY_CACHE_DIR = ".mypy_cache"
-
 
 def mypy_checker() -> None:
     # To parse the arguments that bazel provides.
@@ -34,8 +31,6 @@ def mypy_checker() -> None:
 
     args = parser.parse_args()
 
-    os.makedirs(MYPY_CACHE_DIR, exist_ok=True)
-
     with tempfile.NamedTemporaryFile(suffix=".py") as mypy_entrypoint:
         mypy_entrypoint.write(MYPY_ENTRYPOINT_CODE.encode())
         mypy_entrypoint.flush()
@@ -44,7 +39,6 @@ def mypy_checker() -> None:
             data = sys.stdin.readline()
             req = json.loads(data)
             mypy_args = req["arguments"]
-            mypy_args = ["--cache-dir", MYPY_CACHE_DIR] + mypy_args
             process = subprocess.Popen(
                 # We use this to make sure we are invoking mypy that is installed in the same environment of the current
                 # Python.
@@ -53,8 +47,16 @@ def mypy_checker() -> None:
                 stderr=subprocess.PIPE,
             )
             process.wait()
-            text, err = process.communicate()
-            message = text.decode() + err.decode()
+            text, _ = process.communicate()
+
+            if process.returncode:
+                header = "=" * 20 + " MYPY TYPE CHECKING REPORT BEGIN " + "=" * 20 + "\n"
+                footer = "=" * 20 + "  MYPY TYPE CHECKING REPORT END  " + "=" * 20 + "\n"
+
+                message = "".join([header, text.decode(), footer])
+            else:
+                message = ""
+
             with open(args.out, "w") as output:
                 output.write(message)
             sys.stderr.flush()

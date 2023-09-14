@@ -1,7 +1,3 @@
-#
-# Copyright (c) 2012-2022 Snowflake Computing Inc. All rights reserved.
-#
-
 import uuid
 from typing import Dict
 
@@ -358,7 +354,7 @@ class TestModelRegistryInteg(absltest.TestCase):
         )
 
     @pytest.mark.pip_incompatible
-    def test_log_model_with_traing_dataset(self) -> None:
+    def test_log_model_with_training_dataset(self) -> None:
         registry = model_registry.ModelRegistry(session=self._session, database_name=self.registry_name)
 
         model_name = "snowml_test_training_dataset"

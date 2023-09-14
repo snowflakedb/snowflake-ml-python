@@ -3,7 +3,7 @@ from __future__ import annotations  # for return self methods
 import functools
 from dataclasses import dataclass
 from types import TracebackType
-from typing import Any, TypeVar
+from typing import Any, Optional, TypeVar
 
 from snowflake.ml._internal.utils import formatting
 
@@ -99,7 +99,7 @@ class MockSnowMLBase:
             )
 
         # Statement params are used for telemetry only so we handle their matching separately. If
-        # check_statement_params is set, we will only validate the subset of entries given in the spected operation.
+        # check_statement_params is set, we will only validate the subset of entries given in the expected operation.
         # Any additional entries in statement_params will be ignored. If the expected statement_params are empty,
         # we will only validate the presence of statement_params in the call.
         if check_statement_params and mo.check_statement_params:
@@ -147,7 +147,7 @@ class MockSnowMLBase:
         operation: str,
         args: tuple[Any, ...] | None = None,
         kwargs: dict[str, Any] | None = None,
-        result: Any = None,
+        result: Optional[Any] = None,
         check_args: bool = True,
         check_kwargs: bool = True,
         # TODO(amauser): Set this to True after updating the tests.

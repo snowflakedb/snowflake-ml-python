@@ -6,13 +6,6 @@ class ResourceType(Enum):
     JOB = "job"
 
 
-"""
-Potential SnowService status based on existing ResourceSetStatus proto:
-
-github.com/snowflakedb/snowflake/blob/main/GlobalServices/src/main/protobuf/snowservices_resourceset_reconciler.proto
-"""
-
-
 class ResourceStatus(Enum):
     UNKNOWN = "UNKNOWN"  # status is unknown because we have not received enough data from K8s yet.
     PENDING = "PENDING"  # resource set is being created, can't be used yet
@@ -25,7 +18,7 @@ class ResourceStatus(Enum):
 
 
 RESOURCE_TO_STATUS_FUNCTION_MAPPING = {
-    ResourceType.SERVICE: "SYSTEM$GET_SNOWSERVICE_STATUS",
+    ResourceType.SERVICE: "SYSTEM$GET_SERVICE_STATUS",
     ResourceType.JOB: "SYSTEM$GET_JOB_STATUS",
 }
 

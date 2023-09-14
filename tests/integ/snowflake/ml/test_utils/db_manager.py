@@ -1,7 +1,3 @@
-#
-# Copyright (c) 2012-2022 Snowflake Computing Inc. All rights reserved.
-#
-
 import datetime
 from typing import List, Optional
 
@@ -262,8 +258,8 @@ class DBManager:
             f"\"created_on\" < dateadd('day', {-expire_days}, current_timestamp())"
         ).collect()
         for stale_func in stale_funcs:
-            func_argments = str(stale_func.arguments)
-            func_def = func_argments.partition("RETURN")[0].strip()
+            func_arguments = str(stale_func.arguments)
+            func_def = func_arguments.partition("RETURN")[0].strip()
             self.drop_function(function_def=func_def, schema_name=schema_name, db_name=db_name, if_exists=True)
 
     def get_snowservice_image_repo(

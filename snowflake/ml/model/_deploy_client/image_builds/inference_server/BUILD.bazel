@@ -2,21 +2,27 @@ load("//bazel:py_rules.bzl", "py_library", "py_test")
 
 package(default_visibility = ["//visibility:public"])
 
+exports_files([
+    "main.py",
+])
+
 py_library(
     name = "main",
     srcs = ["main.py"],
+    compatible_with_snowpark = False,
     deps = [
         "//snowflake/ml/model:_model",
         "//snowflake/ml/model:custom_model",
         "//snowflake/ml/model:type_hints",
-    ]
+    ],
 )
 
 py_test(
     name = "main_test",
     srcs = ["main_test.py"],
+    compatible_with_snowpark = False,
     deps = [
         ":main",
         "//snowflake/ml/model:_model_meta",
-    ]
+    ],
 )

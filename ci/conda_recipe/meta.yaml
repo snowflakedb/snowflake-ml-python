@@ -1,7 +1,7 @@
+---
 # DO NOT EDIT!
 # Generate by running 'bazel run --config=pre_build //bazel/requirements:sync_requirements'
 
----
 about:
   description: |
     Snowflake ML client Library is used for interacting with Snowflake to build machine learning solutions.
@@ -17,7 +17,7 @@ build:
   noarch: python
 package:
   name: snowflake-ml-python
-  version: 1.0.7
+  version: 1.0.8
 requirements:
   build:
     - python
@@ -37,7 +37,7 @@ requirements:
     - s3fs>=2022.11,<2024
     - scikit-learn>=1.2.1,<1.4
     - scipy>=1.9,<2
-    - snowflake-connector-python>=3.0.3,<4
+    - snowflake-connector-python>=3.0.4,<4
     - snowflake-snowpark-python>=1.5.1,<2
     - sqlparse>=0.4,<1
     - typing-extensions>=4.1.0,<5
@@ -45,6 +45,7 @@ requirements:
   run_constrained:
     - lightgbm==3.3.5
     - mlflow>=2.1.0,<2.4
+    - sentencepiece>=0.1.95,<0.2
     - tensorflow>=2.9,<3
     - torchdata>=0.4,<1
     - transformers>=4.29.2,<5

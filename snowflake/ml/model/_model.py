@@ -8,6 +8,10 @@ from absl import logging
 from packaging import requirements
 
 from snowflake.ml._internal import env as snowml_env, env_utils, file_utils
+from snowflake.ml._internal.exceptions import (
+    error_codes,
+    exceptions as snowml_exceptions,
+)
 from snowflake.ml.model import (
     _env,
     _model_handler,
@@ -191,24 +195,37 @@ def save_model(
         Model metadata.
 
     Raises:
-        ValueError: Raised when the signatures and sample_input specified at the same time, or not presented when
-            specifying local model.
-        ValueError: Raised when provided model directory is not a directory.
-        ValueError: Raised when provided model stage path is not a zip file.
+        SnowflakeMLException: Raised when the signatures and sample_input specified at the same time, or not presented
+            when specifying local model.
+        SnowflakeMLException: Raised when provided model directory is not a directory.
+        SnowflakeMLException: Raised when provided model stage path is not a zip file.
     """
 
     if (signatures is None) and (sample_input is None) and not _model_handler.is_auto_signature_model(model):
-        raise ValueError("Signatures and sample_input both cannot be None at the same time for this kind of model.")
+        raise snowml_exceptions.SnowflakeMLException(
+            error_code=error_codes.INVALID_ARGUMENT,
+            original_exception=ValueError(
+                "Signatures and sample_input both cannot be None at the same time for this kind of model."
+            ),
+        )
 
     if (signatures is not None) and (sample_input is not None):
-        raise ValueError("Signatures and sample_input both cannot be specified at the same time.")
+        raise snowml_exceptions.SnowflakeMLException(
+            error_code=error_codes.INVALID_ARGUMENT,
+            original_exception=ValueError("Signatures and sample_input both cannot be specified at the same time."),
+        )
 
     if not options:
         options = model_types.BaseModelSaveOption()
 
     assert session and model_stage_file_path
     if posixpath.splitext(model_stage_file_path)[1] != ".zip":
-        raise ValueError(f"Provided model path in the stage {model_stage_file_path} must be a path to a zip file.")
+        raise snowml_exceptions.SnowflakeMLException(
+            error_code=error_codes.INVALID_ARGUMENT,
+            original_exception=ValueError(
+                f"Provided model path in the stage {model_stage_file_path} must be a path to a zip file."
+            ),
+        )
 
     snowml_server_availability = env_utils.validate_requirements_in_snowflake_conda_channel(
         session=session,
@@ -243,8 +260,8 @@ def save_model(
             temp_local_model_dir_path, leading_path=temp_local_model_dir_path
         ) as zf:
             assert session and model_stage_file_path
-            fo = FileOperation(session=session)
-            fo.put_stream(
+            file_operation = FileOperation(session=session)
+            file_operation.put_stream(
                 zf,
                 model_stage_file_path,
                 auto_compress=False,
@@ -275,7 +292,9 @@ def _save(
 
     handler = _model_handler._find_handler(model)
     if handler is None:
-        raise TypeError(f"{type(model)} is not supported.")
+        raise snowml_exceptions.SnowflakeMLException(
+            error_code=error_codes.INVALID_TYPE, original_exception=TypeError(f"{type(model)} is not supported.")
+        )
     with _model_meta._create_model_metadata(
         model_dir_path=local_dir_path,
         name=name,
@@ -360,7 +379,7 @@ def load_model(
         meta_only: Flag to indicate that if only load metadata.
 
     Raises:
-        ValueError: Raised if model provided in the stage is not a zip file.
+        SnowflakeMLException: Raised if model provided in the stage is not a zip file.
 
     Returns:
         A tuple containing the model object and the model metadata.
@@ -368,10 +387,15 @@ def load_model(
 
     assert session and model_stage_file_path
     if posixpath.splitext(model_stage_file_path)[1] != ".zip":
-        raise ValueError(f"Provided model path in the stage {model_stage_file_path} must be a path to a zip file.")
+        raise snowml_exceptions.SnowflakeMLException(
+            error_code=error_codes.INVALID_ARGUMENT,
+            original_exception=ValueError(
+                f"Provided model path in the stage {model_stage_file_path} must be a path to a zip file."
+            ),
+        )
 
-    fo = FileOperation(session=session)
-    zf = fo.get_stream(model_stage_file_path)
+    file_operation = FileOperation(session=session)
+    zf = file_operation.get_stream(model_stage_file_path)
     with file_utils.unzip_stream_in_temp_dir(stream=zf) as temp_local_model_dir_path:
         # This is to make mypy happy.
         if meta_only:
@@ -429,7 +453,7 @@ def _load(
         options: Model loading options.
 
     Raises:
-        TypeError: Raised if model is not native format.
+        SnowflakeMLException: Raised if model is not native format.
 
     Returns:
         ModelMeta data when meta_only is True.
@@ -447,7 +471,9 @@ def _load(
 
     handler = _model_handler._load_handler(meta.model_type)
     if handler is None:
-        raise TypeError(f"{meta.model_type} is not supported.")
+        raise snowml_exceptions.SnowflakeMLException(
+            error_code=error_codes.INVALID_TYPE, original_exception=TypeError(f"{meta.model_type} is not supported.")
+        )
     model_blobs_path = os.path.join(local_dir_path, MODEL_BLOBS_DIR)
     if as_custom_model:
         load_func = getattr(handler, "_load_as_custom_model", None)

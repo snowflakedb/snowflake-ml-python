@@ -123,7 +123,7 @@ ${bazel} query --query_file="${excluded_test_source_rule_file}" \
     awk -F// '{print $2}' |
     sed -e 's/:/\//g' >"${output_path}"
 
-echo "Tests geting excluded:"
+echo "Tests getting excluded:"
 
 cat "${output_path}"
 

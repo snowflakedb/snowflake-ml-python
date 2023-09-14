@@ -1,7 +1,3 @@
-#
-# Copyright (c) 2012-2022 Snowflake Computing Inc. All rights reserved.
-#
-
 import uuid
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 from unittest import SkipTest
@@ -21,14 +17,12 @@ from tests.integ.snowflake.ml.test_utils import (
 
 
 class TestModelRegistryIntegSnowServiceBase(parameterized.TestCase):
-    _SNOWSERVICE_CONNECTION_NAME = "snowservice"
-    _TEST_CPU_COMPUTE_POOL = "MODEL_DEPLOYMENT_INTEG_TEST_POOL_STANDARD_2"
-    _TEST_GPU_COMPUTE_POOL = "MODEL_DEPLOYMENT_INTEG_TEST_POOL_GPU_3"
+    _SNOWSERVICE_CONNECTION_NAME = "regtest"
+    _TEST_CPU_COMPUTE_POOL = "REGTEST_INFERENCE_CPU_POOL"
+    _TEST_GPU_COMPUTE_POOL = "REGTEST_INFERENCE_GPU_POOL"
     _RUN_ID = uuid.uuid4().hex[:2]
     _TEST_DB = db_manager.TestObjectNameGenerator.get_snowml_test_object_name(_RUN_ID, "db").upper()
     _TEST_SCHEMA = db_manager.TestObjectNameGenerator.get_snowml_test_object_name(_RUN_ID, "schema").upper()
-    _TEST_IMAGE_REPO = db_manager.TestObjectNameGenerator.get_snowml_test_object_name(_RUN_ID, "repo").upper()
-    _TEST_ROLE = "SYSADMIN"
 
     @classmethod
     def setUpClass(cls) -> None:
@@ -40,16 +34,13 @@ class TestModelRegistryIntegSnowServiceBase(parameterized.TestCase):
                 "SnowService connection parameters not present: skipping "
                 "TestModelRegistryIntegWithSnowServiceDeployment."
             )
-
         cls._session = Session.builder.configs(
             {
                 **login_options,
                 **{"database": cls._TEST_DB, "schema": cls._TEST_SCHEMA},
             }
         ).create()
-
         cls._db_manager = db_manager.DBManager(cls._session)
-        cls._db_manager.set_role(cls._TEST_ROLE)
         cls._db_manager.cleanup_databases(expire_hours=6)
         model_registry.create_model_registry(
             session=cls._session, database_name=cls._TEST_DB, schema_name=cls._TEST_SCHEMA
@@ -57,11 +48,9 @@ class TestModelRegistryIntegSnowServiceBase(parameterized.TestCase):
         cls.registry = model_registry.ModelRegistry(
             session=cls._session, database_name=cls._TEST_DB, schema_name=cls._TEST_SCHEMA
         )
-        cls._db_manager.create_image_repo(cls._TEST_IMAGE_REPO)
 
     @classmethod
     def tearDownClass(cls) -> None:
-        cls._db_manager.drop_image_repo(cls._TEST_IMAGE_REPO)
         cls._db_manager.drop_database(cls._TEST_DB)
         cls._session.close()
 
