@@ -1,6 +1,9 @@
 # Created by https://www.gitignore.io/api/c,c++,node,java,python,intellij,netbeans
 # Edit at https://www.gitignore.io/?templates=c,c++,node,java,python,intellij,netbeans
 
+# Mac droppings
+.DS_Store
+
 ### C ###
 # Prerequisites
 *.d
@@ -47,7 +50,8 @@
 *.pdb
 
 # Kernel Module Compile Results
-*.mod*
+# commented out below line to allow modeling files to be committed
+# *.mod*
 *.cmd
 .tmp_versions/
 modules.order
@@ -271,6 +275,8 @@ public/
 .dynamodb/
 
 ### Python ###
+.venv
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
