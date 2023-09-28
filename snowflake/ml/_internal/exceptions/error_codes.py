@@ -93,6 +93,8 @@ SNOWML_INVALID_QUERY = "2211"
 
 # Invalid Snowpark Session (Missing information) in Snowpark Session that is required.
 INVALID_SNOWPARK_SESSION = "2301"
+# Indicates the compute pool is not valid, e.g. not ready, or does not have enough GPUs.
+INVALID_SNOWPARK_COMPUTE_POOL = "2302"
 
 # Incorrect local Python environment when trying to do some actions that require specific dependency or versions.
 LOCAL_ENVIRONMENT_ERROR = "2501"

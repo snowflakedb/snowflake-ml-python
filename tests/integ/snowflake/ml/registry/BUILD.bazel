@@ -1,4 +1,4 @@
-load("//bazel:py_rules.bzl", "py_test")
+load("//bazel:py_rules.bzl", "py_library", "py_test")
 
 py_test(
     name = "model_registry_basic_integ_test",
@@ -25,9 +25,10 @@ py_test(
     ],
 )
 
-py_test(
-    name = "model_registry_integ_test_snowservice_base",
-    srcs = ["model_registry_integ_test_snowservice_base.py"],
+py_library(
+    name = "model_registry_snowservice_integ_test_base",
+    testonly = True,
+    srcs = ["model_registry_snowservice_integ_test_base.py"],
     deps = [
         "//snowflake/ml/model:deploy_platforms",
         "//snowflake/ml/registry:model_registry",
@@ -39,15 +40,15 @@ py_test(
 )
 
 py_test(
-    name = "model_registry_integ_test_snowservice",
+    name = "model_registry_snowservice_integ_test",
     timeout = "eternal",  # 3600s
-    srcs = ["model_registry_integ_test_snowservice.py"],
-    deps = [":model_registry_integ_test_snowservice_base"],
+    srcs = ["model_registry_snowservice_integ_test.py"],
+    deps = [":model_registry_snowservice_integ_test_base"],
 )
 
 py_test(
-    name = "model_registry_integ_test_snowservice_merge_gate",
+    name = "model_registry_snowservice_merge_gate_integ_test",
     timeout = "eternal",  # 3600s
-    srcs = ["model_registry_integ_test_snowservice_merge_gate.py"],
-    deps = [":model_registry_integ_test_snowservice_base"],
+    srcs = ["model_registry_snowservice_merge_gate_integ_test.py"],
+    deps = [":model_registry_snowservice_integ_test_base"],
 )

@@ -1,14 +1,14 @@
 import os
-from typing import Dict, List
+from typing import Dict, List, cast
 
 import boto3
 import requests
-import stage_fs
 from absl.testing import absltest
 from moto import server
 
 from snowflake import snowpark
 from snowflake.connector import connection
+from snowflake.ml.fileset import stage_fs
 from snowflake.ml.test_utils import mock_data_frame, mock_session
 
 
@@ -74,7 +74,7 @@ class SFStageFileSystemTest(absltest.TestCase):
             db=self.db,
             schema=self.schema,
             stage=self.stage,
-            snowpark_session=self.session,
+            snowpark_session=cast(snowpark.Session, self.session),
         )
         return stagefs
 
@@ -124,7 +124,7 @@ class SFStageFileSystemTest(absltest.TestCase):
                 db=self.db,
                 schema=self.schema,
                 stage=self.stage,
-                snowpark_session=self.session,
+                snowpark_session=cast(snowpark.Session, self.session),
                 sf_connection=self.mock_connection,
             )
 

@@ -5,6 +5,7 @@ import functools
 import itertools
 import json
 import os
+import platform
 import sys
 from typing import (
     Generator,
@@ -249,7 +250,9 @@ def resolve_conda_environment(specs: Sequence[str], channels: Sequence[str]) -> 
         sys.stdout = _original_stdout
 
     with _block_print():
-        conda_solver = solver.LibMambaSolver("snowml-dev", channels=channels, specs_to_add=specs)
+        conda_solver = solver.LibMambaSolver(
+            "snowml-dev", channels=channels, specs_to_add=list(specs) + [f"python=={platform.python_version()}"]
+        )
         solve_result = conda_solver.solve_final_state()
         if solve_result is None:
             raise ValueError("Unable to resolve the environment.")

@@ -8,7 +8,12 @@ import shutil
 import tarfile
 import tempfile
 import zipfile
-from typing import IO, Generator, List, Optional, Union
+from typing import IO, Any, Dict, Generator, List, Optional, Union
+
+import cloudpickle
+
+from snowflake import snowpark
+from snowflake.ml._internal.exceptions import exceptions
 
 GENERATED_PY_FILE_EXT = (".pyc", ".pyo", ".pyd", ".pyi")
 
@@ -206,3 +211,24 @@ def _create_tar_gz_stream(source_dir: str, arcname: Optional[str] = None) -> Gen
             tar.add(source_dir, arcname=arcname)
         output_stream.seek(0)
         yield output_stream
+
+
+def stage_object(session: snowpark.Session, object: object, stage_location: str) -> List[snowpark.PutResult]:
+    temp_file = tempfile.NamedTemporaryFile(delete=False)
+    temp_file_path = temp_file.name
+    temp_file.close()
+    with open(temp_file_path, "wb") as file:
+        cloudpickle.dump(object, file)
+    put_res = session.file.put(temp_file_path, stage_location, auto_compress=False, overwrite=True)
+    os.remove(temp_file_path)
+    return put_res
+
+
+def stage_file_exists(
+    session: snowpark.Session, stage_location: str, file_name: str, statement_params: Dict[str, Any]
+) -> bool:
+    try:
+        res = session.sql(f"list {stage_location}/{file_name}").collect(statement_params=statement_params)
+        return len(res) > 0
+    except exceptions.SnowflakeMLException:
+        return False

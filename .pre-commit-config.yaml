@@ -1,5 +1,5 @@
 ---
-exclude: ^(.*egg.info.*|docs/.*|.*/parameters.py$|docs/.*|.*\.py_template|.*/experimental/.*)
+exclude: ^(.*egg.info.*|.*/parameters.py$|.*\.py_template|.*/experimental/.*|docs/source/_themes/.*)
 minimum_pre_commit_version: 3.4.0
 repos:
   - repo: https://github.com/asottile/pyupgrade
@@ -26,6 +26,8 @@ repos:
     hooks:
       - id: trailing-whitespace
       - id: end-of-file-fixer
+        exclude_types:
+          - image
         exclude: >
           (?x)^(
               license_header.txt|
@@ -66,12 +68,15 @@ repos:
       - id: buildifier
         args:
           - --warnings=all
+        files: \.(bzl|bazel|sky)$
       # - id: buildifier-lint
       #   args: *args
   - repo: https://github.com/crate-ci/typos  # config: _typos.toml
     rev: v1.16.10
     hooks:
       - id: typos
+        exclude_types:
+          - image
   - repo: https://github.com/lyz-code/yamlfix
     rev: 1.13.0
     hooks:
@@ -89,3 +94,18 @@ repos:
       - id: shellcheck
         args:
           - --severity=warning
+  - repo: https://github.com/python-jsonschema/check-jsonschema
+    rev: 0.26.3
+    hooks:
+      - id: check-jsonschema
+        files: ^requirements.*\.yml$
+        args:
+          - --schemafile
+          - bazel/requirements/requirements.schema.json
+      - id: check-github-workflows
+  - repo: https://github.com/pre-commit/pygrep-hooks
+    rev: v1.10.0
+    hooks:
+      - id: python-check-blanket-noqa
+      - id: python-check-blanket-type-ignore
+      - id: python-check-mock-methods

@@ -224,7 +224,7 @@ class SimpleImputerTest(TestCase):
 
         simple_imputer._reset()
         with self.assertRaises(AttributeError):
-            simple_imputer.statistics_  # noqa
+            simple_imputer.statistics_
 
     def test_transform_snowpark(self) -> None:
         """

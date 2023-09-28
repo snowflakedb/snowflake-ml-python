@@ -8,20 +8,32 @@ from absl.testing import absltest, parameterized
 from sklearn.datasets import load_diabetes
 from sklearn.linear_model import LinearRegression as SkLinearRegression
 
-from snowflake.ml.modeling._internal.snowpark_handlers import SnowparkHandlers
+import snowflake.snowpark.session
+from snowflake.ml.modeling._internal.snowpark_handlers import (
+    SklearnWrapperProvider,
+    SnowparkHandlers,
+)
 from snowflake.ml.utils.connection_params import SnowflakeLoginOptions
 from snowflake.snowpark import Session
+from snowflake.snowpark._internal.utils import is_in_stored_procedure
 
 
 @pytest.mark.pip_incompatible
 class SnowparkHandlersTest(parameterized.TestCase):
     def setUp(self) -> None:
         """Creates Snowpark and Snowflake environments for testing."""
-        self._session = Session.builder.configs(SnowflakeLoginOptions()).create()
-        self._handlers = SnowparkHandlers(class_name="test", subproject="subproject")
+        self._session = (
+            Session.builder.configs(SnowflakeLoginOptions()).create()
+            if not is_in_stored_procedure()
+            else snowflake.snowpark.session._get_active_session()
+        )
+        self._handlers = SnowparkHandlers(
+            class_name="test", subproject="subproject", wrapper_provider=SklearnWrapperProvider()
+        )
 
     def tearDown(self) -> None:
-        self._session.close()
+        if not is_in_stored_procedure():
+            self._session.close()
 
     def _get_test_dataset(self) -> Tuple[pd.DataFrame, List[str], List[str]]:
         """Constructs input dataset to be used in the integration test.
@@ -65,7 +77,6 @@ class SnowparkHandlersTest(parameterized.TestCase):
             session=self._session,
             estimator=sklearn_estimator,
             dependencies=["snowflake-snowpark-python", "numpy", "scikit-learn", "cloudpickle"],
-            fit_sproc_imports=["sklearn"],
             input_cols=input_cols,
             label_cols=label_cols,
             sample_weight_col=None,
@@ -75,6 +86,18 @@ class SnowparkHandlersTest(parameterized.TestCase):
             X=input_df_pandas[input_cols], y=input_df_pandas[label_cols].squeeze()
         )
 
+        # Confirm that sproc was stored in session._FIT_WRAPPER_SPROCS for reuse.
+        assert "SklearnWrapperProvider" in self._session._FIT_WRAPPER_SPROCS
+
+        fit_estimator = self._handlers.fit_snowpark(
+            dataset=input_df,
+            session=self._session,
+            estimator=sklearn_estimator,
+            dependencies=["snowflake-snowpark-python", "numpy", "scikit-learn", "cloudpickle"],
+            input_cols=input_cols,
+            label_cols=label_cols,
+            sample_weight_col=None,
+        )
         np.testing.assert_allclose(fit_estimator.coef_, pandas_fit_estimator.coef_)
 
     def test_batch_inference(self) -> None:

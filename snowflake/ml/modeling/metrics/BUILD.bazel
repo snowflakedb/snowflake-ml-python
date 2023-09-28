@@ -1,5 +1,4 @@
-load("@rules_python//python:packaging.bzl", "py_package")
-load("//bazel:py_rules.bzl", "py_library")
+load("//bazel:py_rules.bzl", "py_library", "py_package")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -65,16 +64,6 @@ py_library(
     ],
 )
 
-py_library(
-    name = "monitor",
-    srcs = [
-        "monitor.py",
-    ],
-    deps = [
-        "//snowflake/ml/_internal:telemetry",
-    ],
-)
-
 py_package(
     name = "metrics_pkg",
     packages = ["snowflake.ml"],
@@ -84,14 +73,6 @@ py_package(
         ":covariance",
         ":ranking",
         ":regression",
-    ],
-)
-
-py_package(
-    name = "monitor_pkg",
-    packages = ["snowflake.ml"],
-    deps = [
-        ":monitor",
     ],
 )
 

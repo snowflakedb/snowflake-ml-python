@@ -3,8 +3,8 @@ load("//bazel:py_rules.bzl", "py_library", "py_test")
 package(default_visibility = ["//visibility:public"])
 
 py_test(
-    name = "test_base",
-    srcs = ["test_base.py"],
+    name = "base_test",
+    srcs = ["base_test.py"],
     deps = [
         ":utils",
         "//snowflake/ml/_internal/exceptions:modeling_error_messages",

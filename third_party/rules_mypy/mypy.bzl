@@ -1,6 +1,6 @@
 "Public API"
 
-load("//bazel/mypy:rules.bzl", "MyPyStubsInfo")
+load("@rules_mypy//:rules.bzl", "MyPyStubsInfo")
 
 MyPyAspectInfo = provider(
     """This is an aspect attaching to the original Python build graph to type-checking Python source files.
@@ -25,12 +25,12 @@ VALID_EXTENSIONS = ["py", "pyi"]
 
 DEFAULT_ATTRS = {
     "_mypy_cli": attr.label(
-        default = Label("//bazel/mypy:mypy"),
+        default = Label("@rules_mypy//:mypy"),
         executable = True,
         cfg = "exec",
     ),
     "_mypy_config": attr.label(
-        default = Label("//:mypy.ini"),
+        default = Label("@//:mypy.ini"),
         allow_single_file = True,
     ),
 }

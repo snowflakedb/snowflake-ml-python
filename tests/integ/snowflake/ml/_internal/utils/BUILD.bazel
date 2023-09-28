@@ -3,8 +3,8 @@ load("//bazel:py_rules.bzl", "py_test")
 package(default_visibility = ["//visibility:public"])
 
 py_test(
-    name = "test_parallelize",
-    srcs = ["test_parallelize.py"],
+    name = "parallelize_test",
+    srcs = ["parallelize_test.py"],
     deps = [
         "//snowflake/ml/_internal/utils:parallelize",
         "//snowflake/ml/utils:connection_params",

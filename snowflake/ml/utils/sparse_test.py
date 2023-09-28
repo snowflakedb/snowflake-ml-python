@@ -1,8 +1,9 @@
 import numpy as np
 import pandas as pd
-import sparse
 from absl.testing import absltest
 from pandas.api import types as pandas_types
+
+from snowflake.ml.utils import sparse
 
 
 class SparseTest(absltest.TestCase):
@@ -41,7 +42,7 @@ class SparseTest(absltest.TestCase):
                 ],
             }
         )
-        df_actual = sparse._pandas_to_sparse_pandas(df, ["sparse1", "sparse2"])
+        df_actual: pd.DataFrame = sparse._pandas_to_sparse_pandas(df, ["sparse1", "sparse2"])
         self.assertTrue(df_expected.compare(df_actual).empty)
         self.assertTrue(
             pandas_types.is_sparse(df_actual["sparse1_0"].dtype)

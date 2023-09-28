@@ -41,6 +41,8 @@ while getopts "b:m:t:h" opt; do
     m)
         if [[ "${OPTARG}" = "merge_gate" || "${OPTARG}" = "continuous_run" || "${OPTARG}" = "local_unittest" || "${OPTARG}" = "local_all" ]]; then
             mode="${OPTARG}"
+        else
+            help 1
         fi
         ;;
     b)
@@ -49,6 +51,8 @@ while getopts "b:m:t:h" opt; do
     t)
         if [[ "${mode}" = "local_unittest" || "${mode}" = "local_all" ]]; then
             target="${OPTARG}"
+        else
+            help 1
         fi
         ;;
     h)
@@ -75,6 +79,7 @@ working_dir=$(mktemp -d "/tmp/tmp_XXXXX")
 trap 'rm -rf "${working_dir}"' EXIT
 
 tag_filter="--test_tag_filters=-perf_test"
+coverage_tag_filter="--test_tag_filters=-perf_test,-sproc_test"
 cache_test_results="--cache_test_results=no"
 
 case "${mode}" in
@@ -83,6 +88,7 @@ merge_gate)
     ./bazel/get_affected_targets.sh -b "${bazel}" -f "${affected_targets_file}"
 
     tag_filter="--test_tag_filters=-autogen,-perf_test"
+    coverage_tag_filter="--test_tag_filters=-autogen,-perf_test,-sproc_test"
 
     query_expr='kind(".*_test rule", rdeps(//... - //snowflake/ml/experimental/... - set('"$(<ci/skip_merge_gate_targets)"'), set('$(<"${affected_targets_file}")')))'
     ;;
@@ -146,7 +152,7 @@ elif [[ "${action}" = "coverage" ]]; then
     "${bazel}" coverage \
         "${cache_test_results}" \
         --combined_report=lcov \
-        "${tag_filter}" \
+        "${coverage_tag_filter}" \
         --target_pattern_file "${sf_only_test_targets_file}"
     sf_only_bazel_exit_code=$?
 
@@ -158,7 +164,7 @@ elif [[ "${action}" = "coverage" ]]; then
         --config=extended \
         "${cache_test_results}" \
         --combined_report=lcov \
-        "${tag_filter}" \
+        "${coverage_tag_filter}" \
         --target_pattern_file "${extended_test_targets_file}"
     extended_bazel_exit_code=$?
 

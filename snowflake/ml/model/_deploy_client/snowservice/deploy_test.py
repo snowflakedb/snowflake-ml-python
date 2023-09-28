@@ -30,14 +30,25 @@ class DeployTestCase(absltest.TestCase):
             "image_repo": "mock_image_repo",
         }
 
-    @mock.patch("snowflake.ml.model._deploy_client.snowservice.deploy._model_meta.ModelMetadata")  # type: ignore
-    @mock.patch("snowflake.ml.model._deploy_client.snowservice.deploy.SnowServiceDeployment")  # type: ignore
+    @mock.patch("snowflake.ml.model._deploy_client.snowservice.deploy._model_meta.ModelMetadata")  # type: ignore[misc]
+    @mock.patch("snowflake.ml.model._deploy_client.snowservice.deploy.SnowServiceDeployment")  # type: ignore[misc]
     def test_deploy_with_model_id(self, m_deployment_class: mock.MagicMock, m_model_meta_class: mock.MagicMock) -> None:
         m_deployment = m_deployment_class.return_value
         m_model_meta = m_model_meta_class.return_value
 
         m_model_zip_stage_path = "@mock_model_zip_stage_path/model.zip"
         m_deployment_stage_path = "@mock_model_deployment_stage_path"
+
+        self.m_session.add_mock_sql(
+            query=f"DESC COMPUTE POOL {self.options['compute_pool']}",
+            result=mock_data_frame.MockDataFrame(
+                [
+                    row.Row(
+                        name="mock_compute_pool", state="IDLE", min_nodes=1, max_nodes=1, instance_family="STANDARD_1"
+                    )
+                ]
+            ),
+        )
 
         _deploy(
             session=cast(session.Session, self.m_session),
@@ -62,8 +73,46 @@ class DeployTestCase(absltest.TestCase):
         )
         m_deployment.deploy.assert_called_once()
 
-    @mock.patch("snowflake.ml.model._deploy_client.snowservice.deploy._model_meta.ModelMetadata")  # type: ignore
-    @mock.patch("snowflake.ml.model._deploy_client.snowservice.deploy.SnowServiceDeployment")  # type: ignore
+    @mock.patch("snowflake.ml.model._deploy_client.snowservice.deploy._model_meta.ModelMetadata")  # type: ignore[misc]
+    @mock.patch("snowflake.ml.model._deploy_client.snowservice.deploy.SnowServiceDeployment")  # type: ignore[misc]
+    def test_deploy_with_not_ready_compute_pool(
+        self, m_deployment_class: mock.MagicMock, m_model_meta_class: mock.MagicMock
+    ) -> None:
+        m_model_meta = m_model_meta_class.return_value
+
+        m_model_zip_stage_path = "@mock_model_zip_stage_path/model.zip"
+        m_deployment_stage_path = "@mock_model_deployment_stage_path"
+
+        self.m_session.add_mock_sql(
+            query=f"DESC COMPUTE POOL {self.options['compute_pool']}",
+            result=mock_data_frame.MockDataFrame(
+                [
+                    row.Row(
+                        name="mock_compute_pool",
+                        state="STARTING",
+                        min_nodes=1,
+                        max_nodes=1,
+                        instance_family="STANDARD_1",
+                    )
+                ]
+            ),
+        )
+        with exception_utils.assert_snowml_exceptions(self, expected_original_error_type=RuntimeError):
+            _deploy(
+                session=cast(session.Session, self.m_session),
+                model_id="provided_model_id",
+                model_meta=m_model_meta,
+                service_func_name="mock_service_func",
+                model_zip_stage_path=m_model_zip_stage_path,
+                deployment_stage_path=m_deployment_stage_path,
+                target_method=constants.PREDICT,
+                **self.options,
+            )
+
+        m_deployment_class.assert_not_called()
+
+    @mock.patch("snowflake.ml.model._deploy_client.snowservice.deploy._model_meta.ModelMetadata")  # type: ignore[misc]
+    @mock.patch("snowflake.ml.model._deploy_client.snowservice.deploy.SnowServiceDeployment")  # type: ignore[misc]
     def test_deploy_with_empty_model_id(
         self, m_deployment_class: mock.MagicMock, m_model_meta_class: mock.MagicMock
     ) -> None:
@@ -82,8 +131,8 @@ class DeployTestCase(absltest.TestCase):
 
         m_deployment_class.assert_not_called()
 
-    @mock.patch("snowflake.ml.model._deploy_client.snowservice.deploy._model_meta.ModelMetadata")  # type: ignore
-    @mock.patch("snowflake.ml.model._deploy_client.snowservice.deploy.SnowServiceDeployment")  # type: ignore
+    @mock.patch("snowflake.ml.model._deploy_client.snowservice.deploy._model_meta.ModelMetadata")  # type: ignore[misc]
+    @mock.patch("snowflake.ml.model._deploy_client.snowservice.deploy.SnowServiceDeployment")  # type: ignore[misc]
     def test_deploy_with_missing_required_options(
         self, m_deployment_class: mock.MagicMock, m_model_meta_class: mock.MagicMock
     ) -> None:
@@ -104,12 +153,13 @@ class DeployTestCase(absltest.TestCase):
             )
         m_deployment_class.assert_not_called()
 
-    @mock.patch("snowflake.ml.model._deploy_client.snowservice.deploy._model_meta.ModelMetadata")  # type: ignore
-    @mock.patch("snowflake.ml.model._deploy_client.snowservice.deploy.SnowServiceDeployment")  # type: ignore
+    @mock.patch("snowflake.ml.model._deploy_client.snowservice.deploy._model_meta.ModelMetadata")  # type: ignore[misc]
+    @mock.patch("snowflake.ml.model._deploy_client.snowservice.deploy.SnowServiceDeployment")  # type: ignore[misc]
     def test_deploy_with_over_requested_gpus(
         self, m_deployment_class: mock.MagicMock, m_model_meta_class: mock.MagicMock
     ) -> None:
         m_model_meta = m_model_meta_class.return_value
+        m_model_meta.cuda_version = "11.7"
         with exception_utils.assert_snowml_exceptions(
             self, expected_original_error_type=RuntimeError, expected_regex="GPU request exceeds instance capability"
         ):
@@ -133,8 +183,8 @@ class DeployTestCase(absltest.TestCase):
             )
         m_deployment_class.assert_not_called()
 
-    @mock.patch("snowflake.ml.model._deploy_client.snowservice.deploy._model_meta.ModelMetadata")  # type: ignore
-    @mock.patch("snowflake.ml.model._deploy_client.snowservice.deploy.SnowServiceDeployment")  # type: ignore
+    @mock.patch("snowflake.ml.model._deploy_client.snowservice.deploy._model_meta.ModelMetadata")  # type: ignore[misc]
+    @mock.patch("snowflake.ml.model._deploy_client.snowservice.deploy.SnowServiceDeployment")  # type: ignore[misc]
     def test_deploy_with_over_requested_gpus_no_cuda(
         self, m_deployment_class: mock.MagicMock, m_model_meta_class: mock.MagicMock
     ) -> None:
@@ -164,9 +214,9 @@ class DeployTestCase(absltest.TestCase):
             )
         m_deployment_class.assert_not_called()
 
-    @mock.patch("snowflake.ml.model._deploy_client.snowservice.deploy.copy.deepcopy")  # type: ignore
-    @mock.patch("snowflake.ml.model._deploy_client.snowservice.deploy._model_meta.ModelMetadata")  # type: ignore
-    @mock.patch("snowflake.ml.model._deploy_client.snowservice.deploy.SnowServiceDeployment")  # type: ignore
+    @mock.patch("snowflake.ml.model._deploy_client.snowservice.deploy.copy.deepcopy")  # type: ignore[misc]
+    @mock.patch("snowflake.ml.model._deploy_client.snowservice.deploy._model_meta.ModelMetadata")  # type: ignore[misc]
+    @mock.patch("snowflake.ml.model._deploy_client.snowservice.deploy.SnowServiceDeployment")  # type: ignore[misc]
     def test_deploy_with_gpu_validation_and_unknown_instance_type(
         self, m_deployment_class: mock.MagicMock, m_model_meta_class: mock.MagicMock, m_deepcopy_func: mock.MagicMock
     ) -> None:
@@ -200,7 +250,8 @@ class DeployTestCase(absltest.TestCase):
             self.assertListEqual(
                 cm.output,
                 [
-                    "INFO:root:num_workers has been defaulted to 1 when using GPU.",
+                    "INFO:snowflake.ml.model._deploy_client.snowservice.deploy_options:num_workers has been defaulted"
+                    " to 1 when using GPU.",
                     (
                         "WARNING:snowflake.ml.model._deploy_client.snowservice.deploy:Unknown "
                         "instance type: GPU_UNKNOWN, skipping GPU validation"
@@ -222,7 +273,7 @@ class DeployTestCase(absltest.TestCase):
 
     @mock.patch(
         "snowflake.ml.model._deploy_client.snowservice.deploy." "snowservice_client.SnowServiceClient"
-    )  # type: ignore
+    )  # type: ignore[misc]
     def test_get_or_create_image_repo(self, m_snowservice_client_class: mock.MagicMock) -> None:
         db = "mock_db"
         schema = "mock_schema"
@@ -289,7 +340,7 @@ class DeployTestCase(absltest.TestCase):
 
 
 class SnowServiceDeploymentTestCase(absltest.TestCase):
-    @mock.patch("snowflake.ml.model._deploy_client.snowservice.deploy._model_meta.ModelMetadata")  # type: ignore
+    @mock.patch("snowflake.ml.model._deploy_client.snowservice.deploy._model_meta.ModelMetadata")  # type: ignore[misc]
     def setUp(self, m_model_meta_class: mock.MagicMock) -> None:
         super().setUp()
         self.m_session = cast(session.Session, mock_session.MockSession(conn=None, test_case=self))
@@ -298,6 +349,9 @@ class SnowServiceDeploymentTestCase(absltest.TestCase):
         self.m_model_zip_stage_path = "@provided_model_zip_stage_path/model.zip"
         self.m_deployment_stage_path = "@mock_model_deployment_stage_path"
         self.m_model_meta = m_model_meta_class.return_value
+        self.m_model_meta.cuda_version = None
+        self.model_name = "mock_model_name"
+        self.m_model_meta.name = self.model_name
         self.m_options = {
             "stage": "mock_stage",
             "compute_pool": "mock_compute_pool",
@@ -318,25 +372,86 @@ class SnowServiceDeploymentTestCase(absltest.TestCase):
     def test_service_name(self) -> None:
         self.assertEqual(self.deployment._service_name, "mock_db.mock_schema.service_provided_model_id")
 
-    def test_deploy(self) -> None:
+    @mock.patch(
+        "snowflake.ml.model._deploy_client.snowservice.deploy.image_registry_client.ImageRegistryClient"
+        ".add_tag_to_remote_image"
+    )  # type: ignore[misc]
+    @mock.patch(
+        "snowflake.ml.model._deploy_client.snowservice.deploy.image_registry_client.ImageRegistryClient" ".image_exists"
+    )  # type: ignore[misc]
+    def test_deploy(self, m_image_exists_class: mock.MagicMock, m_add_tag_class: mock.MagicMock) -> None:
+        m_image_exists_class.return_value = False
+        m_add_tag_class.return_value = None
         with mock.patch.object(
             self.deployment, "_build_and_upload_image"
-        ) as m_build_and_upload_image, mock.patch.object(self.deployment, "_deploy_workflow") as m_deploy_workflow:
-            self.deployment.deploy()
-            m_build_and_upload_image.assert_called_once()
-            m_deploy_workflow.assert_called_once()
+        ) as m_build_and_upload_image, mock.patch.object(
+            self.deployment, "_deploy_workflow"
+        ) as m_deploy_workflow, mock.patch.object(
+            self.deployment, "_get_full_image_name"
+        ) as m_get_full_image_name:
+            full_image_name = "org-account.registry.snowflakecomputing.com/db/schema/repo/image:latest"
+            m_get_full_image_name.return_value = full_image_name
+
+            with self.assertLogs(level="WARNING") as cm:
+                self.deployment.deploy()
+                m_build_and_upload_image.assert_called_once()
+                m_deploy_workflow.assert_called_once_with(full_image_name)
+                self.assertEqual(
+                    cm.output,
+                    [
+                        (
+                            "WARNING:snowflake.ml.model._deploy_client.snowservice.deploy:Building the Docker image "
+                            "and deploying to Snowpark Container Service. This process may take a few minutes."
+                        ),
+                        (
+                            f"WARNING:snowflake.ml.model._deploy_client.snowservice.deploy:Image successfully built! "
+                            f"For future model deployments, the image will be reused if possible, saving model "
+                            f"deployment time. To enforce using the same image, include 'prebuilt_snowflake_image': "
+                            f"'{full_image_name}' in the deploy() function's options."
+                        ),
+                    ],
+                )
+
+            m_add_tag_class.assert_called_once_with(original_full_image_name=full_image_name, new_tag=self.model_name)
 
     @mock.patch(
-        "snowflake.ml.model._deploy_client.snowservice.deploy.client_image_builder" ".ClientImageBuilder"
-    )  # type: ignore
-    def test_build_and_upload_image(self, client_image_builder_class: mock.MagicMock) -> None:
-        m_image_builder = client_image_builder_class.return_value
+        "snowflake.ml.model._deploy_client.snowservice.deploy.image_registry_client.ImageRegistryClient"
+        ".add_tag_to_remote_image"
+    )  # type: ignore[misc]
+    @mock.patch(
+        "snowflake.ml.model._deploy_client.snowservice.deploy.image_registry_client.ImageRegistryClient.image_exists"
+    )  # type: ignore[misc]
+    def test_deploy_with_image_already_exists_in_registry(
+        self, m_image_exists_class: mock.MagicMock, m_add_tag_class: mock.MagicMock
+    ) -> None:
+        m_image_exists_class.return_value = True
+        m_add_tag_class.return_value = None
         with mock.patch.object(
-            m_image_builder, "build_and_upload_image", return_value="image_path"
-        ) as mock_build_and_upload:
-            res = self.deployment._build_and_upload_image()
-            mock_build_and_upload.assert_called_once()
-            self.assertEqual(res, "image_path")
+            self.deployment, "_build_and_upload_image"
+        ) as m_build_and_upload_image, mock.patch.object(
+            self.deployment, "_deploy_workflow"
+        ) as m_deploy_workflow, mock.patch.object(
+            self.deployment, "_get_full_image_name"
+        ) as m_get_full_image_name:
+            full_image_name = "org-account.registry.snowflakecomputing.com/db/schema/repo/image:latest"
+            m_get_full_image_name.return_value = full_image_name
+
+            with self.assertLogs(level="WARNING") as cm:
+                self.deployment.deploy()
+                m_build_and_upload_image.assert_not_called()
+                m_deploy_workflow.assert_called_once_with(full_image_name)
+
+                self.assertEqual(
+                    cm.output,
+                    [
+                        (
+                            f"WARNING:snowflake.ml.model._deploy_client.snowservice.deploy:Similar environment "
+                            f"detected. Using existing image {full_image_name} to skip image build. To disable this"
+                            f" feature, set 'force_image_build=True' in deployment options"
+                        )
+                    ],
+                )
+        m_add_tag_class.assert_called_once_with(original_full_image_name=full_image_name, new_tag=self.model_name)
 
 
 if __name__ == "__main__":

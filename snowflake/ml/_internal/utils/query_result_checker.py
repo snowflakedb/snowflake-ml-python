@@ -1,7 +1,7 @@
 from __future__ import annotations  # for return self methods
 
 from functools import partial
-from typing import Any, Callable, Dict, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 from snowflake import connector, snowpark
 from snowflake.ml._internal.utils import formatting
@@ -119,7 +119,7 @@ def cell_value_by_column_matcher(
     return True
 
 
-_DEFAULT_MATCHERS = [
+_DEFAULT_MATCHERS: List[Callable[[List[snowpark.Row], Optional[str]], bool]] = [
     partial(result_dimension_matcher, 1, 1),
     partial(column_name_matcher, "status"),
 ]
@@ -143,7 +143,7 @@ class ResultValidator:
     def __init__(self, result: list[snowpark.Row], query: str | None = None) -> None:
         self._result: list[snowpark.Row] = result
         self._query: str | None = query
-        self._success_matchers: list[Callable[[list[snowpark.Row], str], bool]] = []
+        self._success_matchers: list[Callable[[list[snowpark.Row], Optional[str]], bool]] = []
 
     def has_dimensions(self, expected_rows: int | None = None, expected_cols: int | None = None) -> ResultValidator:
         """Validate that the result of the operation has the right shape of `expected_rows` rows and `expected_cols`
@@ -225,10 +225,10 @@ class ResultValidator:
             Query result.
         """
         if len(self._success_matchers) == 0:
-            self._success_matchers = _DEFAULT_MATCHERS  # type: ignore
+            self._success_matchers = _DEFAULT_MATCHERS
         result = self._get_result()
         for matcher in self._success_matchers:
-            assert matcher(result, self._query)  # type: ignore
+            assert matcher(result, self._query)
         return result
 
 
@@ -253,7 +253,7 @@ class SqlResultValidator(ResultValidator):
     ) -> None:
         self._session: snowpark.Session = session
         self._query: str = query
-        self._success_matchers: list[Callable[[list[snowpark.Row], str], bool]] = []
+        self._success_matchers: list[Callable[[list[snowpark.Row], Optional[str]], bool]] = []
         self._statement_params: Optional[Dict[str, Any]] = statement_params
 
     def _get_result(self) -> list[snowpark.Row]:

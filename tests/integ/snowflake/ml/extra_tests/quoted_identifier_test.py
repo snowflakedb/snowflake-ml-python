@@ -1,11 +1,14 @@
 #
 # Copyright (c) 2012-2022 Snowflake Computing Inc. All rights reserved.
 #
+import os
+
 import numpy as np
 import pytest
-from absl.testing import absltest
+from absl.testing import absltest, parameterized
 from scipy.stats import randint
 
+from snowflake.ml._internal.env_utils import SNOWML_SPROC_ENV
 from snowflake.ml.modeling.compose import ColumnTransformer
 from snowflake.ml.modeling.ensemble import RandomForestClassifier
 from snowflake.ml.modeling.impute import SimpleImputer
@@ -22,7 +25,7 @@ from snowflake.snowpark import Session
 
 
 @pytest.mark.pip_incompatible
-class QuotedIdentifierTest(absltest.TestCase):
+class QuotedIdentifierTest(parameterized.TestCase):
     def setUp(self):
         """Creates Snowpark and Snowflake environments for testing."""
         self._session = Session.builder.configs(SnowflakeLoginOptions()).create()
@@ -30,7 +33,11 @@ class QuotedIdentifierTest(absltest.TestCase):
     def tearDown(self):
         self._session.close()
 
-    def test_sp_quoted_identifier_modeling(self) -> None:
+    @parameterized.parameters(False, True)
+    def test_sp_quoted_identifier_modeling(self, test_within_sproc) -> None:
+        if test_within_sproc:
+            os.environ[SNOWML_SPROC_ENV] = "True"
+
         # dataset's columns names are intentionally set as double quotes to maintain lower cased characters
         CATEGORICAL_COLUMNS = ['"cut"', '"color"', '"clarity"']
         NUMERICAL_COLUMNS = ['"carat"', '"depth"', '"x"', '"y"', '"z"']

@@ -1,6 +1,8 @@
 import json
+import time
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
+from uuid import uuid4
 
 from snowflake.snowpark import DataFrame, Session
 
@@ -13,6 +15,9 @@ def _wrap_embedded_str(s: str) -> str:
     s = s.replace("\\", "\\\\")
     s = s.replace('"', '\\"')
     return s
+
+
+TRAINING_DATASET_SCHEMA_VERSION = "1"
 
 
 @dataclass(frozen=True)
@@ -53,29 +58,56 @@ class FeatureStoreMetadata:
         )
 
 
-@dataclass(frozen=True)
 class TrainingDataset:
-    """
-    Training dataset object contains the metadata and async job object if training task is still running.
+    """Metadata of training dataset."""
 
-    Properties:
-        df: A dataframe object representing the training dataset generation.
-        materialized_table: The destination table name which training data will writes into.
-        snapshot_table: A snapshot table name on the materialized table.
-        timestamp_col: Name of timestamp column in spine_df that will be used to join time-series features.
-            If spine_timestamp_col is not none, the input features also must have timestamp_col.
-        label_cols: Name of column(s) in materialized_table that contains training labels.
-        feature_store_metadata: A feature store metadata object.
-        desc: A description about this training dataset.
-    """
+    def __init__(
+        self,
+        session: Session,
+        df: DataFrame,
+        generation_timestamp: Optional[float] = None,
+        materialized_table: Optional[str] = None,
+        snapshot_table: Optional[str] = None,
+        timestamp_col: Optional[str] = None,
+        label_cols: Optional[List[str]] = None,
+        feature_store_metadata: Optional[FeatureStoreMetadata] = None,
+        desc: str = "",
+    ) -> None:
+        """Initialize training dataset object.
 
-    df: DataFrame
-    materialized_table: Optional[str]
-    snapshot_table: Optional[str]
-    timestamp_col: Optional[str]
-    label_cols: Optional[List[str]]
-    feature_store_metadata: Optional[FeatureStoreMetadata]
-    desc: str
+        Args:
+            session: An active snowpark session.
+            df: A dataframe object representing the training dataset generation.
+            generation_timestamp: The timestamp when this dataset is generated. It will use current time if
+                not provided.
+            materialized_table: The destination table name which training data will writes into.
+            snapshot_table: A snapshot table name on the materialized table.
+            timestamp_col: Timestamp column which was used for point-in-time correct feature lookup.
+            label_cols: Name of column(s) in materialized_table that contains training labels.
+            feature_store_metadata: A feature store metadata object.
+            desc: A description about this training dataset.
+        """
+        self.df = df
+        self.generation_timestamp = generation_timestamp if generation_timestamp is not None else time.time()
+        self.materialized_table = materialized_table
+        self.snapshot_table = snapshot_table
+        self.timestamp_col = timestamp_col
+        self.label_cols = label_cols
+        self.feature_store_metadata = feature_store_metadata
+        self.desc = desc
+
+        self.id = uuid4().hex.upper()
+        self.owner = session.sql("SELECT CURRENT_USER()").collect()[0]["CURRENT_USER()"]
+        self.version = TRAINING_DATASET_SCHEMA_VERSION
+
+    @property
+    def name(self) -> str:
+        """Get name of this dataset. It returns snapshot table name if it exists. Otherwise returns empty string.
+
+        Returns:
+            A string name.
+        """
+        return self.snapshot_table if self.snapshot_table is not None else ""
 
     def load_features(self) -> Optional[List[str]]:
         if self.feature_store_metadata is not None:
@@ -93,6 +125,9 @@ Got {len(self.df.queries['queries'])}: {self.df.queries['queries']}
 
         state_dict = {
             "df_query": self.df.queries["queries"][0],
+            "id": self.id,
+            "generation_timestamp": self.generation_timestamp,
+            "owner": self.owner,
             "materialized_table": _get_val_or_null(self.materialized_table),
             "snapshot_table": _get_val_or_null(self.snapshot_table),
             "timestamp_col": _get_val_or_null(self.timestamp_col),
@@ -100,6 +135,7 @@ Got {len(self.df.queries['queries'])}: {self.df.queries['queries']}
             "feature_store_metadata": self.feature_store_metadata.to_json()
             if self.feature_store_metadata is not None
             else "null",
+            "version": self.version,
             "desc": self.desc,
         }
         return json.dumps(state_dict)
@@ -107,25 +143,23 @@ Got {len(self.df.queries['queries'])}: {self.df.queries['queries']}
     @classmethod
     def from_json(cls, json_str: str, session: Session) -> "TrainingDataset":
         json_dict = json.loads(json_str)
-        json_dict["df"] = session.sql(json_dict["df_query"])
-        json_dict.pop("df_query")
+        json_dict["df"] = session.sql(json_dict.pop("df_query"))
 
         fs_meta_json = json_dict["feature_store_metadata"]
-        json_dict["feature_store_metadata"] = FeatureStoreMetadata.from_json(fs_meta_json)
-        return cls(**json_dict)
+        json_dict["feature_store_metadata"] = (
+            FeatureStoreMetadata.from_json(fs_meta_json) if fs_meta_json != "null" else None
+        )
+
+        uid = json_dict.pop("id")
+        version = json_dict.pop("version")
+        owner = json_dict.pop("owner")
+
+        result = cls(session, **json_dict)
+        result.id = uid
+        result.version = version
+        result.owner = owner
+
+        return result
 
     def __eq__(self, other: object) -> bool:
         return isinstance(other, TrainingDataset) and self.to_json() == other.to_json()
-
-    def id(self) -> str:
-        """Return a unique identifier of this training dataset.
-
-        Raises:
-            ValueError: when snapshot_table is None.
-
-        Returns:
-            A unique identifier string.
-        """
-        if self.snapshot_table is None:
-            raise ValueError("snapshot_table is required to generate id.")
-        return self.snapshot_table

@@ -195,12 +195,6 @@ class DBManager:
         for stale_stage in stale_stages:
             self.drop_stage(stale_stage.name, schema_name, db_name, if_exists=True)
 
-    def create_image_repo(self, repo_name: str) -> None:
-        self._session.sql(f"CREATE OR REPLACE IMAGE REPOSITORY {repo_name}").collect()
-
-    def drop_image_repo(self, repo_name: str) -> None:
-        self._session.sql(f"DROP IMAGE REPOSITORY IF EXISTS {repo_name}").collect()
-
     def show_user_functions(
         self,
         function_name: str,

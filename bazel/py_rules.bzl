@@ -32,7 +32,7 @@ load(
     native_py_test = "py_test",
 )
 load("@rules_python//python:packaging.bzl", native_py_wheel = "py_wheel")
-load(":repo_paths.bzl", "check_for_experimental_dependencies", "check_for_tests_dependencies")
+load(":repo_paths.bzl", "check_for_experimental_dependencies", "check_for_test_name", "check_for_tests_dependencies")
 
 def py_genrule(**attrs):
     original_cmd = attrs["cmd"]
@@ -122,6 +122,8 @@ def py_test(compatible_with_snowpark = True, **attrs):
       compatible_with_snowpark: see file-level document.
       **attrs: Rule attributes
     """
+    if not check_for_test_name(native.package_name(), attrs):
+        fail("A test target does not have a valid name!")
     if not check_for_tests_dependencies(native.package_name(), attrs):
         fail("A target in src cannot depend on packages in tests!")
     if not check_for_experimental_dependencies(native.package_name(), attrs):
@@ -133,6 +135,90 @@ def py_test(compatible_with_snowpark = True, **attrs):
     # * https://github.com/bazelbuild/rules_python/issues/55
     attrs["legacy_create_init"] = 0
     native_py_test(**attrs)
+
+def _path_inside_wheel(input_file):
+    # input_file.short_path is sometimes relative ("../${repository_root}/foobar")
+    # which is not a valid path within a zip file. Fix that.
+    short_path = input_file.short_path
+    if short_path.startswith("..") and len(short_path) >= 3:
+        # Path separator. '/' on linux.
+        separator = short_path[2]
+
+        # Consume '../' part.
+        short_path = short_path[3:]
+
+        # Find position of next '/' and consume everything up to that character.
+        pos = short_path.find(separator)
+        short_path = short_path[pos + 1:]
+    return short_path
+
+def _py_package_impl(ctx):
+    inputs = depset(
+        transitive = [dep[DefaultInfo].data_runfiles.files for dep in ctx.attr.deps] +
+                     [dep[DefaultInfo].default_runfiles.files for dep in ctx.attr.deps],
+    )
+
+    # TODO: '/' is wrong on windows, but the path separator is not available in starlark.
+    # Fix this once ctx.configuration has directory separator information.
+    packages = [p.replace(".", "/") for p in ctx.attr.packages]
+    if not packages:
+        filtered_inputs = inputs
+    else:
+        filtered_files = []
+
+        # TODO: flattening depset to list gives poor performance,
+        for input_file in inputs.to_list():
+            wheel_path = _path_inside_wheel(input_file)
+            for package in packages:
+                if wheel_path.startswith(package):
+                    filtered_files.append(input_file)
+        filtered_inputs = depset(direct = filtered_files)
+
+    return [
+        DefaultInfo(
+            files = filtered_inputs,
+            default_runfiles = ctx.runfiles(inputs.to_list(), collect_default = True),
+        ),
+        PyInfo(
+            transitive_sources = depset(transitive = [
+                dep[PyInfo].transitive_sources
+                for dep in ctx.attr.deps
+            ]),
+            imports = depset(transitive = [
+                dep[PyInfo].imports
+                for dep in ctx.attr.deps
+            ]),
+        ),
+    ]
+
+py_package_lib = struct(
+    implementation = _py_package_impl,
+    attrs = {
+        "deps": attr.label_list(
+            doc = "",
+        ),
+        "packages": attr.string_list(
+            mandatory = False,
+            allow_empty = True,
+            doc = """\
+List of Python packages to include in the distribution.
+Sub-packages are automatically included.
+""",
+        ),
+    },
+    path_inside_wheel = _path_inside_wheel,
+)
+
+py_package = rule(
+    implementation = py_package_lib.implementation,
+    doc = """\
+A rule to select all files in transitive dependencies of deps which
+belong to given set of Python packages.
+
+This rule is intended to be used as data dependency to py_wheel rule.
+""",
+    attrs = py_package_lib.attrs,
+)
 
 def py_wheel(compatible_with_snowpark = True, **attrs):
     """Modified version of py_wheel rule from rules_python.

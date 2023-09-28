@@ -44,7 +44,7 @@ class RobustScalerTest(parameterized.TestCase):
             if os.path.exists(filepath):
                 os.remove(filepath)
 
-    @parameterized.parameters(  # type: ignore
+    @parameterized.parameters(  # type: ignore[misc]
         {
             "params": {
                 "with_scaling": True,

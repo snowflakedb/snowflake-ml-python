@@ -47,6 +47,16 @@ aspect_bazel_lib_dependencies()
 
 register_yq_toolchains()
 
+local_repository(
+    name = "rules_sphinx",
+    path = "./third_party/rules_sphinx",
+)
+
+local_repository(
+    name = "rules_mypy",
+    path = "./third_party/rules_mypy",
+)
+
 # Below two conda environments (toolchains) are created and they require different
 # constraint values. Two platforms defined in bazel/platforms/BUILD provide those
 # constraint values. A toolchain matches a platform as long as the platform provides
@@ -63,26 +73,29 @@ load("@SnowML//bazel/environments:fetch_conda_env_config.bzl", "fetch_conda_env_
 
 fetch_conda_env_config(name = "fetch_conda_env_config_repo")
 
-load("@fetch_conda_env_config_repo//:config.bzl", "COMPATIBLE_TARGET", "ENVIRONMENT", "NAME")
+load("@fetch_conda_env_config_repo//:config.bzl", "COMPATIBLE_TARGET", "ENVIRONMENT", "NAME", "PYTHON_VERSION")
+
+PYTHON_VERSION_DISPLAY_NAME = "".join(PYTHON_VERSION.split("."))
 
 load_conda(
-    conda_repo_name = "{}_conda".format(NAME),
+    conda_repo_name = "{}_conda_{}".format(NAME, PYTHON_VERSION_DISPLAY_NAME),
     quiet = True,
 )
 
 conda_create(
-    name = "{}_env".format(NAME),
+    name = "{}_env_{}".format(NAME, PYTHON_VERSION_DISPLAY_NAME),
     timeout = 3600,
     clean = False,
-    conda_repo_name = "{}_conda".format(NAME),
+    conda_repo_name = "{}_conda_{}".format(NAME, PYTHON_VERSION_DISPLAY_NAME),
     coverage_tool = "@//bazel/coverage_tool:coverage_tool.py",
     environment = ENVIRONMENT,
+    python_version = PYTHON_VERSION,
     quiet = True,
 )
 
 register_toolchain(
-    name = "{}_env_repo".format(NAME),
-    env = "{}_env".format(NAME),
+    name = "{}_env_{}_repo".format(NAME, PYTHON_VERSION_DISPLAY_NAME),
+    env = "{}_env_{}".format(NAME, PYTHON_VERSION_DISPLAY_NAME),
     target_compatible_with = COMPATIBLE_TARGET,
-    toolchain_name = "py3_toolchain_{}_env".format(NAME),
+    toolchain_name = "py{}_toolchain_{}_env".format(PYTHON_VERSION_DISPLAY_NAME, NAME),
 )

@@ -15,8 +15,8 @@ from absl.testing import parameterized
 from absl.testing.absltest import main
 from sklearn.preprocessing import OrdinalEncoder as SklearnOrdinalEncoder
 
-from snowflake.ml.modeling.preprocessing import (
-    OrdinalEncoder,  # type: ignore[attr-defined]
+from snowflake.ml.modeling.preprocessing import (  # type: ignore[attr-defined]
+    OrdinalEncoder,
 )
 from snowflake.ml.utils.connection_params import SnowflakeLoginOptions
 from snowflake.snowpark import Session
@@ -102,7 +102,7 @@ class OrdinalEncoderTest(parameterized.TestCase):
         distinct_count = df[[input_col]].distinct().count()
         self.assertEqual(distinct_count - 1, max_index)
 
-    @parameterized.parameters(  # type: ignore
+    @parameterized.parameters(  # type: ignore[misc]
         {"params": {}},
         {"params": {"handle_unknown": "use_encoded_value", "unknown_value": -1}},
         {"params": {"encoded_missing_value": -1}},

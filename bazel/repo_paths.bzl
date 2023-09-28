@@ -1,19 +1,20 @@
 """Helper functions for py_rules.bzl separated for unittesting."""
 
-def _extract_and_split_packages(target):
-    """Splits target into list of packages. For example, '//foo/bar:baz' becomes ['foo', 'bar']."""
-
-    # Remove label of the target (that is remove anything after :).
+def _extract_and_split_packages(target, name = None):
+    """Splits target into list of packages. For example, '//foo/bar:baz' becomes ['foo', 'bar', 'baz']."""
     colon = target.find(":")
     if colon == -1:
         path = target
     else:
         path = target[:colon]
+        name = target[colon:]
     pkgs = path.split("/")
     ret = []
     for p in pkgs:
         if p:
             ret.append(p)
+    if name:
+        ret.append(name)
     return ret
 
 def _experimental_found(deps):
@@ -45,7 +46,7 @@ def check_for_experimental_dependencies(pkg_name, attrs):
     return True
 
 def check_for_tests_dependencies(pkg_name, attrs):
-    """Checks if a src target depends on tests package. If so, it bails out.
+    """Checks if a src target depends on package in tests folder or a target depends on test targets. If so, it bails out.
 
     Args:
       pkg_name(str): Name of a package
@@ -54,17 +55,32 @@ def check_for_tests_dependencies(pkg_name, attrs):
     Returns:
       True if check passes, False otherwise
     """
-    paths = _extract_and_split_packages(pkg_name)
-    if len(paths) > 0 and paths[0] != "src":
-        # This check is not required.
-        return True
+    paths = _extract_and_split_packages(pkg_name, attrs["name"])
     if "deps" not in attrs:
         return True
     if not attrs["deps"]:
         return True
     deps = attrs["deps"]
     for d in deps:
-        paths = _extract_and_split_packages(d)
-        if len(paths) > 0 and paths[0] == "tests":
+        dep_paths = _extract_and_split_packages(d)
+        if len(paths) > 0 and paths[0] == "snowflake":
+            if len(dep_paths) > 0 and dep_paths[0] == "tests":
+                return False
+        elif len(dep_paths[-1]) > 5 and dep_paths[-1][-5:] == "_test":
             return False
     return True
+
+def check_for_test_name(pkg_name, attrs):
+    """Checks if a test target have correct name format. If so, it bails out.
+
+    Args:
+      pkg_name(str): Name of a package
+      attrs(dict): Attributes dictionary
+
+    Returns:
+      True if check passes, False otherwise
+    """
+    paths = _extract_and_split_packages(pkg_name, attrs["name"])
+    if len(paths[-1]) >= 5 and paths[-1][-5:] == "_test":
+        return True
+    return False

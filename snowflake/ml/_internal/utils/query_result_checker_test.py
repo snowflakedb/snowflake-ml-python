@@ -1,9 +1,10 @@
-from typing import List
+from typing import List, cast
 
-import query_result_checker
 from absl.testing.absltest import TestCase, main
 
+from snowflake import snowpark
 from snowflake.connector import DataError
+from snowflake.ml._internal.utils import query_result_checker
 from snowflake.ml.test_utils import mock_data_frame, mock_session
 from snowflake.snowpark.row import Row
 
@@ -45,7 +46,7 @@ class SnowflakeQueryResultCheckerTest(TestCase):
         sql_result = [Row("number of rows updated=1, number of multi-joined rows updated=0")]
         session.add_mock_sql(query=query, result=mock_data_frame.MockDataFrame(sql_result))
         actual_result = (
-            query_result_checker.SqlResultValidator(session=session, query=query)
+            query_result_checker.SqlResultValidator(session=cast(snowpark.Session, session), query=query)
             .has_dimensions(expected_rows=1, expected_cols=1)
             .validate()
         )
@@ -58,7 +59,7 @@ class SnowflakeQueryResultCheckerTest(TestCase):
         sql_result = [Row("number of rows updated=1, number of multi-joined rows updated=0")]
         session.add_mock_sql(query=query, result=mock_data_frame.MockDataFrame(sql_result))
         actual_result = (
-            query_result_checker.SqlResultValidator(session=session, query=query)
+            query_result_checker.SqlResultValidator(session=cast(snowpark.Session, session), query=query)
             .has_dimensions(expected_rows=1)
             .has_dimensions(expected_cols=1)
             .validate()
@@ -75,7 +76,7 @@ class SnowflakeQueryResultCheckerTest(TestCase):
         session.add_mock_sql(query=query, result=mock_data_frame.MockDataFrame(sql_result))
         with self.assertRaises(DataError):
             actual_result = (
-                query_result_checker.SqlResultValidator(session=session, query=query)
+                query_result_checker.SqlResultValidator(session=cast(snowpark.Session, session), query=query)
                 .has_dimensions(expected_rows=1, expected_cols=1)
                 .has_column(expected_col_name="fake_name")
                 .validate()
@@ -92,7 +93,7 @@ class SnowflakeQueryResultCheckerTest(TestCase):
         session.add_mock_sql(query=query, result=expected_result)
         with self.assertRaises(DataError):
             actual_result = (
-                query_result_checker.SqlResultValidator(session=session, query=query)
+                query_result_checker.SqlResultValidator(session=cast(snowpark.Session, session), query=query)
                 .has_dimensions(expected_rows=1, expected_cols=1)
                 .validate()
             )
@@ -105,7 +106,7 @@ class SnowflakeQueryResultCheckerTest(TestCase):
         sql_result = [Row(status="Table TEMP successfully created.")]
         session.add_mock_sql(query=query, result=mock_data_frame.MockDataFrame(sql_result))
         actual_result = (
-            query_result_checker.SqlResultValidator(session=session, query=query)
+            query_result_checker.SqlResultValidator(session=cast(snowpark.Session, session), query=query)
             .has_column(expected_col_name="status")
             .validate()
         )
@@ -119,7 +120,7 @@ class SnowflakeQueryResultCheckerTest(TestCase):
         session.add_mock_sql(query=query, result=mock_data_frame.MockDataFrame(sql_result))
         with self.assertRaises(DataError):
             actual_result = (
-                query_result_checker.SqlResultValidator(session=session, query=query)
+                query_result_checker.SqlResultValidator(session=cast(snowpark.Session, session), query=query)
                 .has_column(expected_col_name="status")
                 .validate()
             )
@@ -133,7 +134,7 @@ class SnowflakeQueryResultCheckerTest(TestCase):
         sql_result = [Row(**{"number of rows inserted": 1})]
         session.add_mock_sql(query=query, result=mock_data_frame.MockDataFrame(sql_result))
         actual_result = (
-            query_result_checker.SqlResultValidator(session=session, query=query)
+            query_result_checker.SqlResultValidator(session=cast(snowpark.Session, session), query=query)
             .insertion_success(expected_num_rows=1)
             .validate()
         )
@@ -148,7 +149,7 @@ class SnowflakeQueryResultCheckerTest(TestCase):
         session.add_mock_sql(query=query, result=mock_data_frame.MockDataFrame(sql_result))
         with self.assertRaises(DataError):
             actual_result = (
-                query_result_checker.SqlResultValidator(session=session, query=query)
+                query_result_checker.SqlResultValidator(session=cast(snowpark.Session, session), query=query)
                 .insertion_success(expected_num_rows=1)
                 .validate()
             )
@@ -162,7 +163,7 @@ class SnowflakeQueryResultCheckerTest(TestCase):
         sql_result = [Row(**{"number of rows deleted": 1})]
         session.add_mock_sql(query=query, result=mock_data_frame.MockDataFrame(sql_result))
         actual_result = (
-            query_result_checker.SqlResultValidator(session=session, query=query)
+            query_result_checker.SqlResultValidator(session=cast(snowpark.Session, session), query=query)
             .has_named_value_match(row_idx=0, col_name="number of rows deleted", expected_value=1)
             .validate()
         )
@@ -177,7 +178,7 @@ class SnowflakeQueryResultCheckerTest(TestCase):
         session.add_mock_sql(query=query, result=mock_data_frame.MockDataFrame(sql_result))
         with self.assertRaises(DataError):
             actual_result = (
-                query_result_checker.SqlResultValidator(session=session, query=query)
+                query_result_checker.SqlResultValidator(session=cast(snowpark.Session, session), query=query)
                 .has_named_value_match(row_idx=0, col_name="number of rows deleted", expected_value=1)
                 .validate()
             )
@@ -191,7 +192,7 @@ class SnowflakeQueryResultCheckerTest(TestCase):
         sql_result = [Row(**{"number of rows deleted": 1})]
         session.add_mock_sql(query=query, result=mock_data_frame.MockDataFrame(sql_result))
         actual_result = (
-            query_result_checker.SqlResultValidator(session=session, query=query)
+            query_result_checker.SqlResultValidator(session=cast(snowpark.Session, session), query=query)
             .deletion_success(expected_num_rows=1)
             .validate()
         )
@@ -206,7 +207,7 @@ class SnowflakeQueryResultCheckerTest(TestCase):
         session.add_mock_sql(query=query, result=mock_data_frame.MockDataFrame(sql_result))
         with self.assertRaises(DataError):
             actual_result = (
-                query_result_checker.SqlResultValidator(session=session, query=query)
+                query_result_checker.SqlResultValidator(session=cast(snowpark.Session, session), query=query)
                 .deletion_success(expected_num_rows=1)
                 .validate()
             )

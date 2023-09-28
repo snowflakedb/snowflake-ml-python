@@ -867,7 +867,7 @@ class OneHotEncoder(base.BaseTransformer):
         encoder_sklearn = self.to_sklearn()
         udf_name = random_name_for_temp_object(TempObjectType.FUNCTION)
 
-        @F.pandas_udf(  # type: ignore
+        @F.pandas_udf(  # type: ignore[arg-type, misc]
             is_permanent=False,
             name=udf_name,
             replace=True,
@@ -901,7 +901,7 @@ class OneHotEncoder(base.BaseTransformer):
 
         # encoded column returned by `one_hot_encoder_sparse_transform`
         encoded_output_col = f"'ENCODED_OUTPUT_{generate_random_alphanumeric()}'"
-        encoded_column = one_hot_encoder_sparse_transform(self.input_cols)  # type: ignore
+        encoded_column = one_hot_encoder_sparse_transform(self.input_cols)  # type: ignore[operator]
         encoded_dataset = dataset.with_column(encoded_output_col, encoded_column)
 
         # output columns of value {column_index: 1.0} or null

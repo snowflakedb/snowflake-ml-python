@@ -1,5 +1,4 @@
-load("@rules_python//python:packaging.bzl", "py_package")
-load("//bazel:py_rules.bzl", "py_library", "py_test")
+load("//bazel:py_rules.bzl", "py_library", "py_package", "py_test")
 
 package(default_visibility = ["//visibility:public"])
 
