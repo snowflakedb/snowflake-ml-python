@@ -5,8 +5,8 @@ def get_build_rules_for_native_impl():
     TIMEOUT = "long"  # 900s
 
     py_test(
-        name = "test_simple_imputer",
-        srcs = ["test_simple_imputer.py"],
+        name = "simple_imputer_test",
+        srcs = ["simple_imputer_test.py"],
         shard_count = SHARD_COUNT,
         timeout = TIMEOUT,
         deps = [

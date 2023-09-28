@@ -5,8 +5,8 @@ def get_build_rules_for_native_impl():
     TIMEOUT = "long"  # 900s
 
     py_test(
-        name = "test_binarizer",
-        srcs = ["test_binarizer.py"],
+        name = "binarizer_test",
+        srcs = ["binarizer_test.py"],
         deps = [
             "//snowflake/ml/modeling/preprocessing:binarizer",
             "//snowflake/ml/utils:connection_params",
@@ -15,8 +15,8 @@ def get_build_rules_for_native_impl():
     )
 
     py_test(
-        name = "test_k_bins_discretizer",
-        srcs = ["test_k_bins_discretizer.py"],
+        name = "k_bins_discretizer_test",
+        srcs = ["k_bins_discretizer_test.py"],
         shard_count = SHARD_COUNT,
         timeout = TIMEOUT,
         deps = [
@@ -28,8 +28,8 @@ def get_build_rules_for_native_impl():
     )
 
     py_test(
-        name = "test_label_encoder",
-        srcs = ["test_label_encoder.py"],
+        name = "label_encoder_test",
+        srcs = ["label_encoder_test.py"],
         shard_count = SHARD_COUNT,
         timeout = TIMEOUT,
         deps = [
@@ -40,8 +40,8 @@ def get_build_rules_for_native_impl():
     )
 
     py_test(
-        name = "test_max_abs_scaler",
-        srcs = ["test_max_abs_scaler.py"],
+        name = "max_abs_scaler_test",
+        srcs = ["max_abs_scaler_test.py"],
         deps = [
             "//snowflake/ml/modeling/preprocessing:max_abs_scaler",
             "//snowflake/ml/utils:connection_params",
@@ -50,8 +50,8 @@ def get_build_rules_for_native_impl():
     )
 
     py_test(
-        name = "test_min_max_scaler",
-        srcs = ["test_min_max_scaler.py"],
+        name = "min_max_scaler_test",
+        srcs = ["min_max_scaler_test.py"],
         deps = [
             "//snowflake/ml/modeling/preprocessing:min_max_scaler",
             "//snowflake/ml/utils:connection_params",
@@ -60,8 +60,8 @@ def get_build_rules_for_native_impl():
     )
 
     py_test(
-        name = "test_normalizer",
-        srcs = ["test_normalizer.py"],
+        name = "normalizer_test",
+        srcs = ["normalizer_test.py"],
         shard_count = SHARD_COUNT,
         timeout = TIMEOUT,
         deps = [
@@ -72,8 +72,8 @@ def get_build_rules_for_native_impl():
     )
 
     py_test(
-        name = "test_one_hot_encoder",
-        srcs = ["test_one_hot_encoder.py"],
+        name = "one_hot_encoder_test",
+        srcs = ["one_hot_encoder_test.py"],
         shard_count = SHARD_COUNT,
         timeout = TIMEOUT,
         deps = [
@@ -86,8 +86,8 @@ def get_build_rules_for_native_impl():
     )
 
     py_test(
-        name = "test_ordinal_encoder",
-        srcs = ["test_ordinal_encoder.py"],
+        name = "ordinal_encoder_test",
+        srcs = ["ordinal_encoder_test.py"],
         shard_count = SHARD_COUNT,
         timeout = TIMEOUT,
         deps = [
@@ -98,8 +98,8 @@ def get_build_rules_for_native_impl():
     )
 
     py_test(
-        name = "test_robust_scaler",
-        srcs = ["test_robust_scaler.py"],
+        name = "robust_scaler_test",
+        srcs = ["robust_scaler_test.py"],
         shard_count = SHARD_COUNT,
         timeout = TIMEOUT,
         deps = [
@@ -110,8 +110,8 @@ def get_build_rules_for_native_impl():
     )
 
     py_test(
-        name = "test_standard_scaler",
-        srcs = ["test_standard_scaler.py"],
+        name = "standard_scaler_test",
+        srcs = ["standard_scaler_test.py"],
         deps = [
             "//snowflake/ml/modeling/preprocessing:standard_scaler",
             "//snowflake/ml/utils:connection_params",
@@ -120,8 +120,8 @@ def get_build_rules_for_native_impl():
     )
 
     py_test(
-        name = "test_drop_input_cols",
-        srcs = ["test_drop_input_cols.py"],
+        name = "drop_input_cols_test",
+        srcs = ["drop_input_cols_test.py"],
         shard_count = SHARD_COUNT,
         timeout = TIMEOUT,
         deps = [

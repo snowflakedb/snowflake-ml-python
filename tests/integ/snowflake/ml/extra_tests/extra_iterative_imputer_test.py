@@ -7,7 +7,7 @@ import numpy as np
 import pytest
 from absl.testing.absltest import TestCase, main
 from sklearn.datasets import load_diabetes
-from sklearn.experimental import enable_iterative_imputer  # noqa
+from sklearn.experimental import enable_iterative_imputer  # noqa: F401
 from sklearn.impute import IterativeImputer as SkIterativeImputer
 from sklearn.linear_model import LinearRegression as SkLinearRegression
 

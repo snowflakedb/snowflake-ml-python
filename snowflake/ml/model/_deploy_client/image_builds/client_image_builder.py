@@ -1,6 +1,7 @@
 import json
 import logging
 import os
+import shutil
 import subprocess
 import tempfile
 import time
@@ -13,11 +14,7 @@ from snowflake.ml._internal.exceptions import (
     exceptions as snowml_exceptions,
 )
 from snowflake.ml._internal.utils import spcs_image_registry
-from snowflake.ml.model import _model_meta
-from snowflake.ml.model._deploy_client.image_builds import (
-    base_image_builder,
-    docker_context,
-)
+from snowflake.ml.model._deploy_client.image_builds import base_image_builder
 
 logger = logging.getLogger(__name__)
 
@@ -38,27 +35,25 @@ class ClientImageBuilder(base_image_builder.ImageBuilder):
     def __init__(
         self,
         *,
-        id: str,
+        context_dir: str,
+        full_image_name: str,
         image_repo: str,
-        model_meta: _model_meta.ModelMetadata,
         session: snowpark.Session,
-        image_tag: Optional[str] = None,
     ) -> None:
         """Initialization
 
         Args:
-            id: A hexadecimal string used for naming the image tag.
+            context_dir: Local docker context dir.
+            full_image_name: Full image name consists of image name and image tag.
             image_repo: Path to image repository.
-            model_meta: Model Metadata
             session: Snowpark session
-            image_tag: Optional image tag name; when not provided, will use model id as the tag name.
         """
-        self.image_tag = image_tag or "/".join([image_repo.rstrip("/"), id]) + ":latest"
+        self.context_dir = context_dir
+        self.full_image_name = full_image_name
         self.image_repo = image_repo
-        self.model_meta = model_meta
         self.session = session
 
-    def build_and_upload_image(self, image_to_pull: Optional[str] = None) -> str:
+    def build_and_upload_image(self, image_to_pull: Optional[str] = None) -> None:
         """Builds and uploads an image to the model registry.
 
         Args:
@@ -66,8 +61,6 @@ class ClientImageBuilder(base_image_builder.ImageBuilder):
                 repo. This is more of a workaround to support non-spcs-registry images.
                 TODO[shchen] remove such logic when first-party-image is supported on snowservice registry.
 
-        Returns:
-            Snowservice registry image tag.
 
         Raises:
             SnowflakeMLException: Occurs when failed to build image or push to image registry.
@@ -84,25 +77,38 @@ class ClientImageBuilder(base_image_builder.ImageBuilder):
               }
             }
 
+            Docker will try to find cli-plugins in the config dir, and then fallback to
+            /usr/local/lib/docker/cli-plugins OR /usr/local/libexec/docker/cli-plugins
+            /usr/lib/docker/cli-plugins OR /usr/libexec/docker/cli-plugins
+            To prevent the case that none of them exists, we copy the cli-plugins in the current config directory,
+            which is defined in DOCKER_CONFIG and default to $HOME/.docker to our temp config dir.
+
             Args:
                 docker_config_dir: Path to docker configuration directory, which stores the temporary session token.
                 registry_cred: image registry basic auth credential.
             """
-            content = {"auths": {self.image_tag: {"auth": registry_cred}}}
+            orig_docker_config_dir = os.getenv("DOCKER_CONFIG", os.path.join(os.path.expanduser("~"), ".docker"))
+            if os.path.exists(os.path.join(orig_docker_config_dir, "cli-plugins")):
+                shutil.copytree(
+                    os.path.join(orig_docker_config_dir, "cli-plugins"),
+                    os.path.join(docker_config_dir, "cli-plugins"),
+                    symlinks=True,
+                )
+            content = {"auths": {self.full_image_name: {"auth": registry_cred}}}
             config_path = os.path.join(docker_config_dir, "config.json")
             with open(config_path, "w", encoding="utf-8") as file:
                 json.dump(content, file)
 
         def _cleanup_local_image(docker_config_dir: str) -> None:
             try:
-                image_exist_command = ["docker", "image", "inspect", self.image_tag]
+                image_exist_command = ["docker", "image", "inspect", self.full_image_name]
                 self._run_docker_commands(image_exist_command)
             except Exception:
                 # Image does not exist, probably due to failed build step
                 pass
             else:
-                commands = ["docker", "--config", docker_config_dir, "rmi", self.image_tag]
-                logger.debug(f"Removing local image: {self.image_tag}")
+                commands = ["docker", "--config", docker_config_dir, "rmi", self.full_image_name]
+                logger.debug(f"Removing local image: {self.full_image_name}")
                 self._run_docker_commands(commands)
 
         self.validate_docker_client_env()
@@ -136,7 +142,6 @@ class ClientImageBuilder(base_image_builder.ImageBuilder):
                     ) from e
                 finally:
                     _cleanup_local_image(docker_config_dir)
-        return self.image_tag
 
     def validate_docker_client_env(self) -> None:
         """Ensure docker client is running and BuildKit is enabled. Note that Buildx always uses BuildKit.
@@ -175,11 +180,7 @@ class ClientImageBuilder(base_image_builder.ImageBuilder):
         Args:
             docker_config_dir: Path to docker configuration directory, which stores the temporary session token.
         """
-
-        with tempfile.TemporaryDirectory() as context_dir:
-            dc = docker_context.DockerContext(context_dir=context_dir, model_meta=self.model_meta)
-            dc.build()
-            self._build_image_from_context(context_dir=context_dir, docker_config_dir=docker_config_dir)
+        self._build_image_from_context(docker_config_dir=docker_config_dir)
 
     def _pull_and_tag(self, image_to_pull: str, platform: Platform = Platform.LINUX_AMD64) -> None:
         """Pull image from public docker hub repo. Then tag it with the specified image tag
@@ -193,7 +194,7 @@ class ClientImageBuilder(base_image_builder.ImageBuilder):
         logger.debug(f"Running {str(commands)}")
         self._run_docker_commands(commands)
 
-        commands = ["docker", "tag", image_to_pull, self.image_tag]
+        commands = ["docker", "tag", image_to_pull, self.full_image_name]
         logger.debug(f"Running {str(commands)}")
         self._run_docker_commands(commands)
 
@@ -217,18 +218,18 @@ class ClientImageBuilder(base_image_builder.ImageBuilder):
                 logger.debug(line)
 
         if proc.wait():
+            for line in output_lines:
+                logger.error(line)
+
             raise snowml_exceptions.SnowflakeMLException(
                 error_code=error_codes.INTERNAL_DOCKER_ERROR,
-                original_exception=RuntimeError(f"Docker commands failed: \n {''.join(output_lines)}"),
+                original_exception=RuntimeError(f"Docker command failed: {' '.join(commands)}"),
             )
 
-    def _build_image_from_context(
-        self, context_dir: str, docker_config_dir: str, *, platform: Platform = Platform.LINUX_AMD64
-    ) -> None:
+    def _build_image_from_context(self, docker_config_dir: str, *, platform: Platform = Platform.LINUX_AMD64) -> None:
         """Builds a Docker image based on provided context.
 
         Args:
-            context_dir: Path to context directory.
             docker_config_dir: Path to docker configuration directory, which stores the temporary session token.
             platform: Target platform for the build output, in the format "os[/arch[/variant]]".
         """
@@ -242,8 +243,8 @@ class ClientImageBuilder(base_image_builder.ImageBuilder):
             "--platform",
             platform.value,
             "--tag",
-            f"{self.image_tag}",
-            context_dir,
+            f"{self.full_image_name}",
+            self.context_dir,
         ]
 
         self._run_docker_commands(commands)
@@ -264,9 +265,9 @@ class ClientImageBuilder(base_image_builder.ImageBuilder):
         Args:
             docker_config_dir: Path to docker configuration directory, which stores the temporary session token.
         """
-        commands = ["docker", "--config", docker_config_dir, "login", self.image_tag]
+        commands = ["docker", "--config", docker_config_dir, "login", self.full_image_name]
         self._run_docker_commands(commands)
 
-        logger.debug(f"Pushing image to image repo {self.image_tag}")
-        commands = ["docker", "--config", docker_config_dir, "push", self.image_tag]
+        logger.debug(f"Pushing image to image repo {self.full_image_name}")
+        commands = ["docker", "--config", docker_config_dir, "push", self.full_image_name]
         self._run_docker_commands(commands)

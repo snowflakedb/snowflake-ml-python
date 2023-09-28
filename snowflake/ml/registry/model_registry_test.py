@@ -4,19 +4,13 @@ import json
 import posixpath
 from typing import Any, Dict, List, Union, cast
 
-from _schema import (
-    _ARTIFACT_TABLE_SCHEMA,
-    _DEPLOYMENTS_TABLE_SCHEMA,
-    _METADATA_TABLE_SCHEMA,
-    _REGISTRY_TABLE_SCHEMA,
-)
 from absl.testing import absltest
 
 from snowflake import connector, snowpark
 from snowflake.ml._internal import telemetry
 from snowflake.ml._internal.utils import formatting, identifier, uri
 from snowflake.ml.model import _model
-from snowflake.ml.registry import model_registry
+from snowflake.ml.registry import _schema, model_registry
 from snowflake.ml.test_utils import mock_data_frame, mock_session
 
 _DATABASE_NAME = identifier.get_inferred_name("_SYSTEM_MODEL_REGISTRY")
@@ -32,18 +26,27 @@ _FULLY_QUALIFIED_REGISTRY_TABLE_NAME = ".".join(
         _REGISTRY_TABLE_NAME,
     ]
 )
-_REGISTRY_SCHEMA_STRING = ", ".join([f"{k} {v}" for k, v in _REGISTRY_TABLE_SCHEMA])
+_REGISTRY_SCHEMA_STRING = ", ".join([f"{k} {v}" for k, v in _schema._REGISTRY_TABLE_SCHEMA])
 _METADATA_INSERT_COLUMNS_STRING = ",".join(
-    filter(lambda x: x != "SEQUENCE_ID", [item[0] for item in _METADATA_TABLE_SCHEMA])
+    filter(lambda x: x != "SEQUENCE_ID", [item[0] for item in _schema._METADATA_TABLE_SCHEMA])
 )
 _METADATA_SCHEMA_STRING = ", ".join(
-    [f"{k} {v.format(registry_table_name=_FULLY_QUALIFIED_REGISTRY_TABLE_NAME)}" for k, v in _METADATA_TABLE_SCHEMA]
+    [
+        f"{k} {v.format(registry_table_name=_FULLY_QUALIFIED_REGISTRY_TABLE_NAME)}"
+        for k, v in _schema._METADATA_TABLE_SCHEMA
+    ]
 )
 _DEPLOYMENTS_SCHEMA_STRING = ",".join(
-    [f"{k} {v.format(registry_table_name=_FULLY_QUALIFIED_REGISTRY_TABLE_NAME)}" for k, v in _DEPLOYMENTS_TABLE_SCHEMA]
+    [
+        f"{k} {v.format(registry_table_name=_FULLY_QUALIFIED_REGISTRY_TABLE_NAME)}"
+        for k, v in _schema._DEPLOYMENTS_TABLE_SCHEMA
+    ]
 )
 _ARTIFACTS_SCHEMA_STRING = ",".join(
-    [f"{k} {v.format(registry_table_name=_FULLY_QUALIFIED_REGISTRY_TABLE_NAME)}" for k, v in _ARTIFACT_TABLE_SCHEMA]
+    [
+        f"{k} {v.format(registry_table_name=_FULLY_QUALIFIED_REGISTRY_TABLE_NAME)}"
+        for k, v in _schema._ARTIFACT_TABLE_SCHEMA
+    ]
 )
 
 
@@ -451,7 +454,7 @@ class ModelRegistryTest(absltest.TestCase):
                 [snowpark.Row(status=f"View {_REGISTRY_TABLE_NAME}_VIEW successfully created.")]
             ),
         )
-        self.add_session_mock_sql(  # type: ignore
+        self.add_session_mock_sql(
             query=(
                 f"""CREATE OR REPLACE VIEW {_DATABASE_NAME}.{_SCHEMA_NAME}.{_ARTIFACTS_TABLE_NAME}_VIEW
                     COPY GRANTS AS
@@ -468,7 +471,7 @@ class ModelRegistryTest(absltest.TestCase):
             result=mock_data_frame.MockDataFrame(
                 [snowpark.Row(status=f"View {_ARTIFACTS_TABLE_NAME}_VIEW successfully created.")]
             ),
-        ),
+        )
 
     def setup_open_existing(self) -> None:
         self.add_session_mock_sql(

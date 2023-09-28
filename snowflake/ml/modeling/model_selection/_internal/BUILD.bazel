@@ -1,6 +1,15 @@
-load("//bazel:py_rules.bzl", "py_library")
+load("//bazel:py_rules.bzl", "py_library", "py_package")
 
 package(default_visibility = ["//visibility:public"])
+
+py_package(
+    name = "_internal_pkg",
+    packages = ["snowflake.ml"],
+    deps = [
+        ":_grid_search_cv",
+        ":_randomized_search_cv",
+    ],
+)
 
 py_library(
     name = "init",

@@ -3,6 +3,11 @@ load("//bazel:py_rules.bzl", "py_library", "py_test")
 package(default_visibility = ["//visibility:public"])
 
 py_library(
+    name = "snowpark_dataframe_utils",
+    srcs = ["snowpark_dataframe_utils.py"],
+)
+
+py_library(
     name = "import_utils",
     srcs = ["import_utils.py"],
 )

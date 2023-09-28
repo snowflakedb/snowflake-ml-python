@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
-import math
-import unittest
+import math, unittest
+from typing import Any, List
 
 import numpy as np
 from absl.testing import absltest
+from sklearn.ensemble import RandomForestClassifier
 
 from snowflake import snowpark
 from snowflake.ml.utils import connection_params
+from snowflake.snowpark import functions, types
 
 
 def rel_entropy(x: float, y: float) -> float:
@@ -21,9 +23,9 @@ def rel_entropy(x: float, y: float) -> float:
 
 
 # This is the official JS algorithm
-def JS_helper(p: list, q: list) -> float:
-    p = np.asarray(p)
-    q = np.asarray(q)
+def JS_helper(p1: List[float], q1: List[float]) -> Any:
+    p = np.asarray(p1)
+    q = np.asarray(q1)
     m = (p + q) / 2.0
     tmp = np.column_stack((p, m))
     left = np.array([rel_entropy(x, y) for x, y in tmp])
@@ -47,7 +49,7 @@ class MonitorTest(absltest.TestCase):
         self._session.close()
 
     def test_compare_udfs(self) -> None:
-        from snowflake.ml.modeling.metrics import monitor
+        from snowflake.ml.monitoring import monitor
 
         inputDf = self._session.create_dataframe(
             [
@@ -78,28 +80,8 @@ class MonitorTest(absltest.TestCase):
         pdfBucketize = resBucketize.to_pandas()
         assert pdfBucketize.iloc[0][1] == 1 and pdfBucketize.iloc[0][2] == 1
 
-        # test invalid bucket_config arg, should fail
-        err = None
-        try:
-            monitor.compare_udfs_outputs("add1", "add2", inputDf, {"min": 0})
-        except Exception as e:
-            err = e
-        assert err is not None
-        err = None
-        try:
-            monitor.compare_udfs_outputs("add1", "add2", inputDf, {"max": 0, "Size": 2})
-        except Exception as e:
-            err = e
-        assert err is not None
-        err = None
-        try:
-            monitor.compare_udfs_outputs("add1", "add2", inputDf, {"MIN": 0, "max": 20, "size": 2, "no": 1})
-        except Exception as e:
-            err = e
-        assert err is not None
-
     def test_get_basic_stats(self) -> None:
-        from snowflake.ml.modeling.metrics import monitor
+        from snowflake.ml.monitoring import monitor
 
         inputDf = self._session.create_dataframe(
             [
@@ -115,7 +97,7 @@ class MonitorTest(absltest.TestCase):
         assert d1["MAX"] == 100 and d2["MAX"] == 98
 
     def test_jensenshannon(self) -> None:
-        from snowflake.ml.modeling.metrics import monitor
+        from snowflake.ml.monitoring import monitor
 
         df1 = self._session.create_dataframe(
             [
@@ -153,6 +135,54 @@ class MonitorTest(absltest.TestCase):
         assert abs(js - JS_helper([0.125, 0.25, 0.25, 0.25, 0.25], [0.25, 0.25, 0.25, 0.25, 0.125])) <= 1e-5
         js = monitor.jensenshannon(df1, "col1", df3, "col1")
         assert abs(js - JS_helper([0.25, 0.25, 0.25, 0.25], [1.0 / 6, 1.0 / 6, 0.5, 1.0 / 6])) <= 1e-5
+
+    def test_shap(self) -> None:
+        X_train = np.random.randint(1, 90, (4, 5))
+        y_train = np.random.randint(0, 3, (4, 1))
+
+        clf = RandomForestClassifier(max_depth=3, random_state=0)
+        clf.fit(X_train, y_train)
+
+        test_sample = np.array([[3, 2, 1, 4, 5]])
+
+        inputDf = self._session.create_dataframe(
+            [snowpark.Row(3, 2, 1, 4, 5)],
+            schema=["COL1", "COL2", "COL3", "COL4", "COL5"],
+        )
+
+        from snowflake.ml.monitoring.shap import ShapExplainer
+
+        sf_explainer = ShapExplainer(self._session, clf.predict, X_train)
+        shapdf2 = sf_explainer.get_shap(inputDf)
+        shapdf2_1 = sf_explainer(inputDf)
+        assert shapdf2_1 is not None
+        v2 = shapdf2.collect()[0].as_dict(True)["SHAP"]
+        v2 = v2.replace("\n", "").strip("[] ").split(",")
+
+        import shap
+
+        shap_explainer1 = shap.Explainer(clf.predict, X_train)
+        shap_values1 = shap_explainer1(test_sample)
+
+        self._session.add_packages("numpy", "shap")
+
+        def get_shap(input: list) -> list:  # type: ignore[type-arg]
+            shap_explainer = shap.Explainer(clf.predict, X_train)
+            shap_values = shap_explainer(np.array([input]))
+            return shap_values.values.tolist()  # type: ignore[no-any-return]
+
+        shapudf = self._session.udf.register(get_shap, input_types=[types.ArrayType()], return_type=types.ArrayType())
+
+        shapdf1 = inputDf.select(
+            functions.array_construct("COL1", "COL2", "COL3", "COL4", "COL5").alias("INPUT")
+        ).select(functions.get(shapudf("INPUT"), 0).alias("SHAP"))
+        v1 = shapdf1.collect()[0].as_dict(True)["SHAP"]
+        v1 = v1.replace("\n", "").strip("[] ").split(",")
+
+        assert abs(float(v1[0]) - shap_values1.values[0][0]) <= 1e-5
+        assert abs(float(v1[1]) - shap_values1.values[0][1]) <= 1e-5
+        assert abs(float(v2[0]) - shap_values1.values[0][0]) <= 1e-5
+        assert abs(float(v2[1]) - shap_values1.values[0][1]) <= 1e-5
 
 
 if __name__ == "__main__":

@@ -1,5 +1,7 @@
 from typing import List, Optional, Protocol
 
+import pandas as pd
+
 from snowflake.snowpark import DataFrame, Session
 
 
@@ -11,9 +13,18 @@ class FitPredictHandlers(Protocol):
         session: Session,
         estimator: object,
         dependencies: List[str],
-        fit_sproc_imports: List[str],
         input_cols: List[str],
         label_cols: List[str],
+        sample_weight_col: Optional[str],
+    ) -> object:
+        raise NotImplementedError
+
+    def fit_pandas(
+        self,
+        dataset: pd.DataFrame,
+        estimator: object,
+        input_cols: List[str],
+        label_cols: Optional[List[str]],
         sample_weight_col: Optional[str],
     ) -> object:
         raise NotImplementedError
@@ -32,6 +43,16 @@ class FitPredictHandlers(Protocol):
     ) -> DataFrame:
         raise NotImplementedError
 
+    def score_pandas(
+        self,
+        dataset: pd.DataFrame,
+        estimator: object,
+        input_cols: List[str],
+        label_cols: List[str],
+        sample_weight_col: Optional[str],
+    ) -> float:
+        raise NotImplementedError
+
     def score_snowpark(
         self,
         dataset: DataFrame,
@@ -48,6 +69,16 @@ class FitPredictHandlers(Protocol):
 
 # TODO: Add more specific entities to type hint estimators instead of using `object`.
 class CVHandlers(Protocol):
+    def fit_pandas(
+        self,
+        dataset: pd.DataFrame,
+        estimator: object,
+        input_cols: List[str],
+        label_cols: Optional[List[str]],
+        sample_weight_col: Optional[str],
+    ) -> object:
+        raise NotImplementedError
+
     def batch_inference(
         self,
         dataset: DataFrame,
@@ -60,6 +91,16 @@ class CVHandlers(Protocol):
         expected_output_cols_list: List[str],
         expected_output_cols_type: str = "",
     ) -> DataFrame:
+        raise NotImplementedError
+
+    def score_pandas(
+        self,
+        dataset: pd.DataFrame,
+        estimator: object,
+        input_cols: List[str],
+        label_cols: List[str],
+        sample_weight_col: Optional[str],
+    ) -> float:
         raise NotImplementedError
 
     def score_snowpark(

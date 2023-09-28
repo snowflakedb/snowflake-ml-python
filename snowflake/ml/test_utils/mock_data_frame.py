@@ -137,7 +137,8 @@ class MockDataFrame(mock_snowml_base.MockSnowMLBase):
 
         We currently cannot check the arguments to filter. Argument checking for the call is disabled.
 
-        # noqa
+        # noqa: DAR101
+        # noqa: DAR201
         """
         mdfo = self._check_operation("filter", args=args, kwargs=kwargs, check_args=False, check_kwargs=False)
         return mdfo.result

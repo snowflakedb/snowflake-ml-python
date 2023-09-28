@@ -1,5 +1,6 @@
-import import_utils
 from absl.testing import absltest
+
+from snowflake.ml._internal.utils import import_utils
 
 
 class ConditionalImportTest(absltest.TestCase):

@@ -25,7 +25,7 @@ def is_relaxed() -> bool:
 def get_valid_pkg_versions_supported_in_snowflake_conda_channel(
     pkg_versions: List[str], session: Session, subproject: Optional[str] = None
 ) -> List[str]:
-    if snowpark_utils.is_in_stored_procedure():  # type: ignore
+    if snowpark_utils.is_in_stored_procedure():  # type: ignore[no-untyped-call]
         return _get_valid_pkg_versions_supported_in_snowflake_conda_channel_sync(pkg_versions, session, subproject)
     else:
         return _get_valid_pkg_versions_supported_in_snowflake_conda_channel_async(pkg_versions, session, subproject)
@@ -53,7 +53,6 @@ def _get_valid_pkg_versions_supported_in_snowflake_conda_channel_sync(
 def _get_valid_pkg_versions_supported_in_snowflake_conda_channel_async(
     pkg_versions: List[str], session: Session, subproject: Optional[str] = None
 ) -> List[str]:
-
     pkg_version_async_job_list: List[Tuple[str, AsyncJob]] = []
     for pkg_version in pkg_versions:
         if pkg_version not in cache:

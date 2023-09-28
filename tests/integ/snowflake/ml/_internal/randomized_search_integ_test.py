@@ -1,4 +1,5 @@
 import inflection
+import numpy as np
 import pytest
 from absl.testing.absltest import TestCase, main
 from scipy.stats import randint
@@ -20,6 +21,20 @@ class RandomizedSearchCVTest(TestCase):
 
     def tearDown(self):
         self._session.close()
+
+    def _compare_cv_results(self, cv_result_1, cv_result_2) -> None:
+        # compare the keys
+        self.assertEqual(cv_result_1.keys(), cv_result_2.keys())
+        # compare the values
+        for k, v in cv_result_1.items():
+            if isinstance(v, np.ndarray):
+                if k.startswith("param_"):  # compare the masked array
+                    np.ma.allequal(v, cv_result_2[k])
+                elif k == "params":  # compare the parameter combination
+                    self.assertItemsEqual(v.tolist(), cv_result_2[k])
+                elif k.endswith("test_score"):  # compare the test score
+                    np.testing.assert_allclose(v, cv_result_2[k], rtol=1.0e-1, atol=1.0e-2)
+                # Do not compare the fit time
 
     def test_fit_and_compare_results(self) -> None:
         input_df_pandas = load_iris(as_frame=True).frame
@@ -52,15 +67,13 @@ class RandomizedSearchCVTest(TestCase):
         reg.fit(input_df)
         sklearn_reg.fit(X=input_df_pandas[input_cols], y=input_df_pandas[label_col].squeeze())
 
-        # TODO: randomized search cv results are not always the same.
-        # check with implementation
-        # actual_arr = reg.predict(input_df).to_pandas().sort_values(by="INDEX")
-        # [output_cols].astype("float64").to_numpy()
-        # sklearn_numpy_arr = sklearn_reg.predict(input_df_pandas[input_cols])
-        # assert reg._sklearn_object.best_score_ == sklearn_reg.best_score_
-        # assert reg._sklearn_object.best_params_ == sklearn_reg.best_params_
+        actual_arr = reg.predict(input_df).to_pandas().sort_values(by="INDEX")[output_cols].to_numpy()
+        sklearn_numpy_arr = sklearn_reg.predict(input_df_pandas[input_cols])
+        np.testing.assert_allclose(reg._sklearn_object.best_score_, sklearn_reg.best_score_)
+        assert reg._sklearn_object.best_params_ == sklearn_reg.best_params_
+        self._compare_cv_results(reg._sklearn_object.cv_results_, sklearn_reg.cv_results_)
 
-        # np.testing.assert_allclose(actual_arr.flatten(), sklearn_numpy_arr.flatten(), rtol=1.0e-1, atol=1.0e-2)
+        np.testing.assert_allclose(actual_arr.flatten(), sklearn_numpy_arr.flatten(), rtol=1.0e-1, atol=1.0e-2)
 
 
 if __name__ == "__main__":

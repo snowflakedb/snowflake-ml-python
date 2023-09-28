@@ -1,0 +1,6 @@
+exports_files(
+    [
+        "sphinx_main.py",
+    ],
+    visibility = ["//visibility:public"],
+)

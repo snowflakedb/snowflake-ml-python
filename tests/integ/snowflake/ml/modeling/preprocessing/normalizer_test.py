@@ -52,7 +52,7 @@ class NormalizerTest(parameterized.TestCase):
             if os.path.exists(filepath):
                 os.remove(filepath)
 
-    @parameterized.parameters({"norm": "l2"}, {"norm": "l1"}, {"norm": "max"})  # type: ignore [misc]
+    @parameterized.parameters({"norm": "l2"}, {"norm": "l1"}, {"norm": "max"})  # type: ignore[misc]
     def test_transform(self, norm: Dict[str, Any]) -> None:
         input_cols, output_cols, id_col = NUMERIC_COLS, OUTPUT_COLS, ID_COL
         input_cols_extended = input_cols.copy()
@@ -142,7 +142,7 @@ class NormalizerTest(parameterized.TestCase):
         with self.assertRaises(SnowparkSQLException):
             transformed_df.collect()
 
-    @parameterized.parameters({"norm": "l2"}, {"norm": "l1"}, {"norm": "max"})  # type: ignore [misc]
+    @parameterized.parameters({"norm": "l2"}, {"norm": "l1"}, {"norm": "max"})  # type: ignore[misc]
     def test_transform_pandas(self, norm: Dict[str, Any]) -> None:
         input_cols, output_cols, id_col = NUMERIC_COLS, OUTPUT_COLS, ID_COL
         df_pandas, df = framework_utils.get_df(self._session, _DATA_NORMALIZE, SCHEMA, np.nan)

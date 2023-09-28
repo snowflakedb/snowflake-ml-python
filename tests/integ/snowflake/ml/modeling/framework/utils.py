@@ -172,7 +172,7 @@ def gen_fuzz_data(
             raise ValueError(f"Unsupported data type {t}")
         names.append(f"COL_{idx}")
 
-    return np.core.records.fromarrays(data, names=names).tolist(), names  # type: ignore
+    return np.core.records.fromarrays(data, names=names).tolist(), names  # type: ignore[call-overload]
 
 
 def get_df(
@@ -200,16 +200,16 @@ def get_df(
 
 
 def sort_by_columns(array: npt.NDArray[Any], num_col: int = 1) -> npt.NDArray[Any]:
-    keys = (array[:, idx] for idx in range(num_col))
-    return array[np.lexsort(keys)]  # type: ignore
+    keys = [array[:, idx] for idx in range(num_col)]
+    return array[np.lexsort(keys)]  # type: ignore[no-any-return]
 
 
-def get_pandas_feature(X, feature_idx) -> np.ndarray:  # type: ignore
+def get_pandas_feature(X: Union[npt.NDArray[Any], pd.DataFrame], feature_idx: int) -> npt.NDArray[Any]:
     if hasattr(X, "iloc"):
         # pandas dataframes
-        return X.iloc[:, feature_idx]  # type: ignore
+        return X.iloc[:, feature_idx]  # type: ignore[no-any-return]
     # numpy arrays, sparse arrays
-    return X[:, feature_idx]  # type: ignore
+    return X[:, feature_idx]
 
 
 def create_columns_metadata(session: Session) -> None:

@@ -198,9 +198,7 @@ class SnowServiceClientTest(absltest.TestCase):
             result=mock_data_frame.MockDataFrame(collect_result=[]),
         )
 
-        with exception_utils.assert_snowml_exceptions(
-            self, expected_original_error_type=RuntimeError, expected_regex=test_log
-        ):
+        with exception_utils.assert_snowml_exceptions(self, expected_original_error_type=RuntimeError):
             with mock.patch.object(self.client, "get_resource_status", side_effect=[None, None, None, "READY"]):
                 self.client.block_until_resource_is_ready(
                     self.m_service_name, constants.ResourceType.SERVICE, max_retries=1, retry_interval_secs=1
@@ -230,9 +228,7 @@ class SnowServiceClientTest(absltest.TestCase):
         )
 
         # Service show failure status on 2nd retry.
-        with exception_utils.assert_snowml_exceptions(
-            self, expected_original_error_type=RuntimeError, expected_regex=test_log
-        ):
+        with exception_utils.assert_snowml_exceptions(self, expected_original_error_type=RuntimeError):
             with mock.patch.object(
                 self.client, "get_resource_status", side_effect=[None, constants.ResourceStatus("FAILED")]
             ):

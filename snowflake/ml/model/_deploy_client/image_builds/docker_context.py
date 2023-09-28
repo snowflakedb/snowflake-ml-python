@@ -62,9 +62,13 @@ class DockerContext(ABC):
         with open(docker_file_path, "w", encoding="utf-8") as dockerfile, open(
             docker_file_template, encoding="utf-8"
         ) as template:
+            base_image = "mambaorg/micromamba:1.4.3"
+            tag = base_image.split(":")[1]
+            assert tag != constants.LATEST_IMAGE_TAG, (
+                "Base image tag should not be 'latest' as it might cause false" "positive image cache hit"
+            )
             dockerfile_content = string.Template(template.read()).safe_substitute(
                 {
-                    # TODO(shchen): SNOW-835411, Support overwriting base image
                     "base_image": "mambaorg/micromamba:1.4.3",
                     "model_env_folder": constants.MODEL_ENV_FOLDER,
                     "inference_server_dir": constants.INFERENCE_SERVER_DIR,

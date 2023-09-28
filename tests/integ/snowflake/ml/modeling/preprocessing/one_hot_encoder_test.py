@@ -140,7 +140,7 @@ class OneHotEncoderTest(parameterized.TestCase):
         for actual_cats, sklearn_cats in zip(actual_categories, encoder_sklearn.categories_):
             self.assertEqual(sklearn_cats.tolist(), actual_cats.tolist())
 
-    @parameterized.parameters(  # type: ignore
+    @parameterized.parameters(  # type: ignore[misc]
         {"params": {}},
         {"params": {"min_frequency": 2}},
         {"params": {"max_categories": 2}},
@@ -259,17 +259,17 @@ class OneHotEncoderTest(parameterized.TestCase):
         ON EQUAL_NULL("STR2", "_CATEGORY")))
 
         Transformed dataset:
-        ------------------------------------------------------------------------------------------------------------------------------------------------------------------ # noqa
-        |"STR1"  |"STR2"      |"OUTPUT1_A"  |"OUTPUT1_a"  |"OUTPUT1_b"  |"OUTPUT1_c"  |"OUTPUT1_d"  |"OUTPUT2_TuDOcLxToB"  |"OUTPUT2_g1ehQlL80t"  |"OUTPUT2_zOyDvcyZ2s"  | # noqa
-        ------------------------------------------------------------------------------------------------------------------------------------------------------------------ # noqa
-        |c       |g1ehQlL80t  |0.0          |0.0          |0.0          |1.0          |0.0          |0.0                   |1.0                   |0.0                   | # noqa
-        |a       |zOyDvcyZ2s  |0.0          |1.0          |0.0          |0.0          |0.0          |0.0                   |0.0                   |1.0                   | # noqa
-        |b       |zOyDvcyZ2s  |0.0          |0.0          |1.0          |0.0          |0.0          |0.0                   |0.0                   |1.0                   | # noqa
-        |A       |TuDOcLxToB  |1.0          |0.0          |0.0          |0.0          |0.0          |1.0                   |0.0                   |0.0                   | # noqa
-        |d       |g1ehQlL80t  |0.0          |0.0          |0.0          |0.0          |1.0          |0.0                   |1.0                   |0.0                   | # noqa
-        |b       |g1ehQlL80t  |0.0          |0.0          |1.0          |0.0          |0.0          |0.0                   |1.0                   |0.0                   | # noqa
-        |b       |g1ehQlL80t  |0.0          |0.0          |1.0          |0.0          |0.0          |0.0                   |1.0                   |0.0                   | # noqa
-        ------------------------------------------------------------------------------------------------------------------------------------------------------------------ # noqa
+        ------------------------------------------------------------------------------------------------------------------------------------------------------------------   # noqa: E501
+        |"STR1"  |"STR2"      |"OUTPUT1_A"  |"OUTPUT1_a"  |"OUTPUT1_b"  |"OUTPUT1_c"  |"OUTPUT1_d"  |"OUTPUT2_TuDOcLxToB"  |"OUTPUT2_g1ehQlL80t"  |"OUTPUT2_zOyDvcyZ2s"  |   # noqa: E501
+        ------------------------------------------------------------------------------------------------------------------------------------------------------------------   # noqa: E501
+        |c       |g1ehQlL80t  |0.0          |0.0          |0.0          |1.0          |0.0          |0.0                   |1.0                   |0.0                   |   # noqa: E501
+        |a       |zOyDvcyZ2s  |0.0          |1.0          |0.0          |0.0          |0.0          |0.0                   |0.0                   |1.0                   |   # noqa: E501
+        |b       |zOyDvcyZ2s  |0.0          |0.0          |1.0          |0.0          |0.0          |0.0                   |0.0                   |1.0                   |   # noqa: E501
+        |A       |TuDOcLxToB  |1.0          |0.0          |0.0          |0.0          |0.0          |1.0                   |0.0                   |0.0                   |   # noqa: E501
+        |d       |g1ehQlL80t  |0.0          |0.0          |0.0          |0.0          |1.0          |0.0                   |1.0                   |0.0                   |   # noqa: E501
+        |b       |g1ehQlL80t  |0.0          |0.0          |1.0          |0.0          |0.0          |0.0                   |1.0                   |0.0                   |   # noqa: E501
+        |b       |g1ehQlL80t  |0.0          |0.0          |1.0          |0.0          |0.0          |0.0                   |1.0                   |0.0                   |   # noqa: E501
+        ------------------------------------------------------------------------------------------------------------------------------------------------------------------   # noqa: E501
 
         Raises
         ------
@@ -1478,7 +1478,7 @@ class OneHotEncoderTest(parameterized.TestCase):
 
         self.assertIn("Found unknown categories", excinfo.value.args[0])
 
-    @parameterized.parameters(  # type: ignore
+    @parameterized.parameters(  # type: ignore[misc]
         {"params": {"sparse": False}},
         {"params": {"sparse": False, "min_frequency": 2}},
         {"params": {"sparse": False, "max_categories": 2}},

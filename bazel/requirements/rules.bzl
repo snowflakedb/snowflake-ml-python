@@ -83,7 +83,7 @@ def generate_requirement_file_yaml(
             template_file,
         ],
         outs = ["{generated_file}.body.formatted.yaml".format(generated_file = generated_file)],
-        expression = ". as $item ireduce ({}; . * $item ) | sort_keys(..)",
+        expression = ". as $item ireduce ({}; . *+ $item ) | sort_keys(..)",
     )
 
     native.genrule(

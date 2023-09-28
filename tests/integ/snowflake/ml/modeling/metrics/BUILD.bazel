@@ -7,8 +7,8 @@ SHARD_COUNT = 3
 TIMEOUT = "long"  # 900s
 
 py_test(
-    name = "test_r2_score",
-    srcs = ["test_r2_score.py"],
+    name = "r2_score_test",
+    srcs = ["r2_score_test.py"],
     deps = [
         "//snowflake/ml/modeling/metrics:regression",
         "//snowflake/ml/utils:connection_params",
@@ -16,8 +16,8 @@ py_test(
 )
 
 py_test(
-    name = "test_accuracy_score",
-    srcs = ["test_accuracy_score.py"],
+    name = "accuracy_score_test",
+    srcs = ["accuracy_score_test.py"],
     deps = [
         "//snowflake/ml/modeling/metrics:classification",
         "//snowflake/ml/utils:connection_params",
@@ -26,9 +26,9 @@ py_test(
 )
 
 py_test(
-    name = "test_confusion_matrix",
+    name = "confusion_matrix_test",
     timeout = TIMEOUT,
-    srcs = ["test_confusion_matrix.py"],
+    srcs = ["confusion_matrix_test.py"],
     deps = [
         "//snowflake/ml/modeling/metrics:classification",
         "//snowflake/ml/utils:connection_params",
@@ -37,9 +37,9 @@ py_test(
 )
 
 py_test(
-    name = "test_correlation",
+    name = "correlation_test",
     timeout = TIMEOUT,
-    srcs = ["test_correlation.py"],
+    srcs = ["correlation_test.py"],
     shard_count = SHARD_COUNT,
     deps = [
         "//snowflake/ml/modeling/metrics:correlation",
@@ -48,9 +48,9 @@ py_test(
 )
 
 py_test(
-    name = "test_covariance",
+    name = "covariance_test",
     timeout = TIMEOUT,
-    srcs = ["test_covariance.py"],
+    srcs = ["covariance_test.py"],
     deps = [
         "//snowflake/ml/modeling/metrics:covariance",
         "//snowflake/ml/utils:connection_params",
@@ -58,9 +58,9 @@ py_test(
 )
 
 py_test(
-    name = "test_d2_absolute_error_score",
+    name = "d2_absolute_error_score_test",
     timeout = TIMEOUT,
-    srcs = ["test_d2_absolute_error_score.py"],
+    srcs = ["d2_absolute_error_score_test.py"],
     shard_count = SHARD_COUNT,
     deps = [
         "//snowflake/ml/modeling/metrics:regression",
@@ -70,9 +70,9 @@ py_test(
 )
 
 py_test(
-    name = "test_d2_pinball_score",
+    name = "d2_pinball_score_test",
     timeout = TIMEOUT,
-    srcs = ["test_d2_pinball_score.py"],
+    srcs = ["d2_pinball_score_test.py"],
     shard_count = SHARD_COUNT,
     deps = [
         "//snowflake/ml/modeling/metrics:regression",
@@ -82,9 +82,9 @@ py_test(
 )
 
 py_test(
-    name = "test_explained_variance_score",
+    name = "explained_variance_score_test",
     timeout = TIMEOUT,
-    srcs = ["test_explained_variance_score.py"],
+    srcs = ["explained_variance_score_test.py"],
     shard_count = SHARD_COUNT,
     deps = [
         "//snowflake/ml/modeling/metrics:regression",
@@ -94,9 +94,9 @@ py_test(
 )
 
 py_test(
-    name = "test_f1_score",
+    name = "f1_score_test",
     timeout = TIMEOUT,
-    srcs = ["test_f1_score.py"],
+    srcs = ["f1_score_test.py"],
     shard_count = SHARD_COUNT,
     deps = [
         "//snowflake/ml/modeling/metrics:classification",
@@ -106,9 +106,9 @@ py_test(
 )
 
 py_test(
-    name = "test_fbeta_score",
+    name = "fbeta_score_test",
     timeout = TIMEOUT,
-    srcs = ["test_fbeta_score.py"],
+    srcs = ["fbeta_score_test.py"],
     shard_count = SHARD_COUNT,
     deps = [
         "//snowflake/ml/modeling/metrics:classification",
@@ -118,9 +118,9 @@ py_test(
 )
 
 py_test(
-    name = "test_log_loss",
+    name = "log_loss_test",
     timeout = TIMEOUT,
-    srcs = ["test_log_loss.py"],
+    srcs = ["log_loss_test.py"],
     shard_count = SHARD_COUNT,
     deps = [
         "//snowflake/ml/modeling/metrics:classification",
@@ -130,9 +130,9 @@ py_test(
 )
 
 py_test(
-    name = "test_mean_absolute_error",
+    name = "mean_absolute_error_test",
     timeout = TIMEOUT,
-    srcs = ["test_mean_absolute_error.py"],
+    srcs = ["mean_absolute_error_test.py"],
     shard_count = SHARD_COUNT,
     deps = [
         "//snowflake/ml/modeling/metrics:regression",
@@ -142,9 +142,9 @@ py_test(
 )
 
 py_test(
-    name = "test_mean_absolute_percentage_error",
+    name = "mean_absolute_percentage_error_test",
     timeout = TIMEOUT,
-    srcs = ["test_mean_absolute_percentage_error.py"],
+    srcs = ["mean_absolute_percentage_error_test.py"],
     shard_count = SHARD_COUNT,
     deps = [
         "//snowflake/ml/modeling/metrics:regression",
@@ -154,9 +154,9 @@ py_test(
 )
 
 py_test(
-    name = "test_mean_squared_error",
+    name = "mean_squared_error_test",
     timeout = TIMEOUT,
-    srcs = ["test_mean_squared_error.py"],
+    srcs = ["mean_squared_error_test.py"],
     shard_count = SHARD_COUNT,
     deps = [
         "//snowflake/ml/modeling/metrics:regression",
@@ -166,9 +166,9 @@ py_test(
 )
 
 py_test(
-    name = "test_precision_recall_curve",
+    name = "precision_recall_curve_test",
     timeout = TIMEOUT,
-    srcs = ["test_precision_recall_curve.py"],
+    srcs = ["precision_recall_curve_test.py"],
     shard_count = SHARD_COUNT,
     deps = [
         "//snowflake/ml/modeling/metrics:ranking",
@@ -178,9 +178,9 @@ py_test(
 )
 
 py_test(
-    name = "test_precision_recall_fscore_support",
+    name = "precision_recall_fscore_support_test",
     timeout = TIMEOUT,
-    srcs = ["test_precision_recall_fscore_support.py"],
+    srcs = ["precision_recall_fscore_support_test.py"],
     shard_count = SHARD_COUNT,
     deps = [
         "//snowflake/ml/modeling/metrics:classification",
@@ -190,9 +190,9 @@ py_test(
 )
 
 py_test(
-    name = "test_precision_score",
+    name = "precision_score_test",
     timeout = TIMEOUT,
-    srcs = ["test_precision_score.py"],
+    srcs = ["precision_score_test.py"],
     shard_count = SHARD_COUNT,
     deps = [
         "//snowflake/ml/modeling/metrics:classification",
@@ -202,9 +202,9 @@ py_test(
 )
 
 py_test(
-    name = "test_recall_score",
+    name = "recall_score_test",
     timeout = TIMEOUT,
-    srcs = ["test_recall_score.py"],
+    srcs = ["recall_score_test.py"],
     shard_count = SHARD_COUNT,
     deps = [
         "//snowflake/ml/modeling/metrics:classification",
@@ -214,9 +214,9 @@ py_test(
 )
 
 py_test(
-    name = "test_roc_auc_score",
+    name = "roc_auc_score_test",
     timeout = TIMEOUT,
-    srcs = ["test_roc_auc_score.py"],
+    srcs = ["roc_auc_score_test.py"],
     shard_count = SHARD_COUNT,
     deps = [
         "//snowflake/ml/modeling/metrics:ranking",
@@ -226,23 +226,13 @@ py_test(
 )
 
 py_test(
-    name = "test_roc_curve",
+    name = "roc_curve_test",
     timeout = TIMEOUT,
-    srcs = ["test_roc_curve.py"],
+    srcs = ["roc_curve_test.py"],
     shard_count = SHARD_COUNT,
     deps = [
         "//snowflake/ml/modeling/metrics:ranking",
         "//snowflake/ml/utils:connection_params",
         "//tests/integ/snowflake/ml/modeling/framework:utils",
-    ],
-)
-
-py_test(
-    name = "test_monitor",
-    timeout = "long",
-    srcs = ["test_monitor.py"],
-    deps = [
-        "//snowflake/ml/modeling/metrics:monitor",
-        "//snowflake/ml/utils:connection_params",
     ],
 )

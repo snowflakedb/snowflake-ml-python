@@ -6,8 +6,7 @@ Helper functions to autogenerate genrules and build rules for the following
 3. Init file for the auto-generated wrappers module.
 """
 
-load("@rules_python//python:packaging.bzl", native_py_package = "py_package")
-load("//bazel:py_rules.bzl", "py_genrule", "py_library", "py_test")
+load("//bazel:py_rules.bzl", "py_genrule", "py_library", "py_package", "py_test")
 
 AUTO_GEN_TOOL_BAZEL_PATH = "//codegen:estimator_autogen_tool"
 ESTIMATOR_TEMPLATE_BAZEL_PATH = "//codegen:sklearn_wrapper_template.py_template"
@@ -95,7 +94,7 @@ def autogen_estimators(module, estimator_info_list):
             ],
         )
 
-    native_py_package(
+    py_package(
         name = "{}_pkg".format(module.lower().replace(".", "_")),
         packages = ["snowflake.ml"],
         deps = [
@@ -122,7 +121,7 @@ def autogen_tests_for_estimators(module, module_root_dir, estimator_info_list):
     for e in estimator_info_list:
         py_genrule(
             name = "generate_test_{}".format(e.normalized_class_name),
-            outs = ["test_{}.py".format(e.normalized_class_name)],
+            outs = ["{}_test.py".format(e.normalized_class_name)],
             tools = [AUTO_GEN_TOOL_BAZEL_PATH],
             srcs = [ESTIMATOR_TEST_TEMPLATE_BAZEL_PATH],
             cmd = cmd.format(e.class_name),
@@ -130,7 +129,7 @@ def autogen_tests_for_estimators(module, module_root_dir, estimator_info_list):
         )
 
         py_test(
-            name = "test_{}".format(e.normalized_class_name),
+            name = "{}_test".format(e.normalized_class_name),
             srcs = [":generate_test_{}".format(e.normalized_class_name)],
             deps = [
                 "//{}:{}".format(module_root_dir, e.normalized_class_name),

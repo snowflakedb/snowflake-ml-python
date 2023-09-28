@@ -62,8 +62,7 @@ class SnowServiceClient:
         self.session.sql(sql).collect()
 
     def create_job(self, compute_pool: str, spec_stage_location: str) -> str:
-        """
-        Return the newly created Job ID.
+        """Return the newly created Job ID.
 
         Args:
             compute_pool: name of the compute pool
@@ -75,8 +74,8 @@ class SnowServiceClient:
         assert spec_stage_location.startswith("@"), f"stage path should start with @, actual: {spec_stage_location}"
         sql = f"execute service compute_pool={compute_pool} spec={spec_stage_location}"
         logger.debug(f"Create job with SQL: \n {sql}")
-        res = self.session.sql(sql).collect()
-        job_id = res[0].status.split(" ")[-1].strip(".")
+        self.session.sql(sql).collect()
+        job_id = self.session.sql("SELECT LAST_QUERY_ID() AS QUERY_ID").collect()[0]["QUERY_ID"]
         return str(job_id)
 
     def _drop_service_if_exists(self, service_name: str) -> None:
@@ -181,12 +180,14 @@ class SnowServiceClient:
                 )
                 if resource_type == constants.ResourceType.SERVICE:
                     self._drop_service_if_exists(service_name=resource_name)
+
+                if error_log:
+                    logger.error(error_log)
+
                 raise snowml_exceptions.SnowflakeMLException(
                     error_code=error_codes.INTERNAL_SNOWPARK_CONTAINER_SERVICE_ERROR,
                     original_exception=RuntimeError(
-                        f"{resource_type} {resource_name} {error_message}."
-                        f"\nStatus: {status if status else ''}"
-                        rf"\Log: {error_log if error_log else ''}"
+                        f"{resource_type} {resource_name} {error_message}." f"\nStatus: {status if status else ''} \n"
                     ),
                 )
             time.sleep(retry_interval_secs)

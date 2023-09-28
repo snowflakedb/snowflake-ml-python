@@ -1,3 +1,4 @@
+# Note that base image tag should not be 'latest' as it might cause false positive image cache hit.
 FROM ${base_image} as build
 
 COPY ${model_env_folder}/conda.yaml conda.yaml

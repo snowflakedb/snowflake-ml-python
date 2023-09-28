@@ -284,7 +284,7 @@ class TelemetryTest(parameterized.TestCase):
             test_obj.foo(True)
         self.assertEqual("foo error", str(context.exception))
 
-    @parameterized.parameters(  # type: ignore
+    @parameterized.parameters(  # type: ignore[misc]
         {"params": {"default_stmt_params": None}},
         {"params": {"default_stmt_params": {}}},
         {"params": {"default_stmt_params": {"default": 0}}},

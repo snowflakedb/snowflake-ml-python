@@ -46,12 +46,15 @@ class OrdinalEncoder(base.BaseTransformer):
         categories: The string 'auto' (the default) causes the categories to be extracted from the input columns.
             To specify the categories yourself, pass a dictionary mapping the column name to an ndarray containing the
             categories.
-        handle_unknown: Specifies how unknown categories are handled during transformation. Applicable only if\
+        handle_unknown: Specifies how unknown categories are handled during transformation. Applicable only if
             categories is not 'auto'.
             Valid values are:
                 - 'error': Raise an error if an unknown category is present during transform (default).
                 - 'use_encoded_value': When an unknown category is encountered during transform, the specified
                     encoded_missing_value (below) is used.
+        unknown_value: When the parameter handle_unknown is set to 'use_encoded_value', this parameter is required and
+            will set the encoded value of unknown categories. It has to be distinct from the values used to encode any
+            of the categories in `fit`.
         encoded_missing_value: The value to be used to encode unknown categories.
         input_cols: The name(s) of one or more columns in a DataFrame containing a feature to be encoded.
         output_cols: The name(s) of one or more columns in a DataFrame in which results will be stored. The number of
@@ -218,7 +221,7 @@ class OrdinalEncoder(base.BaseTransformer):
         # columns: COLUMN_NAME, CATEGORY, INDEX
         state_df = self._get_category_index_state_df(dataset)
         # save the dataframe on server side so that transform doesn't need to upload
-        state_df.write.save_as_table(
+        state_df.write.save_as_table(  # type: ignore[call-overload]
             self._vocab_table_name,
             mode="overwrite",
             table_type="temporary",

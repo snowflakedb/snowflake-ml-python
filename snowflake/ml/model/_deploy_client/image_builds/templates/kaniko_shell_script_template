@@ -47,6 +47,7 @@ run_kaniko() {
     --context ${context_dir} \
     --destination=${image_destination} \
     --cache=true \
+    --compressed-caching=false \
     --cache-copy-layers=false \
     --use-new-run \
     --snapshot-mode=redo \

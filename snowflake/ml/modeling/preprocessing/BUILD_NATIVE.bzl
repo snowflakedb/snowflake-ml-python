@@ -1,5 +1,4 @@
-load("@rules_python//python:packaging.bzl", "py_package")
-load("//bazel:py_rules.bzl", "py_library")
+load("//bazel:py_rules.bzl", "py_library", "py_package")
 
 def get_build_rules_for_native_impl():
     py_library(

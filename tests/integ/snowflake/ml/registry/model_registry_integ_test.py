@@ -381,6 +381,7 @@ class TestModelRegistryInteg(absltest.TestCase):
             features=[],
         )
         dummy_training_dataset = training_dataset.TrainingDataset(
+            self._session,
             df=self._session.sql(spine_query),
             materialized_table=dummy_materialized_table_full_path,
             snapshot_table=dummy_snapshot_table_full_path,
@@ -389,6 +390,20 @@ class TestModelRegistryInteg(absltest.TestCase):
             feature_store_metadata=fs_metadata,
             desc="a dummy training dataset metadata",
         )
+        cur_user = self._session.sql("SELECT CURRENT_USER()").collect()[0]["CURRENT_USER()"]
+        self.assertEqual(dummy_training_dataset.id, dummy_training_dataset.id)
+        self.assertEqual(dummy_training_dataset.owner, cur_user)
+        self.assertIsNotNone(dummy_training_dataset.name, dummy_snapshot_table_full_path)
+        self.assertIsNotNone(dummy_training_dataset.generation_timestamp)
+
+        minimal_training_dataset = training_dataset.TrainingDataset(
+            self._session,
+            df=self._session.sql(spine_query),
+        )
+        self.assertEqual(minimal_training_dataset.id, minimal_training_dataset.id)
+        self.assertEqual(minimal_training_dataset.owner, cur_user)
+        self.assertEqual(minimal_training_dataset.name, "")
+        self.assertIsNotNone(minimal_training_dataset.generation_timestamp)
 
         with self.assertRaisesRegex(
             ValueError,
@@ -406,29 +421,37 @@ class TestModelRegistryInteg(absltest.TestCase):
                 options={"embed_local_ml_library": True},
             )
 
-        registry.log_model(
-            model_name=model_name,
-            model_version=model_version,
-            model=model,
-            conda_dependencies=[
-                test_env_utils.get_latest_package_versions_in_server(self._session, "snowflake-snowpark-python")
-            ],
-            options={"embed_local_ml_library": True},
-            training_dataset=dummy_training_dataset,
-        )
+        test_combinations = [
+            (model_version, dummy_training_dataset),
+            (f"{model_version}.2", dummy_training_dataset),
+            (f"{model_version}.3", minimal_training_dataset),
+        ]
+        for version, dataset in test_combinations:
+            registry.log_model(
+                model_name=model_name,
+                model_version=version,
+                model=model,
+                conda_dependencies=[
+                    test_env_utils.get_latest_package_versions_in_server(self._session, "snowflake-snowpark-python")
+                ],
+                options={"embed_local_ml_library": True},
+                training_dataset=dataset,
+            )
 
-        # test deserialized training dataset from get_training_dataset
-        des_ds_0 = registry.get_training_dataset(model_name, model_version)
-        self.assertIsNotNone(des_ds_0)
-        self.assertEqual(des_ds_0, dummy_training_dataset)
+            # test deserialized training dataset from get_training_dataset
+            des_ds_0 = registry.get_training_dataset(model_name, version)
+            self.assertIsNotNone(des_ds_0)
+            self.assertEqual(des_ds_0, dataset)
 
-        # test deserialized training dataset from list_artifacts
-        rows_list = registry.list_artifacts(model_name, model_version).collect()
-        self.assertEqual(len(rows_list), 1)
-        self.assertEqual(rows_list[0]["ID"], dummy_training_dataset.id())
-        self.assertEqual(_ml_artifact.ArtifactType[rows_list[0]["TYPE"]], _ml_artifact.ArtifactType.TRAINING_DATASET)
-        des_ds_1 = training_dataset.TrainingDataset.from_json(rows_list[0]["ARTIFACT_SPEC"], self._session)
-        self.assertEqual(des_ds_1, dummy_training_dataset)
+            # test deserialized training dataset from list_artifacts
+            rows_list = registry.list_artifacts(model_name, version).collect()
+            self.assertEqual(len(rows_list), 1)
+            self.assertEqual(rows_list[0]["ID"], dataset.id)
+            self.assertEqual(
+                _ml_artifact.ArtifactType[rows_list[0]["TYPE"]], _ml_artifact.ArtifactType.TRAINING_DATASET
+            )
+            des_ds_1 = training_dataset.TrainingDataset.from_json(rows_list[0]["ARTIFACT_SPEC"], self._session)
+            self.assertEqual(des_ds_1, dataset)
 
 
 if __name__ == "__main__":

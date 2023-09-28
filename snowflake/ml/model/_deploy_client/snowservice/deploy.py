@@ -11,7 +11,7 @@ from typing import Any, Dict, Optional, cast
 import yaml
 from typing_extensions import Unpack
 
-from snowflake.ml._internal import env_utils
+from snowflake.ml._internal import env_utils, file_utils
 from snowflake.ml._internal.exceptions import (
     error_codes,
     exceptions as snowml_exceptions,
@@ -21,10 +21,15 @@ from snowflake.ml.model import _model_meta, type_hints
 from snowflake.ml.model._deploy_client.image_builds import (
     base_image_builder,
     client_image_builder,
+    docker_context,
     server_image_builder,
 )
 from snowflake.ml.model._deploy_client.snowservice import deploy_options, instance_types
-from snowflake.ml.model._deploy_client.utils import constants, snowservice_client
+from snowflake.ml.model._deploy_client.utils import (
+    constants,
+    image_registry_client,
+    snowservice_client,
+)
 from snowflake.snowpark import Session
 
 logger = logging.getLogger(__name__)
@@ -119,7 +124,6 @@ def _deploy(
                         "You are requesting GPUs for models that do not use a GPU or does not have CUDA version set."
                     ),
                 )
-            _validate_requested_gpus(session, request_gpus=options.num_gpus, compute_pool=options.compute_pool)
             if model_meta.cuda_version:
                 (
                     model_meta_deploy._conda_dependencies,
@@ -135,6 +139,8 @@ def _deploy(
         # Set conda-forge as backup channel for SPCS deployment
         if "conda-forge" not in model_meta_deploy._conda_dependencies:
             model_meta_deploy._conda_dependencies["conda-forge"] = []
+
+        _validate_compute_pool(session, options=options)
 
         # TODO[shchen]: SNOW-863701, Explore ways to prevent entire model zip being downloaded during deploy step
         #  (for both warehouse and snowservice deployment)
@@ -157,9 +163,9 @@ def _deploy(
         snowflake_connector_logger.setLevel(snowflake_connector_log_level)
 
 
-def _validate_requested_gpus(session: Session, *, request_gpus: int, compute_pool: str) -> None:
+def _validate_compute_pool(session: Session, *, options: deploy_options.SnowServiceDeployOptions) -> None:
     # Remove full qualified name to avoid double quotes, which does not work well in desc compute pool syntax.
-    compute_pool = compute_pool.replace('"', "")
+    compute_pool = options.compute_pool.replace('"', "")
     sql = f"DESC COMPUTE POOL {compute_pool}"
     result = (
         query_result_checker.SqlResultValidator(
@@ -167,22 +173,36 @@ def _validate_requested_gpus(session: Session, *, request_gpus: int, compute_poo
             query=sql,
         )
         .has_column("instance_family")
+        .has_column("state")
         .has_dimensions(expected_rows=1)
         .validate()
     )
-    instance_family = result[0]["instance_family"]
-    if instance_family in instance_types.INSTANCE_TYPE_TO_GPU_COUNT:
-        gpu_capacity = instance_types.INSTANCE_TYPE_TO_GPU_COUNT[instance_family]
-        if request_gpus > gpu_capacity:
-            raise snowml_exceptions.SnowflakeMLException(
-                error_code=error_codes.INVALID_ARGUMENT,
-                original_exception=RuntimeError(
-                    f"GPU request exceeds instance capability; {instance_family} instance type has total "
-                    f"capacity of {gpu_capacity} GPU, yet a request was made for {request_gpus} GPUs."
-                ),
-            )
-    else:
-        logger.warning(f"Unknown instance type: {instance_family}, skipping GPU validation")
+
+    state = result[0]["state"]
+
+    if state not in ["ACTIVE", "IDLE"]:
+        raise snowml_exceptions.SnowflakeMLException(
+            error_code=error_codes.INVALID_SNOWPARK_COMPUTE_POOL,
+            original_exception=RuntimeError(
+                "The compute pool you are requesting to use is not in the ACTIVE/IDLE status."
+            ),
+        )
+    if options.use_gpu:
+        assert options.num_gpus is not None
+        request_gpus = options.num_gpus
+        instance_family = result[0]["instance_family"]
+        if instance_family in instance_types.INSTANCE_TYPE_TO_GPU_COUNT:
+            gpu_capacity = instance_types.INSTANCE_TYPE_TO_GPU_COUNT[instance_family]
+            if request_gpus > gpu_capacity:
+                raise snowml_exceptions.SnowflakeMLException(
+                    error_code=error_codes.INVALID_SNOWPARK_COMPUTE_POOL,
+                    original_exception=RuntimeError(
+                        f"GPU request exceeds instance capability; {instance_family} instance type has total "
+                        f"capacity of {gpu_capacity} GPU, yet a request was made for {request_gpus} GPUs."
+                    ),
+                )
+        else:
+            logger.warning(f"Unknown instance type: {instance_family}, skipping GPU validation")
 
 
 def _get_or_create_image_repo(session: Session, *, service_func_name: str, image_repo: Optional[str] = None) -> str:
@@ -271,48 +291,103 @@ class SnowServiceDeployment(ABC):
         This function triggers image build followed by workflow deployment to SnowService.
         """
         if self.options.prebuilt_snowflake_image:
-            image = self.options.prebuilt_snowflake_image
             logger.warning(f"Skipped image build. Use prebuilt image: {self.options.prebuilt_snowflake_image}")
+            self._deploy_workflow(self.options.prebuilt_snowflake_image)
         else:
-            logger.warning(
-                "Building the Docker image and deploying to Snowpark Container Service. "
-                "This process may take a few minutes."
-            )
-            start = time.time()
-            image = self._build_and_upload_image()
-            end = time.time()
-            logger.info(f"Time taken to build and upload image to registry: {end-start:.2f} seconds")
+            with tempfile.TemporaryDirectory() as context_dir:
+                dc = docker_context.DockerContext(context_dir=context_dir, model_meta=self.model_meta)
+                dc.build()
+                image_repo = _get_or_create_image_repo(
+                    self.session, service_func_name=self.service_func_name, image_repo=self.options.image_repo
+                )
+                full_image_name = self._get_full_image_name(image_repo=image_repo, context_dir=context_dir)
+                registry_client = image_registry_client.ImageRegistryClient(self.session)
 
-            logger.warning(
-                f"Image successfully built! To prevent the need for rebuilding the Docker image in future deployments, "
-                f"simply specify 'prebuilt_snowflake_image': '{image}' in the options field of the deploy() function"
-            )
-        self._deploy_workflow(image)
+                if not self.options.force_image_build and registry_client.image_exists(full_image_name=full_image_name):
+                    logger.warning(
+                        f"Similar environment detected. Using existing image {full_image_name} to skip image "
+                        f"build. To disable this feature, set 'force_image_build=True' in deployment options"
+                    )
+                else:
+                    logger.warning(
+                        "Building the Docker image and deploying to Snowpark Container Service. "
+                        "This process may take a few minutes."
+                    )
+                    start = time.time()
+                    self._build_and_upload_image(
+                        context_dir=context_dir, image_repo=image_repo, full_image_name=full_image_name
+                    )
+                    end = time.time()
+                    logger.info(f"Time taken to build and upload image to registry: {end - start:.2f} seconds")
+                    logger.warning(
+                        f"Image successfully built! For future model deployments, the image will be reused if "
+                        f"possible, saving model deployment time. To enforce using the same image, include "
+                        f"'prebuilt_snowflake_image': '{full_image_name}' in the deploy() function's options."
+                    )
 
-    def _build_and_upload_image(self) -> str:
-        """This function handles image build and upload to image registry.
+                # Adding the model name as an additional tag to the existing image, excluding the version to prevent
+                # excessive tags and also due to version not available in current model metadata. This will allow
+                # users to associate images with specific models and perform relevant image registry actions. In the
+                # event that model dependencies change across versions, a new image hash will be computed, resulting in
+                # a new image.
+                try:
+                    registry_client.add_tag_to_remote_image(
+                        original_full_image_name=full_image_name, new_tag=self.model_meta.name
+                    )
+                except Exception as e:
+                    # Proceed to the deployment with a warning message.
+                    logger.warning(f"Failed to add tag {self.model_meta.name} to image {full_image_name}: {str(e)}")
+
+                self._deploy_workflow(full_image_name)
+
+    def _get_full_image_name(self, image_repo: str, context_dir: str) -> str:
+        """Return a valid full image name that consists of image name and tag. e.g
+        org-account.registry.snowflakecomputing.com/db/schema/repo/image:latest
+
+        Args:
+            image_repo: image repo path, e.g. org-account.registry.snowflakecomputing.com/db/schema/repo
+            context_dir: the local docker context directory, which consists everything needed to build the docker image.
 
         Returns:
-            Path to the image in the remote image repository.
+            Full image name.
         """
         image_repo = _get_or_create_image_repo(
             self.session, service_func_name=self.service_func_name, image_repo=self.options.image_repo
         )
+
+        # We skip "MODEL_METADATA_FILE" as it contains information that will always lead to cache misses.  This isn't an
+        # issue because model dependency is also captured in the model env/ folder, which will be hashed. The aim is to
+        # reuse the same Docker image even if the user logs a similar model without new dependencies.
+        docker_context_dir_hash = file_utils.hash_directory(
+            context_dir, ignore_hidden=True, excluded_files=[_model_meta.ModelMetadata.MODEL_METADATA_FILE]
+        )
+        # By default, we associate a 'latest' tag with each of our created images for easy existence checking.
+        # Additional tags are added for readability.
+        return f"{image_repo}/{docker_context_dir_hash}:{constants.LATEST_IMAGE_TAG}"
+
+    def _build_and_upload_image(self, context_dir: str, image_repo: str, full_image_name: str) -> None:
+        """Handles image build and upload to image registry.
+
+        Args:
+            context_dir: the local docker context directory, which consists everything needed to build the docker image.
+            image_repo: image repo path, e.g. org-account.registry.snowflakecomputing.com/db/schema/repo
+            full_image_name: Full image name consists of image name and image tag.
+        """
         image_builder: base_image_builder.ImageBuilder
         if self.options.enable_remote_image_build:
             image_builder = server_image_builder.ServerImageBuilder(
-                id=self.id,
+                context_dir=context_dir,
+                full_image_name=full_image_name,
                 image_repo=image_repo,
-                model_meta=self.model_meta,
                 session=self.session,
                 artifact_stage_location=self._model_artifact_stage_location,
                 compute_pool=self.options.compute_pool,
             )
         else:
             image_builder = client_image_builder.ClientImageBuilder(
-                id=self.id, image_repo=image_repo, model_meta=self.model_meta, session=self.session
+                context_dir=context_dir, full_image_name=full_image_name, image_repo=image_repo, session=self.session
             )
-        return image_builder.build_and_upload_image()
+        image_builder.build_and_upload_image()
 
     def _prepare_and_upload_artifacts_to_stage(self, image: str) -> None:
         """Constructs and upload service spec to stage.

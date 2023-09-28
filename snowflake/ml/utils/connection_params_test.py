@@ -3,13 +3,14 @@ import os
 import tempfile
 from typing import Optional
 
-import connection_params
 from absl.testing import absltest
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 
+from snowflake.ml.utils import connection_params
 
-class SnowflakeLoginOptionsTest(absltest.TestCase):  # # type: ignore
+
+class SnowflakeLoginOptionsTest(absltest.TestCase):
     """Testing SnowflakeLoginOptions() function."""
 
     def setUp(self) -> None:

@@ -8,6 +8,8 @@ from snowflake.ml._internal.exceptions import (
 )
 from snowflake.ml.model._deploy_client.utils import constants
 
+logger = logging.getLogger(__name__)
+
 
 class SnowServiceDeployOptions:
     def __init__(
@@ -20,7 +22,8 @@ class SnowServiceDeployOptions:
         prebuilt_snowflake_image: Optional[str] = None,
         num_gpus: Optional[int] = 0,
         num_workers: Optional[int] = None,
-        enable_remote_image_build: Optional[bool] = False,
+        enable_remote_image_build: Optional[bool] = True,
+        force_image_build: Optional[bool] = False,
     ) -> None:
         """Initialization
 
@@ -42,7 +45,9 @@ class SnowServiceDeployOptions:
                 lower than the total available memory divided by the size of model to prevent memory-related issues.
                 Default is number of CPU cores * 2 + 1.
             enable_remote_image_build: When set to True, will enable image build on a remote SnowService job.
-                Default is False.
+                Default is True.
+            force_image_build: When set to True, an image rebuild will occur. The default is False, which means the
+                system will automatically check whether a previously built image can be reused
         """
 
         self.compute_pool = compute_pool
@@ -53,9 +58,10 @@ class SnowServiceDeployOptions:
         self.num_gpus = num_gpus
         self.num_workers = num_workers
         self.enable_remote_image_build = enable_remote_image_build
+        self.force_image_build = force_image_build
 
         if self.num_workers is None and self.use_gpu:
-            logging.info("num_workers has been defaulted to 1 when using GPU.")
+            logger.info("num_workers has been defaulted to 1 when using GPU.")
             self.num_workers = 1
 
     @property
