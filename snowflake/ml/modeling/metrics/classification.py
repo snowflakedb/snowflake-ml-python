@@ -1,4 +1,4 @@
-import uuid
+import json
 import warnings
 from typing import Any, Dict, Iterable, List, Optional, Set, Tuple, Union
 
@@ -9,6 +9,7 @@ import sklearn
 from packaging import version
 from sklearn import exceptions, metrics
 
+import snowflake.snowpark._internal.utils as snowpark_utils
 from snowflake import snowpark
 from snowflake.ml._internal import telemetry
 from snowflake.ml.modeling.metrics import metrics_utils
@@ -268,8 +269,7 @@ def _register_confusion_matrix_computer(*, session: snowpark.Session, statement_
                 self._batched_rows[:, 0],
             )
 
-    # TODO(SNANDAMURI): Should we convert it to temp anonymous UDTF for it to work in Sproc?
-    confusion_matrix_computer = "ConfusionMatrixComputer_{}".format(str(uuid.uuid4()).replace("-", "_").upper())
+    confusion_matrix_computer = snowpark_utils.random_name_for_temp_object(snowpark_utils.TempObjectType.TABLE_FUNCTION)
     session.udtf.register(
         ConfusionMatrixComputer,
         output_schema=T.StructType(
@@ -513,43 +513,119 @@ def log_loss(
     """
     session = df._session
     assert session is not None
-    sproc_name = random_name_for_temp_object(TempObjectType.PROCEDURE)
-    sklearn_release = version.parse(sklearn.__version__).release
     statement_params = telemetry.get_statement_params(_PROJECT, _SUBPROJECT)
-    cols = metrics_utils.flatten_cols([y_true_col_names, y_pred_col_names, sample_weight_col_name])
-    queries = df[cols].queries["queries"]
+    y_true = y_true_col_names if isinstance(y_true_col_names, list) else [y_true_col_names]
+    y_pred = y_pred_col_names if isinstance(y_pred_col_names, list) else [y_pred_col_names]
 
-    @F.sproc(  # type: ignore[misc]
-        is_permanent=False,
+    # Since we are processing samples individually, we need to explicitly specify the output labels
+    # in the case that there is one output label.
+    if len(y_true) == 1 and not labels:
+        labels = json.loads(df.select(F.array_unique_agg(y_true[0])).collect(statement_params=statement_params)[0][0])
+
+    normalize_sum = None
+    if normalize:
+        if sample_weight_col_name:
+            normalize_sum = float(
+                df.select(F.sum(df[sample_weight_col_name])).collect(statement_params=statement_params)[0][0]
+            )
+        else:
+            normalize_sum = df.count()
+
+    log_loss_computer = _register_log_loss_computer(
         session=session,
-        name=sproc_name,
-        replace=True,
-        packages=[
-            "cloudpickle",
-            f"scikit-learn=={sklearn_release[0]}.{sklearn_release[1]}.*",
-            "snowflake-snowpark-python",
-        ],
         statement_params=statement_params,
-        anonymous=True,
+        eps=eps,
+        labels=labels,
     )
-    def log_loss_anon_sproc(session: snowpark.Session) -> float:
-        for query in queries[:-1]:
-            _ = session.sql(query).collect(statement_params=statement_params)
-        df = session.sql(queries[-1]).to_pandas(statement_params=statement_params)
-        y_true = df[y_true_col_names]
-        y_pred = df[y_pred_col_names]
-        sample_weight = df[sample_weight_col_name] if sample_weight_col_name else None
-        return metrics.log_loss(  # type: ignore[no-any-return]
-            y_true,
-            y_pred,
-            eps=eps,
-            normalize=normalize,
-            sample_weight=sample_weight,
-            labels=labels,
+    log_loss_computer_udtf = F.table_function(log_loss_computer)
+
+    if sample_weight_col_name:
+        temp_df = df.select(
+            F.array_construct(*y_true).alias("y_true_cols"),
+            F.array_construct(*y_pred).alias("y_pred_cols"),
+            sample_weight_col_name,
+        )
+        res_df = temp_df.select(
+            log_loss_computer_udtf(F.col("y_true_cols"), F.col("y_pred_cols"), F.col(sample_weight_col_name))
+        )
+    else:
+        temp_df = df.select(
+            F.array_construct(*y_true).alias("y_true_cols"),
+            F.array_construct(*y_pred).alias("y_pred_cols"),
+        )
+        temp_df = temp_df.with_column("sample_weight_col", F.lit(1.0))
+        res_df = temp_df.select(
+            log_loss_computer_udtf(F.col("y_true_cols"), F.col("y_pred_cols"), F.col("sample_weight_col"))
         )
 
-    loss: float = log_loss_anon_sproc(session)
-    return loss
+    total_loss = float(res_df.select(F.sum(res_df["log_loss"])).collect(statement_params=statement_params)[0][0])
+
+    return total_loss / normalize_sum if normalize_sum and normalize_sum > 0 else total_loss
+
+
+def _register_log_loss_computer(
+    *,
+    session: snowpark.Session,
+    statement_params: Dict[str, Any],
+    eps: Union[float, str] = "auto",
+    labels: Optional[npt.ArrayLike] = None,
+) -> str:
+    """Registers log loss computation UDTF in Snowflake and returns the name of the UDTF.
+
+    Args:
+        session: Snowpark session.
+        statement_params: Dictionary used for tagging queries for tracking purposes.
+        eps: float or "auto", default="auto"
+            Log loss is undefined for p=0 or p=1, so probabilities are
+            clipped to `max(eps, min(1 - eps, p))`. The default will depend on the
+            data type of `y_pred` and is set to `np.finfo(y_pred.dtype).eps`.
+        labels: If not provided, labels will be inferred from y_true. If ``labels``
+            is ``None`` and ``y_pred`` has shape (n_samples,) the labels are
+            assumed to be binary and are inferred from ``y_true``.
+
+    Returns:
+        Name of the UDTF.
+    """
+
+    class LogLossComputer:
+        def __init__(self) -> None:
+            self._eps = eps
+            self._labels = labels
+            self._y_true: List[List[int]] = []
+            self._y_pred: List[List[float]] = []
+            self._sample_weight: List[float] = []
+
+        def process(self, y_true: List[int], y_pred: List[float], sample_weight: float) -> None:
+            self._y_true.append(y_true)
+            self._y_pred.append(y_pred)
+            self._sample_weight.append(sample_weight)
+
+        def end_partition(self) -> Iterable[Tuple[float]]:
+            res = metrics.log_loss(
+                self._y_true,
+                self._y_pred,
+                eps=self._eps,
+                normalize=False,
+                sample_weight=self._sample_weight,
+                labels=self._labels,
+            )
+            yield (float(res),)
+
+    log_loss_computer = random_name_for_temp_object(TempObjectType.TABLE_FUNCTION)
+    session.udtf.register(
+        LogLossComputer,
+        output_schema=T.StructType(
+            [
+                T.StructField("log_loss", T.FloatType()),
+            ]
+        ),
+        packages=["scikit-learn"],
+        name=log_loss_computer,
+        is_permanent=False,
+        replace=True,
+        statement_params=statement_params,
+    )
+    return log_loss_computer
 
 
 @telemetry.send_api_usage_telemetry(project=_PROJECT, subproject=_SUBPROJECT)

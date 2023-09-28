@@ -1,4 +1,5 @@
 load("//bazel:py_rules.bzl", "py_library", "snowml_wheel")
+load(":packages.bzl", "PACKAGES")
 load(":requirements.bzl", "EXTRA_REQUIREMENTS", "REQUIREMENTS")
 load(":version.bzl", "VERSION")
 
@@ -38,42 +39,5 @@ snowml_wheel(
     extra_requires = EXTRA_REQUIREMENTS,
     requires = REQUIREMENTS,
     version = VERSION,
-    deps = [
-        "//snowflake/ml/modeling/impute:impute_pkg",
-        "//snowflake/ml/modeling/metrics:metrics_pkg",
-        "//snowflake/ml/modeling/pipeline:pipeline_pkg",
-        "//snowflake/ml/modeling/preprocessing:preprocessing_pkg",
-        "//snowflake/ml/utils:utils_pkg",
-        "//snowflake/ml/fileset:fileset_pkg",
-        "//snowflake/ml/registry:model_registry_pkg",
-        # Auotgen packages
-        "//snowflake/ml/modeling/linear_model:sklearn_linear_model_pkg",
-        "//snowflake/ml/modeling/ensemble:sklearn_ensemble_pkg",
-        "//snowflake/ml/modeling/svm:sklearn_svm_pkg",
-        "//snowflake/ml/modeling/neural_network:sklearn_neural_network_pkg",
-        "//snowflake/ml/modeling/tree:sklearn_tree_pkg",
-        "//snowflake/ml/modeling/calibration:sklearn_calibration_pkg",
-        "//snowflake/ml/modeling/cluster:sklearn_cluster_pkg",
-        "//snowflake/ml/modeling/compose:sklearn_compose_pkg",
-        "//snowflake/ml/modeling/covariance:sklearn_covariance_pkg",
-        "//snowflake/ml/modeling/decomposition:sklearn_decomposition_pkg",
-        "//snowflake/ml/modeling/discriminant_analysis:sklearn_discriminant_analysis_pkg",
-        "//snowflake/ml/modeling/feature_selection:sklearn_feature_selection_pkg",
-        "//snowflake/ml/modeling/gaussian_process:sklearn_gaussian_process_pkg",
-        "//snowflake/ml/modeling/impute:sklearn_impute_pkg",
-        "//snowflake/ml/modeling/isotonic:sklearn_isotonic_pkg",
-        "//snowflake/ml/modeling/kernel_approximation:sklearn_kernel_approximation_pkg",
-        "//snowflake/ml/modeling/kernel_ridge:sklearn_kernel_ridge_pkg",
-        "//snowflake/ml/modeling/lightgbm:lightgbm_pkg",
-        "//snowflake/ml/modeling/manifold:sklearn_manifold_pkg",
-        "//snowflake/ml/modeling/mixture:sklearn_mixture_pkg",
-        "//snowflake/ml/modeling/model_selection:sklearn_model_selection_pkg",
-        "//snowflake/ml/modeling/multiclass:sklearn_multiclass_pkg",
-        "//snowflake/ml/modeling/multioutput:sklearn_multioutput_pkg",
-        "//snowflake/ml/modeling/naive_bayes:sklearn_naive_bayes_pkg",
-        "//snowflake/ml/modeling/neighbors:sklearn_neighbors_pkg",
-        "//snowflake/ml/modeling/preprocessing:sklearn_preprocessing_pkg",
-        "//snowflake/ml/modeling/semi_supervised:sklearn_semi_supervised_pkg",
-        "//snowflake/ml/modeling/xgboost:xgboost_pkg",
-    ],
+    deps = PACKAGES,
 )

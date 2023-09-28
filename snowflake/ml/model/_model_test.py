@@ -10,7 +10,7 @@ import pandas as pd
 from absl.testing import absltest
 from sklearn import linear_model
 
-from snowflake.ml._internal import env as snowml_env, env_utils
+from snowflake.ml._internal import env as snowml_env, env_utils, file_utils
 from snowflake.ml.model import _model as model_api, custom_model, model_signature
 from snowflake.ml.modeling.linear_model import (  # type:ignore[attr-defined]
     LinearRegression,
@@ -131,6 +131,35 @@ class ModelLoadHygieneTest(absltest.TestCase):
                         metadata={"author": "halu", "version": "1"},
                         code_paths=[py_file_path],
                     )
+
+    def test_zipimport_snowml(self) -> None:
+        snowml_path = list(importlib.import_module("snowflake.ml").__path__)[-1]
+        with tempfile.TemporaryDirectory() as workspace:
+            zipped_snowml_path = os.path.join(workspace, "snowml.zip")
+            with open(zipped_snowml_path, "wb") as f:
+                with file_utils.zip_file_or_directory_to_stream(
+                    snowml_path, os.path.abspath(os.path.join(snowml_path, os.pardir, os.pardir))
+                ) as zip_stream:
+                    f.write(zip_stream.getbuffer())
+
+            sys.path.append(zipped_snowml_path)
+            try:
+                lm = DemoModel(context=custom_model.ModelContext(models={}, artifacts={}))
+                arr = np.array([[1, 2, 3], [4, 2, 5]])
+                d = pd.DataFrame(arr, columns=["c1", "c2", "c3"])
+                model_api._save(
+                    name="model1",
+                    local_dir_path=os.path.join(workspace, "model1"),
+                    model=lm,
+                    sample_input=d,
+                    metadata={"author": "halu", "version": "1"},
+                    options={"embed_local_ml_library": True},
+                )
+                self.assertTrue(
+                    os.path.exists(os.path.join(workspace, "model1", "code", "snowflake", "ml", "model", "_model.py"))
+                )
+            finally:
+                sys.path.remove(zipped_snowml_path)
 
 
 class ModelInterfaceTest(absltest.TestCase):

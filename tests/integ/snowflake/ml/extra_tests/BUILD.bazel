@@ -3,8 +3,8 @@ load("//bazel:py_rules.bzl", "py_test")
 package(default_visibility = ["//visibility:public"])
 
 py_test(
-    name = "test_column_name_inference",
-    srcs = ["test_column_name_inference.py"],
+    name = "column_name_inference_test",
+    srcs = ["column_name_inference_test.py"],
     deps = [
         "//snowflake/ml/modeling/linear_model:linear_regression",
         "//snowflake/ml/utils:connection_params",
@@ -12,8 +12,8 @@ py_test(
 )
 
 py_test(
-    name = "test_grid_search",
-    srcs = ["test_grid_search.py"],
+    name = "grid_search_test",
+    srcs = ["grid_search_test.py"],
     deps = [
         "//snowflake/ml/modeling/model_selection:grid_search_cv",
         "//snowflake/ml/modeling/svm:svr",
@@ -22,8 +22,8 @@ py_test(
 )
 
 py_test(
-    name = "test_extra_voting_regressor",
-    srcs = ["test_extra_voting_regressor.py"],
+    name = "extra_voting_regressor_test",
+    srcs = ["extra_voting_regressor_test.py"],
     deps = [
         "//snowflake/ml/modeling/ensemble:voting_regressor",
         "//snowflake/ml/modeling/linear_model:linear_regression",
@@ -33,8 +33,8 @@ py_test(
 )
 
 py_test(
-    name = "test_grid_search_on_pipeline",
-    srcs = ["test_grid_search_on_pipeline.py"],
+    name = "grid_search_on_pipeline_test",
+    srcs = ["grid_search_on_pipeline_test.py"],
     deps = [
         "//snowflake/ml/modeling/compose:column_transformer",
         "//snowflake/ml/modeling/linear_model:logistic_regression",
@@ -48,8 +48,8 @@ py_test(
 )
 
 py_test(
-    name = "test_extra_iterative_imputer",
-    srcs = ["test_extra_iterative_imputer.py"],
+    name = "extra_iterative_imputer_test",
+    srcs = ["extra_iterative_imputer_test.py"],
     deps = [
         "//snowflake/ml/modeling/impute:iterative_imputer",
         "//snowflake/ml/modeling/linear_model:linear_regression",
@@ -58,9 +58,9 @@ py_test(
 )
 
 py_test(
-    name = "test_pipeline_with_ohe_and_xgbr",
+    name = "pipeline_with_ohe_and_xgbr_test",
     timeout = "long",
-    srcs = ["test_pipeline_with_ohe_and_xgbr.py"],
+    srcs = ["pipeline_with_ohe_and_xgbr_test.py"],
     shard_count = 4,
     deps = [
         "//snowflake/ml/modeling/framework",
@@ -74,8 +74,8 @@ py_test(
 )
 
 py_test(
-    name = "test_randomized_search",
-    srcs = ["test_randomized_search.py"],
+    name = "randomized_search_test",
+    srcs = ["randomized_search_test.py"],
     deps = [
         "//snowflake/ml/modeling/ensemble:random_forest_classifier",
         "//snowflake/ml/modeling/model_selection:randomized_search_cv",
@@ -84,8 +84,8 @@ py_test(
 )
 
 py_test(
-    name = "test_method_chaining",
-    srcs = ["test_method_chaining.py"],
+    name = "method_chaining_test",
+    srcs = ["method_chaining_test.py"],
     deps = [
         "//snowflake/ml/modeling/linear_model:logistic_regression",
         "//snowflake/ml/utils:connection_params",
@@ -93,8 +93,8 @@ py_test(
 )
 
 py_test(
-    name = "test_non_numeric_target",
-    srcs = ["test_non_numeric_target.py"],
+    name = "non_numeric_target_test",
+    srcs = ["non_numeric_target_test.py"],
     deps = [
         "//snowflake/ml/modeling/ensemble:random_forest_classifier",
         "//snowflake/ml/utils:connection_params",
@@ -102,11 +102,12 @@ py_test(
 )
 
 py_test(
-    name = "test_quoted_identifier",
+    name = "quoted_identifier_test",
     timeout = "long",
-    srcs = ["test_quoted_identifier.py"],
+    srcs = ["quoted_identifier_test.py"],
     shard_count = 4,
     deps = [
+        "//snowflake/ml/_internal:env_utils",
         "//snowflake/ml/modeling/compose:column_transformer",
         "//snowflake/ml/modeling/ensemble:random_forest_classifier",
         "//snowflake/ml/modeling/framework",

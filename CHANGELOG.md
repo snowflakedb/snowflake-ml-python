@@ -1,14 +1,26 @@
 # Release History
 
-## 1.0.8
+## 1.0.9
 
 ### Behavior Changes
+
+- Model Development: log_loss metric calculation is now distributed.
 
 ### New Features
 
 ### Bug Fixes
 
+- Model Registry: Fix an issue that building images fails with specific docker setup.
+- Model Registry: Fix an issue that unable to embed local ML library when the library is imported by `zipimport`.
+- Model Registry: Fix out-of-date doc about `platform` argument in the `deploy` function.
+- Model Registry: Fix an issue that unable to deploy a GPU-trained PyTorch model to a platform where GPU is not available.
+
+## 1.0.8 (2023-09-15)
+
+### Bug Fixes
+
 - Model Development: Ordinal encoder can be used with mixed input column types.
+- Model Development: Fix an issue when the sklearn default value is `np.nan`.
 - Model Registry: Fix an issue that incorrect docker executable is used when building images.
 - Model Registry: Fix an issue that specifying `token` argument when using
 `snowflake.ml.model.models.huggingface_pipeline.HuggingFacePipelineModel` with `transformers < 4.32.0` is not effective.

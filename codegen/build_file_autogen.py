@@ -11,7 +11,8 @@ from typing import List
 
 import inflection
 from absl import app
-from sklearn_wrapper_autogen import AutogenTool
+
+from codegen import sklearn_wrapper_autogen as swa
 
 
 @dataclass(frozen=True)
@@ -177,7 +178,7 @@ def main(argv: List[str]) -> None:
         if len(module.exclude_list) > 0 and len(module.include_list) > 0:
             raise ValueError(f"Both include_list and exclude_list can't be specified for module {module.module_name}!")
 
-        module_root_dir = AutogenTool.module_root_dir(module.module_name)
+        module_root_dir = swa.AutogenTool.module_root_dir(module.module_name)
         estimators_info_file_path = os.path.join(module_root_dir, "estimators_info.bzl")
         src_build_file_path = os.path.join(SRC_OUTPUT_PATH, module_root_dir, "BUILD.bazel")
         test_build_file_path = os.path.join(TEST_OUTPUT_PATH, module_root_dir, "BUILD.bazel")
@@ -209,7 +210,7 @@ def get_estimators_info_file_content(module: ModuleInfo) -> str:
     Returns:
         Information of all the transformer and estimator classes in the given module.
     """
-    class_list = AutogenTool.get_estimator_class_names(module_name=module.module_name)
+    class_list = swa.AutogenTool.get_estimator_class_names(module_name=module.module_name)
     estimators_info_str = (
         "estimator_info_list = [\n"
         + (

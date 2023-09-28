@@ -986,18 +986,23 @@ class ModelRegistry:
         new_model["CREATION_TIME"] = formatting.SqlStr("CURRENT_TIMESTAMP()")
         new_model["CREATION_ROLE"] = self._session.get_current_role()
         new_model["CREATION_ENVIRONMENT_SPEC"] = {"python": ".".join(map(str, sys.version_info[:3]))}
+
         if training_dataset is not None:
-            _ml_artifact.add_artifact(
-                session=self._session,
-                database_name=self._name,
-                schema_name=self._schema,
-                artifact_id=training_dataset.id(),
-                artifact_type=_ml_artifact.ArtifactType.TRAINING_DATASET,
-                artifact_name=training_dataset.id(),
-                artifact_version="",
-                artifact_spec=json.loads(training_dataset.to_json()),
+            is_artifact_exists = _ml_artifact.if_artifact_exists(
+                self._session, self._name, self._schema, training_dataset.id, _ml_artifact.ArtifactType.TRAINING_DATASET
             )
-            new_model["TRAINING_DATASET_ID"] = training_dataset.id()
+            if not is_artifact_exists:
+                _ml_artifact.add_artifact(
+                    session=self._session,
+                    database_name=self._name,
+                    schema_name=self._schema,
+                    artifact_id=training_dataset.id,
+                    artifact_type=_ml_artifact.ArtifactType.TRAINING_DATASET,
+                    artifact_name=training_dataset.name,
+                    artifact_version=training_dataset.version,
+                    artifact_spec=json.loads(training_dataset.to_json()),
+                )
+            new_model["TRAINING_DATASET_ID"] = training_dataset.id
         else:
             new_model["TRAINING_DATASET_ID"] = None
 
@@ -1575,8 +1580,8 @@ class ModelRegistry:
             target_method: The method name to use in deployment. Can be omitted if only 1 method in the model.
             permanent: Whether the deployment is permanent or not. Permanent deployment will generate a permanent UDF.
                 (Only applicable for Warehouse deployment)
-            platform: Target platform to deploy the model to. Currently supported platforms are
-                ['warehouse', 'SNOWPARK_CONTAINER_SERVICES']
+            platform: Target platform to deploy the model to. Currently supported platforms are defined as enum in
+                `snowflake.ml.model.deploy_platforms.TargetPlatform`
             options: Optional options for model deployment. Defaults to None.
 
         Raises:
@@ -1703,21 +1708,22 @@ class ModelRegistry:
         return cast(snowpark.DataFrame, res)
 
     @snowpark._internal.utils.private_preview(version="1.0.1")
-    def list_artifacts(self, model_name: str, model_version: str) -> snowpark.DataFrame:
-        """List all artifacts that associated with given model.
+    def list_artifacts(self, model_name: str, model_version: Optional[str] = None) -> snowpark.DataFrame:
+        """List all artifacts that associated with given model name and version.
 
         Args:
-            model_name: Model Name string.
-            model_version: Model Version string.
+            model_name: Name of model.
+            model_version: Version of model. If version is none then only filter on name.
+                Defaults to none.
 
         Returns:
             A snowpark dataframe that contains all artifacts that associated with the given model.
         """
-        artifacts = (
-            self._session.sql(f"SELECT * FROM {self._fully_qualified_artifact_view_name()}")
-            .filter(snowpark.Column("MODEL_NAME") == model_name)
-            .filter(snowpark.Column("MODEL_VERSION") == model_version)
+        artifacts = self._session.sql(f"SELECT * FROM {self._fully_qualified_artifact_view_name()}").filter(
+            snowpark.Column("MODEL_NAME") == model_name
         )
+        if model_version is not None:
+            artifacts = artifacts.filter(snowpark.Column("MODEL_VERSION") == model_version)
         return cast(snowpark.DataFrame, artifacts)
 
     @telemetry.send_api_usage_telemetry(
@@ -2005,9 +2011,9 @@ class ModelReference:
             docstring = self._remove_arg_from_docstring("model_name", obj.__doc__)
             if docstring and "model_version" in docstring:
                 docstring = self._remove_arg_from_docstring("model_version", docstring)
-            setattr(self.__class__.__dict__[name], "__doc__", docstring)  # NoQA
+            setattr(self.__class__.__dict__[name], "__doc__", docstring)  # noqa: B010
 
-        setattr(self.__class__, "init_complete", True)  # NoQA
+        setattr(self.__class__, "init_complete", True)  # noqa: B010
 
     @telemetry.send_api_usage_telemetry(
         project=_TELEMETRY_PROJECT,

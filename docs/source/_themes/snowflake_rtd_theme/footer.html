@@ -1,0 +1,17 @@
+<footer>
+  <!-- Previous/Next links -->
+  <div class="navlinks" style="float: right">
+    {% if next %}
+      <a href="{{ next.link|e }}" class="pn-prev float-right" title="{{ next.title|striptags|e }}">{{ _('Next') }}</a>
+    {% endif %}
+    {% if prev %}
+      <a href="{{ prev.link|e }}" class="pn-next float-left" title="{{ prev.title|striptags|e }}">{{ _('Previous') }}</a> | 
+    {% endif %}
+  </div>
+  <!-- Copyright acknowledgement-->
+  <div class="copyright"><small>
+    Portions of the Snowpark ML API Reference are derived from scikit-learn, xgboost, and lightgbm documentation.<br>
+    <b>scikit-learn</b> Copyright &copy; 2007-2023 The scikit-learn developers. All rights reserved.<br>
+    <b>xgboost</b> Copyright &copy; 2019 by xgboost contributors. <b>lightgbm</b> Copyright &copy; Microsoft Corporation.
+  </small></div>
+</footer>

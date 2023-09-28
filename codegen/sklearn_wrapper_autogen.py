@@ -9,7 +9,8 @@ from enum import Enum
 from typing import Iterable, List, Optional
 
 from absl import logging
-from sklearn_wrapper_generator import WrapperGeneratorBase, WrapperGeneratorFactory
+
+from codegen import sklearn_wrapper_generator as swg
 
 InitRuleInfo = namedtuple("InitRuleInfo", ["init_import_statement", "init_export_statement"])
 
@@ -67,7 +68,7 @@ class AutogenTool:
         for transformer in inspect.getmembers(module):
             if (
                 inspect.isclass(transformer[1])
-                and WrapperGeneratorFactory.can_generate_wrapper(transformer)
+                and swg.WrapperGeneratorFactory.can_generate_wrapper(transformer)
                 # Not an imported class
                 and transformer[1].__module__.startswith(module_name)
             ):
@@ -98,7 +99,7 @@ class AutogenTool:
             )
 
     def _generate_src_files(
-        self, module_name: str, generators: Iterable[WrapperGeneratorBase], skip_code_gen: bool = False
+        self, module_name: str, generators: Iterable[swg.WrapperGeneratorBase], skip_code_gen: bool = False
     ) -> List[str]:
         """Autogenerate snowflake estimator wrappers for the given SKLearn or XGBoost module.
 
@@ -135,7 +136,7 @@ class AutogenTool:
         return generated_files_list
 
     def _generate_test_files(
-        self, module_name: str, generators: Iterable[WrapperGeneratorBase], skip_code_gen: bool = False
+        self, module_name: str, generators: Iterable[swg.WrapperGeneratorBase], skip_code_gen: bool = False
     ) -> List[str]:
         """Autogenerate integ tests for snowflake estimator wrappers for the given SKLearn or XGBoost module.
 
@@ -170,7 +171,7 @@ class AutogenTool:
 
         return generated_files_list
 
-    def _get_wrapper_generators(self, module: types.ModuleType) -> List[WrapperGeneratorBase]:
+    def _get_wrapper_generators(self, module: types.ModuleType) -> List[swg.WrapperGeneratorBase]:
         """
         Construct wrapper generators for all the supported estimator classes in the given module.
 
@@ -186,9 +187,9 @@ class AutogenTool:
             if inspect.isclass(transformer[1]):
                 if (
                     self.class_list is None or len(self.class_list) == 0 or transformer[0] in self.class_list
-                ) and WrapperGeneratorFactory.can_generate_wrapper(transformer):
+                ) and swg.WrapperGeneratorFactory.can_generate_wrapper(transformer):
                     # Read information from input transformer.
-                    generator = WrapperGeneratorFactory.read(module_name=module_name, class_object=transformer)
+                    generator = swg.WrapperGeneratorFactory.read(module_name=module_name, class_object=transformer)
                     generators.append(generator)
         return generators
 
@@ -236,5 +237,5 @@ class AutogenTool:
         Returns:
             Root directory for the given module.
         """
-        snowml_module_name = WrapperGeneratorFactory.get_snow_ml_module_name(module_name)
+        snowml_module_name = swg.WrapperGeneratorFactory.get_snow_ml_module_name(module_name)
         return os.path.join("/".join(snowml_module_name.split(".")))

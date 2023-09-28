@@ -1,5 +1,4 @@
-load("@rules_python//python:packaging.bzl", "py_package")
-load("//bazel:py_rules.bzl", "py_library", "py_test", "snowml_wheel")
+load("//bazel:py_rules.bzl", "py_library", "py_package", "py_test", "snowml_wheel")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -64,6 +63,7 @@ py_library(
         "//snowflake/ml/_internal/exceptions:fileset_error_messages",
         "//snowflake/ml/_internal/exceptions:fileset_errors",
         "//snowflake/ml/_internal/utils:import_utils",
+        "//snowflake/ml/_internal/utils:snowpark_dataframe_utils",
     ],
 )
 

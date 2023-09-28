@@ -4,13 +4,14 @@ load(":env.bzl", "conda_create_rule")
 load(":toolchain.bzl", "toolchain_rule")
 
 CONDA_DIR = "conda"
+CONDA_ENV_NAME = "env"
 
 # download and install conda
 def load_conda(conda_repo_name, **kwargs):
     maybe(
         load_conda_rule,
         conda_repo_name,
-        conda_dir = conda_repo_name,
+        conda_dir = CONDA_DIR,
         **kwargs
     )
 
@@ -20,7 +21,8 @@ def conda_create(name, conda_repo_name, **kwargs):
         conda_create_rule,
         name,
         conda_repo = conda_repo_name,
-        conda_dir = conda_repo_name,
+        conda_dir = CONDA_DIR,
+        conda_env_name = CONDA_ENV_NAME,
         **kwargs
     )
 

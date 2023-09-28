@@ -83,7 +83,7 @@ def generate_requirement_file_yaml(
             template_file,
         ],
         outs = ["{generated_file}.body.formatted.yaml".format(generated_file = generated_file)],
-        expression = ". as $item ireduce ({}; . * $item ) | sort_keys(..)",
+        expression = ". as $item ireduce ({}; . *+ $item ) | sort_keys(..)",
     )
 
     native.genrule(
@@ -105,7 +105,19 @@ def generate_requirement_file_yaml(
 def sync_target(
         name,
         root_path,
-        targets):
+        targets,
+        src_requirement_file):
+    py_genrule(
+        name = "validate_env_{name}".format(name = name),
+        srcs = [
+            src_requirement_file,
+            _SCHEMA_FILE,
+        ],
+        outs = ["validate_env_{name}_dummy_out".format(name = name)],
+        cmd = _GENERATE_COMMAND.format(src_requirement_file = src_requirement_file, options = "--mode validate"),
+        tools = [_GENERATE_TOOL],
+    )
+
     write_file(
         name = "gen_{name}".format(name = name),
         out = "{name}.sh".format(name = name),

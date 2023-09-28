@@ -109,7 +109,7 @@ class GridSearchCVTest(TestCase):
         sk_predicted = sk_gs.predict(raw_data_pd[feature_cols])
 
         assert gs._sklearn_object.best_params_ == sk_gs.best_params_
-        # np.testing.assert_allclose(gs._sklearn_object.best_score_, sk_gs.best_score_)
+        np.testing.assert_allclose(gs._sklearn_object.best_score_, sk_gs.best_score_)
         np.testing.assert_allclose(
             predicted["OUTPUT_LABEL"].to_numpy().flatten(), sk_predicted.flatten(), rtol=1.0e-1, atol=1.0e-2
         )

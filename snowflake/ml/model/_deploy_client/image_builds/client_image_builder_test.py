@@ -13,21 +13,17 @@ from snowflake.ml.test_utils import exception_utils, mock_session
 
 
 class ClientImageBuilderTestCase(absltest.TestCase):
-    @mock.patch(
-        "snowflake.ml.model._deploy_client.image_builds.client_image_builder._model_meta.ModelMetadata"
-    )  # type: ignore
-    def setUp(self, m_model_meta_class: mock.MagicMock) -> None:
-        m_model_meta = m_model_meta_class.return_value
+    def setUp(self) -> None:
         super().setUp()
         self.m_session = cast(snowpark.session.Session, mock_session.MockSession(conn=None, test_case=self))
-        self.unique_id = "mock_id"
+        self.full_image_name = "mock_full_image_name"
         self.image_repo = "mock_image_repo"
-        self.model_meta = m_model_meta
+        self.context_dir = "/tmp/context_dir"
 
         self.client_image_builder = client_image_builder.ClientImageBuilder(
-            id=self.unique_id,
+            context_dir=self.context_dir,
+            full_image_name=self.full_image_name,
             image_repo=self.image_repo,
-            model_meta=self.model_meta,
             session=self.m_session,
         )
 
@@ -40,35 +36,18 @@ class ClientImageBuilderTestCase(absltest.TestCase):
                 self.client_image_builder.build_and_upload_image()
             m_run_docker_commands.assert_called_once_with(["docker", "info"])
 
-    @mock.patch(
-        "snowflake.ml.model._deploy_client.image_builds.client_image_builder" ".docker_context.DockerContext"
-    )  # type: ignore
-    @mock.patch("tempfile.TemporaryDirectory")  # type: ignore
-    def test_build(self, m_tempdir: mock.MagicMock, m_docker_context_class: mock.MagicMock) -> None:
-        m_docker_context = m_docker_context_class.return_value
-        m_context_dir = "mock_context_dir"
-        # Modify the m_tempdir mock to return the desired TemporaryDirectory object
-        m_tempdir.return_value.__enter__.return_value = m_context_dir
+    def test_build(self) -> None:
         m_docker_config_dir = "mock_docker_config_dir"
 
-        with mock.patch.object(m_docker_context, "build") as m_build, mock.patch.object(
-            self.client_image_builder, "_build_image_from_context"
-        ) as m_build_image_from_context:
+        with mock.patch.object(self.client_image_builder, "_build_image_from_context") as m_build_image_from_context:
             self.client_image_builder._build_and_tag(m_docker_config_dir)
-            m_docker_context_class.assert_called_once_with(context_dir=m_context_dir, model_meta=self.model_meta)
-            m_build.assert_called_once()
-            m_build_image_from_context.assert_called_once_with(
-                context_dir=m_context_dir, docker_config_dir=m_docker_config_dir
-            )
+            m_build_image_from_context.assert_called_once_with(docker_config_dir=m_docker_config_dir)
 
     def test_build_image_from_context(self) -> None:
         with mock.patch.object(self.client_image_builder, "_run_docker_commands") as m_run_docker_commands:
             m_run_docker_commands.return_value = None
-            m_context_dir = "fake_context_dir"
             m_docker_config_dir = "mock_docker_config_dir"
-            self.client_image_builder._build_image_from_context(
-                context_dir=m_context_dir, docker_config_dir=m_docker_config_dir
-            )
+            self.client_image_builder._build_image_from_context(docker_config_dir=m_docker_config_dir)
 
             expected_commands = [
                 "docker",
@@ -79,8 +58,8 @@ class ClientImageBuilderTestCase(absltest.TestCase):
                 "--platform",
                 "linux/amd64",
                 "--tag",
-                f"{'/'.join([self.image_repo, self.unique_id])}:latest",
-                m_context_dir,
+                self.full_image_name,
+                self.context_dir,
             ]
 
             m_run_docker_commands.assert_called_once()

@@ -17,6 +17,8 @@
 
 set -o pipefail
 set -u
+set -e
+
 PROG=$0
 
 help() {
@@ -79,6 +81,7 @@ SeedFileContent
 "${bazel}" run --config=pre_build :bazel-diff --script_path="${bazel_diff}"
 
 git -C "${workspace_path}" checkout "${pr_revision}" --quiet
+trap 'git -C "${workspace_path}" checkout "${current_revision}" --quiet' EXIT
 
 echo "Generating Hashes for Revision '${pr_revision}'"
 
@@ -109,5 +112,3 @@ EndOfMessage
 # -- End of Query Rules Heredoc --
 
 "${bazel}" query --query_file="${filter_query_rules_file}" >"${output_path}"
-
-git -C "${workspace_path}" checkout "${current_revision}" --quiet

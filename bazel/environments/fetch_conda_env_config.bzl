@@ -1,6 +1,7 @@
 def _fetch_conda_env_config_impl(rctx):
     # read the particular environment variable we are interested in
-    config = rctx.os.environ.get("BUILD_CONDA_ENV", "extended").lower()
+    env_name = rctx.os.environ.get("BAZEL_CONDA_ENV_NAME", "extended").lower()
+    python_ver = rctx.os.environ.get("BAZEL_CONDA_PYTHON_VERSION", "3.8").lower()
 
     # necessary to create empty BUILD file for this rule
     # which will be located somewhere in the Bazel build files
@@ -21,8 +22,8 @@ def _fetch_conda_env_config_impl(rctx):
         },
     }
 
-    if config not in conda_env_map.keys():
-        fail("Unsupported conda env {} specified. Only {} is supported.".format(config, repr(conda_env_map.keys())))
+    if env_name not in conda_env_map.keys():
+        fail("Unsupported conda env {} specified. Only {} is supported.".format(env_name, repr(conda_env_map.keys())))
 
     # create a temporary file called config.bzl to be loaded into WORKSPACE
     # passing in any desired information from this rule implementation
@@ -32,10 +33,11 @@ def _fetch_conda_env_config_impl(rctx):
 NAME = {}
 ENVIRONMENT = {}
 COMPATIBLE_TARGET = {}
-""".format(repr(config), repr(conda_env_map[config]["environment"]), repr(conda_env_map[config]["compatible_target"])),
+PYTHON_VERSION = {}
+""".format(repr(env_name), repr(conda_env_map[env_name]["environment"]), repr(conda_env_map[env_name]["compatible_target"]), repr(python_ver)),
     )
 
 fetch_conda_env_config = repository_rule(
     implementation = _fetch_conda_env_config_impl,
-    environ = ["BUILD_CONDA_ENV"],
+    environ = ["BAZEL_CONDA_ENV_NAME", "BAZEL_CONDA_PYTHON_VERSION"],
 )

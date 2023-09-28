@@ -7,9 +7,9 @@ SHARD_COUNT = 3
 TIMEOUT = "long"  # 900s
 
 py_test(
-    name = "test_pipeline",
+    name = "pipeline_test",
     timeout = TIMEOUT,
-    srcs = ["test_pipeline.py"],
+    srcs = ["pipeline_test.py"],
     shard_count = SHARD_COUNT,
     deps = [
         "//snowflake/ml/modeling/linear_model:linear_regression",

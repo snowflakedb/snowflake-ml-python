@@ -8,7 +8,7 @@ from typing import Any, Dict, List, Tuple
 
 import inflection
 import numpy as np
-from sklearn.experimental import enable_iterative_imputer  # noqa
+from sklearn.experimental import enable_iterative_imputer  # noqa: F401
 
 NP_CONSTANTS = [c for c in dir(np) if type(getattr(np, c, None)) == float or type(getattr(np, c, None)) == int]
 LOAD_BREAST_CANCER = "load_breast_cancer"
@@ -18,13 +18,13 @@ LOAD_DIABETES = "load_diabetes"
 
 ADDITIONAL_PARAM_DESCRIPTIONS = """
 
-input_cols : Optional[Union[str, List[str]]]
+input_cols: Optional[Union[str, List[str]]]
     A string or list of strings representing column names that contain features.
     If this parameter is not specified, all columns in the input DataFrame except
     the columns specified by label_cols and sample-weight_col parameters are
     considered input columns.
 
-label_cols : Optional[Union[str, List[str]]]
+label_cols: Optional[Union[str, List[str]]]
     A string or list of strings representing column names that contain labels.
     This is a required param for estimators, as there is no way to infer these
     columns. If this parameter is not specified, then object is fitted without
@@ -417,7 +417,7 @@ class WrapperGeneratorBase:
                                                 is contained in.
     estimator_imports                GENERATED  Imports needed for the estimator / fit()
                                                 call.
-    fit_sproc_imports                GENERATED  Imports needed for the fit sproc call.
+    wrapper_provider_class           GENERATED  Class name of wrapper provider.
     ------------------------------------------------------------------------------------
     SIGNATURES AND ARGUMENTS
     ------------------------------------------------------------------------------------
@@ -452,14 +452,15 @@ class WrapperGeneratorBase:
     original_transform_docstring     INFERRED   Docstring from the given class'
                                                 transform() or predict() method.
     transformer_transform_docstring  GENERATED  Docstring for the transform() or
-                                                predict()"method of the generated class.
-
+                                                predict() method of the generated class.
+    score_docstring                  GENERATED  Docstring for the score() method of the
+                                                generated class.
     ------------------------------------------------------------------------------------
     TEST STRINGS
     ------------------------------------------------------------------------------------
 
     test_dataset_func               INFERRED    Function name to generate datasets for
-                                                testing estimtors.
+                                                testing estimators.
 
     test_estimator_input_args       GENERATED   Input arguments string to initialize
                                                 estimator.
@@ -511,6 +512,8 @@ class WrapperGeneratorBase:
         # Import strings
         self.estimator_imports = ""
         self.estimator_imports_list: List[str] = []
+        self.score_sproc_imports: List[str] = []
+        self.wrapper_provider_class = ""
         self.additional_import_statements = ""
 
         # Test strings
@@ -612,14 +615,21 @@ class WrapperGeneratorBase:
         class_docstring = f"{class_description}\n\n{param_description}"
         class_docstring = textwrap.indent(class_docstring, "    ").strip()
 
-        # Filter out versioned and deprecated notes from SKLearn documentation
+        # Filter out versioned and deprecated notes from SKLearn documentation.
         paragraphs = class_docstring.split("\n\n")
-        class_docstring = "\n\n".join([p for p in paragraphs if not p.lstrip().startswith("..")])
+        filtered_paragraphs = []
+        for paragraph in paragraphs:
+            if not paragraph.lstrip().startswith(".."):
+                # Format colon spacing consistently for sphinx.
+                paragraph = paragraph.replace(" : ", ": ")
+                filtered_paragraphs.append(paragraph)
+
+        class_docstring = "\n\n".join(filtered_paragraphs)
 
         self.estimator_class_docstring = class_docstring
 
     def _populate_function_doc_fields(self) -> None:
-        _METHODS = ["fit", "predict", "predict_log_proba", "predict_proba", "decision_function", "transform"]
+        _METHODS = ["fit", "predict", "predict_log_proba", "predict_proba", "decision_function", "transform", "score"]
         _CLASS_FUNC = {name: func for name, func in inspect.getmembers(self.class_object[1])}
         for _each_method in _METHODS:
             if _each_method in _CLASS_FUNC.keys():
@@ -649,6 +659,7 @@ class WrapperGeneratorBase:
         self.predict_proba_docstring = self.estimator_function_docstring["predict_proba"]
         self.predict_log_proba_docstring = self.estimator_function_docstring["predict_log_proba"]
         self.decision_function_docstring = self.estimator_function_docstring["decision_function"]
+        self.score_docstring = self.estimator_function_docstring["score"]
 
     def _populate_class_names(self) -> None:
         self.original_class_name = self.class_object[0]
@@ -733,7 +744,7 @@ class WrapperGeneratorBase:
         )
         self.estimator_test_file_name = os.path.join(
             "/".join(snow_ml_module_name.split(".")),
-            "test_" + inflection.underscore(self.original_class_name) + ".py",
+            inflection.underscore(self.original_class_name) + "_test.py",
         )
 
     def _populate_integ_test_fields(self) -> None:
@@ -818,7 +829,8 @@ class SklearnWrapperGenerator(WrapperGeneratorBase):
 
         # Populate SKLearn specific values
         self.estimator_imports_list.extend(["import sklearn", f"import {self.root_module_name}"])
-        self.fit_sproc_imports = ["sklearn"]
+        self.wrapper_provider_class = "SklearnWrapperProvider"
+        self.score_sproc_imports = ["sklearn"]
 
         if "random_state" in self.original_init_signature.parameters.keys():
             self.test_estimator_input_args_list.append("random_state=0")
@@ -942,8 +954,11 @@ class XGBoostWrapperGenerator(WrapperGeneratorBase):
 
         # Populate XGBoost specific values
         self.estimator_imports_list.append("import xgboost")
-        self.test_estimator_input_args_list.extend(["random_state=0", "subsample=1.0", "colsample_bynode=1.0"])
-        self.fit_sproc_imports = ["xgboost"]
+        self.test_estimator_input_args_list.extend(
+            ["random_state=0", "subsample=1.0", "colsample_bynode=1.0", "n_jobs=1"]
+        )
+        self.score_sproc_imports = ["xgboost"]
+        self.wrapper_provider_class = "XGBoostWrapperProvider"
         # TODO(snandamuri): Replace cloudpickle with joblib after latest version of joblib is added to snowflake conda.
         self.supported_export_method = "to_xgboost"
         self.unsupported_export_methods = ["to_sklearn", "to_lightgbm"]
@@ -971,8 +986,10 @@ class LightGBMWrapperGenerator(WrapperGeneratorBase):
 
         # Populate LightGBM specific values
         self.estimator_imports_list.append("import lightgbm")
-        self.test_estimator_input_args_list.extend(["random_state=0"])
-        self.fit_sproc_imports = ["lightgbm"]
+        self.test_estimator_input_args_list.extend(["random_state=0", "n_jobs=1"])
+        self.score_sproc_imports = ["lightgbm"]
+        self.wrapper_provider_class = "LightGBMWrapperProvider"
+
         # TODO(snandamuri): Replace cloudpickle with joblib after latest version of joblib is added to snowflake conda.
         self.deps = "f'numpy=={np.__version__}', f'lightgbm=={lightgbm.__version__}', f'cloudpickle=={cp.__version__}'"
         self.supported_export_method = "to_lightgbm"

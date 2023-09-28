@@ -1,17 +1,46 @@
-# Make the target platform and the host platform the same
-build --platforms //bazel/platforms:snowflake_conda_env --host_platform //bazel/platforms:snowflake_conda_env --repo_env=BUILD_CONDA_ENV=build
-test --platforms //bazel/platforms:snowflake_conda_env --host_platform //bazel/platforms:snowflake_conda_env --run_under='//bazel:test_wrapper' --repo_env=BUILD_CONDA_ENV=sf_only
-run --platforms //bazel/platforms:snowflake_conda_env --host_platform //bazel/platforms:snowflake_conda_env --repo_env=BUILD_CONDA_ENV=sf_only
-cquery --platforms //bazel/platforms:snowflake_conda_env --host_platform //bazel/platforms:snowflake_conda_env --repo_env=BUILD_CONDA_ENV=sf_only
+# Common Default
 
-run:pre_build --platforms //bazel/platforms:snowflake_conda_env --host_platform //bazel/platforms:snowflake_conda_env --repo_env=BUILD_CONDA_ENV=build
-build:typecheck --aspects //bazel/mypy:mypy.bzl%mypy_aspect --output_groups=mypy --platforms //bazel/platforms:extended_conda_env --host_platform //bazel/platforms:extended_conda_env --repo_env=BUILD_CONDA_ENV=extended
+# Wrapper to make sure tests are run.
+test --run_under='//bazel:test_wrapper'
 
 # Since integration tests are located in different packages than code under test,
 # the default instrumentation filter would exclude the code under test. This
 # makes bazel consider all the source code in our repo for coverage.
 coverage --instrumentation_filter="-//tests[/:]"
 
-test:extended --platforms //bazel/platforms:extended_conda_env --host_platform //bazel/platforms:extended_conda_env --run_under='//bazel:test_wrapper' --repo_env=BUILD_CONDA_ENV=extended
-run:extended --platforms //bazel/platforms:extended_conda_env --host_platform //bazel/platforms:extended_conda_env --repo_env=BUILD_CONDA_ENV=extended
-cquery:extended --platforms //bazel/platforms:extended_conda_env --host_platform //bazel/platforms:extended_conda_env --repo_env=BUILD_CONDA_ENV=extended
+# Internal definitions
+
+# Make the target platform and the host platform the same
+build:_build --platforms //bazel/platforms:snowflake_conda_env --host_platform //bazel/platforms:snowflake_conda_env --repo_env=BAZEL_CONDA_ENV_NAME=build
+build:_sf_only --platforms //bazel/platforms:snowflake_conda_env --host_platform //bazel/platforms:snowflake_conda_env --repo_env=BAZEL_CONDA_ENV_NAME=sf_only
+build:_extended --platforms //bazel/platforms:extended_conda_env --host_platform //bazel/platforms:extended_conda_env --repo_env=BAZEL_CONDA_ENV_NAME=extended
+
+# Public definitions
+
+# Python environment flag, should use in combination with other configs
+
+build:py3.8 --repo_env=BAZEL_CONDA_PYTHON_VERSION=3.8
+build:py3.9 --repo_env=BAZEL_CONDA_PYTHON_VERSION=3.9
+build:py3.10 --repo_env=BAZEL_CONDA_PYTHON_VERSION=3.10
+
+# Default
+
+build --config=_build
+test --config=_sf_only
+run --config=_sf_only
+cquery --config=_sf_only
+
+# Config to sync files
+run:pre_build --config=_build --config=py3.8
+
+# Config to run type check
+build:typecheck --aspects @rules_mypy//:mypy.bzl%mypy_aspect --output_groups=mypy --config=_extended --config=py3.8
+
+# Config to build the doc
+build:docs --config=_sf_only --config=py3.8
+
+# Public the extended setting
+
+test:extended --config=_extended
+run:extended --config=_extended
+cquery:extended --config=_extended

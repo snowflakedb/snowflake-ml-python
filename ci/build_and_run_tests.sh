@@ -171,7 +171,7 @@ else
     # Build SnowML
     pushd ${SNOWML_DIR}
     # Build conda package
-    conda build --prefix-length 50 --croot "${WORKSPACE}/conda-bld" ci/conda_recipe
+    conda build --prefix-length 50 --python=3.8 --croot "${WORKSPACE}/conda-bld" ci/conda_recipe
     conda build purge
     popd
 fi

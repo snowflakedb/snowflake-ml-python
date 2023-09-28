@@ -27,6 +27,7 @@ from snowflake.ml.model.model_signature import (
 )
 from snowflake.ml.modeling._internal.estimator_protocols import CVHandlers
 from snowflake.ml.modeling._internal.snowpark_handlers import (
+    SklearnWrapperProvider,
     SnowparkHandlers as HandlersImpl,
 )
 from snowflake.ml.modeling.framework._utils import to_native_format
@@ -125,7 +126,7 @@ def _validate_sklearn_args(args: Dict[str, Any], klass: type) -> Dict[str, Any]:
         SnowflakeMLException: if a user specified arg is not supported by current version of sklearn/xgboost.
     """
     result = {}
-    signature = inspect.signature(klass.__init__)  # type: ignore
+    signature = inspect.signature(klass.__init__)  # type: ignore[misc]
     for k, v in args.items():
         if k not in signature.parameters.keys():  # Arg is not supported.
             if v[2] or (  # Arg doesn't have default value in the signature.
@@ -314,7 +315,7 @@ class RandomizedSearchCV(BaseTransformer):
         If set, the response of predict(), transform() methods will not contain input columns.
     """
 
-    def __init__(  # type: ignore
+    def __init__(  # type: ignore[no-untyped-def]
         self,
         *,
         estimator,
@@ -340,7 +341,7 @@ class RandomizedSearchCV(BaseTransformer):
             f"numpy=={np.__version__}",
             f"scikit-learn=={sklearn.__version__}",
             f"cloudpickle=={cp.__version__}",
-            f"cachetools=={cachetools.__version__}",  # type: ignore
+            f"cachetools=={cachetools.__version__}",  # type: ignore[attr-defined]
             f"fsspec=={fsspec.__version__}",
         }
         deps = deps | _gather_dependencies(estimator)
@@ -370,7 +371,9 @@ class RandomizedSearchCV(BaseTransformer):
         self.set_label_cols(label_cols)
         self.set_drop_input_cols(drop_input_cols)
         self.set_sample_weight_col(sample_weight_col)
-        self._handlers: CVHandlers = HandlersImpl(class_name=self.__class__.__name__, subproject=_SUBPROJECT)
+        self._handlers: CVHandlers = HandlersImpl(
+            class_name=self.__class__.__name__, subproject=_SUBPROJECT, wrapper_provider=SklearnWrapperProvider()
+        )
 
     def _get_rand_id(self) -> str:
         """
@@ -426,7 +429,9 @@ class RandomizedSearchCV(BaseTransformer):
         """
         self._infer_input_output_cols(dataset)
         if isinstance(dataset, pd.DataFrame):
-            self._fit_pandas(dataset)
+            self._estimator = self._handlers.fit_pandas(
+                dataset, self._sklearn_object, self.input_cols, self.label_cols, self.sample_weight_col
+            )
         elif isinstance(dataset, DataFrame):
             self._fit_snowpark(dataset)
         else:
@@ -454,7 +459,11 @@ class RandomizedSearchCV(BaseTransformer):
         assert self._sklearn_object is not None
         self._sklearn_object.refit = False
         result_dict = self._handlers._fit_search_snowpark(
-            param_list=ParameterSampler(self._sklearn_object.param_distributions, n_iter=self._sklearn_object.n_iter),
+            param_list=ParameterSampler(
+                self._sklearn_object.param_distributions,
+                n_iter=self._sklearn_object.n_iter,
+                random_state=self._sklearn_object.random_state,
+            ),
             dataset=dataset,
             session=session,
             estimator=self._sklearn_object,
@@ -478,24 +487,10 @@ class RandomizedSearchCV(BaseTransformer):
             session=session,
             estimator=self._sklearn_object.best_estimator_,
             dependencies=["snowflake-snowpark-python"] + self._get_dependencies(),
-            fit_sproc_imports=["sklearn"],
             input_cols=self.input_cols,
             label_cols=self.label_cols,
             sample_weight_col=self.sample_weight_col,
         )
-
-    def _fit_pandas(self, dataset: pd.DataFrame) -> None:
-        assert self._sklearn_object is not None
-        argspec = inspect.getfullargspec(self._sklearn_object.fit)
-        args = {"X": dataset[self.input_cols]}
-        if self.label_cols:
-            label_arg_name = "Y" if "Y" in argspec.args else "y"
-            args[label_arg_name] = dataset[self.label_cols].squeeze()
-
-        if self.sample_weight_col is not None and "sample_weight" in argspec.args:
-            args["sample_weight"] = dataset[self.sample_weight_col].squeeze()
-
-        self._sklearn_object.fit(**args)
 
     def _get_pass_through_columns(self, dataset: DataFrame) -> List[str]:
         if self._drop_input_cols:
@@ -644,7 +639,7 @@ class RandomizedSearchCV(BaseTransformer):
             dataset[output_cols] = transformed_numpy_array
         return dataset
 
-    @available_if(_original_estimator_has_callable("predict"))  # type: ignore
+    @available_if(_original_estimator_has_callable("predict"))  # type: ignore[misc]
     @telemetry.send_api_usage_telemetry(
         project=_PROJECT,
         subproject=_SUBPROJECT,
@@ -691,7 +686,7 @@ class RandomizedSearchCV(BaseTransformer):
 
         return output_df
 
-    @available_if(_original_estimator_has_callable("transform"))  # type: ignore
+    @available_if(_original_estimator_has_callable("transform"))  # type: ignore[misc]
     @telemetry.send_api_usage_telemetry(
         project=_PROJECT,
         subproject=_SUBPROJECT,
@@ -769,7 +764,7 @@ class RandomizedSearchCV(BaseTransformer):
             return output_cols
         return []
 
-    @available_if(_original_estimator_has_callable("predict_proba"))  # type: ignore
+    @available_if(_original_estimator_has_callable("predict_proba"))  # type: ignore[misc]
     @telemetry.send_api_usage_telemetry(
         project=_PROJECT,
         subproject=_SUBPROJECT,
@@ -812,7 +807,7 @@ class RandomizedSearchCV(BaseTransformer):
 
         return output_df
 
-    @available_if(_original_estimator_has_callable("predict_log_proba"))  # type: ignore
+    @available_if(_original_estimator_has_callable("predict_log_proba"))  # type: ignore[misc]
     @telemetry.send_api_usage_telemetry(
         project=_PROJECT,
         subproject=_SUBPROJECT,
@@ -856,7 +851,7 @@ class RandomizedSearchCV(BaseTransformer):
 
         return output_df
 
-    @available_if(_original_estimator_has_callable("decision_function"))  # type: ignore
+    @available_if(_original_estimator_has_callable("decision_function"))  # type: ignore[misc]
     @telemetry.send_api_usage_telemetry(
         project=_PROJECT,
         subproject=_SUBPROJECT,
@@ -900,7 +895,7 @@ class RandomizedSearchCV(BaseTransformer):
 
         return output_df
 
-    @available_if(_original_estimator_has_callable("score"))  # type: ignore
+    @available_if(_original_estimator_has_callable("score"))  # type: ignore[misc]
     def score(self, dataset: Union[DataFrame, pd.DataFrame]) -> float:
         """
         Args:
@@ -913,33 +908,12 @@ class RandomizedSearchCV(BaseTransformer):
         self._infer_input_output_cols(dataset)
         super()._check_dataset_type(dataset)
         if isinstance(dataset, pd.DataFrame):
-            output_score = self._score_sklearn(dataset)
+            output_score = self._handlers.score_pandas(
+                dataset, self._sklearn_object, self.input_cols, self.label_cols, self.sample_weight_col
+            )
         elif isinstance(dataset, DataFrame):
             output_score = self._score_snowpark(dataset)
         return output_score
-
-    def _score_sklearn(self, dataset: pd.DataFrame) -> float:
-        assert self._sklearn_object is not None and hasattr(self._sklearn_object, "score")  # make type checker happy
-        argspec = inspect.getfullargspec(self._sklearn_object.score)
-        if "X" in argspec.args:
-            args = {"X": dataset[self.input_cols]}
-        elif "X_test" in argspec.args:
-            args = {"X_test": dataset[self.input_cols]}
-        else:
-            raise exceptions.SnowflakeMLException(
-                error_code=error_codes.INVALID_ATTRIBUTE,
-                original_exception=RuntimeError("Neither 'X' or 'X_test' exist in argument"),
-            )
-
-        if self.label_cols:
-            label_arg_name = "Y" if "Y" in argspec.args else "y"
-            args[label_arg_name] = dataset[self.label_cols].squeeze()
-
-        if self.sample_weight_col is not None and "sample_weight" in argspec.args:
-            args["sample_weight"] = dataset[self.sample_weight_col].squeeze()
-
-        score = self._sklearn_object.score(**args)
-        return score
 
     def _score_snowpark(self, dataset: DataFrame) -> float:
         # Specify input columns so column pruing will be enforced

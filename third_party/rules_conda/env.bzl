@@ -1,4 +1,4 @@
-load(":utils.bzl", "CONDA_EXT_MAP", "ENV_VAR_SEPARATOR_MAP", "EXECUTE_TIMEOUT", "PYTHON_EXT_MAP", "get_os", "get_path_envar")
+load(":utils.bzl", "EXECUTE_TIMEOUT", "PYTHON_EXT_MAP", "get_os", "get_path_envar")
 
 # This excluded violating file is from arrow-cpp 10.0.1 in Snowflake Anaconda Channel.
 
@@ -24,24 +24,12 @@ filegroup(
 def _conda_cmd(rctx, conda_args, environment = {}):
     path_envar = get_path_envar(rctx)
     os = get_os(rctx)
-    python_executable = "python{}".format(PYTHON_EXT_MAP[os])
-    interpreter_path = python_executable if os == "Windows" else "bin/{}".format(python_executable)
-    conda_entrypoint = Label("@{}//:{}/condabin/conda{}".format(
+    conda_entrypoint = Label("@{}//:{}/micromamba".format(
         rctx.attr.conda_repo,
         rctx.attr.conda_dir,
-        CONDA_EXT_MAP[os],
-    ))
-    python = Label("@{}//:{}/{}".format(
-        rctx.attr.conda_repo,
-        rctx.attr.conda_dir,
-        interpreter_path,
     ))
 
-    additional_paths = [str(rctx.path(python).dirname)]
-    if os == "Windows":
-        additional_paths = additional_paths + [str(rctx.path("{}/Library/bin".format(rctx.attr.conda_repo, rctx.attr.conda_dir)))]
-    additional_paths = additional_paths + [path_envar]
-    actual_environment = {"PATH": ENV_VAR_SEPARATOR_MAP[os].join(additional_paths)}
+    actual_environment = {"PATH": path_envar}
     actual_environment.update(environment)
 
     return rctx.execute(
@@ -64,7 +52,7 @@ def _clean(rctx):
 
 def _create_empty_environment(rctx, env_name):
     rctx.report_progress("Creating empty conda environment, to be populated afterwards")
-    result = _conda_cmd(rctx, ["create", "-y", "-p", "./{}".format(env_name)])
+    result = _conda_cmd(rctx, ["create", "-y", "-c", "https://repo.anaconda.com/pkgs/snowflake", "--override-channels", "-p", "./{}".format(env_name), "python={}".format(rctx.attr.python_version)])
     if result.return_code:
         fail("Failure creating empty environment.\nstdout: {}\nstderr: {}".format(result.stdout, result.stderr))
 
@@ -72,7 +60,7 @@ def _update_environment(rctx, env_name, env_file):
     rctx.report_progress("Updating empty conda environment to populate it")
     result = _conda_cmd(
         rctx,
-        ["env", "update", "--solver", "libmamba", "-f", env_file, "-p", "./{}".format(env_name)],
+        ["install", "-y", "-f", env_file, "-p", "./{}".format(env_name)],
         environment = {"MAMBA_USE_LOCKFILES": "false"},
     )
     if result.return_code:
@@ -103,7 +91,7 @@ def _get_major(version):
 def _create_env_build_file(rctx, env_name):
     os = get_os(rctx)
     python_executable = "python{}".format(PYTHON_EXT_MAP[os])
-    interpreter_path = python_executable if os == "Windows" else "bin/{}".format(python_executable)
+    interpreter_path = python_executable if os == "win" else "bin/{}".format(python_executable)
 
     py_version = _get_py_version(rctx, env_name, interpreter_path)
     py_major = _get_major(py_version)
@@ -140,7 +128,7 @@ def _create_env_build_file(rctx, env_name):
     )
 
 def _conda_create_impl(rctx):
-    env_name = rctx.name
+    env_name = rctx.attr.conda_env_name
     _create_environment(rctx, env_name)
     if rctx.attr.clean:
         _clean(rctx)
@@ -154,6 +142,7 @@ conda_create_rule = repository_rule(
             doc = "True if conda cache should be cleaned",
         ),
         "conda_dir": attr.string(mandatory = True),
+        "conda_env_name": attr.string(mandatory = True),
         "conda_repo": attr.string(mandatory = True),
         "coverage_tool": attr.label(
             allow_single_file = True,
@@ -163,6 +152,11 @@ conda_create_rule = repository_rule(
             mandatory = True,
             allow_single_file = True,
             doc = "The label of the environment.yml file.",
+        ),
+        "python_version": attr.string(
+            mandatory = True,
+            doc = "The Python version to use when creating the environment.",
+            values = ["3.8", "3.9", "3.10"],
         ),
         "quiet": attr.bool(
             default = True,

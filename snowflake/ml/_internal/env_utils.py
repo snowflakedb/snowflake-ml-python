@@ -18,6 +18,7 @@ _INFO_SCHEMA_PACKAGES_HAS_RUNTIME_VERSION: Optional[bool] = None
 _SNOWFLAKE_CONDA_PACKAGE_CACHE: Dict[str, List[version.Version]] = {}
 
 DEFAULT_CHANNEL_NAME = ""
+SNOWML_SPROC_ENV = "IN_SNOWML_SPROC"
 
 
 def _validate_pip_requirement_string(req_str: str) -> requirements.Requirement:

@@ -1,6 +1,5 @@
 import math
 from typing import Any, Collection, Dict, Iterable, List, Optional, Tuple, Union
-from uuid import uuid4
 
 import cloudpickle
 import numpy as np
@@ -45,7 +44,7 @@ def register_accumulator_udtf(*, session: Session, statement_params: Dict[str, A
         def end_partition(self) -> Iterable[Tuple[bytes]]:
             yield (cloudpickle.dumps(self._accumulated_row),)
 
-    accumulator = "Accumulator_{}".format(str(uuid4()).replace("-", "_").upper())
+    accumulator = snowpark_utils.random_name_for_temp_object(snowpark_utils.TempObjectType.TABLE_FUNCTION)
     session.udtf.register(
         Accumulator,
         output_schema=T.StructType(
@@ -160,7 +159,6 @@ def register_sharded_dot_sum_computer(*, session: Session, statement_params: Dic
     sharded_dot_and_sum_computer = snowpark_utils.random_name_for_temp_object(
         snowpark_utils.TempObjectType.TABLE_FUNCTION
     )
-    # TODO (SNOW-897239): make this an anonymous temp UDTF for it to work in a SPROC
     session.udtf.register(
         ShardedDotAndSumComputer,
         output_schema=T.StructType(

@@ -45,8 +45,9 @@ run_kaniko() {
   /kaniko/executor \
     --dockerfile Dockerfile \
     --context dir:///stage/models/id/context \
-    --destination=mock_image_repo/mock_id:latest \
+    --destination=org-account.registry.snowflakecomputing.com/db/schema/repo/image:latest \
     --cache=true \
+    --compressed-caching=false \
     --cache-copy-layers=false \
     --use-new-run \
     --snapshot-mode=redo \

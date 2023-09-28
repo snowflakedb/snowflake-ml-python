@@ -135,7 +135,12 @@ def get_filtered_valid_sklearn_args(
             # passed to the snowml transformer
             elif val != default_sklearn_args[key]:
                 # check if both values are numpy.nan since numpy.nan != numpy.nan
-                if isinstance(val, float) and (np.isnan(val) and np.isnan(default_sklearn_args[key])):
+                if (
+                    isinstance(val, float)
+                    and np.isnan(val)
+                    and isinstance(default_sklearn_args[key], float)
+                    and np.isnan(default_sklearn_args[key])
+                ):
                     continue
                 sklearn_args[key] = val
         # unused sklearn keyword in snowml

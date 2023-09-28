@@ -14,7 +14,8 @@ import os
 from typing import List
 
 from absl import app, flags, logging
-from sklearn_wrapper_autogen import AutogenTool, GenMode
+
+from codegen import sklearn_wrapper_autogen as swa
 
 FLAGS = flags.FLAGS
 flags.DEFINE_string("template_file", None, "Path to the file containing the {transformer|test} template.")
@@ -56,7 +57,7 @@ def main(argv: List[str]) -> None:
     del argv  # Unused.
 
     gen_mode = None
-    for member in GenMode:
+    for member in swa.GenMode:
         if member.name == FLAGS.gen_mode:
             gen_mode = member
 
@@ -69,7 +70,7 @@ def main(argv: List[str]) -> None:
 
     # Comput relative path of bazel-bin folder.
     if FLAGS.bazel_out_dir:
-        expected_suffix = AutogenTool.module_root_dir(module_name=FLAGS.module)
+        expected_suffix = swa.AutogenTool.module_root_dir(module_name=FLAGS.module)
         expected_suffix = os.path.normpath(os.path.join(actual_output_path, expected_suffix))
 
         bazel_out_dir = os.path.normpath(FLAGS.bazel_out_dir)
@@ -83,7 +84,7 @@ def main(argv: List[str]) -> None:
         # Update src and test output paths by prepending relative bazel-bin path.
         actual_output_path = os.path.normpath(os.path.join(relative_bazel_bin_path, actual_output_path))
 
-    autogen_tool = AutogenTool(
+    autogen_tool = swa.AutogenTool(
         gen_mode=gen_mode,
         template_path=FLAGS.template_file,
         class_list=FLAGS.class_list,

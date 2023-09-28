@@ -1,7 +1,7 @@
 #!/bin/bash
 # DESCRIPTION: Utility Shell script to run bazel action for snowml repository
 #
-# RunBazelAction.sh <test|coverage> [-b <bazel_path>] [-m merge_gate|continuous_run|local_unittest|local_all] [-t <target>]
+# RunBazelAction.sh <test|coverage> [-b <bazel_path>] [-m merge_gate|continuous_run|local_unittest|local_all] [-t <target>] [-c <path_to_coverage_report>]
 #
 # Args:
 #   action: bazel action, choose from test and coverage
@@ -13,6 +13,8 @@
 #       continuous_run (default): run all tests except auto-generated tests. (For nightly run.)
 #       local_unit: run all unit tests affected by target defined by -t
 #       local_all: run all tests including integration tests affected by target defined by -t
+#   -t: specify the target for local_unit and local_all mode
+#   -c: specify the path to the coverage report dat file.
 #
 
 set -o pipefail
@@ -36,11 +38,13 @@ if [[ "${action}" != "test" && "${action}" != "coverage" ]]; then
     help 1
 fi
 
-while getopts "b:m:t:h" opt; do
+while getopts "b:m:t:c:h" opt; do
     case "${opt}" in
     m)
         if [[ "${OPTARG}" = "merge_gate" || "${OPTARG}" = "continuous_run" || "${OPTARG}" = "local_unittest" || "${OPTARG}" = "local_all" ]]; then
             mode="${OPTARG}"
+        else
+            help 1
         fi
         ;;
     b)
@@ -49,7 +53,12 @@ while getopts "b:m:t:h" opt; do
     t)
         if [[ "${mode}" = "local_unittest" || "${mode}" = "local_all" ]]; then
             target="${OPTARG}"
+        else
+            help 1
         fi
+        ;;
+    c)
+        coverage_report_file="${OPTARG}"
         ;;
     h)
         help 0
@@ -75,6 +84,7 @@ working_dir=$(mktemp -d "/tmp/tmp_XXXXX")
 trap 'rm -rf "${working_dir}"' EXIT
 
 tag_filter="--test_tag_filters=-perf_test"
+coverage_tag_filter="--test_tag_filters=-perf_test,-sproc_test"
 cache_test_results="--cache_test_results=no"
 
 case "${mode}" in
@@ -83,6 +93,7 @@ merge_gate)
     ./bazel/get_affected_targets.sh -b "${bazel}" -f "${affected_targets_file}"
 
     tag_filter="--test_tag_filters=-autogen,-perf_test"
+    coverage_tag_filter="--test_tag_filters=-autogen,-perf_test,-sproc_test"
 
     query_expr='kind(".*_test rule", rdeps(//... - //snowflake/ml/experimental/... - set('"$(<ci/skip_merge_gate_targets)"'), set('$(<"${affected_targets_file}")')))'
     ;;
@@ -123,7 +134,7 @@ extended_test_targets_file=${working_dir}/extended_test_targets
 
 # Subtract to get targets to run in sf_only env
 sf_only_test_targets_file=${working_dir}/sf_only_test_targets
-grep -Fwvf "${extended_test_targets_file}" "${all_test_targets_file}" >"${sf_only_test_targets_file}"
+comm -2 -3 <(sort "${all_test_targets_file}") <(sort "${extended_test_targets_file}") >"${sf_only_test_targets_file}"
 
 set +e
 if [[ "${action}" = "test" ]]; then
@@ -146,7 +157,7 @@ elif [[ "${action}" = "coverage" ]]; then
     "${bazel}" coverage \
         "${cache_test_results}" \
         --combined_report=lcov \
-        "${tag_filter}" \
+        "${coverage_tag_filter}" \
         --target_pattern_file "${sf_only_test_targets_file}"
     sf_only_bazel_exit_code=$?
 
@@ -158,14 +169,16 @@ elif [[ "${action}" = "coverage" ]]; then
         --config=extended \
         "${cache_test_results}" \
         --combined_report=lcov \
-        "${tag_filter}" \
+        "${coverage_tag_filter}" \
         --target_pattern_file "${extended_test_targets_file}"
     extended_bazel_exit_code=$?
 
     extended_coverage_report_file=${working_dir}/extended_coverage_report.dat
     cp "$(${bazel} info output_path)/_coverage/_coverage_report.dat" "${extended_coverage_report_file}"
 
-    coverage_report_file=${working_dir}/coverage_report.dat
+    if [ -z "${coverage_report_file+x}" ]; then
+        coverage_report_file=${working_dir}/coverage_report.dat
+    fi
 
     cat "${sf_only_coverage_report_file}" "${extended_coverage_report_file}" >"${coverage_report_file}"
 
