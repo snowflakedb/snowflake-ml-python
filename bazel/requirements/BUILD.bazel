@@ -84,6 +84,7 @@ generate_requirement_file_yaml(
 sync_target(
     name = _SYNC_RULE_NAME,
     root_path = _CURRENT_PATH,
+    src_requirement_file = _SRC_REQUIREMENT_FILE,
     targets = _GENERATED_REQUIREMENTS_FILES.values(),
 )
 

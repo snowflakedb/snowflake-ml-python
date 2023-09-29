@@ -13,6 +13,7 @@
 - Model Registry: Fix an issue that building images fails with specific docker setup.
 - Model Registry: Fix an issue that unable to embed local ML library when the library is imported by `zipimport`.
 - Model Registry: Fix out-of-date doc about `platform` argument in the `deploy` function.
+- Model Registry: Fix an issue that unable to deploy a GPU-trained PyTorch model to a platform where GPU is not available.
 
 ## 1.0.8 (2023-09-15)
 

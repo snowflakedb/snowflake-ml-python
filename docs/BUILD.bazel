@@ -1,0 +1,19 @@
+load("@rules_sphinx//:defs.bzl", "sphinx_docs")
+load("//snowflake/ml:packages.bzl", "PACKAGES")
+
+package_group(
+    name = "docs_package",
+    packages = [
+        "//docs/...",
+    ],
+)
+
+sphinx_docs(
+    name = "docs",
+    srcs = [
+        "//docs/source",
+    ],
+    conf = "sphinxconf",
+    visibility = ["//visibility:public"],
+    deps = PACKAGES,
+)

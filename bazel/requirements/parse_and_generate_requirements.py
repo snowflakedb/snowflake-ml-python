@@ -293,7 +293,7 @@ def generate_requirements(
     req_file_path: str,
     schema_file_path: str,
     mode: str,
-    format: str,
+    format: Optional[str],
     snowflake_channel_only: bool,
     tag_filter: Optional[str] = None,
     version: Optional[str] = None,
@@ -340,8 +340,7 @@ def generate_requirements(
     extended_env_conda = list(
         sorted(filter(None, map(lambda req_info: generate_dev_pinned_string(req_info, "conda"), requirements)))
     )
-    resolve_conda_environment(snowflake_only_env, channels=channels_to_use)
-    resolve_conda_environment(extended_env_conda, channels=channels_to_use)
+
     extended_env: List[Union[str, MutableMapping[str, Sequence[str]]]] = extended_env_conda  # type: ignore[assignment]
     pip_only_reqs = list(
         sorted(filter(None, map(lambda req_info: generate_dev_pinned_string(req_info, "pip-only"), requirements)))
@@ -349,7 +348,10 @@ def generate_requirements(
     if pip_only_reqs:
         extended_env.extend(["pip", {"pip": pip_only_reqs}])
 
-    if (mode, format) == ("dev_version", "text"):
+    if (mode, format) == ("validate", None):
+        resolve_conda_environment(snowflake_only_env, channels=channels_to_use)
+        resolve_conda_environment(extended_env_conda, channels=channels_to_use)
+    elif (mode, format) == ("dev_version", "text"):
         results = list(
             sorted(
                 map(
@@ -454,7 +456,7 @@ def main() -> None:
     parser.add_argument(
         "--mode",
         type=str,
-        choices=["dev_version", "version_requirements", "version_requirements_extras"],
+        choices=["dev_version", "version_requirements", "version_requirements_extras", "validate"],
         help="Define the mode when specifying the requirements.",
         required=True,
     )
@@ -463,7 +465,6 @@ def main() -> None:
         type=str,
         choices=["text", "bzl", "python", "conda_env", "conda_meta"],
         help="Define the output format.",
-        required=True,
     )
     parser.add_argument("--filter_by_tag", type=str, default=None, help="Filter the result by tags.")
     parser.add_argument("--version", type=str, default=None, help="Filter the result by tags.")
@@ -476,6 +477,7 @@ def main() -> None:
     args = parser.parse_args()
 
     VALID_SETTINGS = [
+        ("validate", None, False),  # Validate the environment
         ("dev_version", "text", False),  # requirements.txt
         ("version_requirements", "bzl", False),  # wheel rule requirements
         ("version_requirements", "python", False),  # model deployment core dependencies list

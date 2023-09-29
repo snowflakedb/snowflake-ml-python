@@ -1,0 +1,11 @@
+package(default_visibility = ["//docs:docs_package"])
+
+filegroup(
+    name = "source",
+    srcs = glob([
+        "**/*.rst",
+        "_static/**",
+        "_templates/**",
+        "_themes/**",
+    ]),
+)

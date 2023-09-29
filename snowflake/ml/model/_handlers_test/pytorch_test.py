@@ -85,7 +85,7 @@ class PyTorchHandlerTest(absltest.TestCase):
                 assert isinstance(m, torch.nn.Module)
                 torch.testing.assert_close(m.forward(data_x), y_pred)
 
-                with self.assertRaisesRegex(AssertionError, "Torch not compiled with CUDA enabled"):
+                with self.assertRaisesRegex(RuntimeError, "Attempting to deserialize object on a CUDA device"):
                     _, _ = model_api._load(local_dir_path=os.path.join(tmpdir, "model1"), options={"use_gpu": True})
 
                 m_udf, _ = model_api._load(local_dir_path=os.path.join(tmpdir, "model1"), as_custom_model=True)
