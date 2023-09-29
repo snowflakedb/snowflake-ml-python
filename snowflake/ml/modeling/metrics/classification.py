@@ -1,3 +1,4 @@
+import json
 import warnings
 from typing import Any, Dict, Iterable, List, Optional, Set, Tuple, Union
 
@@ -519,12 +520,7 @@ def log_loss(
     # Since we are processing samples individually, we need to explicitly specify the output labels
     # in the case that there is one output label.
     if len(y_true) == 1 and not labels:
-        unique_vals = list(df.select(F.array_unique_agg(y_true[0])).collect(statement_params=statement_params)[0][0])
-        lbls = []
-        for unique_val in unique_vals:
-            if unique_val.isnumeric():
-                lbls.append(int(unique_val))
-        labels = lbls
+        labels = json.loads(df.select(F.array_unique_agg(y_true[0])).collect(statement_params=statement_params)[0][0])
 
     normalize_sum = None
     if normalize:

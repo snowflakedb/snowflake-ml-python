@@ -125,7 +125,9 @@ class _TorchScriptHandler(_base._ModelHandler["torch.jit.ScriptModule"]):  # typ
         model_blob_metadata = model_blobs_metadata[name]
         model_blob_filename = model_blob_metadata.path
         with open(os.path.join(model_blob_path, model_blob_filename), "rb") as f:
-            m = torch.jit.load(f)  # type:ignore[attr-defined]
+            m = torch.jit.load(  # type:ignore[attr-defined]
+                f, map_location="cuda" if kwargs.get("use_gpu", False) else "cpu"
+            )
         assert isinstance(m, torch.jit.ScriptModule)  # type:ignore[attr-defined]
 
         if kwargs.get("use_gpu", False):
