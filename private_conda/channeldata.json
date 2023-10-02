@@ -33,6 +33,11 @@
     }
   },
   "subdirs": [
-    "noarch"
+    "linux-64",
+    "linux-aarch64",
+    "noarch",
+    "osx-64",
+    "osx-arm64",
+    "win-64"
   ]
 }
