@@ -2162,8 +2162,8 @@ def create_model_registry(
         )
     finally:
         # Restore the db & schema to the original ones
-        if old_db is not None:
+        if old_db is not None and old_db != session.get_current_database():
             session.use_database(old_db)
-        if old_schema is not None:
+        if old_schema is not None and old_schema != session.get_current_schema():
             session.use_schema(old_schema)
     return True

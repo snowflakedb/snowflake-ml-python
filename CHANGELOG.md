@@ -1,12 +1,12 @@
 # Release History
 
-## 1.0.9
+## 1.0.10
+
+## 1.0.9 (2023-09-28)
 
 ### Behavior Changes
 
 - Model Development: log_loss metric calculation is now distributed.
-
-### New Features
 
 ### Bug Fixes
 

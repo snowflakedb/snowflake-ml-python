@@ -254,5 +254,4 @@
   version_requirements: '>=3.1.1,<5'
 - name: pytimeparse
   dev_version: 1.1.8
-  tags:
-    - build_essential
+  version_requirements: '>=1.1.8,<2'
