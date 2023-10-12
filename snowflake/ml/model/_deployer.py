@@ -1,7 +1,6 @@
-from typing import Any, Dict, Optional, TypedDict, Union, cast, overload
+from typing import Any, Dict, Optional, Union, cast, overload
 
 import pandas as pd
-from typing_extensions import Required
 
 from snowflake.ml._internal.exceptions import (
     error_codes,
@@ -24,24 +23,6 @@ from snowflake.ml.model._signatures import snowpark_handler
 from snowflake.snowpark import DataFrame as SnowparkDataFrame, Session, functions as F
 
 
-class Deployment(TypedDict):
-    """Deployment information.
-
-    Attributes:
-        name: Name of the deployment.
-        platform: Target platform to deploy the model.
-        target_method: Target method name.
-        signature: The signature of the model method.
-        options: Additional options when deploying the model.
-    """
-
-    name: Required[str]
-    platform: Required[deploy_platforms.TargetPlatform]
-    target_method: Required[str]
-    signature: model_signature.ModelSignature
-    options: Required[model_types.DeployOptions]
-
-
 @overload
 def deploy(
     session: Session,
@@ -51,7 +32,7 @@ def deploy(
     target_method: Optional[str],
     model_stage_file_path: str,
     options: Optional[model_types.DeployOptions],
-) -> Optional[Deployment]:
+) -> Optional[model_types.Deployment]:
     """Create a deployment from a model in a zip file in a stage and deploy it to remote platform.
 
     Args:
@@ -78,7 +59,7 @@ def deploy(
     model_stage_file_path: str,
     deployment_stage_path: str,
     options: Optional[model_types.DeployOptions],
-) -> Optional[Deployment]:
+) -> Optional[model_types.Deployment]:
     """Create a deployment from a model in a local directory and deploy it to remote platform.
 
     Args:
@@ -106,7 +87,7 @@ def deploy(
     deployment_stage_path: Optional[str] = None,
     model_id: Optional[str] = None,
     options: Optional[model_types.DeployOptions],
-) -> Optional[Deployment]:
+) -> Optional[model_types.Deployment]:
     """Create a deployment from a model and deploy it to remote platform.
 
     Args:
@@ -148,6 +129,7 @@ def deploy(
                 ),
             )
 
+    details: model_types.DeployDetails = {}
     if platform == deploy_platforms.TargetPlatform.WAREHOUSE:
         warehouse_deploy._deploy_to_warehouse(
             session=session,
@@ -171,7 +153,7 @@ def deploy(
                 ),
             )
 
-        snowservice_deploy._deploy(
+        details = snowservice_deploy._deploy(
             session=session,
             model_id=model_id,
             model_meta=meta,
@@ -193,7 +175,9 @@ def deploy(
             error_code=error_codes.INVALID_ARGUMENT,
             original_exception=ValueError(f"Target method {target_method} does not exist in model."),
         )
-    info = Deployment(name=name, platform=platform, target_method=target_method, signature=signature, options=options)
+    info = model_types.Deployment(
+        name=name, platform=platform, target_method=target_method, signature=signature, options=options, details=details
+    )
     return info
 
 
@@ -201,7 +185,7 @@ def deploy(
 def predict(
     session: Session,
     *,
-    deployment: Deployment,
+    deployment: model_types.Deployment,
     X: model_types.SupportedLocalDataType,
     statement_params: Optional[Dict[str, Any]] = None,
 ) -> pd.DataFrame:
@@ -221,7 +205,7 @@ def predict(
 def predict(
     session: Session,
     *,
-    deployment: Deployment,
+    deployment: model_types.Deployment,
     X: SnowparkDataFrame,
     statement_params: Optional[Dict[str, Any]] = None,
 ) -> SnowparkDataFrame:
@@ -239,7 +223,7 @@ def predict(
 def predict(
     session: Session,
     *,
-    deployment: Deployment,
+    deployment: model_types.Deployment,
     X: Union[model_types.SupportedDataType, SnowparkDataFrame],
     statement_params: Optional[Dict[str, Any]] = None,
 ) -> Union[pd.DataFrame, SnowparkDataFrame]:

@@ -6,6 +6,7 @@ PACKAGES = [
     "//snowflake/ml/modeling/model_selection/_internal:_internal_pkg",
     "//snowflake/ml/modeling/pipeline:pipeline_pkg",
     "//snowflake/ml/modeling/preprocessing:preprocessing_pkg",
+    "//snowflake/ml/beta/monitoring:monitoring_pkg",
     "//snowflake/ml/utils:utils_pkg",
     "//snowflake/ml/fileset:fileset_pkg",
     "//snowflake/ml/registry:model_registry_pkg",

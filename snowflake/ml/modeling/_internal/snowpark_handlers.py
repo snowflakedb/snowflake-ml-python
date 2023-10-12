@@ -16,13 +16,23 @@ from sklearn import model_selection
 
 from snowflake.ml._internal import telemetry
 from snowflake.ml._internal.env_utils import SNOWML_SPROC_ENV
-from snowflake.ml._internal.exceptions import error_codes, exceptions
+from snowflake.ml._internal.exceptions import (
+    error_codes,
+    exceptions,
+    modeling_error_messages,
+)
+from snowflake.ml._internal.utils import identifier
 from snowflake.ml._internal.utils.query_result_checker import SqlResultValidator
 from snowflake.ml._internal.utils.temp_file_utils import (
     cleanup_temp_files,
     get_temp_file_path,
 )
-from snowflake.snowpark import DataFrame, Session, functions as F
+from snowflake.snowpark import (
+    DataFrame,
+    Session,
+    exceptions as snowpark_exceptions,
+    functions as F,
+)
 from snowflake.snowpark._internal.utils import (
     TempObjectType,
     random_name_for_temp_object,
@@ -273,22 +283,28 @@ class SnowparkHandlers:
 
         fit_wrapper_sproc = self._get_fit_wrapper_sproc(dependencies, session, statement_params)
 
-        sproc_export_file_name: str = fit_wrapper_sproc(
-            session,
-            queries,
-            stage_transform_file_name,
-            stage_result_file_name,
-            input_cols,
-            label_cols,
-            sample_weight_col,
-            statement_params,
-        )
+        try:
+            sproc_export_file_name: str = fit_wrapper_sproc(
+                session,
+                queries,
+                stage_transform_file_name,
+                stage_result_file_name,
+                input_cols,
+                label_cols,
+                sample_weight_col,
+                statement_params,
+            )
+        except snowpark_exceptions.SnowparkClientException as e:
+            if "fit() missing 1 required positional argument: 'y'" in str(e):
+                raise exceptions.SnowflakeMLException(
+                    error_code=error_codes.NOT_FOUND,
+                    original_exception=RuntimeError(modeling_error_messages.ATTRIBUTE_NOT_SET.format("label_cols")),
+                ) from e
+            raise e
 
         if "|" in sproc_export_file_name:
             fields = sproc_export_file_name.strip().split("|")
             sproc_export_file_name = fields[0]
-            if len(fields) > 1:
-                print("\n".join(fields[1:]))
 
         session.file.get(
             posixpath.join(stage_result_file_name, sproc_export_file_name),
@@ -410,7 +426,7 @@ class SnowparkHandlers:
             [
                 "{object_name}:{column_name}{udf_datatype} as {column_name}".format(
                     object_name=batch_inference_udf_name,
-                    column_name=c,
+                    column_name=identifier.get_inferred_name(c),
                     udf_datatype=(f"::{expected_output_cols_type}" if expected_output_cols_type else ""),
                 )
                 for c in expected_output_cols_list

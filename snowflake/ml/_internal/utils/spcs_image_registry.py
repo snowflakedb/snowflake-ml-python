@@ -1,10 +1,15 @@
 import base64
 import contextlib
 import json
-from typing import Generator
+from typing import Generator, TypedDict
 
 from snowflake import snowpark
 from snowflake.ml._internal.utils import query_result_checker
+
+
+class SessionToken(TypedDict):
+    token: str
+    expires_in: str
 
 
 @contextlib.contextmanager
@@ -35,13 +40,13 @@ def generate_image_registry_credential(session: snowpark.Session) -> Generator[s
     prev_format = query_result[0].value
     try:
         session.sql("ALTER SESSION SET PYTHON_CONNECTOR_QUERY_RESULT_FORMAT = 'json'").collect()
-        session_token = _get_session_token(session)
-        yield _get_base64_encoded_credentials(username="0sessiontoken", password=json.dumps({"token": session_token}))
+        token = _get_session_token(session)
+        yield _get_base64_encoded_credentials(username="0sessiontoken", password=json.dumps(token))
     finally:
         session.sql(f"ALTER SESSION SET PYTHON_CONNECTOR_QUERY_RESULT_FORMAT = '{prev_format}'").collect()
 
 
-def _get_session_token(session: snowpark.Session) -> str:
+def _get_session_token(session: snowpark.Session) -> SessionToken:
     """
     This function retrieves the session token from a given Snowpark session object.
 
@@ -55,8 +60,10 @@ def _get_session_token(session: snowpark.Session) -> str:
     assert ctx._rest, "SnowflakeRestful is not set in session"
     token_data = ctx._rest._token_request("ISSUE")
     session_token = token_data["data"]["sessionToken"]
+    validity_in_seconds = token_data["data"]["validityInSecondsST"]
     assert session_token, "session_token is not obtained successfully from the session object"
-    return session_token
+    assert validity_in_seconds, "validityInSecondsST is not obtained successfully from the session object"
+    return {"token": session_token, "expires_in": validity_in_seconds}
 
 
 def _get_base64_encoded_credentials(username: str, password: str) -> str:

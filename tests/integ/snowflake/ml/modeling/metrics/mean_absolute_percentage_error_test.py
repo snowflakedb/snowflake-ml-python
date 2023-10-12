@@ -84,7 +84,7 @@ class MeanAbsolutePercentageErrorTest(parameterized.TestCase):
                     pandas_df[y_pred],
                     sample_weight=sample_weight,
                 )
-                self.assertAlmostEqual(sklearn_loss, actual_loss)
+                np.testing.assert_approx_equal(sklearn_loss, actual_loss)
 
     @parameterized.parameters(  # type: ignore[misc]
         {"params": {"multioutput": ["raw_values", "uniform_average", [0.2, 1.0, 1.66]]}},
@@ -105,7 +105,7 @@ class MeanAbsolutePercentageErrorTest(parameterized.TestCase):
                 pandas_df[_MULTILABEL_Y_PRED_COLS],
                 multioutput=multioutput,
             )
-            np.testing.assert_allclose(actual_loss, sklearn_loss)
+            np.testing.assert_allclose(actual_loss, sklearn_loss, rtol=0.000001)
 
     def test_multilabel(self) -> None:
         pandas_df = pd.DataFrame(_MULTILABEL_DATA, columns=_MULTILABEL_SCHEMA)
@@ -120,7 +120,7 @@ class MeanAbsolutePercentageErrorTest(parameterized.TestCase):
             pandas_df[_MULTILABEL_Y_TRUE_COLS],
             pandas_df[_MULTILABEL_Y_PRED_COLS],
         )
-        self.assertAlmostEqual(sklearn_loss, actual_loss)
+        np.testing.assert_approx_equal(sklearn_loss, actual_loss)
 
     @mock.patch("snowflake.ml.modeling.metrics.regression.result._RESULT_SIZE_THRESHOLD", 0)
     def test_metric_size_threshold(self) -> None:
@@ -136,7 +136,7 @@ class MeanAbsolutePercentageErrorTest(parameterized.TestCase):
             pandas_df[_Y_TRUE_COLS],
             pandas_df[_Y_PRED_COLS],
         )
-        self.assertAlmostEqual(sklearn_loss, actual_loss)
+        np.testing.assert_approx_equal(sklearn_loss, actual_loss)
 
 
 if __name__ == "__main__":

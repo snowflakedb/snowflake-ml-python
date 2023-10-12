@@ -5,15 +5,18 @@ class SnowflakeMLException(Exception):
         self,
         error_code: str,
         original_exception: Exception,
+        suppress_source_trace: bool = False,
     ) -> None:
         """
         Args:
             error_code: Error code.
             original_exception: Original exception. This is the exception raised to users by telemetry.
+            suppress_source_trace: Suppress source stacktrace.
 
         Attributes:
             error_code: Error code.
             original_exception: Original exception with an error code in its message.
+            suppress_source_trace: Suppress source stacktrace.
 
         Raises:
             ValueError: Null error_code or original_exception.
@@ -32,6 +35,7 @@ class SnowflakeMLException(Exception):
 
         self.error_code = error_code
         self.original_exception = type(original_exception)(f"({self.error_code}) {str(original_exception)}")
+        self.suppress_source_trace = suppress_source_trace
         self._pretty_msg = repr(self.original_exception)
 
     def __repr__(self) -> str:

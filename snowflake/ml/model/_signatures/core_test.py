@@ -36,21 +36,6 @@ class DataTypeTest(absltest.TestCase):
         self.assertEqual(core.DataType.STRING, core.DataType.from_snowpark_type(spt.StringType()))
         self.assertEqual(core.DataType.BYTES, core.DataType.from_snowpark_type(spt.BinaryType()))
 
-        self.assertTrue(core.DataType.INT64.is_same_snowpark_type(spt.LongType()))
-        self.assertTrue(core.DataType.INT32.is_same_snowpark_type(spt.IntegerType()))
-        self.assertTrue(core.DataType.INT16.is_same_snowpark_type(spt.ShortType()))
-        self.assertTrue(core.DataType.INT8.is_same_snowpark_type(spt.ByteType()))
-        self.assertTrue(core.DataType.UINT64.is_same_snowpark_type(spt.LongType()))
-        self.assertTrue(core.DataType.UINT32.is_same_snowpark_type(spt.IntegerType()))
-        self.assertTrue(core.DataType.UINT16.is_same_snowpark_type(spt.ShortType()))
-        self.assertTrue(core.DataType.UINT8.is_same_snowpark_type(spt.ByteType()))
-
-        self.assertTrue(core.DataType.FLOAT.is_same_snowpark_type(spt.FloatType()))
-        self.assertTrue(core.DataType.DOUBLE.is_same_snowpark_type(spt.DoubleType()))
-
-        self.assertTrue(core.DataType.INT64.is_same_snowpark_type(incoming_snowpark_type=spt.DecimalType(38, 0)))
-        self.assertTrue(core.DataType.UINT64.is_same_snowpark_type(incoming_snowpark_type=spt.DecimalType(38, 0)))
-
 
 class FeatureSpecTest(absltest.TestCase):
     def test_feature_spec(self) -> None:

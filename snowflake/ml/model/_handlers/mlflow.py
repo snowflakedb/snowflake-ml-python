@@ -196,7 +196,7 @@ class _MLFlowHandler(_base._ModelHandler["mlflow.pyfunc.PyFuncModel"]):
 
         # Port MLFlow dependencies
         if kwargs.get("ignore_mlflow_dependencies", False):
-            model_meta._include_if_absent([model_meta_api.Dependency(conda_name="mlflow", pip_name="mlflow")])
+            model_meta._include_if_absent([model_meta_api.Dependency(conda_name="mlflow", pip_req="mlflow")])
         else:
             model_meta = _parse_mlflow_env(model_uri, model_meta)
 

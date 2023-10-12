@@ -1,0 +1,12 @@
+load("//bazel:py_rules.bzl", "py_binary")
+
+py_binary(
+    name = "run_synthetic_data_generator",
+    srcs = [
+        "run_synthetic_data_generator.py",
+    ],
+    deps = [
+        "//snowflake/ml/feature_store/_internal:synthetic_data_generator",
+        "//snowflake/ml/utils:connection_params",
+    ],
+)

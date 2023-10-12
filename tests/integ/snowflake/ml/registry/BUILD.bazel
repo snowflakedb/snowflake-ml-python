@@ -25,6 +25,20 @@ py_test(
     ],
 )
 
+py_test(
+    name = "model_registry_schema_evolution_integ_test",
+    timeout = "long",
+    srcs = ["model_registry_schema_evolution_integ_test.py"],
+    shard_count = 2,
+    deps = [
+        "//snowflake/ml/registry:model_registry",
+        "//snowflake/ml/utils:connection_params",
+        "//tests/integ/snowflake/ml/test_utils:db_manager",
+        "//tests/integ/snowflake/ml/test_utils:model_factory",
+        "//tests/integ/snowflake/ml/test_utils:test_env_utils",
+    ],
+)
+
 py_library(
     name = "model_registry_snowservice_integ_test_base",
     testonly = True,
@@ -32,9 +46,8 @@ py_library(
     deps = [
         "//snowflake/ml/model:deploy_platforms",
         "//snowflake/ml/registry:model_registry",
-        "//snowflake/ml/utils:connection_params",
-        "//tests/integ/snowflake/ml/test_utils:db_manager",
         "//tests/integ/snowflake/ml/test_utils:model_factory",
+        "//tests/integ/snowflake/ml/test_utils:spcs_integ_test_base",
         "//tests/integ/snowflake/ml/test_utils:test_env_utils",
     ],
 )

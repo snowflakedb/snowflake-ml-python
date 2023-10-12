@@ -5,7 +5,6 @@
 # from typing import Tuple
 
 # import pandas as pd
-# import pytest
 # import sklearn.base
 # import sklearn.datasets as datasets
 from absl.testing import absltest
@@ -35,7 +34,7 @@ from absl.testing import absltest
 #     return knn_model
 
 
-# @pytest.mark.pip_incompatible
+#
 # class DeploymentToSnowServiceIntegTest(absltest.TestCase):
 #     _RUN_ID = uuid.uuid4().hex[:2]
 #     # Upper is necessary for `db, schema and repo names for an image repo must be unquoted identifiers.`

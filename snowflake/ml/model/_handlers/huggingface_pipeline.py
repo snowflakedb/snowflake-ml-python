@@ -43,7 +43,7 @@ def get_requirements_from_task(task: str) -> List[model_meta_api.Dependency]:
         "text2text-generation",
         "zero-shot-classification",
     ] or task.startswith("translation"):
-        return [model_meta_api.Dependency(conda_name="tokenizers", pip_name="tokenizers")]
+        return [model_meta_api.Dependency(conda_name="tokenizers", pip_req="tokenizers")]
 
     return []
 
@@ -203,12 +203,15 @@ class _HuggingFacePipelineHandler(
         model_meta.models[name] = base_meta
 
         pkgs_requirements = [
-            model_meta_api.Dependency(conda_name="transformers", pip_name="transformers"),
+            model_meta_api.Dependency(conda_name="transformers", pip_req="transformers"),
         ] + get_requirements_from_task(task)
         if framework is None or framework == "pt":
-            pkgs_requirements.append(model_meta_api.Dependency(conda_name="pytorch", pip_name="torch"))
+            # Since we set default cuda version to be 11.7, to make sure it works with GPU, we need to have a default
+            # Pytorch version that works with CUDA 11.7 as well. This is required for huggingface pipelines only as
+            # users are not required to install pytorch locally if they are using the wrapper.
+            pkgs_requirements.append(model_meta_api.Dependency(conda_name="pytorch", pip_req="torch==2.0.1"))
         elif framework == "tf":
-            pkgs_requirements.append(model_meta_api.Dependency(conda_name="tensorflow", pip_name="tensorflow"))
+            pkgs_requirements.append(model_meta_api.Dependency(conda_name="tensorflow", pip_req="tensorflow"))
         model_meta._include_if_absent(pkgs_requirements)
 
     @staticmethod

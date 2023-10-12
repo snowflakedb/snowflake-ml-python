@@ -1,14 +1,28 @@
 import contextlib
 import hashlib
+import importlib
 import io
 import os
 import pathlib
 import pkgutil
 import shutil
+import sys
 import tarfile
 import tempfile
 import zipfile
-from typing import IO, Any, Dict, Generator, List, Optional, Union
+from typing import (
+    IO,
+    Any,
+    Callable,
+    Dict,
+    Generator,
+    List,
+    Literal,
+    Optional,
+    Set,
+    Tuple,
+    Union,
+)
 
 import cloudpickle
 
@@ -16,6 +30,65 @@ from snowflake import snowpark
 from snowflake.ml._internal.exceptions import exceptions
 
 GENERATED_PY_FILE_EXT = (".pyc", ".pyo", ".pyd", ".pyi")
+_SNOWFLAKE_ML_PKG_NAME = "snowflake.ml"
+
+# Cache mapping for zip file to unzipped directory.
+_EXTRACTED_ZIP: Dict[str, str] = {}
+
+
+def copytree(
+    src: "Union[str, os.PathLike[str]]",
+    dst: "Union[str, os.PathLike[str]]",
+    ignore: Optional[Callable[..., Set[str]]] = None,
+    dirs_exist_ok: bool = False,
+) -> "Union[str, os.PathLike[str]]":
+    """This is a forked version of shutil.copytree that remove all copystat, to make sure it works in Sproc.
+
+    Args:
+        src: Path to source file or directory
+        dst: Path to destination file or directory
+        ignore: Ignore pattern. Defaults to None.
+        dirs_exist_ok: Flag to indicate if it is okay when creating dir of destination it has existed.
+            Defaults to False.
+
+    Raises:
+        Error: Raised when there is any errors when copying.
+
+    Returns:
+        Path to destination file or directory
+    """
+    sys.audit("shutil.copytree", src, dst)
+    with os.scandir(src) as itr:
+        entries = list(itr)
+
+    if ignore is not None:
+        ignored_names = ignore(os.fspath(src), [x.name for x in entries])
+    else:
+        ignored_names = set()
+
+    os.makedirs(dst, exist_ok=dirs_exist_ok)
+    errors = []
+
+    for srcentry in entries:
+        if srcentry.name in ignored_names:
+            continue
+        srcname = os.path.join(src, srcentry.name)
+        dstname = os.path.join(dst, srcentry.name)
+        try:
+            if srcentry.is_dir():
+                copytree(srcentry, dstname, ignore, dirs_exist_ok)
+            else:
+                # Will raise a SpecialFileError for unsupported file types
+                shutil.copy(srcentry, dstname)
+        # catch the Error from the recursive copytree so that we can
+        # continue with other files
+        except shutil.Error as err:
+            errors.extend(err.args[0])
+        except OSError as why:
+            errors.append((srcname, dstname, str(why)))
+    if errors:
+        raise shutil.Error(errors)
+    return dst
 
 
 def copy_file_or_tree(src: str, dst_dir: str) -> None:
@@ -30,7 +103,7 @@ def copy_file_or_tree(src: str, dst_dir: str) -> None:
     else:
         dir_name = os.path.basename(os.path.abspath(src))
         dst_path = os.path.join(dst_dir, dir_name)
-        shutil.copytree(src=src, dst=dst_path, ignore=shutil.ignore_patterns("__pycache__"))
+        copytree(src=src, dst=dst_path, ignore=shutil.ignore_patterns("__pycache__"))
 
 
 @contextlib.contextmanager
@@ -213,6 +286,25 @@ def _create_tar_gz_stream(source_dir: str, arcname: Optional[str] = None) -> Gen
         yield output_stream
 
 
+def get_package_path(package_name: str, strategy: Literal["first", "last"] = "first") -> Tuple[str, str]:
+    """Return the path to where a package is defined and its start location.
+    Example 1: snowflake.ml -> path/to/site-packages/snowflake/ml, path/to/site-packages
+    Example 2: zip_imported_module -> path/to/some/zipfile.zip/zip_imported_module, path/to/some/zipfile.zip
+
+    Args:
+        package_name: Qualified package name, like `snowflake.ml`
+        strategy: Pick first or last one in sys.path. First is in most cases, the one being used. Last is, in most
+            cases, the first to get imported from site-packages or even builtins.
+
+    Returns:
+        A tuple of the path to the package and start path
+    """
+    levels = len(package_name.split("."))
+    pkg_path = list(importlib.import_module(package_name).__path__)[0 if strategy == "first" else -1]
+    pkg_start_path = os.path.abspath(os.path.join(pkg_path, *([os.pardir] * levels)))
+    return pkg_path, pkg_start_path
+
+
 def stage_object(session: snowpark.Session, object: object, stage_location: str) -> List[snowpark.PutResult]:
     temp_file = tempfile.NamedTemporaryFile(delete=False)
     temp_file_path = temp_file.name
@@ -232,3 +324,37 @@ def stage_file_exists(
         return len(res) > 0
     except exceptions.SnowflakeMLException:
         return False
+
+
+def resolve_zip_import_path(file_path: str) -> str:
+    """This function resolves a file path when snowml is either loaded as a directory or zip(e.g. in notebook env).
+
+    We first check the snowml package path, if it's a directory, meaning we are not using zip import, then we return
+    the file_path as is, immediately; if snowml package path is a file, meaning it's a zip, we unzip it to a temp dir,
+    then reconstruct the correct file path. The reconstruction is needed because if the package is zip-imported, then
+    the path will be `../path_to_zip.zip/snowflake/ml`, which will cause "file not found" in the downstream.
+
+    Args:
+        file_path: file path, likely inferred by os.path.dirname(__file__)
+
+    Returns:
+        Valid file path.
+    """
+
+    def _get_unzipped_dir() -> str:
+        if snowml_start_path in _EXTRACTED_ZIP:
+            cached_dir = _EXTRACTED_ZIP[snowml_path]
+            if os.path.exists(cached_dir):
+                return _EXTRACTED_ZIP[cached_dir]
+        extract_dir = tempfile.mkdtemp()
+        with zipfile.ZipFile(os.path.abspath(snowml_start_path), mode="r", compression=zipfile.ZIP_DEFLATED) as zf:
+            zf.extractall(path=extract_dir)
+            _EXTRACTED_ZIP[snowml_path] = extract_dir
+        return extract_dir
+
+    snowml_path, snowml_start_path = get_package_path(_SNOWFLAKE_ML_PKG_NAME, strategy="last")
+    if not os.path.isfile(snowml_start_path):
+        return file_path
+    extract_root = _get_unzipped_dir()
+    snowml_file_path = os.path.relpath(file_path, snowml_start_path)
+    return os.path.join(extract_root, *(snowml_file_path.split("/")))

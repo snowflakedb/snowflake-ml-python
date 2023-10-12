@@ -1,12 +1,31 @@
 # Release History
 
-## 1.0.9
+## 1.0.10
+
+### Behavior Changes
+
+- Model Development: precision_score, recall_score, f1_score, fbeta_score, precision_recall_fscore_support,
+mean_absolute_error, mean_squared_error, and mean_absolute_percentage_error metric calculations are now distributed.
+- Model Registry: `deploy` will now return `Deployment` for deployment information.
+
+### New Features
+
+- Model Registry: When the model signature is auto-inferred, it will be printed to the log for reference.
+- Model Registry: For SPCS deployment, `Deployment` details will contains `image_name`, `service_spec` and `service_function_sql`.
+
+### Bug Fixes
+
+- Model Development: Fix an issue that leading to UTF-8 decoding errors when using modeling modules on Windows.
+- Model Development: Fix an issue that alias definitions cause `SnowparkSQLUnexpectedAliasException` in inference.
+- Model Registry: Fix an issue that signature inference could be incorrect when using Snowpark DataFrame as sample input.
+- Model Registry: Fix too strict data type validation when predicting. Now, for example, if you have a INT8
+ type feature in the signature, if providing a INT64 dataframe but all values are within the range, it would not fail.
+
+## 1.0.9 (2023-09-28)
 
 ### Behavior Changes
 
 - Model Development: log_loss metric calculation is now distributed.
-
-### New Features
 
 ### Bug Fixes
 

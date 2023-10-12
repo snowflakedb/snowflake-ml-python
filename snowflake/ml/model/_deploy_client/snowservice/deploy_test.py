@@ -1,4 +1,4 @@
-from typing import Any, Dict, cast
+from typing import Any, Dict, Optional, cast
 
 from absl.testing import absltest
 from absl.testing.absltest import mock
@@ -30,6 +30,25 @@ class DeployTestCase(absltest.TestCase):
             "image_repo": "mock_image_repo",
         }
 
+    def _get_mocked_compute_pool_res(
+        self,
+        state: Optional[str] = "IDLE",
+        instance_family: Optional[str] = "STANDARD_1",
+        auto_resume: Optional[bool] = False,
+    ) -> mock_data_frame.MockDataFrame:
+        return mock_data_frame.MockDataFrame(
+            [
+                row.Row(
+                    name="mock_compute_pool",
+                    state=state,
+                    min_nodes=1,
+                    max_nodes=1,
+                    instance_family=instance_family,
+                    auto_resume=auto_resume,
+                )
+            ]
+        )
+
     @mock.patch("snowflake.ml.model._deploy_client.snowservice.deploy._model_meta.ModelMetadata")  # type: ignore[misc]
     @mock.patch("snowflake.ml.model._deploy_client.snowservice.deploy.SnowServiceDeployment")  # type: ignore[misc]
     def test_deploy_with_model_id(self, m_deployment_class: mock.MagicMock, m_model_meta_class: mock.MagicMock) -> None:
@@ -41,13 +60,7 @@ class DeployTestCase(absltest.TestCase):
 
         self.m_session.add_mock_sql(
             query=f"DESC COMPUTE POOL {self.options['compute_pool']}",
-            result=mock_data_frame.MockDataFrame(
-                [
-                    row.Row(
-                        name="mock_compute_pool", state="IDLE", min_nodes=1, max_nodes=1, instance_family="STANDARD_1"
-                    )
-                ]
-            ),
+            result=self._get_mocked_compute_pool_res(),
         )
 
         _deploy(
@@ -85,17 +98,7 @@ class DeployTestCase(absltest.TestCase):
 
         self.m_session.add_mock_sql(
             query=f"DESC COMPUTE POOL {self.options['compute_pool']}",
-            result=mock_data_frame.MockDataFrame(
-                [
-                    row.Row(
-                        name="mock_compute_pool",
-                        state="STARTING",
-                        min_nodes=1,
-                        max_nodes=1,
-                        instance_family="STANDARD_1",
-                    )
-                ]
-            ),
+            result=self._get_mocked_compute_pool_res(state="STARTING"),
         )
         with exception_utils.assert_snowml_exceptions(self, expected_original_error_type=RuntimeError):
             _deploy(
@@ -110,6 +113,35 @@ class DeployTestCase(absltest.TestCase):
             )
 
         m_deployment_class.assert_not_called()
+
+    @mock.patch("snowflake.ml.model._deploy_client.snowservice.deploy._model_meta.ModelMetadata")  # type: ignore[misc]
+    @mock.patch("snowflake.ml.model._deploy_client.snowservice.deploy.SnowServiceDeployment")  # type: ignore[misc]
+    def test_deploy_with_compute_pool_in_suspended_state_with_auto_resume(
+        self, m_deployment_class: mock.MagicMock, m_model_meta_class: mock.MagicMock
+    ) -> None:
+        m_model_meta = m_model_meta_class.return_value
+
+        m_model_zip_stage_path = "@mock_model_zip_stage_path/model.zip"
+        m_deployment_stage_path = "@mock_model_deployment_stage_path"
+        m_deployment = m_deployment_class.return_value
+
+        self.m_session.add_mock_sql(
+            query=f"DESC COMPUTE POOL {self.options['compute_pool']}",
+            result=self._get_mocked_compute_pool_res(state="SUSPENDED", auto_resume=True),
+        )
+
+        _deploy(
+            session=cast(session.Session, self.m_session),
+            model_id="provided_model_id",
+            model_meta=m_model_meta,
+            service_func_name="mock_service_func",
+            model_zip_stage_path=m_model_zip_stage_path,
+            deployment_stage_path=m_deployment_stage_path,
+            target_method=constants.PREDICT,
+            **self.options,
+        )
+
+        m_deployment.deploy.assert_called_once()
 
     @mock.patch("snowflake.ml.model._deploy_client.snowservice.deploy._model_meta.ModelMetadata")  # type: ignore[misc]
     @mock.patch("snowflake.ml.model._deploy_client.snowservice.deploy.SnowServiceDeployment")  # type: ignore[misc]
@@ -165,9 +197,7 @@ class DeployTestCase(absltest.TestCase):
         ):
             self.m_session.add_mock_sql(
                 query=f"DESC COMPUTE POOL {self.options['compute_pool']}",
-                result=mock_data_frame.MockDataFrame(
-                    [row.Row(name="MY_GPU_POOL", state="IDLE", min_nodes=1, max_nodes=1, instance_family="GPU_3")]
-                ),
+                result=self._get_mocked_compute_pool_res(instance_family="GPU_3"),
             )
 
             _deploy(
@@ -230,9 +260,7 @@ class DeployTestCase(absltest.TestCase):
         unknown_instance_type = "GPU_UNKNOWN"
         self.m_session.add_mock_sql(
             query=f"DESC COMPUTE POOL {self.options['compute_pool']}",
-            result=mock_data_frame.MockDataFrame(
-                [row.Row(name="MY_GPU_POOL", state="IDLE", instance_family=unknown_instance_type)]
-            ),
+            result=self._get_mocked_compute_pool_res(instance_family=unknown_instance_type),
         )
         with self.assertLogs(level="INFO") as cm:
             _deploy(
@@ -390,6 +418,7 @@ class SnowServiceDeploymentTestCase(absltest.TestCase):
             self.deployment, "_get_full_image_name"
         ) as m_get_full_image_name:
             full_image_name = "org-account.registry.snowflakecomputing.com/db/schema/repo/image:latest"
+            m_deploy_workflow.return_value = ("service_spec", "sql")
             m_get_full_image_name.return_value = full_image_name
 
             with self.assertLogs(level="WARNING") as cm:
@@ -435,7 +464,7 @@ class SnowServiceDeploymentTestCase(absltest.TestCase):
         ) as m_get_full_image_name:
             full_image_name = "org-account.registry.snowflakecomputing.com/db/schema/repo/image:latest"
             m_get_full_image_name.return_value = full_image_name
-
+            m_deploy_workflow.return_value = ("service_spec", "sql")
             with self.assertLogs(level="WARNING") as cm:
                 self.deployment.deploy()
                 m_build_and_upload_image.assert_not_called()

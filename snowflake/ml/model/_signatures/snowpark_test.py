@@ -1,3 +1,5 @@
+import decimal
+
 import numpy as np
 import pandas as pd
 from absl.testing import absltest
@@ -33,7 +35,7 @@ class SnowParkDataFrameHandlerTest(absltest.TestCase):
         self.assertListEqual(
             snowpark_handler.SnowparkDataFrameHandler.infer_signature(df, role="input"),
             [
-                core.FeatureSpec("a", core.DataType.INT64),
+                core.FeatureSpec("a", core.DataType.INT8),
                 core.FeatureSpec("b", core.DataType.STRING),
             ],
         )
@@ -43,27 +45,152 @@ class SnowParkDataFrameHandlerTest(absltest.TestCase):
         self.assertListEqual(
             snowpark_handler.SnowparkDataFrameHandler.infer_signature(df, role="input"),
             [
-                core.FeatureSpec('"a"', core.DataType.INT64),
+                core.FeatureSpec('"a"', core.DataType.INT8),
                 core.FeatureSpec("b", core.DataType.STRING),
             ],
         )
 
         schema = spt.StructType([spt.StructField('"""a"""', spt.ArrayType(spt.LongType()))])
         df = self._session.create_dataframe([[[1, 3]]], schema)
-        with exception_utils.assert_snowml_exceptions(
-            self,
-            expected_original_error_type=NotImplementedError,
-            expected_regex="Cannot infer model signature from Snowpark DataFrame with Array Type.",
-        ):
+        self.assertListEqual(
             snowpark_handler.SnowparkDataFrameHandler.infer_signature(df, role="input"),
+            [
+                core.FeatureSpec('"a"', core.DataType.INT64, shape=(2,)),
+            ],
+        )
 
     def test_validate_data_with_features(self) -> None:
         fts = [
-            core.FeatureSpec("a", core.DataType.INT64),
+            core.FeatureSpec("a", core.DataType.UINT8),
             core.FeatureSpec("b", core.DataType.INT64),
         ]
         df = self._session.create_dataframe([{'"a"': 1}, {'"b"': 2}])
         with self.assertWarnsRegex(RuntimeWarning, "Nullable column [^\\s]* provided"):
+            model_signature._validate_snowpark_data(df, fts)
+
+        fts = [
+            core.FeatureSpec("a", core.DataType.INT16),
+            core.FeatureSpec("b", core.DataType.UINT32),
+        ]
+        df = self._session.create_dataframe([{'"a"': 1}, {'"b"': 2}])
+        with self.assertWarnsRegex(RuntimeWarning, "Nullable column [^\\s]* provided"):
+            model_signature._validate_snowpark_data(df, fts)
+
+        fts = [
+            core.FeatureSpec("a", core.DataType.INT16),
+            core.FeatureSpec("b", core.DataType.UINT32),
+        ]
+        df = self._session.create_dataframe([{'"a"': 1}, {'"b"': -2}])
+        with exception_utils.assert_snowml_exceptions(
+            self, expected_original_error_type=ValueError, expected_regex="Feature type [^\\s]* is not met by column"
+        ):
+            model_signature._validate_snowpark_data(df, fts)
+
+        fts = [
+            core.FeatureSpec("a", core.DataType.INT8),
+            core.FeatureSpec("b", core.DataType.INT32),
+        ]
+        df = self._session.create_dataframe([{'"a"': 129}, {'"b"': -2}])
+        with exception_utils.assert_snowml_exceptions(
+            self, expected_original_error_type=ValueError, expected_regex="Feature type [^\\s]* is not met by column"
+        ):
+            model_signature._validate_snowpark_data(df, fts)
+
+        fts = [
+            core.FeatureSpec("a", core.DataType.INT16),
+            core.FeatureSpec("b", core.DataType.UINT32),
+        ]
+        schema = spt.StructType(
+            [spt.StructField('"a"', spt.DecimalType(6, 0)), spt.StructField('"b"', spt.DecimalType(12, 0))]
+        )
+        df = self._session.create_dataframe(
+            [[decimal.Decimal(1), decimal.Decimal(1)], [decimal.Decimal(1), decimal.Decimal(1)]], schema
+        )
+        with self.assertWarnsRegex(RuntimeWarning, "Nullable column [^\\s]* provided"):
+            model_signature._validate_snowpark_data(df, fts)
+
+        fts = [
+            core.FeatureSpec("a", core.DataType.INT16),
+            core.FeatureSpec("b", core.DataType.UINT32),
+        ]
+        schema = spt.StructType(
+            [spt.StructField('"a"', spt.DecimalType(6, 2)), spt.StructField('"b"', spt.DecimalType(12, 0))]
+        )
+        df = self._session.create_dataframe(
+            [[decimal.Decimal(1), decimal.Decimal(1)], [decimal.Decimal(1), decimal.Decimal(1)]], schema
+        )
+        with exception_utils.assert_snowml_exceptions(
+            self, expected_original_error_type=ValueError, expected_regex="Feature type [^\\s]* is not met by column"
+        ):
+            model_signature._validate_snowpark_data(df, fts)
+
+        fts = [
+            core.FeatureSpec("a", core.DataType.INT16),
+            core.FeatureSpec("b", core.DataType.UINT32),
+        ]
+        schema = spt.StructType(
+            [spt.StructField('"a"', spt.DecimalType(6, 0)), spt.StructField('"b"', spt.DecimalType(12, 0))]
+        )
+        df = self._session.create_dataframe(
+            [[decimal.Decimal(1), decimal.Decimal(-1)], [decimal.Decimal(1), decimal.Decimal(1)]], schema
+        )
+        with exception_utils.assert_snowml_exceptions(
+            self, expected_original_error_type=ValueError, expected_regex="Feature type [^\\s]* is not met by column"
+        ):
+            model_signature._validate_snowpark_data(df, fts)
+
+        fts = [
+            core.FeatureSpec("a", core.DataType.UINT8),
+            core.FeatureSpec("b", core.DataType.FLOAT),
+        ]
+        df = self._session.create_dataframe([{'"a"': 1}, {'"b"': 2}])
+        with self.assertWarnsRegex(RuntimeWarning, "Nullable column [^\\s]* provided"):
+            model_signature._validate_snowpark_data(df, fts)
+
+        fts = [
+            core.FeatureSpec("a", core.DataType.UINT8),
+            core.FeatureSpec("b", core.DataType.FLOAT),
+        ]
+        df = self._session.create_dataframe([{'"a"': 1}, {'"b"': 2.0}])
+        with self.assertWarnsRegex(RuntimeWarning, "Nullable column [^\\s]* provided"):
+            model_signature._validate_snowpark_data(df, fts)
+
+        fts = [
+            core.FeatureSpec("a", core.DataType.UINT8),
+            core.FeatureSpec("b", core.DataType.FLOAT),
+        ]
+        df = self._session.create_dataframe([{'"a"': 1}, {'"b"': 98765432109876543210987654321098765432}])
+        with self.assertWarnsRegex(RuntimeWarning, "Nullable column [^\\s]* provided"):
+            model_signature._validate_snowpark_data(df, fts)
+
+        fts = [
+            core.FeatureSpec("a", core.DataType.INT16),
+            core.FeatureSpec("b", core.DataType.FLOAT),
+        ]
+        schema = spt.StructType(
+            [spt.StructField('"a"', spt.DecimalType(6, 0)), spt.StructField('"b"', spt.DecimalType(38, 0))]
+        )
+        df = self._session.create_dataframe(
+            [
+                [decimal.Decimal(1), decimal.Decimal(1)],
+                [decimal.Decimal(1), decimal.Decimal(98765432109876543210987654321098765432)],
+            ],
+            schema,
+        )
+        with self.assertWarnsRegex(RuntimeWarning, "Nullable column [^\\s]* provided"):
+            model_signature._validate_snowpark_data(df, fts)
+
+        fts = [
+            core.FeatureSpec("a", core.DataType.INT16),
+            core.FeatureSpec("b", core.DataType.FLOAT),
+        ]
+        schema = spt.StructType(
+            [spt.StructField('"a"', spt.DecimalType(6, 0)), spt.StructField('"b"', spt.DoubleType())]
+        )
+        df = self._session.create_dataframe([[decimal.Decimal(1), -2.0], [decimal.Decimal(1), 1e58]], schema)
+        with exception_utils.assert_snowml_exceptions(
+            self, expected_original_error_type=ValueError, expected_regex="Feature type [^\\s]* is not met by column"
+        ):
             model_signature._validate_snowpark_data(df, fts)
 
         fts = [

@@ -105,8 +105,8 @@ class _XGBModelHandler(_base._ModelHandler[Union["xgboost.Booster", "xgboost.XGB
         model_meta.models[name] = base_meta
         model_meta._include_if_absent(
             [
-                model_meta_api.Dependency(conda_name="scikit-learn", pip_name="scikit-learn"),
-                model_meta_api.Dependency(conda_name="xgboost", pip_name="xgboost"),
+                model_meta_api.Dependency(conda_name="scikit-learn", pip_req="scikit-learn"),
+                model_meta_api.Dependency(conda_name="xgboost", pip_req="xgboost"),
             ]
         )
 

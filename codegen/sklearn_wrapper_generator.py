@@ -722,9 +722,9 @@ class WrapperGeneratorBase:
         for arg_to_transform in args_to_transform:
             if arg_to_transform in self.original_init_signature.parameters.keys():
                 arg_transform_calls.append(
-                    f"{arg_to_transform} = _transform_snowml_obj_to_sklearn_obj({arg_to_transform})"
+                    f"{arg_to_transform} = transform_snowml_obj_to_sklearn_obj({arg_to_transform})"
                 )
-                deps_gathering_calls.append(f"deps = deps | _gather_dependencies({arg_to_transform})")
+                deps_gathering_calls.append(f"deps = deps | gather_dependencies({arg_to_transform})")
 
         self.estimator_init_signature = ",\n        ".join(signature_lines) + ","
         self.sklearn_init_arguments = ",\n            ".join(sklearn_init_lines) + ","

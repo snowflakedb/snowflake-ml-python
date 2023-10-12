@@ -1,10 +1,6 @@
-#
-# Copyright (c) 2012-2022 Snowflake Computing Inc. All rights reserved.
-#
 import os
 
 import numpy as np
-import pytest
 from absl.testing import absltest, parameterized
 from scipy.stats import randint
 
@@ -24,7 +20,6 @@ from snowflake.ml.utils.connection_params import SnowflakeLoginOptions
 from snowflake.snowpark import Session
 
 
-@pytest.mark.pip_incompatible
 class QuotedIdentifierTest(parameterized.TestCase):
     def setUp(self):
         """Creates Snowpark and Snowflake environments for testing."""

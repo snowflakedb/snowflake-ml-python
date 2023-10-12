@@ -13,7 +13,7 @@ dependencies:
   - cachetools==4.2.2
   - cloudpickle==2.0.0
   - conda-forge::accelerate==0.22.0
-  - conda-forge::mypy==1.4.1
+  - conda-forge::mypy==1.5.1
   - conda-forge::starlette==0.27.0
   - conda-forge::types-PyYAML==6.0.12
   - conda-forge::types-cachetools==4.2.2
@@ -35,7 +35,7 @@ dependencies:
   - packaging==23.0
   - pandas==1.5.3
   - protobuf==3.20.3
-  - pytest==7.1.2
+  - pytest==7.4.0
   - pytimeparse==1.1.8
   - pytorch==2.0.1
   - pyyaml==6.0
@@ -51,8 +51,9 @@ dependencies:
   - sphinx==5.0.2
   - sqlparse==0.4.4
   - tensorflow==2.10.0
+  - tokenizers==0.13.2
   - torchdata==0.6.1
-  - transformers==4.29.2
+  - transformers==4.32.1
   - types-protobuf==4.23.0.1
   - types-requests==2.30.0.0
   - typing-extensions==4.5.0

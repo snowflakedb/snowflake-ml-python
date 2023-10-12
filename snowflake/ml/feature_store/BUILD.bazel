@@ -1,0 +1,36 @@
+load("//bazel:py_rules.bzl", "py_library")
+
+package_group(
+    name = "feature_store",
+    packages = [
+        "//snowflake/ml/feature_store/...",
+    ],
+)
+
+package(default_visibility = [":feature_store"])
+
+py_library(
+    name = "init",
+    srcs = [
+        "__init__.py",
+    ],
+    deps = [
+        "//snowflake/ml/_internal:init_utils",
+    ],
+)
+
+py_library(
+    name = "feature_store_lib",
+    srcs = [
+        "entity.py",
+        "feature_store.py",
+        "feature_view.py",
+    ],
+    deps = [
+        ":init",
+        "//snowflake/ml/_internal:telemetry",
+        "//snowflake/ml/_internal/utils:identifier",
+        "//snowflake/ml/_internal/utils:query_result_checker",
+        "//snowflake/ml/dataset",
+    ],
+)

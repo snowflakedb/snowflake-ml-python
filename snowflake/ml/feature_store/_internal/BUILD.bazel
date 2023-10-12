@@ -1,0 +1,11 @@
+load("//bazel:py_rules.bzl", "py_library")
+
+package(default_visibility = ["//snowflake/ml/feature_store"])
+
+py_library(
+    name = "synthetic_data_generator",
+    srcs = [
+        "synthetic_data_generator.py",
+    ],
+    deps = [],
+)

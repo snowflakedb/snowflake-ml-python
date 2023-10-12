@@ -1,5 +1,4 @@
 import numpy as np
-import pytest
 from absl.testing import absltest
 
 from snowflake.ml.modeling.pipeline import Pipeline
@@ -40,7 +39,6 @@ label_column = ["LABEL"]
 feature_cols = categorical_columns + numerical_columns
 
 
-@pytest.mark.pip_incompatible
 class GridSearchCVTest(absltest.TestCase):
     def setUp(self):
         """Creates Snowpark and Snowflake environments for testing."""

@@ -6,7 +6,7 @@ import string
 import tempfile
 import time
 from abc import ABC
-from typing import Any, Dict, Optional, cast
+from typing import Any, Dict, Optional, Tuple, cast
 
 import yaml
 from typing_extensions import Unpack
@@ -45,7 +45,7 @@ def _deploy(
     deployment_stage_path: str,
     target_method: str,
     **kwargs: Unpack[type_hints.SnowparkContainerServiceDeployOptions],
-) -> None:
+) -> type_hints.SnowparkContainerServiceDeployDetails:
     """Entrypoint for model deployment to SnowService. This function will trigger a docker image build followed by
     workflow deployment to SnowService.
 
@@ -58,6 +58,9 @@ def _deploy(
         deployment_stage_path: Path to stage containing deployment artifacts.
         target_method: The name of the target method to be deployed.
         **kwargs: various SnowService deployment options.
+
+    Returns:
+        Deployment details for SPCS.
 
     Raises:
         SnowflakeMLException: Raised when model_id is empty.
@@ -156,7 +159,7 @@ def _deploy(
             target_method=target_method,
             options=options,
         )
-        ss_deployment.deploy()
+        return ss_deployment.deploy()
     finally:
         # Preserve the original logging level.
         snowpark_logger.setLevel(snowpark_log_level)
@@ -174,19 +177,31 @@ def _validate_compute_pool(session: Session, *, options: deploy_options.SnowServ
         )
         .has_column("instance_family")
         .has_column("state")
+        .has_column("auto_resume")
         .has_dimensions(expected_rows=1)
         .validate()
     )
 
     state = result[0]["state"]
+    auto_resume = bool(result[0]["auto_resume"])
 
-    if state not in ["ACTIVE", "IDLE"]:
+    if state == "SUSPENDED":
+        if not auto_resume:
+            raise snowml_exceptions.SnowflakeMLException(
+                error_code=error_codes.INVALID_SNOWPARK_COMPUTE_POOL,
+                original_exception=RuntimeError(
+                    "The compute pool you are requesting to use is suspended without auto-resume enabled"
+                ),
+            )
+
+    elif state not in ["ACTIVE", "IDLE"]:
         raise snowml_exceptions.SnowflakeMLException(
             error_code=error_codes.INVALID_SNOWPARK_COMPUTE_POOL,
             original_exception=RuntimeError(
                 "The compute pool you are requesting to use is not in the ACTIVE/IDLE status."
             ),
         )
+
     if options.use_gpu:
         assert options.num_gpus is not None
         request_gpus = options.num_gpus
@@ -286,16 +301,30 @@ class SnowServiceDeployment(ABC):
         # Spec file and future deployment related artifacts will be stored under {stage}/models/{model_id}
         self._model_artifact_stage_location = posixpath.join(deployment_stage_path, "models", self.id)
 
-    def deploy(self) -> None:
+    def deploy(self) -> type_hints.SnowparkContainerServiceDeployDetails:
         """
         This function triggers image build followed by workflow deployment to SnowService.
+
+        Returns:
+            Deployment details.
         """
         if self.options.prebuilt_snowflake_image:
             logger.warning(f"Skipped image build. Use prebuilt image: {self.options.prebuilt_snowflake_image}")
-            self._deploy_workflow(self.options.prebuilt_snowflake_image)
+            full_image_name = self.options.prebuilt_snowflake_image
+            (service_spec, service_function_sql) = self._deploy_workflow(self.options.prebuilt_snowflake_image)
         else:
             with tempfile.TemporaryDirectory() as context_dir:
-                dc = docker_context.DockerContext(context_dir=context_dir, model_meta=self.model_meta)
+                extra_kwargs = {}
+                if self.options.model_in_image:
+                    extra_kwargs = {
+                        "session": self.session,
+                        "model_zip_stage_path": self.model_zip_stage_path,
+                    }
+                dc = docker_context.DockerContext(
+                    context_dir=context_dir,
+                    model_meta=self.model_meta,
+                    **extra_kwargs,  # type: ignore[arg-type]
+                )
                 dc.build()
                 image_repo = _get_or_create_image_repo(
                     self.session, service_func_name=self.service_func_name, image_repo=self.options.image_repo
@@ -337,8 +366,12 @@ class SnowServiceDeployment(ABC):
                 except Exception as e:
                     # Proceed to the deployment with a warning message.
                     logger.warning(f"Failed to add tag {self.model_meta.name} to image {full_image_name}: {str(e)}")
-
-                self._deploy_workflow(full_image_name)
+                (service_spec, service_function_sql) = self._deploy_workflow(full_image_name)
+        return type_hints.SnowparkContainerServiceDeployDetails(
+            image_name=full_image_name,
+            service_spec=service_spec,
+            service_function_sql=service_function_sql,
+        )
 
     def _get_full_image_name(self, image_repo: str, context_dir: str) -> str:
         """Return a valid full image name that consists of image name and tag. e.g
@@ -389,15 +422,25 @@ class SnowServiceDeployment(ABC):
             )
         image_builder.build_and_upload_image()
 
-    def _prepare_and_upload_artifacts_to_stage(self, image: str) -> None:
+    def _prepare_and_upload_artifacts_to_stage(self, image: str) -> str:
         """Constructs and upload service spec to stage.
 
         Args:
             image: Name of the image to create SnowService container from.
+
+        Returns:
+            Service spec string.
         """
+        if self.options.model_in_image:
+            spec_template_path = file_utils.resolve_zip_import_path(
+                os.path.join(os.path.dirname(__file__), "templates/service_spec_template_with_model")
+            )
+        else:
+            spec_template_path = file_utils.resolve_zip_import_path(
+                os.path.join(os.path.dirname(__file__), "templates/service_spec_template")
+            )
 
         with tempfile.TemporaryDirectory() as tempdir:
-            spec_template_path = os.path.join(os.path.dirname(__file__), "templates/service_spec_template")
             spec_file_path = os.path.join(tempdir, f"{constants.SERVICE_SPEC}.yaml")
 
             with open(spec_template_path, encoding="utf-8") as template, open(
@@ -406,18 +449,19 @@ class SnowServiceDeployment(ABC):
                 assert self.model_zip_stage_path.startswith("@")
                 norm_stage_path = posixpath.normpath(identifier.remove_prefix(self.model_zip_stage_path, "@"))
                 (db, schema, stage, path) = identifier.parse_schema_level_object_identifier(norm_stage_path)
-                content = string.Template(template.read()).substitute(
-                    {
-                        "image": image,
-                        "predict_endpoint_name": constants.PREDICT,
-                        "model_stage": identifier.get_schema_level_object_identifier(db, schema, stage),
-                        "model_zip_stage_path": norm_stage_path,
-                        "inference_server_container_name": constants.INFERENCE_SERVER_CONTAINER,
-                        "target_method": self.target_method,
-                        "num_workers": self.options.num_workers,
-                        "use_gpu": self.options.use_gpu,
-                    }
-                )
+                substitutes = {
+                    "image": image,
+                    "predict_endpoint_name": constants.PREDICT,
+                    "model_stage": identifier.get_schema_level_object_identifier(db, schema, stage),
+                    "model_zip_stage_path": norm_stage_path,
+                    "inference_server_container_name": constants.INFERENCE_SERVER_CONTAINER,
+                    "target_method": self.target_method,
+                    "num_workers": self.options.num_workers,
+                    "use_gpu": self.options.use_gpu,
+                }
+                if self.options.model_in_image:
+                    del substitutes["model_stage"]
+                content = string.Template(template.read()).substitute(substitutes)
                 content_dict = yaml.safe_load(content)
                 if self.options.use_gpu:
                     container = content_dict["spec"]["container"][0]
@@ -437,7 +481,8 @@ class SnowServiceDeployment(ABC):
 
                 yaml.dump(content_dict, spec_file)
                 spec_file.seek(0)
-                logger.debug(f"Create service spec: \n {spec_file.read()}")
+                spec_file_yaml_string = spec_file.read()
+                logger.debug(f"Create service spec: \n {spec_file_yaml_string}")
 
             self.session.file.put(
                 local_file_name=spec_file_path,
@@ -448,15 +493,19 @@ class SnowServiceDeployment(ABC):
             logger.debug(
                 f"Uploaded spec file {os.path.basename(spec_file_path)} " f"to {self._model_artifact_stage_location}"
             )
+            return spec_file_yaml_string
 
-    def _deploy_workflow(self, image: str) -> None:
+    def _deploy_workflow(self, image: str) -> Tuple[str, str]:
         """This function handles workflow deployment to SnowService with the given image.
 
         Args:
             image: Name of the image to create SnowService container from.
+
+        Returns:
+            Tuple of (service spec, service function sql).
         """
 
-        self._prepare_and_upload_artifacts_to_stage(image)
+        service_spec_string = self._prepare_and_upload_artifacts_to_stage(image)
         client = snowservice_client.SnowServiceClient(self.session)
         spec_stage_location = posixpath.join(
             self._model_artifact_stage_location.rstrip("/"), f"{constants.SERVICE_SPEC}.yaml"
@@ -483,9 +532,10 @@ class SnowServiceDeployment(ABC):
                 else:
                     max_batch_rows = min(batch_size, max_batch_rows)
 
-        client.create_or_replace_service_function(
+        service_function_sql = client.create_or_replace_service_function(
             service_func_name=self.service_func_name,
             service_name=self._service_name,
             endpoint_name=constants.PREDICT,
             max_batch_rows=max_batch_rows,
         )
+        return (service_spec_string, service_function_sql)

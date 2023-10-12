@@ -157,11 +157,19 @@ def parse_schema_level_object_identifier(
     res = _SF_SCHEMA_LEVEL_OBJECT_RE.fullmatch(path)
     if not res:
         raise ValueError(f"Invalid identifier. It should start with database.schema.stage. Getting {path}")
-    return res.group("db"), res.group("schema"), res.group("object"), res.group("others")
+    return (
+        res.group("db"),
+        res.group("schema"),
+        res.group("object"),
+        res.group("others"),
+    )
 
 
 def get_schema_level_object_identifier(
-    db: Optional[str], schema: Optional[str], object_name: str, others: Optional[str] = None
+    db: Optional[str],
+    schema: Optional[str],
+    object_name: str,
+    others: Optional[str] = None,
 ) -> str:
     """The reverse operation of parse_schema_level_object_identifier
 
@@ -281,3 +289,38 @@ def remove_prefix(s: str, prefix: str) -> str:
     if s.startswith(prefix):
         return s[len(prefix) :]
     return s
+
+
+def resolve_identifier(id: str) -> str:
+    """Following Snowflake identifier resolution strategies:
+        https://docs.snowflake.com/en/sql-reference/identifiers-syntax#label-identifier-casing
+
+        If identifier is unquoted, it will return upper case.
+        Otherwise return exactly as it is.
+
+    Args:
+        id: identifier string
+
+    Returns:
+        Resolved identifier
+    """
+    if _is_quoted(id):
+        return id
+    else:
+        return id.upper()
+
+
+def strip_wrapping_quotes(id: str) -> str:
+    """Remove wrapping quotes if the identifier is quoted.
+    This is mainly used for keywords like `warehouse` which doesn't like wrapping quotes when being used.
+
+    Args:
+        id: identifier string
+
+    Returns:
+        Identifier with wrapping quotes removed
+    """
+    if _is_quoted(id):
+        return id[1:-1]
+    else:
+        return id
