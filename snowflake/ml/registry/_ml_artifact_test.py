@@ -64,25 +64,6 @@ class ArtifactTest(absltest.TestCase):
             )
         ]
 
-    def test_create_artifact_table(self) -> None:
-        expected_artifact_table_schema_query = (
-            "ID VARCHAR, "
-            "TYPE VARCHAR, "
-            "NAME VARCHAR, "
-            "VERSION VARCHAR, "
-            "CREATION_ROLE VARCHAR, "
-            "CREATION_TIME TIMESTAMP_TZ, "
-            "ARTIFACT_SPEC OBJECT, "
-            "PRIMARY KEY (ID, TYPE) RELY"
-        )
-        self._session.add_mock_sql(
-            query=f"CREATE TABLE IF NOT EXISTS {_FULLY_QUALIFIED_TABLE_NAME} ({expected_artifact_table_schema_query})",
-            result=mock_data_frame.MockDataFrame(
-                [snowpark.Row(status=f"Table {_TABLE_NAME} successfully created.")],
-            ),
-        )
-        _ml_artifact.create_ml_artifact_table(cast(snowpark.Session, self._session), _DATABASE_NAME, _SCHEMA_NAME, {})
-
     def test_if_artifact_table_exists(self) -> None:
         for mock_df, expected_res in [
             (mock_data_frame.MockDataFrame(self._get_show_tables_success(name=_TABLE_NAME)), True),

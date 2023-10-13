@@ -5,7 +5,6 @@ from typing import Any, Callable, Dict, Optional, Tuple, Union
 import mlflow
 import numpy as np
 import pandas as pd
-import pytest
 from absl.testing import absltest, parameterized
 from sklearn import datasets, ensemble, model_selection
 
@@ -18,7 +17,6 @@ from tests.integ.snowflake.ml.model import warehouse_model_integ_test_utils
 from tests.integ.snowflake.ml.test_utils import db_manager
 
 
-@pytest.mark.pip_incompatible
 class TestWarehouseMLFlowModelInteg(parameterized.TestCase):
     @classmethod
     def setUpClass(self) -> None:

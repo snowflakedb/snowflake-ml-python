@@ -1,3 +1,4 @@
+import logging
 import posixpath
 import tempfile
 from types import ModuleType
@@ -13,6 +14,8 @@ from snowflake.ml._internal.exceptions import (
 from snowflake.ml.model import _model_meta, type_hints as model_types
 from snowflake.ml.model._deploy_client.warehouse import infer_template
 from snowflake.snowpark import session as snowpark_session, types as st
+
+logger = logging.getLogger(__name__)
 
 
 def _deploy_to_warehouse(
@@ -72,7 +75,7 @@ def _deploy_to_warehouse(
 
     with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False, encoding="utf-8") as f:
         _write_UDF_py_file(f.file, model_stage_file_name=model_stage_file_name, target_method=target_method, **kwargs)
-        print(f"Generated UDF file is persisted at: {f.name}")
+        logger.info(f"Generated UDF file is persisted at: {f.name}")
 
         class _UDFParams(TypedDict):
             file_path: str
@@ -102,7 +105,7 @@ def _deploy_to_warehouse(
                 stage_location=stage_location,
             )
 
-    print(f"{udf_name} is deployed to warehouse.")
+    logger.info(f"{udf_name} is deployed to warehouse.")
 
 
 def _write_UDF_py_file(

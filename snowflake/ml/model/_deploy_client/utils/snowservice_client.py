@@ -7,6 +7,7 @@ from snowflake.ml._internal.exceptions import (
     error_codes,
     exceptions as snowml_exceptions,
 )
+from snowflake.ml._internal.utils import uri
 from snowflake.ml.model._deploy_client.utils import constants
 from snowflake.snowpark import Session
 
@@ -49,14 +50,15 @@ class SnowServiceClient:
             compute_pool: Name of the compute pool.
             spec_stage_location: Stage path for the service spec.
         """
-        assert spec_stage_location.startswith("@"), f"stage path should start with @, actual: {spec_stage_location}"
+        stage, path = uri.get_stage_and_path(spec_stage_location)
         self._drop_service_if_exists(service_name)
         sql = f"""
              CREATE SERVICE {service_name}
-                 MIN_INSTANCES={min_instances}
-                 MAX_INSTANCES={max_instances}
-                 COMPUTE_POOL={compute_pool}
-                 SPEC={spec_stage_location}
+                IN COMPUTE POOL {compute_pool}
+                FROM {stage}
+                SPEC = '{path}'
+                MIN_INSTANCES={min_instances}
+                MAX_INSTANCES={max_instances}
          """
         logger.debug(f"Create service with SQL: \n {sql}")
         self.session.sql(sql).collect()
@@ -71,8 +73,13 @@ class SnowServiceClient:
         Returns:
             job id in string format.
         """
-        assert spec_stage_location.startswith("@"), f"stage path should start with @, actual: {spec_stage_location}"
-        sql = f"execute service compute_pool={compute_pool} spec={spec_stage_location}"
+        stage, path = uri.get_stage_and_path(spec_stage_location)
+        sql = f"""
+            EXECUTE SERVICE
+            IN COMPUTE POOL {compute_pool}
+            FROM {stage}
+            SPEC = '{path}'
+        """
         logger.debug(f"Create job with SQL: \n {sql}")
         self.session.sql(sql).collect()
         job_id = self.session.sql("SELECT LAST_QUERY_ID() AS QUERY_ID").collect()[0]["QUERY_ID"]
@@ -94,7 +101,7 @@ class SnowServiceClient:
         endpoint_name: str = constants.PREDICT,
         path_at_service_endpoint: str = constants.PREDICT,
         max_batch_rows: Optional[int] = None,
-    ) -> None:
+    ) -> str:
         """Create or replace service function.
 
         Args:
@@ -106,6 +113,8 @@ class SnowServiceClient:
                 and "/monitoring
             max_batch_rows: Specify the MAX_BATCH_ROWS property of the service function, if None, leave unset
 
+        Returns:
+            The actual SQL for service function creation.
         """
         max_batch_rows_sql = ""
         if max_batch_rows:
@@ -122,6 +131,7 @@ class SnowServiceClient:
         logger.debug(f"Create service function with SQL: \n {sql}")
         self.session.sql(sql).collect()
         logger.debug(f"Successfully created service function: {service_func_name}")
+        return sql
 
     def block_until_resource_is_ready(
         self,

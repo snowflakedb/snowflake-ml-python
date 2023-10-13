@@ -146,31 +146,6 @@ class DataType(Enum):
             original_exception=NotImplementedError(f"Type {snowpark_type} is not supported as a DataType."),
         )
 
-    def is_same_snowpark_type(self, incoming_snowpark_type: spt.DataType) -> bool:
-        """Check if provided snowpark type is the same as Data Type.
-
-        Args:
-            incoming_snowpark_type: The snowpark type.
-
-        Raises:
-            SnowflakeMLException: NotImplementedError: Raised when the given numpy type is not supported.
-
-        Returns:
-            If the provided snowpark type is the same as the DataType.
-        """
-        # Special handle for Decimal Type.
-        if isinstance(incoming_snowpark_type, spt.DecimalType):
-            if incoming_snowpark_type.scale == 0:
-                return self == DataType.INT64 or self == DataType.UINT64
-            raise snowml_exceptions.SnowflakeMLException(
-                error_code=error_codes.NOT_IMPLEMENTED,
-                original_exception=NotImplementedError(
-                    f"Type {incoming_snowpark_type} is not supported as a DataType."
-                ),
-            )
-
-        return isinstance(incoming_snowpark_type, self._snowpark_type)
-
 
 class BaseFeatureSpec(ABC):
     """Abstract Class for specification of a feature."""

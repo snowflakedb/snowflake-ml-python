@@ -21,6 +21,7 @@ from snowflake.ml.model import (
     type_hints as model_types,
 )
 from snowflake.snowpark import FileOperation, Session
+from snowflake.snowpark._internal import utils as snowpark_utils
 
 MODEL_BLOBS_DIR = "models"
 
@@ -227,19 +228,20 @@ def save_model(
             ),
         )
 
-    snowml_server_availability = env_utils.validate_requirements_in_snowflake_conda_channel(
-        session=session,
-        reqs=[requirements.Requirement(f"snowflake-ml-python=={snowml_env.VERSION}")],
-        python_version=snowml_env.PYTHON_VERSION,
-    )
+    if not snowpark_utils.is_in_stored_procedure():  # type: ignore[no-untyped-call]
+        snowml_server_availability = env_utils.validate_requirements_in_snowflake_conda_channel(
+            session=session,
+            reqs=[requirements.Requirement(f"snowflake-ml-python=={snowml_env.VERSION}")],
+            python_version=snowml_env.PYTHON_VERSION,
+        )
 
-    if snowml_server_availability is None:
-        if options.get("embed_local_ml_library", False) is False:
-            logging.info(
-                f"Local snowflake-ml-python library has version {snowml_env.VERSION},"
-                " which is not available in the Snowflake server, embedding local ML library automatically."
-            )
-            options["embed_local_ml_library"] = True
+        if snowml_server_availability is None:
+            if options.get("embed_local_ml_library", False) is False:
+                logging.info(
+                    f"Local snowflake-ml-python library has version {snowml_env.VERSION},"
+                    " which is not available in the Snowflake server, embedding local ML library automatically."
+                )
+                options["embed_local_ml_library"] = True
 
     with tempfile.TemporaryDirectory() as temp_local_model_dir_path:
         meta = _save(
@@ -256,6 +258,8 @@ def save_model(
             code_paths=code_paths,
             options=options,
         )
+        if signatures is None:
+            logging.info(f"Model signatures are auto inferred as:\n\n{meta.signatures}")
         with file_utils.zip_file_or_directory_to_stream(
             temp_local_model_dir_path, leading_path=temp_local_model_dir_path
         ) as zf:

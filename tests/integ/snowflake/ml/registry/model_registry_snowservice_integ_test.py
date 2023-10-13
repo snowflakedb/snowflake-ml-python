@@ -6,7 +6,6 @@
 #
 # import numpy as np
 # import pandas as pd
-# import pytest
 # import torch
 from absl.testing import absltest
 
@@ -20,7 +19,7 @@ from absl.testing import absltest
 #
 #
 # class TestModelRegistryIntegWithSnowServiceDeployment(TestModelRegistryIntegSnowServiceBase):
-#     @pytest.mark.pip_incompatible
+#
 #     def test_sklearn_deployment_with_snowml_conda(self) -> None:
 #         self._test_snowservice_deployment(
 #             model_name="test_sklearn_model_with_snowml_conda",
@@ -42,7 +41,7 @@ from absl.testing import absltest
 #             },
 #         )
 #
-#     @pytest.mark.pip_incompatible
+#
 #     def test_sklearn_deployment_with_local_source_code(self) -> None:
 #         self._test_snowservice_deployment(
 #             model_name="test_sklearn_model_with_local_source_code",
@@ -61,7 +60,7 @@ from absl.testing import absltest
 #             },
 #         )
 #
-#     @pytest.mark.pip_incompatible
+#
 #     def test_huggingface_custom_model_deployment(self) -> None:
 #         with tempfile.TemporaryDirectory() as tmpdir:
 #             self._test_snowservice_deployment(
@@ -86,7 +85,7 @@ from absl.testing import absltest
 #                 },
 #             )
 #
-#     @pytest.mark.pip_incompatible
+#
 #     def test_torch_model_deployment_with_gpu(self) -> None:
 #         self._test_snowservice_deployment(
 #             model_name="torch_model",
@@ -116,7 +115,7 @@ from absl.testing import absltest
 #             },
 #         )
 #
-#     @pytest.mark.pip_incompatible
+#
 #     def test_keras_model_deployment(self) -> None:
 #         self._test_snowservice_deployment(
 #             model_name="keras_model",

@@ -1,4 +1,5 @@
 import math
+import warnings
 from typing import Any, Collection, Dict, Iterable, List, Optional, Tuple, Union
 
 import cloudpickle
@@ -6,6 +7,10 @@ import numpy as np
 
 import snowflake.snowpark._internal.utils as snowpark_utils
 from snowflake import snowpark
+from snowflake.ml._internal.exceptions import (
+    error_codes,
+    exceptions as snowml_exceptions,
+)
 from snowflake.snowpark import Session, functions as F, types as T
 
 LABEL = "LABEL"
@@ -270,3 +275,64 @@ def unique_labels(
     assert union_df is not None
     res: snowpark.DataFrame = union_df.with_column(INDEX, F.dense_rank().over(snowpark.Window.order_by(LABEL)) - 1)
     return res
+
+
+def validate_average_pos_label(average: Optional[str] = None, pos_label: Union[str, int] = 1) -> None:
+    """Validating average and pos_label parameters.
+
+    Args:
+        average: Type of average being calculated, or None.
+        pos_label: The class to report if ``average='binary'`` and the data is
+            binary.
+
+    Raises:
+        SnowflakeMLException: Average is not one of the provided options.
+    """
+    average_options = (None, "micro", "macro", "weighted", "samples", "binary")
+    if average not in average_options:
+        raise snowml_exceptions.SnowflakeMLException(
+            error_code=error_codes.INVALID_ARGUMENT,
+            original_exception=ValueError("average has to be one of " + str(average_options)),
+        )
+    if average != "binary" and pos_label not in (None, 1):
+        warnings.warn(
+            "Note that pos_label (set to %r) is ignored when "
+            "average != 'binary' (got %r). You may use "
+            "labels=[pos_label] to specify a single positive class." % (pos_label, average),
+            UserWarning,
+        )
+
+
+def weighted_sum(
+    *,
+    df: snowpark.DataFrame,
+    sample_score_column: snowpark.Column,
+    sample_weight_column: Optional[snowpark.Column] = None,
+    normalize: bool = False,
+    statement_params: Dict[str, str],
+) -> float:
+    """Weighted sum of the sample score column.
+
+    Args:
+        df: Input dataframe.
+        sample_score_column: Sample score column.
+        sample_weight_column: Sample weight column.
+        normalize: If ``False``, return the weighted sum.
+            Otherwise, return the fraction of weighted sum.
+        statement_params: Dictionary used for tagging queries for tracking purposes.
+
+    Returns:
+        If ``normalize == True``, return the fraction of weighted sum (float),
+        else returns the weighted sum (int). If no weight is provided, we assume uniform weights.
+    """
+    if normalize:
+        if sample_weight_column is not None:
+            res = F.sum(sample_score_column * sample_weight_column) / F.sum(sample_weight_column)
+        else:
+            res = F.avg(sample_score_column)
+    elif sample_weight_column is not None:
+        res = F.sum(sample_score_column * sample_weight_column)
+    else:
+        res = F.sum(sample_score_column)
+
+    return float(df.select(res).collect(statement_params=statement_params)[0][0])

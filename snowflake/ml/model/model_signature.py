@@ -1,10 +1,11 @@
 import warnings
-from typing import Any, List, Literal, Optional, Sequence, Type
+from typing import Any, List, Literal, Optional, Sequence, Tuple, Type
 
 import numpy as np
 import pandas as pd
 
 import snowflake.snowpark
+import snowflake.snowpark.functions as F
 import snowflake.snowpark.types as spt
 from snowflake.ml._internal.exceptions import (
     error_codes,
@@ -42,7 +43,9 @@ _LOCAL_DATA_HANDLERS: List[Type[base_handler.BaseDataHandler[Any]]] = [
 _ALL_DATA_HANDLERS = _LOCAL_DATA_HANDLERS + [snowpark_handler.SnowparkDataFrameHandler]
 
 
-def _truncate_data(data: model_types.SupportedDataType) -> model_types.SupportedDataType:
+def _truncate_data(
+    data: model_types.SupportedDataType,
+) -> model_types.SupportedDataType:
     for handler in _ALL_DATA_HANDLERS:
         if handler.can_handle(data):
             row_count = handler.count(data)
@@ -97,6 +100,33 @@ def _infer_signature(
     )
 
 
+def _validate_numpy_array(arr: model_types._SupportedNumpyArray, feature_type: core.DataType) -> bool:
+    if feature_type in [
+        core.DataType.INT8,
+        core.DataType.INT16,
+        core.DataType.INT32,
+        core.DataType.INT64,
+        core.DataType.UINT8,
+        core.DataType.UINT16,
+        core.DataType.UINT32,
+        core.DataType.UINT64,
+    ]:
+        if not (np.issubdtype(arr.dtype, np.integer)):
+            return False
+        min_v, max_v = arr.min(), arr.max()
+        return bool(max_v <= np.iinfo(feature_type._numpy_type).max and min_v >= np.iinfo(feature_type._numpy_type).min)
+    elif feature_type in [core.DataType.FLOAT, core.DataType.DOUBLE]:
+        if not (np.issubdtype(arr.dtype, np.integer) or np.issubdtype(arr.dtype, np.floating)):
+            return False
+        min_v, max_v = arr.min(), arr.max()
+        return bool(
+            max_v <= np.finfo(feature_type._numpy_type).max  # type: ignore[arg-type]
+            and min_v >= np.finfo(feature_type._numpy_type).min  # type: ignore[arg-type]
+        )
+    else:
+        return np.can_cast(arr.dtype, feature_type._numpy_type, casting="no")
+
+
 def _validate_pandas_df(data: pd.DataFrame, features: Sequence[core.BaseFeatureSpec]) -> None:
     """It validates pandas dataframe with provided features.
 
@@ -137,7 +167,7 @@ def _validate_pandas_df(data: pd.DataFrame, features: Sequence[core.BaseFeatureS
         ft_type = feature._dtype
         ft_shape = feature._shape
         if df_col_dtype != np.dtype("O"):
-            if ft_type != core.DataType.from_numpy_type(df_col_dtype):
+            if not _validate_numpy_array(data_col.to_numpy(), ft_type):
                 raise snowml_exceptions.SnowflakeMLException(
                     error_code=error_codes.INVALID_DATA,
                     original_exception=ValueError(
@@ -166,10 +196,7 @@ def _validate_pandas_df(data: pd.DataFrame, features: Sequence[core.BaseFeatureS
 
                 converted_data_list = [utils.convert_list_to_ndarray(data_row) for data_row in data_col]
 
-                if not all(
-                    core.DataType.from_numpy_type(converted_data.dtype) == ft_type
-                    for converted_data in converted_data_list
-                ):
+                if not all(_validate_numpy_array(converted_data, ft_type) for converted_data in converted_data_list):
                     raise snowml_exceptions.SnowflakeMLException(
                         error_code=error_codes.INVALID_DATA,
                         original_exception=ValueError(
@@ -198,7 +225,7 @@ def _validate_pandas_df(data: pd.DataFrame, features: Sequence[core.BaseFeatureS
                         ),
                     )
 
-                if not all(core.DataType.from_numpy_type(data_row.dtype) == ft_type for data_row in data_col):
+                if not all(_validate_numpy_array(data_row, ft_type) for data_row in data_col):
                     raise snowml_exceptions.SnowflakeMLException(
                         error_code=error_codes.INVALID_DATA,
                         original_exception=ValueError(
@@ -270,6 +297,7 @@ def _validate_snowpark_data(data: snowflake.snowpark.DataFrame, features: Sequen
         SnowflakeMLException: ValueError: Raised when confronting invalid feature.
         SnowflakeMLException: ValueError: Raised when a feature cannot be found.
     """
+
     schema = data.schema
     for feature in features:
         ft_name = feature.name
@@ -314,18 +342,96 @@ def _validate_snowpark_data(data: snowflake.snowpark.DataFrame, features: Sequen
                                 + f"Feature is a scalar feature, while {field.name} is not."
                             ),
                         )
-                    if not ft_type.is_same_snowpark_type(field_data_type):
-                        raise snowml_exceptions.SnowflakeMLException(
-                            error_code=error_codes.INVALID_DATA,
-                            original_exception=ValueError(
-                                f"Data Validation Error in feature {ft_name}: "
-                                + f"Feature type {ft_type} is not met by column {field.name}."
-                            ),
-                        )
+                    _validate_snowpark_type_feature(data, field, ft_type, ft_name)
         if not found:
             raise snowml_exceptions.SnowflakeMLException(
                 error_code=error_codes.INVALID_DATA,
                 original_exception=ValueError(f"Data Validation Error: feature {ft_name} does not exist in data."),
+            )
+
+
+def _validate_snowpark_type_feature(
+    df: snowflake.snowpark.DataFrame, field: spt.StructField, ft_type: DataType, ft_name: str
+) -> None:
+    def get_value_range(field_name: str) -> Tuple[int, int]:
+        res = df.select(F.min(field_name).as_("MIN"), F.max(field_name).as_("MAX")).collect()
+        if len(res) != 1:
+            raise snowml_exceptions.SnowflakeMLException(
+                error_code=error_codes.INTERNAL_SNOWML_ERROR,
+                original_exception=ValueError(f"Unable to get the value range of field {field_name}"),
+            )
+        return res[0].MIN, res[0].MAX
+
+    field_data_type = field.datatype
+    col_name = identifier.get_unescaped_names(field.name)
+
+    if ft_type in [
+        core.DataType.INT8,
+        core.DataType.INT16,
+        core.DataType.INT32,
+        core.DataType.INT64,
+        core.DataType.UINT8,
+        core.DataType.UINT16,
+        core.DataType.UINT32,
+        core.DataType.UINT64,
+    ]:
+        if not (
+            isinstance(field_data_type, spt._IntegralType)
+            or (isinstance(field_data_type, spt.DecimalType) and field_data_type.scale == 0)
+        ):
+            raise snowml_exceptions.SnowflakeMLException(
+                error_code=error_codes.INVALID_DATA,
+                original_exception=ValueError(
+                    f"Data Validation Error in feature {ft_name}: "
+                    + f"Feature type {ft_type} is not met by column {col_name}."
+                ),
+            )
+        min_v, max_v = get_value_range(field.name)
+        if max_v > np.iinfo(ft_type._numpy_type).max or min_v < np.iinfo(ft_type._numpy_type).min:
+            raise snowml_exceptions.SnowflakeMLException(
+                error_code=error_codes.INVALID_DATA,
+                original_exception=ValueError(
+                    f"Data Validation Error in feature {ft_name}: "
+                    + f"Feature type {ft_type} is not met by column {col_name}."
+                ),
+            )
+    elif ft_type in [core.DataType.FLOAT, core.DataType.DOUBLE]:
+        if not (
+            isinstance(
+                field_data_type,
+                (spt._IntegralType, spt.FloatType, spt.DoubleType),
+            )
+            # We are not allowing > 0 scale as it will become a decimal.Decimal
+            # Although it is castable, the support will be done as another effort.
+            or (isinstance(field_data_type, spt.DecimalType) and field_data_type.scale == 0)
+        ):
+            raise snowml_exceptions.SnowflakeMLException(
+                error_code=error_codes.INVALID_DATA,
+                original_exception=ValueError(
+                    f"Data Validation Error in feature {ft_name}: "
+                    + f"Feature type {ft_type} is not met by column {col_name}."
+                ),
+            )
+        min_v, max_v = get_value_range(field.name)
+        if (
+            max_v > np.finfo(ft_type._numpy_type).max  # type: ignore[arg-type]
+            or min_v < np.finfo(ft_type._numpy_type).min  # type: ignore[arg-type]
+        ):
+            raise snowml_exceptions.SnowflakeMLException(
+                error_code=error_codes.INVALID_DATA,
+                original_exception=ValueError(
+                    f"Data Validation Error in feature {ft_name}: "
+                    + f"Feature type {ft_type} is not met by column {col_name}."
+                ),
+            )
+    else:
+        if not (isinstance(field_data_type, ft_type._snowpark_type)):
+            raise snowml_exceptions.SnowflakeMLException(
+                error_code=error_codes.INVALID_DATA,
+                original_exception=ValueError(
+                    f"Data Validation Error in feature {ft_name}: "
+                    + f"Feature type {ft_type} is not met by column {col_name}."
+                ),
             )
 
 

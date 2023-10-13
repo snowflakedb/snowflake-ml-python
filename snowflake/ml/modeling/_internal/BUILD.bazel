@@ -9,6 +9,8 @@ py_library(
         "//snowflake/ml/_internal:env_utils",
         "//snowflake/ml/_internal:telemetry",
         "//snowflake/ml/_internal/exceptions",
+        "//snowflake/ml/_internal/exceptions:modeling_error_messages",
+        "//snowflake/ml/_internal/utils:identifier",
         "//snowflake/ml/_internal/utils:query_result_checker",
         "//snowflake/ml/_internal/utils:snowpark_dataframe_utils",
         "//snowflake/ml/_internal/utils:temp_file_utils",
@@ -20,10 +22,27 @@ py_library(
     srcs = ["estimator_protocols.py"],
 )
 
+py_library(
+    name = "estimator_utils",
+    srcs = ["estimator_utils.py"],
+    deps = [
+        "//snowflake/ml/_internal/exceptions",
+        "//snowflake/ml/modeling/framework",
+    ],
+)
+
 py_test(
     name = "estimator_protocols_test",
     srcs = ["estimator_protocols_test.py"],
     deps = [
         ":estimator_protocols",
+    ],
+)
+
+py_test(
+    name = "estimator_utils_test",
+    srcs = ["estimator_utils_test.py"],
+    deps = [
+        ":estimator_utils",
     ],
 )

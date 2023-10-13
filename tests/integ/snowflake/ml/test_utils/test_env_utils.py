@@ -1,5 +1,4 @@
 import functools
-import importlib
 import textwrap
 
 import requests
@@ -9,15 +8,6 @@ import snowflake.connector
 from snowflake.ml._internal import env
 from snowflake.ml._internal.utils import query_result_checker
 from snowflake.snowpark import session
-
-
-@functools.lru_cache
-def is_in_pip_env() -> bool:
-    try:
-        importlib.import_module("conda")
-        return False
-    except ModuleNotFoundError:
-        return True
 
 
 @functools.lru_cache

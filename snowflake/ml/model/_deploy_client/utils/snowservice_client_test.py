@@ -22,18 +22,23 @@ class SnowServiceClientTest(absltest.TestCase):
         m_min_instances = 1
         m_max_instances = 2
         m_compute_pool = "mock_compute_pool"
-        m_spec_storgae_location = "@mock_spec_storage_location"
+        m_stage = "@mock_spec_stage"
+        m_stage_path = "a/hello.yaml"
+        m_spec_storgae_location = f"{m_stage}/{m_stage_path}"
 
         self.m_session.add_mock_sql(
             query="drop service if exists mock_service_name", result=mock_data_frame.MockDataFrame(collect_result=[])
         )
 
         self.m_session.add_mock_sql(
-            query="create service mock_service_name"
-            " min_instances=1"
-            " max_instances=2"
-            " compute_pool=mock_compute_pool"
-            " spec=@mock_spec_storage_location",
+            query=f"""
+             CREATE SERVICE {self.m_service_name}
+                IN COMPUTE POOL {m_compute_pool}
+                FROM {m_stage}
+                SPEC = '{m_stage_path}'
+                MIN_INSTANCES={m_min_instances}
+                MAX_INSTANCES={m_max_instances}
+            """,
             result=mock_data_frame.MockDataFrame(collect_result=[]),
         )
 
@@ -44,6 +49,32 @@ class SnowServiceClientTest(absltest.TestCase):
             compute_pool=m_compute_pool,
             spec_stage_location=m_spec_storgae_location,
         )
+
+    def test_create_job(self) -> None:
+        m_compute_pool = "mock_compute_pool"
+        m_stage = "@mock_spec_stage"
+        m_stage_path = "a/hello.yaml"
+        m_spec_storgae_location = f"{m_stage}/{m_stage_path}"
+        expected_job_id = "abcd"
+        self.m_session.add_mock_sql(
+            query=f"""
+                EXECUTE SERVICE
+                IN COMPUTE POOL {m_compute_pool}
+                FROM {m_stage}
+                SPEC = '{m_stage_path}'
+            """,
+            result=mock_data_frame.MockDataFrame(collect_result=[]),
+        )
+        row = snowpark.Row(**{"QUERY_ID": expected_job_id})
+        self.m_session.add_mock_sql(
+            query="SELECT LAST_QUERY_ID() AS QUERY_ID",
+            result=mock_data_frame.MockDataFrame(collect_result=[row]),
+        )
+        job_id = self.client.create_job(
+            compute_pool=m_compute_pool,
+            spec_stage_location=m_spec_storgae_location,
+        )
+        self.assertEqual(job_id, expected_job_id)
 
     def test_create_service_function(self) -> None:
         m_service_func_name = "mock_service_func_name"

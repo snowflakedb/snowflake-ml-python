@@ -2,47 +2,14 @@ import enum
 from typing import Any, Dict, Optional, cast
 
 from snowflake import connector, snowpark
-from snowflake.ml._internal.utils import formatting, identifier, table_manager
-from snowflake.ml.registry import _schema
+from snowflake.ml._internal.utils import formatting, table_manager
+from snowflake.ml.registry import _initial_schema
 
 
 # Set of allowed artifact types.
 class ArtifactType(enum.Enum):
     TESTTYPE = "TESTTYPE"  # A placeholder type just for unit test
-    TRAINING_DATASET = "TRAINING_DATASET"
-
-
-# Default name of the artifact table
-_ARTIFACT_TABLE_NAME: str = identifier.get_inferred_name("_SYSTEM_REGISTRY_ARTIFACTS")
-
-
-def create_ml_artifact_table(
-    session: snowpark.Session,
-    database_name: str,
-    schema_name: str,
-    statement_params: Dict[str, Any],
-) -> None:
-    """Create the ml artifact table to store immutable properties of various artifacts.
-
-    This artifact table will follow a predefined schema detailed in `_ARTIFACT_TABLE_SCHEMA` from `_schema.py`.
-
-    Note:
-        The artifact table uses (ID + TYPE) as its compound primary key, hence, it needs an out-of-line private key.
-
-    Args:
-        session: Snowpark session object to communicate with Snowflake.
-        database_name: Desired name of the model registry database.
-        schema_name: Desired name of the schema used by this model registry inside the database.
-        statement_params: Function usage statement parameters used in sql query executions.
-    """
-    table_manager.create_single_registry_table(
-        session=session,
-        database_name=database_name,
-        schema_name=schema_name,
-        table_name=_ARTIFACT_TABLE_NAME,
-        table_schema=_schema._ARTIFACT_TABLE_SCHEMA,
-        statement_params=statement_params,
-    )
+    DATASET = "DATASET"
 
 
 def if_artifact_table_exists(
@@ -62,7 +29,7 @@ def if_artifact_table_exists(
         bool: True if the artifact table exists, False otherwise.
     """
     qualified_schema_name = table_manager.get_fully_qualified_schema_name(database_name, schema_name)
-    return table_manager.validate_table_exist(session, _ARTIFACT_TABLE_NAME, qualified_schema_name)
+    return table_manager.validate_table_exist(session, _initial_schema._ARTIFACT_TABLE_NAME, qualified_schema_name)
 
 
 def if_artifact_exists(
@@ -125,7 +92,7 @@ def add_artifact(
         )
 
     fully_qualified_table_name = table_manager.get_fully_qualified_table_name(
-        database_name, schema_name, _ARTIFACT_TABLE_NAME
+        database_name, schema_name, _initial_schema._ARTIFACT_TABLE_NAME
     )
 
     new_artifact = {
@@ -171,7 +138,7 @@ def delete_artifact(
         )
 
     fully_qualified_table_name = table_manager.get_fully_qualified_table_name(
-        database_name, schema_name, _ARTIFACT_TABLE_NAME
+        database_name, schema_name, _initial_schema._ARTIFACT_TABLE_NAME
     )
 
     delete_query = f"DELETE FROM {fully_qualified_table_name} WHERE ID='{artifact_id}' AND TYPE='{artifact_type.name}'"
@@ -204,10 +171,10 @@ def _get_artifact(
     WARNING:
         The returned DataFrame is writable and shouldn't be made accessible to users.
     """
-    artifacts = session.sql(
-        "SELECT * FROM "
-        f"{table_manager.get_fully_qualified_table_name(database_name, schema_name, _ARTIFACT_TABLE_NAME)}"
+    full_table_path = table_manager.get_fully_qualified_table_name(
+        database_name, schema_name, _initial_schema._ARTIFACT_TABLE_NAME
     )
+    artifacts = session.sql(f"SELECT * FROM {full_table_path}")
     target_artifact = artifacts.filter(snowpark.Column("ID") == artifact_id).filter(
         snowpark.Column("TYPE") == artifact_type.name
     )

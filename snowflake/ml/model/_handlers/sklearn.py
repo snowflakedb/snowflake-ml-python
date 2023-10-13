@@ -106,7 +106,7 @@ class _SKLModelHandler(_base._ModelHandler[Union["sklearn.base.BaseEstimator", "
             name=name, model_type=_SKLModelHandler.handler_type, path=_SKLModelHandler.MODEL_BLOB_FILE
         )
         model_meta.models[name] = base_meta
-        model_meta._include_if_absent([model_meta_api.Dependency(conda_name="scikit-learn", pip_name="scikit-learn")])
+        model_meta._include_if_absent([model_meta_api.Dependency(conda_name="scikit-learn", pip_req="scikit-learn")])
 
     @staticmethod
     def _load_model(

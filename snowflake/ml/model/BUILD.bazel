@@ -24,6 +24,8 @@ py_library(
     name = "type_hints",
     srcs = ["type_hints.py"],
     deps = [
+        ":deploy_platforms",
+        "//snowflake/ml/model/_signatures:core",
         "//snowflake/ml/modeling/framework",
     ],
 )

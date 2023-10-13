@@ -166,6 +166,18 @@ py_test(
 )
 
 py_test(
+    name = "metrics_utils_test",
+    timeout = TIMEOUT,
+    srcs = ["metrics_utils_test.py"],
+    shard_count = SHARD_COUNT,
+    deps = [
+        "//snowflake/ml/modeling/metrics:metrics_utils",
+        "//snowflake/ml/utils:connection_params",
+        "//tests/integ/snowflake/ml/modeling/framework:utils",
+    ],
+)
+
+py_test(
     name = "precision_recall_curve_test",
     timeout = TIMEOUT,
     srcs = ["precision_recall_curve_test.py"],

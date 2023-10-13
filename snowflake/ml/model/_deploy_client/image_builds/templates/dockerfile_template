@@ -4,6 +4,8 @@ FROM ${base_image} as build
 COPY ${model_env_folder}/conda.yaml conda.yaml
 COPY ${model_env_folder}/requirements.txt requirements.txt
 
+${copy_model_statement}
+
 # Set MAMBA_DOCKERFILE_ACTIVATE=1 to activate the conda environment during build time.
 ARG MAMBA_DOCKERFILE_ACTIVATE=1
 

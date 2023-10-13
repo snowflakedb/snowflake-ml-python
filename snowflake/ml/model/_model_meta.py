@@ -29,9 +29,14 @@ MODEL_METADATA_VERSION = 1
 _BASIC_DEPENDENCIES = _core_requirements.REQUIREMENTS
 _SNOWFLAKE_PKG_NAME = "snowflake"
 _SNOWFLAKE_ML_PKG_NAME = f"{_SNOWFLAKE_PKG_NAME}.ml"
+# The default CUDA version is chosen based on the driver availability in SPCS.
+# If changing this version, we need also change the version of default PyTorch in HuggingFace pipeline handler to
+# make sure they are compatible.
 _DEFAULT_CUDA_VERSION = "11.7"
 
-Dependency = namedtuple("Dependency", ["conda_name", "pip_name"])
+# conda_name: The name of dependency in conda
+# pip_req: Full version requirement where name is pypi package name.
+Dependency = namedtuple("Dependency", ["conda_name", "pip_req"])
 
 
 @dataclasses.dataclass
@@ -97,16 +102,14 @@ def _create_model_metadata(
     embed_local_ml_library = kwargs.pop("embed_local_ml_library", False)
     # Use the last one which is loaded first, that is mean, it is loaded from site-packages.
     # We could make sure that user does not overwrite our library with their code follow the same naming.
-    snowml_path = list(importlib.import_module(_SNOWFLAKE_ML_PKG_NAME).__path__)[-1]
-    if os.path.isdir(snowml_path):
+    snowml_path, snowml_start_path = file_utils.get_package_path(_SNOWFLAKE_ML_PKG_NAME, strategy="last")
+    if os.path.isdir(snowml_start_path):
         path_to_copy = snowml_path
     # If the package is zip-imported, then the path will be `../path_to_zip.zip/snowflake/ml`
     # It is not a valid path in fact and we need to get the path to the zip file to verify it.
-    elif os.path.isfile(os.path.abspath(os.path.join(snowml_path, os.pardir, os.pardir))):
+    elif os.path.isfile(snowml_start_path):
         extract_root = tempfile.mkdtemp()
-        with zipfile.ZipFile(
-            os.path.abspath(os.path.join(snowml_path, os.pardir, os.pardir)), mode="r", compression=zipfile.ZIP_DEFLATED
-        ) as zf:
+        with zipfile.ZipFile(os.path.abspath(snowml_start_path), mode="r", compression=zipfile.ZIP_DEFLATED) as zf:
             zf.extractall(path=extract_root)
         path_to_copy = os.path.join(extract_root, *(_SNOWFLAKE_ML_PKG_NAME.split(".")))
     else:
@@ -271,10 +274,10 @@ class ModelMetadata:
             pip_requirements if pip_requirements else []
         )
         if "local_ml_library_version" in kwargs:
-            self._include_if_absent([Dependency(conda_name=dep, pip_name=dep) for dep in _BASIC_DEPENDENCIES])
+            self._include_if_absent([Dependency(conda_name=dep, pip_req=dep) for dep in _BASIC_DEPENDENCIES])
         else:
             self._include_if_absent(
-                [Dependency(conda_name=dep, pip_name=dep) for dep in _BASIC_DEPENDENCIES + [env_utils._SNOWML_PKG_NAME]]
+                [Dependency(conda_name=dep, pip_req=dep) for dep in _BASIC_DEPENDENCIES + [env_utils._SNOWML_PKG_NAME]]
             )
         self._cuda_version: Optional[str] = None
 
@@ -477,7 +480,7 @@ def _validate_signature(
         local_sample_input = trunc_sample_input
     for target_method in target_methods:
         predictions_df = get_prediction_fn(target_method, local_sample_input)
-        sig = model_signature.infer_signature(sample_input, predictions_df)
+        sig = model_signature.infer_signature(local_sample_input, predictions_df)
         model_meta._signatures[target_method] = sig
     return model_meta
 

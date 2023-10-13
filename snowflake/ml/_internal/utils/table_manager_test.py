@@ -26,7 +26,8 @@ class TableManagerTest(absltest.TestCase):
         for database_name, schema_name, expected_res in test_cases:
             with self.subTest():
                 self.assertEqual(
-                    table_manager.get_fully_qualified_schema_name(database_name, schema_name), expected_res
+                    table_manager.get_fully_qualified_schema_name(database_name, schema_name),
+                    expected_res,
                 )
 
     def test_get_fully_qualified_table_name(self) -> None:
@@ -38,10 +39,11 @@ class TableManagerTest(absltest.TestCase):
         for database_name, schema_name, table_name, expected_res in test_cases:
             with self.subTest():
                 self.assertEqual(
-                    table_manager.get_fully_qualified_table_name(database_name, schema_name, table_name), expected_res
+                    table_manager.get_fully_qualified_table_name(database_name, schema_name, table_name),
+                    expected_res,
                 )
 
-    def test_create_single_registry_table(self) -> None:
+    def test_create_single_table(self) -> None:
         schema_list = [("ID", "VARCHAR"), ("TYPE", "VARCHAR")]
         database_name = "testdb"
         schema_name = "testschema"
@@ -52,8 +54,13 @@ class TableManagerTest(absltest.TestCase):
                 [snowpark.Row(status=f"Table {table_name} successfully created.")],
             ),
         )
-        table_manager.create_single_registry_table(
-            cast(snowpark.Session, self._session), database_name, schema_name, table_name, schema_list, {}
+        table_manager.create_single_table(
+            cast(snowpark.Session, self._session),
+            database_name,
+            schema_name,
+            table_name,
+            schema_list,
+            {},
         )
 
     def test_insert_table_entry(self) -> None:
@@ -69,7 +76,10 @@ class TableManagerTest(absltest.TestCase):
         table_name = "testtable"
         schema_name = "testschema"
         empty_row_list: List[snowpark.Row] = []
-        test_cases = [(empty_row_list, False), ([snowpark.Row(**{"number of rows inserted": 1})], True)]
+        test_cases = [
+            (empty_row_list, False),
+            ([snowpark.Row(**{"number of rows inserted": 1})], True),
+        ]
         for snowpark_res, expected_res in test_cases:
             with self.subTest():
                 self._session.add_mock_sql(

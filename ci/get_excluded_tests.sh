@@ -87,7 +87,7 @@ if [[ $mode = "unaffected" || $mode = "all" ]]; then
     # -- Begin of Query Rules Heredoc --
     cat >"${unaffected_test_rule_file}" <<EndOfMessage
     let unaffected_targets = //tests/... - rdeps(//tests/..., set($(<"${affected_targets_file}"))) in
-        kind('source file', labels(srcs, set($(<ci/skip_merge_gate_targets)) + kind('py_test rule', \$unaffected_targets)))
+        kind('source file', labels(srcs, set($(<ci/skip_merge_gate_targets)) + kind('py_test rule', \$unaffected_targets)) - labels(srcs, rdeps(//tests/..., set($(<"${affected_targets_file}")))))
 EndOfMessage
     # -- End of Query Rules Heredoc --
 

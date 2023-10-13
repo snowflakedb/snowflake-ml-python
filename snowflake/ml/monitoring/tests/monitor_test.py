@@ -1,12 +1,15 @@
 #!/usr/bin/env python3
-import math, unittest
+import math
 from typing import Any, List
 
 import numpy as np
+import shap
 from absl.testing import absltest
 from sklearn.ensemble import RandomForestClassifier
 
 from snowflake import snowpark
+from snowflake.ml.monitoring import monitor
+from snowflake.ml.monitoring.shap import ShapExplainer
 from snowflake.ml.utils import connection_params
 from snowflake.snowpark import functions, types
 
@@ -37,7 +40,6 @@ def JS_helper(p1: List[float], q1: List[float]) -> Any:
     return np.sqrt(js / 2.0)
 
 
-@unittest.skip("not PrPr")
 class MonitorTest(absltest.TestCase):
     """Test Covariance matrix."""
 
@@ -49,8 +51,6 @@ class MonitorTest(absltest.TestCase):
         self._session.close()
 
     def test_compare_udfs(self) -> None:
-        from snowflake.ml.monitoring import monitor
-
         inputDf = self._session.create_dataframe(
             [
                 snowpark.Row(-2, -5),
@@ -81,8 +81,6 @@ class MonitorTest(absltest.TestCase):
         assert pdfBucketize.iloc[0][1] == 1 and pdfBucketize.iloc[0][2] == 1
 
     def test_get_basic_stats(self) -> None:
-        from snowflake.ml.monitoring import monitor
-
         inputDf = self._session.create_dataframe(
             [
                 snowpark.Row(-2, -5),
@@ -97,8 +95,6 @@ class MonitorTest(absltest.TestCase):
         assert d1["MAX"] == 100 and d2["MAX"] == 98
 
     def test_jensenshannon(self) -> None:
-        from snowflake.ml.monitoring import monitor
-
         df1 = self._session.create_dataframe(
             [
                 snowpark.Row(-3),
@@ -150,16 +146,12 @@ class MonitorTest(absltest.TestCase):
             schema=["COL1", "COL2", "COL3", "COL4", "COL5"],
         )
 
-        from snowflake.ml.monitoring.shap import ShapExplainer
-
         sf_explainer = ShapExplainer(self._session, clf.predict, X_train)
         shapdf2 = sf_explainer.get_shap(inputDf)
         shapdf2_1 = sf_explainer(inputDf)
         assert shapdf2_1 is not None
         v2 = shapdf2.collect()[0].as_dict(True)["SHAP"]
         v2 = v2.replace("\n", "").strip("[] ").split(",")
-
-        import shap
 
         shap_explainer1 = shap.Explainer(clf.predict, X_train)
         shap_values1 = shap_explainer1(test_sample)

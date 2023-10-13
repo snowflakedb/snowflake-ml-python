@@ -1,47 +1,31 @@
-import uuid
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
-from unittest import SkipTest
 
 import pandas as pd
-from absl.testing import absltest, parameterized
+import yaml
+from absl.testing import absltest
 
 from snowflake.ml.model import model_signature
 from snowflake.ml.registry import model_registry
-from snowflake.ml.utils import connection_params
-from snowflake.snowpark import DataFrame as SnowparkDataFrame, Session
+from snowflake.snowpark import DataFrame as SnowparkDataFrame
 from tests.integ.snowflake.ml.test_utils import (
-    db_manager,
     model_factory,
+    spcs_integ_test_base,
     test_env_utils,
 )
 
 
-class TestModelRegistryIntegSnowServiceBase(parameterized.TestCase):
-    _SNOWSERVICE_CONNECTION_NAME = "regtest"
-    _TEST_CPU_COMPUTE_POOL = "REGTEST_INFERENCE_CPU_POOL"
-    _TEST_GPU_COMPUTE_POOL = "REGTEST_INFERENCE_GPU_POOL"
-    _RUN_ID = uuid.uuid4().hex[:2]
-    _TEST_DB = db_manager.TestObjectNameGenerator.get_snowml_test_object_name(_RUN_ID, "db").upper()
-    _TEST_SCHEMA = db_manager.TestObjectNameGenerator.get_snowml_test_object_name(_RUN_ID, "schema").upper()
+def is_valid_yaml(yaml_string) -> bool:
+    try:
+        yaml.safe_load(yaml_string)
+        return True
+    except yaml.YAMLError:
+        return False
 
+
+class TestModelRegistryIntegSnowServiceBase(spcs_integ_test_base.SpcsIntegTestBase):
     @classmethod
     def setUpClass(cls) -> None:
-        """Creates Snowpark and Snowflake environments for testing."""
-        try:
-            login_options = connection_params.SnowflakeLoginOptions(connection_name=cls._SNOWSERVICE_CONNECTION_NAME)
-        except KeyError:
-            raise SkipTest(
-                "SnowService connection parameters not present: skipping "
-                "TestModelRegistryIntegWithSnowServiceDeployment."
-            )
-        cls._session = Session.builder.configs(
-            {
-                **login_options,
-                **{"database": cls._TEST_DB, "schema": cls._TEST_SCHEMA},
-            }
-        ).create()
-        cls._db_manager = db_manager.DBManager(cls._session)
-        cls._db_manager.cleanup_databases(expire_hours=6)
+        super().setUpClass()
         model_registry.create_model_registry(
             session=cls._session, database_name=cls._TEST_DB, schema_name=cls._TEST_SCHEMA
         )
@@ -51,8 +35,7 @@ class TestModelRegistryIntegSnowServiceBase(parameterized.TestCase):
 
     @classmethod
     def tearDownClass(cls) -> None:
-        cls._db_manager.drop_database(cls._TEST_DB)
-        cls._session.close()
+        super().tearDownClass()
 
     def _test_snowservice_deployment(
         self,
@@ -100,7 +83,12 @@ class TestModelRegistryIntegSnowServiceBase(parameterized.TestCase):
 
         deployment_name = f"{model_name}_{model_version}_deployment"
         deployment_options["deployment_name"] = deployment_name
-        model_ref.deploy(**deployment_options)  # type: ignore[attr-defined]
+        deploy_info = model_ref.deploy(**deployment_options)  # type: ignore[attr-defined]
+        deploy_details = deploy_info["details"]
+        self.assertNotEmpty(deploy_details)
+        self.assertTrue(deploy_details["image_name"])
+        self.assertTrue(is_valid_yaml(deploy_details["service_spec"]))
+        self.assertTrue(deploy_details["service_function_sql"])
 
         remote_prediction = model_ref.predict(deployment_name, test_features)
         prediction_assert_fn(local_prediction, remote_prediction)

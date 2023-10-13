@@ -7,18 +7,18 @@ py_library(
     srcs = ["model_registry.py"],
     deps = [
         ":_ml_artifact",
-        ":_schema",
+        ":schema",
         "//snowflake/ml/_internal:telemetry",
         "//snowflake/ml/_internal/utils:formatting",
         "//snowflake/ml/_internal/utils:identifier",
         "//snowflake/ml/_internal/utils:query_result_checker",
         "//snowflake/ml/_internal/utils:table_manager",
         "//snowflake/ml/_internal/utils:uri",
+        "//snowflake/ml/dataset",
         "//snowflake/ml/model:_deployer",
         "//snowflake/ml/model:_model",
         "//snowflake/ml/model:deploy_platforms",
         "//snowflake/ml/modeling/framework",
-        "//snowflake/ml/training_dataset",
     ],
 )
 
@@ -26,24 +26,33 @@ py_test(
     name = "model_registry_test",
     srcs = ["model_registry_test.py"],
     deps = [
-        ":_schema",
         ":model_registry",
+        ":schema",
         "//snowflake/ml/test_utils:mock_data_frame",
         "//snowflake/ml/test_utils:mock_session",
     ],
 )
 
 py_library(
-    name = "_schema",
-    srcs = ["_schema.py"],
+    name = "schema",
+    srcs = [
+        "_initial_schema.py",
+        "_schema.py",
+        "_schema_upgrade_plans.py",
+        "_schema_version_manager.py",
+    ],
     visibility = ["//visibility:private"],
+    deps = [
+        "//snowflake/ml/_internal/utils:query_result_checker",
+        "//snowflake/ml/_internal/utils:table_manager",
+    ],
 )
 
 py_library(
     name = "_ml_artifact",
     srcs = ["_ml_artifact.py"],
     deps = [
-        ":_schema",
+        ":schema",
         "//snowflake/ml/_internal/utils:formatting",
         "//snowflake/ml/_internal/utils:table_manager",
     ],

@@ -1,5 +1,6 @@
 import importlib
 import os
+import re
 import shutil
 import sys
 import tempfile
@@ -19,6 +20,24 @@ def get_file():
 
 
 class FileUtilsTest(absltest.TestCase):
+    def test_copytree(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            leading_path = os.path.join(tmpdir, "test")
+            fake_mod_dirpath = os.path.join(leading_path, "snowflake", "fake", "fake_module")
+            os.makedirs(fake_mod_dirpath)
+
+            py_file_path = os.path.join(fake_mod_dirpath, "p.py")
+            with open(py_file_path, "w", encoding="utf-8") as f:
+                f.write(PY_SRC)
+
+            file_utils.copy_file_or_tree(leading_path, os.path.join(tmpdir, "my_copy"))
+            shutil.copytree(leading_path, os.path.join(tmpdir, "shutil_copy"))
+
+            self.assertListEqual(
+                [ele[1:] for ele in os.walk(os.path.join(tmpdir, "my_copy", "test"))],
+                [ele[1:] for ele in os.walk(os.path.join(tmpdir, "shutil_copy"))],
+            )
+
     def test_zip_file_or_directory_to_stream(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             leading_path = os.path.join(tmpdir, "test")
@@ -38,6 +57,10 @@ class FileUtilsTest(absltest.TestCase):
 
             importlib.import_module("snowflake.fake.fake_module.p")
 
+            mod_path, start_path = file_utils.get_package_path("snowflake.fake.fake_module")
+            self.assertEqual(mod_path, os.path.join(zip_module_filename, "snowflake", "fake", "fake_module"))
+            self.assertEqual(start_path, zip_module_filename)
+
             sys.path.remove(os.path.abspath(zip_module_filename))
 
             with file_utils.zip_file_or_directory_to_stream(fake_mod_dirpath, leading_path) as input_stream:
@@ -47,6 +70,10 @@ class FileUtilsTest(absltest.TestCase):
             sys.path.insert(0, os.path.abspath(zip_module_filename))
 
             importlib.import_module("snowflake.fake.fake_module.p")
+
+            mod_path, start_path = file_utils.get_package_path("snowflake.fake.fake_module")
+            self.assertEqual(mod_path, os.path.join(zip_module_filename, "snowflake", "fake", "fake_module"))
+            self.assertEqual(start_path, zip_module_filename)
 
             sys.path.remove(os.path.abspath(zip_module_filename))
 
@@ -215,6 +242,32 @@ class FileUtilsTest(absltest.TestCase):
     def test_able_ascii_encode(self) -> None:
         self.assertTrue(file_utils._able_ascii_encode("abc"))
         self.assertFalse(file_utils._able_ascii_encode("❄️"))
+
+    def test_resolve_zip_import_path(self) -> None:
+        # Test when snowml is a directory
+        snowflake_ml_path = "snowflake/ml/model/_deploy_client/image_builds/inference_server"
+        input_path = f"/a/b/c/{snowflake_ml_path}"
+        self.assertEqual(file_utils.resolve_zip_import_path(input_path), input_path)
+
+        # Test when snowml is a zip
+        snowml_path, snowml_start_path = file_utils.get_package_path("snowflake.ml", strategy="last")
+        zip_file_name = "snowml.zip"
+        with tempfile.TemporaryDirectory() as tmpdir:
+            zipped_snowml_path = os.path.join(tmpdir, zip_file_name)
+            with open(zipped_snowml_path, "wb") as f:
+                with file_utils.zip_file_or_directory_to_stream(snowml_path, snowml_start_path) as zip_stream:
+                    f.write(zip_stream.getbuffer())
+            try:
+                sys.path.append(zipped_snowml_path)
+                tmp_parent_dir = os.path.dirname(tmpdir)
+                resolved_path = file_utils.resolve_zip_import_path(f"{zipped_snowml_path}/{snowflake_ml_path}")
+                self.assertTrue(zip_file_name not in resolved_path)
+                # Note that this is based on the tempfile.TemporaryDirectory, in which the directory name might differ
+                # between runs. But the suffix/prefix/dir will remain the same. Essentially, the test assumes that if
+                # zip file is created at /tmp/a/b/snowml,zip, then the unzipped dir will be at /tmp/a/{some_dir}
+                self.assertTrue(re.match(rf"{tmp_parent_dir}/(\w+)/{snowflake_ml_path}", resolved_path))
+            finally:
+                sys.path.remove(zipped_snowml_path)
 
 
 if __name__ == "__main__":

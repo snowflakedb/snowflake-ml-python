@@ -3,6 +3,7 @@ from typing import Any, Callable, Dict, Optional, Tuple, Union
 
 import numpy as np
 import pandas as pd
+import pytest
 import tensorflow as tf
 from absl.testing import absltest, parameterized
 
@@ -29,6 +30,7 @@ class SimpleModule(tf.Module):
         return self.a_variable * tensor + self.non_trainable_variable
 
 
+@pytest.mark.pip_incompatible
 class TestWarehouseTensorflowModelInteg(parameterized.TestCase):
     @classmethod
     def setUpClass(self) -> None:

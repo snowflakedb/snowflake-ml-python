@@ -1,4 +1,4 @@
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from snowflake import snowpark
 from snowflake.ml._internal.utils import formatting, query_result_checker
@@ -18,13 +18,13 @@ def get_fully_qualified_table_name(database_name: str, schema_name: str, table_n
     return f"{get_fully_qualified_schema_name(database_name, schema_name)}.{table_name}"
 
 
-def create_single_registry_table(
+def create_single_table(
     session: snowpark.Session,
     database_name: str,
     schema_name: str,
     table_name: str,
     table_schema: List[Tuple[str, str]],
-    statement_params: Dict[str, Any],
+    statement_params: Optional[Dict[str, Any]] = None,
 ) -> str:
     """Creates a single table for registry and returns the fully qualified name of the table.
 
@@ -96,3 +96,11 @@ def validate_table_exist(session: snowpark.Session, table: str, qualified_schema
     """
     tables = session.sql(f"SHOW TABLES LIKE '{table}' IN {qualified_schema_name}").collect()
     return len(tables) == 1
+
+
+def get_table_schema(session: snowpark.Session, table_name: str, qualified_schema_name: str) -> Dict[str, str]:
+    result = session.sql(f"DESC TABLE {qualified_schema_name}.{table_name}").collect()
+    schema_dict: Dict[str, str] = {}
+    for row in result:
+        schema_dict[row["name"]] = row["type"]
+    return schema_dict

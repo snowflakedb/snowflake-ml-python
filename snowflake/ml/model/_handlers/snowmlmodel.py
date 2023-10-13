@@ -112,7 +112,7 @@ class _SnowMLModelHandler(_base._ModelHandler["BaseEstimator"]):
         model_dependencies = model._get_dependencies()
         for dep in model_dependencies:
             pkg_name = dep.split("==")[0]
-            _include_if_absent_pkgs.append(model_meta_api.Dependency(conda_name=pkg_name, pip_name=pkg_name))
+            _include_if_absent_pkgs.append(model_meta_api.Dependency(conda_name=pkg_name, pip_req=pkg_name))
         model_meta._include_if_absent(_include_if_absent_pkgs)
 
     @staticmethod

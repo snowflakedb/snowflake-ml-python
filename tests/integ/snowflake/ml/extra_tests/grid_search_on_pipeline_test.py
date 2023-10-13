@@ -1,4 +1,3 @@
-import pytest
 from absl.testing.absltest import TestCase, main
 from snowflake.ml.modeling.linear_model.logistic_regression import LogisticRegression
 
@@ -36,7 +35,6 @@ label_column = ["LABEL"]
 feature_cols = categorical_columns + numerical_columns
 
 
-@pytest.mark.pip_incompatible
 class GridSearchCVTest(TestCase):
     def setUp(self):
         """Creates Snowpark and Snowflake environments for testing."""

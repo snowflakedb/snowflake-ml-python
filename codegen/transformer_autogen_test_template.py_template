@@ -4,7 +4,6 @@ import numpy as np
 import pandas as pd
 import json
 import random
-import pytest
 
 from typing import Optional, Any, Tuple, List
 from absl.testing.absltest import TestCase, main
@@ -13,7 +12,7 @@ from snowflake.ml.utils.connection_params import SnowflakeLoginOptions
 from snowflake.snowpark import Session, DataFrame
 
 
-@pytest.mark.pip_incompatible
+
 class {transform.test_class_name}(TestCase):
     def setUp(self) -> None:
         """Creates Snowpark and Snowflake environments for testing."""

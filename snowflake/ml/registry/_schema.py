@@ -1,6 +1,11 @@
-from typing import List, Tuple
+from typing import Dict, List, Tuple, Type
 
-# TODO(amauser): Move this scheme and registry creation in general into a server-side implementation.
+from snowflake.ml.registry import _initial_schema, _schema_upgrade_plans
+
+# BUMP THIS VERSION WHENEVER YOU CHANGE ANY SCHEMA TABLES.
+# ALSO UPDATE SCHEMA UPGRADE PLANS.
+_CURRENT_SCHEMA_VERSION = 2
+
 _REGISTRY_TABLE_SCHEMA: List[Tuple[str, str]] = [
     ("CREATION_CONTEXT", "VARCHAR"),
     ("CREATION_ENVIRONMENT_SPEC", "OBJECT"),
@@ -11,13 +16,12 @@ _REGISTRY_TABLE_SCHEMA: List[Tuple[str, str]] = [
     ("NAME", "VARCHAR"),
     ("OUTPUT_SPEC", "OBJECT"),
     ("RUNTIME_ENVIRONMENT_SPEC", "OBJECT"),
-    ("TRAINING_DATASET_ID", "VARCHAR"),
+    ("ARTIFACT_IDS", "ARRAY"),
     ("TYPE", "VARCHAR"),
     ("URI", "VARCHAR"),
     ("VERSION", "VARCHAR"),
 ]
 
-# TODO(amauser): Generalize attribute to any column reference.
 _METADATA_TABLE_SCHEMA: List[Tuple[str, str]] = [
     ("ATTRIBUTE_NAME", "VARCHAR"),
     ("EVENT_ID", "VARCHAR UNIQUE NOT NULL"),
@@ -53,3 +57,25 @@ _ARTIFACT_TABLE_SCHEMA: List[Tuple[str, str]] = [
     # See https://docs.snowflake.com/en/sql-reference/sql/create-table
     ("PRIMARY KEY", "(ID, TYPE) RELY"),
 ]
+
+# Note, one can add/remove tables from this tuple as well. As long as correct schema update process is followed.
+# In case of a new table, they should not be defined in _initial_schema.
+_CURRENT_TABLE_SCHEMAS = {
+    _initial_schema._MODELS_TABLE_NAME: _REGISTRY_TABLE_SCHEMA,
+    _initial_schema._METADATA_TABLE_NAME: _METADATA_TABLE_SCHEMA,
+    _initial_schema._DEPLOYMENT_TABLE_NAME: _DEPLOYMENTS_TABLE_SCHEMA,
+    _initial_schema._ARTIFACT_TABLE_NAME: _ARTIFACT_TABLE_SCHEMA,
+}
+
+
+_SCHEMA_UPGRADE_PLANS: Dict[int, Type[_schema_upgrade_plans.BaseSchemaUpgradePlans]] = {
+    # Currently _CURRENT_SCHEMA_VERSION == _initial_schema._INITIAL_VERSION, so no entry.
+    # But if schema evolves it must contain:
+    #   Key = a version number
+    #   Value = a subclass of _schema_upgrades.BaseSchemaUpgrade
+    # NOTE, all version from _INITIAL_VERSION + 1 till _CURRENT_SCHEMA_VERSION must exists.
+    1: _schema_upgrade_plans.AddTrainingDatasetIdIfNotExists,
+    2: _schema_upgrade_plans.ReplaceTrainingDatasetIdWithArtifactIds,
+}
+
+assert len(_SCHEMA_UPGRADE_PLANS) == _CURRENT_SCHEMA_VERSION - _initial_schema._INITIAL_VERSION
