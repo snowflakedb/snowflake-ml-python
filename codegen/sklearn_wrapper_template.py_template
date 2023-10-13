@@ -13,13 +13,18 @@ import numpy as np
 from sklearn.utils.metaestimators import available_if
 
 from snowflake.ml.modeling.framework.base import BaseTransformer, _process_cols
-from snowflake.ml.modeling.framework._utils import to_native_format
 from snowflake.ml._internal import telemetry
 from snowflake.ml._internal.exceptions import error_codes, exceptions, modeling_error_messages
 from snowflake.ml._internal.utils import pkg_version_utils, identifier
 from snowflake.snowpark import DataFrame
 from snowflake.snowpark._internal.type_utils import convert_sp_to_sf_type
 from snowflake.ml.modeling._internal.snowpark_handlers import SnowparkHandlers as HandlersImpl
+from snowflake.ml.modeling._internal.estimator_utils import (
+    gather_dependencies,
+    original_estimator_has_callable,
+    transform_snowml_obj_to_sklearn_obj,
+    validate_sklearn_args,
+)
 from snowflake.ml.modeling._internal.snowpark_handlers import {transform.wrapper_provider_class}
 from snowflake.ml.modeling._internal.estimator_protocols import FitPredictHandlers
 
@@ -39,101 +44,6 @@ _PROJECT = "ModelDevelopment"
 _SUBPROJECT = "".join([s.capitalize() for s in "{transform.root_module_name}".replace("sklearn.", "").split("_")])
 
 
-def _original_estimator_has_callable(attr: str) -> Callable[[Any], bool]:
-    """ Checks that the original estimator has callable `attr`.
-
-    Args:
-        attr: Attribute to check for.
-
-    Returns:
-        A function which checks for the existence of callable `attr` on the given object.
-    """
-    def check(self: BaseTransformer) -> TypeGuard[Callable[..., object]]:
-        """ Check for the existence of callable `attr` in self.
-
-        Returns:
-            True of the callable `attr` exists in self, False otherwise.
-        """
-        return callable(getattr(self._sklearn_object, attr, None))
-
-    return check
-
-
-def _gather_dependencies(obj: Any) -> Set[str]:
-    """ Gathers dependencies from the SnowML Estimator and Transformer objects.
-
-    Args:
-        obj: Source object to collect dependencies from. Source object could of any type, example, lists, tuples, etc.
-
-    Returns:
-        A set of dependencies required to work with the object.
-    """
-
-    if isinstance(obj, list) or isinstance(obj, tuple):
-        deps: Set[str] = set()
-        for elem in obj:
-            deps = deps | set(_gather_dependencies(elem))
-        return deps
-    elif isinstance(obj, BaseTransformer):
-        return set(obj._get_dependencies())
-    else:
-        return set()
-
-
-def _transform_snowml_obj_to_sklearn_obj(obj: Any) -> Any:
-    """Converts SnowML Estimator and Transformer objects to equivalent SKLearn objects.
-
-    Args:
-        obj: Source object that needs to be converted. Source object could of any type, example, lists, tuples, etc.
-
-    Returns:
-        An equivalent object with SnowML estimators and transforms replaced with equivalent SKLearn objects.
-    """
-
-    if isinstance(obj, list):
-        # Apply transform function to each element in the list
-        return list(map(_transform_snowml_obj_to_sklearn_obj, obj))
-    elif isinstance(obj, tuple):
-        # Apply transform function to each element in the tuple
-        return tuple(map(_transform_snowml_obj_to_sklearn_obj, obj))
-    elif isinstance(obj, BaseTransformer):
-        # Convert SnowML object to equivalent SKLearn object
-        return to_native_format(obj)
-    else:
-        # Return all other objects as it is.
-        return obj
-
-
-def _validate_sklearn_args(args: Dict[str, Any], klass: type) -> Dict[str, Any]:
-    """ Validate if all the keyword args are supported by current version of SKLearn/XGBoost object.
-
-    Args:
-        args: Dictionary of keyword args for the wrapper init method.
-        klass: Underlying SKLearn/XGBoost class object.
-
-    Raises:
-        Raises an exception if a user specified arg is not supported by current version of sklearn/xgboost.
-    """
-    result = {{}}
-    signature = inspect.signature(klass.__init__)  # type: ignore[misc]
-    for k, v in args.items():
-        if k not in signature.parameters.keys():  # Arg is not supported.
-            if (
-                v[2]  # Arg doesn't have default value in the signature.
-                or (
-                    v[0] != v[1]  # Value is not same as default.
-                    and not (isinstance(v[0], float) and np.isnan(v[0]) and np.isnan(v[1])))  # both are not NANs
-            ):
-                raise exceptions.SnowflakeMLException(
-                    error_code=error_codes.DEPENDENCY_VERSION_ERROR,
-                    original_exception=RuntimeError(
-                        f"Arg {{k}} is not supported by current version of SKLearn/XGBoost."
-                    ),
-                )
-        else:
-            result[k] = v[0]
-    return result
-
 
 class {transform.original_class_name}(BaseTransformer):
     r"""{transform.estimator_class_docstring}
@@ -148,7 +58,7 @@ class {transform.original_class_name}(BaseTransformer):
         self._deps = list(deps)
         {transform.estimator_args_transform_calls}
         init_args = {transform.sklearn_init_args_dict}
-        cleaned_up_init_args = _validate_sklearn_args(
+        cleaned_up_init_args = validate_sklearn_args(
             args=init_args,
             klass={transform.root_module_name}.{transform.original_class_name}
         )
@@ -422,7 +332,7 @@ class {transform.original_class_name}(BaseTransformer):
             dataset[output_cols] = transformed_numpy_array
         return dataset
 
-    @available_if(_original_estimator_has_callable("predict"))  # type: ignore[misc]
+    @available_if(original_estimator_has_callable("predict"))  # type: ignore[misc]
     @telemetry.send_api_usage_telemetry(
         project=_PROJECT,
         subproject=_SUBPROJECT,
@@ -471,7 +381,7 @@ class {transform.original_class_name}(BaseTransformer):
 
         return output_df
 
-    @available_if(_original_estimator_has_callable("transform"))  # type: ignore[misc]
+    @available_if(original_estimator_has_callable("transform"))  # type: ignore[misc]
     @telemetry.send_api_usage_telemetry(
         project=_PROJECT,
         subproject=_SUBPROJECT,
@@ -517,6 +427,7 @@ class {transform.original_class_name}(BaseTransformer):
         """ Returns the list of output columns for predict_proba(), decision_function(), etc.. functions.
         Returns a list with output_cols_prefix as the only element if the estimator is not a classifier.
         """
+        output_cols_prefix = identifier.resolve_identifier(output_cols_prefix)
         if getattr(self._sklearn_object, "classes_", None) is None:
             return [output_cols_prefix]
 
@@ -539,7 +450,7 @@ class {transform.original_class_name}(BaseTransformer):
             return output_cols
         return []
 
-    @available_if(_original_estimator_has_callable("predict_proba"))  # type: ignore[misc]
+    @available_if(original_estimator_has_callable("predict_proba"))  # type: ignore[misc]
     @telemetry.send_api_usage_telemetry(
         project=_PROJECT,
         subproject=_SUBPROJECT,
@@ -576,7 +487,7 @@ class {transform.original_class_name}(BaseTransformer):
         
         return output_df
 
-    @available_if(_original_estimator_has_callable("predict_log_proba"))  # type: ignore[misc]
+    @available_if(original_estimator_has_callable("predict_log_proba"))  # type: ignore[misc]
     @telemetry.send_api_usage_telemetry(
         project=_PROJECT,
         subproject=_SUBPROJECT,
@@ -614,7 +525,7 @@ class {transform.original_class_name}(BaseTransformer):
 
         return output_df
 
-    @available_if(_original_estimator_has_callable("decision_function"))  # type: ignore[misc]
+    @available_if(original_estimator_has_callable("decision_function"))  # type: ignore[misc]
     @telemetry.send_api_usage_telemetry(
         project=_PROJECT,
         subproject=_SUBPROJECT,
@@ -652,7 +563,7 @@ class {transform.original_class_name}(BaseTransformer):
 
         return output_df
 
-    @available_if(_original_estimator_has_callable("score"))  # type: ignore[misc]
+    @available_if(original_estimator_has_callable("score"))  # type: ignore[misc]
     @telemetry.send_api_usage_telemetry(
         project=_PROJECT,
         subproject=_SUBPROJECT,

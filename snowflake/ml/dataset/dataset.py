@@ -17,7 +17,7 @@ def _wrap_embedded_str(s: str) -> str:
     return s
 
 
-TRAINING_DATASET_SCHEMA_VERSION = "1"
+DATASET_SCHEMA_VERSION = "1"
 
 
 @dataclass(frozen=True)
@@ -58,8 +58,8 @@ class FeatureStoreMetadata:
         )
 
 
-class TrainingDataset:
-    """Metadata of training dataset."""
+class Dataset:
+    """Metadata of dataset."""
 
     def __init__(
         self,
@@ -73,19 +73,19 @@ class TrainingDataset:
         feature_store_metadata: Optional[FeatureStoreMetadata] = None,
         desc: str = "",
     ) -> None:
-        """Initialize training dataset object.
+        """Initialize dataset object.
 
         Args:
             session: An active snowpark session.
-            df: A dataframe object representing the training dataset generation.
+            df: A dataframe object representing the dataset generation.
             generation_timestamp: The timestamp when this dataset is generated. It will use current time if
                 not provided.
-            materialized_table: The destination table name which training data will writes into.
+            materialized_table: The destination table name which data will writes into.
             snapshot_table: A snapshot table name on the materialized table.
             timestamp_col: Timestamp column which was used for point-in-time correct feature lookup.
-            label_cols: Name of column(s) in materialized_table that contains training labels.
+            label_cols: Name of column(s) in materialized_table that contains labels.
             feature_store_metadata: A feature store metadata object.
-            desc: A description about this training dataset.
+            desc: A description about this dataset.
         """
         self.df = df
         self.generation_timestamp = generation_timestamp if generation_timestamp is not None else time.time()
@@ -98,7 +98,7 @@ class TrainingDataset:
 
         self.id = uuid4().hex.upper()
         self.owner = session.sql("SELECT CURRENT_USER()").collect()[0]["CURRENT_USER()"]
-        self.version = TRAINING_DATASET_SCHEMA_VERSION
+        self.version = DATASET_SCHEMA_VERSION
 
     @property
     def name(self) -> str:
@@ -141,7 +141,7 @@ Got {len(self.df.queries['queries'])}: {self.df.queries['queries']}
         return json.dumps(state_dict)
 
     @classmethod
-    def from_json(cls, json_str: str, session: Session) -> "TrainingDataset":
+    def from_json(cls, json_str: str, session: Session) -> "Dataset":
         json_dict = json.loads(json_str)
         json_dict["df"] = session.sql(json_dict.pop("df_query"))
 
@@ -162,4 +162,4 @@ Got {len(self.df.queries['queries'])}: {self.df.queries['queries']}
         return result
 
     def __eq__(self, other: object) -> bool:
-        return isinstance(other, TrainingDataset) and self.to_json() == other.to_json()
+        return isinstance(other, Dataset) and self.to_json() == other.to_json()

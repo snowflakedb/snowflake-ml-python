@@ -1,6 +1,5 @@
 import copy
-import inspect
-from typing import Any, Callable, Dict, Iterable, List, Optional, Set, Union
+from typing import Any, Dict, Iterable, List, Optional, Set, Union
 from uuid import uuid4
 
 import cachetools
@@ -12,7 +11,6 @@ import sklearn
 import sklearn.model_selection
 from sklearn.model_selection import ParameterSampler
 from sklearn.utils.metaestimators import available_if
-from typing_extensions import TypeGuard
 
 from snowflake.ml._internal import telemetry
 from snowflake.ml._internal.exceptions import error_codes, exceptions
@@ -26,11 +24,16 @@ from snowflake.ml.model.model_signature import (
     _infer_signature,
 )
 from snowflake.ml.modeling._internal.estimator_protocols import CVHandlers
+from snowflake.ml.modeling._internal.estimator_utils import (
+    gather_dependencies,
+    original_estimator_has_callable,
+    transform_snowml_obj_to_sklearn_obj,
+    validate_sklearn_args,
+)
 from snowflake.ml.modeling._internal.snowpark_handlers import (
     SklearnWrapperProvider,
     SnowparkHandlers as HandlersImpl,
 )
-from snowflake.ml.modeling.framework._utils import to_native_format
 from snowflake.ml.modeling.framework.base import BaseTransformer
 from snowflake.snowpark import DataFrame
 from snowflake.snowpark._internal.type_utils import convert_sp_to_sf_type
@@ -40,106 +43,6 @@ _PROJECT = "ModelDevelopment"
 # and converting module name from underscore to CamelCase
 # e.g. sklearn.linear_model -> LinearModel.
 _SUBPROJECT = "ModelSelection"
-
-
-# TODO: refactor all the common logic into a shared utility module.
-def _original_estimator_has_callable(attr: str) -> Callable[[Any], bool]:
-    """Checks that the original estimator has callable `attr`.
-
-    Args:
-        attr: Attribute to check for.
-
-    Returns:
-        A function which checks for the existence of callable `attr` on the given object.
-    """
-
-    def check(self: BaseTransformer) -> TypeGuard[Callable[..., object]]:
-        """Check for the existence of callable `attr` in self.
-
-        Args:
-            self: BaseTransformer object
-
-        Returns:
-            True of the callable `attr` exists in self, False otherwise.
-        """
-        return callable(getattr(self._sklearn_object, attr, None))
-
-    return check
-
-
-def _gather_dependencies(obj: Any) -> Set[str]:
-    """Gathers dependencies from the SnowML Estimator and Transformer objects.
-
-    Args:
-        obj: Source object to collect dependencies from. Source object could of any type, example, lists, tuples, etc.
-
-    Returns:
-        A set of dependencies required to work with the object.
-    """
-
-    if isinstance(obj, list) or isinstance(obj, tuple):
-        deps: Set[str] = set()
-        for elem in obj:
-            deps = deps | set(_gather_dependencies(elem))
-        return deps
-    elif isinstance(obj, BaseTransformer):
-        return set(obj._get_dependencies())
-    else:
-        return set()
-
-
-def _transform_snowml_obj_to_sklearn_obj(obj: Any) -> Any:
-    """Converts SnowML Estimator and Transformer objects to equivalent SKLearn objects.
-
-    Args:
-        obj: Source object that needs to be converted. Source object could of any type, example, lists, tuples, etc.
-
-    Returns:
-        An equivalent object with SnowML estimators and transforms replaced with equivalent SKLearn objects.
-    """
-
-    if isinstance(obj, list):
-        # Apply transform function to each element in the list
-        return list(map(_transform_snowml_obj_to_sklearn_obj, obj))
-    elif isinstance(obj, tuple):
-        # Apply transform function to each element in the tuple
-        return tuple(map(_transform_snowml_obj_to_sklearn_obj, obj))
-    elif isinstance(obj, BaseTransformer):
-        # Convert SnowML object to equivalent SKLearn object
-        return to_native_format(obj)
-    else:
-        # Return all other objects as it is.
-        return obj
-
-
-def _validate_sklearn_args(args: Dict[str, Any], klass: type) -> Dict[str, Any]:
-    """Validate if all the keyword args are supported by current version of SKLearn/XGBoost object.
-
-    Args:
-        args: Dictionary of keyword args for the wrapper init method.
-        klass: Underlying SKLearn/XGBoost class object.
-
-    Returns:
-        result: sklearn arguments
-
-    Raises:
-        SnowflakeMLException: if a user specified arg is not supported by current version of sklearn/xgboost.
-    """
-    result = {}
-    signature = inspect.signature(klass.__init__)  # type: ignore[misc]
-    for k, v in args.items():
-        if k not in signature.parameters.keys():  # Arg is not supported.
-            if v[2] or (  # Arg doesn't have default value in the signature.
-                v[0] != v[1]  # Value is not same as default.
-                and not (isinstance(v[0], float) and np.isnan(v[0]) and np.isnan(v[1]))
-            ):  # both are not NANs
-                raise exceptions.SnowflakeMLException(
-                    error_code=error_codes.DEPENDENCY_VERSION_ERROR,
-                    original_exception=RuntimeError(f"Arg {k} is not supported by current version of SKLearn/XGBoost."),
-                )
-        else:
-            result[k] = v[0]
-    return result
 
 
 class RandomizedSearchCV(BaseTransformer):
@@ -344,9 +247,9 @@ class RandomizedSearchCV(BaseTransformer):
             f"cachetools=={cachetools.__version__}",  # type: ignore[attr-defined]
             f"fsspec=={fsspec.__version__}",
         }
-        deps = deps | _gather_dependencies(estimator)
+        deps = deps | gather_dependencies(estimator)
         self._deps = list(deps)
-        estimator = _transform_snowml_obj_to_sklearn_obj(estimator)
+        estimator = transform_snowml_obj_to_sklearn_obj(estimator)
         init_args = {
             "estimator": (estimator, None, True),
             "param_distributions": (param_distributions, None, True),
@@ -361,7 +264,7 @@ class RandomizedSearchCV(BaseTransformer):
             "error_score": (error_score, np.nan, False),
             "return_train_score": (return_train_score, False, False),
         }
-        cleaned_up_init_args = _validate_sklearn_args(args=init_args, klass=sklearn.model_selection.RandomizedSearchCV)
+        cleaned_up_init_args = validate_sklearn_args(args=init_args, klass=sklearn.model_selection.RandomizedSearchCV)
         self._sklearn_object = sklearn.model_selection.RandomizedSearchCV(
             **cleaned_up_init_args,
         )
@@ -639,7 +542,7 @@ class RandomizedSearchCV(BaseTransformer):
             dataset[output_cols] = transformed_numpy_array
         return dataset
 
-    @available_if(_original_estimator_has_callable("predict"))  # type: ignore[misc]
+    @available_if(original_estimator_has_callable("predict"))  # type: ignore[misc]
     @telemetry.send_api_usage_telemetry(
         project=_PROJECT,
         subproject=_SUBPROJECT,
@@ -686,7 +589,7 @@ class RandomizedSearchCV(BaseTransformer):
 
         return output_df
 
-    @available_if(_original_estimator_has_callable("transform"))  # type: ignore[misc]
+    @available_if(original_estimator_has_callable("transform"))  # type: ignore[misc]
     @telemetry.send_api_usage_telemetry(
         project=_PROJECT,
         subproject=_SUBPROJECT,
@@ -764,7 +667,7 @@ class RandomizedSearchCV(BaseTransformer):
             return output_cols
         return []
 
-    @available_if(_original_estimator_has_callable("predict_proba"))  # type: ignore[misc]
+    @available_if(original_estimator_has_callable("predict_proba"))  # type: ignore[misc]
     @telemetry.send_api_usage_telemetry(
         project=_PROJECT,
         subproject=_SUBPROJECT,
@@ -807,7 +710,7 @@ class RandomizedSearchCV(BaseTransformer):
 
         return output_df
 
-    @available_if(_original_estimator_has_callable("predict_log_proba"))  # type: ignore[misc]
+    @available_if(original_estimator_has_callable("predict_log_proba"))  # type: ignore[misc]
     @telemetry.send_api_usage_telemetry(
         project=_PROJECT,
         subproject=_SUBPROJECT,
@@ -851,7 +754,7 @@ class RandomizedSearchCV(BaseTransformer):
 
         return output_df
 
-    @available_if(_original_estimator_has_callable("decision_function"))  # type: ignore[misc]
+    @available_if(original_estimator_has_callable("decision_function"))  # type: ignore[misc]
     @telemetry.send_api_usage_telemetry(
         project=_PROJECT,
         subproject=_SUBPROJECT,
@@ -895,7 +798,7 @@ class RandomizedSearchCV(BaseTransformer):
 
         return output_df
 
-    @available_if(_original_estimator_has_callable("score"))  # type: ignore[misc]
+    @available_if(original_estimator_has_callable("score"))  # type: ignore[misc]
     def score(self, dataset: Union[DataFrame, pd.DataFrame]) -> float:
         """
         Args:

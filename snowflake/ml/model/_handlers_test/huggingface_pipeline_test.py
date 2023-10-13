@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, Callable, Dict, Optional
 
 import numpy as np
 import pandas as pd
+import torch
 from absl.testing import absltest
 
 from snowflake.ml.model import _model as model_api
@@ -49,7 +50,8 @@ class HuggingFacePipelineHandlerTest(absltest.TestCase):
         original_dict = original.__dict__
         if use_gpu:
             original_dict = copy.deepcopy(original_dict)
-            original_dict["torch_dtype"] = "auto"
+            if "torch_dtype" not in original_dict:
+                original_dict["torch_dtype"] = "auto"
             original_dict["device_map"] = "auto"
         self.assertDictEqual(original_dict, loaded.__dict__)
 
@@ -443,7 +445,9 @@ class HuggingFacePipelineHandlerTest(absltest.TestCase):
             task="summarization",
             model_id="sshleifer/tiny-mbart",
             udf_test_input=x_df,
-            options={},
+            # This model is stored in fp16, but the architecture does not support it,
+            # it will messed up the auto dtype loading.
+            options={"torch_dtype": torch.float32},
             check_pipeline_fn=check_pipeline,
             check_udf_res_fn=check_udf_res,
         )
@@ -456,7 +460,7 @@ class HuggingFacePipelineHandlerTest(absltest.TestCase):
                 task="summarization",
                 model_id="sshleifer/tiny-mbart",
                 udf_test_input=x_df,
-                options={"return_tensors": True},
+                options={"return_tensors": True, "torch_dtype": torch.float32},
                 check_pipeline_fn=check_pipeline,
                 check_udf_res_fn=check_udf_res,
             )

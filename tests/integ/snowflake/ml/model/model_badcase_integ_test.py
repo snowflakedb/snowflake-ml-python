@@ -117,7 +117,6 @@ class TestModelBadCaseInteg(absltest.TestCase):
                 target_method="predict",
                 options=model_types.WarehouseDeployOptions(
                     {
-                        "relax_version": test_env_utils.is_in_pip_env(),
                         "permanent_udf_stage_location": f"{self.full_qual_stage}/",
                         # Test stage location validation
                     }
@@ -133,7 +132,6 @@ class TestModelBadCaseInteg(absltest.TestCase):
             target_method="predict",
             options=model_types.WarehouseDeployOptions(
                 {
-                    "relax_version": test_env_utils.is_in_pip_env(),
                     "permanent_udf_stage_location": f"@{self.full_qual_stage}/",
                 }
             ),
@@ -155,7 +153,6 @@ class TestModelBadCaseInteg(absltest.TestCase):
                 target_method="predict",
                 options=model_types.WarehouseDeployOptions(
                     {
-                        "relax_version": test_env_utils.is_in_pip_env(),
                         "permanent_udf_stage_location": f"@{self.full_qual_stage}/",
                     }
                 ),
@@ -171,7 +168,6 @@ class TestModelBadCaseInteg(absltest.TestCase):
             target_method="predict",
             options=model_types.WarehouseDeployOptions(
                 {
-                    "relax_version": test_env_utils.is_in_pip_env(),
                     "permanent_udf_stage_location": f"@{self.full_qual_stage}/",
                     "replace_udf": True,
                 }

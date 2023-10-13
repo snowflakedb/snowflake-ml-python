@@ -1,5 +1,5 @@
 import json
-from typing import List, Literal, Optional, Sequence, cast
+from typing import Literal, Optional, Sequence, cast
 
 import numpy as np
 import pandas as pd
@@ -35,11 +35,9 @@ class SnowparkDataFrameHandler(base_handler.BaseDataHandler[snowflake.snowpark.D
         schema = data.schema
         for field in schema.fields:
             data_type = field.datatype
-            if isinstance(data_type, spt.ArrayType):
-                actual_data_type = data_type.element_type
-            else:
-                actual_data_type = data_type
-            if not any(type.is_same_snowpark_type(actual_data_type) for type in core.DataType):
+            try:
+                core.DataType.from_snowpark_type(data_type)
+            except snowml_exceptions.SnowflakeMLException:
                 raise snowml_exceptions.SnowflakeMLException(
                     error_code=error_codes.INVALID_DATA,
                     original_exception=ValueError(
@@ -51,20 +49,9 @@ class SnowparkDataFrameHandler(base_handler.BaseDataHandler[snowflake.snowpark.D
     def infer_signature(
         data: snowflake.snowpark.DataFrame, role: Literal["input", "output"]
     ) -> Sequence[core.BaseFeatureSpec]:
-        features: List[core.BaseFeatureSpec] = []
-        schema = data.schema
-        for field in schema.fields:
-            name = identifier.get_unescaped_names(field.name)
-            if isinstance(field.datatype, spt.ArrayType):
-                raise snowml_exceptions.SnowflakeMLException(
-                    error_code=error_codes.NOT_IMPLEMENTED,
-                    original_exception=NotImplementedError(
-                        "Cannot infer model signature from Snowpark DataFrame with Array Type."
-                    ),
-                )
-            else:
-                features.append(core.FeatureSpec(name=name, dtype=core.DataType.from_snowpark_type(field.datatype)))
-        return features
+        return pandas_handler.PandasDataFrameHandler.infer_signature(
+            SnowparkDataFrameHandler.convert_to_df(data), role=role
+        )
 
     @staticmethod
     def convert_to_df(

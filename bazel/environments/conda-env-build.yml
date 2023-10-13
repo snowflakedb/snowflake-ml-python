@@ -13,7 +13,6 @@ dependencies:
   - lightgbm==3.3.5
   - numpy==1.24.3
   - packaging==23.0
-  - pytimeparse==1.1.8
   - ruamel.yaml==0.17.21
   - scikit-learn==1.3.0
   - sphinx==5.0.2

@@ -1,6 +1,5 @@
 import inflection
 import numpy as np
-import pytest
 from absl.testing.absltest import TestCase, main
 from sklearn.datasets import load_diabetes
 from sklearn.linear_model import LinearRegression as SkLinearRegression
@@ -10,7 +9,6 @@ from snowflake.ml.utils.connection_params import SnowflakeLoginOptions
 from snowflake.snowpark import Session
 
 
-@pytest.mark.pip_incompatible
 class ColumnNameInferenceTest(TestCase):
     def setUp(self):
         """Creates Snowpark and Snowflake environments for testing."""

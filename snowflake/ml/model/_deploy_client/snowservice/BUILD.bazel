@@ -16,6 +16,7 @@ py_library(
     srcs = ["deploy.py"],
     data = [
         "templates/service_spec_template",
+        "templates/service_spec_template_with_model",
     ],
     deps = [
         ":deploy_options",

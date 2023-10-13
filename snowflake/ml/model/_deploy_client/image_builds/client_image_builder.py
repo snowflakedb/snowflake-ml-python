@@ -6,7 +6,7 @@ import subprocess
 import tempfile
 import time
 from enum import Enum
-from typing import List, Optional
+from typing import List
 
 from snowflake import snowpark
 from snowflake.ml._internal.exceptions import (
@@ -53,14 +53,8 @@ class ClientImageBuilder(base_image_builder.ImageBuilder):
         self.image_repo = image_repo
         self.session = session
 
-    def build_and_upload_image(self, image_to_pull: Optional[str] = None) -> None:
+    def build_and_upload_image(self) -> None:
         """Builds and uploads an image to the model registry.
-
-        Args:
-            image_to_pull: When set, skips building image locally; instead, pull image directly from public
-                repo. This is more of a workaround to support non-spcs-registry images.
-                TODO[shchen] remove such logic when first-party-image is supported on snowservice registry.
-
 
         Raises:
             SnowflakeMLException: Occurs when failed to build image or push to image registry.
@@ -117,13 +111,11 @@ class ClientImageBuilder(base_image_builder.ImageBuilder):
         ) as registry_cred, tempfile.TemporaryDirectory() as docker_config_dir:
             try:
                 _setup_docker_config(docker_config_dir=docker_config_dir, registry_cred=registry_cred)
-                if not image_to_pull:
-                    start = time.time()
-                    self._build_and_tag(docker_config_dir)
-                    end = time.time()
-                    logger.info(f"Time taken to build the image on the client: {end - start:.2f} seconds")
-                else:
-                    self._pull_and_tag(image_to_pull=image_to_pull)
+                start = time.time()
+                self._build_and_tag(docker_config_dir)
+                end = time.time()
+                logger.info(f"Time taken to build the image on the client: {end - start:.2f} seconds")
+
             except Exception as e:
                 raise snowml_exceptions.SnowflakeMLException(
                     error_code=error_codes.INTERNAL_DOCKER_ERROR,
@@ -181,22 +173,6 @@ class ClientImageBuilder(base_image_builder.ImageBuilder):
             docker_config_dir: Path to docker configuration directory, which stores the temporary session token.
         """
         self._build_image_from_context(docker_config_dir=docker_config_dir)
-
-    def _pull_and_tag(self, image_to_pull: str, platform: Platform = Platform.LINUX_AMD64) -> None:
-        """Pull image from public docker hub repo. Then tag it with the specified image tag
-
-        Args:
-            image_to_pull: Name of image to download.
-            platform: Specifies the target platform that matches the image to be downloaded
-        """
-
-        commands = ["docker", "pull", "--platform", platform.value, image_to_pull]
-        logger.debug(f"Running {str(commands)}")
-        self._run_docker_commands(commands)
-
-        commands = ["docker", "tag", image_to_pull, self.full_image_name]
-        logger.debug(f"Running {str(commands)}")
-        self._run_docker_commands(commands)
 
     def _run_docker_commands(self, commands: List[str]) -> None:
         """Run docker commands in a new child process.

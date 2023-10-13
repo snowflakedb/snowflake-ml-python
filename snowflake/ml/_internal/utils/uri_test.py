@@ -86,6 +86,9 @@ class UriTest(TestCase):
         """Return scheme of URI."""
         self.assertEqual(uri.get_uri_scheme("s3://my_bucket/"), "s3")
 
+    def test_get_stage_and_path(self) -> None:
+        self.assertEqual(uri.get_stage_and_path("@db.schema.stage/a/spec.yaml"), ("@db.schema.stage", "a/spec.yaml"))
+
 
 if __name__ == "__main__":
     main()

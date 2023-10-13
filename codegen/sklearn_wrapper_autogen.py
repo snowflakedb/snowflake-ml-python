@@ -113,7 +113,7 @@ class AutogenTool:
             List of generated files.
         """
 
-        template = open(self.template_path).read()
+        template = open(self.template_path, encoding="utf-8").read()
 
         generated_files_list = []
         for generator in generators:
@@ -130,7 +130,7 @@ class AutogenTool:
             # Create output src dir if it don't exist already.
             os.makedirs("/".join(output_file_name.split("/")[:-1]), exist_ok=True)
 
-            open(output_file_name, "w").write(wrapped_transform_string)
+            open(output_file_name, "w", encoding="utf-8").write(wrapped_transform_string)
             logging.info("Wrote file %s", output_file_name)
 
         return generated_files_list
@@ -149,7 +149,7 @@ class AutogenTool:
         Returns:
             List of generated files.
         """
-        test_template = open(self.template_path).read()
+        test_template = open(self.template_path, encoding="utf-8").read()
 
         generated_files_list = []
         for generator in generators:
@@ -166,7 +166,7 @@ class AutogenTool:
             # Create output test dir if it don't exist already.
             os.makedirs("/".join(test_output_file_name.split("/")[:-1]), exist_ok=True)
 
-            open(test_output_file_name, "w").write(wrapped_transform_string)
+            open(test_output_file_name, "w", encoding="utf-8").write(wrapped_transform_string)
             logging.info("Wrote file %s", test_output_file_name)
 
         return generated_files_list

@@ -361,6 +361,8 @@ def generate_requirements(
             )
         )
         sys.stdout.writelines(results)
+    elif (mode, format) == ("dev_version", "python"):
+        sys.stdout.writelines(f"REQUIREMENTS = {repr(snowflake_only_env)}\n")
     elif (mode, format) == ("version_requirements", "bzl"):
         extras_requirements = list(filter(lambda req_info: filter_by_extras(req_info, True, False), requirements))
         extras_results: MutableMapping[str, Sequence[str]] = {}
@@ -479,6 +481,7 @@ def main() -> None:
     VALID_SETTINGS = [
         ("validate", None, False),  # Validate the environment
         ("dev_version", "text", False),  # requirements.txt
+        ("dev_version", "python", True),  # sproc test dependencies list
         ("version_requirements", "bzl", False),  # wheel rule requirements
         ("version_requirements", "python", False),  # model deployment core dependencies list
         ("dev_version", "conda_env", False),  # dev conda-env.yml file

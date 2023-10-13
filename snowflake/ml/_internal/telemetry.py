@@ -324,7 +324,10 @@ def send_api_usage_telemetry(
                 telemetry_args["error"] = repr(e)
                 telemetry_args["error_code"] = e.error_code
                 e.original_exception._snowflake_ml_handled = True  # type: ignore[attr-defined]
-                raise e.original_exception from e
+                if e.suppress_source_trace:
+                    raise e.original_exception from None
+                else:
+                    raise e.original_exception from e
             else:
                 return res
             finally:

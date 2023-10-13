@@ -38,6 +38,7 @@ WITH_SNOWPARK=false
 MODE="continuous_run"
 SNOWML_DIR="snowml"
 SNOWPARK_DIR="snowpark-python"
+IS_NT=false
 
 while (($#)); do
     case $1 in
@@ -74,26 +75,70 @@ while (($#)); do
     shift
 done
 
+EXT=""
+BAZEL_ADDITIONAL_BUILD_FLAGS=()
+BAZEL_ADDITIONAL_STARTUP_FLAGS=()
+
+# Computing artifact location
+# Detect the platform, also update some platform specific bazel settings
+case "$(uname)" in
+  Linux)
+    PLATFORM="linux" ;;
+  Darwin)
+    PLATFORM="darwin" ;;
+  *NT*)
+    PLATFORM="windows"
+    IS_NT=true ;;
+esac
+
+# Detect the architecture
+ARCH="$(uname -m)"
+case "$ARCH" in
+  aarch64|ppc64le|arm64)
+    ARCH="arm64" ;;
+  *)
+    ARCH="amd64" ;;
+esac
+
+# Compute the platform-arch string used to download yq.
+case "${PLATFORM}_${ARCH}" in
+  linux_arm64|linux_amd64|darwin_arm64|darwin_amd64|windows_amd64)
+      ;;  # pass
+  *)
+    echo "Platform / Architecture is not supported by yq." >&2
+    exit 1
+    ;;
+esac
+
 # Check Python3.8 exist
 # TODO(SNOW-845592): ideally we should download py3.8 from conda if not exist. Currently we just fail.
-set +eu
-source /opt/rh/rh-python38/enable
-PYTHON38_EXIST=$?
-if [ $PYTHON38_EXIST -ne 0 ]; then
-    echo "Failed to execute tests: Python3.8 is not installed."
-    rm -rf "${TEMP_TEST_DIR}"
-    exit ${PYTHON38_EXIST}
+if [ "${ENV}" = "pip" ]; then
+    set +eu
+    source /opt/rh/rh-python38/enable
+    PYTHON38_EXIST=$?
+    if [ $PYTHON38_EXIST -ne 0 ]; then
+        echo "Failed to execute tests: Python3.8 is not installed."
+        rm -rf "${TEMP_TEST_DIR}"
+        exit ${PYTHON38_EXIST}
+    fi
+    set -eu
 fi
-set -eu
+
+if [ ${IS_NT} = true ]; then
+    EXT=".exe"
+    BAZEL_ADDITIONAL_BUILD_FLAGS+=(--nobuild_python_zip)
+    BAZEL_ADDITIONAL_BUILD_FLAGS+=(--enable_runfiles)
+    BAZEL_ADDITIONAL_STARTUP_FLAGS+=(--output_user_root=D:/broot)
+fi
 
 cd "${WORKSPACE}"
 
 # Check and download yq if not presented.
-_YQ_BIN="yq"
+_YQ_BIN="yq${EXT}"
 if ! command -v "${_YQ_BIN}" &>/dev/null; then
     TEMP_BIN=$(mktemp -d "${WORKSPACE}/tmp_bin_XXXXX")
-    curl -Ls https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64 -o "${TEMP_BIN}/yq" && chmod +x "${TEMP_BIN}/yq"
-    _YQ_BIN="${TEMP_BIN}/yq"
+    curl -Lsv https://github.com/mikefarah/yq/releases/latest/download/yq_${PLATFORM}_${ARCH}${EXT} -o "${TEMP_BIN}/yq${EXT}" && chmod +x "${TEMP_BIN}/yq${EXT}"
+    _YQ_BIN="${TEMP_BIN}/yq${EXT}"
 fi
 
 # Create temp release folder
@@ -109,12 +154,6 @@ echo "Extracted Package Version from code: ${VERSION}"
 OPTIONAL_REQUIREMENTS=()
 while IFS='' read -r line; do OPTIONAL_REQUIREMENTS+=("$line"); done < <("${_YQ_BIN}" '.requirements.run_constrained.[] | ... style=""' ci/conda_recipe/meta.yaml)
 
-# Generate and copy auto-gen tests.
-if [[ ${MODE} = "release" ]]; then
-    "${BAZEL}" build //tests/... --build_tag_filters=autogen_build
-    cp -r "$("${BAZEL}" info bazel-bin)/tests" "${TEMP_TEST_DIR}"
-fi
-
 # Compare test required dependencies with wheel pkg dependencies and exclude tests if necessary
 EXCLUDE_TESTS=$(mktemp "${TEMP_TEST_DIR}/exclude_tests_XXXXX")
 if [[ ${MODE} = "continuous_run" || ${MODE} = "release" ]]; then
@@ -122,10 +161,32 @@ if [[ ${MODE} = "continuous_run" || ${MODE} = "release" ]]; then
 elif [[ ${MODE} = "merge_gate" ]]; then
     ./ci/get_excluded_tests.sh -f "${EXCLUDE_TESTS}" -m all -b "${BAZEL}"
 fi
+
+# Generate and copy auto-gen tests.
+if [[ ${MODE} = "release" ]]; then
+# When release, we build all autogen tests
+    "${BAZEL}" "${BAZEL_ADDITIONAL_STARTUP_FLAGS[@]+"${BAZEL_ADDITIONAL_STARTUP_FLAGS[@]}"}" build "${BAZEL_ADDITIONAL_BUILD_FLAGS[@]+"${BAZEL_ADDITIONAL_BUILD_FLAGS[@]}"}" //tests/integ/...
+else
+# In other cases, we build required utility only.
+    "${BAZEL}" "${BAZEL_ADDITIONAL_STARTUP_FLAGS[@]+"${BAZEL_ADDITIONAL_STARTUP_FLAGS[@]}"}" build --build_tag_filters=-autogen_build,-autogen "${BAZEL_ADDITIONAL_BUILD_FLAGS[@]+"${BAZEL_ADDITIONAL_BUILD_FLAGS[@]}"}" //tests/integ/...
+fi
+
+# Rsync cannot work well with path that has drive letter in Windows,
+# Thus, these two rsync has to use relative path instead of absolute ones.
+
+rsync -av --exclude '*.runfiles_manifest' --exclude '*.runfiles/**' "bazel-bin/tests" .
+
 # Copy tests into temp directory
 pushd "${TEMP_TEST_DIR}"
-rsync -av --exclude-from "${EXCLUDE_TESTS}" "${WORKSPACE}/${SNOWML_DIR}/tests" .
+rsync -av --exclude-from "${EXCLUDE_TESTS}" "../${SNOWML_DIR}/tests" .
 popd
+
+# Bazel on windows is consuming a lot of memory, let's clean it before proceed to avoid OOM.
+if [ ${IS_NT} = true ]; then
+    "${BAZEL}" "${BAZEL_ADDITIONAL_STARTUP_FLAGS[@]+"${BAZEL_ADDITIONAL_STARTUP_FLAGS[@]}"}" clean --expunge
+    "${BAZEL}" "${BAZEL_ADDITIONAL_STARTUP_FLAGS[@]+"${BAZEL_ADDITIONAL_STARTUP_FLAGS[@]}"}" shutdown
+fi
+
 popd
 
 # Build snowml package
@@ -149,12 +210,10 @@ if [ "${ENV}" = "pip" ]; then
 
     # Build SnowML
     pushd ${SNOWML_DIR}
-    "${BAZEL}" build //snowflake/ml:wheel
+    "${BAZEL}" "${BAZEL_ADDITIONAL_STARTUP_FLAGS[@]+"${BAZEL_ADDITIONAL_STARTUP_FLAGS[@]}"}" build "${BAZEL_ADDITIONAL_BUILD_FLAGS[@]+"${BAZEL_ADDITIONAL_BUILD_FLAGS[@]}"}" //snowflake/ml:wheel
     cp "$(${BAZEL} info bazel-bin)/snowflake/ml/snowflake_ml_python-${VERSION}-py3-none-any.whl" "${WORKSPACE}"
     popd
 else
-    which conda
-
     # Clean conda cache
     conda clean --all --force-pkgs-dirs -y
 
@@ -183,7 +242,7 @@ pushd "${TEMP_TEST_DIR}"
 COMMON_PYTEST_FLAG=()
 COMMON_PYTEST_FLAG+=(--strict-markers) # Strict the pytest markers to avoid typo in markers
 COMMON_PYTEST_FLAG+=(--import-mode=append)
-COMMON_PYTEST_FLAG+=(-n 10)
+COMMON_PYTEST_FLAG+=(-n logical)
 
 if [ "${ENV}" = "pip" ]; then
     # Copy wheel package
@@ -196,10 +255,10 @@ if [ "${ENV}" = "pip" ]; then
     # otherwise it will fail in dependency resolution.
     python3.8 -m pip install --upgrade pip
     python3.8 -m pip list
-    python3.8 -m pip install "snowflake_ml_python-${VERSION}-py3-none-any.whl[all]" pytest-xdist inflection --no-cache-dir --force-reinstall
+    python3.8 -m pip install "snowflake_ml_python-${VERSION}-py3-none-any.whl[all]" pytest-xdist[psutil] -r "${WORKSPACE}/${SNOWML_DIR}/requirements.txt" --no-cache-dir --force-reinstall
     if [ "${WITH_SNOWPARK}" = true ]; then
         cp "$(find "${WORKSPACE}" -maxdepth 1 -iname 'snowflake_snowpark_python-*.whl')" "${TEMP_TEST_DIR}"
-        python3.8 -m pip install "$(find . -maxdepth 1 -iname 'snowflake_snowpark_python-*.whl')" --force-reinstall
+        python3.8 -m pip install "$(find . -maxdepth 1 -iname 'snowflake_snowpark_python-*.whl')" --no-deps --force-reinstall
     fi
     python3.8 -m pip list
 
@@ -216,12 +275,12 @@ else
     conda clean --all --force-pkgs-dirs -y
 
     # Create testing env
-    conda create -y -p testenv -c "file://${WORKSPACE}/conda-bld" -c "https://repo.anaconda.com/pkgs/snowflake/" --override-channels "python=3.8" snowflake-ml-python pytest-xdist inflection "${OPTIONAL_REQUIREMENTS[@]}"
+    conda create -y -p testenv -c "${WORKSPACE}/conda-bld" -c "https://repo.anaconda.com/pkgs/snowflake/" --override-channels "python=3.8" snowflake-ml-python pytest-xdist psutil inflection "${OPTIONAL_REQUIREMENTS[@]}"
     conda list -p testenv
 
     # Run integration tests
     set +e
-    TEST_SRCDIR="${TEMP_TEST_DIR}" conda run -p testenv --no-capture-output python3.8 -m pytest "${COMMON_PYTEST_FLAG[@]}" tests/integ/
+    TEST_SRCDIR="${TEMP_TEST_DIR}" conda run -p testenv --no-capture-output python -m pytest "${COMMON_PYTEST_FLAG[@]}" tests/integ/
     TEST_RETCODE=$?
     set -e
 

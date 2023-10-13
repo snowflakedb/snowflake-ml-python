@@ -133,13 +133,11 @@ class ModelLoadHygieneTest(absltest.TestCase):
                     )
 
     def test_zipimport_snowml(self) -> None:
-        snowml_path = list(importlib.import_module("snowflake.ml").__path__)[-1]
+        snowml_path, snowml_start_path = file_utils.get_package_path("snowflake.ml", strategy="last")
         with tempfile.TemporaryDirectory() as workspace:
             zipped_snowml_path = os.path.join(workspace, "snowml.zip")
             with open(zipped_snowml_path, "wb") as f:
-                with file_utils.zip_file_or_directory_to_stream(
-                    snowml_path, os.path.abspath(os.path.join(snowml_path, os.pardir, os.pardir))
-                ) as zip_stream:
+                with file_utils.zip_file_or_directory_to_stream(snowml_path, snowml_start_path) as zip_stream:
                     f.write(zip_stream.getbuffer())
 
             sys.path.append(zipped_snowml_path)
@@ -198,7 +196,9 @@ class ModelInterfaceTest(absltest.TestCase):
                 model=linear_model.LinearRegression(),
             )
 
-        with mock.patch.object(model_api, "_save", return_value=None) as mock_save:
+        mock_meta = mock.MagicMock()
+        mock_meta.signatures = mock.MagicMock()
+        with mock.patch.object(model_api, "_save", return_value=mock_meta) as mock_save:
             with mock.patch.object(FileOperation, "put_stream", return_value=None) as mock_put_stream:
                 with mock.patch.object(
                     env_utils, "validate_requirements_in_snowflake_conda_channel", return_value=[""]
@@ -211,7 +211,7 @@ class ModelInterfaceTest(absltest.TestCase):
                     )
             mock_save.assert_called_once()
 
-        with mock.patch.object(model_api, "_save", return_value=None) as mock_save:
+        with mock.patch.object(model_api, "_save", return_value=mock_meta) as mock_save:
             with mock.patch.object(FileOperation, "put_stream", return_value=None) as mock_put_stream:
                 with mock.patch.object(
                     env_utils, "validate_requirements_in_snowflake_conda_channel", return_value=[""]
@@ -238,7 +238,7 @@ class ModelInterfaceTest(absltest.TestCase):
                 sample_input=d,
             )
 
-        with mock.patch.object(model_api, "_save", return_value=None):
+        with mock.patch.object(model_api, "_save", return_value=mock_meta):
             with mock.patch.object(FileOperation, "put_stream", return_value=None):
                 with mock.patch.object(
                     env_utils, "validate_requirements_in_snowflake_conda_channel", return_value=None
@@ -252,7 +252,7 @@ class ModelInterfaceTest(absltest.TestCase):
                             sample_input=d,
                         )
                         self.assertListEqual(
-                            cm.output,
+                            cm.output[:1],
                             [
                                 (
                                     f"INFO:absl:Local snowflake-ml-python library has version {snowml_env.VERSION},"
@@ -262,7 +262,7 @@ class ModelInterfaceTest(absltest.TestCase):
                             ],
                         )
 
-        with mock.patch.object(model_api, "_save", return_value=None):
+        with mock.patch.object(model_api, "_save", return_value=mock_meta):
             with mock.patch.object(FileOperation, "put_stream", return_value=None) as mock_put_stream:
                 with mock.patch.object(
                     env_utils, "validate_requirements_in_snowflake_conda_channel", return_value=[""]
@@ -276,7 +276,7 @@ class ModelInterfaceTest(absltest.TestCase):
                     )
             mock_put_stream.assert_called_once_with(mock.ANY, stage_path, auto_compress=False, overwrite=False)
 
-        with mock.patch.object(model_api, "_save", return_value=None):
+        with mock.patch.object(model_api, "_save", return_value=mock_meta):
             with mock.patch.object(FileOperation, "put_stream", return_value=None) as mock_put_stream:
                 with mock.patch.object(
                     env_utils, "validate_requirements_in_snowflake_conda_channel", return_value=[""]

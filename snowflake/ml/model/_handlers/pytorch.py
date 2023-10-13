@@ -109,7 +109,7 @@ class _PyTorchHandler(_base._ModelHandler["torch.nn.Module"]):
             name=name, model_type=_PyTorchHandler.handler_type, path=_PyTorchHandler.MODEL_BLOB_FILE
         )
         model_meta.models[name] = base_meta
-        model_meta._include_if_absent([model_meta_api.Dependency(conda_name="pytorch", pip_name="torch")])
+        model_meta._include_if_absent([model_meta_api.Dependency(conda_name="pytorch", pip_req="torch")])
 
         model_meta.cuda_version = kwargs.get("cuda_version", model_meta_api._DEFAULT_CUDA_VERSION)
 

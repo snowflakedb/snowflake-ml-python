@@ -113,7 +113,7 @@ class _TensorFlowHandler(_base._ModelHandler["tensorflow.Module"]):
             name=name, model_type=_TensorFlowHandler.handler_type, path=_TensorFlowHandler.MODEL_BLOB_FILE
         )
         model_meta.models[name] = base_meta
-        model_meta._include_if_absent([model_meta_api.Dependency(conda_name="tensorflow", pip_name="tensorflow")])
+        model_meta._include_if_absent([model_meta_api.Dependency(conda_name="tensorflow", pip_req="tensorflow")])
 
         model_meta.cuda_version = kwargs.get("cuda_version", model_meta_api._DEFAULT_CUDA_VERSION)
 

@@ -233,32 +233,12 @@ async def predict(request: requests.Request) -> responses.JSONResponse:
     return resp
 
 
-def _in_test_mode() -> bool:
-    """Check if the code is running in test mode.
-
-    Specifically, it checks for the presence of
-    - "PYTEST_CURRENT_TEST" environment variable, which is automatically set by Pytest when running tests, and
-    - "TEST_WORKSPACE" environment variable, which is set by Bazel test, and
-    - "TEST_SRCDIR" environment variable, which is set by the Absl test.
-
-    Returns:
-        True if in test mode; otherwise, returns False
-    """
-    is_running_under_py_test = "PYTEST_CURRENT_TEST" in os.environ
-    is_running_under_bazel_test = "TEST_WORKSPACE" in os.environ
-    is_running_under_absl_test = "TEST_SRCDIR" in os.environ
-    return is_running_under_py_test or is_running_under_bazel_test or is_running_under_absl_test
-
-
 def run_app() -> applications.Starlette:
-    if _in_test_mode():
-        _MODEL_LOADING_EVENT.set()
-    else:
-        # TODO[shchen]: SNOW-893654. Before SnowService supports Startup probe, or extends support for Readiness probe
-        # with configurable failureThreshold, we will have to load the model in a separate thread in order to prevent
-        # gunicorn worker timeout.
-        model_loading_worker = CustomThread(target=_run_setup)
-        model_loading_worker.start()
+    # TODO[shchen]: SNOW-893654. Before SnowService supports Startup probe, or extends support for Readiness probe
+    # with configurable failureThreshold, we will have to load the model in a separate thread in order to prevent
+    # gunicorn worker timeout.
+    model_loading_worker = CustomThread(target=_run_setup)
+    model_loading_worker.start()
 
     routes = [
         routing.Route("/health", endpoint=ready, methods=["GET"]),

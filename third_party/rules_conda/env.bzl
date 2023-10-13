@@ -36,7 +36,7 @@ def _conda_cmd(rctx, conda_args, environment = {}):
         # all environment variables are stripped. PATH and environment variables passed in are
         # added above. this is to prevent the conda_entrypoint from recognizing the conda
         # environment (if any) where bazel was invoked.
-        [conda_entrypoint] + conda_args,
+        [conda_entrypoint, "--root-prefix", "./"] + conda_args,
         quiet = rctx.attr.quiet,
         environment = actual_environment,
         timeout = rctx.attr.timeout,

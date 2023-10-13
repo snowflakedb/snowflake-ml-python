@@ -17,6 +17,8 @@ from snowflake.snowpark import functions as F
 
 _PROJECT = "ModelDevelopment"
 _SUBPROJECT = "Metrics"
+_MULTIOUTPUT_UNIFORM_AVG = "uniform_average"
+_MULTIOUTPUT_RAW_VALUES = "raw_values"
 
 
 @telemetry.send_api_usage_telemetry(project=_PROJECT, subproject=_SUBPROJECT)
@@ -329,50 +331,37 @@ def mean_absolute_error(
             MAE output is non-negative floating point. The best value is 0.0.
     """
     metrics_utils.check_label_columns(y_true_col_names, y_pred_col_names)
-
     session = df._session
     assert session is not None
-    sproc_name = snowpark_utils.random_name_for_temp_object(snowpark_utils.TempObjectType.PROCEDURE)
-    sklearn_release = version.parse(sklearn.__version__).release
     statement_params = telemetry.get_statement_params(_PROJECT, _SUBPROJECT)
-    cols = metrics_utils.flatten_cols([y_true_col_names, y_pred_col_names, sample_weight_col_name])
-    queries = df[cols].queries["queries"]
-    pickled_result_module = cloudpickle.dumps(result)
+    y_true = y_true_col_names if isinstance(y_true_col_names, list) else [y_true_col_names]
+    y_pred = y_pred_col_names if isinstance(y_pred_col_names, list) else [y_pred_col_names]
+    num_outputs = len(y_true)
+    _validate_multioutput(multioutput, num_outputs)
 
-    @F.sproc(  # type: ignore[misc]
-        is_permanent=False,
-        session=session,
-        name=sproc_name,
-        replace=True,
-        packages=[
-            "cloudpickle",
-            f"scikit-learn=={sklearn_release[0]}.{sklearn_release[1]}.*",
-            "snowflake-snowpark-python",
-        ],
-        statement_params=statement_params,
-        anonymous=True,
-    )
-    def mean_absolute_error_anon_sproc(session: snowpark.Session) -> bytes:
-        for query in queries[:-1]:
-            _ = session.sql(query).collect(statement_params=statement_params)
-        df = session.sql(queries[-1]).to_pandas(statement_params=statement_params)
-        y_true = df[y_true_col_names]
-        y_pred = df[y_pred_col_names]
-        sample_weight = df[sample_weight_col_name] if sample_weight_col_name else None
-
-        loss = metrics.mean_absolute_error(
-            y_true,
-            y_pred,
-            sample_weight=sample_weight,
-            multioutput=multioutput,
+    for i in range(num_outputs):
+        df = df.with_column(
+            "diff" + str(i),
+            F.abs(df[y_pred[i]] - df[y_true[i]]),
         )
+    output_errors = np.array(
+        [
+            metrics_utils.weighted_sum(
+                df=df,
+                sample_score_column=df["diff" + str(i)],
+                sample_weight_column=df[sample_weight_col_name] if sample_weight_col_name else None,
+                normalize=True,
+                statement_params=statement_params,
+            )
+            for i in range(num_outputs)
+        ]
+    )
 
-        result_module = cloudpickle.loads(pickled_result_module)
-        return result_module.serialize(session, loss)  # type: ignore[no-any-return]
+    if multioutput == _MULTIOUTPUT_RAW_VALUES:
+        return output_errors
 
-    result_object = result.deserialize(session, mean_absolute_error_anon_sproc(session))
-    loss: Union[float, npt.NDArray[np.float_]] = result_object
-    return loss
+    weights = None if multioutput == _MULTIOUTPUT_UNIFORM_AVG else multioutput
+    return float(np.average(output_errors, weights=weights))
 
 
 @telemetry.send_api_usage_telemetry(project=_PROJECT, subproject=_SUBPROJECT)
@@ -420,49 +409,38 @@ def mean_absolute_percentage_error(
             Note that we return a large value instead of `inf` when `y_true` is zero.
     """
     metrics_utils.check_label_columns(y_true_col_names, y_pred_col_names)
-
     session = df._session
     assert session is not None
-    sproc_name = snowpark_utils.random_name_for_temp_object(snowpark_utils.TempObjectType.PROCEDURE)
-    sklearn_release = version.parse(sklearn.__version__).release
     statement_params = telemetry.get_statement_params(_PROJECT, _SUBPROJECT)
-    cols = metrics_utils.flatten_cols([y_true_col_names, y_pred_col_names, sample_weight_col_name])
-    queries = df[cols].queries["queries"]
-    pickled_result_module = cloudpickle.dumps(result)
+    y_true = y_true_col_names if isinstance(y_true_col_names, list) else [y_true_col_names]
+    y_pred = y_pred_col_names if isinstance(y_pred_col_names, list) else [y_pred_col_names]
+    num_outputs = len(y_true)
+    _validate_multioutput(multioutput, num_outputs)
 
-    @F.sproc(  # type: ignore[misc]
-        is_permanent=False,
-        session=session,
-        name=sproc_name,
-        replace=True,
-        packages=[
-            "cloudpickle",
-            f"scikit-learn=={sklearn_release[0]}.{sklearn_release[1]}.*",
-            "snowflake-snowpark-python",
-        ],
-        statement_params=statement_params,
-        anonymous=True,
-    )
-    def mean_absolute_percentage_error_anon_sproc(session: snowpark.Session) -> bytes:
-        for query in queries[:-1]:
-            _ = session.sql(query).collect(statement_params=statement_params)
-        df = session.sql(queries[-1]).to_pandas(statement_params=statement_params)
-        y_true = df[y_true_col_names]
-        y_pred = df[y_pred_col_names]
-        sample_weight = df[sample_weight_col_name] if sample_weight_col_name else None
-
-        loss = metrics.mean_absolute_percentage_error(
-            y_true,
-            y_pred,
-            sample_weight=sample_weight,
-            multioutput=multioutput,
+    epsilon = float(np.finfo(np.float64).eps)
+    for i in range(num_outputs):
+        df = df.with_column(
+            "MAPE" + str(i),
+            F.abs(df[y_pred[i]] - df[y_true[i]]) / F.iff(F.abs(df[y_true[i]]) > epsilon, F.abs(df[y_true[i]]), epsilon),
         )
-        result_module = cloudpickle.loads(pickled_result_module)
-        return result_module.serialize(session, loss)  # type: ignore[no-any-return]
+    output_errors = np.array(
+        [
+            metrics_utils.weighted_sum(
+                df=df,
+                sample_score_column=df["MAPE" + str(i)],
+                sample_weight_column=df[sample_weight_col_name] if sample_weight_col_name else None,
+                normalize=True,
+                statement_params=statement_params,
+            )
+            for i in range(num_outputs)
+        ]
+    )
 
-    result_object = result.deserialize(session, mean_absolute_percentage_error_anon_sproc(session))
-    loss: Union[float, npt.NDArray[np.float_]] = result_object
-    return loss
+    if multioutput == _MULTIOUTPUT_RAW_VALUES:
+        return output_errors
+
+    weights = None if multioutput == _MULTIOUTPUT_UNIFORM_AVG else multioutput
+    return float(np.average(output_errors, weights=weights))
 
 
 @telemetry.send_api_usage_telemetry(project=_PROJECT, subproject=_SUBPROJECT)
@@ -499,50 +477,40 @@ def mean_squared_error(
             array of floating point values, one for each individual target.
     """
     metrics_utils.check_label_columns(y_true_col_names, y_pred_col_names)
-
     session = df._session
     assert session is not None
-    sproc_name = snowpark_utils.random_name_for_temp_object(snowpark_utils.TempObjectType.PROCEDURE)
-    sklearn_release = version.parse(sklearn.__version__).release
     statement_params = telemetry.get_statement_params(_PROJECT, _SUBPROJECT)
-    cols = metrics_utils.flatten_cols([y_true_col_names, y_pred_col_names, sample_weight_col_name])
-    queries = df[cols].queries["queries"]
-    pickled_result_module = cloudpickle.dumps(result)
+    y_true = y_true_col_names if isinstance(y_true_col_names, list) else [y_true_col_names]
+    y_pred = y_pred_col_names if isinstance(y_pred_col_names, list) else [y_pred_col_names]
+    num_outputs = len(y_true)
+    _validate_multioutput(multioutput, num_outputs)
 
-    @F.sproc(  # type: ignore[misc]
-        is_permanent=False,
-        session=session,
-        name=sproc_name,
-        replace=True,
-        packages=[
-            "cloudpickle",
-            f"scikit-learn=={sklearn_release[0]}.{sklearn_release[1]}.*",
-            "snowflake-snowpark-python",
-        ],
-        statement_params=statement_params,
-        anonymous=True,
-    )
-    def mean_squared_error_anon_sproc(session: snowpark.Session) -> bytes:
-        for query in queries[:-1]:
-            _ = session.sql(query).collect(statement_params=statement_params)
-        df = session.sql(queries[-1]).to_pandas(statement_params=statement_params)
-        y_true = df[y_true_col_names]
-        y_pred = df[y_pred_col_names]
-        sample_weight = df[sample_weight_col_name] if sample_weight_col_name else None
-
-        loss = metrics.mean_squared_error(
-            y_true,
-            y_pred,
-            sample_weight=sample_weight,
-            multioutput=multioutput,
-            squared=squared,
+    for i in range(num_outputs):
+        df = df.with_column(
+            "diff" + str(i),
+            F.pow(df[y_true[i]] - df[y_pred[i]], 2),
         )
-        result_module = cloudpickle.loads(pickled_result_module)
-        return result_module.serialize(session, loss)  # type: ignore[no-any-return]
 
-    result_object = result.deserialize(session, mean_squared_error_anon_sproc(session))
-    loss: Union[float, npt.NDArray[np.float_]] = result_object
-    return loss
+    output_errors = np.array(
+        [
+            metrics_utils.weighted_sum(
+                df=df,
+                sample_score_column=df["diff" + str(i)],
+                sample_weight_column=df[sample_weight_col_name] if sample_weight_col_name else None,
+                normalize=True,
+                statement_params=statement_params,
+            )
+            for i in range(num_outputs)
+        ]
+    )
+    if not squared:
+        output_errors = np.sqrt(output_errors)
+
+    if multioutput == _MULTIOUTPUT_RAW_VALUES:
+        return output_errors
+
+    weights = None if multioutput == _MULTIOUTPUT_UNIFORM_AVG else multioutput
+    return float(np.average(output_errors, weights=weights))
 
 
 @telemetry.send_api_usage_telemetry(project=_PROJECT, subproject=_SUBPROJECT)
@@ -579,3 +547,30 @@ def r2_score(*, df: snowpark.DataFrame, y_true_col_name: str, y_pred_col_name: s
         function_name=telemetry.get_statement_params_full_func_name(inspect.currentframe(), None),
     )
     return float(df_r_square.collect(statement_params=statement_params)[0][0])
+
+
+def _validate_multioutput(multioutput: Union[str, npt.ArrayLike], num_outputs: int) -> None:
+    """Validates multioutput parameter for MAPE calculation.
+
+    Args:
+        multioutput: Parameter specifying how to deal with multiple outputs.
+        num_outputs: Integer representing number of outputs.
+
+    Raises:
+        ValueError: multioutput parameter is invalid.
+
+    """
+    allowed_str_vals = ("raw_values", "uniform_average")
+    if isinstance(multioutput, str):
+        if multioutput not in allowed_str_vals:
+            raise ValueError(
+                f"Allowed 'multioutput' string values are {allowed_str_vals}. You provided multioutput={multioutput}"
+            )
+    else:
+        multioutput_np = np.array(multioutput)
+        if num_outputs == 1:
+            raise ValueError("Custom weights are useful only in multi-output cases.")
+        elif num_outputs != len(multioutput_np):
+            raise ValueError(
+                f"There must be equally many custom weights ({len(multioutput_np)}) as outputs ({num_outputs})."
+            )

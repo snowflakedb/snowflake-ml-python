@@ -2,7 +2,10 @@
 from typing import TYPE_CHECKING, Sequence, TypedDict, TypeVar, Union
 
 import numpy.typing as npt
-from typing_extensions import NotRequired
+from typing_extensions import NotRequired, Required
+
+from snowflake.ml.model import deploy_platforms
+from snowflake.ml.model._signatures import core
 
 if TYPE_CHECKING:
     import mlflow
@@ -151,6 +154,7 @@ class SnowparkContainerServiceDeployOptions(DeployOptions):
     num_workers: NotRequired[int]
     enable_remote_image_build: NotRequired[bool]
     force_image_build: NotRequired[bool]
+    model_in_image: NotRequired[bool]
 
 
 class BaseModelSaveOption(TypedDict):
@@ -229,3 +233,45 @@ class ModelLoadOption(TypedDict):
     """
 
     use_gpu: NotRequired[bool]
+
+
+class SnowparkContainerServiceDeployDetails(TypedDict):
+    """
+    Attributes:
+        image_name: Full image name.
+        service_spec: YAML service spec.
+        service_function_sql: SQL for service function creation.
+    """
+
+    image_name: str
+    service_spec: str
+    service_function_sql: str
+
+
+class WarehouseDeployDetails(TypedDict):
+    ...
+
+
+DeployDetails = Union[
+    SnowparkContainerServiceDeployDetails,
+    WarehouseDeployDetails,
+]
+
+
+class Deployment(TypedDict):
+    """Deployment information.
+
+    Attributes:
+        name: Name of the deployment.
+        platform: Target platform to deploy the model.
+        target_method: Target method name.
+        signature: The signature of the model method.
+        options: Additional options when deploying the model.
+    """
+
+    name: Required[str]
+    platform: Required[deploy_platforms.TargetPlatform]
+    target_method: Required[str]
+    signature: core.ModelSignature
+    options: Required[DeployOptions]
+    details: NotRequired[DeployDetails]

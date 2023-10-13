@@ -1,0 +1,21 @@
+spec:
+  container:
+    - name: ${inference_server_container_name}
+      image: ${image}
+      env:
+        MODEL_ZIP_STAGE_PATH: ${model_zip_stage_path}
+        TARGET_METHOD: ${target_method}
+        NUM_WORKERS: ${num_workers}
+        SNOWML_USE_GPU: ${use_gpu}
+      readinessProbe:
+        port: 5000
+        path: /health
+      volumeMounts:
+        - name: vol1
+          mountPath: /local/user/vol1
+  endpoint:
+    - name: ${predict_endpoint_name}
+      port: 5000
+  volume:
+    - name: vol1
+      source: local  # only local emptyDir volume is supported

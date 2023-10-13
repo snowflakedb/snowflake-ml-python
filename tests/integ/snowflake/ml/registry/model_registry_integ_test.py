@@ -3,14 +3,12 @@ from typing import Dict
 
 import numpy as np
 import pandas as pd
-import pytest
 from absl.testing import absltest
 from sklearn import metrics
 
 from snowflake import connector
-from snowflake.ml._internal.utils import identifier
+from snowflake.ml.dataset import dataset
 from snowflake.ml.registry import _ml_artifact, model_registry
-from snowflake.ml.training_dataset import training_dataset
 from snowflake.ml.utils import connection_params
 from snowflake.snowpark import Session
 from tests.integ.snowflake.ml.test_utils import (
@@ -191,22 +189,23 @@ class TestModelRegistryInteg(absltest.TestCase):
 
         # Test permanent deployment
         permanent_deployment_name = f"{model_name}_{model_version}_perm_deploy"
-        model_ref.deploy(  # type: ignore[attr-defined]
+        deploy_info = model_ref.deploy(  # type: ignore[attr-defined]
             deployment_name=permanent_deployment_name,
             target_method="predict",
             permanent=True,
-            options={"relax_version": test_env_utils.is_in_pip_env()},
         )
+        self.assertEqual(deploy_info["details"], {})
         remote_prediction_perm = model_ref.predict(permanent_deployment_name, test_features)
         np.testing.assert_allclose(remote_prediction_perm.to_numpy(), np.expand_dims(local_prediction, axis=1))
 
         custom_permanent_deployment_name = f"{model_name}_{model_version}_custom_perm_deploy"
-        model_ref.deploy(  # type: ignore[attr-defined]
+        deploy_info = model_ref.deploy(  # type: ignore[attr-defined]
             deployment_name=custom_permanent_deployment_name,
             target_method="predict_proba",
             permanent=True,
-            options={"permanent_udf_stage_location": self.perm_stage, "relax_version": test_env_utils.is_in_pip_env()},
+            options={"permanent_udf_stage_location": self.perm_stage},
         )
+        self.assertEqual(deploy_info["details"], {})
         remote_prediction_proba_perm = model_ref.predict(custom_permanent_deployment_name, test_features)
         np.testing.assert_allclose(remote_prediction_proba_perm.to_numpy(), local_prediction_proba)
 
@@ -251,7 +250,6 @@ class TestModelRegistryInteg(absltest.TestCase):
             deployment_name=temp_deployment_name,
             target_method="predict",
             permanent=False,
-            options={"relax_version": test_env_utils.is_in_pip_env()},
         )
         remote_prediction_temp = model_ref.predict(temp_deployment_name, test_features)
         np.testing.assert_allclose(remote_prediction_temp.to_numpy(), np.expand_dims(local_prediction, axis=1))
@@ -264,7 +262,6 @@ class TestModelRegistryInteg(absltest.TestCase):
         filtered_model_list = model_list.loc[model_list["ID"] == model_ref._id].reset_index(drop=True)
         self.assertEqual(filtered_model_list.shape[0], 0)
 
-    @pytest.mark.pip_incompatible
     def test_snowml_model(self) -> None:
         registry = model_registry.ModelRegistry(session=self._session, database_name=self.registry_name)
 
@@ -292,11 +289,12 @@ class TestModelRegistryInteg(absltest.TestCase):
         pd.testing.assert_frame_equal(local_prediction, restored_prediction)
 
         temp_predict_deployment_name = f"{model_name}_{model_version}_predict_temp_deploy"
-        model_ref.deploy(  # type: ignore[attr-defined]
+        deploy_info = model_ref.deploy(  # type: ignore[attr-defined]
             deployment_name=temp_predict_deployment_name,
             target_method="predict",
             permanent=False,
         )
+        self.assertEqual(deploy_info["details"], {})
         remote_prediction_temp = model_ref.predict(temp_predict_deployment_name, test_features)
 
         # TODO: Remove check_dtype=False after SNOW-853634 gets fixed.
@@ -314,7 +312,6 @@ class TestModelRegistryInteg(absltest.TestCase):
 
         registry.delete_model(model_name=model_name, model_version=model_version, delete_artifact=True)
 
-    @pytest.mark.pip_incompatible
     def test_snowml_pipeline(self) -> None:
         registry = model_registry.ModelRegistry(session=self._session, database_name=self.registry_name)
 
@@ -341,11 +338,12 @@ class TestModelRegistryInteg(absltest.TestCase):
         pd.testing.assert_frame_equal(local_prediction.to_pandas(), restored_prediction.to_pandas())
 
         temp_predict_deployment_name = f"{model_name}_{model_version}_predict_temp_deploy"
-        model_ref.deploy(  # type: ignore[attr-defined]
+        deploy_info = model_ref.deploy(  # type: ignore[attr-defined]
             deployment_name=temp_predict_deployment_name,
             target_method="predict",
             permanent=False,
         )
+        self.assertEqual(deploy_info["details"], {})
         remote_prediction_temp = model_ref.predict(temp_predict_deployment_name, test_features.to_pandas())
         # TODO: Remove .astype(dtype={"OUTPUT_TARGET": np.float64} after SNOW-853638 gets fixed.
         pd.testing.assert_frame_equal(
@@ -353,25 +351,25 @@ class TestModelRegistryInteg(absltest.TestCase):
             local_prediction.to_pandas().astype(dtype={"OUTPUT_TARGET": np.float64}),
         )
 
-    @pytest.mark.pip_incompatible
-    def test_log_model_with_training_dataset(self) -> None:
+    def test_log_model_with_dataset(self) -> None:
         registry = model_registry.ModelRegistry(session=self._session, database_name=self.registry_name)
 
-        model_name = "snowml_test_training_dataset"
+        model_name = "snowml_test_dataset"
         model_version = self.run_id
-        model, test_features, training_data_df = model_factory.ModelFactory.prepare_snowml_model_xgb()
+        model, test_features, dataset_df = model_factory.ModelFactory.prepare_snowml_model_xgb()
 
-        database_name = identifier.get_unescaped_names(self._session.get_current_database())
-        schema_name = identifier.get_unescaped_names(self._session.get_current_schema())
-        dummy_materialized_table_full_path = f"{database_name}.{schema_name}.dummy_materialized_table"
+        dummy_materialized_table_full_path = f"{registry._fully_qualified_schema_name()}.DUMMY_MATERIALIZED_TABLE"
         dummy_snapshot_table_full_path = f"{dummy_materialized_table_full_path}_SNAPSHOT"
-        self._session.create_dataframe(training_data_df).write.mode("overwrite").save_as_table(
+        self._session.create_dataframe(dataset_df).write.mode("overwrite").save_as_table(
+            f"{dummy_materialized_table_full_path}"
+        )
+        self._session.create_dataframe(dataset_df).write.mode("overwrite").save_as_table(
             f"{dummy_snapshot_table_full_path}"
         )
 
         spine_query = f"SELECT * FROM {dummy_materialized_table_full_path}"
 
-        fs_metadata = training_dataset.FeatureStoreMetadata(
+        fs_metadata = dataset.FeatureStoreMetadata(
             spine_query=spine_query,
             connection_params={
                 "database": "test_db",
@@ -380,7 +378,7 @@ class TestModelRegistryInteg(absltest.TestCase):
             },
             features=[],
         )
-        dummy_training_dataset = training_dataset.TrainingDataset(
+        dummy_dataset = dataset.Dataset(
             self._session,
             df=self._session.sql(spine_query),
             materialized_table=dummy_materialized_table_full_path,
@@ -388,26 +386,26 @@ class TestModelRegistryInteg(absltest.TestCase):
             timestamp_col="ts",
             label_cols=["TARGET"],
             feature_store_metadata=fs_metadata,
-            desc="a dummy training dataset metadata",
+            desc="a dummy dataset metadata",
         )
         cur_user = self._session.sql("SELECT CURRENT_USER()").collect()[0]["CURRENT_USER()"]
-        self.assertEqual(dummy_training_dataset.id, dummy_training_dataset.id)
-        self.assertEqual(dummy_training_dataset.owner, cur_user)
-        self.assertIsNotNone(dummy_training_dataset.name, dummy_snapshot_table_full_path)
-        self.assertIsNotNone(dummy_training_dataset.generation_timestamp)
+        self.assertEqual(dummy_dataset.id, dummy_dataset.id)
+        self.assertEqual(dummy_dataset.owner, cur_user)
+        self.assertIsNotNone(dummy_dataset.name, dummy_snapshot_table_full_path)
+        self.assertIsNotNone(dummy_dataset.generation_timestamp)
 
-        minimal_training_dataset = training_dataset.TrainingDataset(
+        minimal_dataset = dataset.Dataset(
             self._session,
             df=self._session.sql(spine_query),
         )
-        self.assertEqual(minimal_training_dataset.id, minimal_training_dataset.id)
-        self.assertEqual(minimal_training_dataset.owner, cur_user)
-        self.assertEqual(minimal_training_dataset.name, "")
-        self.assertIsNotNone(minimal_training_dataset.generation_timestamp)
+        self.assertEqual(minimal_dataset.id, minimal_dataset.id)
+        self.assertEqual(minimal_dataset.owner, cur_user)
+        self.assertEqual(minimal_dataset.name, "")
+        self.assertIsNotNone(minimal_dataset.generation_timestamp)
 
         with self.assertRaisesRegex(
             ValueError,
-            "Only one of sample_input_data and training_dataset should be provided.",
+            "Only one of sample_input_data and dataset should be provided.",
         ):
             registry.log_model(
                 model_name=model_name,
@@ -417,16 +415,16 @@ class TestModelRegistryInteg(absltest.TestCase):
                     test_env_utils.get_latest_package_versions_in_server(self._session, "snowflake-snowpark-python")
                 ],
                 sample_input_data=test_features,
-                training_dataset=dummy_training_dataset,
+                dataset=dummy_dataset,
                 options={"embed_local_ml_library": True},
             )
 
         test_combinations = [
-            (model_version, dummy_training_dataset),
-            (f"{model_version}.2", dummy_training_dataset),
-            (f"{model_version}.3", minimal_training_dataset),
+            (model_version, dummy_dataset),
+            (f"{model_version}.2", dummy_dataset),
+            (f"{model_version}.3", minimal_dataset),
         ]
-        for version, dataset in test_combinations:
+        for version, ds in test_combinations:
             registry.log_model(
                 model_name=model_name,
                 model_version=version,
@@ -435,23 +433,21 @@ class TestModelRegistryInteg(absltest.TestCase):
                     test_env_utils.get_latest_package_versions_in_server(self._session, "snowflake-snowpark-python")
                 ],
                 options={"embed_local_ml_library": True},
-                training_dataset=dataset,
+                dataset=ds,
             )
 
-            # test deserialized training dataset from get_training_dataset
-            des_ds_0 = registry.get_training_dataset(model_name, version)
+            # test deserialized dataset from get_dataset
+            des_ds_0 = registry.get_dataset(model_name, version)
             self.assertIsNotNone(des_ds_0)
-            self.assertEqual(des_ds_0, dataset)
+            self.assertEqual(des_ds_0, ds)
 
-            # test deserialized training dataset from list_artifacts
+            # test deserialized dataset from list_artifacts
             rows_list = registry.list_artifacts(model_name, version).collect()
             self.assertEqual(len(rows_list), 1)
-            self.assertEqual(rows_list[0]["ID"], dataset.id)
-            self.assertEqual(
-                _ml_artifact.ArtifactType[rows_list[0]["TYPE"]], _ml_artifact.ArtifactType.TRAINING_DATASET
-            )
-            des_ds_1 = training_dataset.TrainingDataset.from_json(rows_list[0]["ARTIFACT_SPEC"], self._session)
-            self.assertEqual(des_ds_1, dataset)
+            self.assertEqual(rows_list[0]["ID"], ds.id)
+            self.assertEqual(_ml_artifact.ArtifactType[rows_list[0]["TYPE"]], _ml_artifact.ArtifactType.DATASET)
+            des_ds_1 = dataset.Dataset.from_json(rows_list[0]["ARTIFACT_SPEC"], self._session)
+            self.assertEqual(des_ds_1, ds)
 
 
 if __name__ == "__main__":

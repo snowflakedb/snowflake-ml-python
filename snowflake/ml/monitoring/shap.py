@@ -68,7 +68,7 @@ class ShapExplainer:
         project=_PROJECT,
         subproject=_SUBPROJECT,
     )
-    @snowpark._internal.utils.private_preview(version="1.0.9")  # TODO: update versions when release
+    @snowpark._internal.utils.private_preview(version="1.0.10")  # TODO: update versions when release
     def get_shap(self, input_df: snowpark.DataFrame) -> Any:
         """Will invoke server udf to compute shap.
 
@@ -87,7 +87,7 @@ class ShapExplainer:
         project=_PROJECT,
         subproject=_SUBPROJECT,
     )
-    @snowpark._internal.utils.private_preview(version="1.0.9")  # TODO: update versions when release
+    @snowpark._internal.utils.private_preview(version="1.0.10")  # TODO: update versions when release
     def __call__(self, input_df: snowpark.DataFrame) -> Any:
         """Will invoke server udf to compute shap.
 

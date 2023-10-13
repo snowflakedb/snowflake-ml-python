@@ -10,7 +10,7 @@ from snowflake import connector, snowpark
 from snowflake.ml._internal import telemetry
 from snowflake.ml._internal.utils import formatting, identifier, uri
 from snowflake.ml.model import _model
-from snowflake.ml.registry import _schema, model_registry
+from snowflake.ml.registry import _initial_schema, _schema, model_registry
 from snowflake.ml.test_utils import mock_data_frame, mock_session
 
 _DATABASE_NAME = identifier.get_inferred_name("_SYSTEM_MODEL_REGISTRY")
@@ -19,6 +19,7 @@ _REGISTRY_TABLE_NAME = identifier.get_inferred_name("_SYSTEM_REGISTRY_MODELS")
 _ARTIFACTS_TABLE_NAME = identifier.get_inferred_name("_SYSTEM_REGISTRY_ARTIFACTS")
 _METADATA_TABLE_NAME = identifier.get_inferred_name("_SYSTEM_REGISTRY_METADATA")
 _DEPLOYMENTS_TABLE_NAME = identifier.get_inferred_name("_SYSTEM_REGISTRY_DEPLOYMENTS")
+_VERSION_TABLE_NAME = identifier.get_inferred_name("_SYSTEM_REGISTRY_SCHEMA_VERSION")
 _FULLY_QUALIFIED_REGISTRY_TABLE_NAME = ".".join(
     [
         _DATABASE_NAME,
@@ -26,26 +27,26 @@ _FULLY_QUALIFIED_REGISTRY_TABLE_NAME = ".".join(
         _REGISTRY_TABLE_NAME,
     ]
 )
-_REGISTRY_SCHEMA_STRING = ", ".join([f"{k} {v}" for k, v in _schema._REGISTRY_TABLE_SCHEMA])
+_REGISTRY_SCHEMA_STRING = ", ".join([f"{k} {v}" for k, v in _initial_schema._INITIAL_REGISTRY_TABLE_SCHEMA])
 _METADATA_INSERT_COLUMNS_STRING = ",".join(
-    filter(lambda x: x != "SEQUENCE_ID", [item[0] for item in _schema._METADATA_TABLE_SCHEMA])
+    filter(lambda x: x != "SEQUENCE_ID", [item[0] for item in _initial_schema._INITIAL_METADATA_TABLE_SCHEMA])
 )
 _METADATA_SCHEMA_STRING = ", ".join(
     [
         f"{k} {v.format(registry_table_name=_FULLY_QUALIFIED_REGISTRY_TABLE_NAME)}"
-        for k, v in _schema._METADATA_TABLE_SCHEMA
+        for k, v in _initial_schema._INITIAL_METADATA_TABLE_SCHEMA
     ]
 )
 _DEPLOYMENTS_SCHEMA_STRING = ",".join(
     [
         f"{k} {v.format(registry_table_name=_FULLY_QUALIFIED_REGISTRY_TABLE_NAME)}"
-        for k, v in _schema._DEPLOYMENTS_TABLE_SCHEMA
+        for k, v in _initial_schema._INITIAL_DEPLOYMENTS_TABLE_SCHEMA
     ]
 )
 _ARTIFACTS_SCHEMA_STRING = ",".join(
     [
         f"{k} {v.format(registry_table_name=_FULLY_QUALIFIED_REGISTRY_TABLE_NAME)}"
-        for k, v in _schema._ARTIFACT_TABLE_SCHEMA
+        for k, v in _initial_schema._INITIAL_ARTIFACT_TABLE_SCHEMA
     ]
 )
 
@@ -210,6 +211,70 @@ class ModelRegistryTest(absltest.TestCase):
             ),
         )
 
+    def _mock_show_version_table_not_exists(self, statement_params: Dict[str, str]) -> None:
+        self.add_session_mock_sql(
+            query=f"""SHOW TABLES LIKE '{_VERSION_TABLE_NAME}' IN {_DATABASE_NAME}.{_SCHEMA_NAME}""",
+            result=mock_data_frame.MockDataFrame([]).add_collect_result([], statement_params=statement_params),
+        )
+
+    def _mock_show_version_table_exists(self, statement_params: Dict[str, str]) -> None:
+        self.add_session_mock_sql(
+            query=f"""SHOW TABLES LIKE '{_VERSION_TABLE_NAME}' IN {_DATABASE_NAME}.{_SCHEMA_NAME}""",
+            result=mock_data_frame.MockDataFrame(self.get_show_tables_success(name=_VERSION_TABLE_NAME)),
+        )
+
+    def _mock_select_from_version_table(self, statement_params: Dict[str, str], schema_version: int = 0) -> None:
+        result_df = mock_data_frame.MockDataFrame().add_collect_result(
+            result=[snowpark.Row(MAX_VERSION=schema_version)]
+        )
+        self.add_session_mock_sql(
+            query=(f"SELECT MAX(VERSION) AS MAX_VERSION FROM {_DATABASE_NAME}.{_SCHEMA_NAME}.{_VERSION_TABLE_NAME}"),
+            result=result_df,
+        )
+
+    def _mock_insert_into_version_table(self, statement_params: Dict[str, str]) -> None:
+        self.add_session_mock_sql(
+            query=(
+                f"""INSERT INTO {_DATABASE_NAME}.{_SCHEMA_NAME}.{_VERSION_TABLE_NAME}
+                    (VERSION, CREATION_TIME)
+                    VALUES ({_schema._CURRENT_SCHEMA_VERSION}, CURRENT_TIMESTAMP())
+                """
+            ),
+            result=mock_data_frame.MockDataFrame([snowpark.Row(**{"number of rows inserted": 1})]),
+        )
+
+    def _mock_desc_registry_table(self, statement_params: Dict[str, str]) -> None:
+        self.add_session_mock_sql(
+            query=f"DESC TABLE {_DATABASE_NAME}.{_SCHEMA_NAME}.{_REGISTRY_TABLE_NAME}",
+            result=mock_data_frame.MockDataFrame(self.get_desc_registry_table_success()).add_collect_result(
+                self.get_desc_registry_table_success()
+            ),
+        )
+
+    def _mock_desc_metadata_table(self, statement_params: Dict[str, str]) -> None:
+        self.add_session_mock_sql(
+            query=f"DESC TABLE {_DATABASE_NAME}.{_SCHEMA_NAME}.{_METADATA_TABLE_NAME}",
+            result=mock_data_frame.MockDataFrame(self.get_desc_metadata_table_success()).add_collect_result(
+                self.get_desc_registry_table_success()
+            ),
+        )
+
+    def _mock_desc_deployments_table(self, statement_params: Dict[str, str]) -> None:
+        self.add_session_mock_sql(
+            query=f"DESC TABLE {_DATABASE_NAME}.{_SCHEMA_NAME}.{_DEPLOYMENTS_TABLE_NAME}",
+            result=mock_data_frame.MockDataFrame(self.get_desc_deployments_table_success()).add_collect_result(
+                self.get_desc_registry_table_success()
+            ),
+        )
+
+    def _mock_desc_artifacts_table(self, statement_params: Dict[str, str]) -> None:
+        self.add_session_mock_sql(
+            query=f"DESC TABLE {_DATABASE_NAME}.{_SCHEMA_NAME}.{_ARTIFACTS_TABLE_NAME}",
+            result=mock_data_frame.MockDataFrame(self.get_desc_artifacts_table_success()).add_collect_result(
+                self.get_desc_registry_table_success()
+            ),
+        )
+
     def add_session_mock_sql(self, query: str, result: Any) -> None:
         self._session.add_mock_sql(query=query, result=result)
 
@@ -291,10 +356,49 @@ class ModelRegistryTest(absltest.TestCase):
             snowpark.Row(name="NAME", type="VARCHAR"),
             snowpark.Row(name="OUTPUT_SPEC", type="OBJECT"),
             snowpark.Row(name="RUNTIME_ENVIRONMENT_SPEC", type="OBJECT"),
-            snowpark.Row(name="TRAINING_DATASET_ID", type="VARCHAR"),
+            snowpark.Row(name="ARTIFACT_IDS", type="ARRAY"),
             snowpark.Row(name="TYPE", type="VARCHAR"),
             snowpark.Row(name="URI", type="VARCHAR"),
             snowpark.Row(name="VERSION", type="VARCHAR"),
+        ]
+
+    def get_desc_metadata_table_success(self) -> List[snowpark.Row]:
+        """Helper method that returns a DataFrame that looks like the response of from a successful desc table."""
+        return [
+            snowpark.Row(name="ATTRIBUTE_NAME", type="VARCHAR"),
+            snowpark.Row(name="EVENT_ID", type="VARCHAR"),
+            snowpark.Row(name="EVENT_TIMESTAMP", type="TIMESTAMP_TZ"),
+            snowpark.Row(name="MODEL_ID", type="VARCHAR"),
+            snowpark.Row(name="OPERATION", type="VARCHAR"),
+            snowpark.Row(name="ROLE", type="VARCHAR"),
+            snowpark.Row(name="SEQUENCE_ID", type="BIGINT"),
+            snowpark.Row(name="VALUE", type="OBJECT"),
+        ]
+
+    def get_desc_deployments_table_success(self) -> List[snowpark.Row]:
+        """Helper method that returns a DataFrame that looks like the response of from a successful desc table."""
+        return [
+            snowpark.Row(name="CREATION_TIME", type="TIMESTAMP_TZ"),
+            snowpark.Row(name="MODEL_ID", type="VARCHAR"),
+            snowpark.Row(name="DEPLOYMENT_NAME", type="VARCHAR"),
+            snowpark.Row(name="OPTIONS", type="VARIANT"),
+            snowpark.Row(name="TARGET_PLATFORM", type="VARCHAR"),
+            snowpark.Row(name="ROLE", type="VARCHAR"),
+            snowpark.Row(name="STAGE_PATH", type="VARCHAR"),
+            snowpark.Row(name="SIGNATURE", type="VARIANT"),
+            snowpark.Row(name="TARGET_METHOD", type="VARCHAR"),
+        ]
+
+    def get_desc_artifacts_table_success(self) -> List[snowpark.Row]:
+        """Helper method that returns a DataFrame that looks like the response of from a successful desc table."""
+        return [
+            snowpark.Row(name="ID", type="VARCHAR"),
+            snowpark.Row(name="TYPE", type="VARCHAR"),
+            snowpark.Row(name="NAME", type="VARCHAR"),
+            snowpark.Row(name="VERSION", type="VARCHAR"),
+            snowpark.Row(name="CREATION_ROLE", type="VARCHAR"),
+            snowpark.Row(name="CREATION_TIME", type="TIMESTAMP_TZ"),
+            snowpark.Row(name="ARTIFACT_SPEC", type="OBJECT"),
         ]
 
     def setup_open_call(self) -> None:
@@ -317,12 +421,6 @@ class ModelRegistryTest(absltest.TestCase):
             ).add_collect_result(self.get_show_tables_success(name=_REGISTRY_TABLE_NAME)),
         )
         self.add_session_mock_sql(
-            query=f"DESC TABLE {_FULLY_QUALIFIED_REGISTRY_TABLE_NAME}",
-            result=mock_data_frame.MockDataFrame(self.get_desc_registry_table_success()).add_collect_result(
-                self.get_desc_registry_table_success()
-            ),
-        )
-        self.add_session_mock_sql(
             query=f"SHOW TABLES LIKE '{_METADATA_TABLE_NAME}' IN {_DATABASE_NAME}.{_SCHEMA_NAME}",
             result=mock_data_frame.MockDataFrame(
                 self.get_show_tables_success(name=_METADATA_TABLE_NAME)
@@ -334,6 +432,8 @@ class ModelRegistryTest(absltest.TestCase):
                 self.get_show_tables_success(name=_DEPLOYMENTS_TABLE_NAME)
             ).add_collect_result(self.get_show_tables_success(name=_DEPLOYMENTS_TABLE_NAME)),
         )
+        self._mock_show_version_table_exists({})
+        self._mock_select_from_version_table({}, _schema._CURRENT_SCHEMA_VERSION)
 
     def setup_list_model_call(self) -> mock_data_frame.MockDataFrame:
         """Setup the expected calls originating from list_model."""
@@ -435,7 +535,7 @@ class ModelRegistryTest(absltest.TestCase):
                 f"""CREATE OR REPLACE VIEW  {_DATABASE_NAME}.{_SCHEMA_NAME}.{_REGISTRY_TABLE_NAME}_VIEW
                     COPY GRANTS AS
                     SELECT {_REGISTRY_TABLE_NAME}.*, {_METADATA_TABLE_NAME}_LAST_DESCRIPTION.DESCRIPTION
-                            AS DESCRIPTION,
+                        AS DESCRIPTION,
                         {_METADATA_TABLE_NAME}_LAST_METRICS.METRICS AS METRICS,
                         {_METADATA_TABLE_NAME}_LAST_TAGS.TAGS AS TAGS,
                         {_METADATA_TABLE_NAME}_LAST_REGISTRATION.REGISTRATION_TIMESTAMP AS REGISTRATION_TIMESTAMP
@@ -464,8 +564,7 @@ class ModelRegistryTest(absltest.TestCase):
                         {_ARTIFACTS_TABLE_NAME}.*
                     FROM {_REGISTRY_TABLE_NAME}
                     LEFT JOIN {_ARTIFACTS_TABLE_NAME}
-                    ON ({_REGISTRY_TABLE_NAME}.TRAINING_DATASET_ID = {_ARTIFACTS_TABLE_NAME}.ID)
-                    WHERE {_ARTIFACTS_TABLE_NAME}.TYPE = 'TRAINING_DATASET'
+                    ON (ARRAY_CONTAINS({_ARTIFACTS_TABLE_NAME}.ID::VARIANT, {_REGISTRY_TABLE_NAME}.ARTIFACT_IDS))
                 """
             ),
             result=mock_data_frame.MockDataFrame(
@@ -487,12 +586,6 @@ class ModelRegistryTest(absltest.TestCase):
             result=mock_data_frame.MockDataFrame(self.get_show_tables_success(name=_REGISTRY_TABLE_NAME)),
         )
         self.add_session_mock_sql(
-            query=f"DESC TABLE {_FULLY_QUALIFIED_REGISTRY_TABLE_NAME}",
-            result=mock_data_frame.MockDataFrame(self.get_desc_registry_table_success()).add_collect_result(
-                self.get_desc_registry_table_success()
-            ),
-        )
-        self.add_session_mock_sql(
             query=f"SHOW TABLES LIKE '{_METADATA_TABLE_NAME}' IN {_DATABASE_NAME}.{_SCHEMA_NAME}",
             result=mock_data_frame.MockDataFrame(self.get_show_tables_success(name=_METADATA_TABLE_NAME)),
         )
@@ -500,6 +593,34 @@ class ModelRegistryTest(absltest.TestCase):
             query=f"SHOW TABLES LIKE '{_DEPLOYMENTS_TABLE_NAME}' IN {_DATABASE_NAME}.{_SCHEMA_NAME}",
             result=mock_data_frame.MockDataFrame(self.get_show_tables_success(name=_DEPLOYMENTS_TABLE_NAME)),
         )
+        self._mock_show_version_table_exists({})
+        self._mock_select_from_version_table({}, _schema._CURRENT_SCHEMA_VERSION)
+
+    def setup_schema_upgrade_calls(self, statement_params: Dict[str, str]) -> None:
+        self._mock_show_version_table_exists(statement_params)
+        self._mock_select_from_version_table(statement_params)
+        self._mock_desc_registry_table(statement_params)
+        # begin schema upgrade plans
+        reg_table_full_path = f"{_DATABASE_NAME}.{_SCHEMA_NAME}.{_REGISTRY_TABLE_NAME}"
+        self.add_session_mock_sql(
+            query=(f"ALTER TABLE {reg_table_full_path} ADD COLUMN TRAINING_DATASET_ID VARCHAR"),
+            result=mock_data_frame.MockDataFrame([snowpark.Row(status="Statement executed successfully.")]),
+        )
+        self.add_session_mock_sql(
+            query=(f"ALTER TABLE {reg_table_full_path} DROP COLUMN TRAINING_DATASET_ID"),
+            result=mock_data_frame.MockDataFrame([snowpark.Row(status="Statement executed successfully.")]),
+        )
+        self.add_session_mock_sql(
+            query=(f"ALTER TABLE {reg_table_full_path} ADD COLUMN ARTIFACT_IDS ARRAY"),
+            result=mock_data_frame.MockDataFrame([snowpark.Row(status="Statement executed successfully.")]),
+        )
+        # end schema upgrade plans
+        self._mock_desc_registry_table(statement_params)
+        self._mock_desc_metadata_table(statement_params)
+        self._mock_desc_deployments_table(statement_params)
+        self._mock_desc_artifacts_table(statement_params)
+        self._mock_show_version_table_exists(statement_params)
+        self._mock_insert_into_version_table(statement_params)
 
     def template_test_get_attribute(
         self, collection_res: List[snowpark.Row], use_id: bool = False
@@ -549,10 +670,11 @@ class ModelRegistryTest(absltest.TestCase):
     def test_create_new(self) -> None:
         """Verify that we can create a new ModelRegistry database with the default names."""
         # "Create" calls.
-        combinations = list(itertools.product([True, False], repeat=6))
+        combinations = list(itertools.product([True, False], repeat=7))
         for (
             database_exists,
             schema_exists,
+            version_table_exists,
             registry_table_exists,
             metadata_table_exists,
             deployments_table_exists,
@@ -562,6 +684,7 @@ class ModelRegistryTest(absltest.TestCase):
                 msg=(
                     f"database_exists={database_exists}, "
                     f"schema_exists={schema_exists}, "
+                    f"version_table_exists={version_table_exists}, "
                     f"registry_table_exists={registry_table_exists}, "
                     f"metadata_table_exists={metadata_table_exists}, "
                     f"deployments_table_exists={deployments_table_exists}, "
@@ -585,6 +708,13 @@ class ModelRegistryTest(absltest.TestCase):
                     self._mock_show_schema_not_exists(statement_params)
                     self._mock_create_schema_not_exists(statement_params)
 
+                # svm.get_deployed_version()
+                if version_table_exists:
+                    self._mock_show_version_table_exists(statement_params)
+                    self._mock_select_from_version_table(statement_params)
+                else:
+                    self._mock_show_version_table_not_exists(statement_params)
+
                 if registry_table_exists:
                     self._mock_create_registry_table_exists(statement_params)
                 else:
@@ -605,6 +735,8 @@ class ModelRegistryTest(absltest.TestCase):
                 else:
                     self._mock_create_artifacts_table_not_exists(statement_params)
 
+                self.setup_schema_upgrade_calls(statement_params)
+
                 self.setup_create_views_call()
 
                 model_registry.create_model_registry(
@@ -624,10 +756,13 @@ class ModelRegistryTest(absltest.TestCase):
         self._mock_create_database_not_exists(statement_params)
         self._mock_show_schema_not_exists(statement_params)
         self._mock_create_schema_not_exists(statement_params)
+        self._mock_show_version_table_not_exists(statement_params)
         self._mock_create_registry_table_not_exists(statement_params)
         self._mock_create_metadata_table_not_exists(statement_params)
         self._mock_create_deployment_table_not_exists(statement_params)
         self._mock_create_artifacts_table_not_exists(statement_params)
+
+        self.setup_schema_upgrade_calls(statement_params)
         self.setup_create_views_call()
 
         # 2. SQL queries issued by ModelRegistry constructor.
@@ -948,6 +1083,8 @@ class ModelRegistryTest(absltest.TestCase):
     def test_log_model(self) -> None:
         """Test log_model()"""
         model_registry = self.get_model_registry()
+        self._mock_show_version_table_exists({})
+        self._mock_select_from_version_table({}, _schema._CURRENT_SCHEMA_VERSION)
 
         model_name = "name"
         model_version = "abc"
@@ -1013,8 +1150,11 @@ class ModelRegistryTest(absltest.TestCase):
                                 uri=uri.get_uri_from_snowflake_stage_path(model_path),
                                 description="description",
                                 tags=None,
-                                training_dataset=None,
+                                dataset=None,
                             )
+
+        self._mock_show_version_table_exists({})
+        self._mock_select_from_version_table({}, _schema._CURRENT_SCHEMA_VERSION)
 
         with absltest.mock.patch.object(
             model_registry,
@@ -1031,6 +1171,8 @@ class ModelRegistryTest(absltest.TestCase):
                     tags=None,
                 )
 
+        self._mock_show_version_table_exists({})
+        self._mock_select_from_version_table({}, _schema._CURRENT_SCHEMA_VERSION)
         self.add_session_mock_sql(
             query=f"DROP STAGE {_DATABASE_NAME}.{_SCHEMA_NAME}.SNOWML_MODEL_{expected_stage_postfix}",
             result=mock_data_frame.MockDataFrame(

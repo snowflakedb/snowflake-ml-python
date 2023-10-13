@@ -1,19 +1,22 @@
 import http
 import json
-from typing import Dict, cast
+import logging
+from typing import Dict, Optional, cast
 from urllib.parse import urlparse, urlunparse
-
-import requests
 
 from snowflake.ml._internal.exceptions import (
     error_codes,
     exceptions as snowml_exceptions,
 )
-from snowflake.ml._internal.utils import spcs_image_registry
+from snowflake.ml._internal.utils import retryable_http, spcs_image_registry
+from snowflake.ml.model._deploy_client.utils import image_auth_manager, imagelib
 from snowflake.snowpark import Session
+from snowflake.snowpark._internal import utils as snowpark_utils
 
 MANIFEST_V1_HEADER = "application/vnd.oci.image.manifest.v1+json"
 MANIFEST_V2_HEADER = "application/vnd.docker.distribution.manifest.v2+json"
+
+logger = logging.getLogger(__name__)
 
 
 class ImageRegistryClient:
@@ -29,6 +32,7 @@ class ImageRegistryClient:
             session: Snowpark session
         """
         self.session = session
+        self.http = retryable_http.get_http_client()
 
     def login(self, repo_url: str, registry_cred: str) -> str:
         """Log in to image registry
@@ -51,11 +55,13 @@ class ImageRegistryClient:
         url_tuple = (scheme, host, login_path, "", "", "")
         login_url = urlunparse(url_tuple)
 
-        resp = requests.get(login_url, headers={"Authorization": f"Basic {registry_cred}"})
+        resp = self.http.get(login_url, headers={"Authorization": f"Basic {registry_cred}"})
         if resp.status_code != http.HTTPStatus.OK:
             raise snowml_exceptions.SnowflakeMLException(
                 error_code=error_codes.INTERNAL_SNOWFLAKE_IMAGE_REGISTRY_ERROR,
-                original_exception=RuntimeError("Failed to login to the repository", resp.text),
+                original_exception=RuntimeError(
+                    f"Failed to login to the repository. Status {resp.status_code}," f"{str(resp.text)}"
+                ),
             )
 
         return str(json.loads(resp.text)["token"])
@@ -96,6 +102,10 @@ class ImageRegistryClient:
             Boolean value. True when image already exists, else False.
 
         """
+        # When running in SPROC, the Sproc session connection will not have _rest object associated, which makes it
+        # unable to fetch session token needed to authenticate to SPCS image registry.
+        if snowpark_utils.is_in_stored_procedure():  # type: ignore[no-untyped-call]
+            return False
 
         with spcs_image_registry.generate_image_registry_credential(self.session) as registry_cred:
             v2_api_url = self.convert_to_v2_manifests_url(full_image_name)
@@ -113,9 +123,9 @@ class ImageRegistryClient:
             # Depending on the built image, the media type of the image manifest might be either
             # application/vnd.oci.image.manifest.v1+json or application/vnd.docker.distribution.manifest.v2+json
             # Hence we need to check for both, otherwise it could result in false negative.
-            if requests.head(v2_api_url, headers=headers_v2).status_code == http.HTTPStatus.OK:
+            if self.http.head(v2_api_url, headers=headers_v2).status_code == http.HTTPStatus.OK:
                 return True
-            elif requests.head(v2_api_url, headers=headers_v1).status_code == http.HTTPStatus.OK:
+            elif self.http.head(v2_api_url, headers=headers_v1).status_code == http.HTTPStatus.OK:
                 return True
             return False
 
@@ -138,10 +148,10 @@ class ImageRegistryClient:
         """
 
         v2_api_url = self.convert_to_v2_manifests_url(full_image_name)
-        res1 = requests.get(v2_api_url, headers=header_v2)
+        res1 = self.http.get(v2_api_url, headers=header_v2)
         if res1.status_code == http.HTTPStatus.OK:
             return cast(Dict[str, str], res1.json())
-        res2 = requests.get(v2_api_url, headers=header_v1)
+        res2 = self.http.get(v2_api_url, headers=header_v1)
         if res2.status_code == http.HTTPStatus.OK:
             return cast(Dict[str, str], res2.json())
         raise snowml_exceptions.SnowflakeMLException(
@@ -160,9 +170,16 @@ class ImageRegistryClient:
             original_full_image_name: The full image name is required to fetch manifest.
             new_tag:  New tag to be added to the image.
 
+        Returns:
+            None
+
         Raises:
             SnowflakeMLException: when failed to push the newly updated manifest.
         """
+
+        if snowpark_utils.is_in_stored_procedure():  # type: ignore[no-untyped-call]
+            return None
+
         with spcs_image_registry.generate_image_registry_credential(self.session) as registry_cred:
             full_image_name_parts = original_full_image_name.split(":")
             assert len(full_image_name_parts) == 2, "full image name should include both image name and tag"
@@ -194,9 +211,9 @@ class ImageRegistryClient:
                 "Content-Type": MANIFEST_V2_HEADER,
             }
 
-            res1 = requests.put(api_url, headers=put_header_v2, json=manifest_copy)
+            res1 = self.http.put(api_url, headers=put_header_v2, json=manifest_copy)
             if res1.status_code != http.HTTPStatus.CREATED:
-                res2 = requests.put(api_url, headers=put_header_v1, json=manifest_copy)
+                res2 = self.http.put(api_url, headers=put_header_v1, json=manifest_copy)
                 if res2.status_code != http.HTTPStatus.CREATED:
                     raise snowml_exceptions.SnowflakeMLException(
                         error_code=error_codes.INTERNAL_SNOWFLAKE_IMAGE_REGISTRY_ERROR,
@@ -209,3 +226,34 @@ class ImageRegistryClient:
             assert self.image_exists(new_full_image_name), (
                 f"{new_full_image_name} should exist in image repo after a" f"successful manifest update"
             )
+
+    def copy_image(
+        self,
+        source_image_with_digest: str,
+        dest_image_with_tag: str,
+        arch: Optional[imagelib._Arch] = None,
+    ) -> None:
+        """Util function to copy image across registry. Currently supported pulling from public docker image repo to
+        SPCS image registry.
+
+        Args:
+            source_image_with_digest: source image with digest, e.g. gcr.io/kaniko-project/executor@sha256:b8c0977
+            dest_image_with_tag: destination image with tag.
+            arch: architecture of source image.
+
+        Returns:
+            None
+        """
+        if snowpark_utils.is_in_stored_procedure():  # type: ignore[no-untyped-call]
+            logger.warning(f"Running inside Sproc. Please ensure image already exists at {dest_image_with_tag}")
+            return None
+
+        arch = arch or imagelib._Arch("amd64", "linux")
+
+        src_image = imagelib.convert_to_image_descriptor(source_image_with_digest, with_digest=True)
+        dest_image = imagelib.convert_to_image_descriptor(
+            dest_image_with_tag,
+            with_tag=True,
+            creds_manager=image_auth_manager.SnowflakeAuthManager(dest_image_with_tag.split("/")[0]),
+        )
+        imagelib.copy_image(src_image=src_image, dest_image=dest_image, arch=arch, session=self.session)

@@ -166,6 +166,11 @@ py_library(
     ],
 )
 
+py_library(
+    name = "retryable_http",
+    srcs = ["retryable_http.py"],
+)
+
 py_test(
     name = "table_manager_test",
     srcs = ["table_manager_test.py"],

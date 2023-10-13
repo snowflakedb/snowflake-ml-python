@@ -12,10 +12,7 @@ from snowflake.ml._internal.exceptions import (
     exceptions as snowml_exceptions,
 )
 from snowflake.ml._internal.utils import identifier
-from snowflake.ml.model._deploy_client.image_builds import (
-    base_image_builder,
-    client_image_builder,
-)
+from snowflake.ml.model._deploy_client.image_builds import base_image_builder
 from snowflake.ml.model._deploy_client.utils import (
     constants,
     image_registry_client,
@@ -90,13 +87,13 @@ class ServerImageBuilder(base_image_builder.ImageBuilder):
         if registry_client.image_exists(kaniko_image):
             logger.debug(f"Kaniko image already existed at {kaniko_image}, skipping uploading")
         else:
-            image_builder_client = client_image_builder.ClientImageBuilder(
-                context_dir="",  # pass dummy empty string as it won't be used.
-                full_image_name=kaniko_image,
-                image_repo=self.image_repo,
-                session=self.session,
+            # Following Digest is corresponding to v1.16.0-debug tag. Note that we cannot copy from image that contains
+            # tag as the underlying image blob copying API supports digest only.
+            registry_client.copy_image(
+                source_image_with_digest="gcr.io/kaniko-project/executor@sha256:"
+                "b8c0977f88f24dbd7cbc2ffe5c5f824c410ccd0952a72cc066efc4b6dfbb52b6",
+                dest_image_with_tag=kaniko_image,
             )
-            image_builder_client.build_and_upload_image(image_to_pull="gcr.io/kaniko-project/executor:v1.16.0-debug")
         self._construct_and_upload_job_spec(
             base_image=kaniko_image,
             kaniko_shell_script_stage_location=kaniko_shell_script_stage_location,
@@ -112,8 +109,8 @@ class ServerImageBuilder(base_image_builder.ImageBuilder):
             context_tarball_stage_location: Path context directory stage location.
         """
 
-        kaniko_shell_script_template = os.path.join(
-            os.path.dirname(__file__), f"templates/{constants.KANIKO_SHELL_SCRIPT_TEMPLATE}"
+        kaniko_shell_script_template = file_utils.resolve_zip_import_path(
+            os.path.join(os.path.dirname(__file__), f"templates/{constants.KANIKO_SHELL_SCRIPT_TEMPLATE}")
         )
         kaniko_shell_file = os.path.join(self.context_dir, constants.KANIKO_SHELL_SCRIPT_NAME)
 
@@ -166,9 +163,11 @@ class ServerImageBuilder(base_image_builder.ImageBuilder):
         assert kaniko_shell_script_stage_location.startswith(
             "@"
         ), f"stage path should start with @, actual: {kaniko_shell_script_stage_location}"
-        spec_template_path = os.path.join(
-            os.path.dirname(__file__), f"templates/{constants.IMAGE_BUILD_JOB_SPEC_TEMPLATE}"
+
+        spec_template_path = file_utils.resolve_zip_import_path(
+            os.path.join(os.path.dirname(__file__), f"templates/{constants.IMAGE_BUILD_JOB_SPEC_TEMPLATE}")
         )
+
         spec_file_path = os.path.join(
             os.path.dirname(self.context_dir), f"{constants.IMAGE_BUILD_JOB_SPEC_TEMPLATE}.yaml"
         )

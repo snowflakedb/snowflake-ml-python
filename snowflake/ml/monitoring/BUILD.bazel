@@ -7,7 +7,7 @@ package_group(
     ],
 )
 
-package(default_visibility = [":monitoring"])
+package(default_visibility = ["//visibility:public"])
 
 py_library(
     name = "monitoring_lib",

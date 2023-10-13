@@ -22,7 +22,7 @@ class BucketConfig(TypedDict):
     project=_PROJECT,
     subproject=_SUBPROJECT,
 )
-@snowpark._internal.utils.private_preview(version="1.0.9") # TODO: update versions when release
+@snowpark._internal.utils.private_preview(version="1.0.10")  # TODO: update versions when release
 def compare_udfs_outputs(
     base_udf_name: str,
     test_udf_name: str,
@@ -69,7 +69,7 @@ def compare_udfs_outputs(
     project=_PROJECT,
     subproject=_SUBPROJECT,
 )
-@snowpark._internal.utils.private_preview(version="1.0.9") # TODO: update versions when release
+@snowpark._internal.utils.private_preview(version="1.0.10")  # TODO: update versions when release
 def get_basic_stats(df: snowpark.DataFrame) -> Tuple[Dict[str, int], Dict[str, int]]:
     """Get basic stats of 2 Columns
     Note this isn't public API. Only support min, max, stddev, HLL--cardinality estimate
@@ -103,7 +103,7 @@ def get_basic_stats(df: snowpark.DataFrame) -> Tuple[Dict[str, int], Dict[str, i
     project=_PROJECT,
     subproject=_SUBPROJECT,
 )
-@snowpark._internal.utils.private_preview(version="1.0.9") # TODO: update versions when release
+@snowpark._internal.utils.private_preview(version="1.0.10")  # TODO: update versions when release
 def jensenshannon(df1: snowpark.DataFrame, colname1: str, df2: snowpark.DataFrame, colname2: str) -> float:
     """
     Similar to scipy implementation:
