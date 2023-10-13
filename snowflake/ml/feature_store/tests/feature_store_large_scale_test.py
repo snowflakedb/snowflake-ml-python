@@ -120,7 +120,7 @@ class FeatureStoreLargeScaleTest(absltest.TestCase):
         )
 
         def create_select_query(start: str, end: str) -> str:
-            return f"""SELECT DISTINCT TPEP_DROPOFF_DATETIME AS DROPOFF_TIME,
+            return f"""SELECT DISTINCT TO_TIMESTAMP(TPEP_DROPOFF_DATETIME / 1000000) AS DROPOFF_TIME,
                     PULOCATIONID, TIP_AMOUNT, TOTAL_AMOUNT
                 FROM {raw_dataset}
                 WHERE DROPOFF_TIME >= '{start}' AND DROPOFF_TIME < '{end}'
