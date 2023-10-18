@@ -42,9 +42,9 @@ class FeatureStoreMetadata:
             # but we retrieve it as an object. Snowpark serialization is inconsistent with
             # our deserialization. A fix is let artifact table stores string and callers
             # handles both serialization and deserialization.
-            "spine_query": _wrap_embedded_str(self.spine_query),
-            "connection_params": _wrap_embedded_str(json.dumps(self.connection_params)),
-            "features": _wrap_embedded_str(json.dumps(self.features)),
+            "spine_query": self.spine_query,
+            "connection_params": json.dumps(self.connection_params),
+            "features": json.dumps(self.features),
         }
         return json.dumps(state_dict)
 
@@ -115,6 +115,14 @@ class Dataset:
         else:
             return None
 
+    def features_df(self) -> DataFrame:
+        result = self.df
+        if self.timestamp_col is not None:
+            result = result.drop(self.timestamp_col)
+        if self.label_cols is not None:
+            result = result.drop(self.label_cols)
+        return result
+
     def to_json(self) -> str:
         if len(self.df.queries["queries"]) != 1:
             raise ValueError(
@@ -124,15 +132,15 @@ Got {len(self.df.queries['queries'])}: {self.df.queries['queries']}
             )
 
         state_dict = {
-            "df_query": self.df.queries["queries"][0],
+            "df_query": _wrap_embedded_str(self.df.queries["queries"][0]),
             "id": self.id,
             "generation_timestamp": self.generation_timestamp,
             "owner": self.owner,
-            "materialized_table": _get_val_or_null(self.materialized_table),
-            "snapshot_table": _get_val_or_null(self.snapshot_table),
-            "timestamp_col": _get_val_or_null(self.timestamp_col),
+            "materialized_table": _wrap_embedded_str(_get_val_or_null(self.materialized_table)),
+            "snapshot_table": _wrap_embedded_str(_get_val_or_null(self.snapshot_table)),
+            "timestamp_col": _wrap_embedded_str(_get_val_or_null(self.timestamp_col)),
             "label_cols": _get_val_or_null(self.label_cols),
-            "feature_store_metadata": self.feature_store_metadata.to_json()
+            "feature_store_metadata": _wrap_embedded_str(self.feature_store_metadata.to_json())
             if self.feature_store_metadata is not None
             else "null",
             "version": self.version,
