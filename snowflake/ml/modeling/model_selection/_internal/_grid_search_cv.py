@@ -1,4 +1,7 @@
-import copy
+#
+# This code is auto-generated using the sklearn_wrapper_template.py_template template.
+# Do not modify the auto-generated code(except automatic reformatting by precommit hooks).
+#
 from typing import Any, Dict, Iterable, List, Optional, Set, Union
 from uuid import uuid4
 
@@ -344,33 +347,13 @@ class GridSearchCV(BaseTransformer):
             dataset = dataset.select(selected_cols)
 
         assert self._sklearn_object is not None
-        # Set GridSearchCV refit as False and fit it again after retrieving the best param
-        self._sklearn_object.refit = False
-        result_dict = self._handlers._fit_search_snowpark(
+        self._sklearn_object = self._handlers._fit_search_snowpark(
             param_list=ParameterGrid(self._sklearn_object.param_grid),
             dataset=dataset,
             session=session,
             estimator=self._sklearn_object,
             dependencies=self._get_dependencies(),
             udf_imports=["sklearn"],
-            input_cols=self.input_cols,
-            label_cols=self.label_cols,
-            sample_weight_col=self.sample_weight_col,
-        )
-
-        self._sklearn_object.best_params_ = result_dict["best_param"]
-        self._sklearn_object.best_score_ = result_dict["best_score"]
-        self._sklearn_object.cv_results_ = result_dict["cv_results"]
-
-        self._sklearn_object.best_estimator_ = copy.deepcopy(
-            copy.deepcopy(self._sklearn_object.estimator).set_params(**self._sklearn_object.best_params_)
-        )
-        self._sklearn_object.refit = True
-        self._sklearn_object.best_estimator_ = self._handlers.fit_snowpark(
-            dataset=dataset,
-            session=session,
-            estimator=self._sklearn_object.best_estimator_,
-            dependencies=["snowflake-snowpark-python"] + self._get_dependencies(),
             input_cols=self.input_cols,
             label_cols=self.label_cols,
             sample_weight_col=self.sample_weight_col,

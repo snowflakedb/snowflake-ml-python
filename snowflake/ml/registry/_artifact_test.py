@@ -5,7 +5,7 @@ from absl.testing import absltest
 
 from snowflake import connector, snowpark
 from snowflake.ml._internal.utils import identifier, table_manager
-from snowflake.ml.registry import _ml_artifact
+from snowflake.ml.registry import _artifact_manager, artifact
 from snowflake.ml.test_utils import mock_data_frame, mock_session
 
 _DATABASE_NAME = identifier.get_inferred_name("_SYSTEM_MODEL_REGISTRY")
@@ -55,31 +55,12 @@ class ArtifactTest(absltest.TestCase):
         return [
             snowpark.Row(
                 id="FAKE_ID",
-                type=_ml_artifact.ArtifactType.TESTTYPE,
-                name="FAKE_NAME",
-                version=None,
+                type=artifact.ArtifactType.TESTTYPE,
                 creation_time=datetime.datetime(2022, 11, 4, 17, 1, 30, 153000),
                 creation_role="OWNER_ROLE",
                 artifact_spec={},
             )
         ]
-
-    def test_if_artifact_table_exists(self) -> None:
-        for mock_df, expected_res in [
-            (mock_data_frame.MockDataFrame(self._get_show_tables_success(name=_TABLE_NAME)), True),
-            (mock_data_frame.MockDataFrame([]), False),
-        ]:
-            with self.subTest():
-                self._session.add_mock_sql(
-                    query=f"SHOW TABLES LIKE '{_TABLE_NAME}' IN {_DATABASE_NAME}.{_SCHEMA_NAME}",
-                    result=mock_df,
-                )
-                self.assertEqual(
-                    _ml_artifact.if_artifact_table_exists(
-                        cast(snowpark.Session, self._session), _DATABASE_NAME, _SCHEMA_NAME
-                    ),
-                    expected_res,
-                )
 
     def test_if_artifact_exists(self) -> None:
         for mock_df_collect, expected_res in [
@@ -87,20 +68,21 @@ class ArtifactTest(absltest.TestCase):
             ([], False),
         ]:
             with self.subTest():
-                artifact_id = "FAKE_ID"
-                artifact_type = _ml_artifact.ArtifactType.TESTTYPE
+                artifact_name = "FAKE_ID"
+                artifact_version = "FAKE_VERSION"
                 expected_df = mock_data_frame.MockDataFrame()
                 expected_df.add_operation("filter")
                 expected_df.add_operation("filter")
                 expected_df.add_collect_result(cast(List[snowpark.Row], mock_df_collect))
                 self._session.add_mock_sql(query=f"SELECT * FROM {_FULLY_QUALIFIED_TABLE_NAME}", result=expected_df)
                 self.assertEqual(
-                    _ml_artifact.if_artifact_exists(
-                        cast(snowpark.Session, self._session),
-                        _DATABASE_NAME,
-                        _SCHEMA_NAME,
-                        artifact_id,
-                        artifact_type,
+                    _artifact_manager.ArtifactManager(
+                        session=cast(snowpark.Session, self._session),
+                        database_name=_DATABASE_NAME,
+                        schema_name=_SCHEMA_NAME,
+                    ).exists(
+                        artifact_name,
+                        artifact_version,
                     ),
                     expected_res,
                 )
@@ -108,15 +90,8 @@ class ArtifactTest(absltest.TestCase):
     def test_add_artifact(self) -> None:
         artifact_id = "FAKE_ID"
         artifact_name = "FAKE_NAME"
-        artifact_version = "1.0.0"
-        artifact_spec = {"description": "mock description"}
-
-        # Mock the get_artifact call
-        expected_df = mock_data_frame.MockDataFrame()
-        expected_df.add_operation("filter")
-        expected_df.add_operation("filter")
-        expected_df.add_collect_result([])
-        self._session.add_mock_sql(query=f"SELECT * FROM {_FULLY_QUALIFIED_TABLE_NAME}", result=expected_df)
+        artifact_version = "FAKE_VERSION"
+        artifact_spec = '{"description": "mock description"}'
 
         # Mock the insertion call
         self._session.add_operation("get_current_role", result="current_role")
@@ -124,59 +99,59 @@ class ArtifactTest(absltest.TestCase):
             f"INSERT INTO {_FULLY_QUALIFIED_TABLE_NAME}"
             " ( ARTIFACT_SPEC,CREATION_ROLE,CREATION_TIME,ID,NAME,TYPE,VERSION )"
             " SELECT"
-            " OBJECT_CONSTRUCT('description','mock description'),'current_role',CURRENT_TIMESTAMP(),"
-            "'FAKE_ID','FAKE_NAME','TESTTYPE','1.0.0' "
+            " '{\"description\": \"mock description\"}','current_role',CURRENT_TIMESTAMP(),"
+            "'FAKE_ID','FAKE_NAME', 'TESTTYPE', 'FAKE_VERSION' "
         )
         self._session.add_mock_sql(
             query=insert_query,
             result=mock_data_frame.MockDataFrame([snowpark.Row(**{"number of rows inserted": 1})]),
         )
-        _ml_artifact.add_artifact(
-            cast(snowpark.Session, self._session),
-            _DATABASE_NAME,
-            _SCHEMA_NAME,
-            artifact_id,
-            _ml_artifact.ArtifactType.TESTTYPE,
-            artifact_name,
-            artifact_version,
-            artifact_spec,
+        _artifact_manager.ArtifactManager(
+            session=cast(snowpark.Session, self._session),
+            database_name=_DATABASE_NAME,
+            schema_name=_SCHEMA_NAME,
+        ).add(
+            artifact_id=artifact_id,
+            artifact_name=artifact_name,
+            artifact_type=artifact.ArtifactType.TESTTYPE,
+            artifact_spec=artifact_spec,
+            artifact_version=artifact_version,
         )
 
     def test_delete_artifact(self) -> None:
         for error_if_not_exist in [True, False]:
             with self.subTest():
                 if error_if_not_exist:
-                    artifact_id = "FAKE_ID"
+                    artifact_name = "FAKE_NAME"
+                    artifact_version = "FAKE_VERSION"
                     expected_df = mock_data_frame.MockDataFrame()
                     expected_df.add_operation("filter")
                     expected_df.add_operation("filter")
                     expected_df.add_collect_result([])
                     self._session.add_mock_sql(query=f"SELECT * FROM {_FULLY_QUALIFIED_TABLE_NAME}", result=expected_df)
                     with self.assertRaises(connector.DataError):
-                        _ml_artifact.delete_artifact(
-                            cast(snowpark.Session, self._session),
-                            _DATABASE_NAME,
-                            _SCHEMA_NAME,
-                            artifact_id,
-                            _ml_artifact.ArtifactType.TESTTYPE,
+                        _artifact_manager.ArtifactManager(
+                            session=cast(snowpark.Session, self._session),
+                            database_name=_DATABASE_NAME,
+                            schema_name=_SCHEMA_NAME,
+                        ).delete(
+                            artifact_name,
+                            artifact_version,
                             True,
                         )
                 else:
-                    # Mock the delete call
-                    insert_query = (
-                        f"DELETE FROM {_FULLY_QUALIFIED_TABLE_NAME}"
-                        f" WHERE ID='{artifact_id}' AND TYPE='{_ml_artifact.ArtifactType.TESTTYPE.name}'"
-                    )
-                    self._session.add_mock_sql(
-                        query=insert_query,
-                        result=mock_data_frame.MockDataFrame([snowpark.Row(**{"number of rows deleted": 1})]),
-                    )
-                    _ml_artifact.delete_artifact(
-                        cast(snowpark.Session, self._session),
-                        _DATABASE_NAME,
-                        _SCHEMA_NAME,
-                        artifact_id,
-                        _ml_artifact.ArtifactType.TESTTYPE,
+                    expected_df = mock_data_frame.MockDataFrame()
+                    expected_df.add_operation("filter")
+                    expected_df.add_operation("filter")
+                    expected_df.add_collect_result([])
+                    self._session.add_mock_sql(query=f"SELECT * FROM {_FULLY_QUALIFIED_TABLE_NAME}", result=expected_df)
+                    _artifact_manager.ArtifactManager(
+                        session=cast(snowpark.Session, self._session),
+                        database_name=_DATABASE_NAME,
+                        schema_name=_SCHEMA_NAME,
+                    ).delete(
+                        artifact_name,
+                        artifact_version,
                     )
 
 
