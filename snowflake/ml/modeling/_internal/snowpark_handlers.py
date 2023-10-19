@@ -5,7 +5,7 @@ import json
 import os
 import posixpath
 import sys
-from typing import Any, Callable, Dict, Iterator, List, Optional, Tuple, Union
+from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 from uuid import uuid4
 
 import cloudpickle as cp
@@ -37,7 +37,7 @@ from snowflake.snowpark._internal.utils import (
     TempObjectType,
     random_name_for_temp_object,
 )
-from snowflake.snowpark.functions import col, pandas_udf, sproc, udtf
+from snowflake.snowpark.functions import col, pandas_udf, sproc
 from snowflake.snowpark.stored_procedure import StoredProcedure
 from snowflake.snowpark.types import (
     FloatType,
@@ -636,7 +636,7 @@ class SnowparkHandlers:
 
         return score
 
-    def _fit_search_snowpark(
+    def fit_search_snowpark(
         self,
         param_list: Union[Dict[str, Any], List[Dict[str, Any]]],
         dataset: DataFrame,
@@ -647,7 +647,7 @@ class SnowparkHandlers:
         input_cols: List[str],
         label_cols: List[str],
         sample_weight_col: Optional[str],
-    ) -> Dict[str, Union[float, Dict[str, Any]]]:
+    ) -> Union[model_selection.GridSearchCV, model_selection.RandomizedSearchCV]:
         from itertools import product
 
         import cachetools
@@ -671,9 +671,13 @@ class SnowparkHandlers:
         )
         imports = [f"@{row.name}" for row in session.sql(f"LIST @{temp_stage_name}").collect()]
 
+        # Store GridSearchCV's refit variable. If user set it as False, we don't need to refit it again
+        refit_bool = estimator.refit
         # Create a temp file and dump the score to that file.
         estimator_file_name = get_temp_file_path()
         with open(estimator_file_name, mode="w+b") as local_estimator_file_obj:
+            # Set GridSearchCV refit as False and fit it again after retrieving the best param
+            estimator.refit = False
             cp.dump(estimator, local_estimator_file_obj)
         stage_estimator_file_name = posixpath.join(temp_stage_name, os.path.basename(estimator_file_name))
         statement_params = telemetry.get_function_usage_statement_params(
@@ -697,11 +701,13 @@ class SnowparkHandlers:
         estimator_location = put_result[0].target
         imports.append(f"@{temp_stage_name}/{estimator_location}")
 
-        cv_sproc_name = random_name_for_temp_object(TempObjectType.PROCEDURE)
+        search_sproc_name = random_name_for_temp_object(TempObjectType.PROCEDURE)
+        random_udtf_name = random_name_for_temp_object(TempObjectType.FUNCTION)
+        random_table_name = random_name_for_temp_object(TempObjectType.TABLE)
 
         @sproc(  # type: ignore[misc]
             is_permanent=False,
-            name=cv_sproc_name,
+            name=search_sproc_name,
             packages=dependencies + ["snowflake-snowpark-python", "pyarrow", "fastparquet"],  # type: ignore[arg-type]
             replace=True,
             session=session,
@@ -709,7 +715,7 @@ class SnowparkHandlers:
             imports=imports,  # type: ignore[arg-type]
             statement_params=statement_params,
         )
-        def preprocess_cv_ind(
+        def _distributed_search(
             session: Session,
             imports: List[str],
             stage_estimator_file_name: str,
@@ -717,8 +723,11 @@ class SnowparkHandlers:
             label_cols: List[str],
             statement_params: Dict[str, str],
         ) -> str:
+            import copy
             import os
             import tempfile
+            import time
+            from typing import Iterator, List
 
             import cloudpickle as cp
             import pandas as pd
@@ -754,216 +763,261 @@ class SnowparkHandlers:
                 estimator = cp.load(local_estimator_file_obj)
 
             cv_orig = check_cv(estimator.cv, y, classifier=is_classifier(estimator.estimator))
-            indices = [[train, test] for train, test in cv_orig.split(X, y)]
+            indices = [test for _, test in cv_orig.split(X, y)]
+            indices_df = pd.DataFrame({"TEST": indices})
+            indices_df = session.create_dataframe(indices_df)
 
-            local_cv_file = tempfile.NamedTemporaryFile(delete=True)
-            local_cv_file_name = local_cv_file.name
-            local_cv_file.close()
-            with open(local_cv_file_name, mode="w+b") as local_cv_file_obj:
-                cp.dump(indices, local_cv_file_obj)
+            remote_file_path = f"{temp_stage_name}/indices.parquet"
+            indices_df.write.copy_into_location(
+                remote_file_path, file_format_type="parquet", header=True, overwrite=True
+            )
+            imports.extend([f"@{row.name}" for row in session.sql(f"LIST @{temp_stage_name}/indices").collect()])
 
-            put_result = session.file.put(
-                local_cv_file_name,
+            indices_len = len(indices)
+
+            assert estimator is not None
+            params_to_evaluate = []
+            for param_to_eval in list(param_list):
+                for k, v in param_to_eval.items():  # type: ignore[attr-defined]
+                    param_to_eval[k] = [v]  # type: ignore[index]
+                params_to_evaluate.append([param_to_eval])
+
+            @cachetools.cached(cache={})
+            def _load_data_into_udf() -> Tuple[
+                Dict[str, pd.DataFrame],
+                Union[model_selection.GridSearchCV, model_selection.RandomizedSearchCV],
+                pd.DataFrame,
+                int,
+            ]:
+                import pyarrow.parquet as pq
+
+                data_files = [
+                    filename
+                    for filename in os.listdir(sys._xoptions["snowflake_import_directory"])
+                    if filename.startswith(temp_stage_name)
+                ]
+                partial_df = [
+                    pq.read_table(os.path.join(sys._xoptions["snowflake_import_directory"], file_name)).to_pandas()
+                    for file_name in data_files
+                ]
+                df = pd.concat(partial_df, ignore_index=True)
+
+                # load estimator
+                local_estimator_file_path = os.path.join(
+                    sys._xoptions["snowflake_import_directory"], f"{estimator_location}"
+                )
+                with open(local_estimator_file_path, mode="rb") as local_estimator_file_obj:
+                    estimator = cp.load(local_estimator_file_obj)
+
+                # load indices
+                indices_files = [
+                    filename
+                    for filename in os.listdir(sys._xoptions["snowflake_import_directory"])
+                    if filename.startswith("indices")
+                ]
+                indices_partial_df = [
+                    pq.read_table(os.path.join(sys._xoptions["snowflake_import_directory"], file_name)).to_pandas()
+                    for file_name in indices_files
+                ]
+                indices = pd.concat(indices_partial_df, ignore_index=True)
+
+                argspec = inspect.getfullargspec(estimator.fit)
+                args = {"X": df[input_cols]}
+
+                if label_cols:
+                    label_arg_name = "Y" if "Y" in argspec.args else "y"
+                    args[label_arg_name] = df[label_cols].squeeze()
+
+                if sample_weight_col is not None and "sample_weight" in argspec.args:
+                    args["sample_weight"] = df[sample_weight_col].squeeze()
+                return args, estimator, indices, len(df)
+
+            class SearchCV:
+                def __init__(self) -> None:
+                    args, estimator, indices, data_length = _load_data_into_udf()
+                    self.args = args
+                    self.estimator = estimator
+                    self.indices = indices
+                    self.data_length = data_length
+
+                def process(
+                    self, params: List[dict], idx: int  # type:ignore[type-arg]
+                ) -> Iterator[Tuple[float, str, str]]:
+                    if hasattr(estimator, "param_grid"):
+                        self.estimator.param_grid = params
+                    else:
+                        self.estimator.param_distributions = params
+                    full_indices = np.array([i for i in range(self.data_length)])
+                    test_indice = json.loads(self.indices["TEST"][idx])
+                    train_indice = np.setdiff1d(full_indices, test_indice)
+                    self.estimator.cv = [(train_indice, test_indice)]
+                    self.estimator.fit(**self.args)
+                    binary_cv_results = None
+                    with io.BytesIO() as f:
+                        cp.dump(self.estimator.cv_results_, f)
+                        f.seek(0)
+                        binary_cv_results = f.getvalue().hex()
+                    yield (self.estimator.best_score_, json.dumps(self.estimator.best_params_), binary_cv_results)
+
+                def end_partition(self) -> None:
+                    ...
+
+            session.udtf.register(
+                SearchCV,
+                output_schema=StructType(
+                    [
+                        StructField("BEST_SCORE", FloatType()),
+                        StructField("BEST_PARAMS", StringType()),
+                        StructField("CV_RESULTS", StringType()),
+                    ]
+                ),
+                input_types=[VariantType(), IntegerType()],
+                name=random_udtf_name,
+                packages=dependencies + ["pyarrow", "fastparquet"],  # type: ignore[arg-type]
+                replace=True,
+                is_permanent=False,
+                imports=imports,  # type: ignore[arg-type]
+                statement_params=statement_params,
+            )
+
+            HP_TUNING = F.table_function(random_udtf_name)
+
+            idx_length = int(indices_len)
+            params_length = len(params_to_evaluate)
+            idxs = [i for i in range(idx_length)]
+            params, param_indices = [], []
+            for param, param_idx in product(params_to_evaluate, idxs):
+                params.append(param)
+                param_indices.append(param_idx)
+
+            pd_df = pd.DataFrame(
+                {
+                    "PARAMS": params,
+                    "TRAIN_IND": param_indices,
+                    "PARAM_INDEX": [i for i in range(idx_length * params_length)],
+                }
+            )
+            df = session.create_dataframe(pd_df)
+            results = df.select(
+                F.cast(df["PARAM_INDEX"], IntegerType()).as_("PARAM_INDEX"),
+                (HP_TUNING(df["PARAMS"], df["TRAIN_IND"]).over(partition_by=df["PARAM_INDEX"])),
+            )
+
+            results.write.saveAsTable(random_table_name, mode="overwrite", table_type="temporary")
+            table_result = session.table(random_table_name).sort(col("PARAM_INDEX"))
+
+            # cv_result maintains the original order
+            cv_results_ = dict()
+            for i, val in enumerate(table_result.select("CV_RESULTS").collect()):
+                # retrieved string had one more double quote in the front and end of the string.
+                # use [1:-1] to remove the extra double quotes
+                hex_str = bytes.fromhex(val[0])
+                with io.BytesIO(hex_str) as f_reload:
+                    each_cv_result = cp.load(f_reload)
+                    for k, v in each_cv_result.items():
+                        cur_cv = i % idx_length
+                        key = k
+                        if k == "split0_test_score":
+                            key = f"split{cur_cv}_test_score"
+                        elif k.startswith("param"):
+                            if cur_cv != 0:
+                                key = False
+                        if key:
+                            if key not in cv_results_:
+                                cv_results_[key] = v
+                            else:
+                                cv_results_[key] = np.concatenate([cv_results_[key], v])
+
+            # Use numpy to re-calculate all the information in cv_results_ again
+            # Generally speaking, reshape all the results into the (3, idx_length, params_length) shape,
+            # and average them by the idx_length;
+            # idx_length is the number of cv folds; params_length is the number of parameter combinations
+            fit_score_test_matrix = np.stack(
+                (
+                    np.reshape(cv_results_["mean_fit_time"], (idx_length, -1)),  # idx_length x params_length
+                    np.reshape(cv_results_["mean_score_time"], (idx_length, -1)),
+                    np.reshape(
+                        np.concatenate([cv_results_[f"split{cur_cv}_test_score"] for cur_cv in range(idx_length)]),
+                        (idx_length, -1),
+                    ),
+                )
+            )
+            mean_fit_score_test_matrix = np.mean(fit_score_test_matrix, axis=1)
+            std_fit_score_test_matrix = np.std(fit_score_test_matrix, axis=1)
+            cv_results_["std_fit_time"] = std_fit_score_test_matrix[0]
+            cv_results_["mean_fit_time"] = mean_fit_score_test_matrix[0]
+            cv_results_["std_score_time"] = std_fit_score_test_matrix[1]
+            cv_results_["mean_score_time"] = mean_fit_score_test_matrix[1]
+            cv_results_["std_test_score"] = std_fit_score_test_matrix[2]
+            cv_results_["mean_test_score"] = mean_fit_score_test_matrix[2]
+            # re-compute the ranking again with mean_test_score
+            cv_results_["rank_test_score"] = rankdata(-cv_results_["mean_test_score"], method="min")
+            # best param is the highest ranking (which is 1) and we choose the first time ranking 1 appeared
+            best_param_index = np.where(cv_results_["rank_test_score"] == 1)[0][0]
+
+            estimator.best_params_ = cv_results_["params"][best_param_index]
+            estimator.best_score_ = cv_results_["mean_test_score"][best_param_index]
+            estimator.cv_results_ = cv_results_
+
+            if refit_bool:
+                estimator.best_estimator_ = copy.deepcopy(
+                    copy.deepcopy(estimator.estimator).set_params(**estimator.best_params_)
+                )
+                # Let the sproc use all cores to refit.
+                estimator.n_jobs = -1 if not estimator.n_jobs else estimator.n_jobs
+
+                # process the input as args
+                argspec = inspect.getfullargspec(estimator.fit)
+                args = {"X": X}
+                if label_cols:
+                    label_arg_name = "Y" if "Y" in argspec.args else "y"
+                    args[label_arg_name] = y
+                if sample_weight_col is not None and "sample_weight" in argspec.args:
+                    args["sample_weight"] = df[sample_weight_col].squeeze()
+                estimator.refit = True
+                refit_start_time = time.time()
+                estimator.best_estimator_.fit(**args)
+                refit_end_time = time.time()
+                estimator.refit_time_ = refit_end_time - refit_start_time
+
+            local_result_file = tempfile.NamedTemporaryFile(delete=True)
+            local_result_file_name = local_result_file.name
+            local_result_file.close()
+
+            with open(local_result_file_name, mode="w+b") as local_result_file_obj:
+                cp.dump(estimator, local_result_file_obj)
+
+            session.file.put(
+                local_result_file_name,
                 temp_stage_name,
                 auto_compress=False,
                 overwrite=True,
+                statement_params=statement_params,
             )
-            ind_location = put_result[0].target
-            return ind_location + "|" + str(len(indices))
 
-        ind_location, indices_len = preprocess_cv_ind(
+            # Note: you can add something like  + "|" + str(df) to the return string
+            # to pass debug information to the caller.
+            return str(os.path.basename(local_result_file_name))
+
+        sproc_export_file_name = _distributed_search(
             session,
             imports,
             stage_estimator_file_name,
             input_cols,
             label_cols,
             statement_params,
-        ).split("|")
-        imports.append(f"@{temp_stage_name}/{ind_location}")
-
-        # Create estimators with subset of param grid.
-        # TODO: Decide how to choose parallelization factor.
-        assert estimator is not None
-        params_to_evaluate = []
-        for param_to_eval in list(param_list):
-            for k, v in param_to_eval.items():  # type: ignore[attr-defined]
-                param_to_eval[k] = [v]  # type: ignore[index]
-            params_to_evaluate.append([param_to_eval])
-
-        @cachetools.cached(cache={})
-        def _load_data_into_udf() -> Tuple[
-            Dict[str, pd.DataFrame],
-            Union[model_selection.GridSearchCV, model_selection.RandomizedSearchCV],
-            List[List[int]],
-        ]:
-            import pyarrow.parquet as pq
-
-            data_files = [
-                filename
-                for filename in os.listdir(sys._xoptions["snowflake_import_directory"])
-                if filename.startswith(temp_stage_name)
-            ]
-            partial_df = [
-                pq.read_table(os.path.join(sys._xoptions["snowflake_import_directory"], file_name)).to_pandas()
-                for file_name in data_files
-            ]
-            df = pd.concat(partial_df, ignore_index=True)
-
-            # load estimator
-            local_estimator_file_path = os.path.join(
-                sys._xoptions["snowflake_import_directory"], f"{estimator_location}"
-            )
-            with open(local_estimator_file_path, mode="rb") as local_estimator_file_obj:
-                estimator = cp.load(local_estimator_file_obj)
-
-            # load index file
-            local_ind_file_path = os.path.join(sys._xoptions["snowflake_import_directory"], f"{ind_location}")
-            with open(local_ind_file_path, mode="rb") as local_ind_file_obj:
-                indices = cp.load(local_ind_file_obj)
-
-            argspec = inspect.getfullargspec(estimator.fit)
-            args = {"X": df[input_cols]}
-
-            if label_cols:
-                label_arg_name = "Y" if "Y" in argspec.args else "y"
-                args[label_arg_name] = df[label_cols].squeeze()
-
-            if sample_weight_col is not None and "sample_weight" in argspec.args:
-                args["sample_weight"] = df[sample_weight_col].squeeze()
-            return args, estimator, indices
-
-        random_udtf_name = random_name_for_temp_object(TempObjectType.TABLE_FUNCTION)
-        statement_params = telemetry.get_function_usage_statement_params(
-            project=_PROJECT,
-            subproject=self._subproject,
-            function_name=telemetry.get_statement_params_full_func_name(
-                inspect.currentframe(), self.__class__.__name__
-            ),
-            api_calls=[udtf],
         )
 
-        @udtf(  # type: ignore[arg-type]
-            output_schema=StructType(
-                [
-                    StructField("BEST_SCORE", FloatType()),
-                    StructField("BEST_PARAMS", StringType()),
-                    StructField("CV_RESULTS", StringType()),
-                ]
-            ),
-            input_types=[VariantType(), IntegerType()],
-            name=random_udtf_name,
-            packages=dependencies + ["pyarrow", "fastparquet"],  # type: ignore[arg-type]
-            replace=True,
-            is_permanent=False,
-            imports=imports,  # type: ignore[arg-type]
+        local_estimator_path = get_temp_file_path()
+        session.file.get(
+            posixpath.join(temp_stage_name, sproc_export_file_name),
+            local_estimator_path,
             statement_params=statement_params,
-            session=session,
-        )
-        class SearchCV:
-            def __init__(self) -> None:
-                args, estimator, indices = _load_data_into_udf()
-                self.args = args
-                self.estimator = estimator
-                self.indices = indices
-
-            def process(
-                self, params: List[dict], idx: int  # type:ignore[type-arg]
-            ) -> Iterator[Tuple[float, str, str]]:
-                if hasattr(estimator, "param_grid"):
-                    self.estimator.param_grid = params
-                else:
-                    self.estimator.param_distributions = params
-
-                self.estimator.cv = [(self.indices[idx][0], self.indices[idx][1])]
-                self.estimator.fit(**self.args)
-                # TODO: handle the case of estimator size > maximum column size or to just serialize and return score.
-                binary_cv_results = None
-                with io.BytesIO() as f:
-                    cp.dump(self.estimator.cv_results_, f)
-                    f.seek(0)
-                    binary_cv_results = f.getvalue().hex()
-                yield (self.estimator.best_score_, json.dumps(self.estimator.best_params_), binary_cv_results)
-
-            def end_partition(self) -> None:
-                ...
-
-        HP_TUNING = F.table_function(random_udtf_name)
-
-        idx_length = int(indices_len)
-        params_length = len(params_to_evaluate)
-        idxs = [i for i in range(idx_length)]
-        params, param_indices = [], []
-        for param, param_idx in product(params_to_evaluate, idxs):
-            params.append(param)
-            param_indices.append(param_idx)
-
-        pd_df = pd.DataFrame(
-            {
-                "PARAMS": params,
-                "TRAIN_IND": param_indices,
-                "PARAM_INDEX": [i for i in range(idx_length * params_length)],
-            }
-        )
-        df = session.create_dataframe(pd_df)
-        results = df.select(
-            F.cast(df["PARAM_INDEX"], IntegerType()).as_("PARAM_INDEX"),
-            (HP_TUNING(df["PARAMS"], df["TRAIN_IND"]).over(partition_by=df["PARAM_INDEX"])),
         )
 
-        random_table_name = random_name_for_temp_object(TempObjectType.TABLE)
-        results.write.saveAsTable(random_table_name, mode="overwrite", table_type="temporary")
-        table_result = session.table(random_table_name).sort(col("PARAM_INDEX"))
+        with open(os.path.join(local_estimator_path, sproc_export_file_name), mode="r+b") as result_file_obj:
+            fit_estimator = cp.load(result_file_obj)
 
-        # cv_result maintains the original order
-        cv_results_ = dict()
-        for i, val in enumerate(table_result.select("CV_RESULTS").collect()):
-            # retrieved string had one more double quote in the front and end of the string.
-            # use [1:-1] to remove the extra double quotes
-            hex_str = bytes.fromhex(val[0])
-            with io.BytesIO(hex_str) as f_reload:
-                each_cv_result = cp.load(f_reload)
-                for k, v in each_cv_result.items():
-                    cur_cv = i % idx_length
-                    key = k
-                    if k == "split0_test_score":
-                        key = f"split{cur_cv}_test_score"
-                    elif k.startswith("param"):
-                        if cur_cv != 0:
-                            key = False
-                    if key:
-                        if key not in cv_results_:
-                            cv_results_[key] = v
-                        else:
-                            cv_results_[key] = np.concatenate([cv_results_[key], v])
+        cleanup_temp_files([local_estimator_path])
 
-        # Use numpy to re-calculate all the information in cv_results_ again
-        # Generally speaking, reshape all the results into the (3, idx_length, params_length) shape,
-        # and average them by the idx_length;
-        # idx_length is the number of cv folds; params_length is the number of parameter combinations
-        fit_score_test_matrix = np.stack(
-            (
-                np.reshape(cv_results_["mean_fit_time"], (idx_length, -1)),  # idx_length x params_length
-                np.reshape(cv_results_["mean_score_time"], (idx_length, -1)),
-                np.reshape(
-                    np.concatenate([cv_results_[f"split{cur_cv}_test_score"] for cur_cv in range(idx_length)]),
-                    (idx_length, -1),
-                ),
-            )
-        )
-        mean_fit_score_test_matrix = np.mean(fit_score_test_matrix, axis=1)
-        std_fit_score_test_matrix = np.std(fit_score_test_matrix, axis=1)
-        cv_results_["std_fit_time"] = std_fit_score_test_matrix[0]
-        cv_results_["mean_fit_time"] = mean_fit_score_test_matrix[0]
-        cv_results_["std_score_time"] = std_fit_score_test_matrix[1]
-        cv_results_["mean_score_time"] = mean_fit_score_test_matrix[1]
-        cv_results_["std_test_score"] = std_fit_score_test_matrix[2]
-        cv_results_["mean_test_score"] = mean_fit_score_test_matrix[2]
-        # re-compute the ranking again with mean_test_score
-        cv_results_["rank_test_score"] = rankdata(-cv_results_["mean_test_score"], method="min")
-        # best param is the highest ranking (which is 1) and we choose the first time ranking 1 appeared
-        best_param_index = np.where(cv_results_["rank_test_score"] == 1)[0][0]
-
-        # assign the parameter to a dict
-        best_param = cv_results_["params"][best_param_index]
-        best_score = cv_results_["mean_test_score"][best_param_index]
-        return {"best_param": best_param, "best_score": best_score, "cv_results": cv_results_}
+        return fit_estimator

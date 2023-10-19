@@ -1,5 +1,16 @@
 # Release History
 
+## 1.0.11
+
+### New Features
+
+- Model Registry: Add log_artifact() public method.
+
+### Behavior Changes
+
+- Model Registry: Change log_model() argument from TrainingDataset to List of ArtifactReference.
+- Model Registry: Change get_training_dataset() to get_artifact().
+
 ## 1.0.10
 
 ### Behavior Changes

@@ -17,7 +17,7 @@ build:
   noarch: python
 package:
   name: snowflake-ml-python
-  version: 1.0.10
+  version: 1.0.11
 requirements:
   build:
     - python
@@ -49,7 +49,7 @@ requirements:
     - mlflow>=2.1.0,<2.4
     - sentencepiece>=0.1.95,<0.2
     - shap==0.42.1
-    - tensorflow>=2.9,<3
+    - tensorflow>=2.9,<3,!=2.12.0
     - tokenizers>=0.10,<1
     - torchdata>=0.4,<1
     - transformers>=4.29.2,<5

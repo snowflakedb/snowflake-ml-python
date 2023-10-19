@@ -1,3 +1,5 @@
+from unittest import mock
+
 import inflection
 import numpy as np
 from absl.testing.absltest import TestCase, main
@@ -34,7 +36,9 @@ class RandomizedSearchCVTest(TestCase):
                     np.testing.assert_allclose(v, cv_result_2[k], rtol=1.0e-1, atol=1.0e-2)
                 # Do not compare the fit time
 
-    def test_fit_and_compare_results(self) -> None:
+    @mock.patch("snowflake.ml.modeling.model_selection._internal._randomized_search_cv.if_single_node")
+    def test_fit_and_compare_results(self, mock_if_single_node) -> None:
+        mock_if_single_node.return_value = True  # falls back to HPO implementation
         input_df_pandas = load_iris(as_frame=True).frame
         input_df_pandas.columns = [inflection.parameterize(c, "_").upper() for c in input_df_pandas.columns]
         input_cols = [c for c in input_df_pandas.columns if not c.startswith("TARGET")]
