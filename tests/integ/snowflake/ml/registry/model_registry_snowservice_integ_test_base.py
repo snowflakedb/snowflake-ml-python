@@ -49,7 +49,6 @@ class TestModelRegistryIntegSnowServiceBase(spcs_integ_test_base.SpcsIntegTestBa
         embed_local_ml_library: Optional[bool] = True,
         omit_target_method_when_deploy: bool = False,
     ) -> None:
-
         model, test_features, *_ = prepare_model_and_feature_fn()
         if omit_target_method_when_deploy:
             target_method = deployment_options.pop("target_method")
@@ -65,7 +64,7 @@ class TestModelRegistryIntegSnowServiceBase(spcs_integ_test_base.SpcsIntegTestBa
         # Instead we rely on snowpark version on information.schema table. Note that this will not affect end user
         # as by the time they use it, the latest snowpark should be available in conda already.
         conda_dependencies = conda_dependencies or []
-        conda_dependencies.append(test_env_utils.get_latest_package_versions_in_conda("snowflake-snowpark-python"))
+        conda_dependencies.append(test_env_utils.get_latest_package_version_spec_in_conda("snowflake-snowpark-python"))
 
         self.registry.log_model(
             model_name=model_name,

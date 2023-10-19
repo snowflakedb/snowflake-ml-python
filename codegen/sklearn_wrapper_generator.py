@@ -188,6 +188,18 @@ class WrapperGeneratorFactory:
         return WrapperGeneratorFactory._is_class_of_type(class_object[1], "_MultiOutputEstimator")
 
     @staticmethod
+    def _is_k_neighbors_obj(class_object: Tuple[str, type]) -> bool:
+        """Check if the given estimator is a k-neighbors estimator.
+
+        Args:
+            class_object: Meta class object which needs to be checked.
+
+        Returns:
+            True if the class inherits from KNeighborsMixin, otherwise False.
+        """
+        return WrapperGeneratorFactory._is_class_of_type(class_object[1], "KNeighborsMixin")
+
+    @staticmethod
     def _is_xgboost(module_name: str) -> bool:
         """Checks if the given module belongs to XGBoost package.
 
@@ -505,9 +517,9 @@ class WrapperGeneratorBase:
         self.predict_docstring = ""
         self.predict_proba_docstring = ""
         self.score_docstring = ""
-        self.predict_proba_docstring = ""
         self.predict_log_proba_docstring = ""
         self.decision_function_docstring = ""
+        self.kneighbors_docstring = ""
 
         # Import strings
         self.estimator_imports = ""
@@ -568,6 +580,7 @@ class WrapperGeneratorBase:
         self._is_transformer = WrapperGeneratorFactory._is_transformer_obj(self.class_object)
         self._is_multioutput = WrapperGeneratorFactory._is_multioutput_obj(self.class_object)
         self._is_multioutput_estimator = WrapperGeneratorFactory._is_multioutput_estimator_obj(self.class_object)
+        self._is_k_neighbors = WrapperGeneratorFactory._is_k_neighbors_obj(self.class_object)
         self._is_heterogeneous_ensemble = WrapperGeneratorFactory._is_heterogeneous_ensemble_obj(self.class_object)
         self._is_stacking_ensemble = WrapperGeneratorFactory._is_stacking_ensemble_obj(self.class_object)
         self._is_voting_ensemble = WrapperGeneratorFactory._is_voting_ensemble_obj(self.class_object)
@@ -629,7 +642,16 @@ class WrapperGeneratorBase:
         self.estimator_class_docstring = class_docstring
 
     def _populate_function_doc_fields(self) -> None:
-        _METHODS = ["fit", "predict", "predict_log_proba", "predict_proba", "decision_function", "transform", "score"]
+        _METHODS = [
+            "fit",
+            "predict",
+            "predict_log_proba",
+            "predict_proba",
+            "decision_function",
+            "transform",
+            "score",
+            "kneighbors",
+        ]
         _CLASS_FUNC = {name: func for name, func in inspect.getmembers(self.class_object[1])}
         for _each_method in _METHODS:
             if _each_method in _CLASS_FUNC.keys():
@@ -660,6 +682,7 @@ class WrapperGeneratorBase:
         self.predict_log_proba_docstring = self.estimator_function_docstring["predict_log_proba"]
         self.decision_function_docstring = self.estimator_function_docstring["decision_function"]
         self.score_docstring = self.estimator_function_docstring["score"]
+        self.kneighbors_docstring = self.estimator_function_docstring["kneighbors"]
 
     def _populate_class_names(self) -> None:
         self.original_class_name = self.class_object[0]

@@ -36,7 +36,12 @@ from snowflake.ml.model import (
     model_signature,
     type_hints as model_types,
 )
-from snowflake.ml.registry import _initial_schema, _ml_artifact, _schema_version_manager
+from snowflake.ml.registry import (
+    _artifact_manager,
+    _initial_schema,
+    _schema_version_manager,
+    artifact,
+)
 from snowflake.snowpark._internal import utils as snowpark_utils
 
 if TYPE_CHECKING:
@@ -231,7 +236,10 @@ def _create_registry_views(
                     {artifact_table_name}.*
                 FROM {registry_table_name}
                 LEFT JOIN {artifact_table_name}
-                ON (ARRAY_CONTAINS({artifact_table_name}.ID::VARIANT, {registry_table_name}.ARTIFACT_IDS))
+                ON (ARRAY_CONTAINS(
+                    {artifact_table_name}.ID::VARIANT,
+                    {registry_table_name}.ARTIFACT_IDS)
+                )
         """
     ).collect(statement_params=statement_params)
 
@@ -313,6 +321,7 @@ class ModelRegistry:
         self._artifact_view = identifier.concat_names([self._artifact_table, "_VIEW"])
         self._session = session
         self._svm = _schema_version_manager.SchemaVersionManager(self._session, self._name, self._schema)
+        self._artifact_manager = _artifact_manager.ArtifactManager(self._session, self._name, self._schema)
 
         # A in-memory deployment info cache to store information of temporary deployments
         # TODO(zhe): Use a temporary table to replace the in-memory cache.
@@ -800,7 +809,7 @@ class ModelRegistry:
         output_spec: Optional[Dict[str, str]] = None,
         description: Optional[str] = None,
         tags: Optional[Dict[str, str]] = None,
-        dataset: Optional[dataset.Dataset] = None,
+        artifacts: Optional[List[artifact.ArtifactReference]] = None,
     ) -> None:
         """Helper function to register model metadata.
 
@@ -820,9 +829,10 @@ class ModelRegistry:
             description: A description for the model. The description can be changed later.
             tags: Key-value pairs of tags to be set for this model. Tags can be modified
                 after model registration.
-            dataset: An object contains dataset metadata.
+            artifacts: A list of artifact references.
 
         Raises:
+            ValueError: Artifact ids not found in model registry.
             DataError: The given model already exists.
             DatabaseError: Unable to register the model properties into table.
         """
@@ -838,24 +848,11 @@ class ModelRegistry:
         new_model["CREATION_ROLE"] = self._session.get_current_role()
         new_model["CREATION_ENVIRONMENT_SPEC"] = {"python": ".".join(map(str, sys.version_info[:3]))}
 
-        if dataset is not None:
-            is_artifact_exists = _ml_artifact.if_artifact_exists(
-                self._session, self._name, self._schema, dataset.id, _ml_artifact.ArtifactType.DATASET
-            )
-            if not is_artifact_exists:
-                _ml_artifact.add_artifact(
-                    session=self._session,
-                    database_name=self._name,
-                    schema_name=self._schema,
-                    artifact_id=dataset.id,
-                    artifact_type=_ml_artifact.ArtifactType.DATASET,
-                    artifact_name=dataset.name,
-                    artifact_version=dataset.version,
-                    artifact_spec=json.loads(dataset.to_json()),
-                )
-            new_model["ARTIFACT_IDS"] = [dataset.id]
-        else:
-            new_model["ARTIFACT_IDS"] = []
+        if artifacts is not None:
+            for atf in artifacts:
+                if not self._artifact_manager.exists(atf.name, atf.version):
+                    raise ValueError(f"Artifact {atf.name}/{atf.version} not found in model registry.")
+            new_model["ARTIFACT_IDS"] = [art._id for art in artifacts]
 
         existing_model_nums = self._list_selected_models(model_name=model_name, model_version=model_version).count()
         if existing_model_nums:
@@ -1266,6 +1263,45 @@ class ModelRegistry:
         else:
             return dict()
 
+    @telemetry.send_api_usage_telemetry(
+        project=_TELEMETRY_PROJECT,
+        subproject=_TELEMETRY_SUBPROJECT,
+    )
+    @snowpark._internal.utils.private_preview(version="1.0.10")
+    def log_artifact(
+        self,
+        artifact_type: artifact.ArtifactType,
+        artifact_name: str,
+        artifact_spec: str,
+        artifact_version: Optional[str] = None,
+    ) -> artifact.ArtifactReference:
+        """Upload and register an artifact to the Model Registry.
+
+        Args:
+            artifact_type: Type of artifact.
+            artifact_name: Name of artifact.
+            artifact_spec: Specification of artifact in json format.
+            artifact_version: Version of artifact.
+
+        Raises:
+            DataError: Artifact with same name and version already exists.
+
+        Returns:
+            Return a reference to the artifact.
+        """
+        artifact_id = self._get_new_unique_identifier()
+
+        if self._artifact_manager.exists(artifact_name, artifact_version):
+            raise connector.DataError(f"Artifact {artifact_name}/{artifact_version} already exists.")
+
+        return self._artifact_manager.add(
+            artifact_id=artifact_id,
+            artifact_type=artifact_type,
+            artifact_name=artifact_name,
+            artifact_version=artifact_version,
+            artifact_spec=artifact_spec,
+        )
+
     # Combined Registry and Repository operations.
     @telemetry.send_api_usage_telemetry(
         project=_TELEMETRY_PROJECT,
@@ -1284,7 +1320,7 @@ class ModelRegistry:
         pip_requirements: Optional[List[str]] = None,
         signatures: Optional[Dict[str, model_signature.ModelSignature]] = None,
         sample_input_data: Optional[Any] = None,
-        dataset: Optional[dataset.Dataset] = None,
+        artifacts: Optional[List[artifact.ArtifactReference]] = None,
         code_paths: Optional[List[str]] = None,
         options: Optional[model_types.BaseModelSaveOption] = None,
     ) -> Optional["ModelReference"]:
@@ -1304,18 +1340,21 @@ class ModelRegistry:
             pip_requirements: List of PIP package specs. Model will not be able to deploy to the warehouse if there is
                 pip requirements.
             signatures: Signatures of the model, which is a mapping from target method name to signatures of input and
-                output, which could be inferred by calling `infer_signature` method with sample input data dataset.
-            sample_input_data: Sample of the input data for the model.
-            dataset: A dataset metadata object.
+                output, which could be inferred by calling `infer_signature` method with sample input data.
+            sample_input_data: Sample of the input data for the model. If artifacts contains a feature store
+                generated dataset, then sample_input_data is not needed. If both sample_input_data and dataset provided
+                , then sample_input_data will be used to infer model signature.
+            artifacts: A list of artifact ids, which are generated from log_artifact().
             code_paths: Directory of code to import when loading and deploying the model.
             options: Additional options when saving the model.
 
         Raises:
-            DataError: Raised when the given model exists.
-            ValueError: Raised in following cases:
-                1) both sample_input_data and dataset are provided;
-                2) signatures and sample_input_data/dataset are both not provided and
-                    model is not a snowflake estimator.
+            DataError: Raised when:
+                1) the given model already exists;
+                2) given artifacts does not exists in this registry.
+            ValueError: Raised when:  # noqa: DAR402
+                1) Signatures, sample_input_data and artifact(dataset) are both not provided and model is not a
+                    snowflake estimator.
             Exception: Raised when there is any error raised when saving the model.
 
         Returns:
@@ -1329,15 +1368,18 @@ class ModelRegistry:
 
         self._model_identifier_is_nonempty_or_raise(model_name, model_version)
 
-        if sample_input_data is not None and dataset is not None:
-            raise ValueError("Only one of sample_input_data and dataset should be provided.")
+        if artifacts is not None:
+            for atf in artifacts:
+                if not self._artifact_manager.exists(atf.name, atf.version):
+                    raise connector.DataError(f"Artifact {atf.name}/{atf.version} does not exists.")
 
-        if dataset is not None:
-            sample_input_data = dataset.df
-            if dataset.timestamp_col is not None:
-                sample_input_data = sample_input_data.drop(dataset.timestamp_col)
-            if dataset.label_cols is not None:
-                sample_input_data = sample_input_data.drop(dataset.label_cols)
+        if sample_input_data is None and artifacts is not None:
+            for atf in artifacts:
+                if atf.type == artifact.ArtifactType.DATASET:
+                    art_ref = self.get_artifact(atf.name, atf.version)
+                    ds = dataset.Dataset.from_json(art_ref._spec, self._session)
+                    sample_input_data = ds.features_df()
+                    break
 
         existing_model_nums = self._list_selected_models(model_name=model_name, model_version=model_version).count()
         if existing_model_nums:
@@ -1377,7 +1419,7 @@ class ModelRegistry:
             uri=uri.get_uri_from_snowflake_stage_path(model_stage_file_path),
             description=description,
             tags=tags,
-            dataset=dataset,
+            artifacts=artifacts,
         )
 
         return ModelReference(registry=self, model_name=model_name, model_version=model_version)
@@ -1621,24 +1663,34 @@ class ModelRegistry:
         project=_TELEMETRY_PROJECT,
         subproject=_TELEMETRY_SUBPROJECT,
     )
-    @snowpark._internal.utils.private_preview(version="1.0.1")
-    def get_dataset(self, model_name: str, model_version: str) -> Optional[dataset.Dataset]:
-        """Get dataset of the model with the given (model name + model version).
+    @snowpark._internal.utils.private_preview(version="1.0.11")
+    def get_artifact(
+        self, artifact_name: str, artifact_version: Optional[str] = None
+    ) -> Optional[artifact.ArtifactReference]:
+        """Get artifact with the given (name, version).
 
         Args:
-            model_name: Model Name string.
-            model_version: Model Version string.
+            artifact_name: Name of artifact.
+            artifact_version: Version of artifact.
 
         Returns:
-            Dataset of the model or none if not found.
+            A reference to artifact if found, otherwise none.
         """
-        artifacts = (
-            self.list_artifacts(model_name, model_version)
-            .filter(snowpark.Column("TYPE") == _ml_artifact.ArtifactType.DATASET.value)
-            .collect()
-        )
+        artifacts = self._artifact_manager.get(
+            artifact_name,
+            artifact_version,
+        ).collect()
 
-        return dataset.Dataset.from_json(artifacts[0]["ARTIFACT_SPEC"], self._session) if len(artifacts) != 0 else None
+        if len(artifacts) == 0:
+            return None
+        atf = artifacts[0]
+        return artifact.ArtifactReference(
+            _id=atf["ID"],
+            _spec=atf["ARTIFACT_SPEC"],
+            type=atf["TYPE"],
+            name=atf["NAME"],
+            version=atf["VERSION"],
+        )
 
     @telemetry.send_api_usage_telemetry(
         project=_TELEMETRY_PROJECT,
@@ -2019,9 +2071,10 @@ def create_model_registry(
             statement_params,
         )
     finally:
-        # Restore the db & schema to the original ones
-        if old_db is not None and old_db != session.get_current_database():
-            session.use_database(old_db)
-        if old_schema is not None and old_schema != session.get_current_schema():
-            session.use_schema(old_schema)
+        if not snowpark_utils.is_in_stored_procedure():  # type: ignore[no-untyped-call]
+            # Restore the db & schema to the original ones
+            if old_db is not None and old_db != session.get_current_database():
+                session.use_database(old_db)
+            if old_schema is not None and old_schema != session.get_current_schema():
+                session.use_schema(old_schema)
     return True
