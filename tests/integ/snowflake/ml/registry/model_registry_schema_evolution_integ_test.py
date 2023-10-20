@@ -296,7 +296,7 @@ class ModelRegistrySchemaEvolutionIntegTest(absltest.TestCase):
             model_version="v1",
             model=model,
             conda_dependencies=[
-                test_env_utils.get_latest_package_versions_in_server(self.session, "snowflake-snowpark-python")
+                test_env_utils.get_latest_package_version_spec_in_server(self.session, "snowflake-snowpark-python")
             ],
         )
 
@@ -314,7 +314,7 @@ class ModelRegistrySchemaEvolutionIntegTest(absltest.TestCase):
                 model_version="v2",
                 model=model,
                 conda_dependencies=[
-                    test_env_utils.get_latest_package_versions_in_server(self.session, "snowflake-snowpark-python")
+                    test_env_utils.get_latest_package_version_spec_in_server(self.session, "snowflake-snowpark-python")
                 ],
             )
 

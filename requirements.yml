@@ -217,7 +217,7 @@
 - name: tensorflow
   dev_version_conda: 2.10.0
   dev_version_pypi: 2.13.1
-  version_requirements: '>=2.9,<3'
+  version_requirements: '>=2.9,<3,!=2.12.0'
   requirements_extra_tags:
     - tensorflow
 - name: tokenizers
