@@ -4,7 +4,7 @@ py_test(
     name = "model_registry_basic_integ_test",
     srcs = ["model_registry_basic_integ_test.py"],
     deps = [
-        "//snowflake/ml/registry:_ml_artifact",
+        "//snowflake/ml/registry:artifact_manager",
         "//snowflake/ml/registry:model_registry",
         "//snowflake/ml/utils:connection_params",
         "//tests/integ/snowflake/ml/test_utils:db_manager",
@@ -22,6 +22,17 @@ py_test(
         "//tests/integ/snowflake/ml/test_utils:db_manager",
         "//tests/integ/snowflake/ml/test_utils:model_factory",
         "//tests/integ/snowflake/ml/test_utils:test_env_utils",
+    ],
+)
+
+py_test(
+    name = "model_registry_compat_test",
+    timeout = "long",
+    srcs = ["model_registry_compat_test.py"],
+    deps = [
+        "//snowflake/ml/registry:model_registry",
+        "//tests/integ/snowflake/ml/test_utils:common_test_base",
+        "//tests/integ/snowflake/ml/test_utils:db_manager",
     ],
 )
 
@@ -63,5 +74,6 @@ py_test(
     name = "model_registry_snowservice_merge_gate_integ_test",
     timeout = "eternal",  # 3600s
     srcs = ["model_registry_snowservice_merge_gate_integ_test.py"],
+    shard_count = 2,
     deps = [":model_registry_snowservice_integ_test_base"],
 )

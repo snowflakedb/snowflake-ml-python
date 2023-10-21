@@ -1,10 +1,10 @@
-import json
 import uuid
 from typing import Optional
 
 from absl.testing import absltest, parameterized
 
-from snowflake.ml.registry import _ml_artifact, model_registry
+from snowflake.ml.registry import model_registry
+from snowflake.ml.registry.artifact import Artifact, ArtifactType
 from snowflake.ml.utils import connection_params
 from snowflake.snowpark import Session
 from tests.integ.snowflake.ml.test_utils import db_manager
@@ -168,7 +168,7 @@ class TestModelRegistryBasicInteg(parameterized.TestCase):
             self._validate_restore_db_and_schema()
 
     def test_add_and_delete_ml_artifacts(self) -> None:
-        """Test add_artifact() and delete_artifact() in `_ml_artifact.py` works as expected."""
+        """Test add() and delete() in `_artifact_manager.py` works as expected."""
 
         artifact_registry = db_manager.TestObjectNameGenerator.get_snowml_test_object_name(
             _RUN_ID, "artifact_registry"
@@ -179,78 +179,51 @@ class TestModelRegistryBasicInteg(parameterized.TestCase):
             model_registry.create_model_registry(
                 session=self._session, database_name=artifact_registry, schema_name=artifact_registry_schema
             )
+            registry = model_registry.ModelRegistry(
+                session=self._session, database_name=artifact_registry, schema_name=artifact_registry_schema
+            )
         except Exception as e:
             self._db_manager.drop_database(artifact_registry)
             raise Exception(f"Test failed with exception:{e}")
 
-        artifact_id = "123"
-        artifact_type = _ml_artifact.ArtifactType.TESTTYPE
-        artifact_name = "test_artifact"
+        artifact_id = "test_art_123"
         artifact_version = "test_artifact_version"
-        artifact_spec = {"test_property": "test_value"}
+        artifact_name = "test_artifact"
+        artifact = Artifact(type=ArtifactType.DATASET, spec='{"test_property": "test_value"}')
 
         try:
-            self.assertTrue(
-                _ml_artifact.if_artifact_table_exists(self._session, artifact_registry, artifact_registry_schema)
-            )
-
-            # Validate `add_artifact()` can insert entry into the artifact table
-            self.assertFalse(
-                _ml_artifact.if_artifact_exists(
-                    self._session,
-                    artifact_registry,
-                    artifact_registry_schema,
-                    artifact_id=artifact_id,
-                    artifact_type=artifact_type,
-                )
-            )
-            _ml_artifact.add_artifact(
-                self._session,
-                artifact_registry,
-                artifact_registry_schema,
+            art_ref = registry._artifact_manager.add(
+                artifact=artifact,
                 artifact_id=artifact_id,
-                artifact_type=artifact_type,
                 artifact_name=artifact_name,
                 artifact_version=artifact_version,
-                artifact_spec=artifact_spec,
             )
+
             self.assertTrue(
-                _ml_artifact.if_artifact_exists(
-                    self._session,
-                    artifact_registry,
-                    artifact_registry_schema,
-                    artifact_id=artifact_id,
-                    artifact_type=artifact_type,
+                registry._artifact_manager.exists(
+                    art_ref.name,
+                    art_ref.version,
                 )
             )
 
             # Validate the artifact_spec can be parsed as expected
-            artifact_df = _ml_artifact._get_artifact(
-                self._session,
-                artifact_registry,
-                artifact_registry_schema,
-                artifact_id=artifact_id,
-                artifact_type=artifact_type,
+            retrieved_art_df = registry._artifact_manager.get(
+                art_ref.name,
+                art_ref.version,
             )
-            actual_artifact_spec_str = artifact_df.collect()[0]["ARTIFACT_SPEC"]
-            actual_artifact_spec_dict = json.loads(actual_artifact_spec_str)
-            self.assertDictEqual(artifact_spec, actual_artifact_spec_dict)
+
+            actual_artifact_spec = retrieved_art_df.collect()[0]["ARTIFACT_SPEC"]
+            self.assertEqual(artifact._spec, actual_artifact_spec)
 
             # Validate that `delete_artifact` can remove entries from the artifact table.
-            _ml_artifact.delete_artifact(
-                self._session,
-                artifact_registry,
-                artifact_registry_schema,
-                artifact_id=artifact_id,
-                artifact_type=artifact_type,
+            registry._artifact_manager.delete(
+                art_ref.name,
+                art_ref.version,
             )
             self.assertFalse(
-                _ml_artifact.if_artifact_exists(
-                    self._session,
-                    artifact_registry,
-                    artifact_registry_schema,
-                    artifact_id=artifact_id,
-                    artifact_type=artifact_type,
+                registry._artifact_manager.exists(
+                    art_ref.name,
+                    art_ref.version,
                 )
             )
         finally:

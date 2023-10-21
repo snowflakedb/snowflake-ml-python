@@ -80,3 +80,37 @@ class ReplaceTrainingDatasetIdWithArtifactIds(BaseSchemaUpgradePlans):
                 ADD COLUMN {new_column} ARRAY
             """
         ).collect(statement_params=self._statement_params)
+
+
+class ChangeArtifactSpecFromObjectToVarchar(BaseSchemaUpgradePlans):
+    """Change artifact spec type from object to varchar. It's fine to drop the column as it's empty."""
+
+    def __init__(
+        self,
+        session: snowpark.Session,
+        database_name: str,
+        schema_name: str,
+        statement_params: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        super().__init__(session, database_name, schema_name, statement_params)
+
+    def upgrade(self) -> None:
+        full_schema_path = f"{self._database}.{self._schema}"
+        update_col = "ARTIFACT_SPEC"
+        self._session.sql(
+            f"""ALTER TABLE {full_schema_path}.{_initial_schema._ARTIFACT_TABLE_NAME}
+                DROP COLUMN {update_col}
+            """
+        ).collect(statement_params=self._statement_params)
+
+        self._session.sql(
+            f"""ALTER TABLE {full_schema_path}.{_initial_schema._ARTIFACT_TABLE_NAME}
+                ADD COLUMN {update_col} VARCHAR
+            """
+        ).collect(statement_params=self._statement_params)
+
+        self._session.sql(
+            f"""COMMENT ON COLUMN {full_schema_path}.{_initial_schema._ARTIFACT_TABLE_NAME}.{update_col} IS
+                'This column is VARCHAR but supposed to store a valid JSON object'
+            """
+        ).collect(statement_params=self._statement_params)
