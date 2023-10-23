@@ -71,3 +71,16 @@ py_test(
         "//snowflake/ml/utils:connection_params",
     ],
 )
+
+py_test(
+    name = "search_single_node_test",
+    srcs = ["search_single_node_test.py"],
+    shard_count = 4,
+    deps = [
+        "//snowflake/ml/modeling/_internal:estimator_utils",
+        "//snowflake/ml/modeling/model_selection/_internal:_grid_search_cv",
+        "//snowflake/ml/modeling/model_selection/_internal:_randomized_search_cv",
+        "//snowflake/ml/modeling/xgboost:xgb_classifier",
+        "//snowflake/ml/utils:connection_params",
+    ],
+)

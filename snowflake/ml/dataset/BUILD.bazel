@@ -9,5 +9,6 @@ py_library(
     ],
     deps = [
         "//snowflake/ml/_internal/utils:query_result_checker",
+        "//snowflake/ml/registry:artifact_manager",
     ],
 )

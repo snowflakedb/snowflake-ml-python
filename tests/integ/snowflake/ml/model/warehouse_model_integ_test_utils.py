@@ -34,12 +34,12 @@ def base_test_case(
     version_args: Dict[str, Any] = {}
     tmp_stage = db._session.get_session_stage()
     conda_dependencies = [
-        test_env_utils.get_latest_package_versions_in_server(db._session, "snowflake-snowpark-python")
+        test_env_utils.get_latest_package_version_spec_in_server(db._session, "snowflake-snowpark-python")
     ]
     if additional_dependencies:
         conda_dependencies.extend(additional_dependencies)
     # We only test when the test is added before the current version available in the server.
-    snowml_req_str = test_env_utils.get_latest_package_versions_in_server(db._session, "snowflake-ml-python")
+    snowml_req_str = test_env_utils.get_latest_package_version_spec_in_server(db._session, "snowflake-ml-python")
 
     if permanent_deploy:
         permanent_deploy_args = {"permanent_udf_stage_location": f"@{full_qual_stage}/"}

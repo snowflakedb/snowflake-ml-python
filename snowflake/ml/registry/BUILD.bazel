@@ -4,9 +4,12 @@ package(default_visibility = ["//visibility:public"])
 
 py_library(
     name = "model_registry",
-    srcs = ["model_registry.py"],
+    srcs = [
+        "artifact.py",
+        "model_registry.py",
+    ],
     deps = [
-        ":_ml_artifact",
+        ":artifact_manager",
         ":schema",
         "//snowflake/ml/_internal:telemetry",
         "//snowflake/ml/_internal/utils:formatting",
@@ -49,8 +52,11 @@ py_library(
 )
 
 py_library(
-    name = "_ml_artifact",
-    srcs = ["_ml_artifact.py"],
+    name = "artifact_manager",
+    srcs = [
+        "_artifact_manager.py",
+        "artifact.py",
+    ],
     deps = [
         ":schema",
         "//snowflake/ml/_internal/utils:formatting",
@@ -59,10 +65,10 @@ py_library(
 )
 
 py_test(
-    name = "_ml_artifact_test",
-    srcs = ["_ml_artifact_test.py"],
+    name = "_artifact_test",
+    srcs = ["_artifact_test.py"],
     deps = [
-        ":_ml_artifact",
+        ":artifact_manager",
         "//snowflake/ml/_internal/utils:identifier",
         "//snowflake/ml/test_utils:mock_data_frame",
         "//snowflake/ml/test_utils:mock_session",

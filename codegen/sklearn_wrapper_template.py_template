@@ -193,6 +193,8 @@ class {transform.original_class_name}(BaseTransformer):
         inference_method: str,
         expected_output_cols_list: List[str],
         expected_output_cols_type: str = "",
+        *args: Any,
+        **kwargs: Any,
     ) -> DataFrame:
         """Util method to create UDF and run batch inference.
         """
@@ -225,7 +227,9 @@ class {transform.original_class_name}(BaseTransformer):
             self.input_cols,
             self._get_pass_through_columns(dataset),
             expected_output_cols_list,
-            expected_output_cols_type
+            expected_output_cols_type,
+            *args,
+            **kwargs,
         )
 
 
@@ -233,7 +237,9 @@ class {transform.original_class_name}(BaseTransformer):
         self,
         dataset: pd.DataFrame,
         inference_method: str,
-        expected_output_cols_list: List[str]
+        expected_output_cols_list: List[str],
+        *args: Any,
+        **kwargs: Any,
     ) -> pd.DataFrame:
         output_cols = expected_output_cols_list.copy()
 
@@ -278,34 +284,41 @@ class {transform.original_class_name}(BaseTransformer):
         input_df = dataset[columns_to_select]
         input_df.columns = features_required_by_estimator
 
-        transformed_numpy_array = getattr(estimator, inference_method)(
-            input_df
-        )
+        inference_res = getattr(estimator, inference_method)(input_df, *args, **kwargs)
 
         if (
-            isinstance(transformed_numpy_array, list)
-            and len(transformed_numpy_array) > 0
-            and isinstance(transformed_numpy_array[0], np.ndarray)
+            isinstance(inference_res, list)
+            and len(inference_res) > 0
+            and isinstance(inference_res[0], np.ndarray)
         ):
-            # In case of multioutput estimators, predict_proba(), decision_function(), etc., functions return 
-            # a list of ndarrays. We need to concatenate them.
+            # In case of multioutput estimators, predict_proba, decision_function etc., functions return a list of
+            # ndarrays. We need to concatenate them.
 
             # First compute output column names
-            if len(output_cols) == len(transformed_numpy_array):
+            if len(output_cols) == len(inference_res):
                 actual_output_cols = []
-                for idx, np_arr in enumerate(transformed_numpy_array):
+                for idx, np_arr in enumerate(inference_res):
                     for i in range(1 if len(np_arr.shape) <= 1 else np_arr.shape[1]):
                         actual_output_cols.append(f"{{output_cols[idx]}}_{{i}}")
                 output_cols = actual_output_cols
 
             # Concatenate np arrays
-            transformed_numpy_array = np.concatenate(transformed_numpy_array, axis=1)
+            transformed_numpy_array = np.concatenate(inference_res, axis=1)
+        elif (
+                isinstance(inference_res, tuple)
+                and len(inference_res) > 0
+                and isinstance(inference_res[0], np.ndarray)
+            ):
+                # In case of kneighbors, functions return a tuple of ndarrays.
+                transformed_numpy_array = np.stack(inference_res, axis=1)
+        else:
+            transformed_numpy_array = inference_res
 
-        if len(transformed_numpy_array.shape) == 3:
+        if (len(transformed_numpy_array.shape) == 3) and inference_method != "kneighbors":
             # VotingClassifier will return results of shape (n_classifiers, n_samples, n_classes)
             # when voting = "soft" and flatten_transform = False. We can't handle unflatten transforms,
             # so we ignore flatten_transform flag and flatten the results.
-            transformed_numpy_array = np.hstack(transformed_numpy_array)
+            transformed_numpy_array = np.hstack(transformed_numpy_array)  # type: ignore[call-overload]
 
         if len(transformed_numpy_array.shape) == 1:
             transformed_numpy_array = np.reshape(transformed_numpy_array, (-1, 1))
@@ -325,11 +338,28 @@ class {transform.original_class_name}(BaseTransformer):
                 actual_output_cols.append(f"{{output_cols[0]}}_{{i}}")
             output_cols = actual_output_cols
 
-        if self._drop_input_cols:
-            dataset = pd.DataFrame(data=transformed_numpy_array, columns=output_cols)
+        if inference_method == "kneighbors":
+            if (len(transformed_numpy_array.shape) == 3):  # return_distance=True
+                shape = transformed_numpy_array.shape
+                data = [transformed_numpy_array[:, i, :].tolist() for i in range(shape[1])]
+                kneighbors_df = pd.DataFrame({{output_cols[i]: data[i] for i in range(shape[1])}})
+            else:  # return_distance=False
+                kneighbors_df = pd.DataFrame(
+                    {{output_cols[0]: [
+                        transformed_numpy_array[i, :].tolist() for i in range(transformed_numpy_array.shape[0])
+                    ]}}
+                )
+
+            if self._drop_input_cols:
+                dataset = kneighbors_df
+            else:
+                dataset = pd.concat([dataset, kneighbors_df], axis=1)
         else:
-            dataset = dataset.copy()
-            dataset[output_cols] = transformed_numpy_array
+            if self._drop_input_cols:
+                dataset = pd.DataFrame(data=transformed_numpy_array, columns=output_cols)
+            else:
+                dataset = dataset.copy()
+                dataset[output_cols] = transformed_numpy_array
         return dataset
 
     @available_if(original_estimator_has_callable("predict"))  # type: ignore[misc]
@@ -423,11 +453,14 @@ class {transform.original_class_name}(BaseTransformer):
 
         return output_df
 
-    def _get_output_column_names(self, output_cols_prefix: str) -> List[str]:
+    def _get_output_column_names(self, output_cols_prefix: str, output_cols: Optional[List[str]] = None) -> List[str]:
         """ Returns the list of output columns for predict_proba(), decision_function(), etc.. functions.
         Returns a list with output_cols_prefix as the only element if the estimator is not a classifier.
         """
         output_cols_prefix = identifier.resolve_identifier(output_cols_prefix)
+        if output_cols:
+            return [f"{{output_cols_prefix}}{{identifier.resolve_identifier(c)}}" for c in output_cols]
+
         if getattr(self._sklearn_object, "classes_", None) is None:
             return [output_cols_prefix]
 
@@ -442,10 +475,10 @@ class {transform.original_class_name}(BaseTransformer):
                 # For binary classification, there is only one output column for each class
                 # ndarray as the two classes are complementary.
                 if len(cl) == 2:
-                    output_cols.append(f'{{output_cols_prefix}}_{{i}}_{{cl[0]}}')
+                    output_cols.append(f'{{output_cols_prefix}}{{i}}_{{cl[0]}}')
                 else:
                     output_cols.extend([
-                        f'{{output_cols_prefix}}_{{i}}_{{c}}' for c in cl.tolist()
+                        f'{{output_cols_prefix}}{{i}}_{{c}}' for c in cl.tolist()
                     ])
             return output_cols
         return []
@@ -611,6 +644,56 @@ class {transform.original_class_name}(BaseTransformer):
         )
 
         return score
+
+    @available_if(original_estimator_has_callable("kneighbors"))  # type: ignore[misc]
+    @telemetry.send_api_usage_telemetry(
+        project=_PROJECT,
+        subproject=_SUBPROJECT,
+        custom_tags=dict([("autogen", True)]),
+    )
+    @telemetry.add_stmt_params_to_df(
+        project=_PROJECT,
+        subproject=_SUBPROJECT,
+        custom_tags=dict([("autogen", True)]),
+    )
+    def kneighbors(
+        self,
+        dataset: Union[DataFrame, pd.DataFrame],
+        n_neighbors: Optional[int] = None,
+        return_distance: bool = True,
+        output_cols_prefix: str = "kneighbors_",
+    ) -> Union[DataFrame, pd.DataFrame]:
+        """{transform.kneighbors_docstring}
+            output_cols_prefix: str
+                Prefix for the response columns
+
+        Returns:
+            Output dataset with results of the K-neighbors for the samples in input dataset.
+        """
+        super()._check_dataset_type(dataset)
+        output_cols = ["neigh_ind"]
+        if return_distance:
+            output_cols.insert(0, "neigh_dist")
+        if isinstance(dataset, DataFrame):
+            # TODO: Solve inconsistent neigh_ind with sklearn due to different precisions in case of close distances.
+            output_df = self._batch_inference(
+                dataset=dataset,
+                inference_method="kneighbors",
+                expected_output_cols_list=self._get_output_column_names(output_cols_prefix, output_cols),
+                expected_output_cols_type="array",
+                n_neighbors=n_neighbors,
+                return_distance=return_distance,
+            )
+        elif isinstance(dataset, pd.DataFrame):
+            output_df = self._sklearn_inference(
+                dataset=dataset,
+                inference_method="kneighbors",
+                expected_output_cols_list=self._get_output_column_names(output_cols_prefix, output_cols),
+                n_neighbors=n_neighbors,
+                return_distance=return_distance,
+            )
+
+        return output_df
 
     def _get_model_signatures(self, dataset: Union[DataFrame, pd.DataFrame]) -> None:
         self._model_signature_dict = dict()

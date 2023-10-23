@@ -181,7 +181,7 @@ class {transform.test_class_name}(TestCase):
                 else:
                     np.testing.assert_allclose(actual_arr, sklearn_numpy_arr, rtol=1.e-1, atol=1.e-2)
 
-        expected_methods = ["predict_proba", "predict_log_proba", "decision_function"]
+        expected_methods = ["predict_proba", "predict_log_proba", "decision_function", "kneighbors"]
         for m in expected_methods:
             assert not (
                 callable(getattr(sklearn_reg, m, None))
@@ -196,20 +196,46 @@ class {transform.test_class_name}(TestCase):
                     actual_inference_result = getattr(reg, m)(dataset=input_df_pandas, output_cols_prefix="OUTPUT_")
 
                 actual_output_cols = [c for c in actual_inference_result.columns if c.find("OUTPUT_") >= 0]
-                actual_inference_result = actual_inference_result[actual_output_cols].to_numpy()
+                if {transform._is_k_neighbors} and m == "kneighbors":
+                    if inference_with_udf:
+                        actual_inference_result[actual_output_cols] = actual_inference_result[
+                            actual_output_cols
+                        ].applymap(lambda x: json.loads(x))
+                    actual_inference_result = actual_inference_result[actual_output_cols].to_numpy()
+                    if actual_inference_result.shape[1] > 1:  # return_distance=True
+                        actual_inference_result = np.array(actual_inference_result.tolist())
+                    else:  # return_distance=False
+                        actual_inference_result = np.vstack([np.array(res[0]) for res in actual_inference_result])
+                else:
+                    actual_inference_result = actual_inference_result[actual_output_cols].to_numpy()
 
                 sklearn_inference_result = getattr(sklearn_reg, m)(input_df_pandas[input_cols])
                 if isinstance(sklearn_inference_result, list):
-                    # Incase of multioutput estimators predict_proba, decision_function, etc., returns a list of
+                    # Incase of multioutput estimators predict_proba, decision_function etc., returns a list of
                     # ndarrays as output. We need to concatenate them to compare with snowflake output.
                     sklearn_inference_result = np.concatenate(sklearn_inference_result, axis=1)
+                elif isinstance(sklearn_inference_result, tuple):
+                    # Incase of kneighbors, returns a tuple of ndarrays as output.
+                    sklearn_inference_result = np.stack(sklearn_inference_result, axis=1)
                 elif len(sklearn_inference_result.shape) == 1:
                     # Some times sklearn retuns results as 1D array of shape (n_samples,), but snowfkale always retunrs
                     # response as 2D array of shape (n_samples, 1). Flatten the snowflake response to compare results.
                     actual_inference_result = actual_inference_result.flatten()
 
-                np.testing.assert_allclose(
-                    actual_inference_result, sklearn_inference_result, rtol=1.e-1, atol=1.e-2)
+                if (
+                    {transform._is_k_neighbors}
+                    and m == "kneighbors"
+                    and len(actual_inference_result.shape) == 3
+                ):  # return_distance=True
+                    # Only compare neigh_dist, as different precisions cause neigh_ind to differ in case of close
+                    # distances.
+                    np.testing.assert_allclose(
+                        actual_inference_result[:, 0, :], sklearn_inference_result[:, 0, :], rtol=1.e-1, atol=1.e-2
+                    )
+                else:
+                    np.testing.assert_allclose(
+                        actual_inference_result, sklearn_inference_result, rtol=1.e-1, atol=1.e-2
+                    )
 
         if callable(getattr(sklearn_reg, "score", None)) and callable(getattr(reg, "score", None)):
             score_argspec = inspect.getfullargspec(sklearn_reg.score)

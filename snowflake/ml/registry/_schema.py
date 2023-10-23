@@ -4,7 +4,7 @@ from snowflake.ml.registry import _initial_schema, _schema_upgrade_plans
 
 # BUMP THIS VERSION WHENEVER YOU CHANGE ANY SCHEMA TABLES.
 # ALSO UPDATE SCHEMA UPGRADE PLANS.
-_CURRENT_SCHEMA_VERSION = 2
+_CURRENT_SCHEMA_VERSION = 3
 
 _REGISTRY_TABLE_SCHEMA: List[Tuple[str, str]] = [
     ("CREATION_CONTEXT", "VARCHAR"),
@@ -52,7 +52,7 @@ _ARTIFACT_TABLE_SCHEMA: List[Tuple[str, str]] = [
     ("VERSION", "VARCHAR"),
     ("CREATION_ROLE", "VARCHAR"),
     ("CREATION_TIME", "TIMESTAMP_TZ"),
-    ("ARTIFACT_SPEC", "OBJECT"),
+    ("ARTIFACT_SPEC", "VARCHAR"),
     # Below is out-of-line constraints of Snowflake table.
     # See https://docs.snowflake.com/en/sql-reference/sql/create-table
     ("PRIMARY KEY", "(ID, TYPE) RELY"),
@@ -76,6 +76,7 @@ _SCHEMA_UPGRADE_PLANS: Dict[int, Type[_schema_upgrade_plans.BaseSchemaUpgradePla
     # NOTE, all version from _INITIAL_VERSION + 1 till _CURRENT_SCHEMA_VERSION must exists.
     1: _schema_upgrade_plans.AddTrainingDatasetIdIfNotExists,
     2: _schema_upgrade_plans.ReplaceTrainingDatasetIdWithArtifactIds,
+    3: _schema_upgrade_plans.ChangeArtifactSpecFromObjectToVarchar,
 }
 
 assert len(_SCHEMA_UPGRADE_PLANS) == _CURRENT_SCHEMA_VERSION - _initial_schema._INITIAL_VERSION

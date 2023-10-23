@@ -1,4 +1,7 @@
-import copy
+#
+# This code is auto-generated using the sklearn_wrapper_template.py_template template.
+# Do not modify the auto-generated code(except automatic reformatting by precommit hooks).
+#
 from typing import Any, Dict, Iterable, List, Optional, Set, Union
 from uuid import uuid4
 
@@ -25,6 +28,7 @@ from snowflake.ml.model.model_signature import (
 from snowflake.ml.modeling._internal.estimator_protocols import CVHandlers
 from snowflake.ml.modeling._internal.estimator_utils import (
     gather_dependencies,
+    if_single_node,
     original_estimator_has_callable,
     transform_snowml_obj_to_sklearn_obj,
     validate_sklearn_args,
@@ -42,6 +46,7 @@ _PROJECT = "ModelDevelopment"
 # and converting module name from underscore to CamelCase
 # e.g. sklearn.linear_model -> LinearModel.
 _SUBPROJECT = "ModelSelection"
+DEFAULT_UDTF_NJOBS = 3
 
 
 class GridSearchCV(BaseTransformer):
@@ -344,37 +349,41 @@ class GridSearchCV(BaseTransformer):
             dataset = dataset.select(selected_cols)
 
         assert self._sklearn_object is not None
-        # Set GridSearchCV refit as False and fit it again after retrieving the best param
-        self._sklearn_object.refit = False
-        result_dict = self._handlers._fit_search_snowpark(
-            param_list=ParameterGrid(self._sklearn_object.param_grid),
-            dataset=dataset,
-            session=session,
-            estimator=self._sklearn_object,
-            dependencies=self._get_dependencies(),
-            udf_imports=["sklearn"],
-            input_cols=self.input_cols,
-            label_cols=self.label_cols,
-            sample_weight_col=self.sample_weight_col,
-        )
+        single_node = if_single_node(session)
+        if not single_node:
+            # Set the default value of the `n_jobs` attribute for the estimator.
+            # If minus one is set, it will not be abided by in the UDTF, so we set that to the default value as well.
+            if hasattr(self._sklearn_object.estimator, "n_jobs") and self._sklearn_object.estimator.n_jobs in [
+                None,
+                -1,
+            ]:
+                self._sklearn_object.estimator.n_jobs = DEFAULT_UDTF_NJOBS
+            self._sklearn_object = self._handlers.fit_search_snowpark(
+                param_list=ParameterGrid(self._sklearn_object.param_grid),
+                dataset=dataset,
+                session=session,
+                estimator=self._sklearn_object,
+                dependencies=self._get_dependencies(),
+                udf_imports=["sklearn"],
+                input_cols=self.input_cols,
+                label_cols=self.label_cols,
+                sample_weight_col=self.sample_weight_col,
+            )
+        else:
+            # Fall back with stored procedure implementation
+            # set the parallel factor to default to minus one, to fully accelerate the cores in single node
+            if self._sklearn_object.n_jobs is None:
+                self._sklearn_object.n_jobs = -1
 
-        self._sklearn_object.best_params_ = result_dict["best_param"]
-        self._sklearn_object.best_score_ = result_dict["best_score"]
-        self._sklearn_object.cv_results_ = result_dict["cv_results"]
-
-        self._sklearn_object.best_estimator_ = copy.deepcopy(
-            copy.deepcopy(self._sklearn_object.estimator).set_params(**self._sklearn_object.best_params_)
-        )
-        self._sklearn_object.refit = True
-        self._sklearn_object.best_estimator_ = self._handlers.fit_snowpark(
-            dataset=dataset,
-            session=session,
-            estimator=self._sklearn_object.best_estimator_,
-            dependencies=["snowflake-snowpark-python"] + self._get_dependencies(),
-            input_cols=self.input_cols,
-            label_cols=self.label_cols,
-            sample_weight_col=self.sample_weight_col,
-        )
+            self._sklearn_object = self._handlers.fit_snowpark(
+                dataset,
+                session,
+                self._sklearn_object,
+                ["snowflake-snowpark-python"] + self._get_dependencies(),
+                self.input_cols,
+                self.label_cols,
+                self.sample_weight_col,
+            )
 
     def _get_pass_through_columns(self, dataset: DataFrame) -> List[str]:
         if self._drop_input_cols:
