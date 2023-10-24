@@ -564,7 +564,9 @@ class ModelRegistryTest(absltest.TestCase):
                         {_ARTIFACTS_TABLE_NAME}.*
                     FROM {_REGISTRY_TABLE_NAME}
                     LEFT JOIN {_ARTIFACTS_TABLE_NAME}
-                    ON (ARRAY_CONTAINS({_ARTIFACTS_TABLE_NAME}.ID::VARIANT, {_REGISTRY_TABLE_NAME}.ARTIFACT_IDS))
+                    ON (ARRAY_CONTAINS(
+                        {_ARTIFACTS_TABLE_NAME}.ID::VARIANT,
+                        {_REGISTRY_TABLE_NAME}.ARTIFACT_IDS))
                 """
             ),
             result=mock_data_frame.MockDataFrame(
@@ -614,6 +616,23 @@ class ModelRegistryTest(absltest.TestCase):
             query=(f"ALTER TABLE {reg_table_full_path} ADD COLUMN ARTIFACT_IDS ARRAY"),
             result=mock_data_frame.MockDataFrame([snowpark.Row(status="Statement executed successfully.")]),
         )
+        art_table_full_path = f"{_DATABASE_NAME}.{_SCHEMA_NAME}.{_ARTIFACTS_TABLE_NAME}"
+        self.add_session_mock_sql(
+            query=(f"ALTER TABLE {art_table_full_path} DROP COLUMN ARTIFACT_SPEC"),
+            result=mock_data_frame.MockDataFrame([snowpark.Row(status="Statement executed successfully.")]),
+        )
+        self.add_session_mock_sql(
+            query=(f"ALTER TABLE {art_table_full_path} ADD COLUMN ARTIFACT_SPEC VARCHAR"),
+            result=mock_data_frame.MockDataFrame([snowpark.Row(status="Statement executed successfully.")]),
+        )
+        self.add_session_mock_sql(
+            query=(
+                f"""COMMENT ON COLUMN {art_table_full_path}.ARTIFACT_SPEC IS
+                'This column is VARCHAR but supposed to store a valid JSON object'"""
+            ),
+            result=mock_data_frame.MockDataFrame([snowpark.Row(status="Statement executed successfully.")]),
+        )
+
         # end schema upgrade plans
         self._mock_desc_registry_table(statement_params)
         self._mock_desc_metadata_table(statement_params)
@@ -1150,7 +1169,7 @@ class ModelRegistryTest(absltest.TestCase):
                                 uri=uri.get_uri_from_snowflake_stage_path(model_path),
                                 description="description",
                                 tags=None,
-                                dataset=None,
+                                artifacts=None,
                             )
 
         self._mock_show_version_table_exists({})

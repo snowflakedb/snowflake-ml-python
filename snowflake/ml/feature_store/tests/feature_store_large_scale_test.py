@@ -37,11 +37,11 @@ class FeatureStoreLargeScaleTest(absltest.TestCase):
     def tearDownClass(self) -> None:
         for fs in self._active_feature_store:
             fs.clear()
-            self._session.sql(f"DROP SCHEMA IF EXISTS {fs._config.schema}").collect()
+            self._session.sql(f"DROP SCHEMA IF EXISTS {fs._config.full_schema_path}").collect()
         self._session.close()
 
     def _create_feature_store(self, name: Optional[str] = None) -> FeatureStore:
-        current_schema = create_random_schema(self._session, "TEST_SHEMA") if name is None else name
+        current_schema = create_random_schema(self._session, "FS_LARGE_SCALE_TEST") if name is None else name
         fs = FeatureStore(
             self._session,
             FS_INTEG_TEST_DB,
@@ -91,7 +91,7 @@ class FeatureStoreLargeScaleTest(absltest.TestCase):
         self._session.sql(f"DROP TABLE {cloned_wine_data}").collect()
 
     def test_external_table(self) -> None:
-        current_schema = create_random_schema(self._session, "TEST_SHEMA")
+        current_schema = create_random_schema(self._session, "TEST_EXTERNAL_TABLE")
         fs = self._create_feature_store(current_schema)
 
         e_loc = Entity("LOCATION", ["PULOCATIONID"])

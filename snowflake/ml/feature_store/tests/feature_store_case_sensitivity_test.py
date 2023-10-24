@@ -53,7 +53,7 @@ class FeatureStoreCaseSensitivityTest(parameterized.TestCase):
     def tearDownClass(cls) -> None:
         for fs in cls._active_fs:
             fs.clear()
-            cls._session.sql(f"DROP SCHEMA IF EXISTS {fs._config.schema}").collect()
+            cls._session.sql(f"DROP SCHEMA IF EXISTS {fs._config.full_schema_path}").collect()
         cls._session.sql(f"DROP TABLE IF EXISTS {cls._mock_table}").collect()
         cls._session.close()
 
@@ -108,7 +108,7 @@ class FeatureStoreCaseSensitivityTest(parameterized.TestCase):
 
     @parameterized.parameters(WAREHOUSE_NAMES)  # type: ignore[misc]
     def test_warehouse_names(self, warehouse: str) -> None:
-        current_schema = create_random_schema(self._session, "TEST_SHEMA")
+        current_schema = create_random_schema(self._session, "TEST_WAREHOUSE_NAMES")
 
         self._session.sql(f"CREATE WAREHOUSE IF NOT EXISTS {warehouse} WITH WAREHOUSE_SIZE='XSMALL'").collect()
 
@@ -190,7 +190,7 @@ class FeatureStoreCaseSensitivityTest(parameterized.TestCase):
     #   5. delete_entity
     @parameterized.parameters(TEST_NAMES)  # type: ignore[misc]
     def test_entity_names(self, equi_names: List[str], diff_names: List[str]) -> None:
-        current_schema = create_random_schema(self._session, "TEST_SHEMA")
+        current_schema = create_random_schema(self._session, "TEST_ENTITY_NAMES")
         fs = FeatureStore(
             self._session,
             FS_INTEG_TEST_DB,
@@ -235,7 +235,7 @@ class FeatureStoreCaseSensitivityTest(parameterized.TestCase):
     #   5. FeatureView.timestamp_col
     @parameterized.parameters(TEST_NAMES)  # type: ignore[misc]
     def test_join_keys_and_ts_col(self, equi_names: List[str], diff_names: List[str]) -> None:
-        current_schema = create_random_schema(self._session, "TEST_SHEMA")
+        current_schema = create_random_schema(self._session, "TEST_JOIN_KEYS_AND_TS_COL")
         fs = FeatureStore(
             self._session,
             FS_INTEG_TEST_DB,
@@ -292,7 +292,7 @@ class FeatureStoreCaseSensitivityTest(parameterized.TestCase):
         equi_full_names: List[Tuple[str, str]],
         diff_full_names: List[Tuple[str, str]],
     ) -> None:
-        current_schema = create_random_schema(self._session, "TEST_SHEMA")
+        current_schema = create_random_schema(self._session, "TEST_FEATURE_VIEW_NAMES")
         fs = FeatureStore(
             self._session,
             FS_INTEG_TEST_DB,
@@ -362,6 +362,25 @@ class FeatureStoreCaseSensitivityTest(parameterized.TestCase):
             fv_name = diff_name[0]
             version = diff_name[1]
             fs.get_feature_view(fv_name, version)
+
+    @parameterized.parameters(TEST_NAMES)  # type: ignore[misc]
+    def test_find_objects(self, equi_names: List[str], diff_names: List[str]) -> None:
+        current_schema = create_random_schema(self._session, "TEST_FIND_OBJECTS")
+        fs = FeatureStore(
+            self._session,
+            FS_INTEG_TEST_DB,
+            current_schema,
+            FS_INTEG_TEST_DEFAULT_WAREHOUSE,
+            creation_mode=CreationMode.CREATE_IF_NOT_EXIST,
+        )
+        self._active_fs.append(fs)
+
+        self._session.sql(f"CREATE SCHEMA IF NOT EXISTS {FS_INTEG_TEST_DB}.{equi_names[0]}").collect()
+        for name in equi_names:
+            self.assertEqual(len(fs._find_object("SCHEMAS", name)), 1)
+        for name in diff_names:
+            self.assertEqual(len(fs._find_object("SCHEMAS", name)), 0)
+        self._session.sql(f"DROP SCHEMA IF EXISTS {FS_INTEG_TEST_DB}.{equi_names[0]}").collect()
 
 
 if __name__ == "__main__":

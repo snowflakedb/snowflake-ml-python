@@ -73,7 +73,55 @@ _NUMERIC_TYPES = [
 ]
 
 
+# TODO(thoyt): Implement logic for `add_indicator` parameter and `indicator_` attribute.Requires
+#  `snowflake.ml.impute.MissingIndicator` to be implemented.
 class SimpleImputer(base.BaseTransformer):
+    """
+    Univariate imputer for completing missing values with simple strategies.
+    Note that the `add_indicator` parameter is not implemented. For more details on this class, see
+    [sklearn.impute.SimpleImputer](https://scikit-learn.org/stable/modules/generated/sklearn.impute.SimpleImputer.html).
+
+    Args:
+        missing_values:  int, float, str, np.nan or None, default=np.nan.
+            The values to treat as missing and impute during transform.
+
+        strategy: str, default="mean".
+            The imputation strategy.
+
+            * If "mean", replace missing values using the mean along each column.
+              Can only be used with numeric data.
+            * If "median", replace missing values using the median along each column.
+              Can only be used with numeric data.
+            * If "most_frequent", replace missing using the most frequent value along each column.
+              Can be used with strings or numeric data.
+              If there is more than one such value, only the smallest is returned.
+            * If "constant", replace the missing values with `fill_value`. Can be used with strings or numeric data.
+
+        fill_value: Optional[str]
+            When `strategy == "constant"`, `fill_value` is used to replace all occurrences of `missing_values`.
+            For string or object data types, `fill_value` must be a string. If `None`, `fill_value` will be 0 when
+            imputing numerical data and `missing_value` for strings and object data types.
+        input_cols: Optional[Union[str, List[str]]]
+            Columns to use as inputs during fit and transform.
+        output_cols: Optional[Union[str, List[str]]]
+            A string or list of strings representing column names that will store the output of transform operation.
+            The length of `output_cols` must equal the length of `input_cols`.
+        drop_input_cols: bool, default=False
+            Remove input columns from output if set `True`.
+
+    Attributes:
+        statistics_: dict {input_col: stats_value}
+            Dict containing the imputation fill value for each feature. Computing statistics can result in `np.nan`
+            values. During `transform`, features corresponding to `np.nan` statistics will be discarded.
+        n_features_in_: int
+            Number of features seen during `fit`.
+        feature_names_in_: ndarray of shape (n_features_in,)
+            Names of features seen during `fit`.
+
+    Raises:
+        SnowflakeMLException: If strategy is invalid, or if fill value is specified for strategy that isn't "constant".
+    """
+
     def __init__(
         self,
         *,
@@ -84,47 +132,6 @@ class SimpleImputer(base.BaseTransformer):
         output_cols: Optional[Union[str, Iterable[str]]] = None,
         drop_input_cols: Optional[bool] = False,
     ) -> None:
-        """
-        Univariate imputer for completing missing values with simple strategies.
-        Note that the `add_indicator` param/functionality is not implemented.
-
-        Args:
-            missing_values: The values to treat as missing and impute during transform.
-            strategy: The imputation strategy.
-                * If "mean", replace missing values using the mean along each column.
-                  Can only be used with numeric data.
-                * If "median", replace missing values using the median along each column.
-                  Can only be used with numeric data.
-                * If "most_frequent", replace missing using the most frequent value along each column.
-                  Can be used with strings or numeric data.
-                  If there is more than one such value, only the smallest is returned.
-                * If "constant", replace the missing values with `fill_value`. Can be used with strings or numeric data.
-            fill_value:
-                When `strategy == "constant"`, `fill_value` is used to replace all occurrences of `missing_values`.
-                For string or object data types, `fill_value` must be a string. If `None`, `fill_value` will be 0 when
-                imputing numerical data and `missing_value` for strings and object data types.
-            input_cols:
-                Columns to use as inputs during fit or transform.
-            output_cols:
-                New column labels for the columns that will contain the output of a transform.
-            drop_input_cols: Remove input columns from output if set True. False by default.
-
-        Attributes:
-        statistics_: dict {input_col: stats_value}
-            Dict containing the imputation fill value for each feature. Computing statistics can result in `np.nan`
-            values. During `transform`, features corresponding to `np.nan` statistics will be discarded.
-        n_features_in_: int
-            Number of features seen during `fit`.
-        feature_names_in_: ndarray of shape (n_features_in,)
-            Names of features seen during `fit`.
-
-        TODO(thoyt): Implement logic for `add_indicator` parameter and `indicator_` attribute. Requires
-            `snowflake.ml.impute.MissingIndicator` to be implemented.
-
-        Raises:
-            SnowflakeMLException: If strategy is invalid, or if fill value is specified for strategy that isn't
-                "constant".
-        """
         super().__init__(drop_input_cols=drop_input_cols)
         if strategy in STRATEGY_TO_STATE_DICT:
             self.strategy = strategy

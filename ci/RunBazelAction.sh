@@ -158,6 +158,7 @@ elif [[ "${action}" = "coverage" ]]; then
         "${cache_test_results}" \
         --combined_report=lcov \
         "${coverage_tag_filter}" \
+        --experimental_collect_code_coverage_for_generated_files \
         --target_pattern_file "${sf_only_test_targets_file}"
     sf_only_bazel_exit_code=$?
 
@@ -170,6 +171,7 @@ elif [[ "${action}" = "coverage" ]]; then
         "${cache_test_results}" \
         --combined_report=lcov \
         "${coverage_tag_filter}" \
+        --experimental_collect_code_coverage_for_generated_files \
         --target_pattern_file "${extended_test_targets_file}"
     extended_bazel_exit_code=$?
 
