@@ -217,7 +217,7 @@
 - name: tensorflow
   dev_version_conda: 2.10.0
   dev_version_pypi: 2.13.1
-  version_requirements: '>=2.9,<3'
+  version_requirements: '>=2.9,<3,!=2.12.0'
   requirements_extra_tags:
     - tensorflow
 - name: tokenizers
@@ -261,3 +261,12 @@
 - name: pytimeparse
   dev_version: 1.1.8
   version_requirements: '>=1.1.8,<2'
+
+# Below are pip only external packages
+- name_pypi: --extra-index-url https://pypi.org/simple
+  dev_version_pypi: ''
+- name_pypi: peft
+  dev_version_pypi: 0.5.0
+  version_requirements_pypi: '>=0.5.0,<1'
+  requirements_extra_tags:
+    - llm

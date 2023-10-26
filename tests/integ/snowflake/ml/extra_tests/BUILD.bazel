@@ -18,6 +18,7 @@ py_test(
         "//snowflake/ml/modeling/linear_model:logistic_regression",
         "//snowflake/ml/modeling/model_selection:grid_search_cv",
         "//snowflake/ml/modeling/svm:svr",
+        "//snowflake/ml/modeling/xgboost:xgb_regressor",
         "//snowflake/ml/utils:connection_params",
     ],
 )
@@ -119,6 +120,15 @@ py_test(
         "//snowflake/ml/modeling/preprocessing:one_hot_encoder",
         "//snowflake/ml/modeling/preprocessing:ordinal_encoder",
         "//snowflake/ml/modeling/preprocessing:standard_scaler",
+        "//snowflake/ml/utils:connection_params",
+    ],
+)
+
+py_test(
+    name = "decimal_type_test",
+    srcs = ["decimal_type_test.py"],
+    deps = [
+        "//snowflake/ml/modeling/linear_model:linear_regression",
         "//snowflake/ml/utils:connection_params",
     ],
 )

@@ -140,24 +140,25 @@ class FeatureStore:
             "SCHEMAS": (f"DATABASE {self._config.database}", "SCHEMA"),
             "TAGS": (self._config.full_schema_path, None),
             "TASKS": (self._config.full_schema_path, "TASK"),
+            "WAREHOUSES": (None, None),
         }
 
-        try:
-            self._session.sql(f"DESC WAREHOUSE {self._config.default_warehouse}").collect()
-        except Exception as e:
+        # DESC WAREHOUSE requires MONITOR privilege on the warehouse which is a high privilege
+        # some users not usually have.
+        warehouse_result = self._find_object("WAREHOUSES", self._config.default_warehouse)
+        if len(warehouse_result) == 0:
             raise snowml_exceptions.SnowflakeMLException(
-                error_code=error_codes.SNOWML_NOT_FOUND,
-                original_exception=ValueError(f"Cannot find warehouse {default_warehouse}: {e}"),
-            ) from e
+                error_code=error_codes.NOT_FOUND,
+                original_exception=ValueError(f"Cannot find warehouse {self._config.default_warehouse}"),
+            )
 
         if creation_mode == CreationMode.FAIL_IF_NOT_EXIST:
-            try:
-                self._session.sql(f"DESC SCHEMA {self._config.full_schema_path}").collect()
-            except Exception as e:
+            schema_result = self._find_object("SCHEMAS", self._config.schema)
+            if len(schema_result) == 0:
                 raise snowml_exceptions.SnowflakeMLException(
                     error_code=error_codes.NOT_FOUND,
                     original_exception=ValueError(f"Feature store {name} does not exist."),
-                ) from e
+                )
         else:
             try:
                 self._session.sql(f"CREATE DATABASE IF NOT EXISTS {self._config.database}").collect(
@@ -1454,12 +1455,16 @@ class FeatureStore:
         return descs
 
     def _find_object(self, object_type: str, object_name_pattern: str) -> List[Row]:
-        """Try to find an object in a given place with respect to case-sensitivity.
-            If object name is not quoted, then it's case insensitive. Otherwise it's case sensitive.
+        """Try to find an object by given type and name pattern.
 
         Args:
-            object_type: Type of the object. Could be TABLE, TAG etc.
-            object_name_pattern: Name match pattern of object. Could be either quoted or not.
+            object_type: Type of the object. Could be TABLES, TAGS etc.
+            object_name_pattern: Name match pattern of object. It obeys snowflake identifier requirements.
+                and can be used with SQL wildcard character '%'.
+                Examples:
+                1. object_name_pattern="bar" will return objects with lowercase name: bar.
+                2. object_name_pattern=BAR will return objects with case-insensitive name: bar.
+                3. object_name_pattern=BAR% will return objects with name starts with case-insensitive: bar.
 
         Raises:
             SnowflakeMLException: [RuntimeError] Failed to find resource.
@@ -1474,6 +1479,7 @@ class FeatureStore:
             unesc_object_name = object_name_pattern
             object_name = ""
         elif object_name_pattern[-1] == "%":
+            assert '"' not in object_name_pattern, "wildcard search doesn't support double quotes"
             unesc_object_name = object_name_pattern
             object_name = unesc_object_name[:-1]
         else:
@@ -1485,7 +1491,8 @@ class FeatureStore:
         fs_objects = []
         tag_free_object_types = ["TAGS", "SCHEMAS"]
         try:
-            all_rows = self._session.sql(f"SHOW {object_type} LIKE '{unesc_object_name}' IN {search_space}").collect(
+            search_scope = f"IN {search_space}" if search_space is not None else ""
+            all_rows = self._session.sql(f"SHOW {object_type} LIKE '{unesc_object_name}' {search_scope}").collect(
                 statement_params=self._telemetry_stmp
             )
             if object_name_pattern == "%" and object_type not in tag_free_object_types and len(all_rows) > 0:

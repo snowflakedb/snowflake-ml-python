@@ -1,3 +1,5 @@
+from unittest import mock
+
 import inflection
 import numpy as np
 from absl.testing.absltest import TestCase, main
@@ -34,7 +36,9 @@ class RandomizedSearchCVTest(TestCase):
                     np.testing.assert_allclose(v, cv_result_2[k], rtol=1.0e-1, atol=1.0e-2)
                 # Do not compare the fit time
 
-    def test_fit_and_compare_results(self) -> None:
+    @mock.patch("snowflake.ml.modeling.model_selection._internal._randomized_search_cv.if_single_node")
+    def test_fit_and_compare_results(self, mock_if_single_node) -> None:
+        mock_if_single_node.return_value = True  # falls back to HPO implementation
         input_df_pandas = load_iris(as_frame=True).frame
         input_df_pandas.columns = [inflection.parameterize(c, "_").upper() for c in input_df_pandas.columns]
         input_cols = [c for c in input_df_pandas.columns if not c.startswith("TARGET")]
@@ -67,11 +71,18 @@ class RandomizedSearchCVTest(TestCase):
 
         actual_arr = reg.predict(input_df).to_pandas().sort_values(by="INDEX")[output_cols].to_numpy()
         sklearn_numpy_arr = sklearn_reg.predict(input_df_pandas[input_cols])
-        np.testing.assert_allclose(reg._sklearn_object.best_score_, sklearn_reg.best_score_)
-        assert reg._sklearn_object.best_params_ == sklearn_reg.best_params_
-        self._compare_cv_results(reg._sklearn_object.cv_results_, sklearn_reg.cv_results_)
+        sk_obj = reg.to_sklearn()
+
+        # the result of SnowML grid search cv should behave the same as sklearn's
+        np.testing.assert_allclose(sk_obj.best_score_, sklearn_reg.best_score_)
+        assert sk_obj.best_params_ == sklearn_reg.best_params_
+        self._compare_cv_results(sk_obj.cv_results_, sklearn_reg.cv_results_)
 
         np.testing.assert_allclose(actual_arr.flatten(), sklearn_numpy_arr.flatten(), rtol=1.0e-1, atol=1.0e-2)
+
+        # Test on fitting on snowpark Dataframe, and predict on pandas dataframe
+        actual_arr_pd = reg.predict(input_df.to_pandas()).sort_values(by="INDEX")[output_cols].to_numpy()
+        np.testing.assert_allclose(actual_arr_pd.flatten(), sklearn_numpy_arr.flatten(), rtol=1.0e-1, atol=1.0e-2)
 
 
 if __name__ == "__main__":

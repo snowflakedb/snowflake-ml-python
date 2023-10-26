@@ -12,6 +12,7 @@ from sklearn.utils import metaestimators
 from snowflake import snowpark
 from snowflake.ml._internal import telemetry
 from snowflake.ml._internal.exceptions import error_codes, exceptions
+from snowflake.ml._internal.utils import snowpark_dataframe_utils
 from snowflake.ml.model.model_signature import ModelSignature, _infer_signature
 from snowflake.ml.modeling.framework import _utils, base
 
@@ -237,6 +238,11 @@ class Pipeline(base.BaseTransformer):
         """
 
         self._validate_steps()
+        dataset = (
+            snowpark_dataframe_utils.cast_snowpark_dataframe_column_types(dataset)
+            if isinstance(dataset, snowpark.DataFrame)
+            else dataset
+        )
         transformed_dataset = self._fit_transform_dataset(dataset)
 
         estimator = self._get_estimator()
@@ -268,6 +274,11 @@ class Pipeline(base.BaseTransformer):
             Transformed data. Output datatype will be same as input datatype.
         """
         self._enforce_fit()
+        dataset = (
+            snowpark_dataframe_utils.cast_snowpark_dataframe_column_types(dataset)
+            if isinstance(dataset, snowpark.DataFrame)
+            else dataset
+        )
 
         transformed_dataset = self._transform_dataset(dataset=dataset)
         estimator = self._get_estimator()
@@ -301,6 +312,11 @@ class Pipeline(base.BaseTransformer):
         """
 
         self._validate_steps()
+        dataset = (
+            snowpark_dataframe_utils.cast_snowpark_dataframe_column_types(dataset)
+            if isinstance(dataset, snowpark.DataFrame)
+            else dataset
+        )
 
         transformed_dataset = self._fit_transform_dataset(dataset=dataset)
 
@@ -340,6 +356,11 @@ class Pipeline(base.BaseTransformer):
         """
 
         self._validate_steps()
+        dataset = (
+            snowpark_dataframe_utils.cast_snowpark_dataframe_column_types(dataset)
+            if isinstance(dataset, snowpark.DataFrame)
+            else dataset
+        )
 
         transformed_dataset = self._fit_transform_dataset(dataset=dataset)
 

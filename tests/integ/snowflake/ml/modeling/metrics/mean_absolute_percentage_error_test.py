@@ -2,7 +2,6 @@ from typing import Any, Dict
 from unittest import mock
 
 import numpy as np
-import pandas as pd
 from absl.testing import parameterized
 from absl.testing.absltest import main
 from sklearn import metrics as sklearn_metrics
@@ -14,23 +13,23 @@ from tests.integ.snowflake.ml.modeling.framework import utils
 
 _ROWS = 100
 _TYPES = [utils.DataType.INTEGER] * 4 + [utils.DataType.FLOAT]
-_BINARY_DATA, _SCHEMA = utils.gen_fuzz_data(
+_BINARY_DATA, _PD_SCHEMA, _SF_SCHEMA = utils.gen_fuzz_data(
     rows=_ROWS,
     types=_TYPES,
     low=0,
     high=2,
 )
-_MULTICLASS_DATA, _ = utils.gen_fuzz_data(
+_MULTICLASS_DATA, _, _ = utils.gen_fuzz_data(
     rows=_ROWS,
     types=_TYPES,
     low=0,
     high=5,
 )
-_Y_TRUE_COL = _SCHEMA[1]
-_Y_PRED_COL = _SCHEMA[2]
-_Y_TRUE_COLS = [_SCHEMA[1], _SCHEMA[2]]
-_Y_PRED_COLS = [_SCHEMA[3], _SCHEMA[4]]
-_SAMPLE_WEIGHT_COL = _SCHEMA[5]
+_Y_TRUE_COL = _SF_SCHEMA[1]
+_Y_PRED_COL = _SF_SCHEMA[2]
+_Y_TRUE_COLS = [_SF_SCHEMA[1], _SF_SCHEMA[2]]
+_Y_PRED_COLS = [_SF_SCHEMA[3], _SF_SCHEMA[4]]
+_SAMPLE_WEIGHT_COL = _SF_SCHEMA[5]
 _MULTILABEL_DATA = [
     [1, 0, 1, 0.8, 0.3, 0.6],
     [0, 1, 0, 0.2, 0.7, 0.4],
@@ -68,8 +67,7 @@ class MeanAbsolutePercentageErrorTest(parameterized.TestCase):
             data = values["data"]
             y_true = values["y_true"]
             y_pred = values["y_pred"]
-            pandas_df = pd.DataFrame(data, columns=_SCHEMA)
-            input_df = self._session.create_dataframe(pandas_df)
+            pandas_df, input_df = utils.get_df(self._session, data, _PD_SCHEMA)
 
             for sample_weight_col_name in params["sample_weight_col_name"]:
                 actual_loss = snowml_metrics.mean_absolute_percentage_error(
@@ -90,8 +88,7 @@ class MeanAbsolutePercentageErrorTest(parameterized.TestCase):
         {"params": {"multioutput": ["raw_values", "uniform_average", [0.2, 1.0, 1.66]]}},
     )
     def test_multioutput(self, params: Dict[str, Any]) -> None:
-        pandas_df = pd.DataFrame(_MULTILABEL_DATA, columns=_MULTILABEL_SCHEMA)
-        input_df = self._session.create_dataframe(pandas_df)
+        pandas_df, input_df = utils.get_df(self._session, _MULTILABEL_DATA, _MULTILABEL_SCHEMA)
 
         for multioutput in params["multioutput"]:
             actual_loss = snowml_metrics.mean_absolute_percentage_error(
@@ -108,8 +105,7 @@ class MeanAbsolutePercentageErrorTest(parameterized.TestCase):
             np.testing.assert_allclose(actual_loss, sklearn_loss, rtol=0.000001)
 
     def test_multilabel(self) -> None:
-        pandas_df = pd.DataFrame(_MULTILABEL_DATA, columns=_MULTILABEL_SCHEMA)
-        input_df = self._session.create_dataframe(pandas_df)
+        pandas_df, input_df = utils.get_df(self._session, _MULTILABEL_DATA, _MULTILABEL_SCHEMA)
 
         actual_loss = snowml_metrics.mean_absolute_percentage_error(
             df=input_df,
@@ -124,8 +120,7 @@ class MeanAbsolutePercentageErrorTest(parameterized.TestCase):
 
     @mock.patch("snowflake.ml.modeling.metrics.regression.result._RESULT_SIZE_THRESHOLD", 0)
     def test_metric_size_threshold(self) -> None:
-        pandas_df = pd.DataFrame(_BINARY_DATA, columns=_SCHEMA)
-        input_df = self._session.create_dataframe(pandas_df)
+        pandas_df, input_df = utils.get_df(self._session, _BINARY_DATA, _PD_SCHEMA)
 
         actual_loss = snowml_metrics.mean_absolute_percentage_error(
             df=input_df,

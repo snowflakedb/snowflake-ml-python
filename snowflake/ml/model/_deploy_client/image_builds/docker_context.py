@@ -91,8 +91,10 @@ class DockerContext(ABC):
             assert len(get_res_list) == 1, f"Single zip file should be returned, but got {len(get_res_list)} files."
             local_zip_file_path = os.path.basename(get_res_list[0].file)
             copy_model_statement = f"COPY {local_zip_file_path} {absolute_path}"
+            extra_env_statement = f"ENV MODEL_ZIP_STAGE_PATH={absolute_path}"
         else:
             copy_model_statement = ""
+            extra_env_statement = ""
 
         with open(docker_file_path, "w", encoding="utf-8") as dockerfile, open(
             docker_file_template, encoding="utf-8"
@@ -113,6 +115,7 @@ class DockerContext(ABC):
                     # https://conda.io/projects/conda/en/latest/user-guide/tasks/manage-virtual.html
                     "cuda_override_env": cuda_version_str,
                     "copy_model_statement": copy_model_statement,
+                    "extra_env_statement": extra_env_statement,
                 }
             )
             dockerfile.write(dockerfile_content)

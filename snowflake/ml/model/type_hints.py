@@ -20,6 +20,7 @@ if TYPE_CHECKING:
 
     import snowflake.ml.model.custom_model
     import snowflake.ml.model.models.huggingface_pipeline
+    import snowflake.ml.model.models.llm
     import snowflake.snowpark
     from snowflake.ml.modeling.framework import base  # noqa: F401
 
@@ -70,6 +71,7 @@ SupportedNoSignatureRequirementsModelType = Union[
     "mlflow.pyfunc.PyFuncModel",
     "transformers.Pipeline",
     "snowflake.ml.model.models.huggingface_pipeline.HuggingFacePipelineModel",
+    "snowflake.ml.model.models.llm.LLM",
 ]
 
 SupportedModelType = Union[

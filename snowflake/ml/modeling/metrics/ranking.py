@@ -79,8 +79,10 @@ def precision_recall_curve(
     sproc_name = snowpark_utils.random_name_for_temp_object(snowpark_utils.TempObjectType.PROCEDURE)
     sklearn_release = version.parse(sklearn.__version__).release
     statement_params = telemetry.get_statement_params(_PROJECT, _SUBPROJECT)
+
     cols = metrics_utils.flatten_cols([y_true_col_name, probas_pred_col_name, sample_weight_col_name])
     queries = df[cols].queries["queries"]
+
     pickled_result_module = cloudpickle.dumps(result)
 
     @F.sproc(  # type: ignore[misc]
@@ -99,7 +101,10 @@ def precision_recall_curve(
     def precision_recall_curve_anon_sproc(session: snowpark.Session) -> bytes:
         for query in queries[:-1]:
             _ = session.sql(query).collect(statement_params=statement_params)
-        df = session.sql(queries[-1]).to_pandas(statement_params=statement_params)
+        sp_df = session.sql(queries[-1])
+        df = sp_df.to_pandas(statement_params=statement_params)
+        df.columns = sp_df.columns
+
         y_true = df[y_true_col_name]
         probas_pred = df[probas_pred_col_name]
         sample_weight = df[sample_weight_col_name] if sample_weight_col_name else None
@@ -215,8 +220,10 @@ def roc_auc_score(
     sproc_name = snowpark_utils.random_name_for_temp_object(snowpark_utils.TempObjectType.PROCEDURE)
     sklearn_release = version.parse(sklearn.__version__).release
     statement_params = telemetry.get_statement_params(_PROJECT, _SUBPROJECT)
+
     cols = metrics_utils.flatten_cols([y_true_col_names, y_score_col_names, sample_weight_col_name])
     queries = df[cols].queries["queries"]
+
     pickled_result_module = cloudpickle.dumps(result)
 
     @F.sproc(  # type: ignore[misc]
@@ -235,7 +242,10 @@ def roc_auc_score(
     def roc_auc_score_anon_sproc(session: snowpark.Session) -> bytes:
         for query in queries[:-1]:
             _ = session.sql(query).collect(statement_params=statement_params)
-        df = session.sql(queries[-1]).to_pandas(statement_params=statement_params)
+        sp_df = session.sql(queries[-1])
+        df = sp_df.to_pandas(statement_params=statement_params)
+        df.columns = sp_df.columns
+
         y_true = df[y_true_col_names]
         y_score = df[y_score_col_names]
         sample_weight = df[sample_weight_col_name] if sample_weight_col_name else None
@@ -306,8 +316,10 @@ def roc_curve(
     sproc_name = snowpark_utils.random_name_for_temp_object(snowpark_utils.TempObjectType.PROCEDURE)
     sklearn_release = version.parse(sklearn.__version__).release
     statement_params = telemetry.get_statement_params(_PROJECT, _SUBPROJECT)
+
     cols = metrics_utils.flatten_cols([y_true_col_name, y_score_col_name, sample_weight_col_name])
     queries = df[cols].queries["queries"]
+
     pickled_result_module = cloudpickle.dumps(result)
 
     @F.sproc(  # type: ignore[misc]
@@ -326,7 +338,10 @@ def roc_curve(
     def roc_curve_anon_sproc(session: snowpark.Session) -> bytes:
         for query in queries[:-1]:
             _ = session.sql(query).collect(statement_params=statement_params)
-        df = session.sql(queries[-1]).to_pandas(statement_params=statement_params)
+        sp_df = session.sql(queries[-1])
+        df = sp_df.to_pandas(statement_params=statement_params)
+        df.columns = sp_df.columns
+
         y_true = df[y_true_col_name]
         y_score = df[y_score_col_name]
         sample_weight = df[sample_weight_col_name] if sample_weight_col_name else None

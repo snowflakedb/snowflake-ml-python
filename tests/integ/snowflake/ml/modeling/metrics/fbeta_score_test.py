@@ -1,7 +1,6 @@
 from typing import Any, Dict
 
 import numpy as np
-import pandas as pd
 from absl.testing import parameterized
 from absl.testing.absltest import main
 from sklearn import exceptions, metrics as sklearn_metrics
@@ -13,23 +12,23 @@ from tests.integ.snowflake.ml.modeling.framework import utils
 
 _ROWS = 100
 _TYPES = [utils.DataType.INTEGER] * 4 + [utils.DataType.FLOAT]
-_BINARY_DATA, _SCHEMA = utils.gen_fuzz_data(
+_BINARY_DATA, _PD_SCHEMA, _SF_SCHEMA = utils.gen_fuzz_data(
     rows=_ROWS,
     types=_TYPES,
     low=0,
     high=2,
 )
-_MULTICLASS_DATA, _ = utils.gen_fuzz_data(
+_MULTICLASS_DATA, _, _ = utils.gen_fuzz_data(
     rows=_ROWS,
     types=_TYPES,
     low=0,
     high=5,
 )
-_Y_TRUE_COL = _SCHEMA[1]
-_Y_PRED_COL = _SCHEMA[2]
-_Y_TRUE_COLS = [_SCHEMA[1], _SCHEMA[2]]
-_Y_PRED_COLS = [_SCHEMA[3], _SCHEMA[4]]
-_SAMPLE_WEIGHT_COL = _SCHEMA[5]
+_Y_TRUE_COL = _SF_SCHEMA[1]
+_Y_PRED_COL = _SF_SCHEMA[2]
+_Y_TRUE_COLS = [_SF_SCHEMA[1], _SF_SCHEMA[2]]
+_Y_PRED_COLS = [_SF_SCHEMA[3], _SF_SCHEMA[4]]
+_SAMPLE_WEIGHT_COL = _SF_SCHEMA[5]
 
 
 class FbetaScoreTest(parameterized.TestCase):
@@ -58,8 +57,7 @@ class FbetaScoreTest(parameterized.TestCase):
             data = values["data"]
             y_true = values["y_true"]
             y_pred = values["y_pred"]
-            pandas_df = pd.DataFrame(data, columns=_SCHEMA)
-            input_df = self._session.create_dataframe(pandas_df)
+            pandas_df, input_df = utils.get_df(self._session, data, _PD_SCHEMA)
 
             for beta in params["beta"]:
                 actual_f = snowml_metrics.fbeta_score(
@@ -81,8 +79,7 @@ class FbetaScoreTest(parameterized.TestCase):
         {"params": {"labels": [None, [2, 0, 4]]}},
     )
     def test_labels(self, params: Dict[str, Any]) -> None:
-        pandas_df = pd.DataFrame(_MULTICLASS_DATA, columns=_SCHEMA)
-        input_df = self._session.create_dataframe(pandas_df)
+        pandas_df, input_df = utils.get_df(self._session, _MULTICLASS_DATA, _PD_SCHEMA)
 
         for labels in params["labels"]:
             actual_f = snowml_metrics.fbeta_score(
@@ -106,8 +103,7 @@ class FbetaScoreTest(parameterized.TestCase):
         {"params": {"pos_label": [0, 2, 4]}},
     )
     def test_pos_label(self, params: Dict[str, Any]) -> None:
-        pandas_df = pd.DataFrame(_MULTICLASS_DATA, columns=_SCHEMA)
-        input_df = self._session.create_dataframe(pandas_df)
+        pandas_df, input_df = utils.get_df(self._session, _MULTICLASS_DATA, _PD_SCHEMA)
 
         for pos_label in params["pos_label"]:
             actual_f = snowml_metrics.fbeta_score(
@@ -131,8 +127,7 @@ class FbetaScoreTest(parameterized.TestCase):
         {"params": {"average": [None, "micro", "macro", "weighted"]}},
     )
     def test_average_multiclass(self, params: Dict[str, Any]) -> None:
-        pandas_df = pd.DataFrame(_MULTICLASS_DATA, columns=_SCHEMA)
-        input_df = self._session.create_dataframe(pandas_df)
+        pandas_df, input_df = utils.get_df(self._session, _MULTICLASS_DATA, _PD_SCHEMA)
 
         for average in params["average"]:
             actual_f = snowml_metrics.fbeta_score(
@@ -160,8 +155,7 @@ class FbetaScoreTest(parameterized.TestCase):
         },
     )
     def test_average_binary(self, params: Dict[str, Any]) -> None:
-        pandas_df = pd.DataFrame(_BINARY_DATA, columns=_SCHEMA)
-        input_df = self._session.create_dataframe(pandas_df)
+        pandas_df, input_df = utils.get_df(self._session, _BINARY_DATA, _PD_SCHEMA)
 
         for idx, average in enumerate(params["average"]):
             y_true = params["y_true"][idx]
@@ -197,8 +191,7 @@ class FbetaScoreTest(parameterized.TestCase):
             data = values["data"]
             y_true = values["y_true"]
             y_pred = values["y_pred"]
-            pandas_df = pd.DataFrame(data, columns=_SCHEMA)
-            input_df = self._session.create_dataframe(pandas_df)
+            pandas_df, input_df = utils.get_df(self._session, data, _PD_SCHEMA)
 
             for sample_weight_col_name in params["sample_weight_col_name"]:
                 actual_f = snowml_metrics.fbeta_score(
@@ -226,8 +219,7 @@ class FbetaScoreTest(parameterized.TestCase):
         data = [
             [0, 0, 0, 0, 0, 0],
         ]
-        pandas_df = pd.DataFrame(data, columns=_SCHEMA)
-        input_df = self._session.create_dataframe(pandas_df)
+        pandas_df, input_df = utils.get_df(self._session, data, _PD_SCHEMA)
 
         for zero_division in params["zero_division"]:
             if zero_division == "warn":

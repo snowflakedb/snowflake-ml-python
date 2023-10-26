@@ -9,10 +9,11 @@ RUN --mount=type=cache,target=/opt/conda/pkgs CONDA_OVERRIDE_CUDA="11.7" \
 	python -m pip install "uvicorn[standard]" gunicorn starlette==0.30.0 && \
 	python -m pip install -r requirements.txt && \
     micromamba clean -afy
-ENV CONDA_PREFIX=/opt/conda
 
 COPY inference_server ./inference_server
 COPY gunicorn_run.sh ./gunicorn_run.sh
+ENV CONDA_PREFIX=/opt/conda
+
 
 USER root
 RUN if id mambauser >/dev/null 2>&1; then \

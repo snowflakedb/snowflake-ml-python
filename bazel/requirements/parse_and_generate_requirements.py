@@ -1,6 +1,7 @@
 import argparse
 import collections
 import contextlib
+import copy
 import functools
 import itertools
 import json
@@ -146,6 +147,9 @@ def generate_dev_pinned_string(
         version = req_info.get("dev_version_conda", req_info.get("dev_version", None))
         if version is None:
             raise ValueError("No pinned version exists.")
+        if env == "conda-only":
+            if "dev_version_conda" in req_info or "dev_version" in req_info:
+                return None
         from_channel = req_info.get("from_channel", None)
         if version == "":
             version_str = ""
@@ -158,6 +162,9 @@ def generate_dev_pinned_string(
         version = req_info.get("dev_version_pypi", req_info.get("dev_version", None))
         if version is None:
             raise ValueError("No pinned version exists.")
+        if env == "pip-only":
+            if "dev_version_conda" in req_info or "dev_version" in req_info:
+                return None
         if version == "":
             version_str = ""
         else:
@@ -341,9 +348,15 @@ def generate_requirements(
         sorted(filter(None, map(lambda req_info: generate_dev_pinned_string(req_info, "conda"), requirements)))
     )
 
-    extended_env: List[Union[str, MutableMapping[str, Sequence[str]]]] = extended_env_conda  # type: ignore[assignment]
+    extended_env: List[Union[str, MutableMapping[str, Sequence[str]]]] = copy.deepcopy(
+        extended_env_conda  # type: ignore[arg-type]
+    )
+    # Relative order needs to be maintained here without sorting.
+    # For external pip-only packages, we want to it able to access pypi.org index,
+    # while for internal pip-only packages, nexus is the only viable index.
+    # Relative order is here to prevent nexus index overriding public index.
     pip_only_reqs = list(
-        sorted(filter(None, map(lambda req_info: generate_dev_pinned_string(req_info, "pip-only"), requirements)))
+        filter(None, map(lambda req_info: generate_dev_pinned_string(req_info, "pip-only"), requirements))
     )
     if pip_only_reqs:
         extended_env.extend(["pip", {"pip": pip_only_reqs}])

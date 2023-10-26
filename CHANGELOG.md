@@ -1,5 +1,23 @@
 # Release History
 
+## 1.0.11
+
+### New Features
+
+- Model Registry: Add log_artifact() public method.
+- Model Development: Add support for `kneighbors`.
+
+### Behavior Changes
+
+- Model Registry: Change log_model() argument from TrainingDataset to List of Artifact.
+- Model Registry: Change get_training_dataset() to get_artifact().
+
+### Bug Fixes
+
+- Model Development: Fix support for XGBoost and LightGBM models using SKLearn Grid Search and Randomized Search model selectors.
+- Model Development: DecimalType is now supported as a DataType.
+- Model Development: Fix metrics compatibility with Snowpark Dataframes that use Snowflake identifiers
+
 ## 1.0.10
 
 ### Behavior Changes

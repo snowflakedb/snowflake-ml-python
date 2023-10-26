@@ -18,7 +18,7 @@ from snowflake.ml.modeling.preprocessing import (  # type: ignore[attr-defined]
     OneHotEncoder,
 )
 from snowflake.ml.modeling.xgboost import XGBClassifier  # type: ignore[attr-defined]
-from snowflake.snowpark import DataFrame, Session
+from snowflake.snowpark import DataFrame, Session, functions, types
 
 
 class DEVICE(Enum):
@@ -88,8 +88,23 @@ class ModelFactory:
             df["SIMPLE"] = categories
             return df
 
+        # Add string to the dataset
         df_cat = add_simple_category(df)
         iris_df = session.create_dataframe(df_cat)
+
+        fields = iris_df.schema.fields
+        # Map DoubleType to DecimalType
+        selected_cols = []
+        count = 0
+        for field in fields:
+            src = field.column_identifier.quoted_name
+            if isinstance(field.datatype, types.DoubleType) and count == 0:
+                dest = types.DecimalType(15, 10)
+                selected_cols.append(functions.cast(functions.col(src), dest).alias(src))
+                count += 1
+            else:
+                selected_cols.append(functions.col(src))
+        iris_df = iris_df.select(selected_cols)
 
         numeric_features = ["SEPALLENGTH", "SEPALWIDTH", "PETALLENGTH", "PETALWIDTH"]
         categorical_features = ["SIMPLE"]

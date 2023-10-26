@@ -8,7 +8,8 @@ from sklearn import metrics
 
 from snowflake import connector
 from snowflake.ml.dataset import dataset
-from snowflake.ml.registry import _ml_artifact, model_registry
+from snowflake.ml.registry import model_registry
+from snowflake.ml.registry.artifact import ArtifactType
 from snowflake.ml.utils import connection_params
 from snowflake.snowpark import Session
 from tests.integ.snowflake.ml.test_utils import (
@@ -63,7 +64,7 @@ class TestModelRegistryInteg(absltest.TestCase):
             model=model,
             tags=model_tags,
             conda_dependencies=[
-                test_env_utils.get_latest_package_versions_in_server(self._session, "snowflake-snowpark-python")
+                test_env_utils.get_latest_package_version_spec_in_server(self._session, "snowflake-snowpark-python")
             ],
             sample_input_data=test_features,
             options={"embed_local_ml_library": True},
@@ -78,7 +79,7 @@ class TestModelRegistryInteg(absltest.TestCase):
                 model=model,
                 tags={"stage": "testing", "classifier_type": "svm.SVC"},
                 conda_dependencies=[
-                    test_env_utils.get_latest_package_versions_in_server(self._session, "snowflake-snowpark-python")
+                    test_env_utils.get_latest_package_version_spec_in_server(self._session, "snowflake-snowpark-python")
                 ],
                 sample_input_data=test_features,
                 options={"embed_local_ml_library": True},
@@ -277,7 +278,7 @@ class TestModelRegistryInteg(absltest.TestCase):
             model_version=model_version,
             model=model,
             conda_dependencies=[
-                test_env_utils.get_latest_package_versions_in_server(self._session, "snowflake-snowpark-python")
+                test_env_utils.get_latest_package_version_spec_in_server(self._session, "snowflake-snowpark-python")
             ],
             options={"embed_local_ml_library": True},
         )
@@ -326,7 +327,7 @@ class TestModelRegistryInteg(absltest.TestCase):
             model_version=model_version,
             model=model,
             conda_dependencies=[
-                test_env_utils.get_latest_package_versions_in_server(self._session, "snowflake-snowpark-python")
+                test_env_utils.get_latest_package_version_spec_in_server(self._session, "snowflake-snowpark-python")
             ],
             options={"embed_local_ml_library": True},
         )
@@ -389,35 +390,18 @@ class TestModelRegistryInteg(absltest.TestCase):
             desc="a dummy dataset metadata",
         )
         cur_user = self._session.sql("SELECT CURRENT_USER()").collect()[0]["CURRENT_USER()"]
-        self.assertEqual(dummy_dataset.id, dummy_dataset.id)
         self.assertEqual(dummy_dataset.owner, cur_user)
-        self.assertIsNotNone(dummy_dataset.name, dummy_snapshot_table_full_path)
+        self.assertIsNone(dummy_dataset.name)
         self.assertIsNotNone(dummy_dataset.generation_timestamp)
 
         minimal_dataset = dataset.Dataset(
             self._session,
             df=self._session.sql(spine_query),
         )
-        self.assertEqual(minimal_dataset.id, minimal_dataset.id)
         self.assertEqual(minimal_dataset.owner, cur_user)
-        self.assertEqual(minimal_dataset.name, "")
+        self.assertIsNone(minimal_dataset.name)
+        self.assertIsNone(minimal_dataset.version)
         self.assertIsNotNone(minimal_dataset.generation_timestamp)
-
-        with self.assertRaisesRegex(
-            ValueError,
-            "Only one of sample_input_data and dataset should be provided.",
-        ):
-            registry.log_model(
-                model_name=model_name,
-                model_version=model_version,
-                model=model,
-                conda_dependencies=[
-                    test_env_utils.get_latest_package_versions_in_server(self._session, "snowflake-snowpark-python")
-                ],
-                sample_input_data=test_features,
-                dataset=dummy_dataset,
-                options={"embed_local_ml_library": True},
-            )
 
         test_combinations = [
             (model_version, dummy_dataset),
@@ -425,27 +409,35 @@ class TestModelRegistryInteg(absltest.TestCase):
             (f"{model_version}.3", minimal_dataset),
         ]
         for version, ds in test_combinations:
+            atf_ref = registry.log_artifact(
+                artifact=ds,
+                name=f"ds_{version}",
+                version=f"{version}.ds",
+            )
+            self.assertEqual(atf_ref.name, f"ds_{version}")
+            self.assertEqual(atf_ref.version, f"{version}.ds")
+
             registry.log_model(
                 model_name=model_name,
                 model_version=version,
                 model=model,
                 conda_dependencies=[
-                    test_env_utils.get_latest_package_versions_in_server(self._session, "snowflake-snowpark-python")
+                    test_env_utils.get_latest_package_version_spec_in_server(self._session, "snowflake-snowpark-python")
                 ],
                 options={"embed_local_ml_library": True},
-                dataset=ds,
+                artifacts=[atf_ref],
             )
 
-            # test deserialized dataset from get_dataset
-            des_ds_0 = registry.get_dataset(model_name, version)
+            # test deserialized dataset from get_artifact
+            des_ds_0 = registry.get_artifact(atf_ref.name, atf_ref.version)
             self.assertIsNotNone(des_ds_0)
             self.assertEqual(des_ds_0, ds)
 
             # test deserialized dataset from list_artifacts
             rows_list = registry.list_artifacts(model_name, version).collect()
             self.assertEqual(len(rows_list), 1)
-            self.assertEqual(rows_list[0]["ID"], ds.id)
-            self.assertEqual(_ml_artifact.ArtifactType[rows_list[0]["TYPE"]], _ml_artifact.ArtifactType.DATASET)
+            self.assertEqual(rows_list[0]["ID"], des_ds_0._id)
+            self.assertEqual(ArtifactType[rows_list[0]["TYPE"]], ArtifactType.DATASET)
             des_ds_1 = dataset.Dataset.from_json(rows_list[0]["ARTIFACT_SPEC"], self._session)
             self.assertEqual(des_ds_1, ds)
 

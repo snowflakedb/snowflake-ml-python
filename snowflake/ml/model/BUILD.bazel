@@ -131,6 +131,7 @@ py_library(
         "//snowflake/ml/_internal/exceptions",
         "//snowflake/ml/model/_handlers:custom",
         "//snowflake/ml/model/_handlers:huggingface_pipeline",
+        "//snowflake/ml/model/_handlers:llm",
         "//snowflake/ml/model/_handlers:mlflow",
         "//snowflake/ml/model/_handlers:pytorch",
         "//snowflake/ml/model/_handlers:sklearn",

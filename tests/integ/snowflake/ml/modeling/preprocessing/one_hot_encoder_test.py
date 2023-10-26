@@ -23,7 +23,7 @@ from snowflake.ml.modeling.preprocessing import (
 )
 from snowflake.ml.utils import sparse as utils_sparse
 from snowflake.ml.utils.connection_params import SnowflakeLoginOptions
-from snowflake.snowpark import DataFrame, Session
+from snowflake.snowpark import DataFrame, Session, functions, types
 from tests.integ.snowflake.ml.modeling.framework import utils as framework_utils
 from tests.integ.snowflake.ml.modeling.framework.utils import (
     BOOLEAN_COLS,
@@ -125,8 +125,44 @@ class OneHotEncoderTest(parameterized.TestCase):
         AssertionError
             If the fitted categories do not match those of the sklearn encoder.
         """
+        input_cols = NUMERIC_COLS
+        df_pandas, df = framework_utils.get_df(self._session, DATA, SCHEMA, np.nan)
+
+        encoder = OneHotEncoder().set_input_cols(input_cols)
+        encoder.fit(df)
+
+        actual_categories = encoder._categories_list
+
+        # sklearn
+        encoder_sklearn = SklearnOneHotEncoder()
+        encoder_sklearn.fit(df_pandas[input_cols])
+
+        for actual_cats, sklearn_cats in zip(actual_categories, encoder_sklearn.categories_):
+            self.assertEqual(set(sklearn_cats.tolist()), set(actual_cats.tolist()))
+
+    def test_fit_decimal(self) -> None:
+        """
+        Verify fitted categories.
+
+        Raises
+        ------
+        AssertionError
+            If the fitted categories do not match those of the sklearn encoder.
+        """
         input_cols = CATEGORICAL_COLS
         df_pandas, df = framework_utils.get_df(self._session, DATA, SCHEMA, np.nan)
+
+        # Map DoubleType to DecimalType
+        fields = df.schema.fields
+        selected_cols = []
+        for field in fields:
+            src = field.column_identifier.quoted_name
+            if isinstance(field.datatype, types.DoubleType):
+                dest = types.DecimalType(15, 10)
+                selected_cols.append(functions.cast(functions.col(src), dest).alias(src))
+            else:
+                selected_cols.append(functions.col(src))
+        df = df.select(selected_cols)
 
         encoder = OneHotEncoder().set_input_cols(input_cols)
         encoder.fit(df)

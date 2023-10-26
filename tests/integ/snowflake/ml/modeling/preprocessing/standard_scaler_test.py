@@ -16,7 +16,7 @@ from snowflake.ml.modeling.preprocessing import (  # type: ignore[attr-defined]
     StandardScaler,
 )
 from snowflake.ml.utils.connection_params import SnowflakeLoginOptions
-from snowflake.snowpark import Session
+from snowflake.snowpark import Session, functions, types
 from tests.integ.snowflake.ml.modeling.framework import utils as framework_utils
 from tests.integ.snowflake.ml.modeling.framework.utils import (
     DATA,
@@ -52,6 +52,46 @@ class StandardScalerTest(TestCase):
         """
         input_cols = NUMERIC_COLS
         df_pandas, df = framework_utils.get_df(self._session, DATA, SCHEMA, np.nan)
+
+        for _df in [df_pandas, df]:
+            scaler = StandardScaler().set_input_cols(input_cols)
+            scaler.fit(_df)
+
+            actual_scale = scaler._convert_attribute_dict_to_ndarray(scaler.scale_)
+            actual_mean = scaler._convert_attribute_dict_to_ndarray(scaler.mean_)
+            actual_var = scaler._convert_attribute_dict_to_ndarray(scaler.var_)
+
+            # sklearn
+            scaler_sklearn = SklearnStandardScaler()
+            scaler_sklearn.fit(df_pandas[input_cols])
+
+            np.testing.assert_allclose(actual_scale, scaler_sklearn.scale_)
+            np.testing.assert_allclose(actual_mean, scaler_sklearn.mean_)
+            np.testing.assert_allclose(actual_var, scaler_sklearn.var_)
+
+    def test_fit_decimal(self) -> None:
+        """
+        Verify fitted states with DecimalType
+
+        Raises
+        ------
+        AssertionError
+            If the fitted states do not match those of the sklearn scaler.
+        """
+        input_cols = NUMERIC_COLS
+        df_pandas, df = framework_utils.get_df(self._session, DATA, SCHEMA, np.nan)
+
+        # Map DoubleType to DecimalType
+        fields = df.schema.fields
+        selected_cols = []
+        for field in fields:
+            src = field.column_identifier.quoted_name
+            if isinstance(field.datatype, types.DoubleType):
+                dest = types.DecimalType(38, 10)
+                selected_cols.append(functions.cast(functions.col(src), dest).alias(src))
+            else:
+                selected_cols.append(functions.col(src))
+        df = df.select(selected_cols)
 
         for _df in [df_pandas, df]:
             scaler = StandardScaler().set_input_cols(input_cols)

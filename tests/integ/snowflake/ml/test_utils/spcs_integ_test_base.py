@@ -15,6 +15,8 @@ class SpcsIntegTestBase(absltest.TestCase):
     _RUN_ID = uuid.uuid4().hex[:2]
     _TEST_DB = db_manager.TestObjectNameGenerator.get_snowml_test_object_name(_RUN_ID, "db").upper()
     _TEST_SCHEMA = db_manager.TestObjectNameGenerator.get_snowml_test_object_name(_RUN_ID, "schema").upper()
+    _TEST_STAGE = db_manager.TestObjectNameGenerator.get_snowml_test_object_name(_RUN_ID, "stage").upper()
+    _TEST_IMAGE_REPO = db_manager.TestObjectNameGenerator.get_snowml_test_object_name(_RUN_ID, "repo").upper()
 
     @classmethod
     def setUpClass(cls) -> None:
@@ -35,6 +37,7 @@ class SpcsIntegTestBase(absltest.TestCase):
         cls._db_manager = db_manager.DBManager(cls._session)
         cls._db_manager.create_database(cls._TEST_DB)
         cls._db_manager.create_schema(cls._TEST_SCHEMA)
+        cls._db_manager.create_stage(cls._TEST_STAGE, cls._TEST_SCHEMA, cls._TEST_DB, sse_encrypted=True)
         cls._db_manager.cleanup_databases(expire_hours=6)
 
     @classmethod

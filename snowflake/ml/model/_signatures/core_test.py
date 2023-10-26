@@ -25,13 +25,7 @@ class DataTypeTest(absltest.TestCase):
         self.assertEqual(core.DataType.FLOAT, core.DataType.from_snowpark_type(spt.FloatType()))
         self.assertEqual(core.DataType.DOUBLE, core.DataType.from_snowpark_type(spt.DoubleType()))
 
-        with exception_utils.assert_snowml_exceptions(
-            self,
-            expected_original_error_type=NotImplementedError,
-            expected_regex="Type .+ is not supported as a DataType.",
-        ):
-            core.DataType.from_snowpark_type(spt.DecimalType(38, 6))
-
+        self.assertEqual(core.DataType.DOUBLE, core.DataType.from_snowpark_type(spt.DecimalType(38, 6)))
         self.assertEqual(core.DataType.BOOL, core.DataType.from_snowpark_type(spt.BooleanType()))
         self.assertEqual(core.DataType.STRING, core.DataType.from_snowpark_type(spt.StringType()))
         self.assertEqual(core.DataType.BYTES, core.DataType.from_snowpark_type(spt.BinaryType()))

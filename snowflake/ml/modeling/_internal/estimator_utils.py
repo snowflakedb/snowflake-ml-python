@@ -7,6 +7,7 @@ from typing_extensions import TypeGuard
 from snowflake.ml._internal.exceptions import error_codes, exceptions
 from snowflake.ml.modeling.framework._utils import to_native_format
 from snowflake.ml.modeling.framework.base import BaseTransformer
+from snowflake.snowpark import Session
 
 
 def validate_sklearn_args(args: Dict[str, Tuple[Any, Any, bool]], klass: type) -> Dict[str, Any]:
@@ -107,3 +108,27 @@ def original_estimator_has_callable(attr: str) -> Callable[[Any], bool]:
         return callable(getattr(self._sklearn_object, attr, None))
 
     return check
+
+
+def if_single_node(session: Session) -> bool:
+    """Retrieve the current session's warehouse type and warehouse size, and depends on those information
+    to identify if it is single node or not
+
+    Args:
+        session (Session): session object that is used by user currently
+
+    Returns:
+        bool: single node or not. True stands for yes.
+    """
+    warehouse_name = session.get_current_warehouse()
+    if warehouse_name:
+        warehouse_name = warehouse_name.replace('"', "")
+        df = session.sql(f"SHOW WAREHOUSES like '{warehouse_name}';")['"type"', '"size"'].collect()[0]
+        # filter out the conditions when it is single node
+        single_node: bool = (df[0] == "SNOWPARK-OPTIMIZED" and df[1] == "Medium") or (
+            df[0] == "STANDARD" and df[1] == "X-Small"
+        )
+        return single_node
+    # If current session cannot retrieve the warehouse name back,
+    # Default as True; Let HPO fall back to stored procedure implementation
+    return True
