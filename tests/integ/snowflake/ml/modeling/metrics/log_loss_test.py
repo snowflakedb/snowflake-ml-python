@@ -1,6 +1,5 @@
 from typing import Any, Dict
 
-import pandas as pd
 from absl.testing import parameterized
 from absl.testing.absltest import main
 from sklearn import metrics as sklearn_metrics
@@ -12,14 +11,14 @@ from tests.integ.snowflake.ml.modeling.framework import utils
 
 _ROWS = 100
 _TYPES = [utils.DataType.INTEGER] + [utils.DataType.FLOAT] * 4
-_BINARY_DATA, _SCHEMA = utils.gen_fuzz_data(
+_BINARY_DATA, _PD_SCHEMA, _SF_SCHEMA = utils.gen_fuzz_data(
     rows=_ROWS,
     types=_TYPES,
     low=0,
     high=[2, 1, 1, 1, 1],
 )
-_BINARY_Y_TRUE_COL = _SCHEMA[1]
-_BINARY_Y_PRED_COL = _SCHEMA[2]
+_BINARY_Y_TRUE_COL = _SF_SCHEMA[1]
+_BINARY_Y_PRED_COL = _SF_SCHEMA[2]
 _MULTICLASS_DATA = [
     [0, 2, 0.29, 0.49, 0.22, 0.18],
     [1, 0, 0.33, 0.16, 0.51, 0.69],
@@ -28,9 +27,9 @@ _MULTICLASS_DATA = [
     [4, 1, 0.82, 0.12, 0.06, 0.91],
     [5, 2, 0.08, 0.46, 0.46, 0.76],
 ]
-_MULTICLASS_Y_TRUE_COL = _SCHEMA[1]
-_MULTICLASS_Y_PRED_COLS = [_SCHEMA[2], _SCHEMA[3], _SCHEMA[4]]
-_SAMPLE_WEIGHT_COL = _SCHEMA[5]
+_MULTICLASS_Y_TRUE_COL = _SF_SCHEMA[1]
+_MULTICLASS_Y_PRED_COLS = [_SF_SCHEMA[2], _SF_SCHEMA[3], _SF_SCHEMA[4]]
+_SAMPLE_WEIGHT_COL = _SF_SCHEMA[5]
 _MULTILABEL_DATA = [
     [1, 0, 1, 0.8, 0.3, 0.6],
     [0, 1, 0, 0.2, 0.7, 0.4],
@@ -68,8 +67,7 @@ class LogLossTest(parameterized.TestCase):
             data = values["data"]
             y_true = values["y_true"]
             y_pred = values["y_pred"]
-            pandas_df = pd.DataFrame(data, columns=_SCHEMA)
-            input_df = self._session.create_dataframe(pandas_df)
+            pandas_df, input_df = utils.get_df(self._session, data, _PD_SCHEMA)
 
             for eps in params["eps"]:
                 actual_loss = snowml_metrics.log_loss(
@@ -101,8 +99,7 @@ class LogLossTest(parameterized.TestCase):
             data = values["data"]
             y_true = values["y_true"]
             y_pred = values["y_pred"]
-            pandas_df = pd.DataFrame(data, columns=_SCHEMA)
-            input_df = self._session.create_dataframe(pandas_df)
+            pandas_df, input_df = utils.get_df(self._session, data, _PD_SCHEMA)
 
             for normalize in params["normalize"]:
                 actual_loss = snowml_metrics.log_loss(
@@ -134,8 +131,7 @@ class LogLossTest(parameterized.TestCase):
             data = values["data"]
             y_true = values["y_true"]
             y_pred = values["y_pred"]
-            pandas_df = pd.DataFrame(data, columns=_SCHEMA)
-            input_df = self._session.create_dataframe(pandas_df)
+            pandas_df, input_df = utils.get_df(self._session, data, _PD_SCHEMA)
 
             for sample_weight_col_name in params["sample_weight_col_name"]:
                 actual_loss = snowml_metrics.log_loss(
@@ -156,8 +152,7 @@ class LogLossTest(parameterized.TestCase):
         {"params": {"labels": [None, [2, 0, 4]]}},
     )
     def test_labels(self, params: Dict[str, Any]) -> None:
-        pandas_df = pd.DataFrame(_MULTICLASS_DATA, columns=_SCHEMA)
-        input_df = self._session.create_dataframe(pandas_df)
+        pandas_df, input_df = utils.get_df(self._session, _MULTICLASS_DATA, _PD_SCHEMA)
 
         for labels in params["labels"]:
             actual_loss = snowml_metrics.log_loss(
@@ -174,8 +169,7 @@ class LogLossTest(parameterized.TestCase):
             self.assertAlmostEqual(sklearn_loss, actual_loss)
 
     def test_multilabel(self) -> None:
-        pandas_df = pd.DataFrame(_MULTILABEL_DATA, columns=_MULTILABEL_SCHEMA)
-        input_df = self._session.create_dataframe(pandas_df)
+        pandas_df, input_df = utils.get_df(self._session, _MULTILABEL_DATA, _MULTILABEL_SCHEMA)
 
         actual_loss = snowml_metrics.log_loss(
             df=input_df,

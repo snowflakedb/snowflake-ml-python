@@ -1,5 +1,4 @@
 import numpy as np
-import pandas as pd
 from absl.testing import parameterized
 from absl.testing.absltest import main
 
@@ -10,15 +9,15 @@ from tests.integ.snowflake.ml.modeling.framework import utils
 
 _ROWS = 100
 _TYPES = [utils.DataType.INTEGER] * 4 + [utils.DataType.FLOAT]
-_BINARY_DATA, _SCHEMA = utils.gen_fuzz_data(
+_BINARY_DATA, _PD_SCHEMA, _SF_SCHEMA = utils.gen_fuzz_data(
     rows=_ROWS,
     types=_TYPES,
     low=0,
     high=2,
 )
-_Y_TRUE_COL = _SCHEMA[1]
-_Y_PRED_COL = _SCHEMA[2]
-_SAMPLE_WEIGHT_COL = _SCHEMA[5]
+_Y_TRUE_COL = _SF_SCHEMA[1]
+_Y_PRED_COL = _SF_SCHEMA[2]
+_SAMPLE_WEIGHT_COL = _SF_SCHEMA[5]
 
 
 class MetricsUtilsTest(parameterized.TestCase):
@@ -38,8 +37,7 @@ class MetricsUtilsTest(parameterized.TestCase):
         normalize=(False, True),
     )
     def test_weighted_sum(self, df, sample_weight_col_name, sample_score_col_name, normalize) -> None:
-        pandas_df = pd.DataFrame(df, columns=_SCHEMA)
-        input_df = self._session.create_dataframe(pandas_df)
+        pandas_df, input_df = utils.get_df(self._session, df, _PD_SCHEMA)
 
         snowpark_weight_col = input_df[sample_weight_col_name] if sample_weight_col_name else None
         actual_sum = metrics_utils.weighted_sum(

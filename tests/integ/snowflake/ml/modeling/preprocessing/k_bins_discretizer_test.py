@@ -130,15 +130,15 @@ class KBinsDiscretizerTest(TestCase):
         N_BINS = [10, 7]
         ENCODE = "ordinal"
 
-        data, schema = utils.gen_fuzz_data(
+        data, pd_schema, sf_schema = utils.gen_fuzz_data(
             rows=1000,
             types=[utils.DataType.INTEGER, utils.DataType.FLOAT],
         )
-        pandas_df, snowpark_df = utils.get_df(self._session, data, schema)
+        pandas_df, snowpark_df = utils.get_df(self._session, data, pd_schema)
 
         for strategy in self._strategies:
             sklearn_discretizer = SklearnKBinsDiscretizer(n_bins=N_BINS, encode=ENCODE, strategy=strategy)
-            sklearn_discretizer.fit(pandas_df[schema[1:]])
+            sklearn_discretizer.fit(pandas_df[sf_schema[1:]])
             target_n_bins = sklearn_discretizer.n_bins_.tolist()
             target_bin_edges = sklearn_discretizer.bin_edges_.tolist()
 
@@ -147,7 +147,7 @@ class KBinsDiscretizerTest(TestCase):
                     n_bins=N_BINS,
                     encode=ENCODE,
                     strategy=strategy,
-                    input_cols=schema[1:],
+                    input_cols=sf_schema[1:],
                 )
                 discretizer.fit(df)
                 actual_edges = discretizer.bin_edges_.tolist()
@@ -197,7 +197,7 @@ class KBinsDiscretizerTest(TestCase):
         ENCODE = "ordinal"
         OUTPUT_COLS = [f"OUT_{x}" for x in range(len(N_BINS))]
 
-        data, schema = utils.gen_fuzz_data(
+        data, pd_schema, sf_schema = utils.gen_fuzz_data(
             rows=10000,
             types=[
                 utils.DataType.INTEGER,
@@ -207,30 +207,32 @@ class KBinsDiscretizerTest(TestCase):
             low=-999999,
             high=999999,
         )
-        pandas_df, snowpark_df = utils.get_df(self._session, data, schema)
+        pandas_df, snowpark_df = utils.get_df(self._session, data, pd_schema)
 
         for strategy in self._strategies:
             # 1. Create OSS SKLearn discretizer
             sklearn_discretizer = SklearnKBinsDiscretizer(n_bins=N_BINS, encode=ENCODE, strategy=strategy)
-            sklearn_discretizer.fit(pandas_df[schema[1:]])
-            target_output = sklearn_discretizer.transform(pandas_df.sort_values(by=[schema[0]])[schema[1:]])
+            sklearn_discretizer.fit(pandas_df[sf_schema[1:]])
+            target_output = sklearn_discretizer.transform(pandas_df.sort_values(by=[sf_schema[0]])[sf_schema[1:]])
 
             # 2. Create SnowML discretizer
             discretizer = KBinsDiscretizer(
                 n_bins=N_BINS,
                 encode=ENCODE,
                 strategy=strategy,
-                input_cols=schema[1:],
+                input_cols=sf_schema[1:],
                 output_cols=OUTPUT_COLS,
             )
             discretizer.fit(snowpark_df)
 
             # 3. Transform with Snowpark DF and compare
-            actual_output = discretizer.transform(snowpark_df).sort(schema[0])[OUTPUT_COLS].to_pandas().to_numpy()
+            actual_output = discretizer.transform(snowpark_df).sort(sf_schema[0])[OUTPUT_COLS].to_pandas().to_numpy()
             np.testing.assert_allclose(target_output, actual_output)
 
             # 4. Transform with Pandas DF and compare
-            pd_actual_output = discretizer.transform(pandas_df.sort_values(by=[schema[0]])[schema[1:]])[OUTPUT_COLS]
+            pd_actual_output = discretizer.transform(pandas_df.sort_values(by=[sf_schema[0]])[sf_schema[1:]])[
+                OUTPUT_COLS
+            ]
             np.testing.assert_allclose(target_output, pd_actual_output)
 
     def test_transform_onehot_encoding(self) -> None:

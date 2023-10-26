@@ -1,4 +1,5 @@
 import textwrap
+import warnings
 from abc import ABC, abstractmethod
 from enum import Enum
 from typing import (
@@ -140,7 +141,23 @@ class DataType(Enum):
         # Fallback for decimal type.
         if isinstance(snowpark_type, spt.DecimalType):
             if snowpark_type.scale == 0:
+                warnings.warn(
+                    f"Warning: Type {snowpark_type}"
+                    " is being automatically converted to INT64 in the Snowpark DataFrame. "
+                    "This automatic conversion may lead to potential precision loss and rounding errors. "
+                    "If you wish to prevent this conversion, you should manually perform "
+                    "the necessary data type conversion."
+                )
                 return DataType.INT64
+            else:
+                warnings.warn(
+                    f"Warning: Type {snowpark_type}"
+                    " is being automatically converted to DOUBLE in the Snowpark DataFrame. "
+                    "This automatic conversion may lead to potential precision loss and rounding errors. "
+                    "If you wish to prevent this conversion, you should manually perform "
+                    "the necessary data type conversion."
+                )
+                return DataType.DOUBLE
         raise snowml_exceptions.SnowflakeMLException(
             error_code=error_codes.NOT_IMPLEMENTED,
             original_exception=NotImplementedError(f"Type {snowpark_type} is not supported as a DataType."),

@@ -46,3 +46,11 @@ py_test(
         ":estimator_utils",
     ],
 )
+
+py_test(
+    name = "snowpark_handlers_test",
+    srcs = ["snowpark_handlers_test.py"],
+    deps = [
+        ":estimator_utils",
+    ],
+)

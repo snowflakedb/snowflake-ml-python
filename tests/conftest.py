@@ -1,6 +1,8 @@
+import inspect
 import os
 from unittest import mock
 
+import cloudpickle as cp
 import pytest
 
 from snowflake.snowpark._internal.utils import TempObjectType
@@ -17,4 +19,5 @@ def random_name_for_temp_object_mock():
     with mock.patch(
         "snowflake.ml.modeling._internal.snowpark_handlers.random_name_for_temp_object", _random_name_for_temp_object
     ) as _fixture:
+        cp.register_pickle_by_value(inspect.getmodule(_random_name_for_temp_object))
         yield _fixture

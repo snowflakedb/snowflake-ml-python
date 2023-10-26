@@ -85,7 +85,7 @@ class FeatureStoreTest(absltest.TestCase):
         return table_full_path
 
     def _create_feature_store(self, name: Optional[str] = None) -> FeatureStore:
-        current_schema = create_random_schema(self._session, "TEST_SHEMA") if name is None else name
+        current_schema = create_random_schema(self._session, "FS_TEST") if name is None else name
         fs = FeatureStore(
             self._session,
             FS_INTEG_TEST_DB,
@@ -123,7 +123,7 @@ class FeatureStoreTest(absltest.TestCase):
             FeatureStore(
                 session=self._session,
                 database=FS_INTEG_TEST_DB,
-                name=create_random_schema(self._session, "TEST_SHEMA"),
+                name=create_random_schema(self._session, "TEST_INVALID_WAREHOUSE"),
                 default_warehouse=schema_name,
                 creation_mode=CreationMode.CREATE_IF_NOT_EXIST,
             )
@@ -150,7 +150,7 @@ class FeatureStoreTest(absltest.TestCase):
         # Schema still exist even feature store creation failed.
         res = self._session.sql(f"SHOW SCHEMAS LIKE '{schema_name}' in DATABASE {FS_INTEG_TEST_DB}").collect()
         self.assertEqual(len(res), 1)
-        self._session.sql(f"DROP SCHEMA IF EXISTS {schema_name}").collect()
+        self._session.sql(f"DROP SCHEMA IF EXISTS {FS_INTEG_TEST_DB}.{schema_name}").collect()
 
     def test_create_if_not_exist_system_error(self) -> None:
         mock_session = create_mock_session(
@@ -959,7 +959,7 @@ class FeatureStoreTest(absltest.TestCase):
             fs.list_feature_views(entity_name="foo")
 
     def test_create_and_cleanup_tags(self) -> None:
-        current_schema = create_random_schema(self._session, "TEST_SHEMA")
+        current_schema = create_random_schema(self._session, "TEST_CREATE_AND_CLEANUP_TAGS")
         fs = FeatureStore(
             self._session,
             FS_INTEG_TEST_DB,
@@ -974,7 +974,7 @@ class FeatureStoreTest(absltest.TestCase):
         ).collect()
         self.assertEqual(len(res), 1)
 
-        self._session.sql(f"DROP SCHEMA IF EXISTS {current_schema}").collect()
+        self._session.sql(f"DROP SCHEMA IF EXISTS {FS_INTEG_TEST_DB}.{current_schema}").collect()
 
         row_list = self._session.sql(
             f"SHOW TAGS LIKE '{FEATURE_VIEW_ENTITY_TAG}' IN DATABASE {fs._config.database}"
@@ -1154,7 +1154,7 @@ class FeatureStoreTest(absltest.TestCase):
             )
 
     def test_clear_feature_store_in_existing_schema(self) -> None:
-        current_schema = create_random_schema(self._session, "TEST_SHEMA")
+        current_schema = create_random_schema(self._session, "TEST_CLEAR_FEATURE_STORE_IN_EXISTING_SCHEMA")
 
         # create some objects outside of feature store domain, later will check if they still exists after fs.clear()
         full_schema_path = f"{FS_INTEG_TEST_DB}.{current_schema}"

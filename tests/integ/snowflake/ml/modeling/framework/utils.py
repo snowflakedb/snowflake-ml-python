@@ -141,7 +141,7 @@ class DataType(Enum):
 
 def gen_fuzz_data(
     rows: int, types: List[DataType], low: Union[int, List[int]] = MIN_INT, high: Union[int, List[int]] = MAX_INT
-) -> Tuple[List[Any], List[str]]:
+) -> Tuple[List[Any], List[str], List[str]]:
     """
     Generate random data based on input column types and row count.
     First column in the result data will be an ID column for indexing.
@@ -160,6 +160,7 @@ def gen_fuzz_data(
     """
     data: List[npt.NDArray[Any]] = [np.arange(1, rows + 1, 1)]
     names = ["ID"]
+    snowflake_identifiers = ["ID"]
 
     for idx, t in enumerate(types):
         _low = low if isinstance(low, int) else low[idx]
@@ -170,9 +171,11 @@ def gen_fuzz_data(
             data.append(np.random.uniform(_low, _high, rows))
         else:
             raise ValueError(f"Unsupported data type {t}")
-        names.append(f"COL_{idx}")
+        names.append(f"col_{idx}")
+        snowflake_identifiers.append(f'"col_{idx}"')
+    data = np.core.records.fromarrays(data, names=names).tolist()  # type: ignore[call-overload]
 
-    return np.core.records.fromarrays(data, names=names).tolist(), names  # type: ignore[call-overload]
+    return data, names, snowflake_identifiers
 
 
 def get_df(
@@ -181,12 +184,14 @@ def get_df(
     schema: List[str],
     fillna: Optional[Union[object, ArrayLike]] = None,
 ) -> Tuple[pd.DataFrame, DataFrame]:
-    """Create pandas dataframe and Snowpark dataframes from input data.
+    """Create pandas dataframe and Snowpark dataframes from input data. The schema passed should be
+    a pandas schema, which will be converted to a schema using snowflake identifiers when `session.create_dataframe`
+    is called.
 
     Args:
         session: Snowpark session object.
         data: List of input data to convert to dataframe.
-        schema: Schema for dataframe to be created.
+        schema: The pandas schema for dataframe to be created.
         fillna: Value to fill for NA values in the input data.
 
     Returns:
@@ -196,6 +201,8 @@ def get_df(
     if fillna is not None:
         df_pandas.fillna(value=fillna, inplace=True)
     df = session.create_dataframe(df_pandas)
+    df_pandas.columns = df.columns
+
     return df_pandas, df
 
 

@@ -461,6 +461,7 @@ class SnowServiceDeployment(ABC):
                 }
                 if self.options.model_in_image:
                     del substitutes["model_stage"]
+                    del substitutes["model_zip_stage_path"]
                 content = string.Template(template.read()).substitute(substitutes)
                 content_dict = yaml.safe_load(content)
                 if self.options.use_gpu:
@@ -526,11 +527,9 @@ class SnowServiceDeployment(ABC):
         if self.options.use_gpu:
             for model_blob_meta in self.model_meta.models.values():
                 if model_blob_meta.model_type == "huggingface_pipeline":
-                    batch_size = int(model_blob_meta.options.get("batch_size", 1))
-                if max_batch_rows is None:
-                    max_batch_rows = batch_size
-                else:
-                    max_batch_rows = min(batch_size, max_batch_rows)
+                    max_batch_rows = int(model_blob_meta.options.get("batch_size", 1))
+                if model_blob_meta.model_type == "llm":
+                    max_batch_rows = int(model_blob_meta.options.get("batch_size", 1))
 
         service_function_sql = client.create_or_replace_service_function(
             service_func_name=self.service_func_name,

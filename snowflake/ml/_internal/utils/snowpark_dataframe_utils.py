@@ -1,4 +1,5 @@
 import logging
+import warnings
 
 from snowflake import snowpark
 from snowflake.snowpark import functions, types
@@ -55,6 +56,57 @@ def cast_snowpark_dataframe(df: snowpark.DataFrame) -> snowpark.DataFrame:
                     "It might not be able to get converted to tensors. "
                     "Please consider handling it in feature engineering."
                 )
+            selected_cols.append(functions.col(src))
+    df = df.select(selected_cols)
+    return df
+
+
+def cast_snowpark_dataframe_column_types(df: snowpark.DataFrame) -> snowpark.DataFrame:
+    """Cast columns in the dataframe to types that are compatible with pandas DataFrame.
+
+    It assists modeling API (fit, predict, ...) in performing implicit data casting.
+    The reason for casting: snowpark dataframe would transform as pandas dataframe
+        to compute within sproc.
+
+    Args:
+        df: A snowpark dataframe.
+
+    Returns:
+        A snowpark dataframe whose data type has been casted.
+    """
+    fields = df.schema.fields
+    selected_cols = []
+    for field in fields:
+        src = field.column_identifier.quoted_name
+        # Handle DecimalType: Numbers up to 38 digits, with an optional precision and scale
+        # By default, precision is 38 and scale is 0 (i.e. NUMBER(38, 0))
+        if isinstance(field.datatype, types.DecimalType):
+            # If datatype has scale; convert into float/double type
+            # In snowflake, DOUBLE is the same as FLOAT, provides precision up to 18.
+            if field.datatype.scale:
+                dest_dtype: types.DataType = types.DoubleType()
+                warnings.warn(
+                    f"Warning: The Decimal({field.datatype.precision}, {field.datatype.scale}) data type"
+                    " is being automatically converted to DoubleType in the Snowpark DataFrame. "
+                    "This automatic conversion may lead to potential precision loss and rounding errors. "
+                    "If you wish to prevent this conversion, you should manually perform "
+                    "the necessary data type conversion."
+                )
+            else:
+                # IntegerType default as NUMBER(38, 0), but
+                # snowpark dataframe would automatically transform to LongType in function `convert_sf_to_sp_type`
+                # To align with snowpark, set all the decimal without scale as LongType
+                dest_dtype = types.LongType()
+                warnings.warn(
+                    f"Warning: The Decimal({field.datatype.precision}, 0) data type"
+                    " is being automatically converted to LongType in the Snowpark DataFrame. "
+                    "This automatic conversion may lead to potential precision loss and rounding errors. "
+                    "If you wish to prevent this conversion, you should manually perform "
+                    "the necessary data type conversion."
+                )
+            selected_cols.append(functions.cast(functions.col(src), dest_dtype).alias(src))
+        # TODO: add more type handling or error message
+        else:
             selected_cols.append(functions.col(src))
     df = df.select(selected_cols)
     return df

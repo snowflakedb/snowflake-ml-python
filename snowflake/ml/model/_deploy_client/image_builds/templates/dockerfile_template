@@ -4,8 +4,6 @@ FROM ${base_image} as build
 COPY ${model_env_folder}/conda.yaml conda.yaml
 COPY ${model_env_folder}/requirements.txt requirements.txt
 
-${copy_model_statement}
-
 # Set MAMBA_DOCKERFILE_ACTIVATE=1 to activate the conda environment during build time.
 ARG MAMBA_DOCKERFILE_ACTIVATE=1
 
@@ -17,11 +15,13 @@ RUN --mount=type=cache,target=/opt/conda/pkgs CONDA_OVERRIDE_CUDA="${cuda_overri
 	python -m pip install -r requirements.txt && \
     micromamba clean -afy
 
-# Bitsandbytes uses this ENVVAR to determine CUDA library location
-ENV CONDA_PREFIX=/opt/conda
-
 COPY ${inference_server_dir} ./${inference_server_dir}
 COPY ${entrypoint_script} ./${entrypoint_script}
+${copy_model_statement}
+
+# Bitsandbytes uses this ENVVAR to determine CUDA library location
+ENV CONDA_PREFIX=/opt/conda
+${extra_env_statement}
 
 USER root
 RUN if id mambauser >/dev/null 2>&1; then \

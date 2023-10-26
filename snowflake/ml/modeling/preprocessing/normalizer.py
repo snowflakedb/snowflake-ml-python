@@ -14,6 +14,30 @@ _VALID_NORMS = ["l1", "l2", "max"]
 
 
 class Normalizer(base.BaseTransformer):
+    """
+    Normalize samples individually to each row's unit norm.
+
+    Each sample (i.e. each row of the data matrix) with at least one
+    non-zero component is rescaled independently of other samples so
+    that its norm (l1, l2 or inf) equals one.
+
+    Args:
+        norm: str, default="l2"
+            The norm to use to normalize each non-zero sample. If norm='max'
+            is used, values will be rescaled by the maximum of the absolute
+            values. It must be one of 'l1', 'l2', or 'max'.
+
+        input_cols: Optional[Union[str, List[str]]]
+            Columns to use as inputs during transform.
+
+        output_cols: Optional[Union[str, List[str]]]
+            A string or list of strings representing column names that will store the output of transform operation.
+            The length of `output_cols` must equal the length of `input_cols`.
+
+        drop_input_cols: bool, default=False
+            Remove input columns from output if set `True`.
+    """
+
     def __init__(
         self,
         *,
@@ -22,21 +46,6 @@ class Normalizer(base.BaseTransformer):
         output_cols: Optional[Union[str, Iterable[str]]] = None,
         drop_input_cols: Optional[bool] = False,
     ) -> None:
-        """
-        Normalize samples individually to each row's unit norm.
-
-        Each sample (i.e. each row of the data matrix) with at least one
-        nonzero component is rescaled independently of other samples so
-        that its norm (l1, l2 or inf) equals one.
-
-        Args:
-            norm: The norm to use to normalize each non zero sample. If norm='max'
-                is used, values will be rescaled by the maximum of the absolute
-                values. It must be one of 'l1', 'l2', or 'max'.
-            input_cols: Single or multiple input columns.
-            output_cols: Single or multiple output columns.
-            drop_input_cols: Remove input columns from output if set True. False by default.
-        """
         super().__init__(drop_input_cols=drop_input_cols)
         self.norm = norm
         self._is_fitted = False
@@ -79,7 +88,7 @@ class Normalizer(base.BaseTransformer):
     )
     def transform(self, dataset: Union[snowpark.DataFrame, pd.DataFrame]) -> Union[snowpark.DataFrame, pd.DataFrame]:
         """
-        Scale each nonzero row of the input dataset to the unit norm.
+        Scale each non-zero row of the input dataset to the unit norm.
 
         Args:
             dataset: Input dataset.

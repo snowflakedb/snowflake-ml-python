@@ -3,18 +3,18 @@ FROM mambaorg/micromamba:1.4.3 as build
 
 COPY env/conda.yaml conda.yaml
 COPY env/requirements.txt requirements.txt
-
-COPY model.zip /model_repo/model.zip
 ARG MAMBA_DOCKERFILE_ACTIVATE=1
 RUN --mount=type=cache,target=/opt/conda/pkgs CONDA_OVERRIDE_CUDA="11.7" \
     micromamba install -y -n base -f conda.yaml && \
 	python -m pip install "uvicorn[standard]" gunicorn starlette==0.30.0 && \
 	python -m pip install -r requirements.txt && \
     micromamba clean -afy
-ENV CONDA_PREFIX=/opt/conda
 
 COPY inference_server ./inference_server
 COPY gunicorn_run.sh ./gunicorn_run.sh
+COPY model.zip /model_repo/model.zip
+ENV CONDA_PREFIX=/opt/conda
+ENV MODEL_ZIP_STAGE_PATH=/model_repo/model.zip
 
 USER root
 RUN if id mambauser >/dev/null 2>&1; then \

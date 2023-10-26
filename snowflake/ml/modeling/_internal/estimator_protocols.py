@@ -1,6 +1,7 @@
-from typing import List, Optional, Protocol
+from typing import Any, Dict, List, Optional, Protocol, Union
 
 import pandas as pd
+from sklearn import model_selection
 
 from snowflake.snowpark import DataFrame, Session
 
@@ -114,4 +115,18 @@ class CVHandlers(Protocol):
         label_cols: List[str],
         sample_weight_col: Optional[str],
     ) -> float:
+        raise NotImplementedError
+
+    def fit_search_snowpark(
+        self,
+        param_list: Union[Dict[str, Any], List[Dict[str, Any]]],
+        dataset: DataFrame,
+        session: Session,
+        estimator: Union[model_selection.GridSearchCV, model_selection.RandomizedSearchCV],
+        dependencies: List[str],
+        udf_imports: List[str],
+        input_cols: List[str],
+        label_cols: List[str],
+        sample_weight_col: Optional[str],
+    ) -> Union[model_selection.GridSearchCV, model_selection.RandomizedSearchCV]:
         raise NotImplementedError

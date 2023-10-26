@@ -16,21 +16,21 @@ from tests.integ.snowflake.ml.modeling.framework import utils
 
 _ROWS = 100
 _TYPES = [utils.DataType.INTEGER] + [utils.DataType.FLOAT] * 2
-_BINARY_DATA, _SCHEMA = utils.gen_fuzz_data(
+_BINARY_DATA, _PD_SCHEMA, _SF_SCHEMA = utils.gen_fuzz_data(
     rows=_ROWS,
     types=_TYPES,
     low=0,
     high=[2, 1, 1],
 )
-_MULTICLASS_DATA, _ = utils.gen_fuzz_data(
+_MULTICLASS_DATA, _, _ = utils.gen_fuzz_data(
     rows=_ROWS,
     types=_TYPES,
     low=0,
     high=[5, 1, 1],
 )
-_Y_TRUE_COL = _SCHEMA[1]
-_Y_SCORE_COL = _SCHEMA[2]
-_SAMPLE_WEIGHT_COL = _SCHEMA[3]
+_Y_TRUE_COL = _SF_SCHEMA[1]
+_Y_SCORE_COL = _SF_SCHEMA[2]
+_SAMPLE_WEIGHT_COL = _SF_SCHEMA[3]
 
 
 class RocCurveTest(parameterized.TestCase):
@@ -47,8 +47,7 @@ class RocCurveTest(parameterized.TestCase):
         {"params": {"pos_label": [0, 2, 4]}},
     )
     def test_pos_label(self, params: Dict[str, Any]) -> None:
-        pandas_df = pd.DataFrame(_MULTICLASS_DATA, columns=_SCHEMA)
-        input_df = self._session.create_dataframe(pandas_df)
+        pandas_df, input_df = utils.get_df(self._session, _MULTICLASS_DATA, _PD_SCHEMA)
 
         for pos_label in params["pos_label"]:
             actual_fpr, actual_tpr, actual_thresholds = snowml_metrics.roc_curve(
@@ -71,8 +70,7 @@ class RocCurveTest(parameterized.TestCase):
         {"params": {"sample_weight_col_name": [None, _SAMPLE_WEIGHT_COL]}},
     )
     def test_sample_weight(self, params: Dict[str, Any]) -> None:
-        pandas_df = pd.DataFrame(_BINARY_DATA, columns=_SCHEMA)
-        input_df = self._session.create_dataframe(pandas_df)
+        pandas_df, input_df = utils.get_df(self._session, _BINARY_DATA, _PD_SCHEMA)
 
         for sample_weight_col_name in params["sample_weight_col_name"]:
             actual_fpr, actual_tpr, actual_thresholds = snowml_metrics.roc_curve(
@@ -96,8 +94,7 @@ class RocCurveTest(parameterized.TestCase):
         {"params": {"drop_intermediate": [True, False]}},
     )
     def test_drop_intermediate(self, params: Dict[str, Any]) -> None:
-        pandas_df = pd.DataFrame(_BINARY_DATA, columns=_SCHEMA)
-        input_df = self._session.create_dataframe(pandas_df)
+        pandas_df, input_df = utils.get_df(self._session, _BINARY_DATA, _PD_SCHEMA)
 
         for drop_intermediate in params["drop_intermediate"]:
             actual_fpr, actual_tpr, actual_thresholds = snowml_metrics.roc_curve(
@@ -122,7 +119,7 @@ class RocCurveTest(parameterized.TestCase):
         self._session.sql(f"create temp stage {stage}").collect()
 
         # Load data into the stage.
-        pandas_df = pd.DataFrame(_BINARY_DATA, columns=_SCHEMA)
+        pandas_df = pd.DataFrame(_BINARY_DATA, columns=_PD_SCHEMA)
         with tempfile.TemporaryDirectory() as temp_dir:
             filename = "data.parquet"
             local_path = os.path.join(temp_dir, filename)
@@ -137,6 +134,7 @@ class RocCurveTest(parameterized.TestCase):
 
         input_df = df_lhs.join(df_rhs, ["ID"])
         pd_df = input_df.to_pandas()
+        pd_df.columns = input_df.columns
 
         actual_fpr, actual_tpr, actual_thresholds = snowml_metrics.roc_curve(
             df=input_df,
@@ -156,8 +154,7 @@ class RocCurveTest(parameterized.TestCase):
     @mock.patch("snowflake.ml.modeling.metrics.ranking.result._RESULT_SIZE_THRESHOLD", 0)
     def test_metric_size_threshold(self) -> None:
         # TODO: somehow confirm that the stage upload code path was taken.
-        pandas_df = pd.DataFrame(_BINARY_DATA, columns=_SCHEMA)
-        input_df = self._session.create_dataframe(pandas_df)
+        pandas_df, input_df = utils.get_df(self._session, _BINARY_DATA, _PD_SCHEMA)
 
         actual_fpr, actual_tpr, actual_thresholds = snowml_metrics.roc_curve(
             df=input_df,

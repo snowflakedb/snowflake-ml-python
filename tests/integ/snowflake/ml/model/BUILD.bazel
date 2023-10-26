@@ -152,3 +152,21 @@ py_test(
         "//tests/integ/snowflake/ml/test_utils:db_manager",
     ],
 )
+
+#TODO(halu): Needs support of pip package for build & test
+#py_test(
+#    name = "spcs_llm_model_integ_test",
+#    timeout = "eternal",  # 3600s, GPU image takes very long to build..
+#    srcs = ["spcs_llm_model_integ_test.py"],
+#    compatible_with_snowpark = False,
+#    deps = [
+#        ":warehouse_model_integ_test_utils",
+#        "//snowflake/ml/_internal:env_utils",
+#        "//snowflake/ml/model:type_hints",
+#        "//snowflake/ml/model/models:llm_model",
+#        "//snowflake/ml/utils:connection_params",
+#        "//tests/integ/snowflake/ml/test_utils:db_manager",
+#        "//tests/integ/snowflake/ml/test_utils:spcs_integ_test_base",
+#        "//tests/integ/snowflake/ml/test_utils:test_env_utils",
+#    ],
+#)
