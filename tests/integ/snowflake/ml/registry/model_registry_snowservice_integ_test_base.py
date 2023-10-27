@@ -98,9 +98,15 @@ class TestModelRegistryIntegSnowServiceBase(spcs_integ_test_base.SpcsIntegTestBa
         self.assertEqual(model_deployment_list["MODEL_VERSION"][0], model_version)
         self.assertEqual(model_deployment_list["DEPLOYMENT_NAME"][0], deployment_name)
 
+        deployment = self.registry._get_deployment(
+            model_name=model_name, model_version=model_version, deployment_name=deployment_name
+        )
+        service_name = f"service_{deployment['MODEL_ID']}"
         model_ref.delete_deployment(deployment_name=deployment_name)  # type: ignore[attr-defined]
         self.assertEqual(model_ref.list_deployments().to_pandas().shape[0], 0)  # type: ignore[attr-defined]
 
+        service_lst = self._session.sql(f"SHOW SERVICES LIKE '{service_name}' in account;").collect()
+        self.assertEqual(len(service_lst), 0, "Service was not deleted successfully")
         self.assertEqual(self.registry.list_models().to_pandas().shape[0], 1)
         self.registry.delete_model(model_name=model_name, model_version=model_version, delete_artifact=True)
         self.assertEqual(self.registry.list_models().to_pandas().shape[0], 0)

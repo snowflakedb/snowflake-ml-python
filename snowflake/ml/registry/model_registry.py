@@ -876,6 +876,21 @@ class ModelRegistry:
         else:
             raise connector.DatabaseError("Failed to insert the model properties to the registry table.")
 
+    def _get_deployment(self, *, model_name: str, model_version: str, deployment_name: str) -> snowpark.Row:
+        statement_params = self._get_statement_params(inspect.currentframe())
+        deployment_lst = (
+            self._session.sql(f"SELECT * FROM {self._fully_qualified_permanent_deployment_view_name()}")
+            .filter(snowpark.Column("DEPLOYMENT_NAME") == deployment_name)
+            .filter(snowpark.Column("MODEL_NAME") == model_name)
+            .filter(snowpark.Column("MODEL_VERSION") == model_version)
+        ).collect(statement_params=statement_params)
+        if len(deployment_lst) == 0:
+            raise KeyError(
+                f"Unable to find deployment named {deployment_name} in the model {model_name}/{model_version}."
+            )
+        assert len(deployment_lst) == 1, "_get_deployment should return exactly 1 deployment"
+        return cast(snowpark.Row, deployment_lst[0])
+
     # Registry operations
 
     @telemetry.send_api_usage_telemetry(
@@ -1703,20 +1718,10 @@ class ModelRegistry:
             model_version: Model Version string.
             deployment_name: Name of the deployment that is getting deleted.
 
-        Raises:
-            KeyError: Raised if the target deployment is not found.
         """
-        deployment = (
-            self._session.sql(f"SELECT * FROM {self._fully_qualified_permanent_deployment_view_name()}")
-            .filter(snowpark.Column("DEPLOYMENT_NAME") == deployment_name)
-            .filter(snowpark.Column("MODEL_NAME") == model_name)
-            .filter(snowpark.Column("MODEL_VERSION") == model_version)
-        ).collect()
-        if len(deployment) == 0:
-            raise KeyError(
-                f"Unable to find deployment named {deployment_name} in the model {model_name}/{model_version}."
-            )
-        deployment = deployment[0]
+        deployment = self._get_deployment(
+            model_name=model_name, model_version=model_version, deployment_name=deployment_name
+        )
 
         # TODO(SNOW-759526): The following sequence should be a transaction.
         # Step 1: Drop the UDF
@@ -1745,7 +1750,9 @@ class ModelRegistry:
 
         # Optional Step 5: Delete Snowpark container service.
         if deployment["TARGET_PLATFORM"] == deploy_platforms.TargetPlatform.SNOWPARK_CONTAINER_SERVICES.value:
-            service_name = f"service_{deployment['MODEL_ID']}"
+            service_name = identifier.get_schema_level_object_identifier(
+                self._name, self._schema, f"service_{deployment['MODEL_ID']}"
+            )
             query_result_checker.SqlResultValidator(
                 self._session,
                 f"DROP SERVICE IF EXISTS {service_name}",
