@@ -11,7 +11,7 @@ from tests.integ.snowflake.ml.modeling.framework import utils
 
 _ROWS = 100
 _TYPES = [utils.DataType.INTEGER] + [utils.DataType.FLOAT] * 4
-_BINARY_DATA, _PD_SCHEMA, _SF_SCHEMA = utils.gen_fuzz_data(
+_BINARY_DATA, _SF_SCHEMA = utils.gen_fuzz_data(
     rows=_ROWS,
     types=_TYPES,
     low=0,
@@ -67,7 +67,7 @@ class LogLossTest(parameterized.TestCase):
             data = values["data"]
             y_true = values["y_true"]
             y_pred = values["y_pred"]
-            pandas_df, input_df = utils.get_df(self._session, data, _PD_SCHEMA)
+            pandas_df, input_df = utils.get_df(self._session, data, _SF_SCHEMA)
 
             for eps in params["eps"]:
                 actual_loss = snowml_metrics.log_loss(
@@ -99,7 +99,7 @@ class LogLossTest(parameterized.TestCase):
             data = values["data"]
             y_true = values["y_true"]
             y_pred = values["y_pred"]
-            pandas_df, input_df = utils.get_df(self._session, data, _PD_SCHEMA)
+            pandas_df, input_df = utils.get_df(self._session, data, _SF_SCHEMA)
 
             for normalize in params["normalize"]:
                 actual_loss = snowml_metrics.log_loss(
@@ -131,7 +131,7 @@ class LogLossTest(parameterized.TestCase):
             data = values["data"]
             y_true = values["y_true"]
             y_pred = values["y_pred"]
-            pandas_df, input_df = utils.get_df(self._session, data, _PD_SCHEMA)
+            pandas_df, input_df = utils.get_df(self._session, data, _SF_SCHEMA)
 
             for sample_weight_col_name in params["sample_weight_col_name"]:
                 actual_loss = snowml_metrics.log_loss(
@@ -152,7 +152,7 @@ class LogLossTest(parameterized.TestCase):
         {"params": {"labels": [None, [2, 0, 4]]}},
     )
     def test_labels(self, params: Dict[str, Any]) -> None:
-        pandas_df, input_df = utils.get_df(self._session, _MULTICLASS_DATA, _PD_SCHEMA)
+        pandas_df, input_df = utils.get_df(self._session, _MULTICLASS_DATA, _SF_SCHEMA)
 
         for labels in params["labels"]:
             actual_loss = snowml_metrics.log_loss(

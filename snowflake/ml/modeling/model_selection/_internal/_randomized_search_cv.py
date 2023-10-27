@@ -313,7 +313,6 @@ class RandomizedSearchCV(BaseTransformer):
     @telemetry.send_api_usage_telemetry(
         project=_PROJECT,
         subproject=_SUBPROJECT,
-        custom_tags=dict([("autogen", True)]),
     )
     def fit(self, dataset: Union[DataFrame, pd.DataFrame]) -> "RandomizedSearchCV":
         """Run fit with all sets of parameters
@@ -552,12 +551,10 @@ class RandomizedSearchCV(BaseTransformer):
     @telemetry.send_api_usage_telemetry(
         project=_PROJECT,
         subproject=_SUBPROJECT,
-        custom_tags=dict([("autogen", True)]),
     )
     @telemetry.add_stmt_params_to_df(
         project=_PROJECT,
         subproject=_SUBPROJECT,
-        custom_tags=dict([("autogen", True)]),
     )
     def predict(self, dataset: Union[DataFrame, pd.DataFrame]) -> Union[DataFrame, pd.DataFrame]:
         """Call predict on the estimator with the best found parameters
@@ -599,12 +596,10 @@ class RandomizedSearchCV(BaseTransformer):
     @telemetry.send_api_usage_telemetry(
         project=_PROJECT,
         subproject=_SUBPROJECT,
-        custom_tags=dict([("autogen", True)]),
     )
     @telemetry.add_stmt_params_to_df(
         project=_PROJECT,
         subproject=_SUBPROJECT,
-        custom_tags=dict([("autogen", True)]),
     )
     def transform(self, dataset: Union[DataFrame, pd.DataFrame]) -> Union[DataFrame, pd.DataFrame]:
         """Call transform on the estimator with the best found parameters
@@ -677,12 +672,10 @@ class RandomizedSearchCV(BaseTransformer):
     @telemetry.send_api_usage_telemetry(
         project=_PROJECT,
         subproject=_SUBPROJECT,
-        custom_tags=dict([("autogen", True)]),
     )
     @telemetry.add_stmt_params_to_df(
         project=_PROJECT,
         subproject=_SUBPROJECT,
-        custom_tags=dict([("autogen", True)]),
     )
     def predict_proba(
         self, dataset: Union[DataFrame, pd.DataFrame], output_cols_prefix: str = "predict_proba_"
@@ -720,12 +713,10 @@ class RandomizedSearchCV(BaseTransformer):
     @telemetry.send_api_usage_telemetry(
         project=_PROJECT,
         subproject=_SUBPROJECT,
-        custom_tags=dict([("autogen", True)]),
     )
     @telemetry.add_stmt_params_to_df(
         project=_PROJECT,
         subproject=_SUBPROJECT,
-        custom_tags=dict([("autogen", True)]),
     )
     def predict_log_proba(
         self, dataset: Union[DataFrame, pd.DataFrame], output_cols_prefix: str = "predict_log_proba_"
@@ -764,12 +755,10 @@ class RandomizedSearchCV(BaseTransformer):
     @telemetry.send_api_usage_telemetry(
         project=_PROJECT,
         subproject=_SUBPROJECT,
-        custom_tags=dict([("autogen", True)]),
     )
     @telemetry.add_stmt_params_to_df(
         project=_PROJECT,
         subproject=_SUBPROJECT,
-        custom_tags=dict([("autogen", True)]),
     )
     def decision_function(
         self, dataset: Union[DataFrame, pd.DataFrame], output_cols_prefix: str = "decision_function_"

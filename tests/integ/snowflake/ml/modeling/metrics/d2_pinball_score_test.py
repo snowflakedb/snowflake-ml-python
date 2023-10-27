@@ -13,13 +13,13 @@ from tests.integ.snowflake.ml.modeling.framework import utils
 
 _ROWS = 100
 _TYPES = [utils.DataType.INTEGER] * 4 + [utils.DataType.FLOAT]
-_BINARY_DATA, _PD_SCHEMA, _SF_SCHEMA = utils.gen_fuzz_data(
+_BINARY_DATA, _SF_SCHEMA = utils.gen_fuzz_data(
     rows=_ROWS,
     types=_TYPES,
     low=0,
     high=2,
 )
-_MULTICLASS_DATA, _, _ = utils.gen_fuzz_data(
+_MULTICLASS_DATA, _ = utils.gen_fuzz_data(
     rows=_ROWS,
     types=_TYPES,
     low=0,
@@ -68,7 +68,7 @@ class D2PinballScoreTest(parameterized.TestCase):
             y_true = values["y_true"]
             y_pred = values["y_pred"]
 
-            pandas_df, input_df = utils.get_df(self._session, data, _PD_SCHEMA)
+            pandas_df, input_df = utils.get_df(self._session, data, _SF_SCHEMA)
 
             for sample_weight_col_name in params["sample_weight_col_name"]:
                 actual_loss = snowml_metrics.d2_pinball_score(
@@ -101,7 +101,7 @@ class D2PinballScoreTest(parameterized.TestCase):
             data = values["data"]
             y_true = values["y_true"]
             y_pred = values["y_pred"]
-            pandas_df, input_df = utils.get_df(self._session, data, _PD_SCHEMA)
+            pandas_df, input_df = utils.get_df(self._session, data, _SF_SCHEMA)
 
             for alpha in params["alpha"]:
                 actual_loss = snowml_metrics.d2_pinball_score(
@@ -153,7 +153,7 @@ class D2PinballScoreTest(parameterized.TestCase):
 
     @mock.patch("snowflake.ml.modeling.metrics.regression.result._RESULT_SIZE_THRESHOLD", 0)
     def test_metric_size_threshold(self) -> None:
-        pandas_df, input_df = utils.get_df(self._session, _BINARY_DATA, _PD_SCHEMA)
+        pandas_df, input_df = utils.get_df(self._session, _BINARY_DATA, _SF_SCHEMA)
 
         actual_loss = snowml_metrics.d2_pinball_score(
             df=input_df,
