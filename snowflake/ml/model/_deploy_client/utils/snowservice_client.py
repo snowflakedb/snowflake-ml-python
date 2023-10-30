@@ -63,15 +63,16 @@ class SnowServiceClient:
         logger.debug(f"Create service with SQL: \n {sql}")
         self.session.sql(sql).collect()
 
-    def create_job(self, compute_pool: str, spec_stage_location: str) -> str:
-        """Return the newly created Job ID.
+    def create_job(self, compute_pool: str, spec_stage_location: str) -> None:
+        """Execute the job creation SQL command. Note that the job creation is synchronous, the query blocks until job
+        either succeeds or fails.
+
+        Upon job failure, full job container log will be logged.
 
         Args:
             compute_pool: name of the compute pool
             spec_stage_location: path to the stage location where the spec is located at.
 
-        Returns:
-            job id in string format.
         """
         stage, path = uri.get_stage_and_path(spec_stage_location)
         sql = f"""
@@ -81,9 +82,17 @@ class SnowServiceClient:
             SPEC = '{path}'
         """
         logger.debug(f"Create job with SQL: \n {sql}")
-        self.session.sql(sql).collect()
-        job_id = self.session.sql("SELECT LAST_QUERY_ID() AS QUERY_ID").collect()[0]["QUERY_ID"]
-        return str(job_id)
+        try:
+            self.session.sql(sql).collect()
+        finally:
+            job_id = self.session.sql("SELECT LAST_QUERY_ID() AS QUERY_ID").collect()[0]["QUERY_ID"]
+            self.block_until_resource_is_ready(
+                resource_name=str(job_id),
+                resource_type=constants.ResourceType.JOB,
+                container_name=constants.KANIKO_CONTAINER_NAME,
+                max_retries=240,
+                retry_interval_secs=15,
+            )
 
     def _drop_service_if_exists(self, service_name: str) -> None:
         """Drop service if it already exists.
