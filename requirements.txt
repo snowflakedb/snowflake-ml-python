@@ -52,3 +52,4 @@ types-protobuf==4.23.0.1
 types-requests==2.30.0.0
 typing-extensions==4.5.0
 xgboost==1.7.3
+wheel>=0.38.0 # not directly required, pinned by Snyk to avoid a vulnerability
