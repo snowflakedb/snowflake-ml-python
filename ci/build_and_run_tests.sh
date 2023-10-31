@@ -255,7 +255,7 @@ if [ "${ENV}" = "pip" ]; then
     # otherwise it will fail in dependency resolution.
     python3.8 -m pip install --upgrade pip
     python3.8 -m pip list
-    python3.8 -m pip install "snowflake_ml_python-${VERSION}-py3-none-any.whl[all]" pytest-xdist[psutil] -r "${WORKSPACE}/${SNOWML_DIR}/requirements.txt" --no-cache-dir --force-reinstall
+    python3.8 -m pip install "snowflake_ml_python-${VERSION}-py3-none-any.whl[all]" "pytest-xdist[psutil]==2.5.0" -r "${WORKSPACE}/${SNOWML_DIR}/requirements.txt" --no-cache-dir --force-reinstall
     if [ "${WITH_SNOWPARK}" = true ]; then
         cp "$(find "${WORKSPACE}" -maxdepth 1 -iname 'snowflake_snowpark_python-*.whl')" "${TEMP_TEST_DIR}"
         python3.8 -m pip install "$(find . -maxdepth 1 -iname 'snowflake_snowpark_python-*.whl')" --no-deps --force-reinstall
@@ -275,7 +275,7 @@ else
     conda clean --all --force-pkgs-dirs -y
 
     # Create testing env
-    conda create -y -p testenv -c "${WORKSPACE}/conda-bld" -c "https://repo.anaconda.com/pkgs/snowflake/" --override-channels "python=3.8" snowflake-ml-python pytest-xdist psutil inflection "${OPTIONAL_REQUIREMENTS[@]}"
+    conda create -y -p testenv -c "${WORKSPACE}/conda-bld" -c "https://repo.anaconda.com/pkgs/snowflake/" --override-channels "python=3.8" snowflake-ml-python "py==1.9.0" "pytest-xdist==2.5.0" psutil inflection "${OPTIONAL_REQUIREMENTS[@]}"
     conda list -p testenv
 
     # Run integration tests

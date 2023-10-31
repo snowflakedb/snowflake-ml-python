@@ -1,5 +1,6 @@
 import inspect
 import json
+import math
 import warnings
 from typing import Any, Dict, Iterable, List, Optional, Set, Tuple, Union
 
@@ -517,6 +518,24 @@ def log_loss(
     statement_params = telemetry.get_statement_params(_PROJECT, _SUBPROJECT)
     y_true = y_true_col_names if isinstance(y_true_col_names, list) else [y_true_col_names]
     y_pred = y_pred_col_names if isinstance(y_pred_col_names, list) else [y_pred_col_names]
+
+    # If it is binary classification, use SQL because it is faster.
+    if len(y_pred) == 1 and eps == "auto":
+        metrics_utils.check_label_columns(y_true_col_names, y_pred_col_names)
+        eps = float(np.finfo(float).eps)
+        y_true_col = y_true[0]
+        y_pred_col = y_pred[0]
+        y_pred_eps_min = F.iff(df[y_pred_col] < (1 - eps), df[y_pred_col], 1 - eps)
+        y_pred_eps = F.iff(y_pred_eps_min > eps, y_pred_eps_min, eps)
+        neg_loss_column = F.iff(df[y_true_col] == 1, F.log(math.e, y_pred_eps), F.log(math.e, 1 - y_pred_eps))
+        loss_column = F.negate(neg_loss_column)
+        return metrics_utils.weighted_sum(
+            df=df,
+            sample_score_column=loss_column,
+            sample_weight_column=df[sample_weight_col_name] if sample_weight_col_name else None,
+            normalize=normalize,
+            statement_params=statement_params,
+        )
 
     # Since we are processing samples individually, we need to explicitly specify the output labels
     # in the case that there is one output label.

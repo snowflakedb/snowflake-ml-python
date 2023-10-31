@@ -150,7 +150,7 @@ def SnowflakeLoginOptions(connection_name: str = "", login_file: Optional[str] =
     >> session = Session.builder.configs(SnowflakeLoginOptions()).create()
 
     Usage Note:
-      Ideally one should have a snoqsql config file. Read more here:
+      Ideally one should have a snowsql config file. Read more here:
       https://docs.snowflake.com/en/user-guide/snowsql-start.html#configuring-default-connection-settings
 
     Args:

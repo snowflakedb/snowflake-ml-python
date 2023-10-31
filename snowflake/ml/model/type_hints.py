@@ -157,6 +157,7 @@ class SnowparkContainerServiceDeployOptions(DeployOptions):
     enable_remote_image_build: NotRequired[bool]
     force_image_build: NotRequired[bool]
     model_in_image: NotRequired[bool]
+    debug_mode: NotRequired[bool]
 
 
 class BaseModelSaveOption(TypedDict):
