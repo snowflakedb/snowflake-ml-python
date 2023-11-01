@@ -25,6 +25,7 @@ class SnowServiceDeployOptions:
         enable_remote_image_build: Optional[bool] = True,
         force_image_build: Optional[bool] = False,
         model_in_image: Optional[bool] = False,
+        debug_mode: Optional[bool] = False,
     ) -> None:
         """Initialization
 
@@ -51,6 +52,7 @@ class SnowServiceDeployOptions:
                 system will automatically check whether a previously built image can be reused
             model_in_image: When set to True, image would container full model weights. The default if False, which
                 means image without model weights and we do stage mount to access weights.
+            debug_mode: When set to True, deployment artifacts will be persisted in a local temp directory.
         """
 
         self.compute_pool = compute_pool
@@ -63,6 +65,7 @@ class SnowServiceDeployOptions:
         self.enable_remote_image_build = enable_remote_image_build
         self.force_image_build = force_image_build
         self.model_in_image = model_in_image
+        self.debug_mode = debug_mode
 
         if self.num_workers is None and self.use_gpu:
             logger.info("num_workers has been defaulted to 1 when using GPU.")

@@ -6,7 +6,8 @@ import string
 import tempfile
 import time
 from abc import ABC
-from typing import Any, Dict, Optional, Tuple, cast
+from contextlib import contextmanager
+from typing import Any, Dict, Generator, Optional, Tuple, cast
 
 import yaml
 from typing_extensions import Unpack
@@ -33,6 +34,30 @@ from snowflake.ml.model._deploy_client.utils import (
 from snowflake.snowpark import Session
 
 logger = logging.getLogger(__name__)
+
+
+@contextmanager
+def _debug_aware_tmp_directory(debug_dir: Optional[str] = None) -> Generator[str, None, None]:
+    """Debug-aware directory provider.
+
+    Args:
+        debug_dir: A folder for deploymement context.
+
+    Yields:
+        A directory path to write deployment artifacts
+    """
+    create_temp = False
+    if debug_dir:
+        directory_path = debug_dir
+    else:
+        temp_dir_context = tempfile.TemporaryDirectory()
+        directory_path = temp_dir_context.name
+        create_temp = True
+    try:
+        yield directory_path
+    finally:
+        if create_temp:
+            temp_dir_context.cleanup()
 
 
 def _deploy(
@@ -300,6 +325,10 @@ class SnowServiceDeployment(ABC):
         self._service_name = identifier.get_schema_level_object_identifier(db, schema, f"service_{model_id}")
         # Spec file and future deployment related artifacts will be stored under {stage}/models/{model_id}
         self._model_artifact_stage_location = posixpath.join(deployment_stage_path, "models", self.id)
+        self.debug_dir: Optional[str] = None
+        if self.options.debug_mode:
+            self.debug_dir = tempfile.mkdtemp()
+            logger.warning(f"Debug model is enabled, deployment artifacts will be available in {self.debug_dir}")
 
     def deploy(self) -> type_hints.SnowparkContainerServiceDeployDetails:
         """
@@ -313,7 +342,7 @@ class SnowServiceDeployment(ABC):
             full_image_name = self.options.prebuilt_snowflake_image
             (service_spec, service_function_sql) = self._deploy_workflow(self.options.prebuilt_snowflake_image)
         else:
-            with tempfile.TemporaryDirectory() as context_dir:
+            with _debug_aware_tmp_directory(debug_dir=self.debug_dir) as context_dir:
                 extra_kwargs = {}
                 if self.options.model_in_image:
                     extra_kwargs = {
@@ -440,8 +469,8 @@ class SnowServiceDeployment(ABC):
                 os.path.join(os.path.dirname(__file__), "templates/service_spec_template")
             )
 
-        with tempfile.TemporaryDirectory() as tempdir:
-            spec_file_path = os.path.join(tempdir, f"{constants.SERVICE_SPEC}.yaml")
+        with _debug_aware_tmp_directory(self.debug_dir) as dir_path:
+            spec_file_path = os.path.join(dir_path, f"{constants.SERVICE_SPEC}.yaml")
 
             with open(spec_template_path, encoding="utf-8") as template, open(
                 spec_file_path, "w+", encoding="utf-8"

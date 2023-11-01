@@ -185,8 +185,8 @@ def get_local_installed_version_of_pip_package(pip_req: requirements.Requirement
     """Get the local installed version of a given pip package requirement.
         If the package is locally installed, and the local version meet the specifier of the requirements, return a new
         requirement specifier that pins the version.
-        If the local version does not meet the specifier of the requirements, a warn will be omitted and returns a new
-        requirement specifier that pins the version.
+        If the local version does not meet the specifier of the requirements, a warn will be omitted and returns
+        the original package requirement.
         If the package is not locally installed or not found, the original package requirement is returned.
 
     Args:
@@ -207,9 +207,11 @@ def get_local_installed_version_of_pip_package(pip_req: requirements.Requirement
     new_pip_req.specifier = specifiers.SpecifierSet(specifiers=f"=={local_dist_version}")
     if not pip_req.specifier.contains(local_dist_version):
         warnings.warn(
-            f"Package requirement {str(pip_req)} specified, while version {local_dist_version} is installed.",
+            f"Package requirement {str(pip_req)} specified, while version {local_dist_version} is installed. "
+            "Local version will be ignored to conform to package requirement.",
             category=UserWarning,
         )
+        return pip_req
     return new_pip_req
 
 

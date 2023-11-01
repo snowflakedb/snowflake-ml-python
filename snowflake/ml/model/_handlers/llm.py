@@ -81,7 +81,7 @@ class _LLMHandler(_base._ModelHandler[llm.LLM]):
             model_meta_api.Dependency(conda_name="transformers", pip_req="transformers"),
             model_meta_api.Dependency(conda_name="pytorch", pip_req="torch==2.0.1"),
         ]
-        if model.model_type == llm.SupportedLLMType.LLAMA_MODEL_TYPE:
+        if model.model_type == llm.SupportedLLMType.LLAMA_MODEL_TYPE.value:
             pkgs_requirements = [
                 model_meta_api.Dependency(conda_name="sentencepiece", pip_req="sentencepiece"),
                 model_meta_api.Dependency(conda_name="protobuf", pip_req="protobuf"),

@@ -2,6 +2,7 @@ import datetime
 import json
 import logging
 import re
+import warnings
 from dataclasses import dataclass
 from enum import Enum
 from typing import Dict, List, Optional, Tuple, Union, cast
@@ -290,7 +291,6 @@ class FeatureStore:
             )
 
         fully_qualified_name = self._get_fully_qualified_name(feature_view_name)
-
         entities = FEATURE_VIEW_ENTITY_TAG_DELIMITER.join(
             [identifier.get_unescaped_names(e.name) for e in feature_view.entities]
         )
@@ -304,81 +304,38 @@ class FeatureStore:
             return f"{col.name} {desc}"
 
         column_descs = ", ".join([f"{create_col_desc(col)}" for col in feature_view.output_schema.fields])
+        new_fv = feature_view
+        new_fv._version = version
+        new_fv._database = self._config.database
+        new_fv._schema = self._config.schema
 
         if refresh_freq is not None:
-            schedule_task = False
-            if refresh_freq != "DOWNSTREAM" and timeparse(refresh_freq) is None:
-                cron_expr = refresh_freq
-                refresh_freq = "DOWNSTREAM"
-                schedule_task = True
-
+            schedule_task = refresh_freq != "DOWNSTREAM" and timeparse(refresh_freq) is None
             target_warehouse = self._config.default_warehouse if warehouse is None else warehouse
-            target_warehouse = identifier.strip_wrapping_quotes(identifier.resolve_identifier(target_warehouse))
-
-            # TODO: cluster by join keys once DT supports that
-            try:
-                query = f"""CREATE DYNAMIC TABLE {fully_qualified_name} ({column_descs})
-                    TARGET_LAG = '{refresh_freq}'
-                    COMMENT = '{feature_view.desc}'
-                    TAG (
-                        {self._get_fully_qualified_name(FEATURE_VIEW_ENTITY_TAG)} = '{entities}',
-                        {self._get_fully_qualified_name(FEATURE_VIEW_TS_COL_TAG)} = '{timestamp_col}',
-                        {self._get_fully_qualified_name(FEATURE_STORE_OBJECT_TAG)} = ''
-                    )
-                    WAREHOUSE = "{target_warehouse}"
-                    AS {feature_view.query}
-                """
-                self._session.sql(query).collect(statement_params=self._telemetry_stmp)
-
-                self._session.sql(f"ALTER DYNAMIC TABLE {fully_qualified_name} REFRESH").collect(
-                    block=block, statement_params=self._telemetry_stmp
-                )
-
-                if schedule_task:
-                    self._session.sql(
-                        f"""CREATE TASK {fully_qualified_name}
-                            WAREHOUSE = "{target_warehouse}"
-                            SCHEDULE = 'USING CRON {cron_expr}'
-                            AS ALTER DYNAMIC TABLE {fully_qualified_name} REFRESH
-                        """
-                    ).collect(statement_params=self._telemetry_stmp)
-                    self._session.sql(
-                        f"""
-                        ALTER TASK {fully_qualified_name}
-                        SET TAG {self._get_fully_qualified_name(FEATURE_STORE_OBJECT_TAG)} = ''
-                    """
-                    ).collect(statement_params=self._telemetry_stmp)
-                    self._session.sql(f"ALTER TASK {fully_qualified_name} RESUME").collect(
-                        statement_params=self._telemetry_stmp
-                    )
-            except Exception as e:
-                self._session.sql(f"DROP DYNAMIC TABLE IF EXISTS {fully_qualified_name}").collect(
-                    statement_params=self._telemetry_stmp
-                )
-                raise snowml_exceptions.SnowflakeMLException(
-                    error_code=error_codes.INTERNAL_SNOWPARK_ERROR,
-                    original_exception=RuntimeError(
-                        f"Create dynamic table [\n{query}\n] or task {fully_qualified_name} failed: {e}."
-                    ),
-                ) from e
-
-            feature_view._version = version
-            feature_view._database = self._config.database
-            feature_view._schema = self._config.schema
-            feature_view._status = self._get_feature_view_status(feature_view)
-            feature_view._refresh_freq = refresh_freq
-            feature_view._warehouse = target_warehouse
-
+            new_fv._warehouse = identifier.strip_wrapping_quotes(identifier.resolve_identifier(target_warehouse))
+            new_fv._refresh_freq = "DOWNSTREAM" if schedule_task else refresh_freq
+            self._create_dynamic_table(
+                feature_view_name,
+                fully_qualified_name,
+                column_descs,
+                new_fv,
+                entities,
+                schedule_task,
+                refresh_freq,
+                timestamp_col,
+                block,
+            )
+            new_fv._status = self._get_feature_view_status(new_fv)
         else:
             try:
                 query = f"""CREATE VIEW {fully_qualified_name} ({column_descs})
-                    COMMENT = '{feature_view.desc}'
+                    COMMENT = '{new_fv.desc}'
                     TAG (
                         {FEATURE_VIEW_ENTITY_TAG} = '{entities}',
                         {FEATURE_VIEW_TS_COL_TAG} = '{timestamp_col}',
                         {FEATURE_STORE_OBJECT_TAG} = ''
                     )
-                    AS {feature_view.query}
+                    AS {new_fv.query}
                 """
                 self._session.sql(query).collect(statement_params=self._telemetry_stmp)
             except Exception as e:
@@ -387,13 +344,10 @@ class FeatureStore:
                     original_exception=RuntimeError(f"Create view {fully_qualified_name} [\n{query}\n] failed: {e}"),
                 ) from e
 
-            feature_view._version = version
-            feature_view._database = self._config.database
-            feature_view._schema = self._config.schema
-            feature_view._status = FeatureViewStatus.STATIC
+            new_fv._status = FeatureViewStatus.STATIC
 
-        logger.info(f"Registered FeatureView {feature_view.name} with version {feature_view.version}.")
-        return feature_view
+        logger.info(f"Registered FeatureView {new_fv.name} with version {new_fv.version}.")
+        return new_fv
 
     @telemetry.send_api_usage_telemetry(project=PROJECT)
     @snowpark_utils.private_preview(version="1.0.8")
@@ -1029,6 +983,78 @@ class FeatureStore:
                 original_exception=RuntimeError(f"Failed to clear feature store {self._config.full_schema_path}: {e}."),
             ) from e
         logger.info(f"Feature store {self._config.full_schema_path} has been cleared.")
+
+    def _create_dynamic_table(
+        self,
+        feature_view_name: str,
+        fully_qualified_name: str,
+        column_descs: str,
+        feature_view: FeatureView,
+        entities: str,
+        schedule_task: bool,
+        refresh_freq: str,
+        timestamp_col: str,
+        block: bool,
+    ) -> None:
+        # TODO: cluster by join keys once DT supports that
+        try:
+            query = f"""CREATE DYNAMIC TABLE {fully_qualified_name} ({column_descs})
+                TARGET_LAG = '{feature_view._refresh_freq}'
+                COMMENT = '{feature_view.desc}'
+                TAG (
+                    {self._get_fully_qualified_name(FEATURE_VIEW_ENTITY_TAG)} = '{entities}',
+                    {self._get_fully_qualified_name(FEATURE_VIEW_TS_COL_TAG)} = '{timestamp_col}',
+                    {self._get_fully_qualified_name(FEATURE_STORE_OBJECT_TAG)} = ''
+                )
+                WAREHOUSE = "{feature_view._warehouse}"
+                AS {feature_view.query}
+            """
+            self._session.sql(query).collect(statement_params=self._telemetry_stmp)
+            self._session.sql(f"ALTER DYNAMIC TABLE {fully_qualified_name} REFRESH").collect(
+                block=block, statement_params=self._telemetry_stmp
+            )
+
+            if schedule_task:
+                self._session.sql(
+                    f"""CREATE TASK {fully_qualified_name}
+                        WAREHOUSE = "{feature_view._warehouse}"
+                        SCHEDULE = 'USING CRON {refresh_freq}'
+                        AS ALTER DYNAMIC TABLE {fully_qualified_name} REFRESH
+                    """
+                ).collect(statement_params=self._telemetry_stmp)
+                self._session.sql(
+                    f"""
+                    ALTER TASK {fully_qualified_name}
+                    SET TAG {self._get_fully_qualified_name(FEATURE_STORE_OBJECT_TAG)} = ''
+                """
+                ).collect(statement_params=self._telemetry_stmp)
+                self._session.sql(f"ALTER TASK {fully_qualified_name} RESUME").collect(
+                    statement_params=self._telemetry_stmp
+                )
+        except Exception as e:
+            self._session.sql(f"DROP DYNAMIC TABLE IF EXISTS {fully_qualified_name}").collect(
+                statement_params=self._telemetry_stmp
+            )
+            raise snowml_exceptions.SnowflakeMLException(
+                error_code=error_codes.INTERNAL_SNOWPARK_ERROR,
+                original_exception=RuntimeError(
+                    f"Create dynamic table [\n{query}\n] or task {fully_qualified_name} failed: {e}."
+                ),
+            ) from e
+
+        found_dts = self._find_object("DYNAMIC TABLES", feature_view_name)
+        if len(found_dts) != 1:
+            raise snowml_exceptions.SnowflakeMLException(
+                error_code=error_codes.NOT_FOUND,
+                original_exception=ValueError(f"Can not find dynamic table: `{feature_view_name}`."),
+            )
+        if found_dts[0]["refresh_mode"] != "INCREMENTAL":
+            warnings.warn(
+                f"Dynamic table: `{fully_qualified_name}` will not refresh in INCREMENTAL mode. "
+                + "It will likely incurr bigger computation cost. "
+                + f"The reason is: {found_dts[0]['refresh_mode_reason']}",
+                category=UserWarning,
+            )
 
     def _dump_dataset(
         self,

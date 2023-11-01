@@ -239,7 +239,7 @@ class EnvUtilsTest(absltest.TestCase):
 
         r = requirements.Requirement(f"pip!={importlib_metadata.version('pip')}")
         self.assertEqual(
-            requirements.Requirement(f"pip=={importlib_metadata.version('pip')}"),
+            requirements.Requirement(f"pip!={importlib_metadata.version('pip')}"),
             env_utils.get_local_installed_version_of_pip_package(r),
         )
 

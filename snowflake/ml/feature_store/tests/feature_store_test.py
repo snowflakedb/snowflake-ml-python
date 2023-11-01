@@ -28,6 +28,7 @@ from snowflake.ml.feature_store.feature_store import (
 )
 from snowflake.ml.utils.connection_params import SnowflakeLoginOptions
 from snowflake.snowpark import DataFrame, Session, exceptions as snowpark_exceptions
+from snowflake.snowpark.functions import udf
 
 
 class FeatureStoreTest(absltest.TestCase):
@@ -1223,6 +1224,30 @@ class FeatureStoreTest(absltest.TestCase):
         self.assertEqual(len(result), 1)
         result = self._session.sql(f"SHOW TAGS LIKE 'my_tag' IN SCHEMA {full_schema_path}").collect()
         self.assertEqual(len(result), 1)
+
+    def test_dynamic_table_full_refresh_warning(self) -> None:
+        temp_stage_name = "test_dynamic_table_full_refresh_warning_stage"
+        self._session.sql(f"CREATE OR REPLACE STAGE {temp_stage_name}").collect()
+
+        @udf(  # type: ignore[misc, arg-type]
+            name=f"{FS_INTEG_TEST_DB}.{FS_INTEG_TEST_DATASET_SCHEMA}.minus_one",
+            session=self._session,
+            is_permanent=True,
+            stage_location=f"@{temp_stage_name}",
+            replace=True,
+        )
+        def minus_one(x: int) -> int:
+            return x - 1
+
+        fs = self._create_feature_store()
+        entity = Entity("foo", ["name"])
+        fs.register_entity(entity)
+
+        df = self._session.table(self._mock_table).select(minus_one("id"), "name")  # type: ignore[operator]
+        fv = FeatureView(name="fv", entities=[entity], feature_df=df)
+
+        with self.assertWarnsRegex(UserWarning, "Dynamic table: `.*` will not refresh in INCREMENTAL mode"):
+            fs.register_feature_view(feature_view=fv, version="V1", refresh_freq="1h")
 
 
 if __name__ == "__main__":

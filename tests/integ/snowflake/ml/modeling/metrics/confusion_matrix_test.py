@@ -10,7 +10,7 @@ from snowflake.ml.modeling import metrics as snowml_metrics
 from snowflake.ml.utils import connection_params
 from tests.integ.snowflake.ml.modeling.framework import utils
 
-_DATA, _PD_SCHEMA, _SF_SCHEMA = utils.gen_fuzz_data(
+_DATA, _SF_SCHEMA = utils.gen_fuzz_data(
     rows=100,
     types=[utils.DataType.INTEGER] * 2 + [utils.DataType.FLOAT],
     low=-1,
@@ -35,7 +35,7 @@ class ConfusionMatrixTest(parameterized.TestCase):
         {"params": {"labels": [None, [2, 0, 4]]}},
     )
     def test_labels(self, params: Dict[str, Any]) -> None:
-        pandas_df, input_df = utils.get_df(self._session, _DATA, _PD_SCHEMA)
+        pandas_df, input_df = utils.get_df(self._session, _DATA, _SF_SCHEMA)
 
         for labels in params["labels"]:
             actual_cm = snowml_metrics.confusion_matrix(
@@ -55,7 +55,7 @@ class ConfusionMatrixTest(parameterized.TestCase):
         {"params": {"sample_weight_col_name": [None, _SAMPLE_WEIGHT_COL]}},
     )
     def test_sample_weight(self, params: Dict[str, Any]) -> None:
-        pandas_df, input_df = utils.get_df(self._session, _DATA, _PD_SCHEMA)
+        pandas_df, input_df = utils.get_df(self._session, _DATA, _SF_SCHEMA)
 
         for sample_weight_col_name in params["sample_weight_col_name"]:
             actual_cm = snowml_metrics.confusion_matrix(
@@ -76,7 +76,7 @@ class ConfusionMatrixTest(parameterized.TestCase):
         {"params": {"normalize": ["true", "pred", "all", None]}},
     )
     def test_normalize(self, params: Dict[str, Any]) -> None:
-        pandas_df, input_df = utils.get_df(self._session, _DATA, _PD_SCHEMA)
+        pandas_df, input_df = utils.get_df(self._session, _DATA, _SF_SCHEMA)
 
         for normalize in params["normalize"]:
             actual_cm = snowml_metrics.confusion_matrix(

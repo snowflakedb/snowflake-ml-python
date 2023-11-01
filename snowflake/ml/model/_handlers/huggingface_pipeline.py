@@ -216,10 +216,7 @@ class _HuggingFacePipelineHandler(
 
     @staticmethod
     def _get_device_config() -> Dict[str, str]:
-        from accelerate import utils
-
         device_config = {}
-        utils.write_basic_config(mixed_precision="fp16")
         device_config["device_map"] = "auto"
 
         return device_config
