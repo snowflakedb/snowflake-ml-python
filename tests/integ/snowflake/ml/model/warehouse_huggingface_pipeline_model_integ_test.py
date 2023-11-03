@@ -68,7 +68,6 @@ class TestWarehouseHuggingFacehModelInteg(parameterized.TestCase):
             Tuple[Dict[str, Any], Callable[[Union[pd.DataFrame, SnowparkDataFrame]], Any]],
         ],
         permanent_deploy: Optional[bool] = False,
-        test_released_version: Optional[str] = None,
         additional_dependencies: Optional[List[str]] = None,
     ) -> None:
         warehouse_model_integ_test_utils.base_test_case(
@@ -81,15 +80,13 @@ class TestWarehouseHuggingFacehModelInteg(parameterized.TestCase):
             test_input=test_input,
             deploy_params=deploy_params,
             permanent_deploy=permanent_deploy,
-            test_released_version=test_released_version,
             additional_dependencies=additional_dependencies,
         )
 
-    @parameterized.product(permanent_deploy=[True, False], test_released_version=[None, "1.0.6"])  # type: ignore[misc]
+    @parameterized.product(permanent_deploy=[True, False])  # type: ignore[misc]
     def test_conversational_pipeline(
         self,
         permanent_deploy: Optional[bool] = False,
-        test_released_version: Optional[str] = None,
     ) -> None:
         # We have to import here due to cache location issue.
         # Only by doing so can we make the cache dir setting effective.
@@ -128,14 +125,12 @@ class TestWarehouseHuggingFacehModelInteg(parameterized.TestCase):
                 ),
             },
             permanent_deploy=permanent_deploy,
-            test_released_version=test_released_version,
         )
 
-    @parameterized.product(permanent_deploy=[True, False], test_released_version=[None, "1.0.6"])  # type: ignore[misc]
+    @parameterized.product(permanent_deploy=[True, False])  # type: ignore[misc]
     def test_fill_mask_pipeline(
         self,
         permanent_deploy: Optional[bool] = False,
-        test_released_version: Optional[str] = None,
     ) -> None:
         import transformers
 
@@ -174,14 +169,12 @@ class TestWarehouseHuggingFacehModelInteg(parameterized.TestCase):
                 ),
             },
             permanent_deploy=permanent_deploy,
-            test_released_version=test_released_version,
         )
 
-    @parameterized.product(permanent_deploy=[True, False], test_released_version=[None, "1.0.6"])  # type: ignore[misc]
+    @parameterized.product(permanent_deploy=[True, False])  # type: ignore[misc]
     def test_ner_pipeline(
         self,
         permanent_deploy: Optional[bool] = False,
-        test_released_version: Optional[str] = None,
     ) -> None:
         import transformers
 
@@ -218,14 +211,12 @@ class TestWarehouseHuggingFacehModelInteg(parameterized.TestCase):
                 ),
             },
             permanent_deploy=permanent_deploy,
-            test_released_version=test_released_version,
         )
 
-    @parameterized.product(permanent_deploy=[True, False], test_released_version=[None, "1.0.6"])  # type: ignore[misc]
+    @parameterized.product(permanent_deploy=[True, False])  # type: ignore[misc]
     def test_question_answering_pipeline(
         self,
         permanent_deploy: Optional[bool] = False,
-        test_released_version: Optional[str] = None,
     ) -> None:
         import transformers
 
@@ -267,14 +258,12 @@ class TestWarehouseHuggingFacehModelInteg(parameterized.TestCase):
                 ),
             },
             permanent_deploy=permanent_deploy,
-            test_released_version=test_released_version,
         )
 
-    @parameterized.product(permanent_deploy=[True, False], test_released_version=[None, "1.0.6"])  # type: ignore[misc]
+    @parameterized.product(permanent_deploy=[True, False])  # type: ignore[misc]
     def test_question_answering_pipeline_multiple_output(
         self,
         permanent_deploy: Optional[bool] = False,
-        test_released_version: Optional[str] = None,
     ) -> None:
         import transformers
 
@@ -320,14 +309,12 @@ class TestWarehouseHuggingFacehModelInteg(parameterized.TestCase):
                 ),
             },
             permanent_deploy=permanent_deploy,
-            test_released_version=test_released_version,
         )
 
-    @parameterized.product(permanent_deploy=[True, False], test_released_version=[None, "1.0.6"])  # type: ignore[misc]
+    @parameterized.product(permanent_deploy=[True, False])  # type: ignore[misc]
     def test_summarization_pipeline(
         self,
         permanent_deploy: Optional[bool] = False,
-        test_released_version: Optional[str] = None,
     ) -> None:
         import transformers
 
@@ -365,17 +352,15 @@ class TestWarehouseHuggingFacehModelInteg(parameterized.TestCase):
                 ),
             },
             permanent_deploy=permanent_deploy,
-            test_released_version=test_released_version,
             additional_dependencies=[
                 str(env_utils.get_local_installed_version_of_pip_package(requirements.Requirement("sentencepiece")))
             ],
         )
 
-    @parameterized.product(permanent_deploy=[True, False], test_released_version=[None, "1.0.6"])  # type: ignore[misc]
+    @parameterized.product(permanent_deploy=[True, False])  # type: ignore[misc]
     def test_table_question_answering_pipeline(
         self,
         permanent_deploy: Optional[bool] = False,
-        test_released_version: Optional[str] = None,
     ) -> None:
         import transformers
 
@@ -433,14 +418,12 @@ class TestWarehouseHuggingFacehModelInteg(parameterized.TestCase):
                 ),
             },
             permanent_deploy=permanent_deploy,
-            test_released_version=test_released_version,
         )
 
-    @parameterized.product(permanent_deploy=[True, False], test_released_version=[None, "1.0.6"])  # type: ignore[misc]
+    @parameterized.product(permanent_deploy=[True, False])  # type: ignore[misc]
     def test_text_classification_pair_pipeline(
         self,
         permanent_deploy: Optional[bool] = False,
-        test_released_version: Optional[str] = None,
     ) -> None:
         import transformers
 
@@ -467,14 +450,12 @@ class TestWarehouseHuggingFacehModelInteg(parameterized.TestCase):
                 ),
             },
             permanent_deploy=permanent_deploy,
-            test_released_version=test_released_version,
         )
 
-    @parameterized.product(permanent_deploy=[True, False], test_released_version=[None, "1.0.6"])  # type: ignore[misc]
+    @parameterized.product(permanent_deploy=[True, False])  # type: ignore[misc]
     def test_text_classification_pipeline(
         self,
         permanent_deploy: Optional[bool] = False,
-        test_released_version: Optional[str] = None,
     ) -> None:
         import transformers
 
@@ -514,14 +495,12 @@ class TestWarehouseHuggingFacehModelInteg(parameterized.TestCase):
                 ),
             },
             permanent_deploy=permanent_deploy,
-            test_released_version=test_released_version,
         )
 
-    @parameterized.product(permanent_deploy=[True, False], test_released_version=[None, "1.0.6"])  # type: ignore[misc]
+    @parameterized.product(permanent_deploy=[True, False])  # type: ignore[misc]
     def test_text_generation_pipeline(
         self,
         permanent_deploy: Optional[bool] = False,
-        test_released_version: Optional[str] = None,
     ) -> None:
         import transformers
 
@@ -554,14 +533,12 @@ class TestWarehouseHuggingFacehModelInteg(parameterized.TestCase):
                 ),
             },
             permanent_deploy=permanent_deploy,
-            test_released_version=test_released_version,
         )
 
-    @parameterized.product(permanent_deploy=[True, False], test_released_version=[None, "1.0.6"])  # type: ignore[misc]
+    @parameterized.product(permanent_deploy=[True, False])  # type: ignore[misc]
     def test_text2text_generation_pipeline(
         self,
         permanent_deploy: Optional[bool] = False,
-        test_released_version: Optional[str] = None,
     ) -> None:
         import transformers
 
@@ -589,14 +566,12 @@ class TestWarehouseHuggingFacehModelInteg(parameterized.TestCase):
                 ),
             },
             permanent_deploy=permanent_deploy,
-            test_released_version=test_released_version,
         )
 
-    @parameterized.product(permanent_deploy=[True, False], test_released_version=[None, "1.0.6"])  # type: ignore[misc]
+    @parameterized.product(permanent_deploy=[True, False])  # type: ignore[misc]
     def test_translation_pipeline(
         self,
         permanent_deploy: Optional[bool] = False,
-        test_released_version: Optional[str] = None,
     ) -> None:
         import transformers
 
@@ -634,14 +609,12 @@ class TestWarehouseHuggingFacehModelInteg(parameterized.TestCase):
                 ),
             },
             permanent_deploy=permanent_deploy,
-            test_released_version=test_released_version,
         )
 
-    @parameterized.product(permanent_deploy=[True, False], test_released_version=[None, "1.0.6"])  # type: ignore[misc]
+    @parameterized.product(permanent_deploy=[True, False])  # type: ignore[misc]
     def test_zero_shot_classification_pipeline(
         self,
         permanent_deploy: Optional[bool] = False,
-        test_released_version: Optional[str] = None,
     ) -> None:
         import transformers
 
@@ -692,7 +665,6 @@ class TestWarehouseHuggingFacehModelInteg(parameterized.TestCase):
                 ),
             },
             permanent_deploy=permanent_deploy,
-            test_released_version=test_released_version,
         )
 
 

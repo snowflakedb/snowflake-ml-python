@@ -1,24 +1,32 @@
 import collections
 import copy
+import pathlib
 import re
 import textwrap
 import warnings
 from importlib import metadata as importlib_metadata
-from typing import DefaultDict, Dict, List, Optional, Tuple
+from typing import Any, DefaultDict, Dict, List, Optional, Tuple
 
+import yaml
 from packaging import requirements, specifiers, utils as packaging_utils, version
 
 import snowflake.connector
 from snowflake.ml._internal import env as snowml_env
+from snowflake.ml._internal.exceptions import (
+    error_codes,
+    exceptions as snowml_exceptions,
+)
 from snowflake.ml._internal.utils import query_result_checker
 from snowflake.snowpark import session
 
-_SNOWML_PKG_NAME = "snowflake-ml-python"
+_SNOWFLAKE_CONDA_CHANNEL_URL = "https://repo.anaconda.com/pkgs/snowflake"
+_NODEFAULTS = "nodefaults"
 _INFO_SCHEMA_PACKAGES_HAS_RUNTIME_VERSION: Optional[bool] = None
 _SNOWFLAKE_CONDA_PACKAGE_CACHE: Dict[str, List[version.Version]] = {}
 
 DEFAULT_CHANNEL_NAME = ""
 SNOWML_SPROC_ENV = "IN_SNOWML_SPROC"
+SNOWPARK_ML_PKG_NAME = "snowflake-ml-python"
 
 
 def _validate_pip_requirement_string(req_str: str) -> requirements.Requirement:
@@ -185,8 +193,8 @@ def get_local_installed_version_of_pip_package(pip_req: requirements.Requirement
     """Get the local installed version of a given pip package requirement.
         If the package is locally installed, and the local version meet the specifier of the requirements, return a new
         requirement specifier that pins the version.
-        If the local version does not meet the specifier of the requirements, a warn will be omitted and returns a new
-        requirement specifier that pins the version.
+        If the local version does not meet the specifier of the requirements, a warn will be omitted and returns
+        the original package requirement.
         If the package is not locally installed or not found, the original package requirement is returned.
 
     Args:
@@ -199,7 +207,7 @@ def get_local_installed_version_of_pip_package(pip_req: requirements.Requirement
         local_dist = importlib_metadata.distribution(pip_req.name)
         local_dist_version = local_dist.version
     except importlib_metadata.PackageNotFoundError:
-        if pip_req.name == _SNOWML_PKG_NAME:
+        if pip_req.name == SNOWPARK_ML_PKG_NAME:
             local_dist_version = snowml_env.VERSION
         else:
             return pip_req
@@ -207,23 +215,41 @@ def get_local_installed_version_of_pip_package(pip_req: requirements.Requirement
     new_pip_req.specifier = specifiers.SpecifierSet(specifiers=f"=={local_dist_version}")
     if not pip_req.specifier.contains(local_dist_version):
         warnings.warn(
-            f"Package requirement {str(pip_req)} specified, while version {local_dist_version} is installed.",
+            f"Package requirement {str(pip_req)} specified, while version {local_dist_version} is installed. "
+            "Local version will be ignored to conform to package requirement.",
             category=UserWarning,
         )
+        return pip_req
     return new_pip_req
 
 
 def relax_requirement_version(req: requirements.Requirement) -> requirements.Requirement:
-    """Remove version specifier from a requirement.
+    """Relax version specifier from a requirement. It detects any ==x.y.z in specifiers and replaced with
+    >=x.y, <(x+1)
 
     Args:
         req: The requirement that version specifier to be removed.
 
     Returns:
-        A new requirement object without version specifier while others kept.
+        A new requirement object after relaxations.
     """
     new_req = copy.deepcopy(req)
-    new_req.specifier = specifiers.SpecifierSet()
+    relaxed_specifier_set = set()
+    for spec in new_req.specifier._specs:
+        if spec.operator != "==":
+            relaxed_specifier_set.add(spec)
+            continue
+        pinned_version = None
+        try:
+            pinned_version = version.parse(spec.version)
+        except version.InvalidVersion:
+            # For the case that the version string has * like 1.2.*
+            relaxed_specifier_set.add(spec)
+            continue
+        assert pinned_version is not None
+        relaxed_specifier_set.add(specifiers.Specifier(f">={pinned_version.major}.{pinned_version.minor}"))
+        relaxed_specifier_set.add(specifiers.Specifier(f"<{pinned_version.major + 1}"))
+    new_req.specifier._specs = frozenset(relaxed_specifier_set)
     return new_req
 
 
@@ -248,9 +274,6 @@ def validate_requirements_in_snowflake_conda_channel(
         session: Snowflake connection session.
         reqs: List of requirement specifiers.
         python_version: A string of python version where model is run.
-
-    Raises:
-        ValueError: Raised when the specifier cannot be supported when creating UDF.
 
     Returns:
         A list of pinned latest version that available in Snowflake anaconda channel and meet the version specifier.
@@ -309,8 +332,6 @@ def validate_requirements_in_snowflake_conda_channel(
         except snowflake.connector.DataError:
             return None
     for req in reqs:
-        if len(req.specifier) > 1 or any(spec.operator != "==" for spec in req.specifier):
-            raise ValueError("At most 1 version specifier using == operator is supported without local conda resolver.")
         available_versions = list(req.specifier.filter(set(_SNOWFLAKE_CONDA_PACKAGE_CACHE.get(req.name, []))))
         if not available_versions:
             return None
@@ -319,13 +340,149 @@ def validate_requirements_in_snowflake_conda_channel(
     return sorted(ret_list)
 
 
+def save_conda_env_file(
+    path: pathlib.Path,
+    conda_chan_deps: DefaultDict[str, List[requirements.Requirement]],
+    python_version: Optional[str] = snowml_env.PYTHON_VERSION,
+) -> None:
+    """Generate conda.yml file given a dict of dependencies after validation.
+    The channels part of conda.yml file will contains Snowflake Anaconda Channel, nodefaults and all channel names
+    in keys of the dict, ordered by the number of the packages which belongs to.
+    The dependencies part of conda.yml file will contains requirements specifications. If the requirements is in the
+    value list whose key is DEFAULT_CHANNEL_NAME, then the channel won't be specified explicitly. Otherwise, it will be
+    specified explicitly via {channel}::{requirement} format.
+
+    Args:
+        path: Path to the conda.yml file.
+        conda_chan_deps: Dict of conda dependencies after validated.
+        python_version: A string 'major.minor.patchlevel' showing python version relate to model. Default to current.
+    """
+    assert path.suffix in [".yml", ".yaml"], "Conda environment file should have extension of yml or yaml."
+    path.parent.mkdir(parents=True, exist_ok=True)
+    env: Dict[str, Any] = dict()
+    env["name"] = "snow-env"
+    # Get all channels in the dependencies, ordered by the number of the packages which belongs to and put into
+    # channels section.
+    channels = list(dict(sorted(conda_chan_deps.items(), key=lambda item: len(item[1]), reverse=True)).keys())
+    if DEFAULT_CHANNEL_NAME in channels:
+        channels.remove(DEFAULT_CHANNEL_NAME)
+    env["channels"] = [_SNOWFLAKE_CONDA_CHANNEL_URL] + channels + [_NODEFAULTS]
+    env["dependencies"] = [f"python=={python_version}.*"]
+    for chan, reqs in conda_chan_deps.items():
+        env["dependencies"].extend(
+            [f"{chan}::{str(req)}" if chan != DEFAULT_CHANNEL_NAME else str(req) for req in reqs]
+        )
+
+    with open(path, "w", encoding="utf-8") as f:
+        yaml.safe_dump(env, stream=f, default_flow_style=False)
+
+
+def save_requirements_file(path: pathlib.Path, pip_deps: List[requirements.Requirement]) -> None:
+    """Generate Python requirements.txt file in the given directory path.
+
+    Args:
+        path: Path to the requirements.txt file.
+        pip_deps: List of dependencies string after validated.
+    """
+    assert path.suffix in [".txt"], "PIP requirement file should have extension of txt."
+    path.parent.mkdir(parents=True, exist_ok=True)
+    requirements = "\n".join(map(str, pip_deps))
+    with open(path, "w", encoding="utf-8") as out:
+        out.write(requirements)
+
+
+def load_conda_env_file(
+    path: pathlib.Path,
+) -> Tuple[DefaultDict[str, List[requirements.Requirement]], Optional[List[requirements.Requirement]], Optional[str]]:
+    """Read conda.yml file to get a dict of dependencies after validation.
+    The channels part of conda.yml file will be processed with following rules:
+    1. If it is Snowflake Anaconda Channel, ignore as it is default.
+    2. If it is nodefaults channel (meta-channel), ignore as we don't need it.
+    3. If it is a channel where its name does not appear in the dependencies section, added into the dict as key where
+        value is an empty list.
+    4. If it is a channel where its name appears in the dependencies section as {channel}::{requirements}, remove it
+        as when parsing the requirements part it will be added into the dict as a key.
+
+    The dependencies part of conda.yml file will be processed as follows.
+    If the requirements has no channel specified, it will be stored in the bucket of DEFAULT_CHANNEL_NAME
+    If the requirements is specified explicitly via {channel}::{requirement} format, it will be stored into
+        corresponding bucket in the dict.
+    If the requirement is a dict whose key is "pip", it will be parsed as pip requirements.
+    If the requirement has the name "python", it will be parsed as python version requirement.
+
+    Args:
+        path: Path to conda.yml.
+
+    Raises:
+        ValueError: Raised when the requirement has an unsupported or unknown type.
+
+    Returns:
+        A tuple of Dict of conda dependencies after validated, optional pip requirements if exist
+        and a string 'major.minor.patchlevel' of python version.
+    """
+    with open(path, encoding="utf-8") as f:
+        env = yaml.safe_load(stream=f)
+
+    assert isinstance(env, dict)
+
+    deps = []
+    pip_deps = []
+
+    python_version = None
+
+    channels = env.get("channels", [])
+    if _SNOWFLAKE_CONDA_CHANNEL_URL in channels:
+        channels.remove(_SNOWFLAKE_CONDA_CHANNEL_URL)
+    if _NODEFAULTS in channels:
+        channels.remove(_NODEFAULTS)
+
+    for dep in env["dependencies"]:
+        if isinstance(dep, str):
+            ver = parse_python_version_string(dep)
+            # ver is None: not python
+            # ver is "": python w/o specifier
+            # ver is str: python w/ specifier
+            if ver:
+                python_version = ver
+            elif ver is None:
+                deps.append(dep)
+        elif isinstance(dep, dict) and "pip" in dep:
+            pip_deps.extend(dep["pip"])
+        else:
+            raise ValueError(f"Unable to parse the conda.yml file, confronting unsupported type of requirement {dep}")
+
+    conda_dep_dict = validate_conda_dependency_string_list(deps)
+    pip_deps_list = validate_pip_requirement_string_list(pip_deps)
+
+    for channel in channels:
+        if channel not in conda_dep_dict:
+            conda_dep_dict[channel] = []
+
+    return conda_dep_dict, pip_deps_list if pip_deps_list else None, python_version
+
+
+def load_requirements_file(path: pathlib.Path) -> List[requirements.Requirement]:
+    """Load Python requirements.txt file from the given directory path.
+
+    Args:
+        path: Path to the requirements.txt file.
+
+    Returns:
+        List of dependencies string after validated.
+    """
+    with open(path, encoding="utf-8") as f:
+        reqs = f.readlines()
+
+    return validate_pip_requirement_string_list(reqs)
+
+
 # We have to use re to support MLFlow generated python string, which use = rather than ==
-PYTHON_VERSION_PATTERN = re.compile(r"python(?:(?P<op>=|==|>|<|>=|<=|~=|===)(?P<ver>\d(?:\.\d+)+))?")
+PYTHON_VERSION_PATTERN = re.compile(r"python(?:(?P<op>=|==|>|<|>=|<=|~=|===)(?P<ver>\d(?:\.\d+)+))?(\.*)?")
 
 
 def parse_python_version_string(dep: str) -> Optional[str]:
     if dep.startswith("python"):
-        m = PYTHON_VERSION_PATTERN.search(dep)
+        m = PYTHON_VERSION_PATTERN.match(dep)
         if m is None:
             return None
         op = m.group("op")
@@ -338,6 +495,33 @@ def parse_python_version_string(dep: str) -> Optional[str]:
             # "python" only, no specifier
             return ""
     return None
+
+
+def validate_py_runtime_version(provided_py_version_str: str) -> None:
+    """Validate the provided python version string with python version in current runtime.
+        If the major or minor is different, errors out.
+
+    Args:
+        provided_py_version_str: the provided python version string.
+
+    Raises:
+        SnowflakeMLException: Raised when the provided python version has different major or minor.
+    """
+    if provided_py_version_str != snowml_env.PYTHON_VERSION:
+        provided_py_version = version.parse(provided_py_version_str)
+        current_py_version = version.parse(snowml_env.PYTHON_VERSION)
+        if (
+            provided_py_version.major != current_py_version.major
+            or provided_py_version.minor != current_py_version.minor
+        ):
+            raise snowml_exceptions.SnowflakeMLException(
+                error_code=error_codes.LOCAL_ENVIRONMENT_ERROR,
+                original_exception=RuntimeError(
+                    f"Unable to load model which is saved with Python {provided_py_version_str} "
+                    f"while current Python version is {snowml_env.PYTHON_VERSION}. "
+                    "To load model metadata only, set meta_only to True."
+                ),
+            )
 
 
 def _find_conda_dep_spec(
@@ -355,15 +539,13 @@ def _find_pip_req_spec(pip_reqs: List[requirements.Requirement], pkg_name: str) 
     return spec
 
 
-def _find_dep_spec(
+def find_dep_spec(
     conda_chan_deps: DefaultDict[str, List[requirements.Requirement]],
     pip_reqs: List[requirements.Requirement],
     conda_pkg_name: str,
     pip_pkg_name: Optional[str] = None,
     remove_spec: bool = False,
-) -> Tuple[
-    DefaultDict[str, List[requirements.Requirement]], List[requirements.Requirement], Optional[requirements.Requirement]
-]:
+) -> Optional[requirements.Requirement]:
     if pip_pkg_name is None:
         pip_pkg_name = conda_pkg_name
     spec_conda = _find_conda_dep_spec(conda_chan_deps, conda_pkg_name)
@@ -371,109 +553,11 @@ def _find_dep_spec(
         channel, spec = spec_conda
         if remove_spec:
             conda_chan_deps[channel].remove(spec)
-        return conda_chan_deps, pip_reqs, spec
+        return spec
     else:
         spec_pip = _find_pip_req_spec(pip_reqs, pip_pkg_name)
         if spec_pip:
             if remove_spec:
                 pip_reqs.remove(spec_pip)
-            return conda_chan_deps, pip_reqs, spec_pip
-    return conda_chan_deps, pip_reqs, None
-
-
-def generate_env_for_cuda(
-    conda_chan_deps: DefaultDict[str, List[requirements.Requirement]],
-    pip_reqs: List[requirements.Requirement],
-    cuda_version: str,
-) -> Tuple[DefaultDict[str, List[requirements.Requirement]], List[requirements.Requirement]]:
-    conda_chan_deps_cuda = copy.deepcopy(conda_chan_deps)
-    pip_reqs_cuda = copy.deepcopy(pip_reqs)
-
-    cuda_version_obj = version.parse(cuda_version)
-    cuda_version_spec_str = f"{cuda_version_obj.major}.{cuda_version_obj.minor}.*"
-
-    try:
-        append_conda_dependency(
-            conda_chan_deps_cuda,
-            ("nvidia", requirements.Requirement(f"cuda=={cuda_version_spec_str}")),
-        )
-    except (DuplicateDependencyError, DuplicateDependencyInMultipleChannelsError):
-        pass
-
-    conda_chan_deps_cuda, pip_reqs_cuda, xgboost_spec = _find_dep_spec(
-        conda_chan_deps_cuda, pip_reqs, conda_pkg_name="xgboost", remove_spec=True
-    )
-    if xgboost_spec:
-        xgboost_spec.name = "py-xgboost-gpu"
-        try:
-            append_conda_dependency(
-                conda_chan_deps_cuda,
-                ("conda-forge", xgboost_spec),
-            )
-        except (DuplicateDependencyError, DuplicateDependencyInMultipleChannelsError):
-            pass
-
-    conda_chan_deps_cuda, pip_reqs_cuda, pytorch_spec = _find_dep_spec(
-        conda_chan_deps_cuda, pip_reqs, conda_pkg_name="pytorch", pip_pkg_name="torch", remove_spec=True
-    )
-    if pytorch_spec:
-        pytorch_spec.name = "pytorch"
-        try:
-            append_conda_dependency(
-                conda_chan_deps_cuda,
-                ("pytorch", pytorch_spec),
-            )
-        except (DuplicateDependencyError, DuplicateDependencyInMultipleChannelsError):
-            pass
-
-        try:
-            append_conda_dependency(
-                conda_chan_deps_cuda,
-                p_chan_dep=("pytorch", requirements.Requirement(f"pytorch-cuda=={cuda_version_spec_str}")),
-            )
-        except (DuplicateDependencyError, DuplicateDependencyInMultipleChannelsError):
-            pass
-
-    conda_chan_deps_cuda, pip_reqs_cuda, tf_spec = _find_dep_spec(
-        conda_chan_deps_cuda, pip_reqs, conda_pkg_name="tensorflow", remove_spec=True
-    )
-    if tf_spec:
-        tf_spec.name = "tensorflow-gpu"
-        try:
-            append_conda_dependency(
-                conda_chan_deps_cuda,
-                ("conda-forge", tf_spec),
-            )
-        except (DuplicateDependencyError, DuplicateDependencyInMultipleChannelsError):
-            pass
-
-    conda_chan_deps_cuda, pip_reqs_cuda, transformers_spec = _find_dep_spec(
-        conda_chan_deps_cuda, pip_reqs, conda_pkg_name="transformers", remove_spec=False
-    )
-    if transformers_spec:
-        try:
-            append_conda_dependency(
-                conda_chan_deps_cuda,
-                ("conda-forge", requirements.Requirement("accelerate>=0.22.0")),
-            )
-        except (DuplicateDependencyError, DuplicateDependencyInMultipleChannelsError):
-            pass
-
-        # Required by bitsandbytes
-        try:
-            append_conda_dependency(
-                conda_chan_deps_cuda,
-                (DEFAULT_CHANNEL_NAME, get_local_installed_version_of_pip_package(requirements.Requirement("scipy"))),
-            )
-        except (DuplicateDependencyError, DuplicateDependencyInMultipleChannelsError):
-            pass
-
-        try:
-            append_requirement_list(
-                pip_reqs_cuda,
-                requirements.Requirement("bitsandbytes>=0.41.0"),
-            )
-        except DuplicateDependencyError:
-            pass
-
-    return conda_chan_deps_cuda, pip_reqs_cuda
+            return spec_pip
+    return None

@@ -6,6 +6,7 @@ import numpy.typing as npt
 import pandas as pd
 from pandas._typing import ArrayLike
 
+from snowflake.ml._internal.utils import identifier
 from snowflake.snowpark import DataFrame, Session
 
 _EqualityFunc = Callable[[Any, Any], bool]
@@ -141,7 +142,7 @@ class DataType(Enum):
 
 def gen_fuzz_data(
     rows: int, types: List[DataType], low: Union[int, List[int]] = MIN_INT, high: Union[int, List[int]] = MAX_INT
-) -> Tuple[List[Any], List[str], List[str]]:
+) -> Tuple[List[Any], List[str]]:
     """
     Generate random data based on input column types and row count.
     First column in the result data will be an ID column for indexing.
@@ -159,7 +160,6 @@ def gen_fuzz_data(
         ValueError: if data type is not supported
     """
     data: List[npt.NDArray[Any]] = [np.arange(1, rows + 1, 1)]
-    names = ["ID"]
     snowflake_identifiers = ["ID"]
 
     for idx, t in enumerate(types):
@@ -171,11 +171,10 @@ def gen_fuzz_data(
             data.append(np.random.uniform(_low, _high, rows))
         else:
             raise ValueError(f"Unsupported data type {t}")
-        names.append(f"col_{idx}")
         snowflake_identifiers.append(f'"col_{idx}"')
-    data = np.core.records.fromarrays(data, names=names).tolist()  # type: ignore[call-overload]
+    data = np.core.records.fromarrays(data, names=snowflake_identifiers).tolist()  # type: ignore[call-overload]
 
-    return data, names, snowflake_identifiers
+    return data, snowflake_identifiers
 
 
 def get_df(
@@ -185,22 +184,27 @@ def get_df(
     fillna: Optional[Union[object, ArrayLike]] = None,
 ) -> Tuple[pd.DataFrame, DataFrame]:
     """Create pandas dataframe and Snowpark dataframes from input data. The schema passed should be
-    a pandas schema, which will be converted to a schema using snowflake identifiers when `session.create_dataframe`
-    is called.
+    a snowflake schema using snowflake identifiers.
 
     Args:
         session: Snowpark session object.
         data: List of input data to convert to dataframe.
-        schema: The pandas schema for dataframe to be created.
+        schema: The schema for dataframe to be created.
         fillna: Value to fill for NA values in the input data.
 
     Returns:
         A tuple containing a pandas dataframe and a snowpark dataframe.
     """
-    df_pandas = pd.DataFrame(data, columns=schema)
+    # Change the snowflake schema into the pandas equivalent identifiers.
+    # This will get converted back to the SF schema in `session.create_dataframe`.
+    pd_schema = identifier.get_unescaped_names(schema)
+    df_pandas = pd.DataFrame(data, columns=pd_schema)
+
     if fillna is not None:
         df_pandas.fillna(value=fillna, inplace=True)
     df = session.create_dataframe(df_pandas)
+
+    # Use snowflake identifiers for the pandas dataframe.
     df_pandas.columns = df.columns
 
     return df_pandas, df

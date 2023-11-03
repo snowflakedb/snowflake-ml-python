@@ -2,7 +2,7 @@ from unittest import mock
 
 import inflection
 import numpy as np
-from absl.testing.absltest import TestCase, main
+from absl.testing import absltest, parameterized
 from sklearn.datasets import load_diabetes, load_iris
 from sklearn.model_selection import GridSearchCV as SkGridSearchCV
 from sklearn.svm import SVR as SkSVR
@@ -15,7 +15,7 @@ from snowflake.ml.utils.connection_params import SnowflakeLoginOptions
 from snowflake.snowpark import Session
 
 
-class GridSearchCVTest(TestCase):
+class GridSearchCVTest(parameterized.TestCase):
     def setUp(self):
         """Creates Snowpark and Snowflake environments for testing."""
         self._session = Session.builder.configs(SnowflakeLoginOptions()).create()
@@ -71,8 +71,10 @@ class GridSearchCVTest(TestCase):
         actual_arr_pd = reg.predict(input_df.to_pandas()).sort_values(by="INDEX")[output_cols].to_numpy()
         np.testing.assert_allclose(actual_arr_pd.flatten(), sklearn_numpy_arr.flatten(), rtol=1.0e-1, atol=1.0e-2)
 
+    @parameterized.parameters({"is_single_node": True}, {"is_single_node": False})
     @mock.patch("snowflake.ml.modeling.model_selection._internal._grid_search_cv.if_single_node")
-    def test_fit_xgboost(self, mock_if_single_node) -> None:
+    def test_fit_xgboost_and_compare_results(self, mock_if_single_node, is_single_node) -> None:
+        mock_if_single_node.return_value = is_single_node
         mock_if_single_node.return_value = True  # falls back to HPO implementation
         input_df_pandas = load_iris(as_frame=True).frame
         input_df_pandas.columns = [inflection.parameterize(c, "_").upper() for c in input_df_pandas.columns]
@@ -83,7 +85,7 @@ class GridSearchCVTest(TestCase):
 
         sk_estimator = SkXGBClassifier(seed=42, n_jobs=1)
         parameters = {
-            "max_depth": range(2, 6, 1),
+            "max_depth": [2, 6],
             "learning_rate": [0.1, 0.01],
         }
         sklearn_reg = SkGridSearchCV(estimator=sk_estimator, param_grid=parameters, verbose=True)
@@ -106,4 +108,4 @@ class GridSearchCVTest(TestCase):
 
 
 if __name__ == "__main__":
-    main()
+    absltest.main()

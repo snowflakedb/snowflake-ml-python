@@ -99,23 +99,39 @@ def _run_setup() -> None:
             logger.info(f"Loading model from {extracted_dir} into memory")
 
             sys.path.insert(0, os.path.join(extracted_dir, _MODEL_CODE_DIR))
-            from snowflake.ml.model import (
-                _model as model_api,
-                type_hints as model_types,
-            )
+            from snowflake.ml.model import type_hints as model_types
 
-            # Backward for <= 1.0.5
-            if hasattr(model_api, "_load_model_for_deploy"):
-                _LOADED_MODEL, _LOADED_META = model_api._load_model_for_deploy(extracted_dir)
-            else:
-                _LOADED_MODEL, _LOADED_META = model_api._load(
-                    local_dir_path=extracted_dir,
+            # TODO (Server-side Model Rollout):
+            # Keep try block only
+            try:
+                from snowflake.ml.model._packager import model_packager
+
+                pk = model_packager.ModelPackager(extracted_dir)
+                pk.load(
                     as_custom_model=True,
                     meta_only=False,
                     options=model_types.ModelLoadOption(
                         {"use_gpu": cast(bool, os.environ.get("SNOWML_USE_GPU", False))}
                     ),
                 )
+                _LOADED_MODEL = pk.model
+                _LOADED_META = pk.meta
+            except ImportError:
+                # Legacy model support
+                from snowflake.ml.model import (  # type: ignore[attr-defined]
+                    _model as model_api,
+                )
+
+                if hasattr(model_api, "_load_model_for_deploy"):
+                    _LOADED_MODEL, _LOADED_META = model_api._load_model_for_deploy(extracted_dir)
+                else:
+                    _LOADED_MODEL, meta_LOADED_META = model_api._load(
+                        local_dir_path=extracted_dir,
+                        as_custom_model=True,
+                        options=model_types.ModelLoadOption(
+                            {"use_gpu": cast(bool, os.environ.get("SNOWML_USE_GPU", False))}
+                        ),
+                    )
             _MODEL_LOADING_STATE = _ModelLoadingState.SUCCEEDED
             logger.info("Successfully loaded model into memory")
             _MODEL_LOADING_EVENT.set()

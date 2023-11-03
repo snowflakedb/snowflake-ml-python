@@ -2,7 +2,7 @@ from unittest import mock
 
 import inflection
 import numpy as np
-from absl.testing.absltest import TestCase, main
+from absl.testing import absltest, parameterized
 from scipy.stats import randint
 from sklearn.datasets import load_iris
 from sklearn.ensemble import RandomForestClassifier as SkRandomForestClassifier
@@ -14,7 +14,7 @@ from snowflake.ml.utils.connection_params import SnowflakeLoginOptions
 from snowflake.snowpark import Session
 
 
-class RandomizedSearchCVTest(TestCase):
+class RandomizedSearchCVTest(parameterized.TestCase):
     def setUp(self):
         """Creates Snowpark and Snowflake environments for testing."""
         self._session = Session.builder.configs(SnowflakeLoginOptions()).create()
@@ -36,9 +36,10 @@ class RandomizedSearchCVTest(TestCase):
                     np.testing.assert_allclose(v, cv_result_2[k], rtol=1.0e-1, atol=1.0e-2)
                 # Do not compare the fit time
 
+    @parameterized.parameters({"is_single_node": True}, {"is_single_node": False})
     @mock.patch("snowflake.ml.modeling.model_selection._internal._randomized_search_cv.if_single_node")
-    def test_fit_and_compare_results(self, mock_if_single_node) -> None:
-        mock_if_single_node.return_value = True  # falls back to HPO implementation
+    def test_fit_and_compare_results(self, mock_if_single_node, is_single_node) -> None:
+        mock_if_single_node.return_value = is_single_node
         input_df_pandas = load_iris(as_frame=True).frame
         input_df_pandas.columns = [inflection.parameterize(c, "_").upper() for c in input_df_pandas.columns]
         input_cols = [c for c in input_df_pandas.columns if not c.startswith("TARGET")]
@@ -46,7 +47,7 @@ class RandomizedSearchCVTest(TestCase):
         input_df_pandas["INDEX"] = input_df_pandas.reset_index().index
         input_df = self._session.create_dataframe(input_df_pandas)
         param_distribution = {
-            "n_estimators": randint(50, 200),
+            "n_estimators": [50, 200],
             "max_depth": randint(3, 8),
         }
 
@@ -86,4 +87,4 @@ class RandomizedSearchCVTest(TestCase):
 
 
 if __name__ == "__main__":
-    main()
+    absltest.main()

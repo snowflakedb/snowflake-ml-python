@@ -182,7 +182,11 @@ elif [[ "${action}" = "coverage" ]]; then
         coverage_report_file=${working_dir}/coverage_report.dat
     fi
 
-    cat "${sf_only_coverage_report_file}" "${extended_coverage_report_file}" >"${coverage_report_file}"
+    lcov -a "${sf_only_coverage_report_file}" -a "${extended_coverage_report_file}" -o "${coverage_report_file}"
+
+    if [[ "${mode}" = "local_unittest" || "${mode}" = "local_all" ]]; then
+        cp -f "${coverage_report_file}" ".coverage.dat"
+    fi
 
     genhtml --prefix "$(pwd)" --output html_coverage_report "${coverage_report_file}"
 fi

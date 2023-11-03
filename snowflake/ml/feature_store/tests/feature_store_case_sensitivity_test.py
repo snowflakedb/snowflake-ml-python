@@ -322,7 +322,7 @@ class FeatureStoreCaseSensitivityTest(parameterized.TestCase):
             fv_name = diff_full_name[0]
             version = diff_full_name[1]
             fv = FeatureView(name=fv_name, entities=[e], feature_df=df)
-            fs.register_feature_view(fv, version, block=True)
+            fv = fs.register_feature_view(fv, version, block=True)
             fs.read_feature_view(fv)
 
         self.assertEqual(len(fs.list_feature_views(as_dataframe=False)), len(diff_full_names) + 1)
