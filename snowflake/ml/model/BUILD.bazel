@@ -1,24 +1,6 @@
-load("//bazel:py_rules.bzl", "py_genrule", "py_library", "py_test")
+load("//bazel:py_rules.bzl", "py_library", "py_test")
 
 package(default_visibility = ["//visibility:public"])
-
-GEN_CORE_REQ_CMD = "$(location //bazel/requirements:parse_and_generate_requirements) $(location //:requirements.yml) --schema $(location //bazel/requirements:requirements.schema.json) --mode version_requirements --format python --filter_by_tag deployment_core > $@"
-
-py_genrule(
-    name = "gen_core_requirements",
-    srcs = [
-        "//:requirements.yml",
-        "//bazel/requirements:requirements.schema.json",
-    ],
-    outs = ["_core_requirements.py"],
-    cmd = GEN_CORE_REQ_CMD,
-    tools = ["//bazel/requirements:parse_and_generate_requirements"],
-)
-
-py_library(
-    name = "_core_requirements",
-    srcs = [":gen_core_requirements"],
-)
 
 py_library(
     name = "type_hints",
@@ -58,16 +40,6 @@ py_library(
 )
 
 py_library(
-    name = "_env",
-    srcs = ["_env.py"],
-    deps = [
-        "//snowflake/ml/_internal:env",
-        "//snowflake/ml/_internal:env_utils",
-        "//snowflake/ml/_internal/exceptions",
-    ],
-)
-
-py_library(
     name = "custom_model",
     srcs = ["custom_model.py"],
     deps = [
@@ -76,25 +48,9 @@ py_library(
 )
 
 py_library(
-    name = "_model_meta",
-    srcs = ["_model_meta.py"],
+    name = "_api",
+    srcs = ["_api.py"],
     deps = [
-        ":_core_requirements",
-        ":_env",
-        ":model_signature",
-        ":type_hints",
-        "//snowflake/ml/_internal:env",
-        "//snowflake/ml/_internal:env_utils",
-        "//snowflake/ml/_internal:file_utils",
-        "//snowflake/ml/model/_signatures:snowpark_handler",
-    ],
-)
-
-py_library(
-    name = "_deployer",
-    srcs = ["_deployer.py"],
-    deps = [
-        ":_model",
         ":deploy_platforms",
         ":model_signature",
         ":type_hints",
@@ -103,43 +59,8 @@ py_library(
         "//snowflake/ml/model/_deploy_client/snowservice:deploy",
         "//snowflake/ml/model/_deploy_client/warehouse:deploy",
         "//snowflake/ml/model/_deploy_client/warehouse:infer_template",
+        "//snowflake/ml/model/_module_model:module_model",
         "//snowflake/ml/model/_signatures:snowpark_handler",
-    ],
-)
-
-py_library(
-    name = "_model_handler",
-    srcs = ["_model_handler.py"],
-    deps = [
-        ":type_hints",
-        "//snowflake/ml/model/_handlers:_base",
-    ],
-)
-
-py_library(
-    name = "_model",
-    srcs = ["_model.py"],
-    deps = [
-        ":_env",
-        ":_model_handler",
-        ":_model_meta",
-        ":custom_model",
-        ":model_signature",
-        ":type_hints",
-        "//snowflake/ml/_internal:env_utils",
-        "//snowflake/ml/_internal:file_utils",
-        "//snowflake/ml/_internal/exceptions",
-        "//snowflake/ml/model/_handlers:custom",
-        "//snowflake/ml/model/_handlers:huggingface_pipeline",
-        "//snowflake/ml/model/_handlers:llm",
-        "//snowflake/ml/model/_handlers:mlflow",
-        "//snowflake/ml/model/_handlers:pytorch",
-        "//snowflake/ml/model/_handlers:sklearn",
-        "//snowflake/ml/model/_handlers:snowmlmodel",
-        "//snowflake/ml/model/_handlers:tensorflow",
-        "//snowflake/ml/model/_handlers:torchscript",
-        "//snowflake/ml/model/_handlers:xgboost",
-        "//snowflake/ml/modeling/framework",
     ],
 )
 
@@ -152,45 +73,10 @@ py_test(
 )
 
 py_test(
-    name = "_env_test",
-    srcs = ["_env_test.py"],
-    deps = [
-        ":_env",
-        "//snowflake/ml/_internal:env",
-    ],
-)
-
-py_test(
     name = "model_signature_test",
     srcs = ["model_signature_test.py"],
     deps = [
         ":model_signature",
         "//snowflake/ml/test_utils:exception_utils",
-    ],
-)
-
-py_test(
-    name = "_model_meta_test",
-    srcs = ["_model_meta_test.py"],
-    deps = [
-        ":_model_meta",
-        ":model_signature",
-        "//snowflake/ml/_internal:env_utils",
-    ],
-)
-
-py_test(
-    name = "_model_test",
-    srcs = ["_model_test.py"],
-    deps = [
-        ":_model",
-        ":custom_model",
-        ":model_signature",
-        "//snowflake/ml/_internal:env",
-        "//snowflake/ml/_internal:env_utils",
-        "//snowflake/ml/_internal:file_utils",
-        "//snowflake/ml/modeling/linear_model:linear_regression",
-        "//snowflake/ml/test_utils:exception_utils",
-        "//snowflake/ml/test_utils:mock_session",
     ],
 )

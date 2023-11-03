@@ -1,0 +1,22 @@
+load("//bazel:py_rules.bzl", "py_library", "py_test")
+
+package(default_visibility = ["//visibility:public"])
+
+py_library(
+    name = "base_migrator",
+    srcs = ["base_migrator.py"],
+    deps = [
+        "//snowflake/ml/model/_packager/model_meta",
+    ],
+)
+
+py_test(
+    name = "base_migrator_test",
+    srcs = ["base_migrator_test.py"],
+    deps = [
+        ":base_migrator",
+        "//snowflake/ml/model:model_signature",
+        "//snowflake/ml/model/_packager/model_meta",
+        "//snowflake/ml/model/_packager/model_meta:model_blob_meta",
+    ],
+)

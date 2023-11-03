@@ -9,7 +9,7 @@ from tests.integ.snowflake.ml.modeling.framework import utils
 
 _ROWS = 100
 _TYPES = [utils.DataType.INTEGER] * 4 + [utils.DataType.FLOAT]
-_BINARY_DATA, _PD_SCHEMA, _SF_SCHEMA = utils.gen_fuzz_data(
+_BINARY_DATA, _SF_SCHEMA = utils.gen_fuzz_data(
     rows=_ROWS,
     types=_TYPES,
     low=0,
@@ -37,7 +37,7 @@ class MetricsUtilsTest(parameterized.TestCase):
         normalize=(False, True),
     )
     def test_weighted_sum(self, df, sample_weight_col_name, sample_score_col_name, normalize) -> None:
-        pandas_df, input_df = utils.get_df(self._session, df, _PD_SCHEMA)
+        pandas_df, input_df = utils.get_df(self._session, df, _SF_SCHEMA)
 
         snowpark_weight_col = input_df[sample_weight_col_name] if sample_weight_col_name else None
         actual_sum = metrics_utils.weighted_sum(

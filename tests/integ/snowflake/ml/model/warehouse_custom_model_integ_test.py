@@ -105,7 +105,6 @@ class TestWarehouseCustomModelInteg(parameterized.TestCase):
         test_input: model_types.SupportedDataType,
         deploy_params: Dict[str, Tuple[Dict[str, Any], Callable[[Union[pd.DataFrame, SnowparkDataFrame]], Any]]],
         permanent_deploy: Optional[bool] = False,
-        test_released_version: Optional[str] = None,
     ) -> None:
         warehouse_model_integ_test_utils.base_test_case(
             self._db_manager,
@@ -117,14 +116,12 @@ class TestWarehouseCustomModelInteg(parameterized.TestCase):
             test_input=test_input,
             deploy_params=deploy_params,
             permanent_deploy=permanent_deploy,
-            test_released_version=test_released_version,
         )
 
-    @parameterized.product(permanent_deploy=[True, False], test_released_version=[None, "1.0.8"])  # type: ignore[misc]
+    @parameterized.product(permanent_deploy=[True, False])  # type: ignore[misc]
     def test_async_model_composition(
         self,
         permanent_deploy: Optional[bool] = False,
-        test_released_version: Optional[str] = None,
     ) -> None:
         async def _test(self: "TestWarehouseCustomModelInteg") -> None:
             arr = np.random.randint(100, size=(10000, 3))
@@ -152,16 +149,14 @@ class TestWarehouseCustomModelInteg(parameterized.TestCase):
                     ),
                 },
                 permanent_deploy=permanent_deploy,
-                test_released_version=test_released_version,
             )
 
         asyncio.get_event_loop().run_until_complete(_test(self))
 
-    @parameterized.product(permanent_deploy=[True, False], test_released_version=[None, "1.0.8"])  # type: ignore[misc]
+    @parameterized.product(permanent_deploy=[True, False])  # type: ignore[misc]
     def test_custom_demo_model_sp(
         self,
         permanent_deploy: Optional[bool] = False,
-        test_released_version: Optional[str] = None,
     ) -> None:
         lm = DemoModel(custom_model.ModelContext())
         arr = [[1, 2, 3], [4, 2, 5]]
@@ -179,14 +174,12 @@ class TestWarehouseCustomModelInteg(parameterized.TestCase):
                 ),
             },
             permanent_deploy=permanent_deploy,
-            test_released_version=test_released_version,
         )
 
-    @parameterized.product(permanent_deploy=[True, False], test_released_version=[None, "1.0.8"])  # type: ignore[misc]
+    @parameterized.product(permanent_deploy=[True, False])  # type: ignore[misc]
     def test_custom_demo_model_sp_quote(
         self,
         permanent_deploy: Optional[bool] = False,
-        test_released_version: Optional[str] = None,
     ) -> None:
         lm = DemoModelSPQuote(custom_model.ModelContext())
         arr = [[1, 2, 3], [4, 2, 5]]
@@ -207,14 +200,12 @@ class TestWarehouseCustomModelInteg(parameterized.TestCase):
                 ),
             },
             permanent_deploy=permanent_deploy,
-            test_released_version=test_released_version,
         )
 
-    @parameterized.product(permanent_deploy=[True, False], test_released_version=[None, "1.0.8"])  # type: ignore[misc]
+    @parameterized.product(permanent_deploy=[True, False])  # type: ignore[misc]
     def test_custom_demo_model_sp_mix_1(
         self,
         permanent_deploy: Optional[bool] = False,
-        test_released_version: Optional[str] = None,
     ) -> None:
         lm = DemoModel(custom_model.ModelContext())
         arr = [[1, 2, 3], [4, 2, 5]]
@@ -233,14 +224,12 @@ class TestWarehouseCustomModelInteg(parameterized.TestCase):
                 ),
             },
             permanent_deploy=permanent_deploy,
-            test_released_version=test_released_version,
         )
 
-    @parameterized.product(permanent_deploy=[True, False], test_released_version=[None, "1.0.8"])  # type: ignore[misc]
+    @parameterized.product(permanent_deploy=[True, False])  # type: ignore[misc]
     def test_custom_demo_model_sp_mix_2(
         self,
         permanent_deploy: Optional[bool] = False,
-        test_released_version: Optional[str] = None,
     ) -> None:
         lm = DemoModel(custom_model.ModelContext())
         arr = [[1, 2, 3], [4, 2, 5]]
@@ -261,14 +250,12 @@ class TestWarehouseCustomModelInteg(parameterized.TestCase):
                 ),
             },
             permanent_deploy=permanent_deploy,
-            test_released_version=test_released_version,
         )
 
-    @parameterized.product(permanent_deploy=[True, False], test_released_version=[None, "1.0.8"])  # type: ignore[misc]
+    @parameterized.product(permanent_deploy=[True, False])  # type: ignore[misc]
     def test_custom_demo_model_array(
         self,
         permanent_deploy: Optional[bool] = False,
-        test_released_version: Optional[str] = None,
     ) -> None:
         lm = DemoModelArray(custom_model.ModelContext())
         arr = np.array([[1, 2, 3], [4, 2, 5]])
@@ -288,14 +275,12 @@ class TestWarehouseCustomModelInteg(parameterized.TestCase):
                 ),
             },
             permanent_deploy=permanent_deploy,
-            test_released_version=test_released_version,
         )
 
-    @parameterized.product(permanent_deploy=[True, False], test_released_version=[None, "1.0.8"])  # type: ignore[misc]
+    @parameterized.product(permanent_deploy=[True, False])  # type: ignore[misc]
     def test_custom_demo_model_str(
         self,
         permanent_deploy: Optional[bool] = False,
-        test_released_version: Optional[str] = None,
     ) -> None:
         lm = DemoModel(custom_model.ModelContext())
         pd_df = pd.DataFrame([["Yogiri", "Civia", "Echo"], ["Artia", "Doris", "Rosalyn"]], columns=["c1", "c2", "c3"])
@@ -314,14 +299,12 @@ class TestWarehouseCustomModelInteg(parameterized.TestCase):
                 ),
             },
             permanent_deploy=permanent_deploy,
-            test_released_version=test_released_version,
         )
 
-    @parameterized.product(permanent_deploy=[True, False], test_released_version=[None, "1.0.8"])  # type: ignore[misc]
+    @parameterized.product(permanent_deploy=[True, False])  # type: ignore[misc]
     def test_custom_demo_model_array_sp(
         self,
         permanent_deploy: Optional[bool] = False,
-        test_released_version: Optional[str] = None,
     ) -> None:
         lm = DemoModelArray(custom_model.ModelContext())
         arr = np.array([[1, 2, 3], [4, 2, 5]])
@@ -340,14 +323,12 @@ class TestWarehouseCustomModelInteg(parameterized.TestCase):
                 )
             },
             permanent_deploy=permanent_deploy,
-            test_released_version=test_released_version,
         )
 
-    @parameterized.product(permanent_deploy=[True, False], test_released_version=[None, "1.0.8"])  # type: ignore[misc]
+    @parameterized.product(permanent_deploy=[True, False])  # type: ignore[misc]
     def test_custom_demo_model_str_sp(
         self,
         permanent_deploy: Optional[bool] = False,
-        test_released_version: Optional[str] = None,
     ) -> None:
         lm = DemoModel(custom_model.ModelContext())
         pd_df = pd.DataFrame([["Yogiri", "Civia", "Echo"], ["Artia", "Doris", "Rosalyn"]], columns=["c1", "c2", "c3"])
@@ -365,14 +346,12 @@ class TestWarehouseCustomModelInteg(parameterized.TestCase):
                 )
             },
             permanent_deploy=permanent_deploy,
-            test_released_version=test_released_version,
         )
 
-    @parameterized.product(permanent_deploy=[True, False], test_released_version=[None, "1.0.8"])  # type: ignore[misc]
+    @parameterized.product(permanent_deploy=[True, False])  # type: ignore[misc]
     def test_custom_demo_model_array_str(
         self,
         permanent_deploy: Optional[bool] = False,
-        test_released_version: Optional[str] = None,
     ) -> None:
         lm = DemoModelArray(custom_model.ModelContext())
         pd_df = pd.DataFrame([["Yogiri", "Civia", "Echo"], ["Artia", "Doris", "Rosalyn"]], columns=["c1", "c2", "c3"])
@@ -391,14 +370,12 @@ class TestWarehouseCustomModelInteg(parameterized.TestCase):
                 )
             },
             permanent_deploy=permanent_deploy,
-            test_released_version=test_released_version,
         )
 
-    @parameterized.product(permanent_deploy=[True, False], test_released_version=[None, "1.0.8"])  # type: ignore[misc]
+    @parameterized.product(permanent_deploy=[True, False])  # type: ignore[misc]
     def test_custom_model_with_artifacts(
         self,
         permanent_deploy: Optional[bool] = False,
-        test_released_version: Optional[str] = None,
     ) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             with open(os.path.join(tmpdir, "bias"), "w", encoding="utf-8") as f:
@@ -423,14 +400,12 @@ class TestWarehouseCustomModelInteg(parameterized.TestCase):
                     )
                 },
                 permanent_deploy=permanent_deploy,
-                test_released_version=test_released_version,
             )
 
-    @parameterized.product(permanent_deploy=[True, False], test_released_version=[None, "1.0.8"])  # type: ignore[misc]
+    @parameterized.product(permanent_deploy=[True, False])  # type: ignore[misc]
     def test_custom_model_bool_sp(
         self,
         permanent_deploy: Optional[bool] = False,
-        test_released_version: Optional[str] = None,
     ) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             with open(os.path.join(tmpdir, "bias"), "w", encoding="utf-8") as f:
@@ -456,7 +431,6 @@ class TestWarehouseCustomModelInteg(parameterized.TestCase):
                     )
                 },
                 permanent_deploy=permanent_deploy,
-                test_released_version=test_released_version,
             )
 
 

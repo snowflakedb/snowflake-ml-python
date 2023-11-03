@@ -13,7 +13,7 @@ from tests.integ.snowflake.ml.modeling.framework import utils
 
 _ROWS = 100
 _TYPES = [utils.DataType.INTEGER] + [utils.DataType.FLOAT] * 2
-_BINARY_DATA, _PD_SCHEMA, _SF_SCHEMA = utils.gen_fuzz_data(
+_BINARY_DATA, _SF_SCHEMA = utils.gen_fuzz_data(
     rows=_ROWS,
     types=_TYPES,
     low=0,
@@ -38,7 +38,7 @@ class PrecisionRecallCurveTest(parameterized.TestCase):
         {"params": {"pos_label": [0, 2, 4]}},
     )
     def test_pos_label(self, params: Dict[str, Any]) -> None:
-        pandas_df, input_df = utils.get_df(self._session, _BINARY_DATA, _PD_SCHEMA)
+        pandas_df, input_df = utils.get_df(self._session, _BINARY_DATA, _SF_SCHEMA)
 
         for pos_label in params["pos_label"]:
             actual_precision, actual_recall, actual_thresholds = snowml_metrics.precision_recall_curve(
@@ -60,7 +60,7 @@ class PrecisionRecallCurveTest(parameterized.TestCase):
         {"params": {"sample_weight_col_name": [None, _SAMPLE_WEIGHT_COL]}},
     )
     def test_sample_weight(self, params: Dict[str, Any]) -> None:
-        pandas_df, input_df = utils.get_df(self._session, _BINARY_DATA, _PD_SCHEMA)
+        pandas_df, input_df = utils.get_df(self._session, _BINARY_DATA, _SF_SCHEMA)
 
         for sample_weight_col_name in params["sample_weight_col_name"]:
             actual_precision, actual_recall, actual_thresholds = snowml_metrics.precision_recall_curve(
@@ -81,7 +81,7 @@ class PrecisionRecallCurveTest(parameterized.TestCase):
 
     @mock.patch("snowflake.ml.modeling.metrics.ranking.result._RESULT_SIZE_THRESHOLD", 0)
     def test_metric_size_threshold(self) -> None:
-        pandas_df, input_df = utils.get_df(self._session, _BINARY_DATA, _PD_SCHEMA)
+        pandas_df, input_df = utils.get_df(self._session, _BINARY_DATA, _SF_SCHEMA)
 
         actual_precision, actual_recall, actual_thresholds = snowml_metrics.precision_recall_curve(
             df=input_df,

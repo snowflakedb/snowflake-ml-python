@@ -37,12 +37,20 @@ with FileLock():
             myzip.extractall(extracted_model_dir_path)
 
 sys.path.insert(0, os.path.join(extracted_model_dir_path, "{code_dir_name}"))
-from snowflake.ml.model import _model
-# Backward for <= 1.0.5
-if hasattr(_model, "_load_model_for_deploy"):
-    model, meta = _model._load_model_for_deploy(extracted_model_dir_path)
-else:
-    model, meta = _model._load(local_dir_path=extracted_model_dir_path, as_custom_model=True)
+try:
+    from snowflake.ml.model._packager import model_packager
+    pk = model_packager.ModelPackager(extracted_model_dir_path)
+    pk.load(as_custom_model=True)
+    model = pk.model
+    meta = pk.meta
+except ImportError:
+    # Support Legacy model
+    from snowflake.ml.model import _model
+    # Backward for <= 1.0.5
+    if hasattr(_model, "_load_model_for_deploy"):
+        model, meta = _model._load_model_for_deploy(extracted_model_dir_path)
+    else:
+        model, meta = _model._load(local_dir_path=extracted_model_dir_path, as_custom_model=True)
 
 features = meta.signatures["{target_method}"].inputs
 input_cols = [feature.name for feature in features]

@@ -23,19 +23,17 @@ def is_valid_yaml(yaml_string) -> bool:
 
 
 class TestModelRegistryIntegSnowServiceBase(spcs_integ_test_base.SpcsIntegTestBase):
-    @classmethod
-    def setUpClass(cls) -> None:
-        super().setUpClass()
+    def setUp(self) -> None:
+        super().setUp()
         model_registry.create_model_registry(
-            session=cls._session, database_name=cls._TEST_DB, schema_name=cls._TEST_SCHEMA
+            session=self._session, database_name=self._test_db, schema_name=self._test_schema
         )
-        cls.registry = model_registry.ModelRegistry(
-            session=cls._session, database_name=cls._TEST_DB, schema_name=cls._TEST_SCHEMA
+        self.registry = model_registry.ModelRegistry(
+            session=self._session, database_name=self._test_db, schema_name=self._test_schema
         )
 
-    @classmethod
-    def tearDownClass(cls) -> None:
-        super().tearDownClass()
+    def tearDown(self) -> None:
+        super().tearDown()
 
     def _test_snowservice_deployment(
         self,
@@ -98,9 +96,15 @@ class TestModelRegistryIntegSnowServiceBase(spcs_integ_test_base.SpcsIntegTestBa
         self.assertEqual(model_deployment_list["MODEL_VERSION"][0], model_version)
         self.assertEqual(model_deployment_list["DEPLOYMENT_NAME"][0], deployment_name)
 
+        deployment = self.registry._get_deployment(
+            model_name=model_name, model_version=model_version, deployment_name=deployment_name
+        )
+        service_name = f"service_{deployment['MODEL_ID']}"
         model_ref.delete_deployment(deployment_name=deployment_name)  # type: ignore[attr-defined]
         self.assertEqual(model_ref.list_deployments().to_pandas().shape[0], 0)  # type: ignore[attr-defined]
 
+        service_lst = self._session.sql(f"SHOW SERVICES LIKE '{service_name}' in account;").collect()
+        self.assertEqual(len(service_lst), 0, "Service was not deleted successfully")
         self.assertEqual(self.registry.list_models().to_pandas().shape[0], 1)
         self.registry.delete_model(model_name=model_name, model_version=model_version, delete_artifact=True)
         self.assertEqual(self.registry.list_models().to_pandas().shape[0], 0)

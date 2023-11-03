@@ -1,7 +1,5 @@
 import inspect
 import json
-import os
-import posixpath
 import sys
 import types
 from typing import (
@@ -30,8 +28,7 @@ from snowflake.ml._internal.utils import (
 )
 from snowflake.ml.dataset import dataset
 from snowflake.ml.model import (
-    _deployer,
-    _model as model_api,
+    _api as model_api,
     deploy_platforms,
     model_signature,
     type_hints as model_types,
@@ -773,7 +770,7 @@ class ModelRegistry:
             raise connector.DataError(f"No files in model artifact for id {id} located at {model_uri}.")
         if len(model_file_list) > 1:
             raise NotImplementedError("Restoring models consisting of multiple files is currently not supported.")
-        return f"{self._fully_qualified_schema_name()}.{model_file_list[0].name}"
+        return f"{_STAGE_PREFIX}{model_stage_path}"
 
     def _log_model_path(
         self,
@@ -875,6 +872,21 @@ class ModelRegistry:
                 )
         else:
             raise connector.DatabaseError("Failed to insert the model properties to the registry table.")
+
+    def _get_deployment(self, *, model_name: str, model_version: str, deployment_name: str) -> snowpark.Row:
+        statement_params = self._get_statement_params(inspect.currentframe())
+        deployment_lst = (
+            self._session.sql(f"SELECT * FROM {self._fully_qualified_permanent_deployment_view_name()}")
+            .filter(snowpark.Column("DEPLOYMENT_NAME") == deployment_name)
+            .filter(snowpark.Column("MODEL_NAME") == model_name)
+            .filter(snowpark.Column("MODEL_VERSION") == model_version)
+        ).collect(statement_params=statement_params)
+        if len(deployment_lst) == 0:
+            raise KeyError(
+                f"Unable to find deployment named {deployment_name} in the model {model_name}/{model_version}."
+            )
+        assert len(deployment_lst) == 1, "_get_deployment should return exactly 1 deployment"
+        return cast(snowpark.Row, deployment_lst[0])
 
     # Registry operations
 
@@ -1384,13 +1396,13 @@ class ModelRegistry:
             model_name=model_name,
             model_version=model_version,
         )
-        model_stage_file_path = posixpath.join(f"{_STAGE_PREFIX}{fully_qualified_model_stage_name}", f"{model_id}.zip")
+        stage_path = f"{_STAGE_PREFIX}{fully_qualified_model_stage_name}"
         model = cast(model_types.SupportedModelType, model)
         try:
-            model_metadata = model_api.save_model(  # type: ignore[call-overload, misc]
+            module_model = model_api.save_model(  # type: ignore[call-overload, misc]
                 name=model_name,
                 session=self._session,
-                model_stage_file_path=model_stage_file_path,
+                stage_path=stage_path,
                 model=model,
                 signatures=signatures,
                 metadata=tags,
@@ -1411,8 +1423,8 @@ class ModelRegistry:
             model_name=model_name,
             model_version=model_version,
             model_id=model_id,
-            type=model_metadata.model_type,
-            uri=uri.get_uri_from_snowflake_stage_path(model_stage_file_path),
+            type=module_model.packager.meta.model_type,
+            uri=uri.get_uri_from_snowflake_stage_path(stage_path),
             description=description,
             tags=tags,
             artifacts=artifacts,
@@ -1438,9 +1450,9 @@ class ModelRegistry:
         remote_model_path = self._get_model_path(model_name=model_name, model_version=model_version)
         restored_model = None
 
-        restored_model, _ = model_api.load_model(session=self._session, model_stage_file_path=remote_model_path)
+        restored_model = model_api.load_model(session=self._session, stage_path=remote_model_path)
 
-        return restored_model
+        return restored_model.packager.model
 
     # Repository Operations
 
@@ -1506,7 +1518,7 @@ class ModelRegistry:
                 )
                 options["permanent_udf_stage_location"] = deployment_stage_path
 
-        remote_model_path = "@" + self._get_model_path(model_name=model_name, model_version=model_version)
+        remote_model_path = self._get_model_path(model_name=model_name, model_version=model_version)
         model_id = self._get_model_id(model_name, model_version)
 
         # https://snowflakecomputing.atlassian.net/browse/SNOW-858376
@@ -1527,15 +1539,15 @@ class ModelRegistry:
                     "Temporary deployment to the warehouse is currently not supported. Please use "
                     "permanent deployment by setting the 'permanent' parameter to True"
                 )
-            remote_model_path = f"{unencrypted_stage}/{os.path.basename(remote_model_path)}"
+            remote_model_path = unencrypted_stage
 
         # Step 1: Deploy to get the UDF
-        deployment_info = _deployer.deploy(
+        deployment_info = model_api.deploy(
             session=self._session,
             name=self._fully_qualified_deployment_name(deployment_name),
             platform=platform,
             target_method=target_method,
-            model_stage_file_path=remote_model_path,
+            stage_path=remote_model_path,
             deployment_stage_path=deployment_stage_path,
             model_id=model_id,
             options=options,
@@ -1703,20 +1715,10 @@ class ModelRegistry:
             model_version: Model Version string.
             deployment_name: Name of the deployment that is getting deleted.
 
-        Raises:
-            KeyError: Raised if the target deployment is not found.
         """
-        deployment = (
-            self._session.sql(f"SELECT * FROM {self._fully_qualified_permanent_deployment_view_name()}")
-            .filter(snowpark.Column("DEPLOYMENT_NAME") == deployment_name)
-            .filter(snowpark.Column("MODEL_NAME") == model_name)
-            .filter(snowpark.Column("MODEL_VERSION") == model_version)
-        ).collect()
-        if len(deployment) == 0:
-            raise KeyError(
-                f"Unable to find deployment named {deployment_name} in the model {model_name}/{model_version}."
-            )
-        deployment = deployment[0]
+        deployment = self._get_deployment(
+            model_name=model_name, model_version=model_version, deployment_name=deployment_name
+        )
 
         # TODO(SNOW-759526): The following sequence should be a transaction.
         # Step 1: Drop the UDF
@@ -1745,7 +1747,9 @@ class ModelRegistry:
 
         # Optional Step 5: Delete Snowpark container service.
         if deployment["TARGET_PLATFORM"] == deploy_platforms.TargetPlatform.SNOWPARK_CONTAINER_SERVICES.value:
-            service_name = f"service_{deployment['MODEL_ID']}"
+            service_name = identifier.get_schema_level_object_identifier(
+                self._name, self._schema, f"service_{deployment['MODEL_ID']}"
+            )
             query_result_checker.SqlResultValidator(
                 self._session,
                 f"DROP SERVICE IF EXISTS {service_name}",
@@ -1966,7 +1970,7 @@ class ModelReference:
         self._registry._svm.validate_schema_version(statement_params)
 
         if di:
-            return _deployer.predict(
+            return model_api.predict(
                 session=self._registry._session, deployment=di, X=data, statement_params=statement_params
             )
 
@@ -1996,7 +2000,7 @@ class ModelReference:
                 signature=signature,
                 options=options,
             )
-            return _deployer.predict(
+            return model_api.predict(
                 session=self._registry._session, deployment=di, X=data, statement_params=statement_params
             )
         except KeyError:

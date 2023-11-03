@@ -54,7 +54,6 @@ class TestWarehouseSKLearnXGBoostModelInteg(parameterized.TestCase):
         test_input: model_types.SupportedDataType,
         deploy_params: Dict[str, Tuple[Dict[str, Any], Callable[[Union[pd.DataFrame, SnowparkDataFrame]], Any]]],
         permanent_deploy: Optional[bool] = False,
-        test_released_version: Optional[str] = None,
     ) -> None:
         warehouse_model_integ_test_utils.base_test_case(
             self._db_manager,
@@ -66,14 +65,12 @@ class TestWarehouseSKLearnXGBoostModelInteg(parameterized.TestCase):
             test_input=test_input,
             deploy_params=deploy_params,
             permanent_deploy=permanent_deploy,
-            test_released_version=test_released_version,
         )
 
-    @parameterized.product(permanent_deploy=[True, False], test_released_version=[None, "1.0.6"])  # type: ignore[misc]
+    @parameterized.product(permanent_deploy=[True, False])  # type: ignore[misc]
     def test_skl_model_deploy(
         self,
         permanent_deploy: Optional[bool] = False,
-        test_released_version: Optional[str] = None,
     ) -> None:
         iris_X, iris_y = datasets.load_iris(return_X_y=True)
         # LogisticRegression is for classfication task, such as iris
@@ -91,14 +88,12 @@ class TestWarehouseSKLearnXGBoostModelInteg(parameterized.TestCase):
                 ),
             },
             permanent_deploy=permanent_deploy,
-            test_released_version=test_released_version,
         )
 
-    @parameterized.product(permanent_deploy=[True, False], test_released_version=[None, "1.0.6"])  # type: ignore[misc]
+    @parameterized.product(permanent_deploy=[True, False])  # type: ignore[misc]
     def test_skl_model_proba_deploy(
         self,
         permanent_deploy: Optional[bool] = False,
-        test_released_version: Optional[str] = None,
     ) -> None:
         iris_X, iris_y = datasets.load_iris(return_X_y=True)
         model = ensemble.RandomForestClassifier(random_state=42)
@@ -119,14 +114,12 @@ class TestWarehouseSKLearnXGBoostModelInteg(parameterized.TestCase):
                 ),
             },
             permanent_deploy=permanent_deploy,
-            test_released_version=test_released_version,
         )
 
-    @parameterized.product(permanent_deploy=[True, False], test_released_version=[None, "1.0.6"])  # type: ignore[misc]
+    @parameterized.product(permanent_deploy=[True, False])  # type: ignore[misc]
     def test_skl_multiple_output_model_proba_deploy(
         self,
         permanent_deploy: Optional[bool] = False,
-        test_released_version: Optional[str] = None,
     ) -> None:
         iris_X, iris_y = datasets.load_iris(return_X_y=True)
         target2 = np.random.randint(0, 6, size=iris_y.shape)
@@ -152,14 +145,12 @@ class TestWarehouseSKLearnXGBoostModelInteg(parameterized.TestCase):
                 ),
             },
             permanent_deploy=permanent_deploy,
-            test_released_version=test_released_version,
         )
 
-    @parameterized.product(permanent_deploy=[True, False], test_released_version=[None, "1.0.6"])  # type: ignore[misc]
+    @parameterized.product(permanent_deploy=[True, False])  # type: ignore[misc]
     def test_xgb(
         self,
         permanent_deploy: Optional[bool] = False,
-        test_released_version: Optional[str] = None,
     ) -> None:
         cal_data = datasets.load_breast_cancer(as_frame=True)
         cal_X = cal_data.data
@@ -181,14 +172,12 @@ class TestWarehouseSKLearnXGBoostModelInteg(parameterized.TestCase):
                 ),
             },
             permanent_deploy=permanent_deploy,
-            test_released_version=test_released_version,
         )
 
-    @parameterized.product(permanent_deploy=[True, False], test_released_version=[None, "1.0.6"])  # type: ignore[misc]
+    @parameterized.product(permanent_deploy=[True, False])  # type: ignore[misc]
     def test_xgb_sp(
         self,
         permanent_deploy: Optional[bool] = False,
-        test_released_version: Optional[str] = None,
     ) -> None:
         cal_data = datasets.load_breast_cancer(as_frame=True)
         cal_data_sp_df = self._session.create_dataframe(cal_data.frame)
@@ -217,14 +206,12 @@ class TestWarehouseSKLearnXGBoostModelInteg(parameterized.TestCase):
                 ),
             },
             permanent_deploy=permanent_deploy,
-            test_released_version=test_released_version,
         )
 
-    @parameterized.product(permanent_deploy=[True, False], test_released_version=[None, "1.0.6"])  # type: ignore[misc]
+    @parameterized.product(permanent_deploy=[True, False])  # type: ignore[misc]
     def test_xgb_booster(
         self,
         permanent_deploy: Optional[bool] = False,
-        test_released_version: Optional[str] = None,
     ) -> None:
         cal_data = datasets.load_breast_cancer(as_frame=True)
         cal_X = cal_data.data
@@ -245,14 +232,12 @@ class TestWarehouseSKLearnXGBoostModelInteg(parameterized.TestCase):
                 ),
             },
             permanent_deploy=permanent_deploy,
-            test_released_version=test_released_version,
         )
 
-    @parameterized.product(permanent_deploy=[True, False], test_released_version=[None, "1.0.6"])  # type: ignore[misc]
+    @parameterized.product(permanent_deploy=[True, False])  # type: ignore[misc]
     def test_xgb_booster_sp(
         self,
         permanent_deploy: Optional[bool] = False,
-        test_released_version: Optional[str] = None,
     ) -> None:
         cal_data = datasets.load_breast_cancer(as_frame=True)
         cal_data_sp_df = self._session.create_dataframe(cal_data.frame)
@@ -286,7 +271,6 @@ class TestWarehouseSKLearnXGBoostModelInteg(parameterized.TestCase):
                 ),
             },
             permanent_deploy=permanent_deploy,
-            test_released_version=test_released_version,
         )
 
 

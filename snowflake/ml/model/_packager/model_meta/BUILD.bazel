@@ -1,0 +1,73 @@
+load("//bazel:py_rules.bzl", "py_genrule", "py_library", "py_test")
+
+package(default_visibility = ["//visibility:public"])
+
+GEN_CORE_REQ_CMD = "$(location //bazel/requirements:parse_and_generate_requirements) $(location //:requirements.yml) --schema $(location //bazel/requirements:requirements.schema.json) --mode version_requirements --format python --filter_by_tag deployment_core > $@"
+
+py_genrule(
+    name = "gen_core_requirements",
+    srcs = [
+        "//:requirements.yml",
+        "//bazel/requirements:requirements.schema.json",
+    ],
+    outs = ["_core_requirements.py"],
+    cmd = GEN_CORE_REQ_CMD,
+    tools = ["//bazel/requirements:parse_and_generate_requirements"],
+)
+
+py_library(
+    name = "_core_requirements",
+    srcs = [":gen_core_requirements"],
+)
+
+py_library(
+    name = "model_meta_schema",
+    srcs = ["model_meta_schema.py"],
+    deps = [
+        "//snowflake/ml/model:type_hints",
+    ],
+)
+
+py_library(
+    name = "model_blob_meta",
+    srcs = ["model_blob_meta.py"],
+    deps = [
+        "//snowflake/ml/model:type_hints",
+    ],
+)
+
+py_library(
+    name = "model_meta",
+    srcs = ["model_meta.py"],
+    deps = [
+        ":_core_requirements",
+        ":model_blob_meta",
+        ":model_meta_schema",
+        "//snowflake/ml/_internal:env",
+        "//snowflake/ml/_internal:env_utils",
+        "//snowflake/ml/_internal:file_utils",
+        "//snowflake/ml/model:model_signature",
+        "//snowflake/ml/model:type_hints",
+        "//snowflake/ml/model/_packager/model_env",
+    ],
+)
+
+py_test(
+    name = "model_meta_test",
+    srcs = ["model_meta_test.py"],
+    deps = [
+        ":model_meta",
+        "//snowflake/ml/_internal:env_utils",
+        "//snowflake/ml/model:model_signature",
+    ],
+)
+
+py_test(
+    name = "model_meta_schema_test",
+    srcs = ["model_meta_schema_test.py"],
+    deps = [
+        ":model_meta_schema",
+        "//snowflake/ml/_internal:env",
+        "//snowflake/ml/test_utils:test_env_utils",
+    ],
+)

@@ -41,6 +41,7 @@ py_library(
     srcs = ["env_utils.py"],
     deps = [
         ":env",
+        "//snowflake/ml/_internal/exceptions",
         "//snowflake/ml/_internal/utils:query_result_checker",
     ],
 )

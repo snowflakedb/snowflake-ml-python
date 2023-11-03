@@ -189,7 +189,7 @@ class FileUtilsTest(absltest.TestCase):
                 f.flush()
 
             os.mkdir(os.path.join(tmpdir, "env"))
-            with open(os.path.join(tmpdir, "env", "conda.yaml"), "w", encoding="utf-8") as f:
+            with open(os.path.join(tmpdir, "env", "conda.yml"), "w", encoding="utf-8") as f:
                 f.write("python==3.8.13")
                 f.flush()
 
