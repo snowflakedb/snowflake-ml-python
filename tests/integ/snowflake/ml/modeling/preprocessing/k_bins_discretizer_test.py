@@ -130,11 +130,11 @@ class KBinsDiscretizerTest(TestCase):
         N_BINS = [10, 7]
         ENCODE = "ordinal"
 
-        data, pd_schema, sf_schema = utils.gen_fuzz_data(
+        data, sf_schema = utils.gen_fuzz_data(
             rows=1000,
             types=[utils.DataType.INTEGER, utils.DataType.FLOAT],
         )
-        pandas_df, snowpark_df = utils.get_df(self._session, data, pd_schema)
+        pandas_df, snowpark_df = utils.get_df(self._session, data, sf_schema)
 
         for strategy in self._strategies:
             sklearn_discretizer = SklearnKBinsDiscretizer(n_bins=N_BINS, encode=ENCODE, strategy=strategy)
@@ -197,7 +197,7 @@ class KBinsDiscretizerTest(TestCase):
         ENCODE = "ordinal"
         OUTPUT_COLS = [f"OUT_{x}" for x in range(len(N_BINS))]
 
-        data, pd_schema, sf_schema = utils.gen_fuzz_data(
+        data, sf_schema = utils.gen_fuzz_data(
             rows=10000,
             types=[
                 utils.DataType.INTEGER,
@@ -207,7 +207,7 @@ class KBinsDiscretizerTest(TestCase):
             low=-999999,
             high=999999,
         )
-        pandas_df, snowpark_df = utils.get_df(self._session, data, pd_schema)
+        pandas_df, snowpark_df = utils.get_df(self._session, data, sf_schema)
 
         for strategy in self._strategies:
             # 1. Create OSS SKLearn discretizer

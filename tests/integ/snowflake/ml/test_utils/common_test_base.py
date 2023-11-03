@@ -52,7 +52,7 @@ class CommonTestBase(parameterized.TestCase):
 
     @classmethod
     def sproc_test(
-        kclass: Type[_V], local: bool = True, test_callers_rights=True
+        kclass: Type[_V], local: bool = True, test_callers_rights: bool = True
     ) -> Callable[[Callable[Concatenate[_V, _T_args], None]], Callable[Concatenate[_V, _T_args], None]]:
         def decorator(fn: Callable[Concatenate[_V, _T_args], None]) -> Callable[Concatenate[_V, _T_args], None]:
             @functools.wraps(fn)

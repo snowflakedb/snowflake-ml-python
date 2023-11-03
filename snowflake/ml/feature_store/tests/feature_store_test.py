@@ -1,4 +1,4 @@
-from typing import Optional, cast
+from typing import Optional
 from uuid import uuid4
 
 from absl.testing import absltest
@@ -27,7 +27,8 @@ from snowflake.ml.feature_store.feature_store import (
     FEATURE_VIEW_TS_COL_TAG,
 )
 from snowflake.ml.utils.connection_params import SnowflakeLoginOptions
-from snowflake.snowpark import DataFrame, Session, exceptions as snowpark_exceptions
+from snowflake.snowpark import Session, exceptions as snowpark_exceptions
+from snowflake.snowpark.functions import udf
 
 
 class FeatureStoreTest(absltest.TestCase):
@@ -450,7 +451,7 @@ class FeatureStoreTest(absltest.TestCase):
             feature_df=self._session.sql(sql0),
             desc="my_fv1",
         )
-        fs.register_feature_view(
+        fv1 = fs.register_feature_view(
             feature_view=fv1,
             version="FIRST",
             refresh_freq="5 minutes",
@@ -586,7 +587,7 @@ class FeatureStoreTest(absltest.TestCase):
         fv = fs.get_feature_view("my_fv", "v1")
         self.assertEqual(my_fv, fv)
 
-        task_name = fs._get_feature_view_name(fv.name, fv.version)
+        task_name = fv.physical_name()
         res = self._session.sql(f"SHOW TASKS LIKE '{task_name}' IN SCHEMA {fs._config.full_schema_path}").collect()
         self.assertEqual(len(res), 1)
         self.assertEqual(res[0]["state"], "started")
@@ -800,7 +801,9 @@ class FeatureStoreTest(absltest.TestCase):
         fv3 = fs.register_feature_view(feature_view=fv3, version="v1", refresh_freq="DOWNSTREAM", block=True)
 
         merged_fv = fs.merge_features(features=[fv1, fv2, fv3], name="merged_fv")
-        fs.register_feature_view(feature_view=merged_fv, version="v1", refresh_freq="DOWNSTREAM", block=True)
+        merged_fv = fs.register_feature_view(
+            feature_view=merged_fv, version="v1", refresh_freq="DOWNSTREAM", block=True
+        )
 
         df = fs.read_feature_view(merged_fv)
         compare_dataframe(
@@ -831,7 +834,9 @@ class FeatureStoreTest(absltest.TestCase):
         fv2 = fs.register_feature_view(feature_view=fv2, version="v1", refresh_freq="DOWNSTREAM", block=True)
 
         merged_fv = fs.merge_features(features=[fv1, fv2.slice(["title"])], name="merged_fv")
-        fs.register_feature_view(feature_view=merged_fv, version="v1", refresh_freq="DOWNSTREAM", block=True)
+        merged_fv = fs.register_feature_view(
+            feature_view=merged_fv, version="v1", refresh_freq="DOWNSTREAM", block=True
+        )
 
         df = fs.read_feature_view(merged_fv)
         compare_dataframe(
@@ -852,7 +857,7 @@ class FeatureStoreTest(absltest.TestCase):
         fv4 = fs.register_feature_view(feature_view=fv4, version="v1", refresh_freq="DOWNSTREAM", block=True)
 
         merged_fv_2 = fs.merge_features(features=[fv3.slice(["title"]), fv4], name="merged_fv_2")
-        fs.register_feature_view(
+        merged_fv_2 = fs.register_feature_view(
             feature_view=merged_fv_2,
             version="v1",
             refresh_freq="DOWNSTREAM",
@@ -890,7 +895,7 @@ class FeatureStoreTest(absltest.TestCase):
         fv6 = fs.register_feature_view(feature_view=fv6, version="v1", refresh_freq="DOWNSTREAM", block=True)
 
         merged_fv_3 = fs.merge_features(features=[fv5, fv6.slice(["title"])], name="merged_fv_3")
-        fs.register_feature_view(
+        merged_fv_3 = fs.register_feature_view(
             feature_view=merged_fv_3,
             version="v1",
             refresh_freq="DOWNSTREAM",
@@ -932,7 +937,29 @@ class FeatureStoreTest(absltest.TestCase):
             [fv1],
         )
 
-        self.assertEqual(len(cast(DataFrame, fs.list_feature_views()).collect()), 2)
+        df = fs.list_feature_views()
+        self.assertListEqual(
+            df.columns,
+            [
+                "NAME",
+                "ENTITIES",
+                "TIMESTAMP_COL",
+                "DESC",
+                "QUERY",
+                "VERSION",
+                "STATUS",
+                "FEATURE_DESC",
+                "REFRESH_FREQ",
+                "DATABASE",
+                "SCHEMA",
+                "WAREHOUSE",
+                "REFRESH_MODE",
+                "REFRESH_MODE_REASON",
+                "PHYSICAL_NAME",
+            ],
+        )
+        result = df.collect()
+        self.assertEqual(len(result), 2)
 
     def test_list_feature_views_system_error(self) -> None:
         fs = self._create_feature_store()
@@ -1177,7 +1204,7 @@ class FeatureStoreTest(absltest.TestCase):
         fs.register_entity(e)
         sql = f"SELECT name, id FROM {self._mock_table}"
         fv = FeatureView(name="fv", entities=[e], feature_df=self._session.sql(sql))
-        fs.register_feature_view(
+        fv = fs.register_feature_view(
             feature_view=fv, version="v1", refresh_freq="* * * * * America/Los_Angeles", block=True
         )
 
@@ -1223,6 +1250,30 @@ class FeatureStoreTest(absltest.TestCase):
         self.assertEqual(len(result), 1)
         result = self._session.sql(f"SHOW TAGS LIKE 'my_tag' IN SCHEMA {full_schema_path}").collect()
         self.assertEqual(len(result), 1)
+
+    def test_dynamic_table_full_refresh_warning(self) -> None:
+        temp_stage_name = "test_dynamic_table_full_refresh_warning_stage"
+        self._session.sql(f"CREATE OR REPLACE STAGE {temp_stage_name}").collect()
+
+        @udf(  # type: ignore[misc, arg-type]
+            name=f"{FS_INTEG_TEST_DB}.{FS_INTEG_TEST_DATASET_SCHEMA}.minus_one",
+            session=self._session,
+            is_permanent=True,
+            stage_location=f"@{temp_stage_name}",
+            replace=True,
+        )
+        def minus_one(x: int) -> int:
+            return x - 1
+
+        fs = self._create_feature_store()
+        entity = Entity("foo", ["name"])
+        fs.register_entity(entity)
+
+        df = self._session.table(self._mock_table).select(minus_one("id"), "name")  # type: ignore[operator]
+        fv = FeatureView(name="fv", entities=[entity], feature_df=df)
+
+        with self.assertWarnsRegex(UserWarning, "Dynamic table: `.*` will not refresh in INCREMENTAL mode"):
+            fs.register_feature_view(feature_view=fv, version="V1", refresh_freq="1h")
 
 
 if __name__ == "__main__":

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 import numbers
 import uuid
-from typing import Dict, Iterable, List, Optional, Union
+from typing import Any, Dict, Iterable, List, Optional, Union
 
 import numpy as np
 import pandas as pd
@@ -13,10 +13,12 @@ from snowflake.ml._internal.exceptions import error_codes, exceptions
 from snowflake.ml._internal.utils import identifier
 from snowflake.ml.modeling.framework import _utils, base
 from snowflake.snowpark import functions as F, types as T
+from snowflake.snowpark._internal import utils as snowpark_utils
 
 _COLUMN_NAME = "_COLUMN_NAME"
 _CATEGORY = "_CATEGORY"
 _INDEX = "_INDEX"
+_COLUMN_BATCH_SIZE = 20
 
 # constants used to validate the compatibility of the kwargs passed to the sklearn
 # transformer with the sklearn version
@@ -123,7 +125,7 @@ class OrdinalEncoder(base.BaseTransformer):
         self._categories_list: List[type_utils.LiteralNDArrayType] = []
         self._missing_indices: Dict[int, int] = {}
         self._infrequent_enabled = False
-        self._vocab_table_name = "snowml_preprocessing_ordinal_encoder_temp_table_" + uuid.uuid4().hex
+        self._vocab_table_name = snowpark_utils.random_name_for_temp_object(snowpark_utils.TempObjectType.TABLE)
 
         self.set_input_cols(input_cols)
         self.set_output_cols(output_cols)
@@ -472,30 +474,46 @@ class OrdinalEncoder(base.BaseTransformer):
         suffix = "_" + uuid.uuid4().hex.upper()
         transformed_dataset = dataset
 
-        for idx, input_col in enumerate(self.input_cols):
-            output_col = self.output_cols[idx]
-            input_col_state_df = state_df.filter(F.col(_COLUMN_NAME) == input_col)[
-                [_CATEGORY, _INDEX]
-            ].with_column_renamed(_INDEX, output_col)
+        for batch_start in range(0, len(self.input_cols), _COLUMN_BATCH_SIZE):
+            batch_end = min(batch_start + _COLUMN_BATCH_SIZE, len(self.input_cols))
+            batch_input_cols = self.input_cols[batch_start:batch_end]
+            batch_output_cols = self.output_cols[batch_start:batch_end]
 
-            # index values through a join operation over dataset and its states
-            # In case of inplace transform, origin column name adds suffix (lsuffix=suffix)
-            transformed_dataset = (
-                transformed_dataset.join(
-                    input_col_state_df,
-                    on=transformed_dataset[input_col].cast(T.StringType()).equal_null(input_col_state_df[_CATEGORY]),
-                    how="left",
-                    lsuffix=suffix,
+            for input_col, output_col in zip(batch_input_cols, batch_output_cols):
+                input_col_state_df = state_df.filter(F.col(_COLUMN_NAME) == input_col)[
+                    [_CATEGORY, _INDEX]
+                ].with_column_renamed(_INDEX, output_col)
+
+                # index values through a join operation over dataset and its states
+                # In case of inplace transform, origin column name adds suffix (lsuffix=suffix)
+                transformed_dataset = (
+                    transformed_dataset.join(
+                        input_col_state_df,
+                        on=transformed_dataset[input_col]
+                        .cast(T.StringType())
+                        .equal_null(input_col_state_df[_CATEGORY]),
+                        how="left",
+                        lsuffix=suffix,
+                    )
+                    .drop(_CATEGORY)
+                    .drop(identifier.concat_names([input_col, suffix]))
                 )
-                .drop(_CATEGORY)
-                .drop(identifier.concat_names([input_col, suffix]))
-            )
 
-            # in case of duplicate column, filter them
-            output_cols = transformed_dataset.columns
-            if output_col not in output_cols:
-                output_cols.append(output_col)
-            transformed_dataset = transformed_dataset[output_cols]
+                # in case of duplicate column, filter them
+                output_cols = transformed_dataset.columns
+                if output_col not in output_cols:
+                    output_cols.append(output_col)
+                transformed_dataset = transformed_dataset[output_cols]
+
+            batch_table_name = snowpark_utils.random_name_for_temp_object(snowpark_utils.TempObjectType.TABLE)
+            transformed_dataset.write.save_as_table(  # type: ignore[call-overload]
+                batch_table_name,
+                mode="overwrite",
+                table_type="temporary",
+                statement_params=telemetry.get_statement_params(base.PROJECT, base.SUBPROJECT, self.__class__.__name__),
+            )
+            assert transformed_dataset._session is not None
+            transformed_dataset = transformed_dataset._session.table(batch_table_name)
 
         if _CATEGORY + suffix in transformed_dataset.columns:
             transformed_dataset = transformed_dataset.with_column_renamed(F.col(_CATEGORY + suffix), _CATEGORY)
@@ -589,48 +607,14 @@ class OrdinalEncoder(base.BaseTransformer):
 
         Returns:
             Transformed dataset with unknown values handled.
-
-        Raises:
-            SnowflakeMLException: If `self.handle_unknown="error"` and unknown values exist in the
-                transformed dataset.
         """
         if self.handle_unknown == "error":
-            # dataframe with unknown values
-            # columns: COLUMN_NAME, UNKNOWN_VALUE
-            unknown_df: Optional[snowpark.DataFrame] = None
-            for idx, input_col in enumerate(self.input_cols):
-                output_col = self.output_cols[idx]
-                unknown_columns = [
-                    F.lit(input_col),
-                    F.col(input_col),
-                ]
-                temp_df = (
-                    transformed_dataset[list({input_col, output_col})]
-                    .distinct()
-                    .filter(F.col(output_col).is_null())
-                    .select(unknown_columns)
-                    .to_df(["COLUMN_NAME", "UNKNOWN_VALUE"])
-                )
-                unknown_df = unknown_df.union_by_name(temp_df) if unknown_df is not None else temp_df
-
-            if unknown_df is None:
-                raise exceptions.SnowflakeMLException(
-                    error_code=error_codes.INTERNAL_PYTHON_ERROR,
-                    original_exception=ValueError(
-                        "Internal error caused by handle_unknown='error': empty input columns."
-                    ),
-                )
-
-            unknown_pandas = unknown_df.to_pandas(
-                statement_params=telemetry.get_statement_params(base.PROJECT, base.SUBPROJECT, self.__class__.__name__)
+            # batch columns to avoid query compilation OOM
+            self._check_unknown(
+                transformed_dataset,
+                batch=len(self.input_cols) > _COLUMN_BATCH_SIZE,
+                statement_params=telemetry.get_statement_params(base.PROJECT, base.SUBPROJECT, self.__class__.__name__),
             )
-            if not unknown_pandas.empty:
-                raise exceptions.SnowflakeMLException(
-                    error_code=error_codes.INVALID_DATA,
-                    original_exception=ValueError(
-                        f"Found unknown categories during transform:\n{unknown_pandas.to_string()}"
-                    ),
-                )
 
         if self.handle_unknown == "use_encoded_value":
             # left outer join has already filled unknown values with null
@@ -638,3 +622,91 @@ class OrdinalEncoder(base.BaseTransformer):
                 transformed_dataset = transformed_dataset.na.fill(self.unknown_value, self.output_cols)
 
         return transformed_dataset
+
+    def _check_unknown(
+        self,
+        dataset: snowpark.DataFrame,
+        statement_params: Dict[str, Any],
+        batch: bool = False,
+    ) -> None:
+        """
+        Check if there are unknown values in the output of the given dataset.
+
+        Args:
+            dataset: Dataset to check.
+            statement_params: Statement parameters for telemetry tracking.
+            batch: Whether to batch the dataset.
+
+        Raises:
+            SnowflakeMLException: If unknown values exist in the output of the given dataset.
+        """
+
+        def create_unknown_df(
+            dataset: snowpark.DataFrame,
+            input_cols: List[str],
+            output_cols: List[str],
+        ) -> snowpark.DataFrame:
+            # dataframe with unknown values
+            # columns: COLUMN_NAME, UNKNOWN_VALUE
+            unknown_df: Optional[snowpark.DataFrame] = None
+            for input_col, output_col in zip(input_cols, output_cols):
+                unknown_columns = [
+                    F.lit(input_col),
+                    F.col(input_col),
+                ]
+                temp_df = (
+                    dataset[list({input_col, output_col})]
+                    .distinct()
+                    .filter(F.col(output_col).is_null())
+                    .select(unknown_columns)
+                    .to_df(["COLUMN_NAME", "UNKNOWN_VALUE"])
+                )
+                unknown_df = unknown_df.union_by_name(temp_df) if unknown_df is not None else temp_df
+            assert unknown_df is not None, "Internal error by handle_unknown='error': Empty input columns."
+            return unknown_df
+
+        unknown_pandas_list = []
+        if batch:
+            batch_writes = []
+            for batch_start in range(0, len(self.input_cols), _COLUMN_BATCH_SIZE):
+                batch_end = min(batch_start + _COLUMN_BATCH_SIZE, len(self.input_cols))
+                batch_input_cols = self.input_cols[batch_start:batch_end]
+                batch_output_cols = self.output_cols[batch_start:batch_end]
+                batch_dataset = dataset[list(set(batch_input_cols + batch_output_cols))]
+                batch_table_name = snowpark_utils.random_name_for_temp_object(snowpark_utils.TempObjectType.TABLE)
+                job = batch_dataset.write.save_as_table(
+                    batch_table_name,
+                    mode="overwrite",
+                    table_type="temporary",
+                    block=False,
+                    statement_params=statement_params,
+                )
+                batch_writes.append((job, batch_table_name, batch_input_cols, batch_output_cols))
+
+            to_pandas_async_jobs = []
+            for job, batch_table_name, batch_input_cols, batch_output_cols in batch_writes:
+                job.result(result_type="no_result")
+                assert dataset._session is not None
+                unknown_df = create_unknown_df(
+                    dataset._session.table(batch_table_name), batch_input_cols, batch_output_cols
+                )
+                job = unknown_df.to_pandas(block=False, statement_params=statement_params)
+                to_pandas_async_jobs.append(job)
+
+            for job in to_pandas_async_jobs:
+                unknown_pandas = job.result(result_type="pandas")
+                if not unknown_pandas.empty:
+                    unknown_pandas_list.append(unknown_pandas)
+        else:
+            unknown_df = create_unknown_df(dataset, self.input_cols, self.output_cols)
+            unknown_pandas = unknown_df.to_pandas(statement_params=statement_params)
+            if not unknown_pandas.empty:
+                unknown_pandas_list.append(unknown_pandas)
+
+        if unknown_pandas_list:
+            concat_unknown_pandas = pd.concat(unknown_pandas_list, ignore_index=True)
+            msg = f"Found unknown categories during transform:\n{concat_unknown_pandas.to_string()}"
+            raise exceptions.SnowflakeMLException(
+                error_code=error_codes.INVALID_DATA,
+                original_exception=ValueError(msg),
+            )

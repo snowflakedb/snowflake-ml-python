@@ -7,6 +7,7 @@ from enum import Enum
 from typing import Dict, List, Optional
 
 from snowflake.ml._internal.utils.identifier import (
+    concat_names,
     get_inferred_name,
     get_unescaped_names,
 )
@@ -105,6 +106,8 @@ class FeatureView:
         self._database: Optional[str] = None
         self._schema: Optional[str] = None
         self._warehouse: Optional[str] = None
+        self._refresh_mode: Optional[str] = None
+        self._refresh_mode_reason: Optional[str] = None
         self._validate()
 
     def slice(self, names: List[str]) -> FeatureViewSlice:
@@ -128,19 +131,27 @@ class FeatureView:
             res.append(name)
         return FeatureViewSlice(self, res)
 
-    def fully_qualified_name(self) -> str:
-        """
-        Returns the fully qualified name for the FeatureView in Snowflake storage.
+    def physical_name(self) -> str:
+        """Returns the physical name for this feature in Snowflake.
 
         Returns:
-            fully qualified name string
+            Physical name string.
 
         Raises:
             RuntimeError: if the FeatureView is not materialized.
         """
         if self.status == FeatureViewStatus.DRAFT:
             raise RuntimeError(f"FeatureView {self.name} has not been materialized.")
-        return f"{self._database}.{self._schema}.{self.name}{FEATURE_VIEW_NAME_DELIMITER}{self.version}"
+        return FeatureView._get_physical_name(self.name, self.version)
+
+    def fully_qualified_name(self) -> str:
+        """Returns the fully qualified name (<database_name>.<schema_name>.<feature_view_name>) for the
+            FeatureView in Snowflake.
+
+        Returns:
+            fully qualified name string.
+        """
+        return f"{self._database}.{self._schema}.{self.physical_name()}"
 
     def attach_feature_desc(self, descs: Dict[str, str]) -> FeatureView:
         """
@@ -225,6 +236,14 @@ class FeatureView:
     def output_schema(self) -> StructType:
         return self._feature_df.schema
 
+    @property
+    def refresh_mode(self) -> Optional[str]:
+        return self._refresh_mode
+
+    @property
+    def refresh_mode_reason(self) -> Optional[str]:
+        return self._refresh_mode_reason
+
     def _get_query(self) -> str:
         if len(self._feature_df.queries["queries"]) != 1:
             raise ValueError(
@@ -284,6 +303,8 @@ Got {len(self._feature_df.queries['queries'])}: {self._feature_df.queries['queri
             and self.refresh_freq == other.refresh_freq
             and str(self.status) == str(other.status)
             and self.warehouse == other.warehouse
+            and self.refresh_mode == other.refresh_mode
+            and self.refresh_mode_reason == other.refresh_mode_reason
         )
 
     def _to_dict(self) -> Dict[str, str]:
@@ -293,6 +314,13 @@ Got {len(self._feature_df.queries['queries'])}: {self._feature_df.queries['queri
         fv_dict["_entities"] = [e.__dict__ for e in self._entities]
         fv_dict["_status"] = str(self._status)
         return fv_dict
+
+    def to_df(self, session: Session) -> DataFrame:
+        values = list(self._to_dict().values())
+        schema = [x.lstrip("_") for x in list(self._to_dict().keys())]
+        values.append(self.physical_name())
+        schema.append("physical_name")
+        return session.create_dataframe([values], schema=schema)
 
     def to_json(self) -> str:
         state_dict = self._to_dict()
@@ -318,6 +346,18 @@ Got {len(self._feature_df.queries['queries'])}: {self._feature_df.queries['queri
             database=json_dict["_database"],
             schema=json_dict["_schema"],
             warehouse=json_dict["_warehouse"],
+            refresh_mode=json_dict["_refresh_mode"],
+            refresh_mode_reason=json_dict["_refresh_mode_reason"],
+        )
+
+    @staticmethod
+    def _get_physical_name(fv_name: Optional[str], fv_version: Optional[str]) -> str:
+        return concat_names(
+            [
+                fv_name if fv_name is not None else "",
+                FEATURE_VIEW_NAME_DELIMITER,
+                fv_version if fv_version is not None else "",
+            ]
         )
 
     @staticmethod
@@ -334,6 +374,8 @@ Got {len(self._feature_df.queries['queries'])}: {self._feature_df.queries['queri
         database: Optional[str],
         schema: Optional[str],
         warehouse: Optional[str],
+        refresh_mode: Optional[str],
+        refresh_mode_reason: Optional[str],
     ) -> FeatureView:
         fv = FeatureView(
             name=name,
@@ -348,5 +390,7 @@ Got {len(self._feature_df.queries['queries'])}: {self._feature_df.queries['queri
         fv._database = database
         fv._schema = schema
         fv._warehouse = warehouse
+        fv._refresh_mode = refresh_mode
+        fv._refresh_mode_reason = refresh_mode_reason
         fv.attach_feature_desc(feature_descs)
         return fv

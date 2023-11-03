@@ -6,18 +6,19 @@ import string
 import tempfile
 import time
 from abc import ABC
-from typing import Any, Dict, Optional, Tuple, cast
+from contextlib import contextmanager
+from typing import Any, Dict, Generator, Optional, Tuple, cast
 
 import yaml
 from typing_extensions import Unpack
 
-from snowflake.ml._internal import env_utils, file_utils
+from snowflake.ml._internal import file_utils
 from snowflake.ml._internal.exceptions import (
     error_codes,
     exceptions as snowml_exceptions,
 )
 from snowflake.ml._internal.utils import identifier, query_result_checker
-from snowflake.ml.model import _model_meta, type_hints
+from snowflake.ml.model import type_hints
 from snowflake.ml.model._deploy_client.image_builds import (
     base_image_builder,
     client_image_builder,
@@ -30,16 +31,41 @@ from snowflake.ml.model._deploy_client.utils import (
     image_registry_client,
     snowservice_client,
 )
+from snowflake.ml.model._packager.model_meta import model_meta, model_meta_schema
 from snowflake.snowpark import Session
 
 logger = logging.getLogger(__name__)
+
+
+@contextmanager
+def _debug_aware_tmp_directory(debug_dir: Optional[str] = None) -> Generator[str, None, None]:
+    """Debug-aware directory provider.
+
+    Args:
+        debug_dir: A folder for deploymement context.
+
+    Yields:
+        A directory path to write deployment artifacts
+    """
+    create_temp = False
+    if debug_dir:
+        directory_path = debug_dir
+    else:
+        temp_dir_context = tempfile.TemporaryDirectory()
+        directory_path = temp_dir_context.name
+        create_temp = True
+    try:
+        yield directory_path
+    finally:
+        if create_temp:
+            temp_dir_context.cleanup()
 
 
 def _deploy(
     session: Session,
     *,
     model_id: str,
-    model_meta: _model_meta.ModelMetadata,
+    model_meta: model_meta.ModelMetadata,
     service_func_name: str,
     model_zip_stage_path: str,
     deployment_stage_path: str,
@@ -120,28 +146,22 @@ def _deploy(
         if options.use_gpu:
             # Make mypy happy
             assert options.num_gpus is not None
-            if model_meta.cuda_version is None:
+            if model_meta_deploy.env.cuda_version is None:
                 raise snowml_exceptions.SnowflakeMLException(
                     error_code=error_codes.INVALID_ARGUMENT,
                     original_exception=ValueError(
                         "You are requesting GPUs for models that do not use a GPU or does not have CUDA version set."
                     ),
                 )
-            if model_meta.cuda_version:
-                (
-                    model_meta_deploy._conda_dependencies,
-                    model_meta_deploy._pip_requirements,
-                ) = env_utils.generate_env_for_cuda(
-                    model_meta._conda_dependencies, model_meta._pip_requirements, model_meta.cuda_version
-                )
+            if model_meta.env.cuda_version:
+                model_meta.env.generate_env_for_cuda()
+            # Set conda-forge as backup channel for SPCS deployment
+            if "conda-forge" not in model_meta_deploy.env._conda_dependencies:
+                model_meta_deploy.env._conda_dependencies["conda-forge"] = []
         else:
             # If user does not need GPU, we set this copies cuda_version to None, thus when Image builder gets a
             # not-None cuda_version, it gets to know that GPU is required.
-            model_meta_deploy._cuda_version = None
-
-        # Set conda-forge as backup channel for SPCS deployment
-        if "conda-forge" not in model_meta_deploy._conda_dependencies:
-            model_meta_deploy._conda_dependencies["conda-forge"] = []
+            model_meta_deploy.env._cuda_version = None
 
         _validate_compute_pool(session, options=options)
 
@@ -267,7 +287,7 @@ class SnowServiceDeployment(ABC):
         self,
         session: Session,
         model_id: str,
-        model_meta: _model_meta.ModelMetadata,
+        model_meta: model_meta.ModelMetadata,
         service_func_name: str,
         model_zip_stage_path: str,
         deployment_stage_path: str,
@@ -300,6 +320,10 @@ class SnowServiceDeployment(ABC):
         self._service_name = identifier.get_schema_level_object_identifier(db, schema, f"service_{model_id}")
         # Spec file and future deployment related artifacts will be stored under {stage}/models/{model_id}
         self._model_artifact_stage_location = posixpath.join(deployment_stage_path, "models", self.id)
+        self.debug_dir: Optional[str] = None
+        if self.options.debug_mode:
+            self.debug_dir = tempfile.mkdtemp()
+            logger.warning(f"Debug model is enabled, deployment artifacts will be available in {self.debug_dir}")
 
     def deploy(self) -> type_hints.SnowparkContainerServiceDeployDetails:
         """
@@ -313,7 +337,7 @@ class SnowServiceDeployment(ABC):
             full_image_name = self.options.prebuilt_snowflake_image
             (service_spec, service_function_sql) = self._deploy_workflow(self.options.prebuilt_snowflake_image)
         else:
-            with tempfile.TemporaryDirectory() as context_dir:
+            with _debug_aware_tmp_directory(debug_dir=self.debug_dir) as context_dir:
                 extra_kwargs = {}
                 if self.options.model_in_image:
                     extra_kwargs = {
@@ -392,7 +416,7 @@ class SnowServiceDeployment(ABC):
         # issue because model dependency is also captured in the model env/ folder, which will be hashed. The aim is to
         # reuse the same Docker image even if the user logs a similar model without new dependencies.
         docker_context_dir_hash = file_utils.hash_directory(
-            context_dir, ignore_hidden=True, excluded_files=[_model_meta.ModelMetadata.MODEL_METADATA_FILE]
+            context_dir, ignore_hidden=True, excluded_files=[model_meta.MODEL_METADATA_FILE]
         )
         # By default, we associate a 'latest' tag with each of our created images for easy existence checking.
         # Additional tags are added for readability.
@@ -440,8 +464,8 @@ class SnowServiceDeployment(ABC):
                 os.path.join(os.path.dirname(__file__), "templates/service_spec_template")
             )
 
-        with tempfile.TemporaryDirectory() as tempdir:
-            spec_file_path = os.path.join(tempdir, f"{constants.SERVICE_SPEC}.yaml")
+        with _debug_aware_tmp_directory(self.debug_dir) as dir_path:
+            spec_file_path = os.path.join(dir_path, f"{constants.SERVICE_SPEC}.yaml")
 
             with open(spec_template_path, encoding="utf-8") as template, open(
                 spec_file_path, "w+", encoding="utf-8"
@@ -496,6 +520,25 @@ class SnowServiceDeployment(ABC):
             )
             return spec_file_yaml_string
 
+    def _get_max_batch_rows(self) -> Optional[int]:
+        # To avoid too large batch in HF LLM case
+        max_batch_rows = None
+        if self.options.use_gpu:
+            for model_blob_meta in self.model_meta.models.values():
+                if model_blob_meta.model_type == "huggingface_pipeline":
+                    model_blob_options_hf = cast(
+                        model_meta_schema.HuggingFacePipelineModelBlobOptions, model_blob_meta.options
+                    )
+                    batch_size = model_blob_options_hf["batch_size"]
+                if model_blob_meta.model_type == "llm":
+                    model_blob_options_llm = cast(model_meta_schema.LLMModelBlobOptions, model_blob_meta.options)
+                    batch_size = model_blob_options_llm["batch_size"]
+                if max_batch_rows is None:
+                    max_batch_rows = batch_size
+                else:
+                    max_batch_rows = min(batch_size, max_batch_rows)
+        return max_batch_rows
+
     def _deploy_workflow(self, image: str) -> Tuple[str, str]:
         """This function handles workflow deployment to SnowService with the given image.
 
@@ -522,19 +565,10 @@ class SnowServiceDeployment(ABC):
             resource_name=self._service_name, resource_type=constants.ResourceType.SERVICE
         )
 
-        # To avoid too large batch in HF LLM case
-        max_batch_rows = None
-        if self.options.use_gpu:
-            for model_blob_meta in self.model_meta.models.values():
-                if model_blob_meta.model_type == "huggingface_pipeline":
-                    max_batch_rows = int(model_blob_meta.options.get("batch_size", 1))
-                if model_blob_meta.model_type == "llm":
-                    max_batch_rows = int(model_blob_meta.options.get("batch_size", 1))
-
         service_function_sql = client.create_or_replace_service_function(
             service_func_name=self.service_func_name,
             service_name=self._service_name,
             endpoint_name=constants.PREDICT,
-            max_batch_rows=max_batch_rows,
+            max_batch_rows=self._get_max_batch_rows(),
         )
         return (service_spec_string, service_function_sql)

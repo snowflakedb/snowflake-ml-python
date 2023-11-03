@@ -1,0 +1,16 @@
+load("//bazel:py_rules.bzl", "py_library")
+
+package(default_visibility = ["//visibility:public"])
+
+py_library(
+    name = "handler_generator",
+    srcs = ["handler_generator.py"],
+    data = [
+        "infer_handler.py_template",
+    ],
+)
+
+py_library(
+    name = "module_method",
+    srcs = ["module_method.py"],
+)
