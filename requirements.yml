@@ -108,6 +108,9 @@
   version_requirements: '>=2022.11,<2024'
 - name: httpx
   dev_version: 0.23.0
+- name: importlib_resources
+  dev_version: 5.1.4
+  version_requirements: '>=5.1.4, <6'
 - name: inflection
   dev_version: 0.5.1
   tags:

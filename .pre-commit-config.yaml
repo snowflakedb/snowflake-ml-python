@@ -69,6 +69,10 @@ repos:
         args:
           - --warnings=all
         files: \.(bzl|bazel|sky)$
+        exclude: >
+          (?x)^(
+              snowflake/ml/requirements.bzl
+          )$
       # - id: buildifier-lint
       #   args: *args
   - repo: https://github.com/crate-ci/typos  # config: _typos.toml

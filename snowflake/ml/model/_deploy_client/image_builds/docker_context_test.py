@@ -9,9 +9,9 @@ import sklearn.datasets as datasets
 from absl.testing import absltest
 from sklearn import neighbors
 
-from snowflake.ml.model import _model as model_api
 from snowflake.ml.model._deploy_client.image_builds import docker_context
 from snowflake.ml.model._deploy_client.utils import constants
+from snowflake.ml.model._packager import model_packager
 from snowflake.snowpark import FileOperation, GetResult, Session
 
 _IRIS = datasets.load_iris(as_frame=True)
@@ -30,12 +30,14 @@ class DockerContextTest(absltest.TestCase):
         self.context_dir = tempfile.mkdtemp()
         self.model_dir = tempfile.mkdtemp()
 
-        self.model_meta = model_api._save(
+        self.packager = model_packager.ModelPackager(self.model_dir)
+        self.packager.save(
             name="model",
-            local_dir_path=self.model_dir,
             model=_get_sklearn_model(),
             sample_input=_IRIS_X,
         )
+        assert self.packager.meta
+        self.model_meta = self.packager.meta
 
         self.docker_context = docker_context.DockerContext(self.context_dir, model_meta=self.model_meta)
 
@@ -83,14 +85,16 @@ class DockerContextTestCuda(absltest.TestCase):
         self.context_dir = tempfile.mkdtemp()
         self.model_dir = tempfile.mkdtemp()
 
-        self.model_meta = model_api._save(
+        self.packager = model_packager.ModelPackager(self.model_dir)
+        self.packager.save(
             name="model",
-            local_dir_path=self.model_dir,
             model=_get_sklearn_model(),
             sample_input=_IRIS_X,
         )
+        assert self.packager.meta
+        self.model_meta = self.packager.meta
 
-        self.model_meta.cuda_version = "11.7.1"
+        self.model_meta.env.cuda_version = "11.7.1"
 
         self.docker_context = docker_context.DockerContext(self.context_dir, model_meta=self.model_meta)
 
@@ -140,14 +144,16 @@ class DockerContextTestModelWeights(absltest.TestCase):
         self.context_dir = tempfile.mkdtemp()
         self.model_dir = tempfile.mkdtemp()
 
-        self.model_meta = model_api._save(
+        self.packager = model_packager.ModelPackager(self.model_dir)
+        self.packager.save(
             name="model",
-            local_dir_path=self.model_dir,
             model=_get_sklearn_model(),
             sample_input=_IRIS_X,
         )
+        assert self.packager.meta
+        self.model_meta = self.packager.meta
 
-        self.model_meta.cuda_version = "11.7.1"
+        self.model_meta.env.cuda_version = "11.7.1"
 
         self.mock_session = absltest.mock.MagicMock(spec=Session)
         self.model_zip_stage_path = "@model_repo/model.zip"

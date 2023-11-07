@@ -12,13 +12,13 @@ from tests.integ.snowflake.ml.modeling.framework import utils
 
 _ROWS = 100
 _TYPES = [utils.DataType.INTEGER] * 4 + [utils.DataType.FLOAT]
-_BINARY_DATA, _PD_SCHEMA, _SF_SCHEMA = utils.gen_fuzz_data(
+_BINARY_DATA, _SF_SCHEMA = utils.gen_fuzz_data(
     rows=_ROWS,
     types=_TYPES,
     low=0,
     high=2,
 )
-_MULTICLASS_DATA, _, _ = utils.gen_fuzz_data(
+_MULTICLASS_DATA, _ = utils.gen_fuzz_data(
     rows=_ROWS,
     types=_TYPES,
     low=0,
@@ -45,7 +45,7 @@ class RecallScoreTest(parameterized.TestCase):
         {"params": {"labels": [None, [2, 0, 4]]}},
     )
     def test_labels(self, params: Dict[str, Any]) -> None:
-        pandas_df, input_df = utils.get_df(self._session, _MULTICLASS_DATA, _PD_SCHEMA)
+        pandas_df, input_df = utils.get_df(self._session, _MULTICLASS_DATA, _SF_SCHEMA)
 
         for labels in params["labels"]:
             actual_r = snowml_metrics.recall_score(
@@ -67,7 +67,7 @@ class RecallScoreTest(parameterized.TestCase):
         {"params": {"pos_label": [0, 2, 4]}},
     )
     def test_pos_label(self, params: Dict[str, Any]) -> None:
-        pandas_df, input_df = utils.get_df(self._session, _MULTICLASS_DATA, _PD_SCHEMA)
+        pandas_df, input_df = utils.get_df(self._session, _MULTICLASS_DATA, _SF_SCHEMA)
 
         for pos_label in params["pos_label"]:
             actual_r = snowml_metrics.recall_score(
@@ -89,7 +89,7 @@ class RecallScoreTest(parameterized.TestCase):
         {"params": {"average": [None, "micro", "macro", "weighted"]}},
     )
     def test_average_multiclass(self, params: Dict[str, Any]) -> None:
-        pandas_df, input_df = utils.get_df(self._session, _MULTICLASS_DATA, _PD_SCHEMA)
+        pandas_df, input_df = utils.get_df(self._session, _MULTICLASS_DATA, _SF_SCHEMA)
 
         for average in params["average"]:
             actual_r = snowml_metrics.recall_score(
@@ -115,7 +115,7 @@ class RecallScoreTest(parameterized.TestCase):
         },
     )
     def test_average_binary(self, params: Dict[str, Any]) -> None:
-        pandas_df, input_df = utils.get_df(self._session, _BINARY_DATA, _PD_SCHEMA)
+        pandas_df, input_df = utils.get_df(self._session, _BINARY_DATA, _SF_SCHEMA)
 
         for idx, average in enumerate(params["average"]):
             y_true = params["y_true"][idx]
@@ -149,7 +149,7 @@ class RecallScoreTest(parameterized.TestCase):
             data = values["data"]
             y_true = values["y_true"]
             y_pred = values["y_pred"]
-            pandas_df, input_df = utils.get_df(self._session, data, _PD_SCHEMA)
+            pandas_df, input_df = utils.get_df(self._session, data, _SF_SCHEMA)
 
             for sample_weight_col_name in params["sample_weight_col_name"]:
                 actual_r = snowml_metrics.recall_score(
@@ -176,7 +176,7 @@ class RecallScoreTest(parameterized.TestCase):
             [0, 0, 1, 0, 0, 0],
             [1, 0, 0, 0, 0, 0],
         ]
-        pandas_df, input_df = utils.get_df(self._session, data, _PD_SCHEMA)
+        pandas_df, input_df = utils.get_df(self._session, data, _SF_SCHEMA)
 
         for zero_division in params["zero_division"]:
             if zero_division == "warn":

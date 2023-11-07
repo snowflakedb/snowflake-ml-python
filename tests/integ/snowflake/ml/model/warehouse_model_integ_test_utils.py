@@ -1,15 +1,12 @@
 import posixpath
-import unittest
 from typing import Any, Callable, Dict, List, Literal, Optional, Tuple, Union
 
 import numpy as np
 import numpy.typing as npt
 import pandas as pd
-from packaging import version
 
 from snowflake.ml.model import (
-    _deployer,
-    _model as model_api,
+    _api as model_api,
     deploy_platforms,
     type_hints as model_types,
 )
@@ -28,18 +25,14 @@ def base_test_case(
     test_input: model_types.SupportedDataType,
     deploy_params: Dict[str, Tuple[Dict[str, Any], Callable[[Union[pd.DataFrame, SnowparkDataFrame]], Any]]],
     permanent_deploy: Optional[bool] = False,
-    test_released_version: Optional[str] = None,
     additional_dependencies: Optional[List[str]] = None,
 ) -> None:
-    version_args: Dict[str, Any] = {}
     tmp_stage = db._session.get_session_stage()
     conda_dependencies = [
         test_env_utils.get_latest_package_version_spec_in_server(db._session, "snowflake-snowpark-python")
     ]
     if additional_dependencies:
         conda_dependencies.extend(additional_dependencies)
-    # We only test when the test is added before the current version available in the server.
-    snowml_req_str = test_env_utils.get_latest_package_version_spec_in_server(db._session, "snowflake-ml-python")
 
     if permanent_deploy:
         permanent_deploy_args = {"permanent_udf_stage_location": f"@{full_qual_stage}/"}
@@ -48,17 +41,7 @@ def base_test_case(
         permanent_deploy_args = {}
         perm_model_name = "temp"
 
-    if test_released_version:
-        if version.parse(test_released_version) <= version.parse(snowml_req_str.split("==")[-1]):
-            actual_name = f"{name}_{perm_model_name}_released"
-            conda_dependencies.append(snowml_req_str)
-        else:
-            raise unittest.SkipTest(
-                f"Skip test on released version {test_released_version} which has not been available yet."
-            )
-    else:
-        actual_name = f"{name}_{perm_model_name}_current"
-        version_args["options"] = {"embed_local_ml_library": True}
+    actual_name = f"{name}_{perm_model_name}"
 
     model_api.save_model(
         name=actual_name,
@@ -67,8 +50,7 @@ def base_test_case(
         conda_dependencies=conda_dependencies,
         metadata={"author": "halu", "version": "1"},
         session=db._session,
-        model_stage_file_path=posixpath.join(tmp_stage, f"{actual_name}_{run_id}.zip"),
-        **version_args,
+        stage_path=posixpath.join(tmp_stage, f"{actual_name}_{run_id}"),
     )
 
     for target_method, (additional_deploy_options, check_func) in deploy_params.items():
@@ -80,10 +62,10 @@ def base_test_case(
             target_method_arg = None
         else:
             target_method_arg = target_method
-        deploy_info = _deployer.deploy(
+        deploy_info = model_api.deploy(
             name=function_name,
             session=db._session,
-            model_stage_file_path=posixpath.join(tmp_stage, f"{actual_name}_{run_id}.zip"),
+            stage_path=posixpath.join(tmp_stage, f"{actual_name}_{run_id}"),
             platform=deploy_platforms.TargetPlatform.WAREHOUSE,
             target_method=target_method_arg,
             options={
@@ -93,7 +75,7 @@ def base_test_case(
         )
 
         assert deploy_info is not None
-        res = _deployer.predict(session=db._session, deployment=deploy_info, X=test_input)
+        res = model_api.predict(session=db._session, deployment=deploy_info, X=test_input)
 
         check_func(res)
 

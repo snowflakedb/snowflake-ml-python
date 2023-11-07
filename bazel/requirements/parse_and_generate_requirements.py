@@ -375,7 +375,7 @@ def generate_requirements(
         )
         sys.stdout.writelines(results)
     elif (mode, format) == ("dev_version", "python"):
-        sys.stdout.writelines(f"REQUIREMENTS = {repr(snowflake_only_env)}\n")
+        sys.stdout.write(f"REQUIREMENTS = {json.dumps(snowflake_only_env, indent=4)}\n")
     elif (mode, format) == ("version_requirements", "bzl"):
         extras_requirements = list(filter(lambda req_info: filter_by_extras(req_info, True, False), requirements))
         extras_results: MutableMapping[str, Sequence[str]] = {}
@@ -414,7 +414,7 @@ def generate_requirements(
         )
         sys.stdout.write(
             "EXTRA_REQUIREMENTS = {extra_requirements}\n\nREQUIREMENTS = {requirements}\n".format(
-                extra_requirements=json.dumps(extras_results), requirements=json.dumps(results)
+                extra_requirements=json.dumps(extras_results, indent=4), requirements=json.dumps(results, indent=4)
             )
         )
     elif (mode, format) == ("version_requirements", "python"):

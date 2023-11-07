@@ -2,6 +2,7 @@ import datetime
 import json
 import logging
 import re
+import warnings
 from dataclasses import dataclass
 from enum import Enum
 from typing import Dict, List, Optional, Tuple, Union, cast
@@ -251,7 +252,7 @@ class FeatureStore:
                 the API will wait until the initial FeatureView data is generated.
 
         Returns:
-            FeatureView object with version and status populated.
+            A materialized FeatureView object.
 
         Raises:
             SnowflakeMLException: [ValueError] FeatureView is already registered, or duplicate name and version
@@ -277,7 +278,7 @@ class FeatureStore:
                     original_exception=ValueError(f"Entity {e.name} has not been registered."),
                 )
 
-        feature_view_name = self._get_feature_view_name(feature_view.name, version)
+        feature_view_name = FeatureView._get_physical_name(feature_view.name, version)
         dynamic_table_results = self._find_object("DYNAMIC TABLES", feature_view_name)
         view_results = self._find_object("VIEWS", feature_view_name)
         if len(dynamic_table_results) > 0 or len(view_results) > 0:
@@ -290,10 +291,7 @@ class FeatureStore:
             )
 
         fully_qualified_name = self._get_fully_qualified_name(feature_view_name)
-
-        entities = FEATURE_VIEW_ENTITY_TAG_DELIMITER.join(
-            [identifier.get_unescaped_names(e.name) for e in feature_view.entities]
-        )
+        entities = FEATURE_VIEW_ENTITY_TAG_DELIMITER.join([e.name for e in feature_view.entities])
         timestamp_col = (
             feature_view.timestamp_col if feature_view.timestamp_col is not None else TIMESTAMP_COL_PLACEHOLDER
         )
@@ -306,69 +304,21 @@ class FeatureStore:
         column_descs = ", ".join([f"{create_col_desc(col)}" for col in feature_view.output_schema.fields])
 
         if refresh_freq is not None:
-            schedule_task = False
-            if refresh_freq != "DOWNSTREAM" and timeparse(refresh_freq) is None:
-                cron_expr = refresh_freq
-                refresh_freq = "DOWNSTREAM"
-                schedule_task = True
-
+            schedule_task = refresh_freq != "DOWNSTREAM" and timeparse(refresh_freq) is None
             target_warehouse = self._config.default_warehouse if warehouse is None else warehouse
             target_warehouse = identifier.strip_wrapping_quotes(identifier.resolve_identifier(target_warehouse))
-
-            # TODO: cluster by join keys once DT supports that
-            try:
-                query = f"""CREATE DYNAMIC TABLE {fully_qualified_name} ({column_descs})
-                    TARGET_LAG = '{refresh_freq}'
-                    COMMENT = '{feature_view.desc}'
-                    TAG (
-                        {self._get_fully_qualified_name(FEATURE_VIEW_ENTITY_TAG)} = '{entities}',
-                        {self._get_fully_qualified_name(FEATURE_VIEW_TS_COL_TAG)} = '{timestamp_col}',
-                        {self._get_fully_qualified_name(FEATURE_STORE_OBJECT_TAG)} = ''
-                    )
-                    WAREHOUSE = "{target_warehouse}"
-                    AS {feature_view.query}
-                """
-                self._session.sql(query).collect(statement_params=self._telemetry_stmp)
-
-                self._session.sql(f"ALTER DYNAMIC TABLE {fully_qualified_name} REFRESH").collect(
-                    block=block, statement_params=self._telemetry_stmp
-                )
-
-                if schedule_task:
-                    self._session.sql(
-                        f"""CREATE TASK {fully_qualified_name}
-                            WAREHOUSE = "{target_warehouse}"
-                            SCHEDULE = 'USING CRON {cron_expr}'
-                            AS ALTER DYNAMIC TABLE {fully_qualified_name} REFRESH
-                        """
-                    ).collect(statement_params=self._telemetry_stmp)
-                    self._session.sql(
-                        f"""
-                        ALTER TASK {fully_qualified_name}
-                        SET TAG {self._get_fully_qualified_name(FEATURE_STORE_OBJECT_TAG)} = ''
-                    """
-                    ).collect(statement_params=self._telemetry_stmp)
-                    self._session.sql(f"ALTER TASK {fully_qualified_name} RESUME").collect(
-                        statement_params=self._telemetry_stmp
-                    )
-            except Exception as e:
-                self._session.sql(f"DROP DYNAMIC TABLE IF EXISTS {fully_qualified_name}").collect(
-                    statement_params=self._telemetry_stmp
-                )
-                raise snowml_exceptions.SnowflakeMLException(
-                    error_code=error_codes.INTERNAL_SNOWPARK_ERROR,
-                    original_exception=RuntimeError(
-                        f"Create dynamic table [\n{query}\n] or task {fully_qualified_name} failed: {e}."
-                    ),
-                ) from e
-
-            feature_view._version = version
-            feature_view._database = self._config.database
-            feature_view._schema = self._config.schema
-            feature_view._status = self._get_feature_view_status(feature_view)
-            feature_view._refresh_freq = refresh_freq
-            feature_view._warehouse = target_warehouse
-
+            self._create_dynamic_table(
+                feature_view_name,
+                feature_view,
+                fully_qualified_name,
+                column_descs,
+                entities,
+                schedule_task,
+                refresh_freq,
+                target_warehouse,
+                timestamp_col,
+                block,
+            )
         else:
             try:
                 query = f"""CREATE VIEW {fully_qualified_name} ({column_descs})
@@ -387,13 +337,8 @@ class FeatureStore:
                     original_exception=RuntimeError(f"Create view {fully_qualified_name} [\n{query}\n] failed: {e}"),
                 ) from e
 
-            feature_view._version = version
-            feature_view._database = self._config.database
-            feature_view._schema = self._config.schema
-            feature_view._status = FeatureViewStatus.STATIC
-
-        logger.info(f"Registered FeatureView {feature_view.name} with version {feature_view.version}.")
-        return feature_view
+        logger.info(f"Registered FeatureView {feature_view.name} with version {version}.")
+        return self.get_feature_view(feature_view.name, version)  # type: ignore[no-any-return]
 
     @telemetry.send_api_usage_telemetry(project=PROJECT)
     @snowpark_utils.private_preview(version="1.0.8")
@@ -416,8 +361,7 @@ class FeatureStore:
                 original_exception=ValueError(f"FeatureView {feature_view.name} has not been registered."),
             )
 
-        fv_name = self._get_feature_view_name(feature_view.name, feature_view.version)
-        return self._session.sql(f"SELECT * FROM {self._get_fully_qualified_name(fv_name)}")
+        return self._session.sql(f"SELECT * FROM {feature_view.fully_qualified_name()}")
 
     @telemetry.send_api_usage_telemetry(project=PROJECT)
     @snowpark_utils.private_preview(version="1.0.8")
@@ -426,7 +370,7 @@ class FeatureStore:
         entity_name: Optional[str] = None,
         feature_view_name: Optional[str] = None,
         as_dataframe: bool = True,
-    ) -> Union[DataFrame, List[FeatureView]]:
+    ) -> Union[Optional[DataFrame], List[FeatureView]]:
         """
         List FeatureViews in the FeatureStore.
         If entity_name is specified, FeatureViews associated with that Entity will be listed.
@@ -449,12 +393,11 @@ class FeatureStore:
                 fvs.append(self._compose_feature_view(row))
 
         if as_dataframe:
-            values = []
-            schema = None
+            result = None
             for fv in fvs:
-                values.append(list(fv._to_dict().values()))
-                schema = [x.lstrip("_") for x in list(fv._to_dict().keys())] if schema is None else schema
-            return self._session.create_dataframe(values, schema=schema)
+                fv_df = fv.to_df(self._session)
+                result = fv_df if result is None else result.union(fv_df)  # type: ignore[attr-defined]
+            return result
         else:
             return fvs
 
@@ -475,7 +418,7 @@ class FeatureStore:
             SnowflakeMLException: [ValueError] FeatureView with name and version is not found,
                 or incurred exception when reconstructing the FeatureView object.
         """
-        fv_name = self._get_feature_view_name(name, version)
+        fv_name = FeatureView._get_physical_name(name, version)
         results = self._get_backend_representations(fv_name)
         if len(results) != 1:
             raise snowml_exceptions.SnowflakeMLException(
@@ -651,9 +594,7 @@ class FeatureStore:
                 original_exception=ValueError(f"FeatureView {feature_view.name} has not been registered."),
             )
 
-        fully_qualified_name = self._get_fully_qualified_name(
-            self._get_feature_view_name(feature_view.name, feature_view.version)
-        )
+        fully_qualified_name = feature_view.fully_qualified_name()
         if feature_view.status == FeatureViewStatus.STATIC:
             self._session.sql(f"DROP VIEW IF EXISTS {fully_qualified_name}").collect(
                 statement_params=self._telemetry_stmp
@@ -1030,6 +971,79 @@ class FeatureStore:
             ) from e
         logger.info(f"Feature store {self._config.full_schema_path} has been cleared.")
 
+    def _create_dynamic_table(
+        self,
+        feature_view_name: str,
+        feature_view: FeatureView,
+        fully_qualified_name: str,
+        column_descs: str,
+        entities: str,
+        schedule_task: bool,
+        refresh_freq: str,
+        warehouse: str,
+        timestamp_col: str,
+        block: bool,
+    ) -> None:
+        # TODO: cluster by join keys once DT supports that
+        try:
+            query = f"""CREATE DYNAMIC TABLE {fully_qualified_name} ({column_descs})
+                TARGET_LAG = '{'DOWNSTREAM' if schedule_task else refresh_freq}'
+                COMMENT = '{feature_view.desc}'
+                TAG (
+                    {self._get_fully_qualified_name(FEATURE_VIEW_ENTITY_TAG)} = '{entities}',
+                    {self._get_fully_qualified_name(FEATURE_VIEW_TS_COL_TAG)} = '{timestamp_col}',
+                    {self._get_fully_qualified_name(FEATURE_STORE_OBJECT_TAG)} = ''
+                )
+                WAREHOUSE = "{warehouse}"
+                AS {feature_view.query}
+            """
+            self._session.sql(query).collect(statement_params=self._telemetry_stmp)
+            self._session.sql(f"ALTER DYNAMIC TABLE {fully_qualified_name} REFRESH").collect(
+                block=block, statement_params=self._telemetry_stmp
+            )
+
+            if schedule_task:
+                self._session.sql(
+                    f"""CREATE TASK {fully_qualified_name}
+                        WAREHOUSE = "{warehouse}"
+                        SCHEDULE = 'USING CRON {refresh_freq}'
+                        AS ALTER DYNAMIC TABLE {fully_qualified_name} REFRESH
+                    """
+                ).collect(statement_params=self._telemetry_stmp)
+                self._session.sql(
+                    f"""
+                    ALTER TASK {fully_qualified_name}
+                    SET TAG {self._get_fully_qualified_name(FEATURE_STORE_OBJECT_TAG)} = ''
+                """
+                ).collect(statement_params=self._telemetry_stmp)
+                self._session.sql(f"ALTER TASK {fully_qualified_name} RESUME").collect(
+                    statement_params=self._telemetry_stmp
+                )
+        except Exception as e:
+            self._session.sql(f"DROP DYNAMIC TABLE IF EXISTS {fully_qualified_name}").collect(
+                statement_params=self._telemetry_stmp
+            )
+            raise snowml_exceptions.SnowflakeMLException(
+                error_code=error_codes.INTERNAL_SNOWPARK_ERROR,
+                original_exception=RuntimeError(
+                    f"Create dynamic table [\n{query}\n] or task {fully_qualified_name} failed: {e}."
+                ),
+            ) from e
+
+        found_dts = self._find_object("DYNAMIC TABLES", feature_view_name)
+        if len(found_dts) != 1:
+            raise snowml_exceptions.SnowflakeMLException(
+                error_code=error_codes.NOT_FOUND,
+                original_exception=ValueError(f"Can not find dynamic table: `{feature_view_name}`."),
+            )
+        if found_dts[0]["refresh_mode"] != "INCREMENTAL":
+            warnings.warn(
+                f"Dynamic table: `{fully_qualified_name}` will not refresh in INCREMENTAL mode. "
+                + "It will likely incurr bigger computation cost. "
+                + f"The reason is: {found_dts[0]['refresh_mode_reason']}",
+                category=UserWarning,
+            )
+
     def _dump_dataset(
         self,
         df: DataFrame,
@@ -1141,7 +1155,7 @@ class FeatureStore:
             join_keys = [k for e in f.entities for k in e.join_keys]
             join_keys_str = ", ".join(join_keys)
             assert f.version is not None
-            join_table_name = self._get_fully_qualified_name(self._get_feature_view_name(f.name, f.version))
+            join_table_name = f.fully_qualified_name()
 
             if spine_timestamp_col is not None and f.timestamp_col is not None:
                 if _ENABLE_ASOF_JOIN:
@@ -1276,9 +1290,6 @@ class FeatureStore:
 
         return complete_query
 
-    def _get_feature_view_name(self, raw_name: str, version: str) -> str:
-        return identifier.concat_names([raw_name, FEATURE_VIEW_NAME_DELIMITER, version])
-
     def _get_entity_name(self, raw_name: str) -> str:
         return identifier.concat_names([ENTITY_TAG_PREFIX, raw_name])
 
@@ -1292,15 +1303,14 @@ class FeatureStore:
         return dynamic_table_results + view_results
 
     def _update_feature_view_status(self, feature_view: FeatureView, operation: str) -> FeatureView:
+        assert operation in ["RESUME", "SUSPEND"], f"Operation: {operation} not supported"
         if feature_view.status == FeatureViewStatus.DRAFT or feature_view.version is None:
             raise snowml_exceptions.SnowflakeMLException(
                 error_code=error_codes.NOT_FOUND,
                 original_exception=ValueError(f"FeatureView {feature_view.name} has not been registered."),
             )
 
-        fully_qualified_name = self._get_fully_qualified_name(
-            self._get_feature_view_name(feature_view.name, feature_view.version)
-        )
+        fully_qualified_name = feature_view.fully_qualified_name()
         try:
             self._session.sql(f"ALTER DYNAMIC TABLE {fully_qualified_name} {operation}").collect(
                 statement_params=self._telemetry_stmp
@@ -1314,25 +1324,9 @@ class FeatureStore:
                 original_exception=RuntimeError(f"Failed to update feature view {fully_qualified_name}'s status: {e}"),
             ) from e
 
-        feature_view._status = self._get_feature_view_status(feature_view)
+        feature_view._status = self.get_feature_view(feature_view.name, feature_view.version).status
         logger.info(f"Successfully {operation} FeatureView {feature_view.name} with version {feature_view.version}.")
         return feature_view
-
-    def _get_feature_view_status(self, feature_view: FeatureView) -> FeatureViewStatus:
-        fv_name = self._get_feature_view_name(
-            feature_view.name,
-            feature_view.version if feature_view.version is not None else "",
-        )
-        results = self._get_backend_representations(fv_name)
-        if len(results) != 1:
-            raise snowml_exceptions.SnowflakeMLException(
-                error_code=error_codes.NOT_FOUND,
-                original_exception=ValueError(
-                    f"Failed to get status for {feature_view.name} with version {feature_view.version}: {results}"
-                ),
-            )
-
-        return FeatureViewStatus(results[0]["scheduling_state"])
 
     def _find_feature_views(self, entity_name: str, feature_view_name: Optional[str]) -> List[FeatureView]:
         if not self._validate_entity_exists(entity_name):
@@ -1370,7 +1364,7 @@ class FeatureStore:
             ) from e
         outputs = []
         for r in results:
-            if identifier.get_unescaped_names(entity_name) in r["TAG_VALUE"]:
+            if identifier.get_unescaped_names(entity_name) == identifier.get_unescaped_names(r["TAG_VALUE"]):
                 fv_name, version = r["OBJECT_NAME"].split(FEATURE_VIEW_NAME_DELIMITER)
                 if feature_view_name is not None:
                     if fv_name == identifier.get_unescaped_names(feature_view_name):
@@ -1383,6 +1377,8 @@ class FeatureStore:
 
     def _compose_feature_view(self, row: Row) -> FeatureView:
         name, version = row["name"].split(FEATURE_VIEW_NAME_DELIMITER)
+        name = identifier.get_inferred_name(name)
+        version = identifier.get_inferred_name(version)
 
         m = re.match(DT_QUERY_PATTERN, row["text"])
         if m is not None:
@@ -1402,11 +1398,13 @@ class FeatureStore:
                 desc=desc,
                 version=version,
                 status=FeatureViewStatus(row["scheduling_state"]),
-                feature_descs=self._fetch_column_descs("DYNAMIC TABLE", row["name"]),
+                feature_descs=self._fetch_column_descs("DYNAMIC TABLE", identifier.get_inferred_name(row["name"])),
                 refresh_freq=m.group("refresh_freq"),
                 database=self._config.database,
                 schema=self._config.schema,
                 warehouse=m.group("warehouse"),
+                refresh_mode=row["refresh_mode"],
+                refresh_mode_reason=row["refresh_mode_reason"],
             )
             return fv
 
@@ -1428,11 +1426,13 @@ class FeatureStore:
                 desc=desc,
                 version=version,
                 status=FeatureViewStatus.STATIC,
-                feature_descs=self._fetch_column_descs("VIEW", row["name"]),
+                feature_descs=self._fetch_column_descs("VIEW", identifier.get_inferred_name(row["name"])),
                 refresh_freq=None,
                 database=self._config.database,
                 schema=self._config.schema,
                 warehouse=None,
+                refresh_mode=None,
+                refresh_mode_reason=None,
             )
             return fv
 

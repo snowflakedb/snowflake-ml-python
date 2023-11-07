@@ -1,5 +1,16 @@
 # Release History
 
+## 1.0.12
+
+### Bug Fixes
+
+- Model Registry: Fix regression issue that container logging is not shown during model deployment to SPCS.
+- Model Development: Enhance the column capacity of OrdinalEncoder.
+
+### Behavior Changes
+
+- Model Registry: Raise early error when deploying to SPCS with db/schema that starts with underscore.
+
 ## 1.0.11
 
 ### New Features
@@ -17,6 +28,7 @@
 - Model Development: Fix support for XGBoost and LightGBM models using SKLearn Grid Search and Randomized Search model selectors.
 - Model Development: DecimalType is now supported as a DataType.
 - Model Development: Fix metrics compatibility with Snowpark Dataframes that use Snowflake identifiers
+- Model Registry: Resolve 'delete_deployment' not deleting the SPCS service in certain cases.
 
 ## 1.0.10
 

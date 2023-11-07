@@ -1,0 +1,23 @@
+load("//bazel:py_rules.bzl", "py_library", "py_test")
+
+package(default_visibility = ["//visibility:public"])
+
+py_library(
+    name = "model_env",
+    srcs = ["model_env.py"],
+    deps = [
+        "//snowflake/ml/_internal:env",
+        "//snowflake/ml/_internal:env_utils",
+        "//snowflake/ml/model/_packager/model_meta:model_meta_schema",
+    ],
+)
+
+py_test(
+    name = "model_env_test",
+    srcs = ["model_env_test.py"],
+    deps = [
+        ":model_env",
+        "//snowflake/ml/_internal:env",
+        "//snowflake/ml/_internal:env_utils",
+    ],
+)

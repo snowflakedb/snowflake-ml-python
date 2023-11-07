@@ -180,3 +180,21 @@ py_test(
         "//snowflake/ml/test_utils:mock_session",
     ],
 )
+
+py_library(
+    name = "sql_identifier",
+    srcs = ["sql_identifier.py"],
+    deps = [
+        "//snowflake/ml/_internal/utils:identifier",
+    ],
+)
+
+py_test(
+    name = "sql_identifier_test",
+    srcs = ["sql_identifier_test.py"],
+    deps = [
+        ":sql_identifier",
+        "//snowflake/ml/test_utils:mock_data_frame",
+        "//snowflake/ml/test_utils:mock_session",
+    ],
+)

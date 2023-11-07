@@ -29,6 +29,7 @@ py_test(
     name = "model_registry_compat_test",
     timeout = "long",
     srcs = ["model_registry_compat_test.py"],
+    shard_count = 2,
     deps = [
         "//snowflake/ml/registry:model_registry",
         "//tests/integ/snowflake/ml/test_utils:common_test_base",

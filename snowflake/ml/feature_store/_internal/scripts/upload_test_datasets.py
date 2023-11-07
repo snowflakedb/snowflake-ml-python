@@ -4,30 +4,68 @@
 from snowflake.ml._internal.utils import identifier
 from snowflake.ml.utils.connection_params import SnowflakeLoginOptions
 from snowflake.snowpark import Session
+from snowflake.snowpark.types import FloatType, IntegerType, StructField, StructType
 
-PARQUET_FILE_NAME = "yellow_tripdata_2016-01.parquet"
+# TODO these global parameters should be shared with those defined in feature_store/tests/common_utils.py
+FS_INTEG_TEST_DB = "SNOWML_FEATURE_STORE_TEST_DB"
+FS_INTEG_TEST_DATASET_SCHEMA = "TEST_DATASET"
+FS_INTEG_TEST_YELLOW_TRIP_DATA = "yellow_tripdata_2016_01"
+FS_INTEG_TEST_WINE_QUALITY_DATA = "wine_quality_data"
 
-PARQUET_FILE_LOCAL_PATH = f"file://~/Downloads/{PARQUET_FILE_NAME}"
+
+TRIPDATA_NAME = "yellow_tripdata_2016-01.parquet"
+WINEDATA_NAME = "winequality-red.csv"
+FILE_LOCAL_PATH = "file://~/Downloads/"
 
 
-def get_destination_table_name(original_file_name: str) -> str:
-    return original_file_name.split(".")[0].replace("-", "_").upper()
+def create_tripdata(sess: Session, overwrite_mode: str) -> None:
+    sess.file.put(f"{FILE_LOCAL_PATH}/{TRIPDATA_NAME}", sess.get_session_stage())
+    df = sess.read.parquet(f"{sess.get_session_stage()}/{TRIPDATA_NAME}")
+    for old_col_name in df.columns:
+        df = df.with_column_renamed(old_col_name, identifier.get_unescaped_names(old_col_name))
+
+    full_table_name = f"{FS_INTEG_TEST_DB}.{FS_INTEG_TEST_DATASET_SCHEMA}.{FS_INTEG_TEST_YELLOW_TRIP_DATA}"
+    df.write.mode(overwrite_mode).save_as_table(full_table_name)
+    rows_count = sess.sql(f"SELECT COUNT(*) FROM {full_table_name}").collect()[0][0]
+
+    print(f"{full_table_name} has total {rows_count} rows.")
+
+
+def create_winedata(sess: Session, overwrite_mode: str) -> None:
+    sess.file.put(f"{FILE_LOCAL_PATH}/{WINEDATA_NAME}", sess.get_session_stage())
+    input_schema = StructType(
+        [
+            StructField("fixed_acidity", FloatType()),
+            StructField("volatile_acidity", FloatType()),
+            StructField("citric_acid", FloatType()),
+            StructField("residual_sugar", FloatType()),
+            StructField("chlorides", FloatType()),
+            StructField("free_sulfur_dioxide", IntegerType()),
+            StructField("total_sulfur_dioxide", IntegerType()),
+            StructField("density", FloatType()),
+            StructField("pH", FloatType()),
+            StructField("sulphates", FloatType()),
+            StructField("alcohol", FloatType()),
+            StructField("quality", IntegerType()),
+        ]
+    )
+
+    full_table_name = f"{FS_INTEG_TEST_DB}.{FS_INTEG_TEST_DATASET_SCHEMA}.{FS_INTEG_TEST_WINE_QUALITY_DATA}"
+    df = (
+        sess.read.options({"field_delimiter": ",", "skip_header": 1})
+        .schema(input_schema)
+        .csv(f"{sess.get_session_stage()}/{WINEDATA_NAME}")
+    )
+    df.write.mode(overwrite_mode).save_as_table(full_table_name)
+    rows_count = sess.sql(f"SELECT COUNT(*) FROM {full_table_name}").collect()[0][0]
+
+    print(f"{full_table_name} has total {rows_count} rows.")
 
 
 if __name__ == "__main__":
     sess = Session.builder.configs(SnowflakeLoginOptions()).create()
-    current_db = "SNOWML_FEATURE_STORE_TEST_DB"
-    current_schema = "TEST_DATASET"
 
-    sess.file.put(PARQUET_FILE_LOCAL_PATH, sess.get_session_stage())
-    df = sess.read.parquet(f"{sess.get_session_stage()}/{PARQUET_FILE_NAME}")
-    for old_col_name in df.columns:
-        df = df.with_column_renamed(old_col_name, identifier.get_unescaped_names(old_col_name))
+    create_tripdata(sess, "overwrite")
+    create_winedata(sess, "overwrite")
 
-    table_name = get_destination_table_name(PARQUET_FILE_NAME)
-    full_table_name = f"{current_db}.{current_schema}.{table_name}"
-    df.write.mode("ignore").save_as_table(full_table_name)
-    rows_count = sess.sql(f"SELECT COUNT(*) FROM {full_table_name}").collect()[0][0]
-
-    print(f"{full_table_name} has total {rows_count} rows.")
     print("Script completes successfully.")

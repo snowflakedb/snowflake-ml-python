@@ -12,6 +12,12 @@ py_library(
 )
 
 py_library(
+    name = "test_env_utils",
+    testonly = True,
+    srcs = ["test_env_utils.py"],
+)
+
+py_library(
     name = "mock_snowml_base",
     testonly = True,
     srcs = ["mock_snowml_base.py"],
