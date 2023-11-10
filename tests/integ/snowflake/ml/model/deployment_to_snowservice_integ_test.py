@@ -12,9 +12,10 @@ from absl.testing import absltest
 # from sklearn import neighbors
 
 # from snowflake.ml.model import (
-#     _model as model_api,
+#     _api as model_api,
 #     _model_meta,
 #     custom_model,
+#     deploy_platforms,
 #     type_hints as model_types,
 # )
 # from snowflake.ml.model._deploy_client.snowservice import deploy as snowservice_api
@@ -80,11 +81,11 @@ from absl.testing import absltest
 #     def _save_model_to_stage(
 #         self, model: custom_model.CustomModel, sample_input: pd.DataFrame
 #     ) -> Tuple[str, _model_meta.ModelMetadata]:
-#         stage_path = f"@{self.TEST_STAGE}/{self.uid}/model.zip"
+#         stage_path = f"@{self.TEST_STAGE}/{self.uid}"
 #         meta = model_api.save_model(  # type: ignore[call-overload]
 #             name="model",
 #             session=self._session,
-#             model_stage_file_path=stage_path,
+#             stage_path=stage_path,
 #             model=model,
 #             sample_input=sample_input,
 #             options={"embed_local_ml_library": True},
@@ -92,7 +93,7 @@ from absl.testing import absltest
 #         return stage_path, meta
 
 #     def test_deployment_workflow(self) -> None:
-#         model_stage_file_path, meta = self._save_model_to_stage(model=_get_sklearn_model(), sample_input=_IRIS_X)
+#         stage_path, meta = self._save_model_to_stage(model=_get_sklearn_model(), sample_input=_IRIS_X)
 #         service_func_name = db_manager.TestObjectNameGenerator.get_snowml_test_object_name(
 #             self._RUN_ID, f"func_{self.uid}"
 #         )
@@ -103,16 +104,17 @@ from absl.testing import absltest
 #                 subdomain=constants.DEV_IMAGE_REGISTRY_SUBDOMAIN, repo=self.TEST_IMAGE_REPO
 #             ),
 #         }
-#         snowservice_api._deploy(
-#             self._session,
-#             model_id=uuid.uuid4().hex,
-#             model_meta=meta,
-#             service_func_name=service_func_name,
-#             model_zip_stage_path=model_stage_file_path,
-#             deployment_stage_path=model_stage_file_path,  # use the same stage for testing
-#             target_method="predict",
-#             **deployment_options,
-#         )
+#        model_api.deploy(
+#            name=service_func_name,
+#            session=self._session,
+#            stage_path=stage_path,
+#            platform=deploy_platforms.TargetPlatform.SNOWPARK_CONTAINER_SERVICES,
+#            target_method="predict",
+#            model_id=uuid.uuid4().hex,
+#            options={
+#                **deployment_options,
+#            },  # type: ignore[call-overload]
+#        )
 
 
 if __name__ == "__main__":

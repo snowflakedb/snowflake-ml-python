@@ -13,6 +13,7 @@ py_library(
     deps = [
         ":constants",
         "//snowflake/ml/_internal/exceptions",
+        "//snowflake/ml/_internal/utils:log_stream_processor",
         "//snowflake/ml/_internal/utils:uri",
     ],
 )

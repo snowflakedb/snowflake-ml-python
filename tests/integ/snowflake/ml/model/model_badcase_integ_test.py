@@ -7,8 +7,7 @@ from absl.testing import absltest
 
 from snowflake.ml._internal.exceptions import exceptions as snowml_exceptions
 from snowflake.ml.model import (
-    _deployer,
-    _model as model_api,
+    _api as model_api,
     custom_model,
     deploy_platforms,
     type_hints as model_types,
@@ -68,7 +67,7 @@ class TestModelBadCaseInteg(absltest.TestCase):
         model_api.save_model(
             name="custom_bad_model",
             session=self._session,
-            model_stage_file_path=posixpath.join(tmp_stage, "custom_bad_model.zip"),
+            stage_path=posixpath.join(tmp_stage, "custom_bad_model"),
             model=lm,
             sample_input=pd_df,
             metadata={"author": "halu", "version": "1"},
@@ -77,10 +76,10 @@ class TestModelBadCaseInteg(absltest.TestCase):
         )
         function_name = db_manager.TestObjectNameGenerator.get_snowml_test_object_name(self.run_id, "custom_bad_model")
         with self.assertRaises(snowml_exceptions.SnowflakeMLException) as e:
-            _ = _deployer.deploy(
+            _ = model_api.deploy(
                 session=self._session,
                 name=function_name,
-                model_stage_file_path=posixpath.join(tmp_stage, "custom_bad_model.zip"),
+                stage_path=posixpath.join(tmp_stage, "custom_bad_model"),
                 platform=deploy_platforms.TargetPlatform.WAREHOUSE,
                 target_method="predict",
                 options=model_types.WarehouseDeployOptions({"relax_version": False}),
@@ -93,10 +92,10 @@ class TestModelBadCaseInteg(absltest.TestCase):
         arr = np.random.randint(100, size=(10000, 3))
         pd_df = pd.DataFrame(arr, columns=["c1", "c2", "c3"])
 
-        model_metadata = model_api.save_model(
+        module_model = model_api.save_model(
             name="custom_demo_model",
             session=self._session,
-            model_stage_file_path=posixpath.join(tmp_stage, "custom_demo_model.zip"),
+            stage_path=posixpath.join(tmp_stage, "custom_demo_model"),
             model=lm,
             conda_dependencies=[
                 test_env_utils.get_latest_package_version_spec_in_server(self._session, "snowflake-snowpark-python")
@@ -105,14 +104,14 @@ class TestModelBadCaseInteg(absltest.TestCase):
             metadata={"author": "halu", "version": "1"},
         )
 
-        self.assertTrue(hasattr(model_metadata, "local_ml_library_version"))
+        self.assertIsNotNone(module_model.packager.meta.env._snowpark_ml_version.local)
 
         function_name = db_manager.TestObjectNameGenerator.get_snowml_test_object_name(self.run_id, "custom_demo_model")
         with self.assertRaises(snowml_exceptions.SnowflakeMLException) as e:
-            deploy_info = _deployer.deploy(
+            deploy_info = model_api.deploy(
                 session=self._session,
                 name=function_name,
-                model_stage_file_path=posixpath.join(tmp_stage, "custom_demo_model.zip"),
+                stage_path=posixpath.join(tmp_stage, "custom_demo_model"),
                 platform=deploy_platforms.TargetPlatform.WAREHOUSE,
                 target_method="predict",
                 options=model_types.WarehouseDeployOptions(
@@ -124,10 +123,10 @@ class TestModelBadCaseInteg(absltest.TestCase):
             )
             self.assertIsInstance(e.exception.original_exception, ValueError)
 
-        deploy_info = _deployer.deploy(
+        deploy_info = model_api.deploy(
             session=self._session,
             name=function_name,
-            model_stage_file_path=posixpath.join(tmp_stage, "custom_demo_model.zip"),
+            stage_path=posixpath.join(tmp_stage, "custom_demo_model"),
             platform=deploy_platforms.TargetPlatform.WAREHOUSE,
             target_method="predict",
             options=model_types.WarehouseDeployOptions(
@@ -137,7 +136,7 @@ class TestModelBadCaseInteg(absltest.TestCase):
             ),
         )
         assert deploy_info is not None
-        res = _deployer.predict(session=self._session, deployment=deploy_info, X=pd_df)
+        res = model_api.predict(session=self._session, deployment=deploy_info, X=pd_df)
 
         pd.testing.assert_frame_equal(
             res,
@@ -145,10 +144,10 @@ class TestModelBadCaseInteg(absltest.TestCase):
         )
 
         with self.assertRaises(snowpark_exceptions.SnowparkSQLException):
-            deploy_info = _deployer.deploy(
+            deploy_info = model_api.deploy(
                 session=self._session,
                 name=function_name,
-                model_stage_file_path=posixpath.join(tmp_stage, "custom_demo_model.zip"),
+                stage_path=posixpath.join(tmp_stage, "custom_demo_model"),
                 platform=deploy_platforms.TargetPlatform.WAREHOUSE,
                 target_method="predict",
                 options=model_types.WarehouseDeployOptions(
@@ -160,10 +159,10 @@ class TestModelBadCaseInteg(absltest.TestCase):
 
         self._db_manager.drop_function(function_name=function_name, args=["OBJECT"])
 
-        deploy_info = _deployer.deploy(
+        deploy_info = model_api.deploy(
             session=self._session,
             name=function_name,
-            model_stage_file_path=posixpath.join(tmp_stage, "custom_demo_model.zip"),
+            stage_path=posixpath.join(tmp_stage, "custom_demo_model"),
             platform=deploy_platforms.TargetPlatform.WAREHOUSE,
             target_method="predict",
             options=model_types.WarehouseDeployOptions(

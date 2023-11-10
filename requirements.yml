@@ -108,6 +108,9 @@
   version_requirements: '>=2022.11,<2024'
 - name: httpx
   dev_version: 0.23.0
+- name: importlib_resources
+  dev_version: 5.1.4
+  version_requirements: '>=5.1.4, <6'
 - name: inflection
   dev_version: 0.5.1
   tags:
@@ -221,7 +224,8 @@
   requirements_extra_tags:
     - tensorflow
 - name: tokenizers
-  dev_version: 0.13.2
+  dev_version_conda: 0.13.2
+  dev_version_pypi: 0.14.1
   version_requirements: '>=0.10,<1'
   requirements_extra_tags:
     - transformers
@@ -231,8 +235,9 @@
   requirements_extra_tags:
     - torch
 - name: transformers
-  dev_version: 4.32.1
-  version_requirements: '>=4.29.2,<5'
+  dev_version_conda: 4.32.1
+  dev_version_pypi: 4.35.0
+  version_requirements: '>=4.32.1,<5'
   requirements_extra_tags:
     - transformers
 - name: types-requests
@@ -268,5 +273,10 @@
 - name_pypi: peft
   dev_version_pypi: 0.5.0
   version_requirements_pypi: '>=0.5.0,<1'
+  requirements_extra_tags:
+    - llm
+- name_pypi: vllm
+  dev_version_pypi: 0.2.1.post1
+  version_requirements_pypi: '>=0.2.1.post1,<1'
   requirements_extra_tags:
     - llm

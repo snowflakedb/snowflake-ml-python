@@ -18,6 +18,9 @@ Overriding default implementation of py_{binary|library|test} to add additional 
      //bazel/platforms:snowflake_conda_env
    - None of the target can be built with the host platform (@local_config_platform//:host). However
      that platform is not the default platform (see .bazelrc).
+5. Similarly, a boolean attribute "require_gpu" is available in all the wrapped rules.
+   The value of this flag affects which platform and toolchain could be running the target as above.
+   Only toolchain supporting GPU would be able to run target tagged with "require_gpu=True"
 
 ### Setup
 ```python
@@ -44,33 +47,52 @@ def py_genrule(**attrs):
 
 _COMPATIBLE_WITH_SNOWPARK_TAG = "wheel_compatible_with_snowpark"
 
-def _add_target_compatibility_labels(compatible_with_snowpark, attrs):
+def _add_target_compatibility_labels(compatible_with_snowpark, require_gpu, attrs):
+    if compatible_with_snowpark and require_gpu:
+        fail("`require_gpu` is not compatible with snowpark.!")
     if compatible_with_snowpark:
         attrs["target_compatible_with"] = select({
             "//bazel/platforms:extended_conda_channels": [],
             "//bazel/platforms:snowflake_conda_channel": [],
+            "//conditions:default": ["@platforms//:incompatible"],
+        }) + select({
+            "//bazel/platforms:has_gpu": [],
+            "//bazel/platforms:no_gpu": [],
+            "//conditions:default": ["@platforms//:incompatible"],
+        })
+    elif require_gpu:
+        attrs["target_compatible_with"] = select({
+            "//bazel/platforms:extended_conda_channels": [],
+            "//conditions:default": ["@platforms//:incompatible"],
+        }) + select({
+            "//bazel/platforms:has_gpu": [],
             "//conditions:default": ["@platforms//:incompatible"],
         })
     else:
         attrs["target_compatible_with"] = select({
             "//bazel/platforms:extended_conda_channels": [],
             "//conditions:default": ["@platforms//:incompatible"],
+        }) + select({
+            "//bazel/platforms:has_gpu": [],
+            "//bazel/platforms:no_gpu": [],
+            "//conditions:default": ["@platforms//:incompatible"],
         })
 
-def py_binary(compatible_with_snowpark = True, **attrs):
+def py_binary(compatible_with_snowpark = True, require_gpu = False, **attrs):
     """Modified version of core py_binary to add check for experimental dependencies.
 
     See the Bazel core [py_binary](https://docs.bazel.build/versions/master/be/python.html#py_binary) documentation.
 
     Args:
       compatible_with_snowpark: see file-level document.
+      require_gpu: see file-level document.
       **attrs: Rule attributes
     """
     if not check_for_tests_dependencies(native.package_name(), attrs):
         fail("A target in src cannot depend on packages in tests!")
     if not check_for_experimental_dependencies(native.package_name(), attrs):
         fail("Non Experimental Target cannot depend on experimental library!")
-    _add_target_compatibility_labels(compatible_with_snowpark, attrs)
+    _add_target_compatibility_labels(compatible_with_snowpark, require_gpu, attrs)
 
     # Disable bazel's behavior to add __init__.py files to modules by default. This causes import errors. Context:
     # * https://bazel.build/reference/be/python#py_test.legacy_create_init
@@ -82,7 +104,7 @@ def py_binary(compatible_with_snowpark = True, **attrs):
     })
     native_py_binary(**attrs)
 
-def py_library(compatible_with_snowpark = True, **attrs):
+def py_library(compatible_with_snowpark = True, require_gpu = False, **attrs):
     """Modified version of core py_library to add additional imports and check for experimental dependencies.
 
     See the Bazel core [py_library](https://docs.bazel.build/versions/master/be/python.html#py_library) documentation.
@@ -103,23 +125,25 @@ def py_library(compatible_with_snowpark = True, **attrs):
 
     Args:
       compatible_with_snowpark: see file-level document.
+      require_gpu: see file-level document.
       **attrs: Rule attributes
     """
     if not check_for_tests_dependencies(native.package_name(), attrs):
         fail("A target in src cannot depend on packages in tests!")
     if not check_for_experimental_dependencies(native.package_name(), attrs):
         fail("Non Experimental Target cannot depend on experimental library!")
-    _add_target_compatibility_labels(compatible_with_snowpark, attrs)
+    _add_target_compatibility_labels(compatible_with_snowpark, require_gpu, attrs)
 
     native_py_library(**attrs)
 
-def py_test(compatible_with_snowpark = True, **attrs):
+def py_test(compatible_with_snowpark = True, require_gpu = False, **attrs):
     """Modified version of core py_binary to add check for experimental dependencies.
 
     See the Bazel core [py_test](https://docs.bazel.build/versions/master/be/python.html#py_test) documentation.
 
     Args:
       compatible_with_snowpark: see file-level document.
+      require_gpu: see file-level document.
       **attrs: Rule attributes
     """
     if not check_for_test_name(native.package_name(), attrs):
@@ -128,7 +152,7 @@ def py_test(compatible_with_snowpark = True, **attrs):
         fail("A target in src cannot depend on packages in tests!")
     if not check_for_experimental_dependencies(native.package_name(), attrs):
         fail("Non Experimental Target cannot depend on experimental library!")
-    _add_target_compatibility_labels(compatible_with_snowpark, attrs)
+    _add_target_compatibility_labels(compatible_with_snowpark, require_gpu, attrs)
 
     # Disable bazel's behavior to add __init__.py files to modules by default. This causes import errors. Context:
     # * https://bazel.build/reference/be/python#py_test.legacy_create_init

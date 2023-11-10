@@ -2,6 +2,8 @@ package(default_visibility = ["//visibility:public"])
 
 constraint_setting(name = "conda_env")
 
+constraint_setting(name = "gpu_env")
+
 constraint_value(
     name = "snowflake_conda_channel",
     constraint_setting = ":conda_env",
@@ -12,14 +14,39 @@ constraint_value(
     constraint_setting = ":conda_env",
 )
 
+constraint_value(
+    name = "has_gpu",
+    constraint_setting = ":gpu_env",
+)
+
+constraint_value(
+    name = "no_gpu",
+    constraint_setting = ":gpu_env",
+)
+
 platform(
     name = "snowflake_conda_env",
-    constraint_values = [":snowflake_conda_channel"],
+    constraint_values = [
+        ":snowflake_conda_channel",
+        ":no_gpu",
+    ],
     parents = ["@local_config_platform//:host"],
 )
 
 platform(
     name = "extended_conda_env",
-    constraint_values = [":extended_conda_channels"],
+    constraint_values = [
+        ":extended_conda_channels",
+        ":no_gpu",
+    ],
+    parents = ["@local_config_platform//:host"],
+)
+
+platform(
+    name = "extended_conda_gpu_env",
+    constraint_values = [
+        ":extended_conda_channels",
+        ":has_gpu",
+    ],
     parents = ["@local_config_platform//:host"],
 )

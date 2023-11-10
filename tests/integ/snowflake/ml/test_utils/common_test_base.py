@@ -52,7 +52,7 @@ class CommonTestBase(parameterized.TestCase):
 
     @classmethod
     def sproc_test(
-        kclass: Type[_V], local: bool = True, test_callers_rights=True
+        kclass: Type[_V], local: bool = True, test_callers_rights: bool = True
     ) -> Callable[[Callable[Concatenate[_V, _T_args], None]], Callable[Concatenate[_V, _T_args], None]]:
         def decorator(fn: Callable[Concatenate[_V, _T_args], None]) -> Callable[Concatenate[_V, _T_args], None]:
             @functools.wraps(fn)
@@ -95,7 +95,10 @@ class CommonTestBase(parameterized.TestCase):
 
                         imports = [snowml_zip_module_filename, tests_zip_module_filename]
                         packages = [
-                            req for req in _snowml_requirements.REQUIREMENTS if "snowflake-connector-python" not in req
+                            req
+                            for req in _snowml_requirements.REQUIREMENTS
+                            # Remove "_" not in req once Snowpark 1.11.0 available, it is a workaround for their bug.
+                            if "snowflake-connector-python" not in req and "_" not in req
                         ]
 
                         @F.sproc(  # type: ignore[misc]

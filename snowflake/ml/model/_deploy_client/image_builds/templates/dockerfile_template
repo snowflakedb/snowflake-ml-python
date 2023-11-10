@@ -1,16 +1,19 @@
 # Note that base image tag should not be 'latest' as it might cause false positive image cache hit.
 FROM ${base_image} as build
 
-COPY ${model_env_folder}/conda.yaml conda.yaml
+COPY ${model_env_folder}/conda.yml conda.yml
 COPY ${model_env_folder}/requirements.txt requirements.txt
 
 # Set MAMBA_DOCKERFILE_ACTIVATE=1 to activate the conda environment during build time.
 ARG MAMBA_DOCKERFILE_ACTIVATE=1
 
+# Bitsandbytes uses this ENVVAR to determine CUDA library location
+ENV CONDA_PREFIX=/opt/conda
+
 # The micromamba image comes with an empty environment named base.
 # CONDA_OVERRIDE_CUDA ref https://conda.io/projects/conda/en/latest/user-guide/tasks/manage-virtual.html
 RUN --mount=type=cache,target=/opt/conda/pkgs CONDA_OVERRIDE_CUDA="${cuda_override_env}" \
-    micromamba install -y -n base -f conda.yaml && \
+    micromamba install -y -n base -f conda.yml && \
 	python -m pip install "uvicorn[standard]" gunicorn starlette==0.30.0 && \
 	python -m pip install -r requirements.txt && \
     micromamba clean -afy
@@ -19,9 +22,8 @@ COPY ${inference_server_dir} ./${inference_server_dir}
 COPY ${entrypoint_script} ./${entrypoint_script}
 ${copy_model_statement}
 
-# Bitsandbytes uses this ENVVAR to determine CUDA library location
-ENV CONDA_PREFIX=/opt/conda
 ${extra_env_statement}
+
 
 USER root
 RUN if id mambauser >/dev/null 2>&1; then \

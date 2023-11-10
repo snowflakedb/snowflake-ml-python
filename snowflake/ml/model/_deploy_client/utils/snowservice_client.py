@@ -7,7 +7,7 @@ from snowflake.ml._internal.exceptions import (
     error_codes,
     exceptions as snowml_exceptions,
 )
-from snowflake.ml._internal.utils import uri
+from snowflake.ml._internal.utils import log_stream_processor, uri
 from snowflake.ml.model._deploy_client.utils import constants
 from snowflake.snowpark import Session
 
@@ -60,18 +60,20 @@ class SnowServiceClient:
                 MIN_INSTANCES={min_instances}
                 MAX_INSTANCES={max_instances}
          """
+        logger.info(f"Creating service {service_name}")
         logger.debug(f"Create service with SQL: \n {sql}")
         self.session.sql(sql).collect()
 
-    def create_job(self, compute_pool: str, spec_stage_location: str) -> str:
-        """Return the newly created Job ID.
+    def create_job(self, compute_pool: str, spec_stage_location: str) -> None:
+        """Execute the job creation SQL command. Note that the job creation is synchronous, hence we execute it in a
+        async way so that we can query the log in the meantime.
+
+        Upon job failure, full job container log will be logged.
 
         Args:
             compute_pool: name of the compute pool
             spec_stage_location: path to the stage location where the spec is located at.
 
-        Returns:
-            job id in string format.
         """
         stage, path = uri.get_stage_and_path(spec_stage_location)
         sql = f"""
@@ -81,9 +83,16 @@ class SnowServiceClient:
             SPEC = '{path}'
         """
         logger.debug(f"Create job with SQL: \n {sql}")
-        self.session.sql(sql).collect()
-        job_id = self.session.sql("SELECT LAST_QUERY_ID() AS QUERY_ID").collect()[0]["QUERY_ID"]
-        return str(job_id)
+        cur = self.session._conn._conn.cursor()
+        cur.execute_async(sql)
+        job_id = cur._sfqid
+        self.block_until_resource_is_ready(
+            resource_name=str(job_id),
+            resource_type=constants.ResourceType.JOB,
+            container_name=constants.KANIKO_CONTAINER_NAME,
+            max_retries=240,
+            retry_interval_secs=15,
+        )
 
     def _drop_service_if_exists(self, service_name: str) -> None:
         """Drop service if it already exists.
@@ -160,19 +169,35 @@ class SnowServiceClient:
             SnowflakeMLException: If the resource does not reach the ready/done state within the specified number
                 of retries.
         """
-        for attempt_idx in range(max_retries + 1):
-            status = self.get_resource_status(resource_name=resource_name, resource_type=resource_type)
-            if resource_type == constants.ResourceType.JOB and status == constants.ResourceStatus.DONE:
-                full_job_log = self.get_resource_log(
+        assert resource_type == constants.ResourceType.SERVICE or resource_type == constants.ResourceType.JOB
+        query_command = ""
+        if resource_type == constants.ResourceType.SERVICE:
+            query_command = f"CALL SYSTEM$GET_SERVICE_LOGS('{resource_name}', '0', '{container_name}')"
+        elif resource_type == constants.ResourceType.JOB:
+            query_command = f"CALL SYSTEM$GET_JOB_LOGS('{resource_name}', '{container_name}')"
+        logger.warning(
+            f"Best-effort log streaming from SPCS will be enabled when python logging level is set to INFO."
+            f"Alternatively, you can also query the logs by running the query '{query_command}'"
+        )
+        lsp = log_stream_processor.LogStreamProcessor()
+
+        for attempt_idx in range(max_retries):
+            if logger.level <= logging.INFO:
+                resource_log = self.get_resource_log(
                     resource_name=resource_name,
                     resource_type=resource_type,
                     container_name=container_name,
                 )
-                logger.debug(full_job_log)
+                lsp.process_new_logs(resource_log, log_level=logging.INFO)
+
+            status = self.get_resource_status(resource_name=resource_name, resource_type=resource_type)
+
+            if resource_type == constants.ResourceType.JOB and status == constants.ResourceStatus.DONE:
                 return
             elif resource_type == constants.ResourceType.SERVICE and status == constants.ResourceStatus.READY:
                 return
-            elif (
+
+            if (
                 status
                 in [
                     constants.ResourceStatus.FAILED,
@@ -180,19 +205,24 @@ class SnowServiceClient:
                     constants.ResourceStatus.INTERNAL_ERROR,
                     constants.ResourceStatus.DELETING,
                 ]
-                or attempt_idx >= max_retries
+                or attempt_idx >= max_retries - 1
             ):
+                if logger.level > logging.INFO:
+                    resource_log = self.get_resource_log(
+                        resource_name=resource_name,
+                        resource_type=resource_type,
+                        container_name=container_name,
+                    )
+                    # Show full error log when logging level is above INFO level. For INFO level and below, we already
+                    # show the log through logStreamProcessor above.
+                    logger.error(resource_log)
+
                 error_message = "failed"
-                if attempt_idx >= max_retries:
+                if attempt_idx >= max_retries - 1:
                     error_message = "does not reach ready/done status"
-                error_log = self.get_resource_log(
-                    resource_name=resource_name, resource_type=resource_type, container_name=container_name
-                )
+
                 if resource_type == constants.ResourceType.SERVICE:
                     self._drop_service_if_exists(service_name=resource_name)
-
-                if error_log:
-                    logger.error(error_log)
 
                 raise snowml_exceptions.SnowflakeMLException(
                     error_code=error_codes.INTERNAL_SNOWPARK_CONTAINER_SERVICE_ERROR,
@@ -253,11 +283,10 @@ class SnowServiceClient:
         status_func = constants.RESOURCE_TO_STATUS_FUNCTION_MAPPING[resource_type]
         try:
             row = self.session.sql(f"CALL {status_func}('{resource_name}');").collect()
-        except Exception as e:
-            raise snowml_exceptions.SnowflakeMLException(
-                error_code=error_codes.INTERNAL_SNOWFLAKE_API_ERROR,
-                original_exception=RuntimeError(f"Error while querying the {resource_type} {resource_name} status."),
-            ) from e
+        except Exception:
+            # Silent fail as SPCS status call is not guaranteed to return in time. Will rely on caller to retry.
+            return None
+
         resource_metadata = json.loads(row[0][status_func])[0]
         logger.debug(f"Resource status metadata: {resource_metadata}")
         if resource_metadata and resource_metadata["status"]:

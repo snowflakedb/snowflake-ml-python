@@ -49,7 +49,7 @@ class DeployTestCase(absltest.TestCase):
             ]
         )
 
-    @mock.patch("snowflake.ml.model._deploy_client.snowservice.deploy._model_meta.ModelMetadata")  # type: ignore[misc]
+    @mock.patch("snowflake.ml.model._deploy_client.snowservice.deploy.model_meta.ModelMetadata")  # type: ignore[misc]
     @mock.patch("snowflake.ml.model._deploy_client.snowservice.deploy.SnowServiceDeployment")  # type: ignore[misc]
     def test_deploy_with_model_id(self, m_deployment_class: mock.MagicMock, m_model_meta_class: mock.MagicMock) -> None:
         m_deployment = m_deployment_class.return_value
@@ -86,7 +86,7 @@ class DeployTestCase(absltest.TestCase):
         )
         m_deployment.deploy.assert_called_once()
 
-    @mock.patch("snowflake.ml.model._deploy_client.snowservice.deploy._model_meta.ModelMetadata")  # type: ignore[misc]
+    @mock.patch("snowflake.ml.model._deploy_client.snowservice.deploy.model_meta.ModelMetadata")  # type: ignore[misc]
     @mock.patch("snowflake.ml.model._deploy_client.snowservice.deploy.SnowServiceDeployment")  # type: ignore[misc]
     def test_deploy_with_not_ready_compute_pool(
         self, m_deployment_class: mock.MagicMock, m_model_meta_class: mock.MagicMock
@@ -114,7 +114,7 @@ class DeployTestCase(absltest.TestCase):
 
         m_deployment_class.assert_not_called()
 
-    @mock.patch("snowflake.ml.model._deploy_client.snowservice.deploy._model_meta.ModelMetadata")  # type: ignore[misc]
+    @mock.patch("snowflake.ml.model._deploy_client.snowservice.deploy.model_meta.ModelMetadata")  # type: ignore[misc]
     @mock.patch("snowflake.ml.model._deploy_client.snowservice.deploy.SnowServiceDeployment")  # type: ignore[misc]
     def test_deploy_with_compute_pool_in_suspended_state_with_auto_resume(
         self, m_deployment_class: mock.MagicMock, m_model_meta_class: mock.MagicMock
@@ -143,7 +143,7 @@ class DeployTestCase(absltest.TestCase):
 
         m_deployment.deploy.assert_called_once()
 
-    @mock.patch("snowflake.ml.model._deploy_client.snowservice.deploy._model_meta.ModelMetadata")  # type: ignore[misc]
+    @mock.patch("snowflake.ml.model._deploy_client.snowservice.deploy.model_meta.ModelMetadata")  # type: ignore[misc]
     @mock.patch("snowflake.ml.model._deploy_client.snowservice.deploy.SnowServiceDeployment")  # type: ignore[misc]
     def test_deploy_with_empty_model_id(
         self, m_deployment_class: mock.MagicMock, m_model_meta_class: mock.MagicMock
@@ -163,7 +163,7 @@ class DeployTestCase(absltest.TestCase):
 
         m_deployment_class.assert_not_called()
 
-    @mock.patch("snowflake.ml.model._deploy_client.snowservice.deploy._model_meta.ModelMetadata")  # type: ignore[misc]
+    @mock.patch("snowflake.ml.model._deploy_client.snowservice.deploy.model_meta.ModelMetadata")  # type: ignore[misc]
     @mock.patch("snowflake.ml.model._deploy_client.snowservice.deploy.SnowServiceDeployment")  # type: ignore[misc]
     def test_deploy_with_missing_required_options(
         self, m_deployment_class: mock.MagicMock, m_model_meta_class: mock.MagicMock
@@ -185,7 +185,7 @@ class DeployTestCase(absltest.TestCase):
             )
         m_deployment_class.assert_not_called()
 
-    @mock.patch("snowflake.ml.model._deploy_client.snowservice.deploy._model_meta.ModelMetadata")  # type: ignore[misc]
+    @mock.patch("snowflake.ml.model._deploy_client.snowservice.deploy.model_meta.ModelMetadata")  # type: ignore[misc]
     @mock.patch("snowflake.ml.model._deploy_client.snowservice.deploy.SnowServiceDeployment")  # type: ignore[misc]
     def test_deploy_with_over_requested_gpus(
         self, m_deployment_class: mock.MagicMock, m_model_meta_class: mock.MagicMock
@@ -213,13 +213,13 @@ class DeployTestCase(absltest.TestCase):
             )
         m_deployment_class.assert_not_called()
 
-    @mock.patch("snowflake.ml.model._deploy_client.snowservice.deploy._model_meta.ModelMetadata")  # type: ignore[misc]
+    @mock.patch("snowflake.ml.model._deploy_client.snowservice.deploy.model_meta.ModelMetadata")  # type: ignore[misc]
     @mock.patch("snowflake.ml.model._deploy_client.snowservice.deploy.SnowServiceDeployment")  # type: ignore[misc]
     def test_deploy_with_over_requested_gpus_no_cuda(
         self, m_deployment_class: mock.MagicMock, m_model_meta_class: mock.MagicMock
     ) -> None:
         m_model_meta = m_model_meta_class.return_value
-        m_model_meta.cuda_version = None
+        m_model_meta.env.cuda_version = None
         with exception_utils.assert_snowml_exceptions(
             self,
             expected_original_error_type=ValueError,
@@ -227,9 +227,7 @@ class DeployTestCase(absltest.TestCase):
         ):
             self.m_session.add_mock_sql(
                 query=f"DESC COMPUTE POOL {self.options['compute_pool']}",
-                result=mock_data_frame.MockDataFrame(
-                    [row.Row(name="MY_GPU_POOL", state="IDLE", min_nodes=1, max_nodes=1, instance_family="GPU_7")]
-                ),
+                result=self._get_mocked_compute_pool_res(instance_family="GPU_7"),
             )
             _deploy(
                 session=cast(session.Session, self.m_session),
@@ -245,7 +243,7 @@ class DeployTestCase(absltest.TestCase):
         m_deployment_class.assert_not_called()
 
     @mock.patch("snowflake.ml.model._deploy_client.snowservice.deploy.copy.deepcopy")  # type: ignore[misc]
-    @mock.patch("snowflake.ml.model._deploy_client.snowservice.deploy._model_meta.ModelMetadata")  # type: ignore[misc]
+    @mock.patch("snowflake.ml.model._deploy_client.snowservice.deploy.model_meta.ModelMetadata")  # type: ignore[misc]
     @mock.patch("snowflake.ml.model._deploy_client.snowservice.deploy.SnowServiceDeployment")  # type: ignore[misc]
     def test_deploy_with_gpu_validation_and_unknown_instance_type(
         self, m_deployment_class: mock.MagicMock, m_model_meta_class: mock.MagicMock, m_deepcopy_func: mock.MagicMock
@@ -368,7 +366,7 @@ class DeployTestCase(absltest.TestCase):
 
 
 class SnowServiceDeploymentTestCase(absltest.TestCase):
-    @mock.patch("snowflake.ml.model._deploy_client.snowservice.deploy._model_meta.ModelMetadata")  # type: ignore[misc]
+    @mock.patch("snowflake.ml.model._deploy_client.snowservice.deploy.model_meta.ModelMetadata")  # type: ignore[misc]
     def setUp(self, m_model_meta_class: mock.MagicMock) -> None:
         super().setUp()
         self.m_session = cast(session.Session, mock_session.MockSession(conn=None, test_case=self))
@@ -430,7 +428,8 @@ class SnowServiceDeploymentTestCase(absltest.TestCase):
                     [
                         (
                             "WARNING:snowflake.ml.model._deploy_client.snowservice.deploy:Building the Docker image "
-                            "and deploying to Snowpark Container Service. This process may take a few minutes."
+                            "and deploying to Snowpark Container Service. This process may take anywhere from a few "
+                            "minutes to a longer period for GPU-based models."
                         ),
                         (
                             f"WARNING:snowflake.ml.model._deploy_client.snowservice.deploy:Image successfully built! "

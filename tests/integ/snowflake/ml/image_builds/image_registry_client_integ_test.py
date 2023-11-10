@@ -9,18 +9,16 @@ from tests.integ.snowflake.ml.test_utils import spcs_integ_test_base
 
 
 class ImageRegistryClientIntegTest(spcs_integ_test_base.SpcsIntegTestBase):
-    @classmethod
-    def setUpClass(cls) -> None:
-        super().setUpClass()
-        cls._TEST_REPO = "TEST_REPO"
-        client = snowservice_client.SnowServiceClient(cls._session)
+    def setUp(self) -> None:
+        super().setUp()
+        self._TEST_REPO = "TEST_REPO"
+        client = snowservice_client.SnowServiceClient(self._session)
         client.create_image_repo(
-            identifier.get_schema_level_object_identifier(cls._TEST_DB, cls._TEST_SCHEMA, cls._TEST_REPO)
+            identifier.get_schema_level_object_identifier(self._test_db, self._test_schema, self._TEST_REPO)
         )
 
-    @classmethod
-    def tearDownClass(cls) -> None:
-        super().tearDownClass()
+    def tearDown(self) -> None:
+        super().tearDown()
 
     def _get_repo_url(self) -> str:
         """Retrieve repo url.
@@ -29,7 +27,7 @@ class ImageRegistryClientIntegTest(spcs_integ_test_base.SpcsIntegTestBase):
         """
         sql = (
             f"SHOW IMAGE REPOSITORIES LIKE '{self._TEST_REPO}' "
-            f"IN SCHEMA {'.'.join([self._TEST_DB, self._TEST_SCHEMA])}"
+            f"IN SCHEMA {'.'.join([self._test_db, self._test_schema])}"
         )
         result = (
             query_result_checker.SqlResultValidator(
