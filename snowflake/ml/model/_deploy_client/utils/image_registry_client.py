@@ -244,6 +244,7 @@ class ImageRegistryClient:
         Returns:
             None
         """
+        logger.info(f"Copying image from {source_image_with_digest} to {dest_image_with_tag}")
         if snowpark_utils.is_in_stored_procedure():  # type: ignore[no-untyped-call]
             logger.warning(f"Running inside Sproc. Please ensure image already exists at {dest_image_with_tag}")
             return None
@@ -257,3 +258,4 @@ class ImageRegistryClient:
             creds_manager=image_auth_manager.SnowflakeAuthManager(dest_image_with_tag.split("/")[0]),
         )
         imagelib.copy_image(src_image=src_image, dest_image=dest_image, arch=arch, session=self.session)
+        logger.info("Image copy completed successfully")

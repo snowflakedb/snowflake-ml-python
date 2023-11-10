@@ -15,6 +15,8 @@ build:_build --platforms //bazel/platforms:snowflake_conda_env --host_platform /
 build:_sf_only --platforms //bazel/platforms:snowflake_conda_env --host_platform //bazel/platforms:snowflake_conda_env --repo_env=BAZEL_CONDA_ENV_NAME=sf_only
 build:_extended --platforms //bazel/platforms:extended_conda_env --host_platform //bazel/platforms:extended_conda_env --repo_env=BAZEL_CONDA_ENV_NAME=extended
 build:_extended_oss --platforms //bazel/platforms:extended_conda_env --host_platform //bazel/platforms:extended_conda_env --repo_env=BAZEL_CONDA_ENV_NAME=extended_oss
+build:_extended_gpu_oss --platforms //bazel/platforms:extended_conda_gpu_env --host_platform //bazel/platforms:extended_conda_gpu_env --repo_env=BAZEL_CONDA_ENV_NAME=extended_gpu_oss
+
 
 # Public definitions
 
@@ -37,6 +39,7 @@ run:pre_build --config=_build --config=py3.8
 # Config to run type check
 build:typecheck --aspects @rules_mypy//:mypy.bzl%mypy_aspect --output_groups=mypy --config=_extended --config=py3.8
 build:typecheck_oss --aspects @rules_mypy//:mypy.bzl%mypy_aspect --output_groups=mypy --config=_extended_oss --config=py3.8
+build:typecheck_gpu_oss --aspects @rules_mypy//:mypy.bzl%mypy_aspect --output_groups=mypy --config=_extended_gpu_oss --config=py3.8
 
 # Config to build the doc
 build:docs --config=_sf_only --config=py3.8
@@ -49,3 +52,6 @@ cquery:extended --config=_extended
 test:extended_oss --config=_extended_oss
 run:extended_oss --config=_extended_oss
 cquery:extended_oss --config=_extended_oss
+test:extended_gpu_oss --config=_extended_gpu_oss
+run:extended_gpu_oss --config=_extended_gpu_oss
+cquery:extended_gpu_oss --config=_extended_gpu_oss

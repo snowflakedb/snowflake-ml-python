@@ -38,6 +38,11 @@ _GENERATED_REQUIREMENTS_FILES = {
         "generated": "conda-env.yml",
         "target": "//bazel/environments:conda-env.yml",
     },
+    "conda_gpu_env_yml": {
+        "cmd": "--mode dev_gpu_version --format conda_env",
+        "generated": "conda-gpu-env.yml",
+        "target": "//bazel/environments:conda-gpu-env.yml",
+    },
     "conda_meta": {
         "cmd": "--mode version_requirements --format conda_meta --version " + VERSION,
         "generated": "meta.yaml",

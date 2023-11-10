@@ -1,0 +1,12 @@
+diff --git a/tools/BUILD.bazel b/tools/BUILD.bazel
+index 51bd56d..fd951d9 100644
+--- a/tools/BUILD.bazel
++++ b/tools/BUILD.bazel
+@@ -21,7 +21,6 @@ licenses(["notice"])
+ py_binary(
+     name = "wheelmaker",
+     srcs = ["wheelmaker.py"],
+-    deps = ["@pypi__packaging//:lib"],
+ )
+
+ filegroup(

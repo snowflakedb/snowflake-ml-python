@@ -358,3 +358,51 @@ def resolve_zip_import_path(file_path: str) -> str:
     extract_root = _get_unzipped_dir()
     snowml_file_path = os.path.relpath(file_path, snowml_start_path)
     return os.path.join(extract_root, *(snowml_file_path.split("/")))
+
+
+def upload_directory_to_stage(
+    session: snowpark.Session, local_path: pathlib.Path, stage_path: pathlib.PurePosixPath
+) -> None:
+    """Upload a local folder recursively to a stage and keep the structure.
+
+    Args:
+        session: Snowpark Session.
+        local_path: Local path to upload.
+        stage_path: Base path in the stage.
+    """
+    file_operation = snowpark.FileOperation(session=session)
+
+    for root, _, filenames in os.walk(local_path):
+        root_path = pathlib.Path(root)
+        for filename in filenames:
+            local_file_path = root_path / filename
+            stage_dir_path = (
+                stage_path / pathlib.PurePosixPath(local_file_path.relative_to(local_path).as_posix()).parent
+            )
+            file_operation.put(
+                str(local_file_path),
+                str(stage_dir_path),
+                auto_compress=False,
+                overwrite=False,
+            )
+
+
+def download_directory_from_stage(
+    session: snowpark.Session, stage_path: pathlib.PurePosixPath, local_path: pathlib.Path
+) -> None:
+    """Upload a folder in stage recursively to a folder in local and keep the structure.
+
+    Args:
+        session: Snowpark Session.
+        stage_path: Stage path to download from.
+        local_path: Local path as the base of destination.
+    """
+    file_operation = file_operation = snowpark.FileOperation(session=session)
+    file_list = [
+        pathlib.PurePosixPath(stage_path.parts[0], *pathlib.PurePosixPath(row.name).parts[1:])
+        for row in session.sql(f"ls {stage_path}").collect()
+    ]
+    for stage_file_path in file_list:
+        local_file_dir = local_path / stage_file_path.relative_to(stage_path).parent
+        local_file_dir.mkdir(parents=True, exist_ok=True)
+        file_operation.get(str(stage_file_path), str(local_file_dir))

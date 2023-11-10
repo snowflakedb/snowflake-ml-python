@@ -5,12 +5,10 @@ import string
 from abc import ABC
 from typing import Optional
 
-from packaging import version
-
 from snowflake.ml._internal import file_utils
 from snowflake.ml._internal.utils import identifier
-from snowflake.ml.model import _model_meta
 from snowflake.ml.model._deploy_client.utils import constants
+from snowflake.ml.model._packager.model_meta import model_meta
 from snowflake.snowpark import FileOperation, Session
 
 
@@ -22,7 +20,7 @@ class DockerContext(ABC):
     def __init__(
         self,
         context_dir: str,
-        model_meta: _model_meta.ModelMetadata,
+        model_meta: model_meta.ModelMetadata,
         session: Optional[Session] = None,
         model_zip_stage_path: Optional[str] = None,
     ) -> None:
@@ -61,7 +59,7 @@ class DockerContext(ABC):
         """
         Convert model dependencies to files from model metadata.
         """
-        self.model_meta.save_model_metadata(self.context_dir)
+        self.model_meta.save(self.context_dir)
 
     def _generate_docker_file(self) -> None:
         """
@@ -71,15 +69,9 @@ class DockerContext(ABC):
         docker_file_template = file_utils.resolve_zip_import_path(
             os.path.join(os.path.dirname(__file__), "templates/dockerfile_template")
         )
-        if self.model_meta.cuda_version:
-            cuda_version_parsed = version.parse(self.model_meta.cuda_version)
-            cuda_version_str = f"{cuda_version_parsed.major}.{cuda_version_parsed.minor}"
-        else:
-            cuda_version_str = ""
 
         if self.model_zip_stage_path is not None:
             norm_stage_path = posixpath.normpath(identifier.remove_prefix(self.model_zip_stage_path, "@"))
-            absolute_path = os.path.join("/", norm_stage_path)
             assert self.session
             fop = FileOperation(self.session)
             # The explicit download here is inefficient but a compromise.
@@ -90,8 +82,8 @@ class DockerContext(ABC):
             get_res_list = fop.get(stage_location=self.model_zip_stage_path, target_directory=self.context_dir)
             assert len(get_res_list) == 1, f"Single zip file should be returned, but got {len(get_res_list)} files."
             local_zip_file_path = os.path.basename(get_res_list[0].file)
-            copy_model_statement = f"COPY {local_zip_file_path} {absolute_path}"
-            extra_env_statement = f"ENV MODEL_ZIP_STAGE_PATH={absolute_path}"
+            copy_model_statement = f"COPY {local_zip_file_path} ./{norm_stage_path}"
+            extra_env_statement = f"ENV MODEL_ZIP_STAGE_PATH={norm_stage_path}"
         else:
             copy_model_statement = ""
             extra_env_statement = ""
@@ -113,7 +105,7 @@ class DockerContext(ABC):
                     # Instead of omitting this ENV var when no CUDA required, we explicitly set it to empty to override
                     # as no CUDA is detected thus it won't be affected by the existence of CUDA in base image.
                     # https://conda.io/projects/conda/en/latest/user-guide/tasks/manage-virtual.html
-                    "cuda_override_env": cuda_version_str,
+                    "cuda_override_env": self.model_meta.env.cuda_version if self.model_meta.env.cuda_version else "",
                     "copy_model_statement": copy_model_statement,
                     "extra_env_statement": extra_env_statement,
                 }

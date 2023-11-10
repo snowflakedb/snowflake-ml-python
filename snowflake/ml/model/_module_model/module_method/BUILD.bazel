@@ -1,0 +1,28 @@
+load("//bazel:py_rules.bzl", "py_library", "py_test")
+
+package(default_visibility = ["//visibility:public"])
+
+py_library(
+    name = "handler_generator",
+    srcs = ["handler_generator.py"],
+    data = [
+        "infer_handler.py_template",
+    ],
+)
+
+py_test(
+    name = "handler_generator_test",
+    srcs = ["handler_generator_test.py"],
+    data = [
+        "fixtures/handler_fixture_1.py_fixture",
+        "fixtures/handler_fixture_2.py_fixture",
+    ],
+    deps = [
+        ":handler_generator",
+    ],
+)
+
+py_library(
+    name = "module_method",
+    srcs = ["module_method.py"],
+)

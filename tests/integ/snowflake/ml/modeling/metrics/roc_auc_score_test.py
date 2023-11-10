@@ -13,7 +13,7 @@ from tests.integ.snowflake.ml.modeling.framework import utils
 
 _ROWS = 100
 _TYPES = [utils.DataType.INTEGER] + [utils.DataType.FLOAT] * 4
-_BINARY_DATA, _PD_SCHEMA, _SF_SCHEMA = utils.gen_fuzz_data(
+_BINARY_DATA, _SF_SCHEMA = utils.gen_fuzz_data(
     rows=_ROWS,
     types=_TYPES,
     low=0,
@@ -57,7 +57,7 @@ class RocAucScoreTest(parameterized.TestCase):
         {"params": {"average": ["weighted"]}},
     )
     def test_average_binary(self, params: Dict[str, Any]) -> None:
-        pandas_df, input_df = utils.get_df(self._session, _BINARY_DATA, _PD_SCHEMA)
+        pandas_df, input_df = utils.get_df(self._session, _BINARY_DATA, _SF_SCHEMA)
 
         for average in params["average"]:
             actual_auc = snowml_metrics.roc_auc_score(
@@ -82,7 +82,7 @@ class RocAucScoreTest(parameterized.TestCase):
         },
     )
     def test_average_multiclass(self, params: Dict[str, Any]) -> None:
-        pandas_df, input_df = utils.get_df(self._session, _MULTICLASS_DATA, _PD_SCHEMA)
+        pandas_df, input_df = utils.get_df(self._session, _MULTICLASS_DATA, _SF_SCHEMA)
 
         for idx, average in enumerate(params["average"]):
             multi_class = params["multi_class"][idx]
@@ -117,7 +117,7 @@ class RocAucScoreTest(parameterized.TestCase):
             data = values["data"]
             y_true = values["y_true"]
             y_score = values["y_score"]
-            pandas_df, input_df = utils.get_df(self._session, data, _PD_SCHEMA)
+            pandas_df, input_df = utils.get_df(self._session, data, _SF_SCHEMA)
 
             for sample_weight_col_name in params["sample_weight_col_name"]:
                 actual_auc = snowml_metrics.roc_auc_score(
@@ -140,7 +140,7 @@ class RocAucScoreTest(parameterized.TestCase):
         {"params": {"max_fpr": [None, 0.1, 0.5, 1]}},
     )
     def test_max_fpr(self, params: Dict[str, Any]) -> None:
-        pandas_df, input_df = utils.get_df(self._session, _BINARY_DATA, _PD_SCHEMA)
+        pandas_df, input_df = utils.get_df(self._session, _BINARY_DATA, _SF_SCHEMA)
 
         for max_fpr in params["max_fpr"]:
             actual_auc = snowml_metrics.roc_auc_score(
@@ -160,7 +160,7 @@ class RocAucScoreTest(parameterized.TestCase):
         {"params": {"multi_class": ["ovr", "ovo"]}},
     )
     def test_multi_class(self, params: Dict[str, Any]) -> None:
-        pandas_df, input_df = utils.get_df(self._session, _MULTICLASS_DATA, _PD_SCHEMA)
+        pandas_df, input_df = utils.get_df(self._session, _MULTICLASS_DATA, _SF_SCHEMA)
 
         for multi_class in params["multi_class"]:
             actual_auc = snowml_metrics.roc_auc_score(
@@ -180,7 +180,7 @@ class RocAucScoreTest(parameterized.TestCase):
         {"params": {"labels": [None, [0, 1, 2]]}},
     )
     def test_labels(self, params: Dict[str, Any]) -> None:
-        pandas_df, input_df = utils.get_df(self._session, _MULTICLASS_DATA, _PD_SCHEMA)
+        pandas_df, input_df = utils.get_df(self._session, _MULTICLASS_DATA, _SF_SCHEMA)
 
         for labels in params["labels"]:
             actual_auc = snowml_metrics.roc_auc_score(

@@ -1,5 +1,30 @@
 # Release History
 
+## 1.0.12
+
+### Bug Fixes
+
+- Model Registry: Fix regression issue that container logging is not shown during model deployment to SPCS.
+- Model Development: Enhance the column capacity of OrdinalEncoder.
+- Model Registry: Fix unbound `batch_size`` error when deploying a model other than Hugging Face Pipeline
+   and LLM with GPU on SPCS.
+
+### Behavior Changes
+
+- Model Registry: Raise early error when deploying to SPCS with db/schema that starts with underscore.
+- Model Registry: `conda-forge` channel is now automatically added to channel lists when deploying to SPCS.
+- Model Registry: `relax_version` will not strip all version specifier, instead it will relax `==x.y.z` specifier to
+  `>=x.y,<(x+1)`.
+- Model Registry: Python with different patchlevel but the same major and minor will not result a warning when loading
+  the model via Model Registry and would be considered to use when deploying to SPCS.
+- Model Registry: When logging a `snowflake.ml.model.models.huggingface_pipeline.HuggingFacePipelineModel` object,
+  versions of local installed libraries won't be picked as dependencies of models, instead it will pick up some pre-
+  defined dependencies to improve user experience.
+
+### New Features
+
+- Model Registry: Enable best-effort SPCS job/service log streaming when logging level is set to INFO.
+
 ## 1.0.11
 
 ### New Features
@@ -17,6 +42,7 @@
 - Model Development: Fix support for XGBoost and LightGBM models using SKLearn Grid Search and Randomized Search model selectors.
 - Model Development: DecimalType is now supported as a DataType.
 - Model Development: Fix metrics compatibility with Snowpark Dataframes that use Snowflake identifiers
+- Model Registry: Resolve 'delete_deployment' not deleting the SPCS service in certain cases.
 
 ## 1.0.10
 

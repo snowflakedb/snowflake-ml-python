@@ -37,6 +37,7 @@ py_test(
 py_test(
     name = "grid_search_on_pipeline_test",
     srcs = ["grid_search_on_pipeline_test.py"],
+    data = ["//tests/integ/snowflake/ml/test_data:UCI_BANK_MARKETING_20COLUMNS.csv"],
     deps = [
         "//snowflake/ml/modeling/compose:column_transformer",
         "//snowflake/ml/modeling/linear_model:logistic_regression",
@@ -63,6 +64,7 @@ py_test(
     name = "pipeline_with_ohe_and_xgbr_test",
     timeout = "long",
     srcs = ["pipeline_with_ohe_and_xgbr_test.py"],
+    data = ["//tests/integ/snowflake/ml/test_data:UCI_BANK_MARKETING_20COLUMNS.csv"],
     shard_count = 4,
     deps = [
         "//snowflake/ml/modeling/framework",

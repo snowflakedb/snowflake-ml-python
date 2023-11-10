@@ -2,4 +2,5 @@ exports_files([
     "conda-env-snowflake.yml",
     "conda-env-build.yml",
     "conda-env.yml",
+    "conda-gpu-env.yml",
 ])

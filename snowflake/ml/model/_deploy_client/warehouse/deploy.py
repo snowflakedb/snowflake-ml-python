@@ -1,3 +1,4 @@
+import copy
 import logging
 import posixpath
 import tempfile
@@ -11,8 +12,9 @@ from snowflake.ml._internal.exceptions import (
     error_codes,
     exceptions as snowml_exceptions,
 )
-from snowflake.ml.model import _model_meta, type_hints as model_types
+from snowflake.ml.model import type_hints as model_types
 from snowflake.ml.model._deploy_client.warehouse import infer_template
+from snowflake.ml.model._packager.model_meta import model_meta
 from snowflake.snowpark import session as snowpark_session, types as st
 
 logger = logging.getLogger(__name__)
@@ -22,7 +24,7 @@ def _deploy_to_warehouse(
     session: snowpark_session.Session,
     *,
     model_stage_file_path: str,
-    model_meta: _model_meta.ModelMetadata,
+    model_meta: model_meta.ModelMetadata,
     udf_name: str,
     target_method: str,
     **kwargs: Unpack[model_types.WarehouseDeployOptions],
@@ -126,14 +128,14 @@ def _write_UDF_py_file(
         model_stage_file_name=model_stage_file_name,
         _KEEP_ORDER_COL_NAME=infer_template._KEEP_ORDER_COL_NAME,
         target_method=target_method,
-        code_dir_name=_model_meta.ModelMetadata.MODEL_CODE_DIR,
+        code_dir_name=model_meta.MODEL_CODE_DIR,
     )
     f.write(udf_code)
     f.flush()
 
 
 def _get_model_final_packages(
-    meta: _model_meta.ModelMetadata,
+    meta: model_meta.ModelMetadata,
     session: snowpark_session.Session,
     relax_version: Optional[bool] = False,
 ) -> List[str]:
@@ -154,11 +156,8 @@ def _get_model_final_packages(
     """
     final_packages = None
     if (
-        any(
-            channel.lower() not in [env_utils.DEFAULT_CHANNEL_NAME, "snowflake"]
-            for channel in meta._conda_dependencies.keys()
-        )
-        or meta.pip_requirements
+        any(channel.lower() not in [env_utils.DEFAULT_CHANNEL_NAME] for channel in meta.env._conda_dependencies.keys())
+        or meta.env.pip_requirements
     ):
         raise snowml_exceptions.SnowflakeMLException(
             error_code=error_codes.DEPENDENCY_VERSION_ERROR,
@@ -167,33 +166,28 @@ def _get_model_final_packages(
             ),
         )
 
-    deps = meta._conda_dependencies[env_utils.DEFAULT_CHANNEL_NAME]
+    if relax_version:
+        relaxed_env = copy.deepcopy(meta.env)
+        relaxed_env.relax_version()
+        required_packages = relaxed_env._conda_dependencies[env_utils.DEFAULT_CHANNEL_NAME]
+    else:
+        required_packages = meta.env._conda_dependencies[env_utils.DEFAULT_CHANNEL_NAME]
 
     final_packages = env_utils.validate_requirements_in_snowflake_conda_channel(
-        session=session,
-        reqs=deps,
-        python_version=meta.python_version,
+        session, required_packages, python_version=meta.env.python_version
     )
-    if final_packages is None and relax_version:
-        final_packages = env_utils.validate_requirements_in_snowflake_conda_channel(
-            session=session,
-            reqs=list(map(env_utils.relax_requirement_version, deps)),
-            python_version=meta.python_version,
-        )
 
     if final_packages is None:
         relax_version_info_str = "" if relax_version else "Try to set relax_version as True in the options. "
-        required_deps = list(map(env_utils.relax_requirement_version, deps)) if relax_version else deps
-        if final_packages is None:
-            raise snowml_exceptions.SnowflakeMLException(
-                error_code=error_codes.DEPENDENCY_VERSION_ERROR,
-                original_exception=RuntimeError(
-                    "The model's dependency cannot fit into Snowflake Warehouse. "
-                    + relax_version_info_str
-                    + "Required packages are:\n"
-                    + " ".join(map(lambda x: f'"{x}"', required_deps))
-                    + "\n Required Python version is: "
-                    + meta.python_version
-                ),
-            )
+        raise snowml_exceptions.SnowflakeMLException(
+            error_code=error_codes.DEPENDENCY_VERSION_ERROR,
+            original_exception=RuntimeError(
+                "The model's dependencyies are not available in Snowflake Anaconda Channel. "
+                + relax_version_info_str
+                + "Required packages are:\n"
+                + " ".join(map(lambda x: f'"{x}"', required_packages))
+                + "\n Required Python version is: "
+                + meta.env.python_version
+            ),
+        )
     return final_packages

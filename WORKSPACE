@@ -1,6 +1,5 @@
 workspace(name = "SnowML")
 
-load("@bazel_tools//tools/build_defs/repo:git.bzl", "git_repository")
 load("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive", "http_jar")
 
 http_jar(
@@ -24,13 +23,18 @@ load("@bazel_skylib//:workspace.bzl", "bazel_skylib_workspace")
 
 bazel_skylib_workspace()
 
-# Latest @ 2023-06-20
-# Replace with released version once newer version released.
-git_repository(
+http_archive(
     name = "rules_python",
-    commit = "0d59fcf561f6d2c4705924bc17c151fb4b998841",
-    remote = "https://github.com/bazelbuild/rules_python.git",
+    patch_args = ["-p1"],
+    patches = ["@//third_party/rules_python:packaging.patch"],
+    sha256 = "9d04041ac92a0985e344235f5d946f71ac543f1b1565f2cdbc9a2aaee8adf55b",
+    strip_prefix = "rules_python-0.26.0",
+    url = "https://github.com/bazelbuild/rules_python/releases/download/0.26.0/rules_python-0.26.0.tar.gz",
 )
+
+load("@rules_python//python:repositories.bzl", "py_repositories")
+
+py_repositories()
 
 load("//third_party/rules_conda:defs.bzl", "conda_create", "load_conda", "register_toolchain")
 

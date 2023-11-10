@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Usage
-# build_and_run_tests.sh <workspace> [-b <bazel path>] [--env pip|conda] [--mode merge_gate|continuous_run|release] [--with-snowpark]
+# build_and_run_tests.sh <workspace> [-b <bazel path>] [--env pip|conda] [--mode merge_gate|continuous_run|release] [--with-snowpark] [--report <report_path>]
 #
 # Args
 # workspace: path to the workspace, SnowML code should be in snowml directory.
@@ -14,6 +14,7 @@
 #   continuous_run (default): run all tests except auto-generated tests. (For nightly run.)
 #   release: run all tests including auto-generated tests. (For releasing)
 # with-snowpark: Build and test with snowpark in snowpark-python directory in the workspace.
+# report: Path to xml test report
 #
 # Action
 #   - Copy the integration tests from workspace folder and execute them in testing Python env using pytest.
@@ -27,7 +28,7 @@ PROG=$0
 
 help() {
     local exit_code=$1
-    echo "Usage: ${PROG} <workspace> [-b <bazel path>] [--env pip|conda] [--mode merge_gate|continuous_run|release] [--with-snowpark]"
+    echo "Usage: ${PROG} <workspace> [-b <bazel path>] [--env pip|conda] [--mode merge_gate|continuous_run|release] [--with-snowpark] [--report <report_path>]"
     exit "${exit_code}"
 }
 
@@ -39,6 +40,7 @@ MODE="continuous_run"
 SNOWML_DIR="snowml"
 SNOWPARK_DIR="snowpark-python"
 IS_NT=false
+JUNIT_REPORT_PATH=""
 
 while (($#)); do
     case $1 in
@@ -64,6 +66,10 @@ while (($#)); do
         else
             help 1
         fi
+        ;;
+    --report)
+        shift
+        JUNIT_REPORT_PATH=$1
         ;;
     -h | --help)
         help 0
@@ -243,6 +249,9 @@ COMMON_PYTEST_FLAG=()
 COMMON_PYTEST_FLAG+=(--strict-markers) # Strict the pytest markers to avoid typo in markers
 COMMON_PYTEST_FLAG+=(--import-mode=append)
 COMMON_PYTEST_FLAG+=(-n logical)
+if [[ -n "${JUNIT_REPORT_PATH}" ]]; then
+    COMMON_PYTEST_FLAG+=(--junitxml "${JUNIT_REPORT_PATH}")
+fi
 
 if [ "${ENV}" = "pip" ]; then
     # Copy wheel package
@@ -255,7 +264,7 @@ if [ "${ENV}" = "pip" ]; then
     # otherwise it will fail in dependency resolution.
     python3.8 -m pip install --upgrade pip
     python3.8 -m pip list
-    python3.8 -m pip install "snowflake_ml_python-${VERSION}-py3-none-any.whl[all]" pytest-xdist[psutil] -r "${WORKSPACE}/${SNOWML_DIR}/requirements.txt" --no-cache-dir --force-reinstall
+    python3.8 -m pip install "snowflake_ml_python-${VERSION}-py3-none-any.whl[all]" "pytest-xdist[psutil]==2.5.0" -r "${WORKSPACE}/${SNOWML_DIR}/requirements.txt" --no-cache-dir --force-reinstall
     if [ "${WITH_SNOWPARK}" = true ]; then
         cp "$(find "${WORKSPACE}" -maxdepth 1 -iname 'snowflake_snowpark_python-*.whl')" "${TEMP_TEST_DIR}"
         python3.8 -m pip install "$(find . -maxdepth 1 -iname 'snowflake_snowpark_python-*.whl')" --no-deps --force-reinstall
@@ -275,12 +284,12 @@ else
     conda clean --all --force-pkgs-dirs -y
 
     # Create testing env
-    conda create -y -p testenv -c "${WORKSPACE}/conda-bld" -c "https://repo.anaconda.com/pkgs/snowflake/" --override-channels "python=3.8" snowflake-ml-python pytest-xdist psutil inflection "${OPTIONAL_REQUIREMENTS[@]}"
+    conda create -y -p testenv -c "${WORKSPACE}/conda-bld" -c "https://repo.anaconda.com/pkgs/snowflake/" --override-channels "python=3.8" snowflake-ml-python "py==1.9.0" "pytest-xdist==2.5.0" psutil inflection "${OPTIONAL_REQUIREMENTS[@]}"
     conda list -p testenv
 
     # Run integration tests
     set +e
-    TEST_SRCDIR="${TEMP_TEST_DIR}" conda run -p testenv --no-capture-output python -m pytest "${COMMON_PYTEST_FLAG[@]}" tests/integ/
+    TEST_SRCDIR="${TEMP_TEST_DIR}" conda run -p testenv --no-capture-output python -m pytest "${COMMON_PYTEST_FLAG[@]}" -m "not conda_incompatible" tests/integ/
     TEST_RETCODE=$?
     set -e
 

@@ -327,8 +327,22 @@ def generate_requirements(
         duplicates = {item for item, count in counter.items() if count > 1}
         if duplicates and duplicates != {"snowflake-snowpark-python"}:
             raise ValueError(f"Duplicate Requirements: {duplicates}")
-
     channels_to_use = [SNOWFLAKE_CONDA_CHANNEL, "nodefaults"]
+
+    if mode == "dev_gpu_version":
+        pytorch_req = next(filter(lambda req: get_req_name(req, "conda") == "pytorch", requirements), None)
+        if pytorch_req:
+            pytorch_req["from_channel"] = "pytorch"
+            # TODO(halu): Central place for supported CUDA version.
+            # To integrate with cuda util.
+            cuda_req = RequirementInfo(
+                name_conda="cuda",
+                dev_version_conda="11.7.*",
+                from_channel="nvidia",
+            )
+            pytorch_cuda_req = RequirementInfo(name_conda="pytorch-cuda", dev_version="11.7.*", from_channel="pytorch")
+            requirements.extend([cuda_req, pytorch_cuda_req])
+
     snowflake_only_env = list(
         sorted(
             filter(
@@ -375,7 +389,7 @@ def generate_requirements(
         )
         sys.stdout.writelines(results)
     elif (mode, format) == ("dev_version", "python"):
-        sys.stdout.writelines(f"REQUIREMENTS = {repr(snowflake_only_env)}\n")
+        sys.stdout.write(f"REQUIREMENTS = {json.dumps(snowflake_only_env, indent=4)}\n")
     elif (mode, format) == ("version_requirements", "bzl"):
         extras_requirements = list(filter(lambda req_info: filter_by_extras(req_info, True, False), requirements))
         extras_results: MutableMapping[str, Sequence[str]] = {}
@@ -414,7 +428,7 @@ def generate_requirements(
         )
         sys.stdout.write(
             "EXTRA_REQUIREMENTS = {extra_requirements}\n\nREQUIREMENTS = {requirements}\n".format(
-                extra_requirements=json.dumps(extras_results), requirements=json.dumps(results)
+                extra_requirements=json.dumps(extras_results, indent=4), requirements=json.dumps(results, indent=4)
             )
         )
     elif (mode, format) == ("version_requirements", "python"):
@@ -424,7 +438,7 @@ def generate_requirements(
             )
         )
         sys.stdout.writelines(f"REQUIREMENTS = {repr(results)}\n")
-    elif (mode, format) == ("dev_version", "conda_env"):
+    elif (mode, format) == ("dev_version", "conda_env") or (mode, format) == ("dev_gpu_version", "conda_env"):
         env_result = {
             "channels": channels_to_use,
             "dependencies": snowflake_only_env if snowflake_channel_only else extended_env,
@@ -471,7 +485,7 @@ def main() -> None:
     parser.add_argument(
         "--mode",
         type=str,
-        choices=["dev_version", "version_requirements", "version_requirements_extras", "validate"],
+        choices=["dev_version", "dev_gpu_version", "version_requirements", "version_requirements_extras", "validate"],
         help="Define the mode when specifying the requirements.",
         required=True,
     )
@@ -498,6 +512,7 @@ def main() -> None:
         ("version_requirements", "bzl", False),  # wheel rule requirements
         ("version_requirements", "python", False),  # model deployment core dependencies list
         ("dev_version", "conda_env", False),  # dev conda-env.yml file
+        ("dev_gpu_version", "conda_env", False),  # dev conda-gpu-env.yml file
         ("dev_version", "conda_env", True),  # dev conda-env-snowflake.yml file
         ("version_requirements", "conda_meta", False),  # conda build recipe metadata file
     ]
