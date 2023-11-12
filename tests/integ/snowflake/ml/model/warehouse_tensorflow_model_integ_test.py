@@ -71,7 +71,6 @@ class TestWarehouseTensorflowModelInteg(parameterized.TestCase):
         test_input: model_types.SupportedDataType,
         deploy_params: Dict[str, Tuple[Dict[str, Any], Callable[[Union[pd.DataFrame, SnowparkDataFrame]], Any]]],
         permanent_deploy: Optional[bool] = False,
-        test_released_version: Optional[str] = None,
     ) -> None:
         warehouse_model_integ_test_utils.base_test_case(
             self._db_manager,
@@ -83,14 +82,12 @@ class TestWarehouseTensorflowModelInteg(parameterized.TestCase):
             test_input=test_input,
             deploy_params=deploy_params,
             permanent_deploy=permanent_deploy,
-            test_released_version=test_released_version,
         )
 
-    @parameterized.product(permanent_deploy=[True, False], test_released_version=[None, "1.0.6"])  # type: ignore[misc]
+    @parameterized.product(permanent_deploy=[True, False])  # type: ignore[misc]
     def test_tf_tensor_as_sample(
         self,
         permanent_deploy: Optional[bool] = False,
-        test_released_version: Optional[str] = None,
     ) -> None:
         model = SimpleModule(name="simple")
         data_x = tf.constant([[5.0], [10.0]])
@@ -112,14 +109,12 @@ class TestWarehouseTensorflowModelInteg(parameterized.TestCase):
                 ),
             },
             permanent_deploy=permanent_deploy,
-            test_released_version=test_released_version,
         )
 
-    @parameterized.product(permanent_deploy=[True, False], test_released_version=[None, "1.0.6"])  # type: ignore[misc]
+    @parameterized.product(permanent_deploy=[True, False])  # type: ignore[misc]
     def test_tf_df_as_sample(
         self,
         permanent_deploy: Optional[bool] = False,
-        test_released_version: Optional[str] = None,
     ) -> None:
         model = SimpleModule(name="simple")
         data_x = tf.constant([[5.0], [10.0]])
@@ -141,14 +136,12 @@ class TestWarehouseTensorflowModelInteg(parameterized.TestCase):
                 ),
             },
             permanent_deploy=permanent_deploy,
-            test_released_version=test_released_version,
         )
 
-    @parameterized.product(permanent_deploy=[True, False], test_released_version=[None, "1.0.6"])  # type: ignore[misc]
+    @parameterized.product(permanent_deploy=[True, False])  # type: ignore[misc]
     def test_tf_sp(
         self,
         permanent_deploy: Optional[bool] = False,
-        test_released_version: Optional[str] = None,
     ) -> None:
         model = SimpleModule(name="simple")
         data_x = tf.constant([[5.0], [10.0]])
@@ -175,14 +168,12 @@ class TestWarehouseTensorflowModelInteg(parameterized.TestCase):
                 ),
             },
             permanent_deploy=permanent_deploy,
-            test_released_version=test_released_version,
         )
 
-    @parameterized.product(permanent_deploy=[True, False], test_released_version=[None, "1.0.6"])  # type: ignore[misc]
+    @parameterized.product(permanent_deploy=[True, False])  # type: ignore[misc]
     def test_keras_tensor_as_sample(
         self,
         permanent_deploy: Optional[bool] = False,
-        test_released_version: Optional[str] = None,
     ) -> None:
         model, data_x, data_y = model_factory.ModelFactory.prepare_keras_model()
         x_df = tensorflow_handler.SeqOfTensorflowTensorHandler.convert_to_df([data_x], ensure_serializable=False)
@@ -204,14 +195,12 @@ class TestWarehouseTensorflowModelInteg(parameterized.TestCase):
                 ),
             },
             permanent_deploy=permanent_deploy,
-            test_released_version=test_released_version,
         )
 
-    @parameterized.product(permanent_deploy=[True, False], test_released_version=[None, "1.0.6"])  # type: ignore[misc]
+    @parameterized.product(permanent_deploy=[True, False])  # type: ignore[misc]
     def test_keras_df_as_sample(
         self,
         permanent_deploy: Optional[bool] = False,
-        test_released_version: Optional[str] = None,
     ) -> None:
         model, data_x, data_y = model_factory.ModelFactory.prepare_keras_model()
         x_df = tensorflow_handler.SeqOfTensorflowTensorHandler.convert_to_df([data_x], ensure_serializable=False)
@@ -233,14 +222,12 @@ class TestWarehouseTensorflowModelInteg(parameterized.TestCase):
                 ),
             },
             permanent_deploy=permanent_deploy,
-            test_released_version=test_released_version,
         )
 
-    @parameterized.product(permanent_deploy=[True, False], test_released_version=[None, "1.0.6"])  # type: ignore[misc]
+    @parameterized.product(permanent_deploy=[True, False])  # type: ignore[misc]
     def test_keras_sp(
         self,
         permanent_deploy: Optional[bool] = False,
-        test_released_version: Optional[str] = None,
     ) -> None:
         model, data_x, data_y = model_factory.ModelFactory.prepare_keras_model()
         x_df = tensorflow_handler.SeqOfTensorflowTensorHandler.convert_to_df([data_x], ensure_serializable=False)
@@ -266,7 +253,6 @@ class TestWarehouseTensorflowModelInteg(parameterized.TestCase):
                 ),
             },
             permanent_deploy=permanent_deploy,
-            test_released_version=test_released_version,
         )
 
 

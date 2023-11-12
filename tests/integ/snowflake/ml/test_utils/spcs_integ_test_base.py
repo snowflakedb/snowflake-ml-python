@@ -12,35 +12,36 @@ class SpcsIntegTestBase(absltest.TestCase):
     _SNOWSERVICE_CONNECTION_NAME = "regtest"
     _TEST_CPU_COMPUTE_POOL = "REGTEST_INFERENCE_CPU_POOL"
     _TEST_GPU_COMPUTE_POOL = "REGTEST_INFERENCE_GPU_POOL"
-    _RUN_ID = uuid.uuid4().hex[:2]
-    _TEST_DB = db_manager.TestObjectNameGenerator.get_snowml_test_object_name(_RUN_ID, "db").upper()
-    _TEST_SCHEMA = db_manager.TestObjectNameGenerator.get_snowml_test_object_name(_RUN_ID, "schema").upper()
-    _TEST_STAGE = db_manager.TestObjectNameGenerator.get_snowml_test_object_name(_RUN_ID, "stage").upper()
-    _TEST_IMAGE_REPO = db_manager.TestObjectNameGenerator.get_snowml_test_object_name(_RUN_ID, "repo").upper()
 
-    @classmethod
-    def setUpClass(cls) -> None:
+    def setUp(self) -> None:
         """Creates Snowpark and Snowflake environments for testing."""
         try:
-            login_options = connection_params.SnowflakeLoginOptions(connection_name=cls._SNOWSERVICE_CONNECTION_NAME)
+            login_options = connection_params.SnowflakeLoginOptions(connection_name=self._SNOWSERVICE_CONNECTION_NAME)
         except KeyError:
             raise SkipTest(
                 "SnowService connection parameters not present: skipping "
                 "TestModelRegistryIntegWithSnowServiceDeployment."
             )
-        cls._session = Session.builder.configs(
+
+        self._run_id = uuid.uuid4().hex[:2]
+        self._test_db = db_manager.TestObjectNameGenerator.get_snowml_test_object_name(self._run_id, "db").upper()
+        self._test_schema = db_manager.TestObjectNameGenerator.get_snowml_test_object_name(
+            self._run_id, "schema"
+        ).upper()
+        self._test_stage = db_manager.TestObjectNameGenerator.get_snowml_test_object_name(self._run_id, "stage").upper()
+
+        self._session = Session.builder.configs(
             {
                 **login_options,
-                **{"database": cls._TEST_DB, "schema": cls._TEST_SCHEMA},
+                **{"database": self._test_db, "schema": self._test_schema},
             }
         ).create()
-        cls._db_manager = db_manager.DBManager(cls._session)
-        cls._db_manager.create_database(cls._TEST_DB)
-        cls._db_manager.create_schema(cls._TEST_SCHEMA)
-        cls._db_manager.create_stage(cls._TEST_STAGE, cls._TEST_SCHEMA, cls._TEST_DB, sse_encrypted=True)
-        cls._db_manager.cleanup_databases(expire_hours=6)
+        self._db_manager = db_manager.DBManager(self._session)
+        self._db_manager.create_database(self._test_db)
+        self._db_manager.create_schema(self._test_schema)
+        self._db_manager.create_stage(self._test_stage, self._test_schema, self._test_db, sse_encrypted=True)
+        self._db_manager.cleanup_databases(expire_hours=6)
 
-    @classmethod
-    def tearDownClass(cls) -> None:
-        cls._db_manager.drop_database(cls._TEST_DB)
-        cls._session.close()
+    def tearDown(self) -> None:
+        self._db_manager.drop_database(self._test_db)
+        self._session.close()

@@ -1,7 +1,6 @@
 import datetime
 import itertools
 import json
-import posixpath
 from typing import Any, Dict, List, Union, cast
 
 from absl.testing import absltest
@@ -9,7 +8,7 @@ from absl.testing import absltest
 from snowflake import connector, snowpark
 from snowflake.ml._internal import telemetry
 from snowflake.ml._internal.utils import formatting, identifier, uri
-from snowflake.ml.model import _model
+from snowflake.ml.model import _api
 from snowflake.ml.registry import _initial_schema, _schema, model_registry
 from snowflake.ml.test_utils import mock_data_frame, mock_session
 
@@ -1116,8 +1115,7 @@ class ModelRegistryTest(absltest.TestCase):
             + "."
             + f"SNOWML_MODEL_{expected_stage_postfix}"
         )
-        model_path = posixpath.join(f"@{expected_stage_path}", f"{self.model_id}.zip")
-
+        model_path = f"@{expected_stage_path}"
         with absltest.mock.patch.object(
             model_registry,
             "_list_selected_models",
@@ -1130,9 +1128,11 @@ class ModelRegistryTest(absltest.TestCase):
             ) as mock_path:
                 mock_model = absltest.mock.MagicMock()
                 mock_type = absltest.mock.MagicMock()
-                mock_metadata = absltest.mock.MagicMock(model_type=mock_type)
+                mock_module_model = absltest.mock.MagicMock(
+                    packager=absltest.mock.MagicMock(meta=absltest.mock.MagicMock(model_type=mock_type))
+                )
                 with absltest.mock.patch.object(
-                    target=_model, attribute="save_model", return_value=mock_metadata
+                    target=_api, attribute="save_model", return_value=mock_module_model
                 ) as mock_save:
                     with absltest.mock.patch.object(
                         target=model_registry, attribute="_register_model_with_id", return_value=None
@@ -1151,7 +1151,7 @@ class ModelRegistryTest(absltest.TestCase):
                             mock_save.assert_called_once_with(
                                 name=model_name,
                                 session=self._session,
-                                model_stage_file_path=model_path,
+                                stage_path=model_path,
                                 model=mock_model,
                                 signatures=m_signatures,
                                 metadata=None,
@@ -1211,8 +1211,7 @@ class ModelRegistryTest(absltest.TestCase):
             ) as mock_path:
                 mock_model = absltest.mock.MagicMock()
                 mock_type = absltest.mock.MagicMock()
-                mock_metadata = absltest.mock.MagicMock(model_type=mock_type)
-                with absltest.mock.patch.object(target=_model, attribute="save_model") as mock_save:
+                with absltest.mock.patch.object(target=_api, attribute="save_model") as mock_save:
                     mock_save.side_effect = ValueError("Mock Error")
                     with self.assertRaises(ValueError):
                         model_registry.log_model(

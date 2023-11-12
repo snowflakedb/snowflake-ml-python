@@ -1,6 +1,9 @@
-from typing import List
+from typing import Dict, List
 
-from snowflake.ml._internal.utils.identifier import get_unescaped_names
+from snowflake.ml._internal.utils.sql_identifier import (
+    SqlIdentifier,
+    to_sql_identifiers,
+)
 
 ENTITY_NAME_LENGTH_LIMIT = 32
 FEATURE_VIEW_ENTITY_TAG_DELIMITER = ","
@@ -25,24 +28,32 @@ class Entity:
             join_keys: join keys associated with a FeatureView, used for feature retrieval.
             desc: description of the Entity.
         """
-        self.name: str = name
-        self.join_keys: List[str] = join_keys
-        self.desc = desc
-        self._validate()
+        self._validate(name, join_keys)
 
-    def _validate(self) -> None:
-        if len(self.name) > ENTITY_NAME_LENGTH_LIMIT:
-            raise ValueError(f"Entity name `{self.name}` exceeds maximum length: {ENTITY_NAME_LENGTH_LIMIT}")
-        if FEATURE_VIEW_ENTITY_TAG_DELIMITER in self.name:
+        self.name: SqlIdentifier = SqlIdentifier(name)
+        self.join_keys: List[SqlIdentifier] = to_sql_identifiers(join_keys)
+        self.desc = desc
+
+    def _validate(self, name: str, join_keys: List[str]) -> None:
+        if len(name) > ENTITY_NAME_LENGTH_LIMIT:
+            raise ValueError(f"Entity name `{name}` exceeds maximum length: {ENTITY_NAME_LENGTH_LIMIT}")
+        if FEATURE_VIEW_ENTITY_TAG_DELIMITER in name:
             raise ValueError(f"Entity name contains invalid char: `{FEATURE_VIEW_ENTITY_TAG_DELIMITER}`")
-        if len(set(self.join_keys)) != len(self.join_keys):
-            raise ValueError(f"Duplicate join keys detected in: {self.join_keys}")
-        if len(FEATURE_VIEW_ENTITY_TAG_DELIMITER.join(self.join_keys)) > ENTITY_JOIN_KEY_LENGTH_LIMIT:
+        if len(set(join_keys)) != len(join_keys):
+            raise ValueError(f"Duplicate join keys detected in: {join_keys}")
+        if len(FEATURE_VIEW_ENTITY_TAG_DELIMITER.join(join_keys)) > ENTITY_JOIN_KEY_LENGTH_LIMIT:
             raise ValueError(f"Total length of join keys exceeded maximum length: {ENTITY_JOIN_KEY_LENGTH_LIMIT}")
 
-        for k in self.join_keys:
+        for k in join_keys:
             if ENTITY_JOIN_KEY_DELIMITER in k:
                 raise ValueError(f"Invalid char `{ENTITY_JOIN_KEY_DELIMITER}` detected in join key {k}")
+
+    def _to_dict(self) -> Dict[str, str]:
+        entity_dict = self.__dict__.copy()
+        for k, v in entity_dict.items():
+            if isinstance(v, SqlIdentifier):
+                entity_dict[k] = str(v)
+        return entity_dict
 
     def __repr__(self) -> str:
         states = (f"{k}={v}" for k, v in vars(self).items())
@@ -52,8 +63,4 @@ class Entity:
         if not isinstance(other, Entity):
             return False
 
-        return (
-            get_unescaped_names(self.name) == get_unescaped_names(other.name)
-            and self.desc == other.desc
-            and self.join_keys == other.join_keys
-        )
+        return self.name == other.name and self.desc == other.desc and self.join_keys == other.join_keys

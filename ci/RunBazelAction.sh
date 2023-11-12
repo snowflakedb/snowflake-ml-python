@@ -83,8 +83,7 @@ fi
 working_dir=$(mktemp -d "/tmp/tmp_XXXXX")
 trap 'rm -rf "${working_dir}"' EXIT
 
-tag_filter="--test_tag_filters=-perf_test"
-coverage_tag_filter="--test_tag_filters=-perf_test,-sproc_test"
+tag_filter="--test_tag_filters="
 cache_test_results="--cache_test_results=no"
 
 case "${mode}" in
@@ -92,13 +91,12 @@ merge_gate)
     affected_targets_file="${working_dir}/affected_targets"
     ./bazel/get_affected_targets.sh -b "${bazel}" -f "${affected_targets_file}"
 
-    tag_filter="--test_tag_filters=-autogen,-perf_test"
-    coverage_tag_filter="--test_tag_filters=-autogen,-perf_test,-sproc_test"
+    tag_filter="--test_tag_filters=-autogen"
 
-    query_expr='kind(".*_test rule", rdeps(//... - //snowflake/ml/experimental/... - set('"$(<ci/skip_merge_gate_targets)"'), set('$(<"${affected_targets_file}")')))'
+    query_expr='kind(".*_test rule", rdeps(//... - set('"$(<ci/skip_merge_gate_targets)"') - set('"$(<ci/skip_continuous_run_targets)"'), set('$(<"${affected_targets_file}")')))'
     ;;
 continuous_run)
-    query_expr='kind(".*_test rule", //... - //snowflake/ml/experimental/...)'
+    query_expr='kind(".*_test rule", //... - set('"$(<ci/skip_continuous_run_targets)"'))'
     ;;
 local_unittest)
     cache_test_results="--cache_test_results=yes"
@@ -157,7 +155,7 @@ elif [[ "${action}" = "coverage" ]]; then
     "${bazel}" coverage \
         "${cache_test_results}" \
         --combined_report=lcov \
-        "${coverage_tag_filter}" \
+        "${tag_filter}" \
         --experimental_collect_code_coverage_for_generated_files \
         --target_pattern_file "${sf_only_test_targets_file}"
     sf_only_bazel_exit_code=$?
@@ -170,7 +168,7 @@ elif [[ "${action}" = "coverage" ]]; then
         --config=extended \
         "${cache_test_results}" \
         --combined_report=lcov \
-        "${coverage_tag_filter}" \
+        "${tag_filter}" \
         --experimental_collect_code_coverage_for_generated_files \
         --target_pattern_file "${extended_test_targets_file}"
     extended_bazel_exit_code=$?
@@ -182,7 +180,11 @@ elif [[ "${action}" = "coverage" ]]; then
         coverage_report_file=${working_dir}/coverage_report.dat
     fi
 
-    cat "${sf_only_coverage_report_file}" "${extended_coverage_report_file}" >"${coverage_report_file}"
+    lcov -a "${sf_only_coverage_report_file}" -a "${extended_coverage_report_file}" -o "${coverage_report_file}"
+
+    if [[ "${mode}" = "local_unittest" || "${mode}" = "local_all" ]]; then
+        cp -f "${coverage_report_file}" ".coverage.dat"
+    fi
 
     genhtml --prefix "$(pwd)" --output html_coverage_report "${coverage_report_file}"
 fi

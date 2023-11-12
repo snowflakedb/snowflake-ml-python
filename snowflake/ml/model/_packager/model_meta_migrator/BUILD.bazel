@@ -1,0 +1,55 @@
+load("//bazel:py_rules.bzl", "py_library", "py_test")
+
+package(default_visibility = ["//visibility:public"])
+
+py_library(
+    name = "base_migrator",
+    srcs = ["base_migrator.py"],
+    deps = [
+        "//snowflake/ml/_internal:migrator_utils",
+    ],
+)
+
+py_test(
+    name = "base_migrator_test",
+    srcs = ["base_migrator_test.py"],
+    deps = [
+        ":base_migrator",
+        "//snowflake/ml/_internal:migrator_utils",
+    ],
+)
+
+py_library(
+    name = "migrator_plans",
+    srcs = ["migrator_plans.py"],
+    deps = [
+        ":base_migrator",
+        ":migrator_v1",
+    ],
+)
+
+py_test(
+    name = "migrator_plans_test",
+    srcs = ["migrator_plans_test.py"],
+    deps = [
+        ":migrator_plans",
+        "//snowflake/ml/model/_packager/model_meta:model_meta_schema",
+    ],
+)
+
+py_library(
+    name = "migrator_v1",
+    srcs = ["migrator_v1.py"],
+    deps = [
+        ":base_migrator",
+        "//snowflake/ml/_internal:env",
+    ],
+)
+
+py_test(
+    name = "migrator_v1_test",
+    srcs = ["migrator_v1_test.py"],
+    deps = [
+        "//snowflake/ml/model/_packager/model_meta",
+    ],
+)

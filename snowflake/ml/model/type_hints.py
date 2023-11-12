@@ -1,5 +1,5 @@
 # mypy: disable-error-code="import"
-from typing import TYPE_CHECKING, Sequence, TypedDict, TypeVar, Union
+from typing import TYPE_CHECKING, Literal, Sequence, TypedDict, TypeVar, Union
 
 import numpy.typing as npt
 from typing_extensions import NotRequired, Required
@@ -79,7 +79,7 @@ SupportedModelType = Union[
     SupportedNoSignatureRequirementsModelType,
 ]
 """This is defined as the type that Snowflake native model packaging could accept.
-Here is all acceptable types of Snowflake native model packaging and its handler file in _handlers/ folder.
+Here is all acceptable types of Snowflake native model packaging and its handler file in _model_handlers/ folder.
 
 | Type                            | Handler File | Handler             |
 |---------------------------------|--------------|---------------------|
@@ -97,6 +97,18 @@ Here is all acceptable types of Snowflake native model packaging and its handler
 | huggingface_pipeline.HuggingFacePipelineModel | huggingface_pipeline.py | _HuggingFacePipelineHandler |
 """
 
+SupportedModelHandlerType = Literal[
+    "custom",
+    "huggingface_pipeline",
+    "mlflow",
+    "pytorch",
+    "sklearn",
+    "snowml",
+    "tensorflow",
+    "torchscript",
+    "xgboost",
+    "llm",
+]
 
 _ModelType = TypeVar("_ModelType", bound=SupportedModelType)
 
@@ -113,7 +125,8 @@ class WarehouseDeployOptions(DeployOptions):
 
     permanent_udf_stage_location: A Snowflake stage option where the UDF should be persisted. If specified, the model
         will be deployed as a permanent UDF, otherwise temporary.
-    relax_version: Whether or not relax the version constraints of the dependencies if unresolvable. Defaults to False.
+    relax_version: Whether or not relax the version constraints of the dependencies if unresolvable. It detects any
+        ==x.y.z in specifiers and replaced with >=x.y, <(x+1). Defaults to False.
     replace_udf: Flag to indicate when deploying model as permanent UDF, whether overwriting existed UDF is allowed.
         Default to False.
     """
@@ -157,18 +170,16 @@ class SnowparkContainerServiceDeployOptions(DeployOptions):
     enable_remote_image_build: NotRequired[bool]
     force_image_build: NotRequired[bool]
     model_in_image: NotRequired[bool]
+    debug_mode: NotRequired[bool]
 
 
 class BaseModelSaveOption(TypedDict):
     """Options for saving the model.
 
     embed_local_ml_library: Embedding local SnowML into the code directory of the folder.
-    allow_overwritten_stage_file: Flag to indicate when saving the model as a stage file, whether overwriting existed
-        file is allowed. Default to False.
     """
 
     embed_local_ml_library: NotRequired[bool]
-    allow_overwritten_stage_file: NotRequired[bool]
 
 
 class CustomModelSaveOption(BaseModelSaveOption):
@@ -214,6 +225,10 @@ class HuggingFaceSaveOptions(BaseModelSaveOption):
     cuda_version: NotRequired[str]
 
 
+class LLMSaveOptions(BaseModelSaveOption):
+    cuda_version: NotRequired[str]
+
+
 ModelSaveOption = Union[
     BaseModelSaveOption,
     CustomModelSaveOption,
@@ -225,6 +240,7 @@ ModelSaveOption = Union[
     TensorflowSaveOptions,
     MLFlowSaveOptions,
     HuggingFaceSaveOptions,
+    LLMSaveOptions,
 ]
 
 

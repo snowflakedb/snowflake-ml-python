@@ -5,12 +5,13 @@ from absl.testing import absltest, parameterized
 from common_utils import (
     FS_INTEG_TEST_DATASET_SCHEMA,
     FS_INTEG_TEST_DB,
-    FS_INTEG_TEST_DEFAULT_WAREHOUSE,
     create_random_schema,
+    get_test_warehouse_name,
 )
 
 from snowflake.ml._internal.utils import identifier
 from snowflake.ml._internal.utils.identifier import resolve_identifier
+from snowflake.ml._internal.utils.sql_identifier import SqlIdentifier
 from snowflake.ml.feature_store import (  # type: ignore[attr-defined]
     CreationMode,
     Entity,
@@ -48,6 +49,7 @@ class FeatureStoreCaseSensitivityTest(parameterized.TestCase):
         cls._session = Session.builder.configs(SnowflakeLoginOptions()).create()
         cls._active_fs = []
         cls._mock_table = cls._create_mock_table("mock_data")
+        cls._test_warehouse_name = get_test_warehouse_name(cls._session)
 
     @classmethod
     def tearDownClass(cls) -> None:
@@ -83,7 +85,7 @@ class FeatureStoreCaseSensitivityTest(parameterized.TestCase):
             session=self._session,
             database=database,
             name=schema,
-            default_warehouse=FS_INTEG_TEST_DEFAULT_WAREHOUSE,
+            default_warehouse=self._test_warehouse_name,
             creation_mode=CreationMode.CREATE_IF_NOT_EXIST,
         )
         self._active_fs.append(fs)
@@ -102,7 +104,7 @@ class FeatureStoreCaseSensitivityTest(parameterized.TestCase):
             session=self._session,
             database=database,
             name=schema,
-            default_warehouse=FS_INTEG_TEST_DEFAULT_WAREHOUSE,
+            default_warehouse=self._test_warehouse_name,
             creation_mode=CreationMode.FAIL_IF_NOT_EXIST,
         )
 
@@ -156,7 +158,7 @@ class FeatureStoreCaseSensitivityTest(parameterized.TestCase):
             self._session,
             FS_INTEG_TEST_DB,
             original_name,
-            FS_INTEG_TEST_DEFAULT_WAREHOUSE,
+            self._test_warehouse_name,
             creation_mode=CreationMode.CREATE_IF_NOT_EXIST,
         )
         self._active_fs.append(fs)
@@ -167,7 +169,7 @@ class FeatureStoreCaseSensitivityTest(parameterized.TestCase):
                 self._session,
                 FS_INTEG_TEST_DB,
                 equi_name,
-                FS_INTEG_TEST_DEFAULT_WAREHOUSE,
+                self._test_warehouse_name,
                 creation_mode=CreationMode.FAIL_IF_NOT_EXIST,
             )
 
@@ -178,7 +180,7 @@ class FeatureStoreCaseSensitivityTest(parameterized.TestCase):
                     self._session,
                     FS_INTEG_TEST_DB,
                     diff_name,
-                    FS_INTEG_TEST_DEFAULT_WAREHOUSE,
+                    self._test_warehouse_name,
                     creation_mode=CreationMode.FAIL_IF_NOT_EXIST,
                 )
 
@@ -195,7 +197,7 @@ class FeatureStoreCaseSensitivityTest(parameterized.TestCase):
             self._session,
             FS_INTEG_TEST_DB,
             current_schema,
-            FS_INTEG_TEST_DEFAULT_WAREHOUSE,
+            self._test_warehouse_name,
             creation_mode=CreationMode.CREATE_IF_NOT_EXIST,
         )
         self._active_fs.append(fs)
@@ -240,7 +242,7 @@ class FeatureStoreCaseSensitivityTest(parameterized.TestCase):
             self._session,
             FS_INTEG_TEST_DB,
             current_schema,
-            FS_INTEG_TEST_DEFAULT_WAREHOUSE,
+            self._test_warehouse_name,
             creation_mode=CreationMode.CREATE_IF_NOT_EXIST,
         )
         self._active_fs.append(fs)
@@ -254,17 +256,17 @@ class FeatureStoreCaseSensitivityTest(parameterized.TestCase):
 
             retrieved_e = fs.get_entity("MY_COOL_ENTITY")
             self.assertEqual(len(retrieved_e.join_keys), 1)
-            self.assertEqual(retrieved_e.join_keys[0], test_name)
+            self.assertEqual(retrieved_e.join_keys[0], SqlIdentifier(test_name))
 
             self.assertEqual(len(fv_1.entities), 1)
             self.assertEqual(len(fv_1.entities[0].join_keys), 1)
-            self.assertEqual(fv_1.entities[0].join_keys[0], test_name)
+            self.assertEqual(fv_1.entities[0].join_keys[0], SqlIdentifier(test_name))
 
             fv_2 = fs.get_feature_view("MY_FV", "V1")
             self.assertEqual(len(fv_2.entities), 1)
             self.assertEqual(len(fv_2.entities[0].join_keys), 1)
-            self.assertEqual(fv_2.entities[0].join_keys[0], test_name)
-            self.assertEqual(fv_2.timestamp_col, test_name)
+            self.assertEqual(fv_2.entities[0].join_keys[0], SqlIdentifier(test_name))
+            self.assertEqual(fv_2.timestamp_col, SqlIdentifier(test_name))
 
             fs.delete_feature_view(fv_2)
             fs.delete_entity("MY_COOL_ENTITY")
@@ -279,10 +281,10 @@ class FeatureStoreCaseSensitivityTest(parameterized.TestCase):
         [
             (
                 [("foo", "bar"), ("foo", "BAR"), ("FOO", "BAR"), ('"FOO"', '"BAR"')],
-                [('"foo"', "bar"), ("foo", '"BAR"')],
+                [('"foo"', "bar"), ("foo", '"bar"')],
             ),
             (
-                [('"abc"', "def"), ('"abc"', '"def"'), ("abc", '"def"')],
+                [('"abc"', "def"), ('"abc"', "DEF"), ('"abc"', '"DEF"')],
                 [("abc", "def")],
             ),
         ]
@@ -297,7 +299,7 @@ class FeatureStoreCaseSensitivityTest(parameterized.TestCase):
             self._session,
             FS_INTEG_TEST_DB,
             current_schema,
-            FS_INTEG_TEST_DEFAULT_WAREHOUSE,
+            self._test_warehouse_name,
             creation_mode=CreationMode.CREATE_IF_NOT_EXIST,
         )
         self._active_fs.append(fs)
@@ -322,7 +324,7 @@ class FeatureStoreCaseSensitivityTest(parameterized.TestCase):
             fv_name = diff_full_name[0]
             version = diff_full_name[1]
             fv = FeatureView(name=fv_name, entities=[e], feature_df=df)
-            fs.register_feature_view(fv, version, block=True)
+            fv = fs.register_feature_view(fv, version, block=True)
             fs.read_feature_view(fv)
 
         self.assertEqual(len(fs.list_feature_views(as_dataframe=False)), len(diff_full_names) + 1)
@@ -370,16 +372,16 @@ class FeatureStoreCaseSensitivityTest(parameterized.TestCase):
             self._session,
             FS_INTEG_TEST_DB,
             current_schema,
-            FS_INTEG_TEST_DEFAULT_WAREHOUSE,
+            self._test_warehouse_name,
             creation_mode=CreationMode.CREATE_IF_NOT_EXIST,
         )
         self._active_fs.append(fs)
 
         self._session.sql(f"CREATE SCHEMA IF NOT EXISTS {FS_INTEG_TEST_DB}.{equi_names[0]}").collect()
         for name in equi_names:
-            self.assertEqual(len(fs._find_object("SCHEMAS", name)), 1)
+            self.assertEqual(len(fs._find_object("SCHEMAS", SqlIdentifier(name))), 1)
         for name in diff_names:
-            self.assertEqual(len(fs._find_object("SCHEMAS", name)), 0)
+            self.assertEqual(len(fs._find_object("SCHEMAS", SqlIdentifier(name))), 0)
         self._session.sql(f"DROP SCHEMA IF EXISTS {FS_INTEG_TEST_DB}.{equi_names[0]}").collect()
 
 

@@ -1,2 +1,3 @@
 //tests/integ/snowflake/ml/model:deployment_to_snowservice_integ_test
 //tests/integ/snowflake/ml/registry:model_registry_snowservice_integ_test
+//tests/integ/snowflake/ml/model:spcs_llm_model_integ_test

@@ -71,7 +71,7 @@ if [[ $mode = "unused" || $mode = "all" ]]; then
     # -- Begin of Query Rules Heredoc --
     cat >"${unused_test_rule_file}" <<EndOfMessage
     let missing_deps = filter('//snowflake/ml[:/].*', kind('py_library rule', deps(tests/...) except deps(snowflake/ml:wheel))) in
-        kind('source file', labels(srcs, kind('py_test rule', rdeps(//tests/..., \$missing_deps, 1))))
+        labels(srcs, kind('py_test rule', rdeps(//tests/..., \$missing_deps, 1)))
 EndOfMessage
     # -- End of Query Rules Heredoc --
 
@@ -86,8 +86,9 @@ if [[ $mode = "unaffected" || $mode = "all" ]]; then
 
     # -- Begin of Query Rules Heredoc --
     cat >"${unaffected_test_rule_file}" <<EndOfMessage
-    let unaffected_targets = //tests/... - rdeps(//tests/..., set($(<"${affected_targets_file}"))) in
-        kind('source file', labels(srcs, set($(<ci/skip_merge_gate_targets)) + kind('py_test rule', \$unaffected_targets)) - labels(srcs, rdeps(//tests/..., set($(<"${affected_targets_file}")))))
+    let affected_targets = set($(<"${affected_targets_file}")) - set($(<ci/skip_merge_gate_targets)) in
+        let unaffected_targets = //tests/... - deps(\$affected_targets) - rdeps(//tests/..., \$affected_targets) in
+            labels(srcs, \$unaffected_targets)
 EndOfMessage
     # -- End of Query Rules Heredoc --
 
@@ -115,7 +116,13 @@ esac
 
 excluded_test_source_rule_file=${working_dir}/excluded_test_source_rule
 
-printf "kind('source file', set(%s))" "$(<"${targets_to_exclude_file}")" >"${excluded_test_source_rule_file}"
+# -- Begin of Query Rules Heredoc --
+cat >"${excluded_test_source_rule_file}" <<EndOfMessage
+let skip_continuous_run_targets = set($(<ci/skip_continuous_run_targets)) in
+    let targets_to_exclude = set($(<"${targets_to_exclude_file}")) + labels(srcs, \$skip_continuous_run_targets) in
+            kind('source file', \$targets_to_exclude)
+EndOfMessage
+# -- End of Query Rules Heredoc --
 
 ${bazel} query --query_file="${excluded_test_source_rule_file}" \
     --output location |

@@ -1,5 +1,5 @@
 import json
-from typing import cast
+from typing import Optional, cast
 
 from absl.testing import absltest
 from absl.testing.absltest import mock
@@ -50,31 +50,55 @@ class SnowServiceClientTest(absltest.TestCase):
             spec_stage_location=m_spec_storgae_location,
         )
 
-    def test_create_job(self) -> None:
-        m_compute_pool = "mock_compute_pool"
-        m_stage = "@mock_spec_stage"
-        m_stage_path = "a/hello.yaml"
-        m_spec_storgae_location = f"{m_stage}/{m_stage_path}"
-        expected_job_id = "abcd"
-        self.m_session.add_mock_sql(
-            query=f"""
-                EXECUTE SERVICE
-                IN COMPUTE POOL {m_compute_pool}
-                FROM {m_stage}
-                SPEC = '{m_stage_path}'
-            """,
-            result=mock_data_frame.MockDataFrame(collect_result=[]),
-        )
-        row = snowpark.Row(**{"QUERY_ID": expected_job_id})
-        self.m_session.add_mock_sql(
-            query="SELECT LAST_QUERY_ID() AS QUERY_ID",
-            result=mock_data_frame.MockDataFrame(collect_result=[row]),
-        )
-        job_id = self.client.create_job(
-            compute_pool=m_compute_pool,
-            spec_stage_location=m_spec_storgae_location,
-        )
-        self.assertEqual(job_id, expected_job_id)
+    def _add_mock_cursor_to_session(self, *, expected_job_id: Optional[str] = None) -> None:
+        mock_cursor = mock.Mock()
+        mock_cursor.execute_async.return_value = None
+        mock_cursor._sfqid = expected_job_id
+
+        # Replace the cursor in the m_session with the mock_cursor
+        self.m_session._conn = mock.Mock()
+        self.m_session._conn._conn = mock.Mock()
+        self.m_session._conn._conn.cursor.return_value = mock_cursor
+
+    def test_create_job_successfully(self) -> None:
+        with mock.patch.object(self.client, "get_resource_status", return_value=constants.ResourceStatus.DONE):
+            m_compute_pool = "mock_compute_pool"
+            m_stage = "@mock_spec_stage"
+            m_stage_path = "a/hello.yaml"
+            m_spec_storgae_location = f"{m_stage}/{m_stage_path}"
+            expected_job_id = "abcd"
+            self._add_mock_cursor_to_session(expected_job_id=expected_job_id)
+            self.client.create_job(
+                compute_pool=m_compute_pool,
+                spec_stage_location=m_spec_storgae_location,
+            )
+
+    def test_create_job_failed(self) -> None:
+        with self.assertLogs(level="INFO") as cm:
+            with mock.patch.object(self.client, "get_resource_status", return_value=constants.ResourceStatus.FAILED):
+                with exception_utils.assert_snowml_exceptions(self, expected_original_error_type=RuntimeError):
+                    test_log = "Job fails because of xyz."
+                    m_compute_pool = "mock_compute_pool"
+                    m_stage = "@mock_spec_stage"
+                    m_stage_path = "a/hello.yaml"
+                    m_spec_storgae_location = f"{m_stage}/{m_stage_path}"
+                    expected_job_id = "abcd"
+
+                    self.m_session.add_mock_sql(
+                        query=f"CALL SYSTEM$GET_JOB_LOGS('{expected_job_id}', '{constants.KANIKO_CONTAINER_NAME}')",
+                        result=mock_data_frame.MockDataFrame(
+                            collect_result=[snowpark.Row(**{"SYSTEM$GET_JOB_LOGS": test_log})]
+                        ),
+                    )
+
+                    self._add_mock_cursor_to_session(expected_job_id=expected_job_id)
+
+                    self.client.create_job(
+                        compute_pool=m_compute_pool,
+                        spec_stage_location=m_spec_storgae_location,
+                    )
+
+                    self.assertTrue(cm.output, test_log)
 
     def test_create_service_function(self) -> None:
         m_service_func_name = "mock_service_func_name"
@@ -217,6 +241,7 @@ class SnowServiceClientTest(absltest.TestCase):
 
     def test_block_until_service_is_ready_timeout(self) -> None:
         test_log = "service fails because of xyz."
+
         self.m_session.add_mock_sql(
             query=f"CALL SYSTEM$GET_SERVICE_LOGS('{self.m_service_name}', '0',"
             f"'{constants.INFERENCE_SERVER_CONTAINER}')",
@@ -224,6 +249,7 @@ class SnowServiceClientTest(absltest.TestCase):
                 collect_result=[snowpark.Row(**{"SYSTEM$GET_SERVICE_LOGS": test_log})]
             ),
         )
+
         self.m_session.add_mock_sql(
             query=f"DROP SERVICE IF EXISTS {self.m_service_name}",
             result=mock_data_frame.MockDataFrame(collect_result=[]),
@@ -246,6 +272,13 @@ class SnowServiceClientTest(absltest.TestCase):
 
     def test_block_until_service_is_ready_retries_and_fail(self) -> None:
         test_log = "service fails because of abc."
+        # First status call return None; first get_log is empty; second status call return failed state
+        self.m_session.add_mock_sql(
+            query=f"CALL SYSTEM$GET_SERVICE_LOGS('{self.m_service_name}', '0',"
+            f"'{constants.INFERENCE_SERVER_CONTAINER}')",
+            result=mock_data_frame.MockDataFrame(collect_result=[]),
+        )
+
         self.m_session.add_mock_sql(
             query=f"CALL SYSTEM$GET_SERVICE_LOGS('{self.m_service_name}', '0',"
             f"'{constants.INFERENCE_SERVER_CONTAINER}')",

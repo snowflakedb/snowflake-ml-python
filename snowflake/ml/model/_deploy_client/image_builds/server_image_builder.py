@@ -201,14 +201,5 @@ class ServerImageBuilder(base_image_builder.ImageBuilder):
         )
 
     def _launch_kaniko_job(self, spec_stage_location: str) -> None:
-        logger.info("Submitting SPCS job for building docker image.")
-        job_id = self.client.create_job(compute_pool=self.compute_pool, spec_stage_location=spec_stage_location)
-        logger.info(f"Server image building SPCS job id is {job_id}.")
-        # Given image build can take a while, we set a generous timeout to be 1 hour.
-        self.client.block_until_resource_is_ready(
-            resource_name=job_id,
-            resource_type=constants.ResourceType.JOB,
-            container_name=constants.KANIKO_CONTAINER_NAME,
-            max_retries=240,
-            retry_interval_secs=15,
-        )
+        logger.debug("Submitting job for building docker image with kaniko")
+        self.client.create_job(compute_pool=self.compute_pool, spec_stage_location=spec_stage_location)

@@ -6,9 +6,10 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Dict, List, Optional
 
-from snowflake.ml._internal.utils.identifier import (
-    get_inferred_name,
-    get_unescaped_names,
+from snowflake.ml._internal.utils.identifier import concat_names
+from snowflake.ml._internal.utils.sql_identifier import (
+    SqlIdentifier,
+    to_sql_identifiers,
 )
 from snowflake.ml.feature_store.entity import Entity
 from snowflake.snowpark import DataFrame, Session
@@ -35,7 +36,7 @@ class FeatureViewStatus(Enum):
 @dataclass(frozen=True)
 class FeatureViewSlice:
     feature_view_ref: FeatureView
-    names: List[str]
+    names: List[SqlIdentifier]
 
     def __repr__(self) -> str:
         states = (f"{k}={v}" for k, v in vars(self).items())
@@ -45,10 +46,7 @@ class FeatureViewSlice:
         if not isinstance(other, FeatureViewSlice):
             return False
 
-        return (
-            get_unescaped_names(self.names) == get_unescaped_names(other.names)
-            and self.feature_view_ref == other.feature_view_ref
-        )
+        return self.names == other.names and self.feature_view_ref == other.feature_view_ref
 
     def to_json(self) -> str:
         fvs_dict = {
@@ -89,22 +87,30 @@ class FeatureView:
             entities: entities that the FeatureView is associated with.
             feature_df: Snowpark DataFrame containing data source and all feature feature_df logics.
                 Final projection of the DataFrame should contain feature names, join keys and timestamp(if applicable).
-            timestamp_col: name of the timestamp column for point-in-time lookup when consuming the feature values.
+            timestamp_col: name of the timestamp column for point-in-time lookup when consuming the
+                feature values.
             desc: description of the FeatureView.
         """
-        self._name: str = name
+
+        self._name: SqlIdentifier = SqlIdentifier(name)
         self._entities: List[Entity] = entities
         self._feature_df: DataFrame = feature_df
-        self._timestamp_col: Optional[str] = timestamp_col if timestamp_col is not None else None
+        self._timestamp_col: Optional[SqlIdentifier] = (
+            SqlIdentifier(timestamp_col) if timestamp_col is not None else None
+        )
         self._desc: str = desc
         self._query: str = self._get_query()
-        self._version: Optional[str] = None
+        self._version: Optional[SqlIdentifier] = None
         self._status: FeatureViewStatus = FeatureViewStatus.DRAFT
-        self._feature_desc: OrderedDict[str, Optional[str]] = OrderedDict((f, None) for f in self._get_feature_names())
+        self._feature_desc: OrderedDict[SqlIdentifier, Optional[str]] = OrderedDict(
+            (f, None) for f in self._get_feature_names()
+        )
         self._refresh_freq: Optional[str] = None
-        self._database: Optional[str] = None
-        self._schema: Optional[str] = None
-        self._warehouse: Optional[str] = None
+        self._database: Optional[SqlIdentifier] = None
+        self._schema: Optional[SqlIdentifier] = None
+        self._warehouse: Optional[SqlIdentifier] = None
+        self._refresh_mode: Optional[str] = None
+        self._refresh_mode_reason: Optional[str] = None
         self._validate()
 
     def slice(self, names: List[str]) -> FeatureViewSlice:
@@ -120,27 +126,36 @@ class FeatureView:
         Raises:
             ValueError: if selected feature names is not found in the FeatureView.
         """
+
         res = []
         for name in names:
-            name = get_unescaped_names(name)
+            name = SqlIdentifier(name)
             if name not in self.feature_names:
                 raise ValueError(f"Feature name {name} not found in FeatureView {self.name}.")
             res.append(name)
         return FeatureViewSlice(self, res)
 
-    def fully_qualified_name(self) -> str:
-        """
-        Returns the fully qualified name for the FeatureView in Snowflake storage.
+    def physical_name(self) -> SqlIdentifier:
+        """Returns the physical name for this feature in Snowflake.
 
         Returns:
-            fully qualified name string
+            Physical name string.
 
         Raises:
             RuntimeError: if the FeatureView is not materialized.
         """
-        if self.status == FeatureViewStatus.DRAFT:
+        if self.status == FeatureViewStatus.DRAFT or self.version is None:
             raise RuntimeError(f"FeatureView {self.name} has not been materialized.")
-        return f"{self._database}.{self._schema}.{self.name}{FEATURE_VIEW_NAME_DELIMITER}{self.version}"
+        return FeatureView._get_physical_name(self.name, self.version)
+
+    def fully_qualified_name(self) -> str:
+        """Returns the fully qualified name (<database_name>.<schema_name>.<feature_view_name>) for the
+            FeatureView in Snowflake.
+
+        Returns:
+            fully qualified name string.
+        """
+        return f"{self._database}.{self._schema}.{self.physical_name()}"
 
     def attach_feature_desc(self, descs: Dict[str, str]) -> FeatureView:
         """
@@ -156,7 +171,7 @@ class FeatureView:
             ValueError: if feature name is not found in the FeatureView.
         """
         for f, d in descs.items():
-            f = get_unescaped_names(f)
+            f = SqlIdentifier(f)
             if f not in self._feature_desc:
                 raise ValueError(
                     f"Feature name {f} is not found in FeatureView {self.name}, "
@@ -166,7 +181,7 @@ class FeatureView:
         return self
 
     @property
-    def name(self) -> str:
+    def name(self) -> SqlIdentifier:
         return self._name
 
     @property
@@ -178,7 +193,7 @@ class FeatureView:
         return self._feature_df
 
     @property
-    def timestamp_col(self) -> Optional[str]:
+    def timestamp_col(self) -> Optional[SqlIdentifier]:
         return self._timestamp_col
 
     @property
@@ -190,7 +205,7 @@ class FeatureView:
         return self._query
 
     @property
-    def version(self) -> Optional[str]:
+    def version(self) -> Optional[SqlIdentifier]:
         return self._version
 
     @property
@@ -198,32 +213,43 @@ class FeatureView:
         return self._status
 
     @property
-    def feature_names(self) -> List[str]:
+    def feature_names(self) -> List[SqlIdentifier]:
         return list(self._feature_desc.keys())
 
     @property
     def feature_descs(self) -> Dict[str, Optional[str]]:
-        return dict(self._feature_desc)
+        new_dict = {}
+        for k, v in self._feature_desc.items():
+            new_dict[k.identifier()] = v
+        return new_dict
 
     @property
     def refresh_freq(self) -> Optional[str]:
         return self._refresh_freq
 
     @property
-    def database(self) -> Optional[str]:
+    def database(self) -> Optional[SqlIdentifier]:
         return self._database
 
     @property
-    def schema(self) -> Optional[str]:
+    def schema(self) -> Optional[SqlIdentifier]:
         return self._schema
 
     @property
-    def warehouse(self) -> Optional[str]:
+    def warehouse(self) -> Optional[SqlIdentifier]:
         return self._warehouse
 
     @property
     def output_schema(self) -> StructType:
         return self._feature_df.schema
+
+    @property
+    def refresh_mode(self) -> Optional[str]:
+        return self._refresh_mode
+
+    @property
+    def refresh_mode_reason(self) -> Optional[str]:
+        return self._refresh_mode_reason
 
     def _get_query(self) -> str:
         if len(self._feature_df.queries["queries"]) != 1:
@@ -240,29 +266,30 @@ Got {len(self._feature_df.queries['queries'])}: {self._feature_df.queries['queri
                 f"FeatureView name `{self._name}` contains invalid character `{FEATURE_VIEW_NAME_DELIMITER}`."
             )
 
-        unescaped_df_cols = get_unescaped_names(self._feature_df.columns)
+        unescaped_df_cols = to_sql_identifiers(self._feature_df.columns)
         for e in self._entities:
-            for k in get_unescaped_names(e.join_keys):
+            for k in e.join_keys:
                 if k not in unescaped_df_cols:
                     raise ValueError(
                         f"join_key {k} in Entity {e.name} is not found in input dataframe: {unescaped_df_cols}"
                     )
 
         if self._timestamp_col is not None:
-            ts_col = get_unescaped_names(self._timestamp_col)
-            if ts_col == TIMESTAMP_COL_PLACEHOLDER:
+            ts_col = self._timestamp_col
+            if ts_col == SqlIdentifier(TIMESTAMP_COL_PLACEHOLDER):
                 raise ValueError(f"Invalid timestamp_col name, cannot be {TIMESTAMP_COL_PLACEHOLDER}.")
-            if ts_col not in get_unescaped_names(self._feature_df.columns):
+            if ts_col not in to_sql_identifiers(self._feature_df.columns):
                 raise ValueError(f"timestamp_col {ts_col} is not found in input dataframe.")
 
-            col_type = self._feature_df.schema[get_inferred_name(ts_col)].datatype
+            col_type = self._feature_df.schema[ts_col].datatype
             if not isinstance(col_type, (DateType, TimeType, TimestampType, _NumericType)):
                 raise ValueError(f"Invalid data type for timestamp_col {ts_col}: {col_type}.")
 
-    def _get_feature_names(self) -> List[str]:
-        join_keys = [k for e in self._entities for k in get_unescaped_names(e.join_keys)]
-        ts_col = [get_unescaped_names(self._timestamp_col)] if self._timestamp_col is not None else []
-        return [c for c in get_unescaped_names(self._feature_df.columns) if c not in join_keys + ts_col]
+    def _get_feature_names(self) -> List[SqlIdentifier]:
+        join_keys = [k for e in self._entities for k in e.join_keys]
+        ts_col = [self._timestamp_col] if self._timestamp_col is not None else []
+        feature_names = to_sql_identifiers(self._feature_df.columns, case_sensitive=True)
+        return [c for c in feature_names if c not in join_keys + ts_col]
 
     def __repr__(self) -> str:
         states = (f"{k}={v}" for k, v in vars(self).items())
@@ -273,9 +300,9 @@ Got {len(self._feature_df.queries['queries'])}: {self._feature_df.queries['queri
             return False
 
         return (
-            get_unescaped_names(self.name) == get_unescaped_names(other.name)
-            and get_unescaped_names(self.version) == get_unescaped_names(other.version)
-            and get_unescaped_names(self.timestamp_col) == get_unescaped_names(other.timestamp_col)
+            self.name == other.name
+            and self.version == other.version
+            and self.timestamp_col == other.timestamp_col
             and self.entities == other.entities
             and self.desc == other.desc
             and self.feature_descs == other.feature_descs
@@ -283,16 +310,34 @@ Got {len(self._feature_df.queries['queries'])}: {self._feature_df.queries['queri
             and self.query == other.query
             and self.refresh_freq == other.refresh_freq
             and str(self.status) == str(other.status)
+            and self.database == other.database
             and self.warehouse == other.warehouse
+            and self.refresh_mode == other.refresh_mode
+            and self.refresh_mode_reason == other.refresh_mode_reason
         )
 
     def _to_dict(self) -> Dict[str, str]:
         fv_dict = self.__dict__.copy()
         if "_feature_df" in fv_dict:
             fv_dict.pop("_feature_df")
-        fv_dict["_entities"] = [e.__dict__ for e in self._entities]
+        fv_dict["_entities"] = [e._to_dict() for e in self._entities]
         fv_dict["_status"] = str(self._status)
+        fv_dict["_name"] = str(self._name) if self._name is not None else None
+        fv_dict["_version"] = str(self._version) if self._version is not None else None
+        fv_dict["_database"] = str(self._database) if self._database is not None else None
+        fv_dict["_schema"] = str(self._schema) if self._schema is not None else None
+        fv_dict["_warehouse"] = str(self._warehouse) if self._warehouse is not None else None
+        fv_dict["_timestamp_col"] = str(self._timestamp_col) if self._timestamp_col is not None else None
+        fv_dict["_feature_desc"] = self.feature_descs if self._feature_desc is not None else None
+
         return fv_dict
+
+    def to_df(self, session: Session) -> DataFrame:
+        values = list(self._to_dict().values())
+        schema = [x.lstrip("_") for x in list(self._to_dict().keys())]
+        values.append(str(self.physical_name()))
+        schema.append("physical_name")
+        return session.create_dataframe([values], schema=schema)
 
     def to_json(self) -> str:
         state_dict = self._to_dict()
@@ -318,6 +363,20 @@ Got {len(self._feature_df.queries['queries'])}: {self._feature_df.queries['queri
             database=json_dict["_database"],
             schema=json_dict["_schema"],
             warehouse=json_dict["_warehouse"],
+            refresh_mode=json_dict["_refresh_mode"],
+            refresh_mode_reason=json_dict["_refresh_mode_reason"],
+        )
+
+    @staticmethod
+    def _get_physical_name(fv_name: SqlIdentifier, fv_version: SqlIdentifier) -> SqlIdentifier:
+        return SqlIdentifier(
+            concat_names(
+                [
+                    fv_name,
+                    FEATURE_VIEW_NAME_DELIMITER,
+                    fv_version,
+                ]
+            )
         )
 
     @staticmethod
@@ -334,6 +393,8 @@ Got {len(self._feature_df.queries['queries'])}: {self._feature_df.queries['queri
         database: Optional[str],
         schema: Optional[str],
         warehouse: Optional[str],
+        refresh_mode: Optional[str],
+        refresh_mode_reason: Optional[str],
     ) -> FeatureView:
         fv = FeatureView(
             name=name,
@@ -342,11 +403,13 @@ Got {len(self._feature_df.queries['queries'])}: {self._feature_df.queries['queri
             timestamp_col=timestamp_col,
             desc=desc,
         )
-        fv._version = version
+        fv._version = SqlIdentifier(version) if version is not None else None
         fv._status = status
         fv._refresh_freq = refresh_freq
-        fv._database = database
-        fv._schema = schema
-        fv._warehouse = warehouse
+        fv._database = SqlIdentifier(database) if database is not None else None
+        fv._schema = SqlIdentifier(schema) if schema is not None else None
+        fv._warehouse = SqlIdentifier(warehouse) if warehouse is not None else None
+        fv._refresh_mode = refresh_mode
+        fv._refresh_mode_reason = refresh_mode_reason
         fv.attach_feature_desc(feature_descs)
         return fv
