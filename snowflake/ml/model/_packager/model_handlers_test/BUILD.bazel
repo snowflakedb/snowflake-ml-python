@@ -1,0 +1,95 @@
+load("//bazel:py_rules.bzl", "py_test")
+
+package(default_visibility = ["//visibility:public"])
+
+py_test(
+    name = "custom_test",
+    srcs = ["custom_test.py"],
+    deps = [
+        "//snowflake/ml/model:custom_model",
+        "//snowflake/ml/model:model_signature",
+        "//snowflake/ml/model/_packager:model_packager",
+    ],
+)
+
+py_test(
+    name = "mlflow_test",
+    srcs = ["mlflow_test.py"],
+    deps = [
+        "//snowflake/ml/model:model_signature",
+        "//snowflake/ml/model/_packager:model_packager",
+    ],
+)
+
+py_test(
+    name = "pytorch_test",
+    srcs = ["pytorch_test.py"],
+    deps = [
+        "//snowflake/ml/model:model_signature",
+        "//snowflake/ml/model/_packager:model_packager",
+        "//snowflake/ml/model/_signatures:pytorch_handler",
+        "//snowflake/ml/model/_signatures:utils",
+    ],
+)
+
+py_test(
+    name = "sklearn_test",
+    srcs = ["sklearn_test.py"],
+    deps = [
+        "//snowflake/ml/model:model_signature",
+        "//snowflake/ml/model:type_hints",
+        "//snowflake/ml/model/_packager:model_packager",
+    ],
+)
+
+py_test(
+    name = "snowmlmodel_test",
+    srcs = ["snowmlmodel_test.py"],
+    deps = [
+        "//snowflake/ml/model:model_signature",
+        "//snowflake/ml/model/_packager:model_packager",
+        "//snowflake/ml/modeling/linear_model:linear_regression",
+    ],
+)
+
+py_test(
+    name = "tensorflow_test",
+    srcs = ["tensorflow_test.py"],
+    deps = [
+        "//snowflake/ml/model:model_signature",
+        "//snowflake/ml/model/_packager:model_packager",
+        "//snowflake/ml/model/_signatures:tensorflow_handler",
+        "//snowflake/ml/model/_signatures:utils",
+    ],
+)
+
+py_test(
+    name = "torchscript_test",
+    srcs = ["torchscript_test.py"],
+    deps = [
+        "//snowflake/ml/model:model_signature",
+        "//snowflake/ml/model/_packager:model_packager",
+        "//snowflake/ml/model/_signatures:pytorch_handler",
+        "//snowflake/ml/model/_signatures:utils",
+    ],
+)
+
+py_test(
+    name = "xgboost_test",
+    srcs = ["xgboost_test.py"],
+    deps = [
+        "//snowflake/ml/model:model_signature",
+        "//snowflake/ml/model/_packager:model_packager",
+    ],
+)
+
+py_test(
+    name = "huggingface_pipeline_test",
+    srcs = ["huggingface_pipeline_test.py"],
+    compatible_with_snowpark = False,
+    deps = [
+        "//snowflake/ml/model/_packager:model_packager",
+        "//snowflake/ml/model/_signatures:utils",
+        "//snowflake/ml/model/models:huggingface_pipeline",
+    ],
+)

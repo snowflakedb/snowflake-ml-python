@@ -24,7 +24,7 @@ py_test(
     name = "grid_search_integ_test",
     timeout = "long",
     srcs = ["grid_search_integ_test.py"],
-    shard_count = 2,
+    shard_count = 3,
     deps = [
         "//snowflake/ml/modeling/ensemble:random_forest_classifier",
         "//snowflake/ml/modeling/model_selection/_internal:_grid_search_cv",
@@ -38,6 +38,7 @@ py_test(
     name = "randomized_search_integ_test",
     timeout = "long",
     srcs = ["randomized_search_integ_test.py"],
+    shard_count = 2,
     deps = [
         "//snowflake/ml/modeling/ensemble:random_forest_classifier",
         "//snowflake/ml/modeling/model_selection/_internal:_randomized_search_cv",

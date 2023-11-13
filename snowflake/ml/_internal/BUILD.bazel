@@ -41,6 +41,7 @@ py_library(
     srcs = ["env_utils.py"],
     deps = [
         ":env",
+        "//snowflake/ml/_internal/exceptions",
         "//snowflake/ml/_internal/utils:query_result_checker",
     ],
 )
@@ -73,4 +74,9 @@ py_test(
         "//snowflake/ml/_internal:env",
         "//snowflake/ml/_internal/exceptions",
     ],
+)
+
+py_library(
+    name = "migrator_utils",
+    srcs = ["migrator_utils.py"],
 )

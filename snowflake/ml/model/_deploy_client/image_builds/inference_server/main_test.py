@@ -10,7 +10,8 @@ from absl.testing.absltest import mock
 from starlette import testclient
 
 from snowflake.ml._internal import file_utils
-from snowflake.ml.model import _model as model_api, custom_model
+from snowflake.ml.model import custom_model
+from snowflake.ml.model._packager import model_packager
 
 
 class MainTest(absltest.TestCase):
@@ -41,9 +42,8 @@ class MainTest(absltest.TestCase):
         tmpdir = self.create_tempdir()
         tmpdir_for_zip = self.create_tempdir()
         zip_full_path = os.path.join(tmpdir_for_zip.full_path, "model.zip")
-        model_api._save(
+        model_packager.ModelPackager(tmpdir.full_path).save(
             name="test_model",
-            local_dir_path=tmpdir.full_path,
             model=model,
             sample_input=x,
             metadata={"author": "halu", "version": "1"},

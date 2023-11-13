@@ -62,6 +62,7 @@ repos:
     rev: v0.36.0
     hooks:
       - id: markdownlint-fix
+        language_version: 16.20.2
   - repo: https://github.com/keith/pre-commit-buildifier
     rev: 6.0.0
     hooks:
@@ -69,6 +70,10 @@ repos:
         args:
           - --warnings=all
         files: \.(bzl|bazel|sky)$
+        exclude: >
+          (?x)^(
+              snowflake/ml/requirements.bzl
+          )$
       # - id: buildifier-lint
       #   args: *args
   - repo: https://github.com/crate-ci/typos  # config: _typos.toml

@@ -861,9 +861,8 @@ class OrdinalEncoderTest(parameterized.TestCase):
 
     def test_double_quoted_same_input_output_cols(self) -> None:
         data = [["a", "b"]]
-        schema = ["col1", "col2"]
         cat_cols = ['"col1"', '"col2"']
-        df_pandas, df = framework_utils.get_df(self._session, data, schema)
+        df_pandas, df = framework_utils.get_df(self._session, data, cat_cols)
 
         encoder = OrdinalEncoder(drop_input_cols=True).set_input_cols(cat_cols).set_output_cols(cat_cols)
         transformed_df = encoder.fit(df).transform(df)
@@ -872,9 +871,8 @@ class OrdinalEncoderTest(parameterized.TestCase):
 
     def test_mixed_column_types(self) -> None:
         data = [["a", 1]]
-        schema = ["col1", "col2"]
         cat_cols = ['"col1"', '"col2"']
-        df_pandas, df = framework_utils.get_df(self._session, data, schema)
+        df_pandas, df = framework_utils.get_df(self._session, data, cat_cols)
 
         encoder = OrdinalEncoder(drop_input_cols=True).set_input_cols(cat_cols).set_output_cols(cat_cols)
         transformed_df = encoder.fit(df).transform(df)
@@ -882,9 +880,8 @@ class OrdinalEncoderTest(parameterized.TestCase):
         self.assertEqual(cat_cols, transformed_df.columns)
 
         data = [[1.0, True]]
-        schema = ["col1", "col2"]
         cat_cols = ['"col1"', '"col2"']
-        df_pandas, df = framework_utils.get_df(self._session, data, schema)
+        df_pandas, df = framework_utils.get_df(self._session, data, cat_cols)
 
         encoder = OrdinalEncoder(drop_input_cols=True).set_input_cols(cat_cols).set_output_cols(cat_cols)
         transformed_df = encoder.fit(df).transform(df)
@@ -892,14 +889,51 @@ class OrdinalEncoderTest(parameterized.TestCase):
         self.assertEqual(cat_cols, transformed_df.columns)
 
         data = [[True, "a"]]
-        schema = ["col1", "col2"]
         cat_cols = ['"col1"', '"col2"']
-        df_pandas, df = framework_utils.get_df(self._session, data, schema)
+        df_pandas, df = framework_utils.get_df(self._session, data, cat_cols)
 
         encoder = OrdinalEncoder(drop_input_cols=True).set_input_cols(cat_cols).set_output_cols(cat_cols)
         transformed_df = encoder.fit(df).transform(df)
 
         self.assertEqual(cat_cols, transformed_df.columns)
+
+    def test_large_num_cols(self) -> None:
+        num_cols = 300
+        input_cols = [f"COL{i}" for i in range(1, num_cols + 1)]
+        output_cols = [f"OUT{i}" for i in range(1, num_cols + 1)]
+        col_cardinality = {col: 2 for col in input_cols}
+        data = {}
+        for col, cardinality in col_cardinality.items():
+            data[col] = np.random.randint(0, cardinality, size=100)
+        df = self._session.create_dataframe(pd.DataFrame(data))
+
+        encoder = OrdinalEncoder(input_cols=input_cols, output_cols=output_cols)
+        encoder.fit(df)
+        res = encoder.transform(df)
+        res.collect()
+
+    def test_large_num_cols_unknown(self) -> None:
+        num_cols = 300
+        input_cols = [f"COL{i}" for i in range(1, num_cols + 1)]
+        output_cols = [f"OUT{i}" for i in range(1, num_cols + 1)]
+        col_cardinality = {col: 2 for col in input_cols}
+        data = {}
+        for col, cardinality in col_cardinality.items():
+            data[col] = np.random.randint(0, cardinality, size=100)
+        df = self._session.create_dataframe(pd.DataFrame(data))
+
+        # unknown categories exist
+        unknown_col_cardinality = {col: 3 for col in input_cols}
+        unknown_data = {}
+        for col, cardinality in unknown_col_cardinality.items():
+            unknown_data[col] = np.random.randint(0, cardinality, size=100)
+        unknown_df = self._session.create_dataframe(pd.DataFrame(unknown_data))
+
+        encoder = OrdinalEncoder(input_cols=input_cols, output_cols=output_cols)
+        encoder.fit(df)
+
+        with pytest.raises(ValueError):
+            encoder.transform(unknown_df)
 
 
 if __name__ == "__main__":

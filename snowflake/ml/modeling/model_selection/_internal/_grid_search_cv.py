@@ -5,9 +5,6 @@
 from typing import Any, Dict, Iterable, List, Optional, Set, Union
 from uuid import uuid4
 
-import cachetools
-import cloudpickle as cp
-import fsspec
 import numpy as np
 import pandas as pd
 import sklearn.model_selection
@@ -34,7 +31,7 @@ from snowflake.ml.modeling._internal.estimator_utils import (
     validate_sklearn_args,
 )
 from snowflake.ml.modeling._internal.snowpark_handlers import (
-    SklearnWrapperProvider,
+    SklearnModelSelectionWrapperProvider,
     SnowparkHandlers as HandlersImpl,
 )
 from snowflake.ml.modeling.framework.base import BaseTransformer
@@ -231,13 +228,7 @@ class GridSearchCV(BaseTransformer):
         sample_weight_col: Optional[str] = None,
     ) -> None:
         super().__init__()
-        deps: Set[str] = {
-            f"numpy=={np.__version__}",
-            f"scikit-learn=={sklearn.__version__}",
-            f"cloudpickle=={cp.__version__}",
-            f"cachetools=={cachetools.__version__}",  # type: ignore[attr-defined]
-            f"fsspec=={fsspec.__version__}",
-        }
+        deps: Set[str] = set(SklearnModelSelectionWrapperProvider().dependencies)
         deps = deps | gather_dependencies(estimator)
         self._deps = list(deps)
         estimator = transform_snowml_obj_to_sklearn_obj(estimator)
@@ -264,7 +255,9 @@ class GridSearchCV(BaseTransformer):
         self.set_drop_input_cols(drop_input_cols)
         self.set_sample_weight_col(sample_weight_col)
         self._handlers: CVHandlers = HandlersImpl(
-            class_name=self.__class__.__name__, subproject=_SUBPROJECT, wrapper_provider=SklearnWrapperProvider()
+            class_name=self.__class__.__name__,
+            subproject=_SUBPROJECT,
+            wrapper_provider=SklearnModelSelectionWrapperProvider(),
         )
 
     def _get_rand_id(self) -> str:
@@ -301,7 +294,6 @@ class GridSearchCV(BaseTransformer):
     @telemetry.send_api_usage_telemetry(
         project=_PROJECT,
         subproject=_SUBPROJECT,
-        custom_tags=dict([("autogen", True)]),
     )
     def fit(self, dataset: Union[DataFrame, pd.DataFrame]) -> "GridSearchCV":
         """Run fit with all sets of parameters
@@ -536,12 +528,10 @@ class GridSearchCV(BaseTransformer):
     @telemetry.send_api_usage_telemetry(
         project=_PROJECT,
         subproject=_SUBPROJECT,
-        custom_tags=dict([("autogen", True)]),
     )
     @telemetry.add_stmt_params_to_df(
         project=_PROJECT,
         subproject=_SUBPROJECT,
-        custom_tags=dict([("autogen", True)]),
     )
     def predict(self, dataset: Union[DataFrame, pd.DataFrame]) -> Union[DataFrame, pd.DataFrame]:
         """Call predict on the estimator with the best found parameters
@@ -584,12 +574,10 @@ class GridSearchCV(BaseTransformer):
     @telemetry.send_api_usage_telemetry(
         project=_PROJECT,
         subproject=_SUBPROJECT,
-        custom_tags=dict([("autogen", True)]),
     )
     @telemetry.add_stmt_params_to_df(
         project=_PROJECT,
         subproject=_SUBPROJECT,
-        custom_tags=dict([("autogen", True)]),
     )
     def transform(self, dataset: Union[DataFrame, pd.DataFrame]) -> Union[DataFrame, pd.DataFrame]:
         """Call transform on the estimator with the best found parameters
@@ -662,12 +650,10 @@ class GridSearchCV(BaseTransformer):
     @telemetry.send_api_usage_telemetry(
         project=_PROJECT,
         subproject=_SUBPROJECT,
-        custom_tags=dict([("autogen", True)]),
     )
     @telemetry.add_stmt_params_to_df(
         project=_PROJECT,
         subproject=_SUBPROJECT,
-        custom_tags=dict([("autogen", True)]),
     )
     def predict_proba(
         self, dataset: Union[DataFrame, pd.DataFrame], output_cols_prefix: str = "predict_proba_"
@@ -705,12 +691,10 @@ class GridSearchCV(BaseTransformer):
     @telemetry.send_api_usage_telemetry(
         project=_PROJECT,
         subproject=_SUBPROJECT,
-        custom_tags=dict([("autogen", True)]),
     )
     @telemetry.add_stmt_params_to_df(
         project=_PROJECT,
         subproject=_SUBPROJECT,
-        custom_tags=dict([("autogen", True)]),
     )
     def predict_log_proba(
         self, dataset: Union[DataFrame, pd.DataFrame], output_cols_prefix: str = "predict_log_proba_"
@@ -749,12 +733,10 @@ class GridSearchCV(BaseTransformer):
     @telemetry.send_api_usage_telemetry(
         project=_PROJECT,
         subproject=_SUBPROJECT,
-        custom_tags=dict([("autogen", True)]),
     )
     @telemetry.add_stmt_params_to_df(
         project=_PROJECT,
         subproject=_SUBPROJECT,
-        custom_tags=dict([("autogen", True)]),
     )
     def decision_function(
         self, dataset: Union[DataFrame, pd.DataFrame], output_cols_prefix: str = "decision_function_"
@@ -810,7 +792,7 @@ class GridSearchCV(BaseTransformer):
         return output_score
 
     def _score_snowpark(self, dataset: DataFrame) -> float:
-        # Specify input columns so column pruing will be enforced
+        # Specify input columns so column pruning will be enforced
         selected_cols = self._get_active_columns()
         if len(selected_cols) > 0:
             dataset = dataset.select(selected_cols)

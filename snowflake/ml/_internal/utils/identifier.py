@@ -305,7 +305,10 @@ def resolve_identifier(id: str) -> str:
         Resolved identifier
     """
     if _is_quoted(id):
-        return id
+        if UNQUOTED_CASE_SENSITIVE_RE.match(id[1:-1]):
+            return id[1:-1]
+        else:
+            return id
     else:
         return id.upper()
 

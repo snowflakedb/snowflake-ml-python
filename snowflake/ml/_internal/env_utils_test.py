@@ -1,9 +1,13 @@
 import collections
+import copy
+import pathlib
 import platform
+import tempfile
 import textwrap
 from importlib import metadata as importlib_metadata
 from typing import DefaultDict, List, cast
 
+import yaml
 from absl.testing import absltest
 from packaging import requirements, specifiers
 
@@ -239,13 +243,13 @@ class EnvUtilsTest(absltest.TestCase):
 
         r = requirements.Requirement(f"pip!={importlib_metadata.version('pip')}")
         self.assertEqual(
-            requirements.Requirement(f"pip=={importlib_metadata.version('pip')}"),
+            requirements.Requirement(f"pip!={importlib_metadata.version('pip')}"),
             env_utils.get_local_installed_version_of_pip_package(r),
         )
 
-        r = requirements.Requirement(env_utils._SNOWML_PKG_NAME)
+        r = requirements.Requirement(env_utils.SNOWPARK_ML_PKG_NAME)
         self.assertEqual(
-            requirements.Requirement(f"{env_utils._SNOWML_PKG_NAME}=={snowml_env.VERSION}"),
+            requirements.Requirement(f"{env_utils.SNOWPARK_ML_PKG_NAME}=={snowml_env.VERSION}"),
             env_utils.get_local_installed_version_of_pip_package(r),
         )
 
@@ -262,13 +266,29 @@ class EnvUtilsTest(absltest.TestCase):
 
     def test_relax_requirement_version(self) -> None:
         r = requirements.Requirement("python-package==1.0.1")
-        self.assertEqual(env_utils.relax_requirement_version(r), requirements.Requirement("python-package"))
+        self.assertEqual(env_utils.relax_requirement_version(r), requirements.Requirement("python-package>=1.0,<2"))
+
+        r = requirements.Requirement("python-package==1.0.*")
+        self.assertEqual(env_utils.relax_requirement_version(r), requirements.Requirement("python-package==1.0.*"))
+
+        r = requirements.Requirement("python-package==1.0")
+        self.assertEqual(env_utils.relax_requirement_version(r), requirements.Requirement("python-package>=1.0,<2"))
+
+        r = requirements.Requirement("python-package==1.*")
+        self.assertEqual(env_utils.relax_requirement_version(r), requirements.Requirement("python-package==1.*"))
+
+        r = requirements.Requirement("python-package==1")
+        self.assertEqual(env_utils.relax_requirement_version(r), requirements.Requirement("python-package>=1.0,<2"))
 
         r = requirements.Requirement("python-package==1.0.1, !=1.0.2")
-        self.assertEqual(env_utils.relax_requirement_version(r), requirements.Requirement("python-package"))
+        self.assertEqual(
+            env_utils.relax_requirement_version(r), requirements.Requirement("python-package>=1.0,<2,!=1.0.2")
+        )
 
         r = requirements.Requirement("python-package[extra]==1.0.1")
-        self.assertEqual(env_utils.relax_requirement_version(r), requirements.Requirement("python-package[extra]"))
+        self.assertEqual(
+            env_utils.relax_requirement_version(r), requirements.Requirement("python-package[extra]>=1.0,<2")
+        )
 
         r = requirements.Requirement("python-package")
         self.assertEqual(env_utils.relax_requirement_version(r), requirements.Requirement("python-package"))
@@ -438,19 +458,22 @@ class EnvUtilsTest(absltest.TestCase):
             ["xgboost==1.7.3"],
         )
 
-        with self.assertRaises(ValueError):
+        self.assertListEqual(
             env_utils.validate_requirements_in_snowflake_conda_channel(
                 session=c_session,
-                reqs=[requirements.Requirement("xgboost<1.7")],
+                reqs=[requirements.Requirement("xgboost>=1.7,<1.8")],
                 python_version=snowml_env.PYTHON_VERSION,
-            )
+            ),
+            ["xgboost<1.8,>=1.7"],
+        )
 
-        with self.assertRaises(ValueError):
+        self.assertIsNone(
             env_utils.validate_requirements_in_snowflake_conda_channel(
                 session=c_session,
                 reqs=[requirements.Requirement("xgboost==1.7.1, ==1.7.3")],
                 python_version=snowml_env.PYTHON_VERSION,
             )
+        )
 
         # clear cache
         env_utils._SNOWFLAKE_CONDA_PACKAGE_CACHE = {}
@@ -581,6 +604,7 @@ class EnvUtilsTest(absltest.TestCase):
         self.assertIsNone(env_utils.parse_python_version_string("not_python"))
         self.assertEqual(env_utils.parse_python_version_string("python"), "")
         self.assertEqual(env_utils.parse_python_version_string("python==3.8.13"), "3.8.13")
+        self.assertEqual(env_utils.parse_python_version_string("python==3.8.*"), "3.8")
         self.assertEqual(env_utils.parse_python_version_string("python=3.11"), "3.11")
         with self.assertRaises(ValueError):
             env_utils.parse_python_version_string("python<=3.11")
@@ -630,12 +654,13 @@ class EnvUtilsTest(absltest.TestCase):
 
         pip_reqs = [requirements.Requirement("pip_package==1.0.0")]
 
-        conda_reqs_result, pip_reqs_result, spec = env_utils._find_dep_spec(
-            conda_reqs, pip_reqs, conda_pkg_name="somepackage"
-        )
+        original_conda_reqs = copy.deepcopy(conda_reqs)
+        original_pip_reqs = copy.deepcopy(pip_reqs)
 
-        self.assertDictEqual(conda_reqs_result, conda_reqs)
-        self.assertListEqual(pip_reqs_result, pip_reqs)
+        spec = env_utils.find_dep_spec(conda_reqs, pip_reqs, conda_pkg_name="somepackage")
+
+        self.assertDictEqual(original_conda_reqs, conda_reqs)
+        self.assertListEqual(original_pip_reqs, pip_reqs)
         self.assertEqual(spec, requirements.Requirement("somepackage==1.0.0"))
 
         conda_reqs = collections.defaultdict(
@@ -648,12 +673,13 @@ class EnvUtilsTest(absltest.TestCase):
 
         pip_reqs = [requirements.Requirement("pip_package==1.0.0")]
 
-        conda_reqs_result, pip_reqs_result, spec = env_utils._find_dep_spec(
-            conda_reqs, pip_reqs, conda_pkg_name="pip_package"
-        )
+        original_conda_reqs = copy.deepcopy(conda_reqs)
+        original_pip_reqs = copy.deepcopy(pip_reqs)
 
-        self.assertDictEqual(conda_reqs_result, conda_reqs)
-        self.assertListEqual(pip_reqs_result, pip_reqs)
+        spec = env_utils.find_dep_spec(conda_reqs, pip_reqs, conda_pkg_name="pip_package")
+
+        self.assertDictEqual(original_conda_reqs, conda_reqs)
+        self.assertListEqual(original_pip_reqs, pip_reqs)
         self.assertEqual(spec, requirements.Requirement("pip_package==1.0.0"))
 
         conda_reqs = collections.defaultdict(
@@ -666,12 +692,13 @@ class EnvUtilsTest(absltest.TestCase):
 
         pip_reqs = [requirements.Requirement("pip_package==1.0.0")]
 
-        conda_reqs_result, pip_reqs_result, spec = env_utils._find_dep_spec(
-            conda_reqs, pip_reqs, conda_pkg_name="somepackage", pip_pkg_name="pip_package"
-        )
+        original_conda_reqs = copy.deepcopy(conda_reqs)
+        original_pip_reqs = copy.deepcopy(pip_reqs)
 
-        self.assertDictEqual(conda_reqs_result, conda_reqs)
-        self.assertListEqual(pip_reqs_result, pip_reqs)
+        spec = env_utils.find_dep_spec(conda_reqs, pip_reqs, conda_pkg_name="somepackage", pip_pkg_name="pip_package")
+
+        self.assertDictEqual(original_conda_reqs, conda_reqs)
+        self.assertListEqual(original_pip_reqs, pip_reqs)
         self.assertEqual(spec, requirements.Requirement("somepackage==1.0.0"))
 
         conda_reqs = collections.defaultdict(
@@ -684,12 +711,12 @@ class EnvUtilsTest(absltest.TestCase):
 
         pip_reqs = [requirements.Requirement("pip_package==1.0.0")]
 
-        conda_reqs_result, pip_reqs_result, spec = env_utils._find_dep_spec(
-            conda_reqs, pip_reqs, conda_pkg_name="somepackage", remove_spec=True
-        )
+        original_pip_reqs = copy.deepcopy(pip_reqs)
+
+        spec = env_utils.find_dep_spec(conda_reqs, pip_reqs, conda_pkg_name="somepackage", remove_spec=True)
 
         self.assertDictEqual(
-            conda_reqs_result,
+            conda_reqs,
             collections.defaultdict(
                 list,
                 {
@@ -698,7 +725,7 @@ class EnvUtilsTest(absltest.TestCase):
                 },
             ),
         )
-        self.assertListEqual(pip_reqs_result, pip_reqs)
+        self.assertListEqual(pip_reqs, original_pip_reqs)
         self.assertEqual(spec, requirements.Requirement("somepackage==1.0.0"))
 
         conda_reqs = collections.defaultdict(
@@ -708,15 +735,14 @@ class EnvUtilsTest(absltest.TestCase):
                 "another_channel": [requirements.Requirement("another_package==1.0.0")],
             },
         )
+        original_conda_reqs = copy.deepcopy(conda_reqs)
 
         pip_reqs = [requirements.Requirement("pip_package==1.0.0")]
 
-        conda_reqs_result, pip_reqs_result, spec = env_utils._find_dep_spec(
-            conda_reqs, pip_reqs, conda_pkg_name="pip_package", remove_spec=True
-        )
+        spec = env_utils.find_dep_spec(conda_reqs, pip_reqs, conda_pkg_name="pip_package", remove_spec=True)
 
-        self.assertDictEqual(conda_reqs_result, conda_reqs)
-        self.assertListEqual(pip_reqs_result, [])
+        self.assertDictEqual(conda_reqs, original_conda_reqs)
+        self.assertListEqual(pip_reqs, [])
         self.assertEqual(spec, requirements.Requirement("pip_package==1.0.0"))
 
         conda_reqs = collections.defaultdict(
@@ -729,12 +755,12 @@ class EnvUtilsTest(absltest.TestCase):
 
         pip_reqs = [requirements.Requirement("pip_package==1.0.0")]
 
-        conda_reqs_result, pip_reqs_result, spec = env_utils._find_dep_spec(
+        spec = env_utils.find_dep_spec(
             conda_reqs, pip_reqs, conda_pkg_name="somepackage", pip_pkg_name="pip_package", remove_spec=True
         )
 
         self.assertDictEqual(
-            conda_reqs_result,
+            conda_reqs,
             collections.defaultdict(
                 list,
                 {
@@ -743,545 +769,173 @@ class EnvUtilsTest(absltest.TestCase):
                 },
             ),
         )
-        self.assertListEqual(pip_reqs_result, pip_reqs)
+        self.assertListEqual(pip_reqs, pip_reqs)
         self.assertEqual(spec, requirements.Requirement("somepackage==1.0.0"))
 
-    def test_generate_conda_env_for_cuda(self) -> None:
-        conda_reqs: DefaultDict[str, List[requirements.Requirement]] = collections.defaultdict(
-            list,
-            {
-                env_utils.DEFAULT_CHANNEL_NAME: [requirements.Requirement("somepackage==1.0.0")],
-                "another_channel": [requirements.Requirement("another_package==1.0.0")],
-            },
-        )
 
-        conda_reqs_result, _ = env_utils.generate_env_for_cuda(conda_reqs, [], cuda_version="11.7")
-
-        self.assertDictEqual(
-            conda_reqs_result,
-            {
-                env_utils.DEFAULT_CHANNEL_NAME: [
-                    requirements.Requirement("somepackage==1.0.0"),
-                ],
-                "nvidia": [
-                    requirements.Requirement(requirement_string="cuda==11.7.*"),
-                ],
-                "another_channel": [requirements.Requirement("another_package==1.0.0")],
-            },
-        )
-
-        conda_reqs = collections.defaultdict(
-            list,
-            {
-                env_utils.DEFAULT_CHANNEL_NAME: [requirements.Requirement("somepackage==1.0.0")],
-                "another_channel": [requirements.Requirement("another_package==1.0.0")],
-            },
-        )
-
-        conda_reqs_result, _ = env_utils.generate_env_for_cuda(conda_reqs, [], cuda_version="11.7")
-
-        self.assertDictEqual(
-            conda_reqs_result,
-            {
-                env_utils.DEFAULT_CHANNEL_NAME: [
-                    requirements.Requirement("somepackage==1.0.0"),
-                ],
-                "nvidia": [
-                    requirements.Requirement(requirement_string="cuda==11.7.*"),
-                ],
-                "another_channel": [requirements.Requirement("another_package==1.0.0")],
-            },
-        )
-
-        conda_reqs = collections.defaultdict(
-            list,
-            {
-                env_utils.DEFAULT_CHANNEL_NAME: [requirements.Requirement("somepackage==1.0.0")],
-                "nvidia": [
-                    requirements.Requirement(requirement_string="cuda==11.8.*"),
-                ],
-                "another_channel": [requirements.Requirement("another_package==1.0.0")],
-            },
-        )
-
-        conda_reqs_result, _ = env_utils.generate_env_for_cuda(conda_reqs, [], cuda_version="11.7")
-
-        self.assertDictEqual(
-            conda_reqs_result,
-            {
-                env_utils.DEFAULT_CHANNEL_NAME: [
-                    requirements.Requirement("somepackage==1.0.0"),
-                ],
-                "nvidia": [
-                    requirements.Requirement(requirement_string="cuda==11.8.*"),
-                ],
-                "another_channel": [requirements.Requirement("another_package==1.0.0")],
-            },
-        )
-
-        conda_reqs = collections.defaultdict(
-            list,
-            {
-                env_utils.DEFAULT_CHANNEL_NAME: [requirements.Requirement("pytorch==1.0.0")],
-            },
-        )
-
-        conda_reqs_result, _ = env_utils.generate_env_for_cuda(conda_reqs, [], cuda_version="11.7")
-
-        self.assertDictEqual(
-            conda_reqs_result,
-            {
-                env_utils.DEFAULT_CHANNEL_NAME: [],
-                "pytorch": [
-                    requirements.Requirement("pytorch==1.0.0"),
-                    requirements.Requirement("pytorch-cuda==11.7.*"),
-                ],
-                "nvidia": [
-                    requirements.Requirement(requirement_string="cuda==11.7.*"),
-                ],
-            },
-        )
-
-        conda_reqs = collections.defaultdict(
-            list,
-            {
-                env_utils.DEFAULT_CHANNEL_NAME: [requirements.Requirement("pytorch>=1.0.0")],
-            },
-        )
-
-        conda_reqs_result, _ = env_utils.generate_env_for_cuda(conda_reqs, [], cuda_version="11.7")
-
-        self.assertDictEqual(
-            conda_reqs_result,
-            {
-                env_utils.DEFAULT_CHANNEL_NAME: [],
-                "pytorch": [
-                    requirements.Requirement("pytorch>=1.0.0"),
-                    requirements.Requirement("pytorch-cuda==11.7.*"),
-                ],
-                "nvidia": [
-                    requirements.Requirement(requirement_string="cuda==11.7.*"),
-                ],
-            },
-        )
-
-        conda_reqs = collections.defaultdict(
-            list,
-            {
-                env_utils.DEFAULT_CHANNEL_NAME: [requirements.Requirement("pytorch>=1.0.0")],
-                "pytorch": [
-                    requirements.Requirement("pytorch-cuda==11.8.*"),
-                ],
-            },
-        )
-
-        conda_reqs_result, _ = env_utils.generate_env_for_cuda(conda_reqs, [], cuda_version="11.7")
-
-        self.assertDictEqual(
-            conda_reqs_result,
-            {
-                env_utils.DEFAULT_CHANNEL_NAME: [],
-                "pytorch": [
-                    requirements.Requirement("pytorch-cuda==11.8.*"),
-                    requirements.Requirement("pytorch>=1.0.0"),
-                ],
-                "nvidia": [
-                    requirements.Requirement(requirement_string="cuda==11.7.*"),
-                ],
-            },
-        )
-
-        conda_reqs = collections.defaultdict(
-            list,
-            {
-                env_utils.DEFAULT_CHANNEL_NAME: [requirements.Requirement("pytorch>=1.0.0")],
-                "pytorch": [
-                    requirements.Requirement("pytorch>=1.1.0"),
-                    requirements.Requirement("pytorch-cuda==11.8.*"),
-                ],
-            },
-        )
-
-        conda_reqs_result, _ = env_utils.generate_env_for_cuda(conda_reqs, [], cuda_version="11.7")
-
-        self.assertDictEqual(
-            conda_reqs_result,
-            {
-                env_utils.DEFAULT_CHANNEL_NAME: [],
-                "pytorch": [
-                    requirements.Requirement("pytorch>=1.1.0"),
-                    requirements.Requirement("pytorch-cuda==11.8.*"),
-                ],
-                "nvidia": [
-                    requirements.Requirement(requirement_string="cuda==11.7.*"),
-                ],
-            },
-        )
-
-        conda_reqs = collections.defaultdict(
-            list,
-            {
-                "conda-forge": [requirements.Requirement("pytorch==1.0.0")],
-            },
-        )
-
-        conda_reqs_result, _ = env_utils.generate_env_for_cuda(conda_reqs, [], cuda_version="11.7")
-
-        self.assertDictEqual(
-            conda_reqs_result,
-            {
-                "conda-forge": [],
-                "pytorch": [
-                    requirements.Requirement("pytorch==1.0.0"),
-                    requirements.Requirement("pytorch-cuda==11.7.*"),
-                ],
-                "nvidia": [
-                    requirements.Requirement(requirement_string="cuda==11.7.*"),
-                ],
-            },
-        )
-
-        conda_reqs_result, pip_reqs_result = env_utils.generate_env_for_cuda(
-            collections.defaultdict(
-                list,
-            ),
-            [requirements.Requirement("torch==1.0.0")],
-            cuda_version="11.7",
-        )
-
-        self.assertDictEqual(
-            conda_reqs_result,
-            {
-                "pytorch": [
-                    requirements.Requirement("pytorch==1.0.0"),
-                    requirements.Requirement("pytorch-cuda==11.7.*"),
-                ],
-                "nvidia": [
-                    requirements.Requirement(requirement_string="cuda==11.7.*"),
-                ],
-            },
-        )
-
-        self.assertListEqual(pip_reqs_result, [])
-
-        conda_reqs = collections.defaultdict(
-            list,
-            {
-                env_utils.DEFAULT_CHANNEL_NAME: [requirements.Requirement("tensorflow==1.0.0")],
-            },
-        )
-
-        conda_reqs_result, _ = env_utils.generate_env_for_cuda(conda_reqs, [], cuda_version="11.7")
-
-        self.assertDictEqual(
-            conda_reqs_result,
-            {
-                env_utils.DEFAULT_CHANNEL_NAME: [],
-                "conda-forge": [
-                    requirements.Requirement("tensorflow-gpu==1.0.0"),
-                ],
-                "nvidia": [
-                    requirements.Requirement(requirement_string="cuda==11.7.*"),
-                ],
-            },
-        )
-
-        conda_reqs = collections.defaultdict(
-            list,
-            {
-                env_utils.DEFAULT_CHANNEL_NAME: [requirements.Requirement("tensorflow>=1.0.0")],
-            },
-        )
-
-        conda_reqs_result, _ = env_utils.generate_env_for_cuda(conda_reqs, [], cuda_version="11.7")
-
-        self.assertDictEqual(
-            conda_reqs_result,
-            {
-                env_utils.DEFAULT_CHANNEL_NAME: [],
-                "conda-forge": [
-                    requirements.Requirement("tensorflow-gpu>=1.0.0"),
-                ],
-                "nvidia": [
-                    requirements.Requirement(requirement_string="cuda==11.7.*"),
-                ],
-            },
-        )
-
-        conda_reqs = collections.defaultdict(
-            list,
-            {
-                env_utils.DEFAULT_CHANNEL_NAME: [requirements.Requirement("tensorflow>=1.0.0")],
-                "conda-forge": [
-                    requirements.Requirement("tensorflow-gpu>=1.1.0"),
-                ],
-            },
-        )
-
-        conda_reqs_result, _ = env_utils.generate_env_for_cuda(conda_reqs, [], cuda_version="11.7")
-
-        self.assertDictEqual(
-            conda_reqs_result,
-            {
-                env_utils.DEFAULT_CHANNEL_NAME: [],
-                "conda-forge": [
-                    requirements.Requirement("tensorflow-gpu>=1.1.0"),
-                ],
-                "nvidia": [
-                    requirements.Requirement(requirement_string="cuda==11.7.*"),
-                ],
-            },
-        )
-
-        conda_reqs = collections.defaultdict(
-            list,
-            {
-                "conda-forge": [requirements.Requirement("tensorflow==1.0.0")],
-            },
-        )
-
-        conda_reqs_result, _ = env_utils.generate_env_for_cuda(conda_reqs, [], cuda_version="11.7")
-
-        self.assertDictEqual(
-            conda_reqs_result,
-            {
-                "conda-forge": [
-                    requirements.Requirement("tensorflow-gpu==1.0.0"),
-                ],
-                "nvidia": [
-                    requirements.Requirement(requirement_string="cuda==11.7.*"),
-                ],
-            },
-        )
-
-        conda_reqs_result, pip_reqs_result = env_utils.generate_env_for_cuda(
-            collections.defaultdict(
-                list,
-            ),
-            [requirements.Requirement("tensorflow==1.0.0")],
-            cuda_version="11.7",
-        )
-
-        self.assertDictEqual(
-            conda_reqs_result,
-            {
-                "conda-forge": [
-                    requirements.Requirement("tensorflow-gpu==1.0.0"),
-                ],
-                "nvidia": [
-                    requirements.Requirement(requirement_string="cuda==11.7.*"),
-                ],
-            },
-        )
-
-        self.assertListEqual(pip_reqs_result, [])
-
-        conda_reqs = collections.defaultdict(
-            list,
-            {
-                env_utils.DEFAULT_CHANNEL_NAME: [requirements.Requirement("xgboost==1.0.0")],
-            },
-        )
-
-        conda_reqs_result, _ = env_utils.generate_env_for_cuda(conda_reqs, [], cuda_version="11.7")
-
-        self.assertDictEqual(
-            conda_reqs_result,
-            {
-                env_utils.DEFAULT_CHANNEL_NAME: [],
-                "conda-forge": [
-                    requirements.Requirement("py-xgboost-gpu==1.0.0"),
-                ],
-                "nvidia": [
-                    requirements.Requirement(requirement_string="cuda==11.7.*"),
-                ],
-            },
-        )
-
-        conda_reqs = collections.defaultdict(
-            list,
-            {
-                env_utils.DEFAULT_CHANNEL_NAME: [requirements.Requirement("xgboost>=1.0.0")],
-            },
-        )
-
-        conda_reqs_result, _ = env_utils.generate_env_for_cuda(conda_reqs, [], cuda_version="11.7")
-
-        self.assertDictEqual(
-            conda_reqs_result,
-            {
-                env_utils.DEFAULT_CHANNEL_NAME: [],
-                "conda-forge": [
-                    requirements.Requirement("py-xgboost-gpu>=1.0.0"),
-                ],
-                "nvidia": [
-                    requirements.Requirement(requirement_string="cuda==11.7.*"),
-                ],
-            },
-        )
-
-        conda_reqs = collections.defaultdict(
-            list,
-            {
-                env_utils.DEFAULT_CHANNEL_NAME: [requirements.Requirement("xgboost>=1.0.0")],
-                "conda-forge": [
-                    requirements.Requirement("py-xgboost-gpu>=1.1.0"),
-                ],
-            },
-        )
-
-        conda_reqs_result, _ = env_utils.generate_env_for_cuda(conda_reqs, [], cuda_version="11.7")
-
-        self.assertDictEqual(
-            conda_reqs_result,
-            {
-                env_utils.DEFAULT_CHANNEL_NAME: [],
-                "conda-forge": [
-                    requirements.Requirement("py-xgboost-gpu>=1.1.0"),
-                ],
-                "nvidia": [
-                    requirements.Requirement(requirement_string="cuda==11.7.*"),
-                ],
-            },
-        )
-
-        conda_reqs = collections.defaultdict(
-            list,
-            {
-                "conda-forge": [requirements.Requirement("xgboost==1.0.0")],
-            },
-        )
-
-        conda_reqs_result, _ = env_utils.generate_env_for_cuda(conda_reqs, [], cuda_version="11.7")
-
-        self.assertDictEqual(
-            conda_reqs_result,
-            {
-                "conda-forge": [
-                    requirements.Requirement("py-xgboost-gpu==1.0.0"),
-                ],
-                "nvidia": [
-                    requirements.Requirement(requirement_string="cuda==11.7.*"),
-                ],
-            },
-        )
-
-        conda_reqs_result, pip_reqs_result = env_utils.generate_env_for_cuda(
-            collections.defaultdict(
-                list,
-            ),
-            [requirements.Requirement("xgboost==1.0.0")],
-            cuda_version="11.7",
-        )
-
-        self.assertDictEqual(
-            conda_reqs_result,
-            {
-                "conda-forge": [
-                    requirements.Requirement("py-xgboost-gpu==1.0.0"),
-                ],
-                "nvidia": [
-                    requirements.Requirement(requirement_string="cuda==11.7.*"),
-                ],
-            },
-        )
-
-        self.assertListEqual(pip_reqs_result, [])
-
-        conda_reqs = collections.defaultdict(
-            list,
-            {
-                env_utils.DEFAULT_CHANNEL_NAME: [
-                    requirements.Requirement("transformers==1.0.0"),
-                    requirements.Requirement("pytorch==1.0.0"),
-                ],
-            },
-        )
-
-        conda_reqs_result, pip_reqs_result = env_utils.generate_env_for_cuda(conda_reqs, [], cuda_version="11.7")
-
-        self.assertDictEqual(
-            conda_reqs_result,
-            {
-                env_utils.DEFAULT_CHANNEL_NAME: [
-                    requirements.Requirement("transformers==1.0.0"),
-                    env_utils.get_local_installed_version_of_pip_package(requirements.Requirement("scipy")),
-                ],
-                "pytorch": [
-                    requirements.Requirement("pytorch==1.0.0"),
-                    requirements.Requirement("pytorch-cuda==11.7.*"),
-                ],
-                "conda-forge": [
-                    requirements.Requirement("accelerate>=0.22.0"),
-                ],
-                "nvidia": [
-                    requirements.Requirement(requirement_string="cuda==11.7.*"),
-                ],
-            },
-        )
-
-        self.assertListEqual(pip_reqs_result, [requirements.Requirement("bitsandbytes>=0.41.0")])
-
-        conda_reqs = collections.defaultdict(
-            list,
-            {
-                env_utils.DEFAULT_CHANNEL_NAME: [
-                    requirements.Requirement("transformers==1.0.0"),
-                    requirements.Requirement("scipy==1.0.0"),
-                ],
-                "conda-forge": [
-                    requirements.Requirement("accelerate==1.0.0"),
-                ],
-            },
-        )
-        conda_reqs_result, pip_reqs_result = env_utils.generate_env_for_cuda(
-            conda_reqs, [requirements.Requirement("bitsandbytes==1.0.0")], cuda_version="11.7"
-        )
-
-        self.assertDictEqual(
-            conda_reqs_result,
-            {
-                env_utils.DEFAULT_CHANNEL_NAME: [
-                    requirements.Requirement("transformers==1.0.0"),
-                    requirements.Requirement("scipy==1.0.0"),
-                ],
-                "conda-forge": [
-                    requirements.Requirement("accelerate==1.0.0"),
-                ],
-                "nvidia": [
-                    requirements.Requirement(requirement_string="cuda==11.7.*"),
-                ],
-            },
-        )
-
-        self.assertListEqual(pip_reqs_result, [requirements.Requirement("bitsandbytes==1.0.0")])
-
-        conda_reqs = collections.defaultdict(
-            list,
-            {
-                "conda-forge": [requirements.Requirement("transformers==1.0.0")],
-            },
-        )
-
-        conda_reqs_result, pip_reqs_result = env_utils.generate_env_for_cuda(conda_reqs, [], cuda_version="11.7")
-
-        self.assertDictEqual(
-            conda_reqs_result,
-            {
-                env_utils.DEFAULT_CHANNEL_NAME: [
-                    env_utils.get_local_installed_version_of_pip_package(requirements.Requirement("scipy")),
-                ],
-                "conda-forge": [
-                    requirements.Requirement("transformers==1.0.0"),
-                    requirements.Requirement("accelerate>=0.22.0"),
-                ],
-                "nvidia": [
-                    requirements.Requirement(requirement_string="cuda==11.7.*"),
-                ],
-            },
-        )
-
-        self.assertListEqual(pip_reqs_result, [requirements.Requirement("bitsandbytes>=0.41.0")])
+class EnvFileTest(absltest.TestCase):
+    def test_conda_env_file(self) -> None:
+        cd: DefaultDict[str, List[requirements.Requirement]]
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cd = collections.defaultdict(list)
+            env_file_path = pathlib.Path(tmpdir, "conda.yml")
+            env_utils.save_conda_env_file(env_file_path, cd, python_version="3.8")
+            loaded_cd, _, _ = env_utils.load_conda_env_file(env_file_path)
+            self.assertEqual(cd, loaded_cd)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cd = collections.defaultdict(list)
+            cd[env_utils.DEFAULT_CHANNEL_NAME] = [requirements.Requirement("numpy")]
+            env_file_path = pathlib.Path(tmpdir, "conda.yml")
+            env_utils.save_conda_env_file(env_file_path, cd, python_version="3.8")
+            loaded_cd, _, _ = env_utils.load_conda_env_file(env_file_path)
+            self.assertEqual(cd, loaded_cd)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cd = collections.defaultdict(list)
+            cd[env_utils.DEFAULT_CHANNEL_NAME] = [requirements.Requirement("numpy>=1.22.4")]
+            env_file_path = pathlib.Path(tmpdir, "conda.yml")
+            env_utils.save_conda_env_file(env_file_path, cd, python_version="3.8")
+            loaded_cd, _, _ = env_utils.load_conda_env_file(env_file_path)
+            self.assertEqual(cd, loaded_cd)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cd = collections.defaultdict(list)
+            cd.update(
+                {
+                    env_utils.DEFAULT_CHANNEL_NAME: [requirements.Requirement("numpy>=1.22.4")],
+                    "conda-forge": [requirements.Requirement("pytorch!=2.0")],
+                }
+            )
+            env_file_path = pathlib.Path(tmpdir, "conda.yml")
+            env_utils.save_conda_env_file(env_file_path, cd, python_version="3.8")
+            loaded_cd, _, _ = env_utils.load_conda_env_file(env_file_path)
+            self.assertEqual(cd, loaded_cd)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cd = collections.defaultdict(list)
+            cd.update(
+                {
+                    env_utils.DEFAULT_CHANNEL_NAME: [requirements.Requirement("numpy>=1.22.4")],
+                    "apple": [],
+                    "conda-forge": [requirements.Requirement("pytorch!=2.0")],
+                }
+            )
+            env_file_path = pathlib.Path(tmpdir, "conda.yml")
+            env_utils.save_conda_env_file(env_file_path, cd, python_version="3.8")
+            with open(env_file_path, encoding="utf-8") as f:
+                written_yaml = yaml.safe_load(f)
+            self.assertDictEqual(
+                written_yaml,
+                {
+                    "name": "snow-env",
+                    "channels": ["https://repo.anaconda.com/pkgs/snowflake", "conda-forge", "apple", "nodefaults"],
+                    "dependencies": [
+                        "python==3.8.*",
+                        "numpy>=1.22.4",
+                        "conda-forge::pytorch!=2.0",
+                    ],
+                },
+            )
+            loaded_cd, pip_reqs, _ = env_utils.load_conda_env_file(env_file_path)
+            self.assertEqual(cd, loaded_cd)
+            self.assertIsNone(pip_reqs)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            env_file_path = pathlib.Path(tmpdir, "conda.yml")
+            with open(env_file_path, "w", encoding="utf-8") as f:
+                yaml.safe_dump(
+                    stream=f,
+                    data={
+                        "dependencies": [
+                            f"python=={snowml_env.PYTHON_VERSION}",
+                            "::numpy>=1.22.4",
+                            "conda-forge::pytorch!=2.0",
+                            {"pip": ["python-package==2.3.0"]},
+                        ],
+                    },
+                )
+            loaded_cd, pip_reqs, python_ver = env_utils.load_conda_env_file(env_file_path)
+            self.assertEqual(
+                {
+                    env_utils.DEFAULT_CHANNEL_NAME: [requirements.Requirement("numpy>=1.22.4")],
+                    "conda-forge": [requirements.Requirement("pytorch!=2.0")],
+                },
+                loaded_cd,
+            )
+            self.assertListEqual(pip_reqs, [requirements.Requirement("python-package==2.3.0")])
+            self.assertEqual(python_ver, snowml_env.PYTHON_VERSION)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            env_file_path = pathlib.Path(tmpdir, "conda.yml")
+            with open(env_file_path, "w", encoding="utf-8") as f:
+                yaml.safe_dump(
+                    stream=f,
+                    data={
+                        "name": "snow-env",
+                        "channels": ["https://repo.anaconda.com/pkgs/snowflake", "nodefaults"],
+                        "dependencies": [
+                            f"python=={snowml_env.PYTHON_VERSION}",
+                            "::numpy>=1.22.4",
+                            "conda-forge::pytorch!=2.0",
+                            {"pip": ["python-package==2.3.0"]},
+                        ],
+                    },
+                )
+            loaded_cd, pip_reqs, python_ver = env_utils.load_conda_env_file(env_file_path)
+            self.assertEqual(
+                {
+                    env_utils.DEFAULT_CHANNEL_NAME: [requirements.Requirement("numpy>=1.22.4")],
+                    "conda-forge": [requirements.Requirement("pytorch!=2.0")],
+                },
+                loaded_cd,
+            )
+            self.assertListEqual(pip_reqs, [requirements.Requirement("python-package==2.3.0")])
+            self.assertEqual(python_ver, snowml_env.PYTHON_VERSION)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            env_file_path = pathlib.Path(tmpdir, "conda.yml")
+            with open(env_file_path, "w", encoding="utf-8") as f:
+                yaml.safe_dump(
+                    stream=f,
+                    data={
+                        "name": "snow-env",
+                        "channels": ["https://repo.anaconda.com/pkgs/snowflake", "apple", "nodefaults"],
+                        "dependencies": [
+                            "python=3.8",
+                            "::numpy>=1.22.4",
+                            "conda-forge::pytorch!=2.0",
+                            {"pip": ["python-package"]},
+                        ],
+                    },
+                )
+            loaded_cd, pip_reqs, python_ver = env_utils.load_conda_env_file(env_file_path)
+            self.assertEqual(
+                {
+                    env_utils.DEFAULT_CHANNEL_NAME: [requirements.Requirement("numpy>=1.22.4")],
+                    "conda-forge": [requirements.Requirement("pytorch!=2.0")],
+                    "apple": [],
+                },
+                loaded_cd,
+            )
+            self.assertListEqual(pip_reqs, [requirements.Requirement("python-package")])
+            self.assertEqual(python_ver, "3.8")
+
+    def test_generate_requirements_file(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            rl: List[requirements.Requirement] = []
+            pip_file_path = pathlib.Path(tmpdir, "requirements.txt")
+            env_utils.save_requirements_file(pip_file_path, rl)
+            loaded_rl = env_utils.load_requirements_file(pip_file_path)
+            self.assertEqual(rl, loaded_rl)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            rl = [requirements.Requirement("python-package==1.0.1")]
+            pip_file_path = pathlib.Path(tmpdir, "requirements.txt")
+            env_utils.save_requirements_file(pip_file_path, rl)
+            loaded_rl = env_utils.load_requirements_file(pip_file_path)
+            self.assertEqual(rl, loaded_rl)
 
 
 if __name__ == "__main__":

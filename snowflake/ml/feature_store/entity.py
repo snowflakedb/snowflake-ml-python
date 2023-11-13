@@ -1,6 +1,10 @@
 from typing import List
 
 from snowflake.ml._internal.utils.identifier import get_unescaped_names
+from snowflake.ml._internal.utils.sql_identifier import (
+    SqlIdentifier,
+    to_sql_identifiers,
+)
 
 ENTITY_NAME_LENGTH_LIMIT = 32
 FEATURE_VIEW_ENTITY_TAG_DELIMITER = ","
@@ -25,8 +29,9 @@ class Entity:
             join_keys: join keys associated with a FeatureView, used for feature retrieval.
             desc: description of the Entity.
         """
+
         self.name: str = name
-        self.join_keys: List[str] = join_keys
+        self.join_keys: List[SqlIdentifier] = to_sql_identifiers(join_keys)
         self.desc = desc
         self._validate()
 

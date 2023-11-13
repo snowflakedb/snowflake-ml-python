@@ -16,6 +16,10 @@ def _fetch_conda_env_config_impl(rctx):
             "compatible_target": ["@SnowML//bazel/platforms:extended_conda_channels"],
             "environment": "@//bazel/environments:conda-env.yml",
         },
+        "extended_gpu_oss": {
+            "compatible_target": ["@SnowML//bazel/platforms:extended_conda_channels", "@SnowML//bazel/platforms:has_gpu"],
+            "environment": "@//bazel/environments:conda-gpu-env.yml",
+        },
         # `extended_oss` is the extended env for OSS repo which is a  strict subset of `extended`.
         # It's intended for development without dev VPN.
         "extended_oss": {
