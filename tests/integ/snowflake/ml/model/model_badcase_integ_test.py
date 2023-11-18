@@ -92,7 +92,7 @@ class TestModelBadCaseInteg(absltest.TestCase):
         arr = np.random.randint(100, size=(10000, 3))
         pd_df = pd.DataFrame(arr, columns=["c1", "c2", "c3"])
 
-        module_model = model_api.save_model(
+        model_composer = model_api.save_model(
             name="custom_demo_model",
             session=self._session,
             stage_path=posixpath.join(tmp_stage, "custom_demo_model"),
@@ -104,7 +104,7 @@ class TestModelBadCaseInteg(absltest.TestCase):
             metadata={"author": "halu", "version": "1"},
         )
 
-        self.assertIsNotNone(module_model.packager.meta.env._snowpark_ml_version.local)
+        self.assertIsNotNone(model_composer.packager.meta.env._snowpark_ml_version.local)
 
         function_name = db_manager.TestObjectNameGenerator.get_snowml_test_object_name(self.run_id, "custom_demo_model")
         with self.assertRaises(snowml_exceptions.SnowflakeMLException) as e:

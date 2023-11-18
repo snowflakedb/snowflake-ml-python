@@ -15,6 +15,7 @@ spec:
   endpoint:
     - name: ${predict_endpoint_name}
       port: 5000
+      public: ${enable_ingress}
   volume:
     - name: vol1
       source: local  # only local emptyDir volume is supported

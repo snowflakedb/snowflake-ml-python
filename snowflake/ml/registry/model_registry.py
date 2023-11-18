@@ -748,7 +748,6 @@ class ModelRegistry:
 
         Raises:
             DataError: When the model cannot be found or not be restored.
-            NotImplementedError: For models that span multiple files.
         """
         statement_params = self._get_statement_params(inspect.currentframe())
         selected_models = self._list_selected_models(id=id, model_name=model_name, model_version=model_version)
@@ -769,8 +768,6 @@ class ModelRegistry:
         model_file_list = self._session.sql(f"LIST @{model_stage_path}").collect(statement_params=statement_params)
         if len(model_file_list) == 0:
             raise connector.DataError(f"No files in model artifact for id {id} located at {model_uri}.")
-        if len(model_file_list) > 1:
-            raise NotImplementedError("Restoring models consisting of multiple files is currently not supported.")
         return f"{_STAGE_PREFIX}{model_stage_path}"
 
     def _log_model_path(
@@ -1400,7 +1397,7 @@ class ModelRegistry:
         stage_path = f"{_STAGE_PREFIX}{fully_qualified_model_stage_name}"
         model = cast(model_types.SupportedModelType, model)
         try:
-            module_model = model_api.save_model(  # type: ignore[call-overload, misc]
+            model_composer = model_api.save_model(  # type: ignore[call-overload, misc]
                 name=model_name,
                 session=self._session,
                 stage_path=stage_path,
@@ -1424,7 +1421,7 @@ class ModelRegistry:
             model_name=model_name,
             model_version=model_version,
             model_id=model_id,
-            type=module_model.packager.meta.model_type,
+            type=model_composer.packager.meta.model_type,
             uri=uri.get_uri_from_snowflake_stage_path(stage_path),
             description=description,
             tags=tags,
@@ -1994,37 +1991,37 @@ class ModelReference:
                 session=self._registry._session, deployment=di, X=data, statement_params=statement_params
             )
 
-        try:
-            # Mypy enforce to refer to the registry for calling the function
-            deployment = self._registry.get_deployment(
-                self._model_name, self._model_version, deployment_name=deployment_name
-            ).collect(statement_params=statement_params)[0]
-            platform = deploy_platforms.TargetPlatform(deployment["TARGET_PLATFORM"])
-            target_method = deployment["TARGET_METHOD"]
-            signature = model_signature.ModelSignature.from_dict(json.loads(deployment["SIGNATURE"]))
-            options_dict = cast(Dict[str, Any], json.loads(deployment["OPTIONS"]))
-            platform_options = {
-                deploy_platforms.TargetPlatform.WAREHOUSE: model_types.WarehouseDeployOptions,
-                deploy_platforms.TargetPlatform.SNOWPARK_CONTAINER_SERVICES: (
-                    model_types.SnowparkContainerServiceDeployOptions
-                ),
-            }
-
-            if platform not in platform_options:
-                raise ValueError(f"Unsupported target Platform: {platform}")
-            options = platform_options[platform](options_dict)
-            di = model_types.Deployment(
-                name=self._registry._fully_qualified_deployment_name(deployment_name),
-                platform=platform,
-                target_method=target_method,
-                signature=signature,
-                options=options,
-            )
-            return model_api.predict(
-                session=self._registry._session, deployment=di, X=data, statement_params=statement_params
-            )
-        except KeyError:
+        # Mypy enforce to refer to the registry for calling the function
+        deployment_collect = self._registry.get_deployment(
+            self._model_name, self._model_version, deployment_name=deployment_name
+        ).collect(statement_params=statement_params)
+        if not deployment_collect:
             raise ValueError(f"The deployment with name {deployment_name} haven't been deployed")
+        deployment = deployment_collect[0]
+        platform = deploy_platforms.TargetPlatform(deployment["TARGET_PLATFORM"])
+        target_method = deployment["TARGET_METHOD"]
+        signature = model_signature.ModelSignature.from_dict(json.loads(deployment["SIGNATURE"]))
+        options_dict = cast(Dict[str, Any], json.loads(deployment["OPTIONS"]))
+        platform_options = {
+            deploy_platforms.TargetPlatform.WAREHOUSE: model_types.WarehouseDeployOptions,
+            deploy_platforms.TargetPlatform.SNOWPARK_CONTAINER_SERVICES: (
+                model_types.SnowparkContainerServiceDeployOptions
+            ),
+        }
+
+        if platform not in platform_options:
+            raise ValueError(f"Unsupported target Platform: {platform}")
+        options = platform_options[platform](options_dict)
+        di = model_types.Deployment(
+            name=self._registry._fully_qualified_deployment_name(deployment_name),
+            platform=platform,
+            target_method=target_method,
+            signature=signature,
+            options=options,
+        )
+        return model_api.predict(
+            session=self._registry._session, deployment=di, X=data, statement_params=statement_params
+        )
 
 
 @telemetry.send_api_usage_telemetry(

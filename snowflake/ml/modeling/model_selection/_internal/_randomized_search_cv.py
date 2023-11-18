@@ -363,7 +363,7 @@ class RandomizedSearchCV(BaseTransformer):
             ]:
                 self._sklearn_object.estimator.n_jobs = DEFAULT_UDTF_NJOBS
             self._sklearn_object = self._handlers.fit_search_snowpark(
-                param_list=ParameterSampler(
+                param_grid=ParameterSampler(
                     self._sklearn_object.param_distributions,
                     n_iter=self._sklearn_object.n_iter,
                     random_state=self._sklearn_object.random_state,

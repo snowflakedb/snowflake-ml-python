@@ -2,6 +2,7 @@ import copy
 import os
 import pathlib
 import tempfile
+import warnings
 
 import yaml
 from absl.testing import absltest
@@ -153,6 +154,28 @@ class ModelEnvTest(absltest.TestCase):
             self.assertListEqual(env.conda_dependencies, [])
             self.assertListEqual(env.pip_requirements, ["some-package==1.0.1"])
 
+        env = model_env.ModelEnv()
+        env.conda_dependencies = ["channel::some-package==1.0.1"]
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            env.include_if_absent(
+                [model_env.ModelDependency(requirement="channel::some-package", pip_name="some-package")]
+            )
+            self.assertListEqual(env.conda_dependencies, ["channel::some-package==1.0.1"])
+            self.assertListEqual(env.pip_requirements, [])
+
+        env = model_env.ModelEnv()
+        env.pip_requirements = ["some-package==1.0.1"]
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            env.include_if_absent(
+                [model_env.ModelDependency(requirement="channel::some-package", pip_name="some-package")]
+            )
+            self.assertListEqual(env.conda_dependencies, [])
+            self.assertListEqual(env.pip_requirements, ["some-package==1.0.1"])
+
     def test_include_if_absent_check_local(self) -> None:
         env = model_env.ModelEnv()
         env.conda_dependencies = []
@@ -288,6 +311,160 @@ class ModelEnvTest(absltest.TestCase):
             env.include_if_absent(
                 [model_env.ModelDependency(requirement="numpy", pip_name="numpy")], check_local_version=True
             )
+            self.assertListEqual(env.conda_dependencies, [])
+            self.assertListEqual(env.pip_requirements, ["numpy==1.0.1"])
+
+        env = model_env.ModelEnv()
+        env.conda_dependencies = ["channel::numpy==1.0.1"]
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            env.include_if_absent(
+                [model_env.ModelDependency(requirement="channel::numpy", pip_name="numpy")], check_local_version=True
+            )
+            self.assertListEqual(env.conda_dependencies, ["channel::numpy==1.0.1"])
+            self.assertListEqual(env.pip_requirements, [])
+
+        env = model_env.ModelEnv()
+        env.pip_requirements = ["numpy==1.0.1"]
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            env.include_if_absent(
+                [model_env.ModelDependency(requirement="channel::numpy", pip_name="numpy")], check_local_version=True
+            )
+            self.assertListEqual(env.conda_dependencies, [])
+            self.assertListEqual(env.pip_requirements, ["numpy==1.0.1"])
+
+    def test_include_if_absent_pip(self) -> None:
+        env = model_env.ModelEnv()
+        env.conda_dependencies = ["some-package==1.0.1"]
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            env.include_if_absent_pip(["some-package"])
+            self.assertListEqual(env.conda_dependencies, ["some-package==1.0.1"])
+            self.assertListEqual(env.pip_requirements, ["some-package"])
+
+        env = model_env.ModelEnv()
+        env.pip_requirements = ["some-package==1.0.1"]
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            env.include_if_absent_pip(["some-package"])
+            self.assertListEqual(env.conda_dependencies, [])
+            self.assertListEqual(env.pip_requirements, ["some-package==1.0.1"])
+
+        env = model_env.ModelEnv()
+        env.pip_requirements = ["some-package==1.0.1"]
+
+        env.include_if_absent_pip(["some-package==1.0.2"])
+        self.assertListEqual(env.conda_dependencies, [])
+        self.assertListEqual(env.pip_requirements, ["some-package==1.0.1"])
+
+        env = model_env.ModelEnv()
+        env.pip_requirements = ["some-package==1.0.1"]
+
+        env.include_if_absent_pip(["some-package>=1.0,<2"])
+        self.assertListEqual(env.conda_dependencies, [])
+        self.assertListEqual(env.pip_requirements, ["some-package==1.0.1"])
+
+        env = model_env.ModelEnv()
+        env.pip_requirements = ["some-package==1.0.1"]
+
+        env.include_if_absent_pip(["another-package>=1.0,<2"])
+        self.assertListEqual(env.conda_dependencies, [])
+        self.assertListEqual(env.pip_requirements, ["another-package<2,>=1.0", "some-package==1.0.1"])
+
+    def test_include_if_absent_pip_check_local(self) -> None:
+        env = model_env.ModelEnv()
+        env.include_if_absent_pip(["numpy"], check_local_version=True)
+        self.assertListEqual(
+            env.conda_dependencies,
+            [],
+        )
+        self.assertListEqual(
+            env.pip_requirements,
+            [str(env_utils.get_local_installed_version_of_pip_package(requirements.Requirement("numpy")))],
+        )
+
+        env = model_env.ModelEnv()
+        env.include_if_absent_pip(["numpy>=1.0"], check_local_version=True)
+        self.assertListEqual(
+            env.conda_dependencies,
+            [],
+        )
+        self.assertListEqual(
+            env.pip_requirements,
+            [str(env_utils.get_local_installed_version_of_pip_package(requirements.Requirement("numpy")))],
+        )
+
+        env = model_env.ModelEnv()
+        env.include_if_absent_pip(["numpy<1.0"], check_local_version=True)
+        self.assertListEqual(
+            env.conda_dependencies,
+            [],
+        )
+        self.assertListEqual(env.pip_requirements, ["numpy<1.0"])
+
+        env = model_env.ModelEnv()
+        env.include_if_absent_pip(["invalid-package"], check_local_version=True)
+        self.assertListEqual(
+            env.conda_dependencies,
+            [],
+        )
+        self.assertListEqual(env.pip_requirements, ["invalid-package"])
+
+        env = model_env.ModelEnv()
+        env.pip_requirements = ["numpy==1.0.1"]
+
+        env.include_if_absent_pip(["numpy"], check_local_version=True)
+        self.assertListEqual(env.conda_dependencies, [])
+        self.assertListEqual(env.pip_requirements, ["numpy==1.0.1"])
+
+        env = model_env.ModelEnv()
+        env.pip_requirements = ["numpy==1.0.1"]
+        env.include_if_absent_pip(["numpy==1.0.2"], check_local_version=True)
+        self.assertListEqual(env.conda_dependencies, [])
+        self.assertListEqual(env.pip_requirements, ["numpy==1.0.1"])
+
+        env = model_env.ModelEnv()
+        env.pip_requirements = ["numpy==1.0.1"]
+        env.include_if_absent_pip(["numpy>=1.0,<2"], check_local_version=True)
+        self.assertListEqual(env.conda_dependencies, [])
+        self.assertListEqual(env.pip_requirements, ["numpy==1.0.1"])
+
+        env = model_env.ModelEnv()
+        env.pip_requirements = ["numpy==1.0.1"]
+
+        env.include_if_absent_pip(["torch>=1.0"], check_local_version=True)
+        self.assertListEqual(
+            env.conda_dependencies,
+            [],
+        )
+        self.assertListEqual(
+            env.pip_requirements,
+            [
+                "numpy==1.0.1",
+                str(env_utils.get_local_installed_version_of_pip_package(requirements.Requirement("torch"))),
+            ],
+        )
+
+        env = model_env.ModelEnv()
+        env.conda_dependencies = ["numpy==1.0.1"]
+        env.include_if_absent_pip(["numpy>=1.0"], check_local_version=True)
+        self.assertListEqual(env.conda_dependencies, ["numpy==1.0.1"])
+        self.assertListEqual(
+            env.pip_requirements,
+            [str(env_utils.get_local_installed_version_of_pip_package(requirements.Requirement("numpy")))],
+        )
+
+        env = model_env.ModelEnv()
+        env.pip_requirements = ["numpy==1.0.1"]
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            env.include_if_absent_pip(["numpy>=1.0"], check_local_version=True)
             self.assertListEqual(env.conda_dependencies, [])
             self.assertListEqual(env.pip_requirements, ["numpy==1.0.1"])
 
@@ -545,7 +722,7 @@ class ModelEnvTest(absltest.TestCase):
                 "nvidia::cuda==11.7.*",
                 "pytorch::pytorch-cuda==11.7.*",
                 "pytorch::pytorch==1.0.0",
-                str(env_utils.get_local_installed_version_of_pip_package(requirements.Requirement("scipy"))),
+                "scipy>=1.9",
                 "transformers==1.0.0",
             ],
         )
@@ -583,7 +760,7 @@ class ModelEnvTest(absltest.TestCase):
                 "conda-forge::accelerate==1.0.0",
                 "conda-forge::transformers==1.0.0",
                 "nvidia::cuda==11.7.*",
-                str(env_utils.get_local_installed_version_of_pip_package(requirements.Requirement("scipy"))),
+                "scipy>=1.9",
             ],
         )
 

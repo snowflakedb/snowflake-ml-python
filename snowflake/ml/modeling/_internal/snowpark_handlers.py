@@ -45,7 +45,6 @@ from snowflake.snowpark.types import (
     StringType,
     StructField,
     StructType,
-    VariantType,
 )
 
 cp.register_pickle_by_value(inspect.getmodule(get_temp_file_path))
@@ -693,7 +692,7 @@ class SnowparkHandlers:
 
     def fit_search_snowpark(
         self,
-        param_list: Union[Dict[str, Any], List[Dict[str, Any]]],
+        param_grid: Union[model_selection.ParameterGrid, model_selection.ParameterSampler],
         dataset: DataFrame,
         session: Session,
         estimator: Union[model_selection.GridSearchCV, model_selection.RandomizedSearchCV],
@@ -706,7 +705,7 @@ class SnowparkHandlers:
         from itertools import product
 
         import cachetools
-        from sklearn.base import is_classifier
+        from sklearn.base import clone, is_classifier
         from sklearn.calibration import check_cv
 
         # Create one stage for data and for estimators.
@@ -723,13 +722,20 @@ class SnowparkHandlers:
         imports = [f"@{row.name}" for row in session.sql(f"LIST @{temp_stage_name}").collect()]
 
         # Store GridSearchCV's refit variable. If user set it as False, we don't need to refit it again
-        refit_bool = estimator.refit
+        original_refit = estimator.refit
+
         # Create a temp file and dump the estimator to that file.
         estimator_file_name = get_temp_file_path()
+        params_to_evaluate = []
+        for param_to_eval in list(param_grid):
+            for k, v in param_to_eval.items():
+                param_to_eval[k] = [v]
+            params_to_evaluate.append([param_to_eval])
+
         with open(estimator_file_name, mode="w+b") as local_estimator_file_obj:
             # Set GridSearchCV refit as False and fit it again after retrieving the best param
             estimator.refit = False
-            cp.dump(estimator, local_estimator_file_obj)
+            cp.dump(dict(estimator=estimator, param_grid=params_to_evaluate), local_estimator_file_obj)
         stage_estimator_file_name = posixpath.join(temp_stage_name, os.path.basename(estimator_file_name))
         sproc_statement_params = telemetry.get_function_usage_statement_params(
             project=_PROJECT,
@@ -787,10 +793,9 @@ class SnowparkHandlers:
             input_cols: List[str],
             label_cols: List[str],
         ) -> str:
-            import copy
             import os
             import time
-            from typing import Iterator, List
+            from typing import Iterator
 
             import cloudpickle as cp
             import pandas as pd
@@ -822,7 +827,7 @@ class SnowparkHandlers:
                 local_estimator_file_name, os.listdir(local_estimator_file_name)[0]
             )
             with open(local_estimator_file_path, mode="r+b") as local_estimator_file_obj:
-                estimator = cp.load(local_estimator_file_obj)
+                estimator = cp.load(local_estimator_file_obj)["estimator"]
 
             cv_orig = check_cv(estimator.cv, y, classifier=is_classifier(estimator.estimator))
             indices = [test for _, test in cv_orig.split(X, y)]
@@ -842,11 +847,6 @@ class SnowparkHandlers:
             indices_len = len(indices)
 
             assert estimator is not None
-            params_to_evaluate = []
-            for param_to_eval in list(param_list):
-                for k, v in param_to_eval.items():  # type: ignore[attr-defined]
-                    param_to_eval[k] = [v]  # type: ignore[index]
-                params_to_evaluate.append([param_to_eval])
 
             @cachetools.cached(cache={})
             def _load_data_into_udf() -> Tuple[
@@ -854,6 +854,7 @@ class SnowparkHandlers:
                 Union[model_selection.GridSearchCV, model_selection.RandomizedSearchCV],
                 pd.DataFrame,
                 int,
+                List[Dict[str, Any]],
             ]:
                 import pyarrow.parquet as pq
 
@@ -873,7 +874,9 @@ class SnowparkHandlers:
                     sys._xoptions["snowflake_import_directory"], f"{estimator_location}"
                 )
                 with open(local_estimator_file_path, mode="rb") as local_estimator_file_obj:
-                    estimator = cp.load(local_estimator_file_obj)
+                    estimator_objects = cp.load(local_estimator_file_obj)
+                    estimator = estimator_objects["estimator"]
+                    params_to_evaluate = estimator_objects["param_grid"]
 
                 # load indices
                 local_indices_file_path = os.path.join(
@@ -891,23 +894,22 @@ class SnowparkHandlers:
 
                 if sample_weight_col is not None and "sample_weight" in argspec.args:
                     args["sample_weight"] = df[sample_weight_col].squeeze()
-                return args, estimator, indices, len(df)
+                return args, estimator, indices, len(df), params_to_evaluate
 
             class SearchCV:
                 def __init__(self) -> None:
-                    args, estimator, indices, data_length = _load_data_into_udf()
+                    args, estimator, indices, data_length, params_to_evaluate = _load_data_into_udf()
                     self.args = args
                     self.estimator = estimator
                     self.indices = indices
                     self.data_length = data_length
+                    self.params_to_evaluate = params_to_evaluate
 
-                def process(
-                    self, params: List[dict], idx: int  # type:ignore[type-arg]
-                ) -> Iterator[Tuple[str]]:
+                def process(self, params_idx: int, idx: int) -> Iterator[Tuple[str]]:
                     if hasattr(estimator, "param_grid"):
-                        self.estimator.param_grid = params
+                        self.estimator.param_grid = self.params_to_evaluate[params_idx]
                     else:
-                        self.estimator.param_distributions = params
+                        self.estimator.param_distributions = self.params_to_evaluate[params_idx]
                     full_indices = np.array([i for i in range(self.data_length)])
                     test_indice = self.indices[idx]
                     train_indice = np.setdiff1d(full_indices, test_indice)
@@ -926,7 +928,7 @@ class SnowparkHandlers:
             session.udtf.register(
                 SearchCV,
                 output_schema=StructType([StructField("CV_RESULTS", StringType())]),
-                input_types=[VariantType(), IntegerType()],
+                input_types=[IntegerType(), IntegerType()],
                 name=random_udtf_name,
                 packages=required_deps,  # type: ignore[arg-type]
                 replace=True,
@@ -938,17 +940,17 @@ class SnowparkHandlers:
             HP_TUNING = F.table_function(random_udtf_name)
 
             idx_length = int(indices_len)
-            params_length = len(params_to_evaluate)
+            params_length = len(param_grid)
             idxs = [i for i in range(idx_length)]
-            params, param_indices = [], []
-            for param, param_idx in product(params_to_evaluate, idxs):
-                params.append(param)
+            param_indices, training_indices = [], []
+            for param_idx, cv_idx in product([param_index for param_index in range(params_length)], idxs):
                 param_indices.append(param_idx)
+                training_indices.append(cv_idx)
 
             pd_df = pd.DataFrame(
                 {
-                    "PARAMS": params,
-                    "TRAIN_IND": param_indices,
+                    "PARAMS": param_indices,
+                    "TRAIN_IND": training_indices,
                     "PARAM_INDEX": [i for i in range(idx_length * params_length)],
                 }
             )
@@ -961,6 +963,7 @@ class SnowparkHandlers:
             # cv_result maintains the original order
             multimetric = False
             cv_results_ = dict()
+            scorers = set()
             for i, val in enumerate(results.select("CV_RESULTS").sort(col("PARAM_INDEX")).collect()):
                 # retrieved string had one more double quote in the front and end of the string.
                 # use [1:-1] to remove the extra double quotes
@@ -970,11 +973,11 @@ class SnowparkHandlers:
                     for k, v in each_cv_result.items():
                         cur_cv = i % idx_length
                         key = k
-                        if "split0_test" in k:
+                        if "split0_test_" in k:
                             # For multi-metric evaluation, the scores for all the scorers are available in the
                             # cv_results_ dict at the keys ending with that scorer’s name ('_<scorer_name>')
                             # instead of '_score'.
-                            multimetric = True if k.split("_")[-1] != "score" else False
+                            scorers.add(k[len("split0_test_") :])
                             key = k.replace("split0_test", f"split{cur_cv}_test")
                         elif k.startswith("param"):
                             if cur_cv != 0:
@@ -985,32 +988,41 @@ class SnowparkHandlers:
                             else:
                                 cv_results_[key] = np.concatenate([cv_results_[key], v])
 
+            multimetric = len(scorers) > 1
             # Use numpy to re-calculate all the information in cv_results_ again
-            # Generally speaking, reshape all the results into the (3, idx_length, params_length) shape,
+            # Generally speaking, reshape all the results into the (scorers+2, idx_length, params_length) shape,
             # and average them by the idx_length;
             # idx_length is the number of cv folds; params_length is the number of parameter combinations
-            fit_score_test_matrix = np.stack(
-                (
-                    np.reshape(cv_results_["mean_fit_time"], (idx_length, -1)),  # idx_length x params_length
-                    np.reshape(cv_results_["mean_score_time"], (idx_length, -1)),
-                    np.reshape(
-                        np.concatenate([cv_results_[f"split{cur_cv}_test_score"] for cur_cv in range(idx_length)]),
-                        (idx_length, -1),
-                    ),
+            scores = [
+                np.reshape(
+                    np.concatenate([cv_results_[f"split{cur_cv}_test_{score}"] for cur_cv in range(idx_length)]),
+                    (idx_length, -1),
                 )
+                for score in scorers
+            ]
+
+            fit_score_test_matrix = np.stack(
+                [
+                    np.reshape(cv_results_["mean_fit_time"], (idx_length, -1)),
+                    np.reshape(cv_results_["mean_score_time"], (idx_length, -1)),
+                ]
+                + scores
             )
+
             mean_fit_score_test_matrix = np.mean(fit_score_test_matrix, axis=1)
             std_fit_score_test_matrix = np.std(fit_score_test_matrix, axis=1)
             cv_results_["std_fit_time"] = std_fit_score_test_matrix[0]
             cv_results_["mean_fit_time"] = mean_fit_score_test_matrix[0]
             cv_results_["std_score_time"] = std_fit_score_test_matrix[1]
             cv_results_["mean_score_time"] = mean_fit_score_test_matrix[1]
-            cv_results_["std_test_score"] = std_fit_score_test_matrix[2]
-            cv_results_["mean_test_score"] = mean_fit_score_test_matrix[2]
-            # re-compute the ranking again with mean_test_score
-            cv_results_["rank_test_score"] = rankdata(-cv_results_["mean_test_score"], method="min")
-            # best param is the highest ranking (which is 1) and we choose the first time ranking 1 appeared
-            best_param_index = np.where(cv_results_["rank_test_score"] == 1)[0][0]
+            for idx, score in enumerate(scorers):
+                cv_results_[f"std_test_{score}"] = std_fit_score_test_matrix[idx + 2]
+                cv_results_[f"mean_test_{score}"] = mean_fit_score_test_matrix[idx + 2]
+                # re-compute the ranking again with mean_test_<score>
+                cv_results_[f"rank_test_{score}"] = rankdata(-cv_results_[f"mean_test_{score}"], method="min")
+                # best param is the highest ranking (which is 1) and we choose the first time ranking 1 appeared
+                best_param_index = np.where(cv_results_[f"rank_test_{score}"] == 1)[0][0]
+
             estimator.cv_results_ = cv_results_
             estimator.multimetric_ = multimetric
 
@@ -1023,29 +1035,30 @@ class SnowparkHandlers:
             else:
                 scorers = _check_multimetric_scoring(estimator.estimator, estimator.scoring)
                 estimator._check_refit_for_multimetric(scorers)
-                refit_metric = estimator.refit
+                refit_metric = original_refit
 
             estimator.scorer_ = scorers
 
             # check refit_metric now for a callabe scorer that is multimetric
             if callable(estimator.scoring) and estimator.multimetric_:
-                refit_metric = estimator.refit
+                refit_metric = original_refit
 
             # For multi-metric evaluation, store the best_index_, best_params_ and
             # best_score_ iff refit is one of the scorer names
             # In single metric evaluation, refit_metric is "score"
-            if estimator.refit or not estimator.multimetric_:
-                estimator.best_index_ = estimator._select_best_index(estimator.refit, refit_metric, cv_results_)
-                if not callable(estimator.refit):
+            if original_refit or not estimator.multimetric_:
+                estimator.best_index_ = estimator._select_best_index(original_refit, refit_metric, cv_results_)
+                if not callable(original_refit):
                     # With a non-custom callable, we can select the best score
                     # based on the best index
                     estimator.best_score_ = cv_results_[f"mean_test_{refit_metric}"][estimator.best_index_]
                 estimator.best_params_ = cv_results_["params"][best_param_index]
 
-            if refit_bool:
-                estimator.best_estimator_ = copy.deepcopy(
-                    copy.deepcopy(estimator.estimator).set_params(**estimator.best_params_)
+            if original_refit:
+                estimator.best_estimator_ = clone(estimator.estimator).set_params(
+                    **clone(estimator.best_params_, safe=False)
                 )
+
                 # Let the sproc use all cores to refit.
                 estimator.n_jobs = -1 if not estimator.n_jobs else estimator.n_jobs
 
@@ -1057,7 +1070,7 @@ class SnowparkHandlers:
                     args[label_arg_name] = y
                 if sample_weight_col is not None and "sample_weight" in argspec.args:
                     args["sample_weight"] = df[sample_weight_col].squeeze()
-                estimator.refit = True
+                estimator.refit = original_refit
                 refit_start_time = time.time()
                 estimator.best_estimator_.fit(**args)
                 refit_end_time = time.time()

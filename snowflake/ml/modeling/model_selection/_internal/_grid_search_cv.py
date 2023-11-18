@@ -351,7 +351,7 @@ class GridSearchCV(BaseTransformer):
             ]:
                 self._sklearn_object.estimator.n_jobs = DEFAULT_UDTF_NJOBS
             self._sklearn_object = self._handlers.fit_search_snowpark(
-                param_list=ParameterGrid(self._sklearn_object.param_grid),
+                param_grid=ParameterGrid(self._sklearn_object.param_grid),
                 dataset=dataset,
                 session=session,
                 estimator=self._sklearn_object,

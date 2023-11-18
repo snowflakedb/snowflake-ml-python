@@ -119,20 +119,19 @@ class ModelEnv:
             pkgs: A list of ModelDependency namedtuple to be appended.
             check_local_version: Flag to indicate if it is required to pin to local version. Defaults to False.
         """
-        conda_reqs_str, pip_names_str = tuple(zip(*pkgs))
-        pip_names = env_utils.validate_pip_requirement_string_list(list(pip_names_str))
-        conda_reqs = env_utils.validate_conda_dependency_string_list(list(conda_reqs_str))
 
-        for conda_req, pip_name in zip(conda_reqs[env_utils.DEFAULT_CHANNEL_NAME], pip_names):
+        for conda_req_str, pip_name in pkgs:
+            conda_req_channel, conda_req = env_utils._validate_conda_dependency_string(conda_req_str)
             if check_local_version:
-                req_to_check = requirements.Requirement(f"{pip_name.name}{conda_req.specifier}")
+                req_to_check = requirements.Requirement(f"{pip_name}{conda_req.specifier}")
                 req_to_add = env_utils.get_local_installed_version_of_pip_package(req_to_check)
                 req_to_add.name = conda_req.name
             else:
                 req_to_add = conda_req
-            added_in_pip = False
-            for added_pip_req in self._pip_requirements:
-                if added_pip_req.name == pip_name.name:
+            show_warning_message = conda_req_channel == env_utils.DEFAULT_CHANNEL_NAME
+
+            if any(added_pip_req.name == pip_name for added_pip_req in self._pip_requirements):
+                if show_warning_message:
                     warnings.warn(
                         (
                             f"Basic dependency {req_to_add.name} specified from PIP requirements."
@@ -141,24 +140,39 @@ class ModelEnv:
                         category=UserWarning,
                         stacklevel=2,
                     )
-                    added_in_pip = True
-            if added_in_pip:
                 continue
+
             try:
-                env_utils.append_conda_dependency(
-                    self._conda_dependencies, (env_utils.DEFAULT_CHANNEL_NAME, req_to_add)
-                )
+                env_utils.append_conda_dependency(self._conda_dependencies, (conda_req_channel, req_to_add))
             except env_utils.DuplicateDependencyError:
                 pass
             except env_utils.DuplicateDependencyInMultipleChannelsError:
-                warnings.warn(
-                    (
-                        f"Basic dependency {req_to_add.name} specified from non-Snowflake channel."
-                        + " This may prevent model deploying to Snowflake Warehouse."
-                    ),
-                    category=UserWarning,
-                    stacklevel=2,
-                )
+                if show_warning_message:
+                    warnings.warn(
+                        (
+                            f"Basic dependency {req_to_add.name} specified from non-Snowflake channel."
+                            + " This may prevent model deploying to Snowflake Warehouse."
+                        ),
+                        category=UserWarning,
+                        stacklevel=2,
+                    )
+
+    def include_if_absent_pip(self, pkgs: List[str], check_local_version: bool = False) -> None:
+        """Append pip requirements into model env if absent.
+
+        Args:
+            pkgs: A list of string to be appended in pip requirement.
+            check_local_version: Flag to indicate if it is required to pin to local version. Defaults to False.
+        """
+
+        pip_reqs = env_utils.validate_pip_requirement_string_list(pkgs)
+        for pip_req in pip_reqs:
+            if check_local_version:
+                pip_req = env_utils.get_local_installed_version_of_pip_package(pip_req)
+            try:
+                env_utils.append_requirement_list(self._pip_requirements, pip_req)
+            except env_utils.DuplicateDependencyError:
+                pass
 
     def generate_env_for_cuda(self) -> None:
         if self.cuda_version is None:
@@ -175,26 +189,23 @@ class ModelEnv:
             )
 
         if not cuda_spec:
-            try:
-                env_utils.append_conda_dependency(
-                    self._conda_dependencies,
-                    ("nvidia", requirements.Requirement(f"cuda=={self.cuda_version}.*")),
-                )
-            except (env_utils.DuplicateDependencyError, env_utils.DuplicateDependencyInMultipleChannelsError):
-                pass
+            self.include_if_absent(
+                [ModelDependency(requirement=f"nvidia::cuda=={self.cuda_version}.*", pip_name="cuda")],
+                check_local_version=False,
+            )
 
         xgboost_spec = env_utils.find_dep_spec(
             self._conda_dependencies, self._pip_requirements, conda_pkg_name="xgboost", remove_spec=True
         )
         if xgboost_spec:
-            xgboost_spec.name = "py-xgboost-gpu"
-            try:
-                env_utils.append_conda_dependency(
-                    self._conda_dependencies,
-                    ("conda-forge", xgboost_spec),
-                )
-            except (env_utils.DuplicateDependencyError, env_utils.DuplicateDependencyInMultipleChannelsError):
-                pass
+            self.include_if_absent(
+                [
+                    ModelDependency(
+                        requirement=f"conda-forge::py-xgboost-gpu{xgboost_spec.specifier}", pip_name="xgboost"
+                    )
+                ],
+                check_local_version=False,
+            )
 
         pytorch_spec = env_utils.find_dep_spec(
             self._conda_dependencies,
@@ -216,67 +227,38 @@ class ModelEnv:
                 " dependencies or pip requirements."
             )
         if pytorch_spec:
-            pytorch_spec.name = "pytorch"
-            try:
-                env_utils.append_conda_dependency(
-                    self._conda_dependencies,
-                    ("pytorch", pytorch_spec),
-                )
-            except (env_utils.DuplicateDependencyError, env_utils.DuplicateDependencyInMultipleChannelsError):
-                pass
+            self.include_if_absent(
+                [ModelDependency(requirement=f"pytorch::pytorch{pytorch_spec.specifier}", pip_name="torch")],
+                check_local_version=False,
+            )
             if not pytorch_cuda_spec:
-                try:
-                    env_utils.append_conda_dependency(
-                        self._conda_dependencies,
-                        p_chan_dep=("pytorch", requirements.Requirement(f"pytorch-cuda=={self.cuda_version}.*")),
-                    )
-                except (env_utils.DuplicateDependencyError, env_utils.DuplicateDependencyInMultipleChannelsError):
-                    pass
+                self.include_if_absent(
+                    [ModelDependency(requirement=f"pytorch::pytorch-cuda=={self.cuda_version}.*", pip_name="torch")],
+                    check_local_version=False,
+                )
 
         tf_spec = env_utils.find_dep_spec(
             self._conda_dependencies, self._pip_requirements, conda_pkg_name="tensorflow", remove_spec=True
         )
         if tf_spec:
-            tf_spec.name = "tensorflow-gpu"
-            try:
-                env_utils.append_conda_dependency(
-                    self._conda_dependencies,
-                    ("conda-forge", tf_spec),
-                )
-            except (env_utils.DuplicateDependencyError, env_utils.DuplicateDependencyInMultipleChannelsError):
-                pass
+            self.include_if_absent(
+                [ModelDependency(requirement=f"conda-forge::tensorflow-gpu{tf_spec.specifier}", pip_name="tensorflow")],
+                check_local_version=False,
+            )
 
         transformers_spec = env_utils.find_dep_spec(
             self._conda_dependencies, self._pip_requirements, conda_pkg_name="transformers", remove_spec=False
         )
         if transformers_spec:
-            try:
-                env_utils.append_conda_dependency(
-                    self._conda_dependencies,
-                    ("conda-forge", requirements.Requirement("accelerate>=0.22.0")),
-                )
-            except (env_utils.DuplicateDependencyError, env_utils.DuplicateDependencyInMultipleChannelsError):
-                pass
+            self.include_if_absent(
+                [
+                    ModelDependency(requirement="conda-forge::accelerate>=0.22.0", pip_name="accelerate"),
+                    ModelDependency(requirement="scipy>=1.9", pip_name="scipy"),
+                ],
+                check_local_version=False,
+            )
 
-            # Required by bitsandbytes
-            try:
-                env_utils.append_conda_dependency(
-                    self._conda_dependencies,
-                    (
-                        env_utils.DEFAULT_CHANNEL_NAME,
-                        env_utils.get_local_installed_version_of_pip_package(requirements.Requirement("scipy")),
-                    ),
-                )
-            except (env_utils.DuplicateDependencyError, env_utils.DuplicateDependencyInMultipleChannelsError):
-                pass
-
-            try:
-                env_utils.append_requirement_list(
-                    self._pip_requirements,
-                    requirements.Requirement("bitsandbytes>=0.41.0"),
-                )
-            except env_utils.DuplicateDependencyError:
-                pass
+            self.include_if_absent_pip(["bitsandbytes>=0.41.0"], check_local_version=False)
 
     def relax_version(self) -> None:
         """Relax the version requirements for both conda dependencies and pip requirements.

@@ -129,12 +129,9 @@ class ModelLoadHygieneTest(absltest.TestCase):
                     )
 
     def test_zipimport_snowml(self) -> None:
-        snowml_path, snowml_start_path = file_utils.get_package_path("snowflake.ml", strategy="last")
         with tempfile.TemporaryDirectory() as workspace:
             zipped_snowml_path = os.path.join(workspace, "snowml.zip")
-            with open(zipped_snowml_path, "wb") as f:
-                with file_utils.zip_file_or_directory_to_stream(snowml_path, snowml_start_path) as zip_stream:
-                    f.write(zip_stream.getbuffer())
+            file_utils.zip_python_package(zipped_snowml_path, "snowflake.ml")
 
             sys.path.append(zipped_snowml_path)
             try:

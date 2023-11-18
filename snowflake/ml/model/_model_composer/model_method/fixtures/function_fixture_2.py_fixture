@@ -31,8 +31,8 @@ class FileLock:
 
 # User-defined parameters
 MODEL_FILE_NAME = "model.zip"
-TARGET_METHOD = "predict"
-MAX_BATCH_SIZE = None
+TARGET_METHOD = "__call__"
+MAX_BATCH_SIZE = 10
 
 
 # Retrieve the model
@@ -70,7 +70,7 @@ input_cols = [feature.name for feature in features]
 dtype_map = {feature.name: feature.as_dtype() for feature in features}
 
 
-# Actual handler
+# Actual function
 @vectorized(input=pd.DataFrame, max_batch_size=MAX_BATCH_SIZE)
 def infer(df: pd.DataFrame) -> dict:
     input_df = pd.json_normalize(df[0]).astype(dtype=dtype_map)

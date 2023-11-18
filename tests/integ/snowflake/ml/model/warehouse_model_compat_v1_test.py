@@ -310,8 +310,8 @@ class TestWarehouseCustomModelCompat(common_test_base.CommonTestBase):
             from snowflake.ml.model import (  # type: ignore[attr-defined]
                 _model as model_api,
             )
-            from snowflake.ml.modeling.linear_model import (
-                LogisticRegression,  # type: ignore[attr-defined]
+            from snowflake.ml.modeling.linear_model import (  # type: ignore[attr-defined]
+                LogisticRegression,
             )
 
             iris_X = datasets.load_iris(as_frame=True).frame
@@ -363,8 +363,8 @@ class TestWarehouseCustomModelCompat(common_test_base.CommonTestBase):
             from snowflake.ml.model import (  # type: ignore[attr-defined]
                 _model as model_api,
             )
-            from snowflake.ml.modeling.xgboost import (
-                XGBRegressor,  # type: ignore[attr-defined]
+            from snowflake.ml.modeling.xgboost import (  # type: ignore[attr-defined]
+                XGBRegressor,
             )
 
             iris_X = datasets.load_iris(as_frame=True).frame

@@ -68,7 +68,7 @@ class FeatureViewTest(absltest.TestCase):
             fv.attach_feature_desc({"e": "foo"})
 
         fv.attach_feature_desc({"b": "foo", "d": "bar"})
-        self.assertEqual(fv.feature_descs, {"B": "foo", "C": None, "D": "bar"})
+        self.assertEqual(fv.feature_descs, {"B": "foo", "C": "", "D": "bar"})
 
     def test_invalid_timestamp_col(self) -> None:
         df = self._session.create_dataframe([[1, "bar", 3]], schema=["a", "b", "c"])

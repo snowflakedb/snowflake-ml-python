@@ -10,25 +10,24 @@ from packaging import requirements
 
 from snowflake.ml._internal import env as snowml_env, env_utils, file_utils
 from snowflake.ml.model import model_signature, type_hints as model_types
+from snowflake.ml.model._model_composer.model_manifest import model_manifest
 from snowflake.ml.model._packager import model_packager
 from snowflake.snowpark import Session
 from snowflake.snowpark._internal import utils as snowpark_utils
 
 
-class ModuleModel:
-    """Top-level class to construct and represent contents in a MODEL object in SQL.
+class ModelComposer:
+    """Top-level class to construct contents in a MODEL object in SQL.
 
     Attributes:
         session: The Snowpark Session.
         stage_path: A stage path representing the base directory where the content of a MODEL object will exist.
         workspace_path: A local path which is the exact mapping to the `stage_path`
 
-        (TODO) manifest: A ModuleManifest object managing the MANIFEST file generation.
-        (TODO) runtimes: A list of ModuleRuntime objects managing the runtimes and environment in the MODEL object.
-        (TODO) methods: A list of ModuleMethod objects managing the method we registered to the MODEL object.
+        manifest: A ModelManifest object managing the MANIFEST file generation.
         packager: A ModelPackager object managing the (un)packaging of a Snowflake Native Model in the MODEL object.
 
-        _packager_workspace_path: A local path created from packager where it will dump all files there and ModuleModel
+        _packager_workspace_path: A local path created from packager where it will dump all files there and ModelModel
         will zip it. This would not required if we make directory import work.
     """
 
@@ -42,6 +41,7 @@ class ModuleModel:
         self._packager_workspace = tempfile.TemporaryDirectory()
 
         self.packager = model_packager.ModelPackager(local_dir_path=str(self._packager_workspace_path))
+        self.manifest = model_manifest.ModelManifest(workspace_path=self.workspace_path)
 
     def __del__(self) -> None:
         self._workspace.cleanup()
@@ -57,11 +57,11 @@ class ModuleModel:
 
     @property
     def model_stage_path(self) -> str:
-        return (self.stage_path / ModuleModel.MODEL_FILE_REL_PATH).as_posix()
+        return (self.stage_path / ModelComposer.MODEL_FILE_REL_PATH).as_posix()
 
     @property
     def model_local_path(self) -> str:
-        return str(self.workspace_path / ModuleModel.MODEL_FILE_REL_PATH)
+        return str(self.workspace_path / ModelComposer.MODEL_FILE_REL_PATH)
 
     def save(
         self,
@@ -108,13 +108,17 @@ class ModuleModel:
             code_paths=code_paths,
             options=options,
         )
-        with file_utils.zip_file_or_directory_to_stream(
-            str(self._packager_workspace_path),
-            leading_path=str(self._packager_workspace_path),
-        ) as zf:
-            with open(self.model_local_path, "wb") as f:
-                f.write(zf.getbuffer())
-                f.flush()
+
+        assert self.packager.meta is not None
+
+        file_utils.make_archive(self.model_local_path, str(self._packager_workspace_path))
+
+        self.manifest.save(
+            session=self.session,
+            model_meta=self.packager.meta,
+            model_file_rel_path=pathlib.PurePosixPath(ModelComposer.MODEL_FILE_REL_PATH),
+            options=options,
+        )
 
         file_utils.upload_directory_to_stage(self.session, local_path=self.workspace_path, stage_path=self.stage_path)
 
@@ -130,7 +134,7 @@ class ModuleModel:
 
         # TODO (Server-side Model Rollout): Remove this section.
         model_zip_path = pathlib.Path(glob.glob(str(self.workspace_path / "*.zip"))[0])
-        ModuleModel.MODEL_FILE_REL_PATH = str(model_zip_path.relative_to(self.workspace_path))
+        ModelComposer.MODEL_FILE_REL_PATH = str(model_zip_path.relative_to(self.workspace_path))
 
         with zipfile.ZipFile(self.model_local_path, mode="r", compression=zipfile.ZIP_DEFLATED) as zf:
             zf.extractall(path=self._packager_workspace_path)

@@ -6,6 +6,8 @@ import time
 from dataclasses import dataclass
 from typing import Any, Dict, Optional, Tuple, cast
 
+from absl.logging import logging
+
 from snowflake.snowpark import Session
 from snowflake.snowpark.types import (
     DateType,
@@ -16,6 +18,8 @@ from snowflake.snowpark.types import (
     _IntegralType,
     _NumericType,
 )
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -91,4 +95,4 @@ class SyntheticDataGenerator:
         df.write.mode("append").save_as_table(  # type:ignore[call-overload]
             [self._database, self._schema, self._source_table], block=True
         )
-        print(f"Dumped {num_rows} rows to table {self._source_table}.")
+        logger.info(f"Dumped {num_rows} rows to table {self._source_table}.")

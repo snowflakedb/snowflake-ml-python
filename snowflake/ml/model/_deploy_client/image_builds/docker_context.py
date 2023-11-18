@@ -5,8 +5,11 @@ import string
 from abc import ABC
 from typing import Optional
 
+import importlib_resources
+
 from snowflake.ml._internal import file_utils
 from snowflake.ml._internal.utils import identifier
+from snowflake.ml.model._deploy_client import image_builds
 from snowflake.ml.model._deploy_client.utils import constants
 from snowflake.ml.model._packager.model_meta import model_meta
 from snowflake.snowpark import FileOperation, Session
@@ -50,10 +53,12 @@ class DockerContext(ABC):
 
     def _copy_entrypoint_script_to_docker_context(self) -> None:
         """Copy gunicorn_run.sh entrypoint to docker context directory."""
-        path = file_utils.resolve_zip_import_path(os.path.join(os.path.dirname(__file__), constants.ENTRYPOINT_SCRIPT))
-
-        assert os.path.exists(path), f"Run script file missing at path: {path}"
-        shutil.copy(path, os.path.join(self.context_dir, constants.ENTRYPOINT_SCRIPT))
+        with importlib_resources.as_file(
+            importlib_resources.files(image_builds).joinpath(  # type: ignore[no-untyped-call]
+                constants.ENTRYPOINT_SCRIPT
+            )
+        ) as path:
+            shutil.copy(path, os.path.join(self.context_dir, constants.ENTRYPOINT_SCRIPT))
 
     def _copy_model_env_dependency_to_docker_context(self) -> None:
         """
@@ -66,8 +71,10 @@ class DockerContext(ABC):
         Generates dockerfile based on dockerfile template.
         """
         docker_file_path = os.path.join(self.context_dir, "Dockerfile")
-        docker_file_template = file_utils.resolve_zip_import_path(
-            os.path.join(os.path.dirname(__file__), "templates/dockerfile_template")
+        docker_file_template = (
+            importlib_resources.files(image_builds)
+            .joinpath("templates/dockerfile_template")  # type: ignore[no-untyped-call]
+            .read_text("utf-8")
         )
 
         if self.model_zip_stage_path is not None:
@@ -88,15 +95,13 @@ class DockerContext(ABC):
             copy_model_statement = ""
             extra_env_statement = ""
 
-        with open(docker_file_path, "w", encoding="utf-8") as dockerfile, open(
-            docker_file_template, encoding="utf-8"
-        ) as template:
+        with open(docker_file_path, "w", encoding="utf-8") as dockerfile:
             base_image = "mambaorg/micromamba:1.4.3"
             tag = base_image.split(":")[1]
             assert tag != constants.LATEST_IMAGE_TAG, (
                 "Base image tag should not be 'latest' as it might cause false" "positive image cache hit"
             )
-            dockerfile_content = string.Template(template.read()).safe_substitute(
+            dockerfile_content = string.Template(docker_file_template).safe_substitute(
                 {
                     "base_image": "mambaorg/micromamba:1.4.3",
                     "model_env_folder": constants.MODEL_ENV_FOLDER,
@@ -117,14 +122,15 @@ class DockerContext(ABC):
         Generates inference code based on the app template and creates a folder named 'server' to house the inference
         server code.
         """
-        inference_server_folder_path = file_utils.resolve_zip_import_path(
-            os.path.join(os.path.dirname(__file__), constants.INFERENCE_SERVER_DIR)
-        )
-
-        destination_folder_path = os.path.join(self.context_dir, constants.INFERENCE_SERVER_DIR)
-        ignore_patterns = shutil.ignore_patterns("BUILD.bazel", "*test.py", "*.\\.*", "__pycache__")
-        file_utils.copytree(
-            inference_server_folder_path,
-            destination_folder_path,
-            ignore=ignore_patterns,
-        )
+        with importlib_resources.as_file(
+            importlib_resources.files(image_builds).joinpath(  # type: ignore[no-untyped-call]
+                constants.INFERENCE_SERVER_DIR
+            )
+        ) as inference_server_folder_path:
+            destination_folder_path = os.path.join(self.context_dir, constants.INFERENCE_SERVER_DIR)
+            ignore_patterns = shutil.ignore_patterns("BUILD.bazel", "*test.py", "*.\\.*", "__pycache__")
+            file_utils.copytree(
+                inference_server_folder_path,
+                destination_folder_path,
+                ignore=ignore_patterns,
+            )

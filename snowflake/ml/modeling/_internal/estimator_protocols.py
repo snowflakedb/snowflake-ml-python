@@ -1,4 +1,4 @@
-from typing import Any, Dict, List, Optional, Protocol, Union
+from typing import List, Optional, Protocol, Union
 
 import pandas as pd
 from sklearn import model_selection
@@ -119,7 +119,7 @@ class CVHandlers(Protocol):
 
     def fit_search_snowpark(
         self,
-        param_list: Union[Dict[str, Any], List[Dict[str, Any]]],
+        param_grid: Union[model_selection.ParameterGrid, model_selection.ParameterSampler],
         dataset: DataFrame,
         session: Session,
         estimator: Union[model_selection.GridSearchCV, model_selection.RandomizedSearchCV],
