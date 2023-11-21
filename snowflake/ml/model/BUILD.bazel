@@ -59,7 +59,7 @@ py_library(
         "//snowflake/ml/model/_deploy_client/snowservice:deploy",
         "//snowflake/ml/model/_deploy_client/warehouse:deploy",
         "//snowflake/ml/model/_deploy_client/warehouse:infer_template",
-        "//snowflake/ml/model/_module_model:module_model",
+        "//snowflake/ml/model/_model_composer:model_composer",
         "//snowflake/ml/model/_signatures:snowpark_handler",
     ],
 )

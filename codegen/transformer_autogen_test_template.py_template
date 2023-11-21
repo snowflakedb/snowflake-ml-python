@@ -28,8 +28,8 @@ class {transform.test_class_name}(TestCase):
 
         Args:
             sklearn_obj: SKLearn object under tests. If the sklearn_obj supports multioutput, then this method will
-            add extra lable columns to test multioutput functionality.
-            add_sample_weight_col: If true and addiptional column named "SAMPLE_WEIGHT" will be added to the dataset
+            add extra label columns to test multioutput functionality.
+            add_sample_weight_col: If true and additional column named "SAMPLE_WEIGHT" will be added to the dataset
             representing the weight of each sample.
 
         Returns:
@@ -140,10 +140,10 @@ class {transform.test_class_name}(TestCase):
                         # transform() method of HeterogeneousEnsemble estimators return responses of varying 
                         # shapes from (n_samples, n_estimators) to (n_samples, n_estimators * n_classes)
                         # based on init param values. We will convert that to pandas dataframe of shape (n_samples, 1) with
-                        # each row containing a list of values in the transfrom() UDF.
+                        # each row containing a list of values in the transform() UDF.
                         #
                         # We need to flatten the response from (n_samples, 1) to original 
-                        # dimentions (n_samples, n_original_columns) by flattening list objects.
+                        # dimensions (n_samples, n_original_columns) by flattening list objects.
                         output_df_pandas = output_df_pandas.apply(lambda row: pd.Series(json.loads(row[0])), axis=1)
 
                     # TODO(snandamuri): Implement type inference for transform and predict methods to return results with
@@ -162,13 +162,13 @@ class {transform.test_class_name}(TestCase):
 
                 sklearn_numpy_arr = getattr(sklearn_reg, m)(input_df_pandas[input_cols])
                 if len(sklearn_numpy_arr.shape) == 3:
-                    # VotingClassifier will retunr results of shape (n_classifiers, n_samples, n_classes)
+                    # VotingClassifier will return results of shape (n_classifiers, n_samples, n_classes)
                     # when voting = "soft" and flatten_transform = False. We can't handle unflatten transforms,
                     # so we ignore flatten_transform flag and flatten the results. We need flatten sklearn results
                     # also to compare with snowflake results.
                     sklearn_numpy_arr = np.hstack(sklearn_numpy_arr)
                 elif len(sklearn_numpy_arr.shape) == 1:
-                    # Some times sklearn retuns results as 1D array of shape (n_samples,), but snowfkale always retunrs
+                    # Some times sklearn returns results as 1D array of shape (n_samples,), but snowflake always returns
                     # response as 2D array of shape (n_samples, 1). Flatten the snowflake response to compare results.
                     actual_arr = actual_arr.flatten()
 
@@ -218,7 +218,7 @@ class {transform.test_class_name}(TestCase):
                     # Incase of kneighbors, returns a tuple of ndarrays as output.
                     sklearn_inference_result = np.stack(sklearn_inference_result, axis=1)
                 elif len(sklearn_inference_result.shape) == 1:
-                    # Some times sklearn retuns results as 1D array of shape (n_samples,), but snowfkale always retunrs
+                    # Some times sklearn returns results as 1D array of shape (n_samples,), but snowflake always returns
                     # response as 2D array of shape (n_samples, 1). Flatten the snowflake response to compare results.
                     actual_inference_result = actual_inference_result.flatten()
 

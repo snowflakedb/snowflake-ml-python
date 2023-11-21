@@ -23,9 +23,6 @@ class SnowparkHandlersTest(common_test_base.CommonTestBase):
             class_name="test", subproject="subproject", wrapper_provider=SklearnWrapperProvider()
         )
 
-    def tearDown(self) -> None:
-        super().tearDown()
-
     def _get_test_dataset(self) -> Tuple[pd.DataFrame, List[str], List[str]]:
         """Constructs input dataset to be used in the integration test.
 

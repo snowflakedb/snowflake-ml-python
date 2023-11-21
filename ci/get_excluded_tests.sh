@@ -63,14 +63,14 @@ trap 'rm -rf "${working_dir}"' EXIT
 
 if [[ $mode = "unused" || $mode = "all" ]]; then
     # Compute missing dependencies by subtracting deps included in wheel from deps required by tests.
-    # We only care about dependencies in //snowflake/ml since that's our dev directory.
+    # We only care about dependencies in //snowflake since that's our dev directory.
     # Reverse search on testing files depending on missing deps and exclude those.
 
     unused_test_rule_file=${working_dir}/unused_test_rule
 
     # -- Begin of Query Rules Heredoc --
     cat >"${unused_test_rule_file}" <<EndOfMessage
-    let missing_deps = filter('//snowflake/ml[:/].*', kind('py_library rule', deps(tests/...) except deps(snowflake/ml:wheel))) in
+    let missing_deps = filter('//snowflake[:/].*', kind('py_library rule', deps(tests/...) except deps(snowflake/ml:wheel))) in
         labels(srcs, kind('py_test rule', rdeps(//tests/..., \$missing_deps, 1)))
 EndOfMessage
     # -- End of Query Rules Heredoc --

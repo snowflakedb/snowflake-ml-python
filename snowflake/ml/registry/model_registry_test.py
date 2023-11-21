@@ -1128,11 +1128,11 @@ class ModelRegistryTest(absltest.TestCase):
             ) as mock_path:
                 mock_model = absltest.mock.MagicMock()
                 mock_type = absltest.mock.MagicMock()
-                mock_module_model = absltest.mock.MagicMock(
+                mock_model_composer = absltest.mock.MagicMock(
                     packager=absltest.mock.MagicMock(meta=absltest.mock.MagicMock(model_type=mock_type))
                 )
                 with absltest.mock.patch.object(
-                    target=_api, attribute="save_model", return_value=mock_module_model
+                    target=_api, attribute="save_model", return_value=mock_model_composer
                 ) as mock_save:
                     with absltest.mock.patch.object(
                         target=model_registry, attribute="_register_model_with_id", return_value=None

@@ -110,7 +110,7 @@ def original_estimator_has_callable(attr: str) -> Callable[[Any], bool]:
     return check
 
 
-def if_single_node(session: Session) -> bool:
+def is_single_node(session: Session) -> bool:
     """Retrieve the current session's warehouse type and warehouse size, and depends on those information
     to identify if it is single node or not
 

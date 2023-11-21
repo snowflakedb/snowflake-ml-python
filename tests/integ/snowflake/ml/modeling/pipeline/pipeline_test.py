@@ -352,6 +352,74 @@ class TestPipeline(TestCase):
 
         np.testing.assert_allclose(actual_results, sk_predict_results)
 
+    def test_pipeline_signature_quoted_columns_pandas(self) -> None:
+        input_df_pandas = load_diabetes(as_frame=True).frame
+        # Normalize column names
+        input_df_pandas.columns = [f'"{inflection.parameterize(c, "_")}"' for c in input_df_pandas.columns]
+
+        input_cols = [c for c in input_df_pandas.columns if not c.startswith('"target"')]
+        label_cols = ['"target"']
+        output_cols = '"output"'
+
+        mms = MinMaxScaler()
+        mms.set_input_cols(['"age"'])
+        mms.set_output_cols(['"age"'])
+        ss = StandardScaler()
+        ss.set_input_cols(['"age"'])
+        ss.set_output_cols(['"age"'])
+
+        estimator = SnowmlLinearRegression(input_cols=input_cols, output_cols=output_cols, label_cols=label_cols)
+
+        pipeline = snowml_pipeline.Pipeline(steps=[("mms", mms), ("ss", ss), ("estimator", estimator)])
+        pipeline.fit(input_df_pandas)
+
+        model_signatures = pipeline.model_signatures
+
+        expected_model_signatures = {
+            "predict": ModelSignature(
+                inputs=[FeatureSpec(name=c, dtype=DataType.DOUBLE) for c in input_cols],
+                outputs=[FeatureSpec(name=c, dtype=DataType.DOUBLE) for c in input_cols]
+                + [FeatureSpec(name=output_cols, dtype=DataType.DOUBLE)],
+            )
+        }
+        self.assertEqual(model_signatures["predict"].to_dict(), expected_model_signatures["predict"].to_dict())
+
+    def test_pipeline_signature_snowpark(self) -> None:
+        input_df_pandas = load_diabetes(as_frame=True).frame
+        # If the pandas dataframe columns are not quoted, they will be quoted after create_dataframe.
+        input_df_pandas.columns = [inflection.parameterize(c, "_") for c in input_df_pandas.columns]
+
+        input_df = self._session.create_dataframe(input_df_pandas)
+
+        input_cols = [c for c in input_df.columns if not c.startswith('"target"')]
+        label_cols = ['"target"']
+        output_cols = "OUTPUT"
+
+        mms = MinMaxScaler()
+        mms.set_input_cols(['"age"'])
+        mms.set_output_cols(['"age"'])
+        ss = StandardScaler()
+        ss.set_input_cols(['"age"'])
+        ss.set_output_cols(['"age"'])
+
+        estimator = SnowmlLinearRegression(input_cols=input_cols, output_cols=output_cols, label_cols=label_cols)
+
+        pipeline = snowml_pipeline.Pipeline(steps=[("mms", mms), ("ss", ss), ("estimator", estimator)])
+
+        pipeline.fit(input_df)
+
+        model_signatures = pipeline.model_signatures
+
+        expected_model_signatures = {
+            "predict": ModelSignature(
+                inputs=[FeatureSpec(name=c, dtype=DataType.DOUBLE) for c in input_cols],
+                outputs=[FeatureSpec(name=c, dtype=DataType.DOUBLE) for c in input_cols]
+                + [FeatureSpec(name=output_cols, dtype=DataType.DOUBLE)],
+            )
+        }
+
+        self.assertEqual(model_signatures["predict"].to_dict(), expected_model_signatures["predict"].to_dict())
+
     def test_pipeline_signature(self) -> None:
         input_df_pandas = load_diabetes(as_frame=True).frame
         # Normalize column names
@@ -382,7 +450,7 @@ class TestPipeline(TestCase):
                 + [FeatureSpec(name="OUTPUT", dtype=DataType.DOUBLE)],
             )
         }
-        self.assertItemsEqual(model_signatures["predict"].to_dict(), expected_model_signatures["predict"].to_dict())
+        self.assertEqual(model_signatures["predict"].to_dict(), expected_model_signatures["predict"].to_dict())
 
 
 if __name__ == "__main__":

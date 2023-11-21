@@ -13,9 +13,6 @@ if __name__ == "__main__":
     table = "tbao_test_data"
 
     df = session.table(table)
-    print(df.to_pandas().describe())
-    for s in df.schema:
-        print(s)
 
     generator = SyntheticDataGenerator(session, db, schema, table)
     generator.trigger(3, 5)
@@ -24,6 +21,5 @@ if __name__ == "__main__":
     while True:
         if i > 60:
             break
-        print(f"i: {i}")
         time.sleep(1)
         i = i + 1
