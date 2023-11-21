@@ -273,6 +273,25 @@ class ModelMetaEnvTest(absltest.TestCase):
             with self.assertRaisesRegex(ValueError, "Unable to get the version of the metadata file."):
                 model_meta.ModelMetadata.load(tmpdir)
 
+    def test_model_meta_check_min_version(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with model_meta.create_model_metadata(
+                model_dir_path=tmpdir,
+                name="model1",
+                model_type="custom",
+                signatures=_DUMMY_SIG,
+                metadata={"foo": "bar"},
+            ) as meta:
+                meta.models["model1"] = _DUMMY_BLOB
+                current_version = version.parse(snowml_env.VERSION)
+
+                meta.min_snowpark_ml_version = (
+                    f"{current_version.major}.{current_version.minor}.{current_version.micro+1}"
+                )
+
+            with self.assertRaisesRegex(RuntimeError, "The minimal version required to load the model is"):
+                model_meta.ModelMetadata.load(tmpdir)
+
     def test_model_meta_cuda(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             with model_meta.create_model_metadata(

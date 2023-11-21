@@ -1,6 +1,8 @@
 # A helper script cleans open taxi data (https://www.nyc.gov/site/tlc/about/tlc-trip-record-data.page)
 # and store into snowflake database.
 
+from absl.logging import logging
+
 from snowflake.ml._internal.utils import identifier
 from snowflake.ml.utils.connection_params import SnowflakeLoginOptions
 from snowflake.snowpark import Session
@@ -17,6 +19,8 @@ TRIPDATA_NAME = "yellow_tripdata_2016-01.parquet"
 WINEDATA_NAME = "winequality-red.csv"
 FILE_LOCAL_PATH = "file://~/Downloads/"
 
+logger = logging.getLogger(__name__)
+
 
 def create_tripdata(sess: Session, overwrite_mode: str) -> None:
     sess.file.put(f"{FILE_LOCAL_PATH}/{TRIPDATA_NAME}", sess.get_session_stage())
@@ -28,7 +32,7 @@ def create_tripdata(sess: Session, overwrite_mode: str) -> None:
     df.write.mode(overwrite_mode).save_as_table(full_table_name)
     rows_count = sess.sql(f"SELECT COUNT(*) FROM {full_table_name}").collect()[0][0]
 
-    print(f"{full_table_name} has total {rows_count} rows.")
+    logger.info(f"{full_table_name} has total {rows_count} rows.")
 
 
 def create_winedata(sess: Session, overwrite_mode: str) -> None:
@@ -59,7 +63,7 @@ def create_winedata(sess: Session, overwrite_mode: str) -> None:
     df.write.mode(overwrite_mode).save_as_table(full_table_name)
     rows_count = sess.sql(f"SELECT COUNT(*) FROM {full_table_name}").collect()[0][0]
 
-    print(f"{full_table_name} has total {rows_count} rows.")
+    logger.info(f"{full_table_name} has total {rows_count} rows.")
 
 
 if __name__ == "__main__":
@@ -68,4 +72,4 @@ if __name__ == "__main__":
     create_tripdata(sess, "overwrite")
     create_winedata(sess, "overwrite")
 
-    print("Script completes successfully.")
+    logger.info("Script completes successfully.")

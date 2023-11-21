@@ -22,6 +22,9 @@ max_line_length=120
 ; E731: Do not assign a lambda expression, use a def (E731) https://www.flake8rules.com/rules/E731.html
 ; F821: Undefined name name (F821) https://www.flake8rules.com/rules/F821.html
 ; W504: Line break occurred after a binary operator (W504) https://www.flake8rules.com/rules/W504.html
+; T2xx: Use print https://github.com/jbkahn/flake8-print
 
 extend-ignore=E203
-exclude=build,setup,tool,.tox,connector_python3,parameters.py"
+exclude=build,setup,tool,.tox,connector_python3,parameters.py
+per-file-ignores =
+    tests/*: T2

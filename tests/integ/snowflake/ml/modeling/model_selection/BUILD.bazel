@@ -1,10 +1,47 @@
-load("//codegen:codegen_rules.bzl", "autogen_tests_for_estimators")
-load("//snowflake/ml/modeling/model_selection:estimators_info.bzl", "estimator_info_list")
+load("//bazel:py_rules.bzl", "py_test")
 
 package(default_visibility = ["//visibility:public"])
 
-autogen_tests_for_estimators(
-    estimator_info_list = estimator_info_list,
-    module = "sklearn.model_selection",
-    module_root_dir = "snowflake/ml/modeling/model_selection",
+py_test(
+    name = "grid_search_integ_test",
+    timeout = "long",
+    srcs = ["grid_search_integ_test.py"],
+    shard_count = 5,
+    deps = [
+        "//snowflake/ml/modeling/decomposition:pca",
+        "//snowflake/ml/modeling/ensemble:random_forest_classifier",
+        "//snowflake/ml/modeling/model_selection:grid_search_cv",
+        "//snowflake/ml/modeling/svm:svc",
+        "//snowflake/ml/modeling/svm:svr",
+        "//snowflake/ml/modeling/xgboost:xgb_classifier",
+        "//snowflake/ml/utils:connection_params",
+    ],
+)
+
+py_test(
+    name = "randomized_search_integ_test",
+    timeout = "long",
+    srcs = ["randomized_search_integ_test.py"],
+    shard_count = 3,
+    deps = [
+        "//snowflake/ml/modeling/decomposition:pca",
+        "//snowflake/ml/modeling/ensemble:random_forest_classifier",
+        "//snowflake/ml/modeling/model_selection:randomized_search_cv",
+        "//snowflake/ml/modeling/svm:svc",
+        "//snowflake/ml/modeling/xgboost:xgb_classifier",
+        "//snowflake/ml/utils:connection_params",
+    ],
+)
+
+py_test(
+    name = "search_single_node_test",
+    srcs = ["search_single_node_test.py"],
+    shard_count = 4,
+    deps = [
+        "//snowflake/ml/modeling/_internal:estimator_utils",
+        "//snowflake/ml/modeling/model_selection:grid_search_cv",
+        "//snowflake/ml/modeling/model_selection:randomized_search_cv",
+        "//snowflake/ml/modeling/xgboost:xgb_classifier",
+        "//snowflake/ml/utils:connection_params",
+    ],
 )
