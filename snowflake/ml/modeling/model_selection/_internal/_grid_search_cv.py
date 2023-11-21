@@ -2,7 +2,7 @@
 # This code is auto-generated using the sklearn_wrapper_template.py_template template.
 # Do not modify the auto-generated code(except automatic reformatting by precommit hooks).
 #
-from typing import Any, Dict, Iterable, List, Optional, Set, Union
+from typing import Dict, Iterable, List, Optional, Set, Union
 from uuid import uuid4
 
 import numpy as np
@@ -25,7 +25,7 @@ from snowflake.ml.model.model_signature import (
 from snowflake.ml.modeling._internal.estimator_protocols import CVHandlers
 from snowflake.ml.modeling._internal.estimator_utils import (
     gather_dependencies,
-    if_single_node,
+    is_single_node,
     original_estimator_has_callable,
     transform_snowml_obj_to_sklearn_obj,
     validate_sklearn_args,
@@ -207,6 +207,7 @@ class GridSearchCV(BaseTransformer):
     drop_input_cols: Optional[bool], default=False
         If set, the response of predict(), transform() methods will not contain input columns.
     """
+    _ENABLE_DISTRIBUTED = True
 
     def __init__(  # type: ignore[no-untyped-def]
         self,
@@ -341,8 +342,8 @@ class GridSearchCV(BaseTransformer):
             dataset = dataset.select(selected_cols)
 
         assert self._sklearn_object is not None
-        single_node = if_single_node(session)
-        if not single_node:
+        is_distributed = not is_single_node(session) and self._ENABLE_DISTRIBUTED is True
+        if is_distributed:
             # Set the default value of the `n_jobs` attribute for the estimator.
             # If minus one is set, it will not be abided by in the UDTF, so we set that to the default value as well.
             if hasattr(self._sklearn_object.estimator, "n_jobs") and self._sklearn_object.estimator.n_jobs in [
@@ -351,7 +352,7 @@ class GridSearchCV(BaseTransformer):
             ]:
                 self._sklearn_object.estimator.n_jobs = DEFAULT_UDTF_NJOBS
             self._sklearn_object = self._handlers.fit_search_snowpark(
-                param_list=ParameterGrid(self._sklearn_object.param_grid),
+                param_grid=ParameterGrid(self._sklearn_object.param_grid),
                 dataset=dataset,
                 session=session,
                 estimator=self._sklearn_object,
@@ -864,9 +865,8 @@ class GridSearchCV(BaseTransformer):
             )
         return self._model_signature_dict
 
-    def to_sklearn(self) -> Any:
-        if self._sklearn_object is None:
-            self._sklearn_object = self._create_sklearn_object()
+    def to_sklearn(self) -> sklearn.model_selection.GridSearchCV:
+        assert self._sklearn_object is not None
         return self._sklearn_object
 
     def _get_dependencies(self) -> List[str]:

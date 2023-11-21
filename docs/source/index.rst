@@ -16,6 +16,9 @@ Portions of the Snowpark ML API Reference are derived from
 | **xgboost** Copyright © 2019 by xgboost contributors.
 | **lightgbm** Copyright © Microsoft Corporation.
 
+Table of Contents
+=================
+
 .. toctree::
    :maxdepth: 3
 

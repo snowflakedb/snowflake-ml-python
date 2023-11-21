@@ -1,9 +1,8 @@
-import functools
 import inspect
 import itertools
 import os
 import tempfile
-from typing import Any, Callable, List, Literal, Optional, Tuple, Type, TypeVar
+from typing import Any, Callable, List, Literal, Optional, Tuple, Type, TypeVar, Union
 
 import cloudpickle
 from absl.testing import absltest, parameterized
@@ -53,45 +52,56 @@ class CommonTestBase(parameterized.TestCase):
     @classmethod
     def sproc_test(
         kclass: Type[_V], local: bool = True, test_callers_rights: bool = True
-    ) -> Callable[[Callable[Concatenate[_V, _T_args], None]], Callable[Concatenate[_V, _T_args], None]]:
-        def decorator(fn: Callable[Concatenate[_V, _T_args], None]) -> Callable[Concatenate[_V, _T_args], None]:
-            @functools.wraps(fn)
-            def test_wrapper(self: _V, /, *args: _T_args.args, **kwargs: _T_args.kwargs) -> None:
-                if snowpark_utils.is_in_stored_procedure():  # type: ignore[no-untyped-call]
-                    fn(self, *args, **kwargs)
+    ) -> Callable[
+        [Callable[Concatenate[_V, _T_args], None]],
+        Union[parameterized._ParameterizedTestIter, Callable[Concatenate[_V, _T_args], None]],
+    ]:
+        def decorator(
+            fn: Union[parameterized._ParameterizedTestIter, Callable[Concatenate[_V, _T_args], None]]
+        ) -> Union[parameterized._ParameterizedTestIter, Callable[Concatenate[_V, _T_args], None]]:
+            if snowpark_utils.is_in_stored_procedure():  # type: ignore[no-untyped-call]
+                return fn
+
+            if isinstance(fn, parameterized._ParameterizedTestIter):
+                actual_method = fn._test_method
+                original_name = fn._original_name
+                naming_type = fn._naming_type
+                test_cases = list(fn.testcases)
+            else:
+                actual_method = fn
+                original_name = fn.__name__
+                naming_type = parameterized._ARGUMENT_REPR
+                test_cases = [{}]
+
+            test_module = inspect.getmodule(actual_method)
+            assert test_module
+            assert test_module.__file__
+            test_module_path = os.path.abspath(test_module.__file__)
+            ind = test_module_path.rfind(f"tests{os.sep}")
+            assert ind > 0
+            rel_path = test_module_path[ind:]
+            rel_path = os.path.splitext(rel_path)[0]
+            test_module_name = rel_path.replace(os.sep, ".")
+            method_list = [func for func in dir(kclass) if func.startswith(original_name)]
+
+            def test_wrapper(
+                self: _V,
+                /,
+                *args: _T_args.args,
+                _sproc_test_mode: Literal["local", "owner", "caller"],
+                **kwargs: _T_args.kwargs,
+            ) -> None:
+                if _sproc_test_mode == "local":
+                    actual_method(self, *args, **kwargs)
                     return
 
-                if local:
-                    with self.subTest("Local Test"):
-                        fn(self, *args, **kwargs)
-
                 def _in_sproc_test(execute_as: Literal["owner", "caller"] = "owner") -> None:
-                    test_module = inspect.getmodule(fn)
-                    assert test_module
-                    cloudpickle.register_pickle_by_value(test_module)
-                    assert test_module.__file__
-                    test_module_path = os.path.abspath(test_module.__file__)
-                    ind = test_module_path.rfind(f"tests{os.sep}")
-                    assert ind > 0
-                    rel_path = test_module_path[ind:]
-                    rel_path = os.path.splitext(rel_path)[0]
-                    test_module_name = rel_path.replace(os.sep, ".")
-                    test_name = f"{test_module_name}.{fn.__qualname__}"
-
                     with tempfile.TemporaryDirectory() as tmpdir:
-                        snowml_path, snowml_start_path = file_utils.get_package_path("snowflake.ml")
-
                         snowml_zip_module_filename = os.path.join(tmpdir, "snowflake-ml-python.zip")
-                        with file_utils.zip_file_or_directory_to_stream(snowml_path, snowml_start_path) as input_stream:
-                            with open(snowml_zip_module_filename, "wb") as f:
-                                f.write(input_stream.getbuffer())
-
-                        tests_path, tests_start_path = file_utils.get_package_path("tests")
+                        file_utils.zip_python_package(snowml_zip_module_filename, "snowflake.ml")
 
                         tests_zip_module_filename = os.path.join(tmpdir, "snowflake-ml-test.zip")
-                        with file_utils.zip_file_or_directory_to_stream(tests_path, tests_start_path) as input_stream:
-                            with open(tests_zip_module_filename, "wb") as f:
-                                f.write(input_stream.getbuffer())
+                        file_utils.zip_python_package(tests_zip_module_filename, "tests")
 
                         imports = [snowml_zip_module_filename, tests_zip_module_filename]
                         packages = [
@@ -100,6 +110,8 @@ class CommonTestBase(parameterized.TestCase):
                             # Remove "_" not in req once Snowpark 1.11.0 available, it is a workaround for their bug.
                             if "snowflake-connector-python" not in req and "_" not in req
                         ]
+
+                        cloudpickle.register_pickle_by_value(test_module)
 
                         @F.sproc(  # type: ignore[misc]
                             is_permanent=False,
@@ -125,18 +137,27 @@ class CommonTestBase(parameterized.TestCase):
                             if result.testsRun == 0:
                                 raise RuntimeError("Unit test does not run any test.")
 
-                        test_in_sproc(self.session, test_name)
+                        for method in method_list:
+                            test_in_sproc(self.session, f"{test_module_name}.{self.__class__.__qualname__}.{method}")
 
                         cloudpickle.unregister_pickle_by_value(test_module)
 
-                with self.subTest("In-sproc Test (Owner's rights)"):
-                    _in_sproc_test(execute_as="owner")
+                _in_sproc_test(execute_as=_sproc_test_mode)
 
-                if test_callers_rights:
-                    with self.subTest("In-sproc Test (Caller's rights)"):
-                        _in_sproc_test(execute_as="caller")
+            additional_cases = [
+                {"_sproc_test_mode": "owner"},
+            ]
+            if local:
+                additional_cases.append({"_sproc_test_mode": "local"})
 
-            return test_wrapper
+            if test_callers_rights:
+                additional_cases.append({"_sproc_test_mode": "caller"})
+
+            modified_test_cases = [{**t1, **t2} for t1 in test_cases for t2 in additional_cases]
+
+            return parameterized._ParameterizedTestIter(
+                test_wrapper, modified_test_cases, naming_type, original_name=original_name
+            )
 
         return decorator
 
@@ -146,10 +167,25 @@ class CommonTestBase(parameterized.TestCase):
         prepare_fn_factory: Callable[[_V], Tuple[Callable[[session.Session, _R_args], None], _R_args]],
         version_range: Optional[str] = None,
         additional_packages: Optional[List[str]] = None,
-    ) -> Callable[[Callable[Concatenate[_V, _T_args], None]], Callable[Concatenate[_V, _T_args], None]]:
-        def decorator(fn: Callable[Concatenate[_V, _T_args], None]) -> Callable[Concatenate[_V, _T_args], None]:
-            @functools.wraps(fn)
-            def test_wrapper(self: _V, /, *args: _T_args.args, **kwargs: _T_args.kwargs) -> None:
+    ) -> Callable[
+        [Union[parameterized._ParameterizedTestIter, Callable[Concatenate[_V, _T_args], None]]],
+        parameterized._ParameterizedTestIter,
+    ]:
+        def decorator(
+            fn: Union[parameterized._ParameterizedTestIter, Callable[Concatenate[_V, _T_args], None]]
+        ) -> parameterized._ParameterizedTestIter:
+            if isinstance(fn, parameterized._ParameterizedTestIter):
+                actual_method = fn._test_method
+                original_name = fn._original_name
+                naming_type = fn._naming_type
+                test_cases = list(fn.testcases)
+            else:
+                actual_method = fn
+                original_name = fn.__name__
+                naming_type = parameterized._ARGUMENT_REPR
+                test_cases = [{}]
+
+            def test_wrapper(self: _V, /, *args: _T_args.args, _snowml_pkg_ver: str, **kwargs: _T_args.kwargs) -> None:
                 prepare_fn, prepare_fn_args = prepare_fn_factory(self)
                 if additional_packages:
                     packages = additional_packages
@@ -182,35 +218,38 @@ def {func_name}({first_arg_name}: snowflake.snowpark.Session, {", ".join(arg_lis
 {func_body}
 """
 
-                for pkg_ver in test_env_utils.get_package_versions_in_server(
-                    self.session, f"snowflake-ml-python{version_range}"
-                ):
-                    with self.subTest(f"Testing with snowflake-ml-python version {pkg_ver}"):
-                        final_packages = packages[:] + [f"snowflake-ml-python=={pkg_ver}"]
+                final_packages = packages[:] + [f"snowflake-ml-python=={_snowml_pkg_ver}"]
 
-                        with tempfile.NamedTemporaryFile(
-                            "w", encoding="utf-8", suffix=".py", delete=False
-                        ) as temp_file:
-                            temp_file.write(func_source)
-                            temp_file.flush()
+                with tempfile.NamedTemporaryFile("w", encoding="utf-8", suffix=".py", delete=False) as temp_file:
+                    temp_file.write(func_source)
+                    temp_file.flush()
 
-                            # Instead of using decorator, we register from file to prevent pickling anything from
-                            # current env.
-                            prepare_fn_sproc = self.session.sproc.register_from_file(
-                                file_path=temp_file.name,
-                                func_name=func_name,
-                                return_type=return_type,
-                                input_types=input_types,
-                                is_permanent=False,
-                                packages=final_packages,
-                                replace=True,
-                            )
+                    # Instead of using decorator, we register from file to prevent pickling anything from
+                    # current env.
+                    prepare_fn_sproc = self.session.sproc.register_from_file(
+                        file_path=temp_file.name,
+                        func_name=func_name,
+                        return_type=return_type,
+                        input_types=input_types,
+                        is_permanent=False,
+                        packages=final_packages,
+                        replace=True,
+                    )
 
-                        prepare_fn_sproc(*prepare_fn_args, session=self.session)
+                prepare_fn_sproc(*prepare_fn_args, session=self.session)
 
-                        fn(self, *args, **kwargs)
+                actual_method(self, *args, **kwargs)
 
-            return test_wrapper
+            additional_cases = [
+                {"_snowml_pkg_ver": pkg_ver}
+                for pkg_ver in test_env_utils.get_package_versions_in_conda(f"snowflak-ml-python{version_range}")
+            ]
+
+            modified_test_cases = [{**t1, **t2} for t1 in test_cases for t2 in additional_cases]
+
+            return parameterized._ParameterizedTestIter(
+                test_wrapper, modified_test_cases, naming_type, original_name=original_name
+            )
 
         return decorator
 

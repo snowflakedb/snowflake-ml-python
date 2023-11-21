@@ -1,0 +1,35 @@
+load("//bazel:py_rules.bzl", "py_library", "py_package", "py_test")
+
+package(default_visibility = ["//visibility:public"])
+
+py_library(
+    name = "disable_distributed_hpo",
+    srcs = [
+        "disable_distributed_hpo.py",
+    ],
+    deps = [
+        "//snowflake/ml/modeling/model_selection/_internal:_grid_search_cv",
+        "//snowflake/ml/modeling/model_selection/_internal:_randomized_search_cv",
+    ],
+)
+
+py_test(
+    name = "disable_distributed_hpo_test",
+    srcs = [
+        "disable_distributed_hpo_test.py",
+    ],
+    deps = [
+        ":disable_distributed_hpo",
+        "//snowflake/ml/modeling/model_selection/_internal:_grid_search_cv",
+        "//snowflake/ml/modeling/model_selection/_internal:_randomized_search_cv",
+        "//snowflake/ml/modeling/xgboost:xgb_classifier",
+    ],
+)
+
+py_package(
+    name = "parameters_pkg",
+    packages = ["snowflake.ml"],
+    deps = [
+        ":disable_distributed_hpo",
+    ],
+)

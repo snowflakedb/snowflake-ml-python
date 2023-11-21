@@ -1,9 +1,11 @@
 "Defines packages to be included in the releasing wheel file."
 
 PACKAGES = [
+    "//snowflake/cortex:cortex_pkg",
     "//snowflake/ml/modeling/impute:impute_pkg",
     "//snowflake/ml/modeling/metrics:metrics_pkg",
     "//snowflake/ml/modeling/model_selection/_internal:_internal_pkg",
+    "//snowflake/ml/modeling/parameters:parameters_pkg",
     "//snowflake/ml/modeling/pipeline:pipeline_pkg",
     "//snowflake/ml/modeling/preprocessing:preprocessing_pkg",
     "//snowflake/ml/monitoring:monitoring_pkg",

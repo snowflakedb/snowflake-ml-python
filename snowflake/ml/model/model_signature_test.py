@@ -72,6 +72,14 @@ class ModelSignatureMiscTest(absltest.TestCase):
             ],
         )
 
+        self.assertListEqual(
+            model_signature._infer_signature(lt4, role="input", use_snowflake_identifiers=True),
+            [
+                model_signature.FeatureSpec('"input_feature_0"', model_signature.DataType.INT64),
+                model_signature.FeatureSpec('"input_feature_1"', model_signature.DataType.INT64),
+            ],
+        )
+
         tf_tensor = tf.constant([1, 2, 3, 4], dtype=tf.int64)
         lt5 = [tf_tensor, tf_tensor]
         self.assertListEqual(

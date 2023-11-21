@@ -62,7 +62,7 @@ class PandasDataFrameHandler(base_handler.BaseDataHandler[pd.DataFrame]):
         for df_col, df_col_dtype in zip(df_cols, df_col_dtypes):
             if df_col_dtype == np.dtype("O"):
                 # Check if all objects have the same type
-                if not all(isinstance(data_row, type(data[df_col][0])) for data_row in data[df_col]):
+                if not all(isinstance(data_row, type(data[df_col].iloc[0])) for data_row in data[df_col]):
                     raise snowml_exceptions.SnowflakeMLException(
                         error_code=error_codes.INVALID_DATA,
                         original_exception=ValueError(
@@ -70,8 +70,8 @@ class PandasDataFrameHandler(base_handler.BaseDataHandler[pd.DataFrame]):
                         ),
                     )
 
-                if isinstance(data[df_col][0], list):
-                    arr = utils.convert_list_to_ndarray(data[df_col][0])
+                if isinstance(data[df_col].iloc[0], list):
+                    arr = utils.convert_list_to_ndarray(data[df_col].iloc[0])
                     arr_dtype = core.DataType.from_numpy_type(arr.dtype)
 
                     converted_data_list = [utils.convert_list_to_ndarray(data_row) for data_row in data[df_col]]
@@ -88,8 +88,8 @@ class PandasDataFrameHandler(base_handler.BaseDataHandler[pd.DataFrame]):
                             ),
                         )
 
-                elif isinstance(data[df_col][0], np.ndarray):
-                    arr_dtype = core.DataType.from_numpy_type(data[df_col][0].dtype)
+                elif isinstance(data[df_col].iloc[0], np.ndarray):
+                    arr_dtype = core.DataType.from_numpy_type(data[df_col].iloc[0].dtype)
 
                     if not all(core.DataType.from_numpy_type(data_row.dtype) == arr_dtype for data_row in data[df_col]):
                         raise snowml_exceptions.SnowflakeMLException(
@@ -99,7 +99,7 @@ class PandasDataFrameHandler(base_handler.BaseDataHandler[pd.DataFrame]):
                                 + f"Inconsistent type of element in object found in column data {data[df_col]}."
                             ),
                         )
-                elif not isinstance(data[df_col][0], (str, bytes)):
+                elif not isinstance(data[df_col].iloc[0], (str, bytes)):
                     raise snowml_exceptions.SnowflakeMLException(
                         error_code=error_codes.INVALID_DATA,
                         original_exception=ValueError(
@@ -124,10 +124,10 @@ class PandasDataFrameHandler(base_handler.BaseDataHandler[pd.DataFrame]):
         specs = []
         for df_col, df_col_dtype, ft_name in zip(df_cols, df_col_dtypes, ft_names):
             if df_col_dtype == np.dtype("O"):
-                if isinstance(data[df_col][0], list):
-                    arr = utils.convert_list_to_ndarray(data[df_col][0])
+                if isinstance(data[df_col].iloc[0], list):
+                    arr = utils.convert_list_to_ndarray(data[df_col].iloc[0])
                     arr_dtype = core.DataType.from_numpy_type(arr.dtype)
-                    ft_shape = np.shape(data[df_col][0])
+                    ft_shape = np.shape(data[df_col].iloc[0])
 
                     converted_data_list = [utils.convert_list_to_ndarray(data_row) for data_row in data[df_col]]
 
@@ -135,17 +135,17 @@ class PandasDataFrameHandler(base_handler.BaseDataHandler[pd.DataFrame]):
                         ft_shape = (-1,)
 
                     specs.append(core.FeatureSpec(dtype=arr_dtype, name=ft_name, shape=ft_shape))
-                elif isinstance(data[df_col][0], np.ndarray):
-                    arr_dtype = core.DataType.from_numpy_type(data[df_col][0].dtype)
-                    ft_shape = np.shape(data[df_col][0])
+                elif isinstance(data[df_col].iloc[0], np.ndarray):
+                    arr_dtype = core.DataType.from_numpy_type(data[df_col].iloc[0].dtype)
+                    ft_shape = np.shape(data[df_col].iloc[0])
 
                     if not all(np.shape(data_row) == ft_shape for data_row in data[df_col]):
                         ft_shape = (-1,)
 
                     specs.append(core.FeatureSpec(dtype=arr_dtype, name=ft_name, shape=ft_shape))
-                elif isinstance(data[df_col][0], str):
+                elif isinstance(data[df_col].iloc[0], str):
                     specs.append(core.FeatureSpec(dtype=core.DataType.STRING, name=ft_name))
-                elif isinstance(data[df_col][0], bytes):
+                elif isinstance(data[df_col].iloc[0], bytes):
                     specs.append(core.FeatureSpec(dtype=core.DataType.BYTES, name=ft_name))
             else:
                 specs.append(core.FeatureSpec(dtype=core.DataType.from_numpy_type(df_col_dtype), name=ft_name))

@@ -2,6 +2,7 @@ import contextlib
 import hashlib
 import importlib
 import io
+import logging
 import os
 import pathlib
 import pkgutil
@@ -11,7 +12,6 @@ import tarfile
 import tempfile
 import zipfile
 from typing import (
-    IO,
     Any,
     Callable,
     Dict,
@@ -30,10 +30,6 @@ from snowflake import snowpark
 from snowflake.ml._internal.exceptions import exceptions
 
 GENERATED_PY_FILE_EXT = (".pyc", ".pyo", ".pyd", ".pyi")
-_SNOWFLAKE_ML_PKG_NAME = "snowflake.ml"
-
-# Cache mapping for zip file to unzipped directory.
-_EXTRACTED_ZIP: Dict[str, str] = {}
 
 
 def copytree(
@@ -106,105 +102,69 @@ def copy_file_or_tree(src: str, dst_dir: str) -> None:
         copytree(src=src, dst=dst_path, ignore=shutil.ignore_patterns("__pycache__"))
 
 
-@contextlib.contextmanager
-def zip_file_or_directory_to_stream(
-    path: str,
-    leading_path: Optional[str] = None,
-    ignore_generated_py_file: bool = True,
-) -> Generator[io.BytesIO, None, None]:
-    """This is a temporary fixed version of snowflake.snowpark._internal.utils.zip_file_or_directory_to_stream function.
-    It compresses the file or directory as a zip file to a binary stream. The zip file could be later imported as a
-    Python package.
+def make_archive(
+    target_path: str,
+    root_dir: Optional[str] = None,
+    base_dir: Optional[str] = None,
+    verbose: bool = False,
+    dry_run: bool = False,
+    owner: Optional[str] = None,
+    group: Optional[str] = None,
+    logger: Optional[logging.Logger] = None,
+) -> None:
+    target_file = pathlib.Path(target_path)
+    ext = "".join(target_file.suffixes)
+    basename = str(target_file.parent / target_file.name.replace(ext, ""))
+    EXT_TO_FORMAT_MAPPING = {".zip": "zip", ".tar": "tar", ".tar.gz": "gztar", ".tar.bz2": "bztar", ".tar.xz": "xztar"}
+    shutil.make_archive(
+        basename,
+        EXT_TO_FORMAT_MAPPING[ext],
+        root_dir=root_dir,
+        base_dir=base_dir,
+        verbose=verbose,
+        dry_run=dry_run,
+        owner=owner,
+        group=group,
+        logger=logger,
+    )
 
-    The original version did not implement correctly as it did not add folder record for those directory level between
-    the leading_path and path. In this case, the generated zip file could not be imported as a Python namespace package.
 
-    The original version wrongly believe that __init__.py is needed for all directories along the import path when
-    importing a module as a zip file. However, it is not necessary as modern Python has already support namespace
-    package where __init__.py is no longer required.
+def zip_python_package(zipfile_path: str, package_name: str, ignore_generated_py_file: bool = True) -> None:
+    import importlib_resources
+    from importlib_resources import abc as importlib_resources_abc
 
-    Args:
-        path: The absolute path to a file or directory.
-        leading_path: This argument is used to determine where directory should
-            start in the zip file. Basically, this argument works as the role
-            of `start` argument in os.path.relpath(path, start), i.e.,
-            absolute path = [leading path]/[relative path]. For example,
-            when the path is "/tmp/dir1/dir2/test.py", and the leading path
-            is "/tmp/dir1", the generated filesystem structure in the zip file
-            will be "dir2/" and "dir2/test.py". Defaults to None.
-        ignore_generated_py_file: Whether to ignore some generated python files
-            in the directory. Defaults to True.
+    _, pkg_start_path = get_package_path(package_name)
+    if os.path.isfile(pkg_start_path):
+        shutil.copy(pkg_start_path, zipfile_path)
+        return
 
-    Raises:
-        FileNotFoundError: Raised when the given path does not exist.
-        ValueError: Raised when the leading path is not a actual leading path of path
-        ValueError: Raised when the arcname cannot be encoded using ASCII.
+    base_dirs = package_name.split(".")
+    assert len(base_dirs) >= 1, "Invalid package name."
 
-    Yields:
-        A bytes IO stream containing the zip file.
-    """
-    # TODO(SNOW-862576): Should remove check on ASCII encoding after SNOW-862576 fixed.
-    if not os.path.exists(path):
-        raise FileNotFoundError(f"{path} is not found")
-    if leading_path and not path.startswith(leading_path):
-        raise ValueError(f"{leading_path} doesn't lead to {path}")
-    # if leading_path is not provided, just use the parent path,
-    # and the compression will start from the parent directory
-    start_path = leading_path if leading_path else os.path.join(path, "..")
+    with zipfile.ZipFile(zipfile_path, mode="w", compression=zipfile.ZIP_DEFLATED) as zf:
+        for i in range(len(base_dirs)):
+            arcname = pathlib.PurePosixPath(*base_dirs[: i + 1])
+            zf.writestr(str(arcname) + "/", "")
+        base_arcname = pathlib.PurePosixPath(*base_dirs)
 
-    with io.BytesIO() as input_stream:
-        with zipfile.ZipFile(input_stream, mode="w", compression=zipfile.ZIP_DEFLATED) as zf:
-            if os.path.realpath(path) != os.path.realpath(start_path):
-                cur_path = os.path.dirname(path)
-                while os.path.realpath(cur_path) != os.path.realpath(start_path):
-                    arcname = os.path.relpath(cur_path, start_path)
-                    if not _able_ascii_encode(arcname):
-                        raise ValueError(f"File name {arcname} cannot be encoded using ASCII. Please rename.")
-                    zf.write(cur_path, arcname)
-                    cur_path = os.path.dirname(cur_path)
-
-            if os.path.isdir(path):
-                for dirpath, _, files in os.walk(path):
-                    # ignore __pycache__
-                    if ignore_generated_py_file and "__pycache__" in dirpath:
-                        continue
-                    arcname = os.path.relpath(dirpath, start_path)
-                    if not _able_ascii_encode(arcname):
-                        raise ValueError(f"File name {arcname} cannot be encoded using ASCII. Please rename.")
-                    zf.write(dirpath, arcname)
-                    for file in files:
-                        # ignore generated python files
-                        if ignore_generated_py_file and file.endswith(GENERATED_PY_FILE_EXT):
-                            continue
-                        file_path = os.path.join(dirpath, file)
-                        arcname = os.path.relpath(file_path, start_path)
-                        if not _able_ascii_encode(arcname):
-                            raise ValueError(f"File name {arcname} cannot be encoded using ASCII. Please rename.")
-                        zf.write(file_path, arcname)
-            else:
-                arcname = os.path.relpath(path, start_path)
-                if not _able_ascii_encode(arcname):
+        def _add_to_zip(
+            zf: zipfile.ZipFile, path_info: importlib_resources_abc.Traversable, base_arcname: pathlib.PurePosixPath
+        ) -> None:
+            if path_info.is_file():
+                if ignore_generated_py_file and path_info.name.endswith(GENERATED_PY_FILE_EXT):
+                    return
+                arcname = base_arcname / path_info.name
+                if not _able_ascii_encode(str(arcname)):
                     raise ValueError(f"File name {arcname} cannot be encoded using ASCII. Please rename.")
-                zf.write(path, arcname)
+                zf.writestr(str(arcname), path_info.read_bytes())  # type: ignore[no-untyped-call]
+            elif path_info.is_dir():
+                arcname = base_arcname / path_info.name
+                zf.writestr(str(arcname) + "/", "")
+                for sub_path_info in path_info.iterdir():  # type: ignore[no-untyped-call]
+                    _add_to_zip(zf, sub_path_info, arcname)
 
-        yield input_stream
-
-
-@contextlib.contextmanager
-def unzip_stream_in_temp_dir(stream: IO[bytes], temp_root: Optional[str] = None) -> Generator[str, None, None]:
-    """Unzip an IO stream into a temporary directory.
-
-    Args:
-        stream: The input stream.
-        temp_root: The root directory where the temporary directory should created in. Defaults to None.
-
-    Yields:
-        The path to the created temporary directory.
-    """
-    with tempfile.TemporaryDirectory(dir=temp_root) as tempdir:
-        with zipfile.ZipFile(stream, mode="r", compression=zipfile.ZIP_DEFLATED) as zf:
-            zf.extractall(path=tempdir)
-        yield tempdir
+        for sub_path_info in importlib_resources.files(package_name).iterdir():  # type: ignore[no-untyped-call]
+            _add_to_zip(zf, sub_path_info, base_arcname)
 
 
 def hash_directory(
@@ -287,7 +247,7 @@ def _create_tar_gz_stream(source_dir: str, arcname: Optional[str] = None) -> Gen
 
 
 def get_package_path(package_name: str, strategy: Literal["first", "last"] = "first") -> Tuple[str, str]:
-    """Return the path to where a package is defined and its start location.
+    """[Obsolete]Return the path to where a package is defined and its start location.
     Example 1: snowflake.ml -> path/to/site-packages/snowflake/ml, path/to/site-packages
     Example 2: zip_imported_module -> path/to/some/zipfile.zip/zip_imported_module, path/to/some/zipfile.zip
 
@@ -324,40 +284,6 @@ def stage_file_exists(
         return len(res) > 0
     except exceptions.SnowflakeMLException:
         return False
-
-
-def resolve_zip_import_path(file_path: str) -> str:
-    """This function resolves a file path when snowml is either loaded as a directory or zip(e.g. in notebook env).
-
-    We first check the snowml package path, if it's a directory, meaning we are not using zip import, then we return
-    the file_path as is, immediately; if snowml package path is a file, meaning it's a zip, we unzip it to a temp dir,
-    then reconstruct the correct file path. The reconstruction is needed because if the package is zip-imported, then
-    the path will be `../path_to_zip.zip/snowflake/ml`, which will cause "file not found" in the downstream.
-
-    Args:
-        file_path: file path, likely inferred by os.path.dirname(__file__)
-
-    Returns:
-        Valid file path.
-    """
-
-    def _get_unzipped_dir() -> str:
-        if snowml_start_path in _EXTRACTED_ZIP:
-            cached_dir = _EXTRACTED_ZIP[snowml_path]
-            if os.path.exists(cached_dir):
-                return _EXTRACTED_ZIP[cached_dir]
-        extract_dir = tempfile.mkdtemp()
-        with zipfile.ZipFile(os.path.abspath(snowml_start_path), mode="r", compression=zipfile.ZIP_DEFLATED) as zf:
-            zf.extractall(path=extract_dir)
-            _EXTRACTED_ZIP[snowml_path] = extract_dir
-        return extract_dir
-
-    snowml_path, snowml_start_path = get_package_path(_SNOWFLAKE_ML_PKG_NAME, strategy="last")
-    if not os.path.isfile(snowml_start_path):
-        return file_path
-    extract_root = _get_unzipped_dir()
-    snowml_file_path = os.path.relpath(file_path, snowml_start_path)
-    return os.path.join(extract_root, *(snowml_file_path.split("/")))
 
 
 def upload_directory_to_stage(

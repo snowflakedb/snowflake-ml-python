@@ -11,7 +11,7 @@ from typing import Any, Dict, Generator, List, Optional
 
 import cloudpickle
 import yaml
-from packaging import version
+from packaging import requirements, version
 
 from snowflake.ml._internal import env as snowml_env, env_utils, file_utils
 from snowflake.ml.model import model_signature, type_hints as model_types
@@ -154,13 +154,16 @@ def _create_env_for_model_metadata(
     env.snowpark_ml_version = snowml_env.VERSION
     if embed_local_ml_library:
         env.include_if_absent(
-            [model_env.ModelDependency(requirement=dep, pip_name=dep) for dep in _PACKAGING_CORE_DEPENDENCIES],
+            [
+                model_env.ModelDependency(requirement=dep, pip_name=requirements.Requirement(dep).name)
+                for dep in _PACKAGING_CORE_DEPENDENCIES
+            ],
             check_local_version=True,
         )
     else:
         env.include_if_absent(
             [
-                model_env.ModelDependency(requirement=dep, pip_name=dep)
+                model_env.ModelDependency(requirement=dep, pip_name=requirements.Requirement(dep).name)
                 for dep in _PACKAGING_CORE_DEPENDENCIES + [env_utils.SNOWPARK_ML_PKG_NAME]
             ],
             check_local_version=True,
@@ -301,9 +304,9 @@ class ModelMetadata:
         loaded_meta = migrator_plans.migrate_metadata(loaded_meta)
 
         loaded_meta_min_snowpark_ml_version = loaded_meta.get("min_snowpark_ml_version", None)
-        if not loaded_meta_min_snowpark_ml_version or version.parse(
-            loaded_meta_min_snowpark_ml_version
-        ) < version.parse(snowml_env.VERSION):
+        if not loaded_meta_min_snowpark_ml_version or (
+            version.parse(loaded_meta_min_snowpark_ml_version) > version.parse(snowml_env.VERSION)
+        ):
             raise RuntimeError(
                 f"The minimal version required to load the model is {loaded_meta_min_snowpark_ml_version},"
                 f"while current version of Snowpark ML library is {snowml_env.VERSION}."

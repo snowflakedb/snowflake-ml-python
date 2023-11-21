@@ -138,6 +138,12 @@ def concat_names(ids: List[str]) -> str:
     return final_id
 
 
+def rename_to_valid_snowflake_identifier(name: str) -> str:
+    if QUOTED_IDENTIFIER_RE.match(name) is None and UNQUOTED_CASE_SENSITIVE_RE.match(name) is None:
+        name = get_inferred_name(name)
+    return name
+
+
 def parse_schema_level_object_identifier(
     path: str,
 ) -> Tuple[Union[str, Any], Union[str, Any], Union[str, Any], Union[str, Any]]:

@@ -1,12 +1,25 @@
 # Release History
 
+## 1.0.13
+
+### Bug Fixes
+
+- Model Registry: Fix panda dataframe input not handling first row properly.
+
+### Behavior Changes
+
+### New Features
+
+- Model Registry: Add support for invoking public endpoint on SPCS service, by providing a "enable_ingress" SPCS
+  deployment option.
+
 ## 1.0.12
 
 ### Bug Fixes
 
 - Model Registry: Fix regression issue that container logging is not shown during model deployment to SPCS.
 - Model Development: Enhance the column capacity of OrdinalEncoder.
-- Model Registry: Fix unbound `batch_size`` error when deploying a model other than Hugging Face Pipeline
+- Model Registry: Fix unbound `batch_size` error when deploying a model other than Hugging Face Pipeline
    and LLM with GPU on SPCS.
 
 ### Behavior Changes

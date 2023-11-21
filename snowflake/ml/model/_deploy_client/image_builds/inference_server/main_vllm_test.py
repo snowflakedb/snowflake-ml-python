@@ -55,15 +55,13 @@ class MainVllmTest(absltest.TestCase):
             model=model,
             metadata={"author": "halu", "version": "1"},
         )
-        with file_utils.zip_file_or_directory_to_stream(tmpdir.full_path, leading_path=tmpdir.full_path) as zf:
-            zf.seek(0)
-            with open(zip_full_path, "wb") as f:
-                f.write(zf.getvalue())
+        file_utils.make_archive(zip_full_path, tmpdir.full_path)
         return zip_full_path
 
     def setup_pretrain_model(self) -> str:
         options = llm.LLMOptions(
             max_batch_size=100,
+            enable_tp=True,
         )
         model = llm.LLM("facebook/opt-350m", options=options)
         tmpdir = self.create_tempdir()
@@ -74,10 +72,7 @@ class MainVllmTest(absltest.TestCase):
             model=model,
             metadata={"author": "halu", "version": "1"},
         )
-        with file_utils.zip_file_or_directory_to_stream(tmpdir.full_path, leading_path=tmpdir.full_path) as zf:
-            zf.seek(0)
-            with open(zip_full_path, "wb") as f:
-                f.write(zf.getvalue())
+        file_utils.make_archive(zip_full_path, tmpdir.full_path)
         return zip_full_path
 
     @contextlib.contextmanager

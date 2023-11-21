@@ -1,5 +1,15 @@
 # mypy: disable-error-code="import"
-from typing import TYPE_CHECKING, Literal, Sequence, TypedDict, TypeVar, Union
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Dict,
+    Literal,
+    Optional,
+    Sequence,
+    TypedDict,
+    TypeVar,
+    Union,
+)
 
 import numpy.typing as npt
 from typing_extensions import NotRequired, Required
@@ -158,6 +168,11 @@ class SnowparkContainerServiceDeployOptions(DeployOptions):
     enable_remote_image_build: When set to True, will enable image build on a remote SnowService job. Default is True.
     force_image_build: When set to True, an image rebuild will occur. The default is False, which means the system
         will automatically check whether a previously built image can be reused
+    model_in_image: When set to True, image would container full model weights. The default if False, which
+                means image without model weights and we do stage mount to access weights.
+    debug_mode: When set to True, deployment artifacts will be persisted in a local temp directory.
+    enable_ingress: When set to True, will expose HTTP endpoint for access to the predict method of the created
+        service.
     """
 
     compute_pool: str
@@ -171,6 +186,12 @@ class SnowparkContainerServiceDeployOptions(DeployOptions):
     force_image_build: NotRequired[bool]
     model_in_image: NotRequired[bool]
     debug_mode: NotRequired[bool]
+    enable_ingress: NotRequired[bool]
+
+
+class ModelMethodSaveOptions(TypedDict):
+    case_sensitive: NotRequired[bool]
+    max_batch_size: NotRequired[int]
 
 
 class BaseModelSaveOption(TypedDict):
@@ -180,6 +201,7 @@ class BaseModelSaveOption(TypedDict):
     """
 
     embed_local_ml_library: NotRequired[bool]
+    method_options: NotRequired[Dict[str, ModelMethodSaveOptions]]
 
 
 class CustomModelSaveOption(BaseModelSaveOption):
@@ -256,13 +278,11 @@ class ModelLoadOption(TypedDict):
 class SnowparkContainerServiceDeployDetails(TypedDict):
     """
     Attributes:
-        image_name: Full image name.
-        service_spec: YAML service spec.
+        service_info: A snowpark row containing the result of "describe service"
         service_function_sql: SQL for service function creation.
     """
 
-    image_name: str
-    service_spec: str
+    service_info: Optional[Dict[str, Any]]
     service_function_sql: str
 
 

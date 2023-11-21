@@ -3,6 +3,7 @@ from typing import Any, Dict, Optional, cast
 from absl.testing import absltest
 from absl.testing.absltest import mock
 
+from snowflake import snowpark
 from snowflake.ml.model._deploy_client.snowservice import deploy_options
 from snowflake.ml.model._deploy_client.snowservice.deploy import (
     SnowServiceDeployment,
@@ -369,7 +370,7 @@ class SnowServiceDeploymentTestCase(absltest.TestCase):
     @mock.patch("snowflake.ml.model._deploy_client.snowservice.deploy.model_meta.ModelMetadata")  # type: ignore[misc]
     def setUp(self, m_model_meta_class: mock.MagicMock) -> None:
         super().setUp()
-        self.m_session = cast(session.Session, mock_session.MockSession(conn=None, test_case=self))
+        self.m_session = mock_session.MockSession(conn=None, test_case=self)
         self.m_model_id = "provided_model_id"
         self.m_service_func_name = "mock_db.mock_schema.provided_service_func_name"
         self.m_model_zip_stage_path = "@provided_model_zip_stage_path/model.zip"
@@ -385,7 +386,7 @@ class SnowServiceDeploymentTestCase(absltest.TestCase):
         }
 
         self.deployment = SnowServiceDeployment(
-            self.m_session,
+            cast(session.Session, self.m_session),
             model_id=self.m_model_id,
             service_func_name=self.m_service_func_name,
             model_meta=self.m_model_meta,
@@ -393,6 +394,13 @@ class SnowServiceDeploymentTestCase(absltest.TestCase):
             deployment_stage_path=self.m_deployment_stage_path,
             target_method=constants.PREDICT,
             options=deploy_options.SnowServiceDeployOptions.from_dict(self.m_options),
+        )
+
+        self.m_session.add_mock_sql(
+            query=f"DESCRIBE SERVICE {self.deployment._service_name}",
+            result=mock_data_frame.MockDataFrame(
+                collect_result=[snowpark.Row(**{"name": self.deployment._service_name})]
+            ),
         )
 
     def test_service_name(self) -> None:
@@ -464,6 +472,7 @@ class SnowServiceDeploymentTestCase(absltest.TestCase):
             full_image_name = "org-account.registry.snowflakecomputing.com/db/schema/repo/image:latest"
             m_get_full_image_name.return_value = full_image_name
             m_deploy_workflow.return_value = ("service_spec", "sql")
+
             with self.assertLogs(level="WARNING") as cm:
                 self.deployment.deploy()
                 m_build_and_upload_image.assert_not_called()

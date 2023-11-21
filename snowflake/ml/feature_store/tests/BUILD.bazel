@@ -18,7 +18,7 @@ py_test(
     srcs = [
         "feature_store_test.py",
     ],
-    shard_count = 8,
+    shard_count = 16,
     deps = [
         ":common_utils",
         "//snowflake/ml/feature_store:feature_store_lib",

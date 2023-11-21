@@ -1,0 +1,60 @@
+load("//bazel:py_rules.bzl", "py_library", "py_test")
+
+package(default_visibility = ["//visibility:public"])
+
+filegroup(
+    name = "function_fixtures",
+    srcs = [
+        "fixtures/function_fixture_1.py_fixture",
+        "fixtures/function_fixture_2.py_fixture",
+    ],
+)
+
+py_library(
+    name = "function_generator",
+    srcs = ["function_generator.py"],
+    data = [
+        "infer_function.py_template",
+    ],
+    deps = [
+        "//snowflake/ml/model:type_hints",
+    ],
+)
+
+py_test(
+    name = "function_generator_test",
+    srcs = ["function_generator_test.py"],
+    data = [
+        ":function_fixtures",
+    ],
+    deps = [
+        ":function_generator",
+    ],
+)
+
+py_library(
+    name = "model_method",
+    srcs = ["model_method.py"],
+    deps = [
+        ":function_generator",
+        "//snowflake/ml/_internal/utils:sql_identifier",
+        "//snowflake/ml/model:type_hints",
+        "//snowflake/ml/model/_model_composer/model_manifest:model_manifest_schema",
+        "//snowflake/ml/model/_packager/model_meta",
+    ],
+)
+
+py_test(
+    name = "model_method_test",
+    srcs = ["model_method_test.py"],
+    data = [
+        ":function_fixtures",
+    ],
+    deps = [
+        ":function_generator",
+        ":model_method",
+        "//snowflake/ml/model:model_signature",
+        "//snowflake/ml/model/_packager/model_meta",
+        "//snowflake/ml/model/_packager/model_meta:model_blob_meta",
+    ],
+)
