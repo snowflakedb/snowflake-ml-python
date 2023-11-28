@@ -11,15 +11,13 @@ EXTRA_REQUIREMENTS = {
         "tensorflow>=2.9,<3,!=2.12.0",
         "tokenizers>=0.10,<1",
         "torchdata>=0.4,<1",
-        "transformers>=4.32.1,<5",
-        "vllm>=0.2.1.post1,<1"
+        "transformers>=4.32.1,<5"
     ],
     "lightgbm": [
         "lightgbm==3.3.5"
     ],
     "llm": [
-        "peft>=0.5.0,<1",
-        "vllm>=0.2.1.post1,<1"
+        "peft>=0.5.0,<1"
     ],
     "mlflow": [
         "mlflow>=2.1.0,<2.4"
@@ -56,7 +54,7 @@ REQUIREMENTS = [
     "scikit-learn>=1.2.1,<1.4",
     "scipy>=1.9,<2",
     "snowflake-connector-python[pandas]>=3.0.4,<4",
-    "snowflake-snowpark-python>=1.5.1,<2",
+    "snowflake-snowpark-python>=1.8.0,<2",
     "sqlparse>=0.4,<1",
     "typing-extensions>=4.1.0,<5",
     "xgboost>=1.7.3,<2"

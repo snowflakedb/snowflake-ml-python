@@ -53,11 +53,9 @@ class Base:
         self.output_cols: List[str] = []
         self.label_cols: List[str] = []
 
-    @abstractmethod
     def _create_unfitted_sklearn_object(self) -> Any:
         raise NotImplementedError()
 
-    @abstractmethod
     def _create_sklearn_object(self) -> Any:
         raise NotImplementedError()
 

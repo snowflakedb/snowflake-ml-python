@@ -61,6 +61,7 @@ def _truncate_data(
                     """
                 ),
                 category=UserWarning,
+                stacklevel=1,
             )
             return handler.truncate(data)
     raise snowml_exceptions.SnowflakeMLException(
@@ -72,7 +73,7 @@ def _truncate_data(
 
 
 def _infer_signature(
-    data: model_types.SupportedLocalDataType, role: Literal["input", "output"]
+    data: model_types.SupportedLocalDataType, role: Literal["input", "output"], use_snowflake_identifiers: bool = False
 ) -> Sequence[core.BaseFeatureSpec]:
     """Infer the inputs/outputs signature given a data that could be dataframe, numpy array or list.
         Dispatching is used to separate logic for different types.
@@ -81,6 +82,8 @@ def _infer_signature(
     Args:
         data: The data that we want to infer signature from.
         role: a flag indicating that if this is to infer an input or output feature.
+        use_snowflake_identifiers: a flag indicating whether to ensure the signature names are
+            valid snowflake identifiers.
 
     Raises:
         SnowflakeMLException: NotImplementedError: Raised when an unsupported data type is provided.
@@ -88,16 +91,38 @@ def _infer_signature(
     Returns:
         A sequence of feature specifications and feature group specifications.
     """
+    signature = None
     for handler in _ALL_DATA_HANDLERS:
         if handler.can_handle(data):
             handler.validate(data)
-            return handler.infer_signature(data, role)
-    raise snowml_exceptions.SnowflakeMLException(
-        error_code=error_codes.NOT_IMPLEMENTED,
-        original_exception=NotImplementedError(
-            f"Unable to infer model signature: Un-supported type provided {type(data)} for X type inference."
-        ),
-    )
+            signature = handler.infer_signature(data, role)
+            break
+
+    if signature is None:
+        raise snowml_exceptions.SnowflakeMLException(
+            error_code=error_codes.NOT_IMPLEMENTED,
+            original_exception=NotImplementedError(
+                f"Unable to infer model signature: Un-supported type provided {type(data)} for X type inference."
+            ),
+        )
+
+    if use_snowflake_identifiers:
+        signature = _rename_signature_with_snowflake_identifiers(signature)
+
+    return signature
+
+
+def _rename_signature_with_snowflake_identifiers(
+    signature: Sequence[core.BaseFeatureSpec],
+) -> Sequence[core.BaseFeatureSpec]:
+    inferred_names = []
+    for feature_spec in signature:
+        name = identifier.rename_to_valid_snowflake_identifier(feature_spec.name)
+        inferred_names.append(name)
+
+    signature = utils.rename_features(signature, inferred_names)
+
+    return signature
 
 
 def _validate_numpy_array(arr: model_types._SupportedNumpyArray, feature_type: core.DataType) -> bool:
@@ -311,6 +336,7 @@ def _validate_snowpark_data(data: snowflake.snowpark.DataFrame, features: Sequen
                         f"Warn in feature {ft_name}: Nullable column {field.name} provided,"
                         + " inference might fail if there is null value.",
                         category=RuntimeWarning,
+                        stacklevel=1,
                     )
                 if isinstance(feature, core.FeatureGroupSpec):
                     raise snowml_exceptions.SnowflakeMLException(
@@ -332,6 +358,7 @@ def _validate_snowpark_data(data: snowflake.snowpark.DataFrame, features: Sequen
                     warnings.warn(
                         f"Warn in feature {ft_name}: Feature is a array feature, type validation cannot happen.",
                         category=RuntimeWarning,
+                        stacklevel=1,
                     )
                 else:
                     if feature._shape:

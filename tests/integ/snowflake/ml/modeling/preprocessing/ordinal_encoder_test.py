@@ -912,6 +912,30 @@ class OrdinalEncoderTest(parameterized.TestCase):
         res = encoder.transform(df)
         res.collect()
 
+    def test_lowercase_output_cols_set_input_output(self) -> None:
+        input_cols = "COL"
+        output_cols = "OUT_foo"
+        data = {"COL": np.random.randint(0, 2, size=10)}
+        df = self._session.create_dataframe(pd.DataFrame(data))
+
+        encoder = OrdinalEncoder().set_input_cols(input_cols).set_output_cols(output_cols)
+        encoder.fit(df)
+        res = encoder.transform(df)
+        res.collect()
+        assert "OUT_FOO" in res.columns
+
+    def test_quoted_output_cols_set_input_output(self) -> None:
+        input_cols = "COL"
+        output_cols = '"OUT_foo"'
+        data = {"COL": np.random.randint(0, 2, size=10)}
+        df = self._session.create_dataframe(pd.DataFrame(data))
+
+        encoder = OrdinalEncoder().set_input_cols(input_cols).set_output_cols(output_cols)
+        encoder.fit(df)
+        res = encoder.transform(df)
+        res.collect()
+        assert output_cols in res.columns
+
     def test_large_num_cols_unknown(self) -> None:
         num_cols = 300
         input_cols = [f"COL{i}" for i in range(1, num_cols + 1)]

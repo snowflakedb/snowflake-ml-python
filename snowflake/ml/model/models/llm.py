@@ -29,8 +29,6 @@ class LLMOptions:
     revision: Optional[str] = field(default=None)
     token: Optional[str] = field(default=None)
     max_batch_size: int = field(default=1)
-    # TODO(halu): Debug raylet die issue.
-    # TP on vLLM is not supported yet.
     enable_tp: bool = field(default=False)
     # TODO(halu): Below could be per query call param instead.
     temperature: float = field(default=0.01)

@@ -10,21 +10,22 @@ class SqlIdentifier(str):
         3. resolved(): this is the state how the identifier stored in database.
 
     For example:
-        1. user input               ->    2. identifier()     -> 3. resolved()
-        SqlIdentifier('abc', True)          ABC               ABC
-        SqlIdentifier('"abc"', True)       "abc"              abc
-        SqlIdentifier('abc', False)        "abc"              abc
+        1. user input                           ->    2. identifier()     -> 3. resolved()
+        SqlIdentifier('abc', case_sensitive=False)          ABC                 ABC
+        SqlIdentifier('"abc"', case_sensitive=False)        "abc"               abc
+        SqlIdentifier('abc', case_sensitive=True)           "abc"               abc
     """
 
-    def __new__(cls, name: str, quotes_to_preserve_case: bool = True) -> "SqlIdentifier":
+    def __new__(cls, name: str, *, case_sensitive: bool = False) -> "SqlIdentifier":
         """Create new instance of sql identifier.
             Refer to here for more details: https://docs.snowflake.com/en/sql-reference/identifiers-syntax
 
         Args:
             name: A string name.
-            quotes_to_preserve_case: If true, then double quotes are needed to preserve case. This is the default
-                mode. When it's false, case are preserved automatically. For instance, This happens when you trying
-                to construct SqlIdentifier from result of SQL queries.
+            case_sensitive: If False, then the input string is considered case insensitive and will follow SQL
+                identifier parsing rule; if True, then the input string is considered case sensitive, so quotes are
+                automatically added if necessary to make sure the original input's cases are preserved.
+                Default to False.
 
         Raises:
             ValueError: input name is not a valid identifier.
@@ -35,18 +36,20 @@ class SqlIdentifier(str):
         # TODO (wezhou) add stronger validation to recognize a valid snowflake identifier.
         if not name:
             raise ValueError(f"name:`{name}` is not a valid identifier.")
-        if quotes_to_preserve_case:
-            return super().__new__(cls, identifier.resolve_identifier(name))
-        else:
+        if case_sensitive:
             return super().__new__(cls, identifier.get_inferred_name(name))
+        else:
+            return super().__new__(cls, identifier.resolve_identifier(name))
 
-    def __init__(self, name: str, quotes_to_preserve_case: bool = True) -> None:
+    def __init__(self, name: str, case_sensitive: bool = False) -> None:
         """Initialize sql identifier.
 
         Args:
             name: A string name.
-            quotes_to_preserve_case: If true then double quotes are needed to preserve case-sensitivity.
-                Otherwise, case-sensivitity are preserved automatically.
+            case_sensitive: If False, then the input string is considered case insensitive and will follow SQL
+                identifier parsing rule; if True, then the input string is considered case sensitive, so quotes are
+                automatically added if necessary to make sure the original input's cases are preserved.
+                Default to False.
         """
         super().__init__()
 
@@ -78,5 +81,5 @@ class SqlIdentifier(str):
         return super().__hash__()
 
 
-def to_sql_identifiers(list_of_str: List[str], quotes_to_preserve_case: bool = True) -> List[SqlIdentifier]:
-    return [SqlIdentifier(val, quotes_to_preserve_case) for val in list_of_str]
+def to_sql_identifiers(list_of_str: List[str], *, case_sensitive: bool = False) -> List[SqlIdentifier]:
+    return [SqlIdentifier(val, case_sensitive=case_sensitive) for val in list_of_str]

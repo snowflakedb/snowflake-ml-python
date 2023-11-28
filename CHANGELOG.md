@@ -1,12 +1,29 @@
 # Release History
 
+## 1.1.0
+
+### Bug Fixes
+
+- Model Registry: Fix panda dataframe input not handling first row properly.
+- Model Development: OrdinalEncoder and LabelEncoder output_columns do not need to be valid snowflake identifiers. They
+  would previously be excluded if the normalized name did not match the name specified in output_columns.
+
+### Behavior Changes
+
+### New Features
+
+- Model Registry: Add support for invoking public endpoint on SPCS service, by providing a "enable_ingress" SPCS
+  deployment option.
+- Model Development: Add support for distributed HPO - GridSearchCV and RandomizedSearchCV execution will be
+  distributed on multi-node warehouses.
+
 ## 1.0.12
 
 ### Bug Fixes
 
 - Model Registry: Fix regression issue that container logging is not shown during model deployment to SPCS.
 - Model Development: Enhance the column capacity of OrdinalEncoder.
-- Model Registry: Fix unbound `batch_size`` error when deploying a model other than Hugging Face Pipeline
+- Model Registry: Fix unbound `batch_size` error when deploying a model other than Hugging Face Pipeline
    and LLM with GPU on SPCS.
 
 ### Behavior Changes

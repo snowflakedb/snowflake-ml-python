@@ -69,11 +69,10 @@ class GridSearchCVTest(TestCase):
         input_df_pandas["INDEX"] = input_df_pandas.reset_index().index
         input_df = self._session.create_dataframe(input_df_pandas)
 
-        param_grid = {
-            "penalty": ["l1", "l2"],
-            "C": [0.1, 1, 10],
-            "solver": ["liblinear", "lbfgs"],
-        }
+        param_grid = [
+            {"penalty": ["l2"], "C": [1, 10], "solver": ["lbfgs", "liblinear"]},
+            {"penalty": ["l1"], "C": [1, 10], "solver": ["liblinear"]},
+        ]
         reg = GridSearchCV(estimator=LogisticRegression(), param_grid=param_grid)
         reg.set_input_cols(input_cols)
         output_cols = ["OUTPUT_" + c for c in label_col]
