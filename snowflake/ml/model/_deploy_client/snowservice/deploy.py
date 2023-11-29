@@ -5,10 +5,10 @@ import posixpath
 import string
 import tempfile
 import time
-from abc import ABC
 from contextlib import contextmanager
-from typing import Any, Dict, Generator, Optional, Tuple, cast
+from typing import Any, Dict, Generator, Optional, cast
 
+import importlib_resources
 import yaml
 from typing_extensions import Unpack
 
@@ -19,6 +19,7 @@ from snowflake.ml._internal.exceptions import (
 )
 from snowflake.ml._internal.utils import identifier, query_result_checker
 from snowflake.ml.model import type_hints
+from snowflake.ml.model._deploy_client import snowservice
 from snowflake.ml.model._deploy_client.image_builds import (
     base_image_builder,
     client_image_builder,
@@ -97,11 +98,25 @@ def _deploy(
     snowflake_connector_logger = logging.getLogger("snowflake.connector")
     snowpark_log_level = snowpark_logger.level
     snowflake_connector_log_level = snowflake_connector_logger.level
+
+    query_result = (
+        query_result_checker.SqlResultValidator(
+            session,
+            query="SHOW PARAMETERS LIKE 'PYTHON_CONNECTOR_QUERY_RESULT_FORMAT' IN SESSION",
+        )
+        .has_dimensions(expected_rows=1)
+        .validate()
+    )
+    prev_format = query_result[0].value
+
     try:
         # Setting appropriate log level to prevent console from being polluted by vast amount of snowpark and snowflake
         # connector logging.
         snowpark_logger.setLevel(logging.WARNING)
         snowflake_connector_logger.setLevel(logging.WARNING)
+
+        # Query format change is needed to ensure session token obtained from the session object is valid.
+        session.sql("ALTER SESSION SET PYTHON_CONNECTOR_QUERY_RESULT_FORMAT = 'json'").collect()
         if not model_id:
             raise snowml_exceptions.SnowflakeMLException(
                 error_code=error_codes.INVALID_ARGUMENT,
@@ -181,6 +196,7 @@ def _deploy(
         )
         return ss_deployment.deploy()
     finally:
+        session.sql(f"ALTER SESSION SET PYTHON_CONNECTOR_QUERY_RESULT_FORMAT = '{prev_format}'").collect()
         # Preserve the original logging level.
         snowpark_logger.setLevel(snowpark_log_level)
         snowflake_connector_logger.setLevel(snowflake_connector_log_level)
@@ -278,7 +294,7 @@ def _get_or_create_image_repo(session: Session, *, service_func_name: str, image
         ) from e
 
 
-class SnowServiceDeployment(ABC):
+class SnowServiceDeployment:
     """
     Class implementation that encapsulates image build and workflow deployment to SnowService
     """
@@ -334,8 +350,7 @@ class SnowServiceDeployment(ABC):
         """
         if self.options.prebuilt_snowflake_image:
             logger.warning(f"Skipped image build. Use prebuilt image: {self.options.prebuilt_snowflake_image}")
-            full_image_name = self.options.prebuilt_snowflake_image
-            (service_spec, service_function_sql) = self._deploy_workflow(self.options.prebuilt_snowflake_image)
+            service_function_sql = self._deploy_workflow(self.options.prebuilt_snowflake_image)
         else:
             with _debug_aware_tmp_directory(debug_dir=self.debug_dir) as context_dir:
                 extra_kwargs = {}
@@ -354,7 +369,7 @@ class SnowServiceDeployment(ABC):
                     self.session, service_func_name=self.service_func_name, image_repo=self.options.image_repo
                 )
                 full_image_name = self._get_full_image_name(image_repo=image_repo, context_dir=context_dir)
-                registry_client = image_registry_client.ImageRegistryClient(self.session)
+                registry_client = image_registry_client.ImageRegistryClient(self.session, full_image_name)
 
                 if not self.options.force_image_build and registry_client.image_exists(full_image_name=full_image_name):
                     logger.warning(
@@ -390,10 +405,12 @@ class SnowServiceDeployment(ABC):
                 except Exception as e:
                     # Proceed to the deployment with a warning message.
                     logger.warning(f"Failed to add tag {self.model_meta.name} to image {full_image_name}: {str(e)}")
-                (service_spec, service_function_sql) = self._deploy_workflow(full_image_name)
+                service_function_sql = self._deploy_workflow(full_image_name)
+
+        rows = self.session.sql(f"DESCRIBE SERVICE {self._service_name}").collect()
+        service_info = rows[0].as_dict() if rows and rows[0] else None
         return type_hints.SnowparkContainerServiceDeployDetails(
-            image_name=full_image_name,
-            service_spec=service_spec,
+            service_info=service_info,
             service_function_sql=service_function_sql,
         )
 
@@ -446,30 +463,29 @@ class SnowServiceDeployment(ABC):
             )
         image_builder.build_and_upload_image()
 
-    def _prepare_and_upload_artifacts_to_stage(self, image: str) -> str:
+    def _prepare_and_upload_artifacts_to_stage(self, image: str) -> None:
         """Constructs and upload service spec to stage.
 
         Args:
             image: Name of the image to create SnowService container from.
-
-        Returns:
-            Service spec string.
         """
         if self.options.model_in_image:
-            spec_template_path = file_utils.resolve_zip_import_path(
-                os.path.join(os.path.dirname(__file__), "templates/service_spec_template_with_model")
+            spec_template = (
+                importlib_resources.files(snowservice)
+                .joinpath("templates/service_spec_template_with_model")  # type: ignore[no-untyped-call]
+                .read_text("utf-8")
             )
         else:
-            spec_template_path = file_utils.resolve_zip_import_path(
-                os.path.join(os.path.dirname(__file__), "templates/service_spec_template")
+            spec_template = (
+                importlib_resources.files(snowservice)
+                .joinpath("templates/service_spec_template")  # type: ignore[no-untyped-call]
+                .read_text("utf-8")
             )
 
         with _debug_aware_tmp_directory(self.debug_dir) as dir_path:
             spec_file_path = os.path.join(dir_path, f"{constants.SERVICE_SPEC}.yaml")
 
-            with open(spec_template_path, encoding="utf-8") as template, open(
-                spec_file_path, "w+", encoding="utf-8"
-            ) as spec_file:
+            with open(spec_file_path, "w+", encoding="utf-8") as spec_file:
                 assert self.model_zip_stage_path.startswith("@")
                 norm_stage_path = posixpath.normpath(identifier.remove_prefix(self.model_zip_stage_path, "@"))
                 # Ensure model stage path has root prefix as stage mount will it mount it to root.
@@ -484,11 +500,12 @@ class SnowServiceDeployment(ABC):
                     "target_method": self.target_method,
                     "num_workers": self.options.num_workers,
                     "use_gpu": self.options.use_gpu,
+                    "enable_ingress": self.options.enable_ingress,
                 }
                 if self.options.model_in_image:
                     del substitutes["model_stage"]
                     del substitutes["model_zip_stage_path"]
-                content = string.Template(template.read()).substitute(substitutes)
+                content = string.Template(spec_template).substitute(substitutes)
                 content_dict = yaml.safe_load(content)
                 if self.options.use_gpu:
                     container = content_dict["spec"]["container"][0]
@@ -507,9 +524,7 @@ class SnowServiceDeployment(ABC):
                         container["env"]["_CONCURRENT_REQUESTS_MAX"] = 1
 
                 yaml.dump(content_dict, spec_file)
-                spec_file.seek(0)
-                spec_file_yaml_string = spec_file.read()
-                logger.debug(f"Create service spec: \n {spec_file_yaml_string}")
+                logger.debug("Create service spec: \n, %s", content_dict)
 
             self.session.file.put(
                 local_file_name=spec_file_path,
@@ -520,7 +535,6 @@ class SnowServiceDeployment(ABC):
             logger.debug(
                 f"Uploaded spec file {os.path.basename(spec_file_path)} " f"to {self._model_artifact_stage_location}"
             )
-            return spec_file_yaml_string
 
     def _get_max_batch_rows(self) -> Optional[int]:
         # To avoid too large batch in HF LLM case
@@ -543,17 +557,17 @@ class SnowServiceDeployment(ABC):
                         max_batch_rows = min(batch_size, max_batch_rows)
         return max_batch_rows
 
-    def _deploy_workflow(self, image: str) -> Tuple[str, str]:
+    def _deploy_workflow(self, image: str) -> str:
         """This function handles workflow deployment to SnowService with the given image.
 
         Args:
             image: Name of the image to create SnowService container from.
 
         Returns:
-            Tuple of (service spec, service function sql).
+            service function sql
         """
 
-        service_spec_string = self._prepare_and_upload_artifacts_to_stage(image)
+        self._prepare_and_upload_artifacts_to_stage(image)
         client = snowservice_client.SnowServiceClient(self.session)
         spec_stage_location = posixpath.join(
             self._model_artifact_stage_location.rstrip("/"), f"{constants.SERVICE_SPEC}.yaml"
@@ -578,4 +592,4 @@ class SnowServiceDeployment(ABC):
             max_batch_rows=self._get_max_batch_rows(),
         )
         logger.info(f"Service function {self.service_func_name} is created. Deployment completed successfully!")
-        return service_spec_string, service_function_sql
+        return service_function_sql

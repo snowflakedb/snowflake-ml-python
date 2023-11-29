@@ -23,9 +23,7 @@ from typing import Dict, List, Optional, Tuple
 
 import requests
 
-from snowflake import snowpark
-from snowflake.ml._internal.utils import retryable_http, spcs_image_registry
-from snowflake.ml.model._deploy_client.utils import image_auth_manager
+from snowflake.ml._internal.utils import image_registry_http_client
 
 # Common HTTP headers
 _CONTENT_LENGTH_HEADER = "content-length"
@@ -54,8 +52,6 @@ _Arch = namedtuple("_Arch", ["arch_name", "os"])
 
 logger = logging.getLogger(__name__)
 
-http = retryable_http.get_http_client()
-
 
 @dataclasses.dataclass
 class ImageDescriptor:
@@ -66,7 +62,6 @@ class ImageDescriptor:
     repository_name: the name of the repository like kaniko-project/executor
     tag: the tag of the image like v1.6.0
     digest: the sha256 digest of the image like sha256:b8c0...
-    creds_manager: the credentials manager to use, defaults to None
     protocol: the protocol to use, defaults to https
 
     Only a tag or a digest must be specified, not both.
@@ -76,7 +71,6 @@ class ImageDescriptor:
     repository_name: str
     tag: Optional[str] = None
     digest: Optional[str] = None
-    creds_manager: Optional[image_auth_manager.AuthManager] = None
     protocol: str = "https"
 
     def __baseurl(self) -> str:
@@ -156,7 +150,7 @@ class BlobTransfer:
     src_image: ImageDescriptor
     dest_image: ImageDescriptor
     manifest: Manifest
-    session: snowpark.Session
+    image_registry_http_client: image_registry_http_client.ImageRegistryHttpClient
 
     def upload_all_blobs(self) -> None:
         blob_digests = self.manifest.get_blob_digests()
@@ -173,7 +167,7 @@ class BlobTransfer:
         """
         Check if the blob already exists in the destination registry.
         """
-        resp = http.head(self.dest_image.blob_link(blob_digest), headers={})
+        resp = self.image_registry_http_client.head(self.dest_image.blob_link(blob_digest), headers={})
         return resp.status_code != 200
 
     def _fetch_blob(self, blob_digest: str) -> Tuple[io.BytesIO, int]:
@@ -182,7 +176,7 @@ class BlobTransfer:
         """
         src_blob_link = self.src_image.blob_link(blob_digest)
         headers = {_CONTENT_LENGTH_HEADER: "0"}
-        resp = http.get(src_blob_link, headers=headers)
+        resp = self.image_registry_http_client.get(src_blob_link, headers=headers)
 
         assert resp.status_code == 200, f"Blob GET failed with code {resp.status_code}"
         assert _CONTENT_LENGTH_HEADER in resp.headers, f"Blob does not contain {_CONTENT_LENGTH_HEADER}"
@@ -193,13 +187,11 @@ class BlobTransfer:
         """
         Obtain the upload URL from the destination registry.
         """
-        with spcs_image_registry.generate_image_registry_credential(self.session) as token:
-            headers = add_token({}, self.dest_image, token)
-            response = http.post(self.dest_image.blob_upload_link(), headers=headers)
-            assert (
-                response.status_code == 202
-            ), f"Failed to get the upload URL to destination. Status {response.status_code}. {str(response.content)}"
-            return str(response.headers[_LOCATION_HEADER])
+        response = self.image_registry_http_client.post(self.dest_image.blob_upload_link())
+        assert (
+            response.status_code == 202
+        ), f"Failed to get the upload URL to destination. Status {response.status_code}. {str(response.content)}"
+        return str(response.headers[_LOCATION_HEADER])
 
     def _upload_blob(self, blob_digest: str, blob_data: io.BytesIO, content_length: int) -> None:
         """
@@ -210,31 +202,27 @@ class BlobTransfer:
             _CONTENT_TYPE_HEADER: "application/octet-stream",
         }
 
-        with spcs_image_registry.generate_image_registry_credential(self.session) as token:
-            # Use chunked transfer
-            # This can be optimized to use a single PUT request for small blobs
-            next_loc = upload_url
-            start_byte = 0
-            while start_byte < content_length:
-                add_token(headers, self.dest_image, token)
-                chunk = blob_data.read(self.chunk_size_bytes)
-                chunk_length = len(chunk)
-                end_byte = start_byte + chunk_length - 1
+        # Use chunked transfer
+        # This can be optimized to use a single PUT request for small blobs
+        next_loc = upload_url
+        start_byte = 0
+        while start_byte < content_length:
+            chunk = blob_data.read(self.chunk_size_bytes)
+            chunk_length = len(chunk)
+            end_byte = start_byte + chunk_length - 1
 
-                headers[_CONTENT_RANGE_HEADER] = f"{start_byte}-{end_byte}"
-                headers[_CONTENT_LENGTH_HEADER] = str(chunk_length)
+            headers[_CONTENT_RANGE_HEADER] = f"{start_byte}-{end_byte}"
+            headers[_CONTENT_LENGTH_HEADER] = str(chunk_length)
 
-                resp = http.patch(next_loc, headers=headers, data=chunk)
-                assert resp.status_code == 202, f"Blob PATCH failed with code {resp.status_code}"
+            resp = self.image_registry_http_client.patch(next_loc, headers=headers, data=chunk)
+            assert resp.status_code == 202, f"Blob PATCH failed with code {resp.status_code}"
 
-                next_loc = resp.headers[_LOCATION_HEADER]
-                start_byte += chunk_length
+            next_loc = resp.headers[_LOCATION_HEADER]
+            start_byte += chunk_length
 
-        with spcs_image_registry.generate_image_registry_credential(self.session) as token:
-            # Finalize the upload
-            headers = add_token({}, self.dest_image, token)
-            resp = http.put(f"{next_loc}&digest={blob_digest}", headers=headers)
-            assert resp.status_code == 201, f"Blob PUT failed with code {resp.status_code}"
+        # Finalize the upload
+        resp = self.image_registry_http_client.put(f"{next_loc}&digest={blob_digest}")
+        assert resp.status_code == 201, f"Blob PUT failed with code {resp.status_code}"
 
     def _transfer(self, blob_digest: str) -> None:
         """
@@ -268,24 +256,15 @@ def get_bytes_with_sha_verification(resp: requests.Response, sha256_digest: str)
     return content, calculated_digest
 
 
-def add_token(
-    headers: Dict[str, str], image_descriptor: ImageDescriptor, spcs_token: Optional[str] = None
-) -> Dict[str, str]:
-    if image_descriptor.creds_manager is not None:
-        token = image_descriptor.creds_manager.get_auth_token(spcs_token)
-        headers[_AUTHORIZATION_HEADER] = f"Bearer {token}"
-    return headers
-
-
 def get_manifest(
-    image_descriptor: ImageDescriptor,
-    arch: _Arch,
+    image_descriptor: ImageDescriptor, arch: _Arch, retryable_http: image_registry_http_client.ImageRegistryHttpClient
 ) -> Manifest:
     """Get the manifest of an image from the remote registry.
 
     Args:
         image_descriptor: the image descriptor
         arch: the architecture to filter for if it's a multi-arch image
+        retryable_http: a retryable http client.
 
     Returns:
         Manifest object.
@@ -295,7 +274,7 @@ def get_manifest(
 
     headers = {_ACCEPT_HEADER: ",".join(ALL_SUPPORTED_MEDIA_TYPES)}
 
-    response = http.get(image_descriptor.manifest_link(), headers=headers)
+    response = retryable_http.get(image_descriptor.manifest_link(), headers=headers)
     assert response.status_code == 200, f"Manifest GET failed with code {response.status_code}, {response.text}"
 
     assert image_descriptor.digest
@@ -331,47 +310,49 @@ def get_manifest(
             repository_name=image_descriptor.repository_name,
             digest=manifest_digest,
             tag=None,
-            creds_manager=image_descriptor.creds_manager,
         )
 
         # Supports only one level of manifest list nesting to avoid infinite recursion
-        return get_manifest(descriptor_copy, arch)
+        return get_manifest(descriptor_copy, arch, retryable_http)
 
     return Manifest(manifest_bytes, manifest_digest)
 
 
-def put_manifest(image_descriptor: ImageDescriptor, manifest: Manifest, session: snowpark.Session) -> None:
+def put_manifest(
+    image_descriptor: ImageDescriptor,
+    manifest: Manifest,
+    retryable_http: image_registry_http_client.ImageRegistryHttpClient,
+) -> None:
     """
     Upload the given manifest to the destination registry.
     """
     assert image_descriptor.tag is not None, "Tag must be specified for manifest upload"
-
-    with spcs_image_registry.generate_image_registry_credential(session) as token:
-        headers = {_CONTENT_TYPE_HEADER: manifest.media_type}
-        add_token(headers, image_descriptor, token)
-
-        url = image_descriptor.manifest_upload_link(image_descriptor.tag)
-        logger.debug(f"Uploading manifest to {url}")
-
-        response = http.put(url, headers=headers, data=manifest.manifest_bytes)
-
-        assert response.status_code == 201, f"Manifest PUT failed with code {response.status_code}"
+    headers = {_CONTENT_TYPE_HEADER: manifest.media_type}
+    url = image_descriptor.manifest_upload_link(image_descriptor.tag)
+    logger.debug(f"Uploading manifest to {url}")
+    response = retryable_http.put(url, headers=headers, data=manifest.manifest_bytes)
+    assert response.status_code == 201, f"Manifest PUT failed with code {response.status_code}"
 
 
-def copy_image(src_image: ImageDescriptor, dest_image: ImageDescriptor, arch: _Arch, session: snowpark.Session) -> None:
+def copy_image(
+    src_image: ImageDescriptor,
+    dest_image: ImageDescriptor,
+    arch: _Arch,
+    retryable_http: image_registry_http_client.ImageRegistryHttpClient,
+) -> None:
     logger.debug(f"Pulling image manifest for {src_image}")
 
     # 1. Get the manifest
-    manifest = get_manifest(src_image, arch)
+    manifest = get_manifest(src_image, arch, retryable_http)
     logger.debug(f"Manifest pulled for {src_image} with digest {manifest.manifest_digest}")
 
     # 2: Retrieve all blob digests from manifest; fetch blob based on blob digest, then upload blob.
-    blob_transfer = BlobTransfer(src_image, dest_image, manifest, session=session)
+    blob_transfer = BlobTransfer(src_image, dest_image, manifest, image_registry_http_client=retryable_http)
     blob_transfer.upload_all_blobs()
 
     # 3. Upload the manifest
     logger.debug(f"All blobs copied successfully. Copying manifest for {src_image} to {dest_image}")
-    put_manifest(dest_image, manifest, session)
+    put_manifest(dest_image, manifest, retryable_http)
 
     logger.debug(f"Image {src_image} copied to {dest_image}")
 
@@ -380,7 +361,6 @@ def convert_to_image_descriptor(
     image_name: str,
     with_digest: bool = False,
     with_tag: bool = False,
-    creds_manager: Optional[image_auth_manager.AuthManager] = None,
 ) -> ImageDescriptor:
     """Convert a full image name to a ImageDescriptor object.
 
@@ -388,7 +368,6 @@ def convert_to_image_descriptor(
         image_name: name of image.
         with_digest: boolean to specify whether a digest is included in the image name
         with_tag: boolean to specify whether a tag is included in the image name.
-        creds_manager: optional credential manager, used for authentication to registry.
 
     Returns:
         An ImageDescriptor instance
@@ -403,5 +382,4 @@ def convert_to_image_descriptor(
         repository_name="/".join(parts[1:-1] + [parts[-1].split(sep)[0]]),
         digest=tag_digest if with_digest else None,
         tag=tag_digest if with_tag else None,
-        creds_manager=creds_manager,
     )

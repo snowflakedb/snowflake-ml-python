@@ -6,10 +6,10 @@ from absl.testing import absltest
 from common_utils import (
     FS_INTEG_TEST_DATASET_SCHEMA,
     FS_INTEG_TEST_DB,
-    FS_INTEG_TEST_DEFAULT_WAREHOUSE,
     FS_INTEG_TEST_WINE_QUALITY_DATA,
     FS_INTEG_TEST_YELLOW_TRIP_DATA,
     create_random_schema,
+    get_test_warehouse_name,
 )
 from pandas.testing import assert_frame_equal
 
@@ -32,6 +32,7 @@ class FeatureStoreLargeScaleTest(absltest.TestCase):
     def setUpClass(self) -> None:
         self._session = Session.builder.configs(SnowflakeLoginOptions()).create()
         self._active_feature_store = []
+        self._test_warehouse_name = get_test_warehouse_name(self._session)
 
     @classmethod
     def tearDownClass(self) -> None:
@@ -46,9 +47,8 @@ class FeatureStoreLargeScaleTest(absltest.TestCase):
             self._session,
             FS_INTEG_TEST_DB,
             current_schema,
-            FS_INTEG_TEST_DEFAULT_WAREHOUSE,
             creation_mode=CreationMode.CREATE_IF_NOT_EXIST,
-        )
+        ).set_default_warehouse(self._test_warehouse_name)
         self._active_feature_store.append(fs)
         return fs
 
@@ -115,12 +115,12 @@ class FeatureStoreLargeScaleTest(absltest.TestCase):
             feature_view=location_features,
             version="V1",
             refresh_freq="1 minute",
-            warehouse=FS_INTEG_TEST_DEFAULT_WAREHOUSE,
+            warehouse=self._test_warehouse_name,
             block=True,
         )
 
         def create_select_query(start: str, end: str) -> str:
-            return f"""SELECT DISTINCT TO_TIMESTAMP(TPEP_DROPOFF_DATETIME / 1000000) AS DROPOFF_TIME,
+            return f"""SELECT DISTINCT DATE_TRUNC('second', TO_TIMESTAMP(TPEP_DROPOFF_DATETIME)) AS DROPOFF_TIME,
                     PULOCATIONID, TIP_AMOUNT, TOTAL_AMOUNT
                 FROM {raw_dataset}
                 WHERE DROPOFF_TIME >= '{start}' AND DROPOFF_TIME < '{end}'
@@ -157,7 +157,6 @@ class FeatureStoreLargeScaleTest(absltest.TestCase):
             {
                 "database": FS_INTEG_TEST_DB,
                 "schema": current_schema,
-                "default_warehouse": FS_INTEG_TEST_DEFAULT_WAREHOUSE,
             },
         )
 

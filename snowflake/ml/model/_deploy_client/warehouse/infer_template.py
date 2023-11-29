@@ -62,7 +62,9 @@ try:
 
     model = pk.model
     meta = pk.meta
-except ImportError:
+except ImportError as e:
+    if e.name and not e.name.startswith("snowflake.ml"):
+        raise e
     # Support Legacy model
     from snowflake.ml.model import _model
     # Backward for <= 1.0.5

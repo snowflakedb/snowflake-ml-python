@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Dict, List, Optional
 
-from snowflake.ml._internal.utils.identifier import concat_names, get_unescaped_names
+from snowflake.ml._internal.utils.identifier import concat_names
 from snowflake.ml._internal.utils.sql_identifier import (
     SqlIdentifier,
     to_sql_identifiers,
@@ -92,7 +92,7 @@ class FeatureView:
             desc: description of the FeatureView.
         """
 
-        self._name: str = name
+        self._name: SqlIdentifier = SqlIdentifier(name)
         self._entities: List[Entity] = entities
         self._feature_df: DataFrame = feature_df
         self._timestamp_col: Optional[SqlIdentifier] = (
@@ -100,11 +100,9 @@ class FeatureView:
         )
         self._desc: str = desc
         self._query: str = self._get_query()
-        self._version: Optional[str] = None
+        self._version: Optional[SqlIdentifier] = None
         self._status: FeatureViewStatus = FeatureViewStatus.DRAFT
-        self._feature_desc: OrderedDict[SqlIdentifier, Optional[str]] = OrderedDict(
-            (f, None) for f in self._get_feature_names()
-        )
+        self._feature_desc: OrderedDict[SqlIdentifier, str] = OrderedDict((f, "") for f in self._get_feature_names())
         self._refresh_freq: Optional[str] = None
         self._database: Optional[SqlIdentifier] = None
         self._schema: Optional[SqlIdentifier] = None
@@ -135,7 +133,7 @@ class FeatureView:
             res.append(name)
         return FeatureViewSlice(self, res)
 
-    def physical_name(self) -> str:
+    def physical_name(self) -> SqlIdentifier:
         """Returns the physical name for this feature in Snowflake.
 
         Returns:
@@ -144,7 +142,7 @@ class FeatureView:
         Raises:
             RuntimeError: if the FeatureView is not materialized.
         """
-        if self.status == FeatureViewStatus.DRAFT:
+        if self.status == FeatureViewStatus.DRAFT or self.version is None:
             raise RuntimeError(f"FeatureView {self.name} has not been materialized.")
         return FeatureView._get_physical_name(self.name, self.version)
 
@@ -181,7 +179,7 @@ class FeatureView:
         return self
 
     @property
-    def name(self) -> str:
+    def name(self) -> SqlIdentifier:
         return self._name
 
     @property
@@ -205,7 +203,7 @@ class FeatureView:
         return self._query
 
     @property
-    def version(self) -> Optional[str]:
+    def version(self) -> Optional[SqlIdentifier]:
         return self._version
 
     @property
@@ -217,11 +215,8 @@ class FeatureView:
         return list(self._feature_desc.keys())
 
     @property
-    def feature_descs(self) -> Dict[str, Optional[str]]:
-        new_dict = {}
-        for k, v in self._feature_desc.items():
-            new_dict[k.identifier()] = v
-        return new_dict
+    def feature_descs(self) -> Dict[SqlIdentifier, str]:
+        return self._feature_desc
 
     @property
     def refresh_freq(self) -> Optional[str]:
@@ -288,7 +283,7 @@ Got {len(self._feature_df.queries['queries'])}: {self._feature_df.queries['queri
     def _get_feature_names(self) -> List[SqlIdentifier]:
         join_keys = [k for e in self._entities for k in e.join_keys]
         ts_col = [self._timestamp_col] if self._timestamp_col is not None else []
-        feature_names = to_sql_identifiers(self._feature_df.columns, False)
+        feature_names = to_sql_identifiers(self._feature_df.columns, case_sensitive=True)
         return [c for c in feature_names if c not in join_keys + ts_col]
 
     def __repr__(self) -> str:
@@ -300,8 +295,8 @@ Got {len(self._feature_df.queries['queries'])}: {self._feature_df.queries['queri
             return False
 
         return (
-            get_unescaped_names(self.name) == get_unescaped_names(other.name)
-            and get_unescaped_names(self.version) == get_unescaped_names(other.version)
+            self.name == other.name
+            and self.version == other.version
             and self.timestamp_col == other.timestamp_col
             and self.entities == other.entities
             and self.desc == other.desc
@@ -320,17 +315,26 @@ Got {len(self._feature_df.queries['queries'])}: {self._feature_df.queries['queri
         fv_dict = self.__dict__.copy()
         if "_feature_df" in fv_dict:
             fv_dict.pop("_feature_df")
-        fv_dict["_entities"] = [e.__dict__ for e in self._entities]
+        fv_dict["_entities"] = [e._to_dict() for e in self._entities]
         fv_dict["_status"] = str(self._status)
+        fv_dict["_name"] = str(self._name) if self._name is not None else None
+        fv_dict["_version"] = str(self._version) if self._version is not None else None
         fv_dict["_database"] = str(self._database) if self._database is not None else None
         fv_dict["_schema"] = str(self._schema) if self._schema is not None else None
         fv_dict["_warehouse"] = str(self._warehouse) if self._warehouse is not None else None
+        fv_dict["_timestamp_col"] = str(self._timestamp_col) if self._timestamp_col is not None else None
+
+        feature_desc_dict = {}
+        for k, v in self._feature_desc.items():
+            feature_desc_dict[k.identifier()] = v
+        fv_dict["_feature_desc"] = feature_desc_dict
+
         return fv_dict
 
     def to_df(self, session: Session) -> DataFrame:
         values = list(self._to_dict().values())
         schema = [x.lstrip("_") for x in list(self._to_dict().keys())]
-        values.append(self.physical_name())
+        values.append(str(self.physical_name()))
         schema.append("physical_name")
         return session.create_dataframe([values], schema=schema)
 
@@ -363,13 +367,15 @@ Got {len(self._feature_df.queries['queries'])}: {self._feature_df.queries['queri
         )
 
     @staticmethod
-    def _get_physical_name(fv_name: Optional[str], fv_version: Optional[str]) -> str:
-        return concat_names(
-            [
-                fv_name if fv_name is not None else "",
-                FEATURE_VIEW_NAME_DELIMITER,
-                fv_version if fv_version is not None else "",
-            ]
+    def _get_physical_name(fv_name: SqlIdentifier, fv_version: SqlIdentifier) -> SqlIdentifier:
+        return SqlIdentifier(
+            concat_names(
+                [
+                    fv_name,
+                    FEATURE_VIEW_NAME_DELIMITER,
+                    fv_version,
+                ]
+            )
         )
 
     @staticmethod
@@ -396,7 +402,7 @@ Got {len(self._feature_df.queries['queries'])}: {self._feature_df.queries['queri
             timestamp_col=timestamp_col,
             desc=desc,
         )
-        fv._version = version
+        fv._version = SqlIdentifier(version) if version is not None else None
         fv._status = status
         fv._refresh_freq = refresh_freq
         fv._database = SqlIdentifier(database) if database is not None else None

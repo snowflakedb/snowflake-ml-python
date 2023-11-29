@@ -26,6 +26,7 @@ class SnowServiceDeployOptions:
         force_image_build: Optional[bool] = False,
         model_in_image: Optional[bool] = False,
         debug_mode: Optional[bool] = False,
+        enable_ingress: Optional[bool] = False,
     ) -> None:
         """Initialization
 
@@ -53,6 +54,8 @@ class SnowServiceDeployOptions:
             model_in_image: When set to True, image would container full model weights. The default if False, which
                 means image without model weights and we do stage mount to access weights.
             debug_mode: When set to True, deployment artifacts will be persisted in a local temp directory.
+            enable_ingress: When set to True, will expose HTTP endpoint for access to the predict method of the created
+                service. Default to False.
         """
 
         self.compute_pool = compute_pool
@@ -66,6 +69,7 @@ class SnowServiceDeployOptions:
         self.force_image_build = force_image_build
         self.model_in_image = model_in_image
         self.debug_mode = debug_mode
+        self.enable_ingress = enable_ingress
 
         if self.num_workers is None and self.use_gpu:
             logger.info("num_workers has been defaulted to 1 when using GPU.")

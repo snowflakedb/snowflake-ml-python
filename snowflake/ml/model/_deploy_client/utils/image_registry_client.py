@@ -1,72 +1,43 @@
 import http
-import json
 import logging
 from typing import Dict, Optional, cast
-from urllib.parse import urlparse, urlunparse
+from urllib.parse import urlunparse
 
 from snowflake.ml._internal.exceptions import (
     error_codes,
     exceptions as snowml_exceptions,
 )
-from snowflake.ml._internal.utils import retryable_http, spcs_image_registry
-from snowflake.ml.model._deploy_client.utils import image_auth_manager, imagelib
+from snowflake.ml._internal.utils import image_registry_http_client
+from snowflake.ml.model._deploy_client.utils import imagelib
 from snowflake.snowpark import Session
 from snowflake.snowpark._internal import utils as snowpark_utils
 
-MANIFEST_V1_HEADER = "application/vnd.oci.image.manifest.v1+json"
-MANIFEST_V2_HEADER = "application/vnd.docker.distribution.manifest.v2+json"
+_MANIFEST_V1_HEADER = "application/vnd.oci.image.manifest.v1+json"
+_MANIFEST_V2_HEADER = "application/vnd.docker.distribution.manifest.v2+json"
+_SUPPORTED_MANIFEST_HEADERS = [_MANIFEST_V1_HEADER, _MANIFEST_V2_HEADER]
 
 logger = logging.getLogger(__name__)
 
 
 class ImageRegistryClient:
     """
-    A simple SPCS image registry HTTP client partial implementation. This client exists due to current unavailability
-    of registry "list image" system function and lack of registry SDK.
+    A partial implementation of an SPCS image registry client. The client utilizes the ImageRegistryHttpClient under
+    the hood, incorporating a retry mechanism to handle intermittent 401 errors from the SPCS image registry.
     """
 
-    def __init__(self, session: Session) -> None:
+    def __init__(self, session: Session, full_dest_image_name: str) -> None:
         """Initialization
 
         Args:
             session: Snowpark session
+            full_dest_image_name: Based on dest image name, repo url can be inferred.
         """
-        self.session = session
-        self.http = retryable_http.get_http_client()
+        self.image_registry_http_client = image_registry_http_client.ImageRegistryHttpClient(
+            session=session,
+            repo_url=self._convert_to_v2_manifests_url(full_image_name=full_dest_image_name),
+        )
 
-    def login(self, repo_url: str, registry_cred: str) -> str:
-        """Log in to image registry
-
-        Args:
-            repo_url: image repo url.
-            registry_cred: registry basic auth credential.
-
-        Returns:
-            Bearer token when login succeeded.
-
-        Raises:
-            SnowflakeMLException: when login failed.
-        """
-        parsed_url = urlparse(repo_url)
-        scheme = parsed_url.scheme
-        host = parsed_url.netloc
-
-        login_path = "/login"  # Construct the login path
-        url_tuple = (scheme, host, login_path, "", "", "")
-        login_url = urlunparse(url_tuple)
-
-        resp = self.http.get(login_url, headers={"Authorization": f"Basic {registry_cred}"})
-        if resp.status_code != http.HTTPStatus.OK:
-            raise snowml_exceptions.SnowflakeMLException(
-                error_code=error_codes.INTERNAL_SNOWFLAKE_IMAGE_REGISTRY_ERROR,
-                original_exception=RuntimeError(
-                    f"Failed to login to the repository. Status {resp.status_code}," f"{str(resp.text)}"
-                ),
-            )
-
-        return str(json.loads(resp.text)["token"])
-
-    def convert_to_v2_manifests_url(self, full_image_name: str) -> str:
+    def _convert_to_v2_manifests_url(self, full_image_name: str) -> str:
         """Converts a full image name to a Docker Registry HTTP API V2 URL:
         https://docs.docker.com/registry/spec/api/#existing-manifests
 
@@ -92,6 +63,12 @@ class ImageRegistryClient:
         url_tuple = (scheme, domain, path, "", "", "")
         return urlunparse(url_tuple)
 
+    def _get_accept_headers(self) -> Dict[str, str]:
+        # Depending on the built image, the media type of the image manifest might be either
+        # application/vnd.oci.image.manifest.v1+json or application/vnd.docker.distribution.manifest.v2+json
+        # Hence we need to check for both, otherwise it could result in false negative.
+        return {"Accept": ",".join(_SUPPORTED_MANIFEST_HEADERS)}
+
     def image_exists(self, full_image_name: str) -> bool:
         """Check whether image already exists in the registry.
 
@@ -106,39 +83,17 @@ class ImageRegistryClient:
         # unable to fetch session token needed to authenticate to SPCS image registry.
         if snowpark_utils.is_in_stored_procedure():  # type: ignore[no-untyped-call]
             return False
+        v2_api_url = self._convert_to_v2_manifests_url(full_image_name)
+        headers = self._get_accept_headers()
+        status = self.image_registry_http_client.head(v2_api_url, headers=headers).status_code
+        return status == http.HTTPStatus.OK
 
-        with spcs_image_registry.generate_image_registry_credential(self.session) as registry_cred:
-            v2_api_url = self.convert_to_v2_manifests_url(full_image_name)
-            bearer_login = self.login(v2_api_url, registry_cred)
-
-            headers_v1 = {
-                "Authorization": f"Bearer {bearer_login}",
-                "Accept": MANIFEST_V1_HEADER,
-            }
-
-            headers_v2 = {
-                "Authorization": f"Bearer {bearer_login}",
-                "Accept": MANIFEST_V2_HEADER,
-            }
-            # Depending on the built image, the media type of the image manifest might be either
-            # application/vnd.oci.image.manifest.v1+json or application/vnd.docker.distribution.manifest.v2+json
-            # Hence we need to check for both, otherwise it could result in false negative.
-            if self.http.head(v2_api_url, headers=headers_v2).status_code == http.HTTPStatus.OK:
-                return True
-            elif self.http.head(v2_api_url, headers=headers_v1).status_code == http.HTTPStatus.OK:
-                return True
-            return False
-
-    def _get_manifest(
-        self, full_image_name: str, header_v1: Dict[str, str], header_v2: Dict[str, str]
-    ) -> Dict[str, str]:
+    def _get_manifest(self, full_image_name: str) -> Dict[str, str]:
         """Retrieve image manifest file. Given Docker manifest comes with two versions, and for each version the
         corresponding request header is required for a successful HTTP response.
 
         Args:
             full_image_name: Full image name.
-            header_v1: Docker manifest v1 header.
-            header_v2: Docker manifest v2 header.
 
         Returns:
             Full manifest content as a python dict.
@@ -147,19 +102,15 @@ class ImageRegistryClient:
             SnowflakeMLException: when failed to retrieve manifest.
         """
 
-        v2_api_url = self.convert_to_v2_manifests_url(full_image_name)
-        res1 = self.http.get(v2_api_url, headers=header_v2)
-        if res1.status_code == http.HTTPStatus.OK:
-            return cast(Dict[str, str], res1.json())
-        res2 = self.http.get(v2_api_url, headers=header_v1)
-        if res2.status_code == http.HTTPStatus.OK:
-            return cast(Dict[str, str], res2.json())
+        v2_api_url = self._convert_to_v2_manifests_url(full_image_name)
+        res = self.image_registry_http_client.get(v2_api_url, headers=self._get_accept_headers())
+        if res.status_code == http.HTTPStatus.OK:
+            return cast(Dict[str, str], res.json())
         raise snowml_exceptions.SnowflakeMLException(
             error_code=error_codes.INTERNAL_SNOWFLAKE_IMAGE_REGISTRY_ERROR,
             original_exception=ValueError(
-                f"Failed to retrieve manifest for {full_image_name}. Two requests filed: \n"
-                f"HTTP status code 1: {res1.status_code}. Full response 1: {res1.text}. \n"
-                f"HTTP status code 2: {res2.status_code}. Full response 2: {res2.text}"
+                f"Failed to retrieve manifest for {full_image_name}. \n"
+                f"HTTP status code: {res.status_code}. Full response: {res.text}."
             ),
         )
 
@@ -180,52 +131,42 @@ class ImageRegistryClient:
         if snowpark_utils.is_in_stored_procedure():  # type: ignore[no-untyped-call]
             return None
 
-        with spcs_image_registry.generate_image_registry_credential(self.session) as registry_cred:
-            full_image_name_parts = original_full_image_name.split(":")
-            assert len(full_image_name_parts) == 2, "full image name should include both image name and tag"
-            new_full_image_name = ":".join([full_image_name_parts[0], new_tag])
-            if self.image_exists(new_full_image_name):
-                # Early return if image with the associated tag already exists.
-                return
-            api_url = self.convert_to_v2_manifests_url(new_full_image_name)
-            # Login again to avoid token timeout issue.
-            bearer_login = self.login(api_url, registry_cred)
-            header_v1 = {
-                "Authorization": f"Bearer {bearer_login}",
-                "Accept": MANIFEST_V1_HEADER,
-            }
-            header_v2 = {"Authorization": f"Bearer {bearer_login}", "Accept": MANIFEST_V2_HEADER}
+        full_image_name_parts = original_full_image_name.split(":")
+        assert len(full_image_name_parts) == 2, "full image name should include both image name and tag"
+        new_full_image_name = ":".join([full_image_name_parts[0], new_tag])
+        if self.image_exists(new_full_image_name):
+            # Early return if image with the associated tag already exists.
+            return
+        api_url = self._convert_to_v2_manifests_url(new_full_image_name)
+        manifest = self._get_manifest(full_image_name=original_full_image_name)
+        manifest_copy = manifest.copy()
+        manifest_copy["tag"] = new_tag
+        headers = self._get_accept_headers()
+        # Http Content-Type does not support multi-value, hence need to construct separate header.
+        put_header_v1 = {
+            **headers,
+            "Content-Type": _MANIFEST_V1_HEADER,
+        }
+        put_header_v2 = {
+            **headers,
+            "Content-Type": _MANIFEST_V2_HEADER,
+        }
 
-            manifest = self._get_manifest(
-                full_image_name=original_full_image_name, header_v1=header_v1, header_v2=header_v2
-            )
-            manifest_copy = manifest.copy()
-            manifest_copy["tag"] = new_tag
-
-            put_header_v1 = {
-                **header_v1,
-                "Content-Type": MANIFEST_V1_HEADER,
-            }
-            put_header_v2 = {
-                **header_v2,
-                "Content-Type": MANIFEST_V2_HEADER,
-            }
-
-            res1 = self.http.put(api_url, headers=put_header_v2, json=manifest_copy)
-            if res1.status_code != http.HTTPStatus.CREATED:
-                res2 = self.http.put(api_url, headers=put_header_v1, json=manifest_copy)
-                if res2.status_code != http.HTTPStatus.CREATED:
-                    raise snowml_exceptions.SnowflakeMLException(
-                        error_code=error_codes.INTERNAL_SNOWFLAKE_IMAGE_REGISTRY_ERROR,
-                        original_exception=ValueError(
-                            f"Failed to push manifest for {new_full_image_name}. Two requests filed: \n"
-                            f"HTTP status code 1: {res1.status_code}. Full response 1: {res1.text}. \n"
-                            f"HTTP status code 2: {res2.status_code}. Full response 2: {res2.text}"
-                        ),
-                    )
-            assert self.image_exists(new_full_image_name), (
-                f"{new_full_image_name} should exist in image repo after a" f"successful manifest update"
-            )
+        res1 = self.image_registry_http_client.put(api_url, headers=put_header_v1, json=manifest_copy)
+        if res1.status_code != http.HTTPStatus.CREATED:
+            res2 = self.image_registry_http_client.put(api_url, headers=put_header_v2, json=manifest_copy)
+            if res2.status_code != http.HTTPStatus.CREATED:
+                raise snowml_exceptions.SnowflakeMLException(
+                    error_code=error_codes.INTERNAL_SNOWFLAKE_IMAGE_REGISTRY_ERROR,
+                    original_exception=ValueError(
+                        f"Failed to push manifest for {new_full_image_name}. Two requests filed: \n"
+                        f"HTTP status code 1: {res1.status_code}. Full response 1: {res1.text}. \n"
+                        f"HTTP status code 2: {res2.status_code}. Full response 2: {res2.text}"
+                    ),
+                )
+        assert self.image_exists(
+            new_full_image_name
+        ), f"{new_full_image_name} should exist in image repo after a successful manifest update"
 
     def copy_image(
         self,
@@ -255,7 +196,9 @@ class ImageRegistryClient:
         dest_image = imagelib.convert_to_image_descriptor(
             dest_image_with_tag,
             with_tag=True,
-            creds_manager=image_auth_manager.SnowflakeAuthManager(dest_image_with_tag.split("/")[0]),
         )
-        imagelib.copy_image(src_image=src_image, dest_image=dest_image, arch=arch, session=self.session)
+        # TODO[shchen]: Remove the imagelib, instead rely on the copy image system function later.
+        imagelib.copy_image(
+            src_image=src_image, dest_image=dest_image, arch=arch, retryable_http=self.image_registry_http_client
+        )
         logger.info("Image copy completed successfully")

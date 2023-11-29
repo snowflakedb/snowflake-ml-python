@@ -42,6 +42,7 @@ run_kaniko() {
   echo "Starting Kaniko command..."
 
   # Set cache ttl to a large value as snowservice registry doesn't support deleting cache anyway.
+  # Compression level set to 1 for fastest compression/decompression speed at the cost of compression ration.
   /kaniko/executor \
     --dockerfile Dockerfile \
     --context dir:///stage/models/id/context \
@@ -56,6 +57,8 @@ run_kaniko() {
     --cache-ttl=8760h \
     --push-retry=3 \
     --image-fs-extract-retry=5 \
+    --compression=zstd \
+    --compression-level=1 \
     --log-timestamp
 }
 

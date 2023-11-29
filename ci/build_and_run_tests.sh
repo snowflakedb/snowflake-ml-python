@@ -37,6 +37,8 @@ BAZEL="bazel"
 ENV="pip"
 WITH_SNOWPARK=false
 MODE="continuous_run"
+PYTHON_VERSION=3.8
+PYTHON_JENKINS_ENABLE="/opt/rh/rh-python38/enable"
 SNOWML_DIR="snowml"
 SNOWPARK_DIR="snowpark-python"
 IS_NT=false
@@ -71,6 +73,10 @@ while (($#)); do
         shift
         JUNIT_REPORT_PATH=$1
         ;;
+    --python-version)
+        shift
+        PYTHON_VERSION=$1
+        ;;
     -h | --help)
         help 0
         ;;
@@ -80,6 +86,23 @@ while (($#)); do
     esac
     shift
 done
+
+case ${PYTHON_VERSION} in
+  3.8)
+    PYTHON_EXECUTABLE="python3.8"
+    PYTHON_JENKINS_ENABLE="/opt/rh/rh-python38/enable"
+    ;;
+  3.9)
+    PYTHON_EXECUTABLE="python3.9"
+    PYTHON_JENKINS_ENABLE="/opt/rh/rh-python39/enable"
+    ;;
+  3.10)
+    PYTHON_EXECUTABLE="python3.10"
+    PYTHON_JENKINS_ENABLE="/opt/rh/rh-python310/enable"
+    ;;
+esac
+
+echo "Running build_and_run_tests with PYTHON_VERSION ${PYTHON_VERSION}"
 
 EXT=""
 BAZEL_ADDITIONAL_BUILD_FLAGS=()
@@ -116,16 +139,17 @@ case "${PLATFORM}_${ARCH}" in
     ;;
 esac
 
-# Check Python3.8 exist
-# TODO(SNOW-845592): ideally we should download py3.8 from conda if not exist. Currently we just fail.
+# Verify that the requested python version exists
+# TODO(SNOW-845592): ideally we should download python from conda if it's not present. Currently we just fail.
 if [ "${ENV}" = "pip" ]; then
     set +eu
-    source /opt/rh/rh-python38/enable
-    PYTHON38_EXIST=$?
-    if [ $PYTHON38_EXIST -ne 0 ]; then
-        echo "Failed to execute tests: Python3.8 is not installed."
+    # shellcheck source=/dev/null
+    source ${PYTHON_JENKINS_ENABLE}
+    PYTHON_EXIST=$?
+    if [ $PYTHON_EXIST -ne 0 ]; then
+        echo "Failed to execute tests: ${PYTHON_EXECUTABLE} is not installed."
         rm -rf "${TEMP_TEST_DIR}"
-        exit ${PYTHON38_EXIST}
+        exit ${PYTHON_EXIST}
     fi
     set -eu
 fi
@@ -204,9 +228,9 @@ if [ "${ENV}" = "pip" ]; then
     if [ "${WITH_SNOWPARK}" = true ]; then
         pushd ${SNOWPARK_DIR}
         rm -rf venv
-        python3.8 -m venv venv
+        ${PYTHON_EXECUTABLE} -m venv venv
         source venv/bin/activate
-        python3.8 -m pip install -U pip setuptools wheel
+        ${PYTHON_EXECUTABLE} -m pip install -U pip setuptools wheel
         echo "Building snowpark wheel from main:$(git rev-parse HEAD)."
         pip wheel . --no-deps
         cp "$(find . -maxdepth 1 -iname 'snowflake_snowpark_python-*.whl')" "${WORKSPACE}"
@@ -229,14 +253,14 @@ else
     # Build Snowpark
     if [ "${WITH_SNOWPARK}" = true ]; then
         pushd ${SNOWPARK_DIR}
-        conda build recipe/ --python=3.8 --numpy=1.16 --croot "${WORKSPACE}/conda-bld"
+        conda build recipe/ --python=${PYTHON_VERSION} --numpy=1.16 --croot "${WORKSPACE}/conda-bld"
         popd
     fi
 
     # Build SnowML
     pushd ${SNOWML_DIR}
     # Build conda package
-    conda build --prefix-length 50 --python=3.8 --croot "${WORKSPACE}/conda-bld" ci/conda_recipe
+    conda build --prefix-length 50 --python=${PYTHON_VERSION} --croot "${WORKSPACE}/conda-bld" ci/conda_recipe
     conda build purge
     popd
 fi
@@ -248,7 +272,9 @@ pushd "${TEMP_TEST_DIR}"
 COMMON_PYTEST_FLAG=()
 COMMON_PYTEST_FLAG+=(--strict-markers) # Strict the pytest markers to avoid typo in markers
 COMMON_PYTEST_FLAG+=(--import-mode=append)
+COMMON_PYTEST_FLAG+=(--log-cli-level=INFO)
 COMMON_PYTEST_FLAG+=(-n logical)
+
 if [[ -n "${JUNIT_REPORT_PATH}" ]]; then
     COMMON_PYTEST_FLAG+=(--junitxml "${JUNIT_REPORT_PATH}")
 fi
@@ -258,22 +284,22 @@ if [ "${ENV}" = "pip" ]; then
     cp "${WORKSPACE}/snowflake_ml_python-${VERSION}-py3-none-any.whl" "${TEMP_TEST_DIR}"
 
     # Create testing env
-    python3.8 -m venv testenv
+    ${PYTHON_EXECUTABLE} -m venv testenv
     source testenv/bin/activate
     # Install all of the packages in single line,
     # otherwise it will fail in dependency resolution.
-    python3.8 -m pip install --upgrade pip
-    python3.8 -m pip list
-    python3.8 -m pip install "snowflake_ml_python-${VERSION}-py3-none-any.whl[all]" "pytest-xdist[psutil]==2.5.0" -r "${WORKSPACE}/${SNOWML_DIR}/requirements.txt" --no-cache-dir --force-reinstall
+    ${PYTHON_EXECUTABLE} -m pip install --upgrade pip
+    ${PYTHON_EXECUTABLE} -m pip list
+    ${PYTHON_EXECUTABLE} -m pip install "snowflake_ml_python-${VERSION}-py3-none-any.whl[all]" "pytest-xdist[psutil]==2.5.0" -r "${WORKSPACE}/${SNOWML_DIR}/requirements.txt" --no-cache-dir --force-reinstall
     if [ "${WITH_SNOWPARK}" = true ]; then
         cp "$(find "${WORKSPACE}" -maxdepth 1 -iname 'snowflake_snowpark_python-*.whl')" "${TEMP_TEST_DIR}"
-        python3.8 -m pip install "$(find . -maxdepth 1 -iname 'snowflake_snowpark_python-*.whl')" --no-deps --force-reinstall
+        ${PYTHON_EXECUTABLE} -m pip install "$(find . -maxdepth 1 -iname 'snowflake_snowpark_python-*.whl')" --no-deps --force-reinstall
     fi
-    python3.8 -m pip list
+    ${PYTHON_EXECUTABLE} -m pip list
 
     # Run the tests
     set +e
-    TEST_SRCDIR="${TEMP_TEST_DIR}" python3.8 -m pytest "${COMMON_PYTEST_FLAG[@]}" -m "not pip_incompatible" tests/integ/
+    TEST_SRCDIR="${TEMP_TEST_DIR}" ${PYTHON_EXECUTABLE} -m pytest "${COMMON_PYTEST_FLAG[@]}" -m "not pip_incompatible" tests/integ/
     TEST_RETCODE=$?
     set -e
 else
@@ -284,7 +310,7 @@ else
     conda clean --all --force-pkgs-dirs -y
 
     # Create testing env
-    conda create -y -p testenv -c "${WORKSPACE}/conda-bld" -c "https://repo.anaconda.com/pkgs/snowflake/" --override-channels "python=3.8" snowflake-ml-python "py==1.9.0" "pytest-xdist==2.5.0" psutil inflection "${OPTIONAL_REQUIREMENTS[@]}"
+    conda create -y -p testenv -c "${WORKSPACE}/conda-bld" -c "https://repo.anaconda.com/pkgs/snowflake/" --override-channels "python=${PYTHON_VERSION}" snowflake-ml-python "py==1.9.0" "pytest-xdist==2.5.0" psutil inflection "${OPTIONAL_REQUIREMENTS[@]}"
     conda list -p testenv
 
     # Run integration tests

@@ -19,7 +19,7 @@ from snowflake.ml.model._deploy_client.warehouse import (
     deploy as warehouse_deploy,
     infer_template,
 )
-from snowflake.ml.model._module_model import module_model
+from snowflake.ml.model._model_composer import model_composer
 from snowflake.ml.model._signatures import snowpark_handler
 from snowflake.snowpark import DataFrame as SnowparkDataFrame, Session, functions as F
 
@@ -38,14 +38,14 @@ def save_model(
     ext_modules: Optional[List[ModuleType]] = None,
     code_paths: Optional[List[str]] = None,
     options: Optional[model_types.ModelSaveOption] = None,
-) -> module_model.ModuleModel:
-    """Save a model that does not require a signature as module model to a stage path.
+) -> model_composer.ModelComposer:
+    """Save a model that does not require a signature as model to a stage path.
 
     Args:
         name: Name of the model.
         model: Model object.
         session: Snowpark connection session.
-        stage_path: Path to the stage where module model will be saved.
+        stage_path: Path to the stage where model will be saved.
         metadata: Model metadata.
         conda_dependencies: List of Conda package specs. Use "[channel::]package [operator version]" syntax to specify
             a dependency. It is a recommended way to specify your dependencies using conda. When channel is not
@@ -77,14 +77,14 @@ def save_model(
     ext_modules: Optional[List[ModuleType]] = None,
     code_paths: Optional[List[str]] = None,
     options: Optional[model_types.ModelSaveOption] = None,
-) -> module_model.ModuleModel:
-    """Save a model that requires a external signature with user provided signatures as module model to a stage path.
+) -> model_composer.ModelComposer:
+    """Save a model that requires a external signature with user provided signatures as model to a stage path.
 
     Args:
         name: Name of the model.
         model: Model object.
         session: Snowpark connection session.
-        stage_path: Path to the stage where module model will be saved.
+        stage_path: Path to the stage where model will be saved.
         signatures: Model data signatures for inputs and output for every target methods.
         metadata: Model metadata.
         conda_dependencies: List of Conda package specs. Use "[channel::]package [operator version]" syntax to specify
@@ -117,15 +117,15 @@ def save_model(
     ext_modules: Optional[List[ModuleType]] = None,
     code_paths: Optional[List[str]] = None,
     options: Optional[model_types.ModelSaveOption] = None,
-) -> module_model.ModuleModel:
-    """Save a model that requires a external signature as module model to a stage path with signature inferred from a
+) -> model_composer.ModelComposer:
+    """Save a model that requires a external signature as model to a stage path with signature inferred from a
       sample_input_data.
 
     Args:
         name: Name of the model.
         model: Model object.
         session: Snowpark connection session.
-        stage_path: Path to the stage where module model will be saved.
+        stage_path: Path to the stage where model will be saved.
         sample_input: Sample input data to infer the model signatures from.
         metadata: Model metadata.
         conda_dependencies: List of Conda package specs. Use "[channel::]package [operator version]" syntax to specify
@@ -158,14 +158,14 @@ def save_model(
     ext_modules: Optional[List[ModuleType]] = None,
     code_paths: Optional[List[str]] = None,
     options: Optional[model_types.ModelSaveOption] = None,
-) -> module_model.ModuleModel:
+) -> model_composer.ModelComposer:
     """Save the model.
 
     Args:
         name: Name of the model.
         model: Model object.
         session: Snowpark connection session.
-        stage_path: Path to the stage where module model will be saved.
+        stage_path: Path to the stage where model will be saved.
         signatures: Model data signatures for inputs and output for every target methods. If it is None, sample_input
             would be used to infer the signatures if it is a local (non-SnowML modeling model).
             If not None, sample_input should not be specified. Defaults to None.
@@ -186,9 +186,9 @@ def save_model(
         options: Model specific kwargs.
 
     Returns:
-        Module Model
+        Model
     """
-    m = module_model.ModuleModel(session=session, stage_path=stage_path)
+    m = model_composer.ModelComposer(session=session, stage_path=stage_path)
     m.save(
         name=name,
         model=model,
@@ -206,35 +206,35 @@ def save_model(
 
 
 @overload
-def load_model(*, session: Session, stage_path: str) -> module_model.ModuleModel:
+def load_model(*, session: Session, stage_path: str) -> model_composer.ModelComposer:
     """Load the model into memory from a zip file in the stage.
 
     Args:
         session: Snowflake connection session.
-        stage_path: Path to the stage where module model will be loaded from.
+        stage_path: Path to the stage where model will be loaded from.
     """
     ...
 
 
 @overload
-def load_model(*, session: Session, stage_path: str, meta_only: Literal[False]) -> module_model.ModuleModel:
+def load_model(*, session: Session, stage_path: str, meta_only: Literal[False]) -> model_composer.ModelComposer:
     """Load the model into memory from a zip file in the stage.
 
     Args:
         session: Snowflake connection session.
-        stage_path: Path to the stage where module model will be loaded from.
+        stage_path: Path to the stage where model will be loaded from.
         meta_only: Flag to indicate that if only load metadata.
     """
     ...
 
 
 @overload
-def load_model(*, session: Session, stage_path: str, meta_only: Literal[True]) -> module_model.ModuleModel:
+def load_model(*, session: Session, stage_path: str, meta_only: Literal[True]) -> model_composer.ModelComposer:
     """Load the model into memory from a zip file in the stage with metadata only.
 
     Args:
         session: Snowflake connection session.
-        stage_path: Path to the stage where module model will be loaded from.
+        stage_path: Path to the stage where model will be loaded from.
         meta_only: Flag to indicate that if only load metadata.
     """
     ...
@@ -245,19 +245,19 @@ def load_model(
     session: Session,
     stage_path: str,
     meta_only: bool = False,
-) -> module_model.ModuleModel:
+) -> model_composer.ModelComposer:
     """Load the model into memory from directory or a zip file in the stage.
 
     Args:
         session: Snowflake connection session. Must be specified when specifying model_stage_file_path.
             Exclusive with model_dir_path.
-        stage_path: Path to the stage where module model will be loaded from.
+        stage_path: Path to the stage where model will be loaded from.
         meta_only: Flag to indicate that if only load metadata.
 
     Returns:
-        Loaded module model.
+        Loaded model.
     """
-    m = module_model.ModuleModel(session=session, stage_path=stage_path)
+    m = model_composer.ModelComposer(session=session, stage_path=stage_path)
     m.load(meta_only=meta_only)
     return m
 
@@ -280,7 +280,7 @@ def deploy(
         platform: Target platform to deploy the model.
         target_method: The name of the target method to be deployed. Can be omitted if there is only 1 target method in
             the model.
-        stage_path: Path to the stage where module model will be deployed.
+        stage_path: Path to the stage where model will be deployed.
         options: Additional options when deploying the model.
             Each target platform will have their own specifications of options.
     """
@@ -308,7 +308,7 @@ def deploy(
         platform: Target platform to deploy the model.
         target_method: The name of the target method to be deployed. Can be omitted if there is only 1 target method in
             the model.
-        stage_path: Path to the stage where module model will be deployed.
+        stage_path: Path to the stage where model will be deployed.
         deployment_stage_path: Path to stage containing snowpark container service deployment artifacts.
         options: Additional options when deploying the model.
             Each target platform will have their own specifications of options.
@@ -336,7 +336,7 @@ def deploy(
         platform: Target platform to deploy the model.
         target_method: The name of the target method to be deployed. Can be omitted if there is only 1 target method in
             the model.
-        stage_path: Path to the stage where module model will be deployed.
+        stage_path: Path to the stage where model will be deployed.
         deployment_stage_path: Path to stage containing deployment artifacts.
         options: Additional options when deploying the model.
             Each target platform will have their own specifications of options.

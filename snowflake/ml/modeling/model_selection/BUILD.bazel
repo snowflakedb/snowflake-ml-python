@@ -1,11 +1,44 @@
-load("//codegen:codegen_rules.bzl", "autogen_estimators", "autogen_init_file_for_module")
-load(":estimators_info.bzl", "estimator_info_list")
+load("//bazel:py_rules.bzl", "py_library", "py_package")
 
 package(default_visibility = ["//visibility:public"])
 
-autogen_init_file_for_module(module = "sklearn.model_selection")
+py_package(
+    name = "model_selection_pkg",
+    packages = ["snowflake.ml"],
+    deps = [
+        ":grid_search_cv",
+        ":randomized_search_cv",
+    ],
+)
 
-autogen_estimators(
-    estimator_info_list = estimator_info_list,
-    module = "sklearn.model_selection",
+py_library(
+    name = "init",
+    srcs = [
+        "__init__.py",
+    ],
+    deps = [
+        "//snowflake/ml/_internal:init_utils",
+    ],
+)
+
+py_library(
+    name = "grid_search_cv",
+    srcs = ["grid_search_cv.py"],
+    deps = [
+        ":init",
+        "//snowflake/ml/_internal:telemetry",
+        "//snowflake/ml/_internal/exceptions",
+        "//snowflake/ml/modeling/_internal:snowpark_handlers",
+    ],
+)
+
+py_library(
+    name = "randomized_search_cv",
+    srcs = ["randomized_search_cv.py"],
+    deps = [
+        ":init",
+        "//snowflake/ml/_internal:telemetry",
+        "//snowflake/ml/_internal/exceptions",
+        "//snowflake/ml/modeling/_internal:snowpark_handlers",
+    ],
 )
