@@ -9,7 +9,7 @@ boto3==1.24.28
 cachetools==4.2.2
 cloudpickle==2.0.0
 coverage==6.3.2
-cryptography==39.0.1
+cryptography==41.0.6
 flask-cors==3.0.10
 flask==2.1.3
 fsspec[http]==2023.3.0
