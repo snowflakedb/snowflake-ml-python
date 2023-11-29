@@ -8,6 +8,7 @@ import tempfile
 from typing import Any, Dict, List, Optional, Tuple
 
 import cloudpickle
+import importlib_resources
 import joblib
 import numpy as np
 import pandas as pd
@@ -56,6 +57,10 @@ _DATA_QUOTES = [
     ["8", "C", "zOyDvcyZ2s", 0.0, 0.0],
     ["9", '"c"', "g1ehQlL80t", 0.0, 0.0],
 ]
+
+TEST_DATA_PATH = importlib_resources.files("tests.integ.snowflake.ml.test_data").joinpath(
+    "UCI_BANK_MARKETING_20COLUMNS.csv"
+)
 
 
 class OneHotEncoderTest(parameterized.TestCase):
@@ -1653,12 +1658,8 @@ class OneHotEncoderTest(parameterized.TestCase):
             encoder.fit(df)
         self.assertIn("Empty data while a minimum of 1 sample is required.", str(ex.exception))
 
-    def test_fit_snowpark_transform_numeric_data(self) -> None:
-        snow_df = self._session.sql(
-            """SELECT *, IFF(Y = 'yes', 1.0, 0.0) as LABEL
-            FROM ML_DATASETS.PUBLIC.UCI_BANK_MARKETING_20COLUMNS
-            LIMIT 2000"""
-        ).drop("Y")
+        pd_data = pd.read_csv(TEST_DATA_PATH, index_col=0)
+        snow_df = self._session.create_dataframe(pd_data)
         input_cols = [c for c in snow_df.columns if c != "LABEL"]
         # contains dtype as int, object, float.
         output_cols = [f"OHE_{c}" for c in input_cols]
@@ -1698,12 +1699,8 @@ class OneHotEncoderTest(parameterized.TestCase):
 
     def test_identical_snowpark_vs_pandas_output_column_names(self) -> None:
         # UCI_BANK_MARKETING_20COLUMNS
-        snow_df = self._session.sql(
-            """SELECT *, IFF(Y = 'yes', 1.0, 0.0) as LABEL
-            FROM ML_DATASETS.PUBLIC.UCI_BANK_MARKETING_20COLUMNS
-            LIMIT 1000"""
-        ).drop("Y")
-        pd_df = snow_df.to_pandas()
+        pd_df = pd.read_csv(TEST_DATA_PATH, index_col=0)
+        snow_df = self._session.create_dataframe(pd_df)
         cols = [
             "AGE",
             "CAMPAIGN",
@@ -1721,11 +1718,9 @@ class OneHotEncoderTest(parameterized.TestCase):
         self.assertCountEqual(snow_cols, pd_cols)
 
     def test_select_partial_cols(self) -> None:
-        snow_df = self._session.sql(
-            """SELECT AGE as AGE_1, *
-            FROM ML_DATASETS.PUBLIC.UCI_BANK_MARKETING_20COLUMNS
-            LIMIT 1000"""
-        ).drop("Y")
+        pd_df = pd.read_csv(TEST_DATA_PATH, index_col=0)
+        pd_df["AGE_1"] = pd_df["AGE"]
+        snow_df = self._session.create_dataframe(pd_df)
         cols = [
             "AGE",
             "CAMPAIGN",
@@ -1758,12 +1753,8 @@ class OneHotEncoderTest(parameterized.TestCase):
         self.assertCountEqual(ohe.get_output_cols(), out_cols)
 
     def test_column_insensitivity(self) -> None:
-        # UCI_BANK_MARKETING_20COLUMNS
-        snow_df = self._session.sql(
-            """SELECT *, IFF(Y = 'yes', 1.0, 0.0) as LABEL
-            FROM ML_DATASETS.PUBLIC.UCI_BANK_MARKETING_20COLUMNS
-            LIMIT 1000"""
-        ).drop("Y")
+        pd_data = pd.read_csv(TEST_DATA_PATH, index_col=0)
+        snow_df = self._session.create_dataframe(pd_data)
         cols = [
             "AGE",
             "CAMPAIGN",

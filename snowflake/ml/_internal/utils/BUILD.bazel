@@ -211,3 +211,27 @@ py_test(
         ":log_stream_processor",
     ],
 )
+
+py_library(
+    name = "session_token_manager",
+    srcs = ["session_token_manager.py"],
+)
+
+py_library(
+    name = "image_registry_http_client",
+    srcs = ["image_registry_http_client.py"],
+    deps = [
+        ":session_token_manager",
+        "//snowflake/ml/_internal/exceptions",
+        "//snowflake/ml/_internal/utils:retryable_http",
+    ],
+)
+
+py_test(
+    name = "image_registry_http_client_test",
+    srcs = ["image_registry_http_client_test.py"],
+    deps = [
+        ":image_registry_http_client",
+        "//snowflake/ml/test_utils:mock_session",
+    ],
+)

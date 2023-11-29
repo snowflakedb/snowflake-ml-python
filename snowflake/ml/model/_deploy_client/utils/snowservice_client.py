@@ -1,5 +1,6 @@
 import json
 import logging
+import textwrap
 import time
 from typing import Optional
 
@@ -52,14 +53,16 @@ class SnowServiceClient:
         """
         stage, path = uri.get_stage_and_path(spec_stage_location)
         self._drop_service_if_exists(service_name)
-        sql = f"""
+        sql = textwrap.dedent(
+            f"""
              CREATE SERVICE {service_name}
                 IN COMPUTE POOL {compute_pool}
                 FROM {stage}
                 SPEC = '{path}'
                 MIN_INSTANCES={min_instances}
                 MAX_INSTANCES={max_instances}
-         """
+            """
+        )
         logger.info(f"Creating service {service_name}")
         logger.debug(f"Create service with SQL: \n {sql}")
         self.session.sql(sql).collect()
@@ -76,12 +79,14 @@ class SnowServiceClient:
 
         """
         stage, path = uri.get_stage_and_path(spec_stage_location)
-        sql = f"""
+        sql = textwrap.dedent(
+            f"""
             EXECUTE SERVICE
             IN COMPUTE POOL {compute_pool}
             FROM {stage}
             SPEC = '{path}'
-        """
+            """
+        )
         logger.debug(f"Create job with SQL: \n {sql}")
         cur = self.session._conn._conn.cursor()
         cur.execute_async(sql)
@@ -129,7 +134,8 @@ class SnowServiceClient:
         if max_batch_rows:
             max_batch_rows_sql = f"MAX_BATCH_ROWS = {max_batch_rows}"
 
-        sql = f"""
+        sql = textwrap.dedent(
+            f"""
             CREATE OR REPLACE FUNCTION {service_func_name}(input OBJECT)
                 RETURNS OBJECT
                 SERVICE={service_name}
@@ -137,6 +143,7 @@ class SnowServiceClient:
                 {max_batch_rows_sql}
                 AS '/{path_at_service_endpoint}'
             """
+        )
         logger.debug(f"Create service function with SQL: \n {sql}")
         self.session.sql(sql).collect()
         logger.debug(f"Successfully created service function: {service_func_name}")

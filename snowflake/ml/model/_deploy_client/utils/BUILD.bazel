@@ -24,7 +24,7 @@ py_library(
     deps = [
         ":imagelib",
         "//snowflake/ml/_internal/exceptions",
-        "//snowflake/ml/_internal/utils:spcs_image_registry",
+        "//snowflake/ml/_internal/utils:image_registry_http_client",
     ],
 )
 
@@ -32,17 +32,7 @@ py_library(
     name = "imagelib",
     srcs = ["imagelib.py"],
     deps = [
-        ":image_auth_manager",
-        "//snowflake/ml/_internal/utils:retryable_http",
-        "//snowflake/ml/_internal/utils:spcs_image_registry",
-    ],
-)
-
-py_library(
-    name = "image_auth_manager",
-    srcs = ["image_auth_manager.py"],
-    deps = [
-        "//snowflake/ml/_internal/utils:retryable_http",
+        "//snowflake/ml/_internal/utils:image_registry_http_client",
     ],
 )
 

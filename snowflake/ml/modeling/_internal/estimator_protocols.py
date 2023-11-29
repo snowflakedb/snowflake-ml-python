@@ -1,4 +1,4 @@
-from typing import Any, Dict, List, Optional, Protocol, Union
+from typing import List, Optional, Protocol, Union
 
 import pandas as pd
 from sklearn import model_selection
@@ -70,6 +70,18 @@ class FitPredictHandlers(Protocol):
 
 # TODO: Add more specific entities to type hint estimators instead of using `object`.
 class CVHandlers(Protocol):
+    def fit_snowpark(
+        self,
+        dataset: DataFrame,
+        session: Session,
+        estimator: object,
+        dependencies: List[str],
+        input_cols: List[str],
+        label_cols: List[str],
+        sample_weight_col: Optional[str],
+    ) -> object:
+        raise NotImplementedError
+
     def fit_pandas(
         self,
         dataset: pd.DataFrame,
@@ -119,7 +131,7 @@ class CVHandlers(Protocol):
 
     def fit_search_snowpark(
         self,
-        param_list: Union[Dict[str, Any], List[Dict[str, Any]]],
+        param_grid: Union[model_selection.ParameterGrid, model_selection.ParameterSampler],
         dataset: DataFrame,
         session: Session,
         estimator: Union[model_selection.GridSearchCV, model_selection.RandomizedSearchCV],

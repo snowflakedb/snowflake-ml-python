@@ -48,11 +48,26 @@ class MainTest(absltest.TestCase):
             sample_input=x,
             metadata={"author": "halu", "version": "1"},
         )
-        with file_utils.zip_file_or_directory_to_stream(tmpdir.full_path, leading_path=tmpdir.full_path) as zf:
-            zf.seek(0)
-            with open(zip_full_path, "wb") as f:
-                f.write(zf.getvalue())
+        file_utils.make_archive(zip_full_path, tmpdir.full_path)
         return zip_full_path
+
+    def test_setup_import(self) -> None:
+        with mock.patch.dict(
+            os.environ,
+            {
+                "TARGET_METHOD": "predict",
+                "MODEL_ZIP_STAGE_PATH": self.model_zip_path,
+            },
+        ):
+            with mock.patch.object(
+                model_packager.ModelPackager,
+                "load",
+                side_effect=ImportError("Cannot import transformers", name="transformers"),
+            ):
+                from main import _run_setup
+
+                with self.assertRaisesRegex(ImportError, "Cannot import transformers"):
+                    _run_setup()
 
     @contextlib.contextmanager
     def common_helper(self):  # type: ignore[no-untyped-def]

@@ -49,6 +49,7 @@ class RequirementInfo(TypedDict, total=False):
     version_requirements: str
     version_requirements_pypi: str
     version_requirements_conda: str
+    require_gpu: bool
     requirements_extra_tags: Sequence[str]
     tags: Sequence[str]
 
@@ -67,7 +68,7 @@ def filter_by_tag(
         tag_filter: tag to filter the requirement. Defaults to None.
 
     Returns:
-        True if tag_filter is None, or in the array of given field if presented.
+        True if tag_filter is None, or in the array of given field in presented.
     """
     return tag_filter is None or tag_filter in req_info.get(field, [])
 
@@ -100,6 +101,7 @@ def get_req_name(req_info: RequirementInfo, env: Literal["conda", "pip", "conda-
         req_info: requirement information.
         env: environment indicator, choose from conda and pip.
 
+
     Raises:
         ValueError: Illegal env argument.
 
@@ -123,7 +125,7 @@ def get_req_name(req_info: RequirementInfo, env: Literal["conda", "pip", "conda-
 
 
 def generate_dev_pinned_string(
-    req_info: RequirementInfo, env: Literal["conda", "pip", "conda-only", "pip-only"]
+    req_info: RequirementInfo, env: Literal["conda", "pip", "conda-only", "pip-only"], has_gpu: bool = False
 ) -> Optional[str]:
     """Get the pinned version for dev environment of the requirement in the given env.
     For each env, env specific pinned version will be chosen, if not presented, common pinned version will be chosen.
@@ -131,6 +133,7 @@ def generate_dev_pinned_string(
     Args:
         req_info: requirement information.
         env: environment indicator, choose from conda and pip.
+        has_gpu: If the environment has GPU, present to filter require required GPU package.
 
     Raises:
         ValueError: Illegal env argument.
@@ -142,6 +145,8 @@ def generate_dev_pinned_string(
     """
     name = get_req_name(req_info, env)
     if name is None:
+        return None
+    if not has_gpu and req_info.get("require_gpu", False):
         return None
     if env.startswith("conda"):
         version = req_info.get("dev_version_conda", req_info.get("dev_version", None))
@@ -348,7 +353,7 @@ def generate_requirements(
             filter(
                 None,
                 map(
-                    lambda req_info: generate_dev_pinned_string(req_info, "conda"),
+                    lambda req_info: generate_dev_pinned_string(req_info, "conda", has_gpu=(mode == "dev_gpu_version")),
                     filter(
                         lambda req_info: req_info.get("from_channel", SNOWFLAKE_CONDA_CHANNEL)
                         == SNOWFLAKE_CONDA_CHANNEL,
@@ -359,7 +364,15 @@ def generate_requirements(
         )
     )
     extended_env_conda = list(
-        sorted(filter(None, map(lambda req_info: generate_dev_pinned_string(req_info, "conda"), requirements)))
+        sorted(
+            filter(
+                None,
+                map(
+                    lambda req_info: generate_dev_pinned_string(req_info, "conda", has_gpu=(mode == "dev_gpu_version")),
+                    requirements,
+                ),
+            )
+        )
     )
 
     extended_env: List[Union[str, MutableMapping[str, Sequence[str]]]] = copy.deepcopy(
@@ -370,7 +383,13 @@ def generate_requirements(
     # while for internal pip-only packages, nexus is the only viable index.
     # Relative order is here to prevent nexus index overriding public index.
     pip_only_reqs = list(
-        filter(None, map(lambda req_info: generate_dev_pinned_string(req_info, "pip-only"), requirements))
+        filter(
+            None,
+            map(
+                lambda req_info: generate_dev_pinned_string(req_info, "pip-only", has_gpu=(mode == "dev_gpu_version")),
+                requirements,
+            ),
+        )
     )
     if pip_only_reqs:
         extended_env.extend(["pip", {"pip": pip_only_reqs}])
@@ -383,7 +402,15 @@ def generate_requirements(
             sorted(
                 map(
                     lambda s: s + "\n",
-                    filter(None, map(lambda req_info: generate_dev_pinned_string(req_info, "pip"), requirements)),
+                    filter(
+                        None,
+                        map(
+                            lambda req_info: generate_dev_pinned_string(
+                                req_info, "pip", has_gpu=(mode == "dev_gpu_version")
+                            ),
+                            requirements,
+                        ),
+                    ),
                 )
             )
         )
