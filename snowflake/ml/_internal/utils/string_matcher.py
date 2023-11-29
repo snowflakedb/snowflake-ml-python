@@ -2,8 +2,11 @@ import re
 from typing import Dict, List
 
 import sqlparse
+from absl.logging import logging
 
 from snowflake.ml._internal.utils.formatting import unwrap
+
+logger = logging.getLogger(__name__)
 
 
 class StringMatcherIgnoreWhitespace:
@@ -97,18 +100,17 @@ class StringMatcherSql:
         # If mismatches have been recorded, output differences and return False.
 
         if len(expected_mismatched_tokens) + len(actual_mismatched_tokens) > 0:
-            print()
-            print(
-                unwrap(
-                    f"""---- SQL string mismatch:
-                        actual length {len(actual_tokens)} mismatched {len(actual_mismatched_tokens)}
-                        expected length {len(self._expected_tokens)} mismatched {len(expected_mismatched_tokens)}"""
-                )
+            logger.warn(
+                f"""
+---- SQL string mismatch:
+actual length {len(actual_tokens)} mismatched {len(actual_mismatched_tokens)}
+expected length {len(self._expected_tokens)} mismatched {len(expected_mismatched_tokens)}
+
+==== ACTUAL  : {self._format_sql_tokens(actual_tokens, actual_mismatched_tokens)}
+
+==== EXPECTED: {self._format_sql_tokens(self._expected_tokens, expected_mismatched_tokens)}
+"""
             )
-            print("==== ACTUAL  :", self._format_sql_tokens(actual_tokens, actual_mismatched_tokens))
-            print()
-            print("==== EXPECTED:", self._format_sql_tokens(self._expected_tokens, expected_mismatched_tokens))
-            print()
             return False
 
         return True

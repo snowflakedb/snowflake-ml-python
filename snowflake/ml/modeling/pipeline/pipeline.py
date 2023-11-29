@@ -596,7 +596,7 @@ class Pipeline(base.BaseTransformer):
         self._model_signature_dict = dict()
 
         input_columns = self._get_sanitized_list_of_columns(dataset.columns)
-        inputs_signature = _infer_signature(dataset[input_columns], "input")
+        inputs_signature = _infer_signature(dataset[input_columns], "input", use_snowflake_identifiers=True)
 
         estimator_step = self._get_estimator()
         if estimator_step:

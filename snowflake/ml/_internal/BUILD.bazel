@@ -77,6 +77,19 @@ py_test(
 )
 
 py_library(
+    name = "cuda_utils",
+    srcs = ["cuda_utils.py"],
+)
+
+py_test(
+    name = "cuda_utils_test",
+    srcs = ["cuda_utils_test.py"],
+    deps = [
+        ":cuda_utils",
+    ],
+)
+
+py_library(
     name = "migrator_utils",
     srcs = ["migrator_utils.py"],
 )

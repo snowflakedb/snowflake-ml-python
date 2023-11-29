@@ -1,9 +1,11 @@
 "Defines packages to be included in the releasing wheel file."
 
 PACKAGES = [
+    "//snowflake/cortex:cortex_pkg",
     "//snowflake/ml/modeling/impute:impute_pkg",
     "//snowflake/ml/modeling/metrics:metrics_pkg",
-    "//snowflake/ml/modeling/model_selection/_internal:_internal_pkg",
+    "//snowflake/ml/modeling/model_selection:model_selection_pkg",
+    "//snowflake/ml/modeling/parameters:parameters_pkg",
     "//snowflake/ml/modeling/pipeline:pipeline_pkg",
     "//snowflake/ml/modeling/preprocessing:preprocessing_pkg",
     "//snowflake/ml/monitoring:monitoring_pkg",
@@ -31,7 +33,6 @@ PACKAGES = [
     "//snowflake/ml/modeling/lightgbm:lightgbm_pkg",
     "//snowflake/ml/modeling/manifold:sklearn_manifold_pkg",
     "//snowflake/ml/modeling/mixture:sklearn_mixture_pkg",
-    "//snowflake/ml/modeling/model_selection:sklearn_model_selection_pkg",
     "//snowflake/ml/modeling/multiclass:sklearn_multiclass_pkg",
     "//snowflake/ml/modeling/multioutput:sklearn_multioutput_pkg",
     "//snowflake/ml/modeling/naive_bayes:sklearn_naive_bayes_pkg",

@@ -21,32 +21,6 @@ py_test(
 )
 
 py_test(
-    name = "grid_search_integ_test",
-    timeout = "long",
-    srcs = ["grid_search_integ_test.py"],
-    shard_count = 3,
-    deps = [
-        "//snowflake/ml/modeling/ensemble:random_forest_classifier",
-        "//snowflake/ml/modeling/model_selection/_internal:_grid_search_cv",
-        "//snowflake/ml/modeling/svm:svr",
-        "//snowflake/ml/modeling/xgboost:xgb_classifier",
-        "//snowflake/ml/utils:connection_params",
-    ],
-)
-
-py_test(
-    name = "randomized_search_integ_test",
-    timeout = "long",
-    srcs = ["randomized_search_integ_test.py"],
-    shard_count = 2,
-    deps = [
-        "//snowflake/ml/modeling/ensemble:random_forest_classifier",
-        "//snowflake/ml/modeling/model_selection/_internal:_randomized_search_cv",
-        "//snowflake/ml/utils:connection_params",
-    ],
-)
-
-py_test(
     name = "snowpark_handlers_test",
     timeout = "long",
     srcs = ["snowpark_handlers_test.py"],
@@ -55,33 +29,5 @@ py_test(
         "//snowflake/ml/modeling/_internal:snowpark_handlers",
         "//snowflake/ml/utils:connection_params",
         "//tests/integ/snowflake/ml/test_utils:common_test_base",
-    ],
-)
-
-py_test(
-    name = "grid_search_pipeline_test",
-    srcs = ["grid_search_pipeline_test.py"],
-    deps = [
-        "//snowflake/ml/modeling/compose:column_transformer",
-        "//snowflake/ml/modeling/linear_model:logistic_regression",
-        "//snowflake/ml/modeling/model_selection/_internal:_grid_search_cv",
-        "//snowflake/ml/modeling/pipeline",
-        "//snowflake/ml/modeling/preprocessing:label_encoder",
-        "//snowflake/ml/modeling/preprocessing:min_max_scaler",
-        "//snowflake/ml/modeling/preprocessing:one_hot_encoder",
-        "//snowflake/ml/utils:connection_params",
-    ],
-)
-
-py_test(
-    name = "search_single_node_test",
-    srcs = ["search_single_node_test.py"],
-    shard_count = 4,
-    deps = [
-        "//snowflake/ml/modeling/_internal:estimator_utils",
-        "//snowflake/ml/modeling/model_selection/_internal:_grid_search_cv",
-        "//snowflake/ml/modeling/model_selection/_internal:_randomized_search_cv",
-        "//snowflake/ml/modeling/xgboost:xgb_classifier",
-        "//snowflake/ml/utils:connection_params",
     ],
 )

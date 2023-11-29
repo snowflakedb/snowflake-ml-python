@@ -113,6 +113,18 @@ class WrapperGeneratorFactory:
         return WrapperGeneratorFactory._is_class_of_type(class_object[1], "ClassifierMixin")
 
     @staticmethod
+    def _is_cluster_obj(class_object: Tuple[str, type]) -> bool:
+        """Check if the given estimator object can cluster features and conduct fit_predict methods.
+
+        Args:
+            class_object: Meta class object which needs to be checked.
+
+        Returns:
+            True if the class inherits from ClusterMixin, otherwise False.
+        """
+        return WrapperGeneratorFactory._is_class_of_type(class_object[1], "ClusterMixin")
+
+    @staticmethod
     def _is_meta_estimator_obj(class_object: Tuple[str, type]) -> bool:
         """Check if the given estimator object requires an `estimator` parameter.
         bounded number of integer numerical label values).
@@ -515,6 +527,7 @@ class WrapperGeneratorBase:
         self.transform_docstring = ""
         self.original_predict_docstring = ""
         self.predict_docstring = ""
+        self.fit_predict_docstring = ""
         self.predict_proba_docstring = ""
         self.score_docstring = ""
         self.predict_log_proba_docstring = ""
@@ -535,6 +548,9 @@ class WrapperGeneratorBase:
         self.test_class_name = ""
         self.test_estimator_imports = ""
         self.test_estimator_imports_list: List[str] = []
+
+        # Optional function support
+        self.fit_predict_cluster_function_support = False
 
         # Dependencies
         self.predict_udf_deps = ""
@@ -582,6 +598,7 @@ class WrapperGeneratorBase:
         self._is_multioutput_estimator = WrapperGeneratorFactory._is_multioutput_estimator_obj(self.class_object)
         self._is_k_neighbors = WrapperGeneratorFactory._is_k_neighbors_obj(self.class_object)
         self._is_heterogeneous_ensemble = WrapperGeneratorFactory._is_heterogeneous_ensemble_obj(self.class_object)
+        self._is_cluster = WrapperGeneratorFactory._is_cluster_obj(self.class_object)
         self._is_stacking_ensemble = WrapperGeneratorFactory._is_stacking_ensemble_obj(self.class_object)
         self._is_voting_ensemble = WrapperGeneratorFactory._is_voting_ensemble_obj(self.class_object)
         self._is_chain_multioutput = WrapperGeneratorFactory._is_chain_multioutput_obj(self.class_object)
@@ -644,6 +661,7 @@ class WrapperGeneratorBase:
     def _populate_function_doc_fields(self) -> None:
         _METHODS = [
             "fit",
+            "fit_predict",
             "predict",
             "predict_log_proba",
             "predict_proba",
@@ -678,6 +696,7 @@ class WrapperGeneratorBase:
         self.fit_docstring = self.estimator_function_docstring["fit"]
         self.transform_docstring = self.estimator_function_docstring["transform"]
         self.predict_docstring = self.estimator_function_docstring["predict"]
+        self.fit_predict_docstring = self.estimator_function_docstring["fit_predict"]
         self.predict_proba_docstring = self.estimator_function_docstring["predict_proba"]
         self.predict_log_proba_docstring = self.estimator_function_docstring["predict_log_proba"]
         self.decision_function_docstring = self.estimator_function_docstring["decision_function"]
@@ -884,6 +903,9 @@ class SklearnWrapperGenerator(WrapperGeneratorBase):
                 * n_features_dict[self.test_dataset_func]
             ]
             self.test_estimator_input_args_list.append(f"dictionary={dictionary}")
+
+        if self._is_cluster:
+            self.fit_predict_cluster_function_support = True
 
         if WrapperGeneratorFactory._is_class_of_type(self.class_object[1], "SelectKBest"):
             # Set the k of SelectKBest features transformer to half the number of columns in the dataset.

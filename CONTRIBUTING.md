@@ -246,6 +246,8 @@ available in `conda` only. You can also set this along with `dev_version_pypi` i
 
 (At least one of these three fields should be set.)
 
+`require_gpu`: Set this to true if the package is only a requirement for the environment with GPUs.
+
 #### Snowflake Anaconda Channel
 
 `from_channel`: Set this if the package is not available in the Snowflake Anaconda Channel
@@ -357,16 +359,14 @@ To test if your code is working in store procedure or not simply, you could work
 
 To write a such test, you need to
 
+1. Your test cannot have a parameter called `_sproc_test_mode`.
 1. Let your test case inherit from `common_test_base.CommonTestBase`.
 1. Remove all Snowpark Session creation in your test, and use `self.session` to access the session if needed.
-1. If you write your own `setUp` and `tearDown` method, remember to call `super().setUp()` or `super().tearDown().`
+1. If you write your own `setUp` and `tearDown` method, remember to call `super().setUp()` or
+   `super().tearDown()`.
 1. Decorate your test method with `common_test_base.CommonTestBase.sproc_test()`. If you want your test running in
 store procedure only rather than both locally and in store procedure, set `local=False`. If you don't want to test
 with caller's rights, set `test_callers_rights=False`. (Owner's rights store procedure is always tested)
-
-    **Attention**: Depending on your configurations, 1-3 sub-tests will be run in your test method.
-    Sub-test means that `setUp` and `tearDown` won't run every sub-test and will only run once before and
-    after the whole test method. So it is important to make your test case self-contained.
 
 ### Compatibility Test
 
@@ -376,9 +376,11 @@ To test if your code is compatible with previous version simply, you could work 
 
 To write a such test, you need to
 
+1. Your test cannot have a parameter called `_snowml_pkg_ver`.
 1. Let your test case inherit from `common_test_base.CommonTestBase`.
 1. Remove all Snowpark Session creation in your test, and use `self.session` to access the session if needed.
-1. If you write your own `setUp` and `tearDown` method, remember to call `super().setUp()` or `super().tearDown().`
+1. If you write your own `setUp` and `tearDown` method, remember to call `super().setUp()` or
+   `super().tearDown()`.
 1. Write a factory method in your test class that return a tuple of a function and its parameters as a tuple. The
 function will be run as a store procedure in the environment with previous version of library.
 
@@ -392,11 +394,6 @@ function will be run as a store procedure in the environment with previous versi
 
 1. Decorate your test method with `common_test_base.CommonTestBase.compatibility_test`, providing the factory method
 you created in the above step, optional version range to test with, as well as additional package requirements.
-
-    **Attention**: For every version available in the server and within the version range, a sub-test will be run that
-    contains a run of prepare function in the store procedure and a run of the method. Sub-test means that `setUp` and
-    `tearDown` won't run every sub-test and will only run once before and after the whole test method. So it is
-    important to make your test case self-contained.
 
 ## `pre-commit`
 

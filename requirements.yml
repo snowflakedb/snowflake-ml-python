@@ -30,6 +30,8 @@
 
 # (At least one of these three fields should be set.)
 
+# `require_gpu`: Set this to true if the package is only a requirement for the environment with GPUs.
+
 # # Snowflake Anaconda Channel
 
 # `from_channel`: Set this if the package is not available in the Snowflake Anaconda Channel
@@ -60,7 +62,11 @@
 
 # `tags`: Set tags to filter some of the requirements in specific cases. The current valid tags include:
 #   - `deployment_core`: Used by model deployment to indicate dependencies required to execute model deployment code
-#   on the server-side.
+#   on the server-side. (Obsolete)
+#   - `model_packaging`: Used by model packaging and deployment to indicate the core requirements to save and load the
+#   model.
+#   - `udf_inference`: Used by model packaging and deployment to indicate the requirements to run inference in UDF.
+#   - `spcs_inference`: Used by model packaging and deployment to indicate the requirements to run inference in SPCS.
 #   - `build_essential`: Used to indicate the packages composing the build environment.
 
 - name: absl-py
@@ -69,6 +75,8 @@
   tags:
     - build_essential
     - deployment_core
+    - udf_inference
+    - spcs_inference
 - name: accelerate
   dev_version: 0.22.0
   from_channel: conda-forge
@@ -81,6 +89,8 @@
   version_requirements: '>=3.5.0,<4'
   tags:
     - deployment_core
+    - udf_inference
+    - spcs_inference
 - name: boto3
   dev_version: 1.24.28
 - name_conda: conda-libmamba-solver
@@ -92,6 +102,7 @@
   version_requirements: '>=2.0.0'
   tags:
     - deployment_core
+    - model_packaging
 - name: cryptography
   dev_version: 39.0.1
   # Skipping version requirements as it should come as part of connector.
@@ -151,17 +162,23 @@
   tags:
     - deployment_core
     - build_essential
+    - udf_inference
+    - spcs_inference
 - name: packaging
   dev_version: '23.0'
   version_requirements: '>=20.9,<24'
   tags:
     - deployment_core
     - build_essential
+    - udf_inference
+    - spcs_inference
 - name: pandas
   dev_version: 1.5.3
   version_requirements: '>=1.0.0,<2'
   tags:
     - deployment_core
+    - udf_inference
+    - spcs_inference
 - name: protobuf
   dev_version: 3.20.3
 - name: pytest
@@ -174,6 +191,8 @@
   version_requirements: '>=6.0,<7'
   tags:
     - deployment_core
+    - udf_inference
+    - spcs_inference
 # For fsspec[http] in conda
 - name_conda: requests
   dev_version_conda: 2.29.0
@@ -203,10 +222,12 @@
   dev_version: 3.2.0
   version_requirements: '>=3.0.4,<4'
 - name: snowflake-snowpark-python
-  dev_version: 1.6.1
-  version_requirements: '>=1.5.1,<2'
+  dev_version: 1.8.0
+  version_requirements: '>=1.8.0,<2'
   tags:
     - deployment_core
+    - udf_inference
+    - spcs_inference
 - name: sphinx
   dev_version: 5.0.2
   tags:
@@ -214,6 +235,8 @@
 - name: starlette
   dev_version: 0.27.0
   from_channel: conda-forge
+  tags:
+    - spcs_inference
 - name: sqlparse
   dev_version: 0.4.4
   version_requirements: '>=0.4,<1'
@@ -224,8 +247,7 @@
   requirements_extra_tags:
     - tensorflow
 - name: tokenizers
-  dev_version_conda: 0.13.2
-  dev_version_pypi: 0.14.1
+  dev_version: 0.13.2
   version_requirements: '>=0.10,<1'
   requirements_extra_tags:
     - transformers
@@ -235,8 +257,7 @@
   requirements_extra_tags:
     - torch
 - name: transformers
-  dev_version_conda: 4.32.1
-  dev_version_pypi: 4.35.0
+  dev_version: 4.32.1
   version_requirements: '>=4.32.1,<5'
   requirements_extra_tags:
     - transformers
@@ -252,6 +273,8 @@
   version_requirements: '>=4.1.0,<5'
   tags:
     - deployment_core
+    - udf_inference
+    - spcs_inference
 - name: xgboost
   dev_version: 1.7.3
   version_requirements: '>=1.7.3,<2'
@@ -277,6 +300,4 @@
     - llm
 - name_pypi: vllm
   dev_version_pypi: 0.2.1.post1
-  version_requirements_pypi: '>=0.2.1.post1,<1'
-  requirements_extra_tags:
-    - llm
+  require_gpu: true

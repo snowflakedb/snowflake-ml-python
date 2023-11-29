@@ -5,6 +5,7 @@ import os
 import sys
 import tempfile
 import threading
+import time
 import traceback
 import zipfile
 from enum import Enum
@@ -41,6 +42,10 @@ class CustomThread(threading.Thread):
     def run(self) -> None:
         try:
             super().run()
+            # Keep the daemon thread alive to avoid destroy
+            # state attached to thread when loading the model.
+            while True:
+                time.sleep(60)
         except Exception:
             logger.error(traceback.format_exc())
             os._exit(arbiter.Arbiter.APP_LOAD_ERROR)
@@ -113,7 +118,9 @@ def _run_setup() -> None:
                 )
                 _LOADED_MODEL = pk.model
                 _LOADED_META = pk.meta
-            except ImportError:
+            except ImportError as e:
+                if e.name and not e.name.startswith("snowflake.ml"):
+                    raise e
                 # Legacy model support
                 from snowflake.ml.model import (  # type: ignore[attr-defined]
                     _model as model_api,
@@ -252,7 +259,7 @@ def run_app() -> applications.Starlette:
     # TODO[shchen]: SNOW-893654. Before SnowService supports Startup probe, or extends support for Readiness probe
     # with configurable failureThreshold, we will have to load the model in a separate thread in order to prevent
     # gunicorn worker timeout.
-    model_loading_worker = CustomThread(target=_run_setup)
+    model_loading_worker = CustomThread(target=_run_setup, daemon=True)
     model_loading_worker.start()
 
     routes = [

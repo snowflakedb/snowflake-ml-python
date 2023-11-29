@@ -1,5 +1,7 @@
 import numpy as np
+import pandas as pd
 from absl.testing import absltest
+from importlib_resources import files
 
 from snowflake.ml.modeling.pipeline import Pipeline
 from snowflake.ml.modeling.preprocessing import (
@@ -9,7 +11,7 @@ from snowflake.ml.modeling.preprocessing import (
 )
 from snowflake.ml.modeling.xgboost import XGBRegressor
 from snowflake.ml.utils.connection_params import SnowflakeLoginOptions
-from snowflake.snowpark import Column, Session, functions as F
+from snowflake.snowpark import Session
 
 categorical_columns = [
     "AGE",
@@ -43,16 +45,15 @@ class GridSearchCVTest(absltest.TestCase):
     def setUp(self):
         """Creates Snowpark and Snowflake environments for testing."""
         self._session = Session.builder.configs(SnowflakeLoginOptions()).create()
+        data_file = files("tests.integ.snowflake.ml.test_data").joinpath("UCI_BANK_MARKETING_20COLUMNS.csv")
+        self._test_data = pd.read_csv(data_file, index_col=0)
 
     def tearDown(self):
         self._session.close()
 
     def test_fit_and_compare_results(self) -> None:
-        raw_data = self._session.sql(
-            """SELECT *, IFF(Y = 'yes', 1.0, 0.0) as LABEL
-                FROM ML_DATASETS.PUBLIC.UCI_BANK_MARKETING_20COLUMNS
-                LIMIT 2000"""
-        ).drop(Column("Y"))
+        pd_data = self._test_data
+        raw_data = self._session.create_dataframe(pd_data)
 
         pipeline = Pipeline(
             steps=[
@@ -78,12 +79,7 @@ class GridSearchCVTest(absltest.TestCase):
         pipeline.predict(raw_data).to_pandas()
 
     def test_fit_and_compare_results_pandas_dataframe(self) -> None:
-        raw_data = self._session.sql(
-            """SELECT *, IFF(Y = 'yes', 1.0, 0.0) as LABEL
-                FROM ML_DATASETS.PUBLIC.UCI_BANK_MARKETING_20COLUMNS
-                LIMIT 2000"""
-        ).drop(Column("Y"))
-        raw_data_pandas = raw_data.to_pandas()
+        raw_data_pandas = self._test_data
 
         pipeline = Pipeline(
             steps=[
@@ -109,11 +105,8 @@ class GridSearchCVTest(absltest.TestCase):
         pipeline.predict(raw_data_pandas)
 
     def test_fit_and_compare_results_pandas(self) -> None:
-        raw_data = self._session.sql(
-            """SELECT *, IFF(Y = 'yes', 1.0, 0.0) as LABEL
-                FROM ML_DATASETS.PUBLIC.UCI_BANK_MARKETING_20COLUMNS
-                LIMIT 2000"""
-        ).drop(Column("Y"))
+        pd_data = self._test_data
+        raw_data = self._session.create_dataframe(pd_data)
 
         pipeline = Pipeline(
             steps=[
@@ -139,16 +132,10 @@ class GridSearchCVTest(absltest.TestCase):
         pipeline.predict(raw_data.to_pandas())
 
     def test_pipeline_export(self) -> None:
-        snow_df = (
-            self._session.sql(
-                """SELECT *, IFF(Y = 'yes', 1.0, 0.0) as LABEL
-                FROM ML_DATASETS.PUBLIC.UCI_BANK_MARKETING_20COLUMNS
-                LIMIT 2000"""
-            )
-            .drop("Y")
-            .withColumn("ROW_INDEX", F.monotonically_increasing_id())
-        )
-        pd_df = snow_df.to_pandas().sort_values(by=["ROW_INDEX"]).drop("LABEL", axis=1)
+        pd_data = self._test_data
+        pd_data["ROW_INDEX"] = pd_data.reset_index().index
+        snow_df = self._session.create_dataframe(pd_data)
+        pd_df = pd_data.drop("LABEL", axis=1)
 
         pipeline = Pipeline(
             steps=[
@@ -182,16 +169,10 @@ class GridSearchCVTest(absltest.TestCase):
         np.testing.assert_allclose(snow_results.flatten(), sk_results.flatten(), rtol=1.0e-1, atol=1.0e-2)
 
     def test_pipeline_with_limited_number_of_columns_in_estimator_export(self) -> None:
-        snow_df = (
-            self._session.sql(
-                """SELECT *, IFF(Y = 'yes', 1.0, 0.0) as LABEL
-                FROM ML_DATASETS.PUBLIC.UCI_BANK_MARKETING_20COLUMNS
-                LIMIT 2000"""
-            )
-            .drop("Y", "DEFAULT")
-            .withColumn("ROW_INDEX", F.monotonically_increasing_id())
-        )
-        pd_df = snow_df.to_pandas().sort_values(by=["ROW_INDEX"]).drop("LABEL", axis=1)
+        pd_data = self._test_data
+        pd_data["ROW_INDEX"] = pd_data.reset_index().index
+        snow_df = self._session.create_dataframe(pd_data.drop("DEFAULT", axis=1))
+        pd_df = pd_data.drop("LABEL", axis=1)
 
         pipeline = Pipeline(
             steps=[

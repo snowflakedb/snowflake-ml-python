@@ -5,6 +5,7 @@ from uuid import uuid4
 import pandas as pd
 from pandas.testing import assert_frame_equal
 
+from snowflake.ml._internal.utils import identifier
 from snowflake.ml.feature_store.feature_view import FeatureView
 from snowflake.ml.utils.connection_params import SnowflakeLoginOptions
 from snowflake.snowpark import Session
@@ -18,9 +19,6 @@ FS_INTEG_TEST_DUMMY_DB = "SNOWML_FEATURE_STORE_DUMMY_DB"
 
 # Schema with test datasets used for feature store integration test
 FS_INTEG_TEST_DATASET_SCHEMA = "TEST_DATASET"
-
-# Warehouse used for feature store integration test
-FS_INTEG_TEST_DEFAULT_WAREHOUSE = "FEATURE_STORE_INTEG_TEST"
 
 # Yellow trip dataset
 FS_INTEG_TEST_YELLOW_TRIP_DATA = "yellow_tripdata_2016_01"
@@ -62,3 +60,8 @@ def create_mock_session(trouble_query: str, exception: Exception) -> Any:
     session = Session.builder.configs(SnowflakeLoginOptions()).create()
     session.sql = Mock(side_effect=side_effect(session))
     return session
+
+
+def get_test_warehouse_name(session: Session) -> str:
+    session_warehouse = session.get_current_warehouse()
+    return identifier._get_unescaped_name(session_warehouse) if session_warehouse else "REGTEST_ML_4XL_MULTI"
