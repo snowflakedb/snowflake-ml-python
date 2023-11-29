@@ -83,8 +83,7 @@ class TestModelRegistryIntegSnowServiceBase(spcs_integ_test_base.SpcsIntegTestBa
         deploy_info = model_ref.deploy(**deployment_options)  # type: ignore[attr-defined]
         deploy_details = deploy_info["details"]
         self.assertNotEmpty(deploy_details)
-        self.assertTrue(deploy_details["image_name"])
-        self.assertTrue(is_valid_yaml(deploy_details["service_spec"]))
+        self.assertTrue(deploy_details["service_info"])
         self.assertTrue(deploy_details["service_function_sql"])
 
         remote_prediction = model_ref.predict(deployment_name, test_features)

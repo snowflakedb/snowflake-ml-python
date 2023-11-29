@@ -6,6 +6,7 @@ import pandas as pd
 from typing_extensions import TypeGuard
 
 import snowflake.snowpark
+import snowflake.snowpark.functions as F
 import snowflake.snowpark.types as spt
 from snowflake.ml._internal.exceptions import (
     error_codes,
@@ -89,10 +90,6 @@ class SnowparkDataFrameHandler(base_handler.BaseDataHandler[snowflake.snowpark.D
         session: snowflake.snowpark.Session, df: pd.DataFrame, keep_order: bool = False
     ) -> snowflake.snowpark.DataFrame:
         # This method is necessary to create the Snowpark Dataframe in correct schema.
-        # Snowpark ignore the schema argument when providing a pandas DataFrame.
-        # However, in this case, if a cell of the original Dataframe is some array type,
-        # they will be inferred as VARIANT.
-        # To make sure Snowpark get the correct schema, we have to provide in a list of records.
         # However, in this case, the order could not be preserved. Thus, a _ID column has to be added,
         # if keep_order is True.
         # Although in this case, the column with array type can get correct ARRAY type, however, the element
@@ -106,7 +103,9 @@ class SnowparkDataFrameHandler(base_handler.BaseDataHandler[snowflake.snowpark.D
             )
         features = pandas_handler.PandasDataFrameHandler.infer_signature(df, role="input")
         # Role will be no effect on the column index. That is to say, the feature name is the actual column name.
-        schema_list = []
+        sp_df = session.create_dataframe(df)
+        column_names = []
+        columns = []
         for feature in features:
             if isinstance(feature, core.FeatureGroupSpec):
                 raise snowml_exceptions.SnowflakeMLException(
@@ -114,21 +113,12 @@ class SnowparkDataFrameHandler(base_handler.BaseDataHandler[snowflake.snowpark.D
                     original_exception=NotImplementedError("FeatureGroupSpec is not supported."),
                 )
             assert isinstance(feature, core.FeatureSpec), "Invalid feature kind."
-            schema_list.append(
-                spt.StructField(
-                    identifier.get_inferred_name(feature.name),
-                    feature.as_snowpark_type(),
-                    nullable=df[feature.name].isnull().any(),
-                )
-            )
+            column_names.append(identifier.get_inferred_name(feature.name))
+            columns.append(F.col(identifier.get_inferred_name(feature.name)).cast(feature.as_snowpark_type()))
 
-        data = df.rename(columns=identifier.get_inferred_name).to_dict("records")
+        sp_df = sp_df.with_columns(column_names, columns)
+
         if keep_order:
-            for idx, data_item in enumerate(data):
-                data_item[infer_template._KEEP_ORDER_COL_NAME] = idx
-            schema_list.append(spt.StructField(infer_template._KEEP_ORDER_COL_NAME, spt.LongType(), nullable=False))
-        sp_df = session.create_dataframe(
-            data,  # To make sure the schema can be used, otherwise, array will become variant.
-            spt.StructType(schema_list),
-        )
+            sp_df = sp_df.with_column(infer_template._KEEP_ORDER_COL_NAME, F.monotonically_increasing_id())
+
         return sp_df

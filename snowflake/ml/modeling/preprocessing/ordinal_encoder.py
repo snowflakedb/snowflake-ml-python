@@ -499,12 +499,6 @@ class OrdinalEncoder(base.BaseTransformer):
                     .drop(identifier.concat_names([input_col, suffix]))
                 )
 
-                # in case of duplicate column, filter them
-                output_cols = transformed_dataset.columns
-                if output_col not in output_cols:
-                    output_cols.append(output_col)
-                transformed_dataset = transformed_dataset[output_cols]
-
             batch_table_name = snowpark_utils.random_name_for_temp_object(snowpark_utils.TempObjectType.TABLE)
             transformed_dataset.write.save_as_table(  # type: ignore[call-overload]
                 batch_table_name,

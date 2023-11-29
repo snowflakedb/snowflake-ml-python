@@ -4,10 +4,9 @@ from typing import Dict, Optional, Type, cast, final
 
 import cloudpickle
 import pandas as pd
-from packaging import requirements
 from typing_extensions import TypeGuard, Unpack
 
-from snowflake.ml._internal import env_utils, file_utils
+from snowflake.ml._internal import file_utils
 from snowflake.ml.model import custom_model, model_signature, type_hints as model_types
 from snowflake.ml.model._packager.model_env import model_env
 from snowflake.ml.model._packager.model_handlers import _base
@@ -109,14 +108,7 @@ class LLMHandler(_base.BaseModelHandler[llm.LLM]):
             ]
         model_meta.env.include_if_absent(pkgs_requirements, check_local_version=True)
         # Recent peft versions are only available in PYPI.
-        env_utils.append_requirement_list(
-            model_meta.env._pip_requirements,
-            requirements.Requirement("peft==0.5.0"),
-        )
-        env_utils.append_requirement_list(
-            model_meta.env._pip_requirements,
-            requirements.Requirement("vllm==0.2.1.post1"),
-        )
+        model_meta.env.include_if_absent_pip(["peft==0.5.0", "vllm==0.2.1.post1"])
 
         model_meta.env.cuda_version = kwargs.get("cuda_version", model_env.DEFAULT_CUDA_VERSION)
 
@@ -170,7 +162,38 @@ class LLMHandler(_base.BaseModelHandler[llm.LLM]):
                 logger.warning(f"Torch VRAM {torch.cuda.memory_allocated()/1024**2} MB allocated.")
                 logger.warning(f"Torch VRAM {torch.cuda.memory_reserved()/1024**2} MB reserved.")
 
-            def _merge_model(self, local_dir_path: str):  # type: ignore[no-untyped-def]
+            def _prepare_for_pretrain(self) -> None:
+                hub_kwargs = {
+                    "revision": raw_model.revision,
+                    "token": raw_model.token,
+                }
+                model_dir_path = raw_model.model_id_or_path
+                tokenizer = transformers.AutoTokenizer.from_pretrained(
+                    model_dir_path,
+                    padding_side="right",
+                    use_fast=False,
+                    **hub_kwargs,
+                )
+                if not tokenizer.pad_token:
+                    tokenizer.pad_token = tokenizer.eos_token
+                tokenizer.save_pretrained(self.local_model_dir)
+                hf_model = transformers.AutoModelForCausalLM.from_pretrained(
+                    model_dir_path,
+                    device_map="auto",
+                    torch_dtype="auto",
+                    **hub_kwargs,
+                )
+                hf_model.eval()
+                hf_model.save_pretrained(self.local_model_dir)
+                logger.warning(f"Model state is saved to {self.local_model_dir}.")
+                del tokenizer
+                del hf_model
+                gc.collect()
+                torch.cuda.empty_cache()
+                self._memory_stats("After GC on model.")
+
+            def _prepare_for_lora(self) -> None:
+                self._memory_stats("Before model load & merge.")
                 import peft
 
                 hub_kwargs = {
@@ -188,8 +211,8 @@ class LLMHandler(_base.BaseModelHandler[llm.LLM]):
                 )
                 if not tokenizer.pad_token:
                     tokenizer.pad_token = tokenizer.eos_token
-                tokenizer.save_pretrained(local_dir_path)
-                logger.warning(f"Tokenizer state is saved to {local_dir_path}.")
+                tokenizer.save_pretrained(self.local_model_dir)
+                logger.warning(f"Tokenizer state is saved to {self.local_model_dir}.")
                 hf_model = peft.AutoPeftModelForCausalLM.from_pretrained(  # type: ignore[attr-defined]
                     model_dir_path,
                     device_map="auto",
@@ -198,71 +221,35 @@ class LLMHandler(_base.BaseModelHandler[llm.LLM]):
                 )
                 hf_model.eval()
                 hf_model = hf_model.merge_and_unload()
-                hf_model.save_pretrained(local_dir_path)
-                logger.warning(f"Merged model state is saved to {local_dir_path}.")
-                return hf_model
-
-            def _init_engine_for_remote_pretrain(self) -> None:
-                hub_kwargs = {
-                    "revision": raw_model.revision,
-                    "token": raw_model.token,
-                }
-                model_dir_path = raw_model.model_id_or_path
-                tokenizer = transformers.AutoTokenizer.from_pretrained(
-                    model_dir_path,
-                    padding_side="right",
-                    use_fast=False,
-                    **hub_kwargs,
-                )
-                if not tokenizer.pad_token:
-                    tokenizer.pad_token = tokenizer.eos_token
-                t = tempfile.TemporaryDirectory()
-                local_dir_path = t.name
-                tokenizer.save_pretrained(local_dir_path)
-                hf_model = transformers.AutoModelForCausalLM.from_pretrained(
-                    model_dir_path,
-                    device_map="auto",
-                    torch_dtype="auto",
-                    **hub_kwargs,
-                )
-                hf_model.eval()
-                hf_model.save_pretrained(local_dir_path)
-                logger.warning(f"Model state is saved to {local_dir_path}.")
-                del tokenizer
-                del hf_model
-                gc.collect()
-                torch.cuda.empty_cache()
-                self._memory_stats("After GC on model.")
-                self.llm_engine = vllm.LLM(
-                    model=t.name,
-                    # TODO(halu): Update if raylet issued resolved.
-                    tensor_parallel_size=1,
-                )
-
-            def _init_engine_for_lora(self) -> None:
-                t = tempfile.TemporaryDirectory()
-                self._memory_stats("Before model load & merge.")
-                hf_model = self._merge_model(t.name)
+                hf_model.save_pretrained(self.local_model_dir)
+                logger.warning(f"Merged model state is saved to {self.local_model_dir}.")
                 self._memory_stats("After model load & merge.")
                 del hf_model
                 gc.collect()
                 torch.cuda.empty_cache()
                 self._memory_stats("After GC on model.")
 
-                tp_size = torch.cuda.device_count() if raw_model.enable_tp else 1
-                self.llm_engine = vllm.LLM(model=t.name, tensor_parallel_size=tp_size)
-                logger.warning(f"vLLM engine init is done. tp: {tp_size}")
-
             def __init__(self, context: custom_model.ModelContext) -> None:
+                self.local_tmp_holder = tempfile.TemporaryDirectory()
+                self.local_model_dir = self.local_tmp_holder.name
                 if raw_model.mode == llm.LLM.Mode.LOCAL_LORA:
-                    self._init_engine_for_lora()
+                    self._prepare_for_lora()
                 elif raw_model.mode == llm.LLM.Mode.REMOTE_PRETRAIN:
-                    self._init_engine_for_remote_pretrain()
-
+                    self._prepare_for_pretrain()
                 self.sampling_params = vllm.SamplingParams(
                     temperature=raw_model.temperature,
                     top_p=raw_model.top_p,
                     max_tokens=raw_model.max_tokens,
+                )
+                self._init_engine()
+
+            # This has to have same lifetime as main thread
+            # in order to avoid pre-maturely terminate ray.
+            def _init_engine(self) -> None:
+                tp_size = torch.cuda.device_count() if raw_model.enable_tp else 1
+                self.llm_engine = vllm.LLM(
+                    model=self.local_model_dir,
+                    tensor_parallel_size=tp_size,
                 )
 
             @custom_model.inference_api
