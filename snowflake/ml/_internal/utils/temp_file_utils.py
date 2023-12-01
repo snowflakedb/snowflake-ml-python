@@ -3,6 +3,10 @@ import shutil
 import tempfile
 from typing import Iterable, Union
 
+from absl.logging import logging
+
+logger = logging.getLogger(__name__)
+
 
 def get_temp_file_path() -> str:
     """Returns a new random temp file path.
@@ -43,4 +47,4 @@ def cleanup_temp_files(file_paths: Union[str, Iterable[str]]) -> None:
             else:
                 os.remove(file_to_delete)
         except FileNotFoundError:
-            print(f"Failed to cleanup file {file_to_delete}")
+            logger.warn(f"Failed to cleanup file {file_to_delete}")

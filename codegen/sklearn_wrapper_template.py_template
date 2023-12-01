@@ -8,6 +8,7 @@ from uuid import uuid4
 import cloudpickle as cp
 import pandas as pd
 import numpy as np
+from numpy import typing as npt
 
 {transform.estimator_imports}
 from sklearn.utils.metaestimators import available_if
@@ -33,6 +34,7 @@ from snowflake.ml.model.model_signature import (
     FeatureSpec,
     ModelSignature,
     _infer_signature,
+    _rename_signature_with_snowflake_identifiers,
     BaseFeatureSpec,
 )
 from snowflake.ml.model._signatures import utils as model_signature_utils
@@ -453,6 +455,20 @@ class {transform.original_class_name}(BaseTransformer):
             )
 
         return output_df
+    
+    @available_if(original_estimator_has_callable("fit_predict"))  # type: ignore[misc]
+    def fit_predict(self, dataset: Union[DataFrame, pd.DataFrame]) -> npt.NDArray[Any]:
+        """ {transform.fit_predict_docstring}
+        Returns:
+            Predicted dataset.
+        """
+        if {transform.fit_predict_cluster_function_support}:
+            self.fit(dataset)
+            assert self._sklearn_object is not None
+            return self._sklearn_object.labels_
+        else:
+            # TODO(xinyi): support fit_predict for mixture classes
+            raise NotImplementedError
 
     def _get_output_column_names(self, output_cols_prefix: str, output_cols: Optional[List[str]] = None) -> List[str]:
         """ Returns the list of output columns for predict_proba(), decision_function(), etc.. functions.
@@ -460,29 +476,35 @@ class {transform.original_class_name}(BaseTransformer):
         """
         output_cols_prefix = identifier.resolve_identifier(output_cols_prefix)
         if output_cols:
-            return [f"{{output_cols_prefix}}{{identifier.resolve_identifier(c)}}" for c in output_cols]
-
-        if getattr(self._sklearn_object, "classes_", None) is None:
-            return [output_cols_prefix]
-
-        assert self._sklearn_object is not None  # keep mypy happy
-        classes = self._sklearn_object.classes_
-        if isinstance(classes, numpy.ndarray):
-            return [f'{{output_cols_prefix}}{{c}}' for c in classes.tolist()]
-        elif isinstance(classes, list) and len(classes) > 0 and isinstance(classes[0], numpy.ndarray):
-            # If the estimator is a multioutput estimator, classes_ will be a list of ndarrays.
+            output_cols = [
+                identifier.concat_names([output_cols_prefix, identifier.resolve_identifier(c)])
+                for c in output_cols
+            ]
+        elif getattr(self._sklearn_object, "classes_", None) is None:
+            output_cols = [output_cols_prefix]
+        elif self._sklearn_object is not None:
+            classes = self._sklearn_object.classes_
+            if isinstance(classes, numpy.ndarray):
+                output_cols = [f'{{output_cols_prefix}}{{str(c)}}' for c in classes.tolist()]
+            elif isinstance(classes, list) and len(classes) > 0 and isinstance(classes[0], numpy.ndarray):
+                # If the estimator is a multioutput estimator, classes_ will be a list of ndarrays.
+                output_cols = []
+                for i, cl in enumerate(classes):
+                    # For binary classification, there is only one output column for each class
+                    # ndarray as the two classes are complementary.
+                    if len(cl) == 2:
+                        output_cols.append(f'{{output_cols_prefix}}{{i}}_{{cl[0]}}')
+                    else:
+                        output_cols.extend([
+                            f'{{output_cols_prefix}}{{i}}_{{c}}' for c in cl.tolist()
+                        ])
+        else:
             output_cols = []
-            for i, cl in enumerate(classes):
-                # For binary classification, there is only one output column for each class
-                # ndarray as the two classes are complementary.
-                if len(cl) == 2:
-                    output_cols.append(f'{{output_cols_prefix}}{{i}}_{{cl[0]}}')
-                else:
-                    output_cols.extend([
-                        f'{{output_cols_prefix}}{{i}}_{{c}}' for c in cl.tolist()
-                    ])
-            return output_cols
-        return []
+
+        # Make sure column names are valid snowflake identifiers.
+        rv = [identifier.rename_to_valid_snowflake_identifier(c) for c in output_cols]
+
+        return rv
 
     @available_if(original_estimator_has_callable("predict_proba"))  # type: ignore[misc]
     @telemetry.send_api_usage_telemetry(
@@ -709,7 +731,7 @@ class {transform.original_class_name}(BaseTransformer):
             # For classifier, the type of predict is the same as the type of label
             if self._sklearn_object._estimator_type == 'classifier':
                  # label columns is the desired type for output
-                outputs = _infer_signature(dataset[self.label_cols], "output")
+                outputs = _infer_signature(dataset[self.label_cols], "output", use_snowflake_identifiers=True)
                 # rename the output columns
                 outputs = model_signature_utils.rename_features(outputs, self.output_cols)
                 self._model_signature_dict["predict"] = ModelSignature(inputs,
@@ -729,6 +751,12 @@ class {transform.original_class_name}(BaseTransformer):
                 self._model_signature_dict[prob_func] = ModelSignature(inputs,
                                                                        ([] if self._drop_input_cols else inputs)
                                                                        + outputs)
+
+        # Output signature names may still need to be renamed, since they were not created with `_infer_signature`.
+        items = list(self._model_signature_dict.items())
+        for method, signature in items:
+            signature._outputs = _rename_signature_with_snowflake_identifiers(signature._outputs)
+            self._model_signature_dict[method] = signature
 
     @property
     def model_signatures(self) -> Dict[str, ModelSignature]:

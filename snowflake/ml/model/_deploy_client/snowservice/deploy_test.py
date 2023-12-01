@@ -3,6 +3,7 @@ from typing import Any, Dict, Optional, cast
 from absl.testing import absltest
 from absl.testing.absltest import mock
 
+from snowflake import snowpark
 from snowflake.ml.model._deploy_client.snowservice import deploy_options
 from snowflake.ml.model._deploy_client.snowservice.deploy import (
     SnowServiceDeployment,
@@ -29,6 +30,16 @@ class DeployTestCase(absltest.TestCase):
             "compute_pool": "mock_compute_pool",
             "image_repo": "mock_image_repo",
         }
+
+        self.m_session.add_mock_sql(
+            query="SHOW PARAMETERS LIKE 'PYTHON_CONNECTOR_QUERY_RESULT_FORMAT' IN SESSION",
+            result=mock_data_frame.MockDataFrame([row.Row(value="arrow")]),
+        )
+
+        self.m_session.add_mock_sql(
+            query="ALTER SESSION SET PYTHON_CONNECTOR_QUERY_RESULT_FORMAT = 'json'",
+            result=mock_data_frame.MockDataFrame(collect_result=[]),
+        )
 
     def _get_mocked_compute_pool_res(
         self,
@@ -61,6 +72,11 @@ class DeployTestCase(absltest.TestCase):
         self.m_session.add_mock_sql(
             query=f"DESC COMPUTE POOL {self.options['compute_pool']}",
             result=self._get_mocked_compute_pool_res(),
+        )
+
+        self.m_session.add_mock_sql(
+            query="ALTER SESSION SET PYTHON_CONNECTOR_QUERY_RESULT_FORMAT = 'arrow'",
+            result=mock_data_frame.MockDataFrame(collect_result=[]),
         )
 
         _deploy(
@@ -100,6 +116,12 @@ class DeployTestCase(absltest.TestCase):
             query=f"DESC COMPUTE POOL {self.options['compute_pool']}",
             result=self._get_mocked_compute_pool_res(state="STARTING"),
         )
+
+        self.m_session.add_mock_sql(
+            query="ALTER SESSION SET PYTHON_CONNECTOR_QUERY_RESULT_FORMAT = 'arrow'",
+            result=mock_data_frame.MockDataFrame(collect_result=[]),
+        )
+
         with exception_utils.assert_snowml_exceptions(self, expected_original_error_type=RuntimeError):
             _deploy(
                 session=cast(session.Session, self.m_session),
@@ -130,6 +152,11 @@ class DeployTestCase(absltest.TestCase):
             result=self._get_mocked_compute_pool_res(state="SUSPENDED", auto_resume=True),
         )
 
+        self.m_session.add_mock_sql(
+            query="ALTER SESSION SET PYTHON_CONNECTOR_QUERY_RESULT_FORMAT = 'arrow'",
+            result=mock_data_frame.MockDataFrame(collect_result=[]),
+        )
+
         _deploy(
             session=cast(session.Session, self.m_session),
             model_id="provided_model_id",
@@ -150,6 +177,11 @@ class DeployTestCase(absltest.TestCase):
     ) -> None:
         m_model_meta = m_model_meta_class.return_value
         with exception_utils.assert_snowml_exceptions(self, expected_original_error_type=ValueError):
+            self.m_session.add_mock_sql(
+                query="ALTER SESSION SET PYTHON_CONNECTOR_QUERY_RESULT_FORMAT = 'arrow'",
+                result=mock_data_frame.MockDataFrame(collect_result=[]),
+            )
+
             _deploy(
                 session=cast(session.Session, self.m_session),
                 service_func_name="mock_service_func",
@@ -173,6 +205,10 @@ class DeployTestCase(absltest.TestCase):
             self, expected_original_error_type=ValueError, expected_regex="compute_pool"
         ):
             options: Dict[str, Any] = {}
+            self.m_session.add_mock_sql(
+                query="ALTER SESSION SET PYTHON_CONNECTOR_QUERY_RESULT_FORMAT = 'arrow'",
+                result=mock_data_frame.MockDataFrame(collect_result=[]),
+            )
             _deploy(
                 session=cast(session.Session, self.m_session),
                 service_func_name="mock_service_func",
@@ -199,7 +235,10 @@ class DeployTestCase(absltest.TestCase):
                 query=f"DESC COMPUTE POOL {self.options['compute_pool']}",
                 result=self._get_mocked_compute_pool_res(instance_family="GPU_3"),
             )
-
+            self.m_session.add_mock_sql(
+                query="ALTER SESSION SET PYTHON_CONNECTOR_QUERY_RESULT_FORMAT = 'arrow'",
+                result=mock_data_frame.MockDataFrame(collect_result=[]),
+            )
             _deploy(
                 session=cast(session.Session, self.m_session),
                 service_func_name="mock_service_func",
@@ -226,8 +265,8 @@ class DeployTestCase(absltest.TestCase):
             expected_regex="You are requesting GPUs for models that do not use a GPU or does not have CUDA version set",
         ):
             self.m_session.add_mock_sql(
-                query=f"DESC COMPUTE POOL {self.options['compute_pool']}",
-                result=self._get_mocked_compute_pool_res(instance_family="GPU_7"),
+                query="ALTER SESSION SET PYTHON_CONNECTOR_QUERY_RESULT_FORMAT = 'arrow'",
+                result=mock_data_frame.MockDataFrame(collect_result=[]),
             )
             _deploy(
                 session=cast(session.Session, self.m_session),
@@ -259,6 +298,10 @@ class DeployTestCase(absltest.TestCase):
         self.m_session.add_mock_sql(
             query=f"DESC COMPUTE POOL {self.options['compute_pool']}",
             result=self._get_mocked_compute_pool_res(instance_family=unknown_instance_type),
+        )
+        self.m_session.add_mock_sql(
+            query="ALTER SESSION SET PYTHON_CONNECTOR_QUERY_RESULT_FORMAT = 'arrow'",
+            result=mock_data_frame.MockDataFrame(collect_result=[]),
         )
         with self.assertLogs(level="INFO") as cm:
             _deploy(
@@ -296,6 +339,12 @@ class DeployTestCase(absltest.TestCase):
             options=mock.ANY,
         )
         m_deployment.deploy.assert_called_once()
+
+
+class TestImageRepoCreate(absltest.TestCase):
+    def setUp(self) -> None:
+        super().setUp()
+        self.m_session = mock_session.MockSession(conn=None, test_case=self)
 
     @mock.patch(
         "snowflake.ml.model._deploy_client.snowservice.deploy." "snowservice_client.SnowServiceClient"
@@ -369,7 +418,7 @@ class SnowServiceDeploymentTestCase(absltest.TestCase):
     @mock.patch("snowflake.ml.model._deploy_client.snowservice.deploy.model_meta.ModelMetadata")  # type: ignore[misc]
     def setUp(self, m_model_meta_class: mock.MagicMock) -> None:
         super().setUp()
-        self.m_session = cast(session.Session, mock_session.MockSession(conn=None, test_case=self))
+        self.m_session = mock_session.MockSession(conn=None, test_case=self)
         self.m_model_id = "provided_model_id"
         self.m_service_func_name = "mock_db.mock_schema.provided_service_func_name"
         self.m_model_zip_stage_path = "@provided_model_zip_stage_path/model.zip"
@@ -385,7 +434,7 @@ class SnowServiceDeploymentTestCase(absltest.TestCase):
         }
 
         self.deployment = SnowServiceDeployment(
-            self.m_session,
+            cast(session.Session, self.m_session),
             model_id=self.m_model_id,
             service_func_name=self.m_service_func_name,
             model_meta=self.m_model_meta,
@@ -395,19 +444,25 @@ class SnowServiceDeploymentTestCase(absltest.TestCase):
             options=deploy_options.SnowServiceDeployOptions.from_dict(self.m_options),
         )
 
+        self.m_session.add_mock_sql(
+            query=f"DESCRIBE SERVICE {self.deployment._service_name}",
+            result=mock_data_frame.MockDataFrame(
+                collect_result=[snowpark.Row(**{"name": self.deployment._service_name})]
+            ),
+        )
+
     def test_service_name(self) -> None:
         self.assertEqual(self.deployment._service_name, "mock_db.mock_schema.service_provided_model_id")
 
     @mock.patch(
         "snowflake.ml.model._deploy_client.snowservice.deploy.image_registry_client.ImageRegistryClient"
-        ".add_tag_to_remote_image"
     )  # type: ignore[misc]
-    @mock.patch(
-        "snowflake.ml.model._deploy_client.snowservice.deploy.image_registry_client.ImageRegistryClient" ".image_exists"
-    )  # type: ignore[misc]
-    def test_deploy(self, m_image_exists_class: mock.MagicMock, m_add_tag_class: mock.MagicMock) -> None:
-        m_image_exists_class.return_value = False
-        m_add_tag_class.return_value = None
+    def test_deploy(self, m_image_registry_client: mock.MagicMock) -> None:
+        m_image_registry_client.return_value = mock.MagicMock()
+        m_client = m_image_registry_client.return_value
+        m_client.image_exists.return_value = False
+        m_client.add_tag_to_remote_image.return_value = None
+
         with mock.patch.object(
             self.deployment, "_build_and_upload_image"
         ) as m_build_and_upload_image, mock.patch.object(
@@ -440,20 +495,19 @@ class SnowServiceDeploymentTestCase(absltest.TestCase):
                     ],
                 )
 
-            m_add_tag_class.assert_called_once_with(original_full_image_name=full_image_name, new_tag=self.model_name)
+            m_client.add_tag_to_remote_image.assert_called_once_with(
+                original_full_image_name=full_image_name, new_tag=self.model_name
+            )
 
     @mock.patch(
         "snowflake.ml.model._deploy_client.snowservice.deploy.image_registry_client.ImageRegistryClient"
-        ".add_tag_to_remote_image"
     )  # type: ignore[misc]
-    @mock.patch(
-        "snowflake.ml.model._deploy_client.snowservice.deploy.image_registry_client.ImageRegistryClient.image_exists"
-    )  # type: ignore[misc]
-    def test_deploy_with_image_already_exists_in_registry(
-        self, m_image_exists_class: mock.MagicMock, m_add_tag_class: mock.MagicMock
-    ) -> None:
-        m_image_exists_class.return_value = True
-        m_add_tag_class.return_value = None
+    def test_deploy_with_image_already_exists_in_registry(self, m_image_registry_client: mock.MagicMock) -> None:
+        m_image_registry_client.return_value = mock.MagicMock()
+        m_client = m_image_registry_client.return_value
+        m_client.image_exists.return_value = True
+        m_client.add_tag_to_remote_image.return_value = None
+
         with mock.patch.object(
             self.deployment, "_build_and_upload_image"
         ) as m_build_and_upload_image, mock.patch.object(
@@ -464,6 +518,7 @@ class SnowServiceDeploymentTestCase(absltest.TestCase):
             full_image_name = "org-account.registry.snowflakecomputing.com/db/schema/repo/image:latest"
             m_get_full_image_name.return_value = full_image_name
             m_deploy_workflow.return_value = ("service_spec", "sql")
+
             with self.assertLogs(level="WARNING") as cm:
                 self.deployment.deploy()
                 m_build_and_upload_image.assert_not_called()
@@ -479,7 +534,9 @@ class SnowServiceDeploymentTestCase(absltest.TestCase):
                         )
                     ],
                 )
-        m_add_tag_class.assert_called_once_with(original_full_image_name=full_image_name, new_tag=self.model_name)
+        m_client.add_tag_to_remote_image.assert_called_once_with(
+            original_full_image_name=full_image_name, new_tag=self.model_name
+        )
 
 
 if __name__ == "__main__":

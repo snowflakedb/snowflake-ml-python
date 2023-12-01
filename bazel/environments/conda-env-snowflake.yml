@@ -43,7 +43,7 @@ dependencies:
   - sentencepiece==0.1.99
   - shap==0.42.1
   - snowflake-connector-python==3.2.0
-  - snowflake-snowpark-python==1.6.1
+  - snowflake-snowpark-python==1.8.0
   - sphinx==5.0.2
   - sqlparse==0.4.4
   - tensorflow==2.10.0

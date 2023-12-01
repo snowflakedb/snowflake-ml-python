@@ -1,3 +1,4 @@
+# TODO[shchen]:  Remove this file and use session_token_manager instead.
 import base64
 import contextlib
 import json

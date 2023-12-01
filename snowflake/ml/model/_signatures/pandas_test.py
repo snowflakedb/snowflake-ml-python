@@ -283,6 +283,12 @@ class PandasDataFrameHandlerTest(absltest.TestCase):
         df2 = pd.DataFrame([[1, li], [2, li]], columns=["a", "b"])
         pd.testing.assert_frame_equal(pandas_handler.PandasDataFrameHandler.convert_to_df(df1), df2)
 
+    def test_infer_signature_pd_DataFrame_with_random_row_labels(self) -> None:
+        df = pd.DataFrame({"input": ["1", "2", "3", "4"]})
+        df.index = [10, 11, 12, 13]
+        df["input"] = df["input"].astype(np.dtype("O"))
+        pandas_handler.PandasDataFrameHandler.validate(df)
+
 
 if __name__ == "__main__":
     absltest.main()

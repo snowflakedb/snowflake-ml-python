@@ -6,7 +6,7 @@ import numpy as np
 import pandas as pd
 from typing_extensions import TypeGuard, Unpack
 
-from snowflake.ml._internal import env as snowml_env, env_utils, type_utils
+from snowflake.ml._internal import type_utils
 from snowflake.ml.model import custom_model, model_signature, type_hints as model_types
 from snowflake.ml.model._packager.model_env import model_env
 from snowflake.ml.model._packager.model_handlers import _base, _utils as handlers_utils
@@ -125,13 +125,6 @@ class SnowMLModelHandler(_base.BaseModelHandler["BaseEstimator"]):
         for dep in model_dependencies:
             pkg_name = dep.split("==")[0]
             _include_if_absent_pkgs.append(model_env.ModelDependency(requirement=pkg_name, pip_name=pkg_name))
-        if not model_meta.env._snowpark_ml_version.local:
-            _include_if_absent_pkgs.append(
-                model_env.ModelDependency(
-                    requirement=f"{env_utils.SNOWPARK_ML_PKG_NAME}=={snowml_env.VERSION}",
-                    pip_name=env_utils.SNOWPARK_ML_PKG_NAME,
-                )
-            )
         model_meta.env.include_if_absent(_include_if_absent_pkgs, check_local_version=True)
 
     @classmethod
