@@ -24,7 +24,7 @@ _COLUMN_BATCH_SIZE = 20
 # transformer with the sklearn version
 _SKLEARN_INITIAL_KEYWORDS = "categories"  # initial keywords in sklearn
 _SKLEARN_UNUSED_KEYWORDS = "dtype"  # sklearn keywords that are unused in snowml
-_SNOWML_ONLY_KEYWORDS = ["input_cols", "output_cols"]  # snowml only keywords not present in sklearn
+_SNOWML_ONLY_KEYWORDS = ["input_cols", "output_cols", "passthrough_cols"]  # snowml only keywords not present in sklearn
 
 # Added keywords mapped to the sklearn versions in which they were added. Update mappings in new
 # sklearn versions to support parameter validation.
@@ -61,6 +61,11 @@ class OrdinalEncoder(base.BaseTransformer):
         input_cols: The name(s) of one or more columns in a DataFrame containing a feature to be encoded.
         output_cols: The name(s) of one or more columns in a DataFrame in which results will be stored. The number of
             columns specified must match the number of input columns.
+        passthrough_cols: A string or a list of strings indicating column names to be excluded from any
+            operations (such as train, transform, or inference). These specified column(s)
+            will remain untouched throughout the process. This option is helpful in scenarios
+            requiring automatic input_cols inference, but need to avoid using specific
+            columns, like index columns, during training or inference.
         drop_input_cols: Remove input columns from output if set True. False by default.
 
     Attributes:
@@ -78,6 +83,7 @@ class OrdinalEncoder(base.BaseTransformer):
         encoded_missing_value: Union[int, float] = np.nan,
         input_cols: Optional[Union[str, Iterable[str]]] = None,
         output_cols: Optional[Union[str, Iterable[str]]] = None,
+        passthrough_cols: Optional[Union[str, Iterable[str]]] = None,
         drop_input_cols: Optional[bool] = False,
     ) -> None:
         """
@@ -110,6 +116,11 @@ class OrdinalEncoder(base.BaseTransformer):
             encoded_missing_value: Encoded value of missing categories.
             input_cols: Single or multiple input columns.
             output_cols: Single or multiple output columns.
+            passthrough_cols: A string or a list of strings indicating column names to be excluded from any
+                operations (such as train, transform, or inference). These specified column(s)
+                will remain untouched throughout the process. This option is helful in scenarios
+                requiring automatic input_cols inference, but need to avoid using specific
+                columns, like index columns, during in training or inference.
             drop_input_cols: Remove input columns from output if set True. False by default.
 
         Attributes:
@@ -129,6 +140,7 @@ class OrdinalEncoder(base.BaseTransformer):
 
         self.set_input_cols(input_cols)
         self.set_output_cols(output_cols)
+        self.set_passthrough_cols(passthrough_cols)
 
     def _reset(self) -> None:
         """

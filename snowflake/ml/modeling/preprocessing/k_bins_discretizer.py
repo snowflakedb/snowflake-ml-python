@@ -38,6 +38,7 @@ _SKLEARN_UNUSED_KEYWORDS = [
 _SNOWML_ONLY_KEYWORDS = [
     "input_cols",
     "output_cols",
+    "passthrough_cols",
 ]  # snowml only keywords not present in sklearn
 
 _VALID_ENCODING_SCHEME = ["onehot", "onehot-dense", "ordinal"]
@@ -78,6 +79,12 @@ class KBinsDiscretizer(base.BaseTransformer):
         output_cols: str or Iterable [column_name], default=None
             Single or multiple output columns.
 
+        passthrough_cols: A string or a list of strings indicating column names to be excluded from any
+            operations (such as train, transform, or inference). These specified column(s)
+            will remain untouched throughout the process. This option is helpful in scenarios
+            requiring automatic input_cols inference, but need to avoid using specific
+            columns, like index columns, during training or inference.
+
         drop_input_cols: boolean, default=False
             Remove input columns from output if set True.
 
@@ -97,6 +104,7 @@ class KBinsDiscretizer(base.BaseTransformer):
         strategy: str = "quantile",
         input_cols: Optional[Union[str, Iterable[str]]] = None,
         output_cols: Optional[Union[str, Iterable[str]]] = None,
+        passthrough_cols: Optional[Union[str, Iterable[str]]] = None,
         drop_input_cols: Optional[bool] = False,
     ) -> None:
         super().__init__(drop_input_cols=drop_input_cols)
@@ -105,6 +113,7 @@ class KBinsDiscretizer(base.BaseTransformer):
         self.strategy = strategy
         self.set_input_cols(input_cols)
         self.set_output_cols(output_cols)
+        self.set_passthrough_cols(passthrough_cols)
 
     def _enforce_params(self) -> None:
         self.n_bins = self.n_bins if isinstance(self.n_bins, Iterable) else [self.n_bins] * len(self.input_cols)

@@ -1,10 +1,11 @@
 from __future__ import annotations  # for return self methods
 
-from typing import Any
+from typing import Any, Type
 from unittest import TestCase
 
 from snowflake.ml._internal.utils.string_matcher import StringMatcherSql
 from snowflake.ml.test_utils import mock_data_frame, mock_snowml_base
+from snowflake.snowpark import Session
 
 
 class MockSession(mock_snowml_base.MockSnowMLBase):
@@ -49,6 +50,10 @@ class MockSession(mock_snowml_base.MockSnowMLBase):
     def __init__(self, conn: Any, test_case: TestCase | None, check_call_sequence_completion: bool = True) -> None:
         super().__init__(check_call_sequence_completion)
         self._test_case = test_case if test_case else TestCase()
+
+    @property  # type: ignore[misc]
+    def __class__(self) -> Type[Session]:  # type: ignore[override]
+        return Session
 
     # Helpers for setting up the MockDataFrame.
 

@@ -15,7 +15,7 @@ py_test(
     name = "model_registry_integ_test",
     timeout = "long",
     srcs = ["model_registry_integ_test.py"],
-    shard_count = 2,
+    shard_count = 3,
     deps = [
         "//snowflake/ml/registry:model_registry",
         "//snowflake/ml/utils:connection_params",

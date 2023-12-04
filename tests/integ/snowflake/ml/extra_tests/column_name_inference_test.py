@@ -25,10 +25,16 @@ class ColumnNameInferenceTest(TestCase):
         label_col = [c for c in input_df_pandas.columns if c.startswith("TARGET")]
         return (input_df_pandas, input_cols, label_col)
 
-    def _test_column_name_inference(self, use_snowpark_interface: bool = True) -> None:
+    def _test_column_name_inference(
+        self, use_snowpark_interface: bool = True, use_passthrough_cols: bool = True
+    ) -> None:
         input_df_pandas, input_cols, label_cols = self._get_test_dataset()
         sklearn_reg = SkLinearRegression()
-        reg = LinearRegression(label_cols=label_cols)
+        if use_passthrough_cols:
+            input_df_pandas["INDEX"] = input_df_pandas.reset_index().index
+            reg = LinearRegression(label_cols=label_cols, passthrough_cols=["INDEX"])
+        else:
+            reg = LinearRegression(label_cols=label_cols)
 
         if use_snowpark_interface:
             input_df = self._session.create_dataframe(input_df_pandas)
@@ -38,16 +44,28 @@ class ColumnNameInferenceTest(TestCase):
 
         sklearn_reg.fit(X=input_df_pandas[input_cols], y=input_df_pandas[label_cols])
 
-        actual_results = reg.predict(input_df_pandas)[reg.get_output_cols()].to_numpy()
+        actual_results = reg.predict(input_df_pandas)
+        if use_passthrough_cols:
+            actual_results = actual_results.sort_values(by="INDEX")[reg.get_output_cols()].to_numpy()
+        else:
+            actual_results = actual_results[reg.get_output_cols()].to_numpy()
+
         sklearn_results = sklearn_reg.predict(input_df_pandas[input_cols])
 
+        np.testing.assert_array_equal(reg.get_input_cols(), input_cols)
         np.testing.assert_allclose(actual_results.flatten(), sklearn_results.flatten())
 
-    def test_snowpark_interface(self):
-        self._test_column_name_inference(use_snowpark_interface=True)
+    def test_snowpark_interface_with_passthrough_cols(self):
+        self._test_column_name_inference(use_snowpark_interface=True, use_passthrough_cols=True)
 
-    def test_pandas_interface(self):
-        self._test_column_name_inference(use_snowpark_interface=False)
+    def test_snowpark_interface_with_out_passthrough_cols(self):
+        self._test_column_name_inference(use_snowpark_interface=True, use_passthrough_cols=False)
+
+    def test_pandas_interface_with_passthrough_cols(self):
+        self._test_column_name_inference(use_snowpark_interface=False, use_passthrough_cols=True)
+
+    def test_pandas_interface_with_out_passthrough_cols(self):
+        self._test_column_name_inference(use_snowpark_interface=False, use_passthrough_cols=False)
 
 
 if __name__ == "__main__":

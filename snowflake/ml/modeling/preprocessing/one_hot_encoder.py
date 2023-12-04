@@ -38,7 +38,7 @@ _N_FEATURES_OUT = "_N_FEATURES_OUT"
 # transformer with the sklearn version
 _SKLEARN_INITIAL_KEYWORDS = ("sparse", "handle_unknown")  # initial keywords in sklearn
 _SKLEARN_UNUSED_KEYWORDS = "dtype"  # sklearn keywords that are unused in snowml
-_SNOWML_ONLY_KEYWORDS = ["input_cols", "output_cols"]  # snowml only keywords not present in sklearn
+_SNOWML_ONLY_KEYWORDS = ["input_cols", "output_cols", "passthrough_cols"]  # snowml only keywords not present in sklearn
 
 # Added keywords mapped to the sklearn versions in which they were added. Update mappings in new
 # sklearn versions to support parameter validation.
@@ -154,6 +154,11 @@ class OneHotEncoder(base.BaseTransformer):
             Single or multiple input columns.
         output_cols: str or Iterable [column_name], default=None
             Single or multiple output columns.
+        passthrough_cols: A string or a list of strings indicating column names to be excluded from any
+                operations (such as train, transform, or inference). These specified column(s)
+                will remain untouched throughout the process. This option is helpful in scenarios
+                requiring automatic input_cols inference, but need to avoid using specific
+                columns, like index columns, during training or inference.
         drop_input_cols: Remove input columns from output if set True. False by default.
 
     Attributes:
@@ -190,6 +195,7 @@ class OneHotEncoder(base.BaseTransformer):
         max_categories: Optional[int] = None,
         input_cols: Optional[Union[str, Iterable[str]]] = None,
         output_cols: Optional[Union[str, Iterable[str]]] = None,
+        passthrough_cols: Optional[Union[str, Iterable[str]]] = None,
         drop_input_cols: Optional[bool] = False,
     ) -> None:
         """See class-level docstring."""
@@ -218,6 +224,7 @@ class OneHotEncoder(base.BaseTransformer):
 
         self.set_input_cols(input_cols)
         self.set_output_cols(output_cols)
+        self.set_passthrough_cols(passthrough_cols)
 
     @property
     def infrequent_categories_(self) -> List[Optional[type_utils.LiteralNDArrayType]]:
@@ -1319,7 +1326,9 @@ class OneHotEncoder(base.BaseTransformer):
         """
         category_counts_list = []  # list of ndarray
         for idx, input_col in enumerate(self.input_cols):
-            counts = np.vectorize(lambda x: category_counts[input_col][x])(self._categories_list[idx])
+            counts = np.vectorize(lambda x, input_col=input_col: category_counts[input_col][x])(
+                self._categories_list[idx]
+            )
             category_counts_list.append(np.array(counts))
         self._infrequent_indices = [
             self._identify_infrequent(category_count, n_samples) for category_count in category_counts_list

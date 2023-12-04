@@ -72,7 +72,7 @@ py_test(
         "//snowflake/ml/modeling/preprocessing:min_max_scaler",
         "//snowflake/ml/modeling/preprocessing:one_hot_encoder",
         "//snowflake/ml/modeling/preprocessing:standard_scaler",
-        "//snowflake/ml/modeling/xgboost:xgb_regressor",
+        "//snowflake/ml/modeling/xgboost:xgb_classifier",
         "//snowflake/ml/utils:connection_params",
     ],
 )

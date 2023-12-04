@@ -50,6 +50,7 @@ py_library(
     srcs = ["model_factory.py"],
     deps = [
         "//snowflake/ml/modeling/linear_model:logistic_regression",
+        "//snowflake/ml/modeling/mixture:gaussian_mixture",
         "//snowflake/ml/modeling/pipeline",
         "//snowflake/ml/modeling/preprocessing:min_max_scaler",
         "//snowflake/ml/modeling/preprocessing:one_hot_encoder",

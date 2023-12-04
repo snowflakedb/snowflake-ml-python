@@ -127,6 +127,8 @@ class {transform.test_class_name}(TestCase):
         inference_methods = ["transform", "predict"]
         for m in inference_methods:
             if callable(getattr(sklearn_reg, m, None)):
+                if m == 'predict':
+                    self.assertTrue(m in reg.model_signatures)
 
                 if inference_with_udf:
                     output_df = getattr(reg, m)(input_df)
