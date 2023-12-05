@@ -83,24 +83,6 @@ class {transform.original_class_name}(BaseTransformer):
         """
         return str(uuid4()).replace("-", "_").upper()
 
-    def _infer_input_output_cols(self, dataset: Union[DataFrame, pd.DataFrame]) -> None:
-        """
-        Infer `self.input_cols` and `self.output_cols` if they are not explicitly set.
-
-        Args:
-            dataset: Input dataset.
-        """
-        if not self.input_cols:
-            cols = [
-                c for c in dataset.columns 
-                if c not in self.get_label_cols() and c != self.sample_weight_col
-            ]
-            self.set_input_cols(input_cols=cols)
-
-        if not self.output_cols:
-            cols = [identifier.concat_names(ids=['OUTPUT_', c]) for c in self.label_cols]
-            self.set_output_cols(output_cols=cols)
-
     def set_input_cols(self, input_cols: Optional[Union[str, Iterable[str]]]) -> "{transform.original_class_name}":
         """
         Input columns setter.
@@ -737,12 +719,22 @@ class {transform.original_class_name}(BaseTransformer):
                 self._model_signature_dict["predict"] = ModelSignature(inputs,
                                                                        ([] if self._drop_input_cols else inputs)
                                                                        + outputs)
+            # For mixture models that use the density mixin, `predict` returns the argmax of the log prob.
+            # For outlier models, returns -1 for outliers and 1 for inliers.
+            # Clusterer returns int64 cluster labels. 
+            elif self._sklearn_object._estimator_type in ["DensityEstimator", "clusterer", "outlier_detector"]:
+                outputs = [FeatureSpec(dtype=DataType.INT64, name=c) for c in self.output_cols]
+                self._model_signature_dict["predict"] = ModelSignature(inputs,
+                                                                       ([] if self._drop_input_cols else inputs)
+                                                                       + outputs)
+            
             # For regressor, the type of predict is float64
             elif self._sklearn_object._estimator_type == 'regressor':
                 outputs = [FeatureSpec(dtype=DataType.DOUBLE, name=c) for c in self.output_cols]
                 self._model_signature_dict["predict"] = ModelSignature(inputs,
                                                                        ([] if self._drop_input_cols else inputs)
                                                                        + outputs)
+                
         for prob_func in PROB_FUNCTIONS:
             if hasattr(self, prob_func):
                 output_cols_prefix: str = f"{{prob_func}}_"

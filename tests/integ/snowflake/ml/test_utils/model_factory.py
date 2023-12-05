@@ -12,6 +12,7 @@ from snowflake.ml.model import custom_model
 from snowflake.ml.modeling.linear_model import (  # type: ignore[attr-defined]
     LogisticRegression,
 )
+from snowflake.ml.modeling.mixture import GaussianMixture
 from snowflake.ml.modeling.pipeline import Pipeline  # type: ignore[attr-defined]
 from snowflake.ml.modeling.preprocessing import (  # type: ignore[attr-defined]
     MinMaxScaler,
@@ -149,6 +150,20 @@ class ModelFactory:
         ).fit(df)
 
         return estimator, df.drop(columns=label_cols).head(10)
+
+    @staticmethod
+    def prepare_snowml_model_gmm() -> Tuple[GaussianMixture, pd.DataFrame, pd.DataFrame]:
+        iris = datasets.load_iris()
+        # For an unsupervised learning model, there is no need for a target column.
+        df = pd.DataFrame(data=np.c_[iris["data"]], columns=iris["feature_names"])
+        df.columns = [s.replace(" (CM)", "").replace(" ", "") for s in df.columns.str.upper()]
+
+        # Allow the output columns to be inferred.
+        input_cols = ["SEPALLENGTH", "SEPALWIDTH", "PETALLENGTH", "PETALWIDTH"]
+
+        estimator = GaussianMixture(input_cols=input_cols, random_state=0).fit(df)
+
+        return estimator, df.head(10), df
 
     @staticmethod
     def prepare_gpt2_model(local_cache_dir: Optional[str] = None) -> Tuple[custom_model.CustomModel, pd.DataFrame]:

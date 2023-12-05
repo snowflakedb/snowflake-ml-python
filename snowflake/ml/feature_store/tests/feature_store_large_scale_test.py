@@ -13,6 +13,7 @@ from common_utils import (
 )
 from pandas.testing import assert_frame_equal
 
+from snowflake.ml._internal.utils.sql_identifier import SqlIdentifier
 from snowflake.ml.feature_store import (  # type: ignore[attr-defined]
     CreationMode,
     Entity,
@@ -47,8 +48,9 @@ class FeatureStoreLargeScaleTest(absltest.TestCase):
             self._session,
             FS_INTEG_TEST_DB,
             current_schema,
+            self._test_warehouse_name,
             creation_mode=CreationMode.CREATE_IF_NOT_EXIST,
-        ).set_default_warehouse(self._test_warehouse_name)
+        )
         self._active_feature_store.append(fs)
         return fs
 
@@ -70,10 +72,14 @@ class FeatureStoreLargeScaleTest(absltest.TestCase):
 
         source_df = self._session.table(cloned_wine_data)
         feature_df = addIdColumn(source_df, "wine_id")
-        fv = FeatureView(name="wine_features", entities=[entity], feature_df=feature_df, desc="wine features")
-        fv = fs.register_feature_view(
-            feature_view=fv, version="v1", refresh_freq="* * * * * America/Los_Angeles", block=True
+        fv = FeatureView(
+            name="wine_features",
+            entities=[entity],
+            feature_df=feature_df,
+            refresh_freq="* * * * * America/Los_Angeles",
+            desc="wine features",
         )
+        fv = fs.register_feature_view(feature_view=fv, version="v1", block=True)
         self.assertEqual(fv.refresh_freq, "DOWNSTREAM")
         self.assertEqual(len(fs.read_feature_view(fv).collect()), 1599)
 
@@ -108,14 +114,13 @@ class FeatureStoreLargeScaleTest(absltest.TestCase):
             name="FV_LOCATION_FEATURES",
             entities=[e_loc],
             feature_df=feature_df,
+            refresh_freq="1 minute",
             desc="location features",
         )
 
         location_features = fs.register_feature_view(
             feature_view=location_features,
             version="V1",
-            refresh_freq="1 minute",
-            warehouse=self._test_warehouse_name,
             block=True,
         )
 
@@ -155,8 +160,8 @@ class FeatureStoreLargeScaleTest(absltest.TestCase):
         self.assertDictEqual(
             ds0.feature_store_metadata.connection_params,
             {
-                "database": FS_INTEG_TEST_DB,
-                "schema": current_schema,
+                "database": SqlIdentifier(FS_INTEG_TEST_DB).identifier(),
+                "schema": SqlIdentifier(current_schema).identifier(),
             },
         )
 

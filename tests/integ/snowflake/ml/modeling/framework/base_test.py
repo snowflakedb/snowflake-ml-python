@@ -1,8 +1,13 @@
 #!/usr/bin/env python3
+from typing import Any, Optional
+
 import numpy as np
 import pandas as pd
 import pytest
 from absl.testing.absltest import TestCase, main
+from sklearn.impute import SimpleImputer
+from sklearn.mixture import GaussianMixture
+from xgboost import XGBRegressor
 
 from snowflake.ml._internal.exceptions.exceptions import SnowflakeMLException
 from snowflake.ml.modeling.framework.base import BaseTransformer, _process_cols
@@ -11,7 +16,7 @@ from snowflake.ml.modeling.preprocessing import (  # type: ignore[attr-defined]
     StandardScaler,
 )
 from snowflake.ml.utils.connection_params import SnowflakeLoginOptions
-from snowflake.snowpark import Session
+from snowflake.snowpark import DataFrame, Session
 from snowflake.snowpark.exceptions import SnowparkColumnException
 from tests.integ.snowflake.ml.modeling.framework import utils as framework_utils
 from tests.integ.snowflake.ml.modeling.framework.utils import (
@@ -32,6 +37,46 @@ class TestBaseFunctions(TestCase):
 
     def tearDown(self) -> None:
         self._session.close()
+
+    def test_infer_input_output_cols(self) -> None:
+        test_df = pd.DataFrame({"COL_1": [1, 2, 3], "COL_2": [4, 5, 6], "COL_3": [10, 11, 12]})
+
+        class TestTransformer(BaseTransformer):
+            def __init__(self) -> None:
+                super().__init__()
+                self._sklearn_object: Optional[Any] = None
+
+            def fit(self, dataset: DataFrame) -> "TestTransformer":
+                return self
+
+        with self.subTest("Test with regressor"):
+            estimator = TestTransformer()
+            estimator._sklearn_object = XGBRegressor()
+
+            estimator.set_input_cols(["COL_1", "COL_2"])
+            estimator.set_label_cols("COL_3")
+
+            estimator._infer_input_output_cols(dataset=test_df)
+
+            self.assertEqual(estimator.output_cols, ["OUTPUT_COL_3"])
+
+        with self.subTest("Test with unsupervised model"):
+            estimator = TestTransformer()
+            estimator._sklearn_object = GaussianMixture()
+
+            estimator.set_input_cols(["COL_1", "COL_2"])
+            estimator._infer_input_output_cols(dataset=test_df)
+
+            self.assertEqual(estimator.output_cols, ["OUTPUT_0"])
+
+        # Users must specify transformer output columns explicitly.
+        with self.subTest("Test transformer raises `ValueError`"):
+            with self.assertRaises(SnowflakeMLException):
+                estimator = TestTransformer()
+                estimator._sklearn_object = SimpleImputer()
+
+                estimator.set_input_cols(["COL_1", "COL_2"])
+                estimator._infer_input_output_cols(dataset=test_df)
 
     def test_fit_input_cols_check(self) -> None:
         """

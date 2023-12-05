@@ -27,6 +27,11 @@ class LabelEncoder(base.BaseTransformer):
         input_cols: The name of a column in a DataFrame to be encoded. May be a string or a list containing one string.
         output_cols: The name of a column in a DataFrame where the results will be stored. May be a string or a list
             containing one string.
+        passthrough_cols: A string or a list of strings indicating column names to be excluded from any
+            operations (such as train, transform, or inference). These specified column(s)
+            will remain untouched throughout the process. This option is helpful in scenarios
+            requiring automatic input_cols inference, but need to avoid using specific
+            columns, like index columns, during training or inference.
         drop_input_cols: Remove input columns from output if set True. False by default.
     """
 
@@ -34,6 +39,7 @@ class LabelEncoder(base.BaseTransformer):
         self,
         input_cols: Optional[Union[str, Iterable[str]]] = None,
         output_cols: Optional[Union[str, Iterable[str]]] = None,
+        passthrough_cols: Optional[Union[str, Iterable[str]]] = None,
         drop_input_cols: Optional[bool] = False,
     ) -> None:
         """
@@ -44,6 +50,11 @@ class LabelEncoder(base.BaseTransformer):
                 string.
             output_cols: The name of a column in a DataFrame where the results will be stored. May be a string or a list
                 containing one string.
+            passthrough_cols: A string or a list of strings indicating column names to be excluded from any
+                operations (such as train, transform, or inference). These specified column(s)
+                will remain untouched throughout the process. This option is helful in scenarios
+                requiring automatic input_cols inference, but need to avoid using specific
+                columns, like index columns, during in training or inference.
             drop_input_cols: Remove input columns from output if set True. False by default.
 
         Attributes:
@@ -56,6 +67,7 @@ class LabelEncoder(base.BaseTransformer):
         self.classes_: Optional[type_utils.LiteralNDArrayType] = None
         self.set_input_cols(input_cols)
         self.set_output_cols(output_cols)
+        self.set_passthrough_cols(passthrough_cols)
 
     def _reset(self) -> None:
         super()._reset()

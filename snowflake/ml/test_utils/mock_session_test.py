@@ -1,11 +1,14 @@
 from absl.testing.absltest import TestCase, main
 
 from snowflake.ml.test_utils import mock_data_frame, mock_session
-from snowflake.snowpark import Row
+from snowflake.snowpark import Row, Session
 
 
 class MockSessionTest(TestCase):
     """Testing MockSession function."""
+
+    def test_isinstance(self) -> None:
+        self.assertTrue(mock_session.MockSession(conn=None, test_case=self), Session)
 
     def test_sql_match_verify_result(self) -> None:
         """Test that MockSession responds correctly for a matching query."""

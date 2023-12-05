@@ -77,6 +77,7 @@ class FeatureView:
         entities: List[Entity],
         feature_df: DataFrame,
         timestamp_col: Optional[str] = None,
+        refresh_freq: Optional[str] = None,
         desc: str = "",
     ) -> None:
         """
@@ -89,6 +90,13 @@ class FeatureView:
                 Final projection of the DataFrame should contain feature names, join keys and timestamp(if applicable).
             timestamp_col: name of the timestamp column for point-in-time lookup when consuming the
                 feature values.
+            refresh_freq: Time unit defining how often the new feature data should be generated.
+                Valid args are { <num> { seconds | minutes | hours | days } | DOWNSTREAM | <cron expr> <time zone>}.
+                NOTE: Currently minimum refresh frequency is 1 minute.
+                NOTE: If refresh_freq is in cron expression format, there must be a valid time zone as well.
+                    E.g. * * * * * UTC
+                NOTE: If refresh_freq is not provided, then FeatureView will be registered as View on Snowflake backend
+                    and there won't be extra storage cost.
             desc: description of the FeatureView.
         """
 
@@ -103,7 +111,7 @@ class FeatureView:
         self._version: Optional[SqlIdentifier] = None
         self._status: FeatureViewStatus = FeatureViewStatus.DRAFT
         self._feature_desc: OrderedDict[SqlIdentifier, str] = OrderedDict((f, "") for f in self._get_feature_names())
-        self._refresh_freq: Optional[str] = None
+        self._refresh_freq: Optional[str] = refresh_freq
         self._database: Optional[SqlIdentifier] = None
         self._schema: Optional[SqlIdentifier] = None
         self._warehouse: Optional[SqlIdentifier] = None
@@ -222,6 +230,14 @@ class FeatureView:
     def refresh_freq(self) -> Optional[str]:
         return self._refresh_freq
 
+    @refresh_freq.setter
+    def refresh_freq(self, new_value: str) -> None:
+        if self.status == FeatureViewStatus.DRAFT or self.status == FeatureViewStatus.STATIC:
+            raise RuntimeError(
+                f"Feature view {self.name}/{self.version} must be registered and non-static to update refresh_freq."
+            )
+        self._refresh_freq = new_value
+
     @property
     def database(self) -> Optional[SqlIdentifier]:
         return self._database
@@ -233,6 +249,14 @@ class FeatureView:
     @property
     def warehouse(self) -> Optional[SqlIdentifier]:
         return self._warehouse
+
+    @warehouse.setter
+    def warehouse(self, new_value: str) -> None:
+        if self.status == FeatureViewStatus.DRAFT or self.status == FeatureViewStatus.STATIC:
+            raise RuntimeError(
+                f"Feature view {self.name}/{self.version} must be registered and non-static to update warehouse."
+            )
+        self._warehouse = SqlIdentifier(new_value)
 
     @property
     def output_schema(self) -> StructType:

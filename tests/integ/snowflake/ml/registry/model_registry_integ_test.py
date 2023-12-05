@@ -3,7 +3,7 @@ from typing import Dict
 
 import numpy as np
 import pandas as pd
-from absl.testing import absltest
+from absl.testing import absltest, parameterized
 from sklearn import metrics
 
 from snowflake import connector
@@ -19,7 +19,7 @@ from tests.integ.snowflake.ml.test_utils import (
 )
 
 
-class TestModelRegistryInteg(absltest.TestCase):
+class TestModelRegistryInteg(parameterized.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
         """Creates Snowpark and Snowflake environments for testing."""
@@ -263,12 +263,15 @@ class TestModelRegistryInteg(absltest.TestCase):
         filtered_model_list = model_list.loc[model_list["ID"] == model_ref._id].reset_index(drop=True)
         self.assertEqual(filtered_model_list.shape[0], 0)
 
-    def test_snowml_model(self) -> None:
+    @parameterized.parameters(
+        model_factory.ModelFactory.prepare_snowml_model_gmm, model_factory.ModelFactory.prepare_snowml_model_xgb
+    )
+    def test_snowml_model(self, model_prepare_callable: callable) -> None:
         registry = model_registry.ModelRegistry(session=self._session, database_name=self.registry_name)
 
         model_name = "snowml_xgb_classifier"
         model_version = self.run_id
-        model, test_features, _ = model_factory.ModelFactory.prepare_snowml_model_xgb()
+        model, test_features, _ = model_prepare_callable()
 
         local_prediction = model.predict(test_features)
         local_prediction_proba = model.predict_proba(test_features)

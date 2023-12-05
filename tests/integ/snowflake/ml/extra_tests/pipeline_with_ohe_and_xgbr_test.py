@@ -2,6 +2,13 @@ import numpy as np
 import pandas as pd
 from absl.testing import absltest
 from importlib_resources import files
+from sklearn.compose import ColumnTransformer as SkColumnTransformer
+from sklearn.pipeline import Pipeline as SkPipeline
+from sklearn.preprocessing import (
+    MinMaxScaler as SkMinMaxScaler,
+    OneHotEncoder as SkOneHotEncoder,
+)
+from xgboost import XGBClassifier as XGB_XGBClassifier
 
 from snowflake.ml.modeling.pipeline import Pipeline
 from snowflake.ml.modeling.preprocessing import (
@@ -9,7 +16,7 @@ from snowflake.ml.modeling.preprocessing import (
     OneHotEncoder,
     StandardScaler,
 )
-from snowflake.ml.modeling.xgboost import XGBRegressor
+from snowflake.ml.modeling.xgboost import XGBClassifier
 from snowflake.ml.utils.connection_params import SnowflakeLoginOptions
 from snowflake.snowpark import Session
 
@@ -53,6 +60,7 @@ class GridSearchCVTest(absltest.TestCase):
 
     def test_fit_and_compare_results(self) -> None:
         pd_data = self._test_data
+        pd_data["ROW_INDEX"] = pd_data.reset_index().index
         raw_data = self._session.create_dataframe(pd_data)
 
         pipeline = Pipeline(
@@ -71,12 +79,31 @@ class GridSearchCVTest(absltest.TestCase):
                         output_cols=numerical_columns,
                     ),
                 ),
-                ("regression", XGBRegressor(label_cols=label_column)),
+                ("regression", XGBClassifier(label_cols=label_column, passthrough_cols="ROW_INDEX")),
             ]
         )
 
         pipeline.fit(raw_data)
-        pipeline.predict(raw_data).to_pandas()
+        results = pipeline.predict(raw_data).to_pandas().sort_values(by=["ROW_INDEX"])["OUTPUT_LABEL"].to_numpy()
+
+        sk_pipeline = SkPipeline(
+            steps=[
+                (
+                    "Preprocessing",
+                    SkColumnTransformer(
+                        [
+                            ("cat_transformer", SkOneHotEncoder(), categorical_columns),
+                            ("num_transforms", SkMinMaxScaler(), numerical_columns),
+                        ]
+                    ),
+                ),
+                ("Training", XGB_XGBClassifier()),
+            ]
+        )
+        sk_pipeline.fit(pd_data[numerical_columns + categorical_columns], pd_data[label_column])
+        sk_results = sk_pipeline.predict(pd_data[numerical_columns + categorical_columns])
+
+        np.testing.assert_allclose(results.flatten(), sk_results.flatten(), rtol=1.0e-1, atol=1.0e-2)
 
     def test_fit_and_compare_results_pandas_dataframe(self) -> None:
         raw_data_pandas = self._test_data
@@ -97,7 +124,7 @@ class GridSearchCVTest(absltest.TestCase):
                         output_cols=numerical_columns,
                     ),
                 ),
-                ("regression", XGBRegressor(label_cols=label_column)),
+                ("regression", XGBClassifier(label_cols=label_column)),
             ]
         )
 
@@ -124,7 +151,7 @@ class GridSearchCVTest(absltest.TestCase):
                         output_cols=numerical_columns,
                     ),
                 ),
-                ("regression", XGBRegressor(label_cols=label_column)),
+                ("regression", XGBClassifier(label_cols=label_column)),
             ]
         )
 
@@ -157,7 +184,7 @@ class GridSearchCVTest(absltest.TestCase):
                     "SS",
                     StandardScaler(input_cols=(numerical_columns[0:2]), output_cols=(numerical_columns[0:2])),
                 ),
-                ("regression", XGBRegressor(label_cols=label_column)),
+                ("regression", XGBClassifier(label_cols=label_column, passthrough_cols="ROW_INDEX")),
             ]
         )
 
@@ -188,7 +215,7 @@ class GridSearchCVTest(absltest.TestCase):
                     "SS",
                     StandardScaler(input_cols=(numerical_columns[0:2]), output_cols=(numerical_columns[0:2])),
                 ),
-                ("regression", XGBRegressor(input_cols=numerical_columns, label_cols=label_column)),
+                ("regression", XGBClassifier(input_cols=numerical_columns, label_cols=label_column)),
             ]
         )
 

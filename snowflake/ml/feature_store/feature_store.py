@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import datetime
+import functools
 import json
 import logging
 import re
 import warnings
 from dataclasses import dataclass
 from enum import Enum
-from typing import Dict, List, Optional, Tuple, Union, cast
+from typing import Any, Callable, Dict, List, Optional, Tuple, Union, cast
 
 from pytimeparse.timeparse import timeparse
 
@@ -80,6 +81,34 @@ class _FeatureStoreConfig:
         return f"{self.database}.{self.schema}"
 
 
+def switch_warehouse(f: Callable[..., Any]) -> Callable[..., Any]:
+    @functools.wraps(f)
+    def wrapper(self: FeatureStore, *args: Any, **kargs: Any) -> Any:
+        original_warehouse = self._session.get_current_warehouse()
+        try:
+            if self._default_warehouse is not None:
+                self._session.use_warehouse(self._default_warehouse)
+            return f(self, *args, **kargs)
+        finally:
+            self._session.use_warehouse(original_warehouse)  # type: ignore[arg-type]
+
+    return wrapper
+
+
+def dispatch_decorator(prpr_version: str) -> Callable[..., Any]:
+    def decorator(f: Callable[..., Any]) -> Callable[..., Any]:
+        @telemetry.send_api_usage_telemetry(project=PROJECT)
+        @snowpark_utils.private_preview(version=prpr_version)
+        @switch_warehouse
+        @functools.wraps(f)
+        def wrap(self: FeatureStore, *args: Any, **kargs: Any) -> Any:
+            return f(self, *args, **kargs)
+
+        return wrap
+
+    return decorator
+
+
 class FeatureStore:
     """
     FeatureStore provides APIs to create, materialize, retrieve and manage feature pipelines.
@@ -92,6 +121,7 @@ class FeatureStore:
         session: Session,
         database: str,
         name: str,
+        default_warehouse: str,
         creation_mode: CreationMode = CreationMode.FAIL_IF_NOT_EXIST,
     ) -> None:
         """
@@ -101,9 +131,11 @@ class FeatureStore:
             session: Snowpark Session to interact with Snowflake backend.
             database: Database to create the FeatureStore instance.
             name: Target FeatureStore name, maps to a schema in the database.
+            default_warehouse: Default warehouse for feature store compute.
             creation_mode: Create new backend or fail if not exist upon feature store creation.
 
         Raises:
+            SnowflakeMLException: [ValueError] default_warehouse does not exist.
             SnowflakeMLException: [ValueError] FAIL_IF_NOT_EXIST is set and feature store not exists.
             SnowflakeMLException: [RuntimeError] Failed to find resources.
             SnowflakeMLException: [RuntimeError] Failed to create feature store.
@@ -117,7 +149,6 @@ class FeatureStore:
             database=database,
             schema=name,
         )
-        self._default_warehouse: Optional[SqlIdentifier] = None
 
         # A dict from object name to tuple of search space and object domain.
         # search space used in query "SHOW <object_TYPE> LIKE <object_name> IN <search_space>"
@@ -131,6 +162,8 @@ class FeatureStore:
             "TASKS": (self._config.full_schema_path, "TASK"),
             "WAREHOUSES": (None, None),
         }
+
+        self.update_default_warehouse(default_warehouse)
 
         if creation_mode == CreationMode.FAIL_IF_NOT_EXIST:
             schema_result = self._find_object("SCHEMAS", self._config.schema)
@@ -168,14 +201,11 @@ class FeatureStore:
 
     @telemetry.send_api_usage_telemetry(project=PROJECT)
     @snowpark_utils.private_preview(version="1.0.12")
-    def set_default_warehouse(self, warehouse_name: str) -> FeatureStore:
-        """Set default warehouse for feature store.
+    def update_default_warehouse(self, warehouse_name: str) -> None:
+        """Update default warehouse for feature store.
 
         Args:
             warehouse_name: Name of warehouse.
-
-        Returns:
-            FeatureStore object with default warehouse.
 
         Raises:
             SnowflakeMLException: If warehouse does not exists.
@@ -189,10 +219,8 @@ class FeatureStore:
             )
 
         self._default_warehouse = warehouse
-        return self
 
-    @telemetry.send_api_usage_telemetry(project=PROJECT)
-    @snowpark_utils.private_preview(version="1.0.8")
+    @dispatch_decorator(prpr_version="1.0.8")
     def register_entity(self, entity: Entity) -> None:
         """
         Register Entity in the FeatureStore.
@@ -224,14 +252,11 @@ class FeatureStore:
         logger.info(f"Registered Entity {entity}.")
 
     # TODO: add support to update column desc once SNOW-894249 is fixed
-    @telemetry.send_api_usage_telemetry(project=PROJECT)
-    @snowpark_utils.private_preview(version="1.0.8")
+    @dispatch_decorator(prpr_version="1.0.8")
     def register_feature_view(
         self,
         feature_view: FeatureView,
         version: str,
-        refresh_freq: Optional[str] = None,
-        warehouse: Optional[str] = None,
         block: bool = False,
     ) -> FeatureView:
         """
@@ -245,15 +270,6 @@ class FeatureStore:
             feature_view: FeatureView instance to materialize.
             version: version of the registered FeatureView.
                 NOTE: `$` is not a valid char for the version identifier. Also version will be capitalized.
-            refresh_freq: Time unit defining how often the new feature data should be generated.
-                Valid args are { <num> { seconds | minutes | hours | days } | DOWNSTREAM | <cron expr> <time zone>}.
-                NOTE: Currently minimum refresh frequency is 1 minute.
-                NOTE: If refresh_freq is in cron expression format, there must be a valid time zone as well.
-                    E.g. * * * * * UTC
-                NOTE: If refresh_freq is not provided, then FeatureView will be registered as View on Snowflake backend
-                    and there won't be extra storage cost.
-            warehouse: warehouse to run the compute for the registered FeatureView, if not provided
-                default_warehouse specified in the FeatureStore will be used.
             block: Specify whether the FeatureView backend materialization should be blocking or not. If blocking then
                 the API will wait until the initial FeatureView data is generated.
 
@@ -269,8 +285,6 @@ class FeatureStore:
             SnowflakeMLException: [RuntimeError] Failed to find resources.
         """
         version = SqlIdentifier(version)
-        if warehouse is not None:
-            warehouse = SqlIdentifier(warehouse)
 
         if feature_view.status != FeatureViewStatus.DRAFT:
             raise snowml_exceptions.SnowflakeMLException(
@@ -315,15 +329,10 @@ class FeatureStore:
             return f"{col.name} {desc}"
 
         column_descs = ", ".join([f"{create_col_desc(col)}" for col in feature_view.output_schema.fields])
+        refresh_freq = feature_view.refresh_freq
 
         if refresh_freq is not None:
-            if self._default_warehouse is None and warehouse is None:
-                raise snowml_exceptions.SnowflakeMLException(
-                    error_code=error_codes.INVALID_ARGUMENT,
-                    original_exception=ValueError("Warehouse cannot be None."),
-                )
             schedule_task = refresh_freq != "DOWNSTREAM" and timeparse(refresh_freq) is None
-            target_warehouse = cast(SqlIdentifier, self._default_warehouse if warehouse is None else warehouse)
             self._create_dynamic_table(
                 feature_view_name,
                 feature_view,
@@ -331,8 +340,7 @@ class FeatureStore:
                 column_descs,
                 entities,
                 schedule_task,
-                refresh_freq,
-                target_warehouse,
+                self._default_warehouse,
                 timestamp_col,
                 block,
             )
@@ -357,8 +365,44 @@ class FeatureStore:
         logger.info(f"Registered FeatureView {feature_view.name} with version {version}.")
         return self.get_feature_view(feature_view.name, version)  # type: ignore[no-any-return]
 
-    @telemetry.send_api_usage_telemetry(project=PROJECT)
-    @snowpark_utils.private_preview(version="1.0.8")
+    @dispatch_decorator(prpr_version="1.1.0")
+    def update_feature_view(self, feature_view: FeatureView) -> None:
+        """Update a registered feature view.
+            Check feature_view.py for which fields are allowed to be updated after registration.
+
+        Args:
+            feature_view: The feature view to be updated.
+
+        Raises:
+            SnowflakeMLException: [RuntimeError] Feature view must be registered before updating.
+            SnowflakeMLException: [RuntimeError] Failed to update feature view.
+        """
+        if feature_view.status == FeatureViewStatus.DRAFT or feature_view.status == FeatureViewStatus.STATIC:
+            full_name = f"{feature_view.name}/{feature_view.version}"
+            raise snowml_exceptions.SnowflakeMLException(
+                error_code=error_codes.INVALID_ARGUMENT,
+                original_exception=RuntimeError(
+                    f"Feature view {full_name} must be registered and non-static so that can be updated."
+                ),
+            )
+
+        if feature_view.refresh_freq is not None:
+            try:
+                self._session.sql(
+                    f"""ALTER DYNAMIC TABLE {feature_view.fully_qualified_name()} SET
+                        TARGET_LAG = '{feature_view.refresh_freq}'
+                        WAREHOUSE = {feature_view.warehouse}
+                    """
+                ).collect()
+            except Exception as e:
+                raise snowml_exceptions.SnowflakeMLException(
+                    error_code=error_codes.INTERNAL_SNOWPARK_ERROR,
+                    original_exception=RuntimeError(
+                        f"Update feature view {feature_view.name}/{feature_view.version} failed: {e}"
+                    ),
+                ) from e
+
+    @dispatch_decorator(prpr_version="1.0.8")
     def read_feature_view(self, feature_view: FeatureView) -> DataFrame:
         """
         Read FeatureView data.
@@ -380,8 +424,7 @@ class FeatureStore:
 
         return self._session.sql(f"SELECT * FROM {feature_view.fully_qualified_name()}")
 
-    @telemetry.send_api_usage_telemetry(project=PROJECT)
-    @snowpark_utils.private_preview(version="1.0.8")
+    @dispatch_decorator(prpr_version="1.0.8")
     def list_feature_views(
         self,
         entity_name: Optional[str] = None,
@@ -422,8 +465,7 @@ class FeatureStore:
         else:
             return fvs
 
-    @telemetry.send_api_usage_telemetry(project=PROJECT)
-    @snowpark_utils.private_preview(version="1.0.8")
+    @dispatch_decorator(prpr_version="1.0.8")
     def get_feature_view(self, name: str, version: str) -> FeatureView:
         """
         Retrieve previously registered FeatureView.
@@ -452,8 +494,7 @@ class FeatureStore:
 
         return self._compose_feature_view(results[0])
 
-    @telemetry.send_api_usage_telemetry(project=PROJECT)
-    @snowpark_utils.private_preview(version="1.0.8")
+    @dispatch_decorator(prpr_version="1.0.8")
     def merge_features(
         self,
         features: List[Union[FeatureView, FeatureViewSlice]],
@@ -551,8 +592,7 @@ class FeatureStore:
             desc=desc,
         )
 
-    @telemetry.send_api_usage_telemetry(project=PROJECT)
-    @snowpark_utils.private_preview(version="1.0.8")
+    @dispatch_decorator(prpr_version="1.0.8")
     def resume_feature_view(self, feature_view: FeatureView) -> FeatureView:
         """
         Resume a previously suspended FeatureView.
@@ -577,8 +617,7 @@ class FeatureStore:
 
         return self._update_feature_view_status(feature_view, "RESUME")
 
-    @telemetry.send_api_usage_telemetry(project=PROJECT)
-    @snowpark_utils.private_preview(version="1.0.8")
+    @dispatch_decorator(prpr_version="1.0.8")
     def suspend_feature_view(self, feature_view: FeatureView) -> FeatureView:
         """
         Suspend a running FeatureView.
@@ -602,8 +641,7 @@ class FeatureStore:
             )
         return self._update_feature_view_status(feature_view, "SUSPEND")
 
-    @telemetry.send_api_usage_telemetry(project=PROJECT)
-    @snowpark_utils.private_preview(version="1.0.8")
+    @dispatch_decorator(prpr_version="1.0.8")
     def delete_feature_view(self, feature_view: FeatureView) -> None:
         """
         Delete a FeatureView.
@@ -636,8 +674,7 @@ class FeatureStore:
 
         logger.info(f"Deleted FeatureView {feature_view.name} with version {feature_view.version}.")
 
-    @telemetry.send_api_usage_telemetry(project=PROJECT)
-    @snowpark_utils.private_preview(version="1.0.8")
+    @dispatch_decorator(prpr_version="1.0.8")
     def list_entities(self) -> DataFrame:
         """
         List all Entities in the FeatureStore.
@@ -673,8 +710,7 @@ class FeatureStore:
             ),
         )
 
-    @telemetry.send_api_usage_telemetry(project=PROJECT)
-    @snowpark_utils.private_preview(version="1.0.8")
+    @dispatch_decorator(prpr_version="1.0.8")
     def get_entity(self, name: str) -> Entity:
         """
         Retrieve previously registered Entity object.
@@ -741,8 +777,7 @@ class FeatureStore:
             desc=found_tags[0]["comment"],
         )
 
-    @telemetry.send_api_usage_telemetry(project=PROJECT)
-    @snowpark_utils.private_preview(version="1.0.8")
+    @dispatch_decorator(prpr_version="1.0.8")
     def delete_entity(self, name: str) -> None:
         """
         Delete a previously registered Entity.
@@ -785,8 +820,7 @@ class FeatureStore:
             ) from e
         logger.info(f"Deleted Entity {name}.")
 
-    @telemetry.send_api_usage_telemetry(project=PROJECT)
-    @snowpark_utils.private_preview(version="1.0.8")
+    @dispatch_decorator(prpr_version="1.0.8")
     def retrieve_feature_values(
         self,
         spine_df: DataFrame,
@@ -824,8 +858,7 @@ class FeatureStore:
         )
         return df
 
-    @telemetry.send_api_usage_telemetry(project=PROJECT)
-    @snowpark_utils.private_preview(version="1.0.8")
+    @dispatch_decorator(prpr_version="1.0.8")
     def generate_dataset(
         self,
         spine_df: DataFrame,
@@ -963,8 +996,7 @@ class FeatureStore:
         )
         return dataset
 
-    @telemetry.send_api_usage_telemetry(project=PROJECT)
-    @snowpark_utils.private_preview(version="1.0.8")
+    @dispatch_decorator(prpr_version="1.0.8")
     def load_feature_views_from_dataset(self, dataset: Dataset) -> List[Union[FeatureView, FeatureViewSlice]]:
         """
         Retrieve FeatureViews used during Dataset construction.
@@ -984,8 +1016,7 @@ class FeatureStore:
 
         return self._load_serialized_feature_objects(serialized_objs)
 
-    @telemetry.send_api_usage_telemetry(project=PROJECT)
-    @snowpark_utils.private_preview(version="1.0.8")
+    @dispatch_decorator(prpr_version="1.0.8")
     def clear(self) -> None:
         """
         Clear all feature store internal objects including feature views, entities etc. Note feature store
@@ -1039,7 +1070,6 @@ class FeatureStore:
         column_descs: str,
         entities: str,
         schedule_task: bool,
-        refresh_freq: str,
         warehouse: SqlIdentifier,
         timestamp_col: SqlIdentifier,
         block: bool,
@@ -1047,7 +1077,7 @@ class FeatureStore:
         # TODO: cluster by join keys once DT supports that
         try:
             query = f"""CREATE DYNAMIC TABLE {fully_qualified_name} ({column_descs})
-                TARGET_LAG = '{'DOWNSTREAM' if schedule_task else refresh_freq}'
+                TARGET_LAG = '{'DOWNSTREAM' if schedule_task else feature_view.refresh_freq}'
                 COMMENT = '{feature_view.desc}'
                 TAG (
                     {self._get_fully_qualified_name(FEATURE_VIEW_ENTITY_TAG)} = '{entities}',
@@ -1066,7 +1096,7 @@ class FeatureStore:
                 self._session.sql(
                     f"""CREATE TASK {fully_qualified_name}
                         WAREHOUSE = {warehouse}
-                        SCHEDULE = 'USING CRON {refresh_freq}'
+                        SCHEDULE = 'USING CRON {feature_view.refresh_freq}'
                         AS ALTER DYNAMIC TABLE {fully_qualified_name} REFRESH
                     """
                 ).collect(statement_params=self._telemetry_stmp)
