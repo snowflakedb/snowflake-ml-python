@@ -21,8 +21,8 @@ ADDITIONAL_PARAM_DESCRIPTIONS = """
 input_cols: Optional[Union[str, List[str]]]
     A string or list of strings representing column names that contain features.
     If this parameter is not specified, all columns in the input DataFrame except
-    the columns specified by label_cols and sample_weight_col parameters are
-    considered input columns.
+    the columns specified by label_cols, sample_weight_col, and passthrough_cols
+    parameters are considered input columns.
 
 label_cols: Optional[Union[str, List[str]]]
     A string or list of strings representing column names that contain labels.
@@ -43,6 +43,13 @@ output_cols: Optional[Union[str, List[str]]]
 sample_weight_col: Optional[str]
     A string representing the column name containing the sample weights.
     This argument is only required when working with weighted datasets.
+
+passthrough_cols: Optional[Union[str, List[str]]]
+    A string or a list of strings indicating column names to be excluded from any
+    operations (such as train, transform, or inference). These specified column(s)
+    will remain untouched throughout the process. This option is helpful in scenarios
+    requiring automatic input_cols inference, but need to avoid using specific
+    columns, like index columns, during training or inference.
 
 drop_input_cols: Optional[bool], default=False
     If set, the response of predict(), transform() methods will not contain input columns.
@@ -743,7 +750,7 @@ class WrapperGeneratorBase:
                     signature_lines.append(v.name)
                 sklearn_init_args_dict_list.append(f"'{v.name}':({v.name}, None, True)")
 
-        for arg in ["input_cols", "output_cols", "label_cols"]:
+        for arg in ["input_cols", "output_cols", "label_cols", "passthrough_cols"]:
             signature_lines.append(f"{arg}: Optional[Union[str, Iterable[str]]] = None")
             init_member_args.append(f"self.set_{arg}({arg})")
 

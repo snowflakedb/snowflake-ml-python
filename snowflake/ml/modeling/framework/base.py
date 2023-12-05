@@ -16,12 +16,15 @@ from snowflake.ml._internal.exceptions import (
     exceptions,
     modeling_error_messages,
 )
-from snowflake.ml._internal.utils import parallelize
+from snowflake.ml._internal.utils import identifier, parallelize
 from snowflake.ml.modeling.framework import _utils
 from snowflake.snowpark import functions as F
 
 PROJECT = "ModelDevelopment"
 SUBPROJECT = "Preprocessing"
+
+SKLEARN_SUPERVISED_ESTIMATORS = ["regressor", "classifier"]
+SKLEARN_SINGLE_OUTPUT_ESTIMATORS = ["DensityEstimator", "clusterer", "outlier_detector"]
 
 
 def _process_cols(cols: Optional[Union[str, Iterable[str]]]) -> List[str]:
@@ -48,10 +51,13 @@ class Base:
             input_cols: Input columns.
             output_cols: Output columns.
             label_cols: Label column(s).
+            passthrough_cols: List columns not to be used or modified by the estimator/trasformers.
+                These columns will be passed through all the estimator/trasformer operations without any modifications.
         """
         self.input_cols: List[str] = []
         self.output_cols: List[str] = []
         self.label_cols: List[str] = []
+        self.passthrough_cols: List[str] = []
 
     def _create_unfitted_sklearn_object(self) -> Any:
         raise NotImplementedError()
@@ -123,6 +129,29 @@ class Base:
             self
         """
         self.label_cols = _process_cols(label_cols)
+        return self
+
+    def get_passthrough_cols(self) -> List[str]:
+        """
+        Getter method for passthrough_cols attribute.
+
+        Returns:
+            Passthrough column(s).
+        """
+        return self.passthrough_cols
+
+    def set_passthrough_cols(self, passthrough_cols: Optional[Union[str, Iterable[str]]]) -> "Base":
+        """
+        Setter method passthrough_cols attribute.
+
+        Args:
+            passthrough_cols: Column(s) that should not be used or modified by the estimator/transformer.
+                Estimator/Transformer just passthrough these columns without any modifications.
+
+        Returns:
+            self
+        """
+        self.passthrough_cols = _process_cols(passthrough_cols)
         return self
 
     def _check_input_cols(self) -> None:
@@ -494,6 +523,59 @@ class BaseTransformer(BaseEstimator):
                     f"Model {self.__class__.__name__} not fitted before calling predict/transform."
                 ),
             )
+
+    def _infer_input_output_cols(self, dataset: Union[snowpark.DataFrame, pd.DataFrame]) -> None:
+        """
+        Infer `self.input_cols` and `self.output_cols` if they are not explicitly set.
+
+        Args:
+            dataset: Input dataset.
+
+        Raises:
+            SnowflakeMLException: If unable to infer output columns
+        """
+        if not self.input_cols:
+            cols = [
+                c
+                for c in dataset.columns
+                if (
+                    c not in self.get_label_cols()
+                    and c not in self.get_passthrough_cols()
+                    and c != self.sample_weight_col
+                )
+            ]
+            self.set_input_cols(input_cols=cols)
+
+        if not self.output_cols:
+            # keep mypy happy
+            assert self._sklearn_object is not None
+
+            if hasattr(self._sklearn_object, "_estimator_type"):
+                # For supervised estimators, infer the output columns from the label columns
+                if self._sklearn_object._estimator_type in SKLEARN_SUPERVISED_ESTIMATORS:
+                    cols = [identifier.concat_names(["OUTPUT_", c]) for c in self.label_cols]
+                    self.set_output_cols(output_cols=cols)
+
+                # For density estimators, clusterers, and outlier detectors, there is always exactly one output column.
+                elif self._sklearn_object._estimator_type in SKLEARN_SINGLE_OUTPUT_ESTIMATORS:
+                    self.set_output_cols(output_cols=["OUTPUT_0"])
+
+                else:
+                    raise exceptions.SnowflakeMLException(
+                        error_code=error_codes.INVALID_ARGUMENT,
+                        original_exception=ValueError(
+                            f"Unable to infer output columns for estimator type {self._sklearn_object._estimator_type}."
+                            f"Please include `output_cols` explicitly."
+                        ),
+                    )
+            else:
+                raise exceptions.SnowflakeMLException(
+                    error_code=error_codes.INVALID_ARGUMENT,
+                    original_exception=ValueError(
+                        f"Unable to infer output columns for object {self._sklearn_object}."
+                        f"Please include `output_cols` explicitly."
+                    ),
+                )
 
     def set_drop_input_cols(self, drop_input_cols: Optional[bool] = False) -> None:
         self._drop_input_cols = drop_input_cols

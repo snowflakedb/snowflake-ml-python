@@ -9,7 +9,6 @@ from common_utils import (
     get_test_warehouse_name,
 )
 
-from snowflake.ml._internal.utils import identifier
 from snowflake.ml._internal.utils.identifier import resolve_identifier
 from snowflake.ml._internal.utils.sql_identifier import SqlIdentifier
 from snowflake.ml.feature_store import (  # type: ignore[attr-defined]
@@ -76,7 +75,7 @@ class FeatureStoreCaseSensitivityTest(parameterized.TestCase):
     def test_feature_store_location(self, database: str, schema: str) -> None:
         self._session.sql(f"CREATE DATABASE IF NOT EXISTS {database}").collect()
 
-        if identifier._is_quoted(schema):
+        if schema.startswith('"') and schema.endswith('"'):
             schema = f'{schema[:-1]}_{ uuid4().hex.upper()}"'
         else:
             schema = f"{schema}_{uuid4().hex.upper()}"
@@ -85,15 +84,16 @@ class FeatureStoreCaseSensitivityTest(parameterized.TestCase):
             session=self._session,
             database=database,
             name=schema,
+            default_warehouse=self._test_warehouse_name,
             creation_mode=CreationMode.CREATE_IF_NOT_EXIST,
-        ).set_default_warehouse(self._test_warehouse_name)
+        )
         self._active_fs.append(fs)
 
         df = self._session.sql(f"SELECT a, b FROM {self._mock_table}")
         e = Entity(name="e", join_keys=["a"])
         fs.register_entity(e)
-        fv = FeatureView(name="fv", entities=[e], feature_df=df)
-        fs.register_feature_view(feature_view=fv, version="v1", refresh_freq="1 minute", block=True)
+        fv = FeatureView(name="fv", entities=[e], feature_df=df, refresh_freq="1 minute")
+        fs.register_feature_view(feature_view=fv, version="v1", block=True)
         retrieved_fv = fs.get_feature_view(name="fv", version="v1")
         self.assertEqual(resolve_identifier(database), retrieved_fv.database)
         self.assertEqual(resolve_identifier(schema), retrieved_fv.schema)
@@ -103,6 +103,7 @@ class FeatureStoreCaseSensitivityTest(parameterized.TestCase):
             session=self._session,
             database=database,
             name=schema,
+            default_warehouse=self._test_warehouse_name,
             creation_mode=CreationMode.FAIL_IF_NOT_EXIST,
         )
 
@@ -116,15 +117,16 @@ class FeatureStoreCaseSensitivityTest(parameterized.TestCase):
             session=self._session,
             database=FS_INTEG_TEST_DB,
             name=current_schema,
+            default_warehouse=warehouse,
             creation_mode=CreationMode.CREATE_IF_NOT_EXIST,
-        ).set_default_warehouse(warehouse)
+        )
         self._active_fs.append(fs)
 
         df = self._session.sql(f"SELECT a, b FROM {self._mock_table}")
         e = Entity(name="e", join_keys=["a"])
         fs.register_entity(e)
-        fv = FeatureView(name="fv", entities=[e], feature_df=df)
-        fs.register_feature_view(feature_view=fv, version="v1", refresh_freq="1 minute", block=True)
+        fv = FeatureView(name="fv", entities=[e], feature_df=df, refresh_freq="1 minute")
+        fs.register_feature_view(feature_view=fv, version="v1", block=True)
         retrieved_fv = fs.get_feature_view(name="fv", version="v1")
         self.assertEqual(resolve_identifier(warehouse), retrieved_fv.warehouse)
         self.assertEqual(2, len(fs.read_feature_view(retrieved_fv).to_pandas()))
@@ -139,7 +141,7 @@ class FeatureStoreCaseSensitivityTest(parameterized.TestCase):
         def generate_unique_name(names: List[str]) -> List[str]:
             result = []
             for name in names:
-                if identifier._is_quoted(name):
+                if name.startswith('"') and name.endswith('"'):
                     result.append(f'"{name[1:-1]}_{per_run_id}"')
                 else:
                     result.append(f"{name}_{per_run_id}")
@@ -155,6 +157,7 @@ class FeatureStoreCaseSensitivityTest(parameterized.TestCase):
             self._session,
             FS_INTEG_TEST_DB,
             original_name,
+            default_warehouse=self._test_warehouse_name,
             creation_mode=CreationMode.CREATE_IF_NOT_EXIST,
         )
         self._active_fs.append(fs)
@@ -165,6 +168,7 @@ class FeatureStoreCaseSensitivityTest(parameterized.TestCase):
                 self._session,
                 FS_INTEG_TEST_DB,
                 equi_name,
+                default_warehouse=self._test_warehouse_name,
                 creation_mode=CreationMode.FAIL_IF_NOT_EXIST,
             )
 
@@ -175,6 +179,7 @@ class FeatureStoreCaseSensitivityTest(parameterized.TestCase):
                     self._session,
                     FS_INTEG_TEST_DB,
                     diff_name,
+                    default_warehouse=self._test_warehouse_name,
                     creation_mode=CreationMode.FAIL_IF_NOT_EXIST,
                 )
 
@@ -191,6 +196,7 @@ class FeatureStoreCaseSensitivityTest(parameterized.TestCase):
             self._session,
             FS_INTEG_TEST_DB,
             current_schema,
+            default_warehouse=self._test_warehouse_name,
             creation_mode=CreationMode.CREATE_IF_NOT_EXIST,
         )
         self._active_fs.append(fs)
@@ -235,6 +241,7 @@ class FeatureStoreCaseSensitivityTest(parameterized.TestCase):
             self._session,
             FS_INTEG_TEST_DB,
             current_schema,
+            default_warehouse=self._test_warehouse_name,
             creation_mode=CreationMode.CREATE_IF_NOT_EXIST,
         )
         self._active_fs.append(fs)
@@ -291,8 +298,9 @@ class FeatureStoreCaseSensitivityTest(parameterized.TestCase):
             self._session,
             FS_INTEG_TEST_DB,
             current_schema,
+            default_warehouse=self._test_warehouse_name,
             creation_mode=CreationMode.CREATE_IF_NOT_EXIST,
-        ).set_default_warehouse(self._test_warehouse_name)
+        )
         self._active_fs.append(fs)
 
         df = self._session.create_dataframe([1, 2, 3], schema=["a"])
@@ -363,6 +371,7 @@ class FeatureStoreCaseSensitivityTest(parameterized.TestCase):
             self._session,
             FS_INTEG_TEST_DB,
             current_schema,
+            default_warehouse=self._test_warehouse_name,
             creation_mode=CreationMode.CREATE_IF_NOT_EXIST,
         )
         self._active_fs.append(fs)

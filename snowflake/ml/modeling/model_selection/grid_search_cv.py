@@ -200,6 +200,12 @@ class GridSearchCV(BaseTransformer):
         column names work for estimator's predict() method, but output_cols must
         be set explicitly for transformers.
 
+    passthrough_cols: A string or a list of strings indicating column names to be excluded from any
+        operations (such as train, transform, or inference). These specified column(s)
+        will remain untouched throughout the process. This option is helpful in scenarios
+        requiring automatic input_cols inference, but need to avoid using specific
+        columns, like index columns, during training or inference.
+
     sample_weight_col: Optional[str]
         A string representing the column name containing the examples’ weights.
         This argument is only required when working with weighted datasets.
@@ -225,6 +231,7 @@ class GridSearchCV(BaseTransformer):
         input_cols: Optional[Union[str, Iterable[str]]] = None,
         output_cols: Optional[Union[str, Iterable[str]]] = None,
         label_cols: Optional[Union[str, Iterable[str]]] = None,
+        passthrough_cols: Optional[Union[str, Iterable[str]]] = None,
         drop_input_cols: Optional[bool] = False,
         sample_weight_col: Optional[str] = None,
     ) -> None:
@@ -255,6 +262,7 @@ class GridSearchCV(BaseTransformer):
         self.set_label_cols(label_cols)
         self.set_drop_input_cols(drop_input_cols)
         self.set_sample_weight_col(sample_weight_col)
+        self.set_passthrough_cols(passthrough_cols)
         self._handlers: CVHandlers = HandlersImpl(
             class_name=self.__class__.__name__,
             subproject=_SUBPROJECT,
@@ -269,21 +277,6 @@ class GridSearchCV(BaseTransformer):
             Random id string usable in sproc, table, and stage names.
         """
         return str(uuid4()).replace("-", "_").upper()
-
-    def _infer_input_output_cols(self, dataset: Union[DataFrame, pd.DataFrame]) -> None:
-        """
-        Infer `self.input_cols` and `self.output_cols` if they are not explicitly set.
-
-        Args:
-            dataset: Input dataset.
-        """
-        if not self.input_cols:
-            cols = [c for c in dataset.columns if c not in self.get_label_cols() and c != self.sample_weight_col]
-            self.set_input_cols(input_cols=cols)
-
-        if not self.output_cols:
-            cols = [identifier.concat_names(ids=["OUTPUT_", c]) for c in self.label_cols]
-            self.set_output_cols(output_cols=cols)
 
     def _get_active_columns(self) -> List[str]:
         """ "Get the list of columns that are relevant to the transformer."""
@@ -433,7 +426,7 @@ class GridSearchCV(BaseTransformer):
         # input cols need to match unquoted / quoted
         input_cols = self.input_cols
         unquoted_input_cols = identifier.get_unescaped_names(self.input_cols)
-        quoted_input_cols = identifier.get_escaped_names(unquoted_input_cols)
+        quoted_input_cols = identifier.get_inferred_names(unquoted_input_cols)
 
         estimator = self._sklearn_object
 

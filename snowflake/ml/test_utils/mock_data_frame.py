@@ -1,11 +1,13 @@
 from __future__ import annotations  # for return self methods
 
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Type, Union
 
 from snowflake import snowpark
 from snowflake.ml._internal.utils import formatting
 from snowflake.ml._internal.utils.string_matcher import StringMatcherIgnoreWhitespace
 from snowflake.ml.test_utils import mock_snowml_base
+from snowflake.snowpark import Column, DataFrame
+from snowflake.snowpark._internal import type_utils
 
 
 class MockAsyncJob:
@@ -68,6 +70,10 @@ class MockDataFrame(mock_snowml_base.MockSnowMLBase):
         if count_result is not None:
             self.add_count_result(count_result, count_statement_params)
 
+    @property  # type: ignore[misc]
+    def __class__(self) -> Type[DataFrame]:  # type: ignore[override]
+        return DataFrame
+
     def __repr__(self) -> str:
         result = "MockDataFrame"
         indent = 8
@@ -127,6 +133,31 @@ class MockDataFrame(mock_snowml_base.MockSnowMLBase):
             operation="filter", args=(), kwargs={"expr": StringMatcherIgnoreWhitespace(expr)}, result=result
         )
 
+    def add_mock_drop(self, *cols: type_utils.ColumnOrName, result: MockDataFrame | None = None) -> MockDataFrame:
+        return self.add_operation(operation="drop", args=cols, kwargs={}, result=result)
+
+    def add_mock_sort(
+        self,
+        *cols: type_utils.ColumnOrName,
+        ascending: Optional[Union[bool, int, List[Union[bool, int]]]] = None,
+        result: MockDataFrame | None = None,
+    ) -> MockDataFrame:
+        if ascending:
+            kwargs = {"ascending": ascending}
+        else:
+            kwargs = {}
+        return self.add_operation(operation="sort", args=cols, kwargs=kwargs, result=result)
+
+    def add_mock_with_columns(
+        self,
+        col_names: List[str],
+        values: List[Column],
+        result: MockDataFrame | None = None,
+    ) -> MockDataFrame:
+        return self.add_operation(
+            operation="with_columns", args=(), kwargs={"col_names": col_names, "values": values}, result=result
+        )
+
     def collect(self, *args: Any, **kwargs: Any) -> Any:
         """Collect a dataframe. Corresponds to DataFrame.collect."""
         mdfo = self._check_operation("collect", args, kwargs)
@@ -141,6 +172,18 @@ class MockDataFrame(mock_snowml_base.MockSnowMLBase):
         # noqa: DAR201
         """
         mdfo = self._check_operation("filter", args=args, kwargs=kwargs, check_args=False, check_kwargs=False)
+        return mdfo.result
+
+    def drop(self, *args: Any, **kwargs: Any) -> Any:
+        mdfo = self._check_operation("drop", args=args, kwargs=kwargs)
+        return mdfo.result
+
+    def sort(self, *args: Any, **kwargs: Any) -> Any:
+        mdfo = self._check_operation("sort", args=args, kwargs=kwargs)
+        return mdfo.result
+
+    def with_columns(self, *args: Any, **kwargs: Any) -> Any:
+        mdfo = self._check_operation("with_columns", args=args, kwargs=kwargs, check_args=False, check_kwargs=False)
         return mdfo.result
 
     def count(self, *args: Any, **kwargs: Any) -> Any:

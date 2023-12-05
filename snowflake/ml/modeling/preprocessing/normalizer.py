@@ -34,6 +34,12 @@ class Normalizer(base.BaseTransformer):
             A string or list of strings representing column names that will store the output of transform operation.
             The length of `output_cols` must equal the length of `input_cols`.
 
+        passthrough_cols: A string or a list of strings indicating column names to be excluded from any
+                operations (such as train, transform, or inference). These specified column(s)
+                will remain untouched throughout the process. This option is helpful in scenarios
+                requiring automatic input_cols inference, but need to avoid using specific
+                columns, like index columns, during training or inference.
+
         drop_input_cols: bool, default=False
             Remove input columns from output if set `True`.
     """
@@ -44,6 +50,7 @@ class Normalizer(base.BaseTransformer):
         norm: str = "l2",
         input_cols: Optional[Union[str, Iterable[str]]] = None,
         output_cols: Optional[Union[str, Iterable[str]]] = None,
+        passthrough_cols: Optional[Union[str, Iterable[str]]] = None,
         drop_input_cols: Optional[bool] = False,
     ) -> None:
         super().__init__(drop_input_cols=drop_input_cols)
@@ -51,6 +58,7 @@ class Normalizer(base.BaseTransformer):
         self._is_fitted = False
         self.set_input_cols(input_cols)
         self.set_output_cols(output_cols)
+        self.set_passthrough_cols(passthrough_cols)
 
     def _reset(self) -> None:
         """

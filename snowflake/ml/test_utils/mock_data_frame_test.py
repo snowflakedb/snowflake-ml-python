@@ -1,13 +1,16 @@
 from absl.testing.absltest import TestCase, main
 
 from snowflake.ml.test_utils import mock_data_frame
-from snowflake.snowpark import Row
+from snowflake.snowpark import DataFrame, Row
 from snowflake.snowpark._internal.analyzer.expression import Literal
 from snowflake.snowpark.functions import col
 
 
 class MockDataFrameTest(TestCase):
     """Testing MockDataFrame function."""
+
+    def test_isinstance(self) -> None:
+        self.assertTrue(mock_data_frame.MockDataFrame(), DataFrame)
 
     def test_constructor_collect(self) -> None:
         """Tests the basic operation of MockDataFrame creation and calling collect()."""
@@ -51,6 +54,75 @@ class MockDataFrameTest(TestCase):
         """Test that if don't execute an operation in the sequence, an assertion fails."""
         mock_df = mock_data_frame.MockDataFrame(check_call_sequence_completion=False)
         mock_df.add_operation(operation="filter")
+        mock_df.add_count_result(5)
+        with self.assertRaises(AssertionError):
+            mock_df.count()
+
+    def test_drop_operation(self) -> None:
+        """Test that the dataframe drop operation is validated."""
+        mock_df = mock_data_frame.MockDataFrame()
+        mock_df.add_mock_drop("NAME")
+        mock_df.add_count_result(5)
+        self.assertEqual(mock_df.drop("NAME").count(), 5)
+
+    def test_wrong_drop_operation(self) -> None:
+        """Test that the dataframe drop operation is validated."""
+        mock_df = mock_data_frame.MockDataFrame()
+        mock_df.add_mock_drop("NAME")
+        mock_df.add_count_result(5)
+        with self.assertRaises(AssertionError):
+            mock_df.drop("VALUE").count()
+
+    def test_missing_drop_operation(self) -> None:
+        """Test that if don't execute an operation in the sequence, an assertion fails."""
+        mock_df = mock_data_frame.MockDataFrame(check_call_sequence_completion=False)
+        mock_df.add_mock_drop("NAME")
+        mock_df.add_count_result(5)
+        with self.assertRaises(AssertionError):
+            mock_df.count()
+
+    def test_sort_operation(self) -> None:
+        mock_df = mock_data_frame.MockDataFrame()
+        mock_df.add_mock_sort("NAME")
+        mock_df.add_count_result(5)
+        self.assertEqual(mock_df.sort("NAME").count(), 5)
+
+    def test_sort_operation_with_kwargs(self) -> None:
+        mock_df = mock_data_frame.MockDataFrame()
+        mock_df.add_mock_sort("NAME", ascending=True)
+        mock_df.add_count_result(5)
+        self.assertEqual(mock_df.sort("NAME", ascending=True).count(), 5)
+
+    def test_wrong_sort_operation(self) -> None:
+        mock_df = mock_data_frame.MockDataFrame()
+        mock_df.add_mock_sort("NAME")
+        mock_df.add_count_result(5)
+        with self.assertRaises(AssertionError):
+            mock_df.sort("VALUE").count()
+
+    def test_wrong_operation_with_kwargs(self) -> None:
+        mock_df = mock_data_frame.MockDataFrame()
+        mock_df.add_mock_sort("NAME", ascending=True)
+        mock_df.add_count_result(5)
+        with self.assertRaises(AssertionError):
+            mock_df.sort("NAME").count()
+
+    def test_missing_sort_operation(self) -> None:
+        mock_df = mock_data_frame.MockDataFrame(check_call_sequence_completion=False)
+        mock_df.add_mock_sort("NAME")
+        mock_df.add_count_result(5)
+        with self.assertRaises(AssertionError):
+            mock_df.count()
+
+    def test_with_columns_operation(self) -> None:
+        mock_df = mock_data_frame.MockDataFrame()
+        mock_df.add_mock_with_columns(col_names=["NAME"], values=[col("NAME")])
+        mock_df.add_count_result(5)
+        self.assertEqual(mock_df.with_columns(col_names=["NAME"], values=[col("NAME")]).count(), 5)
+
+    def test_missing_with_columns_operation(self) -> None:
+        mock_df = mock_data_frame.MockDataFrame(check_call_sequence_completion=False)
+        mock_df.add_mock_with_columns(col_names=["NAME"], values=[col("NAME")])
         mock_df.add_count_result(5)
         with self.assertRaises(AssertionError):
             mock_df.count()

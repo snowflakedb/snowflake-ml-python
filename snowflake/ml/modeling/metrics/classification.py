@@ -252,7 +252,7 @@ def _register_confusion_matrix_computer(*, session: snowpark.Session, statement_
             self._batched_rows[self._cur_count, :] = input_row
             self._cur_count += 1
 
-            # 2. Compute incremental sum and dot_prod for the batch.
+            # 2. Compute incremental confusion matrix for the batch.
             if self._cur_count >= self.BATCH_SIZE:
                 self.update_confusion_matrix()
                 self._cur_count = 0
@@ -265,10 +265,16 @@ def _register_confusion_matrix_computer(*, session: snowpark.Session, statement_
                 yield cloudpickle.dumps(self._confusion_matrix[i, :]), "row_" + str(i)
 
         def update_confusion_matrix(self) -> None:
+            # Update the confusion matrix by adding values from the 1st column of the batched rows to specific
+            # locations in the confusion matrix determined by row and column indices from the 2nd and 3rd columns of
+            # the batched rows.
             np.add.at(
                 self._confusion_matrix,
-                (self._batched_rows[:, 1].astype(int), self._batched_rows[:, 2].astype(int)),
-                self._batched_rows[:, 0],
+                (
+                    self._batched_rows[: self._cur_count][:, 1].astype(int),
+                    self._batched_rows[: self._cur_count][:, 2].astype(int),
+                ),
+                self._batched_rows[: self._cur_count][:, 0],
             )
 
     confusion_matrix_computer = snowpark_utils.random_name_for_temp_object(snowpark_utils.TempObjectType.TABLE_FUNCTION)

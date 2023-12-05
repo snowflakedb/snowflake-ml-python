@@ -23,7 +23,7 @@ quote_name_without_upper_casing = analyzer_utils.quote_name_without_upper_casing
 
 
 def _is_quoted(id: str) -> bool:
-    """Checks if input is quoted.
+    """Checks if input *identifier* is quoted.
 
     NOTE: Snowflake treats all identifiers as UPPERCASE by default. That is 'Hello' would become 'HELLO'. To preserve
     case, one needs to use quoted identifiers, e.g. "Hello" (note the double quote). Callers must take care of that
@@ -40,23 +40,21 @@ def _is_quoted(id: str) -> bool:
         ValueError: If the id is invalid.
     """
     if not id:
-        raise ValueError("Invalid id passed.")
-    if len(id) < 2:
-        return False
-    if id[0] == '"' and id[-1] == '"':
+        raise ValueError(f"Invalid id {id} passed. ID is empty.")
+    if len(id) >= 2 and id[0] == '"' and id[-1] == '"':
         if len(id) == 2:
-            raise ValueError("Invalid id passed.")
+            raise ValueError(f"Invalid id {id} passed. ID is empty.")
         if not QUOTED_IDENTIFIER_RE.match(id):
-            raise ValueError("Invalid id passed.")
+            raise ValueError(f"Invalid id {id} passed. ID is quoted but does not match the quoted rule.")
         return True
-    if not UNQUOTED_CASE_INSENSITIVE_RE.match(id):
-        raise ValueError("Invalid id passed.")
-    return False  # To keep mypy happy
+    if not UNQUOTED_CASE_SENSITIVE_RE.match(id):
+        raise ValueError(f"Invalid id {id} passed. ID is unquoted but does not match the unquoted rule.")
+    return False
 
 
 def _get_unescaped_name(id: str) -> str:
     """Remove double quotes and unescape quotes between them from id if quoted.
-        Uppercase if not quoted.
+        Return as it is otherwise
 
     NOTE: See note in :meth:`_is_quoted`.
 
@@ -67,7 +65,7 @@ def _get_unescaped_name(id: str) -> str:
         String with quotes removed if quoted; original string otherwise.
     """
     if not _is_quoted(id):
-        return id.upper()
+        return id
     unquoted_id = id[1:-1]
     return unquoted_id.replace(DOUBLE_QUOTE + DOUBLE_QUOTE, DOUBLE_QUOTE)
 
@@ -88,9 +86,9 @@ def _get_escaped_name(id: str) -> str:
     return DOUBLE_QUOTE + escape_quotes + DOUBLE_QUOTE
 
 
-def get_inferred_name(id: str) -> str:
-    """Double quote id when it is case-sensitive and can start with and
-    contain any valid characters; unquote otherwise.
+def get_inferred_name(name: str) -> str:
+    """Double quote name when it is case-sensitive and can start with and
+    contain any valid characters; otherwise, keep it as it is.
 
     Examples:
         COL1 -> COL1
@@ -100,42 +98,38 @@ def get_inferred_name(id: str) -> str:
         COL 1 -> "COL 1"
 
     Args:
-        id: The string to be checked & treated.
+        name: The string to be checked & treated.
 
     Returns:
         Double quoted identifier if necessary; unquoted string otherwise.
     """
-    if UNQUOTED_CASE_SENSITIVE_RE.match(id):
-        return id
-    escaped_id = get_escaped_names(id)
+    if UNQUOTED_CASE_SENSITIVE_RE.match(name):
+        return name
+    escaped_id = _get_escaped_name(name)
     assert isinstance(escaped_id, str)
     return escaped_id
 
 
-def concat_names(ids: List[str]) -> str:
-    """Concatenates `ids` to form one valid id.
+def concat_names(names: List[str]) -> str:
+    """Concatenates `names` to form one valid id.
 
-    NOTE: See note in :meth:`_is_quoted`.
 
     Args:
-        ids: List of identifiers to be concatenated.
+        names: List of identifiers to be concatenated.
 
     Returns:
         Concatenated identifier.
     """
-    quotes_needed = False
     parts = []
-    for id in ids:
-        if _is_quoted(id):
-            # If any part is quoted, the user cares about case.
-            quotes_needed = True
-            # Remove quotes before using it.
-            id = _get_unescaped_name(id)
-        parts.append(id)
+    for name in names:
+        if QUOTED_IDENTIFIER_RE.match(name):
+            # If any part is quoted identifier, we need to remove the quotes
+            unescaped_name: str = _get_unescaped_name(name)
+            parts.append(unescaped_name)
+        else:
+            parts.append(name)
     final_id = "".join(parts)
-    if quotes_needed:
-        return _get_escaped_name(final_id)
-    return final_id
+    return get_inferred_name(final_id)
 
 
 def rename_to_valid_snowflake_identifier(name: str) -> str:
@@ -222,6 +216,14 @@ def get_unescaped_names(ids: Optional[Union[str, List[str]]]) -> Optional[Union[
     response pandas dataframe(i.e., in the response of snowpark_df.to_pandas()) using the rules defined here
     https://docs.snowflake.com/en/sql-reference/identifiers-syntax.
 
+    This function will mimic the behavior of Snowpark's `to_pandas()` from Snowpark DataFrame.
+
+    Examples:
+        COL1 -> COL1
+        "Col" -> Col
+        \"""COL""\" -> "COL"  (ignore '\')
+        "COL 1" -> COL 1
+
     Args:
         ids: User provided column name identifier(s).
 
@@ -243,27 +245,36 @@ def get_unescaped_names(ids: Optional[Union[str, List[str]]]) -> Optional[Union[
 
 
 @overload
-def get_escaped_names(ids: None) -> None:
+def get_inferred_names(names: None) -> None:
     ...
 
 
 @overload
-def get_escaped_names(ids: str) -> str:
+def get_inferred_names(names: str) -> str:
     ...
 
 
 @overload
-def get_escaped_names(ids: List[str]) -> List[str]:
+def get_inferred_names(names: List[str]) -> List[str]:
     ...
 
 
-def get_escaped_names(ids: Optional[Union[str, List[str]]]) -> Optional[Union[str, List[str]]]:
-    """Given a user provided identifier(s), this method will compute the equivalent column name identifier(s)
+def get_inferred_names(names: Optional[Union[str, List[str]]]) -> Optional[Union[str, List[str]]]:
+    """Given a user provided *string(s)*, this method will compute the equivalent column name identifier(s)
     in case of column name contains special characters, and maintains case-sensitivity
     https://docs.snowflake.com/en/sql-reference/identifiers-syntax.
 
+    This function will mimic the behavior of Snowpark's `create_dataframe` from pandas DataFrame.
+
+    Examples:
+        COL1 -> COL1
+        1COL -> "1COL"
+        Col -> "Col"
+        "COL" -> \"""COL""\"  (ignore '\')
+        COL 1 -> "COL 1"
+
     Args:
-        ids: User provided column name identifier(s).
+        names: User provided column name identifier(s).
 
     Returns:
         Double-quoted Identifiers for column names, to make sure that column names are case sensitive
@@ -272,12 +283,12 @@ def get_escaped_names(ids: Optional[Union[str, List[str]]]) -> Optional[Union[st
         ValueError: if input types is unsupported or column name identifiers are invalid.
     """
 
-    if ids is None:
+    if names is None:
         return None
-    elif type(ids) is list:
-        return [_get_escaped_name(id) for id in ids]
-    elif type(ids) is str:
-        return _get_escaped_name(ids)
+    elif type(names) is list:
+        return [get_inferred_name(id) for id in names]
+    elif type(names) is str:
+        return get_inferred_name(names)
     else:
         raise ValueError("Unsupported type. Only string or list of string are supported for selecting columns.")
 
@@ -297,39 +308,34 @@ def remove_prefix(s: str, prefix: str) -> str:
     return s
 
 
-def resolve_identifier(id: str) -> str:
-    """Following Snowflake identifier resolution strategies:
+def resolve_identifier(name: str) -> str:
+    """Given a user provided *string*, resolve following Snowflake identifier resolution strategies:
         https://docs.snowflake.com/en/sql-reference/identifiers-syntax#label-identifier-casing
 
-        If identifier is unquoted, it will return upper case.
-        Otherwise return exactly as it is.
+        This function will mimic the behavior of the SQL parser.
+
+    Examples:
+        COL1 -> COL1
+        1COL -> Raise Error
+        Col -> COL
+        "COL" -> COL
+        COL 1 -> Raise Error
 
     Args:
-        id: identifier string
+        name: the string to be resolved.
+
+    Raises:
+        ValueError: if input would not be accepted by SQL parser.
 
     Returns:
         Resolved identifier
     """
-    if _is_quoted(id):
-        if UNQUOTED_CASE_SENSITIVE_RE.match(id[1:-1]):
-            return id[1:-1]
-        else:
-            return id
+    if QUOTED_IDENTIFIER_RE.match(name):
+        unescaped = _get_unescaped_name(name)
+        if UNQUOTED_CASE_SENSITIVE_RE.match(unescaped):
+            return unescaped
+        return name
+    elif UNQUOTED_CASE_INSENSITIVE_RE.match(name):
+        return name.upper()
     else:
-        return id.upper()
-
-
-def strip_wrapping_quotes(id: str) -> str:
-    """Remove wrapping quotes if the identifier is quoted.
-    This is mainly used for keywords like `warehouse` which doesn't like wrapping quotes when being used.
-
-    Args:
-        id: identifier string
-
-    Returns:
-        Identifier with wrapping quotes removed
-    """
-    if _is_quoted(id):
-        return id[1:-1]
-    else:
-        return id
+        raise ValueError(f"Invalid name {name} passed. ID is not quoted and cannot normalized.")

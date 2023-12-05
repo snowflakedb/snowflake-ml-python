@@ -1,5 +1,20 @@
 # Release History
 
+## 1.1.1
+
+### Bug Fixes
+
+- Model Registry: The `predict` target method on registered models is now compatible with unsupervised estimators.
+- Model Development: Fix confusion_matrix incorrect results when the row number cannot be divided by the batch size.
+
+### Behavior Changes
+
+### New Features
+
+- Introduced passthrough_col param in Modeling API. This new param is helpful in scenarios
+  requiring automatic input_cols inference, but need to avoid using specific
+  columns, like index columns, during training or inference.
+
 ## 1.1.0
 
 ### Bug Fixes
