@@ -353,11 +353,6 @@ class {transform.original_class_name}(BaseTransformer):
         subproject=_SUBPROJECT,
         custom_tags=dict([("autogen", True)]),
     )
-    @telemetry.add_stmt_params_to_df(
-        project=_PROJECT,
-        subproject=_SUBPROJECT,
-        custom_tags=dict([("autogen", True)]),
-    )
     def predict(self, dataset: Union[DataFrame, pd.DataFrame]) -> Union[DataFrame, pd.DataFrame]:
         """{transform.predict_docstring}
 
@@ -398,11 +393,6 @@ class {transform.original_class_name}(BaseTransformer):
 
     @available_if(original_estimator_has_callable("transform"))  # type: ignore[misc]
     @telemetry.send_api_usage_telemetry(
-        project=_PROJECT,
-        subproject=_SUBPROJECT,
-        custom_tags=dict([("autogen", True)]),
-    )
-    @telemetry.add_stmt_params_to_df(
         project=_PROJECT,
         subproject=_SUBPROJECT,
         custom_tags=dict([("autogen", True)]),
@@ -494,11 +484,6 @@ class {transform.original_class_name}(BaseTransformer):
         subproject=_SUBPROJECT,
         custom_tags=dict([("autogen", True)]),
     )
-    @telemetry.add_stmt_params_to_df(
-        project=_PROJECT,
-        subproject=_SUBPROJECT,
-        custom_tags=dict([("autogen", True)]),
-    )
     def predict_proba(
         self, dataset: Union[DataFrame, pd.DataFrame], output_cols_prefix: str = "predict_proba_"
     ) -> Union[DataFrame, pd.DataFrame]:
@@ -531,11 +516,6 @@ class {transform.original_class_name}(BaseTransformer):
         subproject=_SUBPROJECT,
         custom_tags=dict([("autogen", True)]),
     )
-    @telemetry.add_stmt_params_to_df(
-        project=_PROJECT,
-        subproject=_SUBPROJECT,
-        custom_tags=dict([("autogen", True)]),
-    )
     def predict_log_proba(
         self, dataset: Union[DataFrame, pd.DataFrame], output_cols_prefix: str = "predict_log_proba_"
     ) -> Union[DataFrame, pd.DataFrame]:
@@ -564,16 +544,6 @@ class {transform.original_class_name}(BaseTransformer):
         return output_df
 
     @available_if(original_estimator_has_callable("decision_function"))  # type: ignore[misc]
-    @telemetry.send_api_usage_telemetry(
-        project=_PROJECT,
-        subproject=_SUBPROJECT,
-        custom_tags=dict([("autogen", True)]),
-    )
-    @telemetry.add_stmt_params_to_df(
-        project=_PROJECT,
-        subproject=_SUBPROJECT,
-        custom_tags=dict([("autogen", True)]),
-    )
     def decision_function(
         self, dataset: Union[DataFrame, pd.DataFrame], output_cols_prefix: str = "decision_function_"
     ) -> Union[DataFrame, pd.DataFrame]:
@@ -652,11 +622,6 @@ class {transform.original_class_name}(BaseTransformer):
 
     @available_if(original_estimator_has_callable("kneighbors"))  # type: ignore[misc]
     @telemetry.send_api_usage_telemetry(
-        project=_PROJECT,
-        subproject=_SUBPROJECT,
-        custom_tags=dict([("autogen", True)]),
-    )
-    @telemetry.add_stmt_params_to_df(
         project=_PROJECT,
         subproject=_SUBPROJECT,
         custom_tags=dict([("autogen", True)]),

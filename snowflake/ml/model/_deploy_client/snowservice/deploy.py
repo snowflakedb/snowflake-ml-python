@@ -10,9 +10,10 @@ from typing import Any, Dict, Generator, Optional, cast
 
 import importlib_resources
 import yaml
+from packaging import requirements
 from typing_extensions import Unpack
 
-from snowflake.ml._internal import file_utils
+from snowflake.ml._internal import env_utils, file_utils
 from snowflake.ml._internal.exceptions import (
     error_codes,
     exceptions as snowml_exceptions,
@@ -161,6 +162,11 @@ def _deploy(
         # Set conda-forge as backup channel for SPCS deployment
         if "conda-forge" not in model_meta_deploy.env._conda_dependencies:
             model_meta_deploy.env._conda_dependencies["conda-forge"] = []
+        # Snowflake connector needs pyarrow to work correctly.
+        env_utils.append_conda_dependency(
+            model_meta_deploy.env._conda_dependencies,
+            (env_utils.DEFAULT_CHANNEL_NAME, requirements.Requirement("pyarrow")),
+        )
         if options.use_gpu:
             # Make mypy happy
             assert options.num_gpus is not None

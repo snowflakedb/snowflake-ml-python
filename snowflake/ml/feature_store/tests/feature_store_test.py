@@ -23,10 +23,10 @@ from snowflake.ml.feature_store import (  # type: ignore[attr-defined]
     FeatureViewStatus,
 )
 from snowflake.ml.feature_store.feature_store import (
-    ENTITY_TAG_PREFIX,
-    FEATURE_STORE_OBJECT_TAG,
-    FEATURE_VIEW_ENTITY_TAG,
-    FEATURE_VIEW_TS_COL_TAG,
+    _ENTITY_TAG_PREFIX,
+    _FEATURE_STORE_OBJECT_TAG,
+    _FEATURE_VIEW_ENTITY_TAG,
+    _FEATURE_VIEW_TS_COL_TAG,
 )
 from snowflake.ml.utils.connection_params import SnowflakeLoginOptions
 from snowflake.snowpark import Session, exceptions as snowpark_exceptions
@@ -1017,14 +1017,14 @@ class FeatureStoreTest(absltest.TestCase):
         self.assertIsNotNone(fs)
 
         res = self._session.sql(
-            f"SHOW TAGS LIKE '{FEATURE_VIEW_ENTITY_TAG}' IN SCHEMA {fs._config.full_schema_path}"
+            f"SHOW TAGS LIKE '{_FEATURE_VIEW_ENTITY_TAG}' IN SCHEMA {fs._config.full_schema_path}"
         ).collect()
         self.assertEqual(len(res), 1)
 
         self._session.sql(f"DROP SCHEMA IF EXISTS {FS_INTEG_TEST_DB}.{current_schema}").collect()
 
         row_list = self._session.sql(
-            f"SHOW TAGS LIKE '{FEATURE_VIEW_ENTITY_TAG}' IN DATABASE {fs._config.database}"
+            f"SHOW TAGS LIKE '{_FEATURE_VIEW_ENTITY_TAG}' IN DATABASE {fs._config.database}"
         ).collect()
         for row in row_list:
             self.assertNotEqual(row["schema_name"], current_schema)
@@ -1246,10 +1246,10 @@ class FeatureStoreTest(absltest.TestCase):
             result = self._session.sql(f"SHOW TASKS LIKE 'FV$V1' IN SCHEMA {full_schema_path}").collect()
             self.assertEqual(len(result), expected_count)
             expected_tags = [
-                FEATURE_VIEW_ENTITY_TAG,
-                FEATURE_VIEW_TS_COL_TAG,
-                FEATURE_STORE_OBJECT_TAG,
-                f"{ENTITY_TAG_PREFIX}foo",
+                _FEATURE_VIEW_ENTITY_TAG,
+                _FEATURE_VIEW_TS_COL_TAG,
+                _FEATURE_STORE_OBJECT_TAG,
+                f"{_ENTITY_TAG_PREFIX}foo",
             ]
             for tag in expected_tags:
                 result = self._session.sql(f"SHOW TAGS LIKE '{tag}' in {full_schema_path}").collect()
@@ -1295,7 +1295,7 @@ class FeatureStoreTest(absltest.TestCase):
         df = self._session.table(self._mock_table).select(call_udf(udf_name, col("id")).alias("uid"), "name")
         fv = FeatureView(name="fv", entities=[entity], feature_df=df, refresh_freq="1h")
 
-        with self.assertWarnsRegex(UserWarning, "Dynamic table: `.*` will not refresh in INCREMENTAL mode"):
+        with self.assertWarnsRegex(UserWarning, "Your pipeline won't be incrementally refreshed due to:"):
             fs.register_feature_view(feature_view=fv, version="V1")
 
     def test_switch_warehouse(self) -> None:

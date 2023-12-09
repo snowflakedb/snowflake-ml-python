@@ -308,7 +308,6 @@ class SimpleImputer(base.BaseTransformer):
         return self
 
     @telemetry.send_api_usage_telemetry(project=base.PROJECT, subproject=_SUBPROJECT)
-    @telemetry.add_stmt_params_to_df(project=base.PROJECT, subproject=_SUBPROJECT)
     def transform(self, dataset: Union[snowpark.DataFrame, pd.DataFrame]) -> Union[snowpark.DataFrame, pd.DataFrame]:
         """
         Transform the input dataset by imputing the computed statistics in the input columns.

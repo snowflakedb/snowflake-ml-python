@@ -1,13 +1,23 @@
 # Release History
 
+## 1.1.2
+
+### Bug Fixes
+
+- Generic: Fix the issue that stack trace is hidden by telemetry unexpectedly.
+
+### Behavior Changes
+
+- Model Registry: When calling `predict` with Snowpark DataFrame, both inferred or normalized column names are accepted.
+
+### New Features
+
 ## 1.1.1
 
 ### Bug Fixes
 
 - Model Registry: The `predict` target method on registered models is now compatible with unsupervised estimators.
 - Model Development: Fix confusion_matrix incorrect results when the row number cannot be divided by the batch size.
-
-### Behavior Changes
 
 ### New Features
 

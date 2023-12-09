@@ -182,7 +182,7 @@ def _get_model_final_packages(
         raise snowml_exceptions.SnowflakeMLException(
             error_code=error_codes.DEPENDENCY_VERSION_ERROR,
             original_exception=RuntimeError(
-                "The model's dependencyies are not available in Snowflake Anaconda Channel. "
+                "The model's dependencies are not available in Snowflake Anaconda Channel. "
                 + relax_version_info_str
                 + "Required packages are:\n"
                 + " ".join(map(lambda x: f'"{x}"', required_packages))

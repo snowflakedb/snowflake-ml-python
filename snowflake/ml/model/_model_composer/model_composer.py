@@ -3,7 +3,7 @@ import pathlib
 import tempfile
 import zipfile
 from types import ModuleType
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 from absl import logging
 from packaging import requirements
@@ -32,8 +32,15 @@ class ModelComposer:
     """
 
     MODEL_FILE_REL_PATH = "model.zip"
+    MODEL_DIR_REL_PATH = "model"
 
-    def __init__(self, session: Session, stage_path: str) -> None:
+    def __init__(
+        self,
+        session: Session,
+        stage_path: str,
+        *,
+        statement_params: Optional[Dict[str, Any]] = None,
+    ) -> None:
         self.session = session
         self.stage_path = pathlib.PurePosixPath(stage_path)
 
@@ -42,6 +49,8 @@ class ModelComposer:
 
         self.packager = model_packager.ModelPackager(local_dir_path=str(self._packager_workspace_path))
         self.manifest = model_manifest.ModelManifest(workspace_path=self.workspace_path)
+
+        self._statement_params = statement_params
 
     def __del__(self) -> None:
         self._workspace.cleanup()
@@ -111,6 +120,12 @@ class ModelComposer:
 
         assert self.packager.meta is not None
 
+        # Keep both loose files and zipped file.
+        # TODO(SNOW-726678): Remove once import a directory is possible.
+        file_utils.copytree(
+            str(self._packager_workspace_path), str(self.workspace_path / ModelComposer.MODEL_DIR_REL_PATH)
+        )
+
         file_utils.make_archive(self.model_local_path, str(self._packager_workspace_path))
 
         self.manifest.save(
@@ -120,7 +135,12 @@ class ModelComposer:
             options=options,
         )
 
-        file_utils.upload_directory_to_stage(self.session, local_path=self.workspace_path, stage_path=self.stage_path)
+        file_utils.upload_directory_to_stage(
+            self.session,
+            local_path=self.workspace_path,
+            stage_path=self.stage_path,
+            statement_params=self._statement_params,
+        )
 
     def load(
         self,
@@ -129,7 +149,10 @@ class ModelComposer:
         options: Optional[model_types.ModelLoadOption] = None,
     ) -> None:
         file_utils.download_directory_from_stage(
-            self.session, stage_path=self.stage_path, local_path=self.workspace_path
+            self.session,
+            stage_path=self.stage_path,
+            local_path=self.workspace_path,
+            statement_params=self._statement_params,
         )
 
         # TODO (Server-side Model Rollout): Remove this section.

@@ -27,19 +27,29 @@ class MaxAbsScaler(base.BaseTransformer):
     (https://scikit-learn.org/stable/modules/generated/sklearn.preprocessing.MaxAbsScaler.html).
 
     Args:
-        input_cols: The name(s) of one or more columns in a DataFrame containing a feature to be scaled.
-        output_cols: The name(s) of one or more columns in a DataFrame in which results will be stored. The number of
+        input_cols: Optional[Union[str, List[str]]], default=None
+            The name(s) of one or more columns in a DataFrame containing a feature to be scaled.
+
+        output_cols: Optional[Union[str, List[str]]], default=None
+            The name(s) of one or more columns in a DataFrame in which results will be stored. The number of
             columns specified must match the number of input columns.
-        passthrough_cols: A string or a list of strings indicating column names to be excluded from any
-                operations (such as train, transform, or inference). These specified column(s)
-                will remain untouched throughout the process. This option is helpful in scenarios
-                requiring automatic input_cols inference, but need to avoid using specific
-                columns, like index columns, during training or inference.
-        drop_input_cols: Remove input columns from output if set True. False by default.
+
+        passthrough_cols: Optional[Union[str, List[str]]], default=None
+            A string or a list of strings indicating column names to be excluded from any
+            operations (such as train, transform, or inference). These specified column(s)
+            will remain untouched throughout the process. This option is helpful in scenarios
+            requiring automatic input_cols inference, but need to avoid using specific
+            columns, like index columns, during training or inference.
+
+        drop_input_cols: Optional[bool], default=False
+            Remove input columns from output if set True. False by default.
 
     Attributes:
-        scale_: dict {column_name: value} or None. Per-feature relative scaling factor.
-        max_abs_: dict {column_name: value} or None. Per-feature maximum absolute value.
+        scale_: Dict[str, float]
+            dict {column_name: value} or None. Per-feature relative scaling factor.
+
+        max_abs_: Dict[str, float]
+            dict {column_name: value} or None. Per-feature maximum absolute value.
     """
 
     def __init__(
@@ -147,10 +157,6 @@ class MaxAbsScaler(base.BaseTransformer):
             )
 
     @telemetry.send_api_usage_telemetry(
-        project=base.PROJECT,
-        subproject=base.SUBPROJECT,
-    )
-    @telemetry.add_stmt_params_to_df(
         project=base.PROJECT,
         subproject=base.SUBPROJECT,
     )

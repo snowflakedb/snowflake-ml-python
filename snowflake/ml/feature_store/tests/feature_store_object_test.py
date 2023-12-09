@@ -9,8 +9,8 @@ from snowflake.ml.feature_store import (  # type: ignore[attr-defined]
     FeatureViewStatus,
 )
 from snowflake.ml.feature_store.feature_view import (
-    FEATURE_OBJ_TYPE,
-    TIMESTAMP_COL_PLACEHOLDER,
+    _FEATURE_OBJ_TYPE,
+    _TIMESTAMP_COL_PLACEHOLDER,
 )
 from snowflake.ml.utils.connection_params import SnowflakeLoginOptions
 from snowflake.snowpark import Session
@@ -75,7 +75,7 @@ class FeatureViewTest(absltest.TestCase):
         e = Entity(name="foo", join_keys=["a"])
 
         with self.assertRaisesRegex(ValueError, "Invalid timestamp_col name.*"):
-            FeatureView(name="my_fv", entities=[e], feature_df=df, timestamp_col=TIMESTAMP_COL_PLACEHOLDER)
+            FeatureView(name="my_fv", entities=[e], feature_df=df, timestamp_col=_TIMESTAMP_COL_PLACEHOLDER)
 
         with self.assertRaisesRegex(ValueError, "timestamp_col.*is not found in input dataframe.*"):
             FeatureView(name="my_fv", entities=[e], feature_df=df, timestamp_col="d")
@@ -97,7 +97,7 @@ class FeatureViewTest(absltest.TestCase):
         serialized = fv.to_json()
         self.assertEqual(fv, FeatureView.from_json(serialized, self._session))
 
-        malformed = json.dumps({FEATURE_OBJ_TYPE: "foobar"})
+        malformed = json.dumps({_FEATURE_OBJ_TYPE: "foobar"})
         with self.assertRaisesRegex(ValueError, "Invalid json str for FeatureView.*"):
             FeatureView.from_json(malformed, self._session)
 
@@ -109,7 +109,7 @@ class FeatureViewTest(absltest.TestCase):
         serialized = fv_slice.to_json()
         self.assertEqual(fv_slice, FeatureViewSlice.from_json(serialized, self._session))
 
-        malformed = json.dumps({FEATURE_OBJ_TYPE: "foobar"})
+        malformed = json.dumps({_FEATURE_OBJ_TYPE: "foobar"})
         with self.assertRaisesRegex(ValueError, "Invalid json str for FeatureViewSlice.*"):
             FeatureViewSlice.from_json(malformed, self._session)
 

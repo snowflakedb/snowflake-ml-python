@@ -287,7 +287,11 @@ def stage_file_exists(
 
 
 def upload_directory_to_stage(
-    session: snowpark.Session, local_path: pathlib.Path, stage_path: pathlib.PurePosixPath
+    session: snowpark.Session,
+    local_path: pathlib.Path,
+    stage_path: pathlib.PurePosixPath,
+    *,
+    statement_params: Optional[Dict[str, Any]] = None,
 ) -> None:
     """Upload a local folder recursively to a stage and keep the structure.
 
@@ -295,6 +299,7 @@ def upload_directory_to_stage(
         session: Snowpark Session.
         local_path: Local path to upload.
         stage_path: Base path in the stage.
+        statement_params: Statement Params.
     """
     file_operation = snowpark.FileOperation(session=session)
 
@@ -310,11 +315,16 @@ def upload_directory_to_stage(
                 str(stage_dir_path),
                 auto_compress=False,
                 overwrite=False,
+                statement_params=statement_params,
             )
 
 
 def download_directory_from_stage(
-    session: snowpark.Session, stage_path: pathlib.PurePosixPath, local_path: pathlib.Path
+    session: snowpark.Session,
+    stage_path: pathlib.PurePosixPath,
+    local_path: pathlib.Path,
+    *,
+    statement_params: Optional[Dict[str, Any]] = None,
 ) -> None:
     """Upload a folder in stage recursively to a folder in local and keep the structure.
 
@@ -322,6 +332,7 @@ def download_directory_from_stage(
         session: Snowpark Session.
         stage_path: Stage path to download from.
         local_path: Local path as the base of destination.
+        statement_params: Statement Params.
     """
     file_operation = file_operation = snowpark.FileOperation(session=session)
     file_list = [
@@ -331,4 +342,4 @@ def download_directory_from_stage(
     for stage_file_path in file_list:
         local_file_dir = local_path / stage_file_path.relative_to(stage_path).parent
         local_file_dir.mkdir(parents=True, exist_ok=True)
-        file_operation.get(str(stage_file_path), str(local_file_dir))
+        file_operation.get(str(stage_file_path), str(local_file_dir), statement_params=statement_params)

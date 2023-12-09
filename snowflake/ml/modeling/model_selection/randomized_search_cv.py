@@ -50,13 +50,13 @@ class RandomizedSearchCV(BaseTransformer):
 
     Parameters
     ----------
-    estimator : estimator object
+    estimator: estimator object
         An object of that type is instantiated for each grid point.
         This is assumed to implement the scikit-learn estimator interface.
         Either estimator needs to provide a ``score`` function,
         or ``scoring`` must be passed.
 
-    param_distributions : dict or list of dicts
+    param_distributions: dict or list of dicts
         Dictionary with parameters names (`str`) as keys and distributions
         or lists of parameters to try. Distributions must provide a ``rvs``
         method for sampling (such as those from scipy.stats.distributions).
@@ -64,135 +64,13 @@ class RandomizedSearchCV(BaseTransformer):
         If a list of dicts is given, first a dict is sampled uniformly, and
         then a parameter is sampled using that dict as above.
 
-    n_iter : int, default=10
-        Number of parameter settings that are sampled. n_iter trades
-        off runtime vs quality of the solution.
-
-    scoring : str, callable, list, tuple or dict, default=None
-        Strategy to evaluate the performance of the cross-validated model on
-        the test set.
-
-        If `scoring` represents a single score, one can use:
-
-        - a single string (see :ref:`scoring_parameter`);
-        - a callable (see :ref:`scoring`) that returns a single value.
-
-        If `scoring` represents multiple scores, one can use:
-
-        - a list or tuple of unique strings;
-        - a callable returning a dictionary where the keys are the metric
-          names and the values are the metric scores;
-        - a dictionary with metric names as keys and callables a values.
-
-        See :ref:`multimetric_grid_search` for an example.
-
-        If None, the estimator's score method is used.
-
-    n_jobs : int, default=None
-        Number of jobs to run in parallel.
-        ``None`` means 1 unless in a :obj:`joblib.parallel_backend` context.
-        ``-1`` means using all processors. See :term:`Glossary <n_jobs>`
-        for more details.
-
-    refit : bool, str, or callable, default=True
-        Refit an estimator using the best found parameters on the whole
-        dataset.
-
-        For multiple metric evaluation, this needs to be a `str` denoting the
-        scorer that would be used to find the best parameters for refitting
-        the estimator at the end.
-
-        Where there are considerations other than maximum score in
-        choosing a best estimator, ``refit`` can be set to a function which
-        returns the selected ``best_index_`` given the ``cv_results``. In that
-        case, the ``best_estimator_`` and ``best_params_`` will be set
-        according to the returned ``best_index_`` while the ``best_score_``
-        attribute will not be available.
-
-        The refitted estimator is made available at the ``best_estimator_``
-        attribute and permits using ``predict`` directly on this
-        ``RandomizedSearchCV`` instance.
-
-        Also for multiple metric evaluation, the attributes ``best_index_``,
-        ``best_score_`` and ``best_params_`` will only be available if
-        ``refit`` is set and all of them will be determined w.r.t this specific
-        scorer.
-
-        See ``scoring`` parameter to know more about multiple metric
-        evaluation.
-
-    cv : int, cross-validation generator or an iterable, default=None
-        Determines the cross-validation splitting strategy.
-        Possible inputs for cv are:
-
-        - None, to use the default 5-fold cross validation,
-        - integer, to specify the number of folds in a `(Stratified)KFold`,
-        - :term:`CV splitter`,
-        - An iterable yielding (train, test) splits as arrays of indices.
-
-        For integer/None inputs, if the estimator is a classifier and ``y`` is
-        either binary or multiclass, :class:`StratifiedKFold` is used. In all
-        other cases, :class:`KFold` is used. These splitters are instantiated
-        with `shuffle=False` so the splits will be the same across calls.
-
-        Refer :ref:`User Guide <cross_validation>` for the various
-        cross-validation strategies that can be used here.
-
-    verbose : int
-        Controls the verbosity: the higher, the more messages.
-
-        - >1 : the computation time for each fold and parameter candidate is
-          displayed;
-        - >2 : the score is also displayed;
-        - >3 : the fold and candidate parameter indexes are also displayed
-          together with the starting time of the computation.
-
-    pre_dispatch : int, or str, default='2*n_jobs'
-        Controls the number of jobs that get dispatched during parallel
-        execution. Reducing this number can be useful to avoid an
-        explosion of memory consumption when more jobs get dispatched
-        than CPUs can process. This parameter can be:
-
-            - None, in which case all the jobs are immediately
-              created and spawned. Use this for lightweight and
-              fast-running jobs, to avoid delays due to on-demand
-              spawning of the jobs
-
-            - An int, giving the exact number of total jobs that are
-              spawned
-
-            - A str, giving an expression as a function of n_jobs,
-              as in '2*n_jobs'
-
-    random_state : int, RandomState instance or None, default=None
-        Pseudo random number generator state used for random uniform sampling
-        from lists of possible values instead of scipy.stats distributions.
-        Pass an int for reproducible output across multiple
-        function calls.
-        See :term:`Glossary <random_state>`.
-
-    error_score : 'raise' or numeric, default=np.nan
-        Value to assign to the score if an error occurs in estimator fitting.
-        If set to 'raise', the error is raised. If a numeric value is given,
-        FitFailedWarning is raised. This parameter does not affect the refit
-        step, which will always raise the error.
-
-    return_train_score : bool, default=False
-        If ``False``, the ``cv_results_`` attribute will not include training
-        scores.
-        Computing training scores is used to get insights on how different
-        parameter settings impact the overfitting/underfitting trade-off.
-        However computing the scores on the training set can be computationally
-        expensive and is not strictly required to select the parameters that
-        yield the best generalization performance.
-
-    input_cols : Optional[Union[str, List[str]]]
+    input_cols: Optional[Union[str, List[str]]]
         A string or list of strings representing column names that contain features.
         If this parameter is not specified, all columns in the input DataFrame except
         the columns specified by label_cols and sample-weight_col parameters are
         considered input columns.
 
-    label_cols : Optional[Union[str, List[str]]]
+    label_cols: Optional[Union[str, List[str]]]
         A string or list of strings representing column names that contain labels.
         This is a required param for estimators, as there is no way to infer these
         columns. If this parameter is not specified, then object is fitted without
@@ -220,6 +98,128 @@ class RandomizedSearchCV(BaseTransformer):
 
     drop_input_cols: Optional[bool], default=False
         If set, the response of predict(), transform() methods will not contain input columns.
+
+    n_iter: int, default=10
+        Number of parameter settings that are sampled. n_iter trades
+        off runtime vs quality of the solution.
+
+    scoring: str, callable, list, tuple or dict, default=None
+        Strategy to evaluate the performance of the cross-validated model on
+        the test set.
+
+        If `scoring` represents a single score, one can use:
+
+        - a single string (see :ref:`scoring_parameter`);
+        - a callable (see :ref:`scoring`) that returns a single value.
+
+        If `scoring` represents multiple scores, one can use:
+
+        - a list or tuple of unique strings;
+        - a callable returning a dictionary where the keys are the metric
+          names and the values are the metric scores;
+        - a dictionary with metric names as keys and callables a values.
+
+        See :ref:`multimetric_grid_search` for an example.
+
+        If None, the estimator's score method is used.
+
+    n_jobs: int, default=None
+        Number of jobs to run in parallel.
+        ``None`` means 1 unless in a :obj:`joblib.parallel_backend` context.
+        ``-1`` means using all processors. See :term:`Glossary <n_jobs>`
+        for more details.
+
+    refit: bool, str, or callable, default=True
+        Refit an estimator using the best found parameters on the whole
+        dataset.
+
+        For multiple metric evaluation, this needs to be a `str` denoting the
+        scorer that would be used to find the best parameters for refitting
+        the estimator at the end.
+
+        Where there are considerations other than maximum score in
+        choosing a best estimator, ``refit`` can be set to a function which
+        returns the selected ``best_index_`` given the ``cv_results``. In that
+        case, the ``best_estimator_`` and ``best_params_`` will be set
+        according to the returned ``best_index_`` while the ``best_score_``
+        attribute will not be available.
+
+        The refitted estimator is made available at the ``best_estimator_``
+        attribute and permits using ``predict`` directly on this
+        ``RandomizedSearchCV`` instance.
+
+        Also for multiple metric evaluation, the attributes ``best_index_``,
+        ``best_score_`` and ``best_params_`` will only be available if
+        ``refit`` is set and all of them will be determined w.r.t this specific
+        scorer.
+
+        See ``scoring`` parameter to know more about multiple metric
+        evaluation.
+
+    cv: int, cross-validation generator or an iterable, default=None
+        Determines the cross-validation splitting strategy.
+        Possible inputs for cv are:
+
+        - None, to use the default 5-fold cross validation,
+        - integer, to specify the number of folds in a `(Stratified)KFold`,
+        - :term:`CV splitter`,
+        - An iterable yielding (train, test) splits as arrays of indices.
+
+        For integer/None inputs, if the estimator is a classifier and ``y`` is
+        either binary or multiclass, :class:`StratifiedKFold` is used. In all
+        other cases, :class:`KFold` is used. These splitters are instantiated
+        with `shuffle=False` so the splits will be the same across calls.
+
+        Refer :ref:`User Guide <cross_validation>` for the various
+        cross-validation strategies that can be used here.
+
+    verbose: int
+        Controls the verbosity: the higher, the more messages.
+
+        - >1 : the computation time for each fold and parameter candidate is
+          displayed;
+        - >2 : the score is also displayed;
+        - >3 : the fold and candidate parameter indexes are also displayed
+          together with the starting time of the computation.
+
+    pre_dispatch: int, or str, default='2*n_jobs'
+        Controls the number of jobs that get dispatched during parallel
+        execution. Reducing this number can be useful to avoid an
+        explosion of memory consumption when more jobs get dispatched
+        than CPUs can process. This parameter can be:
+
+            - None, in which case all the jobs are immediately
+              created and spawned. Use this for lightweight and
+              fast-running jobs, to avoid delays due to on-demand
+              spawning of the jobs
+
+            - An int, giving the exact number of total jobs that are
+              spawned
+
+            - A str, giving an expression as a function of n_jobs,
+              as in '2*n_jobs'
+
+    random_state: int, RandomState instance or None, default=None
+        Pseudo random number generator state used for random uniform sampling
+        from lists of possible values instead of scipy.stats distributions.
+        Pass an int for reproducible output across multiple
+        function calls.
+        See :term:`Glossary <random_state>`.
+
+    error_score: 'raise' or numeric, default=np.nan
+        Value to assign to the score if an error occurs in estimator fitting.
+        If set to 'raise', the error is raised. If a numeric value is given,
+        FitFailedWarning is raised. This parameter does not affect the refit
+        step, which will always raise the error.
+
+    return_train_score: bool, default=False
+        If ``False``, the ``cv_results_`` attribute will not include training
+        scores.
+        Computing training scores is used to get insights on how different
+        parameter settings impact the overfitting/underfitting trade-off.
+        However computing the scores on the training set can be computationally
+        expensive and is not strictly required to select the parameters that
+        yield the best generalization performance.
     """
     _ENABLE_DISTRIBUTED = True
 
@@ -539,10 +539,6 @@ class RandomizedSearchCV(BaseTransformer):
         project=_PROJECT,
         subproject=_SUBPROJECT,
     )
-    @telemetry.add_stmt_params_to_df(
-        project=_PROJECT,
-        subproject=_SUBPROJECT,
-    )
     def predict(self, dataset: Union[DataFrame, pd.DataFrame]) -> Union[DataFrame, pd.DataFrame]:
         """Call predict on the estimator with the best found parameters
         For more details on this function, see [sklearn.model_selection.RandomizedSearchCV.predict]
@@ -581,10 +577,6 @@ class RandomizedSearchCV(BaseTransformer):
 
     @available_if(original_estimator_has_callable("transform"))  # type: ignore[misc]
     @telemetry.send_api_usage_telemetry(
-        project=_PROJECT,
-        subproject=_SUBPROJECT,
-    )
-    @telemetry.add_stmt_params_to_df(
         project=_PROJECT,
         subproject=_SUBPROJECT,
     )
@@ -651,10 +643,6 @@ class RandomizedSearchCV(BaseTransformer):
         project=_PROJECT,
         subproject=_SUBPROJECT,
     )
-    @telemetry.add_stmt_params_to_df(
-        project=_PROJECT,
-        subproject=_SUBPROJECT,
-    )
     def predict_proba(
         self, dataset: Union[DataFrame, pd.DataFrame], output_cols_prefix: str = "predict_proba_"
     ) -> Union[DataFrame, pd.DataFrame]:
@@ -689,10 +677,6 @@ class RandomizedSearchCV(BaseTransformer):
 
     @available_if(original_estimator_has_callable("predict_log_proba"))  # type: ignore[misc]
     @telemetry.send_api_usage_telemetry(
-        project=_PROJECT,
-        subproject=_SUBPROJECT,
-    )
-    @telemetry.add_stmt_params_to_df(
         project=_PROJECT,
         subproject=_SUBPROJECT,
     )
@@ -734,10 +718,6 @@ class RandomizedSearchCV(BaseTransformer):
         project=_PROJECT,
         subproject=_SUBPROJECT,
     )
-    @telemetry.add_stmt_params_to_df(
-        project=_PROJECT,
-        subproject=_SUBPROJECT,
-    )
     def decision_function(
         self, dataset: Union[DataFrame, pd.DataFrame], output_cols_prefix: str = "decision_function_"
     ) -> Union[DataFrame, pd.DataFrame]:
@@ -774,6 +754,8 @@ class RandomizedSearchCV(BaseTransformer):
     @available_if(original_estimator_has_callable("score"))  # type: ignore[misc]
     def score(self, dataset: Union[DataFrame, pd.DataFrame]) -> float:
         """
+        If implemented by the original estimator, return the score for the dataset.
+
         Args:
             dataset: Union[snowflake.snowpark.DataFrame, pandas.DataFrame]
                 Snowpark or Pandas DataFrame.
@@ -865,6 +847,9 @@ class RandomizedSearchCV(BaseTransformer):
         return self._model_signature_dict
 
     def to_sklearn(self) -> sklearn.model_selection.RandomizedSearchCV:
+        """
+        Get sklearn.model_selection.RandomizedSearchCV object.
+        """
         assert self._sklearn_object is not None
         return self._sklearn_object
 

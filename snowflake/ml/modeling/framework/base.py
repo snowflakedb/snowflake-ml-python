@@ -133,7 +133,7 @@ class Base:
 
     def get_passthrough_cols(self) -> List[str]:
         """
-        Getter method for passthrough_cols attribute.
+        Passthrough columns getter.
 
         Returns:
             Passthrough column(s).
@@ -142,7 +142,7 @@ class Base:
 
     def set_passthrough_cols(self, passthrough_cols: Optional[Union[str, Iterable[str]]]) -> "Base":
         """
-        Setter method passthrough_cols attribute.
+        Passthrough columns setter.
 
         Args:
             passthrough_cols: Column(s) that should not be used or modified by the estimator/transformer.

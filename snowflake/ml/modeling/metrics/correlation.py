@@ -36,8 +36,10 @@ def correlation(*, df: snowpark.DataFrame, columns: Optional[Collection[str]] = 
     as a post-processing step.
 
     Args:
-        df (snowpark.DataFrame): Snowpark Dataframe for which correlation matrix has to be computed.
-        columns (Optional[Collection[str]]): List of column names for which the correlation matrix has to be computed.
+        df: snowpark.DataFrame
+            Snowpark Dataframe for which correlation matrix has to be computed.
+        columns: List of strings
+            List of column names for which the correlation matrix has to be computed.
             If None, correlation matrix is computed for all numeric columns in the snowpark dataframe.
 
     Returns:
