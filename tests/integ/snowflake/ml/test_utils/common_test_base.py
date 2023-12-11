@@ -108,7 +108,7 @@ class CommonTestBase(parameterized.TestCase):
                             req
                             for req in _snowml_requirements.REQUIREMENTS
                             # Remove "_" not in req once Snowpark 1.11.0 available, it is a workaround for their bug.
-                            if "snowflake-connector-python" not in req and "_" not in req
+                            if not any(offending in req for offending in ["snowflake-connector-python", "pyarrow", "_"])
                         ]
 
                         cloudpickle.register_pickle_by_value(test_module)

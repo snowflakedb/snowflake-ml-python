@@ -24,15 +24,22 @@ class LabelEncoder(base.BaseTransformer):
     (https://scikit-learn.org/stable/modules/generated/sklearn.preprocessing.LabelEncoder.html).
 
     Args:
-        input_cols: The name of a column in a DataFrame to be encoded. May be a string or a list containing one string.
-        output_cols: The name of a column in a DataFrame where the results will be stored. May be a string or a list
+        input_cols: Optional[Union[str, List[str]]]
+            The name of a column in a DataFrame to be encoded. May be a string or a list containing one string.
+
+        output_cols: Optional[Union[str, List[str]]]
+            The name of a column in a DataFrame where the results will be stored. May be a string or a list
             containing one string.
-        passthrough_cols: A string or a list of strings indicating column names to be excluded from any
+
+        passthrough_cols: Optional[Union[str, List[str]]]
+            A string or a list of strings indicating column names to be excluded from any
             operations (such as train, transform, or inference). These specified column(s)
             will remain untouched throughout the process. This option is helpful in scenarios
             requiring automatic input_cols inference, but need to avoid using specific
             columns, like index columns, during training or inference.
-        drop_input_cols: Remove input columns from output if set True. False by default.
+
+        drop_input_cols: Optional[bool], default=False
+            Remove input columns from output if set True. False by default.
     """
 
     def __init__(
@@ -46,19 +53,24 @@ class LabelEncoder(base.BaseTransformer):
         Encode target labels with integers between 0 and n_classes-1.
 
         Args:
-            input_cols: The name of a column in a DataFrame to be encoded. May be a string or a list containing one
+            input_cols: Optional[Union[str, List[str]]]
+                The name of a column in a DataFrame to be encoded. May be a string or a list containing one
                 string.
-            output_cols: The name of a column in a DataFrame where the results will be stored. May be a string or a list
+            output_cols: Optional[Union[str, List[str]]]
+                The name of a column in a DataFrame where the results will be stored. May be a string or a list
                 containing one string.
-            passthrough_cols: A string or a list of strings indicating column names to be excluded from any
+            passthrough_cols: Optional[Union[str, List[str]]]
+                A string or a list of strings indicating column names to be excluded from any
                 operations (such as train, transform, or inference). These specified column(s)
                 will remain untouched throughout the process. This option is helful in scenarios
                 requiring automatic input_cols inference, but need to avoid using specific
                 columns, like index columns, during in training or inference.
-            drop_input_cols: Remove input columns from output if set True. False by default.
+            drop_input_cols: Optional[bool], default=False
+                Remove input columns from output if set True. False by default.
 
         Attributes:
-            classes_: A np.ndarray that holds the label for each class.
+            classes_: Optional[type_utils.LiteralNDArrayType]
+                A np.ndarray that holds the label for each class.
                 Attributes are valid only after fit() has been called.
 
         """
@@ -123,10 +135,6 @@ class LabelEncoder(base.BaseTransformer):
         return self
 
     @telemetry.send_api_usage_telemetry(
-        project=base.PROJECT,
-        subproject=base.SUBPROJECT,
-    )
-    @telemetry.add_stmt_params_to_df(
         project=base.PROJECT,
         subproject=base.SUBPROJECT,
     )

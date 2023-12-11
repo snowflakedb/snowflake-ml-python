@@ -62,7 +62,7 @@ class ModelManifestTest(absltest.TestCase):
                                 "runtime": "python_runtime",
                                 "type": "FUNCTION",
                                 "handler": "functions.predict.infer",
-                                "inputs": [{"name": "tmp_input", "type": "OBJECT"}],
+                                "inputs": [{"name": "INPUT", "type": "FLOAT"}],
                                 "outputs": [{"type": "OBJECT"}],
                             }
                         ],
@@ -120,7 +120,7 @@ class ModelManifestTest(absltest.TestCase):
                                 "runtime": "python_runtime",
                                 "type": "FUNCTION",
                                 "handler": "functions.__call__.infer",
-                                "inputs": [{"name": "tmp_input", "type": "OBJECT"}],
+                                "inputs": [{"name": "INPUT", "type": "FLOAT"}],
                                 "outputs": [{"type": "OBJECT"}],
                             }
                         ],
@@ -177,11 +177,11 @@ class ModelManifestTest(absltest.TestCase):
                         },
                         "methods": [
                             {
-                                "name": '"predict"',
+                                "name": "predict",
                                 "runtime": "python_runtime",
                                 "type": "FUNCTION",
                                 "handler": "functions.predict.infer",
-                                "inputs": [{"name": "tmp_input", "type": "OBJECT"}],
+                                "inputs": [{"name": "input", "type": "FLOAT"}],
                                 "outputs": [{"type": "OBJECT"}],
                             },
                             {
@@ -189,7 +189,7 @@ class ModelManifestTest(absltest.TestCase):
                                 "runtime": "python_runtime",
                                 "type": "FUNCTION",
                                 "handler": "functions.__call__.infer",
-                                "inputs": [{"name": "tmp_input", "type": "OBJECT"}],
+                                "inputs": [{"name": "INPUT", "type": "FLOAT"}],
                                 "outputs": [{"type": "OBJECT"}],
                             },
                         ],
@@ -237,6 +237,73 @@ class ModelManifestTest(absltest.TestCase):
                             meta,
                             pathlib.PurePosixPath("model.zip"),
                         )
+
+    def test_load(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with open(os.path.join(tmpdir, "MANIFEST.yml"), "w", encoding="utf-8") as f:
+                yaml.safe_dump({}, f)
+
+            mm = model_manifest.ModelManifest(pathlib.Path(tmpdir))
+
+            with self.assertRaisesRegex(ValueError, "Unable to get the version of the MANIFEST file."):
+                mm.load()
+
+        raw_input = {
+            "manifest_version": "1.0",
+            "runtimes": {
+                "python_runtime": {
+                    "language": "PYTHON",
+                    "version": "3.8",
+                    "imports": ["model.zip", "runtimes/python_runtime/snowflake-ml-python.zip"],
+                    "dependencies": {"conda": "runtimes/python_runtime/env/conda.yml"},
+                }
+            },
+            "methods": [
+                {
+                    "name": "predict",
+                    "runtime": "python_runtime",
+                    "type": "FUNCTION",
+                    "handler": "functions.predict.infer",
+                    "inputs": [{"name": "input", "type": "FLOAT"}],
+                    "outputs": [{"type": "OBJECT"}],
+                },
+                {
+                    "name": "__CALL__",
+                    "runtime": "python_runtime",
+                    "type": "FUNCTION",
+                    "handler": "functions.__call__.infer",
+                    "inputs": [{"name": "INPUT", "type": "FLOAT"}],
+                    "outputs": [{"type": "OBJECT"}],
+                },
+            ],
+        }
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with open(os.path.join(tmpdir, "MANIFEST.yml"), "w", encoding="utf-8") as f:
+                yaml.safe_dump(raw_input, f)
+
+            mm = model_manifest.ModelManifest(pathlib.Path(tmpdir))
+
+            self.assertDictEqual(raw_input, mm.load())
+
+        raw_input["user_data"] = {}
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with open(os.path.join(tmpdir, "MANIFEST.yml"), "w", encoding="utf-8") as f:
+                yaml.safe_dump(raw_input, f)
+
+            mm = model_manifest.ModelManifest(pathlib.Path(tmpdir))
+
+            self.assertDictEqual(raw_input, mm.load())
+
+        raw_input["user_data"] = {"description": "Hello"}
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with open(os.path.join(tmpdir, "MANIFEST.yml"), "w", encoding="utf-8") as f:
+                yaml.safe_dump(raw_input, f)
+
+            mm = model_manifest.ModelManifest(pathlib.Path(tmpdir))
+
+            self.assertDictEqual(raw_input, mm.load())
 
 
 if __name__ == "__main__":

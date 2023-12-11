@@ -53,19 +53,54 @@ class GridSearchCV(BaseTransformer):
 
     Parameters
     ----------
-    estimator : estimator object
+    estimator: estimator object
         This is assumed to implement the scikit-learn estimator interface.
         Either estimator needs to provide a ``score`` function,
         or ``scoring`` must be passed.
 
-    param_grid : dict or list of dictionaries
+    param_grid: dict or list of dictionaries
         Dictionary with parameters names (`str`) as keys and lists of
         parameter settings to try as values, or a list of such
         dictionaries, in which case the grids spanned by each dictionary
         in the list are explored. This enables searching over any sequence
         of parameter settings.
 
-    scoring : str, callable, list, tuple or dict, default=None
+    input_cols: Optional[Union[str, List[str]]]
+        A string or list of strings representing column names that contain features.
+        If this parameter is not specified, all columns in the input DataFrame except
+        the columns specified by label_cols and sample-weight_col parameters are
+        considered input columns.
+
+    label_cols: Optional[Union[str, List[str]]]
+        A string or list of strings representing column names that contain labels.
+        This is a required param for estimators, as there is no way to infer these
+        columns. If this parameter is not specified, then object is fitted without
+        labels(Like a transformer).
+
+    output_cols: Optional[Union[str, List[str]]]
+        A string or list of strings representing column names that will store the
+        output of predict and transform operations. The length of output_cols mus
+        match the expected number of output columns from the specific estimator or
+        transformer class used.
+        If this parameter is not specified, output column names are derived by
+        adding an OUTPUT_ prefix to the label column names. These inferred output
+        column names work for estimator's predict() method, but output_cols must
+        be set explicitly for transformers.
+
+    passthrough_cols: A string or a list of strings indicating column names to be excluded from any
+        operations (such as train, transform, or inference). These specified column(s)
+        will remain untouched throughout the process. This option is helpful in scenarios
+        requiring automatic input_cols inference, but need to avoid using specific
+        columns, like index columns, during training or inference.
+
+    sample_weight_col: Optional[str]
+        A string representing the column name containing the examples’ weights.
+        This argument is only required when working with weighted datasets.
+
+    drop_input_cols: Optional[bool], default=False
+        If set, the response of predict(), transform() methods will not contain input columns.
+
+    scoring: str, callable, list, tuple or dict, default=None
         Strategy to evaluate the performance of the cross-validated model on
         the test set.
 
@@ -83,13 +118,13 @@ class GridSearchCV(BaseTransformer):
 
         See :ref:`multimetric_grid_search` for an example.
 
-    n_jobs : int, default=None
+    n_jobs: int, default=None
         Number of jobs to run in parallel.
         ``None`` means 1 unless in a :obj:`joblib.parallel_backend` context.
         ``-1`` means using all processors. See :term:`Glossary <n_jobs>`
         for more details.
 
-    refit : bool, str, or callable, default=True
+    refit: bool, str, or callable, default=True
         Refit an estimator using the best found parameters on the whole
         dataset.
 
@@ -120,7 +155,7 @@ class GridSearchCV(BaseTransformer):
         to see how to design a custom selection strategy using a callable
         via `refit`.
 
-    cv : int, cross-validation generator or an iterable, default=None
+    cv: int, cross-validation generator or an iterable, default=None
         Determines the cross-validation splitting strategy.
         Possible inputs for cv are:
 
@@ -137,7 +172,7 @@ class GridSearchCV(BaseTransformer):
         Refer :ref:`User Guide <cross_validation>` for the various
         cross-validation strategies that can be used here.
 
-    verbose : int
+    verbose: int
         Controls the verbosity: the higher, the more messages.
 
         - >1 : the computation time for each fold and parameter candidate is
@@ -146,7 +181,7 @@ class GridSearchCV(BaseTransformer):
         - >3 : the fold and candidate parameter indexes are also displayed
           together with the starting time of the computation.
 
-    pre_dispatch : int, or str, default='2*n_jobs'
+    pre_dispatch: int, or str, default='2*n_jobs'
         Controls the number of jobs that get dispatched during parallel
         execution. Reducing this number can be useful to avoid an
         explosion of memory consumption when more jobs get dispatched
@@ -163,13 +198,13 @@ class GridSearchCV(BaseTransformer):
             - A str, giving an expression as a function of n_jobs,
               as in '2*n_jobs'
 
-    error_score : 'raise' or numeric, default=np.nan
+    error_score: 'raise' or numeric, default=np.nan
         Value to assign to the score if an error occurs in estimator fitting.
         If set to 'raise', the error is raised. If a numeric value is given,
         FitFailedWarning is raised. This parameter does not affect the refit
         step, which will always raise the error.
 
-    return_train_score : bool, default=False
+    return_train_score: bool, default=False
         If ``False``, the ``cv_results_`` attribute will not include training
         scores.
         Computing training scores is used to get insights on how different
@@ -177,41 +212,6 @@ class GridSearchCV(BaseTransformer):
         However computing the scores on the training set can be computationally
         expensive and is not strictly required to select the parameters that
         yield the best generalization performance.
-
-    input_cols : Optional[Union[str, List[str]]]
-        A string or list of strings representing column names that contain features.
-        If this parameter is not specified, all columns in the input DataFrame except
-        the columns specified by label_cols and sample-weight_col parameters are
-        considered input columns.
-
-    label_cols : Optional[Union[str, List[str]]]
-        A string or list of strings representing column names that contain labels.
-        This is a required param for estimators, as there is no way to infer these
-        columns. If this parameter is not specified, then object is fitted without
-        labels(Like a transformer).
-
-    output_cols: Optional[Union[str, List[str]]]
-        A string or list of strings representing column names that will store the
-        output of predict and transform operations. The length of output_cols mus
-        match the expected number of output columns from the specific estimator or
-        transformer class used.
-        If this parameter is not specified, output column names are derived by
-        adding an OUTPUT_ prefix to the label column names. These inferred output
-        column names work for estimator's predict() method, but output_cols must
-        be set explicitly for transformers.
-
-    passthrough_cols: A string or a list of strings indicating column names to be excluded from any
-        operations (such as train, transform, or inference). These specified column(s)
-        will remain untouched throughout the process. This option is helpful in scenarios
-        requiring automatic input_cols inference, but need to avoid using specific
-        columns, like index columns, during training or inference.
-
-    sample_weight_col: Optional[str]
-        A string representing the column name containing the examples’ weights.
-        This argument is only required when working with weighted datasets.
-
-    drop_input_cols: Optional[bool], default=False
-        If set, the response of predict(), transform() methods will not contain input columns.
     """
     _ENABLE_DISTRIBUTED = True
 
@@ -523,10 +523,6 @@ class GridSearchCV(BaseTransformer):
         project=_PROJECT,
         subproject=_SUBPROJECT,
     )
-    @telemetry.add_stmt_params_to_df(
-        project=_PROJECT,
-        subproject=_SUBPROJECT,
-    )
     def predict(self, dataset: Union[DataFrame, pd.DataFrame]) -> Union[DataFrame, pd.DataFrame]:
         """Call predict on the estimator with the best found parameters
         For more details on this function, see [sklearn.model_selection.GridSearchCV.predict]
@@ -566,10 +562,6 @@ class GridSearchCV(BaseTransformer):
 
     @available_if(original_estimator_has_callable("transform"))  # type: ignore[misc]
     @telemetry.send_api_usage_telemetry(
-        project=_PROJECT,
-        subproject=_SUBPROJECT,
-    )
-    @telemetry.add_stmt_params_to_df(
         project=_PROJECT,
         subproject=_SUBPROJECT,
     )
@@ -636,10 +628,6 @@ class GridSearchCV(BaseTransformer):
         project=_PROJECT,
         subproject=_SUBPROJECT,
     )
-    @telemetry.add_stmt_params_to_df(
-        project=_PROJECT,
-        subproject=_SUBPROJECT,
-    )
     def predict_proba(
         self, dataset: Union[DataFrame, pd.DataFrame], output_cols_prefix: str = "predict_proba_"
     ) -> Union[DataFrame, pd.DataFrame]:
@@ -674,10 +662,6 @@ class GridSearchCV(BaseTransformer):
 
     @available_if(original_estimator_has_callable("predict_log_proba"))  # type: ignore[misc]
     @telemetry.send_api_usage_telemetry(
-        project=_PROJECT,
-        subproject=_SUBPROJECT,
-    )
-    @telemetry.add_stmt_params_to_df(
         project=_PROJECT,
         subproject=_SUBPROJECT,
     )
@@ -719,10 +703,6 @@ class GridSearchCV(BaseTransformer):
         project=_PROJECT,
         subproject=_SUBPROJECT,
     )
-    @telemetry.add_stmt_params_to_df(
-        project=_PROJECT,
-        subproject=_SUBPROJECT,
-    )
     def decision_function(
         self, dataset: Union[DataFrame, pd.DataFrame], output_cols_prefix: str = "decision_function_"
     ) -> Union[DataFrame, pd.DataFrame]:
@@ -759,6 +739,8 @@ class GridSearchCV(BaseTransformer):
     @available_if(original_estimator_has_callable("score"))  # type: ignore[misc]
     def score(self, dataset: Union[DataFrame, pd.DataFrame]) -> float:
         """
+        If implemented by the original estimator, return the score for the dataset.
+
         Args:
             dataset: Union[snowflake.snowpark.DataFrame, pandas.DataFrame]
                 Snowpark or Pandas DataFrame.
@@ -850,6 +832,9 @@ class GridSearchCV(BaseTransformer):
         return self._model_signature_dict
 
     def to_sklearn(self) -> sklearn.model_selection.GridSearchCV:
+        """
+        Get sklearn.model_selection.GridSearchCV object.
+        """
         assert self._sklearn_object is not None
         return self._sklearn_object
 

@@ -304,7 +304,7 @@ snowflake.ml.modeling.metrics
 
 .. currentmodule:: snowflake.ml.modeling.metrics
 
-.. rubric:: Classes
+.. rubric:: Functions
 
 .. autosummary::
     :toctree: api/modeling
@@ -312,12 +312,20 @@ snowflake.ml.modeling.metrics
     accuracy_score
     confusion_matrix
     correlation
+    covariance
+    d2_absolute_error_score
+    d2_pinball_score
+    explained_variance_score
     f1_score
     fbeta_score
     log_loss
+    mean_absolute_error
+    mean_absolute_percentage_error
+    mean_squared_error
     precision_recall_curve
     precision_recall_fscore_support
     precision_score
+    r2_score
     recall_score
     roc_auc_score
     roc_curve
@@ -448,6 +456,7 @@ snowflake.ml.modeling.preprocessing
     Normalizer
     OneHotEncoder
     Binarizer
+    PolynomialFeatures
 
 
 snowflake.ml.modeling.semi_supervised

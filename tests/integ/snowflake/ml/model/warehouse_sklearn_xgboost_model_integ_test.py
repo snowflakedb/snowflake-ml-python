@@ -1,6 +1,7 @@
 import uuid
 from typing import Any, Callable, Dict, Optional, Tuple, Union, cast
 
+import inflection
 import numpy as np
 import pandas as pd
 import xgboost
@@ -155,6 +156,7 @@ class TestWarehouseSKLearnXGBoostModelInteg(parameterized.TestCase):
         cal_data = datasets.load_breast_cancer(as_frame=True)
         cal_X = cal_data.data
         cal_y = cal_data.target
+        cal_X.columns = [inflection.parameterize(c, "_") for c in cal_X.columns]
         cal_X_train, cal_X_test, cal_y_train, cal_y_test = model_selection.train_test_split(cal_X, cal_y)
         regressor = xgboost.XGBRegressor(n_estimators=100, reg_lambda=1, gamma=0, max_depth=3)
         regressor.fit(cal_X_train, cal_y_train)
@@ -179,8 +181,9 @@ class TestWarehouseSKLearnXGBoostModelInteg(parameterized.TestCase):
         self,
         permanent_deploy: Optional[bool] = False,
     ) -> None:
-        cal_data = datasets.load_breast_cancer(as_frame=True)
-        cal_data_sp_df = self._session.create_dataframe(cal_data.frame)
+        cal_data = datasets.load_breast_cancer(as_frame=True).frame
+        cal_data.columns = [inflection.parameterize(c, "_") for c in cal_data]
+        cal_data_sp_df = self._session.create_dataframe(cal_data)
         cal_data_sp_df_train, cal_data_sp_df_test = tuple(cal_data_sp_df.random_split([0.25, 0.75], seed=2568))
         regressor = xgboost.XGBRegressor(n_estimators=100, reg_lambda=1, gamma=0, max_depth=3)
         cal_data_pd_df_train = cal_data_sp_df_train.to_pandas()
@@ -216,6 +219,7 @@ class TestWarehouseSKLearnXGBoostModelInteg(parameterized.TestCase):
         cal_data = datasets.load_breast_cancer(as_frame=True)
         cal_X = cal_data.data
         cal_y = cal_data.target
+        cal_X.columns = [inflection.parameterize(c, "_") for c in cal_X.columns]
         cal_X_train, cal_X_test, cal_y_train, cal_y_test = model_selection.train_test_split(cal_X, cal_y)
         params = dict(n_estimators=100, reg_lambda=1, gamma=0, max_depth=3, objective="binary:logistic")
         regressor = xgboost.train(params, xgboost.DMatrix(data=cal_X_train, label=cal_y_train))
@@ -239,8 +243,9 @@ class TestWarehouseSKLearnXGBoostModelInteg(parameterized.TestCase):
         self,
         permanent_deploy: Optional[bool] = False,
     ) -> None:
-        cal_data = datasets.load_breast_cancer(as_frame=True)
-        cal_data_sp_df = self._session.create_dataframe(cal_data.frame)
+        cal_data = datasets.load_breast_cancer(as_frame=True).frame
+        cal_data.columns = [inflection.parameterize(c, "_") for c in cal_data]
+        cal_data_sp_df = self._session.create_dataframe(cal_data)
         cal_data_sp_df_train, cal_data_sp_df_test = tuple(cal_data_sp_df.random_split([0.25, 0.75], seed=2568))
         cal_data_pd_df_train = cal_data_sp_df_train.to_pandas()
         params = dict(n_estimators=100, reg_lambda=1, gamma=0, max_depth=3, objective="binary:logistic")

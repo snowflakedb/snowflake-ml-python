@@ -49,18 +49,23 @@ def precision_recall_curve(
     which corresponds to a classifier that always predicts the positive class.
 
     Args:
-        df: Input dataframe.
-        y_true_col_name: Column name representing true binary labels.
+        df: snowpark.DataFrame
+            Input dataframe.
+        y_true_col_name: string
+            Column name representing true binary labels.
             If labels are not either {-1, 1} or {0, 1}, then pos_label should be
             explicitly given.
-        probas_pred_col_name: Column name representing target scores.
+        probas_pred_col_name: string
+            Column name representing target scores.
             Can either be probability estimates of the positive
             class, or non-thresholded measure of decisions (as returned by
             `decision_function` on some classifiers).
-        pos_label: The label of the positive class.
+        pos_label: string or int, default=None
+            The label of the positive class.
             When ``pos_label=None``, if y_true is in {-1, 1} or {0, 1},
             ``pos_label`` is set to 1, otherwise an error will be raised.
-        sample_weight_col_name: Column name representing sample weights.
+        sample_weight_col_name: string, default=None
+            Column name representing sample weights.
 
     Returns:
         Tuple containing following items
@@ -142,12 +147,15 @@ def roc_auc_score(
     multilabel classification, but some restrictions apply.
 
     Args:
-        df: Input dataframe.
-        y_true_col_names: Column name(s) representing true labels or binary label indicators.
+        df: snowpark.DataFrame
+            Input dataframe.
+        y_true_col_names: string or list of strings
+            Column name(s) representing true labels or binary label indicators.
             The binary and multiclass cases expect labels with shape (n_samples,)
             while the multilabel case expects binary label indicators with shape
             (n_samples, n_classes).
-        y_score_col_names: Column name(s) representing target scores.
+        y_score_col_names: string or list of strings
+            Column name(s) representing target scores.
             * In the binary case, it corresponds to an array of shape
               `(n_samples,)`. Both probability estimates and non-thresholded
               decision values can be provided. The probability estimates correspond
@@ -186,7 +194,8 @@ def roc_auc_score(
             ``'samples'``
                 Calculate metrics for each instance, and find their average.
             Will be ignored when ``y_true`` is binary.
-        sample_weight_col_name: Column name representing sample weights.
+        sample_weight_col_name: string, default=None
+            Column name representing sample weights.
         max_fpr: float > 0 and <= 1, default=None
             If not ``None``, the standardized partial AUC [2]_ over the range
             [0, max_fpr] is returned. For the multiclass case, ``max_fpr``,
@@ -208,7 +217,8 @@ def roc_auc_score(
                 possible pairwise combinations of classes [5]_.
                 Insensitive to class imbalance when
                 ``average == 'macro'``.
-        labels: Only used for multiclass targets. List of labels that index the
+        labels: list of labels, default=None
+            Only used for multiclass targets. List of labels that index the
             classes in ``y_score``. If ``None``, the numerical or lexicographical
             order of the labels in ``y_true`` is used.
 
@@ -282,19 +292,25 @@ def roc_curve(
     Note: this implementation is restricted to the binary classification task.
 
     Args:
-        df: Input dataframe.
-        y_true_col_name: Column name representing true binary labels.
+        df: snowpark.DataFrame
+            Input dataframe.
+        y_true_col_name: string
+            Column name representing true binary labels.
             If labels are not either {-1, 1} or {0, 1}, then pos_label should be
             explicitly given.
-        y_score_col_name: Column name representing target scores, can either
+        y_score_col_name: string
+            Column name representing target scores, can either
             be probability estimates of the positive class, confidence values,
             or non-thresholded measure of decisions (as returned by
             "decision_function" on some classifiers).
-        pos_label: The label of the positive class.
+        pos_label: string, default=None
+            The label of the positive class.
             When ``pos_label=None``, if `y_true` is in {-1, 1} or {0, 1},
             ``pos_label`` is set to 1, otherwise an error will be raised.
-        sample_weight_col_name: Column name representing sample weights.
-        drop_intermediate: Whether to drop some suboptimal thresholds which would
+        sample_weight_col_name: string, default=None
+            Column name representing sample weights.
+        drop_intermediate: boolean, default=True
+            Whether to drop some suboptimal thresholds which would
             not appear on a plotted ROC curve. This is useful in order to create
             lighter ROC curves.
 

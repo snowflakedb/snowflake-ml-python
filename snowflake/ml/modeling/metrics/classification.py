@@ -43,12 +43,17 @@ def accuracy_score(
     corresponding set of labels in the y true columns.
 
     Args:
-        df: Input dataframe.
-        y_true_col_names: Column name(s) representing actual values.
-        y_pred_col_names: Column name(s) representing predicted values.
-        normalize: If ``False``, return the number of correctly classified samples.
+        df: snowpark.DataFrame
+            Input dataframe.
+        y_true_col_names: string or list of strings
+            Column name(s) representing actual values.
+        y_pred_col_names: string or list of strings
+            Column name(s) representing predicted values.
+        normalize: boolean, default=True
+            If ``False``, return the number of correctly classified samples.
             Otherwise, return the fraction of correctly classified samples.
-        sample_weight_col_name: Column name representing sample weights.
+        sample_weight_col_name: string, default=None
+            Column name representing sample weights.
 
     Returns:
         If ``normalize == True``, return the fraction of correctly
@@ -102,14 +107,19 @@ def confusion_matrix(
     :math:`C_{1,1}` and false positives is :math:`C_{0,1}`.
 
     Args:
-        df: Input dataframe.
-        y_true_col_name: Column name representing actual values.
-        y_pred_col_name: Column name representing predicted values.
-        labels: List of labels to index the matrix. This may be used to
+        df: snowpark.DataFrame
+            Input dataframe.
+        y_true_col_name: string or list of strings
+            Column name representing actual values.
+        y_pred_col_name: string or list of strings
+            Column name representing predicted values.
+        labels: list of labels, default=None
+            List of labels to index the matrix. This may be used to
             reorder or select a subset of labels.
             If ``None`` is given, those that appear at least once in the
             y true or y pred column are used in sorted order.
-        sample_weight_col_name: Column name representing sample weights.
+        sample_weight_col_name: string, default=None
+            Column name representing sample weights.
         normalize: {'true', 'pred', 'all'}, default=None
             Normalizes confusion matrix over the true (rows), predicted (columns)
             conditions or all the population. If None, confusion matrix will not be
@@ -124,7 +134,9 @@ def confusion_matrix(
 
     Raises:
         ValueError: The given ``labels`` is empty.
+
         ValueError: No label specified in the given ``labels`` is in the y true column.
+
         ValueError: ``normalize`` is not one of {'true', 'pred', 'all', None}.
     """
     assert df._session is not None
@@ -323,17 +335,22 @@ def f1_score(
     parameter.
 
     Args:
-        df: Input dataframe.
-        y_true_col_names: Column name(s) representing actual values.
-        y_pred_col_names: Column name(s) representing predicted values.
-        labels: The set of labels to include when ``average != 'binary'``, and
+        df: snowpark.DataFrame
+            Input dataframe.
+        y_true_col_names: string or list of strings
+            Column name(s) representing actual values.
+        y_pred_col_names: string or list of strings
+            Column name(s) representing predicted values.
+        labels: list of labels, default=None
+            The set of labels to include when ``average != 'binary'``, and
             their order if ``average is None``. Labels present in the data can be
             excluded, for example to calculate a multiclass average ignoring a
             majority negative class, while labels not present in the data will
             result in 0 components in a macro average. For multilabel targets,
             labels are column indices. By default, all labels in the y true and
             y pred columns are used in sorted order.
-        pos_label: The class to report if ``average='binary'`` and the data is
+        pos_label:  string or integer, default=1
+            The class to report if ``average='binary'`` and the data is
             binary. If the data are multiclass or multilabel, this will be ignored;
             setting ``labels=[pos_label]`` and ``average != 'binary'`` will report
             scores for that label only.
@@ -359,7 +376,8 @@ def f1_score(
                 Calculate metrics for each instance, and find their average (only
                 meaningful for multilabel classification where this differs from
                 func`accuracy_score`).
-        sample_weight_col_name: Column name representing sample weights.
+        sample_weight_col_name: string, default=None
+            Column name representing sample weights.
         zero_division: "warn", 0 or 1, default="warn"
             Sets the value to return when there is a zero division, i.e. when all
             predictions and labels are negative. If set to "warn", this acts as 0,
@@ -408,18 +426,24 @@ def fbeta_score(
     only recall).
 
     Args:
-        df: Input dataframe.
-        y_true_col_names: Column name(s) representing actual values.
-        y_pred_col_names: Column name(s) representing predicted values.
-        beta: Determines the weight of recall in the combined score.
-        labels: The set of labels to include when ``average != 'binary'``, and
+        df: snowpark.DataFrame
+            Input dataframe.
+        y_true_col_names: string or list of strings
+            Column name(s) representing actual values.
+        y_pred_col_names: string or list of strings
+            Column name(s) representing predicted values.
+        beta: float
+            Determines the weight of recall in the combined score.
+        labels: list of labels, default=None
+            The set of labels to include when ``average != 'binary'``, and
             their order if ``average is None``. Labels present in the data can be
             excluded, for example to calculate a multiclass average ignoring a
             majority negative class, while labels not present in the data will
             result in 0 components in a macro average. For multilabel targets,
             labels are column indices. By default, all labels in the y true and
             y pred columns are used in sorted order.
-        pos_label: The class to report if ``average='binary'`` and the data is
+        pos_label: string or integer, default=1
+            The class to report if ``average='binary'`` and the data is
             binary. If the data are multiclass or multilabel, this will be ignored;
             setting ``labels=[pos_label]`` and ``average != 'binary'`` will report
             scores for that label only.
@@ -445,7 +469,8 @@ def fbeta_score(
                 Calculate metrics for each instance, and find their average (only
                 meaningful for multilabel classification where this differs from
                 func`accuracy_score`).
-        sample_weight_col_name: Column name representing sample weights.
+        sample_weight_col_name: string, default=None
+            Column name representing sample weights.
         zero_division: "warn", 0 or 1, default="warn"
             Sets the value to return when there is a zero division, i.e. when all
             predictions and labels are negative. If set to "warn", this acts as 0,
@@ -498,9 +523,12 @@ def log_loss(
         L_{\log}(y, p) = -(y \log (p) + (1 - y) \log (1 - p))
 
     Args:
-        df: Input dataframe.
-        y_true_col_names: Column name(s) representing actual values.
-        y_pred_col_names: Column name(s) representing predicted probabilities,
+        df: snowpark.DataFrame
+            Input dataframe.
+        y_true_col_names: string or list of strings
+            Column name(s) representing actual values.
+        y_pred_col_names: string or list of strings
+            Column name(s) representing predicted probabilities,
             as returned by a classifier's predict_proba method.
             If ``y_pred.shape = (n_samples,)`` the probabilities provided are
             assumed to be that of the positive class. The labels in ``y_pred``
@@ -509,10 +537,13 @@ def log_loss(
             Log loss is undefined for p=0 or p=1, so probabilities are
             clipped to `max(eps, min(1 - eps, p))`. The default will depend on the
             data type of `y_pred` and is set to `np.finfo(y_pred.dtype).eps`.
-        normalize: If true, return the mean loss per sample.
+        normalize: boolean, default=True
+            If true, return the mean loss per sample.
             Otherwise, return the sum of the per-sample losses.
-        sample_weight_col_name: Column name representing sample weights.
-        labels: If not provided, labels will be inferred from y_true. If ``labels``
+        sample_weight_col_name: string, default=None
+            Column name representing sample weights.
+        labels: list of labels, default=None
+            If not provided, labels will be inferred from y_true. If ``labels``
             is ``None`` and ``y_pred`` has shape (n_samples,) the labels are
             assumed to be binary and are inferred from ``y_true``.
 
@@ -697,18 +728,24 @@ def precision_recall_fscore_support(
     is one of ``'micro'``, ``'macro'``, ``'weighted'`` or ``'samples'``.
 
     Args:
-        df: Input dataframe.
-        y_true_col_names: Column name(s) representing actual values.
-        y_pred_col_names: Column name(s) representing predicted values.
-        beta: The strength of recall versus precision in the F-score.
-        labels: The set of labels to include when ``average != 'binary'``, and
+        df: snowpark.DataFrame
+            Input dataframe.
+        y_true_col_names: string or list of strings
+            Column name(s) representing actual values.
+        y_pred_col_names: string or list of strings
+            Column name(s) representing predicted values.
+        beta: float, default=1.0
+            The strength of recall versus precision in the F-score.
+        labels: list of labels, default=None
+            The set of labels to include when ``average != 'binary'``, and
             their order if ``average is None``. Labels present in the data can be
             excluded, for example to calculate a multiclass average ignoring a
             majority negative class, while labels not present in the data will
             result in 0 components in a macro average. For multilabel targets,
             labels are column indices. By default, all labels in the y true and
             y pred columns are used in sorted order.
-        pos_label: The class to report if ``average='binary'`` and the data is
+        pos_label: string or integer, default=1
+            The class to report if ``average='binary'`` and the data is
             binary. If the data are multiclass or multilabel, this will be ignored;
             setting ``labels=[pos_label]`` and ``average != 'binary'`` will report
             scores for that label only.
@@ -733,9 +770,11 @@ def precision_recall_fscore_support(
                 Calculate metrics for each instance, and find their average (only
                 meaningful for multilabel classification where this differs from
                 :func:`accuracy_score`).
-        warn_for: This determines which warnings will be made in the case that this
+        warn_for: tuple or set containing "precision", "recall", or "f-score"
+            This determines which warnings will be made in the case that this
             function is being used to return only one of its metrics.
-        sample_weight_col_name: Column name representing sample weights.
+        sample_weight_col_name: string, default=None
+            Column name representing sample weights.
         zero_division: "warn", 0 or 1, default="warn"
             Sets the value to return when there is a zero division:
                * recall - when there are no positive labels
@@ -1003,17 +1042,22 @@ def precision_score(
     The best value is 1 and the worst value is 0.
 
     Args:
-        df: Input dataframe.
-        y_true_col_names: Column name(s) representing actual values.
-        y_pred_col_names: Column name(s) representing predicted values.
-        labels: The set of labels to include when ``average != 'binary'``, and
+        df: snowpark.DataFrame
+            Input dataframe.
+        y_true_col_names: string or list of strings
+            Column name(s) representing actual values.
+        y_pred_col_names: string or list of strings
+            Column name(s) representing predicted values.
+        labels: list of labels, default=None
+            The set of labels to include when ``average != 'binary'``, and
             their order if ``average is None``. Labels present in the data can be
             excluded, for example to calculate a multiclass average ignoring a
             majority negative class, while labels not present in the data will
             result in 0 components in a macro average. For multilabel targets,
             labels are column indices. By default, all labels in the y true and
             y pred columns are used in sorted order.
-        pos_label: The class to report if ``average='binary'`` and the data is
+        pos_label: string or integer, default=1
+            The class to report if ``average='binary'`` and the data is
             binary. If the data are multiclass or multilabel, this will be ignored;
             setting ``labels=[pos_label]`` and ``average != 'binary'`` will report
             scores for that label only.
@@ -1038,7 +1082,8 @@ def precision_score(
                 Calculate metrics for each instance, and find their average (only
                 meaningful for multilabel classification where this differs from
                 func`accuracy_score`).
-        sample_weight_col_name: Column name representing sample weights.
+        sample_weight_col_name: string, default=None
+            Column name representing sample weights.
         zero_division: "warn", 0 or 1, default="warn"
             Sets the value to return when there is a zero division. If set to
             "warn", this acts as 0, but warnings are also raised.
@@ -1084,17 +1129,22 @@ def recall_score(
     The best value is 1 and the worst value is 0.
 
     Args:
-        df: Input dataframe.
-        y_true_col_names: Column name(s) representing actual values.
-        y_pred_col_names: Column name(s) representing predicted values.
-        labels: The set of labels to include when ``average != 'binary'``, and
+        df: snowpark.DataFrame
+            Input dataframe.
+        y_true_col_names: string or list of strings
+            Column name(s) representing actual values.
+        y_pred_col_names: string or list of strings
+            Column name(s) representing predicted values.
+        labels: list of labels, default=None
+            The set of labels to include when ``average != 'binary'``, and
             their order if ``average is None``. Labels present in the data can be
             excluded, for example to calculate a multiclass average ignoring a
             majority negative class, while labels not present in the data will
             result in 0 components in a macro average. For multilabel targets,
             labels are column indices. By default, all labels in the y true and
             y pred columns are used in sorted order.
-        pos_label: The class to report if ``average='binary'`` and the data is
+        pos_label: string or integer, default=1
+            The class to report if ``average='binary'`` and the data is
             binary. If the data are multiclass or multilabel, this will be ignored;
             setting ``labels=[pos_label]`` and ``average != 'binary'`` will report
             scores for that label only.
@@ -1121,7 +1171,8 @@ def recall_score(
                 Calculate metrics for each instance, and find their average (only
                 meaningful for multilabel classification where this differs from
                 func`accuracy_score`).
-        sample_weight_col_name: Column name representing sample weights.
+        sample_weight_col_name: string, default=None
+            Column name representing sample weights.
         zero_division: "warn", 0 or 1, default="warn"
             Sets the value to return when there is a zero division. If set to
             "warn", this acts as 0, but warnings are also raised.

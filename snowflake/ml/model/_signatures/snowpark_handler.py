@@ -51,7 +51,7 @@ class SnowparkDataFrameHandler(base_handler.BaseDataHandler[snowflake.snowpark.D
         data: snowflake.snowpark.DataFrame, role: Literal["input", "output"]
     ) -> Sequence[core.BaseFeatureSpec]:
         return pandas_handler.PandasDataFrameHandler.infer_signature(
-            SnowparkDataFrameHandler.convert_to_df(data), role=role
+            SnowparkDataFrameHandler.convert_to_df(data.limit(n=1)), role=role
         )
 
     @staticmethod

@@ -21,25 +21,45 @@ class MinMaxScaler(base.BaseTransformer):
     (https://scikit-learn.org/stable/modules/generated/sklearn.preprocessing.MinMaxScaler.html).
 
     Args:
-        feature_range: Desired range of transformed data (default is 0 to 1).
-        clip: Whether to clip transformed values of held-out data to the specified feature range (default is True).
-        input_cols: The name(s) of one or more columns in a DataFrame containing a feature to be scaled. Each specified
+        feature_range: Tuple[float, float], default=(0, 1)
+            Desired range of transformed data (default is 0 to 1).
+
+        clip: bool, default=False
+            Whether to clip transformed values of held-out data to the specified feature range (default is True).
+
+        input_cols: Optional[Union[str, List[str]]], default=None
+            The name(s) of one or more columns in a DataFrame containing a feature to be scaled. Each specified
             input column is scaled independently and stored in the corresponding output column.
-        output_cols: The name(s) of one or more columns in a DataFrame in which results will be stored. The number of
+
+        output_cols: Optional[Union[str, List[str]]], default=None
+            The name(s) of one or more columns in a DataFrame in which results will be stored. The number of
             columns specified must match the number of input columns.
-        passthrough_cols: A string or a list of strings indicating column names to be excluded from any
-                operations (such as train, transform, or inference). These specified column(s)
-                will remain untouched throughout the process. This option is helpful in scenarios
-                requiring automatic input_cols inference, but need to avoid using specific
-                columns, like index columns, during training or inference.
-        drop_input_cols: Remove input columns from output if set True. False by default.
+
+        passthrough_cols: Optional[Union[str, List[str]]], default=None
+            A string or a list of strings indicating column names to be excluded from any
+            operations (such as train, transform, or inference). These specified column(s)
+            will remain untouched throughout the process. This option is helpful in scenarios
+            requiring automatic input_cols inference, but need to avoid using specific
+            columns, like index columns, during training or inference.
+
+        drop_input_cols: Optional[bool], default=False
+            Remove input columns from output if set True. False by default.
 
     Attributes:
-        min_: dict {column_name: value} or None. Per-feature adjustment for minimum.
-        scale_: dict {column_name: value} or None. Per-feature relative scaling factor.
-        data_min_: dict {column_name: value} or None. Per-feature minimum seen in the data.
-        data_max_: dict {column_name: value} or None. Per-feature maximum seen in the data.
-        data_range_: dict {column_name: value} or None. Per-feature range seen in the data as a (min, max) tuple.
+        min_: Dict[str, float]
+            dict {column_name: value} or None. Per-feature adjustment for minimum.
+
+        scale_: Dict[str, float]
+            dict {column_name: value} or None. Per-feature relative scaling factor.
+
+        data_min_: Dict[str, float]
+            dict {column_name: value} or None. Per-feature minimum seen in the data.
+
+        data_max_: Dict[str, float]
+            dict {column_name: value} or None. Per-feature maximum seen in the data.
+
+        data_range_: Dict[str, float]
+            dict {column_name: value} or None. Per-feature range seen in the data as a (min, max) tuple.
     """
 
     def __init__(
@@ -167,10 +187,6 @@ class MinMaxScaler(base.BaseTransformer):
             self.data_range_[input_col] = data_range
 
     @telemetry.send_api_usage_telemetry(
-        project=base.PROJECT,
-        subproject=base.SUBPROJECT,
-    )
-    @telemetry.add_stmt_params_to_df(
         project=base.PROJECT,
         subproject=base.SUBPROJECT,
     )

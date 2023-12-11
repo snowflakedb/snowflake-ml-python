@@ -48,6 +48,7 @@ REQUIREMENTS = [
     "numpy>=1.23,<2",
     "packaging>=20.9,<24",
     "pandas>=1.0.0,<2",
+    "pyarrow",
     "pytimeparse>=1.1.8,<2",
     "pyyaml>=6.0,<7",
     "s3fs>=2022.11,<2024",

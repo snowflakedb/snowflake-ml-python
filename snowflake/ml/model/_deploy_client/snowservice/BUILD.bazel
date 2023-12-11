@@ -21,6 +21,7 @@ py_library(
     deps = [
         ":deploy_options",
         ":instance_types",
+        "//snowflake/ml/_internal:env_utils",
         "//snowflake/ml/_internal/exceptions",
         "//snowflake/ml/_internal/utils:identifier",
         "//snowflake/ml/model:type_hints",

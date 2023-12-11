@@ -36,11 +36,14 @@ def covariance(*, df: DataFrame, columns: Optional[Collection[str]] = None, ddof
     as a post-processing step.
 
     Args:
-        df (DataFrame): Snowpark Dataframe for which covariance matrix has to be computed.
-        columns (Optional[Collection[str]]): List of column names for which the covariance matrix has to be computed.
+        df: snowpark.DataFrame
+            Snowpark Dataframe for which covariance matrix has to be computed.
+        columns: list of strings, default=None
+            List of column names for which the covariance matrix has to be computed.
             If None, covariance matrix is computed for all numeric columns in the snowpark dataframe.
-        ddof (int): default 1. Delta degrees of freedom.
-            The divisor used in calculations is N - ddof, where N represents the number of rows.
+        ddof: int, default=1
+            Delta degrees of freedom. The divisor used in calculations is N - ddof, where N represents the
+            number of rows.
 
     Returns:
         Covariance matrix in pandas.DataFrame format.

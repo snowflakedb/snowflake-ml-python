@@ -101,7 +101,7 @@ class OneHotEncoder(base.BaseTransformer):
     (https://scikit-learn.org/stable/modules/generated/sklearn.preprocessing.OneHotEncoder.html).
 
     Args:
-        categories: 'auto' or dict {column_name: ndarray([category])}, default='auto'
+        categories: 'auto' or dict {column_name: np.ndarray([category])}, default='auto'
             Categories (unique values) per feature:
             - 'auto': Determine categories automatically from the training data.
             - dict: ``categories[column_name]`` holds the categories expected in
@@ -109,6 +109,7 @@ class OneHotEncoder(base.BaseTransformer):
               and numeric values within a single feature, and should be sorted in
               case of numeric values.
             The used categories can be found in the ``categories_`` attribute.
+
         drop: {‘first’, ‘if_binary’} or an array-like of shape (n_features,), default=None
             Specifies a methodology to use to drop one of the categories per
             feature. This is useful in situations where perfectly collinear
@@ -128,15 +129,18 @@ class OneHotEncoder(base.BaseTransformer):
             When `max_categories` or `min_frequency` is configured to group
             infrequent categories, the dropping behavior is handled after the
             grouping.
+
         sparse: bool, default=False
             Will return a column with sparse representation if set True else will return
             a separate column for each category.
+
         handle_unknown: {'error', 'ignore'}, default='error'
             Specifies the way unknown categories are handled during :meth:`transform`.
             - 'error': Raise an error if an unknown category is present during transform.
             - 'ignore': When an unknown category is encountered during
               transform, the resulting one-hot encoded columns for this feature
               will be all zeros.
+
         min_frequency: int or float, default=None
             Specifies the minimum frequency below which a category will be
             considered infrequent.
@@ -144,22 +148,29 @@ class OneHotEncoder(base.BaseTransformer):
               infrequent.
             - If `float`, categories with a smaller cardinality than
               `min_frequency * n_samples`  will be considered infrequent.
+
         max_categories: int, default=None
             Specifies an upper limit to the number of output features for each input
             feature when considering infrequent categories. If there are infrequent
             categories, `max_categories` includes the category representing the
             infrequent categories along with the frequent categories. If `None`,
             there is no limit to the number of output features.
-        input_cols: str or Iterable [column_name], default=None
+
+        input_cols: Optional[Union[str, List[str]]], default=None
             Single or multiple input columns.
-        output_cols: str or Iterable [column_name], default=None
+
+        output_cols: Optional[Union[str, List[str]]], default=None
             Single or multiple output columns.
-        passthrough_cols: A string or a list of strings indicating column names to be excluded from any
-                operations (such as train, transform, or inference). These specified column(s)
-                will remain untouched throughout the process. This option is helpful in scenarios
-                requiring automatic input_cols inference, but need to avoid using specific
-                columns, like index columns, during training or inference.
-        drop_input_cols: Remove input columns from output if set True. False by default.
+
+        passthrough_cols: Optional[Union[str, List[str]]]
+            A string or a list of strings indicating column names to be excluded from any
+            operations (such as train, transform, or inference). These specified column(s)
+            will remain untouched throughout the process. This option is helpful in scenarios
+            requiring automatic input_cols inference, but need to avoid using specific
+            columns, like index columns, during training or inference.
+
+        drop_input_cols: Optional[Union[str, List[str]]]
+            Remove input columns from output if set True. False by default.
 
     Attributes:
         categories_: dict {column_name: ndarray([category])}
@@ -662,10 +673,6 @@ class OneHotEncoder(base.BaseTransformer):
         self._state_pandas[_ENCODING] = self._state_pandas.apply(lambda x: map_encoding(x), axis=1)
 
     @telemetry.send_api_usage_telemetry(
-        project=base.PROJECT,
-        subproject=base.SUBPROJECT,
-    )
-    @telemetry.add_stmt_params_to_df(
         project=base.PROJECT,
         subproject=base.SUBPROJECT,
     )
