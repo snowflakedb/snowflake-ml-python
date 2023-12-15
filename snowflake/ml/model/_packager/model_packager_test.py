@@ -143,7 +143,7 @@ class ModelLoadHygieneTest(absltest.TestCase):
                     model=lm,
                     sample_input=d,
                     metadata={"author": "halu", "version": "1"},
-                    options={"embed_local_ml_library": True},
+                    options={"embed_local_ml_library": True, "_legacy_save": True},
                 )
                 self.assertTrue(
                     os.path.exists(

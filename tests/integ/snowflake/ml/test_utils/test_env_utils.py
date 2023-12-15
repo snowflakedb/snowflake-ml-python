@@ -2,13 +2,21 @@ import functools
 import textwrap
 from typing import List
 
-import requests
 from packaging import requirements, version
 
 import snowflake.connector
-from snowflake.ml._internal import env
+from snowflake.ml._internal import env, env_utils
 from snowflake.ml._internal.utils import query_result_checker
 from snowflake.snowpark import session
+
+
+def get_current_snowflake_version(session: session.Session) -> version.Version:
+    res = session.sql("SELECT CURRENT_VERSION() AS CURRENT_VERSION").collect()[0]
+    version_str = res.CURRENT_VERSION
+    assert isinstance(version_str, str)
+
+    version_str = "+".join(version_str.split())
+    return version.parse(version_str)
 
 
 @functools.lru_cache
@@ -63,46 +71,11 @@ def get_latest_package_version_spec_in_server(
 
 
 @functools.lru_cache
-def get_package_versions_in_conda(
-    package_req_str: str, python_version: str = env.PYTHON_VERSION
-) -> List[version.Version]:
-    package_req = requirements.Requirement(package_req_str)
-    repodata_url = "https://repo.anaconda.com/pkgs/snowflake/linux-64/repodata.json"
-
-    parsed_python_version = version.Version(python_version)
-    python_version_build_str = f"py{parsed_python_version.major}{parsed_python_version.minor}"
-
-    max_retry = 3
-
-    exc_list = []
-
-    while max_retry > 0:
-        try:
-            version_list = []
-            repodata = requests.get(repodata_url).json()
-            assert isinstance(repodata, dict)
-            packages_info = repodata["packages"]
-            assert isinstance(packages_info, dict)
-            for package_info in packages_info.values():
-                if package_info["name"] == package_req.name and python_version_build_str in package_info["build"]:
-                    version_list.append(version.parse(package_info["version"]))
-            available_version_list = list(package_req.specifier.filter(version_list))
-            return available_version_list
-        except Exception as e:
-            max_retry -= 1
-            exc_list.append(e)
-
-    raise RuntimeError(
-        f"Failed to get latest version of package {package_req} in Snowflake Anaconda Channel. "
-        + "Exceptions are "
-        + ", ".join(map(str, exc_list))
-    )
-
-
-@functools.lru_cache
 def get_latest_package_version_spec_in_conda(package_req_str: str, python_version: str = env.PYTHON_VERSION) -> str:
     package_req = requirements.Requirement(package_req_str)
-    available_version_list = get_package_versions_in_conda(package_req_str, python_version)
+    available_version_list = env_utils.get_matched_package_versions_in_snowflake_conda_channel(
+        req=requirements.Requirement(package_req_str), python_version=python_version
+    )
     if len(available_version_list) == 0:
         return str(package_req)
     return f"{package_req.name}=={max(available_version_list)}"

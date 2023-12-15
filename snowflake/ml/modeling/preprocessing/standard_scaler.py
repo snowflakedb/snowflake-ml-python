@@ -19,24 +19,40 @@ class StandardScaler(base.BaseTransformer):
     (https://scikit-learn.org/stable/modules/generated/sklearn.preprocessing.StandardScaler.html).
 
     Args:
-        with_mean: If True, center the data before scaling.
-        with_std: If True, scale the data unit variance (i.e. unit standard deviation).
-        input_cols: The name(s) of one or more columns in a DataFrame containing a feature to be scaled.
-        output_cols: The name(s) of one or more columns in a DataFrame in which results will be stored. The number of
+        with_mean: bool, default=True
+            If True, center the data before scaling.
+
+        with_std: bool, default=True
+            If True, scale the data unit variance (i.e. unit standard deviation).
+
+        input_cols: Optional[Union[str, List[str]]], default=None
+            The name(s) of one or more columns in a DataFrame containing a feature to be scaled.
+
+        output_cols: Optional[Union[str, List[str]]], default=None
+            The name(s) of one or more columns in a DataFrame in which results will be stored. The number of
             columns specified must match the number of input columns.
-        passthrough_cols: A string or a list of strings indicating column names to be excluded from any
+
+        passthrough_cols: Optional[Union[str, List[str]]], default=None
+            A string or a list of strings indicating column names to be excluded from any
             operations (such as train, transform, or inference). These specified column(s)
             will remain untouched throughout the process. This option is helpful in scenarios
             requiring automatic input_cols inference, but need to avoid using specific
             columns, like index columns, during training or inference.
-        drop_input_cols: Remove input columns from output if set True. False by default.
+
+        drop_input_cols: Optional[bool], default=False
+            Remove input columns from output if set True. False by default.
 
     Attributes:
-        scale_: Dictionary mapping input column names to relative scaling factor to achieve zero mean and unit variance.
+        scale_: Optional[Dict[str, float]] = {}
+            Dictionary mapping input column names to relative scaling factor to achieve zero mean and unit variance.
             If a variance is zero, unit variance could not be achieved, and the data is left as-is, giving a scaling
             factor of 1. None if with_std is False.
-        mean_: Dictionary mapping input column name to the mean value for that feature. None if with_mean is False.
-        var_: Dictionary mapping input column name to the variance for that feature. Used to compute scale_. None if
+
+        mean_: Optional[Dict[str, float]] = {}
+            Dictionary mapping input column name to the mean value for that feature. None if with_mean is False.
+
+        var_: Optional[Dict[str, float]] = {}
+            Dictionary mapping input column name to the variance for that feature. Used to compute scale_. None if
             with_std is False
     """
 
@@ -174,10 +190,6 @@ class StandardScaler(base.BaseTransformer):
                 )
 
     @telemetry.send_api_usage_telemetry(
-        project=base.PROJECT,
-        subproject=base.SUBPROJECT,
-    )
-    @telemetry.add_stmt_params_to_df(
         project=base.PROJECT,
         subproject=base.SUBPROJECT,
     )

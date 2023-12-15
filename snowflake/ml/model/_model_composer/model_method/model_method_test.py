@@ -16,6 +16,7 @@ _DUMMY_SIG = {
     "predict": model_signature.ModelSignature(
         inputs=[
             model_signature.FeatureSpec(dtype=model_signature.DataType.FLOAT, name="input"),
+            model_signature.FeatureSpec(dtype=model_signature.DataType.STRING, name="name"),
         ],
         outputs=[model_signature.FeatureSpec(name="output", dtype=model_signature.DataType.FLOAT)],
     )
@@ -59,7 +60,7 @@ class ModelMethodTest(absltest.TestCase):
                     "runtime": "python_runtime",
                     "type": "FUNCTION",
                     "handler": "functions.predict.infer",
-                    "inputs": [{"name": "tmp_input", "type": "OBJECT"}],
+                    "inputs": [{"name": "INPUT", "type": "FLOAT"}, {"name": "NAME", "type": "STRING"}],
                     "outputs": [{"type": "OBJECT"}],
                 },
             )
@@ -98,7 +99,7 @@ class ModelMethodTest(absltest.TestCase):
                     "runtime": "python_runtime",
                     "type": "FUNCTION",
                     "handler": "functions.__call__.infer",
-                    "inputs": [{"name": "tmp_input", "type": "OBJECT"}],
+                    "inputs": [{"name": "INPUT", "type": "FLOAT"}, {"name": "NAME", "type": "STRING"}],
                     "outputs": [{"type": "OBJECT"}],
                 },
             )
@@ -159,11 +160,11 @@ class ModelMethodTest(absltest.TestCase):
             self.assertDictEqual(
                 method_dict,
                 {
-                    "name": '"predict"',
+                    "name": "predict",
                     "runtime": "python_runtime",
                     "type": "FUNCTION",
                     "handler": "functions.predict.infer",
-                    "inputs": [{"name": "tmp_input", "type": "OBJECT"}],
+                    "inputs": [{"name": "input", "type": "FLOAT"}, {"name": "name", "type": "STRING"}],
                     "outputs": [{"type": "OBJECT"}],
                 },
             )

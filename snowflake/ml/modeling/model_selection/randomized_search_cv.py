@@ -1,11 +1,11 @@
-from typing import Dict, Iterable, List, Optional, Set, Union
+from typing import Any, Dict, Iterable, List, Optional, Set, Union
 from uuid import uuid4
 
+import cloudpickle as cp
 import numpy as np
 import pandas as pd
 import sklearn
 import sklearn.model_selection
-from sklearn.model_selection import ParameterSampler
 from sklearn.utils.metaestimators import available_if
 
 from snowflake.ml._internal import telemetry
@@ -22,13 +22,12 @@ from snowflake.ml.model.model_signature import (
 from snowflake.ml.modeling._internal.estimator_protocols import CVHandlers
 from snowflake.ml.modeling._internal.estimator_utils import (
     gather_dependencies,
-    is_single_node,
     original_estimator_has_callable,
     transform_snowml_obj_to_sklearn_obj,
     validate_sklearn_args,
 )
+from snowflake.ml.modeling._internal.model_trainer_builder import ModelTrainerBuilder
 from snowflake.ml.modeling._internal.snowpark_handlers import (
-    SklearnModelSelectionWrapperProvider,
     SnowparkHandlers as HandlersImpl,
 )
 from snowflake.ml.modeling.framework.base import BaseTransformer
@@ -50,13 +49,13 @@ class RandomizedSearchCV(BaseTransformer):
 
     Parameters
     ----------
-    estimator : estimator object
+    estimator: estimator object
         An object of that type is instantiated for each grid point.
         This is assumed to implement the scikit-learn estimator interface.
         Either estimator needs to provide a ``score`` function,
         or ``scoring`` must be passed.
 
-    param_distributions : dict or list of dicts
+    param_distributions: dict or list of dicts
         Dictionary with parameters names (`str`) as keys and distributions
         or lists of parameters to try. Distributions must provide a ``rvs``
         method for sampling (such as those from scipy.stats.distributions).
@@ -64,135 +63,13 @@ class RandomizedSearchCV(BaseTransformer):
         If a list of dicts is given, first a dict is sampled uniformly, and
         then a parameter is sampled using that dict as above.
 
-    n_iter : int, default=10
-        Number of parameter settings that are sampled. n_iter trades
-        off runtime vs quality of the solution.
-
-    scoring : str, callable, list, tuple or dict, default=None
-        Strategy to evaluate the performance of the cross-validated model on
-        the test set.
-
-        If `scoring` represents a single score, one can use:
-
-        - a single string (see :ref:`scoring_parameter`);
-        - a callable (see :ref:`scoring`) that returns a single value.
-
-        If `scoring` represents multiple scores, one can use:
-
-        - a list or tuple of unique strings;
-        - a callable returning a dictionary where the keys are the metric
-          names and the values are the metric scores;
-        - a dictionary with metric names as keys and callables a values.
-
-        See :ref:`multimetric_grid_search` for an example.
-
-        If None, the estimator's score method is used.
-
-    n_jobs : int, default=None
-        Number of jobs to run in parallel.
-        ``None`` means 1 unless in a :obj:`joblib.parallel_backend` context.
-        ``-1`` means using all processors. See :term:`Glossary <n_jobs>`
-        for more details.
-
-    refit : bool, str, or callable, default=True
-        Refit an estimator using the best found parameters on the whole
-        dataset.
-
-        For multiple metric evaluation, this needs to be a `str` denoting the
-        scorer that would be used to find the best parameters for refitting
-        the estimator at the end.
-
-        Where there are considerations other than maximum score in
-        choosing a best estimator, ``refit`` can be set to a function which
-        returns the selected ``best_index_`` given the ``cv_results``. In that
-        case, the ``best_estimator_`` and ``best_params_`` will be set
-        according to the returned ``best_index_`` while the ``best_score_``
-        attribute will not be available.
-
-        The refitted estimator is made available at the ``best_estimator_``
-        attribute and permits using ``predict`` directly on this
-        ``RandomizedSearchCV`` instance.
-
-        Also for multiple metric evaluation, the attributes ``best_index_``,
-        ``best_score_`` and ``best_params_`` will only be available if
-        ``refit`` is set and all of them will be determined w.r.t this specific
-        scorer.
-
-        See ``scoring`` parameter to know more about multiple metric
-        evaluation.
-
-    cv : int, cross-validation generator or an iterable, default=None
-        Determines the cross-validation splitting strategy.
-        Possible inputs for cv are:
-
-        - None, to use the default 5-fold cross validation,
-        - integer, to specify the number of folds in a `(Stratified)KFold`,
-        - :term:`CV splitter`,
-        - An iterable yielding (train, test) splits as arrays of indices.
-
-        For integer/None inputs, if the estimator is a classifier and ``y`` is
-        either binary or multiclass, :class:`StratifiedKFold` is used. In all
-        other cases, :class:`KFold` is used. These splitters are instantiated
-        with `shuffle=False` so the splits will be the same across calls.
-
-        Refer :ref:`User Guide <cross_validation>` for the various
-        cross-validation strategies that can be used here.
-
-    verbose : int
-        Controls the verbosity: the higher, the more messages.
-
-        - >1 : the computation time for each fold and parameter candidate is
-          displayed;
-        - >2 : the score is also displayed;
-        - >3 : the fold and candidate parameter indexes are also displayed
-          together with the starting time of the computation.
-
-    pre_dispatch : int, or str, default='2*n_jobs'
-        Controls the number of jobs that get dispatched during parallel
-        execution. Reducing this number can be useful to avoid an
-        explosion of memory consumption when more jobs get dispatched
-        than CPUs can process. This parameter can be:
-
-            - None, in which case all the jobs are immediately
-              created and spawned. Use this for lightweight and
-              fast-running jobs, to avoid delays due to on-demand
-              spawning of the jobs
-
-            - An int, giving the exact number of total jobs that are
-              spawned
-
-            - A str, giving an expression as a function of n_jobs,
-              as in '2*n_jobs'
-
-    random_state : int, RandomState instance or None, default=None
-        Pseudo random number generator state used for random uniform sampling
-        from lists of possible values instead of scipy.stats distributions.
-        Pass an int for reproducible output across multiple
-        function calls.
-        See :term:`Glossary <random_state>`.
-
-    error_score : 'raise' or numeric, default=np.nan
-        Value to assign to the score if an error occurs in estimator fitting.
-        If set to 'raise', the error is raised. If a numeric value is given,
-        FitFailedWarning is raised. This parameter does not affect the refit
-        step, which will always raise the error.
-
-    return_train_score : bool, default=False
-        If ``False``, the ``cv_results_`` attribute will not include training
-        scores.
-        Computing training scores is used to get insights on how different
-        parameter settings impact the overfitting/underfitting trade-off.
-        However computing the scores on the training set can be computationally
-        expensive and is not strictly required to select the parameters that
-        yield the best generalization performance.
-
-    input_cols : Optional[Union[str, List[str]]]
+    input_cols: Optional[Union[str, List[str]]]
         A string or list of strings representing column names that contain features.
         If this parameter is not specified, all columns in the input DataFrame except
         the columns specified by label_cols and sample-weight_col parameters are
         considered input columns.
 
-    label_cols : Optional[Union[str, List[str]]]
+    label_cols: Optional[Union[str, List[str]]]
         A string or list of strings representing column names that contain labels.
         This is a required param for estimators, as there is no way to infer these
         columns. If this parameter is not specified, then object is fitted without
@@ -220,6 +97,128 @@ class RandomizedSearchCV(BaseTransformer):
 
     drop_input_cols: Optional[bool], default=False
         If set, the response of predict(), transform() methods will not contain input columns.
+
+    n_iter: int, default=10
+        Number of parameter settings that are sampled. n_iter trades
+        off runtime vs quality of the solution.
+
+    scoring: str, callable, list, tuple or dict, default=None
+        Strategy to evaluate the performance of the cross-validated model on
+        the test set.
+
+        If `scoring` represents a single score, one can use:
+
+        - a single string (see :ref:`scoring_parameter`);
+        - a callable (see :ref:`scoring`) that returns a single value.
+
+        If `scoring` represents multiple scores, one can use:
+
+        - a list or tuple of unique strings;
+        - a callable returning a dictionary where the keys are the metric
+          names and the values are the metric scores;
+        - a dictionary with metric names as keys and callables a values.
+
+        See :ref:`multimetric_grid_search` for an example.
+
+        If None, the estimator's score method is used.
+
+    n_jobs: int, default=None
+        Number of jobs to run in parallel.
+        ``None`` means 1 unless in a :obj:`joblib.parallel_backend` context.
+        ``-1`` means using all processors. See :term:`Glossary <n_jobs>`
+        for more details.
+
+    refit: bool, str, or callable, default=True
+        Refit an estimator using the best found parameters on the whole
+        dataset.
+
+        For multiple metric evaluation, this needs to be a `str` denoting the
+        scorer that would be used to find the best parameters for refitting
+        the estimator at the end.
+
+        Where there are considerations other than maximum score in
+        choosing a best estimator, ``refit`` can be set to a function which
+        returns the selected ``best_index_`` given the ``cv_results``. In that
+        case, the ``best_estimator_`` and ``best_params_`` will be set
+        according to the returned ``best_index_`` while the ``best_score_``
+        attribute will not be available.
+
+        The refitted estimator is made available at the ``best_estimator_``
+        attribute and permits using ``predict`` directly on this
+        ``RandomizedSearchCV`` instance.
+
+        Also for multiple metric evaluation, the attributes ``best_index_``,
+        ``best_score_`` and ``best_params_`` will only be available if
+        ``refit`` is set and all of them will be determined w.r.t this specific
+        scorer.
+
+        See ``scoring`` parameter to know more about multiple metric
+        evaluation.
+
+    cv: int, cross-validation generator or an iterable, default=None
+        Determines the cross-validation splitting strategy.
+        Possible inputs for cv are:
+
+        - None, to use the default 5-fold cross validation,
+        - integer, to specify the number of folds in a `(Stratified)KFold`,
+        - :term:`CV splitter`,
+        - An iterable yielding (train, test) splits as arrays of indices.
+
+        For integer/None inputs, if the estimator is a classifier and ``y`` is
+        either binary or multiclass, :class:`StratifiedKFold` is used. In all
+        other cases, :class:`KFold` is used. These splitters are instantiated
+        with `shuffle=False` so the splits will be the same across calls.
+
+        Refer :ref:`User Guide <cross_validation>` for the various
+        cross-validation strategies that can be used here.
+
+    verbose: int
+        Controls the verbosity: the higher, the more messages.
+
+        - >1 : the computation time for each fold and parameter candidate is
+          displayed;
+        - >2 : the score is also displayed;
+        - >3 : the fold and candidate parameter indexes are also displayed
+          together with the starting time of the computation.
+
+    pre_dispatch: int, or str, default='2*n_jobs'
+        Controls the number of jobs that get dispatched during parallel
+        execution. Reducing this number can be useful to avoid an
+        explosion of memory consumption when more jobs get dispatched
+        than CPUs can process. This parameter can be:
+
+            - None, in which case all the jobs are immediately
+              created and spawned. Use this for lightweight and
+              fast-running jobs, to avoid delays due to on-demand
+              spawning of the jobs
+
+            - An int, giving the exact number of total jobs that are
+              spawned
+
+            - A str, giving an expression as a function of n_jobs,
+              as in '2*n_jobs'
+
+    random_state: int, RandomState instance or None, default=None
+        Pseudo random number generator state used for random uniform sampling
+        from lists of possible values instead of scipy.stats distributions.
+        Pass an int for reproducible output across multiple
+        function calls.
+        See :term:`Glossary <random_state>`.
+
+    error_score: 'raise' or numeric, default=np.nan
+        Value to assign to the score if an error occurs in estimator fitting.
+        If set to 'raise', the error is raised. If a numeric value is given,
+        FitFailedWarning is raised. This parameter does not affect the refit
+        step, which will always raise the error.
+
+    return_train_score: bool, default=False
+        If ``False``, the ``cv_results_`` attribute will not include training
+        scores.
+        Computing training scores is used to get insights on how different
+        parameter settings impact the overfitting/underfitting trade-off.
+        However computing the scores on the training set can be computationally
+        expensive and is not strictly required to select the parameters that
+        yield the best generalization performance.
     """
     _ENABLE_DISTRIBUTED = True
 
@@ -246,7 +245,11 @@ class RandomizedSearchCV(BaseTransformer):
         sample_weight_col: Optional[str] = None,
     ) -> None:
         super().__init__()
-        deps: Set[str] = set(SklearnModelSelectionWrapperProvider().dependencies)
+        deps: Set[str] = {
+            f"numpy=={np.__version__}",
+            f"scikit-learn=={sklearn.__version__}",
+            f"cloudpickle=={cp.__version__}",
+        }
         deps = deps | gather_dependencies(estimator)
         self._deps = list(deps)
         estimator = transform_snowml_obj_to_sklearn_obj(estimator)
@@ -265,7 +268,7 @@ class RandomizedSearchCV(BaseTransformer):
             "return_train_score": (return_train_score, False, False),
         }
         cleaned_up_init_args = validate_sklearn_args(args=init_args, klass=sklearn.model_selection.RandomizedSearchCV)
-        self._sklearn_object = sklearn.model_selection.RandomizedSearchCV(
+        self._sklearn_object: Any = sklearn.model_selection.RandomizedSearchCV(
             **cleaned_up_init_args,
         )
         self._model_signature_dict: Optional[Dict[str, ModelSignature]] = None
@@ -278,7 +281,6 @@ class RandomizedSearchCV(BaseTransformer):
         self._handlers: CVHandlers = HandlersImpl(
             class_name=self.__class__.__name__,
             subproject=_SUBPROJECT,
-            wrapper_provider=SklearnModelSelectionWrapperProvider(),
         )
 
     def _get_rand_id(self) -> str:
@@ -306,10 +308,6 @@ class RandomizedSearchCV(BaseTransformer):
         For more details on this function, see [sklearn.model_selection.RandomizedSearchCV.fit]
         (https://scikit-learn.org/stable/modules/generated/sklearn.model_selection.RandomizedSearchCV.html#sklearn.model_selection.RandomizedSearchCV.fit)
 
-
-        Raises:
-            TypeError: Supported dataset types: snowpark.DataFrame, pandas.DataFrame.
-
         Args:
             dataset: Union[snowflake.snowpark.DataFrame, pandas.DataFrame]
                 Snowpark or Pandas DataFrame.
@@ -318,74 +316,37 @@ class RandomizedSearchCV(BaseTransformer):
             self
         """
         self._infer_input_output_cols(dataset)
-        if isinstance(dataset, pd.DataFrame):
-            self._estimator = self._handlers.fit_pandas(
-                dataset, self._sklearn_object, self.input_cols, self.label_cols, self.sample_weight_col
+        if hasattr(self._sklearn_object, "n_jobs") and self._sklearn_object.n_jobs is None:
+            self._sklearn_object.n_jobs = -1
+        if isinstance(dataset, DataFrame):
+            session = dataset._session
+            assert session is not None  # keep mypy happy
+            # Validate that key package version in user workspace are supported in snowflake conda channel
+            # If customer doesn't have package in conda channel, replace the ones have the closest versions
+            self._deps = pkg_version_utils.get_valid_pkg_versions_supported_in_snowflake_conda_channel(
+                pkg_versions=self._get_dependencies(), session=session, subproject=_SUBPROJECT
             )
-        elif isinstance(dataset, DataFrame):
-            self._fit_snowpark(dataset)
-        else:
-            raise TypeError(
-                f"Unexpected dataset type: {type(dataset)}."
-                "Supported dataset types: snowpark.DataFrame, pandas.DataFrame."
-            )
+
+            # Specify input columns so column pruning will be enforced
+            selected_cols = self._get_active_columns()
+            if len(selected_cols) > 0:
+                dataset = dataset.select(selected_cols)
+
+            self._snowpark_cols = dataset.select(self.input_cols).columns
+
+        model_trainer = ModelTrainerBuilder.build(
+            estimator=self._sklearn_object,
+            dataset=dataset,
+            input_cols=self.input_cols,
+            label_cols=self.label_cols,
+            sample_weight_col=self.sample_weight_col,
+            autogenerated=False,
+            subproject=_SUBPROJECT,
+        )
+        self._sklearn_object = model_trainer.train()
         self._is_fitted = True
         self._get_model_signatures(dataset)
         return self
-
-    def _fit_snowpark(self, dataset: DataFrame) -> None:
-        session = dataset._session
-        assert session is not None  # keep mypy happy
-        # Validate that key package version in user workspace are supported in snowflake conda channel
-        # If customer doesn't have package in conda channel, replace the ones have the closest versions
-        self._deps = pkg_version_utils.get_valid_pkg_versions_supported_in_snowflake_conda_channel(
-            pkg_versions=self._get_dependencies(), session=session, subproject=_SUBPROJECT
-        )
-
-        selected_cols = self._get_active_columns()
-        if len(selected_cols) > 0:
-            dataset = dataset.select(selected_cols)
-
-        assert self._sklearn_object is not None
-        is_distributed = not is_single_node(session) and self._ENABLE_DISTRIBUTED is True
-        if is_distributed:
-            # Set the default value of the `n_jobs` attribute for the estimator.
-            # If minus one is set, it will not be abided by in the UDTF, so we set that to the default value as well.
-            if hasattr(self._sklearn_object.estimator, "n_jobs") and self._sklearn_object.estimator.n_jobs in [
-                None,
-                -1,
-            ]:
-                self._sklearn_object.estimator.n_jobs = DEFAULT_UDTF_NJOBS
-            self._sklearn_object = self._handlers.fit_search_snowpark(
-                param_grid=ParameterSampler(
-                    self._sklearn_object.param_distributions,
-                    n_iter=self._sklearn_object.n_iter,
-                    random_state=self._sklearn_object.random_state,
-                ),
-                dataset=dataset,
-                session=session,
-                estimator=self._sklearn_object,
-                dependencies=self._get_dependencies(),
-                udf_imports=["sklearn"],
-                input_cols=self.input_cols,
-                label_cols=self.label_cols,
-                sample_weight_col=self.sample_weight_col,
-            )
-        else:
-            # Fall back with stored procedure implementation
-            # set the parallel factor to default to minus one, to fully accelerate the cores in single node
-            if self._sklearn_object.n_jobs is None:
-                self._sklearn_object.n_jobs = -1
-
-            self._sklearn_object = self._handlers.fit_snowpark(
-                dataset,
-                session,
-                self._sklearn_object,
-                ["snowflake-snowpark-python"] + self._get_dependencies(),
-                self.input_cols,
-                self.label_cols,
-                self.sample_weight_col,
-            )
 
     def _get_pass_through_columns(self, dataset: DataFrame) -> List[str]:
         if self._drop_input_cols:
@@ -539,10 +500,6 @@ class RandomizedSearchCV(BaseTransformer):
         project=_PROJECT,
         subproject=_SUBPROJECT,
     )
-    @telemetry.add_stmt_params_to_df(
-        project=_PROJECT,
-        subproject=_SUBPROJECT,
-    )
     def predict(self, dataset: Union[DataFrame, pd.DataFrame]) -> Union[DataFrame, pd.DataFrame]:
         """Call predict on the estimator with the best found parameters
         For more details on this function, see [sklearn.model_selection.RandomizedSearchCV.predict]
@@ -581,10 +538,6 @@ class RandomizedSearchCV(BaseTransformer):
 
     @available_if(original_estimator_has_callable("transform"))  # type: ignore[misc]
     @telemetry.send_api_usage_telemetry(
-        project=_PROJECT,
-        subproject=_SUBPROJECT,
-    )
-    @telemetry.add_stmt_params_to_df(
         project=_PROJECT,
         subproject=_SUBPROJECT,
     )
@@ -651,10 +604,6 @@ class RandomizedSearchCV(BaseTransformer):
         project=_PROJECT,
         subproject=_SUBPROJECT,
     )
-    @telemetry.add_stmt_params_to_df(
-        project=_PROJECT,
-        subproject=_SUBPROJECT,
-    )
     def predict_proba(
         self, dataset: Union[DataFrame, pd.DataFrame], output_cols_prefix: str = "predict_proba_"
     ) -> Union[DataFrame, pd.DataFrame]:
@@ -689,10 +638,6 @@ class RandomizedSearchCV(BaseTransformer):
 
     @available_if(original_estimator_has_callable("predict_log_proba"))  # type: ignore[misc]
     @telemetry.send_api_usage_telemetry(
-        project=_PROJECT,
-        subproject=_SUBPROJECT,
-    )
-    @telemetry.add_stmt_params_to_df(
         project=_PROJECT,
         subproject=_SUBPROJECT,
     )
@@ -734,10 +679,6 @@ class RandomizedSearchCV(BaseTransformer):
         project=_PROJECT,
         subproject=_SUBPROJECT,
     )
-    @telemetry.add_stmt_params_to_df(
-        project=_PROJECT,
-        subproject=_SUBPROJECT,
-    )
     def decision_function(
         self, dataset: Union[DataFrame, pd.DataFrame], output_cols_prefix: str = "decision_function_"
     ) -> Union[DataFrame, pd.DataFrame]:
@@ -774,6 +715,8 @@ class RandomizedSearchCV(BaseTransformer):
     @available_if(original_estimator_has_callable("score"))  # type: ignore[misc]
     def score(self, dataset: Union[DataFrame, pd.DataFrame]) -> float:
         """
+        If implemented by the original estimator, return the score for the dataset.
+
         Args:
             dataset: Union[snowflake.snowpark.DataFrame, pandas.DataFrame]
                 Snowpark or Pandas DataFrame.
@@ -826,9 +769,9 @@ class RandomizedSearchCV(BaseTransformer):
             # For classifier, the type of predict is the same as the type of label
             if self._sklearn_object._estimator_type == "classifier":
                 # label columns is the desired type for output
-                outputs = _infer_signature(dataset[self.label_cols], "output")
+                outputs = list(_infer_signature(dataset[self.label_cols], "output"))
                 # rename the output columns
-                outputs = model_signature_utils.rename_features(outputs, self.output_cols)
+                outputs = list(model_signature_utils.rename_features(outputs, self.output_cols))
                 self._model_signature_dict["predict"] = ModelSignature(
                     inputs, ([] if self._drop_input_cols else inputs) + outputs
                 )
@@ -865,6 +808,9 @@ class RandomizedSearchCV(BaseTransformer):
         return self._model_signature_dict
 
     def to_sklearn(self) -> sklearn.model_selection.RandomizedSearchCV:
+        """
+        Get sklearn.model_selection.RandomizedSearchCV object.
+        """
         assert self._sklearn_object is not None
         return self._sklearn_object
 

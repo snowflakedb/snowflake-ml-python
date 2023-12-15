@@ -64,7 +64,6 @@ py_library(
     srcs = ["snowmlmodel.py"],
     deps = [
         ":_base",
-        ":_utils",
         "//snowflake/ml/_internal:type_utils",
         "//snowflake/ml/model:custom_model",
         "//snowflake/ml/model:model_signature",

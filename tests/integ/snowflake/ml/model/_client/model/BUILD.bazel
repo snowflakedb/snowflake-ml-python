@@ -1,0 +1,31 @@
+load("//bazel:py_rules.bzl", "py_test")
+
+py_test(
+    name = "model_impl_integ_test",
+    timeout = "long",
+    srcs = ["model_impl_integ_test.py"],
+    shard_count = 6,
+    deps = [
+        "//snowflake/ml/registry",
+        "//snowflake/ml/utils:connection_params",
+        "//tests/integ/snowflake/ml/test_utils:db_manager",
+        "//tests/integ/snowflake/ml/test_utils:model_factory",
+        "//tests/integ/snowflake/ml/test_utils:test_env_utils",
+    ],
+)
+
+py_test(
+    name = "model_version_impl_integ_test",
+    timeout = "long",
+    srcs = ["model_version_impl_integ_test.py"],
+    shard_count = 6,
+    deps = [
+        "//snowflake/ml/_internal/utils:sql_identifier",
+        "//snowflake/ml/model/_client/model:model_version_impl",
+        "//snowflake/ml/registry",
+        "//snowflake/ml/utils:connection_params",
+        "//tests/integ/snowflake/ml/test_utils:db_manager",
+        "//tests/integ/snowflake/ml/test_utils:model_factory",
+        "//tests/integ/snowflake/ml/test_utils:test_env_utils",
+    ],
+)

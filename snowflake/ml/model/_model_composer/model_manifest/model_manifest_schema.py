@@ -1,6 +1,6 @@
 # This files contains schema definition of what will be written into MANIFEST.yml
 
-from typing import Dict, List, Literal, TypedDict
+from typing import Any, Dict, List, Literal, TypedDict
 
 from typing_extensions import NotRequired, Required
 
@@ -42,4 +42,4 @@ class ModelManifestDict(TypedDict):
     manifest_version: Required[str]
     runtimes: Required[Dict[str, ModelRuntimeDict]]
     methods: Required[List[ModelMethodDict]]
-    user_data: NotRequired[Dict[str, str]]
+    user_data: NotRequired[Dict[str, Any]]

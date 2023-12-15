@@ -1,22 +1,38 @@
 spec:
   container:
-    - name: $container_name
-      image: $base_image
+    - name: "${container_name}"
+      image: "${base_image}"
       command:
         - sh
       args:
         - -c
-        - >-
-          while [ ! -f "$script_path" ]; do echo "File not found: $script_path"; sleep 1; done;
-          chmod +x $script_path;
-          sh $script_path;
+        - |
+          wait_for_file() {
+              file_path="$1"
+              timeout="$2"
+              elapsed_time=0
+              while [ ! -f "${file_path}" ]; do
+                if [ "${elapsed_time}" -ge "${timeout}" ]; then
+                  echo "Error: ${file_path} not found within ${timeout} seconds. Exiting."
+                  exit 1
+                fi
+                elapsed_time=$((elapsed_time + 1))
+                remaining_time=$((timeout - elapsed_time))
+                echo "Awaiting the mounting of ${file_path}. Wait time remaining: ${remaining_time} seconds"
+                sleep 1
+              done
+           }
+           wait_for_file "${script_path}" 300
+           wait_for_file "${mounted_token_path}" 300
+           chmod +x "${script_path}"
+           sh "${script_path}"
       volumeMounts:
         - name: vol1
           mountPath: /local/user/vol1
         - name: stagemount
-          mountPath: /$stage
+          mountPath: "/${stage}"
   volume:
     - name: vol1
       source: local  # only local emptyDir volume is supported
     - name: stagemount
-      source: "@$stage"
+      source: "@${stage}"

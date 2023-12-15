@@ -23,7 +23,7 @@ def Complete(
         A column of string responses.
     """
 
-    return _complete_impl("snowflake.ml.complete", model, prompt, session=session)
+    return _complete_impl("snowflake.cortex.complete", model, prompt, session=session)
 
 
 def _complete_impl(

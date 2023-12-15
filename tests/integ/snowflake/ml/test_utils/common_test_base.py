@@ -6,13 +6,14 @@ from typing import Any, Callable, List, Literal, Optional, Tuple, Type, TypeVar,
 
 import cloudpickle
 from absl.testing import absltest, parameterized
+from packaging import requirements
 from typing_extensions import Concatenate, ParamSpec
 
-from snowflake.ml._internal import file_utils
+from snowflake.ml._internal import env_utils, file_utils
 from snowflake.ml.utils import connection_params
 from snowflake.snowpark import functions as F, session
 from snowflake.snowpark._internal import udf_utils, utils as snowpark_utils
-from tests.integ.snowflake.ml.test_utils import _snowml_requirements, test_env_utils
+from tests.integ.snowflake.ml.test_utils import _snowml_requirements
 
 _V = TypeVar("_V", bound="CommonTestBase")
 _T_args = ParamSpec("_T_args")
@@ -40,9 +41,9 @@ class CommonTestBase(parameterized.TestCase):
     def setUp(self) -> None:
         """Creates Snowpark and Snowflake environments for testing."""
         self.session = (
-            session.Session.builder.configs(connection_params.SnowflakeLoginOptions()).create()
-            if not snowpark_utils.is_in_stored_procedure()  # type: ignore[no-untyped-call] #
-            else session._get_active_session()
+            session._get_active_session()
+            if snowpark_utils.is_in_stored_procedure()  # type: ignore[no-untyped-call] #
+            else session.Session.builder.configs(connection_params.SnowflakeLoginOptions()).create()
         )
 
     def tearDown(self) -> None:
@@ -108,7 +109,7 @@ class CommonTestBase(parameterized.TestCase):
                             req
                             for req in _snowml_requirements.REQUIREMENTS
                             # Remove "_" not in req once Snowpark 1.11.0 available, it is a workaround for their bug.
-                            if "snowflake-connector-python" not in req and "_" not in req
+                            if not any(offending in req for offending in ["snowflake-connector-python", "pyarrow", "_"])
                         ]
 
                         cloudpickle.register_pickle_by_value(test_module)
@@ -242,7 +243,9 @@ def {func_name}({first_arg_name}: snowflake.snowpark.Session, {", ".join(arg_lis
 
             additional_cases = [
                 {"_snowml_pkg_ver": pkg_ver}
-                for pkg_ver in test_env_utils.get_package_versions_in_conda(f"snowflake-ml-python{version_range}")
+                for pkg_ver in env_utils.get_matched_package_versions_in_snowflake_conda_channel(
+                    req=requirements.Requirement(f"snowflake-ml-python{version_range}")
+                )
             ]
 
             modified_test_cases = [{**t1, **t2} for t1 in test_cases for t2 in additional_cases]

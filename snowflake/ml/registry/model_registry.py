@@ -24,6 +24,7 @@ from snowflake.ml._internal.utils import (
     formatting,
     identifier,
     query_result_checker,
+    spcs_attribution_utils,
     table_manager,
     uri,
 )
@@ -1767,6 +1768,7 @@ class ModelRegistry:
             service_name = identifier.get_schema_level_object_identifier(
                 self._name, self._schema, f"service_{deployment['MODEL_ID']}"
             )
+            spcs_attribution_utils.record_service_end(self._session, service_name)
             query_result_checker.SqlResultValidator(
                 self._session,
                 f"DROP SERVICE IF EXISTS {service_name}",

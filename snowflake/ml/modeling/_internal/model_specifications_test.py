@@ -2,12 +2,13 @@ from typing import Any
 from unittest import mock
 
 from absl.testing import absltest, parameterized
+from lightgbm import LGBMRegressor
+from sklearn.linear_model import LinearRegression
+from sklearn.model_selection import GridSearchCV
+from xgboost import XGBRegressor
 
-from snowflake.ml.modeling._internal.snowpark_handlers import (
-    LightGBMWrapperProvider,
-    SklearnModelSelectionWrapperProvider,
-    SklearnWrapperProvider,
-    XGBoostWrapperProvider,
+from snowflake.ml.modeling._internal.model_specifications import (
+    ModelSpecificationsBuilder,
 )
 
 
@@ -23,7 +24,8 @@ class SnowparkHandlersUnitTest(parameterized.TestCase):
             return orig_import(name, *args, **kwargs)
 
         with mock.patch("builtins.__import__", side_effect=import_mock):
-            provider = SklearnModelSelectionWrapperProvider()
+            model = GridSearchCV(estimator=XGBRegressor(), param_grid={"max_depth": [10, 100]})
+            provider = ModelSpecificationsBuilder.build(model=model)
 
             self.assertEqual(provider.imports, ["sklearn", "xgboost", "lightgbm"])
 
@@ -36,16 +38,17 @@ class SnowparkHandlersUnitTest(parameterized.TestCase):
             return orig_import(name, *args, **kwargs)
 
         with mock.patch("builtins.__import__", side_effect=import_mock):
-            provider = SklearnModelSelectionWrapperProvider()
+            model = GridSearchCV(estimator=XGBRegressor(), param_grid={"max_depth": [10, 100]})
+            provider = ModelSpecificationsBuilder.build(model=model)
 
             self.assertEqual(provider.imports, ["sklearn", "xgboost"])
 
     def test_xgboost_wrapper_provider(self) -> None:
-        provider = XGBoostWrapperProvider()
+        provider = ModelSpecificationsBuilder.build(model=XGBRegressor())
         self.assertEqual(provider.imports, ["xgboost"])
 
     def test_sklearn_wrapper_provider(self) -> None:
-        provider = SklearnWrapperProvider()
+        provider = ModelSpecificationsBuilder.build(model=LinearRegression())
         self.assertEqual(provider.imports, ["sklearn"])
 
     def test_lightgbm_wrapper_provider(self) -> None:
@@ -59,7 +62,7 @@ class SnowparkHandlersUnitTest(parameterized.TestCase):
             return orig_import(name, *args, **kwargs)
 
         with mock.patch("builtins.__import__", side_effect=import_mock):
-            provider = LightGBMWrapperProvider()
+            provider = ModelSpecificationsBuilder.build(model=LGBMRegressor())
             self.assertEqual(provider.imports, ["lightgbm"])
 
 

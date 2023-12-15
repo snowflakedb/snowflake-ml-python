@@ -29,7 +29,6 @@ class TestModelRegistryIntegWithSnowServiceDeployment(TestModelRegistryIntegSnow
                         "enable_remote_image_build": True,
                     },
                 },
-                omit_target_method_when_deploy=True,
             )
 
         # First deployment
@@ -60,7 +59,6 @@ class TestModelRegistryIntegWithSnowServiceDeployment(TestModelRegistryIntegSnow
                         "model_in_image": True,
                     },
                 },
-                omit_target_method_when_deploy=True,
             )
 
         _run_deployment()

@@ -28,6 +28,7 @@ py_library(
         ":init",
         "//snowflake/ml/_internal:telemetry",
         "//snowflake/ml/_internal/exceptions",
+        "//snowflake/ml/modeling/_internal:model_trainer_builder",
         "//snowflake/ml/modeling/_internal:snowpark_handlers",
     ],
 )
@@ -39,6 +40,7 @@ py_library(
         ":init",
         "//snowflake/ml/_internal:telemetry",
         "//snowflake/ml/_internal/exceptions",
+        "//snowflake/ml/modeling/_internal:model_trainer_builder",
         "//snowflake/ml/modeling/_internal:snowpark_handlers",
     ],
 )

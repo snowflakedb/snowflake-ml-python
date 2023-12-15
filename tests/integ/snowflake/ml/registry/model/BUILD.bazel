@@ -1,0 +1,106 @@
+load("//bazel:py_rules.bzl", "py_library", "py_test")
+
+package(default_visibility = ["//tests/integ/snowflake/ml:__subpackages__"])
+
+py_library(
+    name = "registry_model_test_base",
+    testonly = True,
+    srcs = ["registry_model_test_base.py"],
+    deps = [
+        "//snowflake/ml/model:type_hints",
+        "//snowflake/ml/registry",
+        "//snowflake/ml/utils:connection_params",
+        "//tests/integ/snowflake/ml/test_utils:db_manager",
+        "//tests/integ/snowflake/ml/test_utils:test_env_utils",
+    ],
+)
+
+py_test(
+    name = "registry_sklearn_model_test",
+    srcs = ["registry_sklearn_model_test.py"],
+    shard_count = 2,
+    deps = [
+        ":registry_model_test_base",
+    ],
+)
+
+py_test(
+    name = "registry_xgboost_model_test",
+    srcs = ["registry_xgboost_model_test.py"],
+    shard_count = 2,
+    deps = [
+        ":registry_model_test_base",
+        "//tests/integ/snowflake/ml/test_utils:dataframe_utils",
+    ],
+)
+
+py_test(
+    name = "registry_custom_model_test",
+    srcs = ["registry_custom_model_test.py"],
+    shard_count = 4,
+    deps = [
+        ":registry_model_test_base",
+        "//snowflake/ml/model:custom_model",
+        "//tests/integ/snowflake/ml/test_utils:dataframe_utils",
+    ],
+)
+
+py_test(
+    name = "registry_pytorch_model_test",
+    srcs = ["registry_pytorch_model_test.py"],
+    shard_count = 4,
+    deps = [
+        ":registry_model_test_base",
+        "//snowflake/ml/model/_signatures:pytorch_handler",
+        "//snowflake/ml/model/_signatures:snowpark_handler",
+        "//tests/integ/snowflake/ml/test_utils:dataframe_utils",
+        "//tests/integ/snowflake/ml/test_utils:model_factory",
+    ],
+)
+
+py_test(
+    name = "registry_tensorflow_model_test",
+    srcs = ["registry_tensorflow_model_test.py"],
+    shard_count = 4,
+    deps = [
+        ":registry_model_test_base",
+        "//snowflake/ml/model/_signatures:numpy_handler",
+        "//snowflake/ml/model/_signatures:snowpark_handler",
+        "//snowflake/ml/model/_signatures:tensorflow_handler",
+        "//tests/integ/snowflake/ml/test_utils:dataframe_utils",
+        "//tests/integ/snowflake/ml/test_utils:model_factory",
+    ],
+)
+
+py_test(
+    name = "registry_modeling_model_test",
+    srcs = ["registry_modeling_model_test.py"],
+    shard_count = 2,
+    deps = [
+        ":registry_model_test_base",
+        "//snowflake/ml/modeling/lightgbm:lgbm_regressor",
+        "//snowflake/ml/modeling/linear_model:logistic_regression",
+        "//snowflake/ml/modeling/xgboost:xgb_regressor",
+    ],
+)
+
+py_test(
+    name = "registry_mlflow_model_test",
+    srcs = ["registry_mlflow_model_test.py"],
+    shard_count = 2,
+    deps = [
+        ":registry_model_test_base",
+        "//snowflake/ml/_internal:env",
+        "//snowflake/ml/model/_signatures:numpy_handler",
+    ],
+)
+
+py_test(
+    name = "registry_huggingface_pipeline_model_test",
+    srcs = ["registry_huggingface_pipeline_model_test.py"],
+    shard_count = 6,
+    deps = [
+        ":registry_model_test_base",
+        "//snowflake/ml/_internal:env_utils",
+    ],
+)

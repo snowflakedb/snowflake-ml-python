@@ -25,7 +25,7 @@ def ExtractAnswer(
         A column of strings containing answers.
     """
 
-    return _extract_answer_impl("snowflake.ml.extract_answer", from_text, question, session=session)
+    return _extract_answer_impl("snowflake.cortex.extract_answer", from_text, question, session=session)
 
 
 def _extract_answer_impl(

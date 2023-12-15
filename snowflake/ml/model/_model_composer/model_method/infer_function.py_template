@@ -73,6 +73,7 @@ dtype_map = {{feature.name: feature.as_dtype() for feature in features}}
 # Actual function
 @vectorized(input=pd.DataFrame, max_batch_size=MAX_BATCH_SIZE)
 def {function_name}(df: pd.DataFrame) -> dict:
-    input_df = pd.json_normalize(df[0]).astype(dtype=dtype_map)
+    df.columns = input_cols
+    input_df = df.astype(dtype=dtype_map)
     predictions_df = runner(input_df[input_cols])
     return predictions_df.to_dict("records")

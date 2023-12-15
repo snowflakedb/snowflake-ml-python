@@ -14,12 +14,12 @@ class TestEnvUtils(absltest.TestCase):
         self._session.close()
 
     def test_validate_requirement_in_snowflake_conda_channel(self) -> None:
-        res = env_utils.validate_requirements_in_snowflake_conda_channel(
+        res = env_utils.validate_requirements_in_information_schema(
             session=self._session, reqs=[requirements.Requirement("xgboost")], python_version=snowml_env.PYTHON_VERSION
         )
         self.assertNotEmpty(res)
 
-        res = env_utils.validate_requirements_in_snowflake_conda_channel(
+        res = env_utils.validate_requirements_in_information_schema(
             session=self._session,
             reqs=[requirements.Requirement("xgboost"), requirements.Requirement("pytorch")],
             python_version=snowml_env.PYTHON_VERSION,
@@ -27,7 +27,7 @@ class TestEnvUtils(absltest.TestCase):
         self.assertNotEmpty(res)
 
         self.assertIsNone(
-            env_utils.validate_requirements_in_snowflake_conda_channel(
+            env_utils.validate_requirements_in_information_schema(
                 session=self._session,
                 reqs=[requirements.Requirement("xgboost==1.0.*")],
                 python_version=snowml_env.PYTHON_VERSION,
@@ -35,7 +35,7 @@ class TestEnvUtils(absltest.TestCase):
         )
 
         self.assertIsNone(
-            env_utils.validate_requirements_in_snowflake_conda_channel(
+            env_utils.validate_requirements_in_information_schema(
                 session=self._session,
                 reqs=[requirements.Requirement("python-package")],
                 python_version=snowml_env.PYTHON_VERSION,

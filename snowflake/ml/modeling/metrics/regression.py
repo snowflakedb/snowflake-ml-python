@@ -40,10 +40,14 @@ def d2_absolute_error_score(
     gets a :math:`D^2` score of 0.0.
 
     Args:
-        df: Input dataframe.
-        y_true_col_names: Column name(s) representing actual values.
-        y_pred_col_names: Column name(s) representing predicted values.
-        sample_weight_col_name: Column name representing sample weights.
+        df: snowpark.DataFrame
+            Input dataframe.
+        y_true_col_names: string or list of strings
+            Column name(s) representing actual values.
+        y_pred_col_names: string or list of strings
+            Column name(s) representing predicted values.
+        sample_weight_col_name: string, default=None
+            Column name representing sample weights.
         multioutput: {'raw_values', 'uniform_average'}  or array-like of shape \
             (n_outputs,), default='uniform_average'
             Defines aggregating of multiple output values.
@@ -128,11 +132,16 @@ def d2_pinball_score(
     gets a :math:`D^2` score of 0.0.
 
     Args:
-        df: Input dataframe.
-        y_true_col_names: Column name(s) representing actual values.
-        y_pred_col_names: Column name(s) representing predicted values.
-        sample_weight_col_name: Column name representing sample weights.
-        alpha: Slope of the pinball deviance. It determines the quantile level
+        df: snowpark.DataFrame
+            Input dataframe.
+        y_true_col_names: string or list of strings
+            Column name(s) representing actual values.
+        y_pred_col_names: string or list of strings
+            Column name(s) representing predicted values.
+        sample_weight_col_name: string, default=None
+            Column name representing sample weights.
+        alpha: float, default=0.5
+            Slope of the pinball deviance. It determines the quantile level
             alpha for which the pinball deviance and also D2 are optimal.
             The default `alpha=0.5` is equivalent to `d2_absolute_error_score`.
         multioutput: {'raw_values', 'uniform_average'}  or array-like of shape \
@@ -233,10 +242,14 @@ def explained_variance_score(
        the :func:`R^2 score <r2_score>` should be preferred.
 
     Args:
-        df: Input dataframe.
-        y_true_col_names: Column name(s) representing actual values.
-        y_pred_col_names: Column name(s) representing predicted values.
-        sample_weight_col_name: Column name representing sample weights.
+        df: snowpark.DataFrame
+            Input dataframe.
+        y_true_col_names: string or list of strings
+            Column name(s) representing actual values.
+        y_pred_col_names: string or list of strings
+            Column name(s) representing predicted values.
+        sample_weight_col_name: string, default=None
+            Column name representing sample weights.
         multioutput: {'raw_values', 'uniform_average', 'variance_weighted'} or \
             array-like of shape (n_outputs,), default='uniform_average'
             Defines aggregating of multiple output values.
@@ -248,7 +261,8 @@ def explained_variance_score(
             'variance_weighted':
                 Scores of all outputs are averaged, weighted by the variances
                 of each individual output.
-        force_finite: Flag indicating if ``NaN`` and ``-Inf`` scores resulting
+        force_finite: boolean, default=True
+            Flag indicating if ``NaN`` and ``-Inf`` scores resulting
             from constant data should be replaced with real numbers (``1.0`` if
             prediction is perfect, ``0.0`` otherwise). Default is ``True``, a
             convenient setting for hyperparameters' search procedures (e.g. grid
@@ -323,10 +337,14 @@ def mean_absolute_error(
     Mean absolute error regression loss.
 
     Args:
-        df: Input dataframe.
-        y_true_col_names: Column name(s) representing actual values.
-        y_pred_col_names: Column name(s) representing predicted values.
-        sample_weight_col_name: Column name representing sample weights.
+        df: snowpark.DataFrame
+            Input dataframe.
+        y_true_col_names: string or list of strings
+            Column name(s) representing actual values.
+        y_pred_col_names: string or list of strings
+            Column name(s) representing predicted values.
+        sample_weight_col_name: string, default=None
+            Column name representing sample weights.
         multioutput: {'raw_values', 'uniform_average'}  or array-like of shape \
             (n_outputs,), default='uniform_average'
             Defines aggregating of multiple output values.
@@ -398,10 +416,14 @@ def mean_absolute_percentage_error(
     regression metrics).
 
     Args:
-        df: Input dataframe.
-        y_true_col_names: Column name(s) representing actual values.
-        y_pred_col_names: Column name(s) representing predicted values.
-        sample_weight_col_name: Column name representing sample weights.
+        df: snowpark.DataFrame
+            Input dataframe.
+        y_true_col_names: string or list of strings
+            Column name(s) representing actual values.
+        y_pred_col_names: string or list of strings
+            Column name(s) representing predicted values.
+        sample_weight_col_name: string, default=None
+            Column name representing sample weights.
         multioutput: {'raw_values', 'uniform_average'}  or array-like of shape \
             (n_outputs,), default='uniform_average'
             Defines aggregating of multiple output values.
@@ -472,10 +494,14 @@ def mean_squared_error(
     Mean squared error regression loss.
 
     Args:
-        df: Input dataframe.
-        y_true_col_names: Column name(s) representing actual values.
-        y_pred_col_names: Column name(s) representing predicted values.
-        sample_weight_col_name: Column name representing sample weights.
+        df: snowpark.DataFrame
+            Input dataframe.
+        y_true_col_names: string or list of strings
+            Column name(s) representing actual values.
+        y_pred_col_names: string or list of strings
+            Column name(s) representing predicted values.
+        sample_weight_col_name: string, default=None
+            Column name representing sample weights.
         multioutput: {'raw_values', 'uniform_average'}  or array-like of shape \
             (n_outputs,), default='uniform_average'
             Defines aggregating of multiple output values.
@@ -484,7 +510,8 @@ def mean_squared_error(
                 Returns a full set of errors in case of multioutput input.
             'uniform_average':
                 Errors of all outputs are averaged with uniform weight.
-        squared: If True returns MSE value, if False returns RMSE value.
+        squared: boolean, default=True
+            If True returns MSE value, if False returns RMSE value.
 
     Returns:
         loss: float or ndarray of floats
@@ -538,12 +565,13 @@ def r2_score(*, df: snowpark.DataFrame, y_true_col_name: str, y_pred_col_name: s
     non-constant, a constant model that always predicts the average y
     disregarding the input features would get a :math:`R^2` score of 0.0.
 
-    TODO(pdorairaj): Implement other params from sklearn - sample_weight, multi_output, force_finite.
-
     Args:
-        df: Input dataframe.
-        y_true_col_name: Column name representing actual values.
-        y_pred_col_name: Column name representing predicted values.
+        df: snowpark.DataFrame
+            Input dataframe.
+        y_true_col_name: string
+            Column name representing actual values.
+        y_pred_col_name: string
+            Column name representing predicted values.
 
     Returns:
         R squared metric.

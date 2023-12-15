@@ -1,153 +1,153 @@
-AdditiveChi2Sampler, predict, predict_log_proba, predict_proba, decision_function, to_xgboost, to_lightgbm
-Nystroem, predict, predict_log_proba, predict_proba, decision_function, to_xgboost, to_lightgbm
-KernelRidge, predict_log_proba, predict_proba, decision_function, transform, to_xgboost, to_lightgbm
-SkewedChi2Sampler, predict, predict_log_proba, predict_proba, decision_function, to_xgboost, to_lightgbm
-PolynomialCountSketch, predict, predict_log_proba, predict_proba, decision_function, to_xgboost, to_lightgbm
-SVC, transform, to_xgboost, to_lightgbm
-RBFSampler, predict, predict_log_proba, predict_proba, decision_function, to_xgboost, to_lightgbm
-ARDRegression, predict_log_proba, predict_proba, decision_function, transform, to_xgboost, to_lightgbm
-HistGradientBoostingClassifier, predict_log_proba, transform, to_xgboost, to_lightgbm
-LGBMClassifier, predict_log_proba, decision_function, transform, to_xgboost, to_sklearn
-LinearSVC, predict_log_proba, predict_proba, transform, to_xgboost, to_lightgbm
-OrthogonalMatchingPursuit, predict_log_proba, predict_proba, decision_function, transform, to_xgboost, to_lightgbm
-NearestNeighbors, predict, predict_log_proba, predict_proba, decision_function, transform, to_xgboost, to_lightgbm
-PoissonRegressor, predict_log_proba, predict_proba, decision_function, transform, to_xgboost, to_lightgbm
-Lars, predict_log_proba, predict_proba, decision_function, transform, to_xgboost, to_lightgbm
-Ridge, predict_log_proba, predict_proba, decision_function, transform, to_xgboost, to_lightgbm
-RandomForestClassifier, decision_function, transform, to_xgboost, to_lightgbm
-ExtraTreesRegressor, predict_log_proba, predict_proba, decision_function, transform, to_xgboost, to_lightgbm
-ComplementNB, decision_function, transform, to_xgboost, to_lightgbm
-MultiTaskElasticNetCV, predict_log_proba, predict_proba, decision_function, transform, to_xgboost, to_lightgbm
-Lasso, predict_log_proba, predict_proba, decision_function, transform, to_xgboost, to_lightgbm
-LinearSVR, predict_log_proba, predict_proba, decision_function, transform, to_xgboost, to_lightgbm
-PassiveAggressiveRegressor, predict_log_proba, predict_proba, decision_function, transform, to_xgboost, to_lightgbm
-Perceptron, predict_log_proba, predict_proba, transform, to_xgboost, to_lightgbm
-MultiTaskElasticNet, predict_log_proba, predict_proba, decision_function, transform, to_xgboost, to_lightgbm
-RANSACRegressor, predict_log_proba, predict_proba, decision_function, transform, to_xgboost, to_lightgbm
-ColumnTransformer, predict, predict_log_proba, predict_proba, decision_function, to_xgboost, to_lightgbm
-NeighborhoodComponentsAnalysis, predict, predict_log_proba, predict_proba, decision_function, to_xgboost, to_lightgbm
-VotingRegressor, predict_log_proba, predict_proba, decision_function, to_xgboost, to_lightgbm
-HuberRegressor, predict_log_proba, predict_proba, decision_function, transform, to_xgboost, to_lightgbm
-SGDClassifier, transform, to_xgboost, to_lightgbm
-SGDOneClassSVM, predict_log_proba, predict_proba, transform, to_xgboost, to_lightgbm
-TheilSenRegressor, predict_log_proba, predict_proba, decision_function, transform, to_xgboost, to_lightgbm
-SGDRegressor, predict_log_proba, predict_proba, decision_function, transform, to_xgboost, to_lightgbm
-TweedieRegressor, predict_log_proba, predict_proba, decision_function, transform, to_xgboost, to_lightgbm
-AdaBoostClassifier, transform, to_xgboost, to_lightgbm
-BaggingClassifier, transform, to_xgboost, to_lightgbm
-AdaBoostRegressor, predict_log_proba, predict_proba, decision_function, transform, to_xgboost, to_lightgbm
-BaggingRegressor, predict_log_proba, predict_proba, decision_function, transform, to_xgboost, to_lightgbm
-ExtraTreesClassifier, decision_function, transform, to_xgboost, to_lightgbm
-GradientBoostingClassifier, transform, to_xgboost, to_lightgbm
-RidgeCV, predict_log_proba, predict_proba, decision_function, transform, to_xgboost, to_lightgbm
-NuSVC, transform, to_xgboost, to_lightgbm
-IsolationForest, predict_log_proba, predict_proba, transform, to_xgboost, to_lightgbm
-LarsCV, predict_log_proba, predict_proba, decision_function, transform, to_xgboost, to_lightgbm
-RadiusNeighborsRegressor, predict_log_proba, predict_proba, decision_function, transform, to_xgboost, to_lightgbm
-VotingClassifier, predict_log_proba, decision_function, to_xgboost, to_lightgbm
-SVR, predict_log_proba, predict_proba, decision_function, transform, to_xgboost, to_lightgbm
-StackingRegressor, predict_log_proba, predict_proba, decision_function, to_xgboost, to_lightgbm
-MultiTaskLassoCV, predict_log_proba, predict_proba, decision_function, transform, to_xgboost, to_lightgbm
-NuSVR, predict_log_proba, predict_proba, decision_function, transform, to_xgboost, to_lightgbm
-ExtraTreeClassifier, decision_function, transform, to_xgboost, to_lightgbm
-BernoulliRBM, predict, predict_log_proba, predict_proba, decision_function, to_xgboost, to_lightgbm
-DBSCAN, predict, predict_log_proba, predict_proba, decision_function, transform, to_xgboost, to_lightgbm
-DecisionTreeRegressor, predict_log_proba, predict_proba, decision_function, transform, to_xgboost, to_lightgbm
-MLPClassifier, decision_function, transform, to_xgboost, to_lightgbm
-MLPRegressor, predict_log_proba, predict_proba, decision_function, transform, to_xgboost, to_lightgbm
-DecisionTreeClassifier, decision_function, transform, to_xgboost, to_lightgbm
-ExtraTreeRegressor, predict_log_proba, predict_proba, decision_function, transform, to_xgboost, to_lightgbm
-CalibratedClassifierCV, predict_log_proba, decision_function, transform, to_xgboost, to_lightgbm
-AffinityPropagation, predict_log_proba, predict_proba, decision_function, transform, to_xgboost, to_lightgbm
-SpectralBiclustering, predict, predict_log_proba, predict_proba, decision_function, transform, to_xgboost, to_lightgbm
-AgglomerativeClustering, predict, predict_log_proba, predict_proba, decision_function, transform, to_xgboost, to_lightgbm
-Birch, predict_log_proba, predict_proba, decision_function, to_xgboost, to_lightgbm
-MeanShift, predict_log_proba, predict_proba, decision_function, transform, to_xgboost, to_lightgbm
-KMeans, predict_log_proba, predict_proba, decision_function, to_xgboost, to_lightgbm
-FeatureAgglomeration, predict, predict_log_proba, predict_proba, decision_function, to_xgboost, to_lightgbm
-BisectingKMeans, predict_log_proba, predict_proba, decision_function, to_xgboost, to_lightgbm
-HistGradientBoostingRegressor, predict_log_proba, predict_proba, decision_function, transform, to_xgboost, to_lightgbm
-OPTICS, predict, predict_log_proba, predict_proba, decision_function, transform, to_xgboost, to_lightgbm
-PolynomialFeatures, predict, predict_log_proba, predict_proba, decision_function, to_xgboost, to_lightgbm
-IterativeImputer, predict, predict_log_proba, predict_proba, decision_function, to_xgboost, to_lightgbm
-MultiTaskLasso, predict_log_proba, predict_proba, decision_function, transform, to_xgboost, to_lightgbm
-RandomForestRegressor, predict_log_proba, predict_proba, decision_function, transform, to_xgboost, to_lightgbm
-GraphicalLasso, predict, predict_log_proba, predict_proba, decision_function, transform, to_xgboost, to_lightgbm
-MinCovDet, predict, predict_log_proba, predict_proba, decision_function, transform, to_xgboost, to_lightgbm
-LedoitWolf, predict, predict_log_proba, predict_proba, decision_function, transform, to_xgboost, to_lightgbm
-OAS, predict, predict_log_proba, predict_proba, decision_function, transform, to_xgboost, to_lightgbm
-EmpiricalCovariance, predict, predict_log_proba, predict_proba, decision_function, transform, to_xgboost, to_lightgbm
-ShrunkCovariance, predict, predict_log_proba, predict_proba, decision_function, transform, to_xgboost, to_lightgbm
-FactorAnalysis, predict, predict_log_proba, predict_proba, decision_function, to_xgboost, to_lightgbm
-DictionaryLearning, predict, predict_log_proba, predict_proba, decision_function, to_xgboost, to_lightgbm
-FastICA, predict, predict_log_proba, predict_proba, decision_function, to_xgboost, to_lightgbm
-IncrementalPCA, predict, predict_log_proba, predict_proba, decision_function, to_xgboost, to_lightgbm
-KernelPCA, predict, predict_log_proba, predict_proba, decision_function, to_xgboost, to_lightgbm
-QuadraticDiscriminantAnalysis, transform, to_xgboost, to_lightgbm
-PCA, predict, predict_log_proba, predict_proba, decision_function, to_xgboost, to_lightgbm
-MiniBatchDictionaryLearning, predict, predict_log_proba, predict_proba, decision_function, to_xgboost, to_lightgbm
-LinearDiscriminantAnalysis, to_xgboost, to_lightgbm
-TruncatedSVD, predict, predict_log_proba, predict_proba, decision_function, to_xgboost, to_lightgbm
-SparsePCA, predict, predict_log_proba, predict_proba, decision_function, to_xgboost, to_lightgbm
-GenericUnivariateSelect, predict, predict_log_proba, predict_proba, decision_function, to_xgboost, to_lightgbm
-SelectFwe, predict, predict_log_proba, predict_proba, decision_function, to_xgboost, to_lightgbm
-SelectFpr, predict, predict_log_proba, predict_proba, decision_function, to_xgboost, to_lightgbm
-SequentialFeatureSelector, predict, predict_log_proba, predict_proba, decision_function, to_xgboost, to_lightgbm
-GaussianProcessClassifier, predict_log_proba, decision_function, transform, to_xgboost, to_lightgbm
-VarianceThreshold, predict, predict_log_proba, predict_proba, decision_function, to_xgboost, to_lightgbm
-GaussianProcessRegressor, predict_log_proba, predict_proba, decision_function, transform, to_xgboost, to_lightgbm
-KNNImputer, predict, predict_log_proba, predict_proba, decision_function, to_xgboost, to_lightgbm
-MissingIndicator, predict, predict_log_proba, predict_proba, decision_function, to_xgboost, to_lightgbm
-TSNE, predict, predict_log_proba, predict_proba, decision_function, transform, to_xgboost, to_lightgbm
-Isomap, predict, predict_log_proba, predict_proba, decision_function, to_xgboost, to_lightgbm
-SpectralEmbedding, predict, predict_log_proba, predict_proba, decision_function, transform, to_xgboost, to_lightgbm
-LGBMRegressor, predict_log_proba, predict_proba, decision_function, transform, to_xgboost, to_sklearn
-BayesianGaussianMixture, predict_log_proba, decision_function, transform, to_xgboost, to_lightgbm
+AdditiveChi2Sampler, predict, predict_log_proba, predict_proba, decision_function, to_xgboost, to_lightgbm, score, kneighbors, fit_predict
+Nystroem, predict, predict_log_proba, predict_proba, decision_function, to_xgboost, to_lightgbm, score, kneighbors, fit_predict
+KernelRidge, predict_log_proba, predict_proba, decision_function, transform, to_xgboost, to_lightgbm, kneighbors, fit_predict
+SkewedChi2Sampler, predict, predict_log_proba, predict_proba, decision_function, to_xgboost, to_lightgbm, score, kneighbors, fit_predict
+PolynomialCountSketch, predict, predict_log_proba, predict_proba, decision_function, to_xgboost, to_lightgbm, score, kneighbors, fit_predict
+SVC, transform, to_xgboost, to_lightgbm, kneighbors, fit_predict
+RBFSampler, predict, predict_log_proba, predict_proba, decision_function, to_xgboost, to_lightgbm, score, kneighbors, fit_predict
+ARDRegression, predict_log_proba, predict_proba, decision_function, transform, to_xgboost, to_lightgbm, kneighbors, fit_predict
+HistGradientBoostingClassifier, predict_log_proba, transform, to_xgboost, to_lightgbm, kneighbors, fit_predict
+LGBMClassifier, predict_log_proba, decision_function, transform, to_xgboost, to_sklearn, kneighbors, fit_predict
+LinearSVC, predict_log_proba, predict_proba, transform, to_xgboost, to_lightgbm, kneighbors, fit_predict
+OrthogonalMatchingPursuit, predict_log_proba, predict_proba, decision_function, transform, to_xgboost, to_lightgbm, kneighbors, fit_predict
+NearestNeighbors, predict, predict_log_proba, predict_proba, decision_function, transform, to_xgboost, to_lightgbm, score, fit_predict
+PoissonRegressor, predict_log_proba, predict_proba, decision_function, transform, to_xgboost, to_lightgbm, kneighbors, fit_predict
+Lars, predict_log_proba, predict_proba, decision_function, transform, to_xgboost, to_lightgbm, kneighbors, fit_predict
+Ridge, predict_log_proba, predict_proba, decision_function, transform, to_xgboost, to_lightgbm, kneighbors, fit_predict
+RandomForestClassifier, decision_function, transform, to_xgboost, to_lightgbm, kneighbors, fit_predict
+ExtraTreesRegressor, predict_log_proba, predict_proba, decision_function, transform, to_xgboost, to_lightgbm, kneighbors, fit_predict
+ComplementNB, decision_function, transform, to_xgboost, to_lightgbm, kneighbors, fit_predict
+MultiTaskElasticNetCV, predict_log_proba, predict_proba, decision_function, transform, to_xgboost, to_lightgbm, kneighbors, fit_predict
+Lasso, predict_log_proba, predict_proba, decision_function, transform, to_xgboost, to_lightgbm, kneighbors, fit_predict
+LinearSVR, predict_log_proba, predict_proba, decision_function, transform, to_xgboost, to_lightgbm, kneighbors, fit_predict
+PassiveAggressiveRegressor, predict_log_proba, predict_proba, decision_function, transform, to_xgboost, to_lightgbm, kneighbors, fit_predict
+Perceptron, predict_log_proba, predict_proba, transform, to_xgboost, to_lightgbm, kneighbors, fit_predict
+MultiTaskElasticNet, predict_log_proba, predict_proba, decision_function, transform, to_xgboost, to_lightgbm, kneighbors, fit_predict
+RANSACRegressor, predict_log_proba, predict_proba, decision_function, transform, to_xgboost, to_lightgbm, kneighbors, fit_predict
+ColumnTransformer, predict, predict_log_proba, predict_proba, decision_function, to_xgboost, to_lightgbm, kneighbors, score, fit_predict
+NeighborhoodComponentsAnalysis, predict, predict_log_proba, predict_proba, decision_function, to_xgboost, to_lightgbm, score, kneighbors, fit_predict
+VotingRegressor, predict_log_proba, predict_proba, decision_function, to_xgboost, to_lightgbm, kneighbors, fit_predict
+HuberRegressor, predict_log_proba, predict_proba, decision_function, transform, to_xgboost, to_lightgbm, kneighbors, fit_predict
+SGDClassifier, transform, to_xgboost, to_lightgbm, kneighbors, fit_predict
+SGDOneClassSVM, predict_log_proba, predict_proba, transform, to_xgboost, to_lightgbm, score, kneighbors
+TheilSenRegressor, predict_log_proba, predict_proba, decision_function, transform, to_xgboost, to_lightgbm, kneighbors, fit_predict
+SGDRegressor, predict_log_proba, predict_proba, decision_function, transform, to_xgboost, to_lightgbm, kneighbors, fit_predict
+TweedieRegressor, predict_log_proba, predict_proba, decision_function, transform, to_xgboost, to_lightgbm, kneighbors, fit_predict
+AdaBoostClassifier, transform, to_xgboost, to_lightgbm, kneighbors, fit_predict
+BaggingClassifier, transform, to_xgboost, to_lightgbm, kneighbors, fit_predict
+AdaBoostRegressor, predict_log_proba, predict_proba, decision_function, transform, to_xgboost, to_lightgbm, kneighbors, fit_predict
+BaggingRegressor, predict_log_proba, predict_proba, decision_function, transform, to_xgboost, to_lightgbm, kneighbors, fit_predict
+ExtraTreesClassifier, decision_function, transform, to_xgboost, to_lightgbm, kneighbors, fit_predict
+GradientBoostingClassifier, transform, to_xgboost, to_lightgbm, kneighbors, fit_predict
+RidgeCV, predict_log_proba, predict_proba, decision_function, transform, to_xgboost, to_lightgbm, kneighbors, fit_predict
+NuSVC, transform, to_xgboost, to_lightgbm, kneighbors, fit_predict
+IsolationForest, predict_log_proba, predict_proba, transform, to_xgboost, to_lightgbm, score, kneighbors
+LarsCV, predict_log_proba, predict_proba, decision_function, transform, to_xgboost, to_lightgbm, kneighbors, fit_predict
+RadiusNeighborsRegressor, predict_log_proba, predict_proba, decision_function, transform, to_xgboost, to_lightgbm, kneighbors, fit_predict
+VotingClassifier, predict_log_proba, decision_function, to_xgboost, to_lightgbm, kneighbors, fit_predict
+SVR, predict_log_proba, predict_proba, decision_function, transform, to_xgboost, to_lightgbm, kneighbors, fit_predict
+StackingRegressor, predict_log_proba, predict_proba, decision_function, to_xgboost, to_lightgbm, kneighbors, fit_predict
+MultiTaskLassoCV, predict_log_proba, predict_proba, decision_function, transform, to_xgboost, to_lightgbm, kneighbors, fit_predict
+NuSVR, predict_log_proba, predict_proba, decision_function, transform, to_xgboost, to_lightgbm, kneighbors, fit_predict
+ExtraTreeClassifier, decision_function, transform, to_xgboost, to_lightgbm, kneighbors, fit_predict
+BernoulliRBM, predict, predict_log_proba, predict_proba, decision_function, to_xgboost, to_lightgbm, score, kneighbors, fit_predict
+DBSCAN, predict, predict_log_proba, predict_proba, decision_function, transform, to_xgboost, to_lightgbm, score, kneighbors
+DecisionTreeRegressor, predict_log_proba, predict_proba, decision_function, transform, to_xgboost, to_lightgbm, kneighbors, fit_predict
+MLPClassifier, decision_function, transform, to_xgboost, to_lightgbm, kneighbors, fit_predict
+MLPRegressor, predict_log_proba, predict_proba, decision_function, transform, to_xgboost, to_lightgbm, kneighbors, fit_predict
+DecisionTreeClassifier, decision_function, transform, to_xgboost, to_lightgbm, kneighbors, fit_predict
+ExtraTreeRegressor, predict_log_proba, predict_proba, decision_function, transform, to_xgboost, to_lightgbm, kneighbors, fit_predict
+CalibratedClassifierCV, predict_log_proba, decision_function, transform, to_xgboost, to_lightgbm, kneighbors, fit_predict
+AffinityPropagation, predict_log_proba, predict_proba, decision_function, transform, to_xgboost, to_lightgbm, score, kneighbors
+SpectralBiclustering, predict, predict_log_proba, predict_proba, decision_function, transform, to_xgboost, to_lightgbm, score, kneighbors, fit_predict
+AgglomerativeClustering, predict, predict_log_proba, predict_proba, decision_function, transform, to_xgboost, to_lightgbm, score, kneighbors
+Birch, predict_log_proba, predict_proba, decision_function, to_xgboost, to_lightgbm, score, kneighbors
+MeanShift, predict_log_proba, predict_proba, decision_function, transform, to_xgboost, to_lightgbm, score, kneighbors
+KMeans, predict_log_proba, predict_proba, decision_function, to_xgboost, to_lightgbm, kneighbors
+FeatureAgglomeration, predict, predict_log_proba, predict_proba, decision_function, to_xgboost, to_lightgbm, score, kneighbors, fit_predict
+BisectingKMeans, predict_log_proba, predict_proba, decision_function, to_xgboost, to_lightgbm, kneighbors
+HistGradientBoostingRegressor, predict_log_proba, predict_proba, decision_function, transform, to_xgboost, to_lightgbm, kneighbors, fit_predict
+OPTICS, predict, predict_log_proba, predict_proba, decision_function, transform, to_xgboost, to_lightgbm, score, kneighbors
+PolynomialFeatures, predict, predict_log_proba, predict_proba, decision_function, to_xgboost, to_lightgbm, score, kneighbors, fit_predict
+IterativeImputer, predict, predict_log_proba, predict_proba, decision_function, to_xgboost, to_lightgbm, score, kneighbors, fit_predict
+MultiTaskLasso, predict_log_proba, predict_proba, decision_function, transform, to_xgboost, to_lightgbm, kneighbors, fit_predict
+RandomForestRegressor, predict_log_proba, predict_proba, decision_function, transform, to_xgboost, to_lightgbm, kneighbors, fit_predict
+GraphicalLasso, predict, predict_log_proba, predict_proba, decision_function, transform, to_xgboost, to_lightgbm, kneighbors, fit_predict
+MinCovDet, predict, predict_log_proba, predict_proba, decision_function, transform, to_xgboost, to_lightgbm, kneighbors, fit_predict
+LedoitWolf, predict, predict_log_proba, predict_proba, decision_function, transform, to_xgboost, to_lightgbm, kneighbors, fit_predict
+OAS, predict, predict_log_proba, predict_proba, decision_function, transform, to_xgboost, to_lightgbm, kneighbors, fit_predict
+EmpiricalCovariance, predict, predict_log_proba, predict_proba, decision_function, transform, to_xgboost, to_lightgbm, kneighbors, fit_predict
+ShrunkCovariance, predict, predict_log_proba, predict_proba, decision_function, transform, to_xgboost, to_lightgbm, kneighbors, fit_predict
+FactorAnalysis, predict, predict_log_proba, predict_proba, decision_function, to_xgboost, to_lightgbm, kneighbors, fit_predict
+DictionaryLearning, predict, predict_log_proba, predict_proba, decision_function, to_xgboost, to_lightgbm, score, kneighbors, fit_predict
+FastICA, predict, predict_log_proba, predict_proba, decision_function, to_xgboost, to_lightgbm, score, kneighbors, fit_predict
+IncrementalPCA, predict, predict_log_proba, predict_proba, decision_function, to_xgboost, to_lightgbm, score, kneighbors, fit_predict
+KernelPCA, predict, predict_log_proba, predict_proba, decision_function, to_xgboost, to_lightgbm, score, kneighbors, fit_predict
+QuadraticDiscriminantAnalysis, transform, to_xgboost, to_lightgbm, kneighbors, fit_predict
+PCA, predict, predict_log_proba, predict_proba, decision_function, to_xgboost, to_lightgbm, kneighbors, fit_predict
+MiniBatchDictionaryLearning, predict, predict_log_proba, predict_proba, decision_function, to_xgboost, to_lightgbm, score, kneighbors, fit_predict
+LinearDiscriminantAnalysis, to_xgboost, to_lightgbm, kneighbors, fit_predict
+TruncatedSVD, predict, predict_log_proba, predict_proba, decision_function, to_xgboost, to_lightgbm, score, kneighbors, fit_predict
+SparsePCA, predict, predict_log_proba, predict_proba, decision_function, to_xgboost, to_lightgbm, score, kneighbors, fit_predict
+GenericUnivariateSelect, predict, predict_log_proba, predict_proba, decision_function, to_xgboost, to_lightgbm, score, kneighbors, fit_predict
+SelectFwe, predict, predict_log_proba, predict_proba, decision_function, to_xgboost, to_lightgbm, score, kneighbors, fit_predict
+SelectFpr, predict, predict_log_proba, predict_proba, decision_function, to_xgboost, to_lightgbm, score, kneighbors, fit_predict
+SequentialFeatureSelector, predict, predict_log_proba, predict_proba, decision_function, to_xgboost, to_lightgbm, score, kneighbors, fit_predict
+GaussianProcessClassifier, predict_log_proba, decision_function, transform, to_xgboost, to_lightgbm, kneighbors, fit_predict
+VarianceThreshold, predict, predict_log_proba, predict_proba, decision_function, to_xgboost, to_lightgbm, score, kneighbors, fit_predict
+GaussianProcessRegressor, predict_log_proba, predict_proba, decision_function, transform, to_xgboost, to_lightgbm, kneighbors, fit_predict
+KNNImputer, predict, predict_log_proba, predict_proba, decision_function, to_xgboost, to_lightgbm, score, kneighbors, fit_predict
+MissingIndicator, predict, predict_log_proba, predict_proba, decision_function, to_xgboost, to_lightgbm, score, kneighbors, fit_predict
+TSNE, predict, predict_log_proba, predict_proba, decision_function, transform, to_xgboost, to_lightgbm, score, kneighbors, fit_predict
+Isomap, predict, predict_log_proba, predict_proba, decision_function, to_xgboost, to_lightgbm, score, kneighbors, fit_predict
+SpectralEmbedding, predict, predict_log_proba, predict_proba, decision_function, transform, to_xgboost, to_lightgbm, score, kneighbors, fit_predict
+LGBMRegressor, predict_log_proba, predict_proba, decision_function, transform, to_xgboost, to_sklearn, kneighbors, fit_predict
+BayesianGaussianMixture, predict_log_proba, decision_function, transform, to_xgboost, to_lightgbm, kneighbors
 GridSearchCV, to_xgboost, to_lightgbm
-GaussianMixture, predict_log_proba, decision_function, transform, to_xgboost, to_lightgbm
-XGBRFClassifier, predict_log_proba, decision_function, transform, to_sklearn, to_lightgbm
-OneVsOneClassifier, predict_log_proba, predict_proba, transform, to_xgboost, to_lightgbm
+GaussianMixture, predict_log_proba, decision_function, transform, to_xgboost, to_lightgbm, kneighbors
+XGBRFClassifier, predict_log_proba, decision_function, transform, to_sklearn, to_lightgbm, kneighbors, fit_predict
+OneVsOneClassifier, predict_log_proba, predict_proba, transform, to_xgboost, to_lightgbm, kneighbors, fit_predict
 RandomizedSearchCV, to_xgboost, to_lightgbm
-OneVsRestClassifier, predict_log_proba, transform, to_xgboost, to_lightgbm
-GaussianNB, decision_function, transform, to_xgboost, to_lightgbm
-BernoulliNB, decision_function, transform, to_xgboost, to_lightgbm
-OutputCodeClassifier, predict_log_proba, predict_proba, decision_function, transform, to_xgboost, to_lightgbm
-CategoricalNB, decision_function, transform, to_xgboost, to_lightgbm
-MiniBatchKMeans, predict_log_proba, predict_proba, decision_function, to_xgboost, to_lightgbm
-LabelSpreading, predict_log_proba, decision_function, transform, to_xgboost, to_lightgbm
-KNeighborsClassifier, predict_log_proba, decision_function, transform, to_xgboost, to_lightgbm
-KNeighborsRegressor, predict_log_proba, predict_proba, decision_function, transform, to_xgboost, to_lightgbm
-LocalOutlierFactor, predict_log_proba, predict_proba, transform, to_xgboost, to_lightgbm
-NearestCentroid, predict_log_proba, predict_proba, decision_function, transform, to_xgboost, to_lightgbm
-KernelDensity, predict, predict_log_proba, predict_proba, decision_function, transform, to_xgboost, to_lightgbm
-RidgeClassifier, predict_log_proba, predict_proba, transform, to_xgboost, to_lightgbm
-SpectralClustering, predict, predict_log_proba, predict_proba, decision_function, transform, to_xgboost, to_lightgbm
-RidgeClassifierCV, predict_log_proba, predict_proba, transform, to_xgboost, to_lightgbm
-RadiusNeighborsClassifier, predict_log_proba, decision_function, transform, to_xgboost, to_lightgbm
-LabelPropagation, predict_log_proba, decision_function, transform, to_xgboost, to_lightgbm
-TransformedTargetRegressor, predict_log_proba, predict_proba, decision_function, transform, to_xgboost, to_lightgbm
-PassiveAggressiveClassifier, predict_log_proba, predict_proba, transform, to_xgboost, to_lightgbm
-XGBRFRegressor, predict_log_proba, predict_proba, decision_function, transform, to_sklearn, to_lightgbm
-XGBClassifier, predict_log_proba, decision_function, transform, to_sklearn, to_lightgbm
-GradientBoostingRegressor, predict_log_proba, predict_proba, decision_function, transform, to_xgboost, to_lightgbm
-MultinomialNB, decision_function, transform, to_xgboost, to_lightgbm
-LogisticRegression, transform, to_xgboost, to_lightgbm
-MDS, predict, predict_log_proba, predict_proba, decision_function, transform, to_xgboost, to_lightgbm
-SelectPercentile, predict, predict_log_proba, predict_proba, decision_function, to_xgboost, to_lightgbm
-SelectFdr, predict, predict_log_proba, predict_proba, decision_function, to_xgboost, to_lightgbm
-XGBRegressor, predict_log_proba, predict_proba, decision_function, transform, to_sklearn, to_lightgbm
-GraphicalLassoCV, predict, predict_log_proba, predict_proba, decision_function, transform, to_xgboost, to_lightgbm
-SelectKBest, predict, predict_log_proba, predict_proba, decision_function, to_xgboost, to_lightgbm
-MiniBatchSparsePCA, predict, predict_log_proba, predict_proba, decision_function, to_xgboost, to_lightgbm
-EllipticEnvelope, predict_log_proba, predict_proba, transform, to_xgboost, to_lightgbm
-LassoLars, predict_log_proba, predict_proba, decision_function, transform, to_xgboost, to_lightgbm
-SpectralCoclustering, predict, predict_log_proba, predict_proba, decision_function, transform, to_xgboost, to_lightgbm
-LogisticRegressionCV, transform, to_xgboost, to_lightgbm
-LassoLarsCV, predict_log_proba, predict_proba, decision_function, transform, to_xgboost, to_lightgbm
-LassoCV, predict_log_proba, predict_proba, decision_function, transform, to_xgboost, to_lightgbm
-ElasticNet, predict_log_proba, predict_proba, decision_function, transform, to_xgboost, to_lightgbm
-LassoLarsIC, predict_log_proba, predict_proba, decision_function, transform, to_xgboost, to_lightgbm
-LinearRegression, predict_log_proba, predict_proba, decision_function, transform, to_xgboost, to_lightgbm
-GammaRegressor, predict_log_proba, predict_proba, decision_function, transform, to_xgboost, to_lightgbm
-ElasticNetCV, predict_log_proba, predict_proba, decision_function, transform, to_xgboost, to_lightgbm
-BayesianRidge, predict_log_proba, predict_proba, decision_function, transform, to_xgboost, to_lightgbm
+OneVsRestClassifier, predict_log_proba, transform, to_xgboost, to_lightgbm, kneighbors ,fit_predict
+GaussianNB, decision_function, transform, to_xgboost, to_lightgbm, kneighbors, fit_predict
+BernoulliNB, decision_function, transform, to_xgboost, to_lightgbm, kneighbors, fit_predict
+OutputCodeClassifier, predict_log_proba, predict_proba, decision_function, transform, to_xgboost, to_lightgbm, kneighbors, fit_predict
+CategoricalNB, decision_function, transform, to_xgboost, to_lightgbm, kneighbors, fit_predict
+MiniBatchKMeans, predict_log_proba, predict_proba, decision_function, to_xgboost, to_lightgbm, kneighbors
+LabelSpreading, predict_log_proba, decision_function, transform, to_xgboost, to_lightgbm, kneighbors, fit_predict
+KNeighborsClassifier, predict_log_proba, decision_function, transform, to_xgboost, to_lightgbm, fit_predict
+KNeighborsRegressor, predict_log_proba, predict_proba, decision_function, transform, to_xgboost, to_lightgbm, fit_predict
+LocalOutlierFactor, predict_log_proba, predict_proba, transform, to_xgboost, to_lightgbm, score
+NearestCentroid, predict_log_proba, predict_proba, decision_function, transform, to_xgboost, to_lightgbm, kneighbors, fit_predict
+KernelDensity, predict, predict_log_proba, predict_proba, decision_function, transform, to_xgboost, to_lightgbm, kneighbors, fit_predict
+RidgeClassifier, predict_log_proba, predict_proba, transform, to_xgboost, to_lightgbm, kneighbors, fit_predict
+SpectralClustering, predict, predict_log_proba, predict_proba, decision_function, transform, to_xgboost, to_lightgbm, score, kneighbors
+RidgeClassifierCV, predict_log_proba, predict_proba, transform, to_xgboost, to_lightgbm, kneighbors, fit_predict
+RadiusNeighborsClassifier, predict_log_proba, decision_function, transform, to_xgboost, to_lightgbm, kneighbors, fit_predict
+LabelPropagation, predict_log_proba, decision_function, transform, to_xgboost, to_lightgbm, kneighbors, fit_predict
+TransformedTargetRegressor, predict_log_proba, predict_proba, decision_function, transform, to_xgboost, to_lightgbm, kneighbors, fit_predict
+PassiveAggressiveClassifier, predict_log_proba, predict_proba, transform, to_xgboost, to_lightgbm, kneighbors, fit_predict
+XGBRFRegressor, predict_log_proba, predict_proba, decision_function, transform, to_sklearn, to_lightgbm, kneighbors, fit_predict
+XGBClassifier, predict_log_proba, decision_function, transform, to_sklearn, to_lightgbm, kneighbors, fit_predict
+GradientBoostingRegressor, predict_log_proba, predict_proba, decision_function, transform, to_xgboost, to_lightgbm, kneighbors, fit_predict
+MultinomialNB, decision_function, transform, to_xgboost, to_lightgbm, kneighbors, fit_predict
+LogisticRegression, transform, to_xgboost, to_lightgbm, kneighbors, fit_predict
+MDS, predict, predict_log_proba, predict_proba, decision_function, transform, to_xgboost, to_lightgbm, score, kneighbors, fit_predict
+SelectPercentile, predict, predict_log_proba, predict_proba, decision_function, to_xgboost, to_lightgbm, score, kneighbors, fit_predict
+SelectFdr, predict, predict_log_proba, predict_proba, decision_function, to_xgboost, to_lightgbm, score, kneighbors, fit_predict
+XGBRegressor, predict_log_proba, predict_proba, decision_function, transform, to_sklearn, to_lightgbm, kneighbors, fit_predict
+GraphicalLassoCV, predict, predict_log_proba, predict_proba, decision_function, transform, to_xgboost, to_lightgbm, kneighbors, fit_predict
+SelectKBest, predict, predict_log_proba, predict_proba, decision_function, to_xgboost, to_lightgbm, score, kneighbors, fit_predict
+MiniBatchSparsePCA, predict, predict_log_proba, predict_proba, decision_function, to_xgboost, to_lightgbm, score, kneighbors, fit_predict
+EllipticEnvelope, predict_log_proba, predict_proba, transform, to_xgboost, to_lightgbm, kneighbors
+LassoLars, predict_log_proba, predict_proba, decision_function, transform, to_xgboost, to_lightgbm, kneighbors, fit_predict
+SpectralCoclustering, predict, predict_log_proba, predict_proba, decision_function, transform, to_xgboost, to_lightgbm, score, kneighbors, fit_predict
+LogisticRegressionCV, transform, to_xgboost, to_lightgbm, kneighbors, fit_predict
+LassoLarsCV, predict_log_proba, predict_proba, decision_function, transform, to_xgboost, to_lightgbm, kneighbors, fit_predict
+LassoCV, predict_log_proba, predict_proba, decision_function, transform, to_xgboost, to_lightgbm, kneighbors, fit_predict
+ElasticNet, predict_log_proba, predict_proba, decision_function, transform, to_xgboost, to_lightgbm, kneighbors, fit_predict
+LassoLarsIC, predict_log_proba, predict_proba, decision_function, transform, to_xgboost, to_lightgbm, kneighbors, fit_predict
+LinearRegression, predict_log_proba, predict_proba, decision_function, transform, to_xgboost, to_lightgbm, kneighbors, fit_predict
+GammaRegressor, predict_log_proba, predict_proba, decision_function, transform, to_xgboost, to_lightgbm, kneighbors, fit_predict
+ElasticNetCV, predict_log_proba, predict_proba, decision_function, transform, to_xgboost, to_lightgbm, kneighbors, fit_predict
+BayesianRidge, predict_log_proba, predict_proba, decision_function, transform, to_xgboost, to_lightgbm, kneighbors, fit_predict

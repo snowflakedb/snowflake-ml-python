@@ -54,7 +54,7 @@ class TestSPCSLLMModelInteg(spcs_integ_test_base.SpcsIntegTestBase):
             model=model,
             options={"embed_local_ml_library": True},
             conda_dependencies=[
-                test_env_utils.get_latest_package_version_spec_in_server(self._session, "snowflake-snowpark-python"),
+                test_env_utils.get_latest_package_version_spec_in_conda("snowflake-snowpark-python"),
             ],
         )
         svc_func_name = db_manager.TestObjectNameGenerator.get_snowml_test_object_name(

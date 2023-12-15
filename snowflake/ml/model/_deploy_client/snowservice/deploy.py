@@ -10,14 +10,19 @@ from typing import Any, Dict, Generator, Optional, cast
 
 import importlib_resources
 import yaml
+from packaging import requirements
 from typing_extensions import Unpack
 
-from snowflake.ml._internal import file_utils
+from snowflake.ml._internal import env_utils, file_utils
 from snowflake.ml._internal.exceptions import (
     error_codes,
     exceptions as snowml_exceptions,
 )
-from snowflake.ml._internal.utils import identifier, query_result_checker
+from snowflake.ml._internal.utils import (
+    identifier,
+    query_result_checker,
+    spcs_attribution_utils,
+)
 from snowflake.ml.model import type_hints
 from snowflake.ml.model._deploy_client import snowservice
 from snowflake.ml.model._deploy_client.image_builds import (
@@ -161,6 +166,11 @@ def _deploy(
         # Set conda-forge as backup channel for SPCS deployment
         if "conda-forge" not in model_meta_deploy.env._conda_dependencies:
             model_meta_deploy.env._conda_dependencies["conda-forge"] = []
+        # Snowflake connector needs pyarrow to work correctly.
+        env_utils.append_conda_dependency(
+            model_meta_deploy.env._conda_dependencies,
+            (env_utils.DEFAULT_CHANNEL_NAME, requirements.Requirement("pyarrow")),
+        )
         if options.use_gpu:
             # Make mypy happy
             assert options.num_gpus is not None
@@ -584,6 +594,8 @@ class SnowServiceDeployment:
             resource_name=self._service_name, resource_type=constants.ResourceType.SERVICE
         )
         logger.info(f"Service {self._service_name} is ready. Creating service function...")
+
+        spcs_attribution_utils.record_service_start(self.session, self._service_name)
 
         service_function_sql = client.create_or_replace_service_function(
             service_func_name=self.service_func_name,

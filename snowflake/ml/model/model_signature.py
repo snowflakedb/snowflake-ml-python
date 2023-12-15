@@ -1,8 +1,10 @@
+import enum
 import warnings
-from typing import Any, List, Literal, Optional, Sequence, Tuple, Type
+from typing import Any, Dict, List, Literal, Optional, Sequence, Tuple, Type
 
 import numpy as np
 import pandas as pd
+from typing_extensions import Never
 
 import snowflake.snowpark
 import snowflake.snowpark.functions as F
@@ -11,7 +13,7 @@ from snowflake.ml._internal.exceptions import (
     error_codes,
     exceptions as snowml_exceptions,
 )
-from snowflake.ml._internal.utils import formatting, identifier
+from snowflake.ml._internal.utils import formatting, identifier, sql_identifier
 from snowflake.ml.model import type_hints as model_types
 from snowflake.ml.model._signatures import (
     base_handler,
@@ -310,8 +312,35 @@ def _validate_pandas_df(data: pd.DataFrame, features: Sequence[core.BaseFeatureS
                     )
 
 
-def _validate_snowpark_data(data: snowflake.snowpark.DataFrame, features: Sequence[core.BaseFeatureSpec]) -> None:
-    """Validate Snowpark DataFrame as input
+def assert_never(arg: Never) -> Never:
+    raise AssertionError("Expected code to be unreachable")
+
+
+class SnowparkIdentifierRule(enum.Enum):
+    INFERRED = "inferred"
+    NORMALIZED = "normalized"
+
+    def get_identifier_from_feature(self, ft_name: str) -> str:
+        if self == SnowparkIdentifierRule.INFERRED:
+            return identifier.get_inferred_name(ft_name)
+        elif self == SnowparkIdentifierRule.NORMALIZED:
+            return identifier.resolve_identifier(ft_name)
+        else:
+            assert_never(self)
+
+    def get_sql_identifier_from_feature(self, ft_name: str) -> sql_identifier.SqlIdentifier:
+        if self == SnowparkIdentifierRule.INFERRED:
+            return sql_identifier.SqlIdentifier(ft_name, case_sensitive=True)
+        elif self == SnowparkIdentifierRule.NORMALIZED:
+            return sql_identifier.SqlIdentifier(ft_name, case_sensitive=False)
+        else:
+            assert_never(self)
+
+
+def _validate_snowpark_data(
+    data: snowflake.snowpark.DataFrame, features: Sequence[core.BaseFeatureSpec]
+) -> SnowparkIdentifierRule:
+    """Validate Snowpark DataFrame as input. It will try to map both normalized name or inferred name.
 
     Args:
         data: A snowpark dataframe to be validated.
@@ -321,60 +350,86 @@ def _validate_snowpark_data(data: snowflake.snowpark.DataFrame, features: Sequen
         SnowflakeMLException: NotImplementedError: FeatureGroupSpec is not supported.
         SnowflakeMLException: ValueError: Raised when confronting invalid feature.
         SnowflakeMLException: ValueError: Raised when a feature cannot be found.
-    """
 
+    Returns:
+        Identifier rule to use.
+        - inferred: signature `a` - Snowpark DF `"a"`, use `get_inferred_name`
+        - normalized: signature `a` - Snowpark DF `A`, use `resolve_identifier`
+    """
+    errors: Dict[SnowparkIdentifierRule, List[Exception]] = {
+        SnowparkIdentifierRule.INFERRED: [],
+        SnowparkIdentifierRule.NORMALIZED: [],
+    }
     schema = data.schema
-    for feature in features:
-        ft_name = feature.name
-        found = False
-        for field in schema.fields:
-            name = identifier.get_unescaped_names(field.name)
-            if name == ft_name:
-                found = True
-                if field.nullable:
-                    warnings.warn(
-                        f"Warn in feature {ft_name}: Nullable column {field.name} provided,"
-                        + " inference might fail if there is null value.",
-                        category=RuntimeWarning,
-                        stacklevel=1,
-                    )
-                if isinstance(feature, core.FeatureGroupSpec):
-                    raise snowml_exceptions.SnowflakeMLException(
-                        error_code=error_codes.NOT_IMPLEMENTED,
-                        original_exception=NotImplementedError("FeatureGroupSpec is not supported."),
-                    )
-                assert isinstance(feature, core.FeatureSpec)  # mypy
-                ft_type = feature._dtype
-                field_data_type = field.datatype
-                if isinstance(field_data_type, spt.ArrayType):
-                    if feature._shape is None:
+    for identifier_rule in errors.keys():
+        for feature in features:
+            try:
+                ft_name = identifier_rule.get_identifier_from_feature(feature.name)
+            except ValueError as e:
+                errors[identifier_rule].append(e)
+                continue
+            found = False
+            for field in schema.fields:
+                if field.name == ft_name:
+                    found = True
+                    if isinstance(feature, core.FeatureGroupSpec):
                         raise snowml_exceptions.SnowflakeMLException(
-                            error_code=error_codes.INVALID_DATA,
-                            original_exception=ValueError(
-                                f"Data Validation Error in feature {ft_name}: "
-                                + f"Feature is a array feature, while {field.name} is not."
-                            ),
+                            error_code=error_codes.NOT_IMPLEMENTED,
+                            original_exception=NotImplementedError("FeatureGroupSpec is not supported."),
                         )
-                    warnings.warn(
-                        f"Warn in feature {ft_name}: Feature is a array feature, type validation cannot happen.",
-                        category=RuntimeWarning,
-                        stacklevel=1,
-                    )
-                else:
-                    if feature._shape:
-                        raise snowml_exceptions.SnowflakeMLException(
-                            error_code=error_codes.INVALID_DATA,
-                            original_exception=ValueError(
-                                f"Data Validation Error in feature {ft_name}: "
-                                + f"Feature is a scalar feature, while {field.name} is not."
-                            ),
+                    assert isinstance(feature, core.FeatureSpec)  # mypy
+                    ft_type = feature._dtype
+                    field_data_type = field.datatype
+                    if isinstance(field_data_type, spt.ArrayType):
+                        if feature._shape is None:
+                            errors[identifier_rule].append(
+                                ValueError(
+                                    f"Data Validation Error in feature {feature.name}: "
+                                    + f"Feature is an array feature, while {field.name} is not."
+                                ),
+                            )
+                        warnings.warn(
+                            (f"Feature {feature.name} type cannot be validated: feature is an array feature."),
+                            category=RuntimeWarning,
+                            stacklevel=2,
                         )
-                    _validate_snowpark_type_feature(data, field, ft_type, ft_name)
-        if not found:
-            raise snowml_exceptions.SnowflakeMLException(
-                error_code=error_codes.INVALID_DATA,
-                original_exception=ValueError(f"Data Validation Error: feature {ft_name} does not exist in data."),
-            )
+                    else:
+                        if feature._shape:
+                            errors[identifier_rule].append(
+                                ValueError(
+                                    f"Data Validation Error in feature {feature.name}: "
+                                    + f"Feature is a scalar feature, while {field.name} is not."
+                                ),
+                            )
+                        try:
+                            _validate_snowpark_type_feature(data, field, ft_type, feature.name)
+                        except snowml_exceptions.SnowflakeMLException as e:
+                            errors[identifier_rule].append(e.original_exception)
+                    break
+            if not found:
+                errors[identifier_rule].append(
+                    ValueError(f"Data Validation Error: feature {feature.name} does not exist in data."),
+                )
+    if all(len(error_list) != 0 for error_list in errors.values()):
+        raise snowml_exceptions.SnowflakeMLException(
+            error_code=error_codes.INVALID_DATA,
+            original_exception=ValueError(
+                f"""
+Data Validation Error when validating your Snowpark DataFrame.
+If using the normalized names from model signatures, there are the following errors:
+{errors[SnowparkIdentifierRule.NORMALIZED]}
+
+If using the inferred names from model signatures, there are the following errors:
+{errors[SnowparkIdentifierRule.INFERRED]}
+"""
+            ),
+        )
+    else:
+        return (
+            SnowparkIdentifierRule.INFERRED
+            if len(errors[SnowparkIdentifierRule.INFERRED]) == 0
+            else SnowparkIdentifierRule.NORMALIZED
+        )
 
 
 def _validate_snowpark_type_feature(

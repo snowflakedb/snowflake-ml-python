@@ -8,8 +8,7 @@ py_library(
         "disable_distributed_hpo.py",
     ],
     deps = [
-        "//snowflake/ml/modeling/model_selection:grid_search_cv",
-        "//snowflake/ml/modeling/model_selection:randomized_search_cv",
+        "//snowflake/ml/modeling/_internal:model_trainer_builder",
     ],
 )
 
@@ -20,8 +19,9 @@ py_test(
     ],
     deps = [
         ":disable_distributed_hpo",
-        "//snowflake/ml/modeling/model_selection:grid_search_cv",
-        "//snowflake/ml/modeling/model_selection:randomized_search_cv",
+        "//snowflake/ml/modeling/_internal:distributed_hpo_trainer",
+        "//snowflake/ml/modeling/_internal:model_trainer_builder",
+        "//snowflake/ml/modeling/_internal:snowpark_trainer",
         "//snowflake/ml/modeling/xgboost:xgb_classifier",
     ],
 )

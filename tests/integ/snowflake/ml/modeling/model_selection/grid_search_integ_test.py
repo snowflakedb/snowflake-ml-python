@@ -60,7 +60,7 @@ class GridSearchCVTest(parameterized.TestCase):
                     np.testing.assert_allclose(v, cv_result_2[k], rtol=1.0e-1, atol=1.0e-2)
                 # Do not compare the fit time
 
-    @mock.patch("snowflake.ml.modeling.model_selection.grid_search_cv.is_single_node")
+    @mock.patch("snowflake.ml.modeling._internal.model_trainer_builder.is_single_node")
     def test_fit_and_compare_results(self, mock_is_single_node) -> None:
         mock_is_single_node.return_value = True  # falls back to HPO implementation
 
@@ -114,7 +114,7 @@ class GridSearchCVTest(parameterized.TestCase):
             "estimator_kwargs": dict(seed=42),
         },
     )
-    @mock.patch("snowflake.ml.modeling.model_selection.grid_search_cv.is_single_node")
+    @mock.patch("snowflake.ml.modeling._internal.model_trainer_builder.is_single_node")
     def test_fit_and_compare_results_distributed(
         self, mock_is_single_node, is_single_node, skmodel, model, params, kwargs, estimator_kwargs
     ) -> None:
@@ -214,7 +214,7 @@ class GridSearchCVTest(parameterized.TestCase):
                 actual_pandas_result.flatten(), sklearn_decision_function.flatten(), rtol=1.0e-1, atol=1.0e-2
             )
 
-    @mock.patch("snowflake.ml.modeling.model_selection.grid_search_cv.is_single_node")
+    @mock.patch("snowflake.ml.modeling._internal.model_trainer_builder.is_single_node")
     def test_transform(self, mock_is_single_node) -> None:
         mock_is_single_node.return_value = False
 
