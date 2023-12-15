@@ -1,4 +1,5 @@
 import os
+import warnings
 from typing import TYPE_CHECKING, Callable, Dict, Optional, Type, cast, final
 
 import cloudpickle
@@ -9,7 +10,7 @@ from typing_extensions import TypeGuard, Unpack
 from snowflake.ml._internal import type_utils
 from snowflake.ml.model import custom_model, model_signature, type_hints as model_types
 from snowflake.ml.model._packager.model_env import model_env
-from snowflake.ml.model._packager.model_handlers import _base, _utils as handlers_utils
+from snowflake.ml.model._packager.model_handlers import _base
 from snowflake.ml.model._packager.model_handlers_migrator import base_migrator
 from snowflake.ml.model._packager.model_meta import (
     model_blob_meta,
@@ -78,34 +79,15 @@ class SnowMLModelHandler(_base.BaseModelHandler["BaseEstimator"]):
         # Pipeline is inherited from BaseEstimator, so no need to add one more check
 
         if not is_sub_model:
-            if (not model_meta.signatures) and sample_input is None:
-                assert hasattr(model, "model_signatures")
-                model_meta.signatures = getattr(model, "model_signatures", {})
-            else:
-                target_methods = handlers_utils.get_target_methods(
-                    model=model,
-                    target_methods=kwargs.pop("target_methods", None),
-                    default_target_methods=cls.DEFAULT_TARGET_METHODS,
+            if sample_input is not None or model_meta.signatures:
+                warnings.warn(
+                    "Inferring model signature from sample input or providing model signature for Snowpark ML "
+                    + "Modeling model is not required. Model signature will automatically be inferred during fitting. ",
+                    UserWarning,
+                    stacklevel=2,
                 )
-
-                def get_prediction(
-                    target_method_name: str, sample_input: model_types.SupportedLocalDataType
-                ) -> model_types.SupportedLocalDataType:
-                    if not isinstance(sample_input, (pd.DataFrame,)):
-                        sample_input = model_signature._convert_local_data_to_df(sample_input)
-
-                    target_method = getattr(model, target_method_name, None)
-                    assert callable(target_method)
-                    predictions_df = target_method(sample_input)
-                    return predictions_df
-
-                model_meta = handlers_utils.validate_signature(
-                    model=model,
-                    model_meta=model_meta,
-                    target_methods=target_methods,
-                    sample_input=sample_input,
-                    get_prediction_fn=get_prediction,
-                )
+            assert hasattr(model, "model_signatures"), "Model does not have model signatures as expected."
+            model_meta.signatures = getattr(model, "model_signatures", {})
 
         model_blob_path = os.path.join(model_blobs_dir_path, name)
         os.makedirs(model_blob_path, exist_ok=True)

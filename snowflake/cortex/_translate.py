@@ -27,7 +27,7 @@ def Translate(
         A column of string translations.
     """
 
-    return _translate_impl("snowflake.ml.translate", text, from_language, to_language, session=session)
+    return _translate_impl("snowflake.cortex.translate", text, from_language, to_language, session=session)
 
 
 def _translate_impl(

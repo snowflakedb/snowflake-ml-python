@@ -20,28 +20,46 @@ class RobustScaler(base.BaseTransformer):
     (https://scikit-learn.org/stable/modules/generated/sklearn.preprocessing.RobustScaler.html).
 
     Args:
-        with_centering: If True, center the data around zero before scaling.
-        with_scaling: If True, scale the data to interquartile range.
-        quantile_range: tuple like (q_min, q_max), where 0.0 < q_min < q_max < 100.0, default=(25.0, 75.0). Quantile
+        with_centering: bool, default=True
+            If True, center the data around zero before scaling.
+
+        with_scaling: bool, default=True
+            If True, scale the data to interquartile range.
+
+        quantile_range: Tuple[float, float], default=(25.0, 75.0)
+            tuple like (q_min, q_max), where 0.0 < q_min < q_max < 100.0, default=(25.0, 75.0). Quantile
             range used to calculate scale_. By default, this is equal to the IQR, i.e., q_min is the first quantile and
             q_max is the third quantile.
-        unit_variance: If True, scale data so that normally-distributed features have a variance of 1. In general, if
+
+        unit_variance: bool, default=False
+            If True, scale data so that normally-distributed features have a variance of 1. In general, if
             the difference between the x-values of q_max and q_min for a standard normal distribution is greater than 1,
             the dataset is scaled down. If less than 1, the dataset is scaled up.
-        input_cols: The name(s) of one or more columns in a DataFrame containing a feature to be scaled.
-        output_cols: The name(s) of one or more columns in a DataFrame in which results will be stored. The number of
+
+        input_cols: Optional[Union[str, List[str]]], default=None
+            The name(s) of one or more columns in a DataFrame containing a feature to be scaled.
+
+        output_cols: Optional[Union[str, List[str]]], default=None
+            The name(s) of one or more columns in a DataFrame in which results will be stored. The number of
             columns specified must match the number of input columns. For dense output, the column names specified are
             used as base names for the columns created for each category.
-        passthrough_cols: A string or a list of strings indicating column names to be excluded from any
+
+        passthrough_cols: Optional[Union[str, List[str]]], default=None
+            A string or a list of strings indicating column names to be excluded from any
             operations (such as train, transform, or inference). These specified column(s)
             will remain untouched throughout the process. This option is helpful in scenarios
             requiring automatic input_cols inference, but need to avoid using specific
             columns, like index columns, during training or inference.
-        drop_input_cols: Remove input columns from output if set True. False by default.
+
+        drop_input_cols: Optional[bool], default=False
+            Remove input columns from output if set True. False by default.
 
     Attributes:
-        center_: Dictionary mapping input column name to the median value for that feature.
-        scale_: Dictionary mapping input column name to the (scaled) interquartile range for that feature.
+        center_: Dict[str, float]
+            Dictionary mapping input column name to the median value for that feature.
+
+        scale_: Dict[str, float]
+            Dictionary mapping input column name to the (scaled) interquartile range for that feature.
     """
 
     def __init__(
@@ -196,10 +214,6 @@ class RobustScaler(base.BaseTransformer):
                 self._scale[input_col] = 1
 
     @telemetry.send_api_usage_telemetry(
-        project=base.PROJECT,
-        subproject=base.SUBPROJECT,
-    )
-    @telemetry.add_stmt_params_to_df(
         project=base.PROJECT,
         subproject=base.SUBPROJECT,
     )

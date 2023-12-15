@@ -5,11 +5,11 @@ from snowflake.ml._internal.utils.sql_identifier import (
     to_sql_identifiers,
 )
 
-ENTITY_NAME_LENGTH_LIMIT = 32
-FEATURE_VIEW_ENTITY_TAG_DELIMITER = ","
-ENTITY_JOIN_KEY_DELIMITER = ","
+_ENTITY_NAME_LENGTH_LIMIT = 32
+_FEATURE_VIEW_ENTITY_TAG_DELIMITER = ","
+_ENTITY_JOIN_KEY_DELIMITER = ","
 # join key length limit is the length limit of TAG value
-ENTITY_JOIN_KEY_LENGTH_LIMIT = 256
+_ENTITY_JOIN_KEY_LENGTH_LIMIT = 256
 
 
 class Entity:
@@ -35,18 +35,18 @@ class Entity:
         self.desc = desc
 
     def _validate(self, name: str, join_keys: List[str]) -> None:
-        if len(name) > ENTITY_NAME_LENGTH_LIMIT:
-            raise ValueError(f"Entity name `{name}` exceeds maximum length: {ENTITY_NAME_LENGTH_LIMIT}")
-        if FEATURE_VIEW_ENTITY_TAG_DELIMITER in name:
-            raise ValueError(f"Entity name contains invalid char: `{FEATURE_VIEW_ENTITY_TAG_DELIMITER}`")
+        if len(name) > _ENTITY_NAME_LENGTH_LIMIT:
+            raise ValueError(f"Entity name `{name}` exceeds maximum length: {_ENTITY_NAME_LENGTH_LIMIT}")
+        if _FEATURE_VIEW_ENTITY_TAG_DELIMITER in name:
+            raise ValueError(f"Entity name contains invalid char: `{_FEATURE_VIEW_ENTITY_TAG_DELIMITER}`")
         if len(set(join_keys)) != len(join_keys):
             raise ValueError(f"Duplicate join keys detected in: {join_keys}")
-        if len(FEATURE_VIEW_ENTITY_TAG_DELIMITER.join(join_keys)) > ENTITY_JOIN_KEY_LENGTH_LIMIT:
-            raise ValueError(f"Total length of join keys exceeded maximum length: {ENTITY_JOIN_KEY_LENGTH_LIMIT}")
+        if len(_FEATURE_VIEW_ENTITY_TAG_DELIMITER.join(join_keys)) > _ENTITY_JOIN_KEY_LENGTH_LIMIT:
+            raise ValueError(f"Total length of join keys exceeded maximum length: {_ENTITY_JOIN_KEY_LENGTH_LIMIT}")
 
         for k in join_keys:
-            if ENTITY_JOIN_KEY_DELIMITER in k:
-                raise ValueError(f"Invalid char `{ENTITY_JOIN_KEY_DELIMITER}` detected in join key {k}")
+            if _ENTITY_JOIN_KEY_DELIMITER in k:
+                raise ValueError(f"Invalid char `{_ENTITY_JOIN_KEY_DELIMITER}` detected in join key {k}")
 
     def _to_dict(self) -> Dict[str, str]:
         entity_dict = self.__dict__.copy()

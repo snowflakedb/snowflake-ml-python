@@ -72,20 +72,22 @@ def create_model_metadata(
     """
     model_dir_path = os.path.normpath(model_dir_path)
     embed_local_ml_library = kwargs.pop("embed_local_ml_library", False)
-    # Use the last one which is loaded first, that is mean, it is loaded from site-packages.
-    # We could make sure that user does not overwrite our library with their code follow the same naming.
-    snowml_path, snowml_start_path = file_utils.get_package_path(_SNOWFLAKE_ML_PKG_NAME, strategy="last")
-    if os.path.isdir(snowml_start_path):
-        path_to_copy = snowml_path
-    # If the package is zip-imported, then the path will be `../path_to_zip.zip/snowflake/ml`
-    # It is not a valid path in fact and we need to get the path to the zip file to verify it.
-    elif os.path.isfile(snowml_start_path):
-        extract_root = tempfile.mkdtemp()
-        with zipfile.ZipFile(os.path.abspath(snowml_start_path), mode="r", compression=zipfile.ZIP_DEFLATED) as zf:
-            zf.extractall(path=extract_root)
-        path_to_copy = os.path.join(extract_root, *(_SNOWFLAKE_ML_PKG_NAME.split(".")))
-    else:
-        raise ValueError("`snowflake.ml` is imported via a way that embedding local ML library is not supported.")
+    legacy_save = kwargs.pop("_legacy_save", False)
+    if embed_local_ml_library:
+        # Use the last one which is loaded first, that is mean, it is loaded from site-packages.
+        # We could make sure that user does not overwrite our library with their code follow the same naming.
+        snowml_path, snowml_start_path = file_utils.get_package_path(_SNOWFLAKE_ML_PKG_NAME, strategy="last")
+        if os.path.isdir(snowml_start_path):
+            path_to_copy = snowml_path
+        # If the package is zip-imported, then the path will be `../path_to_zip.zip/snowflake/ml`
+        # It is not a valid path in fact and we need to get the path to the zip file to verify it.
+        elif os.path.isfile(snowml_start_path):
+            extract_root = tempfile.mkdtemp()
+            with zipfile.ZipFile(os.path.abspath(snowml_start_path), mode="r", compression=zipfile.ZIP_DEFLATED) as zf:
+                zf.extractall(path=extract_root)
+            path_to_copy = os.path.join(extract_root, *(_SNOWFLAKE_ML_PKG_NAME.split(".")))
+        else:
+            raise ValueError("`snowflake.ml` is imported via a way that embedding local ML library is not supported.")
 
     env = _create_env_for_model_metadata(
         conda_dependencies=conda_dependencies,
@@ -106,10 +108,10 @@ def create_model_metadata(
     )
 
     code_dir_path = os.path.join(model_dir_path, MODEL_CODE_DIR)
-    if embed_local_ml_library or code_paths:
+    if (embed_local_ml_library and legacy_save) or code_paths:
         os.makedirs(code_dir_path, exist_ok=True)
 
-    if embed_local_ml_library:
+    if embed_local_ml_library and legacy_save:
         snowml_path_in_code = os.path.join(code_dir_path, _SNOWFLAKE_PKG_NAME)
         os.makedirs(snowml_path_in_code, exist_ok=True)
         file_utils.copy_file_or_tree(path_to_copy, snowml_path_in_code)

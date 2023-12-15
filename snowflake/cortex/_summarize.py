@@ -23,7 +23,7 @@ def Summarize(
         A column of string summaries.
     """
 
-    return _summarize_impl("snowflake.ml.summarize", text, session=session)
+    return _summarize_impl("snowflake.cortex.summarize", text, session=session)
 
 
 def _summarize_impl(

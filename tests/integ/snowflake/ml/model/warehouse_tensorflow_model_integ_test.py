@@ -16,7 +16,11 @@ from snowflake.ml.model._signatures import (
 from snowflake.ml.utils import connection_params
 from snowflake.snowpark import DataFrame as SnowparkDataFrame, Session
 from tests.integ.snowflake.ml.model import warehouse_model_integ_test_utils
-from tests.integ.snowflake.ml.test_utils import db_manager, model_factory
+from tests.integ.snowflake.ml.test_utils import (
+    dataframe_utils,
+    db_manager,
+    model_factory,
+)
 
 
 class SimpleModule(tf.Module):
@@ -164,7 +168,7 @@ class TestWarehouseTensorflowModelInteg(parameterized.TestCase):
             deploy_params={
                 "": (
                     {},
-                    lambda res: warehouse_model_integ_test_utils.check_sp_df_res(res, y_df_expected),
+                    lambda res: dataframe_utils.check_sp_df_res(res, y_df_expected),
                 ),
             },
             permanent_deploy=permanent_deploy,
@@ -249,7 +253,7 @@ class TestWarehouseTensorflowModelInteg(parameterized.TestCase):
             deploy_params={
                 "": (
                     {},
-                    lambda res: warehouse_model_integ_test_utils.check_sp_df_res(res, y_df_expected),
+                    lambda res: dataframe_utils.check_sp_df_res(res, y_df_expected),
                 ),
             },
             permanent_deploy=permanent_deploy,

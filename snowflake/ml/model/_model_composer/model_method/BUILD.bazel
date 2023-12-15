@@ -38,6 +38,7 @@ py_library(
     deps = [
         ":function_generator",
         "//snowflake/ml/_internal/utils:sql_identifier",
+        "//snowflake/ml/model:model_signature",
         "//snowflake/ml/model:type_hints",
         "//snowflake/ml/model/_model_composer/model_manifest:model_manifest_schema",
         "//snowflake/ml/model/_packager/model_meta",

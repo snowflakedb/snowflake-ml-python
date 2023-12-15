@@ -201,6 +201,7 @@ class BaseModelSaveOption(TypedDict):
     """
 
     embed_local_ml_library: NotRequired[bool]
+    _legacy_save: NotRequired[bool]
     method_options: NotRequired[Dict[str, ModelMethodSaveOptions]]
 
 

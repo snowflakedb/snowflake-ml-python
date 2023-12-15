@@ -31,6 +31,15 @@ py_library(
 )
 
 py_library(
+    name = "dataframe_utils",
+    testonly = True,
+    srcs = ["dataframe_utils.py"],
+    deps = [
+        "//snowflake/ml/model/_signatures:snowpark_handler",
+    ],
+)
+
+py_library(
     name = "common_test_base",
     testonly = True,
     srcs = [
@@ -38,7 +47,7 @@ py_library(
     ],
     deps = [
         ":_snowml_requirements",
-        ":test_env_utils",
+        "//snowflake/ml/_internal:env_utils",
         "//snowflake/ml/_internal:file_utils",
         "//snowflake/ml/utils:connection_params",
     ],
@@ -64,6 +73,7 @@ py_library(
     srcs = ["test_env_utils.py"],
     deps = [
         "//snowflake/ml/_internal:env",
+        "//snowflake/ml/_internal:env_utils",
         "//snowflake/ml/_internal/utils:query_result_checker",
     ],
 )

@@ -1,13 +1,29 @@
 # Release History
 
+## 1.1.2
+
+### Bug Fixes
+
+- Generic: Fix the issue that stack trace is hidden by telemetry unexpectedly.
+- Model Development: Execute model signature inference without materializing full dataframe in memory.
+- Model Registry: Fix occasional 'snowflake-ml-python library does not exist' error when deploying to SPCS.
+
+### Behavior Changes
+
+- Model Registry: When calling `predict` with Snowpark DataFrame, both inferred or normalized column names are accepted.
+- Model Registry: When logging a Snowpark ML Modeling Model, sample input data or manually provided signature will be
+  ignored since they are not necessary.
+
+### New Features
+
+- Model Development: SQL implementation of binary `precision_score` metric.
+
 ## 1.1.1
 
 ### Bug Fixes
 
 - Model Registry: The `predict` target method on registered models is now compatible with unsupervised estimators.
 - Model Development: Fix confusion_matrix incorrect results when the row number cannot be divided by the batch size.
-
-### Behavior Changes
 
 ### New Features
 

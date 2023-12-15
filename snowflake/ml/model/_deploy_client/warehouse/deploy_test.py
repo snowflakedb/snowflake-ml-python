@@ -91,7 +91,7 @@ class TestFinalPackagesWithoutConda(absltest.TestCase):
 
     def test_get_model_final_packages(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
-            env_utils._SNOWFLAKE_CONDA_PACKAGE_CACHE = {}
+            env_utils._SNOWFLAKE_INFO_SCHEMA_PACKAGE_CACHE = {}
             with model_meta.create_model_metadata(
                 model_dir_path=tmpdir, name="model1", model_type="custom", signatures=_DUMMY_SIG
             ) as meta:
@@ -103,7 +103,7 @@ class TestFinalPackagesWithoutConda(absltest.TestCase):
 
     def test_get_model_final_packages_no_relax(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
-            env_utils._SNOWFLAKE_CONDA_PACKAGE_CACHE = {}
+            env_utils._SNOWFLAKE_INFO_SCHEMA_PACKAGE_CACHE = {}
             with model_meta.create_model_metadata(
                 model_dir_path=tmpdir,
                 name="model1",
@@ -118,7 +118,7 @@ class TestFinalPackagesWithoutConda(absltest.TestCase):
 
     def test_get_model_final_packages_relax(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
-            env_utils._SNOWFLAKE_CONDA_PACKAGE_CACHE = {}
+            env_utils._SNOWFLAKE_INFO_SCHEMA_PACKAGE_CACHE = {}
             with model_meta.create_model_metadata(
                 model_dir_path=tmpdir,
                 name="model1",
@@ -136,7 +136,7 @@ class TestFinalPackagesWithoutConda(absltest.TestCase):
 
     def test_get_model_final_packages_with_pip(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
-            env_utils._SNOWFLAKE_CONDA_PACKAGE_CACHE = {}
+            env_utils._SNOWFLAKE_INFO_SCHEMA_PACKAGE_CACHE = {}
             with model_meta.create_model_metadata(
                 model_dir_path=tmpdir,
                 name="model1",
@@ -151,7 +151,7 @@ class TestFinalPackagesWithoutConda(absltest.TestCase):
 
     def test_get_model_final_packages_with_other_channel(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
-            env_utils._SNOWFLAKE_CONDA_PACKAGE_CACHE = {}
+            env_utils._SNOWFLAKE_INFO_SCHEMA_PACKAGE_CACHE = {}
             with model_meta.create_model_metadata(
                 model_dir_path=tmpdir,
                 name="model1",
@@ -166,7 +166,7 @@ class TestFinalPackagesWithoutConda(absltest.TestCase):
 
     def test_get_model_final_packages_with_non_exist_package(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
-            env_utils._SNOWFLAKE_CONDA_PACKAGE_CACHE = {}
+            env_utils._SNOWFLAKE_INFO_SCHEMA_PACKAGE_CACHE = {}
             d = {
                 **{
                     basic_dep.name: [importlib_metadata.version(basic_dep.name)]

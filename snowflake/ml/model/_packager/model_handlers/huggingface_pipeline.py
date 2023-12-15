@@ -59,7 +59,7 @@ def get_requirements_from_task(task: str, spcs_only: bool = False) -> List[model
         return (
             [model_env.ModelDependency(requirement="tokenizers>=0.13.3", pip_name="tokenizers")]
             if spcs_only
-            else [model_env.ModelDependency(requirement="tokenizers", pip_name="tokenizers")]
+            else [model_env.ModelDependency(requirement="tokenizers<=0.13.2", pip_name="tokenizers")]
         )
 
     return []
@@ -170,6 +170,7 @@ class HuggingFacePipelineHandler(
                         " `snowflake.ml.model.models.huggingface_pipeline.HuggingFacePipelineModel` object. "
                         "Please make sure you are providing correct model signatures.",
                         UserWarning,
+                        stacklevel=2,
                     )
             else:
                 handlers_utils.validate_target_methods(model, target_methods)
@@ -179,6 +180,7 @@ class HuggingFacePipelineHandler(
                         + "Model signature will automatically be inferred from pipeline task. "
                         + "Or, you could specify model signature manually.",
                         UserWarning,
+                        stacklevel=2,
                     )
                 if inferred_pipe_sig is None:
                     raise NotImplementedError(f"Cannot auto infer the signature of pipeline for task {task}")

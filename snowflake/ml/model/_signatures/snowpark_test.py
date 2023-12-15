@@ -65,15 +65,64 @@ class SnowParkDataFrameHandlerTest(absltest.TestCase):
             core.FeatureSpec("b", core.DataType.INT64),
         ]
         df = self._session.create_dataframe([{'"a"': 1}, {'"b"': 2}])
-        with self.assertWarnsRegex(RuntimeWarning, "Nullable column [^\\s]* provided"):
+        self.assertEqual(
+            model_signature._validate_snowpark_data(df, fts), model_signature.SnowparkIdentifierRule.INFERRED
+        )
+
+        fts = [
+            core.FeatureSpec("a", core.DataType.UINT8),
+            core.FeatureSpec("b", core.DataType.INT64),
+        ]
+        df = self._session.create_dataframe([{"a": 1}, {"b": 2}])
+        self.assertEqual(
+            model_signature._validate_snowpark_data(df, fts), model_signature.SnowparkIdentifierRule.NORMALIZED
+        )
+
+        fts = [
+            core.FeatureSpec("a", core.DataType.UINT8),
+            core.FeatureSpec("b", core.DataType.INT64),
+        ]
+        df = self._session.create_dataframe([{"A": 1}, {"B": 2}])
+        self.assertEqual(
+            model_signature._validate_snowpark_data(df, fts), model_signature.SnowparkIdentifierRule.NORMALIZED
+        )
+
+        fts = [
+            core.FeatureSpec('"a"', core.DataType.UINT8),
+            core.FeatureSpec('"b"', core.DataType.INT64),
+        ]
+        df = self._session.create_dataframe([{'"a"': 1}, {'"b"': 2}])
+        self.assertEqual(
+            model_signature._validate_snowpark_data(df, fts), model_signature.SnowparkIdentifierRule.NORMALIZED
+        )
+
+        fts = [
+            core.FeatureSpec('"a"', core.DataType.UINT8),
+            core.FeatureSpec('"b"', core.DataType.INT64),
+        ]
+        df = self._session.create_dataframe([{'"""a"""': 1}, {'"""b"""': 2}])
+        self.assertEqual(
+            model_signature._validate_snowpark_data(df, fts), model_signature.SnowparkIdentifierRule.INFERRED
+        )
+
+        fts = [
+            core.FeatureSpec('"a"', core.DataType.UINT8),
+            core.FeatureSpec('"b"', core.DataType.INT64),
+        ]
+        df = self._session.create_dataframe([{'"A"': 1}, {'"b"': 2}])
+        with exception_utils.assert_snowml_exceptions(
+            self, expected_original_error_type=ValueError, expected_regex="feature [^\\s]* does not exist in data."
+        ):
             model_signature._validate_snowpark_data(df, fts)
 
         fts = [
-            core.FeatureSpec("a", core.DataType.INT16),
-            core.FeatureSpec("b", core.DataType.UINT32),
+            core.FeatureSpec('"a"', core.DataType.UINT8),
+            core.FeatureSpec('"b"', core.DataType.INT64),
         ]
-        df = self._session.create_dataframe([{'"a"': 1}, {'"b"': 2}])
-        with self.assertWarnsRegex(RuntimeWarning, "Nullable column [^\\s]* provided"):
+        df = self._session.create_dataframe([{"A": 1}, {'"b"': 2}])
+        with exception_utils.assert_snowml_exceptions(
+            self, expected_original_error_type=ValueError, expected_regex="feature [^\\s]* does not exist in data."
+        ):
             model_signature._validate_snowpark_data(df, fts)
 
         fts = [
@@ -106,8 +155,7 @@ class SnowParkDataFrameHandlerTest(absltest.TestCase):
         df = self._session.create_dataframe(
             [[decimal.Decimal(1), decimal.Decimal(1)], [decimal.Decimal(1), decimal.Decimal(1)]], schema
         )
-        with self.assertWarnsRegex(RuntimeWarning, "Nullable column [^\\s]* provided"):
-            model_signature._validate_snowpark_data(df, fts)
+        model_signature._validate_snowpark_data(df, fts)
 
         fts = [
             core.FeatureSpec("a", core.DataType.INT16),
@@ -144,24 +192,21 @@ class SnowParkDataFrameHandlerTest(absltest.TestCase):
             core.FeatureSpec("b", core.DataType.FLOAT),
         ]
         df = self._session.create_dataframe([{'"a"': 1}, {'"b"': 2}])
-        with self.assertWarnsRegex(RuntimeWarning, "Nullable column [^\\s]* provided"):
-            model_signature._validate_snowpark_data(df, fts)
+        model_signature._validate_snowpark_data(df, fts)
 
         fts = [
             core.FeatureSpec("a", core.DataType.UINT8),
             core.FeatureSpec("b", core.DataType.FLOAT),
         ]
         df = self._session.create_dataframe([{'"a"': 1}, {'"b"': 2.0}])
-        with self.assertWarnsRegex(RuntimeWarning, "Nullable column [^\\s]* provided"):
-            model_signature._validate_snowpark_data(df, fts)
+        model_signature._validate_snowpark_data(df, fts)
 
         fts = [
             core.FeatureSpec("a", core.DataType.UINT8),
             core.FeatureSpec("b", core.DataType.FLOAT),
         ]
         df = self._session.create_dataframe([{'"a"': 1}, {'"b"': 98765432109876543210987654321098765432}])
-        with self.assertWarnsRegex(RuntimeWarning, "Nullable column [^\\s]* provided"):
-            model_signature._validate_snowpark_data(df, fts)
+        model_signature._validate_snowpark_data(df, fts)
 
         fts = [
             core.FeatureSpec("a", core.DataType.INT16),
@@ -177,8 +222,7 @@ class SnowParkDataFrameHandlerTest(absltest.TestCase):
             ],
             schema,
         )
-        with self.assertWarnsRegex(RuntimeWarning, "Nullable column [^\\s]* provided"):
-            model_signature._validate_snowpark_data(df, fts)
+        model_signature._validate_snowpark_data(df, fts)
 
         fts = [
             core.FeatureSpec("a", core.DataType.INT16),

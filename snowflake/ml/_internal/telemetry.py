@@ -42,6 +42,7 @@ class TelemetryField(enum.Enum):
     NAME = "name"
     # types of telemetry
     TYPE_FUNCTION_USAGE = "function_usage"
+    TYPE_SNOWML_SPCS_USAGE = "snowml_spcs_usage"
     # message keys for telemetry
     KEY_PROJECT = "project"
     KEY_SUBPROJECT = "subproject"
@@ -207,6 +208,23 @@ def suppress_exceptions(func: Callable[..., Any]) -> Callable[..., Any]:
     return wrapper
 
 
+def send_custom_usage(
+    project: str,
+    *,
+    telemetry_type: str,
+    subproject: Optional[str] = None,
+    data: Optional[Dict[str, Any]] = None,
+    **kwargs: Any,
+) -> None:
+    active_session = next(iter(session._get_active_sessions()))
+    assert active_session, "Missing active session object"
+
+    client = _SourceTelemetryClient(conn=active_session._conn._conn, project=project, subproject=subproject)
+    common_metrics = client._create_basic_telemetry_data(telemetry_type=telemetry_type)
+    data = {**common_metrics, TelemetryField.KEY_DATA.value: data, **kwargs}
+    client._send(msg=data)
+
+
 def send_api_usage_telemetry(
     project: str,
     subproject: Optional[str] = None,
@@ -228,7 +246,8 @@ def send_api_usage_telemetry(
     custom_tags: Optional[Dict[str, Union[bool, int, str, float]]] = None,
 ) -> Callable[[Callable[_Args, _ReturnValue]], Callable[_Args, _ReturnValue]]:
     """
-    Decorator that sends API usage telemetry.
+    Decorator that sends API usage telemetry and adds function usage statement parameters to the dataframe returned by
+    the function.
 
     Args:
         project: Project.
@@ -253,34 +272,7 @@ def send_api_usage_telemetry(
         def wrap(*args: Any, **kwargs: Any) -> _ReturnValue:
             params = _get_func_params(func, func_params_to_log, args, kwargs) if func_params_to_log else None
 
-            # prioritize `conn_attr_name` over the active session
-            if conn_attr_name:
-                # raise AttributeError if conn attribute does not exist in `self`
-                conn = operator.attrgetter(conn_attr_name)(args[0])
-                if not isinstance(conn, connector.SnowflakeConnection):
-                    raise TypeError(f"Expected a conn object of type SnowflakeConnection, but got {type(conn)}")
-            # get an active session
-            else:
-                try:
-                    active_session = next(iter(session._get_active_sessions()))
-                # server no default session
-                except snowpark_exceptions.SnowparkSessionException:
-                    try:
-                        return func(*args, **kwargs)
-                    except Exception as e:
-                        if isinstance(e, snowml_exceptions.SnowflakeMLException):
-                            e = e.original_exception
-                        # suppress SnowparkSessionException from telemetry in the stack trace
-                        raise e from None
-
-                conn = active_session._conn._conn
-                if (not active_session.telemetry_enabled) or (conn is None):
-                    try:
-                        return func(*args, **kwargs)
-                    except snowml_exceptions.SnowflakeMLException as e:
-                        raise e.original_exception from e
-
-            api_calls: List[Dict[str, Any]] = []
+            api_calls: List[Union[Dict[str, Union[Callable[..., Any], str]], Callable[..., Any], str]] = []
             if api_calls_extractor:
                 extracted_api_calls = api_calls_extractor(args[0])
                 for api_call in extracted_api_calls:
@@ -295,6 +287,62 @@ def send_api_usage_telemetry(
             sfqids = None
             if sfqids_extractor:
                 sfqids = sfqids_extractor(args[0])
+
+            statement_params = get_function_usage_statement_params(
+                project=project,
+                subproject=subproject,
+                function_category=TelemetryField.FUNC_CAT_USAGE.value,
+                function_name=_get_full_func_name(func),
+                function_parameters=params,
+                api_calls=api_calls,
+                custom_tags=custom_tags,
+            )
+
+            def update_stmt_params_if_snowpark_df(obj: _ReturnValue, statement_params: Dict[str, Any]) -> _ReturnValue:
+                """
+                Update SnowML function usage statement parameters to the object if it is a Snowpark DataFrame.
+                Used to track APIs returning a Snowpark DataFrame.
+
+                Args:
+                    obj: Object to check and update.
+                    statement_params: Statement parameters.
+
+                Returns:
+                    Updated object.
+                """
+                if isinstance(obj, dataframe.DataFrame):
+                    if hasattr(obj, "_statement_params") and obj._statement_params:
+                        obj._statement_params.update(statement_params)
+                    else:
+                        obj._statement_params = statement_params  # type: ignore[assignment]
+                return obj
+
+            # prioritize `conn_attr_name` over the active session
+            if conn_attr_name:
+                # raise AttributeError if conn attribute does not exist in `self`
+                conn = operator.attrgetter(conn_attr_name)(args[0])
+                if not isinstance(conn, connector.SnowflakeConnection):
+                    raise TypeError(f"Expected a conn object of type SnowflakeConnection, but got {type(conn)}")
+            # get an active session
+            else:
+                try:
+                    active_session = next(iter(session._get_active_sessions()))
+                # server no default session
+                except snowpark_exceptions.SnowparkSessionException:
+                    try:
+                        return update_stmt_params_if_snowpark_df(func(*args, **kwargs), statement_params)
+                    except Exception as e:
+                        if isinstance(e, snowml_exceptions.SnowflakeMLException):
+                            raise e.original_exception.with_traceback(e.__traceback__) from None
+                        # suppress SnowparkSessionException from telemetry in the stack trace
+                        raise e from None
+
+                conn = active_session._conn._conn
+                if (not active_session.telemetry_enabled) or (conn is None):
+                    try:
+                        return update_stmt_params_if_snowpark_df(func(*args, **kwargs), statement_params)
+                    except snowml_exceptions.SnowflakeMLException as e:
+                        raise e.original_exception from e
 
             # TODO(hayu): [SNOW-750287] Optimize telemetry client to a singleton.
             telemetry = _SourceTelemetryClient(conn=conn, project=project, subproject=subproject)
@@ -314,22 +362,24 @@ def send_api_usage_telemetry(
                     if hasattr(e, "_snowflake_ml_handled") and e._snowflake_ml_handled:
                         raise e
                     if isinstance(e, snowpark_exceptions.SnowparkClientException):
-                        e = snowml_exceptions.SnowflakeMLException(
+                        me = snowml_exceptions.SnowflakeMLException(
                             error_code=error_codes.INTERNAL_SNOWPARK_ERROR, original_exception=e
                         )
                     else:
-                        e = snowml_exceptions.SnowflakeMLException(
+                        me = snowml_exceptions.SnowflakeMLException(
                             error_code=error_codes.UNDEFINED, original_exception=e
                         )
-                telemetry_args["error"] = repr(e)
-                telemetry_args["error_code"] = e.error_code
-                e.original_exception._snowflake_ml_handled = True  # type: ignore[attr-defined]
-                if e.suppress_source_trace:
-                    raise e.original_exception from None
                 else:
-                    raise e.original_exception from e
+                    me = e
+                telemetry_args["error"] = repr(me)
+                telemetry_args["error_code"] = me.error_code
+                me.original_exception._snowflake_ml_handled = True  # type: ignore[attr-defined]
+                if me.suppress_source_trace:
+                    raise me.original_exception from None
+                else:
+                    raise me.original_exception from e
             else:
-                return res
+                return update_stmt_params_if_snowpark_df(res, statement_params)
             finally:
                 telemetry.send_function_usage_telemetry(**telemetry_args)
                 global _log_counter
@@ -337,68 +387,6 @@ def send_api_usage_telemetry(
                 if _log_counter >= _FLUSH_SIZE or "error" in telemetry_args:
                     telemetry.send_batch()
                     _log_counter = 0
-
-        return cast(Callable[_Args, _ReturnValue], wrap)
-
-    return decorator
-
-
-def add_stmt_params_to_df(
-    project: str,
-    subproject: Optional[str] = None,
-    *,
-    function_category: str = TelemetryField.FUNC_CAT_USAGE.value,
-    func_params_to_log: Optional[Iterable[str]] = None,
-    api_calls: Optional[
-        List[
-            Union[
-                Dict[str, Union[Callable[..., Any], str]],
-                Union[Callable[..., Any], str],
-            ]
-        ]
-    ] = None,
-    custom_tags: Optional[Dict[str, Union[bool, int, str, float]]] = None,
-) -> Callable[[Callable[_Args, _ReturnValue]], Callable[_Args, _ReturnValue]]:
-    """
-    Decorator that adds function usage statement parameters to the dataframe returned by the function.
-
-    Args:
-        project: Project.
-        subproject: Subproject.
-        function_category: Function category.
-        func_params_to_log: Function parameters to log.
-        api_calls: API calls in the function.
-        custom_tags: Custom tags.
-
-    Returns:
-        Decorator that adds function usage statement parameters to the dataframe returned by the decorated function.
-    """
-
-    def decorator(func: Callable[_Args, _ReturnValue]) -> Callable[_Args, _ReturnValue]:
-        @functools.wraps(func)
-        def wrap(*args: Any, **kwargs: Any) -> _ReturnValue:
-            params = _get_func_params(func, func_params_to_log, args, kwargs) if func_params_to_log else None
-            statement_params = get_function_usage_statement_params(
-                project=project,
-                subproject=subproject,
-                function_category=function_category,
-                function_name=_get_full_func_name(func),
-                function_parameters=params,
-                api_calls=api_calls,
-                custom_tags=custom_tags,
-            )
-
-            try:
-                res = func(*args, **kwargs)
-                if isinstance(res, dataframe.DataFrame):
-                    if hasattr(res, "_statement_params") and res._statement_params:
-                        res._statement_params.update(statement_params)
-                    else:
-                        res._statement_params = statement_params  # type: ignore[assignment]
-            except Exception:
-                raise
-            else:
-                return res
 
         return cast(Callable[_Args, _ReturnValue], wrap)
 

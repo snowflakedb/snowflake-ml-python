@@ -1,0 +1,59 @@
+load("//bazel:py_rules.bzl", "py_library", "py_test")
+
+package(default_visibility = [
+    "//snowflake/ml/model/_client/model:__pkg__",
+    "//snowflake/ml/registry:__pkg__",
+])
+
+py_library(
+    name = "model_ops",
+    srcs = ["model_ops.py"],
+    deps = [
+        ":metadata_ops",
+        "//snowflake/ml/_internal/utils:sql_identifier",
+        "//snowflake/ml/model:model_signature",
+        "//snowflake/ml/model:type_hints",
+        "//snowflake/ml/model/_client/sql:model",
+        "//snowflake/ml/model/_client/sql:model_version",
+        "//snowflake/ml/model/_client/sql:stage",
+        "//snowflake/ml/model/_model_composer:model_composer",
+        "//snowflake/ml/model/_model_composer/model_manifest",
+        "//snowflake/ml/model/_model_composer/model_manifest:model_manifest_schema",
+        "//snowflake/ml/model/_packager/model_meta",
+        "//snowflake/ml/model/_packager/model_meta:model_meta_schema",
+        "//snowflake/ml/model/_signatures:snowpark_handler",
+    ],
+)
+
+py_test(
+    name = "model_ops_test",
+    srcs = ["model_ops_test.py"],
+    deps = [
+        ":model_ops",
+        "//snowflake/ml/_internal/utils:sql_identifier",
+        "//snowflake/ml/model:model_signature",
+        "//snowflake/ml/model/_signatures:snowpark_handler",
+        "//snowflake/ml/test_utils:mock_data_frame",
+        "//snowflake/ml/test_utils:mock_session",
+    ],
+)
+
+py_library(
+    name = "metadata_ops",
+    srcs = ["metadata_ops.py"],
+    deps = [
+        "//snowflake/ml/_internal/utils:sql_identifier",
+        "//snowflake/ml/model/_client/sql:model",
+        "//snowflake/ml/model/_client/sql:model_version",
+    ],
+)
+
+py_test(
+    name = "metadata_ops_test",
+    srcs = ["metadata_ops_test.py"],
+    deps = [
+        ":metadata_ops",
+        "//snowflake/ml/_internal/utils:sql_identifier",
+        "//snowflake/ml/test_utils:mock_session",
+    ],
+)

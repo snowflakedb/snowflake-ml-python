@@ -21,16 +21,25 @@ class Binarizer(base.BaseTransformer):
     (https://scikit-learn.org/stable/modules/generated/sklearn.preprocessing.Binarizer.html).
 
     Args:
-        threshold: Feature values below or equal to this are replaced by 0, above it by 1. Default values is 0.0.
-        input_cols: The name(s) of one or more columns in a DataFrame containing a feature to be binarized.
-        output_cols: The name(s) of one or more columns in a DataFrame in which results will be stored. The number of
+        threshold: float, default=0.0
+            Feature values below or equal to this are replaced by 0, above it by 1. Default values is 0.0.
+
+        input_cols: Optional[Union[str, Iterable[str]]], default=None
+            The name(s) of one or more columns in a DataFrame containing a feature to be binarized.
+
+        output_cols: Optional[Union[str, Iterable[str]]], default=None
+            The name(s) of one or more columns in a DataFrame in which results will be stored. The number of
             columns specified must match the number of input columns.
-        passthrough_cols: A string or a list of strings indicating column names to be excluded from any
+
+        passthrough_cols:  Optional[Union[str, Iterable[str]]], default=None
+            A string or a list of strings indicating column names to be excluded from any
             operations (such as train, transform, or inference). These specified column(s)
             will remain untouched throughout the process. This option is helpful in scenarios
             requiring automatic input_cols inference, but need to avoid using specific
             columns, like index columns, during training or inference.
-        drop_input_cols: Remove input columns from output if set True. False by default.
+
+        drop_input_cols: Optional[bool], default=False
+            Remove input columns from output if set True. False by default.
     """
 
     def __init__(
@@ -105,10 +114,6 @@ class Binarizer(base.BaseTransformer):
         return self
 
     @telemetry.send_api_usage_telemetry(
-        project=base.PROJECT,
-        subproject=base.SUBPROJECT,
-    )
-    @telemetry.add_stmt_params_to_df(
         project=base.PROJECT,
         subproject=base.SUBPROJECT,
     )

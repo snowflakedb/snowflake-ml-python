@@ -47,10 +47,76 @@ py_test(
     ],
 )
 
-py_test(
-    name = "snowpark_handlers_test",
-    srcs = ["snowpark_handlers_test.py"],
+py_library(
+    name = "model_specifications",
+    srcs = ["model_specifications.py"],
     deps = [
-        ":estimator_utils",
+        "//snowflake/ml/_internal/exceptions",
+    ],
+)
+
+py_test(
+    name = "model_specifications_test",
+    srcs = ["model_specifications_test.py"],
+    deps = [
+        ":model_specifications",
+    ],
+)
+
+py_library(
+    name = "model_trainer",
+    srcs = ["model_trainer.py"],
+    deps = [],
+)
+
+py_library(
+    name = "pandas_trainer",
+    srcs = ["pandas_trainer.py"],
+    deps = [
+        ":model_trainer",
+    ],
+)
+
+py_library(
+    name = "snowpark_trainer",
+    srcs = ["snowpark_trainer.py"],
+    deps = [
+        ":model_specifications",
+        ":model_trainer",
+        "//snowflake/ml/_internal:env_utils",
+        "//snowflake/ml/_internal:telemetry",
+        "//snowflake/ml/_internal/exceptions",
+        "//snowflake/ml/_internal/exceptions:modeling_error_messages",
+        "//snowflake/ml/_internal/utils:identifier",
+        "//snowflake/ml/_internal/utils:query_result_checker",
+        "//snowflake/ml/_internal/utils:snowpark_dataframe_utils",
+        "//snowflake/ml/_internal/utils:temp_file_utils",
+    ],
+)
+
+py_library(
+    name = "distributed_hpo_trainer",
+    srcs = ["distributed_hpo_trainer.py"],
+    deps = [
+        ":model_specifications",
+        ":snowpark_trainer",
+        "//snowflake/ml/_internal:env_utils",
+        "//snowflake/ml/_internal:telemetry",
+        "//snowflake/ml/_internal/exceptions",
+        "//snowflake/ml/_internal/exceptions:modeling_error_messages",
+        "//snowflake/ml/_internal/utils:identifier",
+        "//snowflake/ml/_internal/utils:snowpark_dataframe_utils",
+        "//snowflake/ml/_internal/utils:temp_file_utils",
+    ],
+)
+
+py_library(
+    name = "model_trainer_builder",
+    srcs = ["model_trainer_builder.py"],
+    deps = [
+        ":distributed_hpo_trainer",
+        ":model_trainer",
+        ":pandas_trainer",
+        ":snowpark_trainer",
     ],
 )

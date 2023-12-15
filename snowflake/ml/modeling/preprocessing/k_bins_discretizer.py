@@ -177,10 +177,6 @@ class KBinsDiscretizer(base.BaseTransformer):
         project=base.PROJECT,
         subproject=base.SUBPROJECT,
     )
-    @telemetry.add_stmt_params_to_df(
-        project=base.PROJECT,
-        subproject=base.SUBPROJECT,
-    )
     def transform(
         self, dataset: Union[snowpark.DataFrame, pd.DataFrame]
     ) -> Union[snowpark.DataFrame, pd.DataFrame, sparse.csr_matrix]:

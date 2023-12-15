@@ -15,11 +15,14 @@ py_library(
         "//snowflake/ml/_internal/utils:formatting",
         "//snowflake/ml/_internal/utils:identifier",
         "//snowflake/ml/_internal/utils:query_result_checker",
+        "//snowflake/ml/_internal/utils:spcs_attribution_utils",
         "//snowflake/ml/_internal/utils:table_manager",
         "//snowflake/ml/_internal/utils:uri",
         "//snowflake/ml/dataset",
         "//snowflake/ml/model:_api",
         "//snowflake/ml/model:deploy_platforms",
+        "//snowflake/ml/model:model_signature",
+        "//snowflake/ml/model:type_hints",
         "//snowflake/ml/modeling/framework",
     ],
 )
@@ -74,10 +77,44 @@ py_test(
     ],
 )
 
+py_library(
+    name = "registry",
+    srcs = [
+        "registry.py",
+    ],
+    deps = [
+        "//snowflake/ml/_internal:telemetry",
+        "//snowflake/ml/_internal/utils:identifier",
+        "//snowflake/ml/_internal/utils:sql_identifier",
+        "//snowflake/ml/model:model_signature",
+        "//snowflake/ml/model:type_hints",
+        "//snowflake/ml/model/_client/model:model_impl",
+        "//snowflake/ml/model/_client/model:model_version_impl",
+        "//snowflake/ml/model/_client/ops:model_ops",
+        "//snowflake/ml/model/_model_composer:model_composer",
+    ],
+)
+
+py_test(
+    name = "registry_test",
+    srcs = [
+        "registry_test.py",
+    ],
+    deps = [
+        ":registry",
+        "//snowflake/ml/_internal/utils:sql_identifier",
+        "//snowflake/ml/model/_client/model:model_version_impl",
+        "//snowflake/ml/model/_model_composer:model_composer",
+        "//snowflake/ml/test_utils:mock_data_frame",
+        "//snowflake/ml/test_utils:mock_session",
+    ],
+)
+
 py_package(
     name = "model_registry_pkg",
     packages = ["snowflake.ml"],
     deps = [
         ":model_registry",
+        ":registry",
     ],
 )

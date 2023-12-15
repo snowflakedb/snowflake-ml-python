@@ -294,7 +294,7 @@ class EnvUtilsTest(absltest.TestCase):
         self.assertEqual(env_utils.relax_requirement_version(r), requirements.Requirement("python-package"))
         self.assertIsNot(env_utils.relax_requirement_version(r), r)
 
-    def test_validate_requirements_in_snowflake_conda_channel(self) -> None:
+    def test_validate_requirements_in_information_schema(self) -> None:
         m_session = mock_session.MockSession(conn=None, test_case=self)
         m_session.add_mock_sql(
             query=textwrap.dedent(
@@ -326,7 +326,7 @@ class EnvUtilsTest(absltest.TestCase):
         c_session = cast(session.Session, m_session)
 
         self.assertListEqual(
-            env_utils.validate_requirements_in_snowflake_conda_channel(
+            env_utils.validate_requirements_in_information_schema(
                 session=c_session,
                 reqs=[requirements.Requirement("xgboost"), requirements.Requirement("pytorch")],
                 python_version=snowml_env.PYTHON_VERSION,
@@ -336,7 +336,7 @@ class EnvUtilsTest(absltest.TestCase):
 
         # Test cache
         self.assertListEqual(
-            env_utils.validate_requirements_in_snowflake_conda_channel(
+            env_utils.validate_requirements_in_information_schema(
                 session=c_session,
                 reqs=[requirements.Requirement("xgboost"), requirements.Requirement("pytorch")],
                 python_version=snowml_env.PYTHON_VERSION,
@@ -345,7 +345,7 @@ class EnvUtilsTest(absltest.TestCase):
         )
 
         # clear cache
-        env_utils._SNOWFLAKE_CONDA_PACKAGE_CACHE = {}
+        env_utils._SNOWFLAKE_INFO_SCHEMA_PACKAGE_CACHE = {}
 
         query = textwrap.dedent(
             """
@@ -366,7 +366,7 @@ class EnvUtilsTest(absltest.TestCase):
         c_session = cast(session.Session, m_session)
 
         self.assertListEqual(
-            env_utils.validate_requirements_in_snowflake_conda_channel(
+            env_utils.validate_requirements_in_information_schema(
                 session=c_session,
                 reqs=[requirements.Requirement("xgboost")],
                 python_version=snowml_env.PYTHON_VERSION,
@@ -376,7 +376,7 @@ class EnvUtilsTest(absltest.TestCase):
 
         # Test cache
         self.assertListEqual(
-            env_utils.validate_requirements_in_snowflake_conda_channel(
+            env_utils.validate_requirements_in_information_schema(
                 session=c_session,
                 reqs=[requirements.Requirement("xgboost")],
                 python_version=snowml_env.PYTHON_VERSION,
@@ -401,7 +401,7 @@ class EnvUtilsTest(absltest.TestCase):
         c_session = cast(session.Session, m_session)
 
         self.assertListEqual(
-            env_utils.validate_requirements_in_snowflake_conda_channel(
+            env_utils.validate_requirements_in_information_schema(
                 session=c_session,
                 reqs=[requirements.Requirement("xgboost"), requirements.Requirement("pytorch")],
                 python_version=snowml_env.PYTHON_VERSION,
@@ -411,7 +411,7 @@ class EnvUtilsTest(absltest.TestCase):
 
         # Test cache
         self.assertListEqual(
-            env_utils.validate_requirements_in_snowflake_conda_channel(
+            env_utils.validate_requirements_in_information_schema(
                 session=c_session,
                 reqs=[requirements.Requirement("xgboost"), requirements.Requirement("pytorch")],
                 python_version=snowml_env.PYTHON_VERSION,
@@ -420,7 +420,7 @@ class EnvUtilsTest(absltest.TestCase):
         )
 
         # clear cache
-        env_utils._SNOWFLAKE_CONDA_PACKAGE_CACHE = {}
+        env_utils._SNOWFLAKE_INFO_SCHEMA_PACKAGE_CACHE = {}
 
         query = textwrap.dedent(
             """
@@ -440,7 +440,7 @@ class EnvUtilsTest(absltest.TestCase):
         c_session = cast(session.Session, m_session)
 
         self.assertListEqual(
-            env_utils.validate_requirements_in_snowflake_conda_channel(
+            env_utils.validate_requirements_in_information_schema(
                 session=c_session,
                 reqs=[requirements.Requirement("xgboost==1.7.3")],
                 python_version=snowml_env.PYTHON_VERSION,
@@ -450,7 +450,7 @@ class EnvUtilsTest(absltest.TestCase):
 
         # Test cache
         self.assertListEqual(
-            env_utils.validate_requirements_in_snowflake_conda_channel(
+            env_utils.validate_requirements_in_information_schema(
                 session=c_session,
                 reqs=[requirements.Requirement("xgboost==1.7.3")],
                 python_version=snowml_env.PYTHON_VERSION,
@@ -459,7 +459,7 @@ class EnvUtilsTest(absltest.TestCase):
         )
 
         self.assertListEqual(
-            env_utils.validate_requirements_in_snowflake_conda_channel(
+            env_utils.validate_requirements_in_information_schema(
                 session=c_session,
                 reqs=[requirements.Requirement("xgboost>=1.7,<1.8")],
                 python_version=snowml_env.PYTHON_VERSION,
@@ -468,7 +468,7 @@ class EnvUtilsTest(absltest.TestCase):
         )
 
         self.assertIsNone(
-            env_utils.validate_requirements_in_snowflake_conda_channel(
+            env_utils.validate_requirements_in_information_schema(
                 session=c_session,
                 reqs=[requirements.Requirement("xgboost==1.7.1, ==1.7.3")],
                 python_version=snowml_env.PYTHON_VERSION,
@@ -476,13 +476,13 @@ class EnvUtilsTest(absltest.TestCase):
         )
 
         # clear cache
-        env_utils._SNOWFLAKE_CONDA_PACKAGE_CACHE = {}
+        env_utils._SNOWFLAKE_INFO_SCHEMA_PACKAGE_CACHE = {}
 
         m_session.add_mock_sql(query=query, result=mock_data_frame.MockDataFrame(sql_result))
         c_session = cast(session.Session, m_session)
 
         self.assertListEqual(
-            env_utils.validate_requirements_in_snowflake_conda_channel(
+            env_utils.validate_requirements_in_information_schema(
                 session=c_session,
                 reqs=[requirements.Requirement("xgboost==1.7.*")],
                 python_version=snowml_env.PYTHON_VERSION,
@@ -492,7 +492,7 @@ class EnvUtilsTest(absltest.TestCase):
 
         # Test cache
         self.assertListEqual(
-            env_utils.validate_requirements_in_snowflake_conda_channel(
+            env_utils.validate_requirements_in_information_schema(
                 session=c_session,
                 reqs=[requirements.Requirement("xgboost==1.7.*")],
                 python_version=snowml_env.PYTHON_VERSION,
@@ -501,13 +501,13 @@ class EnvUtilsTest(absltest.TestCase):
         )
 
         # clear cache
-        env_utils._SNOWFLAKE_CONDA_PACKAGE_CACHE = {}
+        env_utils._SNOWFLAKE_INFO_SCHEMA_PACKAGE_CACHE = {}
 
         m_session.add_mock_sql(query=query, result=mock_data_frame.MockDataFrame(sql_result))
         c_session = cast(session.Session, m_session)
 
         self.assertIsNone(
-            env_utils.validate_requirements_in_snowflake_conda_channel(
+            env_utils.validate_requirements_in_information_schema(
                 session=c_session,
                 reqs=[requirements.Requirement("xgboost==1.3.*")],
                 python_version=snowml_env.PYTHON_VERSION,
@@ -516,7 +516,7 @@ class EnvUtilsTest(absltest.TestCase):
 
         # Test cache
         self.assertIsNone(
-            env_utils.validate_requirements_in_snowflake_conda_channel(
+            env_utils.validate_requirements_in_information_schema(
                 session=c_session,
                 reqs=[requirements.Requirement("xgboost==1.3.*")],
                 python_version=snowml_env.PYTHON_VERSION,
@@ -524,7 +524,7 @@ class EnvUtilsTest(absltest.TestCase):
         )
 
         # clear cache
-        env_utils._SNOWFLAKE_CONDA_PACKAGE_CACHE = {}
+        env_utils._SNOWFLAKE_INFO_SCHEMA_PACKAGE_CACHE = {}
 
         query = textwrap.dedent(
             """
@@ -541,7 +541,7 @@ class EnvUtilsTest(absltest.TestCase):
         c_session = cast(session.Session, m_session)
 
         self.assertIsNone(
-            env_utils.validate_requirements_in_snowflake_conda_channel(
+            env_utils.validate_requirements_in_information_schema(
                 session=c_session,
                 reqs=[requirements.Requirement("python-package")],
                 python_version=snowml_env.PYTHON_VERSION,
@@ -582,7 +582,7 @@ class EnvUtilsTest(absltest.TestCase):
         c_session = cast(session.Session, m_session)
 
         self.assertListEqual(
-            env_utils.validate_requirements_in_snowflake_conda_channel(
+            env_utils.validate_requirements_in_information_schema(
                 session=c_session,
                 reqs=[requirements.Requirement("xgboost"), requirements.Requirement("pytorch")],
                 python_version=snowml_env.PYTHON_VERSION,
@@ -592,7 +592,7 @@ class EnvUtilsTest(absltest.TestCase):
 
         # Test cache
         self.assertListEqual(
-            env_utils.validate_requirements_in_snowflake_conda_channel(
+            env_utils.validate_requirements_in_information_schema(
                 session=c_session,
                 reqs=[requirements.Requirement("xgboost"), requirements.Requirement("pytorch")],
                 python_version=snowml_env.PYTHON_VERSION,

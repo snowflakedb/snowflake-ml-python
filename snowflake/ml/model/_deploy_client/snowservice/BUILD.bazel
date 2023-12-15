@@ -21,8 +21,10 @@ py_library(
     deps = [
         ":deploy_options",
         ":instance_types",
+        "//snowflake/ml/_internal:env_utils",
         "//snowflake/ml/_internal/exceptions",
         "//snowflake/ml/_internal/utils:identifier",
+        "//snowflake/ml/_internal/utils:spcs_attribution_utils",
         "//snowflake/ml/model:type_hints",
         "//snowflake/ml/model/_deploy_client/image_builds:base_image_builder",
         "//snowflake/ml/model/_deploy_client/image_builds:client_image_builder",

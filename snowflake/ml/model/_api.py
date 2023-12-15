@@ -7,7 +7,6 @@ from snowflake.ml._internal.exceptions import (
     error_codes,
     exceptions as snowml_exceptions,
 )
-from snowflake.ml._internal.utils import identifier
 from snowflake.ml.model import (
     deploy_platforms,
     model_signature,
@@ -188,6 +187,10 @@ def save_model(
     Returns:
         Model
     """
+    if options is None:
+        options = {}
+    options["_legacy_save"] = True
+
     m = model_composer.ModelComposer(session=session, stage_path=stage_path)
     m.save(
         name=name,
@@ -481,6 +484,7 @@ def predict(
     # Get options
     INTERMEDIATE_OBJ_NAME = "tmp_result"
     sig = deployment["signature"]
+    identifier_rule = model_signature.SnowparkIdentifierRule.INFERRED
 
     # Validate and prepare input
     if not isinstance(X, SnowparkDataFrame):
@@ -491,7 +495,7 @@ def predict(
     else:
         keep_order = False
         output_with_input_features = True
-        model_signature._validate_snowpark_data(X, sig.inputs)
+        identifier_rule = model_signature._validate_snowpark_data(X, sig.inputs)
         s_df = X
 
     if statement_params:
@@ -500,10 +504,14 @@ def predict(
         else:
             s_df._statement_params = statement_params  # type: ignore[assignment]
 
+    original_cols = s_df.columns
+
     # Infer and get intermediate result
     input_cols = []
-    for col_name in s_df.columns:
-        literal_col_name = identifier.get_unescaped_names(col_name)
+    for input_feature in sig.inputs:
+        literal_col_name = input_feature.name
+        col_name = identifier_rule.get_identifier_from_feature(input_feature.name)
+
         input_cols.extend(
             [
                 F.lit(literal_col_name),
@@ -511,29 +519,28 @@ def predict(
             ]
         )
 
-    # TODO[shchen]: SNOW-870032, For SnowService, external function name cannot be double quoted, else it results in
-    # external function no found.
     udf_name = deployment["name"]
-    output_obj = F.call_udf(udf_name, F.object_construct(*input_cols))
-
-    if output_with_input_features:
-        df_res = s_df.with_column(INTERMEDIATE_OBJ_NAME, output_obj)
-    else:
-        df_res = s_df.select(output_obj.alias(INTERMEDIATE_OBJ_NAME))
+    output_obj = F.call_udf(udf_name, F.object_construct_keep_null(*input_cols))
+    df_res = s_df.with_column(INTERMEDIATE_OBJ_NAME, output_obj)
 
     if keep_order:
         df_res = df_res.order_by(
-            F.col(INTERMEDIATE_OBJ_NAME)[infer_template._KEEP_ORDER_COL_NAME],
+            F.col(infer_template._KEEP_ORDER_COL_NAME),
             ascending=True,
         )
 
+    if not output_with_input_features:
+        df_res = df_res.drop(*original_cols)
+
     # Prepare the output
     output_cols = []
+    output_col_names = []
     for output_feature in sig.outputs:
         output_cols.append(F.col(INTERMEDIATE_OBJ_NAME)[output_feature.name].astype(output_feature.as_snowpark_type()))
+        output_col_names.append(identifier_rule.get_identifier_from_feature(output_feature.name))
 
     df_res = df_res.with_columns(
-        [identifier.get_inferred_name(output_feature.name) for output_feature in sig.outputs],
+        output_col_names,
         output_cols,
     ).drop(INTERMEDIATE_OBJ_NAME)
 

@@ -43,6 +43,7 @@ py_library(
         ":env",
         "//snowflake/ml/_internal/exceptions",
         "//snowflake/ml/_internal/utils:query_result_checker",
+        "//snowflake/ml/_internal/utils:retryable_http",
     ],
 )
 
