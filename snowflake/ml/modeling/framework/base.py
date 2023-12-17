@@ -511,6 +511,14 @@ class BaseTransformer(BaseEstimator):
     def transform(self, dataset: pd.DataFrame) -> pd.DataFrame:
         ...
 
+    @overload
+    def inverse_transform(self, dataset: snowpark.DataFrame) -> snowpark.DataFrame:
+        ...
+        
+    @overload
+    def inverse_transform(self, dataset: pd.DataFrame) -> pd.DataFrame:
+        ...
+
     @abstractmethod
     def transform(self, dataset: Union[snowpark.DataFrame, pd.DataFrame]) -> Union[snowpark.DataFrame, pd.DataFrame]:
         raise NotImplementedError()
