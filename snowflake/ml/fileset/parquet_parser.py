@@ -1,4 +1,6 @@
 import collections
+import logging
+import time
 from typing import Any, Deque, Dict, Iterator, List
 
 import fsspec
@@ -83,7 +85,7 @@ class ParquetParser:
             np.random.shuffle(files)
         pa_dataset: ds.Dataset = ds.dataset(files, format="parquet", filesystem=self._fs)
 
-        for rb in pa_dataset.to_batches(batch_size=self._dataset_batch_size):
+        for rb in _retryable_batches(pa_dataset, batch_size=self._dataset_batch_size):
             if self._shuffle:
                 rb = rb.take(np.random.permutation(rb.num_rows))
             self._rb_buffer.append(rb)
@@ -138,3 +140,31 @@ def _record_batch_to_arrays(rb: pa.RecordBatch) -> Dict[str, npt.NDArray[Any]]:
         array = column.to_numpy(zero_copy_only=False)
         batch_dict[column_schema.name] = array
     return batch_dict
+
+
+def _retryable_batches(
+    dataset: ds.Dataset, batch_size: int, max_retries: int = 3, delay: int = 0
+) -> Iterator[pa.RecordBatch]:
+    """Make the Dataset to_batches retryable."""
+    retries = 0
+    current_batch_index = 0
+
+    while True:
+        try:
+            for batch_index, batch in enumerate(dataset.to_batches(batch_size=batch_size)):
+                if batch_index < current_batch_index:
+                    # Skip batches that have already been processed
+                    continue
+
+                yield batch
+                current_batch_index = batch_index + 1
+            # Exit the loop once all batches are processed
+            break
+
+        except Exception as e:
+            if retries < max_retries:
+                retries += 1
+                logging.info(f"Error encountered: {e}. Retrying {retries}/{max_retries}...")
+                time.sleep(delay)
+            else:
+                raise e
