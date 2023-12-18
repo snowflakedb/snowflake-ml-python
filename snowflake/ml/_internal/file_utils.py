@@ -28,6 +28,7 @@ import cloudpickle
 
 from snowflake import snowpark
 from snowflake.ml._internal.exceptions import exceptions
+from snowflake.snowpark import exceptions as snowpark_exceptions
 
 GENERATED_PY_FILE_EXT = (".pyc", ".pyo", ".pyd", ".pyi")
 
@@ -286,8 +287,16 @@ def stage_file_exists(
         return False
 
 
+def _retry_on_sql_error(exception: Exception) -> bool:
+    return isinstance(exception, snowpark_exceptions.SnowparkSQLException)
+
+
 def upload_directory_to_stage(
-    session: snowpark.Session, local_path: pathlib.Path, stage_path: pathlib.PurePosixPath
+    session: snowpark.Session,
+    local_path: pathlib.Path,
+    stage_path: pathlib.PurePosixPath,
+    *,
+    statement_params: Optional[Dict[str, Any]] = None,
 ) -> None:
     """Upload a local folder recursively to a stage and keep the structure.
 
@@ -295,7 +304,10 @@ def upload_directory_to_stage(
         session: Snowpark Session.
         local_path: Local path to upload.
         stage_path: Base path in the stage.
+        statement_params: Statement Params.
     """
+    import retrying
+
     file_operation = snowpark.FileOperation(session=session)
 
     for root, _, filenames in os.walk(local_path):
@@ -305,16 +317,26 @@ def upload_directory_to_stage(
             stage_dir_path = (
                 stage_path / pathlib.PurePosixPath(local_file_path.relative_to(local_path).as_posix()).parent
             )
-            file_operation.put(
+            retrying.retry(
+                retry_on_exception=_retry_on_sql_error,
+                stop_max_attempt_number=5,
+                wait_exponential_multiplier=100,
+                wait_exponential_max=10000,
+            )(file_operation.put)(
                 str(local_file_path),
                 str(stage_dir_path),
                 auto_compress=False,
                 overwrite=False,
+                statement_params=statement_params,
             )
 
 
 def download_directory_from_stage(
-    session: snowpark.Session, stage_path: pathlib.PurePosixPath, local_path: pathlib.Path
+    session: snowpark.Session,
+    stage_path: pathlib.PurePosixPath,
+    local_path: pathlib.Path,
+    *,
+    statement_params: Optional[Dict[str, Any]] = None,
 ) -> None:
     """Upload a folder in stage recursively to a folder in local and keep the structure.
 
@@ -322,7 +344,10 @@ def download_directory_from_stage(
         session: Snowpark Session.
         stage_path: Stage path to download from.
         local_path: Local path as the base of destination.
+        statement_params: Statement Params.
     """
+    import retrying
+
     file_operation = file_operation = snowpark.FileOperation(session=session)
     file_list = [
         pathlib.PurePosixPath(stage_path.parts[0], *pathlib.PurePosixPath(row.name).parts[1:])
@@ -331,4 +356,9 @@ def download_directory_from_stage(
     for stage_file_path in file_list:
         local_file_dir = local_path / stage_file_path.relative_to(stage_path).parent
         local_file_dir.mkdir(parents=True, exist_ok=True)
-        file_operation.get(str(stage_file_path), str(local_file_dir))
+        retrying.retry(
+            retry_on_exception=_retry_on_sql_error,
+            stop_max_attempt_number=5,
+            wait_exponential_multiplier=100,
+            wait_exponential_max=10000,
+        )(file_operation.get)(str(stage_file_path), str(local_file_dir), statement_params=statement_params)

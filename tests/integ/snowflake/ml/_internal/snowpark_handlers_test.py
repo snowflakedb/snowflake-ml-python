@@ -7,11 +7,7 @@ from absl.testing import absltest
 from sklearn.datasets import load_diabetes
 from sklearn.linear_model import LinearRegression as SkLinearRegression
 
-from snowflake.ml._internal.exceptions import exceptions
-from snowflake.ml.modeling._internal.snowpark_handlers import (
-    SklearnWrapperProvider,
-    SnowparkHandlers,
-)
+from snowflake.ml.modeling._internal.snowpark_handlers import SnowparkHandlers
 from tests.integ.snowflake.ml.test_utils import common_test_base
 
 
@@ -19,9 +15,7 @@ class SnowparkHandlersTest(common_test_base.CommonTestBase):
     def setUp(self) -> None:
         """Creates Snowpark and Snowflake environments for testing."""
         super().setUp()
-        self._handlers = SnowparkHandlers(
-            class_name="test", subproject="subproject", wrapper_provider=SklearnWrapperProvider()
-        )
+        self._handlers = SnowparkHandlers(class_name="test", subproject="subproject")
 
     def _get_test_dataset(self) -> Tuple[pd.DataFrame, List[str], List[str]]:
         """Constructs input dataset to be used in the integration test.
@@ -53,41 +47,6 @@ class SnowparkHandlersTest(common_test_base.CommonTestBase):
         label_cols = [c for c in input_df_pandas.columns if c.startswith("TARGET")]
 
         return (input_df_pandas, input_cols, label_cols)
-
-    @common_test_base.CommonTestBase.sproc_test()
-    def test_fit_snowpark(self) -> None:
-        input_df_pandas, input_cols, label_cols = self._get_test_dataset()
-        input_df = self.session.create_dataframe(input_df_pandas)
-
-        sklearn_estimator = SkLinearRegression()
-
-        fit_estimator = self._handlers.fit_snowpark(
-            dataset=input_df,
-            session=self.session,
-            estimator=sklearn_estimator,
-            dependencies=["snowflake-snowpark-python", "numpy", "scikit-learn", "cloudpickle"],
-            input_cols=input_cols,
-            label_cols=label_cols,
-            sample_weight_col=None,
-        )
-
-        pandas_fit_estimator = sklearn_estimator.fit(
-            X=input_df_pandas[input_cols], y=input_df_pandas[label_cols].squeeze()
-        )
-
-        # Confirm that sproc was stored in session._FIT_WRAPPER_SPROCS for reuse.
-        assert "SklearnWrapperProvider" in self.session._FIT_WRAPPER_SPROCS
-
-        fit_estimator = self._handlers.fit_snowpark(
-            dataset=input_df,
-            session=self.session,
-            estimator=sklearn_estimator,
-            dependencies=["snowflake-snowpark-python", "numpy", "scikit-learn", "cloudpickle"],
-            input_cols=input_cols,
-            label_cols=label_cols,
-            sample_weight_col=None,
-        )
-        np.testing.assert_allclose(fit_estimator.coef_, pandas_fit_estimator.coef_)
 
     @common_test_base.CommonTestBase.sproc_test()
     def test_batch_inference(self) -> None:
@@ -138,28 +97,6 @@ class SnowparkHandlersTest(common_test_base.CommonTestBase):
         sklearn_score = fit_estimator.score(input_df_pandas[input_cols], input_df_pandas[label_cols].squeeze())
 
         np.testing.assert_allclose(score, sklearn_score)
-
-    @common_test_base.CommonTestBase.sproc_test()
-    def test_fit_snowpark_no_label_cols(self) -> None:
-        input_df_pandas, input_cols, _ = self._get_test_dataset()
-        label_cols = []
-        input_df = self.session.create_dataframe(input_df_pandas)
-
-        sklearn_estimator = SkLinearRegression()
-
-        with self.assertRaises(exceptions.SnowflakeMLException) as e:
-            self._handlers.fit_snowpark(
-                dataset=input_df,
-                session=self.session,
-                estimator=sklearn_estimator,
-                dependencies=["snowflake-snowpark-python", "numpy", "scikit-learn", "cloudpickle"],
-                input_cols=input_cols,
-                label_cols=label_cols,
-                sample_weight_col=None,
-            )
-
-            self.assertIsInstance(e.exception.original_exception, RuntimeError)
-            self.assertIn("label_cols", str(e.exception))
 
 
 if __name__ == "__main__":

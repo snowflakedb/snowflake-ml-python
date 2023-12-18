@@ -181,6 +181,9 @@
     - spcs_inference
 - name: protobuf
   dev_version: 3.20.3
+- name: pyarrow
+  dev_version: 10.0.1
+  version_requirements: ''
 - name: pytest
   dev_version: 7.4.0
 - name_pypi: torch
@@ -193,6 +196,9 @@
     - deployment_core
     - udf_inference
     - spcs_inference
+- name: retrying
+  dev_version: 1.3.3
+  version_requirements: '>=1.3.3,<2'
 # For fsspec[http] in conda
 - name_conda: requests
   dev_version_conda: 2.29.0

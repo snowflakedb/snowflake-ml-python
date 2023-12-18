@@ -140,7 +140,7 @@ Got {len(self.df.queries['queries'])}: {self.df.queries['queries']}
 
     @classmethod
     def from_json(cls, json_str: str, session: Session) -> "Dataset":
-        json_dict = json.loads(json_str)
+        json_dict = json.loads(json_str, strict=False)
         json_dict["df"] = session.sql(json_dict.pop("df_query"))
 
         fs_meta_json = json_dict["feature_store_metadata"]

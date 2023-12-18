@@ -17,7 +17,7 @@ class SearchSingleNodeTest(absltest.TestCase):
     def tearDown(self) -> None:
         self._session.close()
 
-    @mock.patch("snowflake.ml.modeling.model_selection.grid_search_cv.is_single_node")
+    @mock.patch("snowflake.ml.modeling._internal.model_trainer_builder.is_single_node")
     def test_single_node_grid(self, mock_is_single_node) -> None:
         mock_is_single_node.return_value = True
         input_df_pandas = load_iris(as_frame=True).frame
@@ -43,7 +43,7 @@ class SearchSingleNodeTest(absltest.TestCase):
 
         self.assertEqual(reg._sklearn_object.n_jobs, -1)
 
-    @mock.patch("snowflake.ml.modeling.model_selection.grid_search_cv.is_single_node")
+    @mock.patch("snowflake.ml.modeling._internal.model_trainer_builder.is_single_node")
     def test_single_node_random(self, mock_is_single_node) -> None:
         mock_is_single_node.return_value = True
         input_df_pandas = load_iris(as_frame=True).frame
@@ -69,7 +69,7 @@ class SearchSingleNodeTest(absltest.TestCase):
 
         self.assertEqual(reg._sklearn_object.n_jobs, -1)
 
-    @mock.patch("snowflake.ml.modeling.model_selection.grid_search_cv.is_single_node")
+    @mock.patch("snowflake.ml.modeling._internal.model_trainer_builder.is_single_node")
     def test_not_single_node_grid(self, mock_is_single_node) -> None:
         mock_is_single_node.return_value = False
         input_df_pandas = load_iris(as_frame=True).frame
@@ -93,7 +93,7 @@ class SearchSingleNodeTest(absltest.TestCase):
 
         self.assertEqual(reg._sklearn_object.estimator.n_jobs, 3)
 
-    @mock.patch("snowflake.ml.modeling.model_selection.grid_search_cv.is_single_node")
+    @mock.patch("snowflake.ml.modeling._internal.model_trainer_builder.is_single_node")
     def test_not_single_node_random(self, mock_is_single_node) -> None:
         mock_is_single_node.return_value = False
         input_df_pandas = load_iris(as_frame=True).frame

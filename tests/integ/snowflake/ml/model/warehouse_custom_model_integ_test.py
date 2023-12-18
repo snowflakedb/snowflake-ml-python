@@ -12,7 +12,7 @@ from snowflake.ml.model import custom_model, type_hints as model_types
 from snowflake.ml.utils import connection_params
 from snowflake.snowpark import DataFrame as SnowparkDataFrame, Session
 from tests.integ.snowflake.ml.model import warehouse_model_integ_test_utils
-from tests.integ.snowflake.ml.test_utils import db_manager
+from tests.integ.snowflake.ml.test_utils import dataframe_utils, db_manager
 
 
 class DemoModel(custom_model.CustomModel):
@@ -170,7 +170,7 @@ class TestWarehouseCustomModelInteg(parameterized.TestCase):
             deploy_params={
                 "": (
                     {},
-                    lambda res: warehouse_model_integ_test_utils.check_sp_df_res(res, y_df_expected, check_dtype=False),
+                    lambda res: dataframe_utils.check_sp_df_res(res, y_df_expected, check_dtype=False),
                 ),
             },
             permanent_deploy=permanent_deploy,
@@ -203,6 +203,31 @@ class TestWarehouseCustomModelInteg(parameterized.TestCase):
         )
 
     @parameterized.product(permanent_deploy=[True, False])  # type: ignore[misc]
+    def test_custom_demo_model_sp_quote_norm_1(
+        self,
+        permanent_deploy: Optional[bool] = False,
+    ) -> None:
+        lm = DemoModelSPQuote(custom_model.ModelContext())
+        arr = [[1, 2, 3], [4, 2, 5]]
+        pd_df = pd.DataFrame(arr, columns=["c1", "c2", "c3"])
+        sp_df = self._session.create_dataframe(arr, schema=['"""c1"""', '"""c2"""', '"""c3"""'])
+        sp_df_1 = self._session.create_dataframe(arr, schema=['"c1"', '"c2"', '"c3"'])
+        y_df_expected = pd.concat([pd_df, pd_df[["c1"]].rename(columns={"c1": "output"})], axis=1)
+        self.base_test_case(
+            name="custom_demo_model_sp_quote",
+            model=lm,
+            sample_input=sp_df,
+            test_input=sp_df_1,
+            deploy_params={
+                "": (
+                    {},
+                    lambda res: dataframe_utils.check_sp_df_res(res, y_df_expected, check_dtype=False),
+                ),
+            },
+            permanent_deploy=permanent_deploy,
+        )
+
+    @parameterized.product(permanent_deploy=[True, False])  # type: ignore[misc]
     def test_custom_demo_model_sp_mix_1(
         self,
         permanent_deploy: Optional[bool] = False,
@@ -220,7 +245,33 @@ class TestWarehouseCustomModelInteg(parameterized.TestCase):
             deploy_params={
                 "": (
                     {},
-                    lambda res: warehouse_model_integ_test_utils.check_sp_df_res(res, y_df_expected, check_dtype=False),
+                    lambda res: dataframe_utils.check_sp_df_res(res, y_df_expected, check_dtype=False),
+                ),
+            },
+            permanent_deploy=permanent_deploy,
+        )
+
+    @parameterized.product(permanent_deploy=[True, False])  # type: ignore[misc]
+    def test_custom_demo_model_sp_mix_1_norm(
+        self,
+        permanent_deploy: Optional[bool] = False,
+    ) -> None:
+        lm = DemoModel(custom_model.ModelContext())
+        arr = [[1, 2, 3], [4, 2, 5]]
+        pd_df = pd.DataFrame(arr, columns=["c1", "c2", "c3"])
+        sp_df = self._session.create_dataframe(arr, schema=["c1", "c2", "c3"])
+        y_df_expected = pd.concat(
+            [pd_df.rename(columns=str.upper), pd_df[["c1"]].rename(columns={"c1": "OUTPUT"})], axis=1
+        )
+        self.base_test_case(
+            name="custom_demo_model_sp1",
+            model=lm,
+            sample_input=pd_df,
+            test_input=sp_df,
+            deploy_params={
+                "": (
+                    {},
+                    lambda res: dataframe_utils.check_sp_df_res(res, y_df_expected, check_dtype=False),
                 ),
             },
             permanent_deploy=permanent_deploy,
@@ -247,6 +298,31 @@ class TestWarehouseCustomModelInteg(parameterized.TestCase):
                         res,
                         pd.DataFrame([1, 4], columns=["output"], dtype=np.int8),
                     ),
+                ),
+            },
+            permanent_deploy=permanent_deploy,
+        )
+
+    @parameterized.product(permanent_deploy=[True, False])  # type: ignore[misc]
+    def test_custom_demo_model_sp_mix_2_norm(
+        self,
+        permanent_deploy: Optional[bool] = False,
+    ) -> None:
+        lm = DemoModel(custom_model.ModelContext())
+        arr = [[1, 2, 3], [4, 2, 5]]
+        sp_df = self._session.create_dataframe(arr, schema=['"c1"', '"c2"', '"c3"'])
+        sp_df_1 = self._session.create_dataframe(arr, schema=["c1", "c2", "c3"])
+        pd_df = pd.DataFrame(arr, columns=["C1", "C2", "C3"])
+        y_df_expected = pd.concat([pd_df, pd_df[["C1"]].rename(columns={"C1": "OUTPUT"})], axis=1)
+        self.base_test_case(
+            name="custom_demo_model_sp2",
+            model=lm,
+            sample_input=sp_df,
+            test_input=sp_df_1,
+            deploy_params={
+                "": (
+                    {},
+                    lambda res: dataframe_utils.check_sp_df_res(res, y_df_expected, check_dtype=False),
                 ),
             },
             permanent_deploy=permanent_deploy,
@@ -319,7 +395,7 @@ class TestWarehouseCustomModelInteg(parameterized.TestCase):
             deploy_params={
                 "": (
                     {},
-                    lambda res: warehouse_model_integ_test_utils.check_sp_df_res(res, y_df_expected, check_dtype=False),
+                    lambda res: dataframe_utils.check_sp_df_res(res, y_df_expected, check_dtype=False),
                 )
             },
             permanent_deploy=permanent_deploy,
@@ -342,7 +418,7 @@ class TestWarehouseCustomModelInteg(parameterized.TestCase):
             deploy_params={
                 "": (
                     {},
-                    lambda res: warehouse_model_integ_test_utils.check_sp_df_res(res, y_df_expected),
+                    lambda res: dataframe_utils.check_sp_df_res(res, y_df_expected),
                 )
             },
             permanent_deploy=permanent_deploy,
@@ -425,9 +501,7 @@ class TestWarehouseCustomModelInteg(parameterized.TestCase):
                 deploy_params={
                     "": (
                         {},
-                        lambda res: warehouse_model_integ_test_utils.check_sp_df_res(
-                            res, y_df_expected, check_dtype=False
-                        ),
+                        lambda res: dataframe_utils.check_sp_df_res(res, y_df_expected, check_dtype=False),
                     )
                 },
                 permanent_deploy=permanent_deploy,

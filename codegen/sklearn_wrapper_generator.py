@@ -16,44 +16,58 @@ LOAD_IRIS = "load_iris"
 LOAD_DIABETES = "load_diabetes"
 
 
-ADDITIONAL_PARAM_DESCRIPTIONS = """
-
+ADDITIONAL_PARAM_DESCRIPTIONS = {
+    "input_cols": """
 input_cols: Optional[Union[str, List[str]]]
     A string or list of strings representing column names that contain features.
     If this parameter is not specified, all columns in the input DataFrame except
     the columns specified by label_cols, sample_weight_col, and passthrough_cols
-    parameters are considered input columns.
-
+    parameters are considered input columns. Input columns can also be set after
+    initialization with the `set_input_cols` method.
+    """,
+    "label_cols": """
 label_cols: Optional[Union[str, List[str]]]
     A string or list of strings representing column names that contain labels.
-    This is a required param for estimators, as there is no way to infer these
-    columns. If this parameter is not specified, then object is fitted without
-    labels (like a transformer).
-
+    Label columns must be specified with this parameter during initialization
+    or with the `set_label_cols` method before fitting.
+""",
+    "output_cols": """
 output_cols: Optional[Union[str, List[str]]]
     A string or list of strings representing column names that will store the
     output of predict and transform operations. The length of output_cols must
-    match the expected number of output columns from the specific estimator or
+    match the expected number of output columns from the specific predictor or
     transformer class used.
-    If this parameter is not specified, output column names are derived by
-    adding an OUTPUT_ prefix to the label column names. These inferred output
-    column names work for estimator's predict() method, but output_cols must
-    be set explicitly for transformers.
-
+    If you omit this parameter, output column names are derived by adding an
+    OUTPUT_ prefix to the label column names for supervised estimators, or
+    OUTPUT_<IDX>for unsupervised estimators. These inferred output column names
+    work for predictors, but output_cols must be set explicitly for transformers.
+    In general, explicitly specifying output column names is clearer, especially
+    if you don’t specify the input column names.
+    To transform in place, pass the same names for input_cols and output_cols.
+    be set explicitly for transformers. Output columns can also be set after
+    initialization with the `set_output_cols` method.
+""",
+    "sample_weight_col": """
 sample_weight_col: Optional[str]
     A string representing the column name containing the sample weights.
-    This argument is only required when working with weighted datasets.
-
+    This argument is only required when working with weighted datasets. Sample
+    weight column can also be set after initialization with the
+    `set_sample_weight_col` method.
+""",
+    "passthrough_cols": """
 passthrough_cols: Optional[Union[str, List[str]]]
     A string or a list of strings indicating column names to be excluded from any
     operations (such as train, transform, or inference). These specified column(s)
     will remain untouched throughout the process. This option is helpful in scenarios
     requiring automatic input_cols inference, but need to avoid using specific
-    columns, like index columns, during training or inference.
-
+    columns, like index columns, during training or inference. Passthrough columns
+    can also be set after initialization with the `set_passthrough_cols` method.
+""",
+    "drop_input_cols": """
 drop_input_cols: Optional[bool], default=False
     If set, the response of predict(), transform() methods will not contain input columns.
-"""
+""",
+}
 
 ADDITIONAL_METHOD_DESCRIPTION = """
 Raises:
@@ -448,7 +462,6 @@ class WrapperGeneratorBase:
                                                 is contained in.
     estimator_imports                GENERATED  Imports needed for the estimator / fit()
                                                 call.
-    wrapper_provider_class           GENERATED  Class name of wrapper provider.
     ------------------------------------------------------------------------------------
     SIGNATURES AND ARGUMENTS
     ------------------------------------------------------------------------------------
@@ -545,7 +558,6 @@ class WrapperGeneratorBase:
         self.estimator_imports = ""
         self.estimator_imports_list: List[str] = []
         self.score_sproc_imports: List[str] = []
-        self.wrapper_provider_class = ""
         self.additional_import_statements = ""
 
         # Test strings
@@ -630,10 +642,11 @@ class WrapperGeneratorBase:
         class_docstring = inspect.getdoc(self.class_object[1]) or ""
         class_docstring = class_docstring.rsplit("Attributes\n", 1)[0]
 
+        parameters_heading = "Parameters\n----------\n"
         class_description, param_description = (
-            class_docstring.rsplit("Parameters\n", 1)
-            if len(class_docstring.rsplit("Parameters\n", 1)) == 2
-            else (class_docstring, "----------\n")
+            class_docstring.rsplit(parameters_heading, 1)
+            if len(class_docstring.rsplit(parameters_heading, 1)) == 2
+            else (class_docstring, "")
         )
 
         # Extract the first sentence of the class description
@@ -645,9 +658,11 @@ class WrapperGeneratorBase:
             f"]\n({self.get_doc_link()})"
         )
 
-        # Add SnowML specific param descriptions.
-        param_description = "Parameters\n" + param_description.strip()
-        param_description += ADDITIONAL_PARAM_DESCRIPTIONS
+        # Add SnowML specific param descriptions before third party parameters.
+        snowml_parameters = ""
+        for d in ADDITIONAL_PARAM_DESCRIPTIONS.values():
+            snowml_parameters += d
+        param_description = f"{parameters_heading}{snowml_parameters}\n{param_description.strip()}"
 
         class_docstring = f"{class_description}\n\n{param_description}"
         class_docstring = textwrap.indent(class_docstring, "    ").strip()
@@ -718,12 +733,23 @@ class WrapperGeneratorBase:
         for member in inspect.getmembers(self.class_object[1]):
             if member[0] == "__init__":
                 self.original_init_signature = inspect.signature(member[1])
+            elif member[0] == "fit":
+                original_fit_signature = inspect.signature(member[1])
+                if original_fit_signature.parameters["y"].default is None:
+                    # The fit does not require labels, so our label_cols argument is optional.
+                    ADDITIONAL_PARAM_DESCRIPTIONS[
+                        "label_cols"
+                    ] = """
+label_cols: Optional[Union[str, List[str]]]
+    This parameter is optional and will be ignored during fit. It is present here for API consistency by convention.
+                    """
 
         signature_lines = []
         sklearn_init_lines = []
         init_member_args = []
         has_kwargs = False
         sklearn_init_args_dict_list = []
+
         for k, v in self.original_init_signature.parameters.items():
             if k == "self":
                 signature_lines.append("self")
@@ -855,9 +881,9 @@ class WrapperGeneratorBase:
         self._populate_flags()
         self._populate_class_names()
         self._populate_import_statements()
-        self._populate_class_doc_fields()
         self._populate_function_doc_fields()
         self._populate_function_names_and_signatures()
+        self._populate_class_doc_fields()
         self._populate_file_paths()
         self._populate_integ_test_fields()
         return self
@@ -876,13 +902,8 @@ class SklearnWrapperGenerator(WrapperGeneratorBase):
         # Populate all the common values
         super().generate()
 
-        is_model_selector = WrapperGeneratorFactory._is_class_of_type(self.class_object[1], "BaseSearchCV")
-
         # Populate SKLearn specific values
         self.estimator_imports_list.extend(["import sklearn", f"import {self.root_module_name}"])
-        self.wrapper_provider_class = (
-            "SklearnModelSelectionWrapperProvider" if is_model_selector else "SklearnWrapperProvider"
-        )
         self.score_sproc_imports = ["sklearn"]
 
         if "random_state" in self.original_init_signature.parameters.keys():
@@ -982,6 +1003,9 @@ class SklearnWrapperGenerator(WrapperGeneratorBase):
         if self._is_hist_gradient_boosting_regressor:
             self.test_estimator_input_args_list.extend(["min_samples_leaf=1", "max_leaf_nodes=100"])
 
+        self.deps = (
+            "f'numpy=={np.__version__}', f'scikit-learn=={sklearn.__version__}', f'cloudpickle=={cp.__version__}'"
+        )
         self.supported_export_method = "to_sklearn"
         self.unsupported_export_methods = ["to_xgboost", "to_lightgbm"]
         self._construct_string_from_lists()
@@ -1010,10 +1034,10 @@ class XGBoostWrapperGenerator(WrapperGeneratorBase):
             ["random_state=0", "subsample=1.0", "colsample_bynode=1.0", "n_jobs=1"]
         )
         self.score_sproc_imports = ["xgboost"]
-        self.wrapper_provider_class = "XGBoostWrapperProvider"
         # TODO(snandamuri): Replace cloudpickle with joblib after latest version of joblib is added to snowflake conda.
         self.supported_export_method = "to_xgboost"
         self.unsupported_export_methods = ["to_sklearn", "to_lightgbm"]
+        self.deps = "f'numpy=={np.__version__}', f'xgboost=={xgboost.__version__}', f'cloudpickle=={cp.__version__}'"
         self._construct_string_from_lists()
         return self
 
@@ -1039,8 +1063,8 @@ class LightGBMWrapperGenerator(WrapperGeneratorBase):
         self.estimator_imports_list.append("import lightgbm")
         self.test_estimator_input_args_list.extend(["random_state=0", "n_jobs=1"])
         self.score_sproc_imports = ["lightgbm"]
-        self.wrapper_provider_class = "LightGBMWrapperProvider"
 
+        self.deps = "f'numpy=={np.__version__}', f'lightgbm=={lightgbm.__version__}', f'cloudpickle=={cp.__version__}'"
         self.supported_export_method = "to_lightgbm"
         self.unsupported_export_methods = ["to_sklearn", "to_xgboost"]
         self._construct_string_from_lists()

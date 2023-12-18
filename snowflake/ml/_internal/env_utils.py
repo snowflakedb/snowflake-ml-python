@@ -4,6 +4,7 @@ import pathlib
 import re
 import textwrap
 import warnings
+from enum import Enum
 from importlib import metadata as importlib_metadata
 from typing import Any, DefaultDict, Dict, List, Optional, Tuple
 
@@ -18,10 +19,22 @@ from snowflake.ml._internal.exceptions import (
 )
 from snowflake.ml._internal.utils import query_result_checker
 from snowflake.snowpark import session
+from snowflake.snowpark._internal import utils as snowpark_utils
+
+
+class CONDA_OS(Enum):
+    LINUX_64 = "linux-64"
+    LINUX_AARCH64 = "linux-aarch64"
+    OSX_64 = "osx-64"
+    OSX_ARM64 = "osx-arm64"
+    WIN_64 = "win-64"
+    NO_ARCH = "noarch"
+
 
 _SNOWFLAKE_CONDA_CHANNEL_URL = "https://repo.anaconda.com/pkgs/snowflake"
 _NODEFAULTS = "nodefaults"
 _INFO_SCHEMA_PACKAGES_HAS_RUNTIME_VERSION: Optional[bool] = None
+_SNOWFLAKE_INFO_SCHEMA_PACKAGE_CACHE: Dict[str, List[version.Version]] = {}
 _SNOWFLAKE_CONDA_PACKAGE_CACHE: Dict[str, List[version.Version]] = {}
 
 DEFAULT_CHANNEL_NAME = ""
@@ -217,6 +230,7 @@ def get_local_installed_version_of_pip_package(pip_req: requirements.Requirement
         warnings.warn(
             f"Package requirement {str(pip_req)} specified, while version {local_dist_version} is installed. "
             "Local version will be ignored to conform to package requirement.",
+            stacklevel=2,
             category=UserWarning,
         )
         return pip_req
@@ -265,10 +279,58 @@ def _check_runtime_version_column_existence(session: session.Session) -> bool:
     return result == 1
 
 
-def validate_requirements_in_snowflake_conda_channel(
+def get_matched_package_versions_in_snowflake_conda_channel(
+    req: requirements.Requirement,
+    python_version: str = snowml_env.PYTHON_VERSION,
+    conda_os: CONDA_OS = CONDA_OS.LINUX_64,
+) -> List[version.Version]:
+    """Search the snowflake anaconda channel for packages that matches the specifier. Note that this will be the
+    source of truth for checking whether a package indeed exists in Snowflake conda channel.
+
+    Given that a package comes in different architectures, we only check for the Linux x86_64 architecture and assume
+    the package exists in other architectures. If such an assumption does not hold true for a certain package, the
+    caller should specify the architecture to search for.
+
+    Args:
+        req: Requirement specifier.
+        python_version: A string of python version where model is run.
+        conda_os: Specified platform to search availability of the package.
+
+    Returns:
+        List of package versions that meet the requirement specifier.
+    """
+    # Move the retryable_http import here as when UDF import this file, it won't have the "requests" dependency.
+    from snowflake.ml._internal.utils import retryable_http
+
+    assert not snowpark_utils.is_in_stored_procedure()  # type: ignore[no-untyped-call]
+
+    url = f"{_SNOWFLAKE_CONDA_CHANNEL_URL}/{conda_os.value}/repodata.json"
+
+    if req.name not in _SNOWFLAKE_CONDA_PACKAGE_CACHE:
+        http_client = retryable_http.get_http_client()
+        parsed_python_version = version.Version(python_version)
+        python_version_build_str = f"py{parsed_python_version.major}{parsed_python_version.minor}"
+        repodata = http_client.get(url).json()
+        assert isinstance(repodata, dict)
+        packages_info = repodata["packages"]
+        assert isinstance(packages_info, dict)
+        version_list = [
+            version.parse(package_info["version"])
+            for package_info in packages_info.values()
+            if package_info["name"] == req.name and python_version_build_str in package_info["build"]
+        ]
+        _SNOWFLAKE_CONDA_PACKAGE_CACHE[req.name] = version_list
+
+    matched_versions = list(req.specifier.filter(set(_SNOWFLAKE_CONDA_PACKAGE_CACHE.get(req.name, []))))
+    return matched_versions
+
+
+def validate_requirements_in_information_schema(
     session: session.Session, reqs: List[requirements.Requirement], python_version: str
 ) -> Optional[List[str]]:
-    """Search the snowflake anaconda channel for packages with version meet the specifier.
+    """Look up the information_schema table to check if a package with the specified specifier exists in the Snowflake
+    Conda channel. Note that this is not the source of truth due to the potential delay caused by a package that might
+    exist in the information_schema table but has not yet become available in the Snowflake Conda channel.
 
     Args:
         session: Snowflake connection session.
@@ -285,7 +347,7 @@ def validate_requirements_in_snowflake_conda_channel(
     ret_list = []
     reqs_to_request = []
     for req in reqs:
-        if req.name not in _SNOWFLAKE_CONDA_PACKAGE_CACHE:
+        if req.name not in _SNOWFLAKE_INFO_SCHEMA_PACKAGE_CACHE:
             reqs_to_request.append(req)
     if reqs_to_request:
         pkg_names_str = " OR ".join(
@@ -326,13 +388,13 @@ def validate_requirements_in_snowflake_conda_channel(
             for row in result:
                 req_name = row["PACKAGE_NAME"]
                 req_ver = version.parse(row["VERSION"])
-                cached_req_ver_list = _SNOWFLAKE_CONDA_PACKAGE_CACHE.get(req_name, [])
+                cached_req_ver_list = _SNOWFLAKE_INFO_SCHEMA_PACKAGE_CACHE.get(req_name, [])
                 cached_req_ver_list.append(req_ver)
-                _SNOWFLAKE_CONDA_PACKAGE_CACHE[req_name] = cached_req_ver_list
+                _SNOWFLAKE_INFO_SCHEMA_PACKAGE_CACHE[req_name] = cached_req_ver_list
         except snowflake.connector.DataError:
             return None
     for req in reqs:
-        available_versions = list(req.specifier.filter(set(_SNOWFLAKE_CONDA_PACKAGE_CACHE.get(req.name, []))))
+        available_versions = list(req.specifier.filter(set(_SNOWFLAKE_INFO_SCHEMA_PACKAGE_CACHE.get(req.name, []))))
         if not available_versions:
             return None
         else:

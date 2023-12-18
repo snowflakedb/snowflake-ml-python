@@ -44,7 +44,7 @@ class ModelRuntime:
         if self.runtime_env._snowpark_ml_version.local:
             self.embed_local_ml_library = True
         else:
-            snowml_server_availability = env_utils.validate_requirements_in_snowflake_conda_channel(
+            snowml_server_availability = env_utils.validate_requirements_in_information_schema(
                 session=session,
                 reqs=[requirements.Requirement(snowml_pkg_spec)],
                 python_version=snowml_env.PYTHON_VERSION,

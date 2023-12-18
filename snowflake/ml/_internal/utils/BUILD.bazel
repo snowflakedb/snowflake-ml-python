@@ -235,3 +235,22 @@ py_test(
         "//snowflake/ml/test_utils:mock_session",
     ],
 )
+
+py_library(
+    name = "spcs_attribution_utils",
+    srcs = ["spcs_attribution_utils.py"],
+    deps = [
+        ":query_result_checker",
+        "//snowflake/ml/_internal:telemetry",
+    ],
+)
+
+py_test(
+    name = "spcs_attribution_utils_test",
+    srcs = ["spcs_attribution_utils_test.py"],
+    deps = [
+        ":spcs_attribution_utils",
+        "//snowflake/ml/test_utils:mock_data_frame",
+        "//snowflake/ml/test_utils:mock_session",
+    ],
+)

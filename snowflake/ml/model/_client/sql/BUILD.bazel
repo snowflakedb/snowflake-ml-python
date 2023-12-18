@@ -1,0 +1,63 @@
+load("//bazel:py_rules.bzl", "py_library", "py_test")
+
+package(default_visibility = ["//snowflake/ml/model/_client/ops:__pkg__"])
+
+py_library(
+    name = "model",
+    srcs = ["model.py"],
+    deps = [
+        "//snowflake/ml/_internal/utils:identifier",
+        "//snowflake/ml/_internal/utils:sql_identifier",
+    ],
+)
+
+py_test(
+    name = "model_test",
+    srcs = ["model_test.py"],
+    deps = [
+        ":model",
+        "//snowflake/ml/_internal/utils:sql_identifier",
+        "//snowflake/ml/test_utils:mock_data_frame",
+        "//snowflake/ml/test_utils:mock_session",
+    ],
+)
+
+py_library(
+    name = "model_version",
+    srcs = ["model_version.py"],
+    deps = [
+        "//snowflake/ml/_internal/utils:identifier",
+        "//snowflake/ml/_internal/utils:sql_identifier",
+    ],
+)
+
+py_test(
+    name = "model_version_test",
+    srcs = ["model_version_test.py"],
+    deps = [
+        ":model_version",
+        "//snowflake/ml/_internal/utils:sql_identifier",
+        "//snowflake/ml/test_utils:mock_data_frame",
+        "//snowflake/ml/test_utils:mock_session",
+    ],
+)
+
+py_library(
+    name = "stage",
+    srcs = ["stage.py"],
+    deps = [
+        "//snowflake/ml/_internal/utils:identifier",
+        "//snowflake/ml/_internal/utils:sql_identifier",
+    ],
+)
+
+py_test(
+    name = "stage_test",
+    srcs = ["stage_test.py"],
+    deps = [
+        ":stage",
+        "//snowflake/ml/_internal/utils:sql_identifier",
+        "//snowflake/ml/test_utils:mock_data_frame",
+        "//snowflake/ml/test_utils:mock_session",
+    ],
+)

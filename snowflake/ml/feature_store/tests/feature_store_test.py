@@ -23,10 +23,10 @@ from snowflake.ml.feature_store import (  # type: ignore[attr-defined]
     FeatureViewStatus,
 )
 from snowflake.ml.feature_store.feature_store import (
-    ENTITY_TAG_PREFIX,
-    FEATURE_STORE_OBJECT_TAG,
-    FEATURE_VIEW_ENTITY_TAG,
-    FEATURE_VIEW_TS_COL_TAG,
+    _ENTITY_TAG_PREFIX,
+    _FEATURE_STORE_OBJECT_TAG,
+    _FEATURE_VIEW_ENTITY_TAG,
+    _FEATURE_VIEW_TS_COL_TAG,
 )
 from snowflake.ml.utils.connection_params import SnowflakeLoginOptions
 from snowflake.snowpark import Session, exceptions as snowpark_exceptions
@@ -697,6 +697,18 @@ class FeatureStoreTest(absltest.TestCase):
             sort_cols=["ID"],
         )
 
+        df = fs.retrieve_feature_values(
+            spine_df=spine_df, features=[fv1.slice(["name"]), fv2], exclude_columns=["NAME"]
+        )
+        compare_dataframe(
+            actual_df=df.to_pandas(),
+            target_data={
+                "ID": [1, 2],
+                "AGE": [20, 30],
+            },
+            sort_cols=["ID"],
+        )
+
         # test retrieve_feature_values with serialized feature objects
         fv1_slice = fv1.slice(["name"])
         dataset = fs.generate_dataset(spine_df, features=[fv1_slice, fv2])
@@ -1017,14 +1029,14 @@ class FeatureStoreTest(absltest.TestCase):
         self.assertIsNotNone(fs)
 
         res = self._session.sql(
-            f"SHOW TAGS LIKE '{FEATURE_VIEW_ENTITY_TAG}' IN SCHEMA {fs._config.full_schema_path}"
+            f"SHOW TAGS LIKE '{_FEATURE_VIEW_ENTITY_TAG}' IN SCHEMA {fs._config.full_schema_path}"
         ).collect()
         self.assertEqual(len(res), 1)
 
         self._session.sql(f"DROP SCHEMA IF EXISTS {FS_INTEG_TEST_DB}.{current_schema}").collect()
 
         row_list = self._session.sql(
-            f"SHOW TAGS LIKE '{FEATURE_VIEW_ENTITY_TAG}' IN DATABASE {fs._config.database}"
+            f"SHOW TAGS LIKE '{_FEATURE_VIEW_ENTITY_TAG}' IN DATABASE {fs._config.database}"
         ).collect()
         for row in row_list:
             self.assertNotEqual(row["schema_name"], current_schema)
@@ -1048,7 +1060,7 @@ class FeatureStoreTest(absltest.TestCase):
             refresh_freq="DOWNSTREAM",
         )
         fv2 = fs.register_feature_view(feature_view=fv2, version="v1", block=True)
-        spine_df = self._session.create_dataframe([(1, 101)], schema=["id", "ts"])
+        spine_df = self._session.create_dataframe([(1, 100), (1, 101)], schema=["id", "ts"])
 
         # Generate dataset the first time
         ds1 = fs.generate_dataset(
@@ -1060,13 +1072,13 @@ class FeatureStoreTest(absltest.TestCase):
         compare_dataframe(
             actual_df=ds1.df.to_pandas(),
             target_data={
-                "ID": [1],
-                "TS": [101],
-                "NAME": ["jonh"],
-                "TITLE": ["boss"],
-                "AGE": [20],
+                "ID": [1, 1],
+                "TS": [100, 101],
+                "NAME": ["jonh", "jonh"],
+                "TITLE": ["boss", "boss"],
+                "AGE": [20, 20],
             },
-            sort_cols=["ID"],
+            sort_cols=["ID", "TS"],
         )
         self.assertEqual([fv1, fv2], fs.load_feature_views_from_dataset(ds1))
 
@@ -1081,13 +1093,13 @@ class FeatureStoreTest(absltest.TestCase):
         compare_dataframe(
             actual_df=ds2.df.to_pandas(),
             target_data={
-                "ID": [1],
-                "TS": [101],
-                "NAME": ["jonh"],
-                "TITLE": ["boss"],
-                "AGE": [20],
+                "ID": [1, 1],
+                "TS": [100, 101],
+                "NAME": ["jonh", "jonh"],
+                "TITLE": ["boss", "boss"],
+                "AGE": [20, 20],
             },
-            sort_cols=["ID"],
+            sort_cols=["ID", "TS"],
         )
 
         # New data should properly appear
@@ -1102,37 +1114,37 @@ class FeatureStoreTest(absltest.TestCase):
         compare_dataframe(
             actual_df=ds3.df.to_pandas(),
             target_data={
-                "ID": [1, 2],
-                "TS": [101, 202],
-                "NAME": ["jonh", "porter"],
-                "TITLE": ["boss", "manager"],
-                "AGE": [20, 30],
+                "ID": [1, 1, 2],
+                "TS": [100, 101, 202],
+                "NAME": ["jonh", "jonh", "porter"],
+                "TITLE": ["boss", "boss", "manager"],
+                "AGE": [20, 20, 30],
             },
-            sort_cols=["ID"],
+            sort_cols=["ID", "TS"],
         )
 
         # Snapshot should remain the same
         compare_dataframe(
             actual_df=self._session.sql(f"SELECT * FROM {ds1.snapshot_table}").to_pandas(),
             target_data={
-                "ID": [1],
-                "TS": [101],
-                "NAME": ["jonh"],
-                "TITLE": ["boss"],
-                "AGE": [20],
+                "ID": [1, 1],
+                "TS": [100, 101],
+                "NAME": ["jonh", "jonh"],
+                "TITLE": ["boss", "boss"],
+                "AGE": [20, 20],
             },
-            sort_cols=["ID"],
+            sort_cols=["ID", "TS"],
         )
         compare_dataframe(
             actual_df=self._session.sql(f"SELECT * FROM {ds3.snapshot_table}").to_pandas(),
             target_data={
-                "ID": [1, 2],
-                "TS": [101, 202],
-                "NAME": ["jonh", "porter"],
-                "TITLE": ["boss", "manager"],
-                "AGE": [20, 30],
+                "ID": [1, 1, 2],
+                "TS": [100, 101, 202],
+                "NAME": ["jonh", "jonh", "porter"],
+                "TITLE": ["boss", "boss", "manager"],
+                "AGE": [20, 20, 30],
             },
-            sort_cols=["ID"],
+            sort_cols=["ID", "TS"],
         )
 
         # Generate dataset with exclude_columns and check both materialization and non-materialization path
@@ -1246,10 +1258,10 @@ class FeatureStoreTest(absltest.TestCase):
             result = self._session.sql(f"SHOW TASKS LIKE 'FV$V1' IN SCHEMA {full_schema_path}").collect()
             self.assertEqual(len(result), expected_count)
             expected_tags = [
-                FEATURE_VIEW_ENTITY_TAG,
-                FEATURE_VIEW_TS_COL_TAG,
-                FEATURE_STORE_OBJECT_TAG,
-                f"{ENTITY_TAG_PREFIX}foo",
+                _FEATURE_VIEW_ENTITY_TAG,
+                _FEATURE_VIEW_TS_COL_TAG,
+                _FEATURE_STORE_OBJECT_TAG,
+                f"{_ENTITY_TAG_PREFIX}foo",
             ]
             for tag in expected_tags:
                 result = self._session.sql(f"SHOW TAGS LIKE '{tag}' in {full_schema_path}").collect()
@@ -1295,7 +1307,7 @@ class FeatureStoreTest(absltest.TestCase):
         df = self._session.table(self._mock_table).select(call_udf(udf_name, col("id")).alias("uid"), "name")
         fv = FeatureView(name="fv", entities=[entity], feature_df=df, refresh_freq="1h")
 
-        with self.assertWarnsRegex(UserWarning, "Dynamic table: `.*` will not refresh in INCREMENTAL mode"):
+        with self.assertWarnsRegex(UserWarning, "Your pipeline won't be incrementally refreshed due to:"):
             fs.register_feature_view(feature_view=fv, version="V1")
 
     def test_switch_warehouse(self) -> None:

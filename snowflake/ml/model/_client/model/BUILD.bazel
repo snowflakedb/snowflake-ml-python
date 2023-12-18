@@ -1,0 +1,59 @@
+load("//bazel:py_rules.bzl", "py_library", "py_test")
+
+package(default_visibility = ["//visibility:public"])
+
+py_library(
+    name = "model_impl",
+    srcs = ["model_impl.py"],
+    deps = [
+        ":model_version_impl",
+        "//snowflake/ml/_internal:telemetry",
+        "//snowflake/ml/_internal/utils:sql_identifier",
+        "//snowflake/ml/model/_client/ops:model_ops",
+    ],
+)
+
+py_test(
+    name = "model_impl_test",
+    srcs = ["model_impl_test.py"],
+    deps = [
+        ":model_impl",
+        ":model_version_impl",
+        "//snowflake/ml/_internal/utils:sql_identifier",
+        "//snowflake/ml/test_utils:mock_session",
+    ],
+)
+
+py_library(
+    name = "model_version_impl",
+    srcs = ["model_version_impl.py"],
+    deps = [
+        ":model_method_info",
+        "//snowflake/ml/_internal:telemetry",
+        "//snowflake/ml/_internal/utils:sql_identifier",
+        "//snowflake/ml/model:model_signature",
+        "//snowflake/ml/model/_client/ops:model_ops",
+    ],
+)
+
+py_test(
+    name = "model_version_impl_test",
+    srcs = ["model_version_impl_test.py"],
+    deps = [
+        ":model_version_impl",
+        "//snowflake/ml/_internal/utils:sql_identifier",
+        "//snowflake/ml/model:model_signature",
+        "//snowflake/ml/model/_client/ops:metadata_ops",
+        "//snowflake/ml/model/_client/ops:model_ops",
+        "//snowflake/ml/test_utils:mock_data_frame",
+        "//snowflake/ml/test_utils:mock_session",
+    ],
+)
+
+py_library(
+    name = "model_method_info",
+    srcs = ["model_method_info.py"],
+    deps = [
+        "//snowflake/ml/model:model_signature",
+    ],
+)

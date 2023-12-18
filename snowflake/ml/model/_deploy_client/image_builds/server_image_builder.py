@@ -4,7 +4,6 @@ import posixpath
 from string import Template
 
 import importlib_resources
-import yaml
 
 from snowflake import snowpark
 from snowflake.ml._internal import file_utils
@@ -180,7 +179,7 @@ class ServerImageBuilder(base_image_builder.ImageBuilder):
             assert self.artifact_stage_location.startswith("@")
             normed_artifact_stage_path = posixpath.normpath(identifier.remove_prefix(self.artifact_stage_location, "@"))
             (db, schema, stage, path) = identifier.parse_schema_level_object_identifier(normed_artifact_stage_path)
-            content = Template(spec_template).substitute(
+            content = Template(spec_template).safe_substitute(
                 {
                     "base_image": base_image,
                     "container_name": constants.KANIKO_CONTAINER_NAME,
@@ -188,10 +187,10 @@ class ServerImageBuilder(base_image_builder.ImageBuilder):
                     # Remove @ in the beginning, append "/" to denote root directory.
                     "script_path": "/"
                     + posixpath.normpath(identifier.remove_prefix(kaniko_shell_script_stage_location, "@")),
+                    "mounted_token_path": constants.SPCS_MOUNTED_TOKEN_PATH,
                 }
             )
-            content_dict = yaml.safe_load(content)
-            yaml.dump(content_dict, spec_file)
+            spec_file.write(content)
             spec_file.seek(0)
             logger.debug(f"Kaniko job spec file: \n\n {spec_file.read()}")
 

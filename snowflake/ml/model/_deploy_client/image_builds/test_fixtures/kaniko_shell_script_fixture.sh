@@ -11,18 +11,41 @@ cleanup() {
   kill -- -$$ # Kill the entire process group. Extra $ to escape, the generated shell script should have two $.
 }
 
+# SNOW-990976, This is an additional safety check to ensure token file exists, on top of the token file check upon
+# launching SPCS job. This additional check could provide value in cases things go wrong with token refresh that result
+# in token file to disappear.
+wait_till_token_file_exists() {
+  timeout=60  # 1 minute timeout
+  elapsed_time=0
+
+  while [ ! -f "${SESSION_TOKEN_PATH}" ] && [ "$elapsed_time" -lt "$timeout" ]; do
+    sleep 1
+    elapsed_time=$((elapsed_time + 1))
+    remaining_time=$((timeout - elapsed_time))
+    echo "Waiting for token file to exist. Wait time remaining: ${remaining_time} seconds."
+  done
+
+  if [ ! -f "${SESSION_TOKEN_PATH}" ]; then
+    echo "Error: Token file '${SESSION_TOKEN_PATH}' does not show up within the ${timeout} seconds timeout period."
+    exit 1
+  fi
+}
+
 generate_registry_cred() {
+  wait_till_token_file_exists
   AUTH_TOKEN=$(printf '0auth2accesstoken:%s' "$(cat ${SESSION_TOKEN_PATH})" | base64);
   echo '{"auths":{"mock_image_repo":{"auth":"'"$AUTH_TOKEN"'"}}}' | tr -d '\n' > $REGISTRY_CRED_PATH;
 }
 
 on_session_token_change() {
+  wait_till_token_file_exists
   # Get the initial checksum of the file
   CHECKSUM=$(md5sum "${SESSION_TOKEN_PATH}" | awk '{ print $1 }')
   # Run the command once before the loop
   echo "Monitoring session token changes in the background..."
   (
     while true; do
+      wait_till_token_file_exists
       # Get the current checksum of the file
       CURRENT_CHECKSUM=$(md5sum "${SESSION_TOKEN_PATH}" | awk '{ print $1 }')
       if [ "${CURRENT_CHECKSUM}" != "${CHECKSUM}" ]; then

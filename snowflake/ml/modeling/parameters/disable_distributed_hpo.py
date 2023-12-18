@@ -1,8 +1,4 @@
 """Disables the distributed implementation of Grid Search and Randomized Search CV"""
-from snowflake.ml.modeling.model_selection.grid_search_cv import GridSearchCV
-from snowflake.ml.modeling.model_selection.randomized_search_cv import (
-    RandomizedSearchCV,
-)
+from snowflake.ml.modeling._internal.model_trainer_builder import ModelTrainerBuilder
 
-GridSearchCV._ENABLE_DISTRIBUTED = False
-RandomizedSearchCV._ENABLE_DISTRIBUTED = False
+ModelTrainerBuilder._ENABLE_DISTRIBUTED = False

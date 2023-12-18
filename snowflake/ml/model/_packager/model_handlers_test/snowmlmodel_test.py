@@ -31,21 +31,27 @@ class SnowMLModelHandlerTest(absltest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmpdir:
             s = {"predict": model_signature.infer_signature(df[INPUT_COLUMNS], regr.predict(df)[[OUTPUT_COLUMNS]])}
-            with self.assertRaises(ValueError):
+            with self.assertWarnsRegex(UserWarning, "Model signature will automatically be inferred during fitting"):
                 model_packager.ModelPackager(os.path.join(tmpdir, "model1")).save(
                     name="model1",
                     model=regr,
-                    signatures={**s, "another_predict": s["predict"]},
+                    signatures=s,
+                    metadata={"author": "halu", "version": "1"},
+                )
+            with self.assertWarnsRegex(UserWarning, "Model signature will automatically be inferred during fitting"):
+                model_packager.ModelPackager(os.path.join(tmpdir, "model1_no_sig")).save(
+                    name="model1_no_sig",
+                    model=regr,
+                    sample_input=df[INPUT_COLUMNS],
                     metadata={"author": "halu", "version": "1"},
                 )
 
+        with tempfile.TemporaryDirectory() as tmpdir:
             model_packager.ModelPackager(os.path.join(tmpdir, "model1")).save(
                 name="model1",
                 model=regr,
-                signatures=s,
                 metadata={"author": "halu", "version": "1"},
             )
-
             with warnings.catch_warnings():
                 warnings.simplefilter("error")
 
@@ -63,30 +69,6 @@ class SnowMLModelHandlerTest(absltest.TestCase):
                 predict_method = getattr(pk.model, "predict", None)
                 assert callable(predict_method)
                 np.testing.assert_allclose(predictions, predict_method(df[:1])[[OUTPUT_COLUMNS]])
-
-            model_packager.ModelPackager(os.path.join(tmpdir, "model1_no_sig")).save(
-                name="model1_no_sig",
-                model=regr,
-                sample_input=df[INPUT_COLUMNS],
-                metadata={"author": "halu", "version": "1"},
-            )
-
-            pk = model_packager.ModelPackager(os.path.join(tmpdir, "model1_no_sig"))
-            pk.load()
-            assert pk.model
-            assert pk.meta
-            assert isinstance(pk.model, LinearRegression)
-            np.testing.assert_allclose(predictions, desired=pk.model.predict(df[:1])[[OUTPUT_COLUMNS]])
-            s = regr.model_signatures
-            self.assertEqual(s["predict"], pk.meta.signatures["predict"])
-
-            pk = model_packager.ModelPackager(os.path.join(tmpdir, "model1_no_sig"))
-            pk.load(as_custom_model=True)
-            assert pk.model
-            assert pk.meta
-            predict_method = getattr(pk.model, "predict", None)
-            assert callable(predict_method)
-            np.testing.assert_allclose(predictions, predict_method(df[:1])[[OUTPUT_COLUMNS]])
 
     def test_snowml_signature_partial_input(self) -> None:
         iris = datasets.load_iris()
@@ -103,19 +85,9 @@ class SnowMLModelHandlerTest(absltest.TestCase):
         predictions = regr.predict(df[:1])[[OUTPUT_COLUMNS]]
 
         with tempfile.TemporaryDirectory() as tmpdir:
-            s = {"predict": model_signature.infer_signature(df[INPUT_COLUMNS], regr.predict(df)[[OUTPUT_COLUMNS]])}
-            with self.assertRaises(ValueError):
-                model_packager.ModelPackager(os.path.join(tmpdir, "model1")).save(
-                    name="model1",
-                    model=regr,
-                    signatures={**s, "another_predict": s["predict"]},
-                    metadata={"author": "halu", "version": "1"},
-                )
-
             model_packager.ModelPackager(os.path.join(tmpdir, "model1")).save(
                 name="model1",
                 model=regr,
-                signatures=s,
                 metadata={"author": "halu", "version": "1"},
             )
 
@@ -136,31 +108,6 @@ class SnowMLModelHandlerTest(absltest.TestCase):
                 predict_method = getattr(pk.model, "predict", None)
                 assert callable(predict_method)
                 np.testing.assert_allclose(predictions, predict_method(df[:1])[[OUTPUT_COLUMNS]])
-
-            model_packager.ModelPackager(os.path.join(tmpdir, "model1_no_sig")).save(
-                name="model1_no_sig",
-                model=regr,
-                sample_input=df,
-                metadata={"author": "halu", "version": "1"},
-            )
-
-            pk = model_packager.ModelPackager(os.path.join(tmpdir, "model1_no_sig"))
-            pk.load()
-            assert pk.model
-            assert pk.meta
-            assert isinstance(pk.model, LinearRegression)
-            np.testing.assert_allclose(predictions, pk.model.predict(df[:1])[[OUTPUT_COLUMNS]])
-            s = regr.model_signatures
-            # Compare the Model Signature without indexing
-            self.assertItemsEqual(s["predict"].to_dict(), pk.meta.signatures["predict"].to_dict())
-
-            pk = model_packager.ModelPackager(os.path.join(tmpdir, "model1_no_sig"))
-            pk.load(as_custom_model=True)
-            assert pk.model
-            assert pk.meta
-            predict_method = getattr(pk.model, "predict", None)
-            assert callable(predict_method)
-            np.testing.assert_allclose(predictions, predict_method(df[:1])[[OUTPUT_COLUMNS]])
 
     def test_snowml_signature_drop_input_cols(self) -> None:
         iris = datasets.load_iris()
@@ -179,19 +126,9 @@ class SnowMLModelHandlerTest(absltest.TestCase):
         predictions = regr.predict(df[:1])[[OUTPUT_COLUMNS]]
 
         with tempfile.TemporaryDirectory() as tmpdir:
-            s = {"predict": model_signature.infer_signature(df[INPUT_COLUMNS], regr.predict(df)[[OUTPUT_COLUMNS]])}
-            with self.assertRaises(ValueError):
-                model_packager.ModelPackager(os.path.join(tmpdir, "model1")).save(
-                    name="model1",
-                    model=regr,
-                    signatures={**s, "another_predict": s["predict"]},
-                    metadata={"author": "halu", "version": "1"},
-                )
-
             model_packager.ModelPackager(os.path.join(tmpdir, "model1")).save(
                 name="model1",
                 model=regr,
-                signatures=s,
                 metadata={"author": "halu", "version": "1"},
             )
 
@@ -212,31 +149,6 @@ class SnowMLModelHandlerTest(absltest.TestCase):
                 predict_method = getattr(pk.model, "predict", None)
                 assert callable(predict_method)
                 np.testing.assert_allclose(predictions, predict_method(df[:1])[[OUTPUT_COLUMNS]])
-
-            model_packager.ModelPackager(os.path.join(tmpdir, "model1_no_sig")).save(
-                name="model1_no_sig",
-                model=regr,
-                sample_input=df,
-                metadata={"author": "halu", "version": "1"},
-            )
-
-            pk = model_packager.ModelPackager(os.path.join(tmpdir, "model1_no_sig"))
-            pk.load()
-            assert pk.model
-            assert pk.meta
-            assert isinstance(pk.model, LinearRegression)
-            np.testing.assert_allclose(predictions, pk.model.predict(df[:1])[[OUTPUT_COLUMNS]])
-            s = regr.model_signatures
-            # Compare the Model Signature without indexing
-            self.assertItemsEqual(s["predict"].to_dict(), pk.meta.signatures["predict"].to_dict())
-
-            pk = model_packager.ModelPackager(os.path.join(tmpdir, "model1_no_sig"))
-            pk.load(as_custom_model=True)
-            assert pk.model
-            assert pk.meta
-            predict_method = getattr(pk.model, "predict", None)
-            assert callable(predict_method)
-            np.testing.assert_allclose(predictions, predict_method(df[:1])[[OUTPUT_COLUMNS]])
 
 
 if __name__ == "__main__":

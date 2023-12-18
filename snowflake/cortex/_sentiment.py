@@ -22,7 +22,7 @@ def Sentiment(
         A column of floats. 1 represents positive sentiment, -1 represents negative sentiment.
     """
 
-    return _sentiment_impl("snowflake.ml.sentiment", text, session=session)
+    return _sentiment_impl("snowflake.cortex.sentiment", text, session=session)
 
 
 def _sentiment_impl(

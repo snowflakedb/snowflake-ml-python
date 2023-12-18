@@ -1,5 +1,6 @@
 import inspect
 import time
+import traceback
 from typing import Any, Dict, Optional
 from unittest import mock
 
@@ -289,13 +290,23 @@ class TelemetryTest(parameterized.TestCase):
         {"params": {"default_stmt_params": {}}},
         {"params": {"default_stmt_params": {"default": 0}}},
     )
-    def test_add_stmt_params_to_df(self, params: Dict[str, Any]) -> None:
+    @mock.patch("snowflake.snowpark.session._get_active_sessions")
+    def test_add_stmt_params_to_df(self, mock_get_active_sessions: mock.MagicMock, params: Dict[str, Any]) -> None:
+        mock_get_active_sessions.return_value = {self.mock_session}
+
+        def extract_api_calls(captured: Any) -> Any:
+            assert isinstance(captured, DummyObject)
+            return captured.api_calls
+
         class DummyObject:
-            @utils_telemetry.add_stmt_params_to_df(
+            def __init__(self) -> None:
+                self.api_calls = [time.time, time.sleep]
+
+            @utils_telemetry.send_api_usage_telemetry(
                 project=_PROJECT,
                 subproject=_SUBPROJECT,
                 func_params_to_log=["default_stmt_params"],
-                api_calls=[time.time, time.sleep],
+                api_calls_extractor=extract_api_calls,
                 custom_tags={"custom_tag": "tag"},
             )
             def foo(self, default_stmt_params: Optional[Dict[str, Any]] = None) -> dataframe.DataFrame:
@@ -304,7 +315,7 @@ class TelemetryTest(parameterized.TestCase):
                     mock_df._statement_params = default_stmt_params.copy()  # type: ignore[assignment]
                 return mock_df
 
-            @utils_telemetry.add_stmt_params_to_df(
+            @utils_telemetry.send_api_usage_telemetry(
                 project=_PROJECT,
             )
             def foo2(self) -> "DummyObject":
@@ -315,8 +326,10 @@ class TelemetryTest(parameterized.TestCase):
         actual_statement_params = returned_df._statement_params
         full_func_name_time = utils_telemetry._get_full_func_name(time.time)
         full_func_name_sleep = utils_telemetry._get_full_func_name(time.sleep)
+        full_func_name_foo = utils_telemetry._get_full_func_name(DummyObject.foo)
         api_call_time = {utils_telemetry.TelemetryField.NAME.value: full_func_name_time}
         api_call_sleep = {utils_telemetry.TelemetryField.NAME.value: full_func_name_sleep}
+        api_call_foo = {utils_telemetry.TelemetryField.NAME.value: full_func_name_foo}
         expected_statement_params = {
             connector_telemetry.TelemetryField.KEY_SOURCE.value: _SOURCE,
             utils_telemetry.TelemetryField.KEY_PROJECT.value: _PROJECT,
@@ -329,7 +342,7 @@ class TelemetryTest(parameterized.TestCase):
             utils_telemetry.TelemetryField.KEY_FUNC_PARAMS.value: {
                 "default_stmt_params": repr(params["default_stmt_params"])
             },
-            utils_telemetry.TelemetryField.KEY_API_CALLS.value: [api_call_time, api_call_sleep],
+            utils_telemetry.TelemetryField.KEY_API_CALLS.value: [api_call_time, api_call_sleep, api_call_foo],
             utils_telemetry.TelemetryField.KEY_CUSTOM_TAGS.value: {"custom_tag": "tag"},
         }
         self.assertIsNotNone(actual_statement_params)
@@ -402,26 +415,101 @@ class TelemetryTest(parameterized.TestCase):
         self.assertNotIn(error_codes.UNDEFINED, str(ex.exception))
 
     @mock.patch("snowflake.snowpark.session._get_active_sessions")
-    def test_disable_telemetry(self, mock_get_active_sessions: mock.MagicMock) -> None:
-        mock_session = absltest.mock.MagicMock(spec=session.Session)
-        mock_server_conn = absltest.mock.MagicMock(spec=server_connection.ServerConnection)
-        mock_session._conn = mock_server_conn
-        mock_server_conn._conn = None
-        mock_get_active_sessions.return_value = {mock_session}
-
-        mock_session.telemetry_enabled = False
+    def test_snowml_nested_error_tb_1(self, mock_get_active_sessions: mock.MagicMock) -> None:
+        mock_get_active_sessions.return_value = {self.mock_session}
 
         class DummyObject:
             @utils_telemetry.send_api_usage_telemetry(
                 project=_PROJECT,
             )
             def foo(self) -> None:
-                raise exceptions.SnowflakeMLException(error_codes.INTERNAL_TEST, RuntimeError("Message"))
+                self.nested_foo()
+
+            def nested_foo(self) -> None:
+                raise RuntimeError("foo error")
 
         test_obj = DummyObject()
-        with self.assertRaises(RuntimeError):
+        try:
             test_obj.foo()
+        except RuntimeError:
+            self.assertIn("nested_foo", traceback.format_exc())
+
+    @mock.patch("snowflake.snowpark.session._get_active_sessions")
+    def test_snowml_nested_error_tb_2(self, mock_get_active_sessions: mock.MagicMock) -> None:
+        mock_get_active_sessions.return_value = {self.mock_session}
+
+        class DummyObject:
+            @utils_telemetry.send_api_usage_telemetry(
+                project=_PROJECT,
+            )
+            def foo(self) -> None:
+                self.nested_foo()
+
+            def nested_foo(self) -> None:
+                raise exceptions.SnowflakeMLException(
+                    error_code=error_codes.INTERNAL_TEST,
+                    original_exception=RuntimeError("foo error"),
+                )
+
+        test_obj = DummyObject()
+        try:
+            test_obj.foo()
+        except RuntimeError:
+            self.assertIn("nested_foo", traceback.format_exc())
+
+    @mock.patch("snowflake.snowpark.session._get_active_sessions")
+    def test_disable_telemetry(self, mock_get_active_sessions: mock.MagicMock) -> None:
+        mock_session = absltest.mock.MagicMock(spec=session.Session)
+        mock_session._conn = self.mock_server_conn
+
+        mock_session.telemetry_enabled = False
+        mock_get_active_sessions.return_value = {mock_session}
+
+        class DummyObject:
+            @utils_telemetry.send_api_usage_telemetry(
+                project=_PROJECT,
+            )
+            def foo(self) -> dataframe.DataFrame:
+                return absltest.mock.MagicMock(spec=dataframe.DataFrame)  # type: ignore[no-any-return]
+
+        test_obj = DummyObject()
+        returned_df = test_obj.foo()
+        actual_statement_params = returned_df._statement_params
+        # No client telemetry sent.
         self.mock_telemetry.try_add_log_to_batch.assert_not_called()
+        assert actual_statement_params is not None  # mypy
+        # Statement parameters updated to the returned dataframe.
+        self.assertEqual(actual_statement_params[connector_telemetry.TelemetryField.KEY_SOURCE.value], env.SOURCE)
+
+    @mock.patch("snowflake.snowpark.session._get_active_sessions")
+    def test_send_custom_usage(self, mock_get_active_sessions: mock.MagicMock) -> None:
+        mock_get_active_sessions.return_value = {self.mock_session}
+
+        project = "m_project"
+        subproject = "m_subproject"
+        telemetry_type = "m_telemetry_type"
+        tag = "m_tag"
+        data = {"k1": "v1", "k2": {"nested_k2": "nested_v2"}}
+        kwargs = {utils_telemetry.TelemetryField.KEY_CUSTOM_TAGS.value: tag}
+
+        with mock.patch.object(utils_telemetry._SourceTelemetryClient, "_send", return_value=None) as m_send:
+            utils_telemetry.send_custom_usage(
+                project=project, telemetry_type=telemetry_type, subproject=subproject, data=data, **kwargs
+            )
+
+            m_send.assert_called_once_with(
+                msg={
+                    "source": "SnowML",
+                    "project": project,
+                    "subproject": subproject,
+                    "version": _VERSION,
+                    "python_version": _PYTHON_VERSION,
+                    "operating_system": _OS,
+                    "type": telemetry_type,
+                    "data": data,
+                    "custom_tags": tag,
+                }
+            )
 
 
 if __name__ == "__main__":

@@ -278,6 +278,7 @@ class SimpleImputer(base.BaseTransformer):
             state = STRATEGY_TO_STATE_DICT[self.strategy]
             assert state is not None
             dataset_copy = copy.copy(dataset)
+            dataset_copy = dataset_copy.select(self.input_cols)
             if not pd.isna(self.missing_values):
                 # Replace `self.missing_values` with null to avoid including it when computing states.
                 dataset_copy = dataset_copy.na.replace(self.missing_values, None)
@@ -308,7 +309,6 @@ class SimpleImputer(base.BaseTransformer):
         return self
 
     @telemetry.send_api_usage_telemetry(project=base.PROJECT, subproject=_SUBPROJECT)
-    @telemetry.add_stmt_params_to_df(project=base.PROJECT, subproject=_SUBPROJECT)
     def transform(self, dataset: Union[snowpark.DataFrame, pd.DataFrame]) -> Union[snowpark.DataFrame, pd.DataFrame]:
         """
         Transform the input dataset by imputing the computed statistics in the input columns.

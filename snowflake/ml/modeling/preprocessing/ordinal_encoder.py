@@ -45,31 +45,47 @@ class OrdinalEncoder(base.BaseTransformer):
     (https://scikit-learn.org/stable/modules/generated/sklearn.preprocessing.OrdinalEncoder.html).
 
     Args:
-        categories: The string 'auto' (the default) causes the categories to be extracted from the input columns.
+        categories: Union[str, Dict[str, type_utils.LiteralNDArrayType]], default="auto"
+            The string 'auto' (the default) causes the categories to be extracted from the input columns.
             To specify the categories yourself, pass a dictionary mapping the column name to an ndarray containing the
             categories.
-        handle_unknown: Specifies how unknown categories are handled during transformation. Applicable only if
+
+        handle_unknown: str, default="error"
+            Specifies how unknown categories are handled during transformation. Applicable only if
             categories is not 'auto'.
             Valid values are:
                 - 'error': Raise an error if an unknown category is present during transform (default).
                 - 'use_encoded_value': When an unknown category is encountered during transform, the specified
                     encoded_missing_value (below) is used.
-        unknown_value: When the parameter handle_unknown is set to 'use_encoded_value', this parameter is required and
+
+        unknown_value: Optional[Union[int, float]], default=None
+            When the parameter handle_unknown is set to 'use_encoded_value', this parameter is required and
             will set the encoded value of unknown categories. It has to be distinct from the values used to encode any
             of the categories in `fit`.
-        encoded_missing_value: The value to be used to encode unknown categories.
-        input_cols: The name(s) of one or more columns in a DataFrame containing a feature to be encoded.
-        output_cols: The name(s) of one or more columns in a DataFrame in which results will be stored. The number of
+
+        encoded_missing_value: Union[int, float], default=np.nan
+            The value to be used to encode unknown categories.
+
+        input_cols: Optional[Union[str, List[str]]], default=None
+            The name(s) of one or more columns in a DataFrame containing a feature to be encoded.
+
+        output_cols: Optional[Union[str, List[str]]], default=None
+            The name(s) of one or more columns in a DataFrame in which results will be stored. The number of
             columns specified must match the number of input columns.
-        passthrough_cols: A string or a list of strings indicating column names to be excluded from any
+
+        passthrough_cols: Optional[Union[str, List[str]]], default=None
+            A string or a list of strings indicating column names to be excluded from any
             operations (such as train, transform, or inference). These specified column(s)
             will remain untouched throughout the process. This option is helpful in scenarios
             requiring automatic input_cols inference, but need to avoid using specific
             columns, like index columns, during training or inference.
-        drop_input_cols: Remove input columns from output if set True. False by default.
+
+        drop_input_cols: Optional[bool], default=False
+            Remove input columns from output if set True. False by default.
 
     Attributes:
-        categories_ (dict of ndarray): The categories of each feature determined during fitting. Maps input column
+        categories_ (dict of ndarray): List[type_utils.LiteralNDArrayType]
+            The categories of each feature determined during fitting. Maps input column
             names to an array of the detected categories.
             Attributes are valid only after fit() has been called.
     """
@@ -426,10 +442,6 @@ class OrdinalEncoder(base.BaseTransformer):
                     )
 
     @telemetry.send_api_usage_telemetry(
-        project=base.PROJECT,
-        subproject=base.SUBPROJECT,
-    )
-    @telemetry.add_stmt_params_to_df(
         project=base.PROJECT,
         subproject=base.SUBPROJECT,
     )

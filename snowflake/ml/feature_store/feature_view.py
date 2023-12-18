@@ -1,11 +1,16 @@
 from __future__ import annotations
 
 import json
+import re
 from collections import OrderedDict
 from dataclasses import dataclass
 from enum import Enum
 from typing import Dict, List, Optional
 
+from snowflake.ml._internal.exceptions import (
+    error_codes,
+    exceptions as snowml_exceptions,
+)
 from snowflake.ml._internal.utils.identifier import concat_names
 from snowflake.ml._internal.utils.sql_identifier import (
     SqlIdentifier,
@@ -21,9 +26,25 @@ from snowflake.snowpark.types import (
     _NumericType,
 )
 
-FEATURE_VIEW_NAME_DELIMITER = "$"
-TIMESTAMP_COL_PLACEHOLDER = "FS_TIMESTAMP_COL_PLACEHOLDER_VAL"
-FEATURE_OBJ_TYPE = "FEATURE_OBJ_TYPE"
+_FEATURE_VIEW_NAME_DELIMITER = "$"
+_TIMESTAMP_COL_PLACEHOLDER = "FS_TIMESTAMP_COL_PLACEHOLDER_VAL"
+_FEATURE_OBJ_TYPE = "FEATURE_OBJ_TYPE"
+_FEATURE_VIEW_VERSION_RE = re.compile("^([A-Za-z0-9_]*)$")
+
+
+class FeatureViewVersion(str):
+    def __new__(cls, version: str) -> FeatureViewVersion:
+        if not _FEATURE_VIEW_VERSION_RE.match(version):
+            raise snowml_exceptions.SnowflakeMLException(
+                error_code=error_codes.INVALID_ARGUMENT,
+                original_exception=ValueError(
+                    f"`{version}` is not a valid feature view version. Only letter, number and underscore is allowed."
+                ),
+            )
+        return super().__new__(cls, version.upper())
+
+    def __init__(self, version: str) -> None:
+        return super().__init__()
 
 
 class FeatureViewStatus(Enum):
@@ -52,16 +73,16 @@ class FeatureViewSlice:
         fvs_dict = {
             "feature_view_ref": self.feature_view_ref.to_json(),
             "names": self.names,
-            FEATURE_OBJ_TYPE: self.__class__.__name__,
+            _FEATURE_OBJ_TYPE: self.__class__.__name__,
         }
         return json.dumps(fvs_dict)
 
     @classmethod
     def from_json(cls, json_str: str, session: Session) -> FeatureViewSlice:
         json_dict = json.loads(json_str)
-        if FEATURE_OBJ_TYPE not in json_dict or json_dict[FEATURE_OBJ_TYPE] != cls.__name__:
+        if _FEATURE_OBJ_TYPE not in json_dict or json_dict[_FEATURE_OBJ_TYPE] != cls.__name__:
             raise ValueError(f"Invalid json str for {cls.__name__}: {json_str}")
-        del json_dict[FEATURE_OBJ_TYPE]
+        del json_dict[_FEATURE_OBJ_TYPE]
         json_dict["feature_view_ref"] = FeatureView.from_json(json_dict["feature_view_ref"], session)
         return cls(**json_dict)
 
@@ -108,7 +129,7 @@ class FeatureView:
         )
         self._desc: str = desc
         self._query: str = self._get_query()
-        self._version: Optional[SqlIdentifier] = None
+        self._version: Optional[FeatureViewVersion] = None
         self._status: FeatureViewStatus = FeatureViewStatus.DRAFT
         self._feature_desc: OrderedDict[SqlIdentifier, str] = OrderedDict((f, "") for f in self._get_feature_names())
         self._refresh_freq: Optional[str] = refresh_freq
@@ -211,7 +232,7 @@ class FeatureView:
         return self._query
 
     @property
-    def version(self) -> Optional[SqlIdentifier]:
+    def version(self) -> Optional[FeatureViewVersion]:
         return self._version
 
     @property
@@ -280,9 +301,9 @@ Got {len(self._feature_df.queries['queries'])}: {self._feature_df.queries['queri
         return str(self._feature_df.queries["queries"][0])
 
     def _validate(self) -> None:
-        if FEATURE_VIEW_NAME_DELIMITER in self._name:
+        if _FEATURE_VIEW_NAME_DELIMITER in self._name:
             raise ValueError(
-                f"FeatureView name `{self._name}` contains invalid character `{FEATURE_VIEW_NAME_DELIMITER}`."
+                f"FeatureView name `{self._name}` contains invalid character `{_FEATURE_VIEW_NAME_DELIMITER}`."
             )
 
         unescaped_df_cols = to_sql_identifiers(self._feature_df.columns)
@@ -295,8 +316,8 @@ Got {len(self._feature_df.queries['queries'])}: {self._feature_df.queries['queri
 
         if self._timestamp_col is not None:
             ts_col = self._timestamp_col
-            if ts_col == SqlIdentifier(TIMESTAMP_COL_PLACEHOLDER):
-                raise ValueError(f"Invalid timestamp_col name, cannot be {TIMESTAMP_COL_PLACEHOLDER}.")
+            if ts_col == SqlIdentifier(_TIMESTAMP_COL_PLACEHOLDER):
+                raise ValueError(f"Invalid timestamp_col name, cannot be {_TIMESTAMP_COL_PLACEHOLDER}.")
             if ts_col not in to_sql_identifiers(self._feature_df.columns):
                 raise ValueError(f"timestamp_col {ts_col} is not found in input dataframe.")
 
@@ -364,13 +385,13 @@ Got {len(self._feature_df.queries['queries'])}: {self._feature_df.queries['queri
 
     def to_json(self) -> str:
         state_dict = self._to_dict()
-        state_dict[FEATURE_OBJ_TYPE] = self.__class__.__name__
+        state_dict[_FEATURE_OBJ_TYPE] = self.__class__.__name__
         return json.dumps(state_dict)
 
     @classmethod
     def from_json(cls, json_str: str, session: Session) -> FeatureView:
         json_dict = json.loads(json_str)
-        if FEATURE_OBJ_TYPE not in json_dict or json_dict[FEATURE_OBJ_TYPE] != cls.__name__:
+        if _FEATURE_OBJ_TYPE not in json_dict or json_dict[_FEATURE_OBJ_TYPE] != cls.__name__:
             raise ValueError(f"Invalid json str for {cls.__name__}: {json_str}")
 
         return FeatureView._construct_feature_view(
@@ -391,13 +412,13 @@ Got {len(self._feature_df.queries['queries'])}: {self._feature_df.queries['queri
         )
 
     @staticmethod
-    def _get_physical_name(fv_name: SqlIdentifier, fv_version: SqlIdentifier) -> SqlIdentifier:
+    def _get_physical_name(fv_name: SqlIdentifier, fv_version: FeatureViewVersion) -> SqlIdentifier:
         return SqlIdentifier(
             concat_names(
                 [
-                    fv_name,
-                    FEATURE_VIEW_NAME_DELIMITER,
-                    fv_version,
+                    str(fv_name),
+                    _FEATURE_VIEW_NAME_DELIMITER,
+                    str(fv_version),
                 ]
             )
         )
@@ -426,7 +447,7 @@ Got {len(self._feature_df.queries['queries'])}: {self._feature_df.queries['queri
             timestamp_col=timestamp_col,
             desc=desc,
         )
-        fv._version = SqlIdentifier(version) if version is not None else None
+        fv._version = FeatureViewVersion(version) if version is not None else None
         fv._status = status
         fv._refresh_freq = refresh_freq
         fv._database = SqlIdentifier(database) if database is not None else None

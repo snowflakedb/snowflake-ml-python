@@ -1,5 +1,6 @@
+import collections
 import pathlib
-from typing import List, Optional
+from typing import List, Optional, cast
 
 import yaml
 
@@ -48,7 +49,6 @@ class ModelManifest:
         ]
         self.function_generator = function_generator.FunctionGenerator(model_file_rel_path=model_file_rel_path)
         self.methods: List[model_method.ModelMethod] = []
-        _seen_method_names: List[str] = []
         for target_method in model_meta.signatures.keys():
             method = model_method.ModelMethod(
                 model_meta=model_meta,
@@ -57,16 +57,17 @@ class ModelManifest:
                 function_generator=self.function_generator,
                 options=model_method.get_model_method_options_from_options(options, target_method),
             )
-            if method.method_name in _seen_method_names:
-                raise ValueError(
-                    f"Found duplicate method named resolved as {method.method_name} in the model. "
-                    "This might because you have methods with same letters but different cases. "
-                    "In this case, set case_sensitive as True for those methods to distinguish them"
-                )
-            else:
-                _seen_method_names.append(method.method_name)
 
             self.methods.append(method)
+
+        method_name_counter = collections.Counter([method.method_name for method in self.methods])
+        dup_method_names = [k for k, v in method_name_counter.items() if v > 1]
+        if dup_method_names:
+            raise ValueError(
+                f"Found duplicate method named resolved as {', '.join(dup_method_names)} in the model. "
+                "This might because you have methods with same letters but different cases. "
+                "In this case, set case_sensitive as True for those methods to distinguish them."
+            )
 
         manifest_dict = model_manifest_schema.ModelManifestDict(
             manifest_version=model_manifest_schema.MODEL_MANIFEST_VERSION,
@@ -84,3 +85,17 @@ class ModelManifest:
 
         with (self.workspace_path / ModelManifest.MANIFEST_FILE_REL_PATH).open("w", encoding="utf-8") as f:
             yaml.safe_dump(manifest_dict, f)
+
+    def load(self) -> model_manifest_schema.ModelManifestDict:
+        with (self.workspace_path / ModelManifest.MANIFEST_FILE_REL_PATH).open("r", encoding="utf-8") as f:
+            raw_input = yaml.safe_load(f)
+        if not isinstance(raw_input, dict):
+            raise ValueError(f"Read ill-formatted model MANIFEST, should be a dict, received {type(raw_input)}")
+
+        original_loaded_manifest_version = raw_input.get("manifest_version", None)
+        if not original_loaded_manifest_version:
+            raise ValueError("Unable to get the version of the MANIFEST file.")
+
+        res = cast(model_manifest_schema.ModelManifestDict, raw_input)
+
+        return res
