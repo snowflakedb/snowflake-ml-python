@@ -1,5 +1,16 @@
 # Release History
 
+## 1.2.0
+
+### Bug Fixes
+
+### Behavior Changes
+
+### New Features
+
+- Model Development: Introduced XGBoost external memory training feature. This feature enables training XGBoost models
+  on large datasets that don't fit into memory.
+
 ## 1.1.2
 
 ### Bug Fixes
