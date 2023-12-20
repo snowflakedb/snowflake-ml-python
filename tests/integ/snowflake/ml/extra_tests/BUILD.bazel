@@ -146,3 +146,13 @@ py_test(
         "//snowflake/ml/utils:connection_params",
     ],
 )
+
+py_test(
+    name = "xgboost_external_memory_training_test",
+    srcs = ["xgboost_external_memory_training_test.py"],
+    deps = [
+        "//snowflake/ml/modeling/metrics:classification",
+        "//snowflake/ml/modeling/xgboost:xgb_classifier",
+        "//snowflake/ml/utils:connection_params",
+    ],
+)

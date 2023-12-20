@@ -12,20 +12,18 @@ from typing import Any, Callable, Dict, List, Optional, Tuple, Union, cast
 
 from pytimeparse.timeparse import timeparse
 
-from snowflake import connector
 from snowflake.ml._internal import telemetry
 from snowflake.ml._internal.exceptions import (
     error_codes,
     exceptions as snowml_exceptions,
 )
-from snowflake.ml._internal.utils import identifier, query_result_checker as qrc
+from snowflake.ml._internal.utils import identifier
 from snowflake.ml._internal.utils.sql_identifier import (
     SqlIdentifier,
     to_sql_identifiers,
 )
 from snowflake.ml.dataset.dataset import Dataset, FeatureStoreMetadata
 from snowflake.ml.feature_store.entity import (
-    _ENTITY_JOIN_KEY_DELIMITER,
     _ENTITY_NAME_LENGTH_LIMIT,
     _FEATURE_VIEW_ENTITY_TAG_DELIMITER,
     Entity,
@@ -240,13 +238,15 @@ class FeatureStore:
                 suppress_source_trace=True,
             )
 
-        join_keys_str = _ENTITY_JOIN_KEY_DELIMITER.join(entity.join_keys)
+        # allowed_values will add double-quotes around each value, thus use resolved str here.
+        join_keys = [f"'{key.resolved()}'" for key in entity.join_keys]
+        join_keys_str = ",".join(join_keys)
         full_tag_name = self._get_fully_qualified_name(tag_name)
-        self._session.sql(f"CREATE TAG IF NOT EXISTS {full_tag_name} COMMENT = '{entity.desc}'").collect(
-            statement_params=self._telemetry_stmp
-        )
         self._session.sql(
-            f"ALTER SCHEMA {self._config.full_schema_path} SET TAG {full_tag_name} = '{join_keys_str}'"
+            f"""CREATE TAG IF NOT EXISTS {full_tag_name}
+                ALLOWED_VALUES {join_keys_str}
+                COMMENT = '{entity.desc}'
+            """
         ).collect(statement_params=self._telemetry_stmp)
         logger.info(f"Registered Entity {entity}.")
 
@@ -681,30 +681,14 @@ class FeatureStore:
             Snowpark DataFrame containing the results.
         """
         prefix_len = len(_ENTITY_TAG_PREFIX) + 1
-        tag_values_df = self._session.sql(
-            f"""
-            SELECT SUBSTR(TAG_NAME,{prefix_len},{_ENTITY_NAME_LENGTH_LIMIT}) AS NAME,
-            TAG_VALUE AS JOIN_KEYS
-            FROM TABLE(
-                {self._config.database}.INFORMATION_SCHEMA.TAG_REFERENCES(
-                '{self._config.full_schema_path}',
-                'SCHEMA'
-            )
-            )
-            WHERE TAG_NAME LIKE '{_ENTITY_TAG_PREFIX}%'
-        """
-        )
-        tag_metadata_df = self._session.sql(
-            f"SHOW TAGS LIKE '{_ENTITY_TAG_PREFIX}%' IN SCHEMA {self._config.full_schema_path}"
-        )
         return cast(
             DataFrame,
-            tag_values_df.join(
-                right=tag_metadata_df.with_column("NAME", F.substr('"name"', prefix_len, _ENTITY_NAME_LENGTH_LIMIT))
-                .with_column_renamed('"comment"', "DESC")
-                .select("NAME", "DESC"),
-                on=["NAME"],
-                how="left",
+            self._session.sql(
+                f"SHOW TAGS LIKE '{_ENTITY_TAG_PREFIX}%' IN SCHEMA {self._config.full_schema_path}"
+            ).select(
+                F.col('"name"').substr(prefix_len, _ENTITY_NAME_LENGTH_LIMIT).alias("NAME"),
+                F.col('"allowed_values"').alias("JOIN_KEYS"),
+                F.col('"comment"').alias("DESC"),
             ),
         )
 
@@ -725,54 +709,25 @@ class FeatureStore:
             SnowflakeMLException: [RuntimeError] Failed to find resources.
         """
         name = SqlIdentifier(name)
-
-        full_entity_tag_name = self._get_entity_name(name)
-        prefix_len = len(_ENTITY_TAG_PREFIX) + 1
-
-        found_tags = self._find_object("TAGS", full_entity_tag_name)
-        if len(found_tags) == 0:
-            raise snowml_exceptions.SnowflakeMLException(
-                error_code=error_codes.NOT_FOUND,
-                original_exception=ValueError(f"Cannot find Entity with name {name}."),
-            )
-
         try:
-            physical_name = self._get_entity_name(name)
-            tag_values = (
-                qrc.SqlResultValidator(
-                    self._session,
-                    f"""
-                        SELECT SUBSTR(TAG_NAME,{prefix_len},{_ENTITY_NAME_LENGTH_LIMIT}) AS NAME,
-                        TAG_VALUE AS JOIN_KEYS
-                        FROM TABLE(
-                            {self._config.database}.INFORMATION_SCHEMA.TAG_REFERENCES(
-                            '{self._config.full_schema_path}',
-                            'SCHEMA'
-                        )
-                        )
-                        WHERE TAG_NAME LIKE '{physical_name.resolved()}'
-                        AND TAG_DATABASE = '{self._config.database.resolved()}'
-                    """,
-                    self._telemetry_stmp,
-                )
-                .has_dimensions(expected_rows=1)
-                .validate()
-            )
-        except connector.DataError as e:  # raised by SqlResultValidator
-            raise snowml_exceptions.SnowflakeMLException(
-                error_code=error_codes.NOT_FOUND,
-                original_exception=ValueError(f"Cannot find Entity with name {name}."),
-            ) from e
+            result = self.list_entities().filter(F.col("NAME") == name.resolved()).collect()
         except Exception as e:
             raise snowml_exceptions.SnowflakeMLException(
                 error_code=error_codes.INTERNAL_SNOWPARK_ERROR,
-                original_exception=RuntimeError(f"Failed to retrieve tag reference information: {e}"),
+                original_exception=RuntimeError(f"Failed to list entities: {e}"),
             ) from e
+        if len(result) == 0:
+            raise snowml_exceptions.SnowflakeMLException(
+                error_code=error_codes.NOT_FOUND,
+                original_exception=ValueError(f"Cannot find Entity with name: {name}."),
+            )
 
+        raw_join_keys = result[0]["JOIN_KEYS"]
+        join_keys = raw_join_keys.strip("[]").split(",")
         return Entity(
-            name=tag_values[0]["NAME"],
-            join_keys=tag_values[0]["JOIN_KEYS"].split(_ENTITY_JOIN_KEY_DELIMITER),
-            desc=found_tags[0]["comment"],
+            name=result[0]["NAME"],
+            join_keys=join_keys,
+            desc=result[0]["DESC"],
         )
 
     @dispatch_decorator(prpr_version="1.0.8")
@@ -807,9 +762,6 @@ class FeatureStore:
 
         tag_name = self._get_fully_qualified_name(self._get_entity_name(name))
         try:
-            self._session.sql(f"ALTER SCHEMA {self._config.full_schema_path} UNSET TAG {tag_name}").collect(
-                statement_params=self._telemetry_stmp
-            )
             self._session.sql(f"DROP TAG IF EXISTS {tag_name}").collect(statement_params=self._telemetry_stmp)
         except Exception as e:
             raise snowml_exceptions.SnowflakeMLException(
