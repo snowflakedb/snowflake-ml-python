@@ -109,12 +109,12 @@ def _run_setup() -> None:
                 from snowflake.ml.model._packager import model_packager
 
                 pk = model_packager.ModelPackager(extracted_dir)
+                # SPCS spec will convert all environment variables as strings.
+                use_gpu = os.environ.get("SNOWML_USE_GPU", "False").lower() == "true"
                 pk.load(
                     as_custom_model=True,
                     meta_only=False,
-                    options=model_types.ModelLoadOption(
-                        {"use_gpu": cast(bool, os.environ.get("SNOWML_USE_GPU", False))}
-                    ),
+                    options=model_types.ModelLoadOption({"use_gpu": use_gpu}),
                 )
                 _LOADED_MODEL = pk.model
                 _LOADED_META = pk.meta

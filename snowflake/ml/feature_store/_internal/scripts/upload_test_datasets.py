@@ -1,5 +1,11 @@
-# A helper script cleans open taxi data (https://www.nyc.gov/site/tlc/about/tlc-trip-record-data.page)
-# and store into snowflake database.
+"""
+A helper script cleans open taxi data (https://www.nyc.gov/site/tlc/about/tlc-trip-record-data.page)
+and store into snowflake database.
+
+Download yellow trip data(2016 Jan): https://www.nyc.gov/site/tlc/about/tlc-trip-record-data.page.
+Download wine data:
+https://www.google.com/url?q=https://github.com/snowflakedb/snowml/blob/main/snowflake/ml/feature_store/notebooks/customer_demo/winequality-red.csv&sa=D&source=docs&ust=1702084016573738&usg=AOvVaw3r_muH0_LKBDr45C1Gj3cb
+"""
 
 from absl.logging import logging
 
