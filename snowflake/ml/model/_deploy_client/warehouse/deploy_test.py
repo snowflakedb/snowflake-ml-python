@@ -1,3 +1,4 @@
+import platform
 import tempfile
 import textwrap
 from importlib import metadata as importlib_metadata
@@ -40,18 +41,7 @@ _BASIC_DEPENDENCIES_FINAL_PACKAGES = list(
 class TestFinalPackagesWithoutConda(absltest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
-        env_utils._INFO_SCHEMA_PACKAGES_HAS_RUNTIME_VERSION = None
         cls.m_session = mock_session.MockSession(conn=None, test_case=None)
-        cls.m_session.add_mock_sql(
-            query=textwrap.dedent(
-                """
-                SHOW COLUMNS
-                LIKE 'runtime_version'
-                IN TABLE information_schema.packages;
-                """
-            ),
-            result=mock_data_frame.MockDataFrame(count_result=0),
-        )
 
     def setUp(self) -> None:
         self.add_packages(
@@ -76,7 +66,9 @@ class TestFinalPackagesWithoutConda(absltest.TestCase):
             SELECT PACKAGE_NAME, VERSION
             FROM information_schema.packages
             WHERE ({pkg_names_str})
-            AND language = 'python';
+            AND language = 'python'
+            AND (runtime_version = '{platform.python_version_tuple()[0]}.{platform.python_version_tuple()[1]}'
+                OR runtime_version is null);
             """
         )
         sql_result = [

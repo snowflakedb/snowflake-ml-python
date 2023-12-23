@@ -14,33 +14,32 @@ class TestEnvUtils(absltest.TestCase):
         self._session.close()
 
     def test_validate_requirement_in_snowflake_conda_channel(self) -> None:
-        res = env_utils.validate_requirements_in_information_schema(
+        res = env_utils.get_matched_package_versions_in_information_schema(
             session=self._session, reqs=[requirements.Requirement("xgboost")], python_version=snowml_env.PYTHON_VERSION
         )
-        self.assertNotEmpty(res)
+        self.assertNotEmpty(res["xgboost"])
 
-        res = env_utils.validate_requirements_in_information_schema(
+        res = env_utils.get_matched_package_versions_in_information_schema(
             session=self._session,
             reqs=[requirements.Requirement("xgboost"), requirements.Requirement("pytorch")],
             python_version=snowml_env.PYTHON_VERSION,
         )
-        self.assertNotEmpty(res)
+        self.assertNotEmpty(res["xgboost"])
+        self.assertNotEmpty(res["pytorch"])
 
-        self.assertIsNone(
-            env_utils.validate_requirements_in_information_schema(
-                session=self._session,
-                reqs=[requirements.Requirement("xgboost==1.0.*")],
-                python_version=snowml_env.PYTHON_VERSION,
-            )
+        res = env_utils.get_matched_package_versions_in_information_schema(
+            session=self._session,
+            reqs=[requirements.Requirement("xgboost==1.0.*")],
+            python_version=snowml_env.PYTHON_VERSION,
         )
+        self.assertEmpty(res["xgboost"])
 
-        self.assertIsNone(
-            env_utils.validate_requirements_in_information_schema(
-                session=self._session,
-                reqs=[requirements.Requirement("python-package")],
-                python_version=snowml_env.PYTHON_VERSION,
-            )
+        res = env_utils.get_matched_package_versions_in_information_schema(
+            session=self._session,
+            reqs=[requirements.Requirement("python-package")],
+            python_version=snowml_env.PYTHON_VERSION,
         )
+        self.assertNotIn("python-package", res)
 
 
 if __name__ == "__main__":

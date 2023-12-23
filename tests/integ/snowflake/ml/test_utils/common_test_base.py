@@ -9,11 +9,10 @@ from absl.testing import absltest, parameterized
 from packaging import requirements
 from typing_extensions import Concatenate, ParamSpec
 
-from snowflake.ml._internal import env_utils, file_utils
-from snowflake.ml.utils import connection_params
+from snowflake.ml._internal import env, env_utils, file_utils
 from snowflake.snowpark import functions as F, session
 from snowflake.snowpark._internal import udf_utils, utils as snowpark_utils
-from tests.integ.snowflake.ml.test_utils import _snowml_requirements
+from tests.integ.snowflake.ml.test_utils import _snowml_requirements, test_env_utils
 
 _V = TypeVar("_V", bound="CommonTestBase")
 _T_args = ParamSpec("_T_args")
@@ -40,11 +39,7 @@ def get_function_body(func: Callable[..., Any]) -> str:
 class CommonTestBase(parameterized.TestCase):
     def setUp(self) -> None:
         """Creates Snowpark and Snowflake environments for testing."""
-        self.session = (
-            session._get_active_session()
-            if snowpark_utils.is_in_stored_procedure()  # type: ignore[no-untyped-call] #
-            else session.Session.builder.configs(connection_params.SnowflakeLoginOptions()).create()
-        )
+        self.session = test_env_utils.get_available_session()
 
     def tearDown(self) -> None:
         if not snowpark_utils.is_in_stored_procedure():  # type: ignore[no-untyped-call]
@@ -242,10 +237,12 @@ def {func_name}({first_arg_name}: snowflake.snowpark.Session, {", ".join(arg_lis
                 actual_method(self, *args, **kwargs)
 
             additional_cases = [
-                {"_snowml_pkg_ver": pkg_ver}
-                for pkg_ver in env_utils.get_matched_package_versions_in_snowflake_conda_channel(
-                    req=requirements.Requirement(f"snowflake-ml-python{version_range}")
-                )
+                {"_snowml_pkg_ver": str(pkg_ver)}
+                for pkg_ver in env_utils.get_matched_package_versions_in_information_schema(
+                    test_env_utils.get_available_session(),
+                    [requirements.Requirement(f"{env_utils.SNOWPARK_ML_PKG_NAME}{version_range}")],
+                    python_version=env.PYTHON_VERSION,
+                )[env_utils.SNOWPARK_ML_PKG_NAME]
             ]
 
             modified_test_cases = [{**t1, **t2} for t1 in test_cases for t2 in additional_cases]
