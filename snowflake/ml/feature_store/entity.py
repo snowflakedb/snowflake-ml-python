@@ -10,6 +10,9 @@ _FEATURE_VIEW_ENTITY_TAG_DELIMITER = ","
 _ENTITY_JOIN_KEY_DELIMITER = ","
 # join key length limit is the length limit of TAG value
 _ENTITY_JOIN_KEY_LENGTH_LIMIT = 256
+# The maximum number of join keys:
+#   https://docs.snowflake.com/en/user-guide/object-tagging#specify-tag-values
+_ENTITY_MAX_NUM_JOIN_KEYS = 300
 
 
 class Entity:
@@ -39,14 +42,18 @@ class Entity:
             raise ValueError(f"Entity name `{name}` exceeds maximum length: {_ENTITY_NAME_LENGTH_LIMIT}")
         if _FEATURE_VIEW_ENTITY_TAG_DELIMITER in name:
             raise ValueError(f"Entity name contains invalid char: `{_FEATURE_VIEW_ENTITY_TAG_DELIMITER}`")
+        if len(join_keys) > _ENTITY_MAX_NUM_JOIN_KEYS:
+            raise ValueError(
+                f"Maximum number of join keys are {_ENTITY_MAX_NUM_JOIN_KEYS}, " "but {len(join_keys)} is provided."
+            )
         if len(set(join_keys)) != len(join_keys):
             raise ValueError(f"Duplicate join keys detected in: {join_keys}")
-        if len(_FEATURE_VIEW_ENTITY_TAG_DELIMITER.join(join_keys)) > _ENTITY_JOIN_KEY_LENGTH_LIMIT:
-            raise ValueError(f"Total length of join keys exceeded maximum length: {_ENTITY_JOIN_KEY_LENGTH_LIMIT}")
-
         for k in join_keys:
+            # TODO(wezhou) move this logic into SqlIdentifier.
             if _ENTITY_JOIN_KEY_DELIMITER in k:
                 raise ValueError(f"Invalid char `{_ENTITY_JOIN_KEY_DELIMITER}` detected in join key {k}")
+            if len(k) > _ENTITY_JOIN_KEY_LENGTH_LIMIT:
+                raise ValueError(f"Join key: {k} exceeds length limit {_ENTITY_JOIN_KEY_LENGTH_LIMIT}.")
 
     def _to_dict(self) -> Dict[str, str]:
         entity_dict = self.__dict__.copy()

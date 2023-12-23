@@ -38,7 +38,11 @@ class ModelManifestTest(absltest.TestCase):
                 model_dir_path=tmpdir, name="model1", model_type="custom", signatures=_DUMMY_SIG
             ) as meta:
                 meta.models["model1"] = _DUMMY_BLOB
-                with mock.patch.object(env_utils, "validate_requirements_in_information_schema", return_value=[""]):
+                with mock.patch.object(
+                    env_utils,
+                    "get_matched_package_versions_in_information_schema",
+                    return_value={env_utils.SNOWPARK_ML_PKG_NAME: [""]},
+                ):
                     mm.save(self.m_session, meta, pathlib.PurePosixPath("model.zip"))
                 with open(os.path.join(workspace, "MANIFEST.yml"), encoding="utf-8") as f:
                     loaded_manifest = yaml.safe_load(f)
@@ -87,7 +91,11 @@ class ModelManifestTest(absltest.TestCase):
                 signatures={"__call__": _DUMMY_SIG["predict"]},
             ) as meta:
                 meta.models["model1"] = _DUMMY_BLOB
-                with mock.patch.object(env_utils, "validate_requirements_in_information_schema", return_value=[""]):
+                with mock.patch.object(
+                    env_utils,
+                    "get_matched_package_versions_in_information_schema",
+                    return_value={env_utils.SNOWPARK_ML_PKG_NAME: [""]},
+                ):
                     mm.save(
                         self.m_session,
                         meta,
@@ -143,7 +151,11 @@ class ModelManifestTest(absltest.TestCase):
                 signatures={"predict": _DUMMY_SIG["predict"], "__call__": _DUMMY_SIG["predict"]},
             ) as meta:
                 meta.models["model1"] = _DUMMY_BLOB
-                with mock.patch.object(env_utils, "validate_requirements_in_information_schema", return_value=None):
+                with mock.patch.object(
+                    env_utils,
+                    "get_matched_package_versions_in_information_schema",
+                    return_value={env_utils.SNOWPARK_ML_PKG_NAME: []},
+                ):
                     mm.save(
                         self.m_session,
                         meta,
@@ -220,7 +232,11 @@ class ModelManifestTest(absltest.TestCase):
                 signatures={"predict": _DUMMY_SIG["predict"], "PREDICT": _DUMMY_SIG["predict"]},
             ) as meta:
                 meta.models["model1"] = _DUMMY_BLOB
-                with mock.patch.object(env_utils, "validate_requirements_in_information_schema", return_value=[""]):
+                with mock.patch.object(
+                    env_utils,
+                    "get_matched_package_versions_in_information_schema",
+                    return_value={env_utils.SNOWPARK_ML_PKG_NAME: []},
+                ):
                     with self.assertRaisesRegex(
                         ValueError, "Found duplicate method named resolved as PREDICT in the model."
                     ):

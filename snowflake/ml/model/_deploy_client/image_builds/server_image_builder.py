@@ -117,7 +117,7 @@ class ServerImageBuilder(base_image_builder.ImageBuilder):
 
         kaniko_shell_file = os.path.join(self.context_dir, constants.KANIKO_SHELL_SCRIPT_NAME)
 
-        with open(kaniko_shell_file, "w+", encoding="utf-8") as script_file:
+        with open(kaniko_shell_file, "w+", newline="\n", encoding="utf-8") as script_file:
             normed_artifact_stage_path = posixpath.normpath(identifier.remove_prefix(self.artifact_stage_location, "@"))
             params = {
                 # Remove @ in the beginning, append "/" to denote root directory.

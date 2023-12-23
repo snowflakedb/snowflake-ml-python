@@ -4,11 +4,10 @@ import io
 import os
 import posixpath
 import sys
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Set, Tuple, Union
 
 import cloudpickle as cp
 import numpy as np
-from scipy.stats import rankdata
 from sklearn import model_selection
 
 from snowflake.ml._internal import telemetry
@@ -26,7 +25,8 @@ from snowflake.snowpark._internal.utils import (
     TempObjectType,
     random_name_for_temp_object,
 )
-from snowflake.snowpark.functions import col, sproc, udtf
+from snowflake.snowpark.functions import sproc, udtf
+from snowflake.snowpark.row import Row
 from snowflake.snowpark.types import IntegerType, StringType, StructField, StructType
 
 cp.register_pickle_by_value(inspect.getmodule(get_temp_file_path))
@@ -34,6 +34,131 @@ cp.register_pickle_by_value(inspect.getmodule(identifier.get_inferred_name))
 
 _PROJECT = "ModelDevelopment"
 DEFAULT_UDTF_NJOBS = 3
+
+
+def construct_cv_results(
+    cv_results_raw_hex: List[Row], cross_validator_indices_length: int, parameter_grid_length: int
+) -> Tuple[bool, Dict[str, Any], int, Set[str]]:
+    """Construct the cross validation result from the UDF. Because we accelerate the process
+    by the number of cross validation number, and the combination of parameter grids.
+    Therefore, we need to stick them back together instead of returning the raw result
+    to align with original sklearn result.
+
+    Args:
+        cv_results_raw_hex (List[Row]): the list of cv_results from each cv and parameter grid combination.
+            Because UDxF can only return string, and numpy array/masked arrays cannot be encoded in a
+            json format. Each cv_result is encoded into hex string.
+        cross_validator_indices_length (int): the length of cross validator indices
+        parameter_grid_length (int): the length of parameter grid combination
+
+    Raises:
+        ValueError: Retrieved empty cross validation results
+        ValueError: Cross validator index length is 0
+        ValueError: Parameter index length is 0
+        ValueError: Retrieved incorrect dataframe dimension from Snowpark's UDTF.
+        RuntimeError: Cross validation results are unexpectedly empty for one fold.
+
+    Returns:
+        Tuple[bool, Dict[str, Any], int, Set[str]]: returns multimetric, cv_results_, best_param_index, scorers
+    """
+    # Filter corner cases: either the snowpark dataframe result is empty; or index length is empty
+    if len(cv_results_raw_hex) == 0:
+        raise ValueError(
+            "Retrieved empty cross validation results from snowpark. Please retry or contact snowflake support."
+        )
+    if cross_validator_indices_length == 0:
+        raise ValueError("Cross validator index length is 0. Was the CV iterator empty? ")
+    if parameter_grid_length == 0:
+        raise ValueError("Parameter index length is 0. Were there no candidates?")
+
+    from scipy.stats import rankdata
+
+    # cv_result maintains the original order
+    multimetric = False
+    cv_results_ = dict()
+    scorers = set()
+    # retrieve the cv_results from udtf table; results are encoded by hex and cloudpickle;
+    # We are constructing the raw information back to original form
+    if len(cv_results_raw_hex) != cross_validator_indices_length * parameter_grid_length:
+        raise ValueError(
+            "Retrieved incorrect dataframe dimension from Snowpark's UDTF."
+            f"Expected {cross_validator_indices_length * parameter_grid_length}, got {len(cv_results_raw_hex)}. "
+            "Please retry or contact snowflake support."
+        )
+
+    for param_cv_indices, each_cv_result_hex in enumerate(cv_results_raw_hex):
+        # convert the hex string back to cv_results_
+        hex_str = bytes.fromhex(each_cv_result_hex[0])
+        with io.BytesIO(hex_str) as f_reload:
+            each_cv_result = cp.load(f_reload)
+            if not each_cv_result:
+                raise RuntimeError(
+                    "Cross validation response is empty. This issue may be temporary - please try again."
+                )
+            for k, v in each_cv_result.items():
+                cur_cv_idx = param_cv_indices % cross_validator_indices_length
+                key = k
+                if "split0_test_" in k:
+                    # For multi-metric evaluation, the scores for all the scorers are available in the
+                    # cv_results_ dict at the keys ending with that scorer’s name ('_<scorer_name>')
+                    # instead of '_score'.
+                    scorers.add(k[len("split0_test_") :])
+                    key = k.replace("split0_test", f"split{cur_cv_idx}_test")
+                elif k.startswith("param"):
+                    if cur_cv_idx != 0:
+                        continue
+                if key:
+                    if key not in cv_results_:
+                        cv_results_[key] = v
+                    else:
+                        cv_results_[key] = np.concatenate([cv_results_[key], v])
+
+    multimetric = len(scorers) > 1
+    # Use numpy to re-calculate all the information in cv_results_ again
+    # Generally speaking, reshape all the results into the (scorers+2, idx_length, params_length) shape,
+    # and average them by the idx_length;
+    # idx_length is the number of cv folds; params_length is the number of parameter combinations
+    scores = [
+        np.reshape(
+            np.concatenate(
+                [cv_results_[f"split{cur_cv}_test_{score}"] for cur_cv in range(cross_validator_indices_length)]
+            ),
+            (cross_validator_indices_length, -1),
+        )
+        for score in scorers
+    ]
+
+    fit_score_test_matrix = np.stack(
+        [
+            np.reshape(cv_results_["mean_fit_time"], (cross_validator_indices_length, -1)),
+            np.reshape(cv_results_["mean_score_time"], (cross_validator_indices_length, -1)),
+        ]
+        + scores
+    )
+
+    mean_fit_score_test_matrix = np.mean(fit_score_test_matrix, axis=1)
+    std_fit_score_test_matrix = np.std(fit_score_test_matrix, axis=1)
+    cv_results_["std_fit_time"] = std_fit_score_test_matrix[0]
+    cv_results_["mean_fit_time"] = mean_fit_score_test_matrix[0]
+    cv_results_["std_score_time"] = std_fit_score_test_matrix[1]
+    cv_results_["mean_score_time"] = mean_fit_score_test_matrix[1]
+    for idx, score in enumerate(scorers):
+        cv_results_[f"std_test_{score}"] = std_fit_score_test_matrix[idx + 2]
+        cv_results_[f"mean_test_{score}"] = mean_fit_score_test_matrix[idx + 2]
+        # re-compute the ranking again with mean_test_<score>.
+        cv_results_[f"rank_test_{score}"] = rankdata(-cv_results_[f"mean_test_{score}"], method="min")
+        # The best param is the highest ranking (which is 1) and we choose the first time ranking 1 appeared.
+        # If all scores are `nan`, `rankdata` will also produce an array of `nan` values.
+        # In that case, default to first index.
+        best_param_index = (
+            np.where(cv_results_[f"rank_test_{score}"] == 1)[0][0]
+            if not np.isnan(cv_results_[f"rank_test_{score}"]).all()
+            else 0
+        )
+    return multimetric, cv_results_, best_param_index, scorers
+
+
+cp.register_pickle_by_value(inspect.getmodule(construct_cv_results))
 
 
 class DistributedHPOTrainer(SnowparkModelTrainer):
@@ -105,7 +230,7 @@ class DistributedHPOTrainer(SnowparkModelTrainer):
         temp_stage_creation_query = f"CREATE OR REPLACE TEMP STAGE {temp_stage_name};"
         session.sql(temp_stage_creation_query).collect()
 
-        # Stage data.
+        # Stage data as parquet file
         dataset = snowpark_dataframe_utils.cast_snowpark_dataframe(dataset)
         remote_file_path = f"{temp_stage_name}/{temp_stage_name}.parquet"
         dataset.write.copy_into_location(  # type:ignore[call-overload]
@@ -114,6 +239,7 @@ class DistributedHPOTrainer(SnowparkModelTrainer):
         imports = [f"@{row.name}" for row in session.sql(f"LIST @{temp_stage_name}").collect()]
 
         # Store GridSearchCV's refit variable. If user set it as False, we don't need to refit it again
+        # refit variable can be boolean, string or callable
         original_refit = estimator.refit
 
         # Create a temp file and dump the estimator to that file.
@@ -208,7 +334,7 @@ class DistributedHPOTrainer(SnowparkModelTrainer):
                 for file_name in data_files
             ]
             df = pd.concat(partial_df, ignore_index=True)
-            df.columns = [identifier.get_inferred_name(col) for col in df.columns]
+            df.columns = [identifier.get_inferred_name(col_) for col_ in df.columns]
 
             X = df[input_cols]
             y = df[label_cols].squeeze() if label_cols else None
@@ -222,11 +348,12 @@ class DistributedHPOTrainer(SnowparkModelTrainer):
             with open(local_estimator_file_path, mode="r+b") as local_estimator_file_obj:
                 estimator = cp.load(local_estimator_file_obj)["estimator"]
 
-            cv_orig = check_cv(estimator.cv, y, classifier=is_classifier(estimator.estimator))
-            indices = [test for _, test in cv_orig.split(X, y)]
+            build_cross_validator = check_cv(estimator.cv, y, classifier=is_classifier(estimator.estimator))
+            # store the cross_validator's test indices only to save space
+            cross_validator_indices = [test for _, test in build_cross_validator.split(X, y)]
             local_indices_file_name = get_temp_file_path()
             with open(local_indices_file_name, mode="w+b") as local_indices_file_obj:
-                cp.dump(indices, local_indices_file_obj)
+                cp.dump(cross_validator_indices, local_indices_file_obj)
 
             # Put locally serialized indices on stage.
             put_result = session.file.put(
@@ -237,7 +364,8 @@ class DistributedHPOTrainer(SnowparkModelTrainer):
             )
             indices_location = put_result[0].target
             imports.append(f"@{temp_stage_name}/{indices_location}")
-            indices_len = len(indices)
+            cross_validator_indices_length = int(len(cross_validator_indices))
+            parameter_grid_length = len(param_grid)
 
             assert estimator is not None
 
@@ -261,7 +389,7 @@ class DistributedHPOTrainer(SnowparkModelTrainer):
                     for file_name in data_files
                 ]
                 df = pd.concat(partial_df, ignore_index=True)
-                df.columns = [identifier.get_inferred_name(col) for col in df.columns]
+                df.columns = [identifier.get_inferred_name(col_) for col_ in df.columns]
 
                 # load estimator
                 local_estimator_file_path = os.path.join(
@@ -299,16 +427,30 @@ class DistributedHPOTrainer(SnowparkModelTrainer):
                     self.data_length = data_length
                     self.params_to_evaluate = params_to_evaluate
 
-                def process(self, params_idx: int, idx: int) -> Iterator[Tuple[str]]:
+                def process(self, params_idx: int, cv_idx: int) -> Iterator[Tuple[str]]:
+                    # Assign parameter to GridSearchCV
                     if hasattr(estimator, "param_grid"):
                         self.estimator.param_grid = self.params_to_evaluate[params_idx]
+                    # Assign parameter to RandomizedSearchCV
                     else:
                         self.estimator.param_distributions = self.params_to_evaluate[params_idx]
+                    # cross validator's indices: we stored test indices only (to save space);
+                    # use the full indices to re-construct the train indices back.
                     full_indices = np.array([i for i in range(self.data_length)])
-                    test_indice = self.indices[idx]
+                    test_indice = self.indices[cv_idx]
                     train_indice = np.setdiff1d(full_indices, test_indice)
+                    # assign the tuple of train and test indices to estimator's original cross validator
                     self.estimator.cv = [(train_indice, test_indice)]
                     self.estimator.fit(**self.args)
+                    # If the cv_results_ is empty, then the udtf table will have different number of output rows
+                    # from the input rows. Raise ValueError.
+                    if not self.estimator.cv_results_:
+                        raise RuntimeError(
+                            """Cross validation results are unexpectedly empty for one fold.
+                            This issue may be temporary - please try again."""
+                        )
+                    # Encode the dictionary of cv_results_ as binary (in hex format) to send it back
+                    # because udtf doesn't allow numpy within json file
                     binary_cv_results = None
                     with io.BytesIO() as f:
                         cp.dump(self.estimator.cv_results_, f)
@@ -333,95 +475,40 @@ class DistributedHPOTrainer(SnowparkModelTrainer):
 
             HP_TUNING = F.table_function(random_udtf_name)
 
-            idx_length = int(indices_len)
-            params_length = len(param_grid)
-            idxs = [i for i in range(idx_length)]
-            param_indices, training_indices = [], []
-            for param_idx, cv_idx in product([param_index for param_index in range(params_length)], idxs):
+            # param_indices is for the index for each parameter grid;
+            # cv_indices is for the index for each cross_validator's fold;
+            # param_cv_indices is for the index for the product of (len(param_indices) * len(cv_indices))
+            param_indices, cv_indices = [], []
+            for param_idx, cv_idx in product(
+                [param_index for param_index in range(parameter_grid_length)],
+                [cv_index for cv_index in range(cross_validator_indices_length)],
+            ):
                 param_indices.append(param_idx)
-                training_indices.append(cv_idx)
+                cv_indices.append(cv_idx)
 
-            pd_df = pd.DataFrame(
+            indices_info_pandas = pd.DataFrame(
                 {
-                    "PARAMS": param_indices,
-                    "TRAIN_IND": training_indices,
-                    "PARAM_INDEX": [i for i in range(idx_length * params_length)],
+                    "PARAM_IND": param_indices,
+                    "CV_IND": cv_indices,
+                    "PARAM_CV_IND": [i for i in range(cross_validator_indices_length * parameter_grid_length)],
                 }
             )
-            df = session.create_dataframe(pd_df)
-            results = df.select(
-                F.cast(df["PARAM_INDEX"], IntegerType()).as_("PARAM_INDEX"),
-                (HP_TUNING(df["PARAMS"], df["TRAIN_IND"]).over(partition_by=df["PARAM_INDEX"])),
+            indices_info_sp = session.create_dataframe(indices_info_pandas)
+            # execute udtf by querying HP_TUNING table
+            HP_raw_results = indices_info_sp.select(
+                F.cast(indices_info_sp["PARAM_CV_IND"], IntegerType()).as_("PARAM_CV_IND"),
+                (
+                    HP_TUNING(indices_info_sp["PARAM_IND"], indices_info_sp["CV_IND"]).over(
+                        partition_by=indices_info_sp["PARAM_CV_IND"]
+                    )
+                ),
             )
 
-            # cv_result maintains the original order
-            multimetric = False
-            cv_results_ = dict()
-            scorers = set()
-            for i, val in enumerate(results.select("CV_RESULTS").sort(col("PARAM_INDEX")).collect()):
-                # retrieved string had one more double quote in the front and end of the string.
-                # use [1:-1] to remove the extra double quotes
-                hex_str = bytes.fromhex(val[0])
-                with io.BytesIO(hex_str) as f_reload:
-                    each_cv_result = cp.load(f_reload)
-                    for k, v in each_cv_result.items():
-                        cur_cv = i % idx_length
-                        key = k
-                        if "split0_test_" in k:
-                            # For multi-metric evaluation, the scores for all the scorers are available in the
-                            # cv_results_ dict at the keys ending with that scorer’s name ('_<scorer_name>')
-                            # instead of '_score'.
-                            scorers.add(k[len("split0_test_") :])
-                            key = k.replace("split0_test", f"split{cur_cv}_test")
-                        elif k.startswith("param"):
-                            if cur_cv != 0:
-                                key = False
-                        if key:
-                            if key not in cv_results_:
-                                cv_results_[key] = v
-                            else:
-                                cv_results_[key] = np.concatenate([cv_results_[key], v])
-
-            multimetric = len(scorers) > 1
-            # Use numpy to re-calculate all the information in cv_results_ again
-            # Generally speaking, reshape all the results into the (scorers+2, idx_length, params_length) shape,
-            # and average them by the idx_length;
-            # idx_length is the number of cv folds; params_length is the number of parameter combinations
-            scores = [
-                np.reshape(
-                    np.concatenate([cv_results_[f"split{cur_cv}_test_{score}"] for cur_cv in range(idx_length)]),
-                    (idx_length, -1),
-                )
-                for score in scorers
-            ]
-
-            fit_score_test_matrix = np.stack(
-                [
-                    np.reshape(cv_results_["mean_fit_time"], (idx_length, -1)),
-                    np.reshape(cv_results_["mean_score_time"], (idx_length, -1)),
-                ]
-                + scores
+            multimetric, cv_results_, best_param_index, scorers = construct_cv_results(
+                HP_raw_results.select("CV_RESULTS").sort(F.col("PARAM_CV_IND")).collect(),
+                cross_validator_indices_length,
+                parameter_grid_length,
             )
-
-            mean_fit_score_test_matrix = np.mean(fit_score_test_matrix, axis=1)
-            std_fit_score_test_matrix = np.std(fit_score_test_matrix, axis=1)
-            cv_results_["std_fit_time"] = std_fit_score_test_matrix[0]
-            cv_results_["mean_fit_time"] = mean_fit_score_test_matrix[0]
-            cv_results_["std_score_time"] = std_fit_score_test_matrix[1]
-            cv_results_["mean_score_time"] = mean_fit_score_test_matrix[1]
-            for idx, score in enumerate(scorers):
-                cv_results_[f"std_test_{score}"] = std_fit_score_test_matrix[idx + 2]
-                cv_results_[f"mean_test_{score}"] = mean_fit_score_test_matrix[idx + 2]
-                # re-compute the ranking again with mean_test_<score>.
-                cv_results_[f"rank_test_{score}"] = rankdata(-cv_results_[f"mean_test_{score}"], method="min")
-                # The best param is the highest ranking (which is 1) and we choose the first time ranking 1 appeared.
-                # If all scores are `nan`, `rankdata` will also produce an array of `nan` values.
-                # In that case, default to first index.
-                best_param_index = (
-                    np.where(cv_results_[f"rank_test_{score}"] == 1)[0][0]
-                    if not np.isnan(cv_results_[f"rank_test_{score}"]).all()
-                    else 0
-                )
 
             estimator.cv_results_ = cv_results_
             estimator.multimetric_ = multimetric

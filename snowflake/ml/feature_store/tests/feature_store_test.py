@@ -180,7 +180,7 @@ class FeatureStoreTest(absltest.TestCase):
         fs = self._create_feature_store()
 
         entities = {
-            "User": Entity("USER", ["uid"]),
+            "User": Entity("USER", ['"uid"']),
             "Ad": Entity('"aD"', ["aid"]),
             "Product": Entity("Product", ["pid", "cid"]),
         }
@@ -193,7 +193,7 @@ class FeatureStoreTest(absltest.TestCase):
             actual_df=fs.list_entities().to_pandas(),
             target_data={
                 "NAME": ["aD", "PRODUCT", "USER"],
-                "JOIN_KEYS": ["AID", "PID,CID", "UID"],
+                "JOIN_KEYS": ['["AID"]', '["CID","PID"]', '["uid"]'],
                 "DESC": ["", "", ""],
             },
             sort_cols=["NAME"],
@@ -214,7 +214,7 @@ class FeatureStoreTest(absltest.TestCase):
             actual_df=fs.list_entities().to_pandas(),
             target_data={
                 "NAME": ["PRODUCT", "USER"],
-                "JOIN_KEYS": ["PID,CID", "UID"],
+                "JOIN_KEYS": ['["CID","PID"]', '["uid"]'],
                 "DESC": ["", ""],
             },
             sort_cols=["NAME"],
@@ -229,7 +229,7 @@ class FeatureStoreTest(absltest.TestCase):
 
         # test delete entity failure with active feature views
         # create a new feature view
-        sql = f"SELECT name, id AS uid FROM {self._mock_table}"
+        sql = f'SELECT name, id AS "uid" FROM {self._mock_table}'
         fv = FeatureView(name="fv", entities=[entities["User"]], feature_df=self._session.sql(sql), refresh_freq="1m")
         fs.register_feature_view(feature_view=fv, version="FIRST")
         with self.assertRaisesRegex(ValueError, "Cannot delete Entity .* due to active FeatureViews.*"):
@@ -251,7 +251,7 @@ class FeatureStoreTest(absltest.TestCase):
             actual_df=fs.list_entities().to_pandas(),
             target_data={
                 "NAME": ["FOO", "BAR"],
-                "JOIN_KEYS": ["A,B", "C"],
+                "JOIN_KEYS": ['["A","B"]', '["C"]'],
                 "DESC": ["my foo", ""],
             },
             sort_cols=["NAME"],
@@ -264,7 +264,7 @@ class FeatureStoreTest(absltest.TestCase):
             snowpark_exceptions.SnowparkClientException("Intentional Integ Test Error"),
         )
 
-        with self.assertRaisesRegex(RuntimeError, "Failed to find object .*"):
+        with self.assertRaisesRegex(RuntimeError, "Failed to list entities: .*"):
             fs.get_entity("foo")
 
     def test_register_entity_system_error(self) -> None:

@@ -19,6 +19,7 @@ from snowflake.ml.utils.connection_params import SnowflakeLoginOptions
 from snowflake.snowpark import Session
 from tests.integ.snowflake.ml.modeling.framework import utils as framework_utils
 from tests.integ.snowflake.ml.modeling.framework.utils import (
+    CATEGORICAL_COLS,
     DATA,
     DATA_CLIP,
     ID_COL,
@@ -41,6 +42,22 @@ class MinMaxScalerTest(TestCase):
         for filepath in self._to_be_deleted_files:
             if os.path.exists(filepath):
                 os.remove(filepath)
+
+    def test_fit_non_numeric_raises_exception(self) -> None:
+        """
+        Fitting scaler with non-numeric columns should raise an exception..
+
+        Raises
+        ------
+        AssertionError
+            If the expected exception is not raised.
+        """
+        input_cols = CATEGORICAL_COLS
+        _, df = framework_utils.get_df(self._session, DATA, SCHEMA, np.nan)
+
+        scaler = MinMaxScaler().set_input_cols(input_cols)
+        with self.assertRaises(TypeError):
+            scaler.fit(df)
 
     def test_fit(self) -> None:
         """

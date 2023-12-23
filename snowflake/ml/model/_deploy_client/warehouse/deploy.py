@@ -2,6 +2,7 @@ import copy
 import logging
 import posixpath
 import tempfile
+import textwrap
 from types import ModuleType
 from typing import IO, List, Optional, Tuple, TypedDict, Union
 
@@ -154,7 +155,7 @@ def _get_model_final_packages(
     Returns:
         List of final packages string that is accepted by Snowpark register UDF call.
     """
-    final_packages = None
+
     if (
         any(channel.lower() not in [env_utils.DEFAULT_CHANNEL_NAME] for channel in meta.env._conda_dependencies.keys())
         or meta.env.pip_requirements
@@ -173,21 +174,29 @@ def _get_model_final_packages(
     else:
         required_packages = meta.env._conda_dependencies[env_utils.DEFAULT_CHANNEL_NAME]
 
-    final_packages = env_utils.validate_requirements_in_information_schema(
+    package_availability_dict = env_utils.get_matched_package_versions_in_information_schema(
         session, required_packages, python_version=meta.env.python_version
     )
-
-    if final_packages is None:
+    no_version_available_packages = [
+        req_name for req_name, ver_list in package_availability_dict.items() if len(ver_list) < 1
+    ]
+    unavailable_packages = [req.name for req in required_packages if req.name not in package_availability_dict]
+    if no_version_available_packages or unavailable_packages:
         relax_version_info_str = "" if relax_version else "Try to set relax_version as True in the options. "
+        required_package_str = " ".join(map(lambda x: f'"{x}"', required_packages))
         raise snowml_exceptions.SnowflakeMLException(
             error_code=error_codes.DEPENDENCY_VERSION_ERROR,
             original_exception=RuntimeError(
-                "The model's dependencies are not available in Snowflake Anaconda Channel. "
-                + relax_version_info_str
-                + "Required packages are:\n"
-                + " ".join(map(lambda x: f'"{x}"', required_packages))
-                + "\n Required Python version is: "
-                + meta.env.python_version
+                textwrap.dedent(
+                    f"""
+                The model's dependencies are not available in Snowflake Anaconda Channel. {relax_version_info_str}
+                Required packages are: {required_package_str}
+                Required Python version is: {meta.env.python_version}
+                Packages that are not available are: {unavailable_packages}
+                Packages that cannot meet your requirements are: {no_version_available_packages}
+                Package availability information of those you requested is: {package_availability_dict}
+                """
+                ),
             ),
         )
-    return final_packages
+    return list(sorted(map(str, required_packages)))

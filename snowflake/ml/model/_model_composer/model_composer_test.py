@@ -39,7 +39,11 @@ class ModelInterfaceTest(absltest.TestCase):
                 with mock.patch.object(
                     file_utils, "upload_directory_to_stage", return_value=None
                 ) as mock_upload_directory_to_stage:
-                    with mock.patch.object(env_utils, "validate_requirements_in_information_schema", return_value=[""]):
+                    with mock.patch.object(
+                        env_utils,
+                        "get_matched_package_versions_in_information_schema",
+                        return_value={env_utils.SNOWPARK_ML_PKG_NAME: []},
+                    ):
                         m.save(
                             name="model1",
                             model=LinearRegression(),
@@ -59,7 +63,11 @@ class ModelInterfaceTest(absltest.TestCase):
                 with mock.patch.object(
                     file_utils, "upload_directory_to_stage", return_value=None
                 ) as mock_upload_directory_to_stage:
-                    with mock.patch.object(env_utils, "validate_requirements_in_information_schema", return_value=[""]):
+                    with mock.patch.object(
+                        env_utils,
+                        "get_matched_package_versions_in_information_schema",
+                        return_value={env_utils.SNOWPARK_ML_PKG_NAME: []},
+                    ):
                         m.save(
                             name="model1",
                             model=linear_model.LinearRegression(),

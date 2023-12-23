@@ -1,10 +1,9 @@
-import inspect
 from typing import List
 
 import cloudpickle as cp
 import numpy as np
 
-from snowflake.ml._internal.exceptions import error_codes, exceptions
+from snowflake.ml.modeling._internal.estimator_utils import get_module_name
 
 
 class ModelSpecifications:
@@ -120,16 +119,10 @@ class ModelSpecificationsBuilder:
             Appropriate ModelSpecification object
 
         Raises:
-            SnowflakeMLException: Raises an exception the module of given model can't be determined.
             TypeError: Raises the exception for unsupported modules.
         """
-        module = inspect.getmodule(model)
-        if module is None:
-            raise exceptions.SnowflakeMLException(
-                error_code=error_codes.INVALID_TYPE,
-                original_exception=ValueError("Unable to infer model type of the given native model object."),
-            )
-        root_module_name = module.__name__.split(".")[0]
+        module_name = get_module_name(model=model)
+        root_module_name = module_name.split(".")[0]
         if root_module_name == "sklearn":
             from sklearn.model_selection import GridSearchCV, RandomizedSearchCV
 
