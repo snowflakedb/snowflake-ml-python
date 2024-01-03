@@ -1,5 +1,20 @@
 # Release History
 
+## 1.2.0
+
+### Bug Fixes
+
+- Model Registry: Fix "XGBoost version not compiled with GPU support" error when running CPU inference against open-source
+  XGBoost models deployed to SPCS.
+- Model Registry: Fix model deployment to SPCS on Windows machines.
+
+### Behavior Changes
+
+### New Features
+
+- Model Development: Introduced XGBoost external memory training feature. This feature enables training XGBoost models
+  on large datasets that don't fit into memory.
+
 ## 1.1.2
 
 ### Bug Fixes

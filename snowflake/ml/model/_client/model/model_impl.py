@@ -37,10 +37,12 @@ class Model:
 
     @property
     def name(self) -> str:
+        """The name of the model that you could used to refer it in SQL."""
         return self._model_name.identifier()
 
     @property
     def fully_qualified_name(self) -> str:
+        """The fully qualified name of the model that you could used to refer it in SQL."""
         return self._model_ops._model_version_client.fully_qualified_model_name(self._model_name)
 
     @property
@@ -49,6 +51,24 @@ class Model:
         subproject=_TELEMETRY_SUBPROJECT,
     )
     def description(self) -> str:
+        """The description to the model. This is an alias of `comment`."""
+        return self.comment
+
+    @description.setter
+    @telemetry.send_api_usage_telemetry(
+        project=_TELEMETRY_PROJECT,
+        subproject=_TELEMETRY_SUBPROJECT,
+    )
+    def description(self, description: str) -> None:
+        self.comment = description
+
+    @property
+    @telemetry.send_api_usage_telemetry(
+        project=_TELEMETRY_PROJECT,
+        subproject=_TELEMETRY_SUBPROJECT,
+    )
+    def comment(self) -> str:
+        """The comment to the model."""
         statement_params = telemetry.get_statement_params(
             project=_TELEMETRY_PROJECT,
             subproject=_TELEMETRY_SUBPROJECT,
@@ -58,18 +78,18 @@ class Model:
             statement_params=statement_params,
         )
 
-    @description.setter
+    @comment.setter
     @telemetry.send_api_usage_telemetry(
         project=_TELEMETRY_PROJECT,
         subproject=_TELEMETRY_SUBPROJECT,
     )
-    def description(self, description: str) -> None:
+    def comment(self, comment: str) -> None:
         statement_params = telemetry.get_statement_params(
             project=_TELEMETRY_PROJECT,
             subproject=_TELEMETRY_SUBPROJECT,
         )
         return self._model_ops.set_comment(
-            comment=description,
+            comment=comment,
             model_name=self._model_name,
             statement_params=statement_params,
         )
@@ -80,12 +100,13 @@ class Model:
         subproject=_TELEMETRY_SUBPROJECT,
     )
     def default(self) -> model_version_impl.ModelVersion:
+        """The default version of the model."""
         statement_params = telemetry.get_statement_params(
             project=_TELEMETRY_PROJECT,
             subproject=_TELEMETRY_SUBPROJECT,
             class_name=self.__class__.__name__,
         )
-        default_version_name = self._model_ops._model_version_client.get_default_version(
+        default_version_name = self._model_ops.get_default_version(
             model_name=self._model_name, statement_params=statement_params
         )
         return self.version(default_version_name)
@@ -105,7 +126,7 @@ class Model:
             version_name = sql_identifier.SqlIdentifier(version)
         else:
             version_name = version._version_name
-        self._model_ops._model_version_client.set_default_version(
+        self._model_ops.set_default_version(
             model_name=self._model_name, version_name=version_name, statement_params=statement_params
         )
 
@@ -149,7 +170,7 @@ class Model:
         project=_TELEMETRY_PROJECT,
         subproject=_TELEMETRY_SUBPROJECT,
     )
-    def list_versions(self) -> List[model_version_impl.ModelVersion]:
+    def show_versions(self) -> List[model_version_impl.ModelVersion]:
         """List all versions in the model.
 
         Returns:

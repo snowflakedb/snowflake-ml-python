@@ -6,6 +6,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 from absl.testing import absltest
 from packaging import version
 
+from snowflake.ml._internal.utils import snowflake_env
 from snowflake.ml.model import type_hints as model_types
 from snowflake.ml.registry import registry
 from snowflake.ml.utils import connection_params
@@ -13,6 +14,14 @@ from snowflake.snowpark import Session
 from tests.integ.snowflake.ml.test_utils import db_manager, test_env_utils
 
 
+@unittest.skipUnless(
+    test_env_utils.get_current_snowflake_version() >= version.parse("8.0.0"),
+    "New model only available when the Snowflake Version is newer than 8.0.0",
+)
+@unittest.skipUnless(
+    test_env_utils.get_current_snowflake_cloud_type() == snowflake_env.SnowflakeCloudType.AWS,
+    "New model only available in AWS",
+)
 class RegistryModelTestBase(absltest.TestCase):
     def setUp(self) -> None:
         """Creates Snowpark and Snowflake environments for testing."""
@@ -30,11 +39,6 @@ class RegistryModelTestBase(absltest.TestCase):
                 **{"database": self._test_db, "schema": self._test_schema},
             }
         ).create()
-
-        current_sf_version = test_env_utils.get_current_snowflake_version(self._session)
-
-        if current_sf_version < version.parse("8.0.0"):
-            raise unittest.SkipTest("This test requires Snowflake Version 8.0.0 or higher.")
 
         self._db_manager = db_manager.DBManager(self._session)
         self._db_manager.create_database(self._test_db)
@@ -73,13 +77,13 @@ class RegistryModelTestBase(absltest.TestCase):
         )
 
         for target_method, (test_input, check_func) in prediction_assert_fns.items():
-            res = mv.run(test_input, method_name=target_method)
+            res = mv.run(test_input, function_name=target_method)
 
             check_func(res)
 
         self.registry.delete_model(model_name=name)
 
-        self.assertNotIn(mv.model_name, [m.name for m in self.registry.list_models()])
+        self.assertNotIn(mv.model_name, [m.name for m in self.registry.show_models()])
 
 
 if __name__ == "__main__":

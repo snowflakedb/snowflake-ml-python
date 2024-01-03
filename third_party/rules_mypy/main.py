@@ -3,6 +3,9 @@ import json
 import subprocess
 import sys
 import tempfile
+from typing import List, Tuple
+
+import retrying
 
 MYPY_ENTRYPOINT_CODE = """
 import sys
@@ -18,6 +21,25 @@ if __name__ == "__main__":
     main(stdout=sys.stdout, stderr=sys.stderr)
 
 """
+
+
+def _retry_if_result_none(res: Tuple[int, bytes, bytes]) -> bool:
+    ret, _, err = res
+    return ret != 0 and len(err) > 0
+
+
+@retrying.retry(retry_on_result=_retry_if_result_none, stop_max_attempt_number=5)
+def _run_mypy(entrypoint: str, args: List[str]) -> Tuple[int, bytes, bytes]:
+    process = subprocess.Popen(
+        # We use this to make sure we are invoking mypy that is installed in the same environment of the
+        # current Python.
+        [sys.executable, entrypoint] + args,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    process.wait()
+    text, err = process.communicate()
+    return (process.returncode, text, err)
 
 
 def mypy_checker() -> None:
@@ -39,21 +61,13 @@ def mypy_checker() -> None:
             data = sys.stdin.readline()
             req = json.loads(data)
             mypy_args = req["arguments"]
-            process = subprocess.Popen(
-                # We use this to make sure we are invoking mypy that is installed in the same environment of the current
-                # Python.
-                [sys.executable, mypy_entrypoint.name] + mypy_args,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-            )
-            process.wait()
-            text, _ = process.communicate()
+            ret, text, err = _run_mypy(mypy_entrypoint.name, mypy_args)
 
-            if process.returncode:
+            if ret:
                 header = "=" * 20 + " MYPY TYPE CHECKING REPORT BEGIN " + "=" * 20 + "\n"
                 footer = "=" * 20 + "  MYPY TYPE CHECKING REPORT END  " + "=" * 20 + "\n"
 
-                message = "".join([header, text.decode(), footer])
+                message = "".join([header, text.decode(), "\n", err.decode(), footer])
             else:
                 message = ""
 
@@ -63,7 +77,7 @@ def mypy_checker() -> None:
             sys.stdout.write(
                 json.dumps(
                     {
-                        "exitCode": process.returncode,
+                        "exitCode": ret,
                         "output": message,
                         "requestId": req.get("requestId", 0),
                     }

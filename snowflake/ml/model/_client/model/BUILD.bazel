@@ -28,7 +28,7 @@ py_library(
     name = "model_version_impl",
     srcs = ["model_version_impl.py"],
     deps = [
-        ":model_method_info",
+        ":function_info",
         "//snowflake/ml/_internal:telemetry",
         "//snowflake/ml/_internal/utils:sql_identifier",
         "//snowflake/ml/model:model_signature",
@@ -51,8 +51,8 @@ py_test(
 )
 
 py_library(
-    name = "model_method_info",
-    srcs = ["model_method_info.py"],
+    name = "function_info",
+    srcs = ["function_info.py"],
     deps = [
         "//snowflake/ml/model:model_signature",
     ],

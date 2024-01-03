@@ -4,7 +4,11 @@ import textwrap
 from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import ParseResult
 
-from snowflake.ml._internal.utils import identifier, sql_identifier
+from snowflake.ml._internal.utils import (
+    identifier,
+    query_result_checker,
+    sql_identifier,
+)
 from snowflake.snowpark import dataframe, functions as F, session, types as spt
 from snowflake.snowpark._internal import utils as snowpark_utils
 
@@ -46,11 +50,14 @@ class ModelVersionSQLClient:
         stage_path: str,
         statement_params: Optional[Dict[str, Any]] = None,
     ) -> None:
-        self._version_name = version_name
-        self._session.sql(
-            f"CREATE MODEL {self.fully_qualified_model_name(model_name)} WITH VERSION {version_name.identifier()}"
-            f" FROM {stage_path}"
-        ).collect(statement_params=statement_params)
+        query_result_checker.SqlResultValidator(
+            self._session,
+            (
+                f"CREATE MODEL {self.fully_qualified_model_name(model_name)} WITH VERSION {version_name.identifier()}"
+                f" FROM {stage_path}"
+            ),
+            statement_params=statement_params,
+        ).has_dimensions(expected_rows=1, expected_cols=1).validate()
 
     # TODO(SNOW-987381): Merge with above when we have `create or alter module m [with] version v1 ...`
     def add_version_from_stage(
@@ -61,11 +68,14 @@ class ModelVersionSQLClient:
         stage_path: str,
         statement_params: Optional[Dict[str, Any]] = None,
     ) -> None:
-        self._version_name = version_name
-        self._session.sql(
-            f"ALTER MODEL {self.fully_qualified_model_name(model_name)} ADD VERSION {version_name.identifier()}"
-            f" FROM {stage_path}"
-        ).collect(statement_params=statement_params)
+        query_result_checker.SqlResultValidator(
+            self._session,
+            (
+                f"ALTER MODEL {self.fully_qualified_model_name(model_name)} ADD VERSION {version_name.identifier()}"
+                f" FROM {stage_path}"
+            ),
+            statement_params=statement_params,
+        ).has_dimensions(expected_rows=1, expected_cols=1).validate()
 
     def set_default_version(
         self,
@@ -74,24 +84,14 @@ class ModelVersionSQLClient:
         version_name: sql_identifier.SqlIdentifier,
         statement_params: Optional[Dict[str, Any]] = None,
     ) -> None:
-        self._session.sql(
-            f"ALTER MODEL {self.fully_qualified_model_name(model_name)} "
-            f"SET DEFAULT_VERSION = {version_name.identifier()}"
-        ).collect(statement_params=statement_params)
-
-    def get_default_version(
-        self,
-        *,
-        model_name: sql_identifier.SqlIdentifier,
-        statement_params: Optional[Dict[str, Any]] = None,
-    ) -> str:
-        # TODO: Replace SHOW with DESC when available.
-        default_version: str = (
-            self._session.sql(f"SHOW VERSIONS IN MODEL {self.fully_qualified_model_name(model_name)}")
-            .filter('"is_default_version" = TRUE')[['"name"']]
-            .collect(statement_params=statement_params)[0][0]
-        )
-        return default_version
+        query_result_checker.SqlResultValidator(
+            self._session,
+            (
+                f"ALTER MODEL {self.fully_qualified_model_name(model_name)} "
+                f"SET DEFAULT_VERSION = {version_name.identifier()}"
+            ),
+            statement_params=statement_params,
+        ).has_dimensions(expected_rows=1, expected_cols=1).validate()
 
     def get_file(
         self,
@@ -113,9 +113,11 @@ class ModelVersionSQLClient:
             scheme="file", netloc="", path=local_location, params="", query="", fragment=""
         ).geturl()
 
-        self._session.sql(
-            f"GET {_normalize_url_for_sql(stage_location_url)} {_normalize_url_for_sql(local_location_url)}"
-        ).collect(statement_params=statement_params)
+        query_result_checker.SqlResultValidator(
+            self._session,
+            f"GET {_normalize_url_for_sql(stage_location_url)} {_normalize_url_for_sql(local_location_url)}",
+            statement_params=statement_params,
+        ).has_dimensions(expected_rows=1, expected_cols=1).validate()
         return target_path / file_path.name
 
     def set_comment(
@@ -126,11 +128,14 @@ class ModelVersionSQLClient:
         version_name: sql_identifier.SqlIdentifier,
         statement_params: Optional[Dict[str, Any]] = None,
     ) -> None:
-        comment_sql = (
-            f"ALTER MODEL {self.fully_qualified_model_name(model_name)} "
-            f"MODIFY VERSION {version_name.identifier()} SET COMMENT=$${comment}$$"
-        )
-        self._session.sql(comment_sql).collect(statement_params=statement_params)
+        query_result_checker.SqlResultValidator(
+            self._session,
+            (
+                f"ALTER MODEL {self.fully_qualified_model_name(model_name)} "
+                f"MODIFY VERSION {version_name.identifier()} SET COMMENT=$${comment}$$"
+            ),
+            statement_params=statement_params,
+        ).has_dimensions(expected_rows=1, expected_cols=1).validate()
 
     def invoke_method(
         self,
@@ -206,8 +211,11 @@ class ModelVersionSQLClient:
         statement_params: Optional[Dict[str, Any]] = None,
     ) -> None:
         json_metadata = json.dumps(metadata_dict)
-        sql = (
-            f"ALTER MODEL {self.fully_qualified_model_name(model_name)} MODIFY VERSION {version_name.identifier()}"
-            f" SET METADATA=$${json_metadata}$$"
-        )
-        self._session.sql(sql).collect(statement_params=statement_params)
+        query_result_checker.SqlResultValidator(
+            self._session,
+            (
+                f"ALTER MODEL {self.fully_qualified_model_name(model_name)} MODIFY VERSION {version_name.identifier()}"
+                f" SET METADATA=$${json_metadata}$$"
+            ),
+            statement_params=statement_params,
+        ).has_dimensions(expected_rows=1, expected_cols=1).validate()

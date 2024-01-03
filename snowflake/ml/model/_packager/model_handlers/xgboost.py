@@ -1,6 +1,16 @@
 # mypy: disable-error-code="import"
 import os
-from typing import TYPE_CHECKING, Callable, Dict, Optional, Type, Union, cast, final
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Callable,
+    Dict,
+    Optional,
+    Type,
+    Union,
+    cast,
+    final,
+)
 
 import numpy as np
 import pandas as pd
@@ -150,6 +160,7 @@ class XGBModelHandler(_base.BaseModelHandler[Union["xgboost.Booster", "xgboost.X
         m.load_model(os.path.join(model_blob_path, model_blob_filename))
 
         if kwargs.get("use_gpu", False):
+            assert type(kwargs.get("use_gpu", False)) == bool
             gpu_params = {"tree_method": "gpu_hist", "predictor": "gpu_predictor"}
             if isinstance(m, xgboost.Booster):
                 m.set_param(gpu_params)
@@ -197,7 +208,7 @@ class XGBModelHandler(_base.BaseModelHandler[Union["xgboost.Booster", "xgboost.X
 
                 return fn
 
-            type_method_dict = {}
+            type_method_dict: Dict[str, Any] = {"_raw_model": raw_model}
             for target_method_name, sig in model_meta.signatures.items():
                 type_method_dict[target_method_name] = fn_factory(raw_model, sig, target_method_name)
 

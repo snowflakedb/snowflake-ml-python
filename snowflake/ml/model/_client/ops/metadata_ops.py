@@ -68,9 +68,7 @@ class MetadataOperator:
         version_info_list = self._model_client.show_versions(
             model_name=model_name, version_name=version_name, statement_params=statement_params
         )
-        assert len(version_info_list) == 1
-        version_info = version_info_list[0]
-        metadata_str = version_info.metadata
+        metadata_str = version_info_list[0][self._model_client.MODEL_VERSION_METADATA_COL_NAME]
         if not metadata_str:
             return {}
         res = json.loads(metadata_str)

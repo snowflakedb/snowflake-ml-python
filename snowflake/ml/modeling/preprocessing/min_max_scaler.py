@@ -8,8 +8,9 @@ from sklearn.preprocessing import _data as sklearn_preprocessing_data
 
 from snowflake import snowpark
 from snowflake.ml._internal import telemetry
+from snowflake.ml._internal.exceptions import error_codes, exceptions
 from snowflake.ml.modeling.framework import _utils, base
-from snowflake.snowpark import functions as F
+from snowflake.snowpark import functions as F, types as T
 
 
 class MinMaxScaler(base.BaseTransformer):
@@ -125,6 +126,18 @@ class MinMaxScaler(base.BaseTransformer):
             self.data_max_ = {}
             self.data_range_ = {}
 
+    def _check_input_column_types(self, dataset: snowpark.DataFrame) -> None:
+        for field in dataset.schema.fields:
+            if field.name in self.input_cols:
+                if not issubclass(type(field.datatype), T._NumericType):
+                    raise exceptions.SnowflakeMLException(
+                        error_code=error_codes.INVALID_DATA_TYPE,
+                        original_exception=TypeError(
+                            f"Non-numeric input column {field.name} datatype {field.datatype} "
+                            "is not supported by the MinMaxScaler."
+                        ),
+                    )
+
     @telemetry.send_api_usage_telemetry(
         project=base.PROJECT,
         subproject=base.SUBPROJECT,
@@ -169,6 +182,7 @@ class MinMaxScaler(base.BaseTransformer):
             self.data_range_[input_col] = float(sklearn_scaler.data_range_[i])
 
     def _fit_snowpark(self, dataset: snowpark.DataFrame) -> None:
+        self._check_input_column_types(dataset)
         computed_states = self._compute(dataset, self.input_cols, self.custom_states)
 
         # assign states to the object

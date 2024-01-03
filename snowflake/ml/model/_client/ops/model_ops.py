@@ -120,11 +120,13 @@ class ModelOperator:
                 model_name=model_name,
                 statement_params=statement_params,
             )
+            col_name = self._model_client.MODEL_VERSION_NAME_COL_NAME
         else:
             res = self._model_client.show_models(
                 statement_params=statement_params,
             )
-        return [sql_identifier.SqlIdentifier(row.name, case_sensitive=True) for row in res]
+            col_name = self._model_client.MODEL_NAME_COL_NAME
+        return [sql_identifier.SqlIdentifier(row[col_name], case_sensitive=True) for row in res]
 
     def validate_existence(
         self,
@@ -137,11 +139,13 @@ class ModelOperator:
             res = self._model_client.show_versions(
                 model_name=model_name,
                 version_name=version_name,
+                assert_existence=False,
                 statement_params=statement_params,
             )
         else:
             res = self._model_client.show_models(
                 model_name=model_name,
+                assert_existence=False,
                 statement_params=statement_params,
             )
         return len(res) == 1
@@ -159,13 +163,14 @@ class ModelOperator:
                 version_name=version_name,
                 statement_params=statement_params,
             )
+            col_name = self._model_client.MODEL_VERSION_COMMENT_COL_NAME
         else:
             res = self._model_client.show_models(
                 model_name=model_name,
                 statement_params=statement_params,
             )
-        assert len(res) == 1
-        return cast(str, res[0].comment)
+            col_name = self._model_client.MODEL_COMMENT_COL_NAME
+        return cast(str, res[0][col_name])
 
     def set_comment(
         self,
@@ -188,6 +193,32 @@ class ModelOperator:
                 model_name=model_name,
                 statement_params=statement_params,
             )
+
+    def set_default_version(
+        self,
+        *,
+        model_name: sql_identifier.SqlIdentifier,
+        version_name: sql_identifier.SqlIdentifier,
+        statement_params: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        if not self.validate_existence(
+            model_name=model_name, version_name=version_name, statement_params=statement_params
+        ):
+            raise ValueError(f"You cannot set version {version_name} as default version as it does not exist.")
+        self._model_version_client.set_default_version(
+            model_name=model_name, version_name=version_name, statement_params=statement_params
+        )
+
+    def get_default_version(
+        self,
+        *,
+        model_name: sql_identifier.SqlIdentifier,
+        statement_params: Optional[Dict[str, Any]] = None,
+    ) -> sql_identifier.SqlIdentifier:
+        res = self._model_client.show_models(model_name=model_name, statement_params=statement_params)[0]
+        return sql_identifier.SqlIdentifier(
+            res[self._model_client.MODEL_DEFAULT_VERSION_NAME_COL_NAME], case_sensitive=True
+        )
 
     def get_model_version_manifest(
         self,

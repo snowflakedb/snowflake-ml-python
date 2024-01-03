@@ -14,6 +14,9 @@ from packaging import requirements
 from typing_extensions import Unpack
 
 from snowflake.ml._internal import env_utils, file_utils
+from snowflake.ml._internal.container_services.image_registry import (
+    registry_client as image_registry_client,
+)
 from snowflake.ml._internal.exceptions import (
     error_codes,
     exceptions as snowml_exceptions,
@@ -32,11 +35,7 @@ from snowflake.ml.model._deploy_client.image_builds import (
     server_image_builder,
 )
 from snowflake.ml.model._deploy_client.snowservice import deploy_options, instance_types
-from snowflake.ml.model._deploy_client.utils import (
-    constants,
-    image_registry_client,
-    snowservice_client,
-)
+from snowflake.ml.model._deploy_client.utils import constants, snowservice_client
 from snowflake.ml.model._packager.model_meta import model_meta, model_meta_schema
 from snowflake.snowpark import Session
 

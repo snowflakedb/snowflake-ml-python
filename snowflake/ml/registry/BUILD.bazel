@@ -78,7 +78,7 @@ py_test(
 )
 
 py_library(
-    name = "registry",
+    name = "registry_impl",
     srcs = [
         "registry.py",
     ],
@@ -86,12 +86,23 @@ py_library(
         "//snowflake/ml/_internal:telemetry",
         "//snowflake/ml/_internal/utils:identifier",
         "//snowflake/ml/_internal/utils:sql_identifier",
+        "//snowflake/ml/model",
         "//snowflake/ml/model:model_signature",
         "//snowflake/ml/model:type_hints",
-        "//snowflake/ml/model/_client/model:model_impl",
-        "//snowflake/ml/model/_client/model:model_version_impl",
-        "//snowflake/ml/model/_client/ops:model_ops",
-        "//snowflake/ml/model/_model_composer:model_composer",
+        "//snowflake/ml/registry/_manager:model_manager",
+    ],
+)
+
+py_library(
+    name = "registry",
+    srcs = [
+        "__init__.py",
+    ],
+    deps = [
+        ":artifact_manager",
+        ":model_registry",
+        ":registry_impl",
+        ":schema",
     ],
 )
 
@@ -101,12 +112,19 @@ py_test(
         "registry_test.py",
     ],
     deps = [
-        ":registry",
-        "//snowflake/ml/_internal/utils:sql_identifier",
-        "//snowflake/ml/model/_client/model:model_version_impl",
-        "//snowflake/ml/model/_model_composer:model_composer",
+        ":registry_impl",
+        "//snowflake/ml/model",
         "//snowflake/ml/test_utils:mock_data_frame",
         "//snowflake/ml/test_utils:mock_session",
+    ],
+)
+
+py_test(
+    name = "package_visibility_test",
+    srcs = ["package_visibility_test.py"],
+    deps = [
+        ":model_registry",
+        ":registry",
     ],
 )
 

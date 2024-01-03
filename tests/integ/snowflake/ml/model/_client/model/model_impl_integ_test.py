@@ -4,6 +4,7 @@ import uuid
 from absl.testing import absltest, parameterized
 from packaging import version
 
+from snowflake.ml._internal.utils import snowflake_env
 from snowflake.ml.registry import registry
 from snowflake.ml.utils import connection_params
 from snowflake.snowpark import Session
@@ -18,6 +19,14 @@ VERSION_NAME = "V1"
 VERSION_NAME2 = "V2"
 
 
+@unittest.skipUnless(
+    test_env_utils.get_current_snowflake_version() >= version.parse("8.0.0"),
+    "New model only available when the Snowflake Version is newer than 8.0.0",
+)
+@unittest.skipUnless(
+    test_env_utils.get_current_snowflake_cloud_type() == snowflake_env.SnowflakeCloudType.AWS,
+    "New model only available in AWS",
+)
 class TestModelImplInteg(parameterized.TestCase):
     @classmethod
     def setUpClass(self) -> None:
@@ -36,11 +45,6 @@ class TestModelImplInteg(parameterized.TestCase):
                 **{"database": self._test_db, "schema": self._test_schema},
             }
         ).create()
-
-        current_sf_version = test_env_utils.get_current_snowflake_version(self._session)
-
-        if current_sf_version < version.parse("8.0.0"):
-            raise unittest.SkipTest("This test requires Snowflake Version 8.0.0 or higher.")
 
         self._db_manager = db_manager.DBManager(self._session)
         self._db_manager.create_database(self._test_db)

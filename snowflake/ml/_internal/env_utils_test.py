@@ -9,7 +9,7 @@ from typing import DefaultDict, List, cast
 
 import yaml
 from absl.testing import absltest
-from packaging import requirements, specifiers
+from packaging import requirements, specifiers, version
 
 from snowflake.ml._internal import env as snowml_env, env_utils
 from snowflake.ml.test_utils import mock_data_frame, mock_session
@@ -294,272 +294,8 @@ class EnvUtilsTest(absltest.TestCase):
         self.assertEqual(env_utils.relax_requirement_version(r), requirements.Requirement("python-package"))
         self.assertIsNot(env_utils.relax_requirement_version(r), r)
 
-    def test_validate_requirements_in_information_schema(self) -> None:
+    def test_get_matched_package_versions_in_information_schema(self) -> None:
         m_session = mock_session.MockSession(conn=None, test_case=self)
-        m_session.add_mock_sql(
-            query=textwrap.dedent(
-                """
-                SHOW COLUMNS
-                LIKE 'runtime_version'
-                IN TABLE information_schema.packages;
-                """
-            ),
-            result=mock_data_frame.MockDataFrame(count_result=0),
-        )
-
-        query = textwrap.dedent(
-            """
-            SELECT PACKAGE_NAME, VERSION
-            FROM information_schema.packages
-            WHERE (package_name = 'pytorch' OR package_name = 'xgboost')
-            AND language = 'python';
-            """
-        )
-        sql_result = [
-            row.Row(PACKAGE_NAME="xgboost", VERSION="1.3.3"),
-            row.Row(PACKAGE_NAME="xgboost", VERSION="1.5.1"),
-            row.Row(PACKAGE_NAME="xgboost", VERSION="1.7.3"),
-            row.Row(PACKAGE_NAME="pytorch", VERSION="1.12.1"),
-        ]
-
-        m_session.add_mock_sql(query=query, result=mock_data_frame.MockDataFrame(sql_result))
-        c_session = cast(session.Session, m_session)
-
-        self.assertListEqual(
-            env_utils.validate_requirements_in_information_schema(
-                session=c_session,
-                reqs=[requirements.Requirement("xgboost"), requirements.Requirement("pytorch")],
-                python_version=snowml_env.PYTHON_VERSION,
-            ),
-            sorted(["xgboost", "pytorch"]),
-        )
-
-        # Test cache
-        self.assertListEqual(
-            env_utils.validate_requirements_in_information_schema(
-                session=c_session,
-                reqs=[requirements.Requirement("xgboost"), requirements.Requirement("pytorch")],
-                python_version=snowml_env.PYTHON_VERSION,
-            ),
-            sorted(["xgboost", "pytorch"]),
-        )
-
-        # clear cache
-        env_utils._SNOWFLAKE_INFO_SCHEMA_PACKAGE_CACHE = {}
-
-        query = textwrap.dedent(
-            """
-            SELECT PACKAGE_NAME, VERSION
-            FROM information_schema.packages
-            WHERE (package_name = 'xgboost')
-            AND language = 'python';
-            """
-        )
-        sql_result = [
-            row.Row(PACKAGE_NAME="xgboost", VERSION="1.3.3"),
-            row.Row(PACKAGE_NAME="xgboost", VERSION="1.5.1"),
-            row.Row(PACKAGE_NAME="xgboost", VERSION="1.7.3"),
-        ]
-
-        m_session = mock_session.MockSession(conn=None, test_case=self)
-        m_session.add_mock_sql(query=query, result=mock_data_frame.MockDataFrame(sql_result))
-        c_session = cast(session.Session, m_session)
-
-        self.assertListEqual(
-            env_utils.validate_requirements_in_information_schema(
-                session=c_session,
-                reqs=[requirements.Requirement("xgboost")],
-                python_version=snowml_env.PYTHON_VERSION,
-            ),
-            ["xgboost"],
-        )
-
-        # Test cache
-        self.assertListEqual(
-            env_utils.validate_requirements_in_information_schema(
-                session=c_session,
-                reqs=[requirements.Requirement("xgboost")],
-                python_version=snowml_env.PYTHON_VERSION,
-            ),
-            ["xgboost"],
-        )
-
-        query = textwrap.dedent(
-            """
-            SELECT PACKAGE_NAME, VERSION
-            FROM information_schema.packages
-            WHERE (package_name = 'pytorch')
-            AND language = 'python';
-            """
-        )
-        sql_result = [
-            row.Row(PACKAGE_NAME="pytorch", VERSION="1.12.1"),
-        ]
-
-        m_session = mock_session.MockSession(conn=None, test_case=self)
-        m_session.add_mock_sql(query=query, result=mock_data_frame.MockDataFrame(sql_result))
-        c_session = cast(session.Session, m_session)
-
-        self.assertListEqual(
-            env_utils.validate_requirements_in_information_schema(
-                session=c_session,
-                reqs=[requirements.Requirement("xgboost"), requirements.Requirement("pytorch")],
-                python_version=snowml_env.PYTHON_VERSION,
-            ),
-            sorted(["xgboost", "pytorch"]),
-        )
-
-        # Test cache
-        self.assertListEqual(
-            env_utils.validate_requirements_in_information_schema(
-                session=c_session,
-                reqs=[requirements.Requirement("xgboost"), requirements.Requirement("pytorch")],
-                python_version=snowml_env.PYTHON_VERSION,
-            ),
-            sorted(["xgboost", "pytorch"]),
-        )
-
-        # clear cache
-        env_utils._SNOWFLAKE_INFO_SCHEMA_PACKAGE_CACHE = {}
-
-        query = textwrap.dedent(
-            """
-            SELECT PACKAGE_NAME, VERSION
-            FROM information_schema.packages
-            WHERE (package_name = 'xgboost')
-            AND language = 'python';
-            """
-        )
-        sql_result = [
-            row.Row(PACKAGE_NAME="xgboost", VERSION="1.7.0"),
-            row.Row(PACKAGE_NAME="xgboost", VERSION="1.7.1"),
-            row.Row(PACKAGE_NAME="xgboost", VERSION="1.7.3"),
-        ]
-
-        m_session.add_mock_sql(query=query, result=mock_data_frame.MockDataFrame(sql_result))
-        c_session = cast(session.Session, m_session)
-
-        self.assertListEqual(
-            env_utils.validate_requirements_in_information_schema(
-                session=c_session,
-                reqs=[requirements.Requirement("xgboost==1.7.3")],
-                python_version=snowml_env.PYTHON_VERSION,
-            ),
-            ["xgboost==1.7.3"],
-        )
-
-        # Test cache
-        self.assertListEqual(
-            env_utils.validate_requirements_in_information_schema(
-                session=c_session,
-                reqs=[requirements.Requirement("xgboost==1.7.3")],
-                python_version=snowml_env.PYTHON_VERSION,
-            ),
-            ["xgboost==1.7.3"],
-        )
-
-        self.assertListEqual(
-            env_utils.validate_requirements_in_information_schema(
-                session=c_session,
-                reqs=[requirements.Requirement("xgboost>=1.7,<1.8")],
-                python_version=snowml_env.PYTHON_VERSION,
-            ),
-            ["xgboost<1.8,>=1.7"],
-        )
-
-        self.assertIsNone(
-            env_utils.validate_requirements_in_information_schema(
-                session=c_session,
-                reqs=[requirements.Requirement("xgboost==1.7.1, ==1.7.3")],
-                python_version=snowml_env.PYTHON_VERSION,
-            )
-        )
-
-        # clear cache
-        env_utils._SNOWFLAKE_INFO_SCHEMA_PACKAGE_CACHE = {}
-
-        m_session.add_mock_sql(query=query, result=mock_data_frame.MockDataFrame(sql_result))
-        c_session = cast(session.Session, m_session)
-
-        self.assertListEqual(
-            env_utils.validate_requirements_in_information_schema(
-                session=c_session,
-                reqs=[requirements.Requirement("xgboost==1.7.*")],
-                python_version=snowml_env.PYTHON_VERSION,
-            ),
-            ["xgboost==1.7.*"],
-        )
-
-        # Test cache
-        self.assertListEqual(
-            env_utils.validate_requirements_in_information_schema(
-                session=c_session,
-                reqs=[requirements.Requirement("xgboost==1.7.*")],
-                python_version=snowml_env.PYTHON_VERSION,
-            ),
-            ["xgboost==1.7.*"],
-        )
-
-        # clear cache
-        env_utils._SNOWFLAKE_INFO_SCHEMA_PACKAGE_CACHE = {}
-
-        m_session.add_mock_sql(query=query, result=mock_data_frame.MockDataFrame(sql_result))
-        c_session = cast(session.Session, m_session)
-
-        self.assertIsNone(
-            env_utils.validate_requirements_in_information_schema(
-                session=c_session,
-                reqs=[requirements.Requirement("xgboost==1.3.*")],
-                python_version=snowml_env.PYTHON_VERSION,
-            )
-        )
-
-        # Test cache
-        self.assertIsNone(
-            env_utils.validate_requirements_in_information_schema(
-                session=c_session,
-                reqs=[requirements.Requirement("xgboost==1.3.*")],
-                python_version=snowml_env.PYTHON_VERSION,
-            )
-        )
-
-        # clear cache
-        env_utils._SNOWFLAKE_INFO_SCHEMA_PACKAGE_CACHE = {}
-
-        query = textwrap.dedent(
-            """
-            SELECT PACKAGE_NAME, VERSION
-            FROM information_schema.packages
-            WHERE (package_name = 'python-package')
-            AND language = 'python';
-            """
-        )
-        sql_result = [row.Row()]
-
-        m_session = mock_session.MockSession(conn=None, test_case=self)
-        m_session.add_mock_sql(query=query, result=mock_data_frame.MockDataFrame(sql_result))
-        c_session = cast(session.Session, m_session)
-
-        self.assertIsNone(
-            env_utils.validate_requirements_in_information_schema(
-                session=c_session,
-                reqs=[requirements.Requirement("python-package")],
-                python_version=snowml_env.PYTHON_VERSION,
-            )
-        )
-
-        env_utils._INFO_SCHEMA_PACKAGES_HAS_RUNTIME_VERSION = None
-        m_session = mock_session.MockSession(conn=None, test_case=self)
-        m_session.add_mock_sql(
-            query=textwrap.dedent(
-                """
-                SHOW COLUMNS
-                LIKE 'runtime_version'
-                IN TABLE information_schema.packages;
-                """
-            ),
-            result=mock_data_frame.MockDataFrame(count_result=1),
-        )
 
         query = textwrap.dedent(
             f"""
@@ -581,23 +317,271 @@ class EnvUtilsTest(absltest.TestCase):
         m_session.add_mock_sql(query=query, result=mock_data_frame.MockDataFrame(sql_result))
         c_session = cast(session.Session, m_session)
 
-        self.assertListEqual(
-            env_utils.validate_requirements_in_information_schema(
+        self.assertDictEqual(
+            env_utils.get_matched_package_versions_in_information_schema(
                 session=c_session,
                 reqs=[requirements.Requirement("xgboost"), requirements.Requirement("pytorch")],
                 python_version=snowml_env.PYTHON_VERSION,
             ),
-            sorted(["xgboost", "pytorch"]),
+            {
+                "xgboost": list(map(version.parse, ["1.3.3", "1.5.1", "1.7.3"])),
+                "pytorch": list(map(version.parse, ["1.12.1"])),
+            },
         )
 
         # Test cache
-        self.assertListEqual(
-            env_utils.validate_requirements_in_information_schema(
+        self.assertDictEqual(
+            env_utils.get_matched_package_versions_in_information_schema(
                 session=c_session,
                 reqs=[requirements.Requirement("xgboost"), requirements.Requirement("pytorch")],
                 python_version=snowml_env.PYTHON_VERSION,
             ),
-            sorted(["xgboost", "pytorch"]),
+            {
+                "xgboost": list(map(version.parse, ["1.3.3", "1.5.1", "1.7.3"])),
+                "pytorch": list(map(version.parse, ["1.12.1"])),
+            },
+        )
+
+        # clear cache
+        env_utils._SNOWFLAKE_INFO_SCHEMA_PACKAGE_CACHE = {}
+
+        query = textwrap.dedent(
+            f"""
+            SELECT PACKAGE_NAME, VERSION
+            FROM information_schema.packages
+            WHERE (package_name = 'xgboost')
+            AND language = 'python'
+            AND (runtime_version = '{platform.python_version_tuple()[0]}.{platform.python_version_tuple()[1]}'
+                OR runtime_version is null);
+            """
+        )
+        sql_result = [
+            row.Row(PACKAGE_NAME="xgboost", VERSION="1.3.3"),
+            row.Row(PACKAGE_NAME="xgboost", VERSION="1.5.1"),
+            row.Row(PACKAGE_NAME="xgboost", VERSION="1.7.3"),
+        ]
+
+        m_session = mock_session.MockSession(conn=None, test_case=self)
+        m_session.add_mock_sql(query=query, result=mock_data_frame.MockDataFrame(sql_result))
+        c_session = cast(session.Session, m_session)
+
+        self.assertDictEqual(
+            env_utils.get_matched_package_versions_in_information_schema(
+                session=c_session,
+                reqs=[requirements.Requirement("xgboost")],
+                python_version=snowml_env.PYTHON_VERSION,
+            ),
+            {
+                "xgboost": list(map(version.parse, ["1.3.3", "1.5.1", "1.7.3"])),
+            },
+        )
+
+        # Test cache
+        self.assertDictEqual(
+            env_utils.get_matched_package_versions_in_information_schema(
+                session=c_session,
+                reqs=[requirements.Requirement("xgboost")],
+                python_version=snowml_env.PYTHON_VERSION,
+            ),
+            {
+                "xgboost": list(map(version.parse, ["1.3.3", "1.5.1", "1.7.3"])),
+            },
+        )
+
+        query = textwrap.dedent(
+            f"""
+            SELECT PACKAGE_NAME, VERSION
+            FROM information_schema.packages
+            WHERE (package_name = 'pytorch')
+            AND language = 'python'
+            AND (runtime_version = '{platform.python_version_tuple()[0]}.{platform.python_version_tuple()[1]}'
+                OR runtime_version is null);
+            """
+        )
+        sql_result = [
+            row.Row(PACKAGE_NAME="pytorch", VERSION="1.12.1"),
+        ]
+
+        m_session = mock_session.MockSession(conn=None, test_case=self)
+        m_session.add_mock_sql(query=query, result=mock_data_frame.MockDataFrame(sql_result))
+        c_session = cast(session.Session, m_session)
+
+        self.assertDictEqual(
+            env_utils.get_matched_package_versions_in_information_schema(
+                session=c_session,
+                reqs=[requirements.Requirement("xgboost"), requirements.Requirement("pytorch")],
+                python_version=snowml_env.PYTHON_VERSION,
+            ),
+            {
+                "xgboost": list(map(version.parse, ["1.3.3", "1.5.1", "1.7.3"])),
+                "pytorch": list(map(version.parse, ["1.12.1"])),
+            },
+        )
+
+        # Test cache
+        self.assertDictEqual(
+            env_utils.get_matched_package_versions_in_information_schema(
+                session=c_session,
+                reqs=[requirements.Requirement("xgboost"), requirements.Requirement("pytorch")],
+                python_version=snowml_env.PYTHON_VERSION,
+            ),
+            {
+                "xgboost": list(map(version.parse, ["1.3.3", "1.5.1", "1.7.3"])),
+                "pytorch": list(map(version.parse, ["1.12.1"])),
+            },
+        )
+
+        # clear cache
+        env_utils._SNOWFLAKE_INFO_SCHEMA_PACKAGE_CACHE = {}
+
+        query = textwrap.dedent(
+            f"""
+            SELECT PACKAGE_NAME, VERSION
+            FROM information_schema.packages
+            WHERE (package_name = 'xgboost')
+            AND language = 'python'
+            AND (runtime_version = '{platform.python_version_tuple()[0]}.{platform.python_version_tuple()[1]}'
+                OR runtime_version is null);
+            """
+        )
+        sql_result = [
+            row.Row(PACKAGE_NAME="xgboost", VERSION="1.7.0"),
+            row.Row(PACKAGE_NAME="xgboost", VERSION="1.7.1"),
+            row.Row(PACKAGE_NAME="xgboost", VERSION="1.7.3"),
+        ]
+
+        m_session.add_mock_sql(query=query, result=mock_data_frame.MockDataFrame(sql_result))
+        c_session = cast(session.Session, m_session)
+
+        self.assertDictEqual(
+            env_utils.get_matched_package_versions_in_information_schema(
+                session=c_session,
+                reqs=[requirements.Requirement("xgboost==1.7.3")],
+                python_version=snowml_env.PYTHON_VERSION,
+            ),
+            {
+                "xgboost": list(map(version.parse, ["1.7.3"])),
+            },
+        )
+
+        # Test cache
+        self.assertDictEqual(
+            env_utils.get_matched_package_versions_in_information_schema(
+                session=c_session,
+                reqs=[requirements.Requirement("xgboost==1.7.3")],
+                python_version=snowml_env.PYTHON_VERSION,
+            ),
+            {
+                "xgboost": list(map(version.parse, ["1.7.3"])),
+            },
+        )
+
+        self.assertDictEqual(
+            env_utils.get_matched_package_versions_in_information_schema(
+                session=c_session,
+                reqs=[requirements.Requirement("xgboost>=1.7,<1.8")],
+                python_version=snowml_env.PYTHON_VERSION,
+            ),
+            {
+                "xgboost": list(map(version.parse, ["1.7.0", "1.7.1", "1.7.3"])),
+            },
+        )
+
+        self.assertDictEqual(
+            env_utils.get_matched_package_versions_in_information_schema(
+                session=c_session,
+                reqs=[requirements.Requirement("xgboost==1.7.1, ==1.7.3")],
+                python_version=snowml_env.PYTHON_VERSION,
+            ),
+            {
+                "xgboost": list(map(version.parse, [])),
+            },
+        )
+
+        # clear cache
+        env_utils._SNOWFLAKE_INFO_SCHEMA_PACKAGE_CACHE = {}
+
+        m_session.add_mock_sql(query=query, result=mock_data_frame.MockDataFrame(sql_result))
+        c_session = cast(session.Session, m_session)
+
+        self.assertDictEqual(
+            env_utils.get_matched_package_versions_in_information_schema(
+                session=c_session,
+                reqs=[requirements.Requirement("xgboost==1.7.*")],
+                python_version=snowml_env.PYTHON_VERSION,
+            ),
+            {
+                "xgboost": list(map(version.parse, ["1.7.0", "1.7.1", "1.7.3"])),
+            },
+        )
+
+        # Test cache
+        self.assertDictEqual(
+            env_utils.get_matched_package_versions_in_information_schema(
+                session=c_session,
+                reqs=[requirements.Requirement("xgboost==1.7.*")],
+                python_version=snowml_env.PYTHON_VERSION,
+            ),
+            {
+                "xgboost": list(map(version.parse, ["1.7.0", "1.7.1", "1.7.3"])),
+            },
+        )
+
+        # clear cache
+        env_utils._SNOWFLAKE_INFO_SCHEMA_PACKAGE_CACHE = {}
+
+        m_session.add_mock_sql(query=query, result=mock_data_frame.MockDataFrame(sql_result))
+        c_session = cast(session.Session, m_session)
+
+        self.assertDictEqual(
+            env_utils.get_matched_package_versions_in_information_schema(
+                session=c_session,
+                reqs=[requirements.Requirement("xgboost==1.3.*")],
+                python_version=snowml_env.PYTHON_VERSION,
+            ),
+            {
+                "xgboost": list(map(version.parse, [])),
+            },
+        )
+
+        # Test cache
+        self.assertDictEqual(
+            env_utils.get_matched_package_versions_in_information_schema(
+                session=c_session,
+                reqs=[requirements.Requirement("xgboost==1.3.*")],
+                python_version=snowml_env.PYTHON_VERSION,
+            ),
+            {
+                "xgboost": list(map(version.parse, [])),
+            },
+        )
+
+        # clear cache
+        env_utils._SNOWFLAKE_INFO_SCHEMA_PACKAGE_CACHE = {}
+
+        query = textwrap.dedent(
+            f"""
+            SELECT PACKAGE_NAME, VERSION
+            FROM information_schema.packages
+            WHERE (package_name = 'python-package')
+            AND language = 'python'
+            AND (runtime_version = '{platform.python_version_tuple()[0]}.{platform.python_version_tuple()[1]}'
+                OR runtime_version is null);
+            """
+        )
+        sql_result = [row.Row()]
+
+        m_session = mock_session.MockSession(conn=None, test_case=self)
+        m_session.add_mock_sql(query=query, result=mock_data_frame.MockDataFrame(sql_result))
+        c_session = cast(session.Session, m_session)
+
+        self.assertDictEqual(
+            env_utils.get_matched_package_versions_in_information_schema(
+                session=c_session,
+                reqs=[requirements.Requirement("python-package")],
+                python_version=snowml_env.PYTHON_VERSION,
+            ),
+            {},
         )
 
     def test_parse_python_version_string(self) -> None:

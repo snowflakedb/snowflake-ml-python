@@ -62,6 +62,7 @@ class ModelOpsTest(absltest.TestCase):
                 model_name="MODEL",
                 database_name="TEMP",
                 schema_name="test",
+                default_version_name="V1",
             ),
             Row(
                 create_on="06/01",
@@ -70,6 +71,7 @@ class ModelOpsTest(absltest.TestCase):
                 model_name="MODEL",
                 database_name="TEMP",
                 schema_name="test",
+                default_version_name="v1",
             ),
         ]
         with mock.patch.object(self.m_ops._model_client, "show_models", return_value=m_list_res) as mock_show_models:
@@ -132,6 +134,7 @@ class ModelOpsTest(absltest.TestCase):
                 model_name="MODEL",
                 database_name="TEMP",
                 schema_name="test",
+                default_version_name="V1",
             ),
         ]
         with mock.patch.object(self.m_ops._model_client, "show_models", return_value=m_list_res) as mock_show_models:
@@ -142,6 +145,7 @@ class ModelOpsTest(absltest.TestCase):
             self.assertTrue(res)
             mock_show_models.assert_called_once_with(
                 model_name=sql_identifier.SqlIdentifier("Model", case_sensitive=True),
+                assert_existence=False,
                 statement_params=self.m_statement_params,
             )
 
@@ -155,6 +159,7 @@ class ModelOpsTest(absltest.TestCase):
             self.assertFalse(res)
             mock_show_models.assert_called_once_with(
                 model_name=sql_identifier.SqlIdentifier("Model", case_sensitive=True),
+                assert_existence=False,
                 statement_params=self.m_statement_params,
             )
 
@@ -180,6 +185,7 @@ class ModelOpsTest(absltest.TestCase):
             mock_show_versions.assert_called_once_with(
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
                 version_name=sql_identifier.SqlIdentifier("v1", case_sensitive=True),
+                assert_existence=False,
                 statement_params=self.m_statement_params,
             )
 
@@ -197,6 +203,7 @@ class ModelOpsTest(absltest.TestCase):
             mock_show_versions.assert_called_once_with(
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
                 version_name=sql_identifier.SqlIdentifier("v1", case_sensitive=True),
+                assert_existence=False,
                 statement_params=self.m_statement_params,
             )
 
@@ -341,6 +348,7 @@ class ModelOpsTest(absltest.TestCase):
                 model_name="MODEL",
                 database_name="TEMP",
                 schema_name="test",
+                default_version_name="V1",
             ),
         ]
         with mock.patch.object(
@@ -377,6 +385,7 @@ class ModelOpsTest(absltest.TestCase):
                 model_name="MODEL",
                 database_name="TEMP",
                 schema_name="test",
+                default_version_name="V1",
             ),
         )
         m_list_res_versions = [
@@ -540,6 +549,7 @@ class ModelOpsTest(absltest.TestCase):
                 model_name="MODEL",
                 database_name="TEMP",
                 schema_name="test",
+                default_version_name="V1",
             ),
         ]
         with mock.patch.object(
@@ -584,6 +594,83 @@ class ModelOpsTest(absltest.TestCase):
                 version_name=sql_identifier.SqlIdentifier("V1"),
                 statement_params=self.m_statement_params,
             )
+
+    def test_get_default_version(self) -> None:
+        m_list_res = [
+            Row(
+                create_on="06/01",
+                name="MODEL",
+                comment="This is a comment",
+                model_name="MODEL",
+                database_name="TEMP",
+                schema_name="test",
+                default_version_name="v1",
+            ),
+        ]
+        with mock.patch.object(self.m_ops._model_client, "show_models", return_value=m_list_res) as mock_show_models:
+            res = self.m_ops.get_default_version(
+                model_name=sql_identifier.SqlIdentifier("MODEL"),
+                statement_params=self.m_statement_params,
+            )
+            self.assertEqual(res, sql_identifier.SqlIdentifier("v1", case_sensitive=True))
+            mock_show_models.assert_called_once_with(
+                model_name=sql_identifier.SqlIdentifier("MODEL"),
+                statement_params=self.m_statement_params,
+            )
+
+    def test_set_default_version_1(self) -> None:
+        m_list_res = [
+            Row(
+                create_on="06/01",
+                name="v1",
+                comment="This is a comment",
+                model_name="MODEL",
+                is_default_version=True,
+            ),
+        ]
+        with mock.patch.object(
+            self.m_ops._model_client, "show_versions", return_value=m_list_res
+        ) as mock_show_versions, mock.patch.object(
+            self.m_ops._model_version_client, "set_default_version"
+        ) as mock_set_default_version:
+            self.m_ops.set_default_version(
+                model_name=sql_identifier.SqlIdentifier("MODEL"),
+                version_name=sql_identifier.SqlIdentifier('"v1"'),
+                statement_params=self.m_statement_params,
+            )
+            mock_show_versions.assert_called_once_with(
+                model_name=sql_identifier.SqlIdentifier("MODEL"),
+                version_name=sql_identifier.SqlIdentifier('"v1"'),
+                assert_existence=False,
+                statement_params=self.m_statement_params,
+            )
+            mock_set_default_version.assert_called_once_with(
+                model_name=sql_identifier.SqlIdentifier("MODEL"),
+                version_name=sql_identifier.SqlIdentifier('"v1"'),
+                statement_params=self.m_statement_params,
+            )
+
+    def test_set_default_version_2(self) -> None:
+        with mock.patch.object(
+            self.m_ops._model_client, "show_versions", return_value=[]
+        ) as mock_show_versions, mock.patch.object(
+            self.m_ops._model_version_client, "set_default_version"
+        ) as mock_set_default_version:
+            with self.assertRaisesRegex(
+                ValueError, "You cannot set version V1 as default version as it does not exist."
+            ):
+                self.m_ops.set_default_version(
+                    model_name=sql_identifier.SqlIdentifier("MODEL"),
+                    version_name=sql_identifier.SqlIdentifier("V1"),
+                    statement_params=self.m_statement_params,
+                )
+            mock_show_versions.assert_called_once_with(
+                model_name=sql_identifier.SqlIdentifier("MODEL"),
+                version_name=sql_identifier.SqlIdentifier("V1"),
+                assert_existence=False,
+                statement_params=self.m_statement_params,
+            )
+            mock_set_default_version.assert_not_called()
 
     def test_delete_model_or_version(self) -> None:
         with mock.patch.object(

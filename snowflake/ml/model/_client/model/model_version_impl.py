@@ -6,7 +6,7 @@ import pandas as pd
 from snowflake.ml._internal import telemetry
 from snowflake.ml._internal.utils import sql_identifier
 from snowflake.ml.model import model_signature
-from snowflake.ml.model._client.model import model_method_info
+from snowflake.ml.model._client.model import function_info
 from snowflake.ml.model._client.ops import metadata_ops, model_ops
 from snowflake.snowpark import dataframe
 
@@ -49,14 +49,17 @@ class ModelVersion:
 
     @property
     def model_name(self) -> str:
+        """The name of the model which the model version belongs to that you could used to refer it in SQL."""
         return self._model_name.identifier()
 
     @property
     def version_name(self) -> str:
+        """The name of the version that you could used to refer it in SQL."""
         return self._version_name.identifier()
 
     @property
     def fully_qualified_model_name(self) -> str:
+        """The fully qualified name of the model which the model version belongs to."""
         return self._model_ops._model_version_client.fully_qualified_model_name(self._model_name)
 
     @property
@@ -65,6 +68,24 @@ class ModelVersion:
         subproject=_TELEMETRY_SUBPROJECT,
     )
     def description(self) -> str:
+        """The description to the model version. This is a alias of `comment`."""
+        return self.comment
+
+    @description.setter
+    @telemetry.send_api_usage_telemetry(
+        project=_TELEMETRY_PROJECT,
+        subproject=_TELEMETRY_SUBPROJECT,
+    )
+    def description(self, description: str) -> None:
+        self.comment = description
+
+    @property
+    @telemetry.send_api_usage_telemetry(
+        project=_TELEMETRY_PROJECT,
+        subproject=_TELEMETRY_SUBPROJECT,
+    )
+    def comment(self) -> str:
+        """The comment to the model version."""
         statement_params = telemetry.get_statement_params(
             project=_TELEMETRY_PROJECT,
             subproject=_TELEMETRY_SUBPROJECT,
@@ -75,18 +96,18 @@ class ModelVersion:
             statement_params=statement_params,
         )
 
-    @description.setter
+    @comment.setter
     @telemetry.send_api_usage_telemetry(
         project=_TELEMETRY_PROJECT,
         subproject=_TELEMETRY_SUBPROJECT,
     )
-    def description(self, description: str) -> None:
+    def comment(self, comment: str) -> None:
         statement_params = telemetry.get_statement_params(
             project=_TELEMETRY_PROJECT,
             subproject=_TELEMETRY_SUBPROJECT,
         )
         return self._model_ops.set_comment(
-            comment=description,
+            comment=comment,
             model_name=self._model_name,
             version_name=self._version_name,
             statement_params=statement_params,
@@ -96,7 +117,7 @@ class ModelVersion:
         project=_TELEMETRY_PROJECT,
         subproject=_TELEMETRY_SUBPROJECT,
     )
-    def list_metrics(self) -> Dict[str, Any]:
+    def show_metrics(self) -> Dict[str, Any]:
         """Show all metrics logged with the model version.
 
         Returns:
@@ -126,7 +147,7 @@ class ModelVersion:
         Returns:
             The value of the metric.
         """
-        metrics = self.list_metrics()
+        metrics = self.show_metrics()
         if metric_name not in metrics:
             raise KeyError(f"Cannot find metric with name {metric_name}.")
         return metrics[metric_name]
@@ -146,7 +167,7 @@ class ModelVersion:
             project=_TELEMETRY_PROJECT,
             subproject=_TELEMETRY_SUBPROJECT,
         )
-        metrics = self.list_metrics()
+        metrics = self.show_metrics()
         metrics[metric_name] = value
         self._model_ops._metadata_ops.save(
             metadata_ops.ModelVersionMetadataSchema(metrics=metrics),
@@ -172,7 +193,7 @@ class ModelVersion:
             project=_TELEMETRY_PROJECT,
             subproject=_TELEMETRY_SUBPROJECT,
         )
-        metrics = self.list_metrics()
+        metrics = self.show_metrics()
         if metric_name not in metrics:
             raise KeyError(f"Cannot find metric with name {metric_name}.")
         del metrics[metric_name]
@@ -187,14 +208,15 @@ class ModelVersion:
         project=_TELEMETRY_PROJECT,
         subproject=_TELEMETRY_SUBPROJECT,
     )
-    def list_methods(self) -> List[model_method_info.ModelMethodInfo]:
-        """List all method information in a model version that is callable.
+    def show_functions(self) -> List[function_info.ModelFunctionInfo]:
+        """Show all functions information in a model version that is callable.
 
         Returns:
-            A list of ModelMethodInfo object containing the following information:
-            - name: The name of the method to be called (both in SQL and in Python SDK).
+            A list of ModelFunctionInfo object containing the following information:
+
+            - name: The name of the function to be called (both in SQL and in Python SDK).
             - target_method: The original method name in the logged Python object.
-            - Signature: Python signature of the original method.
+            - signature: Python signature of the original method.
         """
         statement_params = telemetry.get_statement_params(
             project=_TELEMETRY_PROJECT,
@@ -211,7 +233,7 @@ class ModelVersion:
             version_name=self._version_name,
             statement_params=statement_params,
         )
-        return_methods_info: List[model_method_info.ModelMethodInfo] = []
+        return_functions_info: List[function_info.ModelFunctionInfo] = []
         for method in manifest["methods"]:
             # Method's name is resolved so we need to use case_sensitive as True to get the user-facing identifier.
             method_name = sql_identifier.SqlIdentifier(method["name"], case_sensitive=True).identifier()
@@ -221,14 +243,14 @@ class ModelVersion:
             ), f"Get unexpected handler name {method['handler']}"
             target_method = method["handler"].split(".")[1]
             signature_dict = model_meta["signatures"][target_method]
-            method_info = model_method_info.ModelMethodInfo(
+            fi = function_info.ModelFunctionInfo(
                 name=method_name,
                 target_method=target_method,
                 signature=model_signature.ModelSignature.from_dict(signature_dict),
             )
-            return_methods_info.append(method_info)
+            return_functions_info.append(fi)
 
-        return return_methods_info
+        return return_functions_info
 
     @telemetry.send_api_usage_telemetry(
         project=_TELEMETRY_PROJECT,
@@ -238,18 +260,18 @@ class ModelVersion:
         self,
         X: Union[pd.DataFrame, dataframe.DataFrame],
         *,
-        method_name: Optional[str] = None,
+        function_name: Optional[str] = None,
     ) -> Union[pd.DataFrame, dataframe.DataFrame]:
         """Invoke a method in a model version object
 
         Args:
             X: The input data. Could be pandas DataFrame or Snowpark DataFrame
-            method_name: The method name to run. It is the name you will use to call a method in SQL. Defaults to None.
-                It can only be None if there is only 1 method.
+            function_name: The function name to run. It is the name you will use to call a function in SQL.
+                Defaults to None. It can only be None if there is only 1 method.
 
         Raises:
             ValueError: No method with the corresponding name is available.
-            ValueError: There are more than 1 target methods available in the model but no method name specified.
+            ValueError: There are more than 1 target methods available in the model but no function name specified.
 
         Returns:
             The prediction data.
@@ -259,31 +281,31 @@ class ModelVersion:
             subproject=_TELEMETRY_SUBPROJECT,
         )
 
-        methods: List[model_method_info.ModelMethodInfo] = self.list_methods()
-        if method_name:
-            req_method_name = sql_identifier.SqlIdentifier(method_name).identifier()
-            find_method: Callable[[model_method_info.ModelMethodInfo], bool] = (
+        functions: List[function_info.ModelFunctionInfo] = self.show_functions()
+        if function_name:
+            req_method_name = sql_identifier.SqlIdentifier(function_name).identifier()
+            find_method: Callable[[function_info.ModelFunctionInfo], bool] = (
                 lambda method: method["name"] == req_method_name
             )
-            target_method_info = next(
-                filter(find_method, methods),
+            target_function_info = next(
+                filter(find_method, functions),
                 None,
             )
-            if target_method_info is None:
+            if target_function_info is None:
                 raise ValueError(
-                    f"There is no method with name {method_name} available in the model"
+                    f"There is no method with name {function_name} available in the model"
                     f" {self.fully_qualified_model_name} version {self.version_name}"
                 )
-        elif len(methods) != 1:
+        elif len(functions) != 1:
             raise ValueError(
                 f"There are more than 1 target methods available in the model {self.fully_qualified_model_name}"
                 f" version {self.version_name}. Please specify a `method_name` when calling the `run` method."
             )
         else:
-            target_method_info = methods[0]
+            target_function_info = functions[0]
         return self._model_ops.invoke_method(
-            method_name=sql_identifier.SqlIdentifier(target_method_info["name"]),
-            signature=target_method_info["signature"],
+            method_name=sql_identifier.SqlIdentifier(target_function_info["name"]),
+            signature=target_function_info["signature"],
             X=X,
             model_name=self._model_name,
             version_name=self._version_name,

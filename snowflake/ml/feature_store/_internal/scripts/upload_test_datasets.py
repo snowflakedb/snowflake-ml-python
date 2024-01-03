@@ -1,5 +1,11 @@
-# A helper script cleans open taxi data (https://www.nyc.gov/site/tlc/about/tlc-trip-record-data.page)
-# and store into snowflake database.
+"""
+A helper script cleans open taxi data (https://www.nyc.gov/site/tlc/about/tlc-trip-record-data.page)
+and store into snowflake database.
+
+Download yellow trip data(2016 Jan): https://www.nyc.gov/site/tlc/about/tlc-trip-record-data.page.
+Download wine data:
+https://www.google.com/url?q=https://github.com/snowflakedb/snowml/blob/main/snowflake/ml/feature_store/notebooks/customer_demo/winequality-red.csv&sa=D&source=docs&ust=1702084016573738&usg=AOvVaw3r_muH0_LKBDr45C1Gj3cb
+"""
 
 from absl.logging import logging
 
@@ -56,7 +62,7 @@ def create_winedata(sess: Session, overwrite_mode: str) -> None:
 
     full_table_name = f"{FS_INTEG_TEST_DB}.{FS_INTEG_TEST_DATASET_SCHEMA}.{FS_INTEG_TEST_WINE_QUALITY_DATA}"
     df = (
-        sess.read.options({"field_delimiter": ",", "skip_header": 1})
+        sess.read.options({"field_delimiter": ";", "skip_header": 1})
         .schema(input_schema)
         .csv(f"{sess.get_session_stage()}/{WINEDATA_NAME}")
     )

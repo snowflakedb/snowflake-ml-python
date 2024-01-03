@@ -3,9 +3,6 @@ from unittest import mock
 
 from absl.testing import absltest
 
-from snowflake.ml._internal.utils import sql_identifier
-from snowflake.ml.model._client.model import model_impl, model_version_impl
-from snowflake.ml.model._model_composer import model_composer
 from snowflake.ml.registry import registry
 from snowflake.ml.test_utils import mock_session
 from snowflake.snowpark import Session
@@ -85,211 +82,76 @@ class RegistryTest(absltest.TestCase):
         self.c_session = cast(Session, self.m_session)
         self.m_r = registry.Registry(self.c_session, database_name="TEMP", schema_name="TEST")
 
-    def test_get_model_1(self) -> None:
-        m_model = model_impl.Model._ref(
-            self.m_r._model_ops,
-            model_name=sql_identifier.SqlIdentifier("MODEL"),
-        )
-        with mock.patch.object(self.m_r._model_ops, "validate_existence", return_value=True) as mock_validate_existence:
-            m = self.m_r.get_model("MODEL")
-            self.assertEqual(m, m_model)
-            mock_validate_existence.assert_called_once_with(
-                model_name=sql_identifier.SqlIdentifier("MODEL"),
+    def test_get_model(self) -> None:
+        with mock.patch.object(self.m_r._model_manager, "get_model", return_value=True) as mock_get_model:
+            self.m_r.get_model("MODEL")
+            mock_get_model.assert_called_once_with(
+                model_name="MODEL",
                 statement_params=mock.ANY,
             )
 
-    def test_get_model_2(self) -> None:
+    def test_show_models(self) -> None:
         with mock.patch.object(
-            self.m_r._model_ops, "validate_existence", return_value=False
-        ) as mock_validate_existence:
-            with self.assertRaisesRegex(ValueError, "Unable to find model MODEL"):
-                self.m_r.get_model("MODEL")
-            mock_validate_existence.assert_called_once_with(
-                model_name=sql_identifier.SqlIdentifier("MODEL"),
+            self.m_r._model_manager,
+            "show_models",
+        ) as mock_show_models:
+            self.m_r.show_models()
+            mock_show_models.assert_called_once_with(
                 statement_params=mock.ANY,
             )
 
-    def test_list_models(self) -> None:
-        m_model_1 = model_impl.Model._ref(
-            self.m_r._model_ops,
-            model_name=sql_identifier.SqlIdentifier("MODEL"),
-        )
-        m_model_2 = model_impl.Model._ref(
-            self.m_r._model_ops,
-            model_name=sql_identifier.SqlIdentifier("Model", case_sensitive=True),
-        )
-        with mock.patch.object(
-            self.m_r._model_ops,
-            "list_models_or_versions",
-            return_value=[
-                sql_identifier.SqlIdentifier("MODEL"),
-                sql_identifier.SqlIdentifier("Model", case_sensitive=True),
-            ],
-        ) as mock_list_models_or_versions:
-            m_list = self.m_r.list_models()
-            self.assertListEqual(m_list, [m_model_1, m_model_2])
-            mock_list_models_or_versions.assert_called_once_with(
-                statement_params=mock.ANY,
-            )
-
-    def test_log_model_1(self) -> None:
+    def test_log_model(self) -> None:
         m_model = mock.MagicMock()
         m_conda_dependency = mock.MagicMock()
         m_sample_input_data = mock.MagicMock()
-        m_stage_path = "@TEMP.TEST.MODEL/V1"
-        with mock.patch.object(
-            self.m_r._model_ops, "prepare_model_stage_path", return_value=m_stage_path
-        ) as mock_prepare_model_stage_path, mock.patch.object(
-            model_composer.ModelComposer, "save"
-        ) as mock_save, mock.patch.object(
-            self.m_r._model_ops, "create_from_stage"
-        ) as mock_create_from_stage:
-            mv = self.m_r.log_model(
-                model=m_model,
-                model_name="MODEL",
-                version_name="v1",
-                conda_dependencies=m_conda_dependency,
-                sample_input_data=m_sample_input_data,
-            )
-            mock_prepare_model_stage_path.assert_called_once_with(
-                statement_params=mock.ANY,
-            )
-            mock_save.assert_called_once_with(
-                name="MODEL",
-                model=m_model,
-                signatures=None,
-                sample_input=m_sample_input_data,
-                conda_dependencies=m_conda_dependency,
-                pip_requirements=None,
-                python_version=None,
-                code_paths=None,
-                ext_modules=None,
-                options=None,
-            )
-            mock_create_from_stage.assert_called_once_with(
-                composed_model=mock.ANY,
-                model_name=sql_identifier.SqlIdentifier("MODEL"),
-                version_name=sql_identifier.SqlIdentifier("v1"),
-                statement_params=mock.ANY,
-            )
-            self.assertEqual(
-                mv,
-                model_version_impl.ModelVersion._ref(
-                    self.m_r._model_ops,
-                    model_name=sql_identifier.SqlIdentifier("MODEL"),
-                    version_name=sql_identifier.SqlIdentifier("v1"),
-                ),
-            )
-
-    def test_log_model_2(self) -> None:
-        m_model = mock.MagicMock()
         m_pip_requirements = mock.MagicMock()
         m_signatures = mock.MagicMock()
         m_options = mock.MagicMock()
-        m_stage_path = "@TEMP.TEST.MODEL/V1"
-        with mock.patch.object(
-            self.m_r._model_ops, "prepare_model_stage_path", return_value=m_stage_path
-        ) as mock_prepare_model_stage_path, mock.patch.object(
-            model_composer.ModelComposer, "save"
-        ) as mock_save, mock.patch.object(
-            self.m_r._model_ops, "create_from_stage"
-        ) as mock_create_from_stage:
-            mv = self.m_r.log_model(
-                model=m_model,
-                model_name="MODEL",
-                version_name="V1",
-                pip_requirements=m_pip_requirements,
-                signatures=m_signatures,
-                options=m_options,
-            )
-            mock_prepare_model_stage_path.assert_called_once_with(
-                statement_params=mock.ANY,
-            )
-            mock_save.assert_called_once_with(
-                name="MODEL",
-                model=m_model,
-                signatures=m_signatures,
-                sample_input=None,
-                conda_dependencies=None,
-                pip_requirements=m_pip_requirements,
-                python_version=None,
-                code_paths=None,
-                ext_modules=None,
-                options=m_options,
-            )
-            mock_create_from_stage.assert_called_once_with(
-                composed_model=mock.ANY,
-                model_name=sql_identifier.SqlIdentifier("MODEL"),
-                version_name=sql_identifier.SqlIdentifier("V1"),
-                statement_params=mock.ANY,
-            )
-            self.assertEqual(
-                mv,
-                model_version_impl.ModelVersion._ref(
-                    self.m_r._model_ops,
-                    model_name=sql_identifier.SqlIdentifier("MODEL"),
-                    version_name=sql_identifier.SqlIdentifier("V1"),
-                ),
-            )
-
-    def test_log_model_3(self) -> None:
-        m_model = mock.MagicMock()
         m_python_version = mock.MagicMock()
         m_code_paths = mock.MagicMock()
         m_ext_modules = mock.MagicMock()
-        m_stage_path = "@TEMP.TEST.MODEL/V1"
-        with mock.patch.object(
-            self.m_r._model_ops, "prepare_model_stage_path", return_value=m_stage_path
-        ) as mock_prepare_model_stage_path, mock.patch.object(
-            model_composer.ModelComposer, "save"
-        ) as mock_save, mock.patch.object(
-            self.m_r._model_ops, "create_from_stage"
-        ) as mock_create_from_stage:
-            mv = self.m_r.log_model(
+        m_comment = mock.MagicMock()
+        m_metrics = mock.MagicMock()
+        with mock.patch.object(self.m_r._model_manager, "log_model") as mock_log_model:
+            self.m_r.log_model(
                 model=m_model,
                 model_name="MODEL",
-                version_name="V1",
+                version_name="v1",
+                comment=m_comment,
+                metrics=m_metrics,
+                conda_dependencies=m_conda_dependency,
+                pip_requirements=m_pip_requirements,
                 python_version=m_python_version,
+                signatures=m_signatures,
+                sample_input_data=m_sample_input_data,
                 code_paths=m_code_paths,
                 ext_modules=m_ext_modules,
+                options=m_options,
             )
-            mock_prepare_model_stage_path.assert_called_once_with(
-                statement_params=mock.ANY,
-            )
-            mock_save.assert_called_once_with(
-                name="MODEL",
+            mock_log_model.assert_called_once_with(
                 model=m_model,
-                signatures=None,
-                sample_input=None,
-                conda_dependencies=None,
-                pip_requirements=None,
+                model_name="MODEL",
+                version_name="v1",
+                comment=m_comment,
+                metrics=m_metrics,
+                conda_dependencies=m_conda_dependency,
+                pip_requirements=m_pip_requirements,
                 python_version=m_python_version,
+                signatures=m_signatures,
+                sample_input_data=m_sample_input_data,
                 code_paths=m_code_paths,
                 ext_modules=m_ext_modules,
-                options=None,
-            )
-            mock_create_from_stage.assert_called_once_with(
-                composed_model=mock.ANY,
-                model_name=sql_identifier.SqlIdentifier("MODEL"),
-                version_name=sql_identifier.SqlIdentifier("V1"),
+                options=m_options,
                 statement_params=mock.ANY,
-            )
-            self.assertEqual(
-                mv,
-                model_version_impl.ModelVersion._ref(
-                    self.m_r._model_ops,
-                    model_name=sql_identifier.SqlIdentifier("MODEL"),
-                    version_name=sql_identifier.SqlIdentifier("V1"),
-                ),
             )
 
     def test_delete_model(self) -> None:
-        with mock.patch.object(self.m_r._model_ops, "delete_model_or_version") as mock_delete_model_or_version:
+        with mock.patch.object(self.m_r._model_manager, "delete_model") as mock_delete_model:
             self.m_r.delete_model(
                 model_name="MODEL",
             )
-            mock_delete_model_or_version.assert_called_once_with(
-                model_name=sql_identifier.SqlIdentifier("MODEL"),
+            mock_delete_model.assert_called_once_with(
+                model_name="MODEL",
                 statement_params=mock.ANY,
             )
 

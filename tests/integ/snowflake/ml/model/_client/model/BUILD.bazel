@@ -6,6 +6,7 @@ py_test(
     srcs = ["model_impl_integ_test.py"],
     shard_count = 6,
     deps = [
+        "//snowflake/ml/_internal/utils:snowflake_env",
         "//snowflake/ml/registry",
         "//snowflake/ml/utils:connection_params",
         "//tests/integ/snowflake/ml/test_utils:db_manager",
@@ -20,6 +21,7 @@ py_test(
     srcs = ["model_version_impl_integ_test.py"],
     shard_count = 6,
     deps = [
+        "//snowflake/ml/_internal/utils:snowflake_env",
         "//snowflake/ml/_internal/utils:sql_identifier",
         "//snowflake/ml/model/_client/model:model_version_impl",
         "//snowflake/ml/registry",

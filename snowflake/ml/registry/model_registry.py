@@ -3,6 +3,7 @@ import json
 import sys
 import textwrap
 import types
+import warnings
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -305,6 +306,17 @@ class ModelRegistry:
             schema_name: Desired name of the schema used by this model registry inside the database.
             create_if_not_exists: create model registry if it's not exists already.
         """
+
+        warnings.warn(
+            """
+The `snowflake.ml.registry.model_registry.ModelRegistry` has been deprecated starting from version 1.2.0.
+It will stay in the Private Preview phase. For future implementations, kindly utilize `snowflake.ml.registry.Registry`,
+except when specifically required. The old model registry will be removed once all its primary functionalities are
+fully integrated into the new registry.
+        """,
+            DeprecationWarning,
+            stacklevel=2,
+        )
         if create_if_not_exists:
             create_model_registry(session=session, database_name=database_name, schema_name=schema_name)
 

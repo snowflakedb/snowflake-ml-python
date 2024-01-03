@@ -7,6 +7,9 @@ import importlib_resources
 
 from snowflake import snowpark
 from snowflake.ml._internal import file_utils
+from snowflake.ml._internal.container_services.image_registry import (
+    registry_client as image_registry_client,
+)
 from snowflake.ml._internal.exceptions import (
     error_codes,
     exceptions as snowml_exceptions,
@@ -14,11 +17,7 @@ from snowflake.ml._internal.exceptions import (
 from snowflake.ml._internal.utils import identifier
 from snowflake.ml.model._deploy_client import image_builds
 from snowflake.ml.model._deploy_client.image_builds import base_image_builder
-from snowflake.ml.model._deploy_client.utils import (
-    constants,
-    image_registry_client,
-    snowservice_client,
-)
+from snowflake.ml.model._deploy_client.utils import constants, snowservice_client
 
 logger = logging.getLogger(__name__)
 
@@ -117,7 +116,7 @@ class ServerImageBuilder(base_image_builder.ImageBuilder):
 
         kaniko_shell_file = os.path.join(self.context_dir, constants.KANIKO_SHELL_SCRIPT_NAME)
 
-        with open(kaniko_shell_file, "w+", encoding="utf-8") as script_file:
+        with file_utils.open_file(kaniko_shell_file, "w+") as script_file:
             normed_artifact_stage_path = posixpath.normpath(identifier.remove_prefix(self.artifact_stage_location, "@"))
             params = {
                 # Remove @ in the beginning, append "/" to denote root directory.
@@ -175,7 +174,7 @@ class ServerImageBuilder(base_image_builder.ImageBuilder):
             os.path.dirname(self.context_dir), f"{constants.IMAGE_BUILD_JOB_SPEC_TEMPLATE}.yaml"
         )
 
-        with open(spec_file_path, "w+", encoding="utf-8") as spec_file:
+        with file_utils.open_file(spec_file_path, "w+") as spec_file:
             assert self.artifact_stage_location.startswith("@")
             normed_artifact_stage_path = posixpath.normpath(identifier.remove_prefix(self.artifact_stage_location, "@"))
             (db, schema, stage, path) = identifier.parse_schema_level_object_identifier(normed_artifact_stage_path)

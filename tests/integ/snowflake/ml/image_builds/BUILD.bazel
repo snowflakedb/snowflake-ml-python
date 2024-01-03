@@ -5,9 +5,9 @@ py_test(
     timeout = "long",
     srcs = ["image_registry_client_integ_test.py"],
     deps = [
+        "//snowflake/ml/_internal/container_services/image_registry:registry_client",
         "//snowflake/ml/_internal/utils:identifier",
         "//snowflake/ml/_internal/utils:query_result_checker",
-        "//snowflake/ml/model/_deploy_client/utils:image_registry_client",
         "//snowflake/ml/model/_deploy_client/utils:snowservice_client",
         "//tests/integ/snowflake/ml/test_utils:spcs_integ_test_base",
     ],
