@@ -2,11 +2,22 @@ load("//bazel:py_rules.bzl", "py_library", "py_test")
 
 package(default_visibility = ["//visibility:public"])
 
+filegroup(
+    name = "manifest_fixtures",
+    srcs = [
+        "fixtures/MANIFEST_0.yml",
+        "fixtures/MANIFEST_1.yml",
+        "fixtures/MANIFEST_2.yml",
+        "fixtures/MANIFEST_3.yml",
+    ],
+)
+
 py_library(
     name = "model_manifest",
     srcs = ["model_manifest.py"],
     deps = [
         ":model_manifest_schema",
+        "//snowflake/ml/_internal/utils:snowflake_env",
         "//snowflake/ml/model/_model_composer/model_method",
         "//snowflake/ml/model/_model_composer/model_method:function_generator",
         "//snowflake/ml/model/_model_composer/model_runtime",
@@ -17,15 +28,22 @@ py_library(
 py_library(
     name = "model_manifest_schema",
     srcs = ["model_manifest_schema.py"],
+    deps = [
+        "//snowflake/ml/model:model_signature",
+    ],
 )
 
 py_test(
     name = "model_manifest_test",
     srcs = ["model_manifest_test.py"],
-    data = ["//snowflake/ml/model/_model_composer/model_method:function_fixtures"],
+    data = [
+        ":manifest_fixtures",
+        "//snowflake/ml/model/_model_composer/model_method:function_fixtures",
+    ],
     deps = [
         ":model_manifest",
         "//snowflake/ml/_internal:env_utils",
+        "//snowflake/ml/_internal/utils:snowflake_env",
         "//snowflake/ml/model:model_signature",
         "//snowflake/ml/model:type_hints",
         "//snowflake/ml/model/_packager/model_meta",

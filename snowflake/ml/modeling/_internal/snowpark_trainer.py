@@ -12,7 +12,11 @@ from snowflake.ml._internal.exceptions import (
     exceptions,
     modeling_error_messages,
 )
-from snowflake.ml._internal.utils import identifier, snowpark_dataframe_utils
+from snowflake.ml._internal.utils import (
+    identifier,
+    pkg_version_utils,
+    snowpark_dataframe_utils,
+)
 from snowflake.ml._internal.utils.query_result_checker import SqlResultValidator
 from snowflake.ml._internal.utils.temp_file_utils import (
     cleanup_temp_files,
@@ -253,11 +257,15 @@ class SnowparkModelTrainer:
 
         fit_sproc_name = random_name_for_temp_object(TempObjectType.PROCEDURE)
 
+        relaxed_dependencies = pkg_version_utils.get_valid_pkg_versions_supported_in_snowflake_conda_channel(
+            pkg_versions=model_spec.pkgDependencies, session=self.session
+        )
+
         fit_wrapper_sproc = self.session.sproc.register(
             func=self._build_fit_wrapper_sproc(model_spec=model_spec),
             is_permanent=False,
             name=fit_sproc_name,
-            packages=["snowflake-snowpark-python"] + model_spec.pkgDependencies,  # type: ignore[arg-type]
+            packages=["snowflake-snowpark-python"] + relaxed_dependencies,  # type: ignore[arg-type]
             replace=True,
             session=self.session,
             statement_params=statement_params,

@@ -1,9 +1,11 @@
 from typing import cast
+from unittest import mock
 
 from absl.testing import absltest
 
-from snowflake.ml._internal.utils import sql_identifier
+from snowflake.ml._internal.utils import snowflake_env, sql_identifier
 from snowflake.ml.model._client.sql import model as model_sql
+from snowflake.ml.model._model_composer.model_manifest import model_manifest_schema
 from snowflake.ml.test_utils import mock_data_frame, mock_session
 from snowflake.snowpark import Row, Session
 
@@ -11,6 +13,9 @@ from snowflake.snowpark import Row, Session
 class ModelSQLTest(absltest.TestCase):
     def setUp(self) -> None:
         self.m_session = mock_session.MockSession(conn=None, test_case=self)
+        snowflake_env.get_current_snowflake_version = mock.MagicMock(
+            return_value=model_manifest_schema.MANIFEST_USER_DATA_ENABLE_VERSION
+        )
 
     def test_show_models_1(self) -> None:
         m_statement_params = {"test": "1"}
@@ -23,6 +28,7 @@ class ModelSQLTest(absltest.TestCase):
                     model_name="MODEL",
                     database_name="TEMP",
                     schema_name="test",
+                    default_version_name="V1",
                 ),
                 Row(
                     create_on="06/01",
@@ -31,6 +37,7 @@ class ModelSQLTest(absltest.TestCase):
                     model_name="MODEL",
                     database_name="TEMP",
                     schema_name="test",
+                    default_version_name="v1",
                 ),
             ],
             collect_statement_params=m_statement_params,
@@ -56,6 +63,7 @@ class ModelSQLTest(absltest.TestCase):
                     model_name="MODEL",
                     database_name="TEMP",
                     schema_name="test",
+                    default_version_name="V1",
                 ),
             ],
             collect_statement_params=m_statement_params,
@@ -80,6 +88,8 @@ class ModelSQLTest(absltest.TestCase):
                     name="v1",
                     comment="This is a comment",
                     model_name="MODEL",
+                    metadata="{}",
+                    user_data="{}",
                     is_default_version=True,
                 ),
                 Row(
@@ -87,6 +97,8 @@ class ModelSQLTest(absltest.TestCase):
                     name="V1",
                     comment="This is a comment",
                     model_name="MODEL",
+                    metadata="{}",
+                    user_data="{}",
                     is_default_version=False,
                 ),
             ],
@@ -112,6 +124,8 @@ class ModelSQLTest(absltest.TestCase):
                     name="v1",
                     comment="This is a comment",
                     model_name="MODEL",
+                    metadata="{}",
+                    user_data="{}",
                     is_default_version=True,
                 ),
             ],

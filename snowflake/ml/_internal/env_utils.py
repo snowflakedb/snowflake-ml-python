@@ -33,7 +33,6 @@ class CONDA_OS(Enum):
 
 _SNOWFLAKE_CONDA_CHANNEL_URL = "https://repo.anaconda.com/pkgs/snowflake"
 _NODEFAULTS = "nodefaults"
-_INFO_SCHEMA_PACKAGES_HAS_RUNTIME_VERSION: Optional[bool] = None
 _SNOWFLAKE_INFO_SCHEMA_PACKAGE_CACHE: Dict[str, List[version.Version]] = {}
 _SNOWFLAKE_CONDA_PACKAGE_CACHE: Dict[str, List[version.Version]] = {}
 
@@ -267,18 +266,6 @@ def relax_requirement_version(req: requirements.Requirement) -> requirements.Req
     return new_req
 
 
-def _check_runtime_version_column_existence(session: session.Session) -> bool:
-    sql = textwrap.dedent(
-        """
-        SHOW COLUMNS
-        LIKE 'runtime_version'
-        IN TABLE information_schema.packages;
-        """
-    )
-    result = session.sql(sql).count()
-    return result == 1
-
-
 def get_matched_package_versions_in_snowflake_conda_channel(
     req: requirements.Requirement,
     python_version: str = snowml_env.PYTHON_VERSION,
@@ -325,9 +312,9 @@ def get_matched_package_versions_in_snowflake_conda_channel(
     return matched_versions
 
 
-def validate_requirements_in_information_schema(
+def get_matched_package_versions_in_information_schema(
     session: session.Session, reqs: List[requirements.Requirement], python_version: str
-) -> Optional[List[str]]:
+) -> Dict[str, List[version.Version]]:
     """Look up the information_schema table to check if a package with the specified specifier exists in the Snowflake
     Conda channel. Note that this is not the source of truth due to the potential delay caused by a package that might
     exist in the information_schema table but has not yet become available in the Snowflake Conda channel.
@@ -338,42 +325,35 @@ def validate_requirements_in_information_schema(
         python_version: A string of python version where model is run.
 
     Returns:
-        A list of pinned latest version that available in Snowflake anaconda channel and meet the version specifier.
+        A Dict, whose key is the package name, and value is a list of versions match the requirements.
     """
-    global _INFO_SCHEMA_PACKAGES_HAS_RUNTIME_VERSION
-
-    if _INFO_SCHEMA_PACKAGES_HAS_RUNTIME_VERSION is None:
-        _INFO_SCHEMA_PACKAGES_HAS_RUNTIME_VERSION = _check_runtime_version_column_existence(session)
-    ret_list = []
-    reqs_to_request = []
+    ret_dict: Dict[str, List[version.Version]] = {}
+    reqs_to_request: List[requirements.Requirement] = []
     for req in reqs:
-        if req.name not in _SNOWFLAKE_INFO_SCHEMA_PACKAGE_CACHE:
+        if req.name in _SNOWFLAKE_INFO_SCHEMA_PACKAGE_CACHE:
+            available_versions = list(
+                sorted(req.specifier.filter(set(_SNOWFLAKE_INFO_SCHEMA_PACKAGE_CACHE.get(req.name, []))))
+            )
+            ret_dict[req.name] = available_versions
+        else:
             reqs_to_request.append(req)
+
     if reqs_to_request:
         pkg_names_str = " OR ".join(
             f"package_name = '{req_name}'" for req_name in sorted(req.name for req in reqs_to_request)
         )
-        if _INFO_SCHEMA_PACKAGES_HAS_RUNTIME_VERSION:
-            parsed_python_version = version.Version(python_version)
-            sql = textwrap.dedent(
-                f"""
-                SELECT PACKAGE_NAME, VERSION
-                FROM information_schema.packages
-                WHERE ({pkg_names_str})
-                AND language = 'python'
-                AND (runtime_version = '{parsed_python_version.major}.{parsed_python_version.minor}'
-                    OR runtime_version is null);
-                """
-            )
-        else:
-            sql = textwrap.dedent(
-                f"""
-                SELECT PACKAGE_NAME, VERSION
-                FROM information_schema.packages
-                WHERE ({pkg_names_str})
-                AND language = 'python';
-                """
-            )
+
+        parsed_python_version = version.Version(python_version)
+        sql = textwrap.dedent(
+            f"""
+            SELECT PACKAGE_NAME, VERSION
+            FROM information_schema.packages
+            WHERE ({pkg_names_str})
+            AND language = 'python'
+            AND (runtime_version = '{parsed_python_version.major}.{parsed_python_version.minor}'
+                OR runtime_version is null);
+            """
+        )
 
         try:
             result = (
@@ -392,14 +372,13 @@ def validate_requirements_in_information_schema(
                 cached_req_ver_list.append(req_ver)
                 _SNOWFLAKE_INFO_SCHEMA_PACKAGE_CACHE[req_name] = cached_req_ver_list
         except snowflake.connector.DataError:
-            return None
-    for req in reqs:
-        available_versions = list(req.specifier.filter(set(_SNOWFLAKE_INFO_SCHEMA_PACKAGE_CACHE.get(req.name, []))))
-        if not available_versions:
-            return None
-        else:
-            ret_list.append(str(req))
-    return sorted(ret_list)
+            return ret_dict
+    for req in reqs_to_request:
+        available_versions = list(
+            sorted(req.specifier.filter(set(_SNOWFLAKE_INFO_SCHEMA_PACKAGE_CACHE.get(req.name, []))))
+        )
+        ret_dict[req.name] = available_versions
+    return ret_dict
 
 
 def save_conda_env_file(

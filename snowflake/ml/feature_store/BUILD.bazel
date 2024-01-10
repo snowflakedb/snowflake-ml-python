@@ -7,7 +7,10 @@ package_group(
     ],
 )
 
-package(default_visibility = [":feature_store"])
+package(default_visibility = [
+    ":feature_store",
+    "//bazel:snowml_public_common",
+])
 
 py_library(
     name = "init",

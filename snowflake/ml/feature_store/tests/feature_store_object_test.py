@@ -126,10 +126,10 @@ class EntityTest(absltest.TestCase):
             Entity(name="my_entity", join_keys=["foo", "foo"])
 
     def test_join_keys_exceed_limit(self) -> None:
-        with self.assertRaisesRegex(ValueError, "Total length of join keys exceeded maximum length.*"):
+        with self.assertRaisesRegex(ValueError, "Join key: .* exceeds length limit 256."):
             Entity(name="foo", join_keys=["f" * 257])
-        with self.assertRaisesRegex(ValueError, "Total length of join keys exceeded maximum length.*"):
-            Entity(name="foo", join_keys=["foo" * 50] + ["bar" * 50])
+        with self.assertRaisesRegex(ValueError, "Maximum number of join keys are 300, but .* is provided."):
+            Entity(name="foo", join_keys=["foo"] * 301)
 
     def test_equality_check(self) -> None:
         self.assertTrue(Entity(name="foo", join_keys=["a"]) == Entity(name="foo", join_keys=["a"]))

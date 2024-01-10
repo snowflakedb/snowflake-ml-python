@@ -1,7 +1,6 @@
 import pathlib
 from typing import Optional, TypedDict
 
-import importlib_resources
 from typing_extensions import NotRequired
 
 from snowflake.ml.model import type_hints
@@ -33,6 +32,8 @@ class FunctionGenerator:
         target_method: str,
         options: Optional[FunctionGenerateOptions] = None,
     ) -> None:
+        import importlib_resources
+
         if options is None:
             options = {}
         function_template = (

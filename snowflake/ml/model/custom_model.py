@@ -9,15 +9,16 @@ from snowflake.ml.model import type_hints as model_types
 
 
 class MethodRef:
-    """Represents an method invocation of an instance of `ModelRef`.
+    """Represents a method invocation of an instance of `ModelRef`.
 
-    This allows us to
-        1) Customize the place of actual execution of the method(inline, thread/process pool or remote).
-        2) Enrich the way of execution(sync versus async).
+    This allows us to:
+        1) Customize the place of actual execution of the method (inline, thread/process pool, or remote).
+        2) Enrich the way of execution (sync versus async).
+
     Example:
-        If you have a SKL model, you would normally invoke by `skl_ref.predict(df)` which has sync API.
-        Within inference graph, you could invoke `await skl_ref.predict.async_run(df)` which automatically
-        will be run on thread with async interface.
+        If you have an SKL model, you would normally invoke it by `skl_ref.predict(df)`, which has a synchronous API.
+        Within the inference graph, you could invoke `await skl_ref.predict.async_run(df)`, which will automatically
+        run on a thread with an asynchronous interface.
     """
 
     def __init__(self, model_ref: "ModelRef", method_name: str) -> None:
@@ -27,11 +28,11 @@ class MethodRef:
         return self._func(*args, **kwargs)
 
     async def async_run(self, *args: Any, **kwargs: Any) -> Any:
-        """Run the method in a async way. If the method is defined as async, this will simply run it. If not, this will
-        be run in a separate thread.
+        """Run the method in an asynchronous way. If the method is defined as async, this will simply run it.
+        If not, this will be run in a separate thread.
 
         Args:
-            *args: Arguments of the original method,
+            *args: Arguments of the original method.
             **kwargs: Keyword arguments of the original method.
 
         Returns:
@@ -43,19 +44,20 @@ class MethodRef:
 
 
 class ModelRef:
-    """Represents an model in the inference graph. Method could be directly called using this reference object as if
-    with the original model object.
+    """
+    Represents a model in the inference graph. Methods can be directly called using this reference object
+    as if with the original model object.
 
-    This enables us to separate physical and logical representation of a model which
-    will allows us to deeply understand the graph and perform optimization at entire
-    graph level.
+    This enables us to separate the physical and logical representation of a model, allowing for a deep understanding
+    of the graph and enabling optimization at the entire graph level.
     """
 
     def __init__(self, name: str, model: model_types.SupportedModelType) -> None:
-        """Initialize the ModelRef.
+        """
+        Initialize the ModelRef.
 
         Args:
-            name: The name of a model to refer it.
+            name: The name of the model to refer to.
             model: The model object.
         """
         self._model = model
@@ -91,11 +93,12 @@ class ModelRef:
 
 
 class ModelContext:
-    """Context for a custom model showing path to artifacts and mapping between model name and object reference.
+    """
+    Context for a custom model showing paths to artifacts and mapping between model name and object reference.
 
     Attributes:
-        artifacts: A dict mapping name of the artifact to its path.
-        model_refs: A dict mapping name of the sub-model to its ModelRef object.
+        artifacts: A dictionary mapping the name of the artifact to its path.
+        model_refs: A dictionary mapping the name of the sub-model to its ModelRef object.
     """
 
     def __init__(
@@ -104,11 +107,11 @@ class ModelContext:
         artifacts: Optional[Dict[str, str]] = None,
         models: Optional[Dict[str, model_types.SupportedModelType]] = None,
     ) -> None:
-        """Initialize the model context
+        """Initialize the model context.
 
         Args:
-            artifacts: A dict mapping name of the artifact to its currently available path. Defaults to None.
-            models: A dict mapping name of the sub-model to the corresponding model object. Defaults to None.
+            artifacts: A dictionary mapping the name of the artifact to its currently available path. Defaults to None.
+            models: A dictionary mapping the name of the sub-model to the corresponding model object. Defaults to None.
         """
         self.artifacts: Dict[str, str] = artifacts if artifacts else dict()
         self.model_refs: Dict[str, ModelRef] = (
@@ -116,7 +119,8 @@ class ModelContext:
         )
 
     def path(self, key: str) -> str:
-        """Get the actual path to a specific artifact.
+        """Get the actual path to a specific artifact. This could be used when defining a Custom Model to retrieve
+            artifacts.
 
         Args:
             key: The name of the artifact.
@@ -127,14 +131,13 @@ class ModelContext:
         return self.artifacts[key]
 
     def model_ref(self, name: str) -> ModelRef:
-        """Get a ModelRef object of a sub-model containing the name and model object, while able to call its method
-        directly as well.
+        """Get a ModelRef object of a sub-model containing the name and model object, allowing direct method calls.
 
         Args:
             name: The name of the sub-model.
 
         Returns:
-            The ModelRef object to the sub-model.
+            The ModelRef object representing the sub-model.
         """
         return self.model_refs[name]
 

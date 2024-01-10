@@ -60,9 +60,13 @@ def result_dimension_matcher(
     return True
 
 
-def column_name_matcher(expected_col_name: str, result: list[snowpark.Row], sql: str | None = None) -> bool:
+def column_name_matcher(
+    expected_col_name: str, allow_empty: bool, result: list[snowpark.Row], sql: str | None = None
+) -> bool:
     """Returns true if `expected_col_name` is found. Raise exception otherwise."""
     if not result:
+        if allow_empty:
+            return True
         raise connector.DataError(f"Query Result is empty.{_query_log(sql)}")
     if expected_col_name not in result[0]:
         raise connector.DataError(
@@ -159,16 +163,17 @@ class ResultValidator:
         self._success_matchers.append(partial(result_dimension_matcher, expected_rows, expected_cols))
         return self
 
-    def has_column(self, expected_col_name: str) -> ResultValidator:
+    def has_column(self, expected_col_name: str, allow_empty: bool = False) -> ResultValidator:
         """Validate that the a column with the name `expected_column_name` exists in the result.
 
         Args:
             expected_col_name: Name of the column that is expected to be present in the result (case sensitive).
+            allow_empty: If the check will fail if the result is empty.
 
         Returns:
             ResultValidator object (self)
         """
-        self._success_matchers.append(partial(column_name_matcher, expected_col_name))
+        self._success_matchers.append(partial(column_name_matcher, expected_col_name, allow_empty))
         return self
 
     def has_named_value_match(self, row_idx: int, col_name: str, expected_value: Any) -> ResultValidator:
@@ -224,8 +229,6 @@ class ResultValidator:
         Returns:
             Query result.
         """
-        if len(self._success_matchers) == 0:
-            self._success_matchers = _DEFAULT_MATCHERS
         result = self._get_result()
         for matcher in self._success_matchers:
             assert matcher(result, self._query)

@@ -2,9 +2,16 @@
 
 from typing import Any, Dict, List, Literal, TypedDict
 
+from packaging import version
 from typing_extensions import NotRequired, Required
 
+from snowflake.ml.model import model_signature
+
 MODEL_MANIFEST_VERSION = "1.0"
+
+MANIFEST_USER_DATA_ENABLE_VERSION = version.parse("8.2.0")
+MANIFEST_CLIENT_DATA_KEY_NAME = "snowpark_ml_data"
+MANIFEST_CLIENT_DATA_SCHEMA_VERSION = "2024-02-01"
 
 
 class ModelRuntimeDependenciesDict(TypedDict):
@@ -36,6 +43,31 @@ class ModelFunctionMethodDict(TypedDict):
 
 
 ModelMethodDict = ModelFunctionMethodDict
+
+
+class ModelFunctionInfo(TypedDict):
+    """Function information.
+
+    Attributes:
+        name: Name of the function to be called via SQL.
+        target_method: actual target method name to be called.
+        signature: The signature of the model method.
+    """
+
+    name: Required[str]
+    target_method: Required[str]
+    signature: Required[model_signature.ModelSignature]
+
+
+class ModelFunctionInfoDict(TypedDict):
+    name: Required[str]
+    target_method: Required[str]
+    signature: Required[Dict[str, Any]]
+
+
+class SnowparkMLDataDict(TypedDict):
+    schema_version: Required[str]
+    functions: Required[List[ModelFunctionInfoDict]]
 
 
 class ModelManifestDict(TypedDict):

@@ -4,6 +4,7 @@ import uuid
 from absl.testing import absltest, parameterized
 from packaging import version
 
+from snowflake.ml._internal.utils import identifier, snowflake_env
 from snowflake.ml.registry import registry
 from snowflake.ml.utils import connection_params
 from snowflake.snowpark import Session
@@ -18,6 +19,14 @@ VERSION_NAME = "V1"
 VERSION_NAME2 = "V2"
 
 
+@unittest.skipUnless(
+    test_env_utils.get_current_snowflake_version() >= version.parse("8.0.0"),
+    "New model only available when the Snowflake Version is newer than 8.0.0",
+)
+@unittest.skipUnless(
+    test_env_utils.get_current_snowflake_cloud_type() == snowflake_env.SnowflakeCloudType.AWS,
+    "New model only available in AWS",
+)
 class TestModelImplInteg(parameterized.TestCase):
     @classmethod
     def setUpClass(self) -> None:
@@ -36,11 +45,6 @@ class TestModelImplInteg(parameterized.TestCase):
                 **{"database": self._test_db, "schema": self._test_schema},
             }
         ).create()
-
-        current_sf_version = test_env_utils.get_current_snowflake_version(self._session)
-
-        if current_sf_version < version.parse("8.0.0"):
-            raise unittest.SkipTest("This test requires Snowflake Version 8.0.0 or higher.")
 
         self._db_manager = db_manager.DBManager(self._session)
         self._db_manager.create_database(self._test_db)
@@ -63,10 +67,20 @@ class TestModelImplInteg(parameterized.TestCase):
         )
         self._model = self.registry.get_model(model_name=MODEL_NAME)
 
+        self._tag_name1 = "MYTAG"
+        self._tag_name2 = '"live_version"'
+
+        self._session.sql(f"CREATE TAG {self._tag_name1}").collect()
+        self._session.sql(f"CREATE TAG {self._tag_name2}").collect()
+
     @classmethod
     def tearDownClass(self) -> None:
         self._db_manager.drop_database(self._test_db)
         self._session.close()
+
+    def test_versions(self) -> None:
+        self.assertEqual(self._model.versions(), [self._mv, self._mv2])
+        self.assertLen(self._model.show_versions(), 2)
 
     def test_description(self) -> None:
         description = "test description"
@@ -78,6 +92,41 @@ class TestModelImplInteg(parameterized.TestCase):
 
         self._model.default = VERSION_NAME2
         self.assertEqual(self._model.default.version_name, VERSION_NAME2)
+
+    @unittest.skipUnless(
+        test_env_utils.get_current_snowflake_version() >= version.parse("8.2.0"),
+        "TAG on model only available when the Snowflake Version is newer than 8.2.0",
+    )
+    def test_tag(self) -> None:
+        fq_tag_name1 = identifier.get_schema_level_object_identifier(self._test_db, self._test_schema, self._tag_name1)
+        fq_tag_name2 = identifier.get_schema_level_object_identifier(self._test_db, self._test_schema, self._tag_name2)
+        self.assertDictEqual({}, self._model.show_tags())
+        self.assertIsNone(self._model.get_tag(self._tag_name1))
+        self._model.set_tag(self._tag_name1, "val1")
+        self.assertEqual(
+            "val1",
+            self._model.get_tag(fq_tag_name1),
+        )
+        self.assertDictEqual(
+            {fq_tag_name1: "val1"},
+            self._model.show_tags(),
+        )
+        self._model.set_tag(fq_tag_name2, "v2")
+        self.assertEqual("v2", self._model.get_tag(self._tag_name2))
+        self.assertDictEqual(
+            {
+                fq_tag_name1: "val1",
+                fq_tag_name2: "v2",
+            },
+            self._model.show_tags(),
+        )
+        self._model.unset_tag(fq_tag_name2)
+        self.assertDictEqual(
+            {fq_tag_name1: "val1"},
+            self._model.show_tags(),
+        )
+        self._model.unset_tag(self._tag_name1)
+        self.assertDictEqual({}, self._model.show_tags())
 
 
 if __name__ == "__main__":

@@ -1,5 +1,32 @@
 # Release History
 
+## 1.2.0
+
+### Bug Fixes
+
+- Model Registry: Fix "XGBoost version not compiled with GPU support" error when running CPU inference against open-source
+  XGBoost models deployed to SPCS.
+- Model Registry: Fix model deployment to SPCS on Windows machines.
+
+### Behavior Changes
+
+### New Features
+
+- Model Development: Introduced XGBoost external memory training feature. This feature enables training XGBoost models
+  on large datasets that don't fit into memory.
+- Registry: New Registry class named `snowflake.ml.registry.Registry` providing similar APIs as the old one but works
+  with new MODEL object in Snowflake SQL. Also, we are providing`snowflake.ml.model.Model` and
+  `snowflake.ml.model.ModelVersion` to represent a model and a specific version of a model.
+- Model Development: Add support for `fit_predict` method in `AgglomerativeClustering`, `DBSCAN`, and `OPTICS` classes;
+- Model Development: Add support for `fit_transform` method in `MDS`, `SpectralEmbedding` and `TSNE` class.
+
+### Additional Notes
+
+- Model Registry: The `snowflake.ml.registry.model_registry.ModelRegistry` has been deprecated starting from version
+1.2.0. It will stay in the Private Preview phase. For future implementations, kindly utilize
+`snowflake.ml.registry.Registry`, except when specifically required. The old model registry will be removed once all
+its primary functionalities are fully integrated into the new registry.
+
 ## 1.1.2
 
 ### Bug Fixes

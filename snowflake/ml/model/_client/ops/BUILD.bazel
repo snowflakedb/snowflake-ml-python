@@ -1,8 +1,9 @@
 load("//bazel:py_rules.bzl", "py_library", "py_test")
 
 package(default_visibility = [
+    "//bazel:snowml_public_common",
     "//snowflake/ml/model/_client/model:__pkg__",
-    "//snowflake/ml/registry:__pkg__",
+    "//snowflake/ml/registry/_manager:__pkg__",
 ])
 
 py_library(
@@ -10,12 +11,15 @@ py_library(
     srcs = ["model_ops.py"],
     deps = [
         ":metadata_ops",
+        "//snowflake/ml/_internal/utils:identifier",
+        "//snowflake/ml/_internal/utils:snowflake_env",
         "//snowflake/ml/_internal/utils:sql_identifier",
         "//snowflake/ml/model:model_signature",
         "//snowflake/ml/model:type_hints",
         "//snowflake/ml/model/_client/sql:model",
         "//snowflake/ml/model/_client/sql:model_version",
         "//snowflake/ml/model/_client/sql:stage",
+        "//snowflake/ml/model/_client/sql:tag",
         "//snowflake/ml/model/_model_composer:model_composer",
         "//snowflake/ml/model/_model_composer/model_manifest",
         "//snowflake/ml/model/_model_composer/model_manifest:model_manifest_schema",
@@ -30,6 +34,7 @@ py_test(
     srcs = ["model_ops_test.py"],
     deps = [
         ":model_ops",
+        "//snowflake/ml/_internal/utils:snowflake_env",
         "//snowflake/ml/_internal/utils:sql_identifier",
         "//snowflake/ml/model:model_signature",
         "//snowflake/ml/model/_signatures:snowpark_handler",

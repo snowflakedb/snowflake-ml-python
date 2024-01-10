@@ -20,7 +20,7 @@ class FunctionGeneratorTest(absltest.TestCase):
                     (
                         importlib_resources.files("snowflake.ml.model._model_composer.model_method")
                         .joinpath("fixtures")  # type: ignore[no-untyped-call]
-                        .joinpath("function_fixture_1.py_fixture")
+                        .joinpath("function_1.py")
                         .read_text()
                     ),
                     f.read(),
@@ -35,7 +35,7 @@ class FunctionGeneratorTest(absltest.TestCase):
                     (
                         importlib_resources.files("snowflake.ml.model._model_composer.model_method")
                         .joinpath("fixtures")  # type: ignore[no-untyped-call]
-                        .joinpath("function_fixture_2.py_fixture")
+                        .joinpath("function_2.py")
                         .read_text()
                     ),
                     f.read(),

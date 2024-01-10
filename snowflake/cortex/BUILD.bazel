@@ -3,13 +3,15 @@ load("//bazel:py_rules.bzl", "py_library", "py_package", "py_test")
 package_group(
     name = "cortex",
     packages = [
-        "//docs/...",
         "//snowflake/cortex/...",
         "//snowflake/ml/...",
     ],
 )
 
-package(default_visibility = [":cortex"])
+package(default_visibility = [
+    ":cortex",
+    "//bazel:snowml_public_common",
+])
 
 py_library(
     name = "util",

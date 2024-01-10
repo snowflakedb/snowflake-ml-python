@@ -1,5 +1,9 @@
 load("//bazel:py_rules.bzl", "py_binary")
 
+package(default_visibility = [
+    "//bazel:snowml_public_common",
+])
+
 py_binary(
     name = "run_synthetic_data_generator",
     srcs = [

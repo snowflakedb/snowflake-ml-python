@@ -29,7 +29,7 @@ release = VERSION
 extensions = [
     "sphinx.ext.autodoc",
     "sphinx.ext.autosummary",
-    # "sphinx.ext.napoleon",
+    "sphinx.ext.napoleon",
     # "sphinx.ext.coverage",
     # "sphinx.ext.linkcode"
 ]
@@ -55,6 +55,8 @@ exclude_patterns = ["*/snowflake/snowpark/**", "*/snowflake/connector/**"]
 
 autosummary_generate = True
 autosummary_generate_overwrite = True
+
+autoclass_content = "both"
 
 # -- Options for HTML output -------------------------------------------------
 
@@ -84,6 +86,18 @@ html_show_sourcelink = False  # Hide "view page source" link
 html_show_sphinx = False
 
 suppress_warnings = ["ref"]
+
+# Napoleon settings
+napoleon_google_docstring = True
+napoleon_numpy_docstring = True
+napoleon_use_admonition_for_examples = False
+napoleon_use_admonition_for_notes = False
+napoleon_use_admonition_for_references = False
+napoleon_use_ivar = False
+napoleon_use_param = True
+napoleon_use_rtype = True
+napoleon_preprocess_types = False
+napoleon_attr_annotations = True
 
 
 def setup(app: Any) -> None:
@@ -166,6 +180,8 @@ class SkipMember:
 
     # sphinx expects a function for this, so make instance callable
     def __call__(self, app: Any, what: str, name: str, obj: ModuleType, skip: bool, options: Dict[str, Any]) -> bool:
+        if name == "__init__":
+            return False
         if name.startswith("_"):
             return True
         if what == "method":

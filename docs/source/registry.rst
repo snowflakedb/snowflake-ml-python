@@ -1,5 +1,3 @@
-:orphan:
-
 ===========================
 snowflake.ml.registry
 ===========================
@@ -14,8 +12,7 @@ snowflake.ml.registry
 .. autosummary::
     :toctree: api/registry
 
-    model_registry.ModelRegistry
-    model_registry.ModelReference
+    Registry
 
 .. .. rubric:: Methods
 

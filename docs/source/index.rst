@@ -24,3 +24,5 @@ Table of Contents
 
    modeling
    fileset
+   model
+   registry
