@@ -1,16 +1,15 @@
 {% extends "!autosummary/class.rst" %}
 
+.. autoclass:: {{ objname }}
 {% set methods =(methods| reject("equalto", "__init__") |list) %}
 
 {% block methods %}
 
 {% if methods %}
    .. rubric:: Methods
-
-   .. autosummary::
-   {% for item in methods %}
-      ~{{ name }}.{{ item }}
-   {%- endfor %}
+{% for item in methods %}
+   .. automethod:: {{ name }}.{{ item }}
+{%- endfor %}
 {% endif %}
 {% endblock %}
 
@@ -18,10 +17,8 @@
 
 {% if attributes %}
    .. rubric:: Attributes
-
-   .. autosummary::
-   {% for item in attributes %}
-      ~{{ name }}.{{ item }}
-   {%- endfor %}
+{% for item in attributes %}
+   .. autoattribute:: {{ name }}.{{ item }}
+{%- endfor %}
 {% endif %}
 {% endblock %}

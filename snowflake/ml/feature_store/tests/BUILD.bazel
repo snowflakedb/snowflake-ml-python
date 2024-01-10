@@ -1,6 +1,9 @@
 load("//bazel:py_rules.bzl", "py_library", "py_test")
 
-package(default_visibility = ["//snowflake/ml/feature_store"])
+package(default_visibility = [
+    "//bazel:snowml_public_common",
+    "//snowflake/ml/feature_store",
+])
 
 py_library(
     name = "common_utils",

@@ -152,12 +152,6 @@ py_library(
 )
 
 py_library(
-    name = "spcs_image_registry",
-    srcs = ["spcs_image_registry.py"],
-    deps = [":query_result_checker"],
-)
-
-py_library(
     name = "table_manager",
     srcs = [
         "table_manager.py",
@@ -218,25 +212,6 @@ py_library(
 )
 
 py_library(
-    name = "image_registry_http_client",
-    srcs = ["image_registry_http_client.py"],
-    deps = [
-        ":session_token_manager",
-        "//snowflake/ml/_internal/exceptions",
-        "//snowflake/ml/_internal/utils:retryable_http",
-    ],
-)
-
-py_test(
-    name = "image_registry_http_client_test",
-    srcs = ["image_registry_http_client_test.py"],
-    deps = [
-        ":image_registry_http_client",
-        "//snowflake/ml/test_utils:mock_session",
-    ],
-)
-
-py_library(
     name = "spcs_attribution_utils",
     srcs = ["spcs_attribution_utils.py"],
     deps = [
@@ -250,6 +225,24 @@ py_test(
     srcs = ["spcs_attribution_utils_test.py"],
     deps = [
         ":spcs_attribution_utils",
+        "//snowflake/ml/test_utils:mock_data_frame",
+        "//snowflake/ml/test_utils:mock_session",
+    ],
+)
+
+py_library(
+    name = "snowflake_env",
+    srcs = ["snowflake_env.py"],
+    deps = [
+        ":query_result_checker",
+    ],
+)
+
+py_test(
+    name = "snowflake_env_test",
+    srcs = ["snowflake_env_test.py"],
+    deps = [
+        ":snowflake_env",
         "//snowflake/ml/test_utils:mock_data_frame",
         "//snowflake/ml/test_utils:mock_session",
     ],

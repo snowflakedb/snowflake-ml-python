@@ -146,7 +146,8 @@ class DataType(Enum):
                     " is being automatically converted to INT64 in the Snowpark DataFrame. "
                     "This automatic conversion may lead to potential precision loss and rounding errors. "
                     "If you wish to prevent this conversion, you should manually perform "
-                    "the necessary data type conversion."
+                    "the necessary data type conversion.",
+                    stacklevel=2,
                 )
                 return DataType.INT64
             else:
@@ -155,7 +156,8 @@ class DataType(Enum):
                     " is being automatically converted to DOUBLE in the Snowpark DataFrame. "
                     "This automatic conversion may lead to potential precision loss and rounding errors. "
                     "If you wish to prevent this conversion, you should manually perform "
-                    "the necessary data type conversion."
+                    "the necessary data type conversion.",
+                    stacklevel=2,
                 )
                 return DataType.DOUBLE
         raise snowml_exceptions.SnowflakeMLException(
@@ -202,23 +204,24 @@ class FeatureSpec(BaseFeatureSpec):
         dtype: DataType,
         shape: Optional[Tuple[int, ...]] = None,
     ) -> None:
-        """Initialize a feature.
+        """
+        Initialize a feature.
 
         Args:
             name: Name of the feature.
             dtype: Type of the elements in the feature.
-            shape: Used to represent scalar feature, 1-d feature list or n-d tensor.
-                -1 is used to represent variable length.Defaults to None.
+            shape: Used to represent scalar feature, 1-d feature list,
+                or n-d tensor. Use -1 to represent variable length. Defaults to None.
 
-                E.g.
-                None: scalar
-                (2,): 1d list with fixed len of 2.
-                (-1,): 1d list with variable length. Used for ragged tensor representation.
-                (d1, d2, d3): 3d tensor.
+                Examples:
+                    - None: scalar
+                    - (2,): 1d list with a fixed length of 2.
+                    - (-1,): 1d list with variable length, used for ragged tensor representation.
+                    - (d1, d2, d3): 3d tensor.
 
         Raises:
-            SnowflakeMLException: TypeError: Raised when the dtype input type is incorrect.
-            SnowflakeMLException: TypeError: Raised when the shape input type is incorrect.
+            SnowflakeMLException: TypeError: When the dtype input type is incorrect.
+            SnowflakeMLException: TypeError: When the shape input type is incorrect.
         """
         super().__init__(name=name)
 
@@ -408,13 +411,13 @@ class ModelSignature:
     """Signature of a model that specifies the input and output of a model."""
 
     def __init__(self, inputs: Sequence[BaseFeatureSpec], outputs: Sequence[BaseFeatureSpec]) -> None:
-        """Initialize a model signature
+        """Initialize a model signature.
 
         Args:
-            inputs: A sequence of feature specifications and feature group specifications that will compose the
-                input of the model.
-            outputs: A sequence of feature specifications and feature group specifications that will compose the
-                output of the model.
+            inputs: A sequence of feature specifications and feature group specifications that will compose
+                the input of the model.
+            outputs: A sequence of feature specifications and feature group specifications that will compose
+                the output of the model.
         """
         self._inputs = inputs
         self._outputs = outputs

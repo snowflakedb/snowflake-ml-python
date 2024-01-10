@@ -139,10 +139,32 @@ py_test(
 )
 
 py_test(
+    name = "fit_transform_test",
+    srcs = ["fit_transform_test.py"],
+    shard_count = 3,
+    deps = [
+        "//snowflake/ml/modeling/manifold:mds",
+        "//snowflake/ml/modeling/manifold:spectral_embedding",
+        "//snowflake/ml/modeling/manifold:tsne",
+        "//snowflake/ml/utils:connection_params",
+    ],
+)
+
+py_test(
     name = "decimal_type_test",
     srcs = ["decimal_type_test.py"],
     deps = [
         "//snowflake/ml/modeling/linear_model:linear_regression",
+        "//snowflake/ml/utils:connection_params",
+    ],
+)
+
+py_test(
+    name = "xgboost_external_memory_training_test",
+    srcs = ["xgboost_external_memory_training_test.py"],
+    deps = [
+        "//snowflake/ml/modeling/metrics:classification",
+        "//snowflake/ml/modeling/xgboost:xgb_classifier",
         "//snowflake/ml/utils:connection_params",
     ],
 )

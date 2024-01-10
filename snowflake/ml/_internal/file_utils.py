@@ -362,3 +362,20 @@ def download_directory_from_stage(
             wait_exponential_multiplier=100,
             wait_exponential_max=10000,
         )(file_operation.get)(str(stage_file_path), str(local_file_dir), statement_params=statement_params)
+
+
+def open_file(path: str, *args: Any, **kwargs: Any) -> Any:
+    """This function is a wrapper on top of the Python built-in "open" function, with a few added default values
+    to ensure successful execution across different platforms.
+
+    Args:
+        path: file path
+        *args: arguments.
+        **kwargs: key arguments.
+
+    Returns:
+        Open file and return a stream.
+    """
+    kwargs.setdefault("newline", "\n")
+    kwargs.setdefault("encoding", "utf-8")
+    return open(path, *args, **kwargs)

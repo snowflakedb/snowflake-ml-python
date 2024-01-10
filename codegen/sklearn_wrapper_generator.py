@@ -69,6 +69,27 @@ drop_input_cols: Optional[bool], default=False
 """,
 }
 
+PARAM_DESC_USE_EXTERNAL_MEMORY_VERSION = """
+use_external_memory_version: bool, default=False
+    If set, external memory version of XGBoost trainer is used. External memory training
+    is done in a two-step process. First,in the preprocessing step, input data is read and
+    parsed into an internal format, which can be CSR, CSC, or sorted CSC, and stored in
+    in-memory buffers. The in-memory buffers are continuously flushed out to disk when
+    predefined memory limit is reached. Second, in the tree construction step, the data
+    pages are streamed from disk via a multi-threaded pre-fetcher as needed for tree construction.
+    Note:'tree_method's 'approx', and 'hist' are supported in the external memory version.
+    Note:'grow_policy=depthwise' is used for optimal performance in the external memory version.
+"""
+
+PARAM_DESC_BATCH_SIZE = """
+batch_size: int, default=10000
+    Number of rows in each batch of input data while using external memory training.
+    It is not recommended to set small batch sizes, like 32 samples per batch, as this
+    can seriously hurt performance in gradient boosting. Set the batch_size as large as possible
+    based on the available memory.
+"""
+
+
 ADDITIONAL_METHOD_DESCRIPTION = """
 Raises:
     TypeError: Supported dataset types: snowpark.DataFrame, pandas.DataFrame.
@@ -194,6 +215,18 @@ class WrapperGeneratorFactory:
             True if the class belongs to `sklearn.preprocessing._data` module, otherwise False.
         """
         return class_object[1].__module__ == "sklearn.preprocessing._data"
+
+    @staticmethod
+    def _is_manifold_module_obj(class_object: Tuple[str, type]) -> bool:
+        """Check if the given class belongs to the SKLearn manifold module.
+
+        Args:
+            class_object: Meta class object which needs to be checked.
+
+        Returns:
+            True if the class belongs to `sklearn.manifold` module, otherwise False.
+        """
+        return class_object[1].__module__.startswith("sklearn.manifold")
 
     @staticmethod
     def _is_multioutput_obj(class_object: Tuple[str, type]) -> bool:
@@ -548,6 +581,7 @@ class WrapperGeneratorBase:
         self.original_predict_docstring = ""
         self.predict_docstring = ""
         self.fit_predict_docstring = ""
+        self.fit_transform_docstring = ""
         self.predict_proba_docstring = ""
         self.score_docstring = ""
         self.predict_log_proba_docstring = ""
@@ -570,6 +604,7 @@ class WrapperGeneratorBase:
 
         # Optional function support
         self.fit_predict_cluster_function_support = False
+        self.fit_transform_manifold_function_support = False
 
         # Dependencies
         self.predict_udf_deps = ""
@@ -608,6 +643,7 @@ class WrapperGeneratorBase:
 
     def _populate_flags(self) -> None:
         self._from_data_py = WrapperGeneratorFactory._is_data_module_obj(self.class_object)
+        self._is_manifold = WrapperGeneratorFactory._is_manifold_module_obj(self.class_object)
         self._is_regressor = WrapperGeneratorFactory._is_regressor_obj(self.class_object)
         self._is_classifier = WrapperGeneratorFactory._is_classifier_obj(self.class_object)
         self._is_meta_estimator = WrapperGeneratorFactory._is_meta_estimator_obj(self.class_object)
@@ -630,6 +666,7 @@ class WrapperGeneratorBase:
         self._is_grid_search_cv = WrapperGeneratorFactory._is_grid_search_cv(self.class_object)
         self._is_randomized_search_cv = WrapperGeneratorFactory._is_randomized_search_cv(self.class_object)
         self._is_iterative_imputer = WrapperGeneratorFactory._is_iterative_imputer(self.class_object)
+        self._is_xgboost = WrapperGeneratorFactory._is_xgboost(self.module_name)
 
     def _populate_import_statements(self) -> None:
         self.estimator_imports_list.append("import numpy")
@@ -786,6 +823,18 @@ label_cols: Optional[Union[str, List[str]]]
         signature_lines.append("sample_weight_col: Optional[str] = None")
         init_member_args.append("self.set_sample_weight_col(sample_weight_col)")
 
+        if self._is_xgboost:
+            signature_lines.append("use_external_memory_version: bool = False")
+            signature_lines.append("batch_size: int = 10000")
+
+            init_member_args.append("self._use_external_memory_version = use_external_memory_version")
+            init_member_args.append("self._batch_size = batch_size")
+            ADDITIONAL_PARAM_DESCRIPTIONS["use_external_memory_version"] = PARAM_DESC_USE_EXTERNAL_MEMORY_VERSION
+            ADDITIONAL_PARAM_DESCRIPTIONS["batch_size"] = PARAM_DESC_BATCH_SIZE
+        else:
+            init_member_args.append("self._use_external_memory_version = False")
+            init_member_args.append("self._batch_size = -1")
+
         sklearn_init_lines.append("**cleaned_up_init_args")
         if has_kwargs:
             signature_lines.append("**kwargs")
@@ -934,6 +983,11 @@ class SklearnWrapperGenerator(WrapperGeneratorBase):
 
         if self._is_cluster:
             self.fit_predict_cluster_function_support = True
+        if self._is_manifold:
+            self.fit_transform_manifold_function_support = True
+
+        if self._is_manifold:
+            self.fit_transform_manifold_function_support = True
 
         if WrapperGeneratorFactory._is_class_of_type(self.class_object[1], "SelectKBest"):
             # Set the k of SelectKBest features transformer to half the number of columns in the dataset.

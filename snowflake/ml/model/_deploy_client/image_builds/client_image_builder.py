@@ -9,11 +9,11 @@ from enum import Enum
 from typing import List
 
 from snowflake import snowpark
+from snowflake.ml._internal.container_services.image_registry import credential
 from snowflake.ml._internal.exceptions import (
     error_codes,
     exceptions as snowml_exceptions,
 )
-from snowflake.ml._internal.utils import spcs_image_registry
 from snowflake.ml.model._deploy_client.image_builds import base_image_builder
 
 logger = logging.getLogger(__name__)
@@ -106,7 +106,7 @@ class ClientImageBuilder(base_image_builder.ImageBuilder):
                 self._run_docker_commands(commands)
 
         self.validate_docker_client_env()
-        with spcs_image_registry.generate_image_registry_credential(
+        with credential.generate_image_registry_credential(
             self.session
         ) as registry_cred, tempfile.TemporaryDirectory() as docker_config_dir:
             try:

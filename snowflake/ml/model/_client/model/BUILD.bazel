@@ -8,6 +8,7 @@ py_library(
     deps = [
         ":model_version_impl",
         "//snowflake/ml/_internal:telemetry",
+        "//snowflake/ml/_internal/utils:identifier",
         "//snowflake/ml/_internal/utils:sql_identifier",
         "//snowflake/ml/model/_client/ops:model_ops",
     ],
@@ -28,11 +29,11 @@ py_library(
     name = "model_version_impl",
     srcs = ["model_version_impl.py"],
     deps = [
-        ":model_method_info",
         "//snowflake/ml/_internal:telemetry",
         "//snowflake/ml/_internal/utils:sql_identifier",
         "//snowflake/ml/model:model_signature",
         "//snowflake/ml/model/_client/ops:model_ops",
+        "//snowflake/ml/model/_model_composer/model_manifest:model_manifest_schema",
     ],
 )
 
@@ -45,15 +46,8 @@ py_test(
         "//snowflake/ml/model:model_signature",
         "//snowflake/ml/model/_client/ops:metadata_ops",
         "//snowflake/ml/model/_client/ops:model_ops",
+        "//snowflake/ml/model/_model_composer/model_manifest:model_manifest_schema",
         "//snowflake/ml/test_utils:mock_data_frame",
         "//snowflake/ml/test_utils:mock_session",
-    ],
-)
-
-py_library(
-    name = "model_method_info",
-    srcs = ["model_method_info.py"],
-    deps = [
-        "//snowflake/ml/model:model_signature",
     ],
 )

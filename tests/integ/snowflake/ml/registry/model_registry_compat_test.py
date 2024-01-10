@@ -69,6 +69,8 @@ class ModelRegistryCompatTest(common_test_base.CommonTestBase):
             registry = model_registry.ModelRegistry(session=session, database_name=registry_name)
 
             iris_X, iris_y = datasets.load_iris(return_X_y=True, as_frame=True)
+            # Normalize the column name to avoid set it as case_sensitive where there was a BCR in 1.1.2
+            iris_X.columns = [s.replace(" (CM)", "").replace(" ", "") for s in iris_X.columns.str.upper()]
             # LogisticRegression is for classfication task, such as iris
             regr = linear_model.LogisticRegression()
             regr.fit(iris_X, iris_y)
@@ -101,6 +103,7 @@ class ModelRegistryCompatTest(common_test_base.CommonTestBase):
             deployment_name=deployment_name, target_method="predict", permanent=permanent
         )
         iris_X, iris_y = datasets.load_iris(return_X_y=True, as_frame=True)
+        iris_X.columns = [s.replace(" (CM)", "").replace(" ", "") for s in iris_X.columns.str.upper()]
         model_ref.predict(deployment_name, iris_X)
 
 

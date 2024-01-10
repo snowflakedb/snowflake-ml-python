@@ -1,13 +1,19 @@
 load("//bazel:py_rules.bzl", "py_library", "py_test")
 
-package(default_visibility = ["//snowflake/ml/model/_client/ops:__pkg__"])
+package(default_visibility = [
+    "//bazel:snowml_public_common",
+    "//snowflake/ml/model/_client/ops:__pkg__",
+])
 
 py_library(
     name = "model",
     srcs = ["model.py"],
     deps = [
         "//snowflake/ml/_internal/utils:identifier",
+        "//snowflake/ml/_internal/utils:query_result_checker",
+        "//snowflake/ml/_internal/utils:snowflake_env",
         "//snowflake/ml/_internal/utils:sql_identifier",
+        "//snowflake/ml/model/_model_composer/model_manifest:model_manifest_schema",
     ],
 )
 
@@ -16,7 +22,9 @@ py_test(
     srcs = ["model_test.py"],
     deps = [
         ":model",
+        "//snowflake/ml/_internal/utils:snowflake_env",
         "//snowflake/ml/_internal/utils:sql_identifier",
+        "//snowflake/ml/model/_model_composer/model_manifest:model_manifest_schema",
         "//snowflake/ml/test_utils:mock_data_frame",
         "//snowflake/ml/test_utils:mock_session",
     ],
@@ -27,6 +35,7 @@ py_library(
     srcs = ["model_version.py"],
     deps = [
         "//snowflake/ml/_internal/utils:identifier",
+        "//snowflake/ml/_internal/utils:query_result_checker",
         "//snowflake/ml/_internal/utils:sql_identifier",
     ],
 )
@@ -47,6 +56,7 @@ py_library(
     srcs = ["stage.py"],
     deps = [
         "//snowflake/ml/_internal/utils:identifier",
+        "//snowflake/ml/_internal/utils:query_result_checker",
         "//snowflake/ml/_internal/utils:sql_identifier",
     ],
 )
@@ -56,6 +66,27 @@ py_test(
     srcs = ["stage_test.py"],
     deps = [
         ":stage",
+        "//snowflake/ml/_internal/utils:sql_identifier",
+        "//snowflake/ml/test_utils:mock_data_frame",
+        "//snowflake/ml/test_utils:mock_session",
+    ],
+)
+
+py_library(
+    name = "tag",
+    srcs = ["tag.py"],
+    deps = [
+        "//snowflake/ml/_internal/utils:identifier",
+        "//snowflake/ml/_internal/utils:query_result_checker",
+        "//snowflake/ml/_internal/utils:sql_identifier",
+    ],
+)
+
+py_test(
+    name = "tag_test",
+    srcs = ["tag_test.py"],
+    deps = [
+        ":tag",
         "//snowflake/ml/_internal/utils:sql_identifier",
         "//snowflake/ml/test_utils:mock_data_frame",
         "//snowflake/ml/test_utils:mock_session",

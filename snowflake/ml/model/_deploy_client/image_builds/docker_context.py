@@ -2,7 +2,6 @@ import os
 import posixpath
 import shutil
 import string
-from abc import ABC
 from typing import Optional
 
 import importlib_resources
@@ -15,7 +14,7 @@ from snowflake.ml.model._packager.model_meta import model_meta
 from snowflake.snowpark import FileOperation, Session
 
 
-class DockerContext(ABC):
+class DockerContext:
     """
     Constructs the Docker context directory required for image building.
     """
@@ -53,12 +52,13 @@ class DockerContext(ABC):
 
     def _copy_entrypoint_script_to_docker_context(self) -> None:
         """Copy gunicorn_run.sh entrypoint to docker context directory."""
-        with importlib_resources.as_file(
-            importlib_resources.files(image_builds).joinpath(  # type: ignore[no-untyped-call]
-                constants.ENTRYPOINT_SCRIPT
-            )
-        ) as path:
-            shutil.copy(path, os.path.join(self.context_dir, constants.ENTRYPOINT_SCRIPT))
+        script_path = importlib_resources.files(image_builds).joinpath(  # type: ignore[no-untyped-call]
+            constants.ENTRYPOINT_SCRIPT
+        )
+        target_path = os.path.join(self.context_dir, constants.ENTRYPOINT_SCRIPT)
+
+        with open(script_path, encoding="utf-8") as source_file, file_utils.open_file(target_path, "w") as target_file:
+            target_file.write(source_file.read())
 
     def _copy_model_env_dependency_to_docker_context(self) -> None:
         """

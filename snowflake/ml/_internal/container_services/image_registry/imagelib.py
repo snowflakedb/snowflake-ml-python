@@ -23,7 +23,9 @@ from typing import Dict, List, Optional, Tuple
 
 import requests
 
-from snowflake.ml._internal.utils import image_registry_http_client
+from snowflake.ml._internal.container_services.image_registry import (
+    http_client as image_registry_http_client,
+)
 
 # Common HTTP headers
 _CONTENT_LENGTH_HEADER = "content-length"

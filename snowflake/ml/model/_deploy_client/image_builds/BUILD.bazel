@@ -13,9 +13,9 @@ py_library(
     deps = [
         ":base_image_builder",
         ":docker_context",
+        "//snowflake/ml/_internal/container_services/image_registry:credential",
         "//snowflake/ml/_internal/exceptions",
         "//snowflake/ml/_internal/utils:query_result_checker",
-        "//snowflake/ml/_internal/utils:spcs_image_registry",
         "//snowflake/ml/model/_packager/model_meta",
     ],
 )
@@ -31,10 +31,10 @@ py_library(
         ":base_image_builder",
         ":docker_context",
         "//snowflake/ml/_internal:file_utils",
+        "//snowflake/ml/_internal/container_services/image_registry:registry_client",
         "//snowflake/ml/_internal/exceptions",
         "//snowflake/ml/_internal/utils:identifier",
         "//snowflake/ml/model/_deploy_client/utils:constants",
-        "//snowflake/ml/model/_deploy_client/utils:image_registry_client",
         "//snowflake/ml/model/_deploy_client/utils:snowservice_client",
     ],
 )

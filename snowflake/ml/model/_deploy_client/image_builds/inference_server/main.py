@@ -105,6 +105,8 @@ def _run_setup() -> None:
 
             # TODO (Server-side Model Rollout):
             # Keep try block only
+            # SPCS spec will convert all environment variables as strings.
+            use_gpu = os.environ.get("SNOWML_USE_GPU", "False").lower() == "true"
             try:
                 from snowflake.ml.model._packager import model_packager
 
@@ -112,9 +114,7 @@ def _run_setup() -> None:
                 pk.load(
                     as_custom_model=True,
                     meta_only=False,
-                    options=model_types.ModelLoadOption(
-                        {"use_gpu": cast(bool, os.environ.get("SNOWML_USE_GPU", False))}
-                    ),
+                    options=model_types.ModelLoadOption({"use_gpu": use_gpu}),
                 )
                 _LOADED_MODEL = pk.model
                 _LOADED_META = pk.meta
@@ -132,9 +132,7 @@ def _run_setup() -> None:
                     _LOADED_MODEL, meta_LOADED_META = model_api._load(
                         local_dir_path=extracted_dir,
                         as_custom_model=True,
-                        options=model_types.ModelLoadOption(
-                            {"use_gpu": cast(bool, os.environ.get("SNOWML_USE_GPU", False))}
-                        ),
+                        options=model_types.ModelLoadOption({"use_gpu": use_gpu}),
                     )
             _MODEL_LOADING_STATE = _ModelLoadingState.SUCCEEDED
             logger.info("Successfully loaded model into memory")

@@ -1,0 +1,66 @@
+manifest_version: '1.0'
+methods:
+- handler: functions.__call__.infer
+  inputs:
+  - name: INPUT_1
+    type: FLOAT
+  - name: INPUT_2
+    type: ARRAY
+  - name: INPUT_3
+    type: ARRAY
+  - name: INPUT_4
+    type: ARRAY
+  name: __CALL__
+  outputs:
+  - type: OBJECT
+  runtime: python_runtime
+  type: FUNCTION
+runtimes:
+  python_runtime:
+    dependencies:
+      conda: runtimes/python_runtime/env/conda.yml
+    imports:
+    - model.zip
+    - runtimes/python_runtime/snowflake-ml-python.zip
+    language: PYTHON
+    version: '3.8'
+user_data:
+  snowpark_ml_data:
+    functions:
+    - name: __CALL__
+      signature:
+        inputs:
+        - name: input_1
+          type: FLOAT
+        - name: input_2
+          shape:
+          - -1
+          type: FLOAT
+        - name: input_3
+          shape:
+          - -1
+          type: FLOAT
+        - name: input_4
+          shape:
+          - -1
+          type: FLOAT
+        outputs:
+        - name: output_1
+          type: FLOAT
+        - name: output_2
+          shape:
+          - 2
+          - 2
+          type: FLOAT
+        - name: output_3
+          shape:
+          - 2
+          - 2
+          type: FLOAT
+        - name: output_4
+          shape:
+          - 2
+          - 2
+          type: FLOAT
+      target_method: __call__
+    schema_version: '2024-02-01'

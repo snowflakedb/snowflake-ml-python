@@ -45,3 +45,15 @@ py_test(
         "//snowflake/ml/utils:connection_params",
     ],
 )
+
+py_test(
+    name = "check_output_hpo_integ_test",
+    timeout = "long",
+    srcs = ["check_output_hpo_integ_test.py"],
+    shard_count = 5,
+    deps = [
+        "//snowflake/ml/modeling/linear_model:linear_regression",
+        "//snowflake/ml/modeling/model_selection:grid_search_cv",
+        "//snowflake/ml/utils:connection_params",
+    ],
+)

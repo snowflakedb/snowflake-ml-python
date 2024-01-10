@@ -117,6 +117,9 @@ You can build an entire sub-tree as:
   )
   ```
 
++ If the visibility of the target is not `//visibility:public`, you need to make sure your target is visible to
+  `//bazel:snowml_public_common` to make sure CI type checking work.
+
 ### Type-check
 
 #### mypy

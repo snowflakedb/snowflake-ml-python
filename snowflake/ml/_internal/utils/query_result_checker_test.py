@@ -25,9 +25,10 @@ class SnowflakeQueryResultCheckerTest(TestCase):
         """Test column_name_matcher()."""
         row1 = Row(name1=1, name2=2)
         row2 = Row(name1=3, name2=4)
-        self.assertTrue(query_result_checker.column_name_matcher("name1", [row1, row2]))
-        self.assertRaises(DataError, query_result_checker.column_name_matcher, "name1", [])
-        self.assertRaises(DataError, query_result_checker.column_name_matcher, "name3", [row1, row2])
+        self.assertTrue(query_result_checker.column_name_matcher("name1", False, [row1, row2]))
+        self.assertTrue(query_result_checker.column_name_matcher("name1", True, []))
+        self.assertRaises(DataError, query_result_checker.column_name_matcher, "name1", False, [])
+        self.assertRaises(DataError, query_result_checker.column_name_matcher, "name3", False, [row1, row2])
 
     def test_result_validator_dimensions_partial_ok(self) -> None:
         """Use the base ResultValidator to verify the dimensions of an operation result."""
@@ -108,6 +109,19 @@ class SnowflakeQueryResultCheckerTest(TestCase):
         actual_result = (
             query_result_checker.SqlResultValidator(session=cast(snowpark.Session, session), query=query)
             .has_column(expected_col_name="status")
+            .validate()
+        )
+        self.assertEqual(actual_result, sql_result)
+
+    def test_sql_result_validator_column_empty(self) -> None:
+        """Use SqlResultValidator to check that a specific column exists in the result."""
+        session = mock_session.MockSession(conn=None, test_case=self)
+        query = "CREATE TABLE TEMP"
+        sql_result: List[Row] = []
+        session.add_mock_sql(query=query, result=mock_data_frame.MockDataFrame(sql_result))
+        actual_result = (
+            query_result_checker.SqlResultValidator(session=cast(snowpark.Session, session), query=query)
+            .has_column(expected_col_name="status", allow_empty=True)
             .validate()
         )
         self.assertEqual(actual_result, sql_result)

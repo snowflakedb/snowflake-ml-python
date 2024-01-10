@@ -1,0 +1,40 @@
+load("//bazel:py_rules.bzl", "py_library", "py_test")
+
+package(default_visibility = [
+    "//bazel:snowml_public_common",
+    "//snowflake/ml/registry:__pkg__",
+])
+
+py_library(
+    name = "model_manager",
+    srcs = [
+        "model_manager.py",
+    ],
+    deps = [
+        "//snowflake/ml/_internal/utils:identifier",
+        "//snowflake/ml/_internal/utils:sql_identifier",
+        "//snowflake/ml/model",
+        "//snowflake/ml/model:model_signature",
+        "//snowflake/ml/model:type_hints",
+        "//snowflake/ml/model/_client/model:model_impl",
+        "//snowflake/ml/model/_client/model:model_version_impl",
+        "//snowflake/ml/model/_client/ops:metadata_ops",
+        "//snowflake/ml/model/_client/ops:model_ops",
+        "//snowflake/ml/model/_model_composer:model_composer",
+    ],
+)
+
+py_test(
+    name = "model_manager_test",
+    srcs = [
+        "model_manager_test.py",
+    ],
+    deps = [
+        ":model_manager",
+        "//snowflake/ml/_internal/utils:sql_identifier",
+        "//snowflake/ml/model/_client/model:model_version_impl",
+        "//snowflake/ml/model/_model_composer:model_composer",
+        "//snowflake/ml/test_utils:mock_data_frame",
+        "//snowflake/ml/test_utils:mock_session",
+    ],
+)

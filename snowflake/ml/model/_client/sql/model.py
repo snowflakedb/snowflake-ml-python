@@ -1,10 +1,25 @@
 from typing import Any, Dict, List, Optional
 
-from snowflake.ml._internal.utils import identifier, sql_identifier
+from snowflake.ml._internal.utils import (
+    identifier,
+    query_result_checker,
+    snowflake_env,
+    sql_identifier,
+)
+from snowflake.ml.model._model_composer.model_manifest import model_manifest_schema
 from snowflake.snowpark import row, session
 
 
 class ModelSQLClient:
+    MODEL_NAME_COL_NAME = "name"
+    MODEL_COMMENT_COL_NAME = "comment"
+    MODEL_DEFAULT_VERSION_NAME_COL_NAME = "default_version_name"
+
+    MODEL_VERSION_NAME_COL_NAME = "name"
+    MODEL_VERSION_COMMENT_COL_NAME = "comment"
+    MODEL_VERSION_METADATA_COL_NAME = "metadata"
+    MODEL_VERSION_USER_DATA_COL_NAME = "user_data"
+
     def __init__(
         self,
         session: session.Session,
@@ -30,29 +45,60 @@ class ModelSQLClient:
         self,
         *,
         model_name: Optional[sql_identifier.SqlIdentifier] = None,
+        validate_result: bool = True,
         statement_params: Optional[Dict[str, Any]] = None,
     ) -> List[row.Row]:
         fully_qualified_schema_name = ".".join([self._database_name.identifier(), self._schema_name.identifier()])
         like_sql = ""
         if model_name:
             like_sql = f" LIKE '{model_name.resolved()}'"
-        res = self._session.sql(f"SHOW MODELS{like_sql} IN SCHEMA {fully_qualified_schema_name}")
 
-        return res.collect(statement_params=statement_params)
+        res = (
+            query_result_checker.SqlResultValidator(
+                self._session,
+                f"SHOW MODELS{like_sql} IN SCHEMA {fully_qualified_schema_name}",
+                statement_params=statement_params,
+            )
+            .has_column(ModelSQLClient.MODEL_NAME_COL_NAME, allow_empty=True)
+            .has_column(ModelSQLClient.MODEL_COMMENT_COL_NAME, allow_empty=True)
+            .has_column(ModelSQLClient.MODEL_DEFAULT_VERSION_NAME_COL_NAME, allow_empty=True)
+        )
+        if validate_result and model_name:
+            res = res.has_dimensions(expected_rows=1)
+
+        return res.validate()
 
     def show_versions(
         self,
         *,
         model_name: sql_identifier.SqlIdentifier,
         version_name: Optional[sql_identifier.SqlIdentifier] = None,
+        validate_result: bool = True,
         statement_params: Optional[Dict[str, Any]] = None,
     ) -> List[row.Row]:
         like_sql = ""
         if version_name:
             like_sql = f" LIKE '{version_name.resolved()}'"
-        res = self._session.sql(f"SHOW VERSIONS{like_sql} IN MODEL {self.fully_qualified_model_name(model_name)}")
 
-        return res.collect(statement_params=statement_params)
+        res = (
+            query_result_checker.SqlResultValidator(
+                self._session,
+                f"SHOW VERSIONS{like_sql} IN MODEL {self.fully_qualified_model_name(model_name)}",
+                statement_params=statement_params,
+            )
+            .has_column(ModelSQLClient.MODEL_VERSION_NAME_COL_NAME, allow_empty=True)
+            .has_column(ModelSQLClient.MODEL_VERSION_COMMENT_COL_NAME, allow_empty=True)
+            .has_column(ModelSQLClient.MODEL_VERSION_METADATA_COL_NAME, allow_empty=True)
+        )
+        if (
+            snowflake_env.get_current_snowflake_version(self._session)
+            >= model_manifest_schema.MANIFEST_USER_DATA_ENABLE_VERSION
+        ):
+            res = res.has_column(ModelSQLClient.MODEL_VERSION_USER_DATA_COL_NAME, allow_empty=True)
+        if validate_result and version_name:
+            res = res.has_dimensions(expected_rows=1)
+
+        return res.validate()
 
     def set_comment(
         self,
@@ -61,8 +107,11 @@ class ModelSQLClient:
         model_name: sql_identifier.SqlIdentifier,
         statement_params: Optional[Dict[str, Any]] = None,
     ) -> None:
-        comment_sql = f"COMMENT ON MODEL {self.fully_qualified_model_name(model_name)} IS $${comment}$$"
-        self._session.sql(comment_sql).collect(statement_params=statement_params)
+        query_result_checker.SqlResultValidator(
+            self._session,
+            f"COMMENT ON MODEL {self.fully_qualified_model_name(model_name)} IS $${comment}$$",
+            statement_params=statement_params,
+        ).has_dimensions(expected_rows=1, expected_cols=1).validate()
 
     def drop_model(
         self,
@@ -70,6 +119,8 @@ class ModelSQLClient:
         model_name: sql_identifier.SqlIdentifier,
         statement_params: Optional[Dict[str, Any]] = None,
     ) -> None:
-        self._session.sql(f"DROP MODEL {self.fully_qualified_model_name(model_name)}").collect(
-            statement_params=statement_params
-        )
+        query_result_checker.SqlResultValidator(
+            self._session,
+            f"DROP MODEL {self.fully_qualified_model_name(model_name)}",
+            statement_params=statement_params,
+        ).has_dimensions(expected_rows=1, expected_cols=1).validate()

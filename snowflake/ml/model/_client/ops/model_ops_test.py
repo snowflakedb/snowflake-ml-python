@@ -1,3 +1,4 @@
+import json
 import os
 import pathlib
 import tempfile
@@ -9,10 +10,12 @@ import numpy as np
 import pandas as pd
 import yaml
 from absl.testing import absltest
+from packaging import version
 
-from snowflake.ml._internal.utils import sql_identifier
+from snowflake.ml._internal.utils import snowflake_env, sql_identifier
 from snowflake.ml.model import model_signature
 from snowflake.ml.model._client.ops import model_ops
+from snowflake.ml.model._model_composer.model_manifest import model_manifest_schema
 from snowflake.ml.model._signatures import snowpark_handler
 from snowflake.ml.test_utils import mock_data_frame, mock_session
 from snowflake.snowpark import DataFrame, Row, Session, types as spt
@@ -38,6 +41,9 @@ class ModelOpsTest(absltest.TestCase):
             database_name=sql_identifier.SqlIdentifier("TEMP"),
             schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
         )
+        snowflake_env.get_current_snowflake_version = mock.MagicMock(
+            return_value=model_manifest_schema.MANIFEST_USER_DATA_ENABLE_VERSION
+        )
 
     def test_prepare_model_stage_path(self) -> None:
         with mock.patch.object(self.m_ops._stage_client, "create_tmp_stage",) as mock_create_stage, mock.patch.object(
@@ -53,6 +59,74 @@ class ModelOpsTest(absltest.TestCase):
                 statement_params=self.m_statement_params,
             )
 
+    def test_show_models_or_versions_1(self) -> None:
+        m_list_res = [
+            Row(
+                create_on="06/01",
+                name="MODEL",
+                comment="This is a comment",
+                model_name="MODEL",
+                database_name="TEMP",
+                schema_name="test",
+                default_version_name="V1",
+            ),
+            Row(
+                create_on="06/01",
+                name="Model",
+                comment="This is a comment",
+                model_name="MODEL",
+                database_name="TEMP",
+                schema_name="test",
+                default_version_name="v1",
+            ),
+        ]
+        with mock.patch.object(self.m_ops._model_client, "show_models", return_value=m_list_res) as mock_show_models:
+            res = self.m_ops.show_models_or_versions(
+                statement_params=self.m_statement_params,
+            )
+            self.assertListEqual(
+                res,
+                m_list_res,
+            )
+            mock_show_models.assert_called_once_with(
+                validate_result=False,
+                statement_params=self.m_statement_params,
+            )
+
+    def test_show_models_or_versions_2(self) -> None:
+        m_list_res = [
+            Row(
+                create_on="06/01",
+                name="v1",
+                comment="This is a comment",
+                model_name="MODEL",
+                is_default_version=True,
+            ),
+            Row(
+                create_on="06/01",
+                name="V1",
+                comment="This is a comment",
+                model_name="MODEL",
+                is_default_version=False,
+            ),
+        ]
+        with mock.patch.object(
+            self.m_ops._model_client, "show_versions", return_value=m_list_res
+        ) as mock_show_versions:
+            res = self.m_ops.show_models_or_versions(
+                model_name=sql_identifier.SqlIdentifier("MODEL"),
+                statement_params=self.m_statement_params,
+            )
+            self.assertListEqual(
+                res,
+                m_list_res,
+            )
+            mock_show_versions.assert_called_once_with(
+                model_name=sql_identifier.SqlIdentifier("MODEL"),
+                validate_result=False,
+                statement_params=self.m_statement_params,
+            )
+
     def test_list_models_or_versions_1(self) -> None:
         m_list_res = [
             Row(
@@ -62,6 +136,7 @@ class ModelOpsTest(absltest.TestCase):
                 model_name="MODEL",
                 database_name="TEMP",
                 schema_name="test",
+                default_version_name="V1",
             ),
             Row(
                 create_on="06/01",
@@ -70,6 +145,7 @@ class ModelOpsTest(absltest.TestCase):
                 model_name="MODEL",
                 database_name="TEMP",
                 schema_name="test",
+                default_version_name="v1",
             ),
         ]
         with mock.patch.object(self.m_ops._model_client, "show_models", return_value=m_list_res) as mock_show_models:
@@ -84,6 +160,7 @@ class ModelOpsTest(absltest.TestCase):
                 ],
             )
             mock_show_models.assert_called_once_with(
+                validate_result=False,
                 statement_params=self.m_statement_params,
             )
 
@@ -120,6 +197,7 @@ class ModelOpsTest(absltest.TestCase):
             )
             mock_show_versions.assert_called_once_with(
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
+                validate_result=False,
                 statement_params=self.m_statement_params,
             )
 
@@ -132,6 +210,7 @@ class ModelOpsTest(absltest.TestCase):
                 model_name="MODEL",
                 database_name="TEMP",
                 schema_name="test",
+                default_version_name="V1",
             ),
         ]
         with mock.patch.object(self.m_ops._model_client, "show_models", return_value=m_list_res) as mock_show_models:
@@ -142,6 +221,7 @@ class ModelOpsTest(absltest.TestCase):
             self.assertTrue(res)
             mock_show_models.assert_called_once_with(
                 model_name=sql_identifier.SqlIdentifier("Model", case_sensitive=True),
+                validate_result=False,
                 statement_params=self.m_statement_params,
             )
 
@@ -155,6 +235,7 @@ class ModelOpsTest(absltest.TestCase):
             self.assertFalse(res)
             mock_show_models.assert_called_once_with(
                 model_name=sql_identifier.SqlIdentifier("Model", case_sensitive=True),
+                validate_result=False,
                 statement_params=self.m_statement_params,
             )
 
@@ -180,6 +261,7 @@ class ModelOpsTest(absltest.TestCase):
             mock_show_versions.assert_called_once_with(
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
                 version_name=sql_identifier.SqlIdentifier("v1", case_sensitive=True),
+                validate_result=False,
                 statement_params=self.m_statement_params,
             )
 
@@ -197,6 +279,157 @@ class ModelOpsTest(absltest.TestCase):
             mock_show_versions.assert_called_once_with(
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
                 version_name=sql_identifier.SqlIdentifier("v1", case_sensitive=True),
+                validate_result=False,
+                statement_params=self.m_statement_params,
+            )
+
+    def test_get_tag_value_1(self) -> None:
+        m_list_res: Row = Row(TAG_VALUE="a")
+        with mock.patch.object(self.m_ops._tag_client, "get_tag_value", return_value=m_list_res) as mock_get_tag_value:
+            res = self.m_ops.get_tag_value(
+                model_name=sql_identifier.SqlIdentifier("MODEL"),
+                tag_database_name=sql_identifier.SqlIdentifier("DB"),
+                tag_schema_name=sql_identifier.SqlIdentifier("schema", case_sensitive=True),
+                tag_name=sql_identifier.SqlIdentifier("MYTAG"),
+                statement_params=self.m_statement_params,
+            )
+            self.assertEqual(res, "a")
+            mock_get_tag_value.assert_called_once_with(
+                module_name=sql_identifier.SqlIdentifier("MODEL"),
+                tag_database_name=sql_identifier.SqlIdentifier("DB"),
+                tag_schema_name=sql_identifier.SqlIdentifier("schema", case_sensitive=True),
+                tag_name=sql_identifier.SqlIdentifier("MYTAG"),
+                statement_params=self.m_statement_params,
+            )
+
+    def test_get_tag_value_2(self) -> None:
+        m_list_res: Row = Row(TAG_VALUE=1)
+        with mock.patch.object(self.m_ops._tag_client, "get_tag_value", return_value=m_list_res) as mock_get_tag_value:
+            res = self.m_ops.get_tag_value(
+                model_name=sql_identifier.SqlIdentifier("MODEL"),
+                tag_database_name=sql_identifier.SqlIdentifier("DB"),
+                tag_schema_name=sql_identifier.SqlIdentifier("schema", case_sensitive=True),
+                tag_name=sql_identifier.SqlIdentifier("MYTAG"),
+                statement_params=self.m_statement_params,
+            )
+            self.assertEqual(res, "1")
+            mock_get_tag_value.assert_called_once_with(
+                module_name=sql_identifier.SqlIdentifier("MODEL"),
+                tag_database_name=sql_identifier.SqlIdentifier("DB"),
+                tag_schema_name=sql_identifier.SqlIdentifier("schema", case_sensitive=True),
+                tag_name=sql_identifier.SqlIdentifier("MYTAG"),
+                statement_params=self.m_statement_params,
+            )
+
+    def test_get_tag_value_3(self) -> None:
+        m_list_res: Row = Row(TAG_VALUE=None)
+        with mock.patch.object(self.m_ops._tag_client, "get_tag_value", return_value=m_list_res) as mock_get_tag_value:
+            res = self.m_ops.get_tag_value(
+                model_name=sql_identifier.SqlIdentifier("MODEL"),
+                tag_database_name=sql_identifier.SqlIdentifier("DB"),
+                tag_schema_name=sql_identifier.SqlIdentifier("schema", case_sensitive=True),
+                tag_name=sql_identifier.SqlIdentifier("MYTAG"),
+                statement_params=self.m_statement_params,
+            )
+            self.assertIsNone(res)
+            mock_get_tag_value.assert_called_once_with(
+                module_name=sql_identifier.SqlIdentifier("MODEL"),
+                tag_database_name=sql_identifier.SqlIdentifier("DB"),
+                tag_schema_name=sql_identifier.SqlIdentifier("schema", case_sensitive=True),
+                tag_name=sql_identifier.SqlIdentifier("MYTAG"),
+                statement_params=self.m_statement_params,
+            )
+
+    def test_show_tags(self) -> None:
+        m_list_res: List[Row] = [
+            Row(TAG_DATABASE="DB", TAG_SCHEMA="schema", TAG_NAME="MYTAG", TAG_VALUE="tag content"),
+            Row(TAG_DATABASE="MYDB", TAG_SCHEMA="SCHEMA", TAG_NAME="my_another_tag", TAG_VALUE=1),
+        ]
+        with mock.patch.object(self.m_ops._tag_client, "get_tag_list", return_value=m_list_res) as mock_get_tag_list:
+            res = self.m_ops.show_tags(
+                model_name=sql_identifier.SqlIdentifier("MODEL"),
+                statement_params=self.m_statement_params,
+            )
+            self.assertDictEqual(res, {'DB."schema".MYTAG': "tag content", 'MYDB.SCHEMA."my_another_tag"': "1"})
+            mock_get_tag_list.assert_called_once_with(
+                module_name=sql_identifier.SqlIdentifier("MODEL"),
+                statement_params=self.m_statement_params,
+            )
+
+    def test_set_tag_fail(self) -> None:
+        with mock.patch.object(
+            snowflake_env,
+            "get_current_snowflake_version",
+            return_value=version.parse("8.1.0+23d9c914e5"),
+        ), mock.patch.object(self.m_ops._tag_client, "set_tag_on_model") as mock_set_tag:
+            with self.assertRaisesRegex(NotImplementedError, "`set_tag` won't work before Snowflake version"):
+                self.m_ops.set_tag(
+                    model_name=sql_identifier.SqlIdentifier("MODEL"),
+                    tag_database_name=sql_identifier.SqlIdentifier("DB"),
+                    tag_schema_name=sql_identifier.SqlIdentifier("schema", case_sensitive=True),
+                    tag_name=sql_identifier.SqlIdentifier("MYTAG"),
+                    tag_value="tag content",
+                    statement_params=self.m_statement_params,
+                )
+            mock_set_tag.assert_not_called()
+
+    def test_set_tag(self) -> None:
+        with mock.patch.object(
+            snowflake_env,
+            "get_current_snowflake_version",
+            return_value=version.parse("8.2.0+23d9c914e5"),
+        ), mock.patch.object(self.m_ops._tag_client, "set_tag_on_model") as mock_set_tag:
+            self.m_ops.set_tag(
+                model_name=sql_identifier.SqlIdentifier("MODEL"),
+                tag_database_name=sql_identifier.SqlIdentifier("DB"),
+                tag_schema_name=sql_identifier.SqlIdentifier("schema", case_sensitive=True),
+                tag_name=sql_identifier.SqlIdentifier("MYTAG"),
+                tag_value="tag content",
+                statement_params=self.m_statement_params,
+            )
+            mock_set_tag.assert_called_once_with(
+                model_name=sql_identifier.SqlIdentifier("MODEL"),
+                tag_database_name=sql_identifier.SqlIdentifier("DB"),
+                tag_schema_name=sql_identifier.SqlIdentifier("schema", case_sensitive=True),
+                tag_name=sql_identifier.SqlIdentifier("MYTAG"),
+                tag_value="tag content",
+                statement_params=self.m_statement_params,
+            )
+
+    def test_unset_tag_fail(self) -> None:
+        with mock.patch.object(
+            snowflake_env,
+            "get_current_snowflake_version",
+            return_value=version.parse("8.1.0+23d9c914e5"),
+        ), mock.patch.object(self.m_ops._tag_client, "unset_tag_on_model") as mock_unset_tag:
+            with self.assertRaisesRegex(NotImplementedError, "`unset_tag` won't work before Snowflake version"):
+                self.m_ops.unset_tag(
+                    model_name=sql_identifier.SqlIdentifier("MODEL"),
+                    tag_database_name=sql_identifier.SqlIdentifier("DB"),
+                    tag_schema_name=sql_identifier.SqlIdentifier("schema", case_sensitive=True),
+                    tag_name=sql_identifier.SqlIdentifier("MYTAG"),
+                    statement_params=self.m_statement_params,
+                )
+            mock_unset_tag.assert_not_called()
+
+    def test_unset_tag(self) -> None:
+        with mock.patch.object(
+            snowflake_env,
+            "get_current_snowflake_version",
+            return_value=version.parse("8.2.0+23d9c914e5"),
+        ), mock.patch.object(self.m_ops._tag_client, "unset_tag_on_model") as mock_unset_tag:
+            self.m_ops.unset_tag(
+                model_name=sql_identifier.SqlIdentifier("MODEL"),
+                tag_database_name=sql_identifier.SqlIdentifier("DB"),
+                tag_schema_name=sql_identifier.SqlIdentifier("schema", case_sensitive=True),
+                tag_name=sql_identifier.SqlIdentifier("MYTAG"),
+                statement_params=self.m_statement_params,
+            )
+            mock_unset_tag.assert_called_once_with(
+                model_name=sql_identifier.SqlIdentifier("MODEL"),
+                tag_database_name=sql_identifier.SqlIdentifier("DB"),
+                tag_schema_name=sql_identifier.SqlIdentifier("schema", case_sensitive=True),
+                tag_name=sql_identifier.SqlIdentifier("MYTAG"),
                 statement_params=self.m_statement_params,
             )
 
@@ -341,6 +574,7 @@ class ModelOpsTest(absltest.TestCase):
                 model_name="MODEL",
                 database_name="TEMP",
                 schema_name="test",
+                default_version_name="V1",
             ),
         ]
         with mock.patch.object(
@@ -377,6 +611,7 @@ class ModelOpsTest(absltest.TestCase):
                 model_name="MODEL",
                 database_name="TEMP",
                 schema_name="test",
+                default_version_name="V1",
             ),
         )
         m_list_res_versions = [
@@ -406,6 +641,45 @@ class ModelOpsTest(absltest.TestCase):
                 )
             mock_create_from_stage.assert_not_called()
             mock_add_version_from_stagel.assert_not_called()
+
+    def test_get_client_data_in_user_data_1(self) -> None:
+        m_client_data = {
+            "schema_version": model_manifest_schema.MANIFEST_CLIENT_DATA_SCHEMA_VERSION,
+            "functions": [
+                model_manifest_schema.ModelFunctionInfoDict(
+                    name="PREDICT",
+                    target_method="predict",
+                    signature=_DUMMY_SIG["predict"].to_dict(),
+                )
+            ],
+        }
+        m_list_res = [
+            Row(
+                create_on="06/01",
+                name="v1",
+                comment="This is a comment",
+                model_name="MODEL",
+                user_data=json.dumps({model_manifest_schema.MANIFEST_CLIENT_DATA_KEY_NAME: m_client_data}),
+                is_default_version=True,
+            ),
+        ]
+        with mock.patch.object(
+            self.m_ops._model_client, "show_versions", return_value=m_list_res
+        ) as mock_show_versions:
+            res = self.m_ops.get_client_data_in_user_data(
+                model_name=sql_identifier.SqlIdentifier("MODEL"),
+                version_name=sql_identifier.SqlIdentifier('"v1"'),
+                statement_params=self.m_statement_params,
+            )
+            self.assertDictEqual(
+                res,
+                m_client_data,
+            )
+            mock_show_versions.assert_called_once_with(
+                model_name=sql_identifier.SqlIdentifier("MODEL"),
+                version_name=sql_identifier.SqlIdentifier('"v1"'),
+                statement_params=self.m_statement_params,
+            )
 
     def test_invoke_method_1(self) -> None:
         pd_df = pd.DataFrame([["1.0"]], columns=["input"], dtype=np.float32)
@@ -540,6 +814,7 @@ class ModelOpsTest(absltest.TestCase):
                 model_name="MODEL",
                 database_name="TEMP",
                 schema_name="test",
+                default_version_name="V1",
             ),
         ]
         with mock.patch.object(
@@ -584,6 +859,83 @@ class ModelOpsTest(absltest.TestCase):
                 version_name=sql_identifier.SqlIdentifier("V1"),
                 statement_params=self.m_statement_params,
             )
+
+    def test_get_default_version(self) -> None:
+        m_list_res = [
+            Row(
+                create_on="06/01",
+                name="MODEL",
+                comment="This is a comment",
+                model_name="MODEL",
+                database_name="TEMP",
+                schema_name="test",
+                default_version_name="v1",
+            ),
+        ]
+        with mock.patch.object(self.m_ops._model_client, "show_models", return_value=m_list_res) as mock_show_models:
+            res = self.m_ops.get_default_version(
+                model_name=sql_identifier.SqlIdentifier("MODEL"),
+                statement_params=self.m_statement_params,
+            )
+            self.assertEqual(res, sql_identifier.SqlIdentifier("v1", case_sensitive=True))
+            mock_show_models.assert_called_once_with(
+                model_name=sql_identifier.SqlIdentifier("MODEL"),
+                statement_params=self.m_statement_params,
+            )
+
+    def test_set_default_version_1(self) -> None:
+        m_list_res = [
+            Row(
+                create_on="06/01",
+                name="v1",
+                comment="This is a comment",
+                model_name="MODEL",
+                is_default_version=True,
+            ),
+        ]
+        with mock.patch.object(
+            self.m_ops._model_client, "show_versions", return_value=m_list_res
+        ) as mock_show_versions, mock.patch.object(
+            self.m_ops._model_version_client, "set_default_version"
+        ) as mock_set_default_version:
+            self.m_ops.set_default_version(
+                model_name=sql_identifier.SqlIdentifier("MODEL"),
+                version_name=sql_identifier.SqlIdentifier('"v1"'),
+                statement_params=self.m_statement_params,
+            )
+            mock_show_versions.assert_called_once_with(
+                model_name=sql_identifier.SqlIdentifier("MODEL"),
+                version_name=sql_identifier.SqlIdentifier('"v1"'),
+                validate_result=False,
+                statement_params=self.m_statement_params,
+            )
+            mock_set_default_version.assert_called_once_with(
+                model_name=sql_identifier.SqlIdentifier("MODEL"),
+                version_name=sql_identifier.SqlIdentifier('"v1"'),
+                statement_params=self.m_statement_params,
+            )
+
+    def test_set_default_version_2(self) -> None:
+        with mock.patch.object(
+            self.m_ops._model_client, "show_versions", return_value=[]
+        ) as mock_show_versions, mock.patch.object(
+            self.m_ops._model_version_client, "set_default_version"
+        ) as mock_set_default_version:
+            with self.assertRaisesRegex(
+                ValueError, "You cannot set version V1 as default version as it does not exist."
+            ):
+                self.m_ops.set_default_version(
+                    model_name=sql_identifier.SqlIdentifier("MODEL"),
+                    version_name=sql_identifier.SqlIdentifier("V1"),
+                    statement_params=self.m_statement_params,
+                )
+            mock_show_versions.assert_called_once_with(
+                model_name=sql_identifier.SqlIdentifier("MODEL"),
+                version_name=sql_identifier.SqlIdentifier("V1"),
+                validate_result=False,
+                statement_params=self.m_statement_params,
+            )
+            mock_set_default_version.assert_not_called()
 
     def test_delete_model_or_version(self) -> None:
         with mock.patch.object(

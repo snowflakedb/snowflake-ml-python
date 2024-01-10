@@ -99,6 +99,14 @@ class GridSearchCVTest(parameterized.TestCase):
         },
         {
             "is_single_node": False,
+            "skmodel": SkRandomForestClassifier,
+            "model": RandomForestClassifier,
+            "params": {"n_estimators": [50, 200], "min_samples_split": [1.0, 2, 3], "max_depth": [3, 8]},
+            "kwargs": dict(return_train_score=True),
+            "estimator_kwargs": dict(random_state=0),
+        },
+        {
+            "is_single_node": False,
             "skmodel": SkSVC,
             "model": SVC,
             "params": {"kernel": ("linear", "rbf"), "C": [1, 10, 80]},
@@ -107,10 +115,26 @@ class GridSearchCVTest(parameterized.TestCase):
         },
         {
             "is_single_node": False,
+            "skmodel": SkSVC,
+            "model": SVC,
+            "params": {"kernel": ("linear", "rbf"), "C": [1, 10, 80]},
+            "kwargs": dict(return_train_score=True),
+            "estimator_kwargs": dict(random_state=0),
+        },
+        {
+            "is_single_node": False,
             "skmodel": SkXGBClassifier,
             "model": XGBClassifier,
             "params": {"max_depth": [2, 6], "learning_rate": [0.1, 0.01]},
             "kwargs": dict(scoring=["accuracy", "f1_macro"], refit="f1_macro"),
+            "estimator_kwargs": dict(seed=42),
+        },
+        {
+            "is_single_node": False,
+            "skmodel": SkXGBClassifier,
+            "model": XGBClassifier,
+            "params": {"max_depth": [2, 6], "learning_rate": [0.1, 0.01]},
+            "kwargs": dict(scoring=["accuracy", "f1_macro"], refit="f1_macro", return_train_score=True),
             "estimator_kwargs": dict(seed=42),
         },
     )

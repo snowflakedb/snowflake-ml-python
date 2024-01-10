@@ -3,12 +3,14 @@ import logging
 from typing import Dict, Optional, cast
 from urllib.parse import urlunparse
 
+from snowflake.ml._internal.container_services.image_registry import (
+    http_client as image_registry_http_client,
+    imagelib,
+)
 from snowflake.ml._internal.exceptions import (
     error_codes,
     exceptions as snowml_exceptions,
 )
-from snowflake.ml._internal.utils import image_registry_http_client
-from snowflake.ml.model._deploy_client.utils import imagelib
 from snowflake.snowpark import Session
 from snowflake.snowpark._internal import utils as snowpark_utils
 
