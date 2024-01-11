@@ -2,6 +2,7 @@ from typing import Optional
 
 import numpy as np
 import pandas as pd
+import pytest
 import tensorflow as tf
 from absl.testing import absltest
 
@@ -25,6 +26,7 @@ class SimpleModule(tf.Module):
         return self.a_variable * tensor + self.non_trainable_variable
 
 
+@pytest.mark.pip_incompatible
 class TestRegistryTensorflowModelInteg(registry_model_test_base.RegistryModelTestBase):
     def test_tf_tensor_as_sample(
         self,

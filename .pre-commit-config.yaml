@@ -1,5 +1,5 @@
 ---
-exclude: ^(.*egg.info.*|.*/parameters.py$|.*\.py_template|.*/experimental/.*|docs/source/_themes/.*)
+exclude: ^(.*egg.info.*|.*/parameters.py$|.*\.py_template|.*/experimental/.*|.*/fixtures/.*|docs/source/_themes/.*)
 minimum_pre_commit_version: 3.4.0
 repos:
   - repo: https://github.com/asottile/pyupgrade

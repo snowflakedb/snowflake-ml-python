@@ -48,7 +48,7 @@ class ModelMethodTest(absltest.TestCase):
                     (
                         importlib_resources.files(model_method_pkg)
                         .joinpath("fixtures")  # type: ignore[no-untyped-call]
-                        .joinpath("function_fixture_1.py_fixture")
+                        .joinpath("function_1.py")
                         .read_text()
                     ),
                     f.read(),
@@ -87,7 +87,7 @@ class ModelMethodTest(absltest.TestCase):
                     (
                         importlib_resources.files(model_method_pkg)
                         .joinpath("fixtures")  # type: ignore[no-untyped-call]
-                        .joinpath("function_fixture_2.py_fixture")
+                        .joinpath("function_2.py")
                         .read_text()
                     ),
                     f.read(),
@@ -152,7 +152,7 @@ class ModelMethodTest(absltest.TestCase):
                     (
                         importlib_resources.files(model_method_pkg)
                         .joinpath("fixtures")  # type: ignore[no-untyped-call]
-                        .joinpath("function_fixture_1.py_fixture")
+                        .joinpath("function_1.py")
                         .read_text()
                     ),
                     f.read(),

@@ -5,8 +5,10 @@ import requests
 from absl.testing import absltest, parameterized
 from absl.testing.absltest import mock
 
+from snowflake.ml._internal.container_services.image_registry import (
+    http_client as image_registry_http_client,
+)
 from snowflake.ml._internal.exceptions import exceptions as snowml_exceptions
-from snowflake.ml._internal.utils import image_registry_http_client
 from snowflake.ml.test_utils import mock_session
 from snowflake.snowpark import session
 

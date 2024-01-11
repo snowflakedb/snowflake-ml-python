@@ -1,9 +1,10 @@
 import collections
 import pathlib
-from typing import List, Optional, cast
+from typing import Any, Dict, List, Optional, cast
 
 import yaml
 
+from snowflake.ml._internal.utils import snowflake_env
 from snowflake.ml.model import type_hints
 from snowflake.ml.model._model_composer.model_manifest import model_manifest_schema
 from snowflake.ml.model._model_composer.model_method import (
@@ -83,7 +84,15 @@ class ModelManifest:
             ],
         )
 
+        if (
+            snowflake_env.get_current_snowflake_version(session)
+            >= model_manifest_schema.MANIFEST_USER_DATA_ENABLE_VERSION
+        ):
+            manifest_dict["user_data"] = self.generate_user_data_with_client_data(model_meta)
+
         with (self.workspace_path / ModelManifest.MANIFEST_FILE_REL_PATH).open("w", encoding="utf-8") as f:
+            # Anchors are not supported in the server, avoid that.
+            yaml.SafeDumper.ignore_aliases = lambda *args: True  # type: ignore[method-assign]
             yaml.safe_dump(manifest_dict, f)
 
     def load(self) -> model_manifest_schema.ModelManifestDict:
@@ -99,3 +108,43 @@ class ModelManifest:
         res = cast(model_manifest_schema.ModelManifestDict, raw_input)
 
         return res
+
+    def generate_user_data_with_client_data(self, model_meta: model_meta_api.ModelMetadata) -> Dict[str, Any]:
+        client_data = model_manifest_schema.SnowparkMLDataDict(
+            schema_version=model_manifest_schema.MANIFEST_CLIENT_DATA_SCHEMA_VERSION,
+            functions=[
+                model_manifest_schema.ModelFunctionInfoDict(
+                    name=method.method_name.identifier(),
+                    target_method=method.target_method,
+                    signature=model_meta.signatures[method.target_method].to_dict(),
+                )
+                for method in self.methods
+            ],
+        )
+        return {model_manifest_schema.MANIFEST_CLIENT_DATA_KEY_NAME: client_data}
+
+    @staticmethod
+    def parse_client_data_from_user_data(raw_user_data: Dict[str, Any]) -> model_manifest_schema.SnowparkMLDataDict:
+        raw_client_data = raw_user_data.get(model_manifest_schema.MANIFEST_CLIENT_DATA_KEY_NAME, {})
+        if not isinstance(raw_client_data, dict) or "schema_version" not in raw_client_data:
+            raise ValueError(f"Ill-formatted client data {raw_client_data} in user data found.")
+        loaded_client_data_schema_version = raw_client_data["schema_version"]
+        if (
+            not isinstance(loaded_client_data_schema_version, str)
+            or loaded_client_data_schema_version != model_manifest_schema.MANIFEST_CLIENT_DATA_SCHEMA_VERSION
+        ):
+            raise ValueError(f"Unsupported client data schema version {loaded_client_data_schema_version} confronted.")
+
+        return_functions_info: List[model_manifest_schema.ModelFunctionInfoDict] = []
+        loaded_functions_info = raw_client_data.get("functions", [])
+        for func in loaded_functions_info:
+            fi = model_manifest_schema.ModelFunctionInfoDict(
+                name=func["name"],
+                target_method=func["target_method"],
+                signature=func["signature"],
+            )
+            return_functions_info.append(fi)
+
+        return model_manifest_schema.SnowparkMLDataDict(
+            schema_version=loaded_client_data_schema_version, functions=return_functions_info
+        )

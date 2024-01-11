@@ -3,7 +3,9 @@ from typing import cast
 from absl.testing import absltest
 from absl.testing.absltest import mock
 
-from snowflake.ml.model._deploy_client.utils import image_registry_client
+from snowflake.ml._internal.container_services.image_registry import (
+    registry_client as image_registry_client,
+)
 from snowflake.ml.test_utils import mock_session
 from snowflake.snowpark import session
 

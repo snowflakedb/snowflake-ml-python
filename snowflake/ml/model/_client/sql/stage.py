@@ -1,6 +1,10 @@
 from typing import Any, Dict, Optional
 
-from snowflake.ml._internal.utils import identifier, sql_identifier
+from snowflake.ml._internal.utils import (
+    identifier,
+    query_result_checker,
+    sql_identifier,
+)
 from snowflake.snowpark import session
 
 
@@ -35,6 +39,8 @@ class StageSQLClient:
         stage_name: sql_identifier.SqlIdentifier,
         statement_params: Optional[Dict[str, Any]] = None,
     ) -> None:
-        self._session.sql(f"CREATE TEMPORARY STAGE {self.fully_qualified_stage_name(stage_name)}").collect(
-            statement_params=statement_params
-        )
+        query_result_checker.SqlResultValidator(
+            self._session,
+            f"CREATE TEMPORARY STAGE {self.fully_qualified_stage_name(stage_name)}",
+            statement_params=statement_params,
+        ).has_dimensions(expected_rows=1, expected_cols=1).validate()

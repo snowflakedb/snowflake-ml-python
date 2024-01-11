@@ -1,10 +1,10 @@
 from absl.testing import absltest
 
-from snowflake.ml._internal.utils import identifier, query_result_checker
-from snowflake.ml.model._deploy_client.utils import (
-    image_registry_client,
-    snowservice_client,
+from snowflake.ml._internal.container_services.image_registry import (
+    registry_client as image_registry_client,
 )
+from snowflake.ml._internal.utils import identifier, query_result_checker
+from snowflake.ml.model._deploy_client.utils import snowservice_client
 from tests.integ.snowflake.ml.test_utils import spcs_integ_test_base
 
 

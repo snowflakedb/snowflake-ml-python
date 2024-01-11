@@ -44,12 +44,17 @@ class ModelRuntime:
         if self.runtime_env._snowpark_ml_version.local:
             self.embed_local_ml_library = True
         else:
-            snowml_server_availability = env_utils.validate_requirements_in_information_schema(
-                session=session,
-                reqs=[requirements.Requirement(snowml_pkg_spec)],
-                python_version=snowml_env.PYTHON_VERSION,
+            snowml_server_availability = (
+                len(
+                    env_utils.get_matched_package_versions_in_information_schema(
+                        session=session,
+                        reqs=[requirements.Requirement(snowml_pkg_spec)],
+                        python_version=snowml_env.PYTHON_VERSION,
+                    ).get(env_utils.SNOWPARK_ML_PKG_NAME, [])
+                )
+                >= 1
             )
-            self.embed_local_ml_library = snowml_server_availability is None
+            self.embed_local_ml_library = not snowml_server_availability
 
         if self.embed_local_ml_library:
             self.runtime_env.include_if_absent(

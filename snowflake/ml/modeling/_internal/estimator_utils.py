@@ -132,3 +132,24 @@ def is_single_node(session: Session) -> bool:
     # If current session cannot retrieve the warehouse name back,
     # Default as True; Let HPO fall back to stored procedure implementation
     return True
+
+
+def get_module_name(model: object) -> str:
+    """Returns the source module of the given object.
+
+    Args:
+        model: Object to inspect.
+
+    Returns:
+        Source module of the given object.
+
+    Raises:
+        SnowflakeMLException: If the source module of the given object is not found.
+    """
+    module = inspect.getmodule(model)
+    if module is None:
+        raise exceptions.SnowflakeMLException(
+            error_code=error_codes.INVALID_TYPE,
+            original_exception=ValueError(f"Unable to infer the source module of the given object {model}."),
+        )
+    return module.__name__

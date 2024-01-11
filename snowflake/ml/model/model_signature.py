@@ -570,32 +570,31 @@ def infer_signature(
     input_feature_names: Optional[List[str]] = None,
     output_feature_names: Optional[List[str]] = None,
 ) -> core.ModelSignature:
-    """Infer model signature from given input and output sample data.
+    """
+    Infer model signature from given input and output sample data.
 
-    Currently, we support infer the model signature from example input/output data in the following cases:
-        - Pandas data frame whose column could have types of supported data types,
-            list (including list of supported data types, list of numpy array of supported data types, and nested list),
-            and numpy array of supported data types.
+    Currently supports inferring model signatures from the following data types:
+
+        - Pandas DataFrame with columns of supported data types, lists (including nested lists) of supported data types,
+            and NumPy arrays of supported data types.
             - Does not support DataFrame with CategoricalIndex column index.
-            - Does not support DataFrame with column of variant length list or numpy array.
-        - Numpy array of supported data types.
-        - List of Numpy array of supported data types.
-        - List of supported data types, or nested list of supported data types.
-            - Does not support list of list of variant length list.
+        - NumPy arrays of supported data types.
+        - Lists of NumPy arrays of supported data types.
+        - Lists of supported data types or nested lists of supported data types.
 
-    When a ValueError is raised when inferring the signature, it indicates that the data is ill and it is impossible to
-    create a signature reflecting that.
-    When a NotImplementedError is raised, it indicates that it might be possible to create a signature reflecting the
-    provided data, however, we could not infer it.
+    When inferring the signature, a ValueError indicates that the data is insufficient or invalid.
+
+    When it might be possible to create a signature reflecting the provided data, but it could not be inferred,
+    a NotImplementedError is raised
 
     Args:
         input_data: Sample input data for the model.
         output_data: Sample output data for the model.
-        input_feature_names: Name for input features. Defaults to None.
-        output_feature_names: Name for output features. Defaults to None.
+        input_feature_names: Names for input features. Defaults to None.
+        output_feature_names: Names for output features. Defaults to None.
 
     Returns:
-        A model signature.
+        A model signature inferred from the given input and output sample data.
     """
     inputs = _infer_signature(input_data, role="input")
     inputs = utils.rename_features(inputs, input_feature_names)

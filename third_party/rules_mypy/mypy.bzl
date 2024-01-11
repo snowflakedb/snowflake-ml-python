@@ -1,5 +1,7 @@
 "Public API"
 
+load("@bazel_skylib//lib:sets.bzl", "sets")
+load("@bazel_skylib//lib:shell.bzl", "shell")
 load("@rules_mypy//:rules.bzl", "MyPyStubsInfo")
 
 MyPyAspectInfo = provider(
@@ -33,7 +35,28 @@ DEFAULT_ATTRS = {
         default = Label("@//:mypy.ini"),
         allow_single_file = True,
     ),
+    "_template": attr.label(
+        default = Label("@rules_mypy//templates:mypy.sh.tpl"),
+        allow_single_file = True,
+    ),
 }
+
+def _sources_to_cache_map_triples(srcs, is_aspect):
+    triples_as_flat_list = []
+    for f in srcs:
+        if is_aspect:
+            f_path = f.path
+        else:
+            # "The path of this file relative to its root. This excludes the aforementioned root, i.e. configuration-specific fragments of the path.
+            # This is also the path under which the file is mapped if it's in the runfiles of a binary."
+            # - https://docs.bazel.build/versions/master/skylark/lib/File.html
+            f_path = f.short_path
+        triples_as_flat_list.extend([
+            shell.quote(f_path),
+            shell.quote("{}.meta.json".format(f_path)),
+            shell.quote("{}.data.json".format(f_path)),
+        ])
+    return triples_as_flat_list
 
 def _is_external_dep(dep):
     return dep.label.workspace_root.startswith("external/")
@@ -68,11 +91,28 @@ def _extract_stub_deps(deps):
                         stub_files.append(src_f)
     return stub_files
 
-def _mypy_rule_impl(ctx):
-    base_rule = ctx.rule
+def _extract_imports(imports, label):
+    # NOTE: Bazel's implementation of this for py_binary, py_test is at
+    # src/main/java/com/google/devtools/build/lib/bazel/rules/python/BazelPythonSemantics.java
+    mypypath_parts = []
+    for import_ in imports:
+        if import_.startswith("/"):
+            # buildifier: disable=print
+            print("ignoring invalid absolute path '{}'".format(import_))
+        elif import_ in ["", "."]:
+            mypypath_parts.append(label.package)
+        else:
+            mypypath_parts.append("{}/{}".format(label.package, import_))
+    return mypypath_parts
+
+def _mypy_rule_impl(ctx, is_aspect = False):
+    base_rule = ctx
+    if is_aspect:
+        base_rule = ctx.rule
 
     mypy_config_file = ctx.file._mypy_config
 
+    mypypath_parts = []
     direct_src_files = []
     transitive_srcs_depsets = []
     stub_files = []
@@ -84,80 +124,99 @@ def _mypy_rule_impl(ctx):
         transitive_srcs_depsets = _extract_transitive_deps(base_rule.attr.deps)
         stub_files = _extract_stub_deps(base_rule.attr.deps)
 
+    if hasattr(base_rule.attr, "imports"):
+        mypypath_parts = _extract_imports(base_rule.attr.imports, ctx.label)
+
     final_srcs_depset = depset(transitive = transitive_srcs_depsets +
                                             [depset(direct = direct_src_files)])
     src_files = [f for f in final_srcs_depset.to_list() if not _is_external_src(f)]
     if not src_files:
         return None
 
-    out = ctx.actions.declare_file("%s_dummy_out" % ctx.rule.attr.name)
-    runfiles_name = "%s.mypy_runfiles" % ctx.rule.attr.name
+    mypypath_parts += [src_f.dirname for src_f in stub_files]
+    mypypath = ":".join(mypypath_parts)
+
+    # Ideally, a file should be passed into this rule. If this is an executable
+    # rule, then we default to the implicit executable file, otherwise we create
+    # a stub.
+    if not is_aspect:
+        if hasattr(ctx, "outputs"):
+            exe = ctx.outputs.executable
+        else:
+            exe = ctx.actions.declare_file(
+                "%s_mypy_exe" % base_rule.attr.name,
+            )
+        out = None
+    else:
+        out = ctx.actions.declare_file("%s_dummy_out" % ctx.rule.attr.name)
+        exe = ctx.actions.declare_file(
+            "%s_mypy_exe" % ctx.rule.attr.name,
+        )
 
     # Compose a list of the files needed for use. Note that aspect rules can use
     # the project version of mypy however, other rules should fall back on their
     # relative runfiles.
+    runfiles = ctx.runfiles(files = src_files + stub_files + [mypy_config_file])
+    if not is_aspect:
+        runfiles = runfiles.merge(ctx.attr._mypy_cli.default_runfiles)
 
-    src_run_files = []
-    direct_src_run_files = []
-    stub_run_files = []
-
-    for f in src_files + stub_files:
-        run_file_path = runfiles_name + "/" + f.short_path
-        run_file = ctx.actions.declare_file(run_file_path)
-        ctx.actions.symlink(
-            output = run_file,
-            target_file = f,
-        )
-        if f in src_files:
-            src_run_files.append(run_file)
-        if f in direct_src_files:
-            direct_src_run_files.append(run_file)
-        if f in stub_files:
-            stub_run_files.append(run_file)
-
-    src_root_path = src_run_files[0].path
-    src_root_path = src_root_path[0:(src_root_path.find(runfiles_name) + len(runfiles_name))]
-
-    # arguments sent to mypy
-    args = ["--cache-dir", ctx.bin_dir.path + "/.mypy_cache", "--package-root", src_root_path, "--config-file", mypy_config_file.path] + [f.path for f in direct_src_run_files]
-
-    worker_arg_file = ctx.actions.declare_file(ctx.rule.attr.name + ".worker_args")
-    ctx.actions.write(
-        output = worker_arg_file,
-        content = "\n".join(args),
+    src_root_paths = sets.to_list(
+        sets.make([f.root.path for f in src_files]),
     )
 
-    return MyPyAspectInfo(
-        exe = ctx.executable._mypy_cli,
-        args = worker_arg_file,
-        runfiles = src_run_files + stub_run_files + [mypy_config_file, worker_arg_file],
-        out = out,
+    ctx.actions.expand_template(
+        template = ctx.file._template,
+        output = exe,
+        substitutions = {
+            "{CACHE_MAP_TRIPLES}": " ".join(_sources_to_cache_map_triples(src_files, is_aspect)),
+            "{MYPYPATH_PATH}": mypypath if mypypath else "",
+            "{MYPY_EXE}": ctx.executable._mypy_cli.path,
+            "{MYPY_INI_PATH}": mypy_config_file.path,
+            "{MYPY_ROOT}": ctx.executable._mypy_cli.root.path,
+            "{OUTPUT}": out.path if out else "",
+            "{PACKAGE_ROOTS}": " ".join([
+                "--package-root " + shell.quote(path or ".")
+                for path in src_root_paths
+            ]),
+            "{SRCS}": " ".join([
+                shell.quote(f.path) if is_aspect else shell.quote(f.short_path)
+                for f in src_files
+            ]),
+            "{VERBOSE_BASH}": "set -x" if DEBUG else "",
+            "{VERBOSE_OPT}": "--verbose" if DEBUG else "",
+        },
+        is_executable = True,
     )
+
+    if is_aspect:
+        return [
+            DefaultInfo(executable = exe, runfiles = runfiles),
+            MyPyAspectInfo(exe = exe, out = out),
+        ]
+    return DefaultInfo(executable = exe, runfiles = runfiles)
 
 def _mypy_aspect_impl(_, ctx):
     if (ctx.rule.kind not in ["py_binary", "py_library", "py_test", "mypy_test"] or
         ctx.label.workspace_root.startswith("external")):
         return []
 
-    aspect_info = _mypy_rule_impl(
+    providers = _mypy_rule_impl(
         ctx,
+        is_aspect = True,
     )
-    if not aspect_info:
+    if not providers:
         return []
+
+    info = providers[0]
+    aspect_info = providers[1]
 
     ctx.actions.run(
         outputs = [aspect_info.out],
-        inputs = aspect_info.runfiles,
-        tools = [aspect_info.exe],
+        inputs = info.default_runfiles.files,
+        tools = [ctx.executable._mypy_cli],
         executable = aspect_info.exe,
         mnemonic = "MyPy",
         progress_message = "Type-checking %s" % ctx.label,
-        execution_requirements = {
-            "requires-worker-protocol": "json",
-            "supports-workers": "1",
-        },
-        # out is required for worker to write the output.
-        arguments = ["--out", aspect_info.out.path, "@" + aspect_info.args.path],
         use_default_shell_env = True,
     )
     return [
@@ -166,8 +225,21 @@ def _mypy_aspect_impl(_, ctx):
         ),
     ]
 
+def _mypy_test_impl(ctx):
+    info = _mypy_rule_impl(ctx, is_aspect = False)
+    if not info:
+        fail("A list of python deps are required for mypy_test")
+    return info
+
 mypy_aspect = aspect(
     implementation = _mypy_aspect_impl,
     attr_aspects = ["deps"],
     attrs = DEFAULT_ATTRS,
+)
+
+mypy_test = rule(
+    implementation = _mypy_test_impl,
+    test = True,
+    attrs = dict(DEFAULT_ATTRS.items() +
+                 [("deps", attr.label_list(aspects = [mypy_aspect]))]),
 )

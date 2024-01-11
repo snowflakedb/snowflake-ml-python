@@ -14,3 +14,13 @@ sh_binary(
     name = "test_wrapper",
     srcs = ["test_wrapper.sh"],
 )
+
+# Package group for common targets in the repo.
+package_group(
+    name = "snowml_public_common",
+    packages = [
+        "//bazel/...",
+        "//ci/...",
+        "//docs/...",
+    ],
+)

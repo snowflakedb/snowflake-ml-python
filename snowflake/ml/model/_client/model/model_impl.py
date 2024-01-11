@@ -1,7 +1,9 @@
-from typing import List, Union
+from typing import Dict, List, Optional, Tuple, Union
+
+import pandas as pd
 
 from snowflake.ml._internal import telemetry
-from snowflake.ml._internal.utils import sql_identifier
+from snowflake.ml._internal.utils import identifier, sql_identifier
 from snowflake.ml.model._client.model import model_version_impl
 from snowflake.ml.model._client.ops import model_ops
 
@@ -37,10 +39,12 @@ class Model:
 
     @property
     def name(self) -> str:
+        """Return the name of the model that can be used to refer to it in SQL."""
         return self._model_name.identifier()
 
     @property
     def fully_qualified_name(self) -> str:
+        """Return the fully qualified name of the model that can be used to refer to it in SQL."""
         return self._model_ops._model_version_client.fully_qualified_model_name(self._model_name)
 
     @property
@@ -49,6 +53,24 @@ class Model:
         subproject=_TELEMETRY_SUBPROJECT,
     )
     def description(self) -> str:
+        """The description for the model. This is an alias of `comment`."""
+        return self.comment
+
+    @description.setter
+    @telemetry.send_api_usage_telemetry(
+        project=_TELEMETRY_PROJECT,
+        subproject=_TELEMETRY_SUBPROJECT,
+    )
+    def description(self, description: str) -> None:
+        self.comment = description
+
+    @property
+    @telemetry.send_api_usage_telemetry(
+        project=_TELEMETRY_PROJECT,
+        subproject=_TELEMETRY_SUBPROJECT,
+    )
+    def comment(self) -> str:
+        """The comment to the model."""
         statement_params = telemetry.get_statement_params(
             project=_TELEMETRY_PROJECT,
             subproject=_TELEMETRY_SUBPROJECT,
@@ -58,18 +80,18 @@ class Model:
             statement_params=statement_params,
         )
 
-    @description.setter
+    @comment.setter
     @telemetry.send_api_usage_telemetry(
         project=_TELEMETRY_PROJECT,
         subproject=_TELEMETRY_SUBPROJECT,
     )
-    def description(self, description: str) -> None:
+    def comment(self, comment: str) -> None:
         statement_params = telemetry.get_statement_params(
             project=_TELEMETRY_PROJECT,
             subproject=_TELEMETRY_SUBPROJECT,
         )
         return self._model_ops.set_comment(
-            comment=description,
+            comment=comment,
             model_name=self._model_name,
             statement_params=statement_params,
         )
@@ -80,12 +102,13 @@ class Model:
         subproject=_TELEMETRY_SUBPROJECT,
     )
     def default(self) -> model_version_impl.ModelVersion:
+        """The default version of the model."""
         statement_params = telemetry.get_statement_params(
             project=_TELEMETRY_PROJECT,
             subproject=_TELEMETRY_SUBPROJECT,
             class_name=self.__class__.__name__,
         )
-        default_version_name = self._model_ops._model_version_client.get_default_version(
+        default_version_name = self._model_ops.get_default_version(
             model_name=self._model_name, statement_params=statement_params
         )
         return self.version(default_version_name)
@@ -105,7 +128,7 @@ class Model:
             version_name = sql_identifier.SqlIdentifier(version)
         else:
             version_name = version._version_name
-        self._model_ops._model_version_client.set_default_version(
+        self._model_ops.set_default_version(
             model_name=self._model_name, version_name=version_name, statement_params=statement_params
         )
 
@@ -114,13 +137,14 @@ class Model:
         subproject=_TELEMETRY_SUBPROJECT,
     )
     def version(self, version_name: str) -> model_version_impl.ModelVersion:
-        """Get a model version object given a version name in the model.
+        """
+        Get a model version object given a version name in the model.
 
         Args:
-            version_name: The name of version
+            version_name: The name of the version.
 
         Raises:
-            ValueError: Raised when the version requested does not exist.
+            ValueError: When the requested version does not exist.
 
         Returns:
             The model version object.
@@ -149,11 +173,11 @@ class Model:
         project=_TELEMETRY_PROJECT,
         subproject=_TELEMETRY_SUBPROJECT,
     )
-    def list_versions(self) -> List[model_version_impl.ModelVersion]:
-        """List all versions in the model.
+    def versions(self) -> List[model_version_impl.ModelVersion]:
+        """Get all versions in the model.
 
         Returns:
-            A List of ModelVersion object representing all versions in the model.
+            A list of ModelVersion objects representing all versions in the model.
         """
         statement_params = telemetry.get_statement_params(
             project=_TELEMETRY_PROJECT,
@@ -172,5 +196,140 @@ class Model:
             for version_name in version_names
         ]
 
+    @telemetry.send_api_usage_telemetry(
+        project=_TELEMETRY_PROJECT,
+        subproject=_TELEMETRY_SUBPROJECT,
+    )
+    def show_versions(self) -> pd.DataFrame:
+        """Show information about all versions in the model.
+
+        Returns:
+            A Pandas DataFrame showing information about all versions in the model.
+        """
+        statement_params = telemetry.get_statement_params(
+            project=_TELEMETRY_PROJECT,
+            subproject=_TELEMETRY_SUBPROJECT,
+        )
+        rows = self._model_ops.show_models_or_versions(
+            model_name=self._model_name,
+            statement_params=statement_params,
+        )
+        return pd.DataFrame([row.as_dict() for row in rows])
+
     def delete_version(self, version_name: str) -> None:
         raise NotImplementedError("Deleting version has not been supported yet.")
+
+    @telemetry.send_api_usage_telemetry(
+        project=_TELEMETRY_PROJECT,
+        subproject=_TELEMETRY_SUBPROJECT,
+    )
+    def show_tags(self) -> Dict[str, str]:
+        """Get a dictionary showing the tag and its value attached to the model.
+
+        Returns:
+            The model version object.
+        """
+        statement_params = telemetry.get_statement_params(
+            project=_TELEMETRY_PROJECT,
+            subproject=_TELEMETRY_SUBPROJECT,
+        )
+        return self._model_ops.show_tags(model_name=self._model_name, statement_params=statement_params)
+
+    def _parse_tag_name(
+        self,
+        tag_name: str,
+    ) -> Tuple[sql_identifier.SqlIdentifier, sql_identifier.SqlIdentifier, sql_identifier.SqlIdentifier]:
+        _tag_db, _tag_schema, _tag_name, _ = identifier.parse_schema_level_object_identifier(tag_name)
+        if _tag_db is None:
+            tag_db_id = self._model_ops._model_client._database_name
+        else:
+            tag_db_id = sql_identifier.SqlIdentifier(_tag_db)
+
+        if _tag_schema is None:
+            tag_schema_id = self._model_ops._model_client._schema_name
+        else:
+            tag_schema_id = sql_identifier.SqlIdentifier(_tag_schema)
+
+        if _tag_name is None:
+            raise ValueError(f"Unable parse the tag name `{tag_name}` you input.")
+
+        tag_name_id = sql_identifier.SqlIdentifier(_tag_name)
+
+        return tag_db_id, tag_schema_id, tag_name_id
+
+    @telemetry.send_api_usage_telemetry(
+        project=_TELEMETRY_PROJECT,
+        subproject=_TELEMETRY_SUBPROJECT,
+    )
+    def get_tag(self, tag_name: str) -> Optional[str]:
+        """Get the value of a tag attached to the model.
+
+        Args:
+            tag_name: The name of the tag, can be fully qualified. If not fully qualified, the database or schema of
+                the model will be used.
+
+        Returns:
+            The tag value as a string if the tag is attached, otherwise None.
+        """
+        statement_params = telemetry.get_statement_params(
+            project=_TELEMETRY_PROJECT,
+            subproject=_TELEMETRY_SUBPROJECT,
+        )
+        tag_db_id, tag_schema_id, tag_name_id = self._parse_tag_name(tag_name)
+        return self._model_ops.get_tag_value(
+            model_name=self._model_name,
+            tag_database_name=tag_db_id,
+            tag_schema_name=tag_schema_id,
+            tag_name=tag_name_id,
+            statement_params=statement_params,
+        )
+
+    @telemetry.send_api_usage_telemetry(
+        project=_TELEMETRY_PROJECT,
+        subproject=_TELEMETRY_SUBPROJECT,
+    )
+    def set_tag(self, tag_name: str, tag_value: str) -> None:
+        """Set the value of a tag, attaching it to the model if not.
+
+        Args:
+            tag_name: The name of the tag, can be fully qualified. If not fully qualified, the database or schema of
+                the model will be used.
+            tag_value: The value of the tag
+        """
+        statement_params = telemetry.get_statement_params(
+            project=_TELEMETRY_PROJECT,
+            subproject=_TELEMETRY_SUBPROJECT,
+        )
+        tag_db_id, tag_schema_id, tag_name_id = self._parse_tag_name(tag_name)
+        self._model_ops.set_tag(
+            model_name=self._model_name,
+            tag_database_name=tag_db_id,
+            tag_schema_name=tag_schema_id,
+            tag_name=tag_name_id,
+            tag_value=tag_value,
+            statement_params=statement_params,
+        )
+
+    @telemetry.send_api_usage_telemetry(
+        project=_TELEMETRY_PROJECT,
+        subproject=_TELEMETRY_SUBPROJECT,
+    )
+    def unset_tag(self, tag_name: str) -> None:
+        """Unset a tag attached to a model.
+
+        Args:
+            tag_name: The name of the tag, can be fully qualified. If not fully qualified, the database or schema of
+                the model will be used.
+        """
+        statement_params = telemetry.get_statement_params(
+            project=_TELEMETRY_PROJECT,
+            subproject=_TELEMETRY_SUBPROJECT,
+        )
+        tag_db_id, tag_schema_id, tag_name_id = self._parse_tag_name(tag_name)
+        self._model_ops.unset_tag(
+            model_name=self._model_name,
+            tag_database_name=tag_db_id,
+            tag_schema_name=tag_schema_id,
+            tag_name=tag_name_id,
+            statement_params=statement_params,
+        )

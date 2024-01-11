@@ -1,16 +1,19 @@
+import json
 import pathlib
 import tempfile
 from typing import Any, Dict, List, Optional, Union, cast
 
 import yaml
+from packaging import version
 
-from snowflake.ml._internal.utils import sql_identifier
+from snowflake.ml._internal.utils import identifier, snowflake_env, sql_identifier
 from snowflake.ml.model import model_signature, type_hints
 from snowflake.ml.model._client.ops import metadata_ops
 from snowflake.ml.model._client.sql import (
     model as model_sql,
     model_version as model_version_sql,
     stage as stage_sql,
+    tag as tag_sql,
 )
 from snowflake.ml.model._model_composer import model_composer
 from snowflake.ml.model._model_composer.model_manifest import (
@@ -19,8 +22,10 @@ from snowflake.ml.model._model_composer.model_manifest import (
 )
 from snowflake.ml.model._packager.model_meta import model_meta, model_meta_schema
 from snowflake.ml.model._signatures import snowpark_handler
-from snowflake.snowpark import dataframe, session
+from snowflake.snowpark import dataframe, row, session
 from snowflake.snowpark._internal import utils as snowpark_utils
+
+_TAG_ON_MODEL_AVAILABLE_VERSION = version.parse("8.2.0")
 
 
 class ModelOperator:
@@ -46,6 +51,11 @@ class ModelOperator:
             schema_name=schema_name,
         )
         self._model_version_client = model_version_sql.ModelVersionSQLClient(
+            session,
+            database_name=database_name,
+            schema_name=schema_name,
+        )
+        self._tag_client = tag_sql.ModuleTagSQLClient(
             session,
             database_name=database_name,
             schema_name=schema_name,
@@ -109,22 +119,39 @@ class ModelOperator:
                 statement_params=statement_params,
             )
 
+    def show_models_or_versions(
+        self,
+        *,
+        model_name: Optional[sql_identifier.SqlIdentifier] = None,
+        statement_params: Optional[Dict[str, Any]] = None,
+    ) -> List[row.Row]:
+        if model_name:
+            return self._model_client.show_versions(
+                model_name=model_name,
+                validate_result=False,
+                statement_params=statement_params,
+            )
+        else:
+            return self._model_client.show_models(
+                validate_result=False,
+                statement_params=statement_params,
+            )
+
     def list_models_or_versions(
         self,
         *,
         model_name: Optional[sql_identifier.SqlIdentifier] = None,
         statement_params: Optional[Dict[str, Any]] = None,
     ) -> List[sql_identifier.SqlIdentifier]:
+        res = self.show_models_or_versions(
+            model_name=model_name,
+            statement_params=statement_params,
+        )
         if model_name:
-            res = self._model_client.show_versions(
-                model_name=model_name,
-                statement_params=statement_params,
-            )
+            col_name = self._model_client.MODEL_VERSION_NAME_COL_NAME
         else:
-            res = self._model_client.show_models(
-                statement_params=statement_params,
-            )
-        return [sql_identifier.SqlIdentifier(row.name, case_sensitive=True) for row in res]
+            col_name = self._model_client.MODEL_NAME_COL_NAME
+        return [sql_identifier.SqlIdentifier(row[col_name], case_sensitive=True) for row in res]
 
     def validate_existence(
         self,
@@ -137,11 +164,13 @@ class ModelOperator:
             res = self._model_client.show_versions(
                 model_name=model_name,
                 version_name=version_name,
+                validate_result=False,
                 statement_params=statement_params,
             )
         else:
             res = self._model_client.show_models(
                 model_name=model_name,
+                validate_result=False,
                 statement_params=statement_params,
             )
         return len(res) == 1
@@ -159,13 +188,14 @@ class ModelOperator:
                 version_name=version_name,
                 statement_params=statement_params,
             )
+            col_name = self._model_client.MODEL_VERSION_COMMENT_COL_NAME
         else:
             res = self._model_client.show_models(
                 model_name=model_name,
                 statement_params=statement_params,
             )
-        assert len(res) == 1
-        return cast(str, res[0].comment)
+            col_name = self._model_client.MODEL_COMMENT_COL_NAME
+        return cast(str, res[0][col_name])
 
     def set_comment(
         self,
@@ -187,6 +217,123 @@ class ModelOperator:
                 comment=comment,
                 model_name=model_name,
                 statement_params=statement_params,
+            )
+
+    def set_default_version(
+        self,
+        *,
+        model_name: sql_identifier.SqlIdentifier,
+        version_name: sql_identifier.SqlIdentifier,
+        statement_params: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        if not self.validate_existence(
+            model_name=model_name, version_name=version_name, statement_params=statement_params
+        ):
+            raise ValueError(f"You cannot set version {version_name} as default version as it does not exist.")
+        self._model_version_client.set_default_version(
+            model_name=model_name, version_name=version_name, statement_params=statement_params
+        )
+
+    def get_default_version(
+        self,
+        *,
+        model_name: sql_identifier.SqlIdentifier,
+        statement_params: Optional[Dict[str, Any]] = None,
+    ) -> sql_identifier.SqlIdentifier:
+        res = self._model_client.show_models(model_name=model_name, statement_params=statement_params)[0]
+        return sql_identifier.SqlIdentifier(
+            res[self._model_client.MODEL_DEFAULT_VERSION_NAME_COL_NAME], case_sensitive=True
+        )
+
+    def get_tag_value(
+        self,
+        *,
+        model_name: sql_identifier.SqlIdentifier,
+        tag_database_name: sql_identifier.SqlIdentifier,
+        tag_schema_name: sql_identifier.SqlIdentifier,
+        tag_name: sql_identifier.SqlIdentifier,
+        statement_params: Optional[Dict[str, Any]] = None,
+    ) -> Optional[str]:
+        r = self._tag_client.get_tag_value(
+            module_name=model_name,
+            tag_database_name=tag_database_name,
+            tag_schema_name=tag_schema_name,
+            tag_name=tag_name,
+            statement_params=statement_params,
+        )
+        value = r.TAG_VALUE
+        if value is None:
+            return value
+        return str(value)
+
+    def show_tags(
+        self,
+        *,
+        model_name: sql_identifier.SqlIdentifier,
+        statement_params: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, str]:
+        tags_info = self._tag_client.get_tag_list(
+            module_name=model_name,
+            statement_params=statement_params,
+        )
+        res: Dict[str, str] = {
+            identifier.get_schema_level_object_identifier(
+                sql_identifier.SqlIdentifier(r.TAG_DATABASE, case_sensitive=True),
+                sql_identifier.SqlIdentifier(r.TAG_SCHEMA, case_sensitive=True),
+                sql_identifier.SqlIdentifier(r.TAG_NAME, case_sensitive=True),
+            ): str(r.TAG_VALUE)
+            for r in tags_info
+        }
+        return res
+
+    def set_tag(
+        self,
+        *,
+        model_name: sql_identifier.SqlIdentifier,
+        tag_database_name: sql_identifier.SqlIdentifier,
+        tag_schema_name: sql_identifier.SqlIdentifier,
+        tag_name: sql_identifier.SqlIdentifier,
+        tag_value: str,
+        statement_params: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        sf_version = snowflake_env.get_current_snowflake_version(self._session, statement_params=statement_params)
+        if sf_version >= _TAG_ON_MODEL_AVAILABLE_VERSION:
+            self._tag_client.set_tag_on_model(
+                model_name=model_name,
+                tag_database_name=tag_database_name,
+                tag_schema_name=tag_schema_name,
+                tag_name=tag_name,
+                tag_value=tag_value,
+                statement_params=statement_params,
+            )
+        else:
+            raise NotImplementedError(
+                f"`set_tag` won't work before Snowflake version {_TAG_ON_MODEL_AVAILABLE_VERSION},"
+                f" currently is {sf_version}"
+            )
+
+    def unset_tag(
+        self,
+        *,
+        model_name: sql_identifier.SqlIdentifier,
+        tag_database_name: sql_identifier.SqlIdentifier,
+        tag_schema_name: sql_identifier.SqlIdentifier,
+        tag_name: sql_identifier.SqlIdentifier,
+        statement_params: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        sf_version = snowflake_env.get_current_snowflake_version(self._session, statement_params=statement_params)
+        if sf_version >= _TAG_ON_MODEL_AVAILABLE_VERSION:
+            self._tag_client.unset_tag_on_model(
+                model_name=model_name,
+                tag_database_name=tag_database_name,
+                tag_schema_name=tag_schema_name,
+                tag_name=tag_name,
+                statement_params=statement_params,
+            )
+        else:
+            raise NotImplementedError(
+                f"`unset_tag` won't work before Snowflake version {_TAG_ON_MODEL_AVAILABLE_VERSION},"
+                f" currently is {sf_version}"
             )
 
     def get_model_version_manifest(
@@ -227,6 +374,27 @@ class ModelOperator:
             with open(model_meta_file_path, encoding="utf-8") as f:
                 raw_model_meta = yaml.safe_load(f)
             return model_meta.ModelMetadata._validate_model_metadata(raw_model_meta)
+
+    def get_client_data_in_user_data(
+        self,
+        *,
+        model_name: sql_identifier.SqlIdentifier,
+        version_name: sql_identifier.SqlIdentifier,
+        statement_params: Optional[Dict[str, Any]] = None,
+    ) -> model_manifest_schema.SnowparkMLDataDict:
+        if (
+            snowflake_env.get_current_snowflake_version(self._session)
+            < model_manifest_schema.MANIFEST_USER_DATA_ENABLE_VERSION
+        ):
+            raise NotImplementedError("User_data has not been supported yet.")
+        raw_user_data_json_string = self._model_client.show_versions(
+            model_name=model_name,
+            version_name=version_name,
+            statement_params=statement_params,
+        )[0][self._model_client.MODEL_VERSION_USER_DATA_COL_NAME]
+        raw_user_data = json.loads(raw_user_data_json_string)
+        assert isinstance(raw_user_data, dict), "user data should be a dictionary"
+        return model_manifest.ModelManifest.parse_client_data_from_user_data(raw_user_data)
 
     def invoke_method(
         self,

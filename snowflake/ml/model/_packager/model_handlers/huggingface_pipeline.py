@@ -59,7 +59,7 @@ def get_requirements_from_task(task: str, spcs_only: bool = False) -> List[model
         return (
             [model_env.ModelDependency(requirement="tokenizers>=0.13.3", pip_name="tokenizers")]
             if spcs_only
-            else [model_env.ModelDependency(requirement="tokenizers<=0.13.2", pip_name="tokenizers")]
+            else [model_env.ModelDependency(requirement="tokenizers", pip_name="tokenizers")]
         )
 
     return []

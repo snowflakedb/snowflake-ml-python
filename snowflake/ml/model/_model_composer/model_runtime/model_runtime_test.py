@@ -56,7 +56,11 @@ class ModelRuntimeTest(absltest.TestCase):
             ) as meta:
                 meta.models["model1"] = _DUMMY_BLOB
 
-                with mock.patch.object(env_utils, "validate_requirements_in_information_schema", return_value=[""]):
+                with mock.patch.object(
+                    env_utils,
+                    "get_matched_package_versions_in_information_schema",
+                    return_value={env_utils.SNOWPARK_ML_PKG_NAME: [""]},
+                ):
                     mr = model_runtime.ModelRuntime(
                         self.m_session, "python_runtime", meta, [pathlib.PurePosixPath("model.zip")]
                     )
@@ -83,7 +87,11 @@ class ModelRuntimeTest(absltest.TestCase):
             ) as meta:
                 meta.models["model1"] = _DUMMY_BLOB
 
-                with mock.patch.object(env_utils, "validate_requirements_in_information_schema", return_value=None):
+                with mock.patch.object(
+                    env_utils,
+                    "get_matched_package_versions_in_information_schema",
+                    return_value={env_utils.SNOWPARK_ML_PKG_NAME: []},
+                ):
                     mr = model_runtime.ModelRuntime(
                         self.m_session, "python_runtime", meta, [pathlib.PurePosixPath("model.zip")]
                     )
@@ -118,7 +126,11 @@ class ModelRuntimeTest(absltest.TestCase):
                 dep_target.append("pandas")
                 dep_target.sort()
 
-                with mock.patch.object(env_utils, "validate_requirements_in_information_schema", return_value=[""]):
+                with mock.patch.object(
+                    env_utils,
+                    "get_matched_package_versions_in_information_schema",
+                    return_value={env_utils.SNOWPARK_ML_PKG_NAME: [""]},
+                ):
                     mr = model_runtime.ModelRuntime(
                         self.m_session, "python_runtime", meta, [pathlib.PurePosixPath("model.zip")]
                     )
@@ -144,7 +156,11 @@ class ModelRuntimeTest(absltest.TestCase):
                 dep_target.append("conda-forge::pandas")
                 dep_target.sort()
 
-                with mock.patch.object(env_utils, "validate_requirements_in_information_schema", return_value=[""]):
+                with mock.patch.object(
+                    env_utils,
+                    "get_matched_package_versions_in_information_schema",
+                    return_value={env_utils.SNOWPARK_ML_PKG_NAME: [""]},
+                ):
                     mr = model_runtime.ModelRuntime(
                         self.m_session, "python_runtime", meta, [pathlib.PurePosixPath("model.zip")]
                     )
@@ -169,7 +185,11 @@ class ModelRuntimeTest(absltest.TestCase):
                 dep_target.remove(f"pandas=={importlib_metadata.version('pandas')}")
                 dep_target.sort()
 
-            with mock.patch.object(env_utils, "validate_requirements_in_information_schema", return_value=[""]):
+            with mock.patch.object(
+                env_utils,
+                "get_matched_package_versions_in_information_schema",
+                return_value={env_utils.SNOWPARK_ML_PKG_NAME: [""]},
+            ):
                 mr = model_runtime.ModelRuntime(
                     self.m_session, "python_runtime", meta, [pathlib.PurePosixPath("model.zip")]
                 )
@@ -194,7 +214,11 @@ class ModelRuntimeTest(absltest.TestCase):
                 dep_target.append("pytorch")
                 dep_target.sort()
 
-                with mock.patch.object(env_utils, "validate_requirements_in_information_schema", return_value=[""]):
+                with mock.patch.object(
+                    env_utils,
+                    "get_matched_package_versions_in_information_schema",
+                    return_value={env_utils.SNOWPARK_ML_PKG_NAME: [""]},
+                ):
                     mr = model_runtime.ModelRuntime(
                         self.m_session, "python_runtime", meta, [pathlib.PurePosixPath("model.zip")]
                     )
@@ -218,7 +242,11 @@ class ModelRuntimeTest(absltest.TestCase):
                 dep_target = _BASIC_DEPENDENCIES_TARGET_WITH_SNOWML[:]
                 dep_target.sort()
 
-                with mock.patch.object(env_utils, "validate_requirements_in_information_schema", return_value=[""]):
+                with mock.patch.object(
+                    env_utils,
+                    "get_matched_package_versions_in_information_schema",
+                    return_value={env_utils.SNOWPARK_ML_PKG_NAME: [""]},
+                ):
                     mr = model_runtime.ModelRuntime(
                         self.m_session, "python_runtime", meta, [pathlib.PurePosixPath("model.zip")]
                     )
@@ -244,7 +272,11 @@ class ModelRuntimeTest(absltest.TestCase):
                 dep_target.append("pytorch")
                 dep_target.sort()
 
-                with mock.patch.object(env_utils, "validate_requirements_in_information_schema", return_value=[""]):
+                with mock.patch.object(
+                    env_utils,
+                    "get_matched_package_versions_in_information_schema",
+                    return_value={env_utils.SNOWPARK_ML_PKG_NAME: [""]},
+                ):
                     mr = model_runtime.ModelRuntime(
                         self.m_session, "python_runtime", meta, [pathlib.PurePosixPath("model.zip")]
                     )

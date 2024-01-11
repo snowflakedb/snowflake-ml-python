@@ -23,20 +23,17 @@ model development classes based on sklearn, xgboost, and lightgbm.
 1. Framework Connectors: Optimized, secure and performant data provisioning for Pytorch and Tensorflow frameworks in
 their native data loader formats.
 
-### Snowpark ML Ops [Private Preview]
-
-[Snowpark MLOps](https://docs.snowflake.com/en/developer-guide/snowpark-ml/index#snowpark-ml-ops) complements the
-Snowpark ML Development API, and provides model management capabilities along with integrated deployment into Snowflake.
-Currently, the API consists of:
-
 1. FileSet API: FileSet provides a Python fsspec-compliant API for materializing data into a Snowflake internal stage
 from a query or Snowpark Dataframe along with a number of convenience APIs.
 
-1. Model Registry: A python API for managing models within Snowflake which also supports deployment of ML models into
-Snowflake Warehouses as vectorized UDFs.
+### Snowpark Model Management [Public Preview]
 
-During PrPr, we are iterating on API without backward compatibility guarantees. It is better to recreate your registry
-everytime you update the package. This means, at this time, you cannot use the registry for production use.
+[Snowpark Model Management](https://docs.snowflake.com/en/developer-guide/snowpark-ml/index#snowpark-ml-ops) complements
+the Snowpark ML Development API, and provides model management capabilities along with integrated deployment into Snowflake.
+Currently, the API consists of:
+
+1. Registry: A python API for managing models within Snowflake which also supports deployment of ML models into Snowflake
+as native MODEL object running with Snowflake Warehouse.
 
 ## Getting started
 

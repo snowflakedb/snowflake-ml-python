@@ -1,27 +1,25 @@
+import unittest
 import uuid
-from unittest import SkipTest
 
 from absl.testing import absltest
 
+from snowflake.ml._internal.utils import snowflake_env
 from snowflake.ml.utils import connection_params
 from snowflake.snowpark import Session
-from tests.integ.snowflake.ml.test_utils import db_manager
+from tests.integ.snowflake.ml.test_utils import db_manager, test_env_utils
 
 
+@unittest.skipUnless(
+    test_env_utils.get_current_snowflake_cloud_type() == snowflake_env.SnowflakeCloudType.AWS,
+    "SPCS only available in AWS",
+)
 class SpcsIntegTestBase(absltest.TestCase):
-    _SNOWSERVICE_CONNECTION_NAME = "regtest"
     _TEST_CPU_COMPUTE_POOL = "REGTEST_INFERENCE_CPU_POOL"
     _TEST_GPU_COMPUTE_POOL = "REGTEST_INFERENCE_GPU_POOL"
 
     def setUp(self) -> None:
         """Creates Snowpark and Snowflake environments for testing."""
-        try:
-            login_options = connection_params.SnowflakeLoginOptions(connection_name=self._SNOWSERVICE_CONNECTION_NAME)
-        except KeyError:
-            raise SkipTest(
-                "SnowService connection parameters not present: skipping "
-                "TestModelRegistryIntegWithSnowServiceDeployment."
-            )
+        login_options = connection_params.SnowflakeLoginOptions()
 
         self._run_id = uuid.uuid4().hex[:2]
         self._test_db = db_manager.TestObjectNameGenerator.get_snowml_test_object_name(self._run_id, "db").upper()
