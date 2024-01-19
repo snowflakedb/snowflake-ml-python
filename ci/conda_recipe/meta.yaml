@@ -17,7 +17,7 @@ build:
   noarch: python
 package:
   name: snowflake-ml-python
-  version: 1.2.0
+  version: 1.2.1
 requirements:
   build:
     - python
@@ -56,5 +56,6 @@ requirements:
     - tokenizers>=0.10,<1
     - torchdata>=0.4,<1
     - transformers>=4.32.1,<5
+    - pytorch<2.1.0 # [win]
 source:
   path: ../../

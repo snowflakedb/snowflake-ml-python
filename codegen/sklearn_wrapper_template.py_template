@@ -418,6 +418,22 @@ class {transform.original_class_name}(BaseTransformer):
                 # each row containing a list of values.
                 expected_dtype = "ARRAY"
 
+            # If we were unable to assign a type to this transform in the factory, infer the type here.
+            if expected_dtype == "":
+                # If this is a clustering transformer, if the number of output columns does not equal the number of clusters the response will be an "ARRAY"
+                if hasattr(self._sklearn_object, "n_clusters") and getattr(self._sklearn_object, "n_clusters") != len(self.output_cols):
+                    expected_dtype = "ARRAY"
+                # If this is a decomposition transformer, if the number of output columns does not equal the number of components the response will be an "ARRAY"
+                elif hasattr(self._sklearn_object, "n_components") and getattr(self._sklearn_object, "n_components") != len(self.output_cols):
+                    expected_dtype = "ARRAY"
+                else:
+                    output_types = [signature.as_snowpark_type() for signature in _infer_signature(dataset[self.input_cols], "output", use_snowflake_identifiers=True)]
+                    # We can only infer the output types from the input types if the following two statemetns are true:
+                    # 1) All of the output types are the same. Otherwise, we still have to fall back to variant because `_sklearn_inference` only accepts one type.
+                    # 2) The length of the input columns equals the length of the output columns. Otherwise the transform will likely result in an `ARRAY`.
+                    if all(x == output_types[0] for x in output_types) and len(output_types) == len(self.output_cols):
+                        expected_dtype = convert_sp_to_sf_type(output_types[0])
+            
             output_df = self._batch_inference(
                 dataset=dataset,
                 inference_method="transform",

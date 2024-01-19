@@ -3,6 +3,7 @@ import pandas as pd
 from absl.testing import absltest
 from importlib_resources import files
 from sklearn.compose import ColumnTransformer as SkColumnTransformer
+from sklearn.impute import KNNImputer as SkKNNImputer
 from sklearn.pipeline import Pipeline as SkPipeline
 from sklearn.preprocessing import (
     MinMaxScaler as SkMinMaxScaler,
@@ -10,6 +11,7 @@ from sklearn.preprocessing import (
 )
 from xgboost import XGBClassifier as XGB_XGBClassifier
 
+from snowflake.ml.modeling.impute import KNNImputer
 from snowflake.ml.modeling.pipeline import Pipeline
 from snowflake.ml.modeling.preprocessing import (
     MinMaxScaler,
@@ -48,7 +50,7 @@ label_column = ["LABEL"]
 feature_cols = categorical_columns + numerical_columns
 
 
-class GridSearchCVTest(absltest.TestCase):
+class PipelineXGBRTest(absltest.TestCase):
     def setUp(self):
         """Creates Snowpark and Snowflake environments for testing."""
         self._session = Session.builder.configs(SnowflakeLoginOptions()).create()
@@ -79,6 +81,7 @@ class GridSearchCVTest(absltest.TestCase):
                         output_cols=numerical_columns,
                     ),
                 ),
+                ("KNNImputer", KNNImputer(input_cols=numerical_columns, output_cols=numerical_columns)),
                 ("regression", XGBClassifier(label_cols=label_column, passthrough_cols="ROW_INDEX")),
             ]
         )
@@ -94,6 +97,7 @@ class GridSearchCVTest(absltest.TestCase):
                         [
                             ("cat_transformer", SkOneHotEncoder(), categorical_columns),
                             ("num_transforms", SkMinMaxScaler(), numerical_columns),
+                            ("num_imputer", SkKNNImputer(), numerical_columns),
                         ]
                     ),
                 ),

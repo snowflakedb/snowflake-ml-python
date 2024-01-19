@@ -4,11 +4,12 @@ import io
 import os
 import posixpath
 import sys
-from typing import Any, Dict, List, Optional, Set, Tuple, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 import cloudpickle as cp
 import numpy as np
 from sklearn import model_selection
+from sklearn.model_selection import GridSearchCV, RandomizedSearchCV
 
 from snowflake.ml._internal import telemetry
 from snowflake.ml._internal.utils import (
@@ -41,23 +42,28 @@ DEFAULT_UDTF_NJOBS = 3
 
 
 def construct_cv_results(
+    estimator: Union[GridSearchCV, RandomizedSearchCV],
+    n_split: int,
+    param_grid: List[Dict[str, Any]],
     cv_results_raw_hex: List[Row],
     cross_validator_indices_length: int,
     parameter_grid_length: int,
-    search_cv_kwargs: Dict[str, Any],
-) -> Tuple[bool, Dict[str, Any], int, Set[str]]:
+) -> Tuple[bool, Dict[str, Any]]:
     """Construct the cross validation result from the UDF. Because we accelerate the process
     by the number of cross validation number, and the combination of parameter grids.
     Therefore, we need to stick them back together instead of returning the raw result
     to align with original sklearn result.
 
     Args:
+        estimator (Union[GridSearchCV, RandomizedSearchCV]): The sklearn object of estimator
+            GridSearchCV or RandomizedSearchCV
+        n_split (int): The number of split, which is determined by build_cross_validator.get_n_splits(X, y, groups)
+        param_grid (List[Dict[str, Any]]): the list of parameter grid or parameter sampler
         cv_results_raw_hex (List[Row]): the list of cv_results from each cv and parameter grid combination.
             Because UDxF can only return string, and numpy array/masked arrays cannot be encoded in a
             json format. Each cv_result is encoded into hex string.
         cross_validator_indices_length (int): the length of cross validator indices
         parameter_grid_length (int): the length of parameter grid combination
-        search_cv_kwargs (Dict[str, Any]): the kwargs for GridSearchCV/RandomSearchCV.
 
     Raises:
         ValueError: Retrieved empty cross validation results
@@ -67,7 +73,7 @@ def construct_cv_results(
         RuntimeError: Cross validation results are unexpectedly empty for one fold.
 
     Returns:
-        Tuple[bool, Dict[str, Any], int, Set[str]]: returns multimetric, cv_results_, best_param_index, scorers
+        Tuple[bool, Dict[str, Any]]: returns multimetric, cv_results_
     """
     # Filter corner cases: either the snowpark dataframe result is empty; or index length is empty
     if len(cv_results_raw_hex) == 0:
@@ -79,12 +85,8 @@ def construct_cv_results(
     if parameter_grid_length == 0:
         raise ValueError("Parameter index length is 0. Were there no candidates?")
 
-    from scipy.stats import rankdata
-
     # cv_result maintains the original order
     multimetric = False
-    cv_results_ = dict()
-    scorers = set()
     # retrieve the cv_results from udtf table; results are encoded by hex and cloudpickle;
     # We are constructing the raw information back to original form
     if len(cv_results_raw_hex) != cross_validator_indices_length * parameter_grid_length:
@@ -94,7 +96,9 @@ def construct_cv_results(
             "Please retry or contact snowflake support."
         )
 
-    for param_cv_indices, each_cv_result_hex in enumerate(cv_results_raw_hex):
+    out = []
+
+    for each_cv_result_hex in cv_results_raw_hex:
         # convert the hex string back to cv_results_
         hex_str = bytes.fromhex(each_cv_result_hex[0])
         with io.BytesIO(hex_str) as f_reload:
@@ -103,85 +107,46 @@ def construct_cv_results(
                 raise RuntimeError(
                     "Cross validation response is empty. This issue may be temporary - please try again."
                 )
-            for k, v in each_cv_result.items():
-                cur_cv_idx = param_cv_indices % cross_validator_indices_length
-                key = k
-                if "split0_test_" in k:
+            temp_dict = dict()
+            """
+            This dictionary has the following keys
+            train_scores : dict of scorer name -> float
+                Score on training set (for all the scorers),
+                returned only if `return_train_score` is `True`.
+            test_scores : dict of scorer name -> float
+                Score on testing set (for all the scorers).
+            fit_time : float
+                Time spent for fitting in seconds.
+            score_time : float
+                Time spent for scoring in seconds.
+            """
+            if estimator.return_train_score:
+                if each_cv_result.get("split0_train_score", None):
+                    # for single scorer, the split0_train_score only contains an array with one value
+                    temp_dict["train_scores"] = each_cv_result["split0_train_score"][0]
+                else:
+                    # if multimetric situation, the format would be
+                    # {metric_name1: value, metric_name2: value, ...}
+                    temp_dict["train_scores"] = {}
                     # For multi-metric evaluation, the scores for all the scorers are available in the
                     # cv_results_ dict at the keys ending with that scorer’s name ('_<scorer_name>')
                     # instead of '_score'.
-                    scorers.add(k[len("split0_test_") :])
-                    key = k.replace("split0_test", f"split{cur_cv_idx}_test")
-                if search_cv_kwargs.get("return_train_score", None) and "split0_train_" in k:
-                    key = k.replace("split0_train", f"split{cur_cv_idx}_train")
-                elif k.startswith("param"):
-                    if cur_cv_idx != 0:
-                        continue
-                if key:
-                    if key not in cv_results_:
-                        cv_results_[key] = v
-                    else:
-                        cv_results_[key] = np.concatenate([cv_results_[key], v])
-
-    multimetric = len(scorers) > 1
-    # Use numpy to re-calculate all the information in cv_results_ again
-    # Generally speaking, reshape all the results into the (scorers+2, idx_length, params_length) shape,
-    # and average them by the idx_length;
-    # idx_length is the number of cv folds; params_length is the number of parameter combinations
-    scores_test = [
-        np.reshape(
-            np.concatenate(
-                [cv_results_[f"split{cur_cv}_test_{score}"] for cur_cv in range(cross_validator_indices_length)]
-            ),
-            (cross_validator_indices_length, -1),
-        )
-        for score in scorers
-    ]
-
-    fit_score_test_matrix = np.stack(
-        [
-            np.reshape(cv_results_["mean_fit_time"], (cross_validator_indices_length, -1)),
-            np.reshape(cv_results_["mean_score_time"], (cross_validator_indices_length, -1)),
-        ]
-        + scores_test
-    )
-    mean_fit_score_test_matrix = np.mean(fit_score_test_matrix, axis=1)
-    std_fit_score_test_matrix = np.std(fit_score_test_matrix, axis=1)
-
-    if search_cv_kwargs.get("return_train_score", None):
-        scores_train = [
-            np.reshape(
-                np.concatenate(
-                    [cv_results_[f"split{cur_cv}_train_{score}"] for cur_cv in range(cross_validator_indices_length)]
-                ),
-                (cross_validator_indices_length, -1),
-            )
-            for score in scorers
-        ]
-        mean_fit_score_train_matrix = np.mean(scores_train, axis=1)
-        std_fit_score_train_matrix = np.std(scores_train, axis=1)
-
-    cv_results_["std_fit_time"] = std_fit_score_test_matrix[0]
-    cv_results_["mean_fit_time"] = mean_fit_score_test_matrix[0]
-    cv_results_["std_score_time"] = std_fit_score_test_matrix[1]
-    cv_results_["mean_score_time"] = mean_fit_score_test_matrix[1]
-    for idx, score in enumerate(scorers):
-        cv_results_[f"std_test_{score}"] = std_fit_score_test_matrix[idx + 2]
-        cv_results_[f"mean_test_{score}"] = mean_fit_score_test_matrix[idx + 2]
-        if search_cv_kwargs.get("return_train_score", None):
-            cv_results_[f"std_train_{score}"] = std_fit_score_train_matrix[idx]
-            cv_results_[f"mean_train_{score}"] = mean_fit_score_train_matrix[idx]
-        # re-compute the ranking again with mean_test_<score>.
-        cv_results_[f"rank_test_{score}"] = rankdata(-cv_results_[f"mean_test_{score}"], method="min")
-        # The best param is the highest ranking (which is 1) and we choose the first time ranking 1 appeared.
-        # If all scores are `nan`, `rankdata` will also produce an array of `nan` values.
-        # In that case, default to first index.
-        best_param_index = (
-            np.where(cv_results_[f"rank_test_{score}"] == 1)[0][0]
-            if not np.isnan(cv_results_[f"rank_test_{score}"]).all()
-            else 0
-        )
-    return multimetric, cv_results_, best_param_index, scorers
+                    for k, v in each_cv_result.items():
+                        if "split0_train_" in k:
+                            temp_dict["train_scores"][k[len("split0_train_") :]] = v
+            if isinstance(each_cv_result.get("split0_test_score"), np.ndarray):
+                temp_dict["test_scores"] = each_cv_result["split0_test_score"][0]
+            else:
+                temp_dict["test_scores"] = {}
+                for k, v in each_cv_result.items():
+                    if "split0_test_" in k:
+                        temp_dict["test_scores"][k[len("split0_test_") :]] = v
+            temp_dict["fit_time"] = each_cv_result["mean_fit_time"][0]
+            temp_dict["score_time"] = each_cv_result["mean_score_time"][0]
+            out.append(temp_dict)
+    first_test_score = out[0]["test_scores"]
+    multimetric = isinstance(first_test_score, dict)
+    return multimetric, estimator._format_results(param_grid, n_split, out)
 
 
 cp.register_pickle_by_value(inspect.getmodule(construct_cv_results))
@@ -288,7 +253,6 @@ class DistributedHPOTrainer(SnowparkModelTrainer):
                 inspect.currentframe(), self.__class__.__name__
             ),
             api_calls=[sproc],
-            custom_tags=dict([("autogen", True)]) if self._autogenerated else None,
         )
         udtf_statement_params = telemetry.get_function_usage_statement_params(
             project=_PROJECT,
@@ -297,7 +261,7 @@ class DistributedHPOTrainer(SnowparkModelTrainer):
                 inspect.currentframe(), self.__class__.__name__
             ),
             api_calls=[udtf],
-            custom_tags=dict([("autogen", True)]) if self._autogenerated else None,
+            custom_tags=dict([("hpo_udtf", True)]),
         )
 
         # Put locally serialized estimator on stage.
@@ -375,8 +339,12 @@ class DistributedHPOTrainer(SnowparkModelTrainer):
                 estimator = cp.load(local_estimator_file_obj)["estimator"]
 
             build_cross_validator = check_cv(estimator.cv, y, classifier=is_classifier(estimator.estimator))
+            from sklearn.utils.validation import indexable
+
+            X, y, _ = indexable(X, y, None)
+            n_splits = build_cross_validator.get_n_splits(X, y, None)
             # store the cross_validator's test indices only to save space
-            cross_validator_indices = [test for _, test in build_cross_validator.split(X, y)]
+            cross_validator_indices = [test for _, test in build_cross_validator.split(X, y, None)]
             local_indices_file_name = get_temp_file_path()
             with open(local_indices_file_name, mode="w+b") as local_indices_file_obj:
                 cp.dump(cross_validator_indices, local_indices_file_obj)
@@ -529,14 +497,14 @@ class DistributedHPOTrainer(SnowparkModelTrainer):
                     )
                 ),
             )
-
-            multimetric, cv_results_, best_param_index, scorers = construct_cv_results(
+            # multimetric, cv_results_, best_param_index, scorers
+            multimetric, cv_results_ = construct_cv_results(
+                estimator,
+                n_splits,
+                list(param_grid),
                 HP_raw_results.select("CV_RESULTS").sort(F.col("PARAM_CV_IND")).collect(),
                 cross_validator_indices_length,
                 parameter_grid_length,
-                {
-                    "return_train_score": estimator.return_train_score,
-                },  # TODO(xjiang): support more kwargs in here
             )
 
             estimator.cv_results_ = cv_results_
@@ -568,7 +536,7 @@ class DistributedHPOTrainer(SnowparkModelTrainer):
                     # With a non-custom callable, we can select the best score
                     # based on the best index
                     estimator.best_score_ = cv_results_[f"mean_test_{refit_metric}"][estimator.best_index_]
-                estimator.best_params_ = cv_results_["params"][best_param_index]
+                estimator.best_params_ = cv_results_["params"][estimator.best_index_]
 
             if original_refit:
                 estimator.best_estimator_ = clone(estimator.estimator).set_params(

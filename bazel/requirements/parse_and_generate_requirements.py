@@ -415,8 +415,23 @@ def generate_requirements(
             )
         )
         sys.stdout.writelines(results)
-    elif (mode, format) == ("dev_version", "python"):
-        sys.stdout.write(f"REQUIREMENTS = {json.dumps(snowflake_only_env, indent=4)}\n")
+    elif (mode, format) == ("version_requirements", "python"):
+        results = list(
+            sorted(
+                filter(
+                    None,
+                    map(
+                        lambda req_info: generate_user_requirements_string(req_info, "conda"),
+                        filter(
+                            lambda req_info: req_info.get("from_channel", SNOWFLAKE_CONDA_CHANNEL)
+                            == SNOWFLAKE_CONDA_CHANNEL,
+                            requirements,
+                        ),
+                    ),
+                ),
+            )
+        )
+        sys.stdout.write(f"REQUIREMENTS = {json.dumps(results, indent=4)}\n")
     elif (mode, format) == ("version_requirements", "bzl"):
         extras_requirements = list(filter(lambda req_info: filter_by_extras(req_info, True, False), requirements))
         extras_results: MutableMapping[str, Sequence[str]] = {}
@@ -535,7 +550,7 @@ def main() -> None:
     VALID_SETTINGS = [
         ("validate", None, False),  # Validate the environment
         ("dev_version", "text", False),  # requirements.txt
-        ("dev_version", "python", True),  # sproc test dependencies list
+        ("version_requirements", "python", True),  # sproc test dependencies list
         ("version_requirements", "bzl", False),  # wheel rule requirements
         ("version_requirements", "python", False),  # model deployment core dependencies list
         ("dev_version", "conda_env", False),  # dev conda-env.yml file

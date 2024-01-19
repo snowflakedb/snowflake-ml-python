@@ -15,6 +15,7 @@ from snowflake.snowpark import Session, functions as F, types as T
 
 LABEL = "LABEL"
 INDEX = "INDEX"
+BATCH_SIZE = 1000
 
 
 def register_accumulator_udtf(*, session: Session, statement_params: Dict[str, Any]) -> str:
@@ -82,7 +83,7 @@ def register_sharded_dot_sum_computer(*, session: Session, statement_params: Dic
         """This class is registered as a UDTF and computes the sum and dot product
         of columns for each partition of rows. The computations across all the partitions happens
         in parallel using the nodes in the warehouse. In order to avoid keeping the entire partition
-        in memory, we batch the rows (size is 1000) and maintain a running sum and dot prod in self._sum_by_count,
+        in memory, we batch the rows and maintain a running sum and dot prod in self._sum_by_count,
         self._sum_by_countd and self._dot_prod respectively. We return these at the end of the partition.
         """
 
@@ -95,7 +96,7 @@ def register_sharded_dot_sum_computer(*, session: Session, statement_params: Dic
             # delta degree of freedom
             self._ddof = 0
             # Setting the batch size to 1000 based on experimentation. Can be fine tuned later.
-            self._batch_size = 1000
+            self._batch_size = BATCH_SIZE
             # 2d array containing a batch of input rows. A batch contains self._batch_size rows.
             self._batched_rows = np.zeros((self._batch_size, 1))
             # 1d array of length = # of cols. Contains sum(col/count) for each column.
@@ -224,7 +225,7 @@ def check_label_columns(
         TypeError: `y_true_col_names` and `y_pred_col_names` are of different types.
         ValueError: Multilabel `y_true_col_names` and `y_pred_col_names` are of different lengths.
     """
-    if type(y_true_col_names) != type(y_pred_col_names):
+    if type(y_true_col_names) is not type(y_pred_col_names):
         raise TypeError(
             "Label columns should be of the same type."
             f"Got y_true_col_names={type(y_true_col_names)} vs y_pred_col_names={type(y_pred_col_names)}."
@@ -300,6 +301,7 @@ def validate_average_pos_label(average: Optional[str] = None, pos_label: Union[s
             "average != 'binary' (got %r). You may use "
             "labels=[pos_label] to specify a single positive class." % (pos_label, average),
             UserWarning,
+            stacklevel=2,
         )
 
 
