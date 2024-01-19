@@ -1,5 +1,11 @@
 # Release History
 
+## 1.2.1
+
+### New Features
+
+- Model Development: Infers output column data type for transformers when possible.
+
 ## 1.2.0
 
 ### Bug Fixes

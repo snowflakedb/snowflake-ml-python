@@ -68,6 +68,7 @@ py_test(
     shard_count = 4,
     deps = [
         "//snowflake/ml/modeling/framework",
+        "//snowflake/ml/modeling/impute:knn_imputer",
         "//snowflake/ml/modeling/pipeline",
         "//snowflake/ml/modeling/preprocessing:min_max_scaler",
         "//snowflake/ml/modeling/preprocessing:one_hot_encoder",

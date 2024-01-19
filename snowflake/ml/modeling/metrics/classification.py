@@ -228,16 +228,15 @@ def _register_confusion_matrix_computer(*, session: snowpark.Session, statement_
     Returns:
         Name of the UDTF.
     """
+    batch_size = metrics_utils.BATCH_SIZE
 
     class ConfusionMatrixComputer:
-        BATCH_SIZE = 1000
-
         def __init__(self) -> None:
             self._initialized = False
             self._confusion_matrix = np.zeros((1, 1))
-            # 2d array containing a batch of input rows. A batch contains self.BATCH_SIZE rows.
+            # 2d array containing a batch of input rows. A batch contains metrics_utils.BATCH_SIZE rows.
             # [sample_weight, y_true, y_pred]
-            self._batched_rows = np.zeros((self.BATCH_SIZE, 1))
+            self._batched_rows = np.zeros((batch_size, 1))
             # Number of columns in the dataset.
             self._n_cols = -1
             # Running count of number of rows added to self._batched_rows.
@@ -255,7 +254,7 @@ def _register_confusion_matrix_computer(*, session: snowpark.Session, statement_
             # 1. Initialize variables.
             if not self._initialized:
                 self._n_cols = len(input_row)
-                self._batched_rows = np.zeros((self.BATCH_SIZE, self._n_cols))
+                self._batched_rows = np.zeros((batch_size, self._n_cols))
                 self._n_label = n_label
                 self._confusion_matrix = np.zeros((self._n_label, self._n_label))
             self._initialized = True
@@ -264,7 +263,7 @@ def _register_confusion_matrix_computer(*, session: snowpark.Session, statement_
             self._cur_count += 1
 
             # 2. Compute incremental confusion matrix for the batch.
-            if self._cur_count >= self.BATCH_SIZE:
+            if self._cur_count >= batch_size:
                 self.update_confusion_matrix()
                 self._cur_count = 0
 
