@@ -10,9 +10,8 @@ import numpy as np
 import pandas as pd
 import yaml
 from absl.testing import absltest
-from packaging import version
 
-from snowflake.ml._internal.utils import snowflake_env, sql_identifier
+from snowflake.ml._internal.utils import sql_identifier
 from snowflake.ml.model import model_signature
 from snowflake.ml.model._client.ops import model_ops
 from snowflake.ml.model._model_composer.model_manifest import model_manifest_schema
@@ -40,9 +39,6 @@ class ModelOpsTest(absltest.TestCase):
             self.c_session,
             database_name=sql_identifier.SqlIdentifier("TEMP"),
             schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
-        )
-        snowflake_env.get_current_snowflake_version = mock.MagicMock(
-            return_value=model_manifest_schema.MANIFEST_USER_DATA_ENABLE_VERSION
         )
 
     def test_prepare_model_stage_path(self) -> None:
@@ -356,29 +352,8 @@ class ModelOpsTest(absltest.TestCase):
                 statement_params=self.m_statement_params,
             )
 
-    def test_set_tag_fail(self) -> None:
-        with mock.patch.object(
-            snowflake_env,
-            "get_current_snowflake_version",
-            return_value=version.parse("8.1.0+23d9c914e5"),
-        ), mock.patch.object(self.m_ops._tag_client, "set_tag_on_model") as mock_set_tag:
-            with self.assertRaisesRegex(NotImplementedError, "`set_tag` won't work before Snowflake version"):
-                self.m_ops.set_tag(
-                    model_name=sql_identifier.SqlIdentifier("MODEL"),
-                    tag_database_name=sql_identifier.SqlIdentifier("DB"),
-                    tag_schema_name=sql_identifier.SqlIdentifier("schema", case_sensitive=True),
-                    tag_name=sql_identifier.SqlIdentifier("MYTAG"),
-                    tag_value="tag content",
-                    statement_params=self.m_statement_params,
-                )
-            mock_set_tag.assert_not_called()
-
     def test_set_tag(self) -> None:
-        with mock.patch.object(
-            snowflake_env,
-            "get_current_snowflake_version",
-            return_value=version.parse("8.2.0+23d9c914e5"),
-        ), mock.patch.object(self.m_ops._tag_client, "set_tag_on_model") as mock_set_tag:
+        with mock.patch.object(self.m_ops._tag_client, "set_tag_on_model") as mock_set_tag:
             self.m_ops.set_tag(
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
                 tag_database_name=sql_identifier.SqlIdentifier("DB"),
@@ -396,28 +371,8 @@ class ModelOpsTest(absltest.TestCase):
                 statement_params=self.m_statement_params,
             )
 
-    def test_unset_tag_fail(self) -> None:
-        with mock.patch.object(
-            snowflake_env,
-            "get_current_snowflake_version",
-            return_value=version.parse("8.1.0+23d9c914e5"),
-        ), mock.patch.object(self.m_ops._tag_client, "unset_tag_on_model") as mock_unset_tag:
-            with self.assertRaisesRegex(NotImplementedError, "`unset_tag` won't work before Snowflake version"):
-                self.m_ops.unset_tag(
-                    model_name=sql_identifier.SqlIdentifier("MODEL"),
-                    tag_database_name=sql_identifier.SqlIdentifier("DB"),
-                    tag_schema_name=sql_identifier.SqlIdentifier("schema", case_sensitive=True),
-                    tag_name=sql_identifier.SqlIdentifier("MYTAG"),
-                    statement_params=self.m_statement_params,
-                )
-            mock_unset_tag.assert_not_called()
-
     def test_unset_tag(self) -> None:
-        with mock.patch.object(
-            snowflake_env,
-            "get_current_snowflake_version",
-            return_value=version.parse("8.2.0+23d9c914e5"),
-        ), mock.patch.object(self.m_ops._tag_client, "unset_tag_on_model") as mock_unset_tag:
+        with mock.patch.object(self.m_ops._tag_client, "unset_tag_on_model") as mock_unset_tag:
             self.m_ops.unset_tag(
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
                 tag_database_name=sql_identifier.SqlIdentifier("DB"),

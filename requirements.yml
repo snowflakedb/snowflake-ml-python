@@ -91,6 +91,10 @@
     - deployment_core
     - udf_inference
     - spcs_inference
+- name: build
+  dev_version: 0.10.0
+  tags:
+    - build_essential
 - name: boto3
   dev_version: 1.24.28
 - name_conda: conda-libmamba-solver
@@ -189,6 +193,9 @@
 - name_pypi: torch
   name_conda: pytorch
   dev_version: 2.0.1
+  version_requirements_pypi: '>=2.0.1,<2.1.0; platform_system == "Windows"'
+  requirements_extra_tags:
+    - torch
 - name: pyyaml
   dev_version: '6.0'
   version_requirements: '>=6.0,<7'
@@ -257,6 +264,10 @@
   version_requirements: '>=0.10,<1'
   requirements_extra_tags:
     - transformers
+- name: toml
+  dev_version: 0.10.2
+  tags:
+    - build_essential
 - name: torchdata
   dev_version: 0.6.1
   version_requirements: '>=0.4,<1'
@@ -274,6 +285,10 @@
 - name: types-PyYAML
   dev_version: 6.0.12
   from_channel: conda-forge
+- name: types-toml
+  dev_version: 0.10.8.6
+  tags:
+    - build_essential
 - name: typing-extensions
   dev_version: 4.5.0
   version_requirements: '>=4.1.0,<5'

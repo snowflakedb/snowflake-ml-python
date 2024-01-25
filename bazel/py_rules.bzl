@@ -34,7 +34,6 @@ load(
     native_py_library = "py_library",
     native_py_test = "py_test",
 )
-load("@rules_python//python:packaging.bzl", native_py_wheel = "py_wheel")
 load(":repo_paths.bzl", "check_for_experimental_dependencies", "check_for_test_name", "check_for_tests_dependencies")
 
 def py_genrule(**attrs):
@@ -244,89 +243,50 @@ This rule is intended to be used as data dependency to py_wheel rule.
     attrs = py_package_lib.attrs,
 )
 
-def py_wheel(compatible_with_snowpark = True, **attrs):
-    """Modified version of py_wheel rule from rules_python.
-
-    Args:
-      compatible_with_snowpark: adds a tag to the wheel to indicate that this
-        wheel is compatible with the snowpark running environment.
-      **attrs: attributes supported by the native py_wheel rules.
-    """
-
-    if compatible_with_snowpark:
-        tags = attrs.setdefault("tags", [])
-        tags.append(_COMPATIBLE_WITH_SNOWPARK_TAG)
-    native_py_wheel(**attrs)
-
-def snowml_wheel(
-        name,
-        requires,
-        extra_requires,
-        version,
-        deps,
-        description_file = None,
-        development_status = "Alpha",
-        compatible_with_snowpark = True):
-    """A SnowML customized wheel definition with lots of default values filled in.
-
-    Args:
-      name: Name of the target
-      requires: List of required dependencies
-      extra_requires(Dict[str, List[str]]): Dict of soft dependencies
-      version: Version string
-      deps: List of dependencies of type py_package
-      development_status: String with PrPr, PuPr & GA
-      description_file: Label of readme file.
-      compatible_with_snowpark: adds a tag to the wheel to indicate that this
-        wheel is compatible with the snowpark running environment.
-    """
-    dev_status = "Development Status :: 5 - Production/Stable"
-    if development_status.lower() == "prpr":
-        dev_status = "Development Status :: 3 - Alpha"
-    elif development_status.lower() == "pupr":
-        dev_status = "Development Status :: 3 - Beta"
-    homepage = "https://github.com/snowflakedb/snowflake-ml-python"
-    py_wheel(
-        name = name,
-        author = "Snowflake, Inc",
-        author_email = "support@snowflake.com",
-        classifiers = [dev_status] +
-                      [
-                          "Environment :: Console",
-                          "Environment :: Other Environment",
-                          "Intended Audience :: Developers",
-                          "Intended Audience :: Education",
-                          "Intended Audience :: Information Technology",
-                          "Intended Audience :: System Administrators",
-                          "License :: OSI Approved :: Apache Software License",
-                          "Operating System :: OS Independent",
-                          "Programming Language :: Python :: 3.8",
-                          "Programming Language :: Python :: 3.9",
-                          "Programming Language :: Python :: 3.10",
-                          "Topic :: Database",
-                          "Topic :: Software Development",
-                          "Topic :: Software Development :: Libraries",
-                          "Topic :: Software Development :: Libraries :: Application Frameworks",
-                          "Topic :: Software Development :: Libraries :: Python Modules",
-                          "Topic :: Scientific/Engineering :: Information Analysis",
-                      ],
-        description_file = description_file,
-        description_content_type = "text/markdown",
-        compatible_with_snowpark = compatible_with_snowpark,
-        distribution = "snowflake-ml-python",
-        extra_requires = extra_requires,
-        homepage = homepage,
-        project_urls = {
-            "Changelog": homepage + "/blob/main/CHANGELOG.md",
-            "Documentation": "https://docs.snowflake.com/developer-guide/snowpark-ml",
-            "Issues": homepage + "/issues",
-            "Source": homepage,
-        },
-        license = "Apache License, Version 2.0",
-        python_requires = ">=3.8,<4",
-        python_tag = "py3",
-        requires = requires,
-        summary = "The machine learning client library that is used for interacting with Snowflake to build machine learning solutions.",
-        version = version,
-        deps = deps,
+def _py_wheel_impl(ctx):
+    runfiles_root = ctx.executable.wheel_builder.path + ".runfiles"
+    workspace_name = ctx.workspace_name
+    execution_root_relative_path = "%s/%s" % (runfiles_root, workspace_name)
+    wheel_output_dir = ctx.actions.declare_directory("dist")
+    ctx.actions.run(
+        inputs = [ctx.file.pyproject_toml],
+        outputs = [wheel_output_dir],
+        executable = ctx.executable.wheel_builder,
+        arguments = [
+            ctx.file.pyproject_toml.path,
+            execution_root_relative_path,
+            "--wheel",
+            "--outdir",
+            wheel_output_dir.path,
+        ],
+        progress_message = "Building Wheel",
+        mnemonic = "WheelBuild",
     )
+
+    return [DefaultInfo(files = depset([wheel_output_dir]))]
+
+_py_wheel = rule(
+    attrs = {
+        "pyproject_toml": attr.label(
+            mandatory = True,
+            allow_single_file = True,
+        ),
+        "wheel_builder": attr.label(
+            executable = True,
+            cfg = "exec",
+        ),
+    },
+    implementation = _py_wheel_impl,
+)
+
+def py_wheel(name, deps, data = [], **kwargs):
+    wheel_builder_name = name + "_wheel_builder_main"
+    py_binary(
+        name = wheel_builder_name,
+        srcs = ["@//bazel:wheelbuilder.py"],
+        visibility = ["//visibility:public"],
+        main = "wheelbuilder.py",
+        deps = deps,
+        data = data,
+    )
+    _py_wheel(name = name, wheel_builder = wheel_builder_name, **kwargs)

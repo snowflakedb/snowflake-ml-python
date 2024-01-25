@@ -18,6 +18,7 @@ from snowflake.ml.model import model_signature, type_hints as model_types
 from snowflake.ml.model._packager.model_env import model_env
 from snowflake.ml.model._packager.model_meta import (
     _core_requirements,
+    _packaging_requirements,
     model_blob_meta,
     model_meta_schema,
 )
@@ -26,7 +27,8 @@ from snowflake.ml.model._packager.model_meta_migrator import migrator_plans
 MODEL_METADATA_FILE = "model.yaml"
 MODEL_CODE_DIR = "code"
 
-_PACKAGING_CORE_DEPENDENCIES = _core_requirements.REQUIREMENTS
+_PACKAGING_CORE_DEPENDENCIES = _core_requirements.REQUIREMENTS  # Legacy Model only
+_PACKAGING_REQUIREMENTS = _packaging_requirements.REQUIREMENTS  # New Model only
 _SNOWFLAKE_PKG_NAME = "snowflake"
 _SNOWFLAKE_ML_PKG_NAME = f"{_SNOWFLAKE_PKG_NAME}.ml"
 
@@ -73,6 +75,8 @@ def create_model_metadata(
     model_dir_path = os.path.normpath(model_dir_path)
     embed_local_ml_library = kwargs.pop("embed_local_ml_library", False)
     legacy_save = kwargs.pop("_legacy_save", False)
+    relax_version = kwargs.pop("relax_version", False)
+
     if embed_local_ml_library:
         # Use the last one which is loaded first, that is mean, it is loaded from site-packages.
         # We could make sure that user does not overwrite our library with their code follow the same naming.
@@ -94,6 +98,8 @@ def create_model_metadata(
         pip_requirements=pip_requirements,
         python_version=python_version,
         embed_local_ml_library=embed_local_ml_library,
+        legacy_save=legacy_save,
+        relax_version=relax_version,
     )
 
     if embed_local_ml_library:
@@ -146,6 +152,8 @@ def _create_env_for_model_metadata(
     pip_requirements: Optional[List[str]] = None,
     python_version: Optional[str] = None,
     embed_local_ml_library: bool = False,
+    legacy_save: bool = False,
+    relax_version: bool = False,
 ) -> model_env.ModelEnv:
     env = model_env.ModelEnv()
 
@@ -154,11 +162,14 @@ def _create_env_for_model_metadata(
     env.pip_requirements = pip_requirements  # type: ignore[assignment]
     env.python_version = python_version  # type: ignore[assignment]
     env.snowpark_ml_version = snowml_env.VERSION
+
+    requirements_to_add = _PACKAGING_CORE_DEPENDENCIES if legacy_save else _PACKAGING_REQUIREMENTS
+
     if embed_local_ml_library:
         env.include_if_absent(
             [
                 model_env.ModelDependency(requirement=dep, pip_name=requirements.Requirement(dep).name)
-                for dep in _PACKAGING_CORE_DEPENDENCIES
+                for dep in requirements_to_add
             ],
             check_local_version=True,
         )
@@ -166,10 +177,13 @@ def _create_env_for_model_metadata(
         env.include_if_absent(
             [
                 model_env.ModelDependency(requirement=dep, pip_name=requirements.Requirement(dep).name)
-                for dep in _PACKAGING_CORE_DEPENDENCIES + [env_utils.SNOWPARK_ML_PKG_NAME]
+                for dep in requirements_to_add + [env_utils.SNOWPARK_ML_PKG_NAME]
             ],
             check_local_version=True,
         )
+
+    if relax_version:
+        env.relax_version()
 
     return env
 

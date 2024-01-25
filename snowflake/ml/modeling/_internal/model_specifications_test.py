@@ -6,6 +6,7 @@ import cloudpickle as cp
 import numpy as np
 from absl.testing import absltest, parameterized
 from lightgbm import LGBMRegressor
+from sklearn.decomposition import PCA
 from sklearn.linear_model import LinearRegression
 from sklearn.model_selection import GridSearchCV
 from xgboost import XGBRegressor
@@ -142,6 +143,9 @@ each_cv_result_return_train = [
 
 SAMPLES: Dict[str, Dict[str, Any]] = {
     "basic": {
+        "estimator": GridSearchCV(estimator=PCA(), param_grid={"n_components": range(1, 3)}, cv=3),
+        "n_splits": 3,
+        "param_grid": [{"n_components": 1}, {"n_components": 2}],
         "each_cv_result": each_cv_result_basic_sample,
         "IDX_LENGTH": 3,
         "PARAM_LENGTH": 2,
@@ -163,31 +167,26 @@ SAMPLES: Dict[str, Dict[str, Any]] = {
         },
     },
     "return_train_score": {
+        "estimator": GridSearchCV(estimator=PCA(), param_grid={"n_components": range(1, 2)}, cv=2),
+        "n_splits": 2,
+        "param_grid": [{"n_components": 2}],
         "each_cv_result": each_cv_result_return_train,
         "IDX_LENGTH": 2,
         "PARAM_LENGTH": 1,
         "CV_RESULT_": {
-            "mean_fit_time": np.array(
-                [
-                    0.00286627,
-                ]
-            ),
+            "mean_fit_time": np.array([0.00286627]),
             "std_fit_time": np.array([0.0002892]),
             "mean_score_time": np.array([0.00164152]),
             "std_score_time": np.array([0.00012303]),
             "param_n_components": np.ma.masked_array(
-                data=[2], mask=False, fill_value="?", dtype=object
+                data=[2], mask=[False], fill_value="?", dtype=object
             ),  # type: ignore[no-untyped-call]
-            "params": np.array([{"n_components": 2}], dtype=object),
-            "mean_train_score": np.array([-11.09288916]),
-            "std_train_score": np.array([2.52275917]),
-            "mean_test_score": np.array([-11.09288916]),
-            "std_test_score": np.array([2.52275917]),
-            "rank_test_score": np.array([1]),
+            "params": [{"n_components": 2}],
             "split0_test_score": np.array([-13.61564833]),
             "split1_test_score": np.array([-8.57012999]),
-            "split0_train_score": np.array([-13.61564833]),
-            "split1_train_score": np.array([-8.57012999]),
+            "mean_test_score": np.array([-11.09288916]),
+            "std_test_score": np.array([2.52275917]),
+            "rank_test_score": np.array([1], dtype=np.int32),
         },
     },
 }
@@ -276,40 +275,60 @@ class SnowparkHandlersUnitTest(parameterized.TestCase):
                 # Do not compare the fit time
 
     def test_cv_result(self) -> None:
-        multimetric, cv_results_, best_param_index, scorers = construct_cv_results(
+        multimetric, cv_results_ = construct_cv_results(
+            SAMPLES["basic"]["estimator"],
+            SAMPLES["basic"]["n_splits"],
+            SAMPLES["basic"]["param_grid"],
             self.RAW_DATA_SP,
             SAMPLES["basic"]["IDX_LENGTH"],
             SAMPLES["basic"]["PARAM_LENGTH"],
-            {"return_train_score": False},
         )
         self.assertEqual(multimetric, False)
-        self.assertEqual(best_param_index, 0)
         self._compare_cv_results(cv_results_, SAMPLES["basic"]["CV_RESULT_"])
-        self.assertEqual(scorers, {"score"})
 
     def test_cv_result_return_train_score(self) -> None:
-        multimetric, cv_results_, best_param_index, scorers = construct_cv_results(
+        multimetric, cv_results_ = construct_cv_results(
+            SAMPLES["return_train_score"]["estimator"],
+            SAMPLES["return_train_score"]["n_splits"],
+            SAMPLES["return_train_score"]["param_grid"],
             [Row(val) for val in SAMPLES["return_train_score"]["combine_hex_cv_result"]],
             SAMPLES["return_train_score"]["IDX_LENGTH"],
             SAMPLES["return_train_score"]["PARAM_LENGTH"],
-            {"return_train_score": True},
         )
         self.assertEqual(multimetric, False)
         self._compare_cv_results(cv_results_, SAMPLES["return_train_score"]["CV_RESULT_"])
-        self.assertEqual(scorers, {"score"})
 
     def test_cv_result_incorrect_param_length(self) -> None:
         with self.assertRaises(ValueError):
-            construct_cv_results(self.RAW_DATA_SP, SAMPLES["basic"]["IDX_LENGTH"], 1, {"return_train_score": False})
+            construct_cv_results(
+                SAMPLES["basic"]["estimator"],
+                SAMPLES["basic"]["n_splits"],
+                SAMPLES["basic"]["param_grid"],
+                self.RAW_DATA_SP,
+                SAMPLES["basic"]["IDX_LENGTH"],
+                1,
+            )
 
     def test_cv_result_nan(self) -> None:
         # corner cases with nan values
         with self.assertRaises(ValueError):
-            construct_cv_results(self.RAW_DATA_SP, 0, SAMPLES["basic"]["PARAM_LENGTH"], {"return_train_score": False})
+            construct_cv_results(
+                SAMPLES["basic"]["estimator"],
+                SAMPLES["basic"]["n_splits"],
+                SAMPLES["basic"]["param_grid"],
+                self.RAW_DATA_SP,
+                0,
+                SAMPLES["basic"]["PARAM_LENGTH"],
+            )
         # empty list
         with self.assertRaises(ValueError):
             construct_cv_results(
-                [], SAMPLES["basic"]["IDX_LENGTH"], SAMPLES["basic"]["PARAM_LENGTH"], {"return_train_score": False}
+                SAMPLES["basic"]["estimator"],
+                SAMPLES["basic"]["n_splits"],
+                SAMPLES["basic"]["param_grid"],
+                [],
+                SAMPLES["basic"]["IDX_LENGTH"],
+                SAMPLES["basic"]["PARAM_LENGTH"],
             )
 
 

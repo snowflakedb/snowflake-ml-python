@@ -2,11 +2,22 @@ import inspect
 import itertools
 import os
 import tempfile
-from typing import Any, Callable, List, Literal, Optional, Tuple, Type, TypeVar, Union
+from typing import (
+    Any,
+    Callable,
+    Dict,
+    List,
+    Literal,
+    Optional,
+    Tuple,
+    Type,
+    TypeVar,
+    Union,
+)
 
 import cloudpickle
 from absl.testing import absltest, parameterized
-from packaging import requirements
+from packaging import requirements, specifiers
 from typing_extensions import Concatenate, ParamSpec
 
 from snowflake.ml._internal import env, env_utils, file_utils
@@ -36,6 +47,22 @@ def get_function_body(func: Callable[..., Any]) -> str:
     return "".join([line[indentation:] for line in source_lines_generator])
 
 
+def get_modified_test_cases(
+    test_cases: Union[List[Dict[str, Any]], List[Tuple[Any, ...]]],
+    additional_cases: List[Any],
+    additional_case_arg_name: str,
+    naming_type: object,
+) -> Union[List[Dict[str, Any]], List[Tuple[Any, ...]]]:
+    if all(isinstance(tc, dict) for tc in test_cases):
+        modified_test_cases = [{**t1, additional_case_arg_name: t2} for t1 in test_cases for t2 in additional_cases]
+        if naming_type is parameterized._NAMED:
+            for tc in modified_test_cases:
+                tc["testcase_name"] += f"_{tc[additional_case_arg_name]}"
+    else:
+        raise ValueError("Unsupported parameterized test argument input.")
+    return modified_test_cases
+
+
 class CommonTestBase(parameterized.TestCase):
     def setUp(self) -> None:
         """Creates Snowpark and Snowflake environments for testing."""
@@ -47,7 +74,10 @@ class CommonTestBase(parameterized.TestCase):
 
     @classmethod
     def sproc_test(
-        kclass: Type[_V], local: bool = True, test_callers_rights: bool = True
+        kclass: Type[_V],
+        local: bool = True,
+        test_callers_rights: bool = True,
+        additional_packages: Optional[List[str]] = None,
     ) -> Callable[
         [Callable[Concatenate[_V, _T_args], None]],
         Union[parameterized._ParameterizedTestIter, Callable[Concatenate[_V, _T_args], None]],
@@ -63,12 +93,18 @@ class CommonTestBase(parameterized.TestCase):
                 original_name = fn._original_name
                 naming_type = fn._naming_type
                 test_cases = list(fn.testcases)
+                if naming_type is parameterized._NAMED:
+                    method_list = [method.__name__ for method in fn]
+                else:
+                    method_list = [f"{original_name}{i}" for i, _ in enumerate(fn)]
             else:
                 actual_method = fn
                 original_name = fn.__name__
                 naming_type = parameterized._ARGUMENT_REPR
                 test_cases = [{}]
+                method_list = [original_name]
 
+            assert len(method_list) > 0
             test_module = inspect.getmodule(actual_method)
             assert test_module
             assert test_module.__file__
@@ -78,7 +114,6 @@ class CommonTestBase(parameterized.TestCase):
             rel_path = test_module_path[ind:]
             rel_path = os.path.splitext(rel_path)[0]
             test_module_name = rel_path.replace(os.sep, ".")
-            method_list = [func for func in dir(kclass) if func.startswith(original_name)]
 
             def test_wrapper(
                 self: _V,
@@ -100,12 +135,25 @@ class CommonTestBase(parameterized.TestCase):
                         file_utils.zip_python_package(tests_zip_module_filename, "tests")
 
                         imports = [snowml_zip_module_filename, tests_zip_module_filename]
-                        packages = [
-                            req
-                            for req in _snowml_requirements.REQUIREMENTS
+                        packages = additional_packages or []
+                        for req_str in _snowml_requirements.REQUIREMENTS:
+                            req = requirements.Requirement(req_str)
                             # Remove "_" not in req once Snowpark 1.11.0 available, it is a workaround for their bug.
-                            if not any(offending in req for offending in ["snowflake-connector-python", "pyarrow", "_"])
-                        ]
+                            if any(
+                                offending in req.name for offending in ["snowflake-connector-python", "pyarrow", "_"]
+                            ):
+                                continue
+                            # != and ~= are not supported by Snowpark
+                            req.specifier = specifiers.SpecifierSet(
+                                ",".join(
+                                    [
+                                        str(spec)
+                                        for spec in req.specifier
+                                        if spec.operator in ["<", "<=", ">", ">=", "=="]
+                                    ]
+                                )
+                            )
+                            packages.append(str(req))
 
                         cloudpickle.register_pickle_by_value(test_module)
 
@@ -133,23 +181,23 @@ class CommonTestBase(parameterized.TestCase):
                             if result.testsRun == 0:
                                 raise RuntimeError("Unit test does not run any test.")
 
-                        for method in method_list:
-                            test_in_sproc(self.session, f"{test_module_name}.{self.__class__.__qualname__}.{method}")
+                        for method_name in method_list:
+                            test_in_sproc(
+                                self.session, f"{test_module_name}.{self.__class__.__qualname__}.{method_name}"
+                            )
 
                         cloudpickle.unregister_pickle_by_value(test_module)
 
                 _in_sproc_test(execute_as=_sproc_test_mode)
 
-            additional_cases = [
-                {"_sproc_test_mode": "owner"},
-            ]
+            additional_cases = ["owner"]
             if local:
-                additional_cases.append({"_sproc_test_mode": "local"})
+                additional_cases.append("local")
 
             if test_callers_rights:
-                additional_cases.append({"_sproc_test_mode": "caller"})
+                additional_cases.append("caller")
 
-            modified_test_cases = [{**t1, **t2} for t1 in test_cases for t2 in additional_cases]
+            modified_test_cases = get_modified_test_cases(test_cases, additional_cases, "_sproc_test_mode", naming_type)
 
             return parameterized._ParameterizedTestIter(
                 test_wrapper, modified_test_cases, naming_type, original_name=original_name
@@ -183,10 +231,7 @@ class CommonTestBase(parameterized.TestCase):
 
             def test_wrapper(self: _V, /, *args: _T_args.args, _snowml_pkg_ver: str, **kwargs: _T_args.kwargs) -> None:
                 prepare_fn, prepare_fn_args = prepare_fn_factory(self)
-                if additional_packages:
-                    packages = additional_packages
-                else:
-                    packages = []
+                packages = additional_packages or []
 
                 _, _, return_type, input_types = udf_utils.extract_return_input_types(
                     prepare_fn, return_type=None, input_types=None, object_type=snowpark_utils.TempObjectType.PROCEDURE
@@ -237,7 +282,7 @@ def {func_name}({first_arg_name}: snowflake.snowpark.Session, {", ".join(arg_lis
                 actual_method(self, *args, **kwargs)
 
             additional_cases = [
-                {"_snowml_pkg_ver": str(pkg_ver)}
+                str(pkg_ver)
                 for pkg_ver in env_utils.get_matched_package_versions_in_information_schema(
                     test_env_utils.get_available_session(),
                     [requirements.Requirement(f"{env_utils.SNOWPARK_ML_PKG_NAME}{version_range}")],
@@ -245,7 +290,7 @@ def {func_name}({first_arg_name}: snowflake.snowpark.Session, {", ".join(arg_lis
                 )[env_utils.SNOWPARK_ML_PKG_NAME]
             ]
 
-            modified_test_cases = [{**t1, **t2} for t1 in test_cases for t2 in additional_cases]
+            modified_test_cases = get_modified_test_cases(test_cases, additional_cases, "_snowml_pkg_ver", naming_type)
 
             return parameterized._ParameterizedTestIter(
                 test_wrapper, modified_test_cases, naming_type, original_name=original_name

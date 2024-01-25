@@ -3,10 +3,8 @@ from typing import Any, Dict, List, Optional
 from snowflake.ml._internal.utils import (
     identifier,
     query_result_checker,
-    snowflake_env,
     sql_identifier,
 )
-from snowflake.ml.model._model_composer.model_manifest import model_manifest_schema
 from snowflake.snowpark import row, session
 
 
@@ -89,12 +87,8 @@ class ModelSQLClient:
             .has_column(ModelSQLClient.MODEL_VERSION_NAME_COL_NAME, allow_empty=True)
             .has_column(ModelSQLClient.MODEL_VERSION_COMMENT_COL_NAME, allow_empty=True)
             .has_column(ModelSQLClient.MODEL_VERSION_METADATA_COL_NAME, allow_empty=True)
+            .has_column(ModelSQLClient.MODEL_VERSION_USER_DATA_COL_NAME, allow_empty=True)
         )
-        if (
-            snowflake_env.get_current_snowflake_version(self._session)
-            >= model_manifest_schema.MANIFEST_USER_DATA_ENABLE_VERSION
-        ):
-            res = res.has_column(ModelSQLClient.MODEL_VERSION_USER_DATA_COL_NAME, allow_empty=True)
         if validate_result and version_name:
             res = res.has_dimensions(expected_rows=1)
 

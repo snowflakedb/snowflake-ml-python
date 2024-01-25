@@ -1,5 +1,5 @@
 load("@rules_sphinx//:defs.bzl", "sphinx_docs")
-load("//snowflake/ml:packages.bzl", "PACKAGES")
+load("//:packages.bzl", "PACKAGES")
 
 package_group(
     name = "docs_package",

@@ -1,12 +1,9 @@
 import inspect
-import unittest
 import uuid
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from absl.testing import absltest
-from packaging import version
 
-from snowflake.ml._internal.utils import snowflake_env
 from snowflake.ml.model import type_hints as model_types
 from snowflake.ml.registry import registry
 from snowflake.ml.utils import connection_params
@@ -14,14 +11,6 @@ from snowflake.snowpark import Session
 from tests.integ.snowflake.ml.test_utils import db_manager, test_env_utils
 
 
-@unittest.skipUnless(
-    test_env_utils.get_current_snowflake_version() >= version.parse("8.0.0"),
-    "New model only available when the Snowflake Version is newer than 8.0.0",
-)
-@unittest.skipUnless(
-    test_env_utils.get_current_snowflake_cloud_type() == snowflake_env.SnowflakeCloudType.AWS,
-    "New model only available in AWS",
-)
 class RegistryModelTestBase(absltest.TestCase):
     def setUp(self) -> None:
         """Creates Snowpark and Snowflake environments for testing."""

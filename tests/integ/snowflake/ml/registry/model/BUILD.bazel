@@ -7,7 +7,6 @@ py_library(
     testonly = True,
     srcs = ["registry_model_test_base.py"],
     deps = [
-        "//snowflake/ml/_internal/utils:snowflake_env",
         "//snowflake/ml/model:type_hints",
         "//snowflake/ml/registry",
         "//snowflake/ml/utils:connection_params",

@@ -2,14 +2,12 @@
 
 from typing import Any, Dict, List, Literal, TypedDict
 
-from packaging import version
 from typing_extensions import NotRequired, Required
 
 from snowflake.ml.model import model_signature
 
 MODEL_MANIFEST_VERSION = "1.0"
 
-MANIFEST_USER_DATA_ENABLE_VERSION = version.parse("8.2.0")
 MANIFEST_CLIENT_DATA_KEY_NAME = "snowpark_ml_data"
 MANIFEST_CLIENT_DATA_SCHEMA_VERSION = "2024-02-01"
 

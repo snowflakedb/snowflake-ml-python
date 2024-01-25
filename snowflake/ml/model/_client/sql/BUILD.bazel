@@ -22,7 +22,6 @@ py_test(
     srcs = ["model_test.py"],
     deps = [
         ":model",
-        "//snowflake/ml/_internal/utils:snowflake_env",
         "//snowflake/ml/_internal/utils:sql_identifier",
         "//snowflake/ml/model/_model_composer/model_manifest:model_manifest_schema",
         "//snowflake/ml/test_utils:mock_data_frame",

@@ -146,24 +146,29 @@ class ModelVersionSQLClient:
         returns: List[Tuple[str, spt.DataType, sql_identifier.SqlIdentifier]],
         statement_params: Optional[Dict[str, Any]] = None,
     ) -> dataframe.DataFrame:
-        tmp_table_name = snowpark_utils.random_name_for_temp_object(snowpark_utils.TempObjectType.TABLE)
-        INTERMEDIATE_TABLE_NAME = identifier.get_schema_level_object_identifier(
-            self._database_name.identifier(),
-            self._schema_name.identifier(),
-            tmp_table_name,
-        )
-        input_df.write.save_as_table(  # type: ignore[call-overload]
-            table_name=INTERMEDIATE_TABLE_NAME,
-            mode="errorifexists",
-            table_type="temporary",
-            statement_params=statement_params,
-        )
+        with_statements = []
+        if len(input_df.queries["queries"]) == 1 and len(input_df.queries["post_actions"]) == 0:
+            INTERMEDIATE_TABLE_NAME = "SNOWPARK_ML_MODEL_INFERENCE_INPUT"
+            with_statements.append(f"{INTERMEDIATE_TABLE_NAME} AS ({input_df.queries['queries'][0]})")
+        else:
+            tmp_table_name = snowpark_utils.random_name_for_temp_object(snowpark_utils.TempObjectType.TABLE)
+            INTERMEDIATE_TABLE_NAME = identifier.get_schema_level_object_identifier(
+                self._database_name.identifier(),
+                self._schema_name.identifier(),
+                tmp_table_name,
+            )
+            input_df.write.save_as_table(  # type: ignore[call-overload]
+                table_name=INTERMEDIATE_TABLE_NAME,
+                mode="errorifexists",
+                table_type="temporary",
+                statement_params=statement_params,
+            )
 
         INTERMEDIATE_OBJ_NAME = "TMP_RESULT"
 
         module_version_alias = "MODEL_VERSION_ALIAS"
-        model_version_alias_sql = (
-            f"WITH {module_version_alias} AS "
+        with_statements.append(
+            f"{module_version_alias} AS "
             f"MODEL {self.fully_qualified_model_name(model_name)} VERSION {version_name.identifier()}"
         )
 
@@ -174,7 +179,7 @@ class ModelVersionSQLClient:
         args_sql = ", ".join(args_sql_list)
 
         sql = textwrap.dedent(
-            f"""{model_version_alias_sql}
+            f"""WITH {','.join(with_statements)}
                 SELECT *,
                     {module_version_alias}!{method_name.identifier()}({args_sql}) AS {INTERMEDIATE_OBJ_NAME}
                 FROM {INTERMEDIATE_TABLE_NAME}"""

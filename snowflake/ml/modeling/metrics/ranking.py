@@ -122,7 +122,8 @@ def precision_recall_curve(
         result_module = cloudpickle.loads(pickled_result_module)
         return result_module.serialize(session, (precision, recall, thresholds))  # type: ignore[no-any-return]
 
-    result_object = result.deserialize(session, precision_recall_curve_anon_sproc(session))
+    kwargs = telemetry.get_sproc_statement_params_kwargs(precision_recall_curve_anon_sproc, statement_params)
+    result_object = result.deserialize(session, precision_recall_curve_anon_sproc(session, **kwargs))
     res: Tuple[npt.NDArray[np.float_], npt.NDArray[np.float_], npt.NDArray[np.float_]] = result_object
     return res
 
@@ -271,7 +272,8 @@ def roc_auc_score(
         result_module = cloudpickle.loads(pickled_result_module)
         return result_module.serialize(session, auc)  # type: ignore[no-any-return]
 
-    result_object = result.deserialize(session, roc_auc_score_anon_sproc(session))
+    kwargs = telemetry.get_sproc_statement_params_kwargs(roc_auc_score_anon_sproc, statement_params)
+    result_object = result.deserialize(session, roc_auc_score_anon_sproc(session, **kwargs))
     auc: Union[float, npt.NDArray[np.float_]] = result_object
     return auc
 
@@ -372,7 +374,9 @@ def roc_curve(
         result_module = cloudpickle.loads(pickled_result_module)
         return result_module.serialize(session, (fpr, tpr, thresholds))  # type: ignore[no-any-return]
 
-    result_object = result.deserialize(session, roc_curve_anon_sproc(session))
+    kwargs = telemetry.get_sproc_statement_params_kwargs(roc_curve_anon_sproc, statement_params)
+    result_object = result.deserialize(session, roc_curve_anon_sproc(session, **kwargs))
+
     res: Tuple[npt.NDArray[np.float_], npt.NDArray[np.float_], npt.NDArray[np.float_]] = result_object
 
     return res

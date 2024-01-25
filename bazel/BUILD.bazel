@@ -2,6 +2,10 @@ load("@rules_python//python:defs.bzl", native_py_test = "py_test")
 
 package(default_visibility = ["//visibility:public"])
 
+exports_files([
+    "wheelbuilder.py",
+])
+
 native_py_test(
     name = "repo_paths_test",
     srcs = ["repo_paths_test.py"],
@@ -19,8 +23,9 @@ sh_binary(
 package_group(
     name = "snowml_public_common",
     packages = [
-        "//bazel/...",
-        "//ci/...",
-        "//docs/...",
+        "-//codegen/...",
+        "-//snowflake/...",
+        "-//tests/...",
+        "//...",
     ],
 )

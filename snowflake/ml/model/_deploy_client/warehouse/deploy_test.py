@@ -85,7 +85,7 @@ class TestFinalPackagesWithoutConda(absltest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             env_utils._SNOWFLAKE_INFO_SCHEMA_PACKAGE_CACHE = {}
             with model_meta.create_model_metadata(
-                model_dir_path=tmpdir, name="model1", model_type="custom", signatures=_DUMMY_SIG
+                model_dir_path=tmpdir, name="model1", model_type="custom", signatures=_DUMMY_SIG, _legacy_save=True
             ) as meta:
                 meta.models["model1"] = _DUMMY_BLOB
                 c_session = cast(session.Session, self.m_session)
@@ -102,6 +102,7 @@ class TestFinalPackagesWithoutConda(absltest.TestCase):
                 model_type="custom",
                 signatures=_DUMMY_SIG,
                 conda_dependencies=["pandas==1.0.*"],
+                _legacy_save=True,
             ) as meta:
                 meta.models["model1"] = _DUMMY_BLOB
                 c_session = cast(session.Session, self.m_session)
@@ -112,10 +113,7 @@ class TestFinalPackagesWithoutConda(absltest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             env_utils._SNOWFLAKE_INFO_SCHEMA_PACKAGE_CACHE = {}
             with model_meta.create_model_metadata(
-                model_dir_path=tmpdir,
-                name="model1",
-                model_type="custom",
-                signatures=_DUMMY_SIG,
+                model_dir_path=tmpdir, name="model1", model_type="custom", signatures=_DUMMY_SIG, _legacy_save=True
             ) as meta:
                 meta.models["model1"] = _DUMMY_BLOB
                 c_session = cast(session.Session, self.m_session)
@@ -135,6 +133,7 @@ class TestFinalPackagesWithoutConda(absltest.TestCase):
                 model_type="custom",
                 signatures=_DUMMY_SIG,
                 pip_requirements=["python-package"],
+                _legacy_save=True,
             ) as meta:
                 meta.models["model1"] = _DUMMY_BLOB
                 c_session = cast(session.Session, self.m_session)
@@ -150,6 +149,7 @@ class TestFinalPackagesWithoutConda(absltest.TestCase):
                 model_type="custom",
                 signatures=_DUMMY_SIG,
                 conda_dependencies=["conda-forge::python_package"],
+                _legacy_save=True,
             ) as meta:
                 meta.models["model1"] = _DUMMY_BLOB
                 c_session = cast(session.Session, self.m_session)
@@ -176,6 +176,7 @@ class TestFinalPackagesWithoutConda(absltest.TestCase):
                 model_type="custom",
                 signatures=_DUMMY_SIG,
                 conda_dependencies=["python-package"],
+                _legacy_save=True,
             ) as meta:
                 meta.models["model1"] = _DUMMY_BLOB
                 c_session = cast(session.Session, self.m_session)

@@ -70,7 +70,7 @@ if [[ $mode = "unused" || $mode = "all" ]]; then
 
     # -- Begin of Query Rules Heredoc --
     cat >"${unused_test_rule_file}" <<EndOfMessage
-    let missing_deps = filter('//snowflake[:/].*', kind('py_library rule', deps(tests/...) except deps(snowflake/ml:wheel))) in
+    let missing_deps = filter('//snowflake[:/].*', kind('py_library rule', deps(tests/...) except deps(wheel))) in
         labels(srcs, kind('py_test rule', rdeps(//tests/..., \$missing_deps, 1)))
 EndOfMessage
     # -- End of Query Rules Heredoc --

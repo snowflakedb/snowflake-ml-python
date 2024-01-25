@@ -108,7 +108,8 @@ def d2_absolute_error_score(
         result_module = cloudpickle.loads(pickled_snowflake_result)
         return result_module.serialize(session, score)  # type: ignore[no-any-return]
 
-    result_object = result.deserialize(session, d2_absolute_error_score_anon_sproc(session))
+    kwargs = telemetry.get_sproc_statement_params_kwargs(d2_absolute_error_score_anon_sproc, statement_params)
+    result_object = result.deserialize(session, d2_absolute_error_score_anon_sproc(session, **kwargs))
     score: Union[float, npt.NDArray[np.float_]] = result_object
     return score
 
@@ -205,7 +206,8 @@ def d2_pinball_score(
         result_module = cloudpickle.loads(pickled_result_module)
         return result_module.serialize(session, score)  # type: ignore[no-any-return]
 
-    result_object = result.deserialize(session, d2_pinball_score_anon_sproc(session))
+    kwargs = telemetry.get_sproc_statement_params_kwargs(d2_pinball_score_anon_sproc, statement_params)
+    result_object = result.deserialize(session, d2_pinball_score_anon_sproc(session, **kwargs))
 
     score: Union[float, npt.NDArray[np.float_]] = result_object
     return score
@@ -319,7 +321,8 @@ def explained_variance_score(
         result_module = cloudpickle.loads(pickled_result_module)
         return result_module.serialize(session, score)  # type: ignore[no-any-return]
 
-    result_object = result.deserialize(session, explained_variance_score_anon_sproc(session))
+    kwargs = telemetry.get_sproc_statement_params_kwargs(explained_variance_score_anon_sproc, statement_params)
+    result_object = result.deserialize(session, explained_variance_score_anon_sproc(session, **kwargs))
     score: Union[float, npt.NDArray[np.float_]] = result_object
     return score
 

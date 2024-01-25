@@ -10,7 +10,7 @@ Learning workflow.
 The Snowpark ML Python SDK provides a number of APIs to support each stage of an end-to-end Machine Learning development
 and deployment process, and includes two key components.
 
-### Snowpark ML Development [Public Preview]
+### Snowpark ML Development
 
 [Snowpark ML Development](https://docs.snowflake.com/en/developer-guide/snowpark-ml/index#snowpark-ml-development)
 provides a collection of python APIs enabling efficient ML model development directly in Snowflake:

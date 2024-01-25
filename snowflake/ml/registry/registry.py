@@ -120,6 +120,8 @@ class Registry:
                 - embed_local_ml_library: Embed local Snowpark ML into the code directory or folder.
                     Override to True if the local Snowpark ML version is not available in the Snowflake Anaconda
                     Channel. Otherwise, defaults to False
+                - relax_version: Whether or not relax the version constraints of the dependencies.
+                    It detects any ==x.y.z in specifiers and replaced with >=x.y, <(x+1). Defaults to False.
                 - method_options: Per-method saving options including:
                     - case_sensitive: Indicates whether the method and its signature should be case sensitive.
                         This means when you refer the method in the SQL, you need to double quote it.

@@ -62,7 +62,6 @@ class ModelRuntime:
                     model_env.ModelDependency(requirement=dep, pip_name=requirements.Requirement(dep).name)
                     for dep in _UDF_INFERENCE_DEPENDENCIES
                 ],
-                check_local_version=True,
             )
         else:
             self.runtime_env.include_if_absent(
@@ -70,7 +69,6 @@ class ModelRuntime:
                     model_env.ModelDependency(requirement=dep, pip_name=requirements.Requirement(dep).name)
                     for dep in _UDF_INFERENCE_DEPENDENCIES + [snowml_pkg_spec]
                 ],
-                check_local_version=True,
             )
 
     def save(self, workspace_path: pathlib.Path) -> model_manifest_schema.ModelRuntimeDict:

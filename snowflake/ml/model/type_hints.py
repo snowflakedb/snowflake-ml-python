@@ -198,9 +198,12 @@ class BaseModelSaveOption(TypedDict):
     """Options for saving the model.
 
     embed_local_ml_library: Embedding local SnowML into the code directory of the folder.
+    relax_version: Whether or not relax the version constraints of the dependencies if unresolvable. It detects any
+        ==x.y.z in specifiers and replaced with >=x.y, <(x+1). Defaults to False.
     """
 
     embed_local_ml_library: NotRequired[bool]
+    relax_version: NotRequired[bool]
     _legacy_save: NotRequired[bool]
     method_options: NotRequired[Dict[str, ModelMethodSaveOptions]]
 
