@@ -1,7 +1,6 @@
 import os
 import pathlib
 import tempfile
-from importlib import metadata as importlib_metadata
 from unittest import mock
 
 import yaml
@@ -28,19 +27,20 @@ _DUMMY_BLOB = model_blob_meta.ModelBlobMeta(
 
 _BASIC_DEPENDENCIES_TARGET = list(
     sorted(
-        map(
-            lambda x: str(env_utils.get_local_installed_version_of_pip_package(requirements.Requirement(x))),
-            model_runtime._UDF_INFERENCE_DEPENDENCIES,
-        )
+        map(lambda x: str(requirements.Requirement(x)), model_runtime._UDF_INFERENCE_DEPENDENCIES),
     )
 )
 
 _BASIC_DEPENDENCIES_TARGET_WITH_SNOWML = list(
     sorted(
-        map(
-            lambda x: str(env_utils.get_local_installed_version_of_pip_package(requirements.Requirement(x))),
-            model_runtime._UDF_INFERENCE_DEPENDENCIES + [env_utils.SNOWPARK_ML_PKG_NAME],
-        )
+        list(map(lambda x: str(requirements.Requirement(x)), model_runtime._UDF_INFERENCE_DEPENDENCIES))
+        + [
+            str(
+                env_utils.get_local_installed_version_of_pip_package(
+                    requirements.Requirement(env_utils.SNOWPARK_ML_PKG_NAME)
+                )
+            )
+        ]
     )
 )
 
@@ -118,12 +118,12 @@ class ModelRuntimeTest(absltest.TestCase):
                 name="model1",
                 model_type="custom",
                 signatures=_DUMMY_SIG,
-                conda_dependencies=["pandas"],
+                conda_dependencies=["packaging"],
             ) as meta:
                 meta.models["model1"] = _DUMMY_BLOB
                 dep_target = _BASIC_DEPENDENCIES_TARGET_WITH_SNOWML[:]
-                dep_target.remove(f"pandas=={importlib_metadata.version('pandas')}")
-                dep_target.append("pandas")
+                dep_target.remove(next(filter(lambda x: x.startswith("packaging"), dep_target)))
+                dep_target.append("packaging")
                 dep_target.sort()
 
                 with mock.patch.object(
@@ -148,12 +148,12 @@ class ModelRuntimeTest(absltest.TestCase):
                 name="model1",
                 model_type="custom",
                 signatures=_DUMMY_SIG,
-                conda_dependencies=["conda-forge::pandas"],
+                conda_dependencies=["conda-forge::packaging"],
             ) as meta:
                 meta.models["model1"] = _DUMMY_BLOB
                 dep_target = _BASIC_DEPENDENCIES_TARGET_WITH_SNOWML[:]
-                dep_target.remove(f"pandas=={importlib_metadata.version('pandas')}")
-                dep_target.append("conda-forge::pandas")
+                dep_target.remove(next(filter(lambda x: x.startswith("packaging"), dep_target)))
+                dep_target.append("conda-forge::packaging")
                 dep_target.sort()
 
                 with mock.patch.object(
@@ -178,11 +178,11 @@ class ModelRuntimeTest(absltest.TestCase):
                 name="model1",
                 model_type="custom",
                 signatures=_DUMMY_SIG,
-                pip_requirements=["pandas"],
+                pip_requirements=["packaging"],
             ) as meta:
                 meta.models["model1"] = _DUMMY_BLOB
                 dep_target = _BASIC_DEPENDENCIES_TARGET_WITH_SNOWML[:]
-                dep_target.remove(f"pandas=={importlib_metadata.version('pandas')}")
+                dep_target.remove(next(filter(lambda x: x.startswith("packaging"), dep_target)))
                 dep_target.sort()
 
             with mock.patch.object(

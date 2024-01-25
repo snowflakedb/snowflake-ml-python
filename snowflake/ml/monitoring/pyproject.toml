@@ -1,0 +1,50 @@
+[build-system]
+requires = ["setuptools >= 61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "snowflake-ml-python"
+version = "0.1.0"
+authors = [
+  {name = "Snowflake, Inc", email = "support@snowflake.com"}
+]
+description = "The machine learning client library that is used for interacting with Snowflake to build machine learning solutions."
+license = {file = "LICENSE.txt"}
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Environment :: Console",
+  "Environment :: Other Environment",
+  "Intended Audience :: Developers",
+  "Intended Audience :: Education",
+  "Intended Audience :: Information Technology",
+  "Intended Audience :: System Administrators",
+  "License :: OSI Approved :: Apache Software License",
+  "Operating System :: OS Independent",
+  "Programming Language :: Python :: 3.8",
+  "Programming Language :: Python :: 3.9",
+  "Programming Language :: Python :: 3.10",
+  "Topic :: Database",
+  "Topic :: Software Development",
+  "Topic :: Software Development :: Libraries",
+  "Topic :: Software Development :: Libraries :: Application Frameworks",
+  "Topic :: Software Development :: Libraries :: Python Modules",
+  "Topic :: Scientific/Engineering :: Information Analysis"
+]
+requires-python = ">=3.8, <4"
+dependencies = [
+  "numpy",
+  "shap",
+  "snowflake-connector-python[pandas]",
+  "snowflake-snowpark-python>=1.4.0,<2"
+]
+
+[project.urls]
+Homepage = "https://github.com/snowflakedb/snowflake-ml-python"
+Documentation = "https://docs.snowflake.com/developer-guide/snowpark-ml"
+Repository = "https://github.com/snowflakedb/snowflake-ml-python"
+Issues = "https://github.com/snowflakedb/snowflake-ml-python/issues"
+Changelog = "https://github.com/snowflakedb/snowflake-ml-python/blob/master/CHANGELOG.md"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["snowflake.ml.monitoring*"]

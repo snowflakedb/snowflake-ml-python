@@ -1,9 +1,6 @@
 load("//bazel:py_rules.bzl", "py_library")
 
-package(default_visibility = [
-    "//bazel:snowml_public_common",
-    "//snowflake/ml/feature_store",
-])
+package(default_visibility = ["//visibility:public"])
 
 py_library(
     name = "synthetic_data_generator",

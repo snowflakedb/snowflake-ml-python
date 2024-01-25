@@ -1,6 +1,4 @@
-load("//bazel:py_rules.bzl", "py_library", "snowml_wheel")
-load(":packages.bzl", "PACKAGES")
-load(":requirements.bzl", "EXTRA_REQUIREMENTS", "REQUIREMENTS")
+load("//bazel:py_rules.bzl", "py_library")
 load(":version.bzl", "VERSION")
 
 package(default_visibility = ["//visibility:public"])
@@ -29,15 +27,4 @@ genrule(
     ],
     outs = ["description.md"],
     cmd = "cat $(location //:README.md) $(location //:CHANGELOG.md) > $@",
-)
-
-snowml_wheel(
-    name = "wheel",
-    compatible_with_snowpark = False,
-    description_file = ":description.md",
-    development_status = "PrPr",
-    extra_requires = EXTRA_REQUIREMENTS,
-    requires = REQUIREMENTS,
-    version = VERSION,
-    deps = PACKAGES,
 )

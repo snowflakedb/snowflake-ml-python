@@ -2,6 +2,7 @@
 
 PACKAGES = [
     "//snowflake/cortex:cortex_pkg",
+    "//snowflake/ml/feature_store:fs_pkg",
     "//snowflake/ml/modeling/impute:impute_pkg",
     "//snowflake/ml/modeling/metrics:metrics_pkg",
     "//snowflake/ml/modeling/model_selection:model_selection_pkg",

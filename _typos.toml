@@ -1,0 +1,16 @@
+[default]
+extend-ignore-identifiers-re = [
+  ".*[A-Fa-f0-9]{8,}"
+]
+
+[default.extend-identifiers]
+LiteralNDArrayType = "LiteralNDArrayType"
+
+[default.extend-words]
+MAPE = "MAPE"
+fpr = "fpr"
+fwe = "fwe"
+
+[type.po]
+extend-glob = ["*.ipynb"]
+check-file = false

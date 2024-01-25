@@ -4,7 +4,6 @@ from typing import Any, Dict, List, Optional, cast
 
 import yaml
 
-from snowflake.ml._internal.utils import snowflake_env
 from snowflake.ml.model import type_hints
 from snowflake.ml.model._model_composer.model_manifest import model_manifest_schema
 from snowflake.ml.model._model_composer.model_method import (
@@ -84,11 +83,7 @@ class ModelManifest:
             ],
         )
 
-        if (
-            snowflake_env.get_current_snowflake_version(session)
-            >= model_manifest_schema.MANIFEST_USER_DATA_ENABLE_VERSION
-        ):
-            manifest_dict["user_data"] = self.generate_user_data_with_client_data(model_meta)
+        manifest_dict["user_data"] = self.generate_user_data_with_client_data(model_meta)
 
         with (self.workspace_path / ModelManifest.MANIFEST_FILE_REL_PATH).open("w", encoding="utf-8") as f:
             # Anchors are not supported in the server, avoid that.

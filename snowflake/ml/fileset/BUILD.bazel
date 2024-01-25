@@ -1,4 +1,4 @@
-load("//bazel:py_rules.bzl", "py_library", "py_package", "py_test", "snowml_wheel")
+load("//bazel:py_rules.bzl", "py_library", "py_package", "py_test")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -127,35 +127,4 @@ py_library(
     name = "parquet_test_util",
     testonly = True,
     srcs = ["parquet_test_util.py"],
-)
-
-_TENSORFLOW_REQUIRES = ["tensorflow>=2.9,<3"]
-
-_PYTORCH_REQUIRES = ["torchdata>=0.4,<1"]
-
-_ALL_REQUIRES = _TENSORFLOW_REQUIRES + _PYTORCH_REQUIRES
-
-snowml_wheel(
-    name = "fileset_wheel",
-    compatible_with_snowpark = False,
-    development_status = "PrPr",
-    extra_requires = {
-        "all": _ALL_REQUIRES,
-        "pytorch": _PYTORCH_REQUIRES,
-        "tensorflow": _TENSORFLOW_REQUIRES,
-    },
-    # TODO(zhuo): consider adding a check to make sure what's listed
-    # here is a subset that is compatible with what is specified in conda-env.yml.
-    requires = [
-        "absl-py>=0.15,<2",
-        "fsspec[http]>=2022.11,<=2023.1",
-        "numpy>=1.23,<1.24",
-        "pyyaml>=6.0,<7",
-        "snowflake-connector-python[pandas]",
-        "snowflake-snowpark-python>=1.4.0,<2",
-    ],
-    version = "0.2.2",
-    deps = [
-        "//snowflake/ml/fileset:fileset_pkg",
-    ],
 )

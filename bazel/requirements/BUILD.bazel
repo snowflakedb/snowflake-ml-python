@@ -48,11 +48,6 @@ _GENERATED_REQUIREMENTS_FILES = {
         "generated": "meta.yaml",
         "target": "//ci/conda_recipe:meta.yaml",
     },
-    "requirements_bzl": {
-        "cmd": "--mode version_requirements --format bzl",
-        "generated": "requirements.bzl",
-        "target": "//snowflake/ml:requirements.bzl",
-    },
     "requirements_txt": {
         "cmd": "--mode dev_version --format text",
         "generated": "requirements.txt",

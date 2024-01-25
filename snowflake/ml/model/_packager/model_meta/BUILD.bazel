@@ -20,6 +20,24 @@ py_library(
     srcs = [":gen_core_requirements"],
 )
 
+GEN_PACKAGING_REQ_CMD = "$(location //bazel/requirements:parse_and_generate_requirements) $(location //:requirements.yml) --schema $(location //bazel/requirements:requirements.schema.json) --mode version_requirements --format python --filter_by_tag model_packaging > $@"
+
+py_genrule(
+    name = "gen_packaging_requirements",
+    srcs = [
+        "//:requirements.yml",
+        "//bazel/requirements:requirements.schema.json",
+    ],
+    outs = ["_packaging_requirements.py"],
+    cmd = GEN_PACKAGING_REQ_CMD,
+    tools = ["//bazel/requirements:parse_and_generate_requirements"],
+)
+
+py_library(
+    name = "_packaging_requirements",
+    srcs = [":gen_packaging_requirements"],
+)
+
 py_library(
     name = "model_meta_schema",
     srcs = ["model_meta_schema.py"],
@@ -41,6 +59,7 @@ py_library(
     srcs = ["model_meta.py"],
     deps = [
         ":_core_requirements",
+        ":_packaging_requirements",
         ":model_blob_meta",
         ":model_meta_schema",
         "//snowflake/ml/_internal:env",

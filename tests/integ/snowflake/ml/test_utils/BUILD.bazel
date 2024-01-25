@@ -1,8 +1,8 @@
-load("//bazel:py_rules.bzl", "py_genrule", "py_library")
+load("//bazel:py_rules.bzl", "py_genrule", "py_library", "py_test")
 
 package(default_visibility = ["//tests/integ/snowflake/ml:__subpackages__"])
 
-GEN_SNOWML_REQ_CMD = "$(location //bazel/requirements:parse_and_generate_requirements) $(location //:requirements.yml) --schema $(location //bazel/requirements:requirements.schema.json) --mode dev_version --format python --snowflake_channel_only > $@"
+GEN_SNOWML_REQ_CMD = "$(location //bazel/requirements:parse_and_generate_requirements) $(location //:requirements.yml) --schema $(location //bazel/requirements:requirements.schema.json) --mode version_requirements --format python --snowflake_channel_only > $@"
 
 py_genrule(
     name = "gen_snowml_requirements",
@@ -91,5 +91,13 @@ py_library(
         "//snowflake/ml/_internal/utils:snowflake_env",
         "//snowflake/ml/utils:connection_params",
         "//tests/integ/snowflake/ml/test_utils:db_manager",
+    ],
+)
+
+py_test(
+    name = "common_test_base_test",
+    srcs = ["common_test_base_test.py"],
+    deps = [
+        ":common_test_base",
     ],
 )

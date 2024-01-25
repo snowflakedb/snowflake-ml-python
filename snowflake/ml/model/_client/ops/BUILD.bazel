@@ -12,7 +12,6 @@ py_library(
     deps = [
         ":metadata_ops",
         "//snowflake/ml/_internal/utils:identifier",
-        "//snowflake/ml/_internal/utils:snowflake_env",
         "//snowflake/ml/_internal/utils:sql_identifier",
         "//snowflake/ml/model:model_signature",
         "//snowflake/ml/model:type_hints",
@@ -34,7 +33,6 @@ py_test(
     srcs = ["model_ops_test.py"],
     deps = [
         ":model_ops",
-        "//snowflake/ml/_internal/utils:snowflake_env",
         "//snowflake/ml/_internal/utils:sql_identifier",
         "//snowflake/ml/model:model_signature",
         "//snowflake/ml/model/_signatures:snowpark_handler",

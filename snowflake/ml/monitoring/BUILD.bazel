@@ -1,4 +1,4 @@
-load("//bazel:py_rules.bzl", "py_library", "py_package", "snowml_wheel")
+load("//bazel:py_rules.bzl", "py_library", "py_package", "py_wheel")
 
 package_group(
     name = "monitoring",
@@ -8,6 +8,10 @@ package_group(
 )
 
 package(default_visibility = ["//visibility:public"])
+
+exports_files([
+    "pyproject.toml",
+])
 
 py_library(
     name = "monitoring_lib",
@@ -28,19 +32,8 @@ py_package(
     ],
 )
 
-snowml_wheel(
-    name = "monitoring_wheel",
-    compatible_with_snowpark = True,
-    development_status = "PrPr",
-    extra_requires = {},
-    requires = [
-        "numpy",
-        "shap",
-        "snowflake-connector-python[pandas]",
-        "snowflake-snowpark-python>=1.4.0,<2",
-    ],
-    version = "0.1.0",
-    deps = [
-        "//snowflake/ml/monitoring:monitoring_pkg",
-    ],
+py_wheel(
+    name = "wheel",
+    pyproject_toml = ":pyproject.toml",
+    deps = ["//snowflake/ml/monitoring:monitoring_pkg"],
 )

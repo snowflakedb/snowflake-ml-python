@@ -1,8 +1,12 @@
 load("@rules_java//java:defs.bzl", "java_binary")
+load("//:packages.bzl", "PACKAGES")
+load("//bazel:py_rules.bzl", "py_wheel")
+load("//bazel/requirements:rules.bzl", "generate_pyproject_file")
 
 exports_files([
     "CHANGELOG.md",
     "README.md",
+    "LICENSE.txt",
     "conda-env-extended.yml",
     "conda-env-snowflake.yml",
     "conda-env.yml",
@@ -15,4 +19,20 @@ java_binary(
     name = "bazel-diff",
     main_class = "com.bazel_diff.Main",
     runtime_deps = ["@bazel_diff//jar"],
+)
+
+generate_pyproject_file(
+    name = "snowml",
+    src_requirement_file = "//:requirements.yml",
+)
+
+py_wheel(
+    name = "wheel",
+    data = [
+        "//:CHANGELOG.md",
+        "//:LICENSE.txt",
+        "//:README.md",
+    ],
+    pyproject_toml = ":snowml_pyproject",
+    deps = PACKAGES,
 )

@@ -22,6 +22,7 @@ from typing import (
 )
 
 import jsonschema
+import toml
 from conda_libmamba_solver import solver
 from packaging import requirements as packaging_requirements
 from ruamel.yaml import YAML
@@ -304,6 +305,7 @@ def fold_channel(channels: Set[str], req_info: RequirementInfo) -> Set[str]:
 def generate_requirements(
     req_file_path: str,
     schema_file_path: str,
+    pyproject_file_path: str,
     mode: str,
     format: Optional[str],
     snowflake_channel_only: bool,
@@ -415,9 +417,24 @@ def generate_requirements(
             )
         )
         sys.stdout.writelines(results)
-    elif (mode, format) == ("dev_version", "python"):
-        sys.stdout.write(f"REQUIREMENTS = {json.dumps(snowflake_only_env, indent=4)}\n")
-    elif (mode, format) == ("version_requirements", "bzl"):
+    elif (mode, format) == ("version_requirements", "python"):
+        results = list(
+            sorted(
+                filter(
+                    None,
+                    map(
+                        lambda req_info: generate_user_requirements_string(req_info, "conda"),
+                        filter(
+                            lambda req_info: req_info.get("from_channel", SNOWFLAKE_CONDA_CHANNEL)
+                            == SNOWFLAKE_CONDA_CHANNEL,
+                            requirements,
+                        ),
+                    ),
+                ),
+            )
+        )
+        sys.stdout.write(f"REQUIREMENTS = {json.dumps(results, indent=4)}\n")
+    elif (mode, format) == ("version_requirements", "toml"):
         extras_requirements = list(filter(lambda req_info: filter_by_extras(req_info, True, False), requirements))
         extras_results: MutableMapping[str, Sequence[str]] = {}
         all_extras_tags: Set[str] = set()
@@ -453,11 +470,11 @@ def generate_requirements(
                 )
             )
         )
-        sys.stdout.write(
-            "EXTRA_REQUIREMENTS = {extra_requirements}\n\nREQUIREMENTS = {requirements}\n".format(
-                extra_requirements=json.dumps(extras_results, indent=4), requirements=json.dumps(results, indent=4)
-            )
-        )
+        with open(pyproject_file_path, encoding="utf-8") as f:
+            pyproject_config = toml.load(f)
+        pyproject_config["project"]["dependencies"] = results
+        pyproject_config["project"]["optional-dependencies"] = extras_results
+        toml.dump(pyproject_config, sys.stdout)
     elif (mode, format) == ("version_requirements", "python"):
         results = list(
             sorted(
@@ -509,6 +526,7 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("requirement_file", help="Path to the requirement.yaml file", type=str)
     parser.add_argument("--schema", type=str, help="Path to the json schema file.", required=True)
+    parser.add_argument("--pyproject-template", type=str, help="PyProject template file.")
     parser.add_argument(
         "--mode",
         type=str,
@@ -519,7 +537,7 @@ def main() -> None:
     parser.add_argument(
         "--format",
         type=str,
-        choices=["text", "bzl", "python", "conda_env", "conda_meta"],
+        choices=["text", "toml", "python", "conda_env", "conda_meta"],
         help="Define the output format.",
     )
     parser.add_argument("--filter_by_tag", type=str, default=None, help="Filter the result by tags.")
@@ -535,8 +553,8 @@ def main() -> None:
     VALID_SETTINGS = [
         ("validate", None, False),  # Validate the environment
         ("dev_version", "text", False),  # requirements.txt
-        ("dev_version", "python", True),  # sproc test dependencies list
-        ("version_requirements", "bzl", False),  # wheel rule requirements
+        ("version_requirements", "python", True),  # sproc test dependencies list
+        ("version_requirements", "toml", False),  # wheel rule requirements
         ("version_requirements", "python", False),  # model deployment core dependencies list
         ("dev_version", "conda_env", False),  # dev conda-env.yml file
         ("dev_gpu_version", "conda_env", False),  # dev conda-gpu-env.yml file
@@ -550,6 +568,7 @@ def main() -> None:
     generate_requirements(
         args.requirement_file,
         args.schema,
+        args.pyproject_template,
         args.mode,
         args.format,
         args.snowflake_channel_only,

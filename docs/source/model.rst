@@ -18,8 +18,6 @@ snowflake.ml.model
     Model
     ModelVersion
     HuggingFacePipelineModel
-    LLM
-    LLMOptions
 
 snowflake.ml.model.custom_model
 ---------------------------------

@@ -511,6 +511,20 @@ class TelemetryTest(parameterized.TestCase):
                 }
             )
 
+    def test_get_sproc_statement_params_kwargs(self) -> None:
+        def test_sproc_no_statement_params() -> None:
+            return None
+
+        def test_sproc_statement_params(statement_params: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
+            return statement_params
+
+        statement_params = {"test": "test"}
+        kwargs = utils_telemetry.get_sproc_statement_params_kwargs(test_sproc_statement_params, statement_params)
+        assert "statement_params" in kwargs
+
+        kwargs = utils_telemetry.get_sproc_statement_params_kwargs(test_sproc_no_statement_params, statement_params)
+        assert "statement_params" not in kwargs
+
 
 if __name__ == "__main__":
     absltest.main()

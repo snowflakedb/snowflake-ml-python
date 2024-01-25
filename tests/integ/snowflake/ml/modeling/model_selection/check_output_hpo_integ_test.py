@@ -3,9 +3,11 @@ The main purpose of this file is to use Linear Regression,
 to match all kinds of input and output for GridSearchCV/RandomSearchCV.
 """
 
+import inspect
 from typing import Any, Dict, List, Tuple, Union
 from unittest import mock
 
+import cloudpickle as cp
 import inflection
 import numpy as np
 import numpy.typing as npt
@@ -13,6 +15,12 @@ import pandas as pd
 from absl.testing import absltest, parameterized
 from sklearn.datasets import load_iris
 from sklearn.linear_model import LinearRegression as SkLinearRegression
+from sklearn.metrics import (
+    make_scorer,
+    mean_absolute_error,
+    mean_squared_error,
+    r2_score,
+)
 from sklearn.model_selection import GridSearchCV as SkGridSearchCV, KFold
 from sklearn.model_selection._split import BaseCrossValidator
 
@@ -37,7 +45,27 @@ def _load_iris_data() -> Tuple[pd.DataFrame, List[str], List[str]]:
     return input_df_pandas, input_cols, label_col
 
 
-class GridSearchCVTest(parameterized.TestCase):
+def matrix_scorer(clf: SkLinearRegression, X: npt.NDArray[Any], y: npt.NDArray[np.int_]) -> Dict[str, float]:
+    y_pred = clf.predict(X)
+    return {
+        "mean_absolute_error": mean_absolute_error(y, y_pred),
+        "mean_squared_error": mean_squared_error(y, y_pred),
+        "r2_score": r2_score(y, y_pred),
+    }
+
+
+def refit_strategy(cv_results: Dict[str, Any]) -> Any:
+    precision_threshold = 0.3
+    cv_results_ = pd.DataFrame(cv_results)
+    high_precision_cv_results = cv_results_[cv_results_["mean_test_score"] > precision_threshold]
+    return high_precision_cv_results["mean_test_score"].idxmin()
+
+
+cp.register_pickle_by_value(inspect.getmodule(matrix_scorer))
+cp.register_pickle_by_value(inspect.getmodule(refit_strategy))
+
+
+class HPOCorrectness(parameterized.TestCase):
     def setUp(self) -> None:
         """Creates Snowpark and Snowflake environments for testing."""
         self._session = Session.builder.configs(SnowflakeLoginOptions()).create()
@@ -65,11 +93,14 @@ class GridSearchCVTest(parameterized.TestCase):
                     np.testing.assert_allclose(v, cv_result_2[k], rtol=1.0e-7, atol=1.0e-7)
                 # Do not compare the fit time
 
-    def _compare_global_variables(self, sk_obj: SkLinearRegression, sklearn_reg: SkLinearRegression) -> None:
+    def _compare_global_variables(self, sk_obj: SkGridSearchCV, sklearn_reg: SkGridSearchCV) -> None:
         # the result of SnowML grid search cv should behave the same as sklearn's
-        # TODO - check scorer_
-        assert isinstance(sk_obj.refit_time_, float)
-        np.testing.assert_allclose(sk_obj.best_score_, sklearn_reg.best_score_)
+        if hasattr(sk_obj, "refit_time_"):
+            # if refit = False, there is no attribute called refit_time_
+            assert isinstance(sk_obj.refit_time_, float)
+        if hasattr(sk_obj, "best_score_"):
+            # if refit = callable and no best_score specified, then this attribute is empty
+            np.testing.assert_allclose(sk_obj.best_score_, sklearn_reg.best_score_)
         self.assertEqual(sk_obj.multimetric_, sklearn_reg.multimetric_)
         self.assertEqual(sk_obj.best_index_, sklearn_reg.best_index_)
         if hasattr(sk_obj, "n_splits_"):  # n_splits_ is only available in RandomSearchCV
@@ -97,7 +128,7 @@ class GridSearchCVTest(parameterized.TestCase):
                             rtol=1.0e-7,
                             atol=1.0e-7,
                         )
-        self.assertEqual(sk_obj.n_features_in_, sklearn_reg.n_features_in_)
+            self.assertEqual(sk_obj.n_features_in_, sklearn_reg.n_features_in_)
         if hasattr(sk_obj, "feature_names_in_") and hasattr(
             sklearn_reg, "feature_names_in_"
         ):  # feature_names_in_ variable is only available when `best_estimator_` is defined
@@ -112,7 +143,7 @@ class GridSearchCVTest(parameterized.TestCase):
         # Standard Sklearn sample
         {
             "is_single_node": False,
-            "params": {"copy_X": [True, False], "fit_intercept": [True, False]},
+            "params": {"fit_intercept": [True, False], "positive": [True, False]},
             "cv": 5,
             "kwargs": dict(),
         },
@@ -120,8 +151,8 @@ class GridSearchCVTest(parameterized.TestCase):
         {
             "is_single_node": False,
             "params": [
-                {"copy_X": [True], "fit_intercept": [True, False]},
-                {"copy_X": [False], "fit_intercept": [True, False]},
+                {"fit_intercept": [True], "positive": [True, False]},
+                {"fit_intercept": [False], "positive": [True, False]},
             ],
             "cv": 5,
             "kwargs": dict(),
@@ -130,18 +161,18 @@ class GridSearchCVTest(parameterized.TestCase):
         {
             "is_single_node": False,
             "params": [
-                {"copy_X": [True], "fit_intercept": [True, False]},
-                {"copy_X": [False], "fit_intercept": [True, False]},
+                {"fit_intercept": [True], "positive": [True, False]},
+                {"fit_intercept": [False], "positive": [True, False]},
             ],
             "cv": KFold(5),
             "kwargs": dict(),
         },
-        # cv: iterator
+        # cv: iterator with numpy array
         {
             "is_single_node": False,
             "params": [
-                {"copy_X": [True], "fit_intercept": [True, False]},
-                {"copy_X": [False], "fit_intercept": [True, False]},
+                {"fit_intercept": [True], "positive": [True, False]},
+                {"fit_intercept": [False], "positive": [True, False]},
             ],
             "cv": [
                 (
@@ -167,11 +198,12 @@ class GridSearchCVTest(parameterized.TestCase):
             ],
             "kwargs": dict(),
         },
+        # cv: iterator with list
         {
             "is_single_node": False,
             "params": [
-                {"copy_X": [True], "fit_intercept": [True, False]},
-                {"copy_X": [False], "fit_intercept": [True, False]},
+                {"fit_intercept": [True], "positive": [True, False]},
+                {"fit_intercept": [False], "positive": [True, False]},
             ],
             "cv": [
                 (
@@ -197,21 +229,128 @@ class GridSearchCVTest(parameterized.TestCase):
             ],
             "kwargs": dict(),
         },
-        # TODO: scoring
+        # scoring: single score with a string
         {
             "is_single_node": False,
-            "params": {"copy_X": [True, False], "fit_intercept": [True, False]},
+            "params": {"fit_intercept": [True, False], "positive": [True, False]},
             "cv": 5,
-            "kwargs": dict(scoring=["accuracy", "f1_macro"], refit="f1_macro", return_train_score=True),
+            "kwargs": dict(scoring="neg_mean_absolute_error"),
         },
-        # TODO: refit
-        # TODO: error_score
+        # scoring: single score with a callable
+        {
+            "is_single_node": False,
+            "params": {"fit_intercept": [True, False], "positive": [True, False]},
+            "cv": 5,
+            "kwargs": dict(scoring=make_scorer(mean_absolute_error)),
+        },
+        # scoring: multiple scores with list
+        {
+            "is_single_node": False,
+            "params": {"fit_intercept": [True, False], "positive": [True, False]},
+            "cv": 5,
+            "kwargs": dict(
+                scoring=["neg_mean_absolute_error", "neg_mean_squared_error"],
+                refit="neg_mean_squared_error",
+                return_train_score=True,
+            ),
+        },
+        #  scoring: multiple scores with tuple
+        {
+            "is_single_node": False,
+            "params": {"fit_intercept": [True, False], "positive": [True, False]},
+            "cv": 5,
+            "kwargs": dict(
+                scoring=("neg_mean_absolute_error", "neg_mean_squared_error"),
+                refit="neg_mean_squared_error",
+                return_train_score=True,
+            ),
+        },
+        # scoring: multiple scores with custom function
+        {
+            "is_single_node": False,
+            "params": {"fit_intercept": [True, False], "positive": [True, False]},
+            "cv": 5,
+            "kwargs": dict(scoring=matrix_scorer, refit="mean_squared_error"),
+        },
+        # scoring: multiple scores with dictionary of callable
+        {
+            "is_single_node": False,
+            "params": {"fit_intercept": [True, False], "positive": [True, False]},
+            "cv": 5,
+            "kwargs": dict(
+                scoring={
+                    "mean_absolute_error": make_scorer(mean_absolute_error),
+                    "mean_squared_error": make_scorer(mean_squared_error),
+                },
+                refit="mean_squared_error",
+                return_train_score=True,
+            ),
+        },
+        # refit: True
+        {
+            "is_single_node": False,
+            "params": {"fit_intercept": [True, False], "positive": [True, False]},
+            "cv": 5,
+            "kwargs": dict(refit=False),
+        },
+        # refit: str
+        {
+            "is_single_node": False,
+            "params": {"fit_intercept": [True, False], "positive": [True, False]},
+            "cv": 5,
+            "kwargs": dict(refit="neg_mean_squared_error"),
+        },
+        # refit: callable
+        {
+            "is_single_node": False,
+            "params": {"fit_intercept": [True, False], "positive": [True, False]},
+            "cv": 5,
+            "kwargs": dict(refit=refit_strategy, error_score=0.98),
+        },
+        # error_score: float
+        {
+            "is_single_node": False,
+            "params": {"fit_intercept": [True, False], "positive": [True, False]},
+            "cv": 5,
+            "kwargs": dict(error_score=0),
+        },
+        # error_score: 'raise'
+        {
+            "is_single_node": False,
+            "params": {"fit_intercept": [True, False], "positive": [True, False]},
+            "cv": 5,
+            "kwargs": dict(
+                scoring=["neg_mean_absolute_error", "neg_mean_squared_error"],
+                refit="neg_mean_squared_error",
+                return_train_score=True,
+            ),
+        },
         # return_train_score: True
         {
             "is_single_node": False,
-            "params": {"copy_X": [True, False], "fit_intercept": [True, False]},
+            "params": {"fit_intercept": [True, False], "positive": [True, False]},
             "cv": 5,
             "kwargs": dict(return_train_score=True),
+        },
+        # n_jobs = -1
+        {
+            "is_single_node": False,
+            "params": {"fit_intercept": [True, False], "positive": [True, False]},
+            "cv": 5,
+            "kwargs": dict(n_jobs=-1),
+        },
+        {
+            "is_single_node": False,
+            "params": {"fit_intercept": [True, False], "positive": [True, False]},
+            "cv": 5,
+            "kwargs": dict(n_jobs=3),
+        },
+        # pre_dispatch: ignored
+        {
+            "is_single_node": False,
+            "params": {"fit_intercept": [True, False], "positive": [True, False]},
+            "cv": 5,
+            "kwargs": dict(pre_dispatch=5),
         },
     )
     @mock.patch("snowflake.ml.modeling._internal.model_trainer_builder.is_single_node")

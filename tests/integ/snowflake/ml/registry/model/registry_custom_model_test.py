@@ -7,6 +7,7 @@ import pandas as pd
 from absl.testing import absltest
 
 from snowflake.ml.model import custom_model
+from snowflake.snowpark._internal import utils as snowpark_utils
 from tests.integ.snowflake.ml.registry.model import registry_model_test_base
 from tests.integ.snowflake.ml.test_utils import dataframe_utils
 
@@ -104,6 +105,26 @@ class TestRegistryCustomModelInteg(registry_model_test_base.RegistryModelTestBas
             sample_input=sp_df,
             prediction_assert_fns={
                 "predict": (sp_df, lambda res: dataframe_utils.check_sp_df_res(res, y_df_expected, check_dtype=False))
+            },
+        )
+
+    def test_custom_demo_model_sp_one_query(
+        self,
+    ) -> None:
+        lm = DemoModel(custom_model.ModelContext())
+        arr = [[1, 2, 3], [4, 2, 5]]
+        sp_df = self._session.create_dataframe(arr, schema=['"c1"', '"c2"', '"c3"'])
+        table_name = snowpark_utils.random_name_for_temp_object(snowpark_utils.TempObjectType.TABLE)
+        sp_df.write.save_as_table(table_name, mode="errorifexists", table_type="temporary")
+        sp_df_2 = self._session.table(table_name)
+        assert len(sp_df_2.queries["queries"]) == 1, sp_df_2.queries
+        assert len(sp_df_2.queries["post_actions"]) == 0, sp_df_2.queries
+        y_df_expected = pd.DataFrame([[1, 2, 3, 1], [4, 2, 5, 4]], columns=["c1", "c2", "c3", "output"])
+        self._test_registry_model(
+            model=lm,
+            sample_input=sp_df_2,
+            prediction_assert_fns={
+                "predict": (sp_df_2, lambda res: dataframe_utils.check_sp_df_res(res, y_df_expected, check_dtype=False))
             },
         )
 
