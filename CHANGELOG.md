@@ -1,5 +1,12 @@
 # Release History
 
+## 1.2.1
+
+### New Features
+
+- Model Development: Infers output column data type for transformers when possible.
+- Registry: `relax_version` option is available in the `options` argument when logging the model.
+
 ## 1.2.0
 
 ### Bug Fixes

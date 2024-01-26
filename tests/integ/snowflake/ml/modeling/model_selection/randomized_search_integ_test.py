@@ -1,4 +1,5 @@
-from typing import List, Tuple
+import numbers
+from typing import Any, Dict, List, Tuple
 from unittest import mock
 
 import inflection
@@ -46,7 +47,7 @@ class RandomizedSearchCVTest(parameterized.TestCase):
     def tearDown(self):
         self._session.close()
 
-    def _compare_cv_results(self, cv_result_1, cv_result_2) -> None:
+    def _compare_cv_results(self, cv_result_1: Dict[str, Any], cv_result_2: Dict[str, Any]) -> None:
         # compare the keys
         self.assertEqual(cv_result_1.keys(), cv_result_2.keys())
         # compare the values
@@ -59,6 +60,71 @@ class RandomizedSearchCVTest(parameterized.TestCase):
                 elif ("test_") in k:  # compare the test score
                     np.testing.assert_allclose(v, cv_result_2[k], rtol=1.0e-1, atol=1.0e-2)
                 # Do not compare the fit time
+
+    def _compare_global_variables(
+        self,
+        sk_obj: SkRandomizedSearchCV,
+        sklearn_reg: SkRandomizedSearchCV,
+    ) -> None:
+        # the result of SnowML grid search cv should behave the same as sklearn's
+        if hasattr(sk_obj, "refit_time_"):
+            # if refit = False, there is no attribute called refit_time_
+            assert isinstance(sk_obj.refit_time_, float)
+        if hasattr(sk_obj, "best_score_"):
+            # if refit = callable and no best_score specified, then this attribute is empty
+            np.testing.assert_allclose(
+                sk_obj.best_score_,
+                sklearn_reg.best_score_,
+                rtol=1.0e-5,
+                atol=1.0e-4,
+            )
+        self.assertEqual(sk_obj.multimetric_, sklearn_reg.multimetric_)
+        self.assertEqual(sk_obj.best_index_, sklearn_reg.best_index_)
+        if hasattr(sk_obj, "n_splits_"):  # n_splits_ is only available in RandomSearchCV
+            self.assertEqual(sk_obj.n_splits_, sklearn_reg.n_splits_)
+        if hasattr(sk_obj, "best_estimator_"):
+            for variable_name in sk_obj.best_estimator_.__dict__.keys():
+                if variable_name not in ("n_jobs", "estimator", "estimator_", "estimators_", "_Booster"):
+                    target_element = getattr(sk_obj.best_estimator_, variable_name)
+                    if isinstance(target_element, np.ndarray):
+                        if getattr(sk_obj.best_estimator_, variable_name).dtype == "object":
+                            self.assertEqual(
+                                getattr(sk_obj.best_estimator_, variable_name).tolist(),
+                                getattr(sklearn_reg.best_estimator_, variable_name).tolist(),
+                            )
+                        else:
+                            np.testing.assert_allclose(
+                                target_element,
+                                getattr(sklearn_reg.best_estimator_, variable_name),
+                                rtol=1.0e-5,
+                                atol=1.0e-4,
+                            )
+                    elif isinstance(target_element, (str, bool, tuple, dict)):
+                        self.assertEqual(
+                            target_element,
+                            getattr(sklearn_reg.best_estimator_, variable_name),
+                        )
+                    elif isinstance(target_element, numbers.Number):
+                        np.testing.assert_allclose(
+                            target_element,
+                            getattr(sklearn_reg.best_estimator_, variable_name),
+                            rtol=1.0e-5,
+                            atol=1.0e-4,
+                        )
+                    elif isinstance(target_element, type(None)):
+                        assert isinstance(getattr(sklearn_reg.best_estimator_, variable_name), type(None))
+                    else:
+                        raise ValueError(variable_name, target_element)
+            self.assertEqual(sk_obj.n_features_in_, sklearn_reg.n_features_in_)
+        if hasattr(sk_obj, "feature_names_in_") and hasattr(
+            sklearn_reg, "feature_names_in_"
+        ):  # feature_names_in_ variable is only available when `best_estimator_` is defined
+            self.assertEqual(sk_obj.feature_names_in_.tolist(), sklearn_reg.feature_names_in_.tolist())
+        if hasattr(sk_obj, "classes_"):
+            np.testing.assert_allclose(sk_obj.classes_, sklearn_reg.classes_)
+        self._compare_cv_results(sk_obj.cv_results_, sklearn_reg.cv_results_)
+        if not sk_obj.multimetric_:
+            self.assertEqual(sk_obj.best_params_, sklearn_reg.best_params_)
 
     @parameterized.parameters(
         {
@@ -109,15 +175,7 @@ class RandomizedSearchCVTest(parameterized.TestCase):
         sk_obj = reg.to_sklearn()
 
         # the result of SnowML grid search cv should behave the same as sklearn's
-        np.testing.assert_allclose(sk_obj.best_score_, sklearn_reg.best_score_)
-        self.assertEqual(sk_obj.multimetric_, sklearn_reg.multimetric_)
-
-        # self.assertEqual(sklearn_reg.multimetric_, False)
-        self.assertEqual(sk_obj.best_index_, sklearn_reg.best_index_)
-        self._compare_cv_results(sk_obj.cv_results_, sklearn_reg.cv_results_)
-
-        if not sk_obj.multimetric_:
-            self.assertEqual(sk_obj.best_params_, sklearn_reg.best_params_)
+        self._compare_global_variables(sk_obj, sklearn_reg)
 
         actual_arr = reg.predict(self._input_df).to_pandas().sort_values(by="INDEX")[output_cols].to_numpy()
         sklearn_numpy_arr = sklearn_reg.predict(self._input_df_pandas[self._input_cols])
@@ -208,6 +266,10 @@ class RandomizedSearchCVTest(parameterized.TestCase):
 
         reg.fit(self._input_df)
         sklearn_reg.fit(X=self._input_df_pandas[self._input_cols], y=self._input_df_pandas[self._label_col].squeeze())
+
+        # the result of SnowML grid search cv should behave the same as sklearn's
+        sk_obj = reg.to_sklearn()
+        self._compare_global_variables(sk_obj, sklearn_reg)
 
         transformed = reg.transform(self._input_df).to_pandas().sort_values(by="INDEX")
         sk_transformed = sklearn_reg.transform(self._input_df_pandas[self._input_cols])

@@ -8,14 +8,31 @@ _AUTOGEN_HEADERS = """# DO NOT EDIT!
 """
 
 _SCHEMA_FILE = "//bazel/requirements:requirements.schema.json"
+_PYPROJECT_FILE = "//bazel/requirements/templates:pyproject.toml"
 
 _GENERATE_TOOL = "//bazel/requirements:parse_and_generate_requirements"
 
-_GENERATE_COMMAND = "$(location " + _GENERATE_TOOL + ") $(location {src_requirement_file} ) --schema $(location " + _SCHEMA_FILE + ") {options} > $@"
+_GENERATE_COMMAND = "$(location {}) $(location {{src_requirement_file}}) --schema $(location {}) {{options}} > $@".format(_GENERATE_TOOL, _SCHEMA_FILE)
 
 # "---" is a document start marker, which is legit but optional (https://yaml.org/spec/1.1/#c-document-start). This
 # is needed for conda meta.yaml to bypass some bug from conda side.
 _YAML_START_DOCUMENT_MARKER = "---"
+
+def generate_pyproject_file(
+        name,
+        src_requirement_file):
+    _cmd = "$(location {}) $(location {{src_requirement_file}} ) --schema $(location {}) --pyproject-template $(location {}) --mode version_requirements --format toml > $@".format(_GENERATE_TOOL, _SCHEMA_FILE, _PYPROJECT_FILE)
+    py_genrule(
+        name = "{name}_pyproject".format(name = name),
+        srcs = [
+            src_requirement_file,
+            _SCHEMA_FILE,
+            _PYPROJECT_FILE,
+        ],
+        outs = ["pyproject.toml"],
+        cmd = _cmd.format(src_requirement_file = src_requirement_file),
+        tools = [_GENERATE_TOOL],
+    )
 
 def generate_requirement_file(
         name,

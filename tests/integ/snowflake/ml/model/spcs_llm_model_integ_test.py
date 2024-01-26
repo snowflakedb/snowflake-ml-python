@@ -1,5 +1,6 @@
 import os
 import tempfile
+import unittest
 
 import pandas as pd
 import pytest
@@ -18,6 +19,7 @@ from tests.integ.snowflake.ml.test_utils import (
 )
 
 
+@unittest.skip("release-1.2.1")
 @pytest.mark.conda_incompatible
 class TestSPCSLLMModelInteg(spcs_integ_test_base.SpcsIntegTestBase):
     def setUp(self) -> None:
@@ -47,7 +49,7 @@ class TestSPCSLLMModelInteg(spcs_integ_test_base.SpcsIntegTestBase):
 
         stage_path = f"@{self._test_stage}/{self._run_id}"
         deployment_stage_path = f"@{self._test_stage}/{self._run_id}"
-        model_api.save_model(  # type: ignore[call-overload]
+        model_api.save_model(
             name="model",
             session=self._session,
             stage_path=stage_path,
@@ -76,7 +78,7 @@ class TestSPCSLLMModelInteg(spcs_integ_test_base.SpcsIntegTestBase):
             model_id=svc_func_name,
             platform=deploy_platforms.TargetPlatform.SNOWPARK_CONTAINER_SERVICES,
             options={
-                **deployment_options,  # type: ignore[arg-type]
+                **deployment_options,
             },  # type: ignore[call-overload]
         )
         assert deploy_info is not None

@@ -1,0 +1,7 @@
+sequence_style = "block_style"
+line_length = 120
+whitelines = 1
+indent_mapping = 2
+indent_offset = 2
+indent_sequence = 4
+comments_min_spaces_from_content = 1

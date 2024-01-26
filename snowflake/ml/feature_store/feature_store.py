@@ -8,9 +8,10 @@ import re
 import warnings
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Callable, Dict, List, Optional, Tuple, Union, cast
+from typing import Callable, Dict, List, Optional, Tuple, TypeVar, Union, cast
 
 from pytimeparse.timeparse import timeparse
+from typing_extensions import Concatenate, ParamSpec
 
 from snowflake.ml._internal import telemetry
 from snowflake.ml._internal.exceptions import (
@@ -41,6 +42,9 @@ from snowflake.snowpark import DataFrame, Row, Session, functions as F
 from snowflake.snowpark._internal import type_utils, utils as snowpark_utils
 from snowflake.snowpark.exceptions import SnowparkSQLException
 from snowflake.snowpark.types import StructField
+
+_Args = ParamSpec("_Args")
+_RT = TypeVar("_RT")
 
 logger = logging.getLogger(__name__)
 
@@ -77,9 +81,11 @@ class _FeatureStoreConfig:
         return f"{self.database}.{self.schema}"
 
 
-def switch_warehouse(f: Callable[..., Any]) -> Callable[..., Any]:
+def switch_warehouse(
+    f: Callable[Concatenate[FeatureStore, _Args], _RT]
+) -> Callable[Concatenate[FeatureStore, _Args], _RT]:
     @functools.wraps(f)
-    def wrapper(self: FeatureStore, *args: Any, **kargs: Any) -> Any:
+    def wrapper(self: FeatureStore, /, *args: _Args.args, **kargs: _Args.kwargs) -> _RT:
         original_warehouse = self._session.get_current_warehouse()
         try:
             if self._default_warehouse is not None:
@@ -91,13 +97,17 @@ def switch_warehouse(f: Callable[..., Any]) -> Callable[..., Any]:
     return wrapper
 
 
-def dispatch_decorator(prpr_version: str) -> Callable[..., Any]:
-    def decorator(f: Callable[..., Any]) -> Callable[..., Any]:
+def dispatch_decorator(
+    prpr_version: str,
+) -> Callable[[Callable[Concatenate[FeatureStore, _Args], _RT]], Callable[Concatenate[FeatureStore, _Args], _RT],]:
+    def decorator(
+        f: Callable[Concatenate[FeatureStore, _Args], _RT]
+    ) -> Callable[Concatenate[FeatureStore, _Args], _RT]:
         @telemetry.send_api_usage_telemetry(project=_PROJECT)
         @snowpark_utils.private_preview(version=prpr_version)
         @switch_warehouse
         @functools.wraps(f)
-        def wrap(self: FeatureStore, *args: Any, **kargs: Any) -> Any:
+        def wrap(self: FeatureStore, /, *args: _Args.args, **kargs: _Args.kwargs) -> _RT:
             return f(self, *args, **kargs)
 
         return wrap
@@ -359,7 +369,7 @@ class FeatureStore:
                 ) from e
 
         logger.info(f"Registered FeatureView {feature_view.name}/{version}.")
-        return self.get_feature_view(feature_view.name, str(version))  # type: ignore[no-any-return]
+        return self.get_feature_view(feature_view.name, str(version))
 
     @dispatch_decorator(prpr_version="1.1.0")
     def update_feature_view(self, feature_view: FeatureView) -> None:
@@ -751,7 +761,7 @@ class FeatureStore:
                 original_exception=ValueError(f"Entity {name} does not exist."),
             )
 
-        active_feature_views = list(self.list_feature_views(entity_name=name, as_dataframe=False))
+        active_feature_views = cast(List[FeatureView], self.list_feature_views(entity_name=name, as_dataframe=False))
         if len(active_feature_views) > 0:
             raise snowml_exceptions.SnowflakeMLException(
                 error_code=error_codes.SNOWML_DELETE_FAILED,

@@ -84,9 +84,11 @@ class MLFlowHandlerTest(absltest.TestCase):
                 sorted(
                     [
                         "mlflow<3,>=2.3",
+                        "numpy==1.23.4",
                         "psutil==5.9.0",
                         "scikit-learn==1.2.2",
                         "scipy==1.9.3",
+                        "typing-extensions==4.5.0",
                     ]
                 ),
             )
@@ -126,9 +128,11 @@ class MLFlowHandlerTest(absltest.TestCase):
                 sorted(
                     [
                         "mlflow<3,>=2.3",
+                        "numpy==1.23.4",
                         "psutil==5.9.0",
                         "scikit-learn==1.2.2",
                         "scipy==1.9.3",
+                        "typing-extensions==4.5.0",
                     ]
                 ),
             )

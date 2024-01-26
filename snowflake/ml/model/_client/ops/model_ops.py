@@ -4,9 +4,8 @@ import tempfile
 from typing import Any, Dict, List, Optional, Union, cast
 
 import yaml
-from packaging import version
 
-from snowflake.ml._internal.utils import identifier, snowflake_env, sql_identifier
+from snowflake.ml._internal.utils import identifier, sql_identifier
 from snowflake.ml.model import model_signature, type_hints
 from snowflake.ml.model._client.ops import metadata_ops
 from snowflake.ml.model._client.sql import (
@@ -24,8 +23,6 @@ from snowflake.ml.model._packager.model_meta import model_meta, model_meta_schem
 from snowflake.ml.model._signatures import snowpark_handler
 from snowflake.snowpark import dataframe, row, session
 from snowflake.snowpark._internal import utils as snowpark_utils
-
-_TAG_ON_MODEL_AVAILABLE_VERSION = version.parse("8.2.0")
 
 
 class ModelOperator:
@@ -296,21 +293,14 @@ class ModelOperator:
         tag_value: str,
         statement_params: Optional[Dict[str, Any]] = None,
     ) -> None:
-        sf_version = snowflake_env.get_current_snowflake_version(self._session, statement_params=statement_params)
-        if sf_version >= _TAG_ON_MODEL_AVAILABLE_VERSION:
-            self._tag_client.set_tag_on_model(
-                model_name=model_name,
-                tag_database_name=tag_database_name,
-                tag_schema_name=tag_schema_name,
-                tag_name=tag_name,
-                tag_value=tag_value,
-                statement_params=statement_params,
-            )
-        else:
-            raise NotImplementedError(
-                f"`set_tag` won't work before Snowflake version {_TAG_ON_MODEL_AVAILABLE_VERSION},"
-                f" currently is {sf_version}"
-            )
+        self._tag_client.set_tag_on_model(
+            model_name=model_name,
+            tag_database_name=tag_database_name,
+            tag_schema_name=tag_schema_name,
+            tag_name=tag_name,
+            tag_value=tag_value,
+            statement_params=statement_params,
+        )
 
     def unset_tag(
         self,
@@ -321,20 +311,13 @@ class ModelOperator:
         tag_name: sql_identifier.SqlIdentifier,
         statement_params: Optional[Dict[str, Any]] = None,
     ) -> None:
-        sf_version = snowflake_env.get_current_snowflake_version(self._session, statement_params=statement_params)
-        if sf_version >= _TAG_ON_MODEL_AVAILABLE_VERSION:
-            self._tag_client.unset_tag_on_model(
-                model_name=model_name,
-                tag_database_name=tag_database_name,
-                tag_schema_name=tag_schema_name,
-                tag_name=tag_name,
-                statement_params=statement_params,
-            )
-        else:
-            raise NotImplementedError(
-                f"`unset_tag` won't work before Snowflake version {_TAG_ON_MODEL_AVAILABLE_VERSION},"
-                f" currently is {sf_version}"
-            )
+        self._tag_client.unset_tag_on_model(
+            model_name=model_name,
+            tag_database_name=tag_database_name,
+            tag_schema_name=tag_schema_name,
+            tag_name=tag_name,
+            statement_params=statement_params,
+        )
 
     def get_model_version_manifest(
         self,
@@ -382,11 +365,6 @@ class ModelOperator:
         version_name: sql_identifier.SqlIdentifier,
         statement_params: Optional[Dict[str, Any]] = None,
     ) -> model_manifest_schema.SnowparkMLDataDict:
-        if (
-            snowflake_env.get_current_snowflake_version(self._session)
-            < model_manifest_schema.MANIFEST_USER_DATA_ENABLE_VERSION
-        ):
-            raise NotImplementedError("User_data has not been supported yet.")
         raw_user_data_json_string = self._model_client.show_versions(
             model_name=model_name,
             version_name=version_name,

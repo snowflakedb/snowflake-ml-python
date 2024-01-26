@@ -48,7 +48,7 @@ class SnowparkHandlersTest(common_test_base.CommonTestBase):
 
         return (input_df_pandas, input_cols, label_cols)
 
-    @common_test_base.CommonTestBase.sproc_test()
+    @common_test_base.CommonTestBase.sproc_test(additional_packages=["inflection"])
     def test_batch_inference(self) -> None:
         sklearn_estimator = SkLinearRegression()
         input_df_pandas, input_cols, label_cols = self._get_test_dataset()
@@ -75,7 +75,7 @@ class SnowparkHandlersTest(common_test_base.CommonTestBase):
 
         np.testing.assert_allclose(sklearn_numpy_arr, sf_numpy_arr, rtol=1.0e-1, atol=1.0e-2)
 
-    @common_test_base.CommonTestBase.sproc_test()
+    @common_test_base.CommonTestBase.sproc_test(additional_packages=["inflection"])
     def test_score_snowpark(self) -> None:
         sklearn_estimator = SkLinearRegression()
         input_df_pandas, input_cols, label_cols = self._get_test_dataset()

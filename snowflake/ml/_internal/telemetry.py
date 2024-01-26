@@ -584,3 +584,22 @@ class _SourceTelemetryClient:
         """Send the telemetry data batch immediately."""
         if self._telemetry:
             self._telemetry.send_batch()
+
+
+def get_sproc_statement_params_kwargs(sproc: Callable[..., Any], statement_params: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Get statement_params keyword argument for sproc call.
+
+    Args:
+        sproc: sproc function
+        statement_params: dictionary to be passed as statement params, if possible
+
+    Returns:
+        Keyword arguments dict
+    """
+    sproc_argspec = inspect.getfullargspec(sproc)
+    kwargs = {}
+    if "statement_params" in sproc_argspec.args:
+        kwargs["statement_params"] = statement_params
+
+    return kwargs

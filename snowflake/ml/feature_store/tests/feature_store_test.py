@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import List, Optional, Union, cast
 from uuid import uuid4
 
 from absl.testing import absltest
@@ -15,21 +15,22 @@ from common_utils import (
 
 from snowflake.ml._internal.utils.sql_identifier import SqlIdentifier
 from snowflake.ml.dataset.dataset import Dataset
-from snowflake.ml.feature_store import (  # type: ignore[attr-defined]
-    CreationMode,
-    Entity,
-    FeatureStore,
-    FeatureView,
-    FeatureViewStatus,
-)
+from snowflake.ml.feature_store.entity import Entity
 from snowflake.ml.feature_store.feature_store import (
     _ENTITY_TAG_PREFIX,
     _FEATURE_STORE_OBJECT_TAG,
     _FEATURE_VIEW_ENTITY_TAG,
     _FEATURE_VIEW_TS_COL_TAG,
+    CreationMode,
+    FeatureStore,
+)
+from snowflake.ml.feature_store.feature_view import (
+    FeatureView,
+    FeatureViewSlice,
+    FeatureViewStatus,
 )
 from snowflake.ml.utils.connection_params import SnowflakeLoginOptions
-from snowflake.snowpark import Session, exceptions as snowpark_exceptions
+from snowflake.snowpark import DataFrame, Session, exceptions as snowpark_exceptions
 from snowflake.snowpark.functions import call_udf, col, udf
 
 
@@ -230,7 +231,12 @@ class FeatureStoreTest(absltest.TestCase):
         # test delete entity failure with active feature views
         # create a new feature view
         sql = f'SELECT name, id AS "uid" FROM {self._mock_table}'
-        fv = FeatureView(name="fv", entities=[entities["User"]], feature_df=self._session.sql(sql), refresh_freq="1m")
+        fv = FeatureView(
+            name="fv",
+            entities=[entities["User"]],
+            feature_df=self._session.sql(sql),
+            refresh_freq="1m",
+        )
         fs.register_feature_view(feature_view=fv, version="FIRST")
         with self.assertRaisesRegex(ValueError, "Cannot delete Entity .* due to active FeatureViews.*"):
             fs.delete_entity("User")
@@ -482,7 +488,7 @@ class FeatureStoreTest(absltest.TestCase):
         self.assertEqual(fv.timestamp_col, None)
 
         fv = fs.get_feature_view(name="fv0", version="SECOND")
-        self.assertEqual(fv.timestamp_col.upper(), "TS")
+        self.assertEqual(str(fv.timestamp_col).upper(), "TS")
 
     def test_create_duplicated_feature_view(self) -> None:
         fs = self._create_feature_store()
@@ -491,10 +497,20 @@ class FeatureStoreTest(absltest.TestCase):
         fs.register_entity(e)
 
         sql = f"SELECT * FROM {self._mock_table}"
-        fv = FeatureView(name="fv", entities=[e], feature_df=self._session.sql(sql), refresh_freq="1m")
+        fv = FeatureView(
+            name="fv",
+            entities=[e],
+            feature_df=self._session.sql(sql),
+            refresh_freq="1m",
+        )
         fv = fs.register_feature_view(feature_view=fv, version="v1")
 
-        fv = FeatureView(name="fv", entities=[e], feature_df=self._session.sql(sql), refresh_freq="1m")
+        fv = FeatureView(
+            name="fv",
+            entities=[e],
+            feature_df=self._session.sql(sql),
+            refresh_freq="1m",
+        )
         with self.assertRaisesRegex(ValueError, "FeatureView .* already exists."):
             fv = fs.register_feature_view(feature_view=fv, version="v1")
 
@@ -505,7 +521,10 @@ class FeatureStoreTest(absltest.TestCase):
         fs.register_entity(e)
 
         my_fv = FeatureView(
-            name="my_fv", entities=[e], feature_df=self._session.table(self._mock_table), refresh_freq="DOWNSTREAM"
+            name="my_fv",
+            entities=[e],
+            feature_df=self._session.table(self._mock_table),
+            refresh_freq="DOWNSTREAM",
         )
         my_fv = fs.register_feature_view(feature_view=my_fv, version="v1", block=True)
 
@@ -526,7 +545,10 @@ class FeatureStoreTest(absltest.TestCase):
         e = Entity("foo", ["id"])
         fs.register_entity(e)
         my_fv = FeatureView(
-            name="my_fv", entities=[e], feature_df=self._session.table(self._mock_table), refresh_freq="DOWNSTREAM"
+            name="my_fv",
+            entities=[e],
+            feature_df=self._session.table(self._mock_table),
+            refresh_freq="DOWNSTREAM",
         )
         my_fv = fs.register_feature_view(feature_view=my_fv, version="v1", block=True)
 
@@ -557,7 +579,12 @@ class FeatureStoreTest(absltest.TestCase):
         fs.register_entity(e)
 
         sql = f"SELECT name, id, title, age, ts FROM {self._mock_table}"
-        my_fv = FeatureView(name="my_fv", entities=[e], feature_df=self._session.sql(sql), refresh_freq="DOWNSTREAM")
+        my_fv = FeatureView(
+            name="my_fv",
+            entities=[e],
+            feature_df=self._session.sql(sql),
+            refresh_freq="DOWNSTREAM",
+        )
         my_fv = fs.register_feature_view(feature_view=my_fv, version="v1", block=True)
 
         df = fs.read_feature_view(my_fv)
@@ -581,7 +608,10 @@ class FeatureStoreTest(absltest.TestCase):
 
         sql = f"SELECT name, id, title, age, ts FROM {self._mock_table}"
         my_fv = FeatureView(
-            name="my_fv", entities=[e], feature_df=self._session.sql(sql), refresh_freq="* * * * * America/Los_Angeles"
+            name="my_fv",
+            entities=[e],
+            feature_df=self._session.sql(sql),
+            refresh_freq="* * * * * America/Los_Angeles",
         ).attach_feature_desc({"title": "my title"})
         my_fv = fs.register_feature_view(
             feature_view=my_fv,
@@ -636,13 +666,18 @@ class FeatureStoreTest(absltest.TestCase):
         fv2 = fs.register_feature_view(feature_view=fv2, version="v1", block=True)
 
         sql3 = f"SELECT id, dept FROM {self._mock_table}"
-        fv3 = FeatureView(name="fv3", entities=[e], feature_df=self._session.sql(sql3), refresh_freq="DOWNSTREAM")
+        fv3 = FeatureView(
+            name="fv3",
+            entities=[e],
+            feature_df=self._session.sql(sql3),
+            refresh_freq="DOWNSTREAM",
+        )
         fv3 = fs.register_feature_view(feature_view=fv3, version="v1", block=True)
 
         spine_df = self._session.create_dataframe([(1, 101), (2, 202), (1, 90)], schema=["id", "ts"])
         df = fs.retrieve_feature_values(
             spine_df=spine_df,
-            features=[fv1, fv2, fv3],
+            features=cast(List[Union[FeatureView, FeatureViewSlice]], [fv1, fv2, fv3]),
             spine_timestamp_col="ts",
         )
         compare_dataframe(
@@ -665,15 +700,28 @@ class FeatureStoreTest(absltest.TestCase):
         fs.register_entity(e)
 
         sql1 = f"SELECT id, name, title FROM {self._mock_table}"
-        fv1 = FeatureView(name="fv1", entities=[e], feature_df=self._session.sql(sql1), refresh_freq="DOWNSTREAM")
+        fv1 = FeatureView(
+            name="fv1",
+            entities=[e],
+            feature_df=self._session.sql(sql1),
+            refresh_freq="DOWNSTREAM",
+        )
         fv1 = fs.register_feature_view(feature_view=fv1, version="v1", block=True)
 
         sql2 = f"SELECT id, age FROM {self._mock_table}"
-        fv2 = FeatureView(name="fv2", entities=[e], feature_df=self._session.sql(sql2), refresh_freq="DOWNSTREAM")
+        fv2 = FeatureView(
+            name="fv2",
+            entities=[e],
+            feature_df=self._session.sql(sql2),
+            refresh_freq="DOWNSTREAM",
+        )
         fv2 = fs.register_feature_view(feature_view=fv2, version="v1", block=True)
 
         spine_df = self._session.create_dataframe([(1), (2)], schema=["id"])
-        df = fs.retrieve_feature_values(spine_df=spine_df, features=[fv1, fv2])
+        df = fs.retrieve_feature_values(
+            spine_df=spine_df,
+            features=cast(List[Union[FeatureView, FeatureViewSlice]], [fv1, fv2]),
+        )
 
         compare_dataframe(
             actual_df=df.to_pandas(),
@@ -686,7 +734,10 @@ class FeatureStoreTest(absltest.TestCase):
             sort_cols=["ID"],
         )
 
-        df = fs.retrieve_feature_values(spine_df=spine_df, features=[fv1.slice(["name"]), fv2])
+        df = fs.retrieve_feature_values(
+            spine_df=spine_df,
+            features=cast(List[Union[FeatureView, FeatureViewSlice]], [fv1.slice(["name"]), fv2]),
+        )
         compare_dataframe(
             actual_df=df.to_pandas(),
             target_data={
@@ -698,7 +749,9 @@ class FeatureStoreTest(absltest.TestCase):
         )
 
         df = fs.retrieve_feature_values(
-            spine_df=spine_df, features=[fv1.slice(["name"]), fv2], exclude_columns=["NAME"]
+            spine_df=spine_df,
+            features=cast(List[Union[FeatureView, FeatureViewSlice]], [fv1.slice(["name"]), fv2]),
+            exclude_columns=["NAME"],
         )
         compare_dataframe(
             actual_df=df.to_pandas(),
@@ -712,7 +765,7 @@ class FeatureStoreTest(absltest.TestCase):
         # test retrieve_feature_values with serialized feature objects
         fv1_slice = fv1.slice(["name"])
         dataset = fs.generate_dataset(spine_df, features=[fv1_slice, fv2])
-        df = fs.retrieve_feature_values(spine_df=spine_df, features=dataset.load_features())
+        df = fs.retrieve_feature_values(spine_df=spine_df, features=cast(List[str], dataset.load_features()))
         compare_dataframe(
             actual_df=df.to_pandas(),
             target_data={
@@ -850,11 +903,21 @@ class FeatureStoreTest(absltest.TestCase):
 
         # 1. Right side is FeatureViewSlice
         sql1 = f"SELECT id, name FROM {self._mock_table}"
-        fv1 = FeatureView(name="fv1", entities=[e], feature_df=self._session.sql(sql1), refresh_freq="DOWNSTREAM")
+        fv1 = FeatureView(
+            name="fv1",
+            entities=[e],
+            feature_df=self._session.sql(sql1),
+            refresh_freq="DOWNSTREAM",
+        )
         fv1 = fs.register_feature_view(feature_view=fv1, version="v1", block=True)
 
         sql2 = f"SELECT id, title, age FROM {self._mock_table}"
-        fv2 = FeatureView(name="fv2", entities=[e], feature_df=self._session.sql(sql2), refresh_freq="DOWNSTREAM")
+        fv2 = FeatureView(
+            name="fv2",
+            entities=[e],
+            feature_df=self._session.sql(sql2),
+            refresh_freq="DOWNSTREAM",
+        )
         fv2 = fs.register_feature_view(feature_view=fv2, version="v1", block=True)
 
         merged_fv = fs.merge_features(features=[fv1, fv2.slice(["title"])], name="merged_fv")
@@ -872,10 +935,20 @@ class FeatureStoreTest(absltest.TestCase):
         )
 
         # 2. Left side is FeatureViewSlice
-        fv3 = FeatureView(name="fv3", entities=[e], feature_df=self._session.sql(sql2), refresh_freq="DOWNSTREAM")
+        fv3 = FeatureView(
+            name="fv3",
+            entities=[e],
+            feature_df=self._session.sql(sql2),
+            refresh_freq="DOWNSTREAM",
+        )
         fv3 = fs.register_feature_view(feature_view=fv3, version="v1", block=True)
 
-        fv4 = FeatureView(name="fv4", entities=[e], feature_df=self._session.sql(sql1), refresh_freq="DOWNSTREAM")
+        fv4 = FeatureView(
+            name="fv4",
+            entities=[e],
+            feature_df=self._session.sql(sql1),
+            refresh_freq="DOWNSTREAM",
+        )
         fv4 = fs.register_feature_view(feature_view=fv4, version="v1", block=True)
 
         merged_fv_2 = fs.merge_features(features=[fv3.slice(["title"]), fv4], name="merged_fv_2")
@@ -953,23 +1026,39 @@ class FeatureStoreTest(absltest.TestCase):
         # 1. Right side is FeatureViewSlice
         sql1 = f"SELECT id, name, ts FROM {self._mock_table}"
         fv1 = FeatureView(
-            name="fv1", entities=[e], feature_df=self._session.sql(sql1), timestamp_col="ts", refresh_freq="DOWNSTREAM"
+            name="fv1",
+            entities=[e],
+            feature_df=self._session.sql(sql1),
+            timestamp_col="ts",
+            refresh_freq="DOWNSTREAM",
         )
         fv1.attach_feature_desc({"name": "this is my name col"})
         fv1 = fs.register_feature_view(feature_view=fv1, version="v1", block=True)
 
         sql2 = f"SELECT id, title, age FROM {self._mock_table}"
-        fv2 = FeatureView(name="fv2", entities=[e], feature_df=self._session.sql(sql2), refresh_freq="DOWNSTREAM")
+        fv2 = FeatureView(
+            name="fv2",
+            entities=[e],
+            feature_df=self._session.sql(sql2),
+            refresh_freq="DOWNSTREAM",
+        )
         fv2 = fs.register_feature_view(feature_view=fv2, version="v1", block=True)
         self.assertEqual(
-            sorted(fs.list_feature_views(entity_name="Foo", as_dataframe=False), key=lambda fv: fv.name), [fv1, fv2]
+            sorted(
+                cast(
+                    List[FeatureView],
+                    fs.list_feature_views(entity_name="Foo", as_dataframe=False),
+                ),
+                key=lambda fv: fv.name,
+            ),
+            [fv1, fv2],
         )
         self.assertEqual(
             fs.list_feature_views(entity_name="foo", feature_view_name="fv1", as_dataframe=False),
             [fv1],
         )
 
-        df = fs.list_feature_views()
+        df = cast(DataFrame, fs.list_feature_views())
         self.assertListEqual(
             df.columns,
             [
@@ -999,7 +1088,12 @@ class FeatureStoreTest(absltest.TestCase):
         fs.register_entity(e)
 
         sql1 = f"SELECT id, name FROM {self._mock_table}"
-        fv1 = FeatureView(name="fv1", entities=[e], feature_df=self._session.sql(sql1), refresh_freq="DOWNSTREAM")
+        fv1 = FeatureView(
+            name="fv1",
+            entities=[e],
+            feature_df=self._session.sql(sql1),
+            refresh_freq="DOWNSTREAM",
+        )
         fs.register_feature_view(feature_view=fv1, version="v1", block=True)
 
         fs._session = create_mock_session(
@@ -1048,7 +1142,12 @@ class FeatureStoreTest(absltest.TestCase):
         fs.register_entity(e)
 
         sql1 = f"SELECT id, name, title FROM {self._mock_table}"
-        fv1 = FeatureView(name="fv1", entities=[e], feature_df=self._session.sql(sql1), refresh_freq="DOWNSTREAM")
+        fv1 = FeatureView(
+            name="fv1",
+            entities=[e],
+            feature_df=self._session.sql(sql1),
+            refresh_freq="DOWNSTREAM",
+        )
         fv1 = fs.register_feature_view(feature_view=fv1, version="v1", block=True)
 
         sql2 = f"SELECT id, age, ts FROM {self._mock_table}"
@@ -1237,7 +1336,10 @@ class FeatureStoreTest(absltest.TestCase):
         fs.register_entity(e)
         sql = f"SELECT name, id FROM {self._mock_table}"
         fv = FeatureView(
-            name="fv", entities=[e], feature_df=self._session.sql(sql), refresh_freq="* * * * * America/Los_Angeles"
+            name="fv",
+            entities=[e],
+            feature_df=self._session.sql(sql),
+            refresh_freq="* * * * * America/Los_Angeles",
         )
         fv = fs.register_feature_view(feature_view=fv, version="v1", block=True)
 
@@ -1347,19 +1449,27 @@ class FeatureStoreTest(absltest.TestCase):
 
         sql = f"SELECT id, name, title FROM {self._mock_table}"
         alternative_wh = "REGTEST_ML_SMALL"
-        fv = FeatureView(name="fv1", entities=[e], feature_df=self._session.sql(sql), refresh_freq="DOWNSTREAM")
+        fv = FeatureView(
+            name="fv1",
+            entities=[e],
+            feature_df=self._session.sql(sql),
+            refresh_freq="DOWNSTREAM",
+        )
         with self.assertRaisesRegex(
-            RuntimeError, "Feature view .* must be registered and non-static to update refresh_freq.*"
+            RuntimeError,
+            "Feature view .* must be registered and non-static to update refresh_freq.*",
         ):
             fv.refresh_freq = "1 minute"
 
         with self.assertRaisesRegex(
-            RuntimeError, "Feature view .* must be registered and non-static to update warehouse.*"
+            RuntimeError,
+            "Feature view .* must be registered and non-static to update warehouse.*",
         ):
-            fv.warehouse = alternative_wh
+            fv.warehouse = SqlIdentifier(alternative_wh)
 
         with self.assertRaisesRegex(
-            RuntimeError, "Feature view .* must be registered and non-static so that can be updated.*"
+            RuntimeError,
+            "Feature view .* must be registered and non-static so that can be updated.*",
         ):
             fs.update_feature_view(fv)
 
@@ -1367,10 +1477,13 @@ class FeatureStoreTest(absltest.TestCase):
         result = self._session.sql(f"SHOW DYNAMIC TABLES IN SCHEMA {fv.database}.{fv.schema}").collect()
         self.assertEqual(len(result), 1)
         self.assertEqual(result[0]["target_lag"], "DOWNSTREAM")
-        self.assertEqual(SqlIdentifier(result[0]["warehouse"]), SqlIdentifier(self._session.get_current_warehouse()))
+        self.assertEqual(
+            SqlIdentifier(result[0]["warehouse"]),
+            SqlIdentifier(self._session.get_current_warehouse()),
+        )
 
         fv.refresh_freq = "1 minute"
-        fv.warehouse = alternative_wh
+        fv.warehouse = SqlIdentifier(alternative_wh)
         fs.update_feature_view(fv)
         result = self._session.sql(f"SHOW DYNAMIC TABLES IN SCHEMA {fv.database}.{fv.schema}").collect()
         self.assertEqual(len(result), 1)

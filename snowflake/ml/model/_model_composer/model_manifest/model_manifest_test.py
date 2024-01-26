@@ -7,10 +7,8 @@ from unittest import mock
 import importlib_resources
 import yaml
 from absl.testing import absltest
-from packaging import version
 
 from snowflake.ml._internal import env_utils
-from snowflake.ml._internal.utils import snowflake_env
 from snowflake.ml.model import model_signature, type_hints
 from snowflake.ml.model._model_composer.model_manifest import (
     model_manifest,
@@ -44,68 +42,6 @@ _DUMMY_BLOB = model_blob_meta.ModelBlobMeta(
 class ModelManifestTest(absltest.TestCase):
     def setUp(self) -> None:
         self.m_session = mock.MagicMock()
-        snowflake_env.get_current_snowflake_version = mock.MagicMock(
-            return_value=model_manifest_schema.MANIFEST_USER_DATA_ENABLE_VERSION
-        )
-
-    def test_model_manifest_old(self) -> None:
-        snowflake_env.get_current_snowflake_version = mock.MagicMock(return_value=version.parse("8.0.0"))
-        with tempfile.TemporaryDirectory() as workspace, tempfile.TemporaryDirectory() as tmpdir:
-            mm = model_manifest.ModelManifest(pathlib.Path(workspace))
-            with model_meta.create_model_metadata(
-                model_dir_path=tmpdir,
-                name="model1",
-                model_type="custom",
-                signatures={"predict": _DUMMY_SIG["predict"], "__call__": _DUMMY_SIG["predict"]},
-                python_version="3.8",
-            ) as meta:
-                meta.models["model1"] = _DUMMY_BLOB
-                with mock.patch.object(
-                    env_utils,
-                    "get_matched_package_versions_in_information_schema",
-                    return_value={env_utils.SNOWPARK_ML_PKG_NAME: []},
-                ):
-                    mm.save(
-                        self.m_session,
-                        meta,
-                        pathlib.PurePosixPath("model.zip"),
-                        options=type_hints.BaseModelSaveOption(
-                            method_options={
-                                "predict": type_hints.ModelMethodSaveOptions(case_sensitive=True),
-                                "__call__": type_hints.ModelMethodSaveOptions(max_batch_size=10),
-                            }
-                        ),
-                    )
-                with open(os.path.join(workspace, "MANIFEST.yml"), encoding="utf-8") as f:
-                    self.assertEqual(
-                        (
-                            importlib_resources.files("snowflake.ml.model._model_composer.model_manifest")
-                            .joinpath("fixtures")  # type: ignore[no-untyped-call]
-                            .joinpath("MANIFEST_0.yml")
-                            .read_text()
-                        ),
-                        f.read(),
-                    )
-                with open(pathlib.Path(workspace, "functions", "predict.py"), encoding="utf-8") as f:
-                    self.assertEqual(
-                        (
-                            importlib_resources.files("snowflake.ml.model._model_composer.model_method")
-                            .joinpath("fixtures")  # type: ignore[no-untyped-call]
-                            .joinpath("function_1.py")
-                            .read_text()
-                        ),
-                        f.read(),
-                    )
-                with open(pathlib.Path(workspace, "functions", "__call__.py"), encoding="utf-8") as f:
-                    self.assertEqual(
-                        (
-                            importlib_resources.files("snowflake.ml.model._model_composer.model_method")
-                            .joinpath("fixtures")  # type: ignore[no-untyped-call]
-                            .joinpath("function_2.py")
-                            .read_text()
-                        ),
-                        f.read(),
-                    )
 
     def test_model_manifest_1(self) -> None:
         with tempfile.TemporaryDirectory() as workspace, tempfile.TemporaryDirectory() as tmpdir:

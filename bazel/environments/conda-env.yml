@@ -10,6 +10,7 @@ dependencies:
   - aiohttp==3.8.3
   - anyio==3.5.0
   - boto3==1.24.28
+  - build==0.10.0
   - cachetools==4.2.2
   - cloudpickle==2.0.0
   - conda-forge::accelerate==0.22.0
@@ -55,10 +56,12 @@ dependencies:
   - sqlparse==0.4.4
   - tensorflow==2.10.0
   - tokenizers==0.13.2
+  - toml==0.10.2
   - torchdata==0.6.1
   - transformers==4.32.1
   - types-protobuf==4.23.0.1
   - types-requests==2.30.0.0
+  - types-toml==0.10.8.6
   - typing-extensions==4.5.0
   - xgboost==1.7.3
   - pip

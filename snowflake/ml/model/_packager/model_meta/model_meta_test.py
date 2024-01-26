@@ -41,12 +41,43 @@ _BASIC_DEPENDENCIES_TARGET_WITH_SNOWML = list(
     )
 )
 
+_PACKAGING_REQUIREMENTS_TARGET = list(
+    sorted(
+        map(
+            lambda x: str(env_utils.get_local_installed_version_of_pip_package(requirements.Requirement(x))),
+            model_meta._PACKAGING_REQUIREMENTS,
+        )
+    )
+)
 
-class ModelMetaEnvTest(absltest.TestCase):
+_PACKAGING_REQUIREMENTS_TARGET_WITH_SNOWML = list(
+    sorted(
+        map(
+            lambda x: str(env_utils.get_local_installed_version_of_pip_package(requirements.Requirement(x))),
+            model_meta._PACKAGING_REQUIREMENTS + [env_utils.SNOWPARK_ML_PKG_NAME],
+        )
+    )
+)
+
+_PACKAGING_REQUIREMENTS_TARGET_WITH_SNOWML_RELAXED = list(
+    sorted(
+        map(
+            lambda x: str(
+                env_utils.relax_requirement_version(
+                    env_utils.get_local_installed_version_of_pip_package(requirements.Requirement(x))
+                )
+            ),
+            model_meta._PACKAGING_REQUIREMENTS + [env_utils.SNOWPARK_ML_PKG_NAME],
+        )
+    )
+)
+
+
+class ModelMetaEnvLegacyTest(absltest.TestCase):
     def test_model_meta_dependencies_no_packages(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             with model_meta.create_model_metadata(
-                model_dir_path=tmpdir, name="model1", model_type="custom", signatures=_DUMMY_SIG
+                model_dir_path=tmpdir, name="model1", model_type="custom", signatures=_DUMMY_SIG, _legacy_save=True
             ) as meta:
                 meta.models["model1"] = _DUMMY_BLOB
                 self.assertListEqual(meta.env.pip_requirements, [])
@@ -67,6 +98,7 @@ class ModelMetaEnvTest(absltest.TestCase):
                 model_type="custom",
                 signatures=_DUMMY_SIG,
                 embed_local_ml_library=True,
+                _legacy_save=True,
             ) as meta:
                 meta.models["model1"] = _DUMMY_BLOB
                 self.assertListEqual(meta.env.pip_requirements, [])
@@ -86,12 +118,13 @@ class ModelMetaEnvTest(absltest.TestCase):
                 name="model1",
                 model_type="custom",
                 signatures=_DUMMY_SIG,
-                conda_dependencies=["pandas"],
+                conda_dependencies=["cloudpickle"],
+                _legacy_save=True,
             ) as meta:
                 meta.models["model1"] = _DUMMY_BLOB
                 dep_target = _BASIC_DEPENDENCIES_TARGET_WITH_SNOWML[:]
-                dep_target.remove(f"pandas=={importlib_metadata.version('pandas')}")
-                dep_target.append("pandas")
+                dep_target.remove(f"cloudpickle=={importlib_metadata.version('cloudpickle')}")
+                dep_target.append("cloudpickle")
                 dep_target.sort()
 
                 self.assertListEqual(meta.env.pip_requirements, [])
@@ -110,12 +143,13 @@ class ModelMetaEnvTest(absltest.TestCase):
                     name="model1",
                     model_type="custom",
                     signatures=_DUMMY_SIG,
-                    conda_dependencies=["conda-forge::pandas"],
+                    conda_dependencies=["conda-forge::cloudpickle"],
+                    _legacy_save=True,
                 ) as meta:
                     meta.models["model1"] = _DUMMY_BLOB
                     dep_target = _BASIC_DEPENDENCIES_TARGET_WITH_SNOWML[:]
-                    dep_target.remove(f"pandas=={importlib_metadata.version('pandas')}")
-                    dep_target.append("conda-forge::pandas")
+                    dep_target.remove(f"cloudpickle=={importlib_metadata.version('cloudpickle')}")
+                    dep_target.append("conda-forge::cloudpickle")
                     dep_target.sort()
 
                     self.assertListEqual(meta.env.pip_requirements, [])
@@ -135,20 +169,21 @@ class ModelMetaEnvTest(absltest.TestCase):
                     name="model1",
                     model_type="custom",
                     signatures=_DUMMY_SIG,
-                    pip_requirements=["pandas"],
+                    pip_requirements=["cloudpickle"],
+                    _legacy_save=True,
                 ) as meta:
                     meta.models["model1"] = _DUMMY_BLOB
                     dep_target = _BASIC_DEPENDENCIES_TARGET_WITH_SNOWML[:]
-                    dep_target.remove(f"pandas=={importlib_metadata.version('pandas')}")
+                    dep_target.remove(f"cloudpickle=={importlib_metadata.version('cloudpickle')}")
                     dep_target.sort()
 
-                    self.assertListEqual(meta.env.pip_requirements, ["pandas"])
+                    self.assertListEqual(meta.env.pip_requirements, ["cloudpickle"])
                     self.assertListEqual(meta.env.conda_dependencies, dep_target)
 
                 with self.assertWarns(UserWarning):
                     loaded_meta = model_meta.ModelMetadata.load(tmpdir)
 
-                self.assertListEqual(loaded_meta.env.pip_requirements, ["pandas"])
+                self.assertListEqual(loaded_meta.env.pip_requirements, ["cloudpickle"])
                 self.assertListEqual(loaded_meta.env.conda_dependencies, dep_target)
 
     def test_model_meta_dependencies_conda(self) -> None:
@@ -159,6 +194,7 @@ class ModelMetaEnvTest(absltest.TestCase):
                 model_type="custom",
                 signatures=_DUMMY_SIG,
                 conda_dependencies=["pytorch"],
+                _legacy_save=True,
             ) as meta:
                 meta.models["model1"] = _DUMMY_BLOB
                 dep_target = _BASIC_DEPENDENCIES_TARGET_WITH_SNOWML[:]
@@ -181,6 +217,7 @@ class ModelMetaEnvTest(absltest.TestCase):
                 model_type="custom",
                 signatures=_DUMMY_SIG,
                 pip_requirements=["torch"],
+                _legacy_save=True,
             ) as meta:
                 meta.models["model1"] = _DUMMY_BLOB
                 dep_target = _BASIC_DEPENDENCIES_TARGET_WITH_SNOWML[:]
@@ -203,9 +240,202 @@ class ModelMetaEnvTest(absltest.TestCase):
                 signatures=_DUMMY_SIG,
                 conda_dependencies=["pytorch"],
                 pip_requirements=["torch"],
+                _legacy_save=True,
             ) as meta:
                 meta.models["model1"] = _DUMMY_BLOB
                 dep_target = _BASIC_DEPENDENCIES_TARGET_WITH_SNOWML[:]
+                dep_target.append("pytorch")
+                dep_target.sort()
+
+                self.assertListEqual(meta.env.pip_requirements, ["torch"])
+                self.assertListEqual(meta.env.conda_dependencies, dep_target)
+
+            loaded_meta = model_meta.ModelMetadata.load(tmpdir)
+
+            self.assertListEqual(loaded_meta.env.pip_requirements, ["torch"])
+            self.assertListEqual(loaded_meta.env.conda_dependencies, dep_target)
+
+
+class ModelMetaEnvTest(absltest.TestCase):
+    def test_model_meta_dependencies_no_packages(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with model_meta.create_model_metadata(
+                model_dir_path=tmpdir, name="model1", model_type="custom", signatures=_DUMMY_SIG
+            ) as meta:
+                meta.models["model1"] = _DUMMY_BLOB
+                self.assertListEqual(meta.env.pip_requirements, [])
+                self.assertListEqual(meta.env.conda_dependencies, _PACKAGING_REQUIREMENTS_TARGET_WITH_SNOWML)
+                self.assertEqual(meta.env.snowpark_ml_version, snowml_env.VERSION)
+
+            loaded_meta = model_meta.ModelMetadata.load(tmpdir)
+
+            self.assertListEqual(loaded_meta.env.pip_requirements, [])
+            self.assertListEqual(loaded_meta.env.conda_dependencies, _PACKAGING_REQUIREMENTS_TARGET_WITH_SNOWML)
+            self.assertEqual(meta.env.snowpark_ml_version, snowml_env.VERSION)
+
+    def test_model_meta_dependencies_relax_version(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with model_meta.create_model_metadata(
+                model_dir_path=tmpdir, name="model1", model_type="custom", signatures=_DUMMY_SIG, relax_version=True
+            ) as meta:
+                meta.models["model1"] = _DUMMY_BLOB
+                self.assertListEqual(meta.env.pip_requirements, [])
+                self.assertListEqual(meta.env.conda_dependencies, _PACKAGING_REQUIREMENTS_TARGET_WITH_SNOWML_RELAXED)
+                self.assertEqual(meta.env.snowpark_ml_version, snowml_env.VERSION)
+
+            loaded_meta = model_meta.ModelMetadata.load(tmpdir)
+
+            self.assertListEqual(loaded_meta.env.pip_requirements, [])
+            self.assertListEqual(loaded_meta.env.conda_dependencies, _PACKAGING_REQUIREMENTS_TARGET_WITH_SNOWML_RELAXED)
+            self.assertEqual(meta.env.snowpark_ml_version, snowml_env.VERSION)
+
+    def test_model_meta_dependencies_no_packages_embedded_snowml(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with model_meta.create_model_metadata(
+                model_dir_path=tmpdir,
+                name="model1",
+                model_type="custom",
+                signatures=_DUMMY_SIG,
+                embed_local_ml_library=True,
+            ) as meta:
+                meta.models["model1"] = _DUMMY_BLOB
+                self.assertListEqual(meta.env.pip_requirements, [])
+                self.assertListEqual(meta.env.conda_dependencies, _PACKAGING_REQUIREMENTS_TARGET)
+                self.assertIsNotNone(meta.env._snowpark_ml_version.local)
+
+            loaded_meta = model_meta.ModelMetadata.load(tmpdir)
+
+            self.assertListEqual(loaded_meta.env.pip_requirements, [])
+            self.assertListEqual(loaded_meta.env.conda_dependencies, _PACKAGING_REQUIREMENTS_TARGET)
+            self.assertIsNotNone(meta.env._snowpark_ml_version.local)
+
+    def test_model_meta_dependencies_dup_basic_dep(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with model_meta.create_model_metadata(
+                model_dir_path=tmpdir,
+                name="model1",
+                model_type="custom",
+                signatures=_DUMMY_SIG,
+                conda_dependencies=["cloudpickle"],
+            ) as meta:
+                meta.models["model1"] = _DUMMY_BLOB
+                dep_target = _PACKAGING_REQUIREMENTS_TARGET_WITH_SNOWML[:]
+                dep_target.remove(f"cloudpickle=={importlib_metadata.version('cloudpickle')}")
+                dep_target.append("cloudpickle")
+                dep_target.sort()
+
+                self.assertListEqual(meta.env.pip_requirements, [])
+                self.assertListEqual(meta.env.conda_dependencies, dep_target)
+
+            loaded_meta = model_meta.ModelMetadata.load(tmpdir)
+
+            self.assertListEqual(loaded_meta.env.pip_requirements, [])
+            self.assertListEqual(loaded_meta.env.conda_dependencies, dep_target)
+
+    def test_model_meta_dependencies_dup_basic_dep_other_channel(self) -> None:
+        with self.assertWarns(UserWarning):
+            with tempfile.TemporaryDirectory() as tmpdir:
+                with model_meta.create_model_metadata(
+                    model_dir_path=tmpdir,
+                    name="model1",
+                    model_type="custom",
+                    signatures=_DUMMY_SIG,
+                    conda_dependencies=["conda-forge::cloudpickle"],
+                ) as meta:
+                    meta.models["model1"] = _DUMMY_BLOB
+                    dep_target = _PACKAGING_REQUIREMENTS_TARGET_WITH_SNOWML[:]
+                    dep_target.remove(f"cloudpickle=={importlib_metadata.version('cloudpickle')}")
+                    dep_target.append("conda-forge::cloudpickle")
+                    dep_target.sort()
+
+                    self.assertListEqual(meta.env.pip_requirements, [])
+                    self.assertListEqual(meta.env.conda_dependencies, dep_target)
+
+                with self.assertWarns(UserWarning):
+                    loaded_meta = model_meta.ModelMetadata.load(tmpdir)
+
+                self.assertListEqual(loaded_meta.env.pip_requirements, [])
+                self.assertListEqual(loaded_meta.env.conda_dependencies, dep_target)
+
+    def test_model_meta_dependencies_dup_basic_dep_pip(self) -> None:
+        with self.assertWarns(UserWarning):
+            with tempfile.TemporaryDirectory() as tmpdir:
+                with model_meta.create_model_metadata(
+                    model_dir_path=tmpdir,
+                    name="model1",
+                    model_type="custom",
+                    signatures=_DUMMY_SIG,
+                    pip_requirements=["cloudpickle"],
+                ) as meta:
+                    meta.models["model1"] = _DUMMY_BLOB
+                    dep_target = _PACKAGING_REQUIREMENTS_TARGET_WITH_SNOWML[:]
+                    dep_target.remove(f"cloudpickle=={importlib_metadata.version('cloudpickle')}")
+                    dep_target.sort()
+
+                    self.assertListEqual(meta.env.pip_requirements, ["cloudpickle"])
+                    self.assertListEqual(meta.env.conda_dependencies, dep_target)
+
+                with self.assertWarns(UserWarning):
+                    loaded_meta = model_meta.ModelMetadata.load(tmpdir)
+
+                self.assertListEqual(loaded_meta.env.pip_requirements, ["cloudpickle"])
+                self.assertListEqual(loaded_meta.env.conda_dependencies, dep_target)
+
+    def test_model_meta_dependencies_conda(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with model_meta.create_model_metadata(
+                model_dir_path=tmpdir,
+                name="model1",
+                model_type="custom",
+                signatures=_DUMMY_SIG,
+                conda_dependencies=["pytorch"],
+            ) as meta:
+                meta.models["model1"] = _DUMMY_BLOB
+                dep_target = _PACKAGING_REQUIREMENTS_TARGET_WITH_SNOWML[:]
+                dep_target.append("pytorch")
+                dep_target.sort()
+
+                self.assertListEqual(meta.env.pip_requirements, [])
+                self.assertListEqual(meta.env.conda_dependencies, dep_target)
+
+            loaded_meta = model_meta.ModelMetadata.load(tmpdir)
+
+            self.assertListEqual(loaded_meta.env.pip_requirements, [])
+            self.assertListEqual(loaded_meta.env.conda_dependencies, dep_target)
+
+    def test_model_meta_dependencies_pip(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with model_meta.create_model_metadata(
+                model_dir_path=tmpdir,
+                name="model1",
+                model_type="custom",
+                signatures=_DUMMY_SIG,
+                pip_requirements=["torch"],
+            ) as meta:
+                meta.models["model1"] = _DUMMY_BLOB
+                dep_target = _PACKAGING_REQUIREMENTS_TARGET_WITH_SNOWML[:]
+                dep_target.sort()
+
+                self.assertListEqual(meta.env.pip_requirements, ["torch"])
+                self.assertListEqual(meta.env.conda_dependencies, dep_target)
+
+            loaded_meta = model_meta.ModelMetadata.load(tmpdir)
+
+            self.assertListEqual(loaded_meta.env.pip_requirements, ["torch"])
+            self.assertListEqual(loaded_meta.env.conda_dependencies, dep_target)
+
+    def test_model_meta_dependencies_both(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with model_meta.create_model_metadata(
+                model_dir_path=tmpdir,
+                name="model1",
+                model_type="custom",
+                signatures=_DUMMY_SIG,
+                conda_dependencies=["pytorch"],
+                pip_requirements=["torch"],
+            ) as meta:
+                meta.models["model1"] = _DUMMY_BLOB
+                dep_target = _PACKAGING_REQUIREMENTS_TARGET_WITH_SNOWML[:]
                 dep_target.append("pytorch")
                 dep_target.sort()
 
