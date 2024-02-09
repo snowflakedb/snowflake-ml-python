@@ -392,6 +392,25 @@ class Pipeline(base.BaseTransformer):
         """
         return self._invoke_estimator_func("predict", dataset)
 
+    @metaestimators.available_if(_final_step_has("score_samples"))  # type: ignore[misc]
+    @telemetry.send_api_usage_telemetry(
+        project=_PROJECT,
+        subproject=_SUBPROJECT,
+    )
+    def score_samples(
+        self, dataset: Union[snowpark.DataFrame, pd.DataFrame]
+    ) -> Union[snowpark.DataFrame, pd.DataFrame]:
+        """
+        Transform the dataset by applying all the transformers in order and predict using the estimator.
+
+        Args:
+            dataset: Input dataset.
+
+        Returns:
+            Output dataset.
+        """
+        return self._invoke_estimator_func("score_samples", dataset)
+
     @metaestimators.available_if(_final_step_has("predict_proba"))  # type: ignore[misc]
     @telemetry.send_api_usage_telemetry(
         project=_PROJECT,

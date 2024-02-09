@@ -74,6 +74,7 @@ def create_winedata(sess: Session, overwrite_mode: str) -> None:
 
 if __name__ == "__main__":
     sess = Session.builder.configs(SnowflakeLoginOptions()).create()
+    sess.sql(f"USE DATABASE {FS_INTEG_TEST_DB}").collect()
 
     create_tripdata(sess, "overwrite")
     create_winedata(sess, "overwrite")

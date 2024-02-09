@@ -2,7 +2,7 @@ import json
 import logging
 import textwrap
 import time
-from typing import Optional
+from typing import List, Optional
 
 from snowflake.ml._internal.exceptions import (
     error_codes,
@@ -36,6 +36,7 @@ class SnowServiceClient:
         service_name: str,
         compute_pool: str,
         spec_stage_location: str,
+        external_access_integrations: List[str],
         *,
         min_instances: Optional[int] = 1,
         max_instances: Optional[int] = 1,
@@ -48,6 +49,7 @@ class SnowServiceClient:
             service_name: Name of the service.
             min_instances: Minimum number of service replicas.
             max_instances: Maximum number of service replicas.
+            external_access_integrations: EAIs for network connection.
             compute_pool: Name of the compute pool.
             spec_stage_location: Stage path for the service spec.
         """
@@ -61,13 +63,14 @@ class SnowServiceClient:
                 SPEC = '{path}'
                 MIN_INSTANCES={min_instances}
                 MAX_INSTANCES={max_instances}
+                EXTERNAL_ACCESS_INTEGRATIONS = ({', '.join(external_access_integrations)})
             """
         )
         logger.info(f"Creating service {service_name}")
         logger.debug(f"Create service with SQL: \n {sql}")
         self.session.sql(sql).collect()
 
-    def create_job(self, compute_pool: str, spec_stage_location: str) -> None:
+    def create_job(self, compute_pool: str, spec_stage_location: str, external_access_integrations: List[str]) -> None:
         """Execute the job creation SQL command. Note that the job creation is synchronous, hence we execute it in a
         async way so that we can query the log in the meantime.
 
@@ -76,7 +79,7 @@ class SnowServiceClient:
         Args:
             compute_pool: name of the compute pool
             spec_stage_location: path to the stage location where the spec is located at.
-
+            external_access_integrations: EAIs for network connection.
         """
         stage, path = uri.get_stage_and_path(spec_stage_location)
         sql = textwrap.dedent(
@@ -85,6 +88,7 @@ class SnowServiceClient:
             IN COMPUTE POOL {compute_pool}
             FROM {stage}
             SPEC = '{path}'
+            EXTERNAL_ACCESS_INTEGRATIONS = ({', '.join(external_access_integrations)})
             """
         )
         logger.debug(f"Create job with SQL: \n {sql}")

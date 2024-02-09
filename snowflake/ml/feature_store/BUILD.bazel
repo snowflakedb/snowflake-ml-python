@@ -1,4 +1,4 @@
-load("//bazel:py_rules.bzl", "py_library")
+load("//bazel:py_rules.bzl", "py_library", "py_package")
 
 package_group(
     name = "feature_store",
@@ -7,10 +7,7 @@ package_group(
     ],
 )
 
-package(default_visibility = [
-    ":feature_store",
-    "//bazel:snowml_public_common",
-])
+package(default_visibility = ["//visibility:public"])
 
 py_library(
     name = "init",
@@ -36,5 +33,13 @@ py_library(
         "//snowflake/ml/_internal/utils:query_result_checker",
         "//snowflake/ml/_internal/utils:sql_identifier",
         "//snowflake/ml/dataset",
+    ],
+)
+
+py_package(
+    name = "fs_pkg",
+    packages = ["snowflake.ml"],
+    deps = [
+        ":feature_store_lib",
     ],
 )

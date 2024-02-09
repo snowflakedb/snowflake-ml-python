@@ -7,7 +7,9 @@ from absl.testing import absltest
 from sklearn.datasets import load_diabetes
 from sklearn.linear_model import LinearRegression as SkLinearRegression
 
-from snowflake.ml.modeling._internal.snowpark_handlers import SnowparkHandlers
+from snowflake.ml.modeling._internal.snowpark_implementations.snowpark_handlers import (
+    SnowparkHandlers,
+)
 from tests.integ.snowflake.ml.test_utils import common_test_base
 
 

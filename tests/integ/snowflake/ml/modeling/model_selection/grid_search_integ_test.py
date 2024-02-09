@@ -8,13 +8,16 @@ import pandas as pd
 from absl.testing import absltest, parameterized
 from sklearn.datasets import load_iris
 from sklearn.decomposition import PCA as SkPCA
-from sklearn.ensemble import RandomForestClassifier as SkRandomForestClassifier
+from sklearn.ensemble import (
+    IsolationForest as SkIsolationForest,
+    RandomForestClassifier as SkRandomForestClassifier,
+)
 from sklearn.model_selection import GridSearchCV as SkGridSearchCV
 from sklearn.svm import SVC as SkSVC, SVR as SkSVR
 from xgboost import XGBClassifier as SkXGBClassifier
 
 from snowflake.ml.modeling.decomposition import PCA
-from snowflake.ml.modeling.ensemble import RandomForestClassifier
+from snowflake.ml.modeling.ensemble import IsolationForest, RandomForestClassifier
 from snowflake.ml.modeling.model_selection import GridSearchCV
 from snowflake.ml.modeling.svm import SVC, SVR
 from snowflake.ml.modeling.xgboost import XGBClassifier
@@ -239,6 +242,9 @@ class GridSearchCVTest(parameterized.TestCase):
         )
         np.testing.assert_allclose(actual_score, sklearn_score, rtol=1.0e-1, atol=1.0e-2)
 
+        actual_score = reg.score(self._input_df_pandas)
+        np.testing.assert_allclose(actual_score, sklearn_score, rtol=1.0e-1, atol=1.0e-2)
+
         # n_features_in_ is available because `refit` is set to `True`.
         self.assertEqual(sk_obj.n_features_in_, sklearn_reg.n_features_in_)
 
@@ -326,6 +332,10 @@ class GridSearchCVTest(parameterized.TestCase):
 
         np.testing.assert_allclose(transformed, sk_transformed, rtol=1.0e-1, atol=1.0e-2)
 
+        transformed = reg.transform(self._input_df_pandas[self._input_cols])
+        transformed = transformed[actual_output_cols].to_numpy()
+        np.testing.assert_allclose(transformed, sk_transformed, rtol=1.0e-1, atol=1.0e-2)
+
     def test_not_fitted_exception(self) -> None:
         param_grid = {"max_depth": [2, 6], "learning_rate": [0.1, 0.01]}
         reg = GridSearchCV(estimator=XGBClassifier(), param_grid=param_grid)
@@ -337,6 +347,31 @@ class GridSearchCVTest(parameterized.TestCase):
             RuntimeError, msg="Estimator GridSearchCV not fitted before calling predict_proba method."
         ):
             reg.predict_proba(self._input_df)
+
+    def test_score_samples(self) -> None:
+        param_grid = {"max_features": [1, 2]}
+        sklearn_reg = SkGridSearchCV(
+            estimator=SkIsolationForest(random_state=0), param_grid=param_grid, scoring="accuracy"
+        )
+        reg = GridSearchCV(estimator=IsolationForest(random_state=0), param_grid=param_grid, scoring="accuracy")
+        reg.set_input_cols(self._input_cols)
+        output_cols = ["OUTPUT_" + c for c in self._label_col]
+        reg.set_output_cols(output_cols)
+        reg.set_label_cols(self._label_col)
+
+        reg.fit(self._input_df)
+        sklearn_reg.fit(X=self._input_df_pandas[self._input_cols], y=self._input_df_pandas[self._label_col].squeeze())
+
+        # Test score_samples
+        actual_score_samples_result = reg.score_samples(self._input_df).to_pandas().sort_values(by="INDEX")
+        actual_output_cols = [c for c in actual_score_samples_result.columns if c.find("score_samples") >= 0]
+        actual_score_samples_result = actual_score_samples_result[actual_output_cols].to_numpy()
+        sklearn_score_samples_array = sklearn_reg.score_samples(self._input_df_pandas[self._input_cols])
+        np.testing.assert_allclose(actual_score_samples_result.flatten(), sklearn_score_samples_array.flatten())
+
+        actual_pandas_result = reg.score_samples(self._input_df_pandas[self._input_cols])
+        actual_pandas_result = actual_pandas_result[actual_output_cols].to_numpy()
+        np.testing.assert_allclose(actual_pandas_result.flatten(), sklearn_score_samples_array.flatten())
 
 
 if __name__ == "__main__":

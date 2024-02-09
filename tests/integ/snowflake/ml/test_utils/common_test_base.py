@@ -259,7 +259,7 @@ def {func_name}({first_arg_name}: snowflake.snowpark.Session, {", ".join(arg_lis
 {func_body}
 """
 
-                final_packages = packages[:] + [f"snowflake-ml-python=={_snowml_pkg_ver}"]
+                final_packages = packages[:] + [f"snowflake-ml-python=={_snowml_pkg_ver}", "snowflake-snowpark-python"]
 
                 with tempfile.NamedTemporaryFile("w", encoding="utf-8", suffix=".py", delete=False) as temp_file:
                     temp_file.write(func_source)

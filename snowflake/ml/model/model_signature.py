@@ -1,6 +1,18 @@
 import enum
+import json
 import warnings
-from typing import Any, Dict, List, Literal, Optional, Sequence, Tuple, Type
+from typing import (
+    Any,
+    Dict,
+    List,
+    Literal,
+    Optional,
+    Sequence,
+    Tuple,
+    Type,
+    Union,
+    cast,
+)
 
 import numpy as np
 import pandas as pd
@@ -337,6 +349,31 @@ class SnowparkIdentifierRule(enum.Enum):
             assert_never(self)
 
 
+def _get_dataframe_values_range(
+    df: snowflake.snowpark.DataFrame,
+) -> Dict[str, Union[Tuple[int, int], Tuple[float, float]]]:
+    columns = [
+        F.array_construct(F.min(field.name), F.max(field.name)).as_(field.name)
+        for field in df.schema.fields
+        if isinstance(field.datatype, spt._NumericType)
+    ]
+    if not columns:
+        return {}
+    res = df.select(columns).collect()
+    if len(res) != 1:
+        raise snowml_exceptions.SnowflakeMLException(
+            error_code=error_codes.INTERNAL_SNOWML_ERROR,
+            original_exception=ValueError(f"Unable to get the value range of fields {df.columns}"),
+        )
+    return cast(
+        Dict[str, Union[Tuple[int, int], Tuple[float, float]]],
+        {
+            sql_identifier.SqlIdentifier(k, case_sensitive=True).identifier(): (json.loads(v)[0], json.loads(v)[1])
+            for k, v in res[0].as_dict().items()
+        },
+    )
+
+
 def _validate_snowpark_data(
     data: snowflake.snowpark.DataFrame, features: Sequence[core.BaseFeatureSpec]
 ) -> SnowparkIdentifierRule:
@@ -361,6 +398,7 @@ def _validate_snowpark_data(
         SnowparkIdentifierRule.NORMALIZED: [],
     }
     schema = data.schema
+    values_range = _get_dataframe_values_range(data)
     for identifier_rule in errors.keys():
         for feature in features:
             try:
@@ -401,8 +439,11 @@ def _validate_snowpark_data(
                                     + f"Feature is a scalar feature, while {field.name} is not."
                                 ),
                             )
+                            continue
                         try:
-                            _validate_snowpark_type_feature(data, field, ft_type, feature.name)
+                            _validate_snowpark_type_feature(
+                                data, field, ft_type, feature.name, values_range.get(field.name, None)
+                            )
                         except snowml_exceptions.SnowflakeMLException as e:
                             errors[identifier_rule].append(e.original_exception)
                     break
@@ -433,17 +474,12 @@ If using the inferred names from model signatures, there are the following error
 
 
 def _validate_snowpark_type_feature(
-    df: snowflake.snowpark.DataFrame, field: spt.StructField, ft_type: DataType, ft_name: str
+    df: snowflake.snowpark.DataFrame,
+    field: spt.StructField,
+    ft_type: DataType,
+    ft_name: str,
+    value_range: Optional[Union[Tuple[int, int], Tuple[float, float]]],
 ) -> None:
-    def get_value_range(field_name: str) -> Tuple[int, int]:
-        res = df.select(F.min(field_name).as_("MIN"), F.max(field_name).as_("MAX")).collect()
-        if len(res) != 1:
-            raise snowml_exceptions.SnowflakeMLException(
-                error_code=error_codes.INTERNAL_SNOWML_ERROR,
-                original_exception=ValueError(f"Unable to get the value range of field {field_name}"),
-            )
-        return res[0].MIN, res[0].MAX
-
     field_data_type = field.datatype
     col_name = identifier.get_unescaped_names(field.name)
 
@@ -465,16 +501,27 @@ def _validate_snowpark_type_feature(
                 error_code=error_codes.INVALID_DATA,
                 original_exception=ValueError(
                     f"Data Validation Error in feature {ft_name}: "
-                    + f"Feature type {ft_type} is not met by column {col_name}."
+                    f"Feature type {ft_type} is not met by column {col_name} "
+                    f"because of its original type {field_data_type}"
                 ),
             )
-        min_v, max_v = get_value_range(field.name)
+        if value_range is None:
+            raise snowml_exceptions.SnowflakeMLException(
+                error_code=error_codes.INVALID_DATA,
+                original_exception=ValueError(
+                    f"Data Validation Error in feature {ft_name}: "
+                    f"Feature type {ft_type} is not met by column {col_name} "
+                    f"because of its original type {field_data_type} is non-Numeric."
+                ),
+            )
+        min_v, max_v = value_range
         if max_v > np.iinfo(ft_type._numpy_type).max or min_v < np.iinfo(ft_type._numpy_type).min:
             raise snowml_exceptions.SnowflakeMLException(
                 error_code=error_codes.INVALID_DATA,
                 original_exception=ValueError(
                     f"Data Validation Error in feature {ft_name}: "
-                    + f"Feature type {ft_type} is not met by column {col_name}."
+                    f"Feature type {ft_type} is not met by column {col_name} "
+                    f"because it overflows with min"
                 ),
             )
     elif ft_type in [core.DataType.FLOAT, core.DataType.DOUBLE]:
@@ -494,7 +541,16 @@ def _validate_snowpark_type_feature(
                     + f"Feature type {ft_type} is not met by column {col_name}."
                 ),
             )
-        min_v, max_v = get_value_range(field.name)
+        if value_range is None:
+            raise snowml_exceptions.SnowflakeMLException(
+                error_code=error_codes.INVALID_DATA,
+                original_exception=ValueError(
+                    f"Data Validation Error in feature {ft_name}: "
+                    f"Feature type {ft_type} is not met by column {col_name} "
+                    f"because of its original type {field_data_type} is non-Numeric."
+                ),
+            )
+        min_v, max_v = value_range
         if (
             max_v > np.finfo(ft_type._numpy_type).max  # type: ignore[arg-type]
             or min_v < np.finfo(ft_type._numpy_type).min  # type: ignore[arg-type]

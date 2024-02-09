@@ -16,6 +16,7 @@ from tests.integ.snowflake.ml.test_utils import db_manager, test_env_utils
 class SpcsIntegTestBase(absltest.TestCase):
     _TEST_CPU_COMPUTE_POOL = "REGTEST_INFERENCE_CPU_POOL"
     _TEST_GPU_COMPUTE_POOL = "REGTEST_INFERENCE_GPU_POOL"
+    _SPCS_EAIS = ["SPCS_EGRESS_ACCESS_INTEGRATION"]
 
     def setUp(self) -> None:
         """Creates Snowpark and Snowflake environments for testing."""

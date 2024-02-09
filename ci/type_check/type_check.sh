@@ -74,11 +74,11 @@ if [[ -z "${affected_targets}" ]]; then
 fi
 
 printf \
-    "let skip_type_checking_targets = set(%s) + set(%s) + set(%s) in \
+    "let skip_type_checking_targets = set(%s) + set(%s) in \
         let affected_targets = kind('py_.* rule', set(%s)) in \
                 let rdeps_targets = rdeps(//..., \$skip_type_checking_targets) in \
                     \$affected_targets except \$rdeps_targets" \
-    "$(<"${SCRIPTPATH}/../skip_type_checking_targets")" "$(<"${SCRIPTPATH}/../skip_merge_gate_targets")" "$(<"${SCRIPTPATH}/../skip_continuous_run_targets")" "${affected_targets}" >"${working_dir}/type_checked_targets_query"
+    "$(<"${SCRIPTPATH}/../targets/untyped.txt")" "$(<"${SCRIPTPATH}/../targets/local_only.txt")" "${affected_targets}" >"${working_dir}/type_checked_targets_query"
 type_check_targets=$("${bazel}" query --query_file="${working_dir}/type_checked_targets_query" | awk 'NF { print "\""$0"\","}')
 
 echo "${type_check_targets}"
