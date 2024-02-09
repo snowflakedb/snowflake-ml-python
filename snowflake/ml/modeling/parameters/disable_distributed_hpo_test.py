@@ -4,11 +4,13 @@ from absl.testing import absltest
 from sklearn.model_selection import GridSearchCV
 from snowflake.ml.modeling.xgboost.xgb_classifier import XGBClassifier
 
-from snowflake.ml.modeling._internal.distributed_hpo_trainer import (
+from snowflake.ml.modeling._internal.model_trainer_builder import ModelTrainerBuilder
+from snowflake.ml.modeling._internal.snowpark_implementations.distributed_hpo_trainer import (
     DistributedHPOTrainer,
 )
-from snowflake.ml.modeling._internal.model_trainer_builder import ModelTrainerBuilder
-from snowflake.ml.modeling._internal.snowpark_trainer import SnowparkModelTrainer
+from snowflake.ml.modeling._internal.snowpark_implementations.snowpark_trainer import (
+    SnowparkModelTrainer,
+)
 from snowflake.snowpark import DataFrame, Session
 
 

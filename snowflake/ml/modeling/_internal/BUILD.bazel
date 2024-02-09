@@ -3,21 +3,6 @@ load("//bazel:py_rules.bzl", "py_library", "py_test")
 package(default_visibility = ["//visibility:public"])
 
 py_library(
-    name = "snowpark_handlers",
-    srcs = ["snowpark_handlers.py"],
-    deps = [
-        "//snowflake/ml/_internal:env_utils",
-        "//snowflake/ml/_internal:telemetry",
-        "//snowflake/ml/_internal/exceptions",
-        "//snowflake/ml/_internal/exceptions:modeling_error_messages",
-        "//snowflake/ml/_internal/utils:identifier",
-        "//snowflake/ml/_internal/utils:query_result_checker",
-        "//snowflake/ml/_internal/utils:snowpark_dataframe_utils",
-        "//snowflake/ml/_internal/utils:temp_file_utils",
-    ],
-)
-
-py_library(
     name = "estimator_protocols",
     srcs = ["estimator_protocols.py"],
 )
@@ -60,8 +45,8 @@ py_test(
     name = "model_specifications_test",
     srcs = ["model_specifications_test.py"],
     deps = [
-        ":distributed_hpo_trainer",
         ":model_specifications",
+        "//snowflake/ml/modeling/_internal/snowpark_implementations:distributed_hpo_trainer",
         "//snowflake/ml/utils:connection_params",
     ],
 )
@@ -73,74 +58,15 @@ py_library(
 )
 
 py_library(
-    name = "pandas_trainer",
-    srcs = ["pandas_trainer.py"],
-    deps = [
-        ":model_trainer",
-    ],
-)
-
-py_library(
-    name = "snowpark_trainer",
-    srcs = ["snowpark_trainer.py"],
-    deps = [
-        ":model_specifications",
-        ":model_trainer",
-        "//snowflake/ml/_internal:env_utils",
-        "//snowflake/ml/_internal:telemetry",
-        "//snowflake/ml/_internal/exceptions",
-        "//snowflake/ml/_internal/exceptions:modeling_error_messages",
-        "//snowflake/ml/_internal/utils:identifier",
-        "//snowflake/ml/_internal/utils:pkg_version_utils",
-        "//snowflake/ml/_internal/utils:query_result_checker",
-        "//snowflake/ml/_internal/utils:snowpark_dataframe_utils",
-        "//snowflake/ml/_internal/utils:temp_file_utils",
-    ],
-)
-
-py_library(
-    name = "distributed_hpo_trainer",
-    srcs = ["distributed_hpo_trainer.py"],
-    deps = [
-        ":model_specifications",
-        ":snowpark_trainer",
-        "//snowflake/ml/_internal:env_utils",
-        "//snowflake/ml/_internal:telemetry",
-        "//snowflake/ml/_internal/exceptions",
-        "//snowflake/ml/_internal/exceptions:modeling_error_messages",
-        "//snowflake/ml/_internal/utils:identifier",
-        "//snowflake/ml/_internal/utils:pkg_version_utils",
-        "//snowflake/ml/_internal/utils:snowpark_dataframe_utils",
-        "//snowflake/ml/_internal/utils:temp_file_utils",
-    ],
-)
-
-py_library(
-    name = "xgboost_external_memory_trainer",
-    srcs = ["xgboost_external_memory_trainer.py"],
-    deps = [
-        ":model_specifications",
-        ":snowpark_trainer",
-        "//snowflake/ml/_internal:telemetry",
-        "//snowflake/ml/_internal/exceptions",
-        "//snowflake/ml/_internal/exceptions:modeling_error_messages",
-        "//snowflake/ml/_internal/utils:identifier",
-        "//snowflake/ml/_internal/utils:pkg_version_utils",
-        "//snowflake/ml/_internal/utils:snowpark_dataframe_utils",
-        "//snowflake/ml/_internal/utils:temp_file_utils",
-    ],
-)
-
-py_library(
     name = "model_trainer_builder",
     srcs = ["model_trainer_builder.py"],
     deps = [
-        ":distributed_hpo_trainer",
         ":estimator_utils",
         ":model_trainer",
-        ":pandas_trainer",
-        ":snowpark_trainer",
-        ":xgboost_external_memory_trainer",
+        "//snowflake/ml/modeling/_internal/local_implementations:pandas_trainer",
+        "//snowflake/ml/modeling/_internal/snowpark_implementations:distributed_hpo_trainer",
+        "//snowflake/ml/modeling/_internal/snowpark_implementations:snowpark_trainer",
+        "//snowflake/ml/modeling/_internal/snowpark_implementations:xgboost_external_memory_trainer",
     ],
 )
 
@@ -148,21 +74,12 @@ py_test(
     name = "model_trainer_builder_test",
     srcs = ["model_trainer_builder_test.py"],
     deps = [
-        ":distributed_hpo_trainer",
         ":model_trainer",
         ":model_trainer_builder",
-        ":pandas_trainer",
-        ":snowpark_trainer",
-        ":xgboost_external_memory_trainer",
+        "//snowflake/ml/modeling/_internal/local_implementations:pandas_trainer",
+        "//snowflake/ml/modeling/_internal/snowpark_implementations:distributed_hpo_trainer",
+        "//snowflake/ml/modeling/_internal/snowpark_implementations:snowpark_trainer",
+        "//snowflake/ml/modeling/_internal/snowpark_implementations:xgboost_external_memory_trainer",
         "//snowflake/ml/utils:connection_params",
-    ],
-)
-
-py_test(
-    name = "xgboost_external_memory_trainer_test",
-    srcs = ["xgboost_external_memory_trainer_test.py"],
-    deps = [
-        ":xgboost_external_memory_trainer",
-        "//snowflake/ml/_internal/utils:temp_file_utils",
     ],
 )

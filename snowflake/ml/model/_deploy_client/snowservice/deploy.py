@@ -465,6 +465,7 @@ class SnowServiceDeployment:
                 session=self.session,
                 artifact_stage_location=self._model_artifact_stage_location,
                 compute_pool=self.options.compute_pool,
+                external_access_integrations=self.options.external_access_integrations,
             )
         else:
             image_builder = client_image_builder.ClientImageBuilder(
@@ -587,6 +588,7 @@ class SnowServiceDeployment:
             spec_stage_location=spec_stage_location,
             min_instances=self.options.min_instances,
             max_instances=self.options.max_instances,
+            external_access_integrations=self.options.external_access_integrations,
         )
         logger.info(f"Wait for service {self._service_name} to become ready...")
         client.block_until_resource_is_ready(

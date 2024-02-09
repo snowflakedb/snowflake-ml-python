@@ -1,7 +1,7 @@
 #!/bin/bash
 # DESCRIPTION: Utility Shell script to run bazel action for snowml repository
 #
-# RunBazelAction.sh <test|coverage> [-b <bazel_path>] [-m merge_gate|continuous_run|local_unittest|local_all] [-t <target>] [-c <path_to_coverage_report>]
+# RunBazelAction.sh <test|coverage> [-b <bazel_path>] [-m merge_gate|continuous_run|quarantined|local_unittest|local_all] [-t <target>] [-c <path_to_coverage_report>]
 #
 # Args:
 #   action: bazel action, choose from test and coverage
@@ -10,11 +10,13 @@
 #   -b: specify path to bazel.
 #   -m: specify the mode from the following options
 #       merge_gate: run affected tests only.
-#       continuous_run (default): run all tests except auto-generated tests. (For nightly run.)
+#       continuous_run (default): run all tests. (For nightly run. Alias: release)
+#       quarantined: Run quarantined tests.
 #       local_unit: run all unit tests affected by target defined by -t
 #       local_all: run all tests including integration tests affected by target defined by -t
 #   -t: specify the target for local_unit and local_all mode
 #   -c: specify the path to the coverage report dat file.
+#   -e: specify the environment, used to determine.
 #
 
 set -o pipefail
@@ -24,13 +26,14 @@ set -e
 bazel="bazel"
 mode="continuous_run"
 target=""
+SF_ENV="prod3"
 PROG=$0
 
 action=$1 && shift
 
 help() {
     local exit_code=$1
-    echo "Usage: ${PROG} <test|coverage> [-b <bazel_path>] [-m merge_gate|continuous_run|local_unittest|local_all]"
+    echo "Usage: ${PROG} <test|coverage> [-b <bazel_path>] [-m merge_gate|continuous_run|quarantined|local_unittest|local_all] [-e <snowflake_env>]"
     exit "${exit_code}"
 }
 
@@ -38,11 +41,14 @@ if [[ "${action}" != "test" && "${action}" != "coverage" ]]; then
     help 1
 fi
 
-while getopts "b:m:t:c:h" opt; do
+while getopts "b:m:t:c:e:h" opt; do
     case "${opt}" in
     m)
-        if [[ "${OPTARG}" = "merge_gate" || "${OPTARG}" = "continuous_run" || "${OPTARG}" = "local_unittest" || "${OPTARG}" = "local_all" ]]; then
+        if [[ "${OPTARG}" = "merge_gate" || "${OPTARG}" = "continuous_run" || "${OPTARG}" = "quarantined" || "${OPTARG}" = "release" || "${OPTARG}" = "local_unittest" || "${OPTARG}" = "local_all" ]]; then
             mode="${OPTARG}"
+            if [[ $mode = "release" ]]; then
+                mode="continuous_run"
+            fi
         else
             help 1
         fi
@@ -59,6 +65,9 @@ while getopts "b:m:t:c:h" opt; do
         ;;
     c)
         coverage_report_file="${OPTARG}"
+        ;;
+    e)
+        SF_ENV="${OPTARG}"
         ;;
     h)
         help 0
@@ -91,12 +100,13 @@ merge_gate)
     affected_targets_file="${working_dir}/affected_targets"
     ./bazel/get_affected_targets.sh -b "${bazel}" -f "${affected_targets_file}"
 
-    tag_filter="--test_tag_filters=-autogen"
-
-    query_expr='kind(".*_test rule", rdeps(//... - set('"$(<ci/skip_merge_gate_targets)"') - set('"$(<ci/skip_continuous_run_targets)"'), set('$(<"${affected_targets_file}")')))'
+    query_expr='kind(".*_test rule", rdeps(//... - set('"$(<"ci/targets/quarantine/${SF_ENV}.txt")"') - set('"$(<"ci/targets/slow.txt")"') - set('"$(<"ci/targets/local_only.txt")"'), set('"$(<"${affected_targets_file}")"')))'
     ;;
 continuous_run)
-    query_expr='kind(".*_test rule", //... - set('"$(<ci/skip_continuous_run_targets)"'))'
+    query_expr='kind(".*_test rule", //... - set('"$(<"ci/targets/quarantine/${SF_ENV}.txt")"') - set('"$(<"ci/targets/local_only.txt")"'))'
+    ;;
+quarantined)
+    query_expr='kind(".*_test rule", set('"$(<"ci/targets/quarantine/${SF_ENV}.txt")"') - set('"$(<"ci/targets/local_only.txt")"'))'
     ;;
 local_unittest)
     cache_test_results="--cache_test_results=yes"

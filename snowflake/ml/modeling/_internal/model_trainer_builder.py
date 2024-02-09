@@ -4,17 +4,21 @@ import pandas as pd
 from sklearn import model_selection
 
 from snowflake.ml._internal.exceptions import error_codes, exceptions
-from snowflake.ml.modeling._internal.distributed_hpo_trainer import (
-    DistributedHPOTrainer,
-)
 from snowflake.ml.modeling._internal.estimator_utils import (
     get_module_name,
     is_single_node,
 )
+from snowflake.ml.modeling._internal.local_implementations.pandas_trainer import (
+    PandasModelTrainer,
+)
 from snowflake.ml.modeling._internal.model_trainer import ModelTrainer
-from snowflake.ml.modeling._internal.pandas_trainer import PandasModelTrainer
-from snowflake.ml.modeling._internal.snowpark_trainer import SnowparkModelTrainer
-from snowflake.ml.modeling._internal.xgboost_external_memory_trainer import (
+from snowflake.ml.modeling._internal.snowpark_implementations.distributed_hpo_trainer import (
+    DistributedHPOTrainer,
+)
+from snowflake.ml.modeling._internal.snowpark_implementations.snowpark_trainer import (
+    SnowparkModelTrainer,
+)
+from snowflake.ml.modeling._internal.snowpark_implementations.xgboost_external_memory_trainer import (
     XGBoostExternalMemoryTrainer,
 )
 from snowflake.snowpark import DataFrame, Session
@@ -76,9 +80,9 @@ class ModelTrainerBuilder:
         batch_size: int = -1,
     ) -> ModelTrainer:
         """
-        Builder method that creates an approproiate ModelTrainer instance based on the given params.
+        Builder method that creates an appropriate ModelTrainer instance based on the given params.
         """
-        assert input_cols is not None  # Make MyPy happpy
+        assert input_cols is not None  # Make MyPy happy
         if isinstance(dataset, pd.DataFrame):
             return PandasModelTrainer(
                 estimator=estimator,
@@ -100,7 +104,7 @@ class ModelTrainerBuilder:
                 "subproject": subproject,
             }
 
-            assert dataset._session is not None  # Make MyPy happpy
+            assert dataset._session is not None  # Make MyPy happy
             if isinstance(estimator, model_selection.GridSearchCV) or isinstance(
                 estimator, model_selection.RandomizedSearchCV
             ):

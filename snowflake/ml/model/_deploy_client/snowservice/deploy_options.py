@@ -1,6 +1,6 @@
 import inspect
 import logging
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from snowflake.ml._internal.exceptions import (
     error_codes,
@@ -16,6 +16,7 @@ class SnowServiceDeployOptions:
         self,
         compute_pool: str,
         *,
+        external_access_integrations: List[str],
         image_repo: Optional[str] = None,
         min_instances: Optional[int] = 1,
         max_instances: Optional[int] = 1,
@@ -34,7 +35,15 @@ class SnowServiceDeployOptions:
 
         Args:
             compute_pool: SnowService compute pool name. Please refer to official doc for how to create a
-                compute pool: https://docs.snowflake.com/LIMITEDACCESS/snowpark-containers/reference/compute-pool
+                compute pool:
+                https://docs.snowflake.com/en/developer-guide/snowpark-container-services/working-with-compute-pool
+            external_access_integrations: External Access Integrations name used to build image and deploy the model.
+                Please refer to the doc for how to create an External Access Integrations: https://docs.snowflake.com/
+                developer-guide/snowpark-container-services/additional-considerations-services-jobs
+                #configuring-network-capabilities .
+                To make sure your image could be built, access to the following endpoint must be allowed.
+                docker.com:80, docker.com:443, anaconda.com:80, anaconda.com:443, anaconda.org:80, anaconda.org:443,
+                pypi.org:80, pypi.org:443
             image_repo: SnowService image repo path. e.g. "<image_registry>/<db>/<schema>/<repo>". Default to auto
                 inferred based on session information.
             min_instances: Minimum number of service replicas. Default to 1.
@@ -70,6 +79,7 @@ class SnowServiceDeployOptions:
         self.model_in_image = model_in_image
         self.debug_mode = debug_mode
         self.enable_ingress = enable_ingress
+        self.external_access_integrations = external_access_integrations
 
         if self.num_workers is None and self.use_gpu:
             logger.info("num_workers has been defaulted to 1 when using GPU.")

@@ -3,6 +3,7 @@ from typing import (
     TYPE_CHECKING,
     Any,
     Dict,
+    List,
     Literal,
     Optional,
     Sequence,
@@ -173,6 +174,13 @@ class SnowparkContainerServiceDeployOptions(DeployOptions):
     debug_mode: When set to True, deployment artifacts will be persisted in a local temp directory.
     enable_ingress: When set to True, will expose HTTP endpoint for access to the predict method of the created
         service.
+    external_access_integrations: External Access Integrations name used to build image and deploy the model.
+        Please refer to the doc for how to create an External Access Integrations: https://docs.snowflake.com/
+        developer-guide/snowpark-container-services/additional-considerations-services-jobs
+        #configuring-network-capabilities .
+        To make sure your image could be built, access to the following endpoint must be allowed.
+        docker.com:80, docker.com:443, anaconda.com:80, anaconda.com:443, anaconda.org:80, anaconda.org:443,
+        pypi.org:80, pypi.org:443
     """
 
     compute_pool: str
@@ -187,6 +195,7 @@ class SnowparkContainerServiceDeployOptions(DeployOptions):
     model_in_image: NotRequired[bool]
     debug_mode: NotRequired[bool]
     enable_ingress: NotRequired[bool]
+    external_access_integrations: List[str]
 
 
 class ModelMethodSaveOptions(TypedDict):

@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Usage
-# build_and_run_tests.sh <workspace> [-b <bazel path>] [--env pip|conda] [--mode merge_gate|continuous_run|release] [--with-snowpark] [--report <report_path>]
+# build_and_run_tests.sh <workspace> [-b <bazel path>] [--env pip|conda] [--mode merge_gate|continuous_run] [--with-snowpark] [--report <report_path>]
 #
 # Args
 # workspace: path to the workspace, SnowML code should be in snowml directory.
@@ -11,9 +11,10 @@
 # env: Set the environment, choose from pip and conda
 # mode: Set the tests set to be run.
 #   merge_gate: run affected tests only.
-#   continuous_run (default): run all tests except auto-generated tests. (For nightly run.)
-#   release: run all tests including auto-generated tests. (For releasing)
+#   continuous_run (default): run all tests. (For nightly run. Alias: release)
+#   quarantined: run all quarantined tests.
 # with-snowpark: Build and test with snowpark in snowpark-python directory in the workspace.
+# snowflake-env: The environment of the snowflake, use to determine the test quarantine list
 # report: Path to xml test report
 #
 # Action
@@ -28,7 +29,7 @@ PROG=$0
 
 help() {
     local exit_code=$1
-    echo "Usage: ${PROG} <workspace> [-b <bazel path>] [--env pip|conda] [--mode merge_gate|continuous_run|release] [--with-snowpark] [--report <report_path>]"
+    echo "Usage: ${PROG} <workspace> [-b <bazel path>] [--env pip|conda] [--mode merge_gate|continuous_run|quarantined] [--with-snowpark] [--snowflake-env <sf_env>] [--report <report_path>]"
     exit "${exit_code}"
 }
 
@@ -43,6 +44,7 @@ SNOWML_DIR="snowml"
 SNOWPARK_DIR="snowpark-python"
 IS_NT=false
 JUNIT_REPORT_PATH=""
+SF_ENV="prod3"
 
 while (($#)); do
     case $1 in
@@ -63,11 +65,18 @@ while (($#)); do
         ;;
     --mode)
         shift
-        if [[ $1 = "merge_gate" || $1 = "continuous_run" || $1 = "release" ]]; then
+        if [[ $1 = "merge_gate" || $1 = "continuous_run" || $1 = "quarantined" || $1 = "release" ]]; then
             MODE=$1
+            if [[ $MODE = "release" ]]; then
+                MODE="continuous_run"
+            fi
         else
             help 1
         fi
+        ;;
+    --snowflake-env)
+        shift
+        SF_ENV=$1
         ;;
     --report)
         shift
@@ -186,20 +195,10 @@ while IFS='' read -r line; do OPTIONAL_REQUIREMENTS+=("$line"); done < <("${_YQ_
 
 # Compare test required dependencies with wheel pkg dependencies and exclude tests if necessary
 EXCLUDE_TESTS=$(mktemp "${TEMP_TEST_DIR}/exclude_tests_XXXXX")
-if [[ ${MODE} = "continuous_run" || ${MODE} = "release" ]]; then
-    ./ci/get_excluded_tests.sh -f "${EXCLUDE_TESTS}" -m unused -b "${BAZEL}"
-elif [[ ${MODE} = "merge_gate" ]]; then
-    ./ci/get_excluded_tests.sh -f "${EXCLUDE_TESTS}" -m all -b "${BAZEL}"
-fi
+./ci/get_excluded_tests.sh -f "${EXCLUDE_TESTS}" -m "${MODE}" -b "${BAZEL}" -e "${SF_ENV}"
 
 # Generate and copy auto-gen tests.
-if [[ ${MODE} = "release" ]]; then
-# When release, we build all autogen tests
-    "${BAZEL}" "${BAZEL_ADDITIONAL_STARTUP_FLAGS[@]+"${BAZEL_ADDITIONAL_STARTUP_FLAGS[@]}"}" build "${BAZEL_ADDITIONAL_BUILD_FLAGS[@]+"${BAZEL_ADDITIONAL_BUILD_FLAGS[@]}"}" //tests/integ/...
-else
-# In other cases, we build required utility only.
-    "${BAZEL}" "${BAZEL_ADDITIONAL_STARTUP_FLAGS[@]+"${BAZEL_ADDITIONAL_STARTUP_FLAGS[@]}"}" build --build_tag_filters=-autogen_build,-autogen "${BAZEL_ADDITIONAL_BUILD_FLAGS[@]+"${BAZEL_ADDITIONAL_BUILD_FLAGS[@]}"}" //tests/integ/...
-fi
+"${BAZEL}" "${BAZEL_ADDITIONAL_STARTUP_FLAGS[@]+"${BAZEL_ADDITIONAL_STARTUP_FLAGS[@]}"}" build "${BAZEL_ADDITIONAL_BUILD_FLAGS[@]+"${BAZEL_ADDITIONAL_BUILD_FLAGS[@]}"}" //tests/integ/...
 
 # Rsync cannot work well with path that has drive letter in Windows,
 # Thus, these two rsync has to use relative path instead of absolute ones.
@@ -330,7 +329,7 @@ echo "Done running ${PROG}"
 #   0: Success;
 #   5: no tests found
 # See https://docs.pytest.org/en/7.1.x/reference/exit-codes.html
-if [[ ${MODE} = "merge_gate" && ${TEST_RETCODE} -eq 5 ]]; then
+if [[ (${MODE} = "merge_gate" || ${MODE} = "quarantined") && ${TEST_RETCODE} -eq 5 ]]; then
     exit 0
 fi
 exit ${TEST_RETCODE}

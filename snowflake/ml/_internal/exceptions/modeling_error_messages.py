@@ -1,4 +1,8 @@
-ATTRIBUTE_NOT_SET = "{} is not set."
+ATTRIBUTE_NOT_SET = (
+    "{} is not set. To read more about Snowpark ML general API differences, please refer to: "
+    "https://docs.snowflake.com/en/developer-guide/snowpark-ml/snowpark-ml-modeling#general-api"
+    "-differences."
+)
 SIZE_MISMATCH = "Size mismatch: {}={}, {}={}."
 INVALID_MODEL_PARAM = "Invalid parameter {} for model {}. Valid parameters: {}."
 UNSUPPORTED_MODEL_CONVERSION = "Object doesn't support {}. Please use {}."
