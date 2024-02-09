@@ -259,6 +259,7 @@ def _py_wheel_impl(ctx):
             "--outdir",
             wheel_output_dir.path,
         ],
+        use_default_shell_env = True,
         progress_message = "Building Wheel",
         mnemonic = "WheelBuild",
     )

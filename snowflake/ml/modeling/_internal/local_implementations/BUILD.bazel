@@ -1,0 +1,11 @@
+load("//bazel:py_rules.bzl", "py_library")
+
+package(default_visibility = ["//visibility:public"])
+
+py_library(
+    name = "pandas_trainer",
+    srcs = ["pandas_trainer.py"],
+    deps = [
+        "//snowflake/ml/modeling/_internal:model_trainer",
+    ],
+)

@@ -239,6 +239,9 @@ class GridSearchCVTest(parameterized.TestCase):
         )
         np.testing.assert_allclose(actual_score, sklearn_score, rtol=1.0e-1, atol=1.0e-2)
 
+        actual_score = reg.score(self._input_df_pandas)
+        np.testing.assert_allclose(actual_score, sklearn_score, rtol=1.0e-1, atol=1.0e-2)
+
         # n_features_in_ is available because `refit` is set to `True`.
         self.assertEqual(sk_obj.n_features_in_, sklearn_reg.n_features_in_)
 
@@ -324,6 +327,10 @@ class GridSearchCVTest(parameterized.TestCase):
         actual_output_cols = [c for c in transformed.columns if c.find("OUTPUT_") >= 0]
         transformed = transformed[actual_output_cols].astype("float64").to_numpy()
 
+        np.testing.assert_allclose(transformed, sk_transformed, rtol=1.0e-1, atol=1.0e-2)
+
+        transformed = reg.transform(self._input_df_pandas[self._input_cols])
+        transformed = transformed[actual_output_cols].to_numpy()
         np.testing.assert_allclose(transformed, sk_transformed, rtol=1.0e-1, atol=1.0e-2)
 
     def test_not_fitted_exception(self) -> None:

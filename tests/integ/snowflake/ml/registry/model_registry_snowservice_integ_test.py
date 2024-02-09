@@ -37,6 +37,7 @@ from absl.testing import absltest
 #                     "compute_pool": self._TEST_CPU_COMPUTE_POOL,
 #                     "image_repo": self._db_manager.get_snowservice_image_repo(repo=self._TEST_IMAGE_REPO),
 #                     "num_workers": 1,
+#                     "external_access_integrations": self._SPCS_EAIS,
 #                 },
 #             },
 #         )
@@ -56,6 +57,7 @@ from absl.testing import absltest
 #                 "options": {
 #                     "compute_pool": self._TEST_CPU_COMPUTE_POOL,
 #                     "image_repo": self._db_manager.get_snowservice_image_repo(repo=self._TEST_IMAGE_REPO),
+#                     "external_access_integrations": self._SPCS_EAIS,
 #                 },
 #             },
 #         )
@@ -81,6 +83,7 @@ from absl.testing import absltest
 #                         "compute_pool": self._TEST_CPU_COMPUTE_POOL,
 #                         "image_repo": self._db_manager.get_snowservice_image_repo(repo=self._TEST_IMAGE_REPO),
 #                         "num_workers": 1,
+#                         "external_access_integrations": self._SPCS_EAIS,
 #                     },
 #                 },
 #             )
@@ -111,6 +114,7 @@ from absl.testing import absltest
 #                     "image_repo": self._db_manager.get_snowservice_image_repo(repo=self._TEST_IMAGE_REPO),
 #                     "num_workers": 1,
 #                     "use_gpu": True,
+#                     "external_access_integrations": self._SPCS_EAIS,
 #                 },
 #             },
 #         )
@@ -132,6 +136,7 @@ from absl.testing import absltest
 #                 "options": {
 #                     "compute_pool": self._TEST_CPU_COMPUTE_POOL,
 #                     "image_repo": self._db_manager.get_snowservice_image_repo(repo=self._TEST_IMAGE_REPO),
+#                     "external_access_integrations": self._SPCS_EAIS,
 #                 },
 #             },
 #         )

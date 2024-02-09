@@ -1,5 +1,20 @@
 # Release History
 
+## 1.2.2
+
+### Bug Fixes
+
+### Behavior Changes
+
+### New Features
+
+- Model Registry: Support providing external access integrations when deploying a model to SPCS. This will help and be
+  required to make sure the deploying process work as long as SPCS will by default deny all network connections. The
+  following endpoints must be allowed to make deployment work: docker.com:80, docker.com:443, anaconda.com:80,
+  anaconda.com:443, anaconda.org:80, anaconda.org:443, pypi.org:80, pypi.org:443. If you are using
+  `snowflake.ml.model.models.huggingface_pipeline.HuggingFacePipelineModel` object, the following endpoints are required
+  to be allowed: huggingface.com:80, huggingface.com:443, huggingface.co:80, huggingface.co:443.
+
 ## 1.2.1
 
 ### New Features
