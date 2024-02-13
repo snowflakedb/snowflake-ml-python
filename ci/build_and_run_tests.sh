@@ -40,6 +40,7 @@ WITH_SNOWPARK=false
 MODE="continuous_run"
 PYTHON_VERSION=3.8
 PYTHON_JENKINS_ENABLE="/opt/rh/rh-python38/enable"
+PYTHON_ENABLE_SCRIPT="bin/activate"
 SNOWML_DIR="snowml"
 SNOWPARK_DIR="snowpark-python"
 IS_NT=false
@@ -96,21 +97,6 @@ while (($#)); do
     shift
 done
 
-case ${PYTHON_VERSION} in
-  3.8)
-    PYTHON_EXECUTABLE="python3.8"
-    PYTHON_JENKINS_ENABLE="/opt/rh/rh-python38/enable"
-    ;;
-  3.9)
-    PYTHON_EXECUTABLE="python3.9"
-    PYTHON_JENKINS_ENABLE="/opt/rh/rh-python39/enable"
-    ;;
-  3.10)
-    PYTHON_EXECUTABLE="python3.10"
-    PYTHON_JENKINS_ENABLE="/opt/rh/rh-python310/enable"
-    ;;
-esac
-
 echo "Running build_and_run_tests with PYTHON_VERSION ${PYTHON_VERSION}"
 
 EXT=""
@@ -148,8 +134,44 @@ case "${PLATFORM}_${ARCH}" in
     ;;
 esac
 
-# Verify that the requested python version exists
-# TODO(SNOW-845592): ideally we should download python from conda if it's not present. Currently we just fail.
+if [ ${IS_NT} = true ]; then
+    EXT=".exe"
+    PYTHON_ENABLE_SCRIPT="Scripts/activate"
+    BAZEL_ADDITIONAL_BUILD_FLAGS+=(--nobuild_python_zip)
+    BAZEL_ADDITIONAL_BUILD_FLAGS+=(--enable_runfiles)
+    BAZEL_ADDITIONAL_BUILD_FLAGS+=(--action_env="USERPROFILE=${USERPROFILE}")
+    BAZEL_ADDITIONAL_BUILD_FLAGS+=(--host_action_env="USERPROFILE=${USERPROFILE}")
+    BAZEL_ADDITIONAL_STARTUP_FLAGS+=(--output_user_root=C:/broot)
+fi
+
+case ${PYTHON_VERSION} in
+  3.8)
+    if [ ${IS_NT} = true ]; then
+        PYTHON_EXECUTABLE="py -3.8"
+    else
+        PYTHON_EXECUTABLE="python3.8"
+    fi
+    PYTHON_JENKINS_ENABLE="/opt/rh/rh-python38/enable"
+    ;;
+  3.9)
+    if [ ${IS_NT} = true ]; then
+        PYTHON_EXECUTABLE="py -3.9"
+    else
+        PYTHON_EXECUTABLE="python3.9"
+    fi
+    PYTHON_JENKINS_ENABLE="/opt/rh/rh-python39/enable"
+    ;;
+  3.10)
+    if [ ${IS_NT} = true ]; then
+        PYTHON_EXECUTABLE="py -3.10"
+    else
+        PYTHON_EXECUTABLE="python3.10"
+    fi
+    PYTHON_JENKINS_ENABLE="/opt/rh/rh-python310/enable"
+    ;;
+esac
+
+# TODO(SNOW-901629): Use native python provided in the node once SNOW-1046060 resolved
 if [ "${ENV}" = "pip" ]; then
     set +eu
     # shellcheck source=/dev/null
@@ -161,13 +183,6 @@ if [ "${ENV}" = "pip" ]; then
         exit ${PYTHON_EXIST}
     fi
     set -eu
-fi
-
-if [ ${IS_NT} = true ]; then
-    EXT=".exe"
-    BAZEL_ADDITIONAL_BUILD_FLAGS+=(--nobuild_python_zip)
-    BAZEL_ADDITIONAL_BUILD_FLAGS+=(--enable_runfiles)
-    BAZEL_ADDITIONAL_STARTUP_FLAGS+=(--output_user_root=D:/broot)
 fi
 
 cd "${WORKSPACE}"
@@ -209,13 +224,6 @@ rsync -av --exclude '*.runfiles_manifest' --exclude '*.runfiles/**' "bazel-bin/t
 pushd "${TEMP_TEST_DIR}"
 rsync -av --exclude-from "${EXCLUDE_TESTS}" "../${SNOWML_DIR}/tests" .
 popd
-
-# Bazel on windows is consuming a lot of memory, let's clean it before proceed to avoid OOM.
-if [ ${IS_NT} = true ]; then
-    "${BAZEL}" "${BAZEL_ADDITIONAL_STARTUP_FLAGS[@]+"${BAZEL_ADDITIONAL_STARTUP_FLAGS[@]}"}" clean --expunge
-    "${BAZEL}" "${BAZEL_ADDITIONAL_STARTUP_FLAGS[@]+"${BAZEL_ADDITIONAL_STARTUP_FLAGS[@]}"}" shutdown
-fi
-
 popd
 
 # Build snowml package
@@ -228,10 +236,12 @@ if [ "${ENV}" = "pip" ]; then
         pushd ${SNOWPARK_DIR}
         rm -rf venv
         ${PYTHON_EXECUTABLE} -m venv venv
-        source venv/bin/activate
-        ${PYTHON_EXECUTABLE} -m pip install -U pip setuptools wheel
+        # shellcheck disable=SC1090
+        source "venv/${PYTHON_ENABLE_SCRIPT}"
+        python --version
+        python -m pip install -U pip setuptools wheel
         echo "Building snowpark wheel from main:$(git rev-parse HEAD)."
-        pip wheel . --no-deps
+        python -m pip wheel . --no-deps
         cp "$(find . -maxdepth 1 -iname 'snowflake_snowpark_python-*.whl')" "${WORKSPACE}"
         deactivate
         popd
@@ -240,7 +250,7 @@ if [ "${ENV}" = "pip" ]; then
     # Build SnowML
     pushd ${SNOWML_DIR}
     "${BAZEL}" "${BAZEL_ADDITIONAL_STARTUP_FLAGS[@]+"${BAZEL_ADDITIONAL_STARTUP_FLAGS[@]}"}" build "${BAZEL_ADDITIONAL_BUILD_FLAGS[@]+"${BAZEL_ADDITIONAL_BUILD_FLAGS[@]}"}" //:wheel
-    cp "$(${BAZEL} info bazel-bin)/dist/snowflake_ml_python-${VERSION}-py3-none-any.whl" "${WORKSPACE}"
+    cp "$("${BAZEL}" "${BAZEL_ADDITIONAL_STARTUP_FLAGS[@]+"${BAZEL_ADDITIONAL_STARTUP_FLAGS[@]}"}" info bazel-bin)/dist/snowflake_ml_python-${VERSION}-py3-none-any.whl" "${WORKSPACE}"
     popd
 else
     # Clean conda cache
@@ -284,21 +294,23 @@ if [ "${ENV}" = "pip" ]; then
 
     # Create testing env
     ${PYTHON_EXECUTABLE} -m venv testenv
-    source testenv/bin/activate
+    # shellcheck disable=SC1090
+    source "testenv/${PYTHON_ENABLE_SCRIPT}"
     # Install all of the packages in single line,
     # otherwise it will fail in dependency resolution.
-    ${PYTHON_EXECUTABLE} -m pip install --upgrade pip
-    ${PYTHON_EXECUTABLE} -m pip list
-    ${PYTHON_EXECUTABLE} -m pip install "snowflake_ml_python-${VERSION}-py3-none-any.whl[all]" "pytest-xdist[psutil]==2.5.0" -r "${WORKSPACE}/${SNOWML_DIR}/requirements.txt" --no-cache-dir --force-reinstall
+    python --version
+    python -m pip install --upgrade pip
+    python -m pip list
+    python -m pip install "snowflake_ml_python-${VERSION}-py3-none-any.whl[all]" "pytest-xdist[psutil]==2.5.0" -r "${WORKSPACE}/${SNOWML_DIR}/requirements.txt" --no-cache-dir --force-reinstall
     if [ "${WITH_SNOWPARK}" = true ]; then
         cp "$(find "${WORKSPACE}" -maxdepth 1 -iname 'snowflake_snowpark_python-*.whl')" "${TEMP_TEST_DIR}"
-        ${PYTHON_EXECUTABLE} -m pip install "$(find . -maxdepth 1 -iname 'snowflake_snowpark_python-*.whl')" --no-deps --force-reinstall
+        python -m pip install "$(find . -maxdepth 1 -iname 'snowflake_snowpark_python-*.whl')" --no-deps --force-reinstall
     fi
-    ${PYTHON_EXECUTABLE} -m pip list
+    python -m pip list
 
     # Run the tests
     set +e
-    TEST_SRCDIR="${TEMP_TEST_DIR}" ${PYTHON_EXECUTABLE} -m pytest "${COMMON_PYTEST_FLAG[@]}" -m "not pip_incompatible" tests/integ/
+    TEST_SRCDIR="${TEMP_TEST_DIR}" python -m pytest "${COMMON_PYTEST_FLAG[@]}" -m "not pip_incompatible" tests/integ/
     TEST_RETCODE=$?
     set -e
 else

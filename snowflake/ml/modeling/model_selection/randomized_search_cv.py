@@ -702,6 +702,45 @@ class RandomizedSearchCV(BaseTransformer):
 
         return output_df
 
+    @available_if(original_estimator_has_callable("score_samples"))  # type: ignore[misc]
+    @telemetry.send_api_usage_telemetry(
+        project=_PROJECT,
+        subproject=_SUBPROJECT,
+        custom_tags=dict([("autogen", True)]),
+    )
+    def score_samples(
+        self, dataset: Union[DataFrame, pd.DataFrame], output_cols_prefix: str = "score_samples_"
+    ) -> Union[DataFrame, pd.DataFrame]:
+        """Call score_samples on the estimator with the best found parameters.
+        Only available if refit=True and the underlying estimator supports score_samples.
+
+        Args:
+            dataset (Union[DataFrame, pd.DataFrame]):
+                Snowpark or Pandas DataFrame.
+            output_cols_prefix (str):
+                Prefix for the response columns. Defaults to "score_samples_".
+
+        Returns:
+            Union[DataFrame, pd.DataFrame]:
+                Output dataset with results of the decision function for the samples in input dataset.
+        """
+        super()._check_dataset_type(dataset)
+        if isinstance(dataset, DataFrame):
+            output_df = self._batch_inference(
+                dataset=dataset,
+                inference_method="score_samples",
+                expected_output_cols_list=self._get_output_column_names(output_cols_prefix),
+                expected_output_cols_type="float",
+            )
+        elif isinstance(dataset, pd.DataFrame):
+            output_df = self._sklearn_inference(
+                dataset=dataset,
+                inference_method="score_samples",
+                expected_output_cols_list=self._get_output_column_names(output_cols_prefix),
+            )
+
+        return output_df
+
     @available_if(original_estimator_has_callable("score"))  # type: ignore[misc]
     def score(self, dataset: Union[DataFrame, pd.DataFrame]) -> float:
         """

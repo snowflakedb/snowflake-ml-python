@@ -4,7 +4,12 @@
 
 ### Bug Fixes
 
+- Registry: Improve the error message when specifying currently unsupported `pip_requirements` argument.
+
 ### Behavior Changes
+
+- Feature Store: `FeatureStore.suspend_feature_view` and `FeatureStore.resume_feature_view` doesn't mutate input feature
+  view argument any more. The updated status only reflected in the returned feature view object.
 
 ### New Features
 
@@ -14,6 +19,8 @@
   anaconda.com:443, anaconda.org:80, anaconda.org:443, pypi.org:80, pypi.org:443. If you are using
   `snowflake.ml.model.models.huggingface_pipeline.HuggingFacePipelineModel` object, the following endpoints are required
   to be allowed: huggingface.com:80, huggingface.com:443, huggingface.co:80, huggingface.co:443.
+- Model Development: support `score_samples` method for all the classes, including Pipeline,
+  GridSearchCV, RandomizedSearchCV, PCA, IsolationForest, ...
 
 ## 1.2.1
 
