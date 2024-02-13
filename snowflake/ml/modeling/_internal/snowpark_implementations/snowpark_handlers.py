@@ -83,6 +83,8 @@ class SnowparkHandlers:
             statement_params=statement_params,
         )
         def vec_batch_infer(ds: PandasSeries[dict]) -> PandasSeries[dict]:  # type: ignore[type-arg]
+            import numbers
+
             import numpy as np
             import pandas as pd
 
@@ -120,6 +122,9 @@ class SnowparkHandlers:
             ):
                 # In case of kneighbors, functions return a tuple of ndarrays.
                 transformed_numpy_array = np.stack(inference_res, axis=1)
+            elif isinstance(inference_res, numbers.Number):
+                # In case of BernoulliRBM, functions return a float
+                transformed_numpy_array = np.array([inference_res])
             else:
                 transformed_numpy_array = inference_res
 

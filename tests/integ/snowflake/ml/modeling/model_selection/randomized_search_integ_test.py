@@ -8,13 +8,16 @@ import pandas as pd
 from absl.testing import absltest, parameterized
 from sklearn.datasets import load_iris
 from sklearn.decomposition import PCA as SkPCA
-from sklearn.ensemble import RandomForestClassifier as SkRandomForestClassifier
+from sklearn.ensemble import (
+    IsolationForest as SkIsolationForest,
+    RandomForestClassifier as SkRandomForestClassifier,
+)
 from sklearn.model_selection import RandomizedSearchCV as SkRandomizedSearchCV
 from sklearn.svm import SVC as SkSVC
 from xgboost import XGBClassifier as SkXGBClassifier
 
 from snowflake.ml.modeling.decomposition import PCA
-from snowflake.ml.modeling.ensemble import RandomForestClassifier
+from snowflake.ml.modeling.ensemble import IsolationForest, RandomForestClassifier
 from snowflake.ml.modeling.model_selection import RandomizedSearchCV
 from snowflake.ml.modeling.svm import SVC
 from snowflake.ml.modeling.xgboost import XGBClassifier
@@ -296,6 +299,33 @@ class RandomizedSearchCVTest(parameterized.TestCase):
             RuntimeError, msg="Estimator RandomizedSearchCV not fitted before calling predict_proba method."
         ):
             reg.predict_proba(self._input_df)
+
+    def test_score_samples(self) -> None:
+        params = {"max_features": range(1, 3)}
+        sklearn_reg = SkRandomizedSearchCV(
+            estimator=SkIsolationForest(random_state=0), param_distributions=params, scoring="accuracy"
+        )
+        reg = RandomizedSearchCV(
+            estimator=IsolationForest(random_state=0), param_distributions=params, scoring="accuracy"
+        )
+        reg.set_input_cols(self._input_cols)
+        output_cols = ["OUTPUT_" + c for c in self._label_col]
+        reg.set_output_cols(output_cols)
+        reg.set_label_cols(self._label_col)
+
+        reg.fit(self._input_df)
+        sklearn_reg.fit(X=self._input_df_pandas[self._input_cols], y=self._input_df_pandas[self._label_col].squeeze())
+
+        # Test score_samples
+        actual_score_samples_result = reg.score_samples(self._input_df).to_pandas().sort_values(by="INDEX")
+        actual_output_cols = [c for c in actual_score_samples_result.columns if c.find("score_samples") >= 0]
+        actual_score_samples_result = actual_score_samples_result[actual_output_cols].to_numpy()
+        sklearn_score_samples_array = sklearn_reg.score_samples(self._input_df_pandas[self._input_cols])
+        np.testing.assert_allclose(actual_score_samples_result.flatten(), sklearn_score_samples_array.flatten())
+
+        actual_pandas_result = reg.score_samples(self._input_df_pandas[self._input_cols])
+        actual_pandas_result = actual_pandas_result[actual_output_cols].to_numpy()
+        np.testing.assert_allclose(actual_pandas_result.flatten(), sklearn_score_samples_array.flatten())
 
 
 if __name__ == "__main__":
