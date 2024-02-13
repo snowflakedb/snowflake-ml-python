@@ -57,3 +57,17 @@ py_test(
         "//snowflake/ml/utils:connection_params",
     ],
 )
+
+py_test(
+    name = "check_sklearn_inference_test",
+    timeout = "long",
+    srcs = ["check_sklearn_inference_test.py"],
+    shard_count = 2,
+    deps = [
+        "//snowflake/ml/_internal/exceptions",
+        "//snowflake/ml/modeling/linear_model:linear_regression",
+        "//snowflake/ml/modeling/model_selection:grid_search_cv",
+        "//snowflake/ml/modeling/model_selection:randomized_search_cv",
+        "//snowflake/ml/utils:connection_params",
+    ],
+)

@@ -10,7 +10,7 @@ from snowflake.snowpark._internal import utils as snowpark_utils
 
 
 def get_available_session() -> session.Session:
-    return (  # type: ignore[no-any-return]
+    return (
         session._get_active_session()
         if snowpark_utils.is_in_stored_procedure()  # type: ignore[no-untyped-call] #
         else session.Session.builder.configs(connection_params.SnowflakeLoginOptions()).create()

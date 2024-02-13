@@ -17,6 +17,6 @@ py_library(
         "//snowflake/ml/_internal/utils:identifier",
         "//snowflake/ml/_internal/utils:parallelize",
         "//snowflake/ml/modeling/_internal:estimator_protocols",
-        "//snowflake/ml/modeling/_internal:snowpark_handlers",
+        "//snowflake/ml/modeling/_internal/snowpark_implementations:snowpark_handlers",
     ],
 )

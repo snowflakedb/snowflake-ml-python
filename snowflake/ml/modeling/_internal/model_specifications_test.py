@@ -11,9 +11,11 @@ from sklearn.linear_model import LinearRegression
 from sklearn.model_selection import GridSearchCV
 from xgboost import XGBRegressor
 
-from snowflake.ml.modeling._internal.distributed_hpo_trainer import construct_cv_results
 from snowflake.ml.modeling._internal.model_specifications import (
     ModelSpecificationsBuilder,
+)
+from snowflake.ml.modeling._internal.snowpark_implementations.distributed_hpo_trainer import (
+    construct_cv_results,
 )
 from snowflake.snowpark import Row
 

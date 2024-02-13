@@ -3,7 +3,6 @@
 # Do not modify the auto-generated code(except automatic reformatting by precommit hooks).
 #
 from typing import Any, Dict, Iterable, List, Optional, Set, Union
-from uuid import uuid4
 
 import cloudpickle as cp
 import numpy as np
@@ -22,7 +21,7 @@ from snowflake.ml.model.model_signature import (
     ModelSignature,
     _infer_signature,
 )
-from snowflake.ml.modeling._internal.estimator_protocols import CVHandlers
+from snowflake.ml.modeling._internal.estimator_protocols import TransformerHandlers
 from snowflake.ml.modeling._internal.estimator_utils import (
     gather_dependencies,
     original_estimator_has_callable,
@@ -30,7 +29,7 @@ from snowflake.ml.modeling._internal.estimator_utils import (
     validate_sklearn_args,
 )
 from snowflake.ml.modeling._internal.model_trainer_builder import ModelTrainerBuilder
-from snowflake.ml.modeling._internal.snowpark_handlers import (
+from snowflake.ml.modeling._internal.snowpark_implementations.snowpark_handlers import (
     SnowparkHandlers as HandlersImpl,
 )
 from snowflake.ml.modeling.framework.base import BaseTransformer
@@ -266,19 +265,10 @@ class GridSearchCV(BaseTransformer):
         self.set_drop_input_cols(drop_input_cols)
         self.set_sample_weight_col(sample_weight_col)
         self.set_passthrough_cols(passthrough_cols)
-        self._handlers: CVHandlers = HandlersImpl(
+        self._handlers: TransformerHandlers = HandlersImpl(
             class_name=self.__class__.__name__,
             subproject=_SUBPROJECT,
         )
-
-    def _get_rand_id(self) -> str:
-        """
-        Generate random id to be used in sproc and stage names.
-
-        Returns:
-            Random id string usable in sproc, table, and stage names.
-        """
-        return str(uuid4()).replace("-", "_").upper()
 
     def _get_active_columns(self) -> List[str]:
         """ "Get the list of columns that are relevant to the transformer."""

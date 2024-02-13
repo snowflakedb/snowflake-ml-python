@@ -66,7 +66,7 @@ def base_test_case(
             platform=deploy_platforms.TargetPlatform.WAREHOUSE,
             target_method=target_method_arg,
             options={
-                **permanent_deploy_args,
+                **permanent_deploy_args,  # type: ignore[arg-type]
                 **additional_deploy_options,
             },  # type: ignore[call-overload]
         )

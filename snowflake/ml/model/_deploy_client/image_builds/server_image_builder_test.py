@@ -16,6 +16,7 @@ class ServerImageBuilderTestCase(absltest.TestCase):
         self.compute_pool = "test_pool"
         self.context_tarball_stage_location = f"{self.artifact_stage_location}/context.tar.gz"
         self.full_image_name = "org-account.registry.snowflakecomputing.com/db/schema/repo/image:latest"
+        self.eais = ["eai_1"]
 
     @mock.patch(  # type: ignore[misc]
         "snowflake.ml.model._deploy_client.image_builds.server_image_builder.snowpark.Session"
@@ -33,6 +34,7 @@ class ServerImageBuilderTestCase(absltest.TestCase):
                 session=m_session,
                 artifact_stage_location=self.artifact_stage_location,
                 compute_pool=self.compute_pool,
+                external_access_integrations=self.eais,
             )
 
             shell_file_path = os.path.join(context_dir, constants.KANIKO_SHELL_SCRIPT_NAME)

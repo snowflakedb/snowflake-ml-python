@@ -27,6 +27,7 @@ class TestModelRegistryIntegWithSnowServiceDeployment(TestModelRegistryIntegSnow
                     "options": {
                         "compute_pool": self._TEST_CPU_COMPUTE_POOL,
                         "enable_remote_image_build": True,
+                        "external_access_integrations": self._SPCS_EAIS,
                     },
                 },
             )
@@ -57,6 +58,7 @@ class TestModelRegistryIntegWithSnowServiceDeployment(TestModelRegistryIntegSnow
                         "compute_pool": self._TEST_CPU_COMPUTE_POOL,
                         "enable_remote_image_build": True,
                         "model_in_image": True,
+                        "external_access_integrations": self._SPCS_EAIS,
                     },
                 },
             )

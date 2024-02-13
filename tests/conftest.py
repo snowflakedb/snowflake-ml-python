@@ -17,7 +17,8 @@ def _random_name_for_temp_object(object_type: TempObjectType) -> str:
 @pytest.fixture(scope="session", autouse=True)
 def random_name_for_temp_object_mock():
     with mock.patch(
-        "snowflake.ml.modeling._internal.snowpark_handlers.random_name_for_temp_object", _random_name_for_temp_object
+        "snowflake.ml.modeling._internal.snowpark_implementations.snowpark_handlers.random_name_for_temp_object",
+        _random_name_for_temp_object,
     ) as _fixture:
         cp.register_pickle_by_value(inspect.getmodule(_random_name_for_temp_object))
         yield _fixture

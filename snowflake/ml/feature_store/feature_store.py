@@ -54,7 +54,7 @@ _FEATURE_VIEW_TS_COL_TAG = "SNOWML_FEATURE_STORE_FV_TS_COL"
 _FEATURE_STORE_OBJECT_TAG = "SNOWML_FEATURE_STORE_OBJECT"
 _PROJECT = "FeatureStore"
 _DT_OR_VIEW_QUERY_PATTERN = re.compile(
-    r"""CREATE\ (?P<obj_type>(DYNAMIC\ TABLE|VIEW))\ .*
+    r"""CREATE\ (OR\ REPLACE\ )?(?P<obj_type>(DYNAMIC\ TABLE|VIEW))\ .*
         COMMENT\ =\ '(?P<comment>.*)'\s*
         TAG.*?{entity_tag}\ =\ '(?P<entities>.*?)',\n
            .*?{ts_col_tag}\ =\ '(?P<ts_col>.*?)',?.*?
@@ -252,12 +252,18 @@ class FeatureStore:
         join_keys = [f"'{key.resolved()}'" for key in entity.join_keys]
         join_keys_str = ",".join(join_keys)
         full_tag_name = self._get_fully_qualified_name(tag_name)
-        self._session.sql(
-            f"""CREATE TAG IF NOT EXISTS {full_tag_name}
-                ALLOWED_VALUES {join_keys_str}
-                COMMENT = '{entity.desc}'
-            """
-        ).collect(statement_params=self._telemetry_stmp)
+        try:
+            self._session.sql(
+                f"""CREATE TAG IF NOT EXISTS {full_tag_name}
+                    ALLOWED_VALUES {join_keys_str}
+                    COMMENT = '{entity.desc}'
+                """
+            ).collect(statement_params=self._telemetry_stmp)
+        except Exception as e:
+            raise snowml_exceptions.SnowflakeMLException(
+                error_code=error_codes.INTERNAL_SNOWPARK_ERROR,
+                original_exception=RuntimeError(f"Failed to register entity `{entity.name}`: {e}."),
+            ) from e
         logger.info(f"Registered Entity {entity}.")
 
     # TODO: add support to update column desc once SNOW-894249 is fixed
@@ -267,6 +273,7 @@ class FeatureStore:
         feature_view: FeatureView,
         version: str,
         block: bool = False,
+        override: bool = False,
     ) -> FeatureView:
         """
         Materialize a FeatureView to Snowflake backend.
@@ -281,6 +288,9 @@ class FeatureStore:
                 NOTE: Version only accepts letters, numbers and underscore. Also version will be capitalized.
             block: Specify whether the FeatureView backend materialization should be blocking or not. If blocking then
                 the API will wait until the initial FeatureView data is generated.
+            override: Override the existing FeatureView with same version. This is the same as dropping the FeatureView
+                first then recreate. NOTE: there will be backfill cost associated if the FeatureView is being
+                continuously maintained.
 
         Returns:
             A materialized FeatureView object.
@@ -312,14 +322,15 @@ class FeatureStore:
                 )
 
         feature_view_name = FeatureView._get_physical_name(feature_view.name, version)
-        dynamic_table_results = self._find_object("DYNAMIC TABLES", feature_view_name)
-        view_results = self._find_object("VIEWS", feature_view_name)
-        if len(dynamic_table_results) > 0 or len(view_results) > 0:
-            raise snowml_exceptions.SnowflakeMLException(
-                error_code=error_codes.OBJECT_ALREADY_EXISTS,
-                original_exception=ValueError(f"FeatureView {feature_view.name}/{version} already exists."),
-                suppress_source_trace=True,
-            )
+        if not override:
+            dynamic_table_results = self._find_object("DYNAMIC TABLES", feature_view_name)
+            view_results = self._find_object("VIEWS", feature_view_name)
+            if len(dynamic_table_results) > 0 or len(view_results) > 0:
+                raise snowml_exceptions.SnowflakeMLException(
+                    error_code=error_codes.OBJECT_ALREADY_EXISTS,
+                    original_exception=ValueError(f"FeatureView {feature_view.name}/{version} already exists."),
+                    suppress_source_trace=True,
+                )
 
         fully_qualified_name = self._get_fully_qualified_name(feature_view_name)
         entities = _FEATURE_VIEW_ENTITY_TAG_DELIMITER.join([e.name for e in feature_view.entities])
@@ -349,10 +360,12 @@ class FeatureStore:
                 self._default_warehouse,
                 timestamp_col,
                 block,
+                override,
             )
         else:
             try:
-                query = f"""CREATE VIEW {fully_qualified_name} ({column_descs})
+                override_clause = " OR REPLACE" if override else ""
+                query = f"""CREATE{override_clause} VIEW {fully_qualified_name} ({column_descs})
                     COMMENT = '{feature_view.desc}'
                     TAG (
                         {_FEATURE_VIEW_ENTITY_TAG} = '{entities}',
@@ -459,7 +472,7 @@ class FeatureStore:
             fvs = self._find_feature_views(entity_name, feature_view_name)
         else:
             fvs = []
-            for row in self._get_backend_representations(feature_view_name, prefix_match=True):
+            for row in self._get_fv_backend_representations(feature_view_name, prefix_match=True):
                 fvs.append(self._compose_feature_view(row))
 
         if as_dataframe:
@@ -491,7 +504,7 @@ class FeatureStore:
         version = FeatureViewVersion(version)
 
         fv_name = FeatureView._get_physical_name(name, version)
-        results = self._get_backend_representations(fv_name)
+        results = self._get_fv_backend_representations(fv_name)
         if len(results) != 1:
             raise snowml_exceptions.SnowflakeMLException(
                 error_code=error_codes.NOT_FOUND,
@@ -787,6 +800,7 @@ class FeatureStore:
         features: Union[List[Union[FeatureView, FeatureViewSlice]], List[str]],
         spine_timestamp_col: Optional[str] = None,
         exclude_columns: Optional[List[str]] = None,
+        include_feature_view_timestamp_col: bool = False,
     ) -> DataFrame:
         """
         Enrich spine dataframe with feature values. Mainly used to generate inference data input.
@@ -798,6 +812,8 @@ class FeatureStore:
                 or a list of serialized feature objects from Dataset.
             spine_timestamp_col: Timestamp column in spine_df for point-in-time feature value lookup.
             exclude_columns: Column names to exclude from the result dataframe.
+            include_feature_view_timestamp_col: Generated dataset will include timestamp column of feature view
+                (if feature view has timestamp column) if set true. Default to false.
 
         Returns:
             Snowpark DataFrame containing the joined results.
@@ -817,6 +833,7 @@ class FeatureStore:
             spine_df,
             cast(List[Union[FeatureView, FeatureViewSlice]], features),
             spine_timestamp_col,
+            include_feature_view_timestamp_col,
         )
 
         if exclude_columns is not None:
@@ -834,6 +851,7 @@ class FeatureStore:
         spine_label_cols: Optional[List[str]] = None,
         exclude_columns: Optional[List[str]] = None,
         save_mode: str = "errorifexists",
+        include_feature_view_timestamp_col: bool = False,
         desc: str = "",
     ) -> Dataset:
         """
@@ -856,6 +874,8 @@ class FeatureStore:
             save_mode: How new data is saved. currently support:
                 errorifexists: Raise error if registered table already exists.
                 merge: Merge new data if registered table already exists.
+            include_feature_view_timestamp_col: Generated dataset will include timestamp column of feature view
+                (if feature view has timestamp column) if set true. Default to false.
             desc: A description about this dataset.
 
         Returns:
@@ -892,7 +912,9 @@ class FeatureStore:
                 ),
             )
 
-        result_df, join_keys = self._join_features(spine_df, features, spine_timestamp_col)
+        result_df, join_keys = self._join_features(
+            spine_df, features, spine_timestamp_col, include_feature_view_timestamp_col
+        )
 
         snapshot_table = None
         if materialized_table is not None:
@@ -1028,10 +1050,12 @@ class FeatureStore:
         warehouse: SqlIdentifier,
         timestamp_col: SqlIdentifier,
         block: bool,
+        override: bool,
     ) -> None:
         # TODO: cluster by join keys once DT supports that
         try:
-            query = f"""CREATE DYNAMIC TABLE {fully_qualified_name} ({column_descs})
+            override_clause = " OR REPLACE" if override else ""
+            query = f"""CREATE{override_clause} DYNAMIC TABLE {fully_qualified_name} ({column_descs})
                 TARGET_LAG = '{'DOWNSTREAM' if schedule_task else feature_view.refresh_freq}'
                 COMMENT = '{feature_view.desc}'
                 TAG (
@@ -1048,26 +1072,29 @@ class FeatureStore:
             )
 
             if schedule_task:
-                self._session.sql(
-                    f"""CREATE TASK {fully_qualified_name}
-                        WAREHOUSE = {warehouse}
-                        SCHEDULE = 'USING CRON {feature_view.refresh_freq}'
-                        AS ALTER DYNAMIC TABLE {fully_qualified_name} REFRESH
+                try:
+                    self._session.sql(
+                        f"""CREATE{override_clause} TASK {fully_qualified_name}
+                            WAREHOUSE = {warehouse}
+                            SCHEDULE = 'USING CRON {feature_view.refresh_freq}'
+                            AS ALTER DYNAMIC TABLE {fully_qualified_name} REFRESH
+                        """
+                    ).collect(statement_params=self._telemetry_stmp)
+                    self._session.sql(
+                        f"""
+                        ALTER TASK {fully_qualified_name}
+                        SET TAG {self._get_fully_qualified_name(_FEATURE_STORE_OBJECT_TAG)} = ''
                     """
-                ).collect(statement_params=self._telemetry_stmp)
-                self._session.sql(
-                    f"""
-                    ALTER TASK {fully_qualified_name}
-                    SET TAG {self._get_fully_qualified_name(_FEATURE_STORE_OBJECT_TAG)} = ''
-                """
-                ).collect(statement_params=self._telemetry_stmp)
-                self._session.sql(f"ALTER TASK {fully_qualified_name} RESUME").collect(
-                    statement_params=self._telemetry_stmp
-                )
+                    ).collect(statement_params=self._telemetry_stmp)
+                    self._session.sql(f"ALTER TASK {fully_qualified_name} RESUME").collect(
+                        statement_params=self._telemetry_stmp
+                    )
+                except Exception:
+                    self._session.sql(f"DROP DYNAMIC TABLE IF EXISTS {fully_qualified_name}").collect(
+                        statement_params=self._telemetry_stmp
+                    )
+                    raise
         except Exception as e:
-            self._session.sql(f"DROP DYNAMIC TABLE IF EXISTS {fully_qualified_name}").collect(
-                statement_params=self._telemetry_stmp
-            )
             raise snowml_exceptions.SnowflakeMLException(
                 error_code=error_codes.INTERNAL_SNOWPARK_ERROR,
                 original_exception=RuntimeError(
@@ -1102,7 +1129,6 @@ class FeatureStore:
                 error_code=error_codes.INVALID_ARGUMENT,
                 original_exception=ValueError(f"Dataset df must contain only one query. Got: {df.queries['queries']}"),
             )
-
         schema = ", ".join([f"{c.name} {type_utils.convert_sp_to_sf_type(c.datatype)}" for c in df.schema.fields])
         fully_qualified_name = self._get_fully_qualified_name(table_name)
 
@@ -1152,6 +1178,7 @@ class FeatureStore:
         spine_df: DataFrame,
         features: List[Union[FeatureView, FeatureViewSlice]],
         spine_timestamp_col: Optional[SqlIdentifier],
+        include_feature_view_timestamp_col: bool,
     ) -> Tuple[DataFrame, List[SqlIdentifier]]:
         if len(spine_df.queries["queries"]) != 1:
             raise snowml_exceptions.SnowflakeMLException(
@@ -1198,9 +1225,15 @@ class FeatureStore:
 
             if spine_timestamp_col is not None and f.timestamp_col is not None:
                 if self._asof_join_enabled:
+                    if include_feature_view_timestamp_col:
+                        f_ts_col_alias = identifier.concat_names([f.name, "_", f.version, "_", f.timestamp_col])
+                        f_ts_col_str = f"r_{layer}.{f.timestamp_col} AS {f_ts_col_alias},"
+                    else:
+                        f_ts_col_str = ""
                     query = f"""
                         SELECT
                             l_{layer}.*,
+                            {f_ts_col_str}
                             r_{layer}.* EXCLUDE ({join_keys_str}, {f.timestamp_col})
                         FROM ({query}) l_{layer}
                         ASOF JOIN (
@@ -1360,7 +1393,7 @@ class FeatureStore:
         return f"{self._config.full_schema_path}.{name}"
 
     # TODO: SHOW DYNAMIC TABLES is very slow while other show objects are fast, investigate with DT in SNOW-902804.
-    def _get_backend_representations(
+    def _get_fv_backend_representations(
         self, object_name: Optional[SqlIdentifier], prefix_match: bool = False
     ) -> List[Row]:
         dynamic_table_results = self._find_object("DYNAMIC TABLES", object_name, prefix_match)
@@ -1399,8 +1432,10 @@ class FeatureStore:
         if not self._validate_entity_exists(entity_name):
             return []
 
-        all_fv_names = [SqlIdentifier(r["name"], case_sensitive=True) for r in self._get_backend_representations(None)]
-        if len(all_fv_names) == 0:
+        all_fvs = self._get_fv_backend_representations(object_name=None)
+        fv_maps = {SqlIdentifier(r["name"], case_sensitive=True): r for r in all_fvs}
+
+        if len(fv_maps.keys()) == 0:
             return []
 
         # NOTE: querying INFORMATION_SCHEMA for Entity lineage can be expensive depending on how many active
@@ -1420,7 +1455,7 @@ class FeatureStore:
                     WHERE LEVEL = 'TABLE'
                     AND TAG_NAME = '{_FEATURE_VIEW_ENTITY_TAG}'
                 """
-                for fv_name in all_fv_names
+                for fv_name in fv_maps.keys()
             ]
 
             results = self._session.sql("\nUNION\n".join(queries)).collect(statement_params=self._telemetry_stmp)
@@ -1432,15 +1467,16 @@ class FeatureStore:
         outputs = []
         for r in results:
             if entity_name == SqlIdentifier(r["TAG_VALUE"], case_sensitive=True):
-                fv_name, version = r["OBJECT_NAME"].split(_FEATURE_VIEW_NAME_DELIMITER)
+                fv_name, _ = r["OBJECT_NAME"].split(_FEATURE_VIEW_NAME_DELIMITER)
                 fv_name = SqlIdentifier(fv_name, case_sensitive=True)
+                obj_name = SqlIdentifier(r["OBJECT_NAME"], case_sensitive=True)
                 if feature_view_name is not None:
                     if fv_name == feature_view_name:
-                        outputs.append(self.get_feature_view(fv_name, version))
+                        outputs.append(self._compose_feature_view(fv_maps[obj_name]))
                     else:
                         continue
                 else:
-                    outputs.append(self.get_feature_view(fv_name.identifier(), version))
+                    outputs.append(self._compose_feature_view(fv_maps[obj_name]))
         return outputs
 
     def _compose_feature_view(self, row: Row) -> FeatureView:

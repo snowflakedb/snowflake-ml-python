@@ -38,6 +38,7 @@ class SnowServiceClientTest(absltest.TestCase):
                 SPEC = '{m_stage_path}'
                 MIN_INSTANCES={m_min_instances}
                 MAX_INSTANCES={m_max_instances}
+                EXTERNAL_ACCESS_INTEGRATIONS=(eai_a, eai_b)
             """,
             result=mock_data_frame.MockDataFrame(collect_result=[]),
         )
@@ -48,6 +49,7 @@ class SnowServiceClientTest(absltest.TestCase):
             max_instances=m_max_instances,
             compute_pool=m_compute_pool,
             spec_stage_location=m_spec_storgae_location,
+            external_access_integrations=["eai_a", "eai_b"],
         )
 
     def _add_mock_cursor_to_session(self, *, expected_job_id: Optional[str] = None) -> None:
@@ -71,6 +73,7 @@ class SnowServiceClientTest(absltest.TestCase):
             self.client.create_job(
                 compute_pool=m_compute_pool,
                 spec_stage_location=m_spec_storgae_location,
+                external_access_integrations=["eai_a", "eai_b"],
             )
 
     def test_create_job_failed(self) -> None:
@@ -96,6 +99,7 @@ class SnowServiceClientTest(absltest.TestCase):
                     self.client.create_job(
                         compute_pool=m_compute_pool,
                         spec_stage_location=m_spec_storgae_location,
+                        external_access_integrations=["eai_a", "eai_b"],
                     )
 
                     self.assertTrue(cm.output, test_log)

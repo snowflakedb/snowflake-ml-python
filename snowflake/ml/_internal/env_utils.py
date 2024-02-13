@@ -294,19 +294,22 @@ def get_matched_package_versions_in_snowflake_conda_channel(
     url = f"{_SNOWFLAKE_CONDA_CHANNEL_URL}/{conda_os.value}/repodata.json"
 
     if req.name not in _SNOWFLAKE_CONDA_PACKAGE_CACHE:
-        http_client = retryable_http.get_http_client()
-        parsed_python_version = version.Version(python_version)
-        python_version_build_str = f"py{parsed_python_version.major}{parsed_python_version.minor}"
-        repodata = http_client.get(url).json()
-        assert isinstance(repodata, dict)
-        packages_info = repodata["packages"]
-        assert isinstance(packages_info, dict)
-        version_list = [
-            version.parse(package_info["version"])
-            for package_info in packages_info.values()
-            if package_info["name"] == req.name and python_version_build_str in package_info["build"]
-        ]
-        _SNOWFLAKE_CONDA_PACKAGE_CACHE[req.name] = version_list
+        try:
+            http_client = retryable_http.get_http_client()
+            parsed_python_version = version.Version(python_version)
+            python_version_build_str = f"py{parsed_python_version.major}{parsed_python_version.minor}"
+            repodata = http_client.get(url).json()
+            assert isinstance(repodata, dict)
+            packages_info = repodata["packages"]
+            assert isinstance(packages_info, dict)
+            version_list = [
+                version.parse(package_info["version"])
+                for package_info in packages_info.values()
+                if package_info["name"] == req.name and python_version_build_str in package_info["build"]
+            ]
+            _SNOWFLAKE_CONDA_PACKAGE_CACHE[req.name] = version_list
+        except Exception:
+            pass
 
     matched_versions = list(req.specifier.filter(set(_SNOWFLAKE_CONDA_PACKAGE_CACHE.get(req.name, []))))
     return matched_versions

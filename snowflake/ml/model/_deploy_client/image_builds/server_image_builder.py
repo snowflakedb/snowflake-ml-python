@@ -2,6 +2,7 @@ import logging
 import os
 import posixpath
 from string import Template
+from typing import List
 
 import importlib_resources
 
@@ -36,6 +37,7 @@ class ServerImageBuilder(base_image_builder.ImageBuilder):
         session: snowpark.Session,
         artifact_stage_location: str,
         compute_pool: str,
+        external_access_integrations: List[str],
     ) -> None:
         """Initialization
 
@@ -47,6 +49,7 @@ class ServerImageBuilder(base_image_builder.ImageBuilder):
             artifact_stage_location: Spec file and future deployment related artifacts will be stored under
                 {stage}/models/{model_id}
             compute_pool: The compute pool used to run docker image build workload.
+            external_access_integrations: EAIs for network connection.
         """
         self.context_dir = context_dir
         self.image_repo = image_repo
@@ -54,6 +57,7 @@ class ServerImageBuilder(base_image_builder.ImageBuilder):
         self.session = session
         self.artifact_stage_location = artifact_stage_location
         self.compute_pool = compute_pool
+        self.external_access_integrations = external_access_integrations
         self.client = snowservice_client.SnowServiceClient(session)
 
         assert artifact_stage_location.startswith(
@@ -202,4 +206,8 @@ class ServerImageBuilder(base_image_builder.ImageBuilder):
 
     def _launch_kaniko_job(self, spec_stage_location: str) -> None:
         logger.debug("Submitting job for building docker image with kaniko")
-        self.client.create_job(compute_pool=self.compute_pool, spec_stage_location=spec_stage_location)
+        self.client.create_job(
+            compute_pool=self.compute_pool,
+            spec_stage_location=spec_stage_location,
+            external_access_integrations=self.external_access_integrations,
+        )

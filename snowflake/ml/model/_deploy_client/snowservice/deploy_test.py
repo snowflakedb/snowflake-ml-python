@@ -29,6 +29,7 @@ class DeployTestCase(absltest.TestCase):
         self.options: Dict[str, Any] = {
             "compute_pool": "mock_compute_pool",
             "image_repo": "mock_image_repo",
+            "external_access_integrations": ["eai_1"],
         }
 
         self.m_session.add_mock_sql(
@@ -431,6 +432,7 @@ class SnowServiceDeploymentTestCase(absltest.TestCase):
             "stage": "mock_stage",
             "compute_pool": "mock_compute_pool",
             "image_repo": "mock_image_repo",
+            "external_access_integrations": ["eai_a", "eai_b"],
         }
 
         self.deployment = SnowServiceDeployment(
