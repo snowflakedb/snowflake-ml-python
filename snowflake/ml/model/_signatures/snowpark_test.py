@@ -229,6 +229,23 @@ class SnowParkDataFrameHandlerTest(absltest.TestCase):
             core.FeatureSpec("b", core.DataType.FLOAT),
         ]
         schema = spt.StructType(
+            [spt.StructField('"a"', spt.DecimalType(6, 0)), spt.StructField('"b"', spt.DecimalType(6, 2))]
+        )
+        df = self._session.create_dataframe(
+            [
+                [decimal.Decimal(1), decimal.Decimal(2.5)],
+                [decimal.Decimal(1), decimal.Decimal(6.8)],
+            ],
+            schema,
+        )
+        with self.assertWarnsRegex(UserWarning, "is being automatically converted to DOUBLE in the Snowpark DataFrame"):
+            model_signature._validate_snowpark_data(df, fts)
+
+        fts = [
+            core.FeatureSpec("a", core.DataType.INT16),
+            core.FeatureSpec("b", core.DataType.FLOAT),
+        ]
+        schema = spt.StructType(
             [spt.StructField('"a"', spt.DecimalType(6, 0)), spt.StructField('"b"', spt.DoubleType())]
         )
         df = self._session.create_dataframe([[decimal.Decimal(1), -2.0], [decimal.Decimal(1), 1e58]], schema)

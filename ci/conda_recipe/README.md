@@ -6,7 +6,7 @@ Conda's guide on building a conda package from a wheel:
 To invoke conda build:
 
 ```sh
-conda build --prefix-length=0 --python=[3.8|3.9|3.10] ci/conda_recipe
+conda build --prefix-length=0 --python=[3.8|3.9|3.10|3.11] ci/conda_recipe
 ```
 
 - `--prefix-length=0`: prevent the conda build environment from being created in

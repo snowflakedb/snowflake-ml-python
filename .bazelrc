@@ -25,6 +25,7 @@ build:_extended_gpu_oss --platforms //bazel/platforms:extended_conda_gpu_env --h
 build:py3.8 --repo_env=BAZEL_CONDA_PYTHON_VERSION=3.8
 build:py3.9 --repo_env=BAZEL_CONDA_PYTHON_VERSION=3.9
 build:py3.10 --repo_env=BAZEL_CONDA_PYTHON_VERSION=3.10
+build:py3.11 --repo_env=BAZEL_CONDA_PYTHON_VERSION=3.11
 
 # Default
 

@@ -216,7 +216,8 @@ class FeatureStoreCaseSensitivityTest(parameterized.TestCase):
 
         # retrieve with equivalent name is fine.
         for equi_name in equi_names:
-            fs.get_entity(equi_name)
+            e_2 = fs.get_entity(equi_name)
+            self.assertEqual(e_2.name, SqlIdentifier(equi_name))
 
         # delete with different names will fail
         for diff_name in diff_names:
@@ -224,8 +225,8 @@ class FeatureStoreCaseSensitivityTest(parameterized.TestCase):
                 fs.delete_entity(diff_name)
 
         # register with different names is fine
-        e_2 = Entity(name=diff_names[0], join_keys=["a"])
-        fs.register_entity(e_2)
+        e_3 = Entity(name=diff_names[0], join_keys=["a"])
+        fs.register_entity(e_3)
 
         # registered two entiteis.
         self.assertEqual(len(fs.list_entities().collect()), 2)

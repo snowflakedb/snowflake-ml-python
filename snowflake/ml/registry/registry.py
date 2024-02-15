@@ -108,6 +108,8 @@ class Registry:
                 to specify a dependency. It is a recommended way to specify your dependencies using conda. When channel
                 is not specified, Snowflake Anaconda Channel will be used. Defaults to None.
             pip_requirements: List of Pip package specifications. Defaults to None.
+                Currently it is not supported since Model can only executed in Snowflake Warehouse where all
+                dependencies are required to be retrieved from Snowflake Anaconda Channel.
             python_version: Python version in which the model is run. Defaults to None.
             code_paths: List of directories containing code to import. Defaults to None.
             ext_modules: List of external modules to pickle with the model object.
@@ -130,6 +132,9 @@ class Registry:
                     - max_batch_size: Maximum batch size that the method could accept in the Snowflake Warehouse.
                         Defaults to None, determined automatically by Snowflake.
 
+        Raises:
+            NotImplementedError: `pip_requirements` is not supported.
+
         Returns:
             ModelVersion: ModelVersion object corresponding to the model just logged.
         """
@@ -138,6 +143,12 @@ class Registry:
             project=_TELEMETRY_PROJECT,
             subproject=_MODEL_TELEMETRY_SUBPROJECT,
         )
+        if pip_requirements:
+            raise NotImplementedError(
+                "Currently `pip_requirements` is not supported since Model can only executed "
+                "in Snowflake Warehouse where all dependencies are required to be retrieved "
+                "from Snowflake Anaconda Channel."
+            )
         return self._model_manager.log_model(
             model=model,
             model_name=model_name,
@@ -145,7 +156,7 @@ class Registry:
             comment=comment,
             metrics=metrics,
             conda_dependencies=conda_dependencies,
-            pip_requirements=pip_requirements,
+            pip_requirements=None,
             python_version=python_version,
             signatures=signatures,
             sample_input_data=sample_input_data,
