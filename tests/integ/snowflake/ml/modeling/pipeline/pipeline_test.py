@@ -13,6 +13,7 @@ import numpy as np
 from absl.testing.absltest import TestCase, main
 from sklearn.compose import ColumnTransformer as SkColumnTransformer
 from sklearn.datasets import load_diabetes, load_iris
+from sklearn.ensemble import IsolationForest as SklearnIsolationForest
 from sklearn.linear_model import (
     LinearRegression as SklearnLinearRegression,
     LogisticRegression as SklearnLogisticRegression,
@@ -25,6 +26,7 @@ from sklearn.preprocessing import (
 
 from snowflake.ml.model.model_signature import DataType, FeatureSpec, ModelSignature
 from snowflake.ml.modeling import pipeline as snowml_pipeline
+from snowflake.ml.modeling.ensemble import IsolationForest
 from snowflake.ml.modeling.linear_model import (
     LinearRegression as SnowmlLinearRegression,
     LogisticRegression as SnowmlLogisticRegression,
@@ -470,6 +472,36 @@ class TestPipeline(TestCase):
         snow_df_output = pipeline.transform(input_df).to_pandas()
 
         assert "TARGET_OUT" in snow_df_output.columns
+
+    def test_pipeline_score_samples(self) -> None:
+        input_df_pandas = load_iris(as_frame=True).frame
+        # Normalize column names
+        input_df_pandas.columns = [inflection.parameterize(c, "_").upper() for c in input_df_pandas.columns]
+        input_df_pandas["INDEX"] = input_df_pandas.reset_index().index
+
+        input_df = self._session.create_dataframe(input_df_pandas)
+
+        input_cols = [c for c in input_df_pandas.columns if not c.startswith("TARGET") and not c.startswith("INDEX")]
+        label_cols = ["TARGET"]
+
+        estimator = IsolationForest(input_cols=input_cols, label_cols=label_cols, random_state=0)
+
+        pipeline = snowml_pipeline.Pipeline(steps=[("estimator", estimator)])
+
+        # fit and predict
+        pipeline.fit(input_df)
+        output_df = pipeline.score_samples(input_df)
+        actual_results = (
+            output_df.to_pandas().sort_values(by="INDEX")["SCORE_SAMPLES_"].astype(float).to_numpy().flatten()
+        )
+
+        # Do the same with SKLearn
+        skpipeline = SkPipeline(steps=[("estimator", SklearnIsolationForest(random_state=0))])
+
+        skpipeline.fit(input_df_pandas[input_cols], input_df_pandas[label_cols])
+        sk_predict_results = skpipeline.score_samples(input_df_pandas[input_cols])
+
+        np.testing.assert_allclose(actual_results, sk_predict_results)
 
 
 if __name__ == "__main__":

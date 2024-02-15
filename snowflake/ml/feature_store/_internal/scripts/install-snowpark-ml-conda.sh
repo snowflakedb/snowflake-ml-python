@@ -3,7 +3,7 @@
 # Setup a conda environment & installs snowpark ML.
 #
 # Usage
-# install-snowpark-ml-conda.sh [-d <output dir>] [-n <conda env name>] [-p 3.8|3.9|3.10] [-h]
+# install-snowpark-ml-conda.sh [-d <output dir>] [-n <conda env name>] [-p <python version>] [-h]
 
 set -o pipefail
 set -eu
@@ -36,9 +36,9 @@ DEFAULT_FILENAME=$(dirname "$PROG")/snowflake-ml-python-1.0.12-fs-0.2.0-conda.zi
 
 function help() {
     exitcode=$1 && shift
-    echo "Usage: ${PROG} [-d <output dir>] [-n <conda env name>] [-p 3.8|3.9|3.10] [-h]"
+    echo "Usage: ${PROG} [-d <output dir>] [-n <conda env name>] [-p <python version>] [-h]"
     echo "  -d OUTPUT_DIR: Optional, default is ${CHANNEL_HOME}"
-    echo "  -p PY_VERSION: Optional, default is 3.8. Options are 3.9, 3.10."
+    echo "  -p PY_VERSION: Optional, default is 3.8."
     if [ "${CONDA_DEFAULT_ENV-}" ]; then
         echo "  -n CONDA_ENV_NAME: Optional, default is \`${CONDA_DEFAULT_ENV}\` (current environment). If an existing env provided, it will reuse. It will create otherwise."
     else
@@ -59,12 +59,7 @@ while (($#)); do
             ;;
         -p)
             shift
-            if [[ $1 = "3.8" || $1 = "3.9" || $1 == "3.10" ]]; then
-                PY_VERSION=$1
-            else
-                echo "Invalid python version: $1"
-                help 1
-            fi
+            PY_VERSION=$1
             ;;
         -h|--help)
             help 0

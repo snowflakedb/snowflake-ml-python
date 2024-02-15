@@ -114,7 +114,6 @@ class RegistryTest(absltest.TestCase):
         m_model = mock.MagicMock()
         m_conda_dependency = mock.MagicMock()
         m_sample_input_data = mock.MagicMock()
-        m_pip_requirements = mock.MagicMock()
         m_signatures = mock.MagicMock()
         m_options = mock.MagicMock()
         m_python_version = mock.MagicMock()
@@ -130,7 +129,6 @@ class RegistryTest(absltest.TestCase):
                 comment=m_comment,
                 metrics=m_metrics,
                 conda_dependencies=m_conda_dependency,
-                pip_requirements=m_pip_requirements,
                 python_version=m_python_version,
                 signatures=m_signatures,
                 sample_input_data=m_sample_input_data,
@@ -145,7 +143,7 @@ class RegistryTest(absltest.TestCase):
                 comment=m_comment,
                 metrics=m_metrics,
                 conda_dependencies=m_conda_dependency,
-                pip_requirements=m_pip_requirements,
+                pip_requirements=None,
                 python_version=m_python_version,
                 signatures=m_signatures,
                 sample_input_data=m_sample_input_data,

@@ -183,7 +183,7 @@ class {transform.test_class_name}(TestCase):
                 else:
                     np.testing.assert_allclose(actual_arr, sklearn_numpy_arr, rtol=1.e-1, atol=1.e-2)
 
-        expected_methods = ["predict_proba", "predict_log_proba", "decision_function", "kneighbors"]
+        expected_methods = ["predict_proba", "predict_log_proba", "decision_function", "kneighbors", "score_samples"]
         for m in expected_methods:
             assert not (
                 callable(getattr(sklearn_reg, m, None))
@@ -234,6 +234,14 @@ class {transform.test_class_name}(TestCase):
                     np.testing.assert_allclose(
                         actual_inference_result[:, 0, :], sklearn_inference_result[:, 0, :], rtol=1.e-1, atol=1.e-2
                     )
+                elif (
+                    m == "score_samples"
+                    and reg.__class__.__name__ == 'BernoulliRBM'
+                ):
+                    # score_samples is not deterministic for BernoulliRBM: 
+                    # it computes a quantity called the free energy on X, 
+                    # then on a randomly corrupted version of X, and returns the log of the logistic function of the difference.
+                    assert actual_inference_result.shape == sklearn_inference_result.shape
                 else:
                     np.testing.assert_allclose(
                         actual_inference_result, sklearn_inference_result, rtol=1.e-1, atol=1.e-2
