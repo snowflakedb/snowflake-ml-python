@@ -283,7 +283,7 @@ class DistributedHPOTrainer(SnowparkModelTrainer):
             "snowflake-snowpark-python<2",
             "fastparquet<2023.11",
             "pyarrow<14",
-            "cachetools<5",
+            "cachetools<6",
         ]
 
         @sproc(  # type: ignore[misc]

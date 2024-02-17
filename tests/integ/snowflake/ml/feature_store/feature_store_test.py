@@ -513,6 +513,10 @@ class FeatureStoreTest(absltest.TestCase):
         )
         fv = fs.register_feature_view(feature_view=fv, version="v1")
 
+        with self.assertWarnsRegex(UserWarning, "FeatureView .* has already been registered."):
+            fv = fs.register_feature_view(feature_view=fv, version="v1")
+            self.assertIsNotNone(fv)
+
         fv = FeatureView(
             name="fv",
             entities=[e],
@@ -635,11 +639,11 @@ class FeatureStoreTest(absltest.TestCase):
         self.assertEqual(res[0]["state"], "started")
         self.assertEqual(fv.refresh_freq, "DOWNSTREAM")
 
-        fs.suspend_feature_view(fv)
+        fv = fs.suspend_feature_view(fv)
         res = self._session.sql(f"SHOW TASKS LIKE '{task_name}' IN SCHEMA {fs._config.full_schema_path}").collect()
         self.assertEqual(res[0]["state"], "suspended")
 
-        fs.resume_feature_view(fv)
+        fv = fs.resume_feature_view(fv)
         res = self._session.sql(f"SHOW TASKS LIKE '{task_name}' IN SCHEMA {fs._config.full_schema_path}").collect()
         self.assertEqual(res[0]["state"], "started")
 

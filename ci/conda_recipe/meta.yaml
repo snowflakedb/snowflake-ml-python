@@ -26,7 +26,7 @@ requirements:
     - absl-py>=0.15,<2
     - aiohttp!=4.0.0a0, !=4.0.0a1
     - anyio>=3.5.0,<4
-    - cachetools>=3.1.1,<5
+    - cachetools>=3.1.1,<6
     - cloudpickle>=2.0.0
     - fsspec>=2022.11,<2024
     - importlib_resources>=5.1.4, <6
@@ -46,7 +46,7 @@ requirements:
     - sqlparse>=0.4,<1
     - typing-extensions>=4.1.0,<5
     - xgboost>=1.7.3,<2
-    - python>=3.8,<3.11
+    - python>=3.8,<3.12
   run_constrained:
     - lightgbm==3.3.5
     - mlflow>=2.1.0,<2.4
