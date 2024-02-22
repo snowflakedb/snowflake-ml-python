@@ -138,6 +138,7 @@ class FeatureView:
         self._warehouse: Optional[SqlIdentifier] = None
         self._refresh_mode: Optional[str] = None
         self._refresh_mode_reason: Optional[str] = None
+        self._owner: Optional[str] = None
         self._validate()
 
     def slice(self, names: List[str]) -> FeatureViewSlice:
@@ -291,6 +292,10 @@ class FeatureView:
     def refresh_mode_reason(self) -> Optional[str]:
         return self._refresh_mode_reason
 
+    @property
+    def owner(self) -> Optional[str]:
+        return self._owner
+
     def _get_query(self) -> str:
         if len(self._feature_df.queries["queries"]) != 1:
             raise ValueError(
@@ -354,6 +359,7 @@ Got {len(self._feature_df.queries['queries'])}: {self._feature_df.queries['queri
             and self.warehouse == other.warehouse
             and self.refresh_mode == other.refresh_mode
             and self.refresh_mode_reason == other.refresh_mode_reason
+            and self._owner == other._owner
         )
 
     def _to_dict(self) -> Dict[str, str]:
@@ -394,9 +400,15 @@ Got {len(self._feature_df.queries['queries'])}: {self._feature_df.queries['queri
         if _FEATURE_OBJ_TYPE not in json_dict or json_dict[_FEATURE_OBJ_TYPE] != cls.__name__:
             raise ValueError(f"Invalid json str for {cls.__name__}: {json_str}")
 
+        entities = []
+        for e_json in json_dict["_entities"]:
+            e = Entity(e_json["name"], e_json["join_keys"], e_json["desc"])
+            e.owner = e_json["owner"]
+            entities.append(e)
+
         return FeatureView._construct_feature_view(
             name=json_dict["_name"],
-            entities=[Entity(**e) for e in json_dict["_entities"]],
+            entities=entities,
             feature_df=session.sql(json_dict["_query"]),
             timestamp_col=json_dict["_timestamp_col"],
             desc=json_dict["_desc"],
@@ -409,6 +421,7 @@ Got {len(self._feature_df.queries['queries'])}: {self._feature_df.queries['queri
             warehouse=json_dict["_warehouse"],
             refresh_mode=json_dict["_refresh_mode"],
             refresh_mode_reason=json_dict["_refresh_mode_reason"],
+            owner=json_dict["_owner"],
         )
 
     @staticmethod
@@ -439,6 +452,7 @@ Got {len(self._feature_df.queries['queries'])}: {self._feature_df.queries['queri
         warehouse: Optional[str],
         refresh_mode: Optional[str],
         refresh_mode_reason: Optional[str],
+        owner: Optional[str],
     ) -> FeatureView:
         fv = FeatureView(
             name=name,
@@ -455,5 +469,6 @@ Got {len(self._feature_df.queries['queries'])}: {self._feature_df.queries['queri
         fv._warehouse = SqlIdentifier(warehouse) if warehouse is not None else None
         fv._refresh_mode = refresh_mode
         fv._refresh_mode_reason = refresh_mode_reason
+        fv._owner = owner
         fv.attach_feature_desc(feature_descs)
         return fv

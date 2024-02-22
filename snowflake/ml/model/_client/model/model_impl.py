@@ -216,8 +216,25 @@ class Model:
         )
         return pd.DataFrame([row.as_dict() for row in rows])
 
+    @telemetry.send_api_usage_telemetry(
+        project=_TELEMETRY_PROJECT,
+        subproject=_TELEMETRY_SUBPROJECT,
+    )
     def delete_version(self, version_name: str) -> None:
-        raise NotImplementedError("Deleting version has not been supported yet.")
+        """Drop a version of the model.
+
+        Args:
+            version_name: The name of the version.
+        """
+        statement_params = telemetry.get_statement_params(
+            project=_TELEMETRY_PROJECT,
+            subproject=_TELEMETRY_SUBPROJECT,
+        )
+        self._model_ops.delete_model_or_version(
+            model_name=self._model_name,
+            version_name=sql_identifier.SqlIdentifier(version_name),
+            statement_params=statement_params,
+        )
 
     @telemetry.send_api_usage_telemetry(
         project=_TELEMETRY_PROJECT,

@@ -167,7 +167,7 @@ def _create_registry_views(
     # Create views on most recent metadata items.
     metadata_view_name_prefix = identifier.concat_names([metadata_table_name, "_LAST_"])
     metadata_view_template = formatting.unwrap(
-        """CREATE OR REPLACE VIEW {database}.{schema}.{attribute_view} COPY GRANTS AS
+        """CREATE OR REPLACE TEMPORARY VIEW {database}.{schema}.{attribute_view} COPY GRANTS AS
             SELECT DISTINCT MODEL_ID, {select_expression} AS {final_attribute_name} FROM {metadata_table}
             WHERE ATTRIBUTE_NAME = '{attribute_name}'"""
     )
@@ -177,7 +177,9 @@ def _create_registry_views(
     metadata_select_fields = []
     for attribute_name in _LIST_METADATA_ATTRIBUTE:
         view_name = identifier.concat_names([metadata_view_name_prefix, attribute_name])
-        select_expression = f"(LAST_VALUE(VALUE) OVER (PARTITION BY MODEL_ID ORDER BY SEQUENCE_ID))['{attribute_name}']"
+        select_expression = (
+            f"(LAST_VALUE(VALUE) OVER (PARTITION BY MODEL_ID ORDER BY EVENT_TIMESTAMP))['{attribute_name}']"
+        )
         sql = metadata_view_template.format(
             database=database_name,
             schema=schema_name,
@@ -221,7 +223,7 @@ def _create_registry_views(
     registry_view_name = identifier.concat_names([registry_table_name, "_VIEW"])
     metadata_select_fields_formatted = ",".join(metadata_select_fields)
     session.sql(
-        f"""CREATE OR REPLACE VIEW {fully_qualified_schema_name}.{registry_view_name} COPY GRANTS AS
+        f"""CREATE OR REPLACE TEMPORARY VIEW {fully_qualified_schema_name}.{registry_view_name} COPY GRANTS AS
                 SELECT {registry_table_name}.*, {metadata_select_fields_formatted}
                 FROM {registry_table_name} {metadata_views_join}"""
     ).collect(statement_params=statement_params)
@@ -229,7 +231,7 @@ def _create_registry_views(
     # Create artifact view. it joins artifact tables with registry table on model id.
     artifact_view_name = identifier.concat_names([artifact_table_name, "_VIEW"])
     session.sql(
-        f"""CREATE OR REPLACE VIEW {fully_qualified_schema_name}.{artifact_view_name} COPY GRANTS AS
+        f"""CREATE OR REPLACE TEMPORARY VIEW {fully_qualified_schema_name}.{artifact_view_name} COPY GRANTS AS
                 SELECT
                     {registry_table_name}.NAME AS MODEL_NAME,
                     {registry_table_name}.VERSION AS MODEL_VERSION,
@@ -265,7 +267,7 @@ def _create_active_permanent_deployment_view(
     # Active deployments are those whose last operation is not DROP.
     active_deployments_view_name = identifier.concat_names([deployment_table_name, "_VIEW"])
     active_deployments_view_expr = f"""
-        CREATE OR REPLACE VIEW {fully_qualified_schema_name}.{active_deployments_view_name}
+        CREATE OR REPLACE TEMPORARY VIEW {fully_qualified_schema_name}.{active_deployments_view_name}
         COPY GRANTS AS
         SELECT
             DEPLOYMENT_NAME,
@@ -342,6 +344,17 @@ fully integrated into the new registry.
 
         statement_params = self._get_statement_params(inspect.currentframe())
         self._svm.validate_schema_version(statement_params)
+
+        _create_registry_views(
+            session,
+            self._name,
+            self._schema,
+            self._registry_table,
+            self._metadata_table,
+            self._deployment_table,
+            self._artifact_table,
+            statement_params,
+        )
 
     # Private methods
 
@@ -2067,10 +2080,6 @@ def create_model_registry(
     # These might be exposed as parameters in the future.
     database_name = identifier.get_inferred_name(database_name)
     schema_name = identifier.get_inferred_name(schema_name)
-    registry_table_name = identifier.get_inferred_name(_MODELS_TABLE_NAME)
-    metadata_table_name = identifier.get_inferred_name(_METADATA_TABLE_NAME)
-    deployment_table_name = identifier.get_inferred_name(_DEPLOYMENT_TABLE_NAME)
-    artifact_table_name = identifier.get_inferred_name(_initial_schema._ARTIFACT_TABLE_NAME)
 
     statement_params = telemetry.get_function_usage_statement_params(
         project=_TELEMETRY_PROJECT,
@@ -2090,16 +2099,6 @@ def create_model_registry(
 
         svm.try_upgrade(statement_params)
 
-        _create_registry_views(
-            session,
-            database_name,
-            schema_name,
-            registry_table_name,
-            metadata_table_name,
-            deployment_table_name,
-            artifact_table_name,
-            statement_params,
-        )
     finally:
         if not snowpark_utils.is_in_stored_procedure():  # type: ignore[no-untyped-call]
             # Restore the db & schema to the original ones

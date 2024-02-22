@@ -7,11 +7,14 @@ from typing import Any, Dict, Iterable, List, Optional, Set, Tuple, Union
 import cloudpickle
 import numpy as np
 import numpy.typing as npt
+import sklearn
+from packaging import version
 from sklearn import exceptions, metrics
 
 import snowflake.snowpark._internal.utils as snowpark_utils
 from snowflake import snowpark
 from snowflake.ml._internal import telemetry
+from snowflake.ml._internal.utils import result
 from snowflake.ml.modeling.metrics import metrics_utils
 from snowflake.snowpark import functions as F, types as T
 from snowflake.snowpark._internal.utils import (
@@ -791,6 +794,80 @@ def precision_recall_fscore_support(
             support - None (if average is not None) or array of int, shape = [n_unique_labels]
                 The number of occurrences of each label in the y true column(s).
     """
+    if average == "samples":
+        metrics_utils.check_label_columns(y_true_col_names, y_pred_col_names)
+
+        session = df._session
+        assert session is not None
+        sproc_name = snowpark_utils.random_name_for_temp_object(snowpark_utils.TempObjectType.PROCEDURE)
+        sklearn_release = version.parse(sklearn.__version__).release
+        statement_params = telemetry.get_statement_params(_PROJECT, _SUBPROJECT)
+
+        cols = metrics_utils.flatten_cols([y_true_col_names, y_pred_col_names, sample_weight_col_name])
+        queries = df[cols].queries["queries"]
+
+        pickled_result_module = cloudpickle.dumps(result)
+
+        @F.sproc(  # type: ignore[misc]
+            is_permanent=False,
+            session=session,
+            name=sproc_name,
+            replace=True,
+            packages=[
+                "cloudpickle",
+                f"scikit-learn=={sklearn_release[0]}.{sklearn_release[1]}.*",
+                "snowflake-snowpark-python",
+            ],
+            statement_params=statement_params,
+            anonymous=True,
+        )
+        def precision_recall_fscore_support_anon_sproc(session: snowpark.Session) -> bytes:
+            for query in queries[:-1]:
+                _ = session.sql(query).collect(statement_params=statement_params)
+            sp_df = session.sql(queries[-1])
+            df = sp_df.to_pandas(statement_params=statement_params)
+            df.columns = sp_df.columns
+
+            y_true = df[y_true_col_names]
+            y_pred = df[y_pred_col_names]
+            sample_weight = df[sample_weight_col_name] if sample_weight_col_name else None
+
+            with warnings.catch_warnings(record=True) as w:
+                p, r, f, s = metrics.precision_recall_fscore_support(
+                    y_true,
+                    y_pred,
+                    beta=beta,
+                    labels=labels,
+                    pos_label=pos_label,
+                    average=average,
+                    warn_for=warn_for,
+                    sample_weight=sample_weight,
+                    zero_division=zero_division,
+                )
+
+                # handle zero_division warnings
+                warning = None
+                if len(w) > 0 and issubclass(w[-1].category, exceptions.UndefinedMetricWarning):
+                    warning = w[-1]
+
+            result_module = cloudpickle.loads(pickled_result_module)
+            return result_module.serialize(session, (p, r, f, s, warning))  # type: ignore[no-any-return]
+
+        kwargs = telemetry.get_sproc_statement_params_kwargs(
+            precision_recall_fscore_support_anon_sproc, statement_params
+        )
+        result_object = result.deserialize(session, precision_recall_fscore_support_anon_sproc(session, **kwargs))
+
+        res: Union[
+            Tuple[float, float, float, None],
+            Tuple[npt.NDArray[np.float_], npt.NDArray[np.float_], npt.NDArray[np.float_], npt.NDArray[np.float_]],
+        ] = result_object[:4]
+        warning = result_object[-1]
+        if warning:
+            warnings.warn(warning.message, category=warning.category, stacklevel=2)
+        return res
+
+    # Distributed when average != "samples"
     session = df._session
     assert session is not None
 

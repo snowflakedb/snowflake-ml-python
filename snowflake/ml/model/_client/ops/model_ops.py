@@ -447,8 +447,14 @@ class ModelOperator:
         version_name: Optional[sql_identifier.SqlIdentifier] = None,
         statement_params: Optional[Dict[str, Any]] = None,
     ) -> None:
-        # TODO: Delete version is not supported yet.
-        self._model_client.drop_model(
-            model_name=model_name,
-            statement_params=statement_params,
-        )
+        if version_name:
+            self._model_version_client.drop_version(
+                model_name=model_name,
+                version_name=version_name,
+                statement_params=statement_params,
+            )
+        else:
+            self._model_client.drop_model(
+                model_name=model_name,
+                statement_params=statement_params,
+            )

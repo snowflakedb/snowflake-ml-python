@@ -183,6 +183,15 @@ class ModelImplTest(absltest.TestCase):
                 statement_params=mock.ANY,
             )
 
+    def test_delete_version(self) -> None:
+        with mock.patch.object(self.m_model._model_ops, "delete_model_or_version") as mock_delete_model_or_version:
+            self.m_model.delete_version(version_name="V2")
+            mock_delete_model_or_version.assert_called_once_with(
+                model_name=sql_identifier.SqlIdentifier("MODEL"),
+                version_name=sql_identifier.SqlIdentifier("V2"),
+                statement_params=mock.ANY,
+            )
+
     def test_show_tags(self) -> None:
         m_res = {'DB."schema".MYTAG': "tag content", 'MYDB.SCHEMA."my_another_tag"': "1"}
         with mock.patch.object(self.m_model._model_ops, "show_tags", return_value=m_res) as mock_show_tags:
