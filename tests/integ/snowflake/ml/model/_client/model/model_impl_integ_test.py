@@ -86,9 +86,20 @@ class TestModelImplInteg(parameterized.TestCase):
         self.assertEqual(self._model.default.version_name, VERSION_NAME2)
 
     @unittest.skipUnless(
-        test_env_utils.get_current_snowflake_version() >= version.parse("8.2.0"),
-        "TAG on model only available when the Snowflake Version is newer than 8.2.0",
+        test_env_utils.get_current_snowflake_version() >= version.parse("8.7.0"),
+        "Drop version on model only available when the Snowflake Version is newer than 8.7.0",
     )
+    def test_delete_version(self) -> None:
+        model, test_features, _ = model_factory.ModelFactory.prepare_sklearn_model()
+        self.registry.log_model(
+            model=model,
+            model_name=MODEL_NAME,
+            version_name="V3",
+            sample_input_data=test_features,
+        )
+        self._model.delete_version("V3")
+        self.assertLen(self._model.show_versions(), 2)
+
     def test_tag(self) -> None:
         fq_tag_name1 = identifier.get_schema_level_object_identifier(self._test_db, self._test_schema, self._tag_name1)
         fq_tag_name2 = identifier.get_schema_level_object_identifier(self._test_db, self._test_schema, self._tag_name2)

@@ -1,4 +1,4 @@
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 from snowflake.ml._internal.utils.sql_identifier import (
     SqlIdentifier,
@@ -35,7 +35,8 @@ class Entity:
 
         self.name: SqlIdentifier = SqlIdentifier(name)
         self.join_keys: List[SqlIdentifier] = to_sql_identifiers(join_keys)
-        self.desc = desc
+        self.owner: Optional[str] = None
+        self.desc: str = desc
 
     def _validate(self, name: str, join_keys: List[str]) -> None:
         if len(name) > _ENTITY_NAME_LENGTH_LIMIT:
@@ -62,6 +63,12 @@ class Entity:
                 entity_dict[k] = str(v)
         return entity_dict
 
+    @staticmethod
+    def _construct_entity(name: str, join_keys: List[str], desc: str, owner: str) -> "Entity":
+        e = Entity(name, join_keys, desc)
+        e.owner = owner
+        return e
+
     def __repr__(self) -> str:
         states = (f"{k}={v}" for k, v in vars(self).items())
         return f"{type(self).__name__}({', '.join(states)})"
@@ -70,4 +77,9 @@ class Entity:
         if not isinstance(other, Entity):
             return False
 
-        return self.name == other.name and self.desc == other.desc and self.join_keys == other.join_keys
+        return (
+            self.name == other.name
+            and self.desc == other.desc
+            and self.join_keys == other.join_keys
+            and self.owner == other.owner
+        )

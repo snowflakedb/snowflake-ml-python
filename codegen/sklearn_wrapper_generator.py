@@ -583,6 +583,7 @@ class WrapperGeneratorBase:
         self.fit_predict_docstring = ""
         self.fit_transform_docstring = ""
         self.predict_proba_docstring = ""
+        self.score_samples_docstring = ""
         self.score_docstring = ""
         self.predict_log_proba_docstring = ""
         self.decision_function_docstring = ""
@@ -728,6 +729,7 @@ class WrapperGeneratorBase:
             "transform",
             "score",
             "kneighbors",
+            "score_samples",
         ]
         _CLASS_FUNC = {name: func for name, func in inspect.getmembers(self.class_object[1])}
         for _each_method in _METHODS:
@@ -757,6 +759,7 @@ class WrapperGeneratorBase:
         self.predict_docstring = self.estimator_function_docstring["predict"]
         self.fit_predict_docstring = self.estimator_function_docstring["fit_predict"]
         self.predict_proba_docstring = self.estimator_function_docstring["predict_proba"]
+        self.score_samples_docstring = self.estimator_function_docstring["score_samples"]
         self.predict_log_proba_docstring = self.estimator_function_docstring["predict_log_proba"]
         self.decision_function_docstring = self.estimator_function_docstring["decision_function"]
         self.score_docstring = self.estimator_function_docstring["score"]

@@ -69,38 +69,34 @@ trap 'rm -rf "${working_dir}"' EXIT
 starting_hashes_json="${working_dir}/starting_hashes.json"
 final_hashes_json="${working_dir}/final_hashes.json"
 impacted_targets_path="${working_dir}/impacted_targets.txt"
-bazel_diff="${working_dir}/bazel_diff"
-seed_file="${working_dir}/bazel_diff_seed"
-ci_hash_file="${working_dir}/ci_scripts_hash"
-
-cat <<SeedFileContent >"${seed_file}"
-${ci_hash_file}
-${workspace_path}/requirements.yml
-SeedFileContent
-
-"${bazel}" run --config=pre_build :bazel-diff --script_path="${bazel_diff}"
+ci_hash_file_pr="${working_dir}/ci_hash_file_pr"
+ci_hash_file_base="${working_dir}/ci_hash_file_base"
 
 git -C "${workspace_path}" checkout "${pr_revision}" --quiet
 trap 'git -C "${workspace_path}" checkout "${current_revision}" --quiet' EXIT
 
 echo "Generating Hashes for Revision '${pr_revision}'"
 
-git ls-files -s "${workspace_path}/ci" | git hash-object --stdin >"${ci_hash_file}"
+git ls-files -s "${workspace_path}/ci" "${workspace_path}/bazel" | git hash-object --stdin >"${ci_hash_file_pr}"
 
-"${bazel_diff}" generate-hashes -w "${workspace_path}" -b "${bazel}" -s "${seed_file}" "${final_hashes_json}"
+"${bazel}" run --config=pre_build :bazel-diff -- generate-hashes -w "${workspace_path}" -b "${bazel}"  "${final_hashes_json}"
 
 MERGE_BASE_MAIN=$(git merge-base "${pr_revision}" main)
 git -C "${workspace_path}" checkout "${MERGE_BASE_MAIN}" --quiet
 
 echo "Generating Hashes for merge base ${MERGE_BASE_MAIN}"
 
-git ls-files -s "${workspace_path}/ci" | git hash-object --stdin >"${ci_hash_file}"
+git ls-files -s "${workspace_path}/ci" "${workspace_path}/bazel" | git hash-object --stdin >"${ci_hash_file_base}"
 
-$"${bazel_diff}" generate-hashes -w "${workspace_path}" -b "${bazel}" -s "${seed_file}" "${starting_hashes_json}"
+"${bazel}" run --config=pre_build :bazel-diff -- generate-hashes -w "${workspace_path}" -b "${bazel}" "${starting_hashes_json}"
 
 git -C "${workspace_path}" checkout "${pr_revision}" --quiet
 echo "Determining Impacted Targets and output to ${output_path}"
-$"${bazel_diff}" get-impacted-targets -sh "${starting_hashes_json}" -fh "${final_hashes_json}" -o "${impacted_targets_path}"
+"${bazel}" run --config=pre_build :bazel-diff -- get-impacted-targets -sh "${starting_hashes_json}" -fh "${final_hashes_json}" -o "${impacted_targets_path}"
+
+if ! cmp -s "$ci_hash_file_pr" "$ci_hash_file_base"; then
+    echo '//...' >> "${impacted_targets_path}"
+fi
 
 filter_query_rules_file="${working_dir}/filter_query_rules"
 

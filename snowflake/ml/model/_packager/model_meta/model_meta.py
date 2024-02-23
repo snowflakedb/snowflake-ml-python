@@ -1,4 +1,3 @@
-import importlib
 import os
 import pathlib
 import sys
@@ -200,22 +199,6 @@ def load_code_path(model_dir_path: str) -> None:
         if code_path in sys.path:
             sys.path.remove(code_path)
         sys.path.insert(0, code_path)
-        module_names = file_utils.get_all_modules(code_path)
-        # If the module_name starts with snowflake, then do not replace it.
-        # When deploying, we would add them beforehand.
-        # When in the local, they should not be added. We already prevent user from overwriting us.
-        module_names = [
-            module_name
-            for module_name in module_names
-            if not (module_name.startswith(f"{_SNOWFLAKE_PKG_NAME}.") or module_name == _SNOWFLAKE_PKG_NAME)
-        ]
-        for module_name in module_names:
-            actual_module = sys.modules.pop(module_name, None)
-            if actual_module is not None:
-                sys.modules[module_name] = importlib.import_module(module_name)
-
-        assert code_path in sys.path
-        sys.path.remove(code_path)
 
 
 class ModelMetadata:

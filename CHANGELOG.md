@@ -1,10 +1,41 @@
 # Release History
 
-## 1.2.2
+## 1.3.0
 
 ### Bug Fixes
 
+- Registry: Fix a bug that leads to module in `code_paths` when `log_model` cannot be correctly imported.
+
 ### Behavior Changes
+
+### New Features
+
+- FileSet: `snowflake.ml.fileset.sfcfs.SFFileSystem` can now be serialized with `pickle`.
+
+## 1.2.3
+
+### Bug Fixes
+
+- Registry: Now when providing Decimal Type column to a DOUBLE or FLOAT feature will not error out but auto cast with
+  warnings.
+- Registry: Improve the error message when specifying currently unsupported `pip_requirements` argument.
+- Model Development: Fix precision_recall_fscore_support incorrect results when `average="samples"`.
+- Model Registry: Fix an issue that leads to description, metrics or tags are not correctly returned in newly created
+  Model Registry (PrPr) due to Snowflake BCR [2024_01](
+  https://docs.snowflake.com/en/release-notes/bcr-bundles/2024_01/bcr-1483)
+
+### Behavior Changes
+
+- Feature Store: `FeatureStore.suspend_feature_view` and `FeatureStore.resume_feature_view` doesn't mutate input feature
+  view argument any more. The updated status only reflected in the returned feature view object.
+
+### New Features
+
+- Model Development: support `score_samples` method for all the classes, including Pipeline,
+  GridSearchCV, RandomizedSearchCV, PCA, IsolationForest, ...
+- Registry: Support deleting a version of a model.
+
+## 1.2.2 (2024-02-13)
 
 ### New Features
 
@@ -15,22 +46,20 @@
   `snowflake.ml.model.models.huggingface_pipeline.HuggingFacePipelineModel` object, the following endpoints are required
   to be allowed: huggingface.com:80, huggingface.com:443, huggingface.co:80, huggingface.co:443.
 
-## 1.2.1
+## 1.2.1 (2024-01-25)
 
 ### New Features
 
 - Model Development: Infers output column data type for transformers when possible.
 - Registry: `relax_version` option is available in the `options` argument when logging the model.
 
-## 1.2.0
+## 1.2.0 (2024-01-11)
 
 ### Bug Fixes
 
 - Model Registry: Fix "XGBoost version not compiled with GPU support" error when running CPU inference against open-source
   XGBoost models deployed to SPCS.
 - Model Registry: Fix model deployment to SPCS on Windows machines.
-
-### Behavior Changes
 
 ### New Features
 
@@ -49,7 +78,7 @@
 `snowflake.ml.registry.Registry`, except when specifically required. The old model registry will be removed once all
 its primary functionalities are fully integrated into the new registry.
 
-## 1.1.2
+## 1.1.2 (2023-12-18)
 
 ### Bug Fixes
 
@@ -67,7 +96,7 @@ its primary functionalities are fully integrated into the new registry.
 
 - Model Development: SQL implementation of binary `precision_score` metric.
 
-## 1.1.1
+## 1.1.1 (2023-12-05)
 
 ### Bug Fixes
 
@@ -80,15 +109,13 @@ its primary functionalities are fully integrated into the new registry.
   requiring automatic input_cols inference, but need to avoid using specific
   columns, like index columns, during training or inference.
 
-## 1.1.0
+## 1.1.0 (2023-12-01)
 
 ### Bug Fixes
 
 - Model Registry: Fix panda dataframe input not handling first row properly.
 - Model Development: OrdinalEncoder and LabelEncoder output_columns do not need to be valid snowflake identifiers. They
   would previously be excluded if the normalized name did not match the name specified in output_columns.
-
-### Behavior Changes
 
 ### New Features
 
@@ -97,7 +124,7 @@ its primary functionalities are fully integrated into the new registry.
 - Model Development: Add support for distributed HPO - GridSearchCV and RandomizedSearchCV execution will be
   distributed on multi-node warehouses.
 
-## 1.0.12
+## 1.0.12 (2023-11-13)
 
 ### Bug Fixes
 
@@ -122,7 +149,7 @@ its primary functionalities are fully integrated into the new registry.
 
 - Model Registry: Enable best-effort SPCS job/service log streaming when logging level is set to INFO.
 
-## 1.0.11
+## 1.0.11 (2023-10-27)
 
 ### New Features
 
@@ -141,7 +168,7 @@ its primary functionalities are fully integrated into the new registry.
 - Model Development: Fix metrics compatibility with Snowpark Dataframes that use Snowflake identifiers
 - Model Registry: Resolve 'delete_deployment' not deleting the SPCS service in certain cases.
 
-## 1.0.10
+## 1.0.10 (2023-10-13)
 
 ### Behavior Changes
 

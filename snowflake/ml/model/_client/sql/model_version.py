@@ -222,3 +222,16 @@ class ModelVersionSQLClient:
             ),
             statement_params=statement_params,
         ).has_dimensions(expected_rows=1, expected_cols=1).validate()
+
+    def drop_version(
+        self,
+        *,
+        model_name: sql_identifier.SqlIdentifier,
+        version_name: sql_identifier.SqlIdentifier,
+        statement_params: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        query_result_checker.SqlResultValidator(
+            self._session,
+            f"ALTER MODEL {self.fully_qualified_model_name(model_name)} DROP VERSION {version_name.identifier()}",
+            statement_params=statement_params,
+        ).has_dimensions(expected_rows=1, expected_cols=1).validate()

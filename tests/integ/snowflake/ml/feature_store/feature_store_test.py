@@ -199,6 +199,7 @@ class FeatureStoreTest(absltest.TestCase):
                 "NAME": ["aD", "PRODUCT", "USER"],
                 "JOIN_KEYS": ['["AID"]', '["CID","PID"]', '["uid"]'],
                 "DESC": ["", "", ""],
+                "OWNER": ["REGTEST_RL", "REGTEST_RL", "REGTEST_RL"],
             },
             sort_cols=["NAME"],
         )
@@ -220,6 +221,7 @@ class FeatureStoreTest(absltest.TestCase):
                 "NAME": ["PRODUCT", "USER"],
                 "JOIN_KEYS": ['["CID","PID"]', '["uid"]'],
                 "DESC": ["", ""],
+                "OWNER": ["REGTEST_RL", "REGTEST_RL"],
             },
             sort_cols=["NAME"],
         )
@@ -249,12 +251,17 @@ class FeatureStoreTest(absltest.TestCase):
 
         e1 = Entity(name="foo", join_keys=["a", "b"], desc="my foo")
         e2 = Entity(name="bar", join_keys=["c"])
-
         fs.register_entity(e1)
         fs.register_entity(e2)
+        re1 = fs.get_entity("foo")
+        re2 = fs.get_entity("bar")
 
-        self.assertEqual(e1, fs.get_entity("foo"))
-        self.assertEqual(e2, fs.get_entity("bar"))
+        self.assertEqual(e1.name, re1.name)
+        self.assertEqual(e1.join_keys, re1.join_keys)
+        self.assertEqual(e1.desc, re1.desc)
+        self.assertEqual(e2.name, re2.name)
+        self.assertEqual(e2.join_keys, re2.join_keys)
+        self.assertEqual(e2.desc, re2.desc)
 
         compare_dataframe(
             actual_df=fs.list_entities().to_pandas(),
@@ -262,6 +269,7 @@ class FeatureStoreTest(absltest.TestCase):
                 "NAME": ["FOO", "BAR"],
                 "JOIN_KEYS": ['["A","B"]', '["C"]'],
                 "DESC": ["my foo", ""],
+                "OWNER": ["REGTEST_RL", "REGTEST_RL"],
             },
             sort_cols=["NAME"],
         )
@@ -513,6 +521,10 @@ class FeatureStoreTest(absltest.TestCase):
         )
         fv = fs.register_feature_view(feature_view=fv, version="v1")
 
+        with self.assertWarnsRegex(UserWarning, "FeatureView .* has already been registered."):
+            fv = fs.register_feature_view(feature_view=fv, version="v1")
+            self.assertIsNotNone(fv)
+
         fv = FeatureView(
             name="fv",
             entities=[e],
@@ -635,11 +647,11 @@ class FeatureStoreTest(absltest.TestCase):
         self.assertEqual(res[0]["state"], "started")
         self.assertEqual(fv.refresh_freq, "DOWNSTREAM")
 
-        fs.suspend_feature_view(fv)
+        fv = fs.suspend_feature_view(fv)
         res = self._session.sql(f"SHOW TASKS LIKE '{task_name}' IN SCHEMA {fs._config.full_schema_path}").collect()
         self.assertEqual(res[0]["state"], "suspended")
 
-        fs.resume_feature_view(fv)
+        fv = fs.resume_feature_view(fv)
         res = self._session.sql(f"SHOW TASKS LIKE '{task_name}' IN SCHEMA {fs._config.full_schema_path}").collect()
         self.assertEqual(res[0]["state"], "started")
 
@@ -1088,6 +1100,7 @@ class FeatureStoreTest(absltest.TestCase):
                 "WAREHOUSE",
                 "REFRESH_MODE",
                 "REFRESH_MODE_REASON",
+                "OWNER",
                 "PHYSICAL_NAME",
             ],
         )

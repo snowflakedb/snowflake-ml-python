@@ -108,6 +108,23 @@ class TestRegistryCustomModelInteg(registry_model_test_base.RegistryModelTestBas
             },
         )
 
+    def test_custom_demo_model_decimal(
+        self,
+    ) -> None:
+        import decimal
+
+        lm = DemoModel(custom_model.ModelContext())
+        arr = [[decimal.Decimal(1.2), 2.3, 3.4], [decimal.Decimal(4.6), 2.7, 5.5]]
+        sp_df = self._session.create_dataframe(arr, schema=['"c1"', '"c2"', '"c3"'])
+        y_df_expected = pd.DataFrame([[1.2, 2.3, 3.4, 1.2], [4.6, 2.7, 5.5, 4.6]], columns=["c1", "c2", "c3", "output"])
+        self._test_registry_model(
+            model=lm,
+            sample_input=sp_df,
+            prediction_assert_fns={
+                "predict": (sp_df, lambda res: dataframe_utils.check_sp_df_res(res, y_df_expected, check_dtype=False))
+            },
+        )
+
     def test_custom_demo_model_sp_one_query(
         self,
     ) -> None:

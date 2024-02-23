@@ -2,6 +2,25 @@ load("//bazel:py_rules.bzl", "py_library", "py_test")
 
 package(default_visibility = ["//tests/integ/snowflake/ml:__subpackages__"])
 
+filegroup(
+    name = "ext_module",
+    srcs = glob([
+        "my_module/**",
+    ]),
+)
+
+py_test(
+    name = "additional_import_test",
+    srcs = ["additional_import_test.py"],
+    data = [":ext_module"],
+    deps = [
+        "//snowflake/ml/model:type_hints",
+        "//snowflake/ml/registry",
+        "//snowflake/ml/utils:connection_params",
+        "//tests/integ/snowflake/ml/test_utils:db_manager",
+    ],
+)
+
 py_library(
     name = "registry_model_test_base",
     testonly = True,
