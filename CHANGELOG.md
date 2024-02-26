@@ -1,5 +1,28 @@
 # Release History
 
+## 1.2.3
+
+### Bug Fixes
+
+- Registry: Now when providing Decimal Type column to a DOUBLE or FLOAT feature will not error out but auto cast with
+  warnings.
+- Registry: Improve the error message when specifying currently unsupported `pip_requirements` argument.
+- Model Development: Fix precision_recall_fscore_support incorrect results when `average="samples"`.
+- Model Registry: Fix an issue that leads to description, metrics or tags are not correctly returned in newly created
+  Model Registry (PrPr) due to Snowflake BCR [2024_01](
+  https://docs.snowflake.com/en/release-notes/bcr-bundles/2024_01/bcr-1483)
+
+### Behavior Changes
+
+- Feature Store: `FeatureStore.suspend_feature_view` and `FeatureStore.resume_feature_view` doesn't mutate input feature
+  view argument any more. The updated status only reflected in the returned feature view object.
+
+### New Features
+
+- Model Development: support `score_samples` method for all the classes, including Pipeline,
+  GridSearchCV, RandomizedSearchCV, PCA, IsolationForest, ...
+- Registry: Support deleting a version of a model.
+
 ## 1.2.2
 
 ### Bug Fixes

@@ -528,11 +528,8 @@ def _validate_snowpark_type_feature(
         if not (
             isinstance(
                 field_data_type,
-                (spt._IntegralType, spt.FloatType, spt.DoubleType),
+                (spt._IntegralType, spt.FloatType, spt.DoubleType, spt.DecimalType),
             )
-            # We are not allowing > 0 scale as it will become a decimal.Decimal
-            # Although it is castable, the support will be done as another effort.
-            or (isinstance(field_data_type, spt.DecimalType) and field_data_type.scale == 0)
         ):
             raise snowml_exceptions.SnowflakeMLException(
                 error_code=error_codes.INVALID_DATA,
@@ -549,6 +546,17 @@ def _validate_snowpark_type_feature(
                     f"Feature type {ft_type} is not met by column {col_name} "
                     f"because of its original type {field_data_type} is non-Numeric."
                 ),
+            )
+        if isinstance(field_data_type, spt.DecimalType) and field_data_type.scale > 0:
+            warnings.warn(
+                (
+                    f"Type {field_data_type} is being automatically converted to DOUBLE in the Snowpark DataFrame. "
+                    "This automatic conversion may lead to potential precision loss and rounding errors. "
+                    "If you wish to prevent this conversion, you should manually perform "
+                    "the necessary data type conversion."
+                ),
+                category=UserWarning,
+                stacklevel=2,
             )
         min_v, max_v = value_range
         if (

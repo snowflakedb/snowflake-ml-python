@@ -892,7 +892,7 @@ class ModelOpsTest(absltest.TestCase):
             )
             mock_set_default_version.assert_not_called()
 
-    def test_delete_model_or_version(self) -> None:
+    def test_delete_model_or_version_1(self) -> None:
         with mock.patch.object(
             self.m_ops._model_client,
             "drop_model",
@@ -903,6 +903,22 @@ class ModelOpsTest(absltest.TestCase):
             )
             mock_drop_model.assert_called_once_with(
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
+                statement_params=self.m_statement_params,
+            )
+
+    def test_delete_model_or_version_2(self) -> None:
+        with mock.patch.object(
+            self.m_ops._model_version_client,
+            "drop_version",
+        ) as mock_drop_version:
+            self.m_ops.delete_model_or_version(
+                model_name=sql_identifier.SqlIdentifier("MODEL"),
+                version_name=sql_identifier.SqlIdentifier("V2"),
+                statement_params=self.m_statement_params,
+            )
+            mock_drop_version.assert_called_once_with(
+                model_name=sql_identifier.SqlIdentifier("MODEL"),
+                version_name=sql_identifier.SqlIdentifier("V2"),
                 statement_params=self.m_statement_params,
             )
 

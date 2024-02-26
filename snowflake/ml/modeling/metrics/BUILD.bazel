@@ -11,6 +11,7 @@ py_library(
         ":init",
         ":metrics_utils",
         "//snowflake/ml/_internal:telemetry",
+        "//snowflake/ml/_internal/utils:result",
     ],
 )
 

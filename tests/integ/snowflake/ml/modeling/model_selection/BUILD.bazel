@@ -9,6 +9,7 @@ py_test(
     shard_count = 5,
     deps = [
         "//snowflake/ml/modeling/decomposition:pca",
+        "//snowflake/ml/modeling/ensemble:isolation_forest",
         "//snowflake/ml/modeling/ensemble:random_forest_classifier",
         "//snowflake/ml/modeling/model_selection:grid_search_cv",
         "//snowflake/ml/modeling/svm:svc",
@@ -25,6 +26,7 @@ py_test(
     shard_count = 3,
     deps = [
         "//snowflake/ml/modeling/decomposition:pca",
+        "//snowflake/ml/modeling/ensemble:isolation_forest",
         "//snowflake/ml/modeling/ensemble:random_forest_classifier",
         "//snowflake/ml/modeling/model_selection:randomized_search_cv",
         "//snowflake/ml/modeling/svm:svc",

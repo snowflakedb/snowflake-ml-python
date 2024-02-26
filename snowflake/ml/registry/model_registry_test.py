@@ -433,6 +433,7 @@ class ModelRegistryTest(absltest.TestCase):
         )
         self._mock_show_version_table_exists({})
         self._mock_select_from_version_table({}, _schema._CURRENT_SCHEMA_VERSION)
+        self.setup_create_views_call()
 
     def setup_list_model_call(self) -> mock_data_frame.MockDataFrame:
         """Setup the expected calls originating from list_model."""
@@ -449,7 +450,7 @@ class ModelRegistryTest(absltest.TestCase):
         """Setup the expected calls originating from _create_views."""
         self.add_session_mock_sql(
             query=(
-                f"""CREATE OR REPLACE VIEW {_DATABASE_NAME}.{_SCHEMA_NAME}.{_DEPLOYMENTS_TABLE_NAME}_VIEW
+                f"""CREATE OR REPLACE TEMPORARY VIEW {_DATABASE_NAME}.{_SCHEMA_NAME}.{_DEPLOYMENTS_TABLE_NAME}_VIEW
                     COPY GRANTS AS
                     SELECT
                         DEPLOYMENT_NAME,
@@ -474,12 +475,13 @@ class ModelRegistryTest(absltest.TestCase):
         )
         self.add_session_mock_sql(
             query=(
-                f"""CREATE OR REPLACE VIEW {_DATABASE_NAME}.{_SCHEMA_NAME}.{_METADATA_TABLE_NAME}_LAST_DESCRIPTION
+                f"""CREATE OR REPLACE TEMPORARY VIEW
+                        {_DATABASE_NAME}.{_SCHEMA_NAME}.{_METADATA_TABLE_NAME}_LAST_DESCRIPTION
                     COPY GRANTS AS
                         SELECT DISTINCT
                             MODEL_ID,
                             (LAST_VALUE(VALUE) OVER (
-                                PARTITION BY MODEL_ID ORDER BY SEQUENCE_ID))['DESCRIPTION']
+                                PARTITION BY MODEL_ID ORDER BY EVENT_TIMESTAMP))['DESCRIPTION']
                             as DESCRIPTION
                         FROM {_METADATA_TABLE_NAME} WHERE ATTRIBUTE_NAME = 'DESCRIPTION'"""
             ),
@@ -489,12 +491,12 @@ class ModelRegistryTest(absltest.TestCase):
         )
         self.add_session_mock_sql(
             query=(
-                f"""CREATE OR REPLACE VIEW {_DATABASE_NAME}.{_SCHEMA_NAME}.{_METADATA_TABLE_NAME}_LAST_METRICS
+                f"""CREATE OR REPLACE TEMPORARY VIEW {_DATABASE_NAME}.{_SCHEMA_NAME}.{_METADATA_TABLE_NAME}_LAST_METRICS
                     COPY GRANTS AS
                         SELECT DISTINCT
                             MODEL_ID,
                             (LAST_VALUE(VALUE) OVER (
-                                PARTITION BY MODEL_ID ORDER BY SEQUENCE_ID))['METRICS']
+                                PARTITION BY MODEL_ID ORDER BY EVENT_TIMESTAMP))['METRICS']
                             as METRICS
                         FROM {_METADATA_TABLE_NAME} WHERE ATTRIBUTE_NAME = 'METRICS'"""
             ),
@@ -504,12 +506,12 @@ class ModelRegistryTest(absltest.TestCase):
         )
         self.add_session_mock_sql(
             query=(
-                f"""CREATE OR REPLACE VIEW {_DATABASE_NAME}.{_SCHEMA_NAME}.{_METADATA_TABLE_NAME}_LAST_TAGS
+                f"""CREATE OR REPLACE TEMPORARY VIEW {_DATABASE_NAME}.{_SCHEMA_NAME}.{_METADATA_TABLE_NAME}_LAST_TAGS
                     COPY GRANTS AS
                         SELECT DISTINCT
                             MODEL_ID,
                             (LAST_VALUE(VALUE) OVER (
-                                PARTITION BY MODEL_ID ORDER BY SEQUENCE_ID))['TAGS']
+                                PARTITION BY MODEL_ID ORDER BY EVENT_TIMESTAMP))['TAGS']
                             as TAGS
                         FROM {_METADATA_TABLE_NAME} WHERE ATTRIBUTE_NAME = 'TAGS'"""
             ),
@@ -519,7 +521,7 @@ class ModelRegistryTest(absltest.TestCase):
         )
         self.add_session_mock_sql(
             query=(
-                f"""CREATE OR REPLACE VIEW
+                f"""CREATE OR REPLACE TEMPORARY VIEW
                     {_DATABASE_NAME}.{_SCHEMA_NAME}.{_METADATA_TABLE_NAME}_LAST_REGISTRATION COPY GRANTS AS
                         SELECT DISTINCT
                             MODEL_ID, EVENT_TIMESTAMP as REGISTRATION_TIMESTAMP
@@ -531,7 +533,7 @@ class ModelRegistryTest(absltest.TestCase):
         )
         self.add_session_mock_sql(
             query=(
-                f"""CREATE OR REPLACE VIEW  {_DATABASE_NAME}.{_SCHEMA_NAME}.{_REGISTRY_TABLE_NAME}_VIEW
+                f"""CREATE OR REPLACE TEMPORARY VIEW  {_DATABASE_NAME}.{_SCHEMA_NAME}.{_REGISTRY_TABLE_NAME}_VIEW
                     COPY GRANTS AS
                     SELECT {_REGISTRY_TABLE_NAME}.*, {_METADATA_TABLE_NAME}_LAST_DESCRIPTION.DESCRIPTION
                         AS DESCRIPTION,
@@ -555,7 +557,7 @@ class ModelRegistryTest(absltest.TestCase):
         )
         self.add_session_mock_sql(
             query=(
-                f"""CREATE OR REPLACE VIEW {_DATABASE_NAME}.{_SCHEMA_NAME}.{_ARTIFACTS_TABLE_NAME}_VIEW
+                f"""CREATE OR REPLACE TEMPORARY VIEW {_DATABASE_NAME}.{_SCHEMA_NAME}.{_ARTIFACTS_TABLE_NAME}_VIEW
                     COPY GRANTS AS
                     SELECT
                         {_REGISTRY_TABLE_NAME}.NAME AS MODEL_NAME,
@@ -596,6 +598,7 @@ class ModelRegistryTest(absltest.TestCase):
         )
         self._mock_show_version_table_exists({})
         self._mock_select_from_version_table({}, _schema._CURRENT_SCHEMA_VERSION)
+        self.setup_create_views_call()
 
     def setup_schema_upgrade_calls(self, statement_params: Dict[str, str]) -> None:
         self._mock_show_version_table_exists(statement_params)
@@ -755,8 +758,6 @@ class ModelRegistryTest(absltest.TestCase):
 
                 self.setup_schema_upgrade_calls(statement_params)
 
-                self.setup_create_views_call()
-
                 model_registry.create_model_registry(
                     session=cast(snowpark.Session, self._session),
                     database_name=_DATABASE_NAME,
@@ -781,7 +782,6 @@ class ModelRegistryTest(absltest.TestCase):
         self._mock_create_artifacts_table_not_exists(statement_params)
 
         self.setup_schema_upgrade_calls(statement_params)
-        self.setup_create_views_call()
 
         # 2. SQL queries issued by ModelRegistry constructor.
         self.setup_open_existing()

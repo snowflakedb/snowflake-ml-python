@@ -240,6 +240,23 @@ class ModelVersionSQLTest(absltest.TestCase):
             statement_params=m_statement_params,
         )
 
+    def test_drop_version(self) -> None:
+        m_statement_params = {"test": "1"}
+        m_df = mock_data_frame.MockDataFrame(
+            collect_result=[Row("Model MODEL successfully altered.")], collect_statement_params=m_statement_params
+        )
+        self.m_session.add_mock_sql("""ALTER MODEL TEMP."test".MODEL DROP VERSION V2""", m_df)
+        c_session = cast(Session, self.m_session)
+        model_version_sql.ModelVersionSQLClient(
+            c_session,
+            database_name=sql_identifier.SqlIdentifier("TEMP"),
+            schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
+        ).drop_version(
+            model_name=sql_identifier.SqlIdentifier("MODEL"),
+            version_name=sql_identifier.SqlIdentifier("V2"),
+            statement_params=m_statement_params,
+        )
+
 
 if __name__ == "__main__":
     absltest.main()

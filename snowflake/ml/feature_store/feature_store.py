@@ -87,12 +87,17 @@ def switch_warehouse(
     @functools.wraps(f)
     def wrapper(self: FeatureStore, /, *args: _Args.args, **kargs: _Args.kwargs) -> _RT:
         original_warehouse = self._session.get_current_warehouse()
+        if original_warehouse is not None:
+            original_warehouse = SqlIdentifier(original_warehouse)
+        warehouse_updated = False
         try:
-            if self._default_warehouse is not None:
+            if original_warehouse != self._default_warehouse:
                 self._session.use_warehouse(self._default_warehouse)
+                warehouse_updated = True
             return f(self, *args, **kargs)
         finally:
-            self._session.use_warehouse(original_warehouse)  # type: ignore[arg-type]
+            if warehouse_updated and original_warehouse is not None:
+                self._session.use_warehouse(original_warehouse)
 
     return wrapper
 
@@ -278,9 +283,14 @@ class FeatureStore:
         """
         Materialize a FeatureView to Snowflake backend.
         Incremental maintenance for updates on the source data will be automated if refresh_freq is set.
-
         NOTE: Each new materialization will trigger a full FeatureView history refresh for the data included in the
               FeatureView.
+
+        Examples:
+            ...
+            draft_fv = FeatureView(name="my_fv", entities=[entities], feature_df)
+            registered_fv = fs.register_feature_view(feature_view=draft_fv, version="v1")
+            ...
 
         Args:
             feature_view: FeatureView instance to materialize.
@@ -306,12 +316,13 @@ class FeatureStore:
         version = FeatureViewVersion(version)
 
         if feature_view.status != FeatureViewStatus.DRAFT:
-            raise snowml_exceptions.SnowflakeMLException(
-                error_code=error_codes.OBJECT_ALREADY_EXISTS,
-                original_exception=ValueError(
-                    f"FeatureView {feature_view.name}/{feature_view.version} has already been registered."
-                ),
+            warnings.warn(
+                f"FeatureView {feature_view.name}/{feature_view.version} has already been registered. "
+                + "Skipping registration.",
+                stacklevel=2,
+                category=UserWarning,
             )
+            return feature_view
 
         # TODO: ideally we should move this to FeatureView creation time
         for e in feature_view.entities:
@@ -472,8 +483,9 @@ class FeatureStore:
             fvs = self._find_feature_views(entity_name, feature_view_name)
         else:
             fvs = []
+            entities = self.list_entities().collect()
             for row in self._get_fv_backend_representations(feature_view_name, prefix_match=True):
-                fvs.append(self._compose_feature_view(row))
+                fvs.append(self._compose_feature_view(row, entities))
 
         if as_dataframe:
             result = None
@@ -511,7 +523,7 @@ class FeatureStore:
                 original_exception=ValueError(f"Failed to find FeatureView {name}/{version}: {results}"),
             )
 
-        return self._compose_feature_view(results[0])
+        return self._compose_feature_view(results[0], self.list_entities().collect())
 
     @dispatch_decorator(prpr_version="1.0.8")
     def merge_features(
@@ -620,7 +632,7 @@ class FeatureStore:
             feature_view: FeatureView to resume.
 
         Returns:
-            FeatureView with updated status.
+            A new feature view with updated status.
 
         Raises:
             SnowflakeMLException: [ValueError] FeatureView is not in suspended status.
@@ -646,7 +658,7 @@ class FeatureStore:
             feature_view: FeatureView to suspend.
 
         Returns:
-            FeatureView with updated status.
+            A new feature view with updated status.
 
         Raises:
             SnowflakeMLException: [ValueError] FeatureView is not in running status.
@@ -712,6 +724,7 @@ class FeatureStore:
                 F.col('"name"').substr(prefix_len, _ENTITY_NAME_LENGTH_LIMIT).alias("NAME"),
                 F.col('"allowed_values"').alias("JOIN_KEYS"),
                 F.col('"comment"').alias("DESC"),
+                F.col('"owner"').alias("OWNER"),
             ),
         )
 
@@ -747,10 +760,12 @@ class FeatureStore:
 
         raw_join_keys = result[0]["JOIN_KEYS"]
         join_keys = raw_join_keys.strip("[]").split(",")
-        return Entity(
-            name=result[0]["NAME"],
+
+        return Entity._construct_entity(
+            name=SqlIdentifier(result[0]["NAME"], case_sensitive=True).identifier(),
             join_keys=join_keys,
             desc=result[0]["DESC"],
+            owner=result[0]["OWNER"],
         )
 
     @dispatch_decorator(prpr_version="1.0.8")
@@ -1339,7 +1354,7 @@ class FeatureStore:
                 {f_ts_col} {s_ts_col},
                 {join_keys_str},
                 {join_cols(s_only_cols, end_comma=True, rename=False, prefix='null AS ')}
-                {join_cols(f_only_cols,end_comma=False, rename=False)}
+                {join_cols(f_only_cols, end_comma=False, rename=False)}
             FROM {f_table_name}"""
         union_cte = f"""
             unioned_{layer} AS (
@@ -1422,9 +1437,8 @@ class FeatureStore:
                 original_exception=RuntimeError(f"Failed to update feature view {fully_qualified_name}'s status: {e}"),
             ) from e
 
-        feature_view._status = self.get_feature_view(feature_view.name, feature_view.version).status
         logger.info(f"Successfully {operation} FeatureView {feature_view.name}/{feature_view.version}.")
-        return feature_view
+        return self.get_feature_view(feature_view.name, feature_view.version)
 
     def _find_feature_views(
         self, entity_name: SqlIdentifier, feature_view_name: Optional[SqlIdentifier]
@@ -1464,6 +1478,8 @@ class FeatureStore:
                 error_code=error_codes.INTERNAL_SNOWPARK_ERROR,
                 original_exception=RuntimeError(f"Failed to retrieve feature views' information: {e}"),
             ) from e
+
+        entities = self.list_entities().collect()
         outputs = []
         for r in results:
             if entity_name == SqlIdentifier(r["TAG_VALUE"], case_sensitive=True):
@@ -1472,14 +1488,25 @@ class FeatureStore:
                 obj_name = SqlIdentifier(r["OBJECT_NAME"], case_sensitive=True)
                 if feature_view_name is not None:
                     if fv_name == feature_view_name:
-                        outputs.append(self._compose_feature_view(fv_maps[obj_name]))
+                        outputs.append(self._compose_feature_view(fv_maps[obj_name], entities))
                     else:
                         continue
                 else:
-                    outputs.append(self._compose_feature_view(fv_maps[obj_name]))
+                    outputs.append(self._compose_feature_view(fv_maps[obj_name], entities))
         return outputs
 
-    def _compose_feature_view(self, row: Row) -> FeatureView:
+    def _compose_feature_view(self, row: Row, entity_list: List[Row]) -> FeatureView:
+        def find_and_compose_entity(name: str) -> Entity:
+            name = SqlIdentifier(name).resolved()
+            for e in entity_list:
+                if e["NAME"] == name:
+                    return Entity(
+                        name=SqlIdentifier(e["NAME"], case_sensitive=True).identifier(),
+                        join_keys=e["JOIN_KEYS"].strip("[]").split(","),
+                        desc=e["DESC"],
+                    )
+            raise RuntimeError(f"Cannot find entity {name} from retrieved entity list: {entity_list}")
+
         name, version = row["name"].split(_FEATURE_VIEW_NAME_DELIMITER)
         name = SqlIdentifier(name, case_sensitive=True)
         m = re.match(_DT_OR_VIEW_QUERY_PATTERN, row["text"])
@@ -1494,7 +1521,7 @@ class FeatureStore:
             df = self._session.sql(query)
             desc = m.group("comment")
             entity_names = m.group("entities")
-            entities = [self.get_entity(n) for n in entity_names.split(_FEATURE_VIEW_ENTITY_TAG_DELIMITER)]
+            entities = [find_and_compose_entity(n) for n in entity_names.split(_FEATURE_VIEW_ENTITY_TAG_DELIMITER)]
             ts_col = m.group("ts_col")
             timestamp_col = ts_col if ts_col != _TIMESTAMP_COL_PLACEHOLDER else None
 
@@ -1515,6 +1542,7 @@ class FeatureStore:
                 warehouse=SqlIdentifier(row["warehouse"], case_sensitive=True).identifier(),
                 refresh_mode=row["refresh_mode"],
                 refresh_mode_reason=row["refresh_mode_reason"],
+                owner=row["owner"],
             )
             return fv
         else:
@@ -1522,7 +1550,7 @@ class FeatureStore:
             df = self._session.sql(query)
             desc = m.group("comment")
             entity_names = m.group("entities")
-            entities = [self.get_entity(n) for n in entity_names.split(_FEATURE_VIEW_ENTITY_TAG_DELIMITER)]
+            entities = [find_and_compose_entity(n) for n in entity_names.split(_FEATURE_VIEW_ENTITY_TAG_DELIMITER)]
             ts_col = m.group("ts_col")
             timestamp_col = ts_col if ts_col != _TIMESTAMP_COL_PLACEHOLDER else None
 
@@ -1541,6 +1569,7 @@ class FeatureStore:
                 warehouse=None,
                 refresh_mode=None,
                 refresh_mode_reason=None,
+                owner=row["owner"],
             )
             return fv
 
