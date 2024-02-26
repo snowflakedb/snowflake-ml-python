@@ -139,7 +139,9 @@ def _rename_signature_with_snowflake_identifiers(
     return signature
 
 
-def _validate_numpy_array(arr: model_types._SupportedNumpyArray, feature_type: core.DataType) -> bool:
+def _validate_numpy_array(
+    arr: model_types._SupportedNumpyArray, feature_type: core.DataType, strict: bool = False
+) -> bool:
     if feature_type in [
         core.DataType.INT8,
         core.DataType.INT16,
@@ -152,11 +154,15 @@ def _validate_numpy_array(arr: model_types._SupportedNumpyArray, feature_type: c
     ]:
         if not (np.issubdtype(arr.dtype, np.integer)):
             return False
+        if not strict:
+            return True
         min_v, max_v = arr.min(), arr.max()
         return bool(max_v <= np.iinfo(feature_type._numpy_type).max and min_v >= np.iinfo(feature_type._numpy_type).min)
     elif feature_type in [core.DataType.FLOAT, core.DataType.DOUBLE]:
         if not (np.issubdtype(arr.dtype, np.integer) or np.issubdtype(arr.dtype, np.floating)):
             return False
+        if not strict:
+            return True
         min_v, max_v = arr.min(), arr.max()
         return bool(
             max_v <= np.finfo(feature_type._numpy_type).max  # type: ignore[arg-type]
@@ -166,12 +172,13 @@ def _validate_numpy_array(arr: model_types._SupportedNumpyArray, feature_type: c
         return np.can_cast(arr.dtype, feature_type._numpy_type, casting="no")
 
 
-def _validate_pandas_df(data: pd.DataFrame, features: Sequence[core.BaseFeatureSpec]) -> None:
+def _validate_pandas_df(data: pd.DataFrame, features: Sequence[core.BaseFeatureSpec], strict: bool = False) -> None:
     """It validates pandas dataframe with provided features.
 
     Args:
         data: A pandas dataframe to be validated.
         features: A sequence of feature specifications and feature group specifications, where the dataframe should fit.
+        strict: Enable strict validation, this includes value range based validation
 
     Raises:
         SnowflakeMLException: NotImplementedError: FeatureGroupSpec is not supported.
@@ -206,7 +213,7 @@ def _validate_pandas_df(data: pd.DataFrame, features: Sequence[core.BaseFeatureS
         ft_type = feature._dtype
         ft_shape = feature._shape
         if df_col_dtype != np.dtype("O"):
-            if not _validate_numpy_array(data_col.to_numpy(), ft_type):
+            if not _validate_numpy_array(data_col.to_numpy(), ft_type, strict=strict):
                 raise snowml_exceptions.SnowflakeMLException(
                     error_code=error_codes.INVALID_DATA,
                     original_exception=ValueError(
@@ -235,7 +242,10 @@ def _validate_pandas_df(data: pd.DataFrame, features: Sequence[core.BaseFeatureS
 
                 converted_data_list = [utils.convert_list_to_ndarray(data_row) for data_row in data_col]
 
-                if not all(_validate_numpy_array(converted_data, ft_type) for converted_data in converted_data_list):
+                if not all(
+                    _validate_numpy_array(converted_data, ft_type, strict=strict)
+                    for converted_data in converted_data_list
+                ):
                     raise snowml_exceptions.SnowflakeMLException(
                         error_code=error_codes.INVALID_DATA,
                         original_exception=ValueError(
@@ -264,7 +274,7 @@ def _validate_pandas_df(data: pd.DataFrame, features: Sequence[core.BaseFeatureS
                         ),
                     )
 
-                if not all(_validate_numpy_array(data_row, ft_type) for data_row in data_col):
+                if not all(_validate_numpy_array(data_row, ft_type, strict=strict) for data_row in data_col):
                     raise snowml_exceptions.SnowflakeMLException(
                         error_code=error_codes.INVALID_DATA,
                         original_exception=ValueError(
@@ -375,13 +385,14 @@ def _get_dataframe_values_range(
 
 
 def _validate_snowpark_data(
-    data: snowflake.snowpark.DataFrame, features: Sequence[core.BaseFeatureSpec]
+    data: snowflake.snowpark.DataFrame, features: Sequence[core.BaseFeatureSpec], strict: bool = False
 ) -> SnowparkIdentifierRule:
     """Validate Snowpark DataFrame as input. It will try to map both normalized name or inferred name.
 
     Args:
         data: A snowpark dataframe to be validated.
         features: A sequence of feature specifications and feature group specifications, where the dataframe should fit.
+        strict: Enable strict validation, this includes value range based validation.
 
     Raises:
         SnowflakeMLException: NotImplementedError: FeatureGroupSpec is not supported.
@@ -398,7 +409,10 @@ def _validate_snowpark_data(
         SnowparkIdentifierRule.NORMALIZED: [],
     }
     schema = data.schema
-    values_range = _get_dataframe_values_range(data)
+    if strict:
+        values_range = _get_dataframe_values_range(data)
+    else:
+        values_range = {}
     for identifier_rule in errors.keys():
         for feature in features:
             try:
@@ -442,7 +456,7 @@ def _validate_snowpark_data(
                             continue
                         try:
                             _validate_snowpark_type_feature(
-                                data, field, ft_type, feature.name, values_range.get(field.name, None)
+                                data, field, ft_type, feature.name, values_range.get(field.name, None), strict=strict
                             )
                         except snowml_exceptions.SnowflakeMLException as e:
                             errors[identifier_rule].append(e.original_exception)
@@ -479,6 +493,7 @@ def _validate_snowpark_type_feature(
     ft_type: DataType,
     ft_name: str,
     value_range: Optional[Union[Tuple[int, int], Tuple[float, float]]],
+    strict: bool = False,
 ) -> None:
     field_data_type = field.datatype
     col_name = identifier.get_unescaped_names(field.name)
@@ -505,6 +520,8 @@ def _validate_snowpark_type_feature(
                     f"because of its original type {field_data_type}"
                 ),
             )
+        if not strict:
+            return
         if value_range is None:
             raise snowml_exceptions.SnowflakeMLException(
                 error_code=error_codes.INVALID_DATA,
@@ -521,7 +538,7 @@ def _validate_snowpark_type_feature(
                 original_exception=ValueError(
                     f"Data Validation Error in feature {ft_name}: "
                     f"Feature type {ft_type} is not met by column {col_name} "
-                    f"because it overflows with min"
+                    f"because it overflows with min or max"
                 ),
             )
     elif ft_type in [core.DataType.FLOAT, core.DataType.DOUBLE]:
@@ -538,15 +555,6 @@ def _validate_snowpark_type_feature(
                     + f"Feature type {ft_type} is not met by column {col_name}."
                 ),
             )
-        if value_range is None:
-            raise snowml_exceptions.SnowflakeMLException(
-                error_code=error_codes.INVALID_DATA,
-                original_exception=ValueError(
-                    f"Data Validation Error in feature {ft_name}: "
-                    f"Feature type {ft_type} is not met by column {col_name} "
-                    f"because of its original type {field_data_type} is non-Numeric."
-                ),
-            )
         if isinstance(field_data_type, spt.DecimalType) and field_data_type.scale > 0:
             warnings.warn(
                 (
@@ -558,6 +566,18 @@ def _validate_snowpark_type_feature(
                 category=UserWarning,
                 stacklevel=2,
             )
+
+        if not strict:
+            return
+        if value_range is None:
+            raise snowml_exceptions.SnowflakeMLException(
+                error_code=error_codes.INVALID_DATA,
+                original_exception=ValueError(
+                    f"Data Validation Error in feature {ft_name}: "
+                    f"Feature type {ft_type} is not met by column {col_name} "
+                    f"because of its original type {field_data_type} is non-Numeric."
+                ),
+            )
         min_v, max_v = value_range
         if (
             max_v > np.finfo(ft_type._numpy_type).max  # type: ignore[arg-type]
@@ -567,7 +587,8 @@ def _validate_snowpark_type_feature(
                 error_code=error_codes.INVALID_DATA,
                 original_exception=ValueError(
                     f"Data Validation Error in feature {ft_name}: "
-                    + f"Feature type {ft_type} is not met by column {col_name}."
+                    f"Feature type {ft_type} is not met by column {col_name}."
+                    f"because it overflows with min or max"
                 ),
             )
     else:
@@ -576,7 +597,7 @@ def _validate_snowpark_type_feature(
                 error_code=error_codes.INVALID_DATA,
                 original_exception=ValueError(
                     f"Data Validation Error in feature {ft_name}: "
-                    + f"Feature type {ft_type} is not met by column {col_name}."
+                    f"Feature type {ft_type} is not met by column {col_name}."
                 ),
             )
 
@@ -609,20 +630,21 @@ def _convert_local_data_to_df(data: model_types.SupportedLocalDataType) -> pd.Da
 
 
 def _convert_and_validate_local_data(
-    data: model_types.SupportedLocalDataType, features: Sequence[core.BaseFeatureSpec]
+    data: model_types.SupportedLocalDataType, features: Sequence[core.BaseFeatureSpec], strict: bool = False
 ) -> pd.DataFrame:
     """Validate the data with features in model signature and convert to DataFrame
 
     Args:
         features: A list of feature specs that the data should follow.
         data: The provided data.
+        strict: Enable strict validation.
 
     Returns:
         The converted dataframe with renamed column index.
     """
     df = _convert_local_data_to_df(data)
     df = utils.rename_pandas_df(df, features)
-    _validate_pandas_df(df, features)
+    _validate_pandas_df(df, features, strict=strict)
     df = pandas_handler.PandasDataFrameHandler.convert_to_df(df, ensure_serializable=True)
 
     return df

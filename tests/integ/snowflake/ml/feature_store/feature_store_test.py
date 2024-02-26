@@ -447,7 +447,9 @@ class FeatureStoreTest(absltest.TestCase):
         # register feature view
         fv0 = fs.register_feature_view(feature_view=fv0, version="FIRST")
         self.assertEqual(fv0.version, "FIRST")
-        self.assertEqual(fv0.status, FeatureViewStatus.RUNNING)
+        self.assertTrue(
+            fv0.status == FeatureViewStatus.ACTIVE or fv0.status == FeatureViewStatus.RUNNING
+        )  # fv0.status == FeatureViewStatus.RUNNING can be removed after BCR 2024_02 gets fully deployed
         self.assertEqual(fv0.refresh_freq, "1 minute")
         self.assertEqual(fv0, fs.get_feature_view("fv0", "FIRST"))
 
@@ -497,7 +499,9 @@ class FeatureStoreTest(absltest.TestCase):
         self.assertEqual(fv.name, "FV1")
         self.assertEqual(fv.version, "FIRST")
         self.assertEqual(fv.query, sql0)
-        self.assertEqual(fv.status, FeatureViewStatus.RUNNING)
+        self.assertTrue(
+            fv.status == FeatureViewStatus.ACTIVE or fv.status == FeatureViewStatus.RUNNING
+        )  # fv.status == FeatureViewStatus.RUNNING can be removed after BCR 2024_02 gets fully deployed
         self.assertEqual(fv.refresh_freq, "5 minutes")
         self.assertEqual(fv.warehouse, alternate_warehouse)
         self.assertEqual(fv.desc, "my_fv1")
@@ -547,17 +551,12 @@ class FeatureStoreTest(absltest.TestCase):
             refresh_freq="DOWNSTREAM",
         )
         my_fv = fs.register_feature_view(feature_view=my_fv, version="v1", block=True)
-
-        with self.assertRaisesRegex(ValueError, "FeatureView.*is not in suspended status.*"):
-            fs.resume_feature_view(my_fv)
-
         my_fv = fs.suspend_feature_view(my_fv)
-
-        with self.assertRaisesRegex(ValueError, "FeatureView.*is not in running status.*"):
-            fs.suspend_feature_view(my_fv)
-
+        self.assertEqual(my_fv.status, FeatureViewStatus.SUSPENDED)
         my_fv = fs.resume_feature_view(my_fv)
-        self.assertEqual(my_fv.status, FeatureViewStatus.RUNNING)
+        self.assertTrue(
+            my_fv.status == FeatureViewStatus.ACTIVE or my_fv.status == FeatureViewStatus.RUNNING
+        )  # my_fv.status == FeatureViewStatus.RUNNING can be removed after BCR 2024_02 gets fully deployed
 
     def test_resume_and_suspend_feature_view_system_error(self) -> None:
         fs = self._create_feature_store()

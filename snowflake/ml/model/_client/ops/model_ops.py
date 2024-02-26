@@ -382,6 +382,7 @@ class ModelOperator:
         X: Union[type_hints.SupportedDataType, dataframe.DataFrame],
         model_name: sql_identifier.SqlIdentifier,
         version_name: sql_identifier.SqlIdentifier,
+        strict_input_validation: bool = False,
         statement_params: Optional[Dict[str, str]] = None,
     ) -> Union[type_hints.SupportedDataType, dataframe.DataFrame]:
         identifier_rule = model_signature.SnowparkIdentifierRule.INFERRED
@@ -390,12 +391,14 @@ class ModelOperator:
         if not isinstance(X, dataframe.DataFrame):
             keep_order = True
             output_with_input_features = False
-            df = model_signature._convert_and_validate_local_data(X, signature.inputs)
+            df = model_signature._convert_and_validate_local_data(X, signature.inputs, strict=strict_input_validation)
             s_df = snowpark_handler.SnowparkDataFrameHandler.convert_from_df(self._session, df, keep_order=keep_order)
         else:
             keep_order = False
             output_with_input_features = True
-            identifier_rule = model_signature._validate_snowpark_data(X, signature.inputs)
+            identifier_rule = model_signature._validate_snowpark_data(
+                X, signature.inputs, strict=strict_input_validation
+            )
             s_df = X
 
         original_cols = s_df.columns

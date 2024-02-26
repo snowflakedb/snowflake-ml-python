@@ -133,7 +133,9 @@ class SnowParkDataFrameHandlerTest(absltest.TestCase):
         with exception_utils.assert_snowml_exceptions(
             self, expected_original_error_type=ValueError, expected_regex="Feature type [^\\s]* is not met by column"
         ):
-            model_signature._validate_snowpark_data(df, fts)
+            model_signature._validate_snowpark_data(df, fts, strict=True)
+
+        model_signature._validate_snowpark_data(df, fts)
 
         fts = [
             core.FeatureSpec("a", core.DataType.INT8),
@@ -143,7 +145,9 @@ class SnowParkDataFrameHandlerTest(absltest.TestCase):
         with exception_utils.assert_snowml_exceptions(
             self, expected_original_error_type=ValueError, expected_regex="Feature type [^\\s]* is not met by column"
         ):
-            model_signature._validate_snowpark_data(df, fts)
+            model_signature._validate_snowpark_data(df, fts, strict=True)
+
+        model_signature._validate_snowpark_data(df, fts)
 
         fts = [
             core.FeatureSpec("a", core.DataType.INT16),
@@ -185,7 +189,9 @@ class SnowParkDataFrameHandlerTest(absltest.TestCase):
         with exception_utils.assert_snowml_exceptions(
             self, expected_original_error_type=ValueError, expected_regex="Feature type [^\\s]* is not met by column"
         ):
-            model_signature._validate_snowpark_data(df, fts)
+            model_signature._validate_snowpark_data(df, fts, strict=True)
+
+        model_signature._validate_snowpark_data(df, fts)
 
         fts = [
             core.FeatureSpec("a", core.DataType.UINT8),
@@ -252,7 +258,9 @@ class SnowParkDataFrameHandlerTest(absltest.TestCase):
         with exception_utils.assert_snowml_exceptions(
             self, expected_original_error_type=ValueError, expected_regex="Feature type [^\\s]* is not met by column"
         ):
-            model_signature._validate_snowpark_data(df, fts)
+            model_signature._validate_snowpark_data(df, fts, strict=True)
+
+        model_signature._validate_snowpark_data(df, fts)
 
         fts = [
             core.FeatureSpec("a", core.DataType.INT64),

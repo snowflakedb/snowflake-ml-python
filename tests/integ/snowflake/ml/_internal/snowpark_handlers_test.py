@@ -8,7 +8,7 @@ from sklearn.datasets import load_diabetes
 from sklearn.linear_model import LinearRegression as SkLinearRegression
 
 from snowflake.ml.modeling._internal.snowpark_implementations.snowpark_handlers import (
-    SnowparkHandlers,
+    SnowparkTransformHandlers,
 )
 from tests.integ.snowflake.ml.test_utils import common_test_base
 
@@ -17,7 +17,17 @@ class SnowparkHandlersTest(common_test_base.CommonTestBase):
     def setUp(self) -> None:
         """Creates Snowpark and Snowflake environments for testing."""
         super().setUp()
-        self._handlers = SnowparkHandlers(class_name="test", subproject="subproject")
+        sklearn_estimator = SkLinearRegression()
+
+        self.input_df_pandas, self.input_cols, self.label_cols = self._get_test_dataset()
+        self.fit_estimator = sklearn_estimator.fit(
+            X=self.input_df_pandas[self.input_cols], y=self.input_df_pandas[self.label_cols].squeeze()
+        )
+        self.input_df = self.session.create_dataframe(self.input_df_pandas)
+
+        self._handlers = SnowparkTransformHandlers(
+            dataset=self.input_df, estimator=self.fit_estimator, class_name="test", subproject="subproject"
+        )
 
     def _get_test_dataset(self) -> Tuple[pd.DataFrame, List[str], List[str]]:
         """Constructs input dataset to be used in the integration test.
@@ -52,51 +62,39 @@ class SnowparkHandlersTest(common_test_base.CommonTestBase):
 
     @common_test_base.CommonTestBase.sproc_test(additional_packages=["inflection"])
     def test_batch_inference(self) -> None:
-        sklearn_estimator = SkLinearRegression()
-        input_df_pandas, input_cols, label_cols = self._get_test_dataset()
-        input_df = self.session.create_dataframe(input_df_pandas)
 
-        fit_estimator = sklearn_estimator.fit(X=input_df_pandas[input_cols], y=input_df_pandas[label_cols].squeeze())
-
-        output_cols = ["OUTPUT_" + c for c in label_cols]
+        output_cols = ["OUTPUT_" + c for c in self.label_cols]
 
         predictions = self._handlers.batch_inference(
-            dataset=input_df,
             session=self.session,
-            estimator=fit_estimator,
             dependencies=["snowflake-snowpark-python", "numpy", "scikit-learn", "cloudpickle"],
             inference_method="predict",
-            input_cols=input_cols,
-            pass_through_columns=list(set(input_df.columns) - set(output_cols)),
-            expected_output_cols_list=output_cols,
+            input_cols=self.input_cols,
+            pass_through_cols=list(set(self.input_df.columns) - set(output_cols)),
+            expected_output_cols=output_cols,
             expected_output_cols_type="INT",
         )
 
-        sklearn_numpy_arr = fit_estimator.predict(input_df_pandas[input_cols])
+        sklearn_numpy_arr = self.fit_estimator.predict(self.input_df_pandas[self.input_cols])
         sf_numpy_arr = predictions.to_pandas().sort_values(by="INDEX")[output_cols].to_numpy().flatten()
 
         np.testing.assert_allclose(sklearn_numpy_arr, sf_numpy_arr, rtol=1.0e-1, atol=1.0e-2)
 
     @common_test_base.CommonTestBase.sproc_test(additional_packages=["inflection"])
     def test_score_snowpark(self) -> None:
-        sklearn_estimator = SkLinearRegression()
-        input_df_pandas, input_cols, label_cols = self._get_test_dataset()
-        input_df = self.session.create_dataframe(input_df_pandas)
 
-        fit_estimator = sklearn_estimator.fit(X=input_df_pandas[input_cols], y=input_df_pandas[label_cols].squeeze())
-
-        score = self._handlers.score_snowpark(
-            dataset=input_df,
+        score = self._handlers.score(
             session=self.session,
-            estimator=fit_estimator,
             dependencies=["snowflake-snowpark-python", "numpy", "scikit-learn", "cloudpickle"],
             score_sproc_imports=["sklearn"],
-            input_cols=input_cols,
-            label_cols=label_cols,
+            input_cols=self.input_cols,
+            label_cols=self.label_cols,
             sample_weight_col=None,
         )
 
-        sklearn_score = fit_estimator.score(input_df_pandas[input_cols], input_df_pandas[label_cols].squeeze())
+        sklearn_score = self.fit_estimator.score(
+            self.input_df_pandas[self.input_cols], self.input_df_pandas[self.label_cols].squeeze()
+        )
 
         np.testing.assert_allclose(score, sklearn_score)
 
