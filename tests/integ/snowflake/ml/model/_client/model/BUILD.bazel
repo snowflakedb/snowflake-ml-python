@@ -27,3 +27,17 @@ py_test(
         "//tests/integ/snowflake/ml/test_utils:model_factory",
     ],
 )
+
+py_test(
+    name = "input_validation_integ_test",
+    timeout = "long",
+    srcs = ["input_validation_integ_test.py"],
+    deps = [
+        "//snowflake/ml/model:custom_model",
+        "//snowflake/ml/model:model_signature",
+        "//snowflake/ml/registry",
+        "//snowflake/ml/utils:connection_params",
+        "//tests/integ/snowflake/ml/test_utils:dataframe_utils",
+        "//tests/integ/snowflake/ml/test_utils:db_manager",
+    ],
+)

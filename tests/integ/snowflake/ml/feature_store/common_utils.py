@@ -1,5 +1,5 @@
 from datetime import datetime, timedelta
-from typing import Any, Callable, Dict, List
+from typing import Any, Callable, Dict, List, Optional
 from unittest.mock import Mock
 from uuid import uuid4
 
@@ -34,9 +34,11 @@ FS_INTEG_TEST_WINE_QUALITY_DATA = "wine_quality_data"
 DB_OBJECT_EXPIRE_HOURS = 24
 
 
-def create_random_schema(session: Session, prefix: str, database: str = FS_INTEG_TEST_DB) -> str:
+def create_random_schema(
+    session: Session, prefix: str, database: str = FS_INTEG_TEST_DB, additional_options: str = ""
+) -> str:
     schema = prefix + "_" + uuid4().hex.upper()
-    session.sql(f"CREATE SCHEMA IF NOT EXISTS {database}.{schema}").collect()
+    session.sql(f"CREATE SCHEMA IF NOT EXISTS {database}.{schema} {additional_options}").collect()
     return schema
 
 
@@ -67,6 +69,30 @@ def create_mock_session(trouble_query: str, exception: Exception) -> Any:
     session = Session.builder.configs(SnowflakeLoginOptions()).create()
     session.sql = Mock(side_effect=side_effect(session))
     return session
+
+
+def create_mock_table(
+    session: Session, database: Optional[str] = None, schema: Optional[str] = None, table_prefix: str = "TEST_TABLE"
+) -> str:
+    test_table = f"{table_prefix}_{uuid4().hex.upper()}"
+    if schema:
+        test_table = schema + "." + test_table
+    if database:
+        assert bool(schema)
+        test_table = database + "." + test_table
+    session.sql(
+        f"""CREATE TABLE IF NOT EXISTS {test_table}
+            (name VARCHAR(64), id INT, title VARCHAR(128), age INT, dept VARCHAR(64), ts INT)
+        """
+    ).collect()
+    session.sql(
+        f"""INSERT OVERWRITE INTO {test_table} (name, id, title, age, dept, ts)
+            VALUES
+            ('john', 1, 'boss', 20, 'sales', 100),
+            ('porter', 2, 'manager', 30, 'engineer', 200)
+        """
+    ).collect()
+    return test_table
 
 
 def get_test_warehouse_name(session: Session) -> str:

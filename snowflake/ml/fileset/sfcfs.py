@@ -1,6 +1,7 @@
 import collections
 import logging
-from typing import Any, Dict, List, Optional, Tuple, Union, cast
+from functools import partial
+from typing import Any, Callable, Dict, List, Optional, Tuple, Type, Union, cast
 
 import fsspec
 
@@ -13,11 +14,15 @@ from snowflake.ml._internal.exceptions import (
 )
 from snowflake.ml._internal.utils import identifier
 from snowflake.ml.fileset import stage_fs
+from snowflake.ml.utils import connection_params
 
 PROTOCOL_NAME = "sfc"
 
 _SFFilePath = collections.namedtuple("_SFFilePath", ["database", "schema", "stage", "filepath"])
 _PROJECT = "FileSet"
+
+_FILESYSTEM_KWARGS_KEY = "kwargs"
+_RECREATE_FROM_SERIALIZED = "recreate_from_serialized"
 
 
 class SFFileSystem(fsspec.AbstractFileSystem):
@@ -73,7 +78,17 @@ class SFFileSystem(fsspec.AbstractFileSystem):
 
         Raises:
             ValueError: An error occurred when not exactly one of sf_connection and snowpark_session is given.
+            SnowflakeMLException: A failure was encountered while recreating the SFFileSystem from a serialized state.
         """
+        if kwargs.get(_RECREATE_FROM_SERIALIZED):
+            try:
+                snowpark_session = self._create_default_session()
+            except Exception as e:
+                raise snowml_exceptions.SnowflakeMLException(
+                    error_code=error_codes.SNOWML_DESERIALIZATION_FAILED,
+                    original_exception=ValueError("Unable to deserialize SFFileSystem."),
+                ) from e
+
         if sf_connection:
             self._conn = sf_connection
         elif snowpark_session:
@@ -84,6 +99,62 @@ class SFFileSystem(fsspec.AbstractFileSystem):
         self._stage_fs_set: Dict[Tuple[str, str, str], stage_fs.SFStageFileSystem] = {}
 
         super().__init__(**kwargs)
+
+    def _create_default_session(self) -> snowpark.Session:
+        """Create a Snowpark Session from default login options.
+
+        Returns:
+            An active Snowpark Session.
+
+        Raises:
+            ValueError: Snowflake Login Options could not be retrieved from default locations.
+            ValueError: Snowflake Connection could not be created.
+
+        """
+        try:
+            snowflake_config = connection_params.SnowflakeLoginOptions()
+        except Exception as e:
+            raise ValueError("Unable to retrieve Snowflake Login Options.") from e
+
+        try:
+            session = snowpark.Session.builder.configs(snowflake_config).create()
+        except Exception as e:
+            raise ValueError("Unable to create Snowflake connection.") from e
+
+        assert isinstance(session, snowpark.Session)
+        return session
+
+    def __reduce__(self) -> Tuple[Callable[[], Type["SFFileSystem"]], Tuple[()], Dict[str, Any]]:
+        """Returns a state dictionary for use in serialization.
+
+        Returns:
+            A tuple that is used for recreating the SFFileSystem. For more information, refer to
+            https://docs.python.org/3/library/pickle.html#object.__reduce__
+            A `partial` is used to generate a callable that accepts kwargs.
+        """
+        state_dictionary = {_FILESYSTEM_KWARGS_KEY: self._kwargs}
+
+        return partial(self.__class__, **{_RECREATE_FROM_SERIALIZED: True}), (), state_dictionary
+
+    def __setstate__(self, state_dict: Dict[str, Any]) -> None:
+        """Sets the dictionary state at deserialization time, and rebuilds a snowflake connection.
+
+        Args:
+            state_dict: State dictionary saved at serialization time.
+
+        Raises:
+            KeyError: The Kwargs key is not present in the state dictionary.
+            ValueError: The value corresponding to the kwargs key is not a dictionary.
+
+        """
+        if _FILESYSTEM_KWARGS_KEY not in state_dict:
+            raise KeyError(f"Serialized state dictionary missing key {_FILESYSTEM_KWARGS_KEY}.")
+
+        kwargs_dict = state_dict.get(_FILESYSTEM_KWARGS_KEY)
+        if not isinstance(kwargs_dict, dict):
+            raise ValueError(f"The value corresponding to {_FILESYSTEM_KWARGS_KEY} is not a dictionary.")
+
+        self._kwargs = kwargs_dict
 
     def _get_stage_fs(self, sf_file_path: _SFFilePath) -> stage_fs.SFStageFileSystem:
         """Get the stage file system for the given snowflake location.

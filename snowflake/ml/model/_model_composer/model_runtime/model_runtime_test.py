@@ -31,6 +31,15 @@ _BASIC_DEPENDENCIES_TARGET = list(
     )
 )
 
+_BASIC_DEPENDENCIES_TARGET_RELAXED = list(
+    sorted(
+        map(
+            lambda x: str(env_utils.relax_requirement_version(requirements.Requirement(x))),
+            model_runtime._UDF_INFERENCE_DEPENDENCIES,
+        )
+    )
+)
+
 _BASIC_DEPENDENCIES_TARGET_WITH_SNOWML = list(
     sorted(
         list(map(lambda x: str(requirements.Requirement(x)), model_runtime._UDF_INFERENCE_DEPENDENCIES))
@@ -41,6 +50,22 @@ _BASIC_DEPENDENCIES_TARGET_WITH_SNOWML = list(
                 )
             )
         ]
+    )
+)
+
+_BASIC_DEPENDENCIES_TARGET_WITH_SNOWML_RELAXED = list(
+    sorted(
+        map(
+            lambda x: str(env_utils.relax_requirement_version(requirements.Requirement(x))),
+            model_runtime._UDF_INFERENCE_DEPENDENCIES
+            + [
+                str(
+                    env_utils.get_local_installed_version_of_pip_package(
+                        requirements.Requirement(env_utils.SNOWPARK_ML_PKG_NAME)
+                    )
+                )
+            ],
+        )
     )
 )
 
@@ -78,7 +103,9 @@ class ModelRuntimeTest(absltest.TestCase):
                     with open(os.path.join(workspace, "runtimes/python_runtime/env/conda.yml"), encoding="utf-8") as f:
                         dependencies = yaml.safe_load(f)
 
-                    self.assertContainsSubset(_BASIC_DEPENDENCIES_TARGET_WITH_SNOWML, dependencies["dependencies"])
+                    self.assertContainsSubset(
+                        _BASIC_DEPENDENCIES_TARGET_WITH_SNOWML_RELAXED, dependencies["dependencies"]
+                    )
 
     def test_model_runtime_local_snowml(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir, tempfile.TemporaryDirectory() as workspace:
@@ -121,7 +148,7 @@ class ModelRuntimeTest(absltest.TestCase):
                 conda_dependencies=["packaging"],
             ) as meta:
                 meta.models["model1"] = _DUMMY_BLOB
-                dep_target = _BASIC_DEPENDENCIES_TARGET_WITH_SNOWML[:]
+                dep_target = _BASIC_DEPENDENCIES_TARGET_WITH_SNOWML_RELAXED[:]
                 dep_target.remove(next(filter(lambda x: x.startswith("packaging"), dep_target)))
                 dep_target.append("packaging")
                 dep_target.sort()
@@ -151,7 +178,7 @@ class ModelRuntimeTest(absltest.TestCase):
                 conda_dependencies=["conda-forge::packaging"],
             ) as meta:
                 meta.models["model1"] = _DUMMY_BLOB
-                dep_target = _BASIC_DEPENDENCIES_TARGET_WITH_SNOWML[:]
+                dep_target = _BASIC_DEPENDENCIES_TARGET_WITH_SNOWML_RELAXED[:]
                 dep_target.remove(next(filter(lambda x: x.startswith("packaging"), dep_target)))
                 dep_target.append("conda-forge::packaging")
                 dep_target.sort()
@@ -181,7 +208,7 @@ class ModelRuntimeTest(absltest.TestCase):
                 pip_requirements=["packaging"],
             ) as meta:
                 meta.models["model1"] = _DUMMY_BLOB
-                dep_target = _BASIC_DEPENDENCIES_TARGET_WITH_SNOWML[:]
+                dep_target = _BASIC_DEPENDENCIES_TARGET_WITH_SNOWML_RELAXED[:]
                 dep_target.remove(next(filter(lambda x: x.startswith("packaging"), dep_target)))
                 dep_target.sort()
 
@@ -210,7 +237,7 @@ class ModelRuntimeTest(absltest.TestCase):
                 conda_dependencies=["pytorch"],
             ) as meta:
                 meta.models["model1"] = _DUMMY_BLOB
-                dep_target = _BASIC_DEPENDENCIES_TARGET_WITH_SNOWML[:]
+                dep_target = _BASIC_DEPENDENCIES_TARGET_WITH_SNOWML_RELAXED[:]
                 dep_target.append("pytorch")
                 dep_target.sort()
 
@@ -239,7 +266,7 @@ class ModelRuntimeTest(absltest.TestCase):
                 pip_requirements=["torch"],
             ) as meta:
                 meta.models["model1"] = _DUMMY_BLOB
-                dep_target = _BASIC_DEPENDENCIES_TARGET_WITH_SNOWML[:]
+                dep_target = _BASIC_DEPENDENCIES_TARGET_WITH_SNOWML_RELAXED[:]
                 dep_target.sort()
 
                 with mock.patch.object(
@@ -268,7 +295,7 @@ class ModelRuntimeTest(absltest.TestCase):
                 pip_requirements=["torch"],
             ) as meta:
                 meta.models["model1"] = _DUMMY_BLOB
-                dep_target = _BASIC_DEPENDENCIES_TARGET_WITH_SNOWML[:]
+                dep_target = _BASIC_DEPENDENCIES_TARGET_WITH_SNOWML_RELAXED[:]
                 dep_target.append("pytorch")
                 dep_target.sort()
 

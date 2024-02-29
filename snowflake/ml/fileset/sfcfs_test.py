@@ -1,3 +1,5 @@
+import pickle
+
 import fsspec
 from absl.testing import absltest
 
@@ -237,6 +239,44 @@ class SFFileSystemTest(absltest.TestCase):
             instance._open.assert_any_call(
                 "nytrain/1.txt", mode="rb", block_size=None, autocommit=True, cache_options=None
             )
+
+    def test_fs_serializability(self) -> None:
+        """Test if an object of Snowflake FS can be serialized using pickle."""
+
+        kwargs_dict = {"key1": "val1", "key2": "val2"}
+        sffs = sfcfs.SFFileSystem(sf_connection=self.mock_connection, snowpark_session=None, **kwargs_dict)
+
+        pickled_data = pickle.dumps(sffs)
+        sffs_deserialized = pickle.loads(pickled_data)
+        assert sffs_deserialized._conn is not None
+        assert sffs_deserialized._kwargs == kwargs_dict
+
+    def test_create_default_session_exceptions(self) -> None:
+        """Tests that correct exceptions are raised when the function fails to create a session.
+        Mocks the two session creation functions called by _create_default_connection individually.
+        """
+        sffs = sfcfs.SFFileSystem(sf_connection=self.mock_connection)
+        with self.assertRaises(ValueError):
+            with absltest.mock.patch(
+                "snowflake.ml.fileset.sfcfs.connection_params.SnowflakeLoginOptions",
+                side_effect=Exception("Error message"),
+            ):
+                sffs._create_default_session()
+
+        with self.assertRaises(ValueError):
+            with absltest.mock.patch(
+                "snowflake.snowpark.Session.SessionBuilder.create", side_effect=Exception("Error message")
+            ):
+                sffs._create_default_session()
+
+    def test_set_state_bad_state_dict(self) -> None:
+        """When deserializing, the state dictionary requires a kwargs key that corresponds to a dictionary."""
+        sffs = sfcfs.SFFileSystem(sf_connection=self.mock_connection)
+        with self.assertRaises(KeyError):
+            sffs.__setstate__(state_dict={"bad_key": 2})
+
+        with self.assertRaises(ValueError):
+            sffs.__setstate__(state_dict={"kwargs": "not_a_dict"})
 
 
 if __name__ == "__main__":

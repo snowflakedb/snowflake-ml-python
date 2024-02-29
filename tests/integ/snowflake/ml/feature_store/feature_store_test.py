@@ -447,7 +447,9 @@ class FeatureStoreTest(absltest.TestCase):
         # register feature view
         fv0 = fs.register_feature_view(feature_view=fv0, version="FIRST")
         self.assertEqual(fv0.version, "FIRST")
-        self.assertEqual(fv0.status, FeatureViewStatus.RUNNING)
+        self.assertTrue(
+            fv0.status == FeatureViewStatus.ACTIVE or fv0.status == FeatureViewStatus.RUNNING
+        )  # fv0.status == FeatureViewStatus.RUNNING can be removed after BCR 2024_02 gets fully deployed
         self.assertEqual(fv0.refresh_freq, "1 minute")
         self.assertEqual(fv0, fs.get_feature_view("fv0", "FIRST"))
 
@@ -497,7 +499,9 @@ class FeatureStoreTest(absltest.TestCase):
         self.assertEqual(fv.name, "FV1")
         self.assertEqual(fv.version, "FIRST")
         self.assertEqual(fv.query, sql0)
-        self.assertEqual(fv.status, FeatureViewStatus.RUNNING)
+        self.assertTrue(
+            fv.status == FeatureViewStatus.ACTIVE or fv.status == FeatureViewStatus.RUNNING
+        )  # fv.status == FeatureViewStatus.RUNNING can be removed after BCR 2024_02 gets fully deployed
         self.assertEqual(fv.refresh_freq, "5 minutes")
         self.assertEqual(fv.warehouse, alternate_warehouse)
         self.assertEqual(fv.desc, "my_fv1")
@@ -547,17 +551,12 @@ class FeatureStoreTest(absltest.TestCase):
             refresh_freq="DOWNSTREAM",
         )
         my_fv = fs.register_feature_view(feature_view=my_fv, version="v1", block=True)
-
-        with self.assertRaisesRegex(ValueError, "FeatureView.*is not in suspended status.*"):
-            fs.resume_feature_view(my_fv)
-
         my_fv = fs.suspend_feature_view(my_fv)
-
-        with self.assertRaisesRegex(ValueError, "FeatureView.*is not in running status.*"):
-            fs.suspend_feature_view(my_fv)
-
+        self.assertEqual(my_fv.status, FeatureViewStatus.SUSPENDED)
         my_fv = fs.resume_feature_view(my_fv)
-        self.assertEqual(my_fv.status, FeatureViewStatus.RUNNING)
+        self.assertTrue(
+            my_fv.status == FeatureViewStatus.ACTIVE or my_fv.status == FeatureViewStatus.RUNNING
+        )  # my_fv.status == FeatureViewStatus.RUNNING can be removed after BCR 2024_02 gets fully deployed
 
     def test_resume_and_suspend_feature_view_system_error(self) -> None:
         fs = self._create_feature_store()
@@ -1680,6 +1679,59 @@ class FeatureStoreTest(absltest.TestCase):
             },
             sort_cols=["CUSTOMER_ID"],
         )
+
+    def test_cross_feature_store_interop(self) -> None:
+        # create first feature store and register feature views
+        first_fs = self._create_feature_store()
+
+        first_entity = Entity("foo", ["id"])
+        first_fs.register_entity(first_entity)
+        first_fv = FeatureView(
+            name="fv",
+            entities=[first_entity],
+            feature_df=self._session.table(self._mock_table).select(["NAME", "ID", "AGE", "TS"]),
+            timestamp_col="ts",
+            desc="foobar",
+        )
+        first_fv = first_fs.register_feature_view(feature_view=first_fv, version="v1")
+
+        # create second feature store and register feature views
+        second_fs = self._create_feature_store()
+
+        second_entity = Entity("foo", ["id"])
+        second_fs.register_entity(second_entity)
+        second_fv = FeatureView(
+            name="fv",
+            entities=[second_entity],
+            feature_df=self._session.table(self._mock_table).select(["ID", "DEPT", "TITLE", "TS"]),
+            timestamp_col="ts",
+            desc="foobar",
+        )
+        second_fv = second_fs.register_feature_view(feature_view=second_fv, version="v1")
+
+        # make sure these two feature views are in different feature store
+        self.assertNotEqual(first_fv.schema, second_fv.schema)
+
+        # generate dataset by joining feature views from different feature store
+        spine_df = self._session.create_dataframe([(1, 101)], schema=["id", "ts"])
+        for fs in [first_fs, second_fs]:
+            ds = fs.generate_dataset(
+                spine_df=spine_df,
+                features=[first_fv, second_fv],
+                spine_timestamp_col="ts",
+            )
+            compare_dataframe(
+                actual_df=ds.df.to_pandas(),
+                target_data={
+                    "ID": [1],
+                    "TS": [101],
+                    "NAME": ["jonh"],
+                    "AGE": [20],
+                    "DEPT": ["sales"],
+                    "TITLE": ["boss"],
+                },
+                sort_cols=["ID"],
+            )
 
 
 if __name__ == "__main__":

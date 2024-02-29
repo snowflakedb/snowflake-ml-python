@@ -50,8 +50,9 @@ class FeatureViewVersion(str):
 class FeatureViewStatus(Enum):
     DRAFT = "DRAFT"
     STATIC = "STATIC"
-    RUNNING = "RUNNING"
+    RUNNING = "RUNNING"  # This can be deprecated after BCR 2024_02 gets fully deployed
     SUSPENDED = "SUSPENDED"
+    ACTIVE = "ACTIVE"
 
 
 @dataclass(frozen=True)

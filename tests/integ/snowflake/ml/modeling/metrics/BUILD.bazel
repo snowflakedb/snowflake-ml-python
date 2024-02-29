@@ -69,6 +69,7 @@ py_test(
     srcs = ["d2_absolute_error_score_test.py"],
     shard_count = SHARD_COUNT,
     deps = [
+        ":generator",
         "//snowflake/ml/modeling/metrics:regression",
         "//snowflake/ml/utils:connection_params",
         "//tests/integ/snowflake/ml/modeling/framework:utils",
@@ -81,6 +82,7 @@ py_test(
     srcs = ["d2_pinball_score_test.py"],
     shard_count = SHARD_COUNT,
     deps = [
+        ":generator",
         "//snowflake/ml/modeling/metrics:regression",
         "//snowflake/ml/utils:connection_params",
         "//tests/integ/snowflake/ml/modeling/framework:utils",
@@ -105,6 +107,7 @@ py_test(
     srcs = ["f1_score_test.py"],
     shard_count = SHARD_COUNT,
     deps = [
+        ":generator",
         "//snowflake/ml/modeling/metrics:classification",
         "//snowflake/ml/utils:connection_params",
         "//tests/integ/snowflake/ml/modeling/framework:utils",
@@ -117,6 +120,7 @@ py_test(
     srcs = ["fbeta_score_test.py"],
     shard_count = SHARD_COUNT,
     deps = [
+        ":generator",
         "//snowflake/ml/modeling/metrics:classification",
         "//snowflake/ml/utils:connection_params",
         "//tests/integ/snowflake/ml/modeling/framework:utils",
@@ -129,6 +133,7 @@ py_test(
     srcs = ["log_loss_test.py"],
     shard_count = SHARD_COUNT,
     deps = [
+        ":generator",
         "//snowflake/ml/modeling/metrics:classification",
         "//snowflake/ml/utils:connection_params",
         "//tests/integ/snowflake/ml/modeling/framework:utils",
@@ -201,6 +206,7 @@ py_test(
     srcs = ["precision_recall_fscore_support_test.py"],
     shard_count = SHARD_COUNT,
     deps = [
+        ":generator",
         "//snowflake/ml/modeling/metrics:classification",
         "//snowflake/ml/utils:connection_params",
         "//tests/integ/snowflake/ml/modeling/framework:utils",
@@ -213,6 +219,7 @@ py_test(
     srcs = ["precision_score_test.py"],
     shard_count = SHARD_COUNT,
     deps = [
+        ":generator",
         "//snowflake/ml/modeling/metrics:classification",
         "//snowflake/ml/utils:connection_params",
         "//tests/integ/snowflake/ml/modeling/framework:utils",
@@ -225,6 +232,7 @@ py_test(
     srcs = ["recall_score_test.py"],
     shard_count = SHARD_COUNT,
     deps = [
+        ":generator",
         "//snowflake/ml/modeling/metrics:classification",
         "//snowflake/ml/utils:connection_params",
         "//tests/integ/snowflake/ml/modeling/framework:utils",

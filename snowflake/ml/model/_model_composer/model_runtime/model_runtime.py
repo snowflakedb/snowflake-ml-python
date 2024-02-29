@@ -11,7 +11,10 @@ from snowflake.ml.model._packager.model_env import model_env
 from snowflake.ml.model._packager.model_meta import model_meta as model_meta_api
 from snowflake.snowpark import session
 
-_UDF_INFERENCE_DEPENDENCIES = _runtime_requirements.REQUIREMENTS
+_UDF_INFERENCE_DEPENDENCIES = [
+    str(env_utils.get_package_spec_with_supported_ops_only(requirements.Requirement(r)))
+    for r in _runtime_requirements.REQUIREMENTS
+]
 
 
 class ModelRuntime:
