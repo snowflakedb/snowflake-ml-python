@@ -1,6 +1,6 @@
 # This files contains schema definition of what will be written into MANIFEST.yml
 
-from typing import Any, Dict, List, Literal, TypedDict
+from typing import Any, Dict, List, Literal, TypedDict, Union
 
 from typing_extensions import NotRequired, Required
 
@@ -34,10 +34,10 @@ class ModelMethodSignatureFieldWithName(ModelMethodSignatureField):
 class ModelFunctionMethodDict(TypedDict):
     name: Required[str]
     runtime: Required[str]
-    type: Required[Literal["FUNCTION"]]
+    type: Required[str]
     handler: Required[str]
     inputs: Required[List[ModelMethodSignatureFieldWithName]]
-    outputs: Required[List[ModelMethodSignatureField]]
+    outputs: Required[Union[List[ModelMethodSignatureField], List[ModelMethodSignatureFieldWithName]]]
 
 
 ModelMethodDict = ModelFunctionMethodDict

@@ -1,3 +1,5 @@
+import os
+import sys
 from typing import Any
 from unittest import mock
 
@@ -8,6 +10,10 @@ from sklearn.linear_model import LinearRegression
 from sklearn.model_selection import GridSearchCV
 from xgboost import XGBRegressor
 
+from snowflake.ml.modeling._internal.constants import IN_ML_RUNTIME_ENV_VAR
+from snowflake.ml.modeling._internal.ml_runtime_implementations.ml_runtime_trainer import (
+    MlRuntimeModelTrainer,
+)
 from snowflake.ml.modeling._internal.model_trainer_builder import ModelTrainerBuilder
 from snowflake.ml.modeling._internal.snowpark_implementations.distributed_hpo_trainer import (
     DistributedHPOTrainer,
@@ -28,6 +34,7 @@ class SnowparkHandlersUnitTest(absltest.TestCase):
 
     def tearDown(self) -> None:
         self._session.close()
+        os.environ.pop(IN_ML_RUNTIME_ENV_VAR, None)
 
     def get_snowpark_dataset(self) -> DataFrame:
         input_df_pandas = load_iris(as_frame=True).frame
@@ -42,6 +49,17 @@ class SnowparkHandlersUnitTest(absltest.TestCase):
         trainer = ModelTrainerBuilder.build(estimator=model, dataset=dataset, input_cols=[])
 
         self.assertTrue(isinstance(trainer, SnowparkModelTrainer))
+
+    def test_sklearn_model_trainer_in_ml_runtime(self) -> None:
+        model = LinearRegression()
+        dataset = self.get_snowpark_dataset()
+        os.environ[IN_ML_RUNTIME_ENV_VAR] = "True"
+
+        with absltest.mock.patch.dict(sys.modules, {**sys.modules, **{"snowflake.ml.runtime": absltest.mock.Mock()}}):
+            trainer = ModelTrainerBuilder.build(estimator=model, dataset=dataset, input_cols=[])
+        del os.environ[IN_ML_RUNTIME_ENV_VAR]
+
+        self.assertTrue(isinstance(trainer, MlRuntimeModelTrainer))
 
     @mock.patch("snowflake.ml.modeling._internal.model_trainer_builder.is_single_node")
     def test_distributed_hpo_trainer(self, mock_is_single_node: Any) -> None:

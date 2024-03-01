@@ -236,7 +236,7 @@
   version_requirements: '>=3.0.4,<4'
 - name: snowflake-snowpark-python
   dev_version: 1.8.0
-  version_requirements: '>=1.8.0,<2'
+  version_requirements: '>=1.8.0,<2,!=1.12.0'
   tags:
     - deployment_core
     - udf_inference
