@@ -94,6 +94,8 @@ def autogen_estimators(module, estimator_info_list):
                 "//snowflake/ml/modeling/_internal:estimator_utils",
                 "//snowflake/ml/modeling/_internal:model_trainer",
                 "//snowflake/ml/modeling/_internal:model_trainer_builder",
+                "//snowflake/ml/modeling/_internal:transformer_protocols",
+                "//snowflake/ml/modeling/_internal:model_transformer_builder",
             ],
         )
 

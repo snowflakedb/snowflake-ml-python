@@ -154,7 +154,8 @@ def gen_fuzz_data(
         high: upper bound(s) of the output interval (exclusive)
 
     Returns:
-        A tuple of generated data and column names
+        A tuple of generated data and column names.
+        The 1st column of test data is "ID".
 
     Raises:
         ValueError: if data type is not supported
