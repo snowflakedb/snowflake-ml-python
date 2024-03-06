@@ -98,7 +98,9 @@ class TestModelBadCaseInteg(absltest.TestCase):
             stage_path=posixpath.join(tmp_stage, "custom_demo_model"),
             model=lm,
             conda_dependencies=[
-                test_env_utils.get_latest_package_version_spec_in_server(self._session, "snowflake-snowpark-python")
+                test_env_utils.get_latest_package_version_spec_in_server(
+                    self._session, "snowflake-snowpark-python!=1.12.0"
+                )
             ],
             sample_input=pd_df,
             metadata={"author": "halu", "version": "1"},

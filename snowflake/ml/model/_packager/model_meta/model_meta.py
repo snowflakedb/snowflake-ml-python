@@ -1,8 +1,8 @@
-import importlib
 import os
 import pathlib
 import sys
 import tempfile
+import warnings
 import zipfile
 from contextlib import contextmanager
 from datetime import datetime
@@ -27,8 +27,14 @@ from snowflake.ml.model._packager.model_meta_migrator import migrator_plans
 MODEL_METADATA_FILE = "model.yaml"
 MODEL_CODE_DIR = "code"
 
-_PACKAGING_CORE_DEPENDENCIES = _core_requirements.REQUIREMENTS  # Legacy Model only
-_PACKAGING_REQUIREMENTS = _packaging_requirements.REQUIREMENTS  # New Model only
+_PACKAGING_CORE_DEPENDENCIES = [
+    str(env_utils.get_package_spec_with_supported_ops_only(requirements.Requirement(r)))
+    for r in _core_requirements.REQUIREMENTS
+]  # Legacy Model only
+_PACKAGING_REQUIREMENTS = [
+    str(env_utils.get_package_spec_with_supported_ops_only(requirements.Requirement(r)))
+    for r in _packaging_requirements.REQUIREMENTS
+]  # New Model only
 _SNOWFLAKE_PKG_NAME = "snowflake"
 _SNOWFLAKE_ML_PKG_NAME = f"{_SNOWFLAKE_PKG_NAME}.ml"
 
@@ -75,7 +81,17 @@ def create_model_metadata(
     model_dir_path = os.path.normpath(model_dir_path)
     embed_local_ml_library = kwargs.pop("embed_local_ml_library", False)
     legacy_save = kwargs.pop("_legacy_save", False)
-    relax_version = kwargs.pop("relax_version", False)
+    if "relax_version" not in kwargs:
+        warnings.warn(
+            (
+                "`relax_version` is not set and therefore defaulted to True. Dependency version constraints relaxed "
+                "from ==x.y.z to >=x.y, <(x+1). To use specific dependency versions for compatibility, "
+                "reproducibility, etc., set `options={'relax_version': False}` when logging the model."
+            ),
+            category=UserWarning,
+            stacklevel=2,
+        )
+    relax_version = kwargs.pop("relax_version", True)
 
     if embed_local_ml_library:
         # Use the last one which is loaded first, that is mean, it is loaded from site-packages.
@@ -200,22 +216,6 @@ def load_code_path(model_dir_path: str) -> None:
         if code_path in sys.path:
             sys.path.remove(code_path)
         sys.path.insert(0, code_path)
-        module_names = file_utils.get_all_modules(code_path)
-        # If the module_name starts with snowflake, then do not replace it.
-        # When deploying, we would add them beforehand.
-        # When in the local, they should not be added. We already prevent user from overwriting us.
-        module_names = [
-            module_name
-            for module_name in module_names
-            if not (module_name.startswith(f"{_SNOWFLAKE_PKG_NAME}.") or module_name == _SNOWFLAKE_PKG_NAME)
-        ]
-        for module_name in module_names:
-            actual_module = sys.modules.pop(module_name, None)
-            if actual_module is not None:
-                sys.modules[module_name] = importlib.import_module(module_name)
-
-        assert code_path in sys.path
-        sys.path.remove(code_path)
 
 
 class ModelMetadata:

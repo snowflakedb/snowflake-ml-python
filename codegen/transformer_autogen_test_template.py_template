@@ -124,7 +124,7 @@ class {transform.test_class_name}(TestCase):
 
         sklearn_reg.fit(**args)
 
-        inference_methods = ["transform", "predict"]
+        inference_methods = ["transform", "predict", "fit_predict"]
         for m in inference_methods:
             if callable(getattr(sklearn_reg, m, None)):
                 if m == 'predict':
@@ -180,8 +180,11 @@ class {transform.test_class_name}(TestCase):
                     num_diffs = (~np.isclose(actual_arr, sklearn_numpy_arr)).sum()
                     num_example = sklearn_numpy_arr.shape[0]
                     assert num_diffs < 0.1 * num_example
+                elif not {transform._is_deterministic}:
+                    assert actual_arr.shape == sklearn_numpy_arr.shape
                 else:
                     np.testing.assert_allclose(actual_arr, sklearn_numpy_arr, rtol=1.e-1, atol=1.e-2)
+
 
         expected_methods = ["predict_proba", "predict_log_proba", "decision_function", "kneighbors", "score_samples"]
         for m in expected_methods:
@@ -236,7 +239,7 @@ class {transform.test_class_name}(TestCase):
                     )
                 elif (
                     m == "score_samples"
-                    and reg.__class__.__name__ == 'BernoulliRBM'
+                    and not {transform._is_deterministic}
                 ):
                     # score_samples is not deterministic for BernoulliRBM: 
                     # it computes a quantity called the free energy on X, 

@@ -64,7 +64,9 @@ class TestModelRegistryInteg(parameterized.TestCase):
             model=model,
             tags=model_tags,
             conda_dependencies=[
-                test_env_utils.get_latest_package_version_spec_in_server(self._session, "snowflake-snowpark-python")
+                test_env_utils.get_latest_package_version_spec_in_server(
+                    self._session, "snowflake-snowpark-python!=1.12.0"
+                )
             ],
             sample_input_data=test_features,
             options={"embed_local_ml_library": True},
@@ -79,7 +81,9 @@ class TestModelRegistryInteg(parameterized.TestCase):
                 model=model,
                 tags={"stage": "testing", "classifier_type": "svm.SVC"},
                 conda_dependencies=[
-                    test_env_utils.get_latest_package_version_spec_in_server(self._session, "snowflake-snowpark-python")
+                    test_env_utils.get_latest_package_version_spec_in_server(
+                        self._session, "snowflake-snowpark-python!=1.12.0"
+                    )
                 ],
                 sample_input_data=test_features,
                 options={"embed_local_ml_library": True},
@@ -281,7 +285,9 @@ class TestModelRegistryInteg(parameterized.TestCase):
             model_version=model_version,
             model=model,
             conda_dependencies=[
-                test_env_utils.get_latest_package_version_spec_in_server(self._session, "snowflake-snowpark-python")
+                test_env_utils.get_latest_package_version_spec_in_server(
+                    self._session, "snowflake-snowpark-python!=1.12.0"
+                )
             ],
             options={"embed_local_ml_library": True},
         )
@@ -330,7 +336,9 @@ class TestModelRegistryInteg(parameterized.TestCase):
             model_version=model_version,
             model=model,
             conda_dependencies=[
-                test_env_utils.get_latest_package_version_spec_in_server(self._session, "snowflake-snowpark-python")
+                test_env_utils.get_latest_package_version_spec_in_server(
+                    self._session, "snowflake-snowpark-python!=1.12.0"
+                )
             ],
             options={"embed_local_ml_library": True},
         )
@@ -425,7 +433,9 @@ class TestModelRegistryInteg(parameterized.TestCase):
                 model_version=version,
                 model=model,
                 conda_dependencies=[
-                    test_env_utils.get_latest_package_version_spec_in_server(self._session, "snowflake-snowpark-python")
+                    test_env_utils.get_latest_package_version_spec_in_server(
+                        self._session, "snowflake-snowpark-python!=1.12.0"
+                    )
                 ],
                 options={"embed_local_ml_library": True},
                 artifacts=[atf_ref],

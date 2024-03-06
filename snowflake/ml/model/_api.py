@@ -491,7 +491,9 @@ def predict(
         keep_order = True
         output_with_input_features = False
         df = model_signature._convert_and_validate_local_data(X, sig.inputs)
-        s_df = snowpark_handler.SnowparkDataFrameHandler.convert_from_df(session, df, keep_order=keep_order)
+        s_df = snowpark_handler.SnowparkDataFrameHandler.convert_from_df(
+            session, df, keep_order=keep_order, features=sig.inputs
+        )
     else:
         keep_order = False
         output_with_input_features = True

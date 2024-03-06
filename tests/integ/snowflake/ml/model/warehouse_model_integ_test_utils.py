@@ -26,7 +26,7 @@ def base_test_case(
 ) -> None:
     tmp_stage = db._session.get_session_stage()
     conda_dependencies = [
-        test_env_utils.get_latest_package_version_spec_in_server(db._session, "snowflake-snowpark-python")
+        test_env_utils.get_latest_package_version_spec_in_server(db._session, "snowflake-snowpark-python!=1.12.0")
     ]
     if additional_dependencies:
         conda_dependencies.extend(additional_dependencies)

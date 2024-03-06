@@ -283,6 +283,7 @@ class ModelVersion:
         X: Union[pd.DataFrame, dataframe.DataFrame],
         *,
         function_name: Optional[str] = None,
+        strict_input_validation: bool = False,
     ) -> Union[pd.DataFrame, dataframe.DataFrame]:
         """Invoke a method in a model version object.
 
@@ -290,6 +291,8 @@ class ModelVersion:
             X: The input data, which could be a pandas DataFrame or Snowpark DataFrame.
             function_name: The function name to run. It is the name used to call a function in SQL.
                 Defaults to None. It can only be None if there is only 1 method.
+            strict_input_validation: Enable stricter validation for the input data. This will result value range based
+                type validation to make sure your input data won't overflow when providing to the model.
 
         Raises:
             ValueError: When no method with the corresponding name is available.
@@ -331,5 +334,6 @@ class ModelVersion:
             X=X,
             model_name=self._model_name,
             version_name=self._version_name,
+            strict_input_validation=strict_input_validation,
             statement_params=statement_params,
         )
