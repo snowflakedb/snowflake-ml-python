@@ -334,6 +334,7 @@ class ModelVersionImplTest(absltest.TestCase):
                 X=m_df,
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
                 version_name=sql_identifier.SqlIdentifier("v1", case_sensitive=True),
+                strict_input_validation=False,
                 statement_params=mock.ANY,
             )
 
@@ -350,6 +351,7 @@ class ModelVersionImplTest(absltest.TestCase):
                 X=m_df,
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
                 version_name=sql_identifier.SqlIdentifier("v1", case_sensitive=True),
+                strict_input_validation=False,
                 statement_params=mock.ANY,
             )
 
@@ -375,6 +377,34 @@ class ModelVersionImplTest(absltest.TestCase):
                 signature=_DUMMY_SIG["predict"],
                 X=m_df,
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
+                version_name=sql_identifier.SqlIdentifier("v1", case_sensitive=True),
+                strict_input_validation=False,
+                statement_params=mock.ANY,
+            )
+
+    def test_run_strict(self) -> None:
+        m_df = mock_data_frame.MockDataFrame()
+        m_methods = [
+            {
+                "name": '"predict"',
+                "target_method": "predict",
+                "signature": _DUMMY_SIG["predict"],
+            },
+        ]
+
+        with mock.patch.object(
+            self.m_mv, "show_functions", return_value=m_methods
+        ) as mock_list_methods, mock.patch.object(
+            self.m_mv._model_ops, "invoke_method", return_value=m_df
+        ) as mock_invoke_method:
+            self.m_mv.run(m_df, strict_input_validation=True)
+            mock_list_methods.assert_called_once_with()
+            mock_invoke_method.assert_called_once_with(
+                method_name='"predict"',
+                signature=_DUMMY_SIG["predict"],
+                X=m_df,
+                model_name=sql_identifier.SqlIdentifier("MODEL"),
+                strict_input_validation=True,
                 version_name=sql_identifier.SqlIdentifier("v1", case_sensitive=True),
                 statement_params=mock.ANY,
             )

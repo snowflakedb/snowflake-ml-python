@@ -1,4 +1,8 @@
-from typing import Protocol
+from typing import List, Protocol, Tuple, Union
+
+import pandas as pd
+
+from snowflake.snowpark import DataFrame
 
 
 class ModelTrainer(Protocol):
@@ -10,4 +14,11 @@ class ModelTrainer(Protocol):
     """
 
     def train(self) -> object:
+        raise NotImplementedError
+
+    def train_fit_predict(
+        self,
+        pass_through_columns: List[str],
+        expected_output_cols_list: List[str],
+    ) -> Tuple[Union[DataFrame, pd.DataFrame], object]:
         raise NotImplementedError

@@ -1,6 +1,33 @@
 # Release History
 
-## 1.2.3
+## 1.3.0
+
+### Bug Fixes
+
+- Registry: Fix a bug that leads to module in `code_paths` when `log_model` cannot be correctly imported.
+- Registry: Fix incorrect error message when validating input Snowpark DataFrame with array feature.
+- Model Registry: Fix an issue when deploying a model to SPCS that some files do not have proper permission.
+- Model Development: Relax package versions for all inference methods if the installed version
+  is not available in the Snowflake conda channel
+
+### Behavior Changes
+
+- Registry: When running the method of a model, the value range based input validation to avoid input from overflowing
+  is now optional rather than enforced, this should improve the performance and should not lead to problem for most
+  kinds of model. If you want to enable this check as previous, specify `strict_input_validation=True` when
+  calling `run`.
+- Registry: By default `relax_version=True` when logging a model instead of using the specific local dependency versions.
+  This improves dependency versioning by using versions available in Snowflake. To switch back to the previous behavior
+  and use specific local dependency versions, specify `relax_version=False` when calling `log_model`.
+- Model Development: The behavior of `fit_predict` for all estimators is changed.
+  Firstly, it will cover all the estimator that contains this function,
+  secondly, the output would be the union of pandas DataFrame and snowpark DataFrame.
+
+### New Features
+
+- FileSet: `snowflake.ml.fileset.sfcfs.SFFileSystem` can now be serialized with `pickle`.
+
+## 1.2.3 (2024-02-26)
 
 ### Bug Fixes
 
@@ -23,11 +50,7 @@
   GridSearchCV, RandomizedSearchCV, PCA, IsolationForest, ...
 - Registry: Support deleting a version of a model.
 
-## 1.2.2
-
-### Bug Fixes
-
-### Behavior Changes
+## 1.2.2 (2024-02-13)
 
 ### New Features
 
@@ -38,22 +61,20 @@
   `snowflake.ml.model.models.huggingface_pipeline.HuggingFacePipelineModel` object, the following endpoints are required
   to be allowed: huggingface.com:80, huggingface.com:443, huggingface.co:80, huggingface.co:443.
 
-## 1.2.1
+## 1.2.1 (2024-01-25)
 
 ### New Features
 
 - Model Development: Infers output column data type for transformers when possible.
 - Registry: `relax_version` option is available in the `options` argument when logging the model.
 
-## 1.2.0
+## 1.2.0 (2024-01-11)
 
 ### Bug Fixes
 
 - Model Registry: Fix "XGBoost version not compiled with GPU support" error when running CPU inference against open-source
   XGBoost models deployed to SPCS.
 - Model Registry: Fix model deployment to SPCS on Windows machines.
-
-### Behavior Changes
 
 ### New Features
 
@@ -72,7 +93,7 @@
 `snowflake.ml.registry.Registry`, except when specifically required. The old model registry will be removed once all
 its primary functionalities are fully integrated into the new registry.
 
-## 1.1.2
+## 1.1.2 (2023-12-18)
 
 ### Bug Fixes
 
@@ -90,7 +111,7 @@ its primary functionalities are fully integrated into the new registry.
 
 - Model Development: SQL implementation of binary `precision_score` metric.
 
-## 1.1.1
+## 1.1.1 (2023-12-05)
 
 ### Bug Fixes
 
@@ -103,15 +124,13 @@ its primary functionalities are fully integrated into the new registry.
   requiring automatic input_cols inference, but need to avoid using specific
   columns, like index columns, during training or inference.
 
-## 1.1.0
+## 1.1.0 (2023-12-01)
 
 ### Bug Fixes
 
 - Model Registry: Fix panda dataframe input not handling first row properly.
 - Model Development: OrdinalEncoder and LabelEncoder output_columns do not need to be valid snowflake identifiers. They
   would previously be excluded if the normalized name did not match the name specified in output_columns.
-
-### Behavior Changes
 
 ### New Features
 
@@ -120,7 +139,7 @@ its primary functionalities are fully integrated into the new registry.
 - Model Development: Add support for distributed HPO - GridSearchCV and RandomizedSearchCV execution will be
   distributed on multi-node warehouses.
 
-## 1.0.12
+## 1.0.12 (2023-11-13)
 
 ### Bug Fixes
 
@@ -145,7 +164,7 @@ its primary functionalities are fully integrated into the new registry.
 
 - Model Registry: Enable best-effort SPCS job/service log streaming when logging level is set to INFO.
 
-## 1.0.11
+## 1.0.11 (2023-10-27)
 
 ### New Features
 
@@ -164,7 +183,7 @@ its primary functionalities are fully integrated into the new registry.
 - Model Development: Fix metrics compatibility with Snowpark Dataframes that use Snowflake identifiers
 - Model Registry: Resolve 'delete_deployment' not deleting the SPCS service in certain cases.
 
-## 1.0.10
+## 1.0.10 (2023-10-13)
 
 ### Behavior Changes
 

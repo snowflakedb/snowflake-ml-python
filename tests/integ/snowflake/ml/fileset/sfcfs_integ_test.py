@@ -1,3 +1,5 @@
+import pickle
+
 import fsspec
 from absl.testing import absltest
 
@@ -297,6 +299,15 @@ class TestSnowflakeFileSystem(absltest.TestCase):
         for fs in [self.sffs1, self.sffs2]:
             with self.assertRaises(fileset_errors.StageNotFoundError):
                 fs.optimize_read(["@ML_DATASETS.public.stage_does_not_exist/aaa"])
+
+    def test_fs_serializability(self) -> None:
+        """Test if an object of Snowflake FS can be serialized using pickle."""
+
+        sfcfs_pickle = sfcfs.SFFileSystem(sf_connection=self.sf_connection)
+
+        pickled_data = pickle.dumps(sfcfs_pickle)
+        sfcfs_deserialized = pickle.loads(pickled_data)
+        assert sfcfs_deserialized._conn is not None
 
 
 if __name__ == "__main__":

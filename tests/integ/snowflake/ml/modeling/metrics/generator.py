@@ -25,7 +25,8 @@ def gen_test_cases(
         high: upper bound(s) of the output interval (exclusive)
 
     Returns:
-        A tuple of test data of multiple sizes and column names
+        A tuple of test data of multiple sizes and column names.
+        The 1st column of test data is "ID".
     """
     data_list = []
     snowflake_identifiers: List[str] = []

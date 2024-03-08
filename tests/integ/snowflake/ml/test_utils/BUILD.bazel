@@ -96,6 +96,7 @@ py_library(
 
 py_test(
     name = "common_test_base_test",
+    timeout = "long",
     srcs = ["common_test_base_test.py"],
     deps = [
         ":common_test_base",

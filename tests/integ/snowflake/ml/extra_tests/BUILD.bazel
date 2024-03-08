@@ -128,30 +128,6 @@ py_test(
 )
 
 py_test(
-    name = "fit_predict_test",
-    srcs = ["fit_predict_test.py"],
-    shard_count = 3,
-    deps = [
-        "//snowflake/ml/modeling/cluster:agglomerative_clustering",
-        "//snowflake/ml/modeling/cluster:dbscan",
-        "//snowflake/ml/modeling/cluster:optics",
-        "//snowflake/ml/utils:connection_params",
-    ],
-)
-
-py_test(
-    name = "fit_transform_test",
-    srcs = ["fit_transform_test.py"],
-    shard_count = 3,
-    deps = [
-        "//snowflake/ml/modeling/manifold:mds",
-        "//snowflake/ml/modeling/manifold:spectral_embedding",
-        "//snowflake/ml/modeling/manifold:tsne",
-        "//snowflake/ml/utils:connection_params",
-    ],
-)
-
-py_test(
     name = "decimal_type_test",
     srcs = ["decimal_type_test.py"],
     deps = [
@@ -166,6 +142,18 @@ py_test(
     deps = [
         "//snowflake/ml/modeling/metrics:classification",
         "//snowflake/ml/modeling/xgboost:xgb_classifier",
+        "//snowflake/ml/utils:connection_params",
+    ],
+)
+
+py_test(
+    name = "fit_transform_test",
+    srcs = ["fit_transform_test.py"],
+    shard_count = 3,
+    deps = [
+        "//snowflake/ml/modeling/manifold:mds",
+        "//snowflake/ml/modeling/manifold:spectral_embedding",
+        "//snowflake/ml/modeling/manifold:tsne",
         "//snowflake/ml/utils:connection_params",
     ],
 )

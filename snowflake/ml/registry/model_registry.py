@@ -1471,6 +1471,18 @@ fully integrated into the new registry.
         Returns:
             Restored model object.
         """
+        warnings.warn(
+            (
+                "Please use with caution: "
+                "Using `load_model` method requires you to have the EXACT same Python environments "
+                "as the one when you logged the model. Any differences will potentially lead to errors.\n"
+                "Also, if your model contains custom code imported using `code_paths` argument when logging, "
+                "they will be added to your `sys.path`. It might lead to unexpected module importing issues. "
+                "If you run into such kind of problems, you need to restart your Python or Notebook kernel."
+            ),
+            category=UserWarning,
+            stacklevel=2,
+        )
         remote_model_path = self._get_model_path(model_name=model_name, model_version=model_version)
         restored_model = None
 

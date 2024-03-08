@@ -111,11 +111,17 @@ class ModelVersionSQLClient:
         local_location = target_path.resolve().as_posix()
         local_location_url = f"file://{local_location}"
 
-        query_result_checker.SqlResultValidator(
-            self._session,
-            f"GET {_normalize_url_for_sql(stage_location_url)} {_normalize_url_for_sql(local_location_url)}",
-            statement_params=statement_params,
-        ).has_dimensions(expected_rows=1).validate()
+        if snowpark_utils.is_in_stored_procedure():  # type: ignore[no-untyped-call]
+            options = {"parallel": 10}
+            cursor = self._session._conn._cursor
+            cursor._download(stage_location_url, str(target_path), options)  # type: ignore[attr-defined]
+            cursor.fetchall()
+        else:
+            query_result_checker.SqlResultValidator(
+                self._session,
+                f"GET {_normalize_url_for_sql(stage_location_url)} {_normalize_url_for_sql(local_location_url)}",
+                statement_params=statement_params,
+            ).has_dimensions(expected_rows=1).validate()
         return target_path / file_path.name
 
     def set_comment(
