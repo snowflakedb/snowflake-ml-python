@@ -64,7 +64,7 @@ class ModelManifestTest(absltest.TestCase):
                     self.assertEqual(
                         (
                             importlib_resources.files("snowflake.ml.model._model_composer.model_manifest")
-                            .joinpath("fixtures")  # type: ignore[no-untyped-call]
+                            .joinpath("fixtures")
                             .joinpath("MANIFEST_1.yml")
                             .read_text()
                         ),
@@ -74,7 +74,7 @@ class ModelManifestTest(absltest.TestCase):
                     self.assertEqual(
                         (
                             importlib_resources.files("snowflake.ml.model._model_composer.model_method")
-                            .joinpath("fixtures")  # type: ignore[no-untyped-call]
+                            .joinpath("fixtures")
                             .joinpath("function_1.py")
                             .read_text()
                         ),
@@ -109,7 +109,7 @@ class ModelManifestTest(absltest.TestCase):
                     self.assertEqual(
                         (
                             importlib_resources.files("snowflake.ml.model._model_composer.model_manifest")
-                            .joinpath("fixtures")  # type: ignore[no-untyped-call]
+                            .joinpath("fixtures")
                             .joinpath("MANIFEST_2.yml")
                             .read_text()
                         ),
@@ -119,7 +119,7 @@ class ModelManifestTest(absltest.TestCase):
                     self.assertEqual(
                         (
                             importlib_resources.files("snowflake.ml.model._model_composer.model_method")
-                            .joinpath("fixtures")  # type: ignore[no-untyped-call]
+                            .joinpath("fixtures")
                             .joinpath("function_2.py")
                             .read_text()
                         ),
@@ -157,7 +157,7 @@ class ModelManifestTest(absltest.TestCase):
                     self.assertEqual(
                         (
                             importlib_resources.files("snowflake.ml.model._model_composer.model_manifest")
-                            .joinpath("fixtures")  # type: ignore[no-untyped-call]
+                            .joinpath("fixtures")
                             .joinpath("MANIFEST_3.yml")
                             .read_text()
                         ),
@@ -167,7 +167,7 @@ class ModelManifestTest(absltest.TestCase):
                     self.assertEqual(
                         (
                             importlib_resources.files("snowflake.ml.model._model_composer.model_method")
-                            .joinpath("fixtures")  # type: ignore[no-untyped-call]
+                            .joinpath("fixtures")
                             .joinpath("function_1.py")
                             .read_text()
                         ),
@@ -177,7 +177,7 @@ class ModelManifestTest(absltest.TestCase):
                     self.assertEqual(
                         (
                             importlib_resources.files("snowflake.ml.model._model_composer.model_method")
-                            .joinpath("fixtures")  # type: ignore[no-untyped-call]
+                            .joinpath("fixtures")
                             .joinpath("function_2.py")
                             .read_text()
                         ),
@@ -207,6 +207,53 @@ class ModelManifestTest(absltest.TestCase):
                             meta,
                             pathlib.PurePosixPath("model.zip"),
                         )
+
+    def test_model_manifest_table_function(self) -> None:
+        with tempfile.TemporaryDirectory() as workspace, tempfile.TemporaryDirectory() as tmpdir:
+            mm = model_manifest.ModelManifest(pathlib.Path(workspace))
+            with model_meta.create_model_metadata(
+                model_dir_path=tmpdir,
+                name="model1",
+                model_type="custom",
+                signatures={"predict": _DUMMY_SIG["predict"]},
+                python_version="3.8",
+            ) as meta:
+                meta.models["model1"] = _DUMMY_BLOB
+                with mock.patch.object(
+                    env_utils,
+                    "get_matched_package_versions_in_information_schema",
+                    return_value={env_utils.SNOWPARK_ML_PKG_NAME: []},
+                ):
+                    mm.save(
+                        self.m_session,
+                        meta,
+                        pathlib.PurePosixPath("model.zip"),
+                        options=type_hints.BaseModelSaveOption(
+                            method_options={
+                                "predict": type_hints.ModelMethodSaveOptions(function_type="TABLE_FUNCTION")
+                            }
+                        ),
+                    )
+                with open(os.path.join(workspace, "MANIFEST.yml"), encoding="utf-8") as f:
+                    self.assertEqual(
+                        (
+                            importlib_resources.files("snowflake.ml.model._model_composer.model_manifest")
+                            .joinpath("fixtures")
+                            .joinpath("MANIFEST_4.yml")
+                            .read_text()
+                        ),
+                        f.read(),
+                    )
+                with open(pathlib.Path(workspace, "functions", "predict.py"), encoding="utf-8") as f:
+                    self.assertEqual(
+                        (
+                            importlib_resources.files("snowflake.ml.model._model_composer.model_method")
+                            .joinpath("fixtures")
+                            .joinpath("function_3.py")
+                            .read_text()
+                        ),
+                        f.read(),
+                    )
 
     def test_load(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

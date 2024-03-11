@@ -1,6 +1,7 @@
 import collections
+import enum
 import pathlib
-from typing import Optional, TypedDict
+from typing import List, Optional, TypedDict, Union
 
 from typing_extensions import NotRequired
 
@@ -12,20 +13,37 @@ from snowflake.ml.model._packager.model_meta import model_meta as model_meta_api
 from snowflake.snowpark._internal import type_utils
 
 
+class ModelMethodFunctionTypes(enum.Enum):
+    FUNCTION = "FUNCTION"
+    TABLE_FUNCTION = "TABLE_FUNCTION"
+
+
 class ModelMethodOptions(TypedDict):
     """Options when creating model method.
 
     case_sensitive: Specify when the name of the method should be considered as case sensitive when registered to SQL.
+    function_type: One of `ModelMethodFunctionTypes` specifying function type.
     """
 
     case_sensitive: NotRequired[bool]
+    function_type: NotRequired[str]
 
 
 def get_model_method_options_from_options(
     options: type_hints.ModelSaveOption, target_method: str
 ) -> ModelMethodOptions:
     method_option = options.get("method_options", {}).get(target_method, {})
-    return ModelMethodOptions(case_sensitive=method_option.get("case_sensitive", False))
+
+    function_type = method_option.get("function_type", ModelMethodFunctionTypes.FUNCTION.value)
+    if function_type not in [function_type.value for function_type in ModelMethodFunctionTypes]:
+        raise NotImplementedError
+
+    # TODO(TH): enforce minimum snowflake version
+
+    return ModelMethodOptions(
+        case_sensitive=method_option.get("case_sensitive", False),
+        function_type=function_type,
+    )
 
 
 class ModelMethod:
@@ -71,6 +89,8 @@ class ModelMethod:
         if self.target_method not in self.model_meta.signatures.keys():
             raise ValueError(f"Target method {self.target_method} is not available in the signatures of the model.")
 
+        self.function_type = self.options.get("function_type", ModelMethodFunctionTypes.FUNCTION.value)
+
     @staticmethod
     def _get_method_arg_from_feature(
         feature: model_signature.BaseFeatureSpec, case_sensitive: bool = False
@@ -94,6 +114,7 @@ class ModelMethod:
         self.function_generator.generate(
             workspace_path / ModelMethod.FUNCTIONS_DIR_REL_PATH / f"{self.target_method}.py",
             self.target_method,
+            self.function_type,
             options=options,
         )
         input_list = [
@@ -109,13 +130,25 @@ class ModelMethod:
                 "In this case, set case_sensitive as True for those methods to distinguish them."
             )
 
+        outputs: Union[
+            List[model_manifest_schema.ModelMethodSignatureField],
+            List[model_manifest_schema.ModelMethodSignatureFieldWithName],
+        ]
+        if self.function_type == ModelMethodFunctionTypes.TABLE_FUNCTION.value:
+            outputs = [
+                ModelMethod._get_method_arg_from_feature(ft, case_sensitive=self.options.get("case_sensitive", False))
+                for ft in self.model_meta.signatures[self.target_method].outputs
+            ]
+        else:
+            outputs = [model_manifest_schema.ModelMethodSignatureField(type="OBJECT")]
+
         return model_manifest_schema.ModelFunctionMethodDict(
             name=self.method_name.resolved(),
             runtime=self.runtime_name,
-            type="FUNCTION",
+            type=self.function_type,
             handler=".".join(
                 [ModelMethod.FUNCTIONS_DIR_REL_PATH, self.target_method, self.function_generator.FUNCTION_NAME]
             ),
             inputs=input_list,
-            outputs=[model_manifest_schema.ModelMethodSignatureField(type="OBJECT")],
+            outputs=outputs,
         )

@@ -70,3 +70,17 @@ py_test(
         "//snowflake/ml/utils:connection_params",
     ],
 )
+
+py_test(
+    name = "feature_store_access_test",
+    srcs = [
+        "access_utils.py",
+        "feature_store_access_test.py",
+    ],
+    shard_count = 16,
+    deps = [
+        ":common_utils",
+        "//snowflake/ml/feature_store:feature_store_lib",
+        "//snowflake/ml/utils:connection_params",
+    ],
+)

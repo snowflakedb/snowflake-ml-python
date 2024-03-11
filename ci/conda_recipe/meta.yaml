@@ -17,7 +17,7 @@ build:
   noarch: python
 package:
   name: snowflake-ml-python
-  version: 1.2.3
+  version: 1.3.0
 requirements:
   build:
     - python
@@ -29,7 +29,7 @@ requirements:
     - cachetools>=3.1.1,<6
     - cloudpickle>=2.0.0
     - fsspec>=2022.11,<2024
-    - importlib_resources>=5.1.4, <6
+    - importlib_resources>=6.1.1, <7
     - numpy>=1.23,<2
     - packaging>=20.9,<24
     - pandas>=1.0.0,<2
@@ -41,8 +41,8 @@ requirements:
     - s3fs>=2022.11,<2024
     - scikit-learn>=1.2.1,<1.4
     - scipy>=1.9,<2
-    - snowflake-connector-python>=3.0.4,<4
-    - snowflake-snowpark-python>=1.8.0,<2
+    - snowflake-connector-python>=3.5.0,<4
+    - snowflake-snowpark-python>=1.11.1,<2,!=1.12.0
     - sqlparse>=0.4,<1
     - typing-extensions>=4.1.0,<5
     - xgboost>=1.7.3,<2
@@ -52,7 +52,7 @@ requirements:
     - mlflow>=2.1.0,<2.4
     - sentencepiece>=0.1.95,<0.2
     - shap==0.42.1
-    - tensorflow>=2.9,<3,!=2.12.0
+    - tensorflow>=2.12,<3
     - tokenizers>=0.10,<1
     - torchdata>=0.4,<1
     - transformers>=4.32.1,<5

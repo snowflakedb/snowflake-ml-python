@@ -2,9 +2,10 @@ import importlib
 import inspect
 import os
 import posixpath
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 import cloudpickle as cp
+import pandas as pd
 
 from snowflake.ml._internal import telemetry
 from snowflake.ml._internal.exceptions import (
@@ -138,7 +139,7 @@ class SnowparkModelTrainer:
 
     def _fetch_model_from_stage(self, dir_path: str, file_name: str, statement_params: Dict[str, str]) -> object:
         """
-        Downloads the serialized model from a stage location and unpickels it.
+        Downloads the serialized model from a stage location and unpickles it.
 
         Args:
             dir_path: Stage directory path where results are stored.
@@ -275,6 +276,128 @@ class SnowparkModelTrainer:
 
         return fit_wrapper_sproc
 
+    def _build_fit_predict_wrapper_sproc(
+        self,
+        model_spec: ModelSpecifications,
+    ) -> Callable[[Session, List[str], str, str, List[str], Dict[str, str], List[str], List[str], str], str]:
+        """
+        Constructs and returns a python stored procedure function to be used for training model.
+
+        Args:
+            model_spec: ModelSpecifications object that contains model specific information
+                like required imports, package dependencies, etc.
+
+        Returns:
+            A callable that can be registered as a stored procedure.
+        """
+        imports = model_spec.imports  # In order for the sproc to not resolve this reference in snowflake.ml
+
+        def fit_wrapper_function(
+            session: Session,
+            sql_queries: List[str],
+            stage_transform_file_name: str,
+            stage_result_file_name: str,
+            input_cols: List[str],
+            statement_params: Dict[str, str],
+            pass_through_columns: List[str],
+            expected_output_cols_list: List[str],
+            fit_predict_result_name: str,
+        ) -> str:
+            import os
+
+            import cloudpickle as cp
+            import pandas as pd
+
+            for import_name in imports:
+                importlib.import_module(import_name)
+
+            # Execute snowpark queries and obtain the results as pandas dataframe
+            # NB: this implies that the result data must fit into memory.
+            for query in sql_queries[:-1]:
+                _ = session.sql(query).collect(statement_params=statement_params)
+            sp_df = session.sql(sql_queries[-1])
+            df: pd.DataFrame = sp_df.to_pandas(statement_params=statement_params)
+            df.columns = sp_df.columns
+
+            local_transform_file_name = get_temp_file_path()
+
+            session.file.get(stage_transform_file_name, local_transform_file_name, statement_params=statement_params)
+
+            local_transform_file_path = os.path.join(
+                local_transform_file_name, os.listdir(local_transform_file_name)[0]
+            )
+            with open(local_transform_file_path, mode="r+b") as local_transform_file_obj:
+                estimator = cp.load(local_transform_file_obj)
+
+            fit_predict_result = estimator.fit_predict(df[input_cols])
+
+            local_result_file_name = get_temp_file_path()
+
+            with open(local_result_file_name, mode="w+b") as local_result_file_obj:
+                cp.dump(estimator, local_result_file_obj)
+
+            session.file.put(
+                local_result_file_name,
+                stage_result_file_name,
+                auto_compress=False,
+                overwrite=True,
+                statement_params=statement_params,
+            )
+
+            # store the predict output
+            if len(pass_through_columns) != 0:
+                df = df.copy()
+                fit_predict_result_pd = pd.DataFrame(data=fit_predict_result, columns=expected_output_cols_list)
+                fit_predict_result_pd = pd.concat([df, fit_predict_result_pd], axis=1)
+            else:
+                fit_predict_result_pd = pd.DataFrame(data=fit_predict_result, columns=expected_output_cols_list)
+
+            # write into a temp table in sproc and load the table from outside
+            session.write_pandas(
+                fit_predict_result_pd, fit_predict_result_name, auto_create_table=True, table_type="temp"
+            )
+
+            # Note: you can add something like  + "|" + str(df) to the return string
+            # to pass debug information to the caller.
+            return str(os.path.basename(local_result_file_name))
+
+        return fit_wrapper_function
+
+    def _get_fit_predict_wrapper_sproc(self, statement_params: Dict[str, str]) -> StoredProcedure:
+        # If the sproc already exists, don't register.
+        if not hasattr(self.session, "_FIT_PRE_WRAPPER_SPROCS"):
+            self.session._FIT_PRE_WRAPPER_SPROCS: Dict[str, StoredProcedure] = {}  # type: ignore[attr-defined, misc]
+
+        model_spec = ModelSpecificationsBuilder.build(model=self.estimator)
+        fit_predict_sproc_key = model_spec.__class__.__name__
+        if fit_predict_sproc_key in self.session._FIT_PRE_WRAPPER_SPROCS:  # type: ignore[attr-defined]
+            fit_sproc: StoredProcedure = self.session._FIT_PRE_WRAPPER_SPROCS[  # type: ignore[attr-defined]
+                fit_predict_sproc_key
+            ]
+            return fit_sproc
+
+        fit_predict_sproc_name = random_name_for_temp_object(TempObjectType.PROCEDURE)
+
+        relaxed_dependencies = pkg_version_utils.get_valid_pkg_versions_supported_in_snowflake_conda_channel(
+            pkg_versions=model_spec.pkgDependencies, session=self.session
+        )
+
+        fit_predict_wrapper_sproc = self.session.sproc.register(
+            func=self._build_fit_predict_wrapper_sproc(model_spec=model_spec),
+            is_permanent=False,
+            name=fit_predict_sproc_name,
+            packages=["snowflake-snowpark-python"] + relaxed_dependencies,  # type: ignore[arg-type]
+            replace=True,
+            session=self.session,
+            statement_params=statement_params,
+        )
+
+        self.session._FIT_PRE_WRAPPER_SPROCS[  # type: ignore[attr-defined]
+            fit_predict_sproc_key
+        ] = fit_predict_wrapper_sproc
+
+        return fit_predict_wrapper_sproc
+
     def train(self) -> object:
         """
         Trains the model by pushing down the compute into Snowflake using stored procedures.
@@ -337,3 +460,64 @@ class SnowparkModelTrainer:
             file_name=sproc_export_file_name,
             statement_params=statement_params,
         )
+
+    def train_fit_predict(
+        self,
+        pass_through_columns: List[str],
+        expected_output_cols_list: List[str],
+    ) -> Tuple[Union[DataFrame, pd.DataFrame], object]:
+        """Trains the model by pushing down the compute into Snowflake using stored procedures.
+        This API is different from fit itself because it would also provide the predict
+        output.
+
+        Args:
+            pass_through_columns (List[str]): The column names that would
+                display in the returned dataset.
+            expected_output_cols_list (List[str]): The output columns
+                name as a list. Defaults to None.
+
+        Returns:
+            Tuple[Union[DataFrame, pd.DataFrame], object]: [predicted dataset, estimator]
+        """
+        dataset = snowpark_dataframe_utils.cast_snowpark_dataframe_column_types(self.dataset)
+
+        # Extract query that generated the dataframe. We will need to pass it to the fit procedure.
+        queries = dataset.queries["queries"]
+
+        transform_stage_name = self._create_temp_stage()
+        (stage_transform_file_name, stage_result_file_name) = self._upload_model_to_stage(
+            stage_name=transform_stage_name
+        )
+
+        # Call fit sproc
+        statement_params = telemetry.get_function_usage_statement_params(
+            project=_PROJECT,
+            subproject=self._subproject,
+            function_name=telemetry.get_statement_params_full_func_name(inspect.currentframe(), self._class_name),
+            api_calls=[Session.call],
+            custom_tags=dict([("autogen", True)]) if self._autogenerated else None,
+        )
+
+        fit_wrapper_sproc = self._get_fit_predict_wrapper_sproc(statement_params=statement_params)
+        fit_predict_result_name = random_name_for_temp_object(TempObjectType.TABLE)
+
+        sproc_export_file_name: str = fit_wrapper_sproc(
+            self.session,
+            queries,
+            stage_transform_file_name,
+            stage_result_file_name,
+            self.input_cols,
+            statement_params,
+            pass_through_columns,
+            expected_output_cols_list,
+            fit_predict_result_name,
+        )
+
+        output_result_sp = self.session.table(fit_predict_result_name)
+        fitted_estimator = self._fetch_model_from_stage(
+            dir_path=stage_result_file_name,
+            file_name=sproc_export_file_name,
+            statement_params=statement_params,
+        )
+
+        return output_result_sp, fitted_estimator

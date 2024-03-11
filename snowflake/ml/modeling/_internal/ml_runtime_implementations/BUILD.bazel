@@ -1,0 +1,38 @@
+load("//bazel:py_rules.bzl", "py_library", "py_test")
+
+package(default_visibility = ["//visibility:public"])
+
+py_library(
+    name = "ml_runtime_trainer",
+    srcs = ["ml_runtime_trainer.py"],
+    deps = [
+        "//snowflake/ml/modeling/_internal:model_trainer",
+    ],
+)
+
+py_library(
+    name = "ml_runtime_handlers",
+    srcs = ["ml_runtime_handlers.py"],
+    deps = [
+        "//snowflake/ml/_internal/exceptions",
+        "//snowflake/ml/modeling/_internal:estimator_utils",
+        "//snowflake/ml/modeling/_internal:transformer_protocols",
+        "//snowflake/ml/modeling/_internal/snowpark_implementations:snowpark_handlers",
+    ],
+)
+
+py_test(
+    name = "ml_runtime_handlers_test",
+    srcs = ["ml_runtime_handlers_test.py"],
+    deps = [
+        ":ml_runtime_handlers",
+    ],
+)
+
+py_test(
+    name = "ml_runtime_trainer_test",
+    srcs = ["ml_runtime_trainer_test.py"],
+    deps = [
+        ":ml_runtime_trainer",
+    ],
+)

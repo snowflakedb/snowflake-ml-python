@@ -8,13 +8,17 @@ from snowflake.ml.model import type_hints
 
 class FunctionGenerateOptions(TypedDict):
     max_batch_size: NotRequired[Optional[int]]
+    function_type: NotRequired[str]
 
 
 def get_function_generate_options_from_options(
     options: type_hints.ModelSaveOption, target_method: str
 ) -> FunctionGenerateOptions:
-    method_option = options.get("method_options", {}).get(target_method, {})
-    return FunctionGenerateOptions(max_batch_size=method_option.get("max_batch_size", None))
+    method_options = options.get("method_options", {}).get(target_method, {})
+    return FunctionGenerateOptions(
+        max_batch_size=method_options.get("max_batch_size", None),
+        function_type=method_options.get("function_type", "function"),
+    )
 
 
 class FunctionGenerator:
@@ -30,15 +34,19 @@ class FunctionGenerator:
         self,
         function_file_path: pathlib.Path,
         target_method: str,
+        function_type: str,
         options: Optional[FunctionGenerateOptions] = None,
     ) -> None:
         import importlib_resources
 
         if options is None:
             options = {}
+
+        template_filename = f"infer_{function_type.lower()}.py_template"
+
         function_template = (
             importlib_resources.files("snowflake.ml.model._model_composer.model_method")
-            .joinpath("infer_function.py_template")  # type: ignore[no-untyped-call]
+            .joinpath(template_filename)
             .read_text()
         )
 

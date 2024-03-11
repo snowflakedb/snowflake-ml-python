@@ -1,5 +1,5 @@
 import inspect
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 import pandas as pd
 
@@ -52,3 +52,31 @@ class PandasModelTrainer:
             args["sample_weight"] = self.dataset[self.sample_weight_col].squeeze()
 
         return self.estimator.fit(**args)
+
+    def train_fit_predict(
+        self,
+        pass_through_columns: List[str],
+        expected_output_cols_list: List[str],
+    ) -> Tuple[pd.DataFrame, object]:
+        """Trains the model using specified features and target columns from the dataset.
+        This API is different from fit itself because it would also provide the predict
+        output.
+
+        Args:
+            pass_through_columns (List[str]): The column names that would
+                display in the returned dataset.
+            expected_output_cols_list (List[str]): The output columns
+                name as a list. Defaults to None.
+
+        Returns:
+            Tuple[pd.DataFrame, object]: [predicted dataset, estimator]
+        """
+        assert hasattr(self.estimator, "fit_predict")  # make type checker happy
+        args = {"X": self.dataset[self.input_cols]}
+        result = self.estimator.fit_predict(**args)
+        result_df = pd.DataFrame(data=result, columns=expected_output_cols_list)
+        if len(pass_through_columns) == 0:
+            result_df = result_df
+        else:
+            result_df = pd.concat([self.dataset, result_df], axis=1)
+        return (result_df, self.estimator)

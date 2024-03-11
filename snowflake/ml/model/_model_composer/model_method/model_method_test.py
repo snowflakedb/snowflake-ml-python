@@ -47,7 +47,7 @@ class ModelMethodTest(absltest.TestCase):
                 self.assertEqual(
                     (
                         importlib_resources.files(model_method_pkg)
-                        .joinpath("fixtures")  # type: ignore[no-untyped-call]
+                        .joinpath("fixtures")
                         .joinpath("function_1.py")
                         .read_text()
                     ),
@@ -86,7 +86,7 @@ class ModelMethodTest(absltest.TestCase):
                 self.assertEqual(
                     (
                         importlib_resources.files(model_method_pkg)
-                        .joinpath("fixtures")  # type: ignore[no-untyped-call]
+                        .joinpath("fixtures")
                         .joinpath("function_2.py")
                         .read_text()
                     ),
@@ -151,7 +151,7 @@ class ModelMethodTest(absltest.TestCase):
                 self.assertEqual(
                     (
                         importlib_resources.files(model_method_pkg)
-                        .joinpath("fixtures")  # type: ignore[no-untyped-call]
+                        .joinpath("fixtures")
                         .joinpath("function_1.py")
                         .read_text()
                     ),
@@ -166,6 +166,46 @@ class ModelMethodTest(absltest.TestCase):
                     "handler": "functions.predict.infer",
                     "inputs": [{"name": "input", "type": "FLOAT"}, {"name": "name", "type": "STRING"}],
                     "outputs": [{"type": "OBJECT"}],
+                },
+            )
+
+        with tempfile.TemporaryDirectory() as workspace, tempfile.TemporaryDirectory() as tmpdir:
+            with model_meta.create_model_metadata(
+                model_dir_path=tmpdir, name="model1", model_type="custom", signatures=_DUMMY_SIG
+            ) as meta:
+                meta.models["model1"] = _DUMMY_BLOB
+
+            mm = model_method.ModelMethod(
+                meta,
+                "predict",
+                "python_runtime",
+                fg,
+                options=model_method.ModelMethodOptions(
+                    function_type=model_method.ModelMethodFunctionTypes.TABLE_FUNCTION.value
+                ),
+            )
+            method_dict = mm.save(
+                pathlib.Path(workspace),
+            )
+            with open(pathlib.Path(workspace, "functions", "predict.py"), encoding="utf-8") as f:
+                self.assertEqual(
+                    (
+                        importlib_resources.files(model_method_pkg)
+                        .joinpath("fixtures")
+                        .joinpath("function_3.py")
+                        .read_text()
+                    ),
+                    f.read(),
+                )
+            self.assertDictEqual(
+                method_dict,
+                {
+                    "name": "PREDICT",
+                    "runtime": "python_runtime",
+                    "type": "TABLE_FUNCTION",
+                    "handler": "functions.predict.infer",
+                    "inputs": [{"name": "INPUT", "type": "FLOAT"}, {"name": "NAME", "type": "STRING"}],
+                    "outputs": [{"name": "OUTPUT", "type": "FLOAT"}],
                 },
             )
 

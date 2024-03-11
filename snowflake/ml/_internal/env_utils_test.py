@@ -264,6 +264,52 @@ class EnvUtilsTest(absltest.TestCase):
                 requirements.Requirement(f"pip!={importlib_metadata.version('pip')}")
             )
 
+    def test_get_package_spec_with_supported_ops_only(self) -> None:
+        r = requirements.Requirement("python-package==1.0.1")
+        self.assertEqual(env_utils.get_package_spec_with_supported_ops_only(r), r)
+
+        r = requirements.Requirement("python-package==1.0.*")
+        self.assertEqual(env_utils.get_package_spec_with_supported_ops_only(r), r)
+
+        r = requirements.Requirement("python-package>=1.0")
+        self.assertEqual(env_utils.get_package_spec_with_supported_ops_only(r), r)
+
+        r = requirements.Requirement("python-package<=1.0")
+        self.assertEqual(env_utils.get_package_spec_with_supported_ops_only(r), r)
+
+        r = requirements.Requirement("python-package>1.0")
+        self.assertEqual(env_utils.get_package_spec_with_supported_ops_only(r), r)
+
+        r = requirements.Requirement("python-package<1.0")
+        self.assertEqual(env_utils.get_package_spec_with_supported_ops_only(r), r)
+
+        r = requirements.Requirement("python-package>=1.0,<2,!=1.1")
+        self.assertEqual(
+            env_utils.get_package_spec_with_supported_ops_only(r), requirements.Requirement("python-package>=1.0,<2")
+        )
+
+        r = requirements.Requirement("python-package==1.0.1, !=1.0.2")
+        self.assertEqual(
+            env_utils.get_package_spec_with_supported_ops_only(r), requirements.Requirement("python-package==1.0.1")
+        )
+
+        r = requirements.Requirement("python-package[extra]>=1.0,<2,!=1.1")
+        self.assertEqual(
+            env_utils.get_package_spec_with_supported_ops_only(r),
+            requirements.Requirement("python-package[extra]>=1.0,<2"),
+        )
+
+        r = requirements.Requirement("python-package!=1.0.1")
+        self.assertEqual(
+            env_utils.get_package_spec_with_supported_ops_only(r), requirements.Requirement("python-package")
+        )
+
+        r = requirements.Requirement("python-package")
+        self.assertEqual(
+            env_utils.get_package_spec_with_supported_ops_only(r), requirements.Requirement("python-package")
+        )
+        self.assertIsNot(env_utils.get_package_spec_with_supported_ops_only(r), r)
+
     def test_relax_requirement_version(self) -> None:
         r = requirements.Requirement("python-package==1.0.1")
         self.assertEqual(env_utils.relax_requirement_version(r), requirements.Requirement("python-package>=1.0,<2"))

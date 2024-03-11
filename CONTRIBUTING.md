@@ -46,13 +46,13 @@ Note: You may need to configure your editor to run this on save.
 To build the package, run:
 
 ```shell
-> bazel build //snowflake/ml:wheel
+> bazel build //:wheel
 ```
 
 `bazel` can be run from anywhere under the monorepo and it can accept absolute path or a relative path. For example,
 
 ```sh
-snowflake/ml> bazel build :wheel
+snowml> bazel build :wheel
 ```
 
 You can build an entire sub-tree as:

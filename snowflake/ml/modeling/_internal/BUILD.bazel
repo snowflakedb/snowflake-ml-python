@@ -3,8 +3,44 @@ load("//bazel:py_rules.bzl", "py_library", "py_test")
 package(default_visibility = ["//visibility:public"])
 
 py_library(
-    name = "estimator_protocols",
-    srcs = ["estimator_protocols.py"],
+    name = "transformer_protocols",
+    srcs = ["transformer_protocols.py"],
+)
+
+py_library(
+    name = "constants",
+    srcs = ["constants.py"],
+    deps = [],
+)
+
+py_library(
+    name = "model_transformer_builder",
+    srcs = ["model_transformer_builder.py"],
+    deps = [
+        ":constants",
+        ":transformer_protocols",
+        "//snowflake/ml/_internal/exceptions",
+        "//snowflake/ml/modeling/_internal:estimator_utils",
+        "//snowflake/ml/modeling/_internal/local_implementations:pandas_handlers",
+        "//snowflake/ml/modeling/_internal/ml_runtime_implementations:ml_runtime_handlers",
+        "//snowflake/ml/modeling/_internal/snowpark_implementations:snowpark_handlers",
+        "//snowflake/ml/modeling/framework",
+    ],
+)
+
+py_test(
+    name = "model_transformer_builder_test",
+    srcs = ["model_transformer_builder_test.py"],
+    deps = [
+        ":constants",
+        ":estimator_utils",
+        ":model_transformer_builder",
+        ":transformer_protocols",
+        "//snowflake/ml/modeling/_internal/local_implementations:pandas_handlers",
+        "//snowflake/ml/modeling/_internal/ml_runtime_implementations:ml_runtime_handlers",
+        "//snowflake/ml/modeling/_internal/snowpark_implementations:snowpark_handlers",
+        "//snowflake/ml/utils:connection_params",
+    ],
 )
 
 py_library(
@@ -13,14 +49,6 @@ py_library(
     deps = [
         "//snowflake/ml/_internal/exceptions",
         "//snowflake/ml/modeling/framework",
-    ],
-)
-
-py_test(
-    name = "estimator_protocols_test",
-    srcs = ["estimator_protocols_test.py"],
-    deps = [
-        ":estimator_protocols",
     ],
 )
 
@@ -61,9 +89,11 @@ py_library(
     name = "model_trainer_builder",
     srcs = ["model_trainer_builder.py"],
     deps = [
+        ":constants",
         ":estimator_utils",
         ":model_trainer",
         "//snowflake/ml/modeling/_internal/local_implementations:pandas_trainer",
+        "//snowflake/ml/modeling/_internal/ml_runtime_implementations:ml_runtime_trainer",
         "//snowflake/ml/modeling/_internal/snowpark_implementations:distributed_hpo_trainer",
         "//snowflake/ml/modeling/_internal/snowpark_implementations:snowpark_trainer",
         "//snowflake/ml/modeling/_internal/snowpark_implementations:xgboost_external_memory_trainer",
@@ -74,9 +104,11 @@ py_test(
     name = "model_trainer_builder_test",
     srcs = ["model_trainer_builder_test.py"],
     deps = [
+        ":constants",
         ":model_trainer",
         ":model_trainer_builder",
         "//snowflake/ml/modeling/_internal/local_implementations:pandas_trainer",
+        "//snowflake/ml/modeling/_internal/ml_runtime_implementations:ml_runtime_trainer",
         "//snowflake/ml/modeling/_internal/snowpark_implementations:distributed_hpo_trainer",
         "//snowflake/ml/modeling/_internal/snowpark_implementations:snowpark_trainer",
         "//snowflake/ml/modeling/_internal/snowpark_implementations:xgboost_external_memory_trainer",

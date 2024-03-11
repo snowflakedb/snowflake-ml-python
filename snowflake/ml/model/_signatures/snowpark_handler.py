@@ -87,7 +87,10 @@ class SnowparkDataFrameHandler(base_handler.BaseDataHandler[snowflake.snowpark.D
 
     @staticmethod
     def convert_from_df(
-        session: snowflake.snowpark.Session, df: pd.DataFrame, keep_order: bool = False
+        session: snowflake.snowpark.Session,
+        df: pd.DataFrame,
+        keep_order: bool = False,
+        features: Optional[Sequence[core.BaseFeatureSpec]] = None,
     ) -> snowflake.snowpark.DataFrame:
         # This method is necessary to create the Snowpark Dataframe in correct schema.
         # However, in this case, the order could not be preserved. Thus, a _ID column has to be added,
@@ -101,7 +104,8 @@ class SnowparkDataFrameHandler(base_handler.BaseDataHandler[snowflake.snowpark.D
                 error_code=error_codes.NOT_IMPLEMENTED,
                 original_exception=ValueError("Cannot convert a Pandas DataFrame whose column index is not a string"),
             )
-        features = pandas_handler.PandasDataFrameHandler.infer_signature(df, role="input")
+        if not features:
+            features = pandas_handler.PandasDataFrameHandler.infer_signature(df, role="input")
         # Role will be no effect on the column index. That is to say, the feature name is the actual column name.
         sp_df = session.create_dataframe(df)
         column_names = []

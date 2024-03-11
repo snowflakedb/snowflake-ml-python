@@ -23,6 +23,11 @@ _SYNC_BAZEL_CMD = "bazel run --config=pre_build //{current_path}:{sync_rule}".fo
 )
 
 _GENERATED_REQUIREMENTS_FILES = {
+    "conda_env_build_test_yml": {
+        "cmd": "--mode dev_version --format conda_env --filter_by_tag build_test_env",
+        "generated": "conda-env-build-test.yml",
+        "target": "//bazel/environments:conda-env-build-test.yml",
+    },
     "conda_env_build_yml": {
         "cmd": "--mode dev_version --format conda_env --filter_by_tag build_essential",
         "generated": "conda-env-build.yml",

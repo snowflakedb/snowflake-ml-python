@@ -35,6 +35,7 @@ _SNOWFLAKE_CONDA_CHANNEL_URL = "https://repo.anaconda.com/pkgs/snowflake"
 _NODEFAULTS = "nodefaults"
 _SNOWFLAKE_INFO_SCHEMA_PACKAGE_CACHE: Dict[str, List[version.Version]] = {}
 _SNOWFLAKE_CONDA_PACKAGE_CACHE: Dict[str, List[version.Version]] = {}
+_SUPPORTED_PACKAGE_SPEC_OPS = ["==", ">=", "<=", ">", "<"]
 
 DEFAULT_CHANNEL_NAME = ""
 SNOWML_SPROC_ENV = "IN_SNOWML_SPROC"
@@ -234,6 +235,22 @@ def get_local_installed_version_of_pip_package(pip_req: requirements.Requirement
         )
         return pip_req
     return new_pip_req
+
+
+def get_package_spec_with_supported_ops_only(req: requirements.Requirement) -> requirements.Requirement:
+    """Get the package spec with supported ops only including ==, >=, <=, > and <
+
+    Args:
+        req: A requirements.Requirement object showing the requirement.
+
+    Returns:
+        A requirements.Requirement object with supported ops only
+    """
+    new_req = copy.deepcopy(req)
+    new_req.specifier = specifiers.SpecifierSet(
+        specifiers=",".join([str(spec) for spec in req.specifier if spec.operator in _SUPPORTED_PACKAGE_SPEC_OPS])
+    )
+    return new_req
 
 
 def relax_requirement_version(req: requirements.Requirement) -> requirements.Requirement:

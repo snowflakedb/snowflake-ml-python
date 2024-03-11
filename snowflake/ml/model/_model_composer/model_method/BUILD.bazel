@@ -7,6 +7,7 @@ filegroup(
     srcs = [
         "fixtures/function_1.py",
         "fixtures/function_2.py",
+        "fixtures/function_3.py",
     ],
 )
 
@@ -15,6 +16,7 @@ py_library(
     srcs = ["function_generator.py"],
     data = [
         "infer_function.py_template",
+        "infer_table_function.py_template",
     ],
     deps = [
         "//snowflake/ml/model:type_hints",
@@ -29,6 +31,7 @@ py_test(
     ],
     deps = [
         ":function_generator",
+        ":model_method",
     ],
 )
 

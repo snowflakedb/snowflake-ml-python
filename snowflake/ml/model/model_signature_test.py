@@ -135,14 +135,18 @@ class ModelSignatureMiscTest(absltest.TestCase):
             expected_original_error_type=ValueError,
             expected_regex="Feature type [^\\s]* is not met by all elements",
         ):
-            model_signature._validate_pandas_df(pd.DataFrame([[257, 5], [6, 8]], columns=["a", "b"]), fts)
+            model_signature._validate_pandas_df(pd.DataFrame([[257, 5], [6, 8]], columns=["a", "b"]), fts, strict=True)
+
+        model_signature._validate_pandas_df(pd.DataFrame([[257, 5], [6, 8]], columns=["a", "b"]), fts)
 
         with exception_utils.assert_snowml_exceptions(
             self,
             expected_original_error_type=ValueError,
             expected_regex="Feature type [^\\s]* is not met by all elements",
         ):
-            model_signature._validate_pandas_df(pd.DataFrame([[2, -5], [6, 8]], columns=["a", "b"]), fts)
+            model_signature._validate_pandas_df(pd.DataFrame([[2, -5], [6, 8]], columns=["a", "b"]), fts, strict=True)
+
+        model_signature._validate_pandas_df(pd.DataFrame([[2, -5], [6, 8]], columns=["a", "b"]), fts)
 
         fts = [
             model_signature.FeatureSpec("a", model_signature.DataType.INT8),
@@ -201,8 +205,12 @@ class ModelSignatureMiscTest(absltest.TestCase):
             expected_regex="Feature type [^\\s]* is not met by all elements",
         ):
             model_signature._validate_pandas_df(
-                pd.DataFrame([[[1, 257], [2, 6]], [[2, 3], [2, 6]]], columns=["a", "b"]), fts
+                pd.DataFrame([[[1, 257], [2, 6]], [[2, 3], [2, 6]]], columns=["a", "b"]), fts, strict=True
             )
+
+        model_signature._validate_pandas_df(
+            pd.DataFrame([[[1, 257], [2, 6]], [[2, 3], [2, 6]]], columns=["a", "b"]), fts
+        )
 
         with exception_utils.assert_snowml_exceptions(
             self,
@@ -210,8 +218,12 @@ class ModelSignatureMiscTest(absltest.TestCase):
             expected_regex="Feature type [^\\s]* is not met by all elements",
         ):
             model_signature._validate_pandas_df(
-                pd.DataFrame([[[1, 2], [2, -6]], [[2, 3], [2, 6]]], columns=["a", "b"]), fts
+                pd.DataFrame([[[1, 2], [2, -6]], [[2, 3], [2, 6]]], columns=["a", "b"]), fts, strict=True
             )
+
+        model_signature._validate_pandas_df(
+            pd.DataFrame([[[1, 2], [2, -6]], [[2, 3], [2, 6]]], columns=["a", "b"]), fts
+        )
 
         fts = [
             model_signature.FeatureSpec("a", model_signature.DataType.INT64),
