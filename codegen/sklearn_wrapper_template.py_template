@@ -185,7 +185,19 @@ class {transform.original_class_name}(BaseTransformer):
         dataset: DataFrame,
         inference_method: str,
     ) -> List[str]:
-        """Util method to run validate that batch inference can be run on a snowpark dataframe.
+        """Util method to run validate that batch inference can be run on a snowpark dataframe and
+        return the available package that exists in the snowflake anaconda channel
+
+        Args:
+            dataset: snowpark dataframe
+            inference_method: the inference method such as predict, score...
+
+        Raises:
+            SnowflakeMLException: If the estimator is not fitted, raise error
+            SnowflakeMLException: If the session is None, raise error
+
+        Returns:
+            A list of available package that exists in the snowflake anaconda channel
         """
         if not self._is_fitted:
             raise exceptions.SnowflakeMLException(
@@ -672,13 +684,17 @@ class {transform.original_class_name}(BaseTransformer):
         transform_kwargs: ScoreKwargsTypedDict = dict()  
 
         if isinstance(dataset, DataFrame):
+            self._deps = self._batch_inference_validate_snowpark(
+                dataset=dataset,
+                inference_method="score",
+            )
             selected_cols = self._get_active_columns()
             if len(selected_cols) > 0:
                 dataset = dataset.select(selected_cols)
             assert isinstance(dataset._session, Session) # keep mypy happy
             transform_kwargs = dict(
                 session=dataset._session,
-                dependencies=["snowflake-snowpark-python"] + self._get_dependencies(),
+                dependencies=["snowflake-snowpark-python"] + self._deps,
                 score_sproc_imports={transform.score_sproc_imports},
             )
         elif isinstance(dataset, pd.DataFrame):

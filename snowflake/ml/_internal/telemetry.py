@@ -32,6 +32,13 @@ from snowflake.snowpark._internal import utils
 _log_counter = 0
 _FLUSH_SIZE = 10
 
+# Prepopulate allowed connection types for type checking later since getattr is slow on large modules
+_CONNECTION_TYPES = {
+    conn_type: getattr(connector, conn_type)
+    for conn_type in ["SnowflakeConnection", "StoredProcConnection"]
+    if hasattr(connector, conn_type)
+}
+
 _Args = ParamSpec("_Args")
 _ReturnValue = TypeVar("_ReturnValue")
 
@@ -321,8 +328,10 @@ def send_api_usage_telemetry(
             if conn_attr_name:
                 # raise AttributeError if conn attribute does not exist in `self`
                 conn = operator.attrgetter(conn_attr_name)(args[0])
-                if not isinstance(conn, connector.SnowflakeConnection):
-                    raise TypeError(f"Expected a conn object of type SnowflakeConnection, but got {type(conn)}")
+                if not isinstance(conn, _CONNECTION_TYPES.get(type(conn).__name__, connector.SnowflakeConnection)):
+                    raise TypeError(
+                        f"Expected a conn object of type {' or '.join(_CONNECTION_TYPES.keys())} but got {type(conn)}"
+                    )
             # get an active session
             else:
                 try:

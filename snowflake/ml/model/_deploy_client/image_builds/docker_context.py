@@ -52,9 +52,7 @@ class DockerContext:
 
     def _copy_entrypoint_script_to_docker_context(self) -> None:
         """Copy gunicorn_run.sh entrypoint to docker context directory."""
-        script_path = importlib_resources.files(image_builds).joinpath(  # type: ignore[no-untyped-call]
-            constants.ENTRYPOINT_SCRIPT
-        )
+        script_path = importlib_resources.files(image_builds).joinpath(constants.ENTRYPOINT_SCRIPT)
         target_path = os.path.join(self.context_dir, constants.ENTRYPOINT_SCRIPT)
 
         with open(script_path, encoding="utf-8") as source_file, file_utils.open_file(target_path, "w") as target_file:
@@ -72,9 +70,7 @@ class DockerContext:
         """
         docker_file_path = os.path.join(self.context_dir, "Dockerfile")
         docker_file_template = (
-            importlib_resources.files(image_builds)
-            .joinpath("templates/dockerfile_template")  # type: ignore[no-untyped-call]
-            .read_text("utf-8")
+            importlib_resources.files(image_builds).joinpath("templates/dockerfile_template").read_text("utf-8")
         )
 
         if self.model_zip_stage_path is not None:
@@ -123,9 +119,7 @@ class DockerContext:
         server code.
         """
         with importlib_resources.as_file(
-            importlib_resources.files(image_builds).joinpath(  # type: ignore[no-untyped-call]
-                constants.INFERENCE_SERVER_DIR
-            )
+            importlib_resources.files(image_builds).joinpath(constants.INFERENCE_SERVER_DIR)
         ) as inference_server_folder_path:
             destination_folder_path = os.path.join(self.context_dir, constants.INFERENCE_SERVER_DIR)
             ignore_patterns = shutil.ignore_patterns("BUILD.bazel", "*test.py", "*.\\.*", "__pycache__")

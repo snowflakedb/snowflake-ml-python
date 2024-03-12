@@ -139,9 +139,7 @@ class CommonTestBase(parameterized.TestCase):
                         for req_str in _snowml_requirements.REQUIREMENTS:
                             req = requirements.Requirement(req_str)
                             # Remove "_" not in req once Snowpark 1.11.0 available, it is a workaround for their bug.
-                            if any(
-                                offending in req.name for offending in ["snowflake-connector-python", "pyarrow", "_"]
-                            ):
+                            if any(offending in req.name for offending in ["snowflake-connector-python", "pyarrow"]):
                                 continue
                             # != and ~= are not supported by Snowpark
                             req.specifier = specifiers.SpecifierSet(
@@ -275,6 +273,7 @@ def {func_name}({first_arg_name}: snowflake.snowpark.Session, {", ".join(arg_lis
                         is_permanent=False,
                         packages=final_packages,
                         replace=True,
+                        execute_as="caller",
                     )
 
                 prepare_fn_sproc(*prepare_fn_args, session=self.session)

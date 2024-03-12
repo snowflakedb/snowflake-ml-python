@@ -47,7 +47,7 @@ class ModelMethodTest(absltest.TestCase):
                 self.assertEqual(
                     (
                         importlib_resources.files(model_method_pkg)
-                        .joinpath("fixtures")  # type: ignore[no-untyped-call]
+                        .joinpath("fixtures")
                         .joinpath("function_1.py")
                         .read_text()
                     ),
@@ -86,7 +86,7 @@ class ModelMethodTest(absltest.TestCase):
                 self.assertEqual(
                     (
                         importlib_resources.files(model_method_pkg)
-                        .joinpath("fixtures")  # type: ignore[no-untyped-call]
+                        .joinpath("fixtures")
                         .joinpath("function_2.py")
                         .read_text()
                     ),
@@ -151,7 +151,7 @@ class ModelMethodTest(absltest.TestCase):
                 self.assertEqual(
                     (
                         importlib_resources.files(model_method_pkg)
-                        .joinpath("fixtures")  # type: ignore[no-untyped-call]
+                        .joinpath("fixtures")
                         .joinpath("function_1.py")
                         .read_text()
                     ),
@@ -191,7 +191,7 @@ class ModelMethodTest(absltest.TestCase):
                 self.assertEqual(
                     (
                         importlib_resources.files(model_method_pkg)
-                        .joinpath("fixtures")  # type: ignore[no-untyped-call]
+                        .joinpath("fixtures")
                         .joinpath("function_3.py")
                         .read_text()
                     ),

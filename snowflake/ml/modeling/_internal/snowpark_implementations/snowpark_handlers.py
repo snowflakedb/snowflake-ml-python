@@ -15,6 +15,7 @@ from snowflake.ml._internal.utils.temp_file_utils import (
     cleanup_temp_files,
     get_temp_file_path,
 )
+from snowflake.ml.modeling._internal.estimator_utils import handle_inference_result
 from snowflake.snowpark import DataFrame, Session
 from snowflake.snowpark._internal.utils import (
     TempObjectType,
@@ -25,6 +26,7 @@ from snowflake.snowpark.types import PandasSeries
 
 cp.register_pickle_by_value(inspect.getmodule(get_temp_file_path))
 cp.register_pickle_by_value(inspect.getmodule(identifier.get_inferred_name))
+cp.register_pickle_by_value(inspect.getmodule(handle_inference_result))
 
 _PROJECT = "ModelDevelopment"
 
@@ -115,9 +117,7 @@ class SnowparkTransformHandlers:
             statement_params=statement_params,
         )
         def vec_batch_infer(ds: PandasSeries[dict]) -> PandasSeries[dict]:  # type: ignore[type-arg]
-            import numbers
-
-            import numpy as np
+            import numpy as np  # noqa: F401
             import pandas as pd
 
             input_df = pd.json_normalize(ds)
@@ -145,44 +145,22 @@ class SnowparkTransformHandlers:
                 # Just rename the column names to unquoted identifiers.
                 input_df.columns = snowpark_cols  # Replace the quoted columns identifier with unquoted column ids.
             inference_res = getattr(estimator, inference_method)(input_df, *args, **kwargs)
-            if isinstance(inference_res, list) and len(inference_res) > 0 and isinstance(inference_res[0], np.ndarray):
-                # In case of multioutput estimators, predict_proba, decision_function etc., functions return a list of
-                # ndarrays. We need to concatenate them.
-                transformed_numpy_array = np.concatenate(inference_res, axis=1)
-            elif (
-                isinstance(inference_res, tuple) and len(inference_res) > 0 and isinstance(inference_res[0], np.ndarray)
-            ):
-                # In case of kneighbors, functions return a tuple of ndarrays.
-                transformed_numpy_array = np.stack(inference_res, axis=1)
-            elif isinstance(inference_res, numbers.Number):
-                # In case of BernoulliRBM, functions return a float
-                transformed_numpy_array = np.array([inference_res])
-            else:
-                transformed_numpy_array = inference_res
 
-            if (len(transformed_numpy_array.shape) == 3) and inference_method != "kneighbors":
-                # VotingClassifier will return results of shape (n_classifiers, n_samples, n_classes)
-                # when voting = "soft" and flatten_transform = False. We can't handle unflatten transforms,
-                # so we ignore flatten_transform flag and flatten the results.
-                transformed_numpy_array = np.hstack(transformed_numpy_array)  # type: ignore[call-overload]
+            transformed_numpy_array, output_cols = handle_inference_result(
+                inference_res=inference_res,
+                output_cols=expected_output_cols,
+                inference_method=inference_method,
+                within_udf=True,
+            )
 
             if len(transformed_numpy_array.shape) > 1:
-                if transformed_numpy_array.shape[1] != len(expected_output_cols):
-                    # HeterogeneousEnsemble's transform method produce results with variying shapes
-                    # from (n_samples, n_estimators) to (n_samples, n_estimators * n_classes).
-                    # It is hard to predict the response shape without using fragile introspection logic.
-                    # So, to avoid that we are packing the results into a dataframe of shape (n_samples, 1) with
-                    # each element being a list.
-                    if len(expected_output_cols) != 1:
-                        raise TypeError(
-                            "expected_output_cols must be same length as transformed array or " "should be of length 1"
-                        )
+                if transformed_numpy_array.shape[1] != len(output_cols):
                     series = pd.Series(transformed_numpy_array.tolist())
-                    transformed_pandas_df = pd.DataFrame(series, columns=expected_output_cols)
+                    transformed_pandas_df = pd.DataFrame(series, columns=output_cols)
                 else:
-                    transformed_pandas_df = pd.DataFrame(transformed_numpy_array.tolist(), columns=expected_output_cols)
+                    transformed_pandas_df = pd.DataFrame(transformed_numpy_array.tolist(), columns=output_cols)
             else:
-                transformed_pandas_df = pd.DataFrame(transformed_numpy_array, columns=expected_output_cols)
+                transformed_pandas_df = pd.DataFrame(transformed_numpy_array, columns=output_cols)
 
             return transformed_pandas_df.to_dict("records")  # type: ignore[no-any-return]
 

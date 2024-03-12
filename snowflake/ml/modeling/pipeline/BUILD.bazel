@@ -21,6 +21,7 @@ py_library(
         ":init",
         "//snowflake/ml/_internal:telemetry",
         "//snowflake/ml/_internal/exceptions",
+        "//snowflake/ml/_internal/utils:snowpark_dataframe_utils",
     ],
 )
 

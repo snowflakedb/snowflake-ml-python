@@ -25,13 +25,13 @@ class TestSnowflakeFileSystem(absltest.TestCase):
 
     @classmethod
     def setUpClass(cls) -> None:
-        fileset_integ_utils.create_tmp_snowflake_stage_if_not_exists(
+        fileset_integ_utils.create_snowflake_stage_if_not_exists(
             sp_session=cls.snowpark_session, snowflake_stage=cls.stage1
         )
         fileset_integ_utils.upload_files_to_snowflake(
             sp_session=cls.snowpark_session, snowflake_stage=cls.stage1, content=cls.file_content1
         )
-        fileset_integ_utils.create_tmp_snowflake_stage_if_not_exists(
+        fileset_integ_utils.create_snowflake_stage_if_not_exists(
             sp_session=cls.snowpark_session, snowflake_stage=cls.stage2
         )
         fileset_integ_utils.upload_files_to_snowflake(

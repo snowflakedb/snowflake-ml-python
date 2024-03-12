@@ -1,10 +1,10 @@
 import inspect
 from typing import Any, List, Optional
 
-import numpy as np
 import pandas as pd
 
 from snowflake.ml._internal.exceptions import error_codes, exceptions
+from snowflake.ml.modeling._internal.estimator_utils import handle_inference_result
 
 
 class PandasTransformHandlers:
@@ -107,48 +107,9 @@ class PandasTransformHandlers:
 
         inference_res = getattr(self.estimator, inference_method)(input_df, *args, **kwargs)
 
-        if isinstance(inference_res, list) and len(inference_res) > 0 and isinstance(inference_res[0], np.ndarray):
-            # In case of multioutput estimators, predict_proba, decision_function etc., functions return a list of
-            # ndarrays. We need to concatenate them.
-
-            # First compute output column names
-            if len(output_cols) == len(inference_res):
-                actual_output_cols = []
-                for idx, np_arr in enumerate(inference_res):
-                    for i in range(1 if len(np_arr.shape) <= 1 else np_arr.shape[1]):
-                        actual_output_cols.append(f"{output_cols[idx]}_{i}")
-                output_cols = actual_output_cols
-
-            # Concatenate np arrays
-            transformed_numpy_array = np.concatenate(inference_res, axis=1)
-        elif isinstance(inference_res, tuple) and len(inference_res) > 0 and isinstance(inference_res[0], np.ndarray):
-            # In case of kneighbors, functions return a tuple of ndarrays.
-            transformed_numpy_array = np.stack(inference_res, axis=1)
-        else:
-            transformed_numpy_array = inference_res
-
-        if (len(transformed_numpy_array.shape) == 3) and inference_method != "kneighbors":
-            # VotingClassifier will return results of shape (n_classifiers, n_samples, n_classes)
-            # when voting = "soft" and flatten_transform = False. We can't handle unflatten transforms,
-            # so we ignore flatten_transform flag and flatten the results.
-            transformed_numpy_array = np.hstack(transformed_numpy_array)  # type: ignore[call-overload]
-
-        if len(transformed_numpy_array.shape) == 1:
-            transformed_numpy_array = np.reshape(transformed_numpy_array, (-1, 1))
-
-        shape = transformed_numpy_array.shape
-        if shape[1] != len(output_cols):
-            if len(output_cols) != 1:
-                raise exceptions.SnowflakeMLException(
-                    error_code=error_codes.INVALID_ARGUMENT,
-                    original_exception=TypeError(
-                        "expected_output_cols must be same length as transformed array or " "should be of length 1"
-                    ),
-                )
-            actual_output_cols = []
-            for i in range(shape[1]):
-                actual_output_cols.append(f"{output_cols[0]}_{i}")
-            output_cols = actual_output_cols
+        transformed_numpy_array, output_cols = handle_inference_result(
+            inference_res=inference_res, output_cols=output_cols, inference_method=inference_method
+        )
 
         if inference_method == "kneighbors":
             if len(transformed_numpy_array.shape) == 3:  # return_distance=True
