@@ -90,6 +90,8 @@ SNOWML_NOT_FOUND = "2204"
 SNOWML_INVALID_STAGE = "2210"
 # Invalid query caused by syntax error, invalid source, etc.
 SNOWML_INVALID_QUERY = "2211"
+# Indicates that an error was encountered while attempting to deserialize a resource (SFFIleSystem).
+SNOWML_DESERIALIZATION_FAILED = "2212"
 
 # Invalid Snowpark Session (Missing information) in Snowpark Session that is required.
 INVALID_SNOWPARK_SESSION = "2301"

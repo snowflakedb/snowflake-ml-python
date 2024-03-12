@@ -201,6 +201,7 @@ class SnowparkContainerServiceDeployOptions(DeployOptions):
 class ModelMethodSaveOptions(TypedDict):
     case_sensitive: NotRequired[bool]
     max_batch_size: NotRequired[int]
+    function_type: NotRequired[Literal["FUNCTION", "TABLE_FUNCTION"]]
 
 
 class BaseModelSaveOption(TypedDict):

@@ -3,20 +3,8 @@ FROM mambaorg/micromamba:1.4.3 as build
 
 COPY env/conda.yml conda.yml
 COPY env/requirements.txt requirements.txt
-ARG MAMBA_DOCKERFILE_ACTIVATE=1
-ENV CONDA_PREFIX=/opt/conda
-RUN --mount=type=cache,target=/opt/conda/pkgs CONDA_OVERRIDE_CUDA="11.7" \
-    micromamba install -y -n base -f conda.yml && \
-	python -m pip install "uvicorn[standard]" gunicorn starlette==0.30.0 && \
-	python -m pip install -r requirements.txt && \
-    micromamba clean -afy
-
 COPY inference_server ./inference_server
 COPY gunicorn_run.sh ./gunicorn_run.sh
-COPY model.zip ./model_repo/model.zip
-
-ENV MODEL_ZIP_STAGE_PATH=model_repo/model.zip
-
 
 USER root
 RUN if id mambauser >/dev/null 2>&1; then \
@@ -32,8 +20,23 @@ RUN if id mambauser >/dev/null 2>&1; then \
             --home $HOME \
             $USER; \
     fi
+
+RUN chmod +rx conda.yml
+RUN chmod +rx requirements.txt
 RUN chmod +x ./gunicorn_run.sh
+
 USER mambauser
+ARG MAMBA_DOCKERFILE_ACTIVATE=1
+ENV CONDA_PREFIX=/opt/conda
+RUN --mount=type=cache,target=/opt/conda/pkgs CONDA_OVERRIDE_CUDA="11.7" \
+    micromamba install -y -n base -f conda.yml && \
+	python -m pip install "uvicorn[standard]" gunicorn starlette==0.30.0 && \
+	python -m pip install -r requirements.txt && \
+    micromamba clean -afy
+
+COPY model.zip ./model_repo/model.zip
+
+ENV MODEL_ZIP_STAGE_PATH=model_repo/model.zip
 EXPOSE 5000
 
 CMD ["./gunicorn_run.sh"]

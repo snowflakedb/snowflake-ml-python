@@ -633,45 +633,20 @@ class FeatureStore:
 
         Returns:
             A new feature view with updated status.
-
-        Raises:
-            SnowflakeMLException: [ValueError] FeatureView is not in suspended status.
-            SnowflakeMLException: [RuntimeError] Failed to update feature view status.
         """
-        if feature_view.status != FeatureViewStatus.SUSPENDED:
-            raise snowml_exceptions.SnowflakeMLException(
-                error_code=error_codes.SNOWML_UPDATE_FAILED,
-                original_exception=ValueError(
-                    f"FeatureView {feature_view.name}/{feature_view.version} is not in suspended status. "
-                    f"Actual status: {feature_view.status}"
-                ),
-            )
-
         return self._update_feature_view_status(feature_view, "RESUME")
 
     @dispatch_decorator(prpr_version="1.0.8")
     def suspend_feature_view(self, feature_view: FeatureView) -> FeatureView:
         """
-        Suspend a running FeatureView.
+        Suspend an active FeatureView.
 
         Args:
             feature_view: FeatureView to suspend.
 
         Returns:
             A new feature view with updated status.
-
-        Raises:
-            SnowflakeMLException: [ValueError] FeatureView is not in running status.
-            SnowflakeMLException: [RuntimeError] Failed to update feature view status.
         """
-        if feature_view.status != FeatureViewStatus.RUNNING:
-            raise snowml_exceptions.SnowflakeMLException(
-                error_code=error_codes.SNOWML_UPDATE_FAILED,
-                original_exception=ValueError(
-                    f"FeatureView {feature_view.name}/{feature_view.version} is not in running status. "
-                    f"Actual status: {feature_view.status}"
-                ),
-            )
         return self._update_feature_view_status(feature_view, "SUSPEND")
 
     @dispatch_decorator(prpr_version="1.0.8")
@@ -1272,7 +1247,7 @@ class FeatureStore:
                 query = f"""
                     SELECT
                         l_{layer}.*,
-                        r_{layer}.* EXCLUDE {join_keys_str}
+                        r_{layer}.* EXCLUDE ({join_keys_str})
                     FROM ({query}) l_{layer}
                     LEFT JOIN (
                         SELECT {join_keys_str}, {', '.join(cols)}

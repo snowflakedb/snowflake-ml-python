@@ -155,18 +155,6 @@ class WrapperGeneratorFactory:
         return WrapperGeneratorFactory._is_class_of_type(class_object[1], "ClassifierMixin")
 
     @staticmethod
-    def _is_cluster_obj(class_object: Tuple[str, type]) -> bool:
-        """Check if the given estimator object can cluster features and conduct fit_predict methods.
-
-        Args:
-            class_object: Meta class object which needs to be checked.
-
-        Returns:
-            True if the class inherits from ClusterMixin, otherwise False.
-        """
-        return WrapperGeneratorFactory._is_class_of_type(class_object[1], "ClusterMixin")
-
-    @staticmethod
     def _is_meta_estimator_obj(class_object: Tuple[str, type]) -> bool:
         """Check if the given estimator object requires an `estimator` parameter.
         bounded number of integer numerical label values).
@@ -276,6 +264,33 @@ class WrapperGeneratorFactory:
             True if the module belongs to XGBoost package, otherwise False.
         """
         return module_name.split(".")[0] == "xgboost"
+
+    @staticmethod
+    def _is_deterministic(class_object: Tuple[str, type]) -> bool:
+        """Checks if the given module is deterministic or not
+
+        Args:
+            class_object: Meta class object which needs to be checked.
+
+        Returns:
+            True if the class is deterministic, otherwise False.
+        """
+        return not (
+            WrapperGeneratorFactory._is_class_of_type(class_object[1], "LinearDiscriminantAnalysis")
+            or WrapperGeneratorFactory._is_class_of_type(class_object[1], "BernoulliRBM")
+        )
+
+    @staticmethod
+    def _is_deterministic_cross_platform(class_object: Tuple[str, type]) -> bool:
+        """Checks if the given module is deterministic or not across different platforms
+
+        Args:
+            class_object: Meta class object which needs to be checked.
+
+        Returns:
+            True if the class is deterministic across different platforms, otherwise False.
+        """
+        return not (WrapperGeneratorFactory._is_class_of_type(class_object[1], "Isomap"))
 
     @staticmethod
     def _is_lightgbm(module_name: str) -> bool:
@@ -604,7 +619,6 @@ class WrapperGeneratorBase:
         self.test_estimator_imports_list: List[str] = []
 
         # Optional function support
-        self.fit_predict_cluster_function_support = False
         self.fit_transform_manifold_function_support = False
 
         # Dependencies
@@ -654,7 +668,6 @@ class WrapperGeneratorBase:
         self._is_multioutput_estimator = WrapperGeneratorFactory._is_multioutput_estimator_obj(self.class_object)
         self._is_k_neighbors = WrapperGeneratorFactory._is_k_neighbors_obj(self.class_object)
         self._is_heterogeneous_ensemble = WrapperGeneratorFactory._is_heterogeneous_ensemble_obj(self.class_object)
-        self._is_cluster = WrapperGeneratorFactory._is_cluster_obj(self.class_object)
         self._is_stacking_ensemble = WrapperGeneratorFactory._is_stacking_ensemble_obj(self.class_object)
         self._is_voting_ensemble = WrapperGeneratorFactory._is_voting_ensemble_obj(self.class_object)
         self._is_chain_multioutput = WrapperGeneratorFactory._is_chain_multioutput_obj(self.class_object)
@@ -668,6 +681,10 @@ class WrapperGeneratorBase:
         self._is_randomized_search_cv = WrapperGeneratorFactory._is_randomized_search_cv(self.class_object)
         self._is_iterative_imputer = WrapperGeneratorFactory._is_iterative_imputer(self.class_object)
         self._is_xgboost = WrapperGeneratorFactory._is_xgboost(self.module_name)
+        self._is_deterministic = WrapperGeneratorFactory._is_deterministic(self.class_object)
+        self._is_deterministic_cross_platform = WrapperGeneratorFactory._is_deterministic_cross_platform(
+            self.class_object
+        )
 
     def _populate_import_statements(self) -> None:
         self.estimator_imports_list.append("import numpy")
@@ -984,11 +1001,6 @@ class SklearnWrapperGenerator(WrapperGeneratorBase):
             ]
             self.test_estimator_input_args_list.append(f"dictionary={dictionary}")
 
-        if self._is_cluster:
-            self.fit_predict_cluster_function_support = True
-        if self._is_manifold:
-            self.fit_transform_manifold_function_support = True
-
         if self._is_manifold:
             self.fit_transform_manifold_function_support = True
 
@@ -998,12 +1010,10 @@ class SklearnWrapperGenerator(WrapperGeneratorBase):
 
         if "n_components" in self.original_init_signature.parameters.keys():
             if WrapperGeneratorFactory._is_class_of_type(self.class_object[1], "SpectralBiclustering"):
-                # For spectral bi clustering, set number of sigular vertors to consider to number of input cols and
+                # For spectral bi clustering, set number of singular vectors to consider to number of input cols and
                 # num best vector to select to half the number of input cols.
                 self.test_estimator_input_args_list.append("n_components=len(cols)")
                 self.test_estimator_input_args_list.append("n_best=int(len(cols)/2)")
-            else:
-                self.test_estimator_input_args_list.append("n_components=1")
 
         if self._is_heterogeneous_ensemble:
             if self._is_regressor:

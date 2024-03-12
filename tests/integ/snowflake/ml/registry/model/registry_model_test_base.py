@@ -48,7 +48,7 @@ class RegistryModelTestBase(absltest.TestCase):
         options: Optional[model_types.ModelSaveOption] = None,
     ) -> None:
         conda_dependencies = [
-            test_env_utils.get_latest_package_version_spec_in_server(self._session, "snowflake-snowpark-python")
+            test_env_utils.get_latest_package_version_spec_in_server(self._session, "snowflake-snowpark-python!=1.12.0")
         ]
         if additional_dependencies:
             conda_dependencies.extend(additional_dependencies)

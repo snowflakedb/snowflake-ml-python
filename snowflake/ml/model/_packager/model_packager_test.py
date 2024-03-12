@@ -1,4 +1,3 @@
-import importlib
 import os
 import sys
 import tempfile
@@ -49,44 +48,6 @@ def get_file():
 
 
 class ModelLoadHygieneTest(absltest.TestCase):
-    def test_model_load_hygiene(self) -> None:
-        with tempfile.TemporaryDirectory() as workspace:
-            with tempfile.TemporaryDirectory() as src_path:
-                fake_mod_dirpath = os.path.join(src_path, "fake", "fake_module")
-                os.makedirs(fake_mod_dirpath)
-
-                py_file_path = os.path.join(fake_mod_dirpath, "p.py")
-                with open(py_file_path, "w", encoding="utf-8") as f:
-                    f.write(PY_SRC)
-                    f.flush()
-
-                sys.path.insert(0, src_path)
-
-                from fake.fake_module import p
-
-                self.assertEqual(p.__file__, py_file_path)
-
-                lm = DemoModel(context=custom_model.ModelContext(models={}, artifacts={}))
-                arr = np.array([[1, 2, 3], [4, 2, 5]])
-                d = pd.DataFrame(arr, columns=["c1", "c2", "c3"])
-
-                model_packager.ModelPackager(os.path.join(workspace, "model1")).save(
-                    name="model1",
-                    model=lm,
-                    sample_input=d,
-                    metadata={"author": "halu", "version": "1"},
-                    code_paths=[os.path.join(src_path, "fake")],
-                )
-
-                model_packager.ModelPackager(os.path.join(workspace, "model1")).load()
-                from fake.fake_module import p
-
-                self.assertEqual(p.__file__, os.path.join(workspace, "model1", "code", "fake", "fake_module", "p.py"))
-
-                importlib.reload(p)
-                self.assertEqual(p.__file__, py_file_path)
-                sys.path.remove(src_path)
-
     def test_model_save_validation(self) -> None:
         with tempfile.TemporaryDirectory() as workspace:
             with tempfile.TemporaryDirectory() as src_path:

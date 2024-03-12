@@ -91,7 +91,10 @@ class TestFinalPackagesWithoutConda(absltest.TestCase):
                 c_session = cast(session.Session, self.m_session)
 
                 final_packages = deploy._get_model_final_packages(meta, c_session)
-                self.assertListEqual(final_packages, list(map(str, _BASIC_DEPENDENCIES_FINAL_PACKAGES)))
+                self.assertListEqual(
+                    final_packages,
+                    list(map(str, map(env_utils.relax_requirement_version, _BASIC_DEPENDENCIES_FINAL_PACKAGES))),
+                )
 
     def test_get_model_final_packages_no_relax(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
