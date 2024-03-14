@@ -12,6 +12,15 @@ py_test(
 )
 
 py_test(
+    name = "batch_inference_with_nan_data_test",
+    srcs = ["batch_inference_with_nan_data_test.py"],
+    deps = [
+        "//snowflake/ml/modeling/xgboost:xgb_classifier",
+        "//snowflake/ml/utils:connection_params",
+    ],
+)
+
+py_test(
     name = "grid_search_test",
     srcs = ["grid_search_test.py"],
     deps = [

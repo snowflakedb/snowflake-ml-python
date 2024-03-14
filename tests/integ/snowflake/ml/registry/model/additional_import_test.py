@@ -113,7 +113,7 @@ class ModelWithAdditionalImportTest(parameterized.TestCase):
                 ext_modules=[my_module],
             )
         else:
-            code_path = importlib_resources.files("tests").joinpath("")
+            code_path = importlib_resources.files("tests")._paths[0]
             mv = self.registry.log_model(
                 my_model,
                 model_name=name,

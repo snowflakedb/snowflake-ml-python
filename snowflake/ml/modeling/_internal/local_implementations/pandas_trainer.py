@@ -55,18 +55,18 @@ class PandasModelTrainer:
 
     def train_fit_predict(
         self,
-        pass_through_columns: List[str],
         expected_output_cols_list: List[str],
+        drop_input_cols: Optional[bool] = False,
     ) -> Tuple[pd.DataFrame, object]:
         """Trains the model using specified features and target columns from the dataset.
         This API is different from fit itself because it would also provide the predict
         output.
 
         Args:
-            pass_through_columns (List[str]): The column names that would
-                display in the returned dataset.
             expected_output_cols_list (List[str]): The output columns
                 name as a list. Defaults to None.
+            drop_input_cols (Optional[bool]): Boolean to determine whether to
+                drop the input columns from the output dataset.
 
         Returns:
             Tuple[pd.DataFrame, object]: [predicted dataset, estimator]
@@ -75,7 +75,7 @@ class PandasModelTrainer:
         args = {"X": self.dataset[self.input_cols]}
         result = self.estimator.fit_predict(**args)
         result_df = pd.DataFrame(data=result, columns=expected_output_cols_list)
-        if len(pass_through_columns) == 0:
+        if drop_input_cols:
             result_df = result_df
         else:
             result_df = pd.concat([self.dataset, result_df], axis=1)

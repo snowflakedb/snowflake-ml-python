@@ -14,6 +14,7 @@ py_library(
         "//snowflake/ml/_internal/utils:query_result_checker",
         "//snowflake/ml/_internal/utils:snowpark_dataframe_utils",
         "//snowflake/ml/_internal/utils:temp_file_utils",
+        "//snowflake/ml/modeling/_internal:estimator_utils",
     ],
 )
 

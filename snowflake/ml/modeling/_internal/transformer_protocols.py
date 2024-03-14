@@ -107,9 +107,9 @@ class RemoteModelTransformHandlers(Protocol):
         inference_method: str,
         input_cols: List[str],
         expected_output_cols: List[str],
-        pass_through_cols: List[str],
         session: snowpark.Session,
         dependencies: List[str],
+        drop_input_cols: Optional[bool] = False,
         expected_output_cols_type: Optional[str] = "",
         *args: Any,
         **kwargs: Any,
@@ -121,9 +121,9 @@ class RemoteModelTransformHandlers(Protocol):
             dependencies: List of dependencies for the transformer.
             inference_method: the name of the method used by `estimator` to run inference.
             input_cols: List of feature columns for inference.
-            pass_through_cols: columns in the dataset not used in inference.
             expected_output_cols: column names (in order) of the output dataset.
             expected_output_cols_type: Expected type of the output columns.
+            drop_input_cols: Boolean to determine drop the input columns from the output dataset or not
             args: additional positional arguments.
             kwargs: additional keyword args.
 
@@ -175,7 +175,6 @@ class BatchInferenceKwargsTypedDict(TypedDict, total=False):
 
     snowpark_input_cols: Optional[List[str]]
     drop_input_cols: Optional[bool]
-    pass_through_cols: List[str]
     session: snowpark.Session
     dependencies: List[str]
     expected_output_cols_type: str

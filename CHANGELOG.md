@@ -1,5 +1,11 @@
 # Release History
 
+## 1.3.1
+
+### New Features
+
+- FileSet: `snowflake.ml.fileset.sfcfs.SFFileSystem` can now be used in UDFs and stored procedures.
+
 ## 1.3.0
 
 ### Bug Fixes
