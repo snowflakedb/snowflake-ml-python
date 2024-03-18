@@ -1,0 +1,12 @@
+---
+# DO NOT EDIT!
+# Generate by running 'bazel run --config=pre_build //bazel/requirements:sync_requirements'
+
+channels:
+  - https://repo.anaconda.com/pkgs/snowflake
+  - nodefaults
+dependencies:
+  - inflection==0.5.1
+  - psutil==5.9.0
+  - pytest-xdist==3.5.0
+  - pytest==7.4.0

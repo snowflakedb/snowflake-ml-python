@@ -108,7 +108,7 @@ class TorchScriptHandlerTest(absltest.TestCase):
             model_packager.ModelPackager(os.path.join(tmpdir, "model1_no_sig_1")).save(
                 name="model1_no_sig_1",
                 model=model_script,
-                sample_input=[data_x],
+                sample_input_data=[data_x],
                 metadata={"author": "halu", "version": "1"},
             )
 

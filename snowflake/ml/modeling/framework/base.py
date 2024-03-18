@@ -577,6 +577,46 @@ class BaseTransformer(BaseEstimator):
                     ),
                 )
 
+    def _get_output_column_names(self, output_cols_prefix: str, output_cols: Optional[List[str]] = None) -> List[str]:
+        """Returns the list of output columns for predict_proba(), decision_function(), etc.. functions.
+        Returns a list with output_cols_prefix as the only element if the estimator is not a classifier.
+
+        Args:
+            output_cols_prefix: the prefix for output cols, such as its inference method.
+            output_cols: The output cols. Defaults to None. This is introduced by kneighbors methods
+
+        Returns:
+            inferred output column names
+        """
+        output_cols_prefix = identifier.resolve_identifier(output_cols_prefix)
+        if output_cols:
+            output_cols = [
+                identifier.concat_names([output_cols_prefix, identifier.resolve_identifier(c)]) for c in output_cols
+            ]
+        elif getattr(self._sklearn_object, "classes_", None) is None:
+            output_cols = [output_cols_prefix]
+        elif self._sklearn_object is not None:
+            classes = self._sklearn_object.classes_
+            if isinstance(classes, np.ndarray):
+                output_cols = [f"{output_cols_prefix}{str(c)}" for c in classes.tolist()]
+            elif isinstance(classes, list) and len(classes) > 0 and isinstance(classes[0], np.ndarray):
+                # If the estimator is a multioutput estimator, classes_ will be a list of ndarrays.
+                output_cols = []
+                for i, cl in enumerate(classes):
+                    # For binary classification, there is only one output column for each class
+                    # ndarray as the two classes are complementary.
+                    if len(cl) == 2:
+                        output_cols.append(f"{output_cols_prefix}{i}_{cl[0]}")
+                    else:
+                        output_cols.extend([f"{output_cols_prefix}{i}_{c}" for c in cl.tolist()])
+        else:
+            output_cols = []
+
+        # Make sure column names are valid snowflake identifiers.
+        assert output_cols is not None  # Make MyPy happy
+        rv = [identifier.rename_to_valid_snowflake_identifier(c) for c in output_cols]
+        return rv
+
     def set_drop_input_cols(self, drop_input_cols: Optional[bool] = False) -> None:
         self._drop_input_cols = drop_input_cols
 

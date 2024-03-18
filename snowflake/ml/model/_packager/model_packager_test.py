@@ -66,7 +66,7 @@ class ModelLoadHygieneTest(absltest.TestCase):
                     model_packager.ModelPackager(os.path.join(workspace, "model1")).save(
                         name="model1",
                         model=lm,
-                        sample_input=d,
+                        sample_input_data=d,
                         metadata={"author": "halu", "version": "1"},
                         code_paths=[os.path.join(src_path, "snowflake")],
                     )
@@ -84,7 +84,7 @@ class ModelLoadHygieneTest(absltest.TestCase):
                     model_packager.ModelPackager(os.path.join(workspace, "model1")).save(
                         name="model1",
                         model=lm,
-                        sample_input=d,
+                        sample_input_data=d,
                         metadata={"author": "halu", "version": "1"},
                         code_paths=[py_file_path],
                     )
@@ -102,7 +102,7 @@ class ModelLoadHygieneTest(absltest.TestCase):
                 model_packager.ModelPackager(os.path.join(workspace, "model1")).save(
                     name="model1",
                     model=lm,
-                    sample_input=d,
+                    sample_input_data=d,
                     metadata={"author": "halu", "version": "1"},
                     options={"embed_local_ml_library": True, "_legacy_save": True},
                 )
@@ -127,12 +127,12 @@ class ModelPackagerTest(absltest.TestCase):
             with exception_utils.assert_snowml_exceptions(
                 self,
                 expected_original_error_type=ValueError,
-                expected_regex="Signatures and sample_input both cannot be specified at the same time.",
+                expected_regex="Signatures and sample_input_data both cannot be specified at the same time.",
             ):
                 pk.save(
                     name="model1",
                     model=linear_model.LinearRegression(),
-                    sample_input=d,
+                    sample_input_data=d,
                     signatures={"predict": model_signature.ModelSignature(inputs=[], outputs=[])},
                 )
 
@@ -140,7 +140,7 @@ class ModelPackagerTest(absltest.TestCase):
                 self,
                 expected_original_error_type=ValueError,
                 expected_regex=(
-                    "Signatures and sample_input both cannot be None at the same time for this kind of model."
+                    "Signatures and sample_input_data both cannot be None at the same time for this kind of model."
                 ),
             ):
                 pk.save(

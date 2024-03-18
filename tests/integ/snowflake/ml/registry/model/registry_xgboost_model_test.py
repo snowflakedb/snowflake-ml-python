@@ -22,7 +22,7 @@ class TestRegistryXGBoostModelInteg(registry_model_test_base.RegistryModelTestBa
         regressor.fit(cal_X_train, cal_y_train)
         self._test_registry_model(
             model=regressor,
-            sample_input=cal_X_test,
+            sample_input_data=cal_X_test,
             prediction_assert_fns={
                 "predict": (
                     cal_X_test,
@@ -54,7 +54,7 @@ class TestRegistryXGBoostModelInteg(registry_model_test_base.RegistryModelTestBa
         )
         self._test_registry_model(
             model=regressor,
-            sample_input=cal_data_sp_df_train.drop('"target"'),
+            sample_input_data=cal_data_sp_df_train.drop('"target"'),
             prediction_assert_fns={
                 "predict": (
                     cal_data_sp_df_test_X,
@@ -76,7 +76,7 @@ class TestRegistryXGBoostModelInteg(registry_model_test_base.RegistryModelTestBa
         y_pred = regressor.predict(xgboost.DMatrix(data=cal_X_test))
         self._test_registry_model(
             model=regressor,
-            sample_input=cal_X_test,
+            sample_input_data=cal_X_test,
             prediction_assert_fns={
                 "predict": (
                     cal_X_test,
@@ -111,7 +111,7 @@ class TestRegistryXGBoostModelInteg(registry_model_test_base.RegistryModelTestBa
         )
         self._test_registry_model(
             model=regressor,
-            sample_input=cal_data_sp_df_train.drop('"target"'),
+            sample_input_data=cal_data_sp_df_train.drop('"target"'),
             prediction_assert_fns={
                 "predict": (
                     cal_data_sp_df_test_X,

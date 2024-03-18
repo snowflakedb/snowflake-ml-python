@@ -76,7 +76,7 @@ class TestWarehouseHuggingFacehModelInteg(parameterized.TestCase):
             full_qual_stage=self.full_qual_stage,
             name=name,
             model=model,
-            sample_input=None,
+            sample_input_data=None,
             test_input=test_input,
             deploy_params=deploy_params,
             permanent_deploy=permanent_deploy,

@@ -114,7 +114,7 @@ class ServerImageBuilder(base_image_builder.ImageBuilder):
         """
         kaniko_shell_script_template = (
             importlib_resources.files(image_builds)
-            .joinpath(f"templates/{constants.KANIKO_SHELL_SCRIPT_TEMPLATE}")  # type: ignore[no-untyped-call]
+            .joinpath(f"templates/{constants.KANIKO_SHELL_SCRIPT_TEMPLATE}")
             .read_text("utf-8")
         )
 
@@ -170,7 +170,7 @@ class ServerImageBuilder(base_image_builder.ImageBuilder):
 
         spec_template = (
             importlib_resources.files(image_builds)
-            .joinpath(f"templates/{constants.IMAGE_BUILD_JOB_SPEC_TEMPLATE}")  # type: ignore[no-untyped-call]
+            .joinpath(f"templates/{constants.IMAGE_BUILD_JOB_SPEC_TEMPLATE}")
             .read_text("utf-8")
         )
 

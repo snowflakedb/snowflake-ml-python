@@ -101,7 +101,7 @@ class TestWarehouseCustomModelInteg(parameterized.TestCase):
         self,
         name: str,
         model: model_types.SupportedModelType,
-        sample_input: model_types.SupportedDataType,
+        sample_input_data: model_types.SupportedDataType,
         test_input: model_types.SupportedDataType,
         deploy_params: Dict[str, Tuple[Dict[str, Any], Callable[[Union[pd.DataFrame, SnowparkDataFrame]], Any]]],
         permanent_deploy: Optional[bool] = False,
@@ -112,7 +112,7 @@ class TestWarehouseCustomModelInteg(parameterized.TestCase):
             full_qual_stage=self.full_qual_stage,
             name=name,
             model=model,
-            sample_input=sample_input,
+            sample_input_data=sample_input_data,
             test_input=test_input,
             deploy_params=deploy_params,
             permanent_deploy=permanent_deploy,
@@ -137,7 +137,7 @@ class TestWarehouseCustomModelInteg(parameterized.TestCase):
             self.base_test_case(
                 name="async_model_composition",
                 model=acm,
-                sample_input=pd_df,
+                sample_input_data=pd_df,
                 test_input=pd_df,
                 deploy_params={
                     "": (
@@ -165,7 +165,7 @@ class TestWarehouseCustomModelInteg(parameterized.TestCase):
         self.base_test_case(
             name="custom_demo_model_sp0",
             model=lm,
-            sample_input=sp_df,
+            sample_input_data=sp_df,
             test_input=sp_df,
             deploy_params={
                 "": (
@@ -188,7 +188,7 @@ class TestWarehouseCustomModelInteg(parameterized.TestCase):
         self.base_test_case(
             name="custom_demo_model_sp_quote",
             model=lm,
-            sample_input=sp_df,
+            sample_input_data=sp_df,
             test_input=pd_df,
             deploy_params={
                 "": (
@@ -216,7 +216,7 @@ class TestWarehouseCustomModelInteg(parameterized.TestCase):
         self.base_test_case(
             name="custom_demo_model_sp_quote",
             model=lm,
-            sample_input=sp_df,
+            sample_input_data=sp_df,
             test_input=sp_df_1,
             deploy_params={
                 "": (
@@ -240,7 +240,7 @@ class TestWarehouseCustomModelInteg(parameterized.TestCase):
         self.base_test_case(
             name="custom_demo_model_sp1",
             model=lm,
-            sample_input=pd_df,
+            sample_input_data=pd_df,
             test_input=sp_df,
             deploy_params={
                 "": (
@@ -266,7 +266,7 @@ class TestWarehouseCustomModelInteg(parameterized.TestCase):
         self.base_test_case(
             name="custom_demo_model_sp1",
             model=lm,
-            sample_input=pd_df,
+            sample_input_data=pd_df,
             test_input=sp_df,
             deploy_params={
                 "": (
@@ -289,7 +289,7 @@ class TestWarehouseCustomModelInteg(parameterized.TestCase):
         self.base_test_case(
             name="custom_demo_model_sp2",
             model=lm,
-            sample_input=sp_df,
+            sample_input_data=sp_df,
             test_input=pd_df,
             deploy_params={
                 "": (
@@ -317,7 +317,7 @@ class TestWarehouseCustomModelInteg(parameterized.TestCase):
         self.base_test_case(
             name="custom_demo_model_sp2",
             model=lm,
-            sample_input=sp_df,
+            sample_input_data=sp_df,
             test_input=sp_df_1,
             deploy_params={
                 "": (
@@ -339,7 +339,7 @@ class TestWarehouseCustomModelInteg(parameterized.TestCase):
         self.base_test_case(
             name="custom_demo_model_array",
             model=lm,
-            sample_input=pd_df,
+            sample_input_data=pd_df,
             test_input=pd_df,
             deploy_params={
                 "": (
@@ -363,7 +363,7 @@ class TestWarehouseCustomModelInteg(parameterized.TestCase):
         self.base_test_case(
             name="custom_demo_model_str",
             model=lm,
-            sample_input=pd_df,
+            sample_input_data=pd_df,
             test_input=pd_df,
             deploy_params={
                 "": (
@@ -390,7 +390,7 @@ class TestWarehouseCustomModelInteg(parameterized.TestCase):
         self.base_test_case(
             name="custom_demo_model_array_sp",
             model=lm,
-            sample_input=sp_df,
+            sample_input_data=sp_df,
             test_input=sp_df,
             deploy_params={
                 "": (
@@ -413,7 +413,7 @@ class TestWarehouseCustomModelInteg(parameterized.TestCase):
         self.base_test_case(
             name="custom_demo_model_str_sp",
             model=lm,
-            sample_input=sp_df,
+            sample_input_data=sp_df,
             test_input=sp_df,
             deploy_params={
                 "": (
@@ -434,7 +434,7 @@ class TestWarehouseCustomModelInteg(parameterized.TestCase):
         self.base_test_case(
             name="custom_demo_model_array_str",
             model=lm,
-            sample_input=pd_df,
+            sample_input_data=pd_df,
             test_input=pd_df,
             deploy_params={
                 "": (
@@ -464,7 +464,7 @@ class TestWarehouseCustomModelInteg(parameterized.TestCase):
             self.base_test_case(
                 name="custom_model_with_artifacts",
                 model=lm,
-                sample_input=pd_df,
+                sample_input_data=pd_df,
                 test_input=pd_df,
                 deploy_params={
                     "": (
@@ -496,7 +496,7 @@ class TestWarehouseCustomModelInteg(parameterized.TestCase):
             self.base_test_case(
                 name="custom_model_bool_sp",
                 model=lm,
-                sample_input=sp_df,
+                sample_input_data=sp_df,
                 test_input=sp_df,
                 deploy_params={
                     "": (

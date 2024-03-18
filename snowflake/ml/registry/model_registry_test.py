@@ -1157,7 +1157,7 @@ class ModelRegistryTest(absltest.TestCase):
                                 metadata=None,
                                 conda_dependencies=None,
                                 pip_requirements=None,
-                                sample_input=None,
+                                sample_input_data=None,
                                 code_paths=None,
                                 options=None,
                             )

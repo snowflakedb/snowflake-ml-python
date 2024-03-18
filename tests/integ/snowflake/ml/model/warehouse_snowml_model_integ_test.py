@@ -52,7 +52,7 @@ class TestWarehouseSnowMLModelInteg(parameterized.TestCase):
         self,
         name: str,
         model: model_types.SupportedModelType,
-        sample_input: model_types.SupportedDataType,
+        sample_input_data: model_types.SupportedDataType,
         test_input: model_types.SupportedDataType,
         deploy_params: Dict[str, Tuple[Dict[str, Any], Callable[[Union[pd.DataFrame, SnowparkDataFrame]], Any]]],
         permanent_deploy: Optional[bool] = False,
@@ -63,7 +63,7 @@ class TestWarehouseSnowMLModelInteg(parameterized.TestCase):
             full_qual_stage=self.full_qual_stage,
             name=name,
             model=model,
-            sample_input=sample_input,
+            sample_input_data=sample_input_data,
             test_input=test_input,
             deploy_params=deploy_params,
             permanent_deploy=permanent_deploy,
@@ -87,7 +87,7 @@ class TestWarehouseSnowMLModelInteg(parameterized.TestCase):
         self.base_test_case(
             name="snowml_model_sklearn",
             model=regr,
-            sample_input=None,
+            sample_input_data=None,
             test_input=test_features,
             deploy_params={
                 "predict": (
@@ -118,7 +118,7 @@ class TestWarehouseSnowMLModelInteg(parameterized.TestCase):
         self.base_test_case(
             name="snowml_model_xgb",
             model=regr,
-            sample_input=None,
+            sample_input_data=None,
             test_input=test_features,
             deploy_params={
                 "predict": (
@@ -149,7 +149,7 @@ class TestWarehouseSnowMLModelInteg(parameterized.TestCase):
         self.base_test_case(
             name="snowml_model_lightgbm",
             model=regr,
-            sample_input=None,
+            sample_input_data=None,
             test_input=test_features,
             deploy_params={
                 "predict": (

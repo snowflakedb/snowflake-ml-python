@@ -224,6 +224,7 @@ class RandomizedSearchCV(BaseTransformer):
         expensive and is not strictly required to select the parameters that
         yield the best generalization performance.
     """
+
     _ENABLE_DISTRIBUTED = True
 
     def __init__(  # type: ignore[no-untyped-def]
@@ -345,13 +346,7 @@ class RandomizedSearchCV(BaseTransformer):
         self._get_model_signatures(dataset)
         return self
 
-    def _get_pass_through_columns(self, dataset: DataFrame) -> List[str]:
-        if self._drop_input_cols:
-            return []
-        else:
-            return list(set(dataset.columns) - set(self.output_cols))
-
-    def _batch_inference_validate_snowpark(self, dataset: DataFrame, inference_method: str) -> None:
+    def _batch_inference_validate_snowpark(self, dataset: DataFrame, inference_method: str) -> List[str]:
         """Util method to run validate that batch inference can be run on a snowpark dataframe."""
         if not self._is_fitted:
             raise exceptions.SnowflakeMLException(
@@ -368,7 +363,7 @@ class RandomizedSearchCV(BaseTransformer):
                 original_exception=ValueError("Session must not specified for snowpark dataset."),
             )
         # Validate that key package version in user workspace are supported in snowflake conda channel
-        pkg_version_utils.get_valid_pkg_versions_supported_in_snowflake_conda_channel(
+        return pkg_version_utils.get_valid_pkg_versions_supported_in_snowflake_conda_channel(
             pkg_versions=self._get_dependencies(), session=session, subproject=_SUBPROJECT
         )
 
@@ -403,7 +398,7 @@ class RandomizedSearchCV(BaseTransformer):
                 expected_type_inferred = convert_sp_to_sf_type(
                     self.model_signatures["predict"].outputs[0].as_snowpark_type()
                 )
-            self._batch_inference_validate_snowpark(
+            self._deps = self._batch_inference_validate_snowpark(
                 dataset=dataset,
                 inference_method=inference_method,
             )
@@ -412,8 +407,8 @@ class RandomizedSearchCV(BaseTransformer):
             )  # mypy does not recognize the check in _batch_inference_validate_snowpark()
             transform_kwargs = dict(
                 session=dataset._session,
-                dependencies=self._get_dependencies(),
-                pass_through_cols=self._get_pass_through_columns(dataset),
+                dependencies=self._deps,
+                drop_input_cols=self._drop_input_cols,
                 expected_output_cols_type=expected_type_inferred,
             )
 
@@ -462,14 +457,14 @@ class RandomizedSearchCV(BaseTransformer):
         inference_method = "transform"
 
         if isinstance(dataset, DataFrame):
-            self._batch_inference_validate_snowpark(dataset=dataset, inference_method=inference_method)
+            self._deps = self._batch_inference_validate_snowpark(dataset=dataset, inference_method=inference_method)
             assert isinstance(
                 dataset._session, Session
             )  # mypy does not recognize the check in _batch_inference_validate_snowpark()
             transform_kwargs = dict(
                 session=dataset._session,
-                dependencies=self._get_dependencies(),
-                pass_through_cols=self._get_pass_through_columns(dataset),
+                dependencies=self._deps,
+                drop_input_cols=self._drop_input_cols,
             )
 
         elif isinstance(dataset, pd.DataFrame):
@@ -490,36 +485,6 @@ class RandomizedSearchCV(BaseTransformer):
             **transform_kwargs,
         )
         return output_df
-
-    def _get_output_column_names(self, output_cols_prefix: str) -> List[str]:
-        """Returns the list of output columns for predict_proba(), decision_function(), etc.. functions.
-        Returns a list with output_cols_prefix as the only element if the estimator is not a classifier.
-
-        Args:
-            output_cols_prefix (str): prefix according to the function
-
-        Returns:
-            List[str]: output cols with prefix
-        """
-        if getattr(self._sklearn_object, "classes_", None) is None:
-            return [output_cols_prefix]
-
-        assert self._sklearn_object is not None  # keep mypy happy
-        classes = self._sklearn_object.classes_
-        if isinstance(classes, np.ndarray):
-            return [f"{output_cols_prefix}{c}" for c in classes.tolist()]
-        elif isinstance(classes, list) and len(classes) > 0 and isinstance(classes[0], np.ndarray):
-            # If the estimator is a multioutput estimator, classes_ will be a list of ndarrays.
-            output_cols = []
-            for i, cl in enumerate(classes):
-                # For binary classification, there is only one output column for each class
-                # ndarray as the two classes are complementary.
-                if len(cl) == 2:
-                    output_cols.append(f"{output_cols_prefix}_{i}_{cl[0]}")
-                else:
-                    output_cols.extend([f"{output_cols_prefix}_{i}_{c}" for c in cl.tolist()])
-            return output_cols
-        return []
 
     @available_if(original_estimator_has_callable("predict_proba"))  # type: ignore[misc]
     @telemetry.send_api_usage_telemetry(
@@ -550,14 +515,14 @@ class RandomizedSearchCV(BaseTransformer):
         inference_method = "predict_proba"
 
         if isinstance(dataset, DataFrame):
-            self._batch_inference_validate_snowpark(dataset=dataset, inference_method=inference_method)
+            self._deps = self._batch_inference_validate_snowpark(dataset=dataset, inference_method=inference_method)
             assert isinstance(
                 dataset._session, Session
             )  # mypy does not recognize the check in _batch_inference_validate_snowpark()
             transform_kwargs = dict(
                 session=dataset._session,
-                dependencies=self._get_dependencies(),
-                pass_through_cols=self._get_pass_through_columns(dataset),
+                dependencies=self._deps,
+                drop_input_cols=self._drop_input_cols,
                 expected_output_cols_type="float",
             )
 
@@ -610,14 +575,14 @@ class RandomizedSearchCV(BaseTransformer):
         inference_method = "predict_log_proba"
 
         if isinstance(dataset, DataFrame):
-            self._batch_inference_validate_snowpark(dataset=dataset, inference_method=inference_method)
+            self._deps = self._batch_inference_validate_snowpark(dataset=dataset, inference_method=inference_method)
             assert isinstance(
                 dataset._session, Session
             )  # mypy does not recognize the check in _batch_inference_validate_snowpark()
             transform_kwargs = dict(
                 session=dataset._session,
-                dependencies=self._get_dependencies(),
-                pass_through_cols=self._get_pass_through_columns(dataset),
+                dependencies=self._deps,
+                drop_input_cols=self._drop_input_cols,
                 expected_output_cols_type="float",
             )
 
@@ -669,14 +634,14 @@ class RandomizedSearchCV(BaseTransformer):
         inference_method = "decision_function"
 
         if isinstance(dataset, DataFrame):
-            self._batch_inference_validate_snowpark(dataset=dataset, inference_method=inference_method)
+            self._deps = self._batch_inference_validate_snowpark(dataset=dataset, inference_method=inference_method)
             assert isinstance(
                 dataset._session, Session
             )  # mypy does not recognize the check in _batch_inference_validate_snowpark()
             transform_kwargs = dict(
                 session=dataset._session,
-                dependencies=self._get_dependencies(),
-                pass_through_cols=self._get_pass_through_columns(dataset),
+                dependencies=self._deps,
+                drop_input_cols=self._drop_input_cols,
                 expected_output_cols_type="float",
             )
 
@@ -730,14 +695,14 @@ class RandomizedSearchCV(BaseTransformer):
         transform_kwargs: BatchInferenceKwargsTypedDict = dict()
 
         if isinstance(dataset, DataFrame):
-            self._batch_inference_validate_snowpark(dataset=dataset, inference_method=inference_method)
+            self._deps = self._batch_inference_validate_snowpark(dataset=dataset, inference_method=inference_method)
             assert isinstance(
                 dataset._session, Session
             )  # mypy does not recognize the check in _batch_inference_validate_snowpark()
             transform_kwargs = dict(
                 session=dataset._session,
-                dependencies=self._get_dependencies(),
-                pass_through_cols=self._get_pass_through_columns(dataset),
+                dependencies=self._deps,
+                drop_input_cols=self._drop_input_cols,
                 expected_output_cols_type="float",
             )
 
@@ -780,6 +745,10 @@ class RandomizedSearchCV(BaseTransformer):
         transform_kwargs: ScoreKwargsTypedDict = dict()
 
         if isinstance(dataset, DataFrame):
+            self._deps = self._batch_inference_validate_snowpark(
+                dataset=dataset,
+                inference_method="score",
+            )
             selected_cols = self._get_active_columns()
             if len(selected_cols) > 0:
                 dataset = dataset.select(selected_cols)
@@ -787,7 +756,7 @@ class RandomizedSearchCV(BaseTransformer):
             assert isinstance(dataset._session, Session)  # keep mypy happy
             transform_kwargs = dict(
                 session=dataset._session,
-                dependencies=["snowflake-snowpark-python"] + self._get_dependencies(),
+                dependencies=["snowflake-snowpark-python"] + self._deps,
                 score_sproc_imports=["sklearn"],
             )
         elif isinstance(dataset, pd.DataFrame):

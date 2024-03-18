@@ -197,6 +197,26 @@ py_library(
 )
 
 py_library(
+    name = "sentence_transformers",
+    srcs = ["sentence_transformers.py"],
+    deps = [
+        ":_base",
+        ":_utils",
+        "//snowflake/ml/_internal:type_utils",
+        "//snowflake/ml/model:custom_model",
+        "//snowflake/ml/model:model_signature",
+        "//snowflake/ml/model:type_hints",
+        "//snowflake/ml/model/_packager/model_env",
+        "//snowflake/ml/model/_packager/model_handlers_migrator:base_migrator",
+        "//snowflake/ml/model/_packager/model_meta",
+        "//snowflake/ml/model/_packager/model_meta:model_blob_meta",
+        "//snowflake/ml/model/_packager/model_meta:model_meta_schema",
+        "//snowflake/ml/model/_signatures:builtins_handler",
+        "//snowflake/ml/model/_signatures:utils",
+    ],
+)
+
+py_library(
     name = "llm",
     srcs = ["llm.py"],
     deps = [

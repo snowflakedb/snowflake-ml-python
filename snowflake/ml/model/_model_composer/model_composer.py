@@ -28,7 +28,7 @@ class ModelComposer:
         packager: A ModelPackager object managing the (un)packaging of a Snowflake Native Model in the MODEL object.
 
         _packager_workspace_path: A local path created from packager where it will dump all files there and ModelModel
-        will zip it. This would not required if we make directory import work.
+        will zip it. This would not be required if we make directory import work.
     """
 
     MODEL_FILE_REL_PATH = "model.zip"
@@ -78,7 +78,7 @@ class ModelComposer:
         name: str,
         model: model_types.SupportedModelType,
         signatures: Optional[Dict[str, model_signature.ModelSignature]] = None,
-        sample_input: Optional[model_types.SupportedDataType] = None,
+        sample_input_data: Optional[model_types.SupportedDataType] = None,
         metadata: Optional[Dict[str, str]] = None,
         conda_dependencies: Optional[List[str]] = None,
         pip_requirements: Optional[List[str]] = None,
@@ -106,7 +106,7 @@ class ModelComposer:
             name=name,
             model=model,
             signatures=signatures,
-            sample_input=sample_input,
+            sample_input_data=sample_input_data,
             metadata=metadata,
             conda_dependencies=conda_dependencies,
             pip_requirements=pip_requirements,

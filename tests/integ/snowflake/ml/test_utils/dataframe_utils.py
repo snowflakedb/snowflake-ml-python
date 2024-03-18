@@ -1,4 +1,4 @@
-from typing import Literal, Tuple, Union
+from typing import Any, Dict, Literal, Optional, Tuple, Union
 
 import numpy as np
 import numpy.typing as npt
@@ -17,6 +17,9 @@ def check_sp_df_res(
     check_column_type: Union[bool, Literal["equiv"]] = "equiv",
     check_frame_type: bool = True,
     check_names: bool = True,
+    check_exact: bool = False,
+    atol: Optional[float] = None,
+    rtol: Optional[float] = None,
 ) -> None:
     res_pd_df = snowpark_handler.SnowparkDataFrameHandler.convert_to_df(res_sp_df)
 
@@ -33,12 +36,23 @@ def check_sp_df_res(
             elif isinstance(df[col][0], np.ndarray):
                 df[col] = df[col].apply(totuple)
 
+    kwargs: Dict[str, Any] = {
+        "check_dtype": check_dtype,
+        "check_index_type": check_index_type,
+        "check_column_type": check_column_type,
+        "check_frame_type": check_frame_type,
+        "check_names": check_names,
+        "check_exact": check_exact,
+    }
+
+    if check_exact is False:
+        if atol is not None:
+            kwargs["atol"] = atol
+        if rtol is not None:
+            kwargs["rtol"] = rtol
+
     pd.testing.assert_frame_equal(
         res_pd_df.sort_values(by=res_pd_df.columns.tolist()).reset_index(drop=True),
         expected_pd_df.sort_values(by=expected_pd_df.columns.tolist()).reset_index(drop=True),
-        check_dtype=check_dtype,
-        check_index_type=check_index_type,
-        check_column_type=check_column_type,
-        check_frame_type=check_frame_type,
-        check_names=check_names,
+        **kwargs,
     )

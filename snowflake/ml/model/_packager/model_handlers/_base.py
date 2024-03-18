@@ -48,7 +48,7 @@ class _BaseModelHandlerProtocol(Protocol[model_types._ModelType]):
         model: model_types._ModelType,
         model_meta: model_meta.ModelMetadata,
         model_blobs_dir_path: str,
-        sample_input: Optional[model_types.SupportedDataType] = None,
+        sample_input_data: Optional[model_types.SupportedDataType] = None,
         is_sub_model: Optional[bool] = False,
         **kwargs: Unpack[model_types.BaseModelSaveOption],
     ) -> None:
@@ -59,7 +59,7 @@ class _BaseModelHandlerProtocol(Protocol[model_types._ModelType]):
             model: The model object.
             model_meta: The model metadata.
             model_blobs_dir_path: Directory path to the model.
-            sample_input: Sample input to infer the signatures from.
+            sample_input_data: Sample input to infer the signatures from.
             is_sub_model: Flag to show if it is a sub model, a sub model does not need signature.
             kwargs: Additional saving options.
 

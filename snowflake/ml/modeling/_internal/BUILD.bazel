@@ -20,6 +20,7 @@ py_library(
         ":constants",
         ":transformer_protocols",
         "//snowflake/ml/_internal/exceptions",
+        "//snowflake/ml/modeling/_internal:estimator_utils",
         "//snowflake/ml/modeling/_internal/local_implementations:pandas_handlers",
         "//snowflake/ml/modeling/_internal/ml_runtime_implementations:ml_runtime_handlers",
         "//snowflake/ml/modeling/_internal/snowpark_implementations:snowpark_handlers",
@@ -32,6 +33,7 @@ py_test(
     srcs = ["model_transformer_builder_test.py"],
     deps = [
         ":constants",
+        ":estimator_utils",
         ":model_transformer_builder",
         ":transformer_protocols",
         "//snowflake/ml/modeling/_internal/local_implementations:pandas_handlers",

@@ -1432,7 +1432,7 @@ fully integrated into the new registry.
                 metadata=tags,
                 conda_dependencies=conda_dependencies,
                 pip_requirements=pip_requirements,
-                sample_input=sample_input_data,
+                sample_input_data=sample_input_data,
                 code_paths=code_paths,
                 options=options,
             )

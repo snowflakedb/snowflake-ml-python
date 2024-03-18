@@ -21,6 +21,7 @@ from snowflake.ml.model._signatures import (
 )
 
 if TYPE_CHECKING:
+    import sentence_transformers  # noqa: F401
     import torch
 
 
@@ -44,9 +45,11 @@ class PyTorchHandler(_base.BaseModelHandler["torch.nn.Module"]):
         cls,
         model: model_types.SupportedModelType,
     ) -> TypeGuard["torch.nn.Module"]:
-        return type_utils.LazyType("torch.nn.Module").isinstance(model) and not type_utils.LazyType(
-            "torch.jit.ScriptModule"
-        ).isinstance(model)
+        return (
+            type_utils.LazyType("torch.nn.Module").isinstance(model)
+            and not type_utils.LazyType("torch.jit.ScriptModule").isinstance(model)
+            and not type_utils.LazyType("sentence_transformers.SentenceTransformer").isinstance(model)
+        )
 
     @classmethod
     def cast_model(
@@ -66,7 +69,7 @@ class PyTorchHandler(_base.BaseModelHandler["torch.nn.Module"]):
         model: "torch.nn.Module",
         model_meta: model_meta_api.ModelMetadata,
         model_blobs_dir_path: str,
-        sample_input: Optional[model_types.SupportedDataType] = None,
+        sample_input_data: Optional[model_types.SupportedDataType] = None,
         is_sub_model: Optional[bool] = False,
         **kwargs: Unpack[model_types.PyTorchSaveOptions],
     ) -> None:
@@ -82,18 +85,18 @@ class PyTorchHandler(_base.BaseModelHandler["torch.nn.Module"]):
             )
 
             def get_prediction(
-                target_method_name: str, sample_input: "model_types.SupportedLocalDataType"
+                target_method_name: str, sample_input_data: "model_types.SupportedLocalDataType"
             ) -> model_types.SupportedLocalDataType:
-                if not pytorch_handler.SeqOfPyTorchTensorHandler.can_handle(sample_input):
-                    sample_input = pytorch_handler.SeqOfPyTorchTensorHandler.convert_from_df(
-                        model_signature._convert_local_data_to_df(sample_input)
+                if not pytorch_handler.SeqOfPyTorchTensorHandler.can_handle(sample_input_data):
+                    sample_input_data = pytorch_handler.SeqOfPyTorchTensorHandler.convert_from_df(
+                        model_signature._convert_local_data_to_df(sample_input_data)
                     )
 
                 model.eval()
                 target_method = getattr(model, target_method_name, None)
                 assert callable(target_method)
                 with torch.no_grad():
-                    predictions_df = target_method(*sample_input)
+                    predictions_df = target_method(*sample_input_data)
 
                 if isinstance(predictions_df, torch.Tensor):
                     predictions_df = [predictions_df]
@@ -103,7 +106,7 @@ class PyTorchHandler(_base.BaseModelHandler["torch.nn.Module"]):
                 model=model,
                 model_meta=model_meta,
                 target_methods=target_methods,
-                sample_input=sample_input,
+                sample_input_data=sample_input_data,
                 get_prediction_fn=get_prediction,
             )
 

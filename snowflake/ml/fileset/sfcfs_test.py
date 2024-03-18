@@ -14,14 +14,14 @@ class SFFileSystemTest(absltest.TestCase):
         self.mock_connection._telemetry = absltest.mock.Mock()
         self.mock_connection._session_parameters = absltest.mock.Mock()
 
+        # Manually add some missing artifacts to make sure the success of creating the snowpark session
+        self.mock_connection.is_closed.return_value = False
+        self.snowpark_session = snowpark.Session.builder.config("connection", self.mock_connection).create()
+
     def test_init_sf_file_system(self) -> None:
         """Test if the FS could be initialized with a snowpark session or a snowflake python connection."""
 
-        # Manually add some missing artifacts to make sure the success of creating the snowpark session
-        self.mock_connection.is_closed.return_value = False
-        snowpark_session = snowpark.Session.builder.config("connection", self.mock_connection).create()
-
-        sffs1 = sfcfs.SFFileSystem(snowpark_session=snowpark_session)
+        sffs1 = sfcfs.SFFileSystem(snowpark_session=self.snowpark_session)
         sffs2 = sfcfs.SFFileSystem(sf_connection=self.mock_connection)
         self.assertEqual(sffs1._conn, sffs2._conn)
 
@@ -51,10 +51,10 @@ class SFFileSystemTest(absltest.TestCase):
                     "snowflake.ml.fileset.stage_fs.SFStageFileSystem", autospec=True
                 ) as MockSFStageFileSystem:
                     instance = MockSFStageFileSystem.return_value
-                    sffs = sfcfs.SFFileSystem(self.mock_connection)
+                    sffs = sfcfs.SFFileSystem(snowpark_session=self.snowpark_session)
                     sffs.ls(test_case[0])
                     MockSFStageFileSystem.assert_any_call(
-                        sf_connection=self.mock_connection,
+                        snowpark_session=self.snowpark_session,
                         db=test_case[1],
                         schema=test_case[2],
                         stage=test_case[3],
@@ -76,7 +76,7 @@ class SFFileSystemTest(absltest.TestCase):
         for test_case in test_cases:
             with self.subTest():
                 with absltest.mock.patch("snowflake.ml.fileset.stage_fs.SFStageFileSystem", autospec=True):
-                    sffs = sfcfs.SFFileSystem(self.mock_connection)
+                    sffs = sfcfs.SFFileSystem(snowpark_session=self.snowpark_session)
                     self.assertRaises(ValueError, sffs.ls, test_case[0])
 
     def test_ls(self) -> None:
@@ -91,10 +91,10 @@ class SFFileSystemTest(absltest.TestCase):
                 {"name": "nytrain/a/", "size": 10, "type": "directory", "md5": "xx", "last_modified": "yy"},
                 {"name": "nytrain/b", "size": 10, "type": "file", "md5": "xx", "last_modified": "yy"},
             ]
-            sffs = sfcfs.SFFileSystem(sf_connection=self.mock_connection)
+            sffs = sfcfs.SFFileSystem(snowpark_session=self.snowpark_session)
             res = sffs.ls("@testdb.testschema.foo/nytrain/")
             MockSFStageFileSystem.assert_any_call(
-                sf_connection=self.mock_connection,
+                snowpark_session=self.snowpark_session,
                 db="testdb",
                 schema="testschema",
                 stage="foo",
@@ -113,10 +113,10 @@ class SFFileSystemTest(absltest.TestCase):
                 {"name": "nytrain/a/", "size": 10, "type": "directory", "md5": "xx", "last_modified": "yy"},
                 {"name": "nytrain/b", "size": 10, "type": "file", "md5": "xx", "last_modified": "yy"},
             ]
-            sffs = fsspec.filesystem("sfc", sf_connection=self.mock_connection)
+            sffs = fsspec.filesystem("sfc", snowpark_session=self.snowpark_session)
             res = sffs.ls("@testdb.testschema.foo/nytrain/")
             MockSFStageFileSystem.assert_any_call(
-                sf_connection=self.mock_connection,
+                snowpark_session=self.snowpark_session,
                 db="testdb",
                 schema="testschema",
                 stage="foo",
@@ -131,10 +131,10 @@ class SFFileSystemTest(absltest.TestCase):
         ) as MockSFStageFileSystem:
             instance = MockSFStageFileSystem.return_value
             instance.exists.return_value = True
-            sffs = sfcfs.SFFileSystem(self.mock_connection)
+            sffs = sfcfs.SFFileSystem(snowpark_session=self.snowpark_session)
             res = sffs.exists("@testdb.testschema.foo/nytrain/b")
             MockSFStageFileSystem.assert_any_call(
-                sf_connection=self.mock_connection,
+                snowpark_session=self.snowpark_session,
                 db="testdb",
                 schema="testschema",
                 stage="foo",
@@ -155,10 +155,10 @@ class SFFileSystemTest(absltest.TestCase):
                 "last_modified": "yy",
             }
             instance.info.return_value = expected_res
-            sffs = sfcfs.SFFileSystem(self.mock_connection)
+            sffs = sfcfs.SFFileSystem(snowpark_session=self.snowpark_session)
             res = sffs.info("@testdb.testschema.foo/nytrain/b")
             MockSFStageFileSystem.assert_any_call(
-                sf_connection=self.mock_connection,
+                snowpark_session=self.snowpark_session,
                 db="testdb",
                 schema="testschema",
                 stage="foo",
@@ -173,7 +173,7 @@ class SFFileSystemTest(absltest.TestCase):
             instance1 = absltest.mock.MagicMock()
             instance2 = absltest.mock.MagicMock()
             MockSFStageFileSystem.side_effect = [instance1, instance2]
-            sffs = sfcfs.SFFileSystem(self.mock_connection)
+            sffs = sfcfs.SFFileSystem(snowpark_session=self.snowpark_session)
 
             # Confirm optimize_read() will do noting for empty input
             sffs.optimize_read([])
@@ -186,13 +186,13 @@ class SFFileSystemTest(absltest.TestCase):
             ]
             sffs.optimize_read(file_list)
             MockSFStageFileSystem.assert_any_call(
-                sf_connection=self.mock_connection,
+                snowpark_session=self.snowpark_session,
                 db="testdb",
                 schema="testschema",
                 stage="bar",
             )
             MockSFStageFileSystem.assert_any_call(
-                sf_connection=self.mock_connection,
+                snowpark_session=self.snowpark_session,
                 db="testdb",
                 schema="testschema",
                 stage="foo",
@@ -208,10 +208,10 @@ class SFFileSystemTest(absltest.TestCase):
             # Test use case of initializing file system object and using it to read
             instance = MockSFStageFileSystem.return_value
             instance._open.return_value = absltest.mock.MagicMock(spec=fsspec.spec.AbstractBufferedFile)
-            sffs = sfcfs.SFFileSystem(self.mock_connection)
+            sffs = sfcfs.SFFileSystem(snowpark_session=self.snowpark_session)
             sffs.open("@testdb.testschema.foo/nytrain/1.txt")
             MockSFStageFileSystem.assert_any_call(
-                sf_connection=self.mock_connection,
+                snowpark_session=self.snowpark_session,
                 db="testdb",
                 schema="testschema",
                 stage="foo",
@@ -227,13 +227,13 @@ class SFFileSystemTest(absltest.TestCase):
             # Test use case of reading from fsspec
             instance = MockSFStageFileSystem.return_value
             instance._open.return_value = absltest.mock.MagicMock(spec=fsspec.spec.AbstractBufferedFile)
-            fp = fsspec.open("sfc://@testdb.testschema.foo/nytrain/1.txt", sf_connection=self.mock_connection)
+            fp = fsspec.open("sfc://@testdb.testschema.bar/nytrain/1.txt", snowpark_session=self.snowpark_session)
             fp.open()
             MockSFStageFileSystem.assert_any_call(
-                sf_connection=self.mock_connection,
+                snowpark_session=self.snowpark_session,
                 db="testdb",
                 schema="testschema",
-                stage="foo",
+                stage="bar",
             )
             instance._open.assert_called()
             instance._open.assert_any_call(
@@ -255,7 +255,7 @@ class SFFileSystemTest(absltest.TestCase):
         """Tests that correct exceptions are raised when the function fails to create a session.
         Mocks the two session creation functions called by _create_default_connection individually.
         """
-        sffs = sfcfs.SFFileSystem(sf_connection=self.mock_connection)
+        sffs = sfcfs.SFFileSystem(snowpark_session=self.snowpark_session)
         with self.assertRaises(ValueError):
             with absltest.mock.patch(
                 "snowflake.ml.fileset.sfcfs.connection_params.SnowflakeLoginOptions",
@@ -271,7 +271,7 @@ class SFFileSystemTest(absltest.TestCase):
 
     def test_set_state_bad_state_dict(self) -> None:
         """When deserializing, the state dictionary requires a kwargs key that corresponds to a dictionary."""
-        sffs = sfcfs.SFFileSystem(sf_connection=self.mock_connection)
+        sffs = sfcfs.SFFileSystem(snowpark_session=self.snowpark_session)
         with self.assertRaises(KeyError):
             sffs.__setstate__(state_dict={"bad_key": 2})
 

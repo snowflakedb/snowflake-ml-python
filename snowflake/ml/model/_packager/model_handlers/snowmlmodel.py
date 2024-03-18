@@ -69,7 +69,7 @@ class SnowMLModelHandler(_base.BaseModelHandler["BaseEstimator"]):
         model: "BaseEstimator",
         model_meta: model_meta_api.ModelMetadata,
         model_blobs_dir_path: str,
-        sample_input: Optional[model_types.SupportedDataType] = None,
+        sample_input_data: Optional[model_types.SupportedDataType] = None,
         is_sub_model: Optional[bool] = False,
         **kwargs: Unpack[model_types.SNOWModelSaveOptions],
     ) -> None:
@@ -79,7 +79,7 @@ class SnowMLModelHandler(_base.BaseModelHandler["BaseEstimator"]):
         # Pipeline is inherited from BaseEstimator, so no need to add one more check
 
         if not is_sub_model:
-            if sample_input is not None or model_meta.signatures:
+            if sample_input_data is not None or model_meta.signatures:
                 warnings.warn(
                     "Inferring model signature from sample input or providing model signature for Snowpark ML "
                     + "Modeling model is not required. Model signature will automatically be inferred during fitting. ",

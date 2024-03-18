@@ -23,11 +23,12 @@ py_test(
     name = "fileset_integ_test",
     timeout = "long",
     srcs = ["fileset_integ_test.py"],
-    shard_count = 5,
+    shard_count = 8,
     deps = [
         ":fileset_integ_utils",
         "//snowflake/ml/_internal/exceptions:fileset_errors",
         "//snowflake/ml/fileset",
         "//snowflake/ml/utils:connection_params",
+        "//tests/integ/snowflake/ml/test_utils:common_test_base",
     ],
 )

@@ -128,7 +128,7 @@ class HuggingFacePipelineHandler(
         model: Union[huggingface_pipeline.HuggingFacePipelineModel, "transformers.Pipeline"],
         model_meta: model_meta_api.ModelMetadata,
         model_blobs_dir_path: str,
-        sample_input: Optional[model_types.SupportedDataType] = None,
+        sample_input_data: Optional[model_types.SupportedDataType] = None,
         is_sub_model: Optional[bool] = False,
         **kwargs: Unpack[model_types.HuggingFaceSaveOptions],
     ) -> None:
@@ -174,7 +174,7 @@ class HuggingFacePipelineHandler(
                     )
             else:
                 handlers_utils.validate_target_methods(model, target_methods)
-                if sample_input is not None:
+                if sample_input_data is not None:
                     warnings.warn(
                         "Inferring model signature from sample input for hugggingface pipeline is not supported. "
                         + "Model signature will automatically be inferred from pipeline task. "

@@ -43,7 +43,7 @@ class RegistryModelTestBase(absltest.TestCase):
         self,
         model: model_types.SupportedModelType,
         prediction_assert_fns: Dict[str, Tuple[Any, Callable[[Any], Any]]],
-        sample_input: Optional[model_types.SupportedDataType] = None,
+        sample_input_data: Optional[model_types.SupportedDataType] = None,
         additional_dependencies: Optional[List[str]] = None,
         options: Optional[model_types.ModelSaveOption] = None,
     ) -> None:
@@ -60,7 +60,7 @@ class RegistryModelTestBase(absltest.TestCase):
             model=model,
             model_name=name,
             version_name=version,
-            sample_input_data=sample_input,
+            sample_input_data=sample_input_data,
             conda_dependencies=conda_dependencies,
             options=options,
         )

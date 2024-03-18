@@ -18,7 +18,7 @@ def base_test_case(
     full_qual_stage: str,
     name: str,
     model: model_types.SupportedModelType,
-    sample_input: model_types.SupportedDataType,
+    sample_input_data: model_types.SupportedDataType,
     test_input: model_types.SupportedDataType,
     deploy_params: Dict[str, Tuple[Dict[str, Any], Callable[[Union[pd.DataFrame, SnowparkDataFrame]], Any]]],
     permanent_deploy: Optional[bool] = False,
@@ -43,7 +43,7 @@ def base_test_case(
     model_api.save_model(
         name=actual_name,
         model=model,
-        sample_input=sample_input,
+        sample_input_data=sample_input_data,
         conda_dependencies=conda_dependencies,
         metadata={"author": "halu", "version": "1"},
         session=db._session,

@@ -107,7 +107,7 @@ class PyTorchHandlerTest(absltest.TestCase):
             model_packager.ModelPackager(os.path.join(tmpdir, "model1_no_sig_1")).save(
                 name="model1_no_sig_1",
                 model=model,
-                sample_input=[data_x],
+                sample_input_data=[data_x],
                 metadata={"author": "halu", "version": "1"},
             )
 
@@ -148,7 +148,7 @@ class PyTorchHandlerTest(absltest.TestCase):
             model_packager.ModelPackager(os.path.join(tmpdir, "model1_no_sig_1")).save(
                 name="model1_no_sig_1",
                 model=model,
-                sample_input=x_df,
+                sample_input_data=x_df,
                 metadata={"author": "halu", "version": "1"},
             )
 
@@ -175,7 +175,7 @@ class PyTorchHandlerTest(absltest.TestCase):
             model_packager.ModelPackager(os.path.join(tmpdir, "model1_no_sig_2")).save(
                 name="model1_no_sig_2",
                 model=model_script,
-                sample_input=x_df,
+                sample_input_data=x_df,
                 metadata={"author": "halu", "version": "1"},
             )
 

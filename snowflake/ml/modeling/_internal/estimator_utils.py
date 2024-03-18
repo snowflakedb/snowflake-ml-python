@@ -1,7 +1,9 @@
 import inspect
-from typing import Any, Callable, Dict, Set, Tuple
+import numbers
+from typing import Any, Callable, Dict, List, Set, Tuple
 
 import numpy as np
+from numpy import typing as npt
 from typing_extensions import TypeGuard
 
 from snowflake.ml._internal.exceptions import error_codes, exceptions
@@ -153,3 +155,61 @@ def get_module_name(model: object) -> str:
             original_exception=ValueError(f"Unable to infer the source module of the given object {model}."),
         )
     return module.__name__
+
+
+def handle_inference_result(
+    inference_res: Any, output_cols: List[str], inference_method: str, within_udf: bool = False
+) -> Tuple[npt.NDArray[Any], List[str]]:
+    if isinstance(inference_res, list) and len(inference_res) > 0 and isinstance(inference_res[0], np.ndarray):
+        # In case of multioutput estimators, predict_proba, decision_function etc., functions return a list of
+        # ndarrays. We need to concatenate them.
+
+        # First compute output column names
+        if len(output_cols) == len(inference_res):
+            actual_output_cols = []
+            for idx, np_arr in enumerate(inference_res):
+                for i in range(1 if len(np_arr.shape) <= 1 else np_arr.shape[1]):
+                    actual_output_cols.append(f"{output_cols[idx]}_{i}")
+            output_cols = actual_output_cols
+
+        # Concatenate np arrays
+        transformed_numpy_array = np.concatenate(inference_res, axis=1)
+    elif isinstance(inference_res, tuple) and len(inference_res) > 0 and isinstance(inference_res[0], np.ndarray):
+        # In case of kneighbors, functions return a tuple of ndarrays.
+        transformed_numpy_array = np.stack(inference_res, axis=1)
+    elif isinstance(inference_res, numbers.Number):
+        # In case of BernoulliRBM, functions return a float
+        transformed_numpy_array = np.array([inference_res])
+    else:
+        transformed_numpy_array = inference_res
+
+    if (len(transformed_numpy_array.shape) == 3) and inference_method != "kneighbors":
+        # VotingClassifier will return results of shape (n_classifiers, n_samples, n_classes)
+        # when voting = "soft" and flatten_transform = False. We can't handle unflatten transforms,
+        # so we ignore flatten_transform flag and flatten the results.
+        transformed_numpy_array = np.hstack(transformed_numpy_array)  # type: ignore[call-overload]
+
+    if len(transformed_numpy_array.shape) == 1:
+        transformed_numpy_array = np.reshape(transformed_numpy_array, (-1, 1))
+
+    shape = transformed_numpy_array.shape
+    if len(shape) > 1:
+        if shape[1] != len(output_cols):
+            # HeterogeneousEnsemble's transform method produce results with variying shapes
+            # from (n_samples, n_estimators) to (n_samples, n_estimators * n_classes).
+            # It is hard to predict the response shape without using fragile introspection logic.
+            # So, to avoid that we are packing the results into a dataframe of shape (n_samples, 1) with
+            # each element being a list.
+            if len(output_cols) != 1:
+                raise TypeError(
+                    "expected_output_cols must be same length as transformed array or should be of length 1."
+                    f"Currently expected_output_cols shape is {len(output_cols)}, "
+                    f"transformed array shape is {shape}. "
+                )
+            if not within_udf:
+                actual_output_cols = []
+                for i in range(shape[1]):
+                    actual_output_cols.append(f"{output_cols[0]}_{i}")
+                output_cols = actual_output_cols
+
+    return transformed_numpy_array, output_cols

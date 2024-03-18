@@ -33,8 +33,8 @@ def get_model_method_options_from_options(
     options: type_hints.ModelSaveOption, target_method: str
 ) -> ModelMethodOptions:
     method_option = options.get("method_options", {}).get(target_method, {})
-
-    function_type = method_option.get("function_type", ModelMethodFunctionTypes.FUNCTION.value)
+    global_function_type = options.get("function_type", ModelMethodFunctionTypes.FUNCTION.value)
+    function_type = method_option.get("function_type", global_function_type)
     if function_type not in [function_type.value for function_type in ModelMethodFunctionTypes]:
         raise NotImplementedError
 

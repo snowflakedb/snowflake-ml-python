@@ -2,6 +2,7 @@ import os
 import random
 import tempfile
 from typing import Any, Callable, Dict, Generator
+from uuid import uuid4
 
 import numpy as np
 import tensorflow as tf
@@ -10,33 +11,38 @@ from absl.testing import absltest, parameterized
 from numpy import typing as npt
 from torch.utils import data
 
-from snowflake import connector, snowpark
+from snowflake import snowpark
 from snowflake.ml._internal.exceptions import fileset_errors
 from snowflake.ml.fileset import fileset
-from snowflake.ml.utils import connection_params
 from snowflake.snowpark import functions
 from tests.integ.snowflake.ml.fileset import fileset_integ_utils
+from tests.integ.snowflake.ml.test_utils import common_test_base, test_env_utils
 
 np.random.seed(0)
 random.seed(0)
 
 
-class TestSnowflakeFileSet(parameterized.TestCase):
+class TestSnowflakeFileSet(common_test_base.CommonTestBase):
     """Integration tests for Snowflake FileSet."""
 
-    connection_parameters = connection_params.SnowflakeLoginOptions()
-    sf_connection = connector.connect(**connection_parameters)
-    snowpark_session = snowpark.Session.builder.config("connection", sf_connection).create()
+    snowpark_session = test_env_utils.get_available_session()
+    sf_connection = snowpark_session._conn._conn
     db = snowpark_session.get_current_database()
     schema = snowpark_session.get_current_schema()
     table_name = "FILESET_INTEG"
-    stage = f"{db}.{schema}.fileset_integ"
+    stage = f"{db}.{schema}.fileset_integ_{uuid4().hex.upper()}"
     num_rows = 1500000
     query = fileset_integ_utils.get_fileset_query(num_rows)
 
     @classmethod
     def setUpClass(cls) -> None:
-        fileset_integ_utils.create_tmp_snowflake_stage_if_not_exists(cls.snowpark_session, cls.stage)
+        super().setUpClass()
+        fileset_integ_utils.create_snowflake_stage_if_not_exists(cls.snowpark_session, cls.stage, temp=False)
+
+    @classmethod
+    def tearDownClass(cls) -> None:
+        super().tearDownClass()
+        cls.snowpark_session.sql(f"drop stage if exists {cls.stage}").collect()
 
     @parameterized.parameters(  # type: ignore[misc]
         {"use_snowpark": True, "fileset_shuffle": False, "datapipe_shuffle": False, "drop_last_batch": True},
@@ -46,6 +52,34 @@ class TestSnowflakeFileSet(parameterized.TestCase):
     )
     def test_fileset_make_and_call(
         self, use_snowpark: bool, fileset_shuffle: bool, datapipe_shuffle: bool, drop_last_batch: bool
+    ) -> None:
+        self._test_fileset_make_and_call(use_snowpark, fileset_shuffle, datapipe_shuffle, drop_last_batch)
+
+    @common_test_base.CommonTestBase.sproc_test(additional_packages=[])
+    @parameterized.parameters(  # type: ignore[misc]
+        {"fileset_shuffle": False, "datapipe_shuffle": False, "drop_last_batch": True},
+        {"fileset_shuffle": True, "datapipe_shuffle": True, "drop_last_batch": False},
+    )
+    def test_fileset_make_and_call_sproc(
+        self, fileset_shuffle: bool, datapipe_shuffle: bool, drop_last_batch: bool
+    ) -> None:
+        self._test_fileset_make_and_call(
+            True,
+            fileset_shuffle,
+            datapipe_shuffle,
+            drop_last_batch,
+            test_delete=False,
+            fileset_prefix="fileset_integ_sproc",
+        )
+
+    def _test_fileset_make_and_call(
+        self,
+        use_snowpark: bool,
+        fileset_shuffle: bool,
+        datapipe_shuffle: bool,
+        drop_last_batch: bool,
+        test_delete: bool = True,
+        fileset_prefix: str = "fileset_integ_make",
     ) -> None:
         """Test if fileset make() can materialize a query or a dataframe, and create a ready-to-use FileSet object."""
         if use_snowpark:
@@ -61,7 +95,7 @@ class TestSnowflakeFileSet(parameterized.TestCase):
 
         batch_size = 2048
 
-        fileset_name = f"fileset_integ_make_{fileset_shuffle}_{datapipe_shuffle}_{drop_last_batch}"
+        fileset_name = f"{fileset_prefix}_{fileset_shuffle}_{datapipe_shuffle}_{drop_last_batch}"
         fs = fileset.FileSet.make(
             target_stage_loc=f"@{self.stage}",
             name=fileset_name,
@@ -86,9 +120,10 @@ class TestSnowflakeFileSet(parameterized.TestCase):
         df = fs.to_snowpark_dataframe()
         self._validate_snowpark_dataframe(df)
 
-        fs.delete()
-        with self.assertRaises(fileset_errors.FileSetAlreadyDeletedError):
-            fs.files()
+        if test_delete:
+            fs.delete()
+            with self.assertRaises(fileset_errors.FileSetAlreadyDeletedError):
+                fs.files()
 
     def _validate_torch_datapipe(
         self, datapipe: data.IterDataPipe[Dict[str, npt.NDArray[Any]]], batch_size: int, drop_last_batch: bool
@@ -240,7 +275,7 @@ class TestSnowflakeFileSet(parameterized.TestCase):
     def test_stage_encryption_validation(self) -> None:
         """Validated that FileSet will raise an error if the target stage is not server-side encrypted."""
         stage_no_sse = f"{self.db}.{self.schema}.no_sse"
-        fileset_integ_utils.create_tmp_snowflake_stage_if_not_exists(self.snowpark_session, stage_no_sse, False)
+        fileset_integ_utils.create_snowflake_stage_if_not_exists(self.snowpark_session, stage_no_sse, False)
         with self.assertRaises(fileset_errors.FileSetLocationError):
             fileset.FileSet.make(
                 target_stage_loc=f"@{stage_no_sse}",

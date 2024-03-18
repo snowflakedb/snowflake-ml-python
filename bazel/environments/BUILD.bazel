@@ -3,4 +3,5 @@ exports_files([
     "conda-env-build.yml",
     "conda-env.yml",
     "conda-gpu-env.yml",
+    "conda-env-build-test.yml",
 ])

@@ -69,7 +69,7 @@ class TestModelBadCaseInteg(absltest.TestCase):
             session=self._session,
             stage_path=posixpath.join(tmp_stage, "custom_bad_model"),
             model=lm,
-            sample_input=pd_df,
+            sample_input_data=pd_df,
             metadata={"author": "halu", "version": "1"},
             conda_dependencies=["invalidnumpy==1.22.4"],
             options=model_types.CustomModelSaveOption({"embed_local_ml_library": True}),
@@ -102,7 +102,7 @@ class TestModelBadCaseInteg(absltest.TestCase):
                     self._session, "snowflake-snowpark-python!=1.12.0"
                 )
             ],
-            sample_input=pd_df,
+            sample_input_data=pd_df,
             metadata={"author": "halu", "version": "1"},
         )
 

@@ -174,18 +174,24 @@ class {transform.original_class_name}(BaseTransformer):
         self._get_model_signatures(dataset)
         return self
 
-    def _get_pass_through_columns(self, dataset: DataFrame) -> List[str]:
-        if self._drop_input_cols:
-            return []
-        else:
-            return list(set(dataset.columns) - set(self.output_cols))
-
     def _batch_inference_validate_snowpark(
         self,
         dataset: DataFrame,
         inference_method: str,
     ) -> List[str]:
-        """Util method to run validate that batch inference can be run on a snowpark dataframe.
+        """Util method to run validate that batch inference can be run on a snowpark dataframe and
+        return the available package that exists in the snowflake anaconda channel
+
+        Args:
+            dataset: snowpark dataframe
+            inference_method: the inference method such as predict, score...
+
+        Raises:
+            SnowflakeMLException: If the estimator is not fitted, raise error
+            SnowflakeMLException: If the session is None, raise error
+
+        Returns:
+            A list of available package that exists in the snowflake anaconda channel
         """
         if not self._is_fitted:
             raise exceptions.SnowflakeMLException(
@@ -250,7 +256,7 @@ class {transform.original_class_name}(BaseTransformer):
             transform_kwargs = dict(
                 session = dataset._session,
                 dependencies = self._deps,
-                pass_through_cols = self._get_pass_through_columns(dataset),
+                drop_input_cols = self._drop_input_cols,
                 expected_output_cols_type = expected_type_inferred,
             )
 
@@ -302,16 +308,16 @@ class {transform.original_class_name}(BaseTransformer):
                 # from (n_samples, n_estimators) to (n_samples, n_estimators * n_classes) (and everything in between)
                 # based on init param values. We will convert that to pandas dataframe of shape (n_samples, 1) with
                 # each row containing a list of values.
-                expected_dtype = "ARRAY"
+                expected_dtype = "array"
 
             # If we were unable to assign a type to this transform in the factory, infer the type here.
             if expected_dtype == "":
-                # If this is a clustering transformer, if the number of output columns does not equal the number of clusters the response will be an "ARRAY"
+                # If this is a clustering transformer, if the number of output columns does not equal the number of clusters the response will be an "array"
                 if hasattr(self._sklearn_object, "n_clusters") and getattr(self._sklearn_object, "n_clusters") != len(self.output_cols):
-                    expected_dtype = "ARRAY"
-                # If this is a decomposition transformer, if the number of output columns does not equal the number of components the response will be an "ARRAY"
+                    expected_dtype = "array"
+                # If this is a decomposition transformer, if the number of output columns does not equal the number of components the response will be an "array"
                 elif hasattr(self._sklearn_object, "n_components") and getattr(self._sklearn_object, "n_components") != len(self.output_cols):
-                    expected_dtype = "ARRAY"
+                    expected_dtype = "array"
                 else:
                     output_types = [signature.as_snowpark_type() for signature in _infer_signature(dataset[self.input_cols], "output", use_snowflake_identifiers=True)]
                     # We can only infer the output types from the input types if the following two statemetns are true:
@@ -329,7 +335,7 @@ class {transform.original_class_name}(BaseTransformer):
             transform_kwargs = dict(
                 session = dataset._session,
                 dependencies = self._deps,
-                pass_through_cols = self._get_pass_through_columns(dataset),
+                drop_input_cols = self._drop_input_cols,
                 expected_output_cols_type = expected_dtype,
             )
 
@@ -372,7 +378,7 @@ class {transform.original_class_name}(BaseTransformer):
             subproject=_SUBPROJECT,
         )
         output_result, fitted_estimator = model_trainer.train_fit_predict(
-            pass_through_columns=self._get_pass_through_columns(dataset),
+            drop_input_cols=self._drop_input_cols,
             expected_output_cols_list=self.output_cols if self.output_cols else self._get_output_column_names(output_cols_prefix),
         )
         self._sklearn_object = fitted_estimator
@@ -389,44 +395,6 @@ class {transform.original_class_name}(BaseTransformer):
         self.fit(dataset)
         assert self._sklearn_object is not None
         return self._sklearn_object.embedding_
-
-
-    def _get_output_column_names(self, output_cols_prefix: str, output_cols: Optional[List[str]] = None) -> List[str]:
-        """ Returns the list of output columns for predict_proba(), decision_function(), etc.. functions.
-        Returns a list with output_cols_prefix as the only element if the estimator is not a classifier.
-        """
-        output_cols_prefix = identifier.resolve_identifier(output_cols_prefix)
-        if output_cols:
-            output_cols = [
-                identifier.concat_names([output_cols_prefix, identifier.resolve_identifier(c)])
-                for c in output_cols
-            ]
-        elif getattr(self._sklearn_object, "classes_", None) is None:
-            output_cols = [output_cols_prefix]
-        elif self._sklearn_object is not None:
-            classes = self._sklearn_object.classes_
-            if isinstance(classes, numpy.ndarray):
-                output_cols = [f'{{output_cols_prefix}}{{str(c)}}' for c in classes.tolist()]
-            elif isinstance(classes, list) and len(classes) > 0 and isinstance(classes[0], numpy.ndarray):
-                # If the estimator is a multioutput estimator, classes_ will be a list of ndarrays.
-                output_cols = []
-                for i, cl in enumerate(classes):
-                    # For binary classification, there is only one output column for each class
-                    # ndarray as the two classes are complementary.
-                    if len(cl) == 2:
-                        output_cols.append(f'{{output_cols_prefix}}{{i}}_{{cl[0]}}')
-                    else:
-                        output_cols.extend([
-                            f'{{output_cols_prefix}}{{i}}_{{c}}' for c in cl.tolist()
-                        ])
-        else:
-            output_cols = []
-
-        # Make sure column names are valid snowflake identifiers.
-        assert output_cols is not None  # Make MyPy happy
-        rv = [identifier.rename_to_valid_snowflake_identifier(c) for c in output_cols]
-
-        return rv
 
     @available_if(original_estimator_has_callable("predict_proba"))  # type: ignore[misc]
     @telemetry.send_api_usage_telemetry(
@@ -459,7 +427,7 @@ class {transform.original_class_name}(BaseTransformer):
             transform_kwargs = dict(
                 session=dataset._session,
                 dependencies=self._deps,
-                pass_through_cols=self._get_pass_through_columns(dataset),
+                drop_input_cols = self._drop_input_cols,
                 expected_output_cols_type="float",
             )
 
@@ -516,7 +484,7 @@ class {transform.original_class_name}(BaseTransformer):
             transform_kwargs = dict(
                 session=dataset._session,
                 dependencies=self._deps,
-                pass_through_cols=self._get_pass_through_columns(dataset),
+                drop_input_cols = self._drop_input_cols,
                 expected_output_cols_type="float",
             )
         elif isinstance(dataset, pd.DataFrame):
@@ -569,7 +537,7 @@ class {transform.original_class_name}(BaseTransformer):
             transform_kwargs = dict(
                 session=dataset._session,
                 dependencies=self._deps,
-                pass_through_cols=self._get_pass_through_columns(dataset),
+                drop_input_cols = self._drop_input_cols,
                 expected_output_cols_type="float",
             )
 
@@ -626,7 +594,7 @@ class {transform.original_class_name}(BaseTransformer):
             transform_kwargs = dict(
                 session=dataset._session,
                 dependencies=self._deps,
-                pass_through_cols=self._get_pass_through_columns(dataset),
+                drop_input_cols = self._drop_input_cols,
                 expected_output_cols_type="float",
             )
 
@@ -672,13 +640,17 @@ class {transform.original_class_name}(BaseTransformer):
         transform_kwargs: ScoreKwargsTypedDict = dict()  
 
         if isinstance(dataset, DataFrame):
+            self._deps = self._batch_inference_validate_snowpark(
+                dataset=dataset,
+                inference_method="score",
+            )
             selected_cols = self._get_active_columns()
             if len(selected_cols) > 0:
                 dataset = dataset.select(selected_cols)
             assert isinstance(dataset._session, Session) # keep mypy happy
             transform_kwargs = dict(
                 session=dataset._session,
-                dependencies=["snowflake-snowpark-python"] + self._get_dependencies(),
+                dependencies=["snowflake-snowpark-python"] + self._deps,
                 score_sproc_imports={transform.score_sproc_imports},
             )
         elif isinstance(dataset, pd.DataFrame):
@@ -745,9 +717,9 @@ class {transform.original_class_name}(BaseTransformer):
             transform_kwargs = dict(
                 session = dataset._session,
                 dependencies = self._deps,
-                pass_through_cols = self._get_pass_through_columns(dataset),
-                expected_output_cols_type =  "array",
-                n_neighbors =  n_neighbors,
+                drop_input_cols = self._drop_input_cols,
+                expected_output_cols_type="array",
+                n_neighbors = n_neighbors,
                 return_distance =  return_distance
             )
         elif isinstance(dataset, pd.DataFrame):

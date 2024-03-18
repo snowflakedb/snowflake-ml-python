@@ -64,7 +64,7 @@ class TensorFlowHandler(_base.BaseModelHandler["tensorflow.Module"]):
         model: "tensorflow.Module",
         model_meta: model_meta_api.ModelMetadata,
         model_blobs_dir_path: str,
-        sample_input: Optional[model_types.SupportedDataType] = None,
+        sample_input_data: Optional[model_types.SupportedDataType] = None,
         is_sub_model: Optional[bool] = False,
         **kwargs: Unpack[model_types.TensorflowSaveOptions],
     ) -> None:
@@ -85,18 +85,18 @@ class TensorFlowHandler(_base.BaseModelHandler["tensorflow.Module"]):
             )
 
             def get_prediction(
-                target_method_name: str, sample_input: "model_types.SupportedLocalDataType"
+                target_method_name: str, sample_input_data: "model_types.SupportedLocalDataType"
             ) -> model_types.SupportedLocalDataType:
-                if not tensorflow_handler.SeqOfTensorflowTensorHandler.can_handle(sample_input):
-                    sample_input = tensorflow_handler.SeqOfTensorflowTensorHandler.convert_from_df(
-                        model_signature._convert_local_data_to_df(sample_input)
+                if not tensorflow_handler.SeqOfTensorflowTensorHandler.can_handle(sample_input_data):
+                    sample_input_data = tensorflow_handler.SeqOfTensorflowTensorHandler.convert_from_df(
+                        model_signature._convert_local_data_to_df(sample_input_data)
                     )
 
                 target_method = getattr(model, target_method_name, None)
                 assert callable(target_method)
-                for tensor in sample_input:
+                for tensor in sample_input_data:
                     tensorflow.stop_gradient(tensor)
-                predictions_df = target_method(*sample_input)
+                predictions_df = target_method(*sample_input_data)
 
                 if isinstance(predictions_df, (tensorflow.Tensor, tensorflow.Variable, np.ndarray)):
                     predictions_df = [predictions_df]
@@ -107,7 +107,7 @@ class TensorFlowHandler(_base.BaseModelHandler["tensorflow.Module"]):
                 model=model,
                 model_meta=model_meta,
                 target_methods=target_methods,
-                sample_input=sample_input,
+                sample_input_data=sample_input_data,
                 get_prediction_fn=get_prediction,
             )
 
