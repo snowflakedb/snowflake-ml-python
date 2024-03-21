@@ -58,7 +58,7 @@ class XgboostHandlerTest(absltest.TestCase):
             model_packager.ModelPackager(os.path.join(tmpdir, "model1_no_sig")).save(
                 name="model1_no_sig",
                 model=regressor,
-                sample_input=cal_X_test,
+                sample_input_data=cal_X_test,
                 metadata={"author": "halu", "version": "1"},
             )
 
@@ -124,7 +124,7 @@ class XgboostHandlerTest(absltest.TestCase):
             model_packager.ModelPackager(os.path.join(tmpdir, "model1_no_sig")).save(
                 name="model1_no_sig",
                 model=regressor,
-                sample_input=cal_X_test,
+                sample_input_data=cal_X_test,
                 metadata={"author": "halu", "version": "1"},
             )
 

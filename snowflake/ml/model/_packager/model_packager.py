@@ -40,7 +40,7 @@ class ModelPackager:
         name: str,
         model: model_types.SupportedModelType,
         signatures: Optional[Dict[str, model_signature.ModelSignature]] = None,
-        sample_input: Optional[model_types.SupportedDataType] = None,
+        sample_input_data: Optional[model_types.SupportedDataType] = None,
         metadata: Optional[Dict[str, str]] = None,
         conda_dependencies: Optional[List[str]] = None,
         pip_requirements: Optional[List[str]] = None,
@@ -49,18 +49,20 @@ class ModelPackager:
         code_paths: Optional[List[str]] = None,
         options: Optional[model_types.ModelSaveOption] = None,
     ) -> None:
-        if (signatures is None) and (sample_input is None) and not model_handler.is_auto_signature_model(model):
+        if (signatures is None) and (sample_input_data is None) and not model_handler.is_auto_signature_model(model):
             raise snowml_exceptions.SnowflakeMLException(
                 error_code=error_codes.INVALID_ARGUMENT,
                 original_exception=ValueError(
-                    "Signatures and sample_input both cannot be None at the same time for this kind of model."
+                    "Signatures and sample_input_data both cannot be None at the same time for this kind of model."
                 ),
             )
 
-        if (signatures is not None) and (sample_input is not None):
+        if (signatures is not None) and (sample_input_data is not None):
             raise snowml_exceptions.SnowflakeMLException(
                 error_code=error_codes.INVALID_ARGUMENT,
-                original_exception=ValueError("Signatures and sample_input both cannot be specified at the same time."),
+                original_exception=ValueError(
+                    "Signatures and sample_input_data both cannot be specified at the same time."
+                ),
             )
 
         if not options:
@@ -93,7 +95,7 @@ class ModelPackager:
                 model=model,
                 model_meta=meta,
                 model_blobs_dir_path=model_blobs_path,
-                sample_input=sample_input,
+                sample_input_data=sample_input_data,
                 is_sub_model=False,
                 **options,
             )

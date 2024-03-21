@@ -24,7 +24,7 @@ class FunctionGeneratorTest(absltest.TestCase):
                 self.assertEqual(
                     (
                         importlib_resources.files("snowflake.ml.model._model_composer.model_method")
-                        .joinpath("fixtures")  # type: ignore[no-untyped-call]
+                        .joinpath("fixtures")
                         .joinpath("function_1.py")
                         .read_text()
                     ),
@@ -44,7 +44,7 @@ class FunctionGeneratorTest(absltest.TestCase):
                 self.assertEqual(
                     (
                         importlib_resources.files("snowflake.ml.model._model_composer.model_method")
-                        .joinpath("fixtures")  # type: ignore[no-untyped-call]
+                        .joinpath("fixtures")
                         .joinpath("function_2.py")
                         .read_text()
                     ),
@@ -61,7 +61,7 @@ class FunctionGeneratorTest(absltest.TestCase):
                 self.assertEqual(
                     (
                         importlib_resources.files("snowflake.ml.model._model_composer.model_method")
-                        .joinpath("fixtures")  # type: ignore[no-untyped-call]
+                        .joinpath("fixtures")
                         .joinpath("function_3.py")
                         .read_text()
                     ),

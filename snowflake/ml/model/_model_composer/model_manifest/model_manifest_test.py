@@ -64,7 +64,7 @@ class ModelManifestTest(absltest.TestCase):
                     self.assertEqual(
                         (
                             importlib_resources.files("snowflake.ml.model._model_composer.model_manifest")
-                            .joinpath("fixtures")  # type: ignore[no-untyped-call]
+                            .joinpath("fixtures")
                             .joinpath("MANIFEST_1.yml")
                             .read_text()
                         ),
@@ -74,7 +74,7 @@ class ModelManifestTest(absltest.TestCase):
                     self.assertEqual(
                         (
                             importlib_resources.files("snowflake.ml.model._model_composer.model_method")
-                            .joinpath("fixtures")  # type: ignore[no-untyped-call]
+                            .joinpath("fixtures")
                             .joinpath("function_1.py")
                             .read_text()
                         ),
@@ -109,7 +109,7 @@ class ModelManifestTest(absltest.TestCase):
                     self.assertEqual(
                         (
                             importlib_resources.files("snowflake.ml.model._model_composer.model_manifest")
-                            .joinpath("fixtures")  # type: ignore[no-untyped-call]
+                            .joinpath("fixtures")
                             .joinpath("MANIFEST_2.yml")
                             .read_text()
                         ),
@@ -119,7 +119,7 @@ class ModelManifestTest(absltest.TestCase):
                     self.assertEqual(
                         (
                             importlib_resources.files("snowflake.ml.model._model_composer.model_method")
-                            .joinpath("fixtures")  # type: ignore[no-untyped-call]
+                            .joinpath("fixtures")
                             .joinpath("function_2.py")
                             .read_text()
                         ),
@@ -157,7 +157,7 @@ class ModelManifestTest(absltest.TestCase):
                     self.assertEqual(
                         (
                             importlib_resources.files("snowflake.ml.model._model_composer.model_manifest")
-                            .joinpath("fixtures")  # type: ignore[no-untyped-call]
+                            .joinpath("fixtures")
                             .joinpath("MANIFEST_3.yml")
                             .read_text()
                         ),
@@ -167,7 +167,7 @@ class ModelManifestTest(absltest.TestCase):
                     self.assertEqual(
                         (
                             importlib_resources.files("snowflake.ml.model._model_composer.model_method")
-                            .joinpath("fixtures")  # type: ignore[no-untyped-call]
+                            .joinpath("fixtures")
                             .joinpath("function_1.py")
                             .read_text()
                         ),
@@ -177,7 +177,7 @@ class ModelManifestTest(absltest.TestCase):
                     self.assertEqual(
                         (
                             importlib_resources.files("snowflake.ml.model._model_composer.model_method")
-                            .joinpath("fixtures")  # type: ignore[no-untyped-call]
+                            .joinpath("fixtures")
                             .joinpath("function_2.py")
                             .read_text()
                         ),
@@ -238,7 +238,7 @@ class ModelManifestTest(absltest.TestCase):
                     self.assertEqual(
                         (
                             importlib_resources.files("snowflake.ml.model._model_composer.model_manifest")
-                            .joinpath("fixtures")  # type: ignore[no-untyped-call]
+                            .joinpath("fixtures")
                             .joinpath("MANIFEST_4.yml")
                             .read_text()
                         ),
@@ -248,7 +248,7 @@ class ModelManifestTest(absltest.TestCase):
                     self.assertEqual(
                         (
                             importlib_resources.files("snowflake.ml.model._model_composer.model_method")
-                            .joinpath("fixtures")  # type: ignore[no-untyped-call]
+                            .joinpath("fixtures")
                             .joinpath("function_3.py")
                             .read_text()
                         ),

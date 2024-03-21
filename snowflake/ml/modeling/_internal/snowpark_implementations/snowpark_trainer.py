@@ -279,7 +279,7 @@ class SnowparkModelTrainer:
     def _build_fit_predict_wrapper_sproc(
         self,
         model_spec: ModelSpecifications,
-    ) -> Callable[[Session, List[str], str, str, List[str], Dict[str, str], List[str], List[str], str], str]:
+    ) -> Callable[[Session, List[str], str, str, List[str], Dict[str, str], bool, List[str], str], str]:
         """
         Constructs and returns a python stored procedure function to be used for training model.
 
@@ -299,7 +299,7 @@ class SnowparkModelTrainer:
             stage_result_file_name: str,
             input_cols: List[str],
             statement_params: Dict[str, str],
-            pass_through_columns: List[str],
+            drop_input_cols: bool,
             expected_output_cols_list: List[str],
             fit_predict_result_name: str,
         ) -> str:
@@ -345,12 +345,12 @@ class SnowparkModelTrainer:
             )
 
             # store the predict output
-            if len(pass_through_columns) != 0:
+            if drop_input_cols:
+                fit_predict_result_pd = pd.DataFrame(data=fit_predict_result, columns=expected_output_cols_list)
+            else:
                 df = df.copy()
                 fit_predict_result_pd = pd.DataFrame(data=fit_predict_result, columns=expected_output_cols_list)
                 fit_predict_result_pd = pd.concat([df, fit_predict_result_pd], axis=1)
-            else:
-                fit_predict_result_pd = pd.DataFrame(data=fit_predict_result, columns=expected_output_cols_list)
 
             # write into a temp table in sproc and load the table from outside
             session.write_pandas(
@@ -463,18 +463,18 @@ class SnowparkModelTrainer:
 
     def train_fit_predict(
         self,
-        pass_through_columns: List[str],
         expected_output_cols_list: List[str],
+        drop_input_cols: Optional[bool] = False,
     ) -> Tuple[Union[DataFrame, pd.DataFrame], object]:
         """Trains the model by pushing down the compute into Snowflake using stored procedures.
         This API is different from fit itself because it would also provide the predict
         output.
 
         Args:
-            pass_through_columns (List[str]): The column names that would
-                display in the returned dataset.
             expected_output_cols_list (List[str]): The output columns
                 name as a list. Defaults to None.
+            drop_input_cols (Optional[bool]): Boolean to determine drop
+                the input columns from the output dataset or not
 
         Returns:
             Tuple[Union[DataFrame, pd.DataFrame], object]: [predicted dataset, estimator]
@@ -508,7 +508,7 @@ class SnowparkModelTrainer:
             stage_result_file_name,
             self.input_cols,
             statement_params,
-            pass_through_columns,
+            drop_input_cols,
             expected_output_cols_list,
             fit_predict_result_name,
         )

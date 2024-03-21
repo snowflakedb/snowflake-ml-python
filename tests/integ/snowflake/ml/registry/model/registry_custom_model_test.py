@@ -79,7 +79,7 @@ class TestRegistryCustomModelInteg(registry_model_test_base.RegistryModelTestBas
             acm = AsyncComposeModel(model_context)
             self._test_registry_model(
                 model=acm,
-                sample_input=pd_df,
+                sample_input_data=pd_df,
                 prediction_assert_fns={
                     "predict": (
                         pd_df,
@@ -102,7 +102,7 @@ class TestRegistryCustomModelInteg(registry_model_test_base.RegistryModelTestBas
         y_df_expected = pd.DataFrame([[1, 2, 3, 1], [4, 2, 5, 4]], columns=["c1", "c2", "c3", "output"])
         self._test_registry_model(
             model=lm,
-            sample_input=sp_df,
+            sample_input_data=sp_df,
             prediction_assert_fns={
                 "predict": (sp_df, lambda res: dataframe_utils.check_sp_df_res(res, y_df_expected, check_dtype=False))
             },
@@ -119,7 +119,7 @@ class TestRegistryCustomModelInteg(registry_model_test_base.RegistryModelTestBas
         y_df_expected = pd.DataFrame([[1.2, 2.3, 3.4, 1.2], [4.6, 2.7, 5.5, 4.6]], columns=["c1", "c2", "c3", "output"])
         self._test_registry_model(
             model=lm,
-            sample_input=sp_df,
+            sample_input_data=sp_df,
             prediction_assert_fns={
                 "predict": (sp_df, lambda res: dataframe_utils.check_sp_df_res(res, y_df_expected, check_dtype=False))
             },
@@ -139,7 +139,7 @@ class TestRegistryCustomModelInteg(registry_model_test_base.RegistryModelTestBas
         y_df_expected = pd.DataFrame([[1, 2, 3, 1], [4, 2, 5, 4]], columns=["c1", "c2", "c3", "output"])
         self._test_registry_model(
             model=lm,
-            sample_input=sp_df_2,
+            sample_input_data=sp_df_2,
             prediction_assert_fns={
                 "predict": (sp_df_2, lambda res: dataframe_utils.check_sp_df_res(res, y_df_expected, check_dtype=False))
             },
@@ -154,7 +154,7 @@ class TestRegistryCustomModelInteg(registry_model_test_base.RegistryModelTestBas
         pd_df = pd.DataFrame(arr, columns=['"c1"', '"c2"', '"c3"'])
         self._test_registry_model(
             model=lm,
-            sample_input=sp_df,
+            sample_input_data=sp_df,
             prediction_assert_fns={
                 "predict": (
                     pd_df,
@@ -176,7 +176,7 @@ class TestRegistryCustomModelInteg(registry_model_test_base.RegistryModelTestBas
         y_df_expected = pd.concat([pd_df, pd_df[["c1"]].rename(columns={"c1": "output"})], axis=1)
         self._test_registry_model(
             model=lm,
-            sample_input=pd_df,
+            sample_input_data=pd_df,
             prediction_assert_fns={
                 "predict": (
                     sp_df,
@@ -194,7 +194,7 @@ class TestRegistryCustomModelInteg(registry_model_test_base.RegistryModelTestBas
         sp_df = self._session.create_dataframe(arr, schema=['"c1"', '"c2"', '"c3"'])
         self._test_registry_model(
             model=lm,
-            sample_input=sp_df,
+            sample_input_data=sp_df,
             prediction_assert_fns={
                 "predict": (
                     pd_df,
@@ -214,7 +214,7 @@ class TestRegistryCustomModelInteg(registry_model_test_base.RegistryModelTestBas
         pd_df = pd.DataFrame(arr, columns=["c1", "c2", "c3"])
         self._test_registry_model(
             model=lm,
-            sample_input=pd_df,
+            sample_input_data=pd_df,
             prediction_assert_fns={
                 "predict": (
                     pd_df,
@@ -233,7 +233,7 @@ class TestRegistryCustomModelInteg(registry_model_test_base.RegistryModelTestBas
         pd_df = pd.DataFrame([["Yogiri", "Civia", "Echo"], ["Artia", "Doris", "Rosalyn"]], columns=["c1", "c2", "c3"])
         self._test_registry_model(
             model=lm,
-            sample_input=pd_df,
+            sample_input_data=pd_df,
             prediction_assert_fns={
                 "predict": (
                     pd_df,
@@ -255,7 +255,7 @@ class TestRegistryCustomModelInteg(registry_model_test_base.RegistryModelTestBas
         y_df_expected = pd.concat([pd_df, pd.DataFrame(data={"output": [[1, 2, 3], [4, 2, 5]]})], axis=1)
         self._test_registry_model(
             model=lm,
-            sample_input=sp_df,
+            sample_input_data=sp_df,
             prediction_assert_fns={
                 "predict": (
                     sp_df,
@@ -273,7 +273,7 @@ class TestRegistryCustomModelInteg(registry_model_test_base.RegistryModelTestBas
         y_df_expected = pd.concat([pd_df, pd.DataFrame(data={"output": ["Yogiri", "Artia"]})], axis=1)
         self._test_registry_model(
             model=lm,
-            sample_input=sp_df,
+            sample_input_data=sp_df,
             prediction_assert_fns={
                 "predict": (
                     sp_df,
@@ -289,7 +289,7 @@ class TestRegistryCustomModelInteg(registry_model_test_base.RegistryModelTestBas
         pd_df = pd.DataFrame([["Yogiri", "Civia", "Echo"], ["Artia", "Doris", "Rosalyn"]], columns=["c1", "c2", "c3"])
         self._test_registry_model(
             model=lm,
-            sample_input=pd_df,
+            sample_input_data=pd_df,
             prediction_assert_fns={
                 "predict": (
                     pd_df,
@@ -314,7 +314,7 @@ class TestRegistryCustomModelInteg(registry_model_test_base.RegistryModelTestBas
             pd_df = pd.DataFrame(arr, columns=["c1", "c2", "c3"])
             self._test_registry_model(
                 model=lm,
-                sample_input=pd_df,
+                sample_input_data=pd_df,
                 prediction_assert_fns={
                     "predict": (
                         pd_df,
@@ -341,7 +341,7 @@ class TestRegistryCustomModelInteg(registry_model_test_base.RegistryModelTestBas
             y_df_expected = pd.concat([pd_df, pd.DataFrame([False, True], columns=["output"])], axis=1)
             self._test_registry_model(
                 model=lm,
-                sample_input=sp_df,
+                sample_input_data=sp_df,
                 prediction_assert_fns={
                     "predict": (
                         sp_df,

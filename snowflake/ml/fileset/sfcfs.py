@@ -90,11 +90,12 @@ class SFFileSystem(fsspec.AbstractFileSystem):
                 ) from e
 
         if sf_connection:
-            self._conn = sf_connection
+            self._session = snowpark.Session.builder.config("connection", sf_connection).create()
         elif snowpark_session:
-            self._conn = snowpark_session._conn._conn
+            self._session = snowpark_session
         else:
             raise ValueError("Either sf_connection or snowpark_session has to be non-empty!")
+        self._conn = self._session._conn._conn  # Telemetry wrappers expect connection under `conn_attr_name="_conn"``
         self._kwargs = kwargs
         self._stage_fs_set: Dict[Tuple[str, str, str], stage_fs.SFStageFileSystem] = {}
 
@@ -168,7 +169,7 @@ class SFFileSystem(fsspec.AbstractFileSystem):
         stage_fs_key = (sf_file_path.database, sf_file_path.schema, sf_file_path.stage)
         if stage_fs_key not in self._stage_fs_set:
             cnt_stage_fs = stage_fs.SFStageFileSystem(
-                sf_connection=self._conn,
+                snowpark_session=self._session,
                 db=sf_file_path.database,
                 schema=sf_file_path.schema,
                 stage=sf_file_path.stage,

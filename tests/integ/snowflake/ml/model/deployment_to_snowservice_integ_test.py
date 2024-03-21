@@ -79,7 +79,7 @@ from absl.testing import absltest
 #         self.uid = uuid.uuid4().hex[:4]
 
 #     def _save_model_to_stage(
-#         self, model: custom_model.CustomModel, sample_input: pd.DataFrame
+#         self, model: custom_model.CustomModel, sample_input_data: pd.DataFrame
 #     ) -> Tuple[str, _model_meta.ModelMetadata]:
 #         stage_path = f"@{self.TEST_STAGE}/{self.uid}"
 #         meta = model_api.save_model(  # type: ignore[call-overload]
@@ -87,13 +87,13 @@ from absl.testing import absltest
 #             session=self._session,
 #             stage_path=stage_path,
 #             model=model,
-#             sample_input=sample_input,
+#             sample_input_data=sample_input_data,
 #             options={"embed_local_ml_library": True},
 #         )
 #         return stage_path, meta
 
 #     def test_deployment_workflow(self) -> None:
-#         stage_path, meta = self._save_model_to_stage(model=_get_sklearn_model(), sample_input=_IRIS_X)
+#         stage_path, meta = self._save_model_to_stage(model=_get_sklearn_model(), sample_input_data=_IRIS_X)
 #         service_func_name = db_manager.TestObjectNameGenerator.get_snowml_test_object_name(
 #             self._RUN_ID, f"func_{self.uid}"
 #         )

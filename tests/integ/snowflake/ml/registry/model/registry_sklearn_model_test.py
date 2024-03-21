@@ -18,7 +18,7 @@ class TestRegistrySKLearnModelInteg(registry_model_test_base.RegistryModelTestBa
         regr.fit(iris_X, iris_y)
         self._test_registry_model(
             model=regr,
-            sample_input=iris_X,
+            sample_input_data=iris_X,
             prediction_assert_fns={
                 "predict": (
                     iris_X,
@@ -40,7 +40,7 @@ class TestRegistrySKLearnModelInteg(registry_model_test_base.RegistryModelTestBa
         regr.fit(iris_X, iris_y)
         self._test_registry_model(
             model=regr,
-            sample_input=iris_X,
+            sample_input_data=iris_X,
             options={
                 "method_options": {"predict": {"case_sensitive": True}, "predict_proba": {"case_sensitive": True}},
                 "target_methods": ["predict", "predict_proba"],
@@ -67,7 +67,7 @@ class TestRegistrySKLearnModelInteg(registry_model_test_base.RegistryModelTestBa
         model.fit(iris_X[:10], dual_target[:10])
         self._test_registry_model(
             model=model,
-            sample_input=iris_X,
+            sample_input_data=iris_X,
             prediction_assert_fns={
                 "predict": (
                     iris_X[-10:],

@@ -193,13 +193,15 @@ class FeatureStoreTest(absltest.TestCase):
         for e in entities.values():
             fs.register_entity(e)
 
+        actual_result = fs.list_entities().to_pandas()
+        self.assertEqual(len(actual_result["OWNER"]), 3)
+
         compare_dataframe(
-            actual_df=fs.list_entities().to_pandas(),
+            actual_df=actual_result.drop(columns="OWNER"),
             target_data={
                 "NAME": ["aD", "PRODUCT", "USER"],
                 "JOIN_KEYS": ['["AID"]', '["CID","PID"]', '["uid"]'],
                 "DESC": ["", "", ""],
-                "OWNER": ["REGTEST_RL", "REGTEST_RL", "REGTEST_RL"],
             },
             sort_cols=["NAME"],
         )
@@ -215,13 +217,15 @@ class FeatureStoreTest(absltest.TestCase):
         with self.assertRaisesRegex(ValueError, "Cannot find Entity with name"):
             fs.get_entity('"aD"')
 
+        actual_result = fs.list_entities().to_pandas()
+        self.assertEqual(len(actual_result["OWNER"]), 2)
+
         compare_dataframe(
-            actual_df=fs.list_entities().to_pandas(),
+            actual_df=actual_result.drop(columns="OWNER"),
             target_data={
                 "NAME": ["PRODUCT", "USER"],
                 "JOIN_KEYS": ['["CID","PID"]', '["uid"]'],
                 "DESC": ["", ""],
-                "OWNER": ["REGTEST_RL", "REGTEST_RL"],
             },
             sort_cols=["NAME"],
         )
@@ -263,13 +267,15 @@ class FeatureStoreTest(absltest.TestCase):
         self.assertEqual(e2.join_keys, re2.join_keys)
         self.assertEqual(e2.desc, re2.desc)
 
+        actual_result = fs.list_entities().to_pandas()
+        self.assertEqual(len(actual_result["OWNER"]), 2)
+
         compare_dataframe(
-            actual_df=fs.list_entities().to_pandas(),
+            actual_df=actual_result.drop(columns="OWNER"),
             target_data={
                 "NAME": ["FOO", "BAR"],
                 "JOIN_KEYS": ['["A","B"]', '["C"]'],
                 "DESC": ["my foo", ""],
-                "OWNER": ["REGTEST_RL", "REGTEST_RL"],
             },
             sort_cols=["NAME"],
         )

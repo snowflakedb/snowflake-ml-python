@@ -157,14 +157,14 @@ def zip_python_package(zipfile_path: str, package_name: str, ignore_generated_py
                 arcname = base_arcname / path_info.name
                 if not _able_ascii_encode(str(arcname)):
                     raise ValueError(f"File name {arcname} cannot be encoded using ASCII. Please rename.")
-                zf.writestr(str(arcname), path_info.read_bytes())  # type: ignore[no-untyped-call]
+                zf.writestr(str(arcname), path_info.read_bytes())
             elif path_info.is_dir():
                 arcname = base_arcname / path_info.name
                 zf.writestr(str(arcname) + "/", "")
-                for sub_path_info in path_info.iterdir():  # type: ignore[no-untyped-call]
+                for sub_path_info in path_info.iterdir():
                     _add_to_zip(zf, sub_path_info, arcname)
 
-        for sub_path_info in importlib_resources.files(package_name).iterdir():  # type: ignore[no-untyped-call]
+        for sub_path_info in importlib_resources.files(package_name).iterdir():
             _add_to_zip(zf, sub_path_info, base_arcname)
 
 

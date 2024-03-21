@@ -42,7 +42,7 @@ class SnowMLModelHandlerTest(absltest.TestCase):
                 model_packager.ModelPackager(os.path.join(tmpdir, "model1_no_sig")).save(
                     name="model1_no_sig",
                     model=regr,
-                    sample_input=df[INPUT_COLUMNS],
+                    sample_input_data=df[INPUT_COLUMNS],
                     metadata={"author": "halu", "version": "1"},
                 )
 

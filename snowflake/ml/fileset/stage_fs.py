@@ -75,6 +75,12 @@ class SFStageFileSystem(fsspec.AbstractFileSystem):
         -74.00688,40.73049,-74.00563,40.70676,2\n'
     """
 
+    # Cached state marking whether we should use Snowpark file download instead of pre-signed URLs:
+    #   None -> Try pre-signed URL access, fall back to file download
+    #   True -> Use file download path without trying pre-signed URL access
+    #   False -> Use pre-signed URL access, skip download fallback on failure
+    _USE_FALLBACK_FILE_ACCESS = None
+
     def __init__(
         self,
         *,
@@ -227,6 +233,8 @@ class SFStageFileSystem(fsspec.AbstractFileSystem):
             SnowflakeMLException: An error occurred when the given path points to a file that cannot be found.
         """
         path = path.lstrip("/")
+        if self._USE_FALLBACK_FILE_ACCESS:
+            return self._session.file.get_stream(f"{self.stage_name}/{path}")
         cached_presigned_url = self._url_cache.get(path, None)
         if not cached_presigned_url:
             res = self._fetch_presigned_urls([path])
@@ -242,6 +250,16 @@ class SFStageFileSystem(fsspec.AbstractFileSystem):
         try:
             return self._fs._open(url, mode=mode, **kwargs)
         except FileNotFoundError:
+            # Enable fallback if _USE_FALLBACK_FILE_ACCESS is True or None; set to False to disable
+            if self._USE_FALLBACK_FILE_ACCESS != False:  # noqa: E712
+                try:
+                    # Try falling back to Snowpark file read if presigned URL access failed
+                    # If fallback is successful, most likely in sproc without External Access Integration
+                    content = self._session.file.get_stream(f"{self.stage_name}/{path}")
+                    self._USE_FALLBACK_FILE_ACCESS = True
+                    return content
+                except Exception:
+                    pass
             raise snowml_exceptions.SnowflakeMLException(
                 error_code=error_codes.SNOWML_NOT_FOUND,
                 original_exception=fileset_errors.StageFileNotFoundError(f"Stage file {path} doesn't exist."),

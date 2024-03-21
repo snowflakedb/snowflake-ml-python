@@ -108,7 +108,7 @@ def save_model(
     model: model_types.SupportedRequireSignatureModelType,
     session: Session,
     stage_path: str,
-    sample_input: model_types.SupportedDataType,
+    sample_input_data: model_types.SupportedDataType,
     metadata: Optional[Dict[str, str]] = None,
     conda_dependencies: Optional[List[str]] = None,
     pip_requirements: Optional[List[str]] = None,
@@ -125,7 +125,7 @@ def save_model(
         model: Model object.
         session: Snowpark connection session.
         stage_path: Path to the stage where model will be saved.
-        sample_input: Sample input data to infer the model signatures from.
+        sample_input_data: Sample input data to infer the model signatures from.
         metadata: Model metadata.
         conda_dependencies: List of Conda package specs. Use "[channel::]package [operator version]" syntax to specify
             a dependency. It is a recommended way to specify your dependencies using conda. When channel is not
@@ -149,7 +149,7 @@ def save_model(
     session: Session,
     stage_path: str,
     signatures: Optional[Dict[str, model_signature.ModelSignature]] = None,
-    sample_input: Optional[model_types.SupportedDataType] = None,
+    sample_input_data: Optional[model_types.SupportedDataType] = None,
     metadata: Optional[Dict[str, str]] = None,
     conda_dependencies: Optional[List[str]] = None,
     pip_requirements: Optional[List[str]] = None,
@@ -165,11 +165,11 @@ def save_model(
         model: Model object.
         session: Snowpark connection session.
         stage_path: Path to the stage where model will be saved.
-        signatures: Model data signatures for inputs and output for every target methods. If it is None, sample_input
-            would be used to infer the signatures if it is a local (non-SnowML modeling model).
-            If not None, sample_input should not be specified. Defaults to None.
-        sample_input: Sample input data to infer the model signatures from. If it is None, signatures must be specified
-            if it is a local (non-SnowML modeling model). If not None, signatures should not be specified.
+        signatures: Model data signatures for inputs and output for every target methods. If it is None,
+            sample_input_data would be used to infer the signatures if it is a local (non-SnowML modeling model).
+            If not None, sample_input_data should not be specified. Defaults to None.
+        sample_input_data: Sample input data to infer the model signatures from. If it is None, signatures must be
+            specified if it is a local (non-SnowML modeling model). If not None, signatures should not be specified.
             Defaults to None.
         metadata: Model metadata.
         conda_dependencies: List of Conda package specs. Use "[channel::]package [operator version]" syntax to specify
@@ -196,7 +196,7 @@ def save_model(
         name=name,
         model=model,
         signatures=signatures,
-        sample_input=sample_input,
+        sample_input_data=sample_input_data,
         metadata=metadata,
         conda_dependencies=conda_dependencies,
         pip_requirements=pip_requirements,

@@ -124,7 +124,7 @@ class CustomHandlerTest(absltest.TestCase):
                 model_packager.ModelPackager(os.path.join(tmpdir, "model1_no_sig")).save(
                     name="model1_no_sig",
                     model=lm,
-                    sample_input=d,
+                    sample_input_data=d,
                     metadata={"author": "halu", "version": "1"},
                     options={"relax_version": False},
                 )

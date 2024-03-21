@@ -51,7 +51,7 @@ class TestWarehouseSKLearnXGBoostModelInteg(parameterized.TestCase):
         self,
         name: str,
         model: model_types.SupportedModelType,
-        sample_input: model_types.SupportedDataType,
+        sample_input_data: model_types.SupportedDataType,
         test_input: model_types.SupportedDataType,
         deploy_params: Dict[str, Tuple[Dict[str, Any], Callable[[Union[pd.DataFrame, SnowparkDataFrame]], Any]]],
         permanent_deploy: Optional[bool] = False,
@@ -62,7 +62,7 @@ class TestWarehouseSKLearnXGBoostModelInteg(parameterized.TestCase):
             full_qual_stage=self.full_qual_stage,
             name=name,
             model=model,
-            sample_input=sample_input,
+            sample_input_data=sample_input_data,
             test_input=test_input,
             deploy_params=deploy_params,
             permanent_deploy=permanent_deploy,
@@ -80,7 +80,7 @@ class TestWarehouseSKLearnXGBoostModelInteg(parameterized.TestCase):
         self.base_test_case(
             name="skl_model",
             model=regr,
-            sample_input=iris_X,
+            sample_input_data=iris_X,
             test_input=iris_X,
             deploy_params={
                 "predict": (
@@ -102,7 +102,7 @@ class TestWarehouseSKLearnXGBoostModelInteg(parameterized.TestCase):
         self.base_test_case(
             name="skl_model_proba_deploy",
             model=model,
-            sample_input=iris_X,
+            sample_input_data=iris_X,
             test_input=iris_X[:10],
             deploy_params={
                 "predict": (
@@ -130,7 +130,7 @@ class TestWarehouseSKLearnXGBoostModelInteg(parameterized.TestCase):
         self.base_test_case(
             name="skl_multiple_output_model_proba",
             model=model,
-            sample_input=iris_X,
+            sample_input_data=iris_X,
             test_input=iris_X[-10:],
             deploy_params={
                 "predict": (
@@ -163,7 +163,7 @@ class TestWarehouseSKLearnXGBoostModelInteg(parameterized.TestCase):
         self.base_test_case(
             name="xgb_model",
             model=regressor,
-            sample_input=cal_X_test,
+            sample_input_data=cal_X_test,
             test_input=cal_X_test,
             deploy_params={
                 "predict": (
@@ -200,7 +200,7 @@ class TestWarehouseSKLearnXGBoostModelInteg(parameterized.TestCase):
         self.base_test_case(
             name="xgb_model_sp",
             model=regressor,
-            sample_input=cal_data_sp_df_train.drop('"target"'),
+            sample_input_data=cal_data_sp_df_train.drop('"target"'),
             test_input=cal_data_sp_df_test_X,
             deploy_params={
                 "predict": (
@@ -227,7 +227,7 @@ class TestWarehouseSKLearnXGBoostModelInteg(parameterized.TestCase):
         self.base_test_case(
             name="xgb_booster",
             model=regressor,
-            sample_input=cal_X_test,
+            sample_input_data=cal_X_test,
             test_input=cal_X_test,
             deploy_params={
                 "predict": (
@@ -267,7 +267,7 @@ class TestWarehouseSKLearnXGBoostModelInteg(parameterized.TestCase):
         self.base_test_case(
             name="xgb_booster_sp",
             model=regressor,
-            sample_input=cal_data_sp_df_train.drop('"target"'),
+            sample_input_data=cal_data_sp_df_train.drop('"target"'),
             test_input=cal_data_sp_df_test_X,
             deploy_params={
                 "predict": (

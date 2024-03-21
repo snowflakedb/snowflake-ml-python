@@ -1,14 +1,21 @@
+import unittest
 import uuid
 from typing import Callable, Tuple
 
 from absl.testing import absltest, parameterized
+from packaging import version
 from sklearn import datasets
 
+from snowflake.ml._internal import env
 from snowflake.ml.registry import model_registry
 from snowflake.snowpark import session
 from tests.integ.snowflake.ml.test_utils import common_test_base, db_manager
 
 
+@unittest.skipIf(
+    version.Version(env.PYTHON_VERSION) >= version.Version("3.11"),
+    "Skip compat test for Python higher than 3.11 since we previously does not support it.",
+)
 class ModelRegistryCompatTest(common_test_base.CommonTestBase):
     def setUp(self) -> None:
         """Creates Snowpark and Snowflake environments for testing."""

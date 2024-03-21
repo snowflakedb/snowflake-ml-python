@@ -225,7 +225,7 @@ class RandomizedSearchCVTest(parameterized.TestCase):
         # Test predict_log_proba
         if hasattr(reg, "predict_log_proba"):
             actual_log_proba_result = reg.predict_log_proba(self._input_df).to_pandas().sort_values(by="INDEX")
-            actual_output_cols = [c for c in actual_log_proba_result.columns if c.find("predict_log_proba_") >= 0]
+            actual_output_cols = [c for c in actual_log_proba_result.columns if c.find("PREDICT_LOG_PROBA_") >= 0]
             actual_log_proba_result = actual_log_proba_result[actual_output_cols].to_numpy()
             sklearn_log_prob_array = sklearn_reg.predict_log_proba(self._input_df_pandas[self._input_cols])
             np.testing.assert_allclose(actual_log_proba_result.flatten(), sklearn_log_prob_array.flatten())
@@ -318,7 +318,7 @@ class RandomizedSearchCVTest(parameterized.TestCase):
 
         # Test score_samples
         actual_score_samples_result = reg.score_samples(self._input_df).to_pandas().sort_values(by="INDEX")
-        actual_output_cols = [c for c in actual_score_samples_result.columns if c.find("score_samples") >= 0]
+        actual_output_cols = [c for c in actual_score_samples_result.columns if c.find("SCORE_SAMPLES_") >= 0]
         actual_score_samples_result = actual_score_samples_result[actual_output_cols].to_numpy()
         sklearn_score_samples_array = sklearn_reg.score_samples(self._input_df_pandas[self._input_cols])
         np.testing.assert_allclose(actual_score_samples_result.flatten(), sklearn_score_samples_array.flatten())

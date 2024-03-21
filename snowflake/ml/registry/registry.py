@@ -95,7 +95,7 @@ class Registry:
         Args:
             model: Model object of supported types such as Scikit-learn, XGBoost, Snowpark ML,
                 PyTorch, TorchScript, Tensorflow, Tensorflow Keras, MLFlow, HuggingFace Pipeline,
-                Peft-finetuned LLM, or Custom Model.
+                Sentence Transformers, Peft-finetuned LLM, or Custom Model.
             model_name: Name to identify the model.
             version_name: Version identifier for the model. Combination of model_name and version_name must be unique.
             comment: Comment associated with the model version. Defaults to None.
@@ -124,6 +124,8 @@ class Registry:
                     Channel. Otherwise, defaults to False
                 - relax_version: Whether or not relax the version constraints of the dependencies.
                     It detects any ==x.y.z in specifiers and replaced with >=x.y, <(x+1). Defaults to True.
+                - function_type: Set the method function type globally. To set method function types individually see
+                  function_type in model_options.
                 - method_options: Per-method saving options including:
                     - case_sensitive: Indicates whether the method and its signature should be case sensitive.
                         This means when you refer the method in the SQL, you need to double quote it.
@@ -131,6 +133,7 @@ class Registry:
                         non-alphabetic characters in your method or feature name. Defaults to False.
                     - max_batch_size: Maximum batch size that the method could accept in the Snowflake Warehouse.
                         Defaults to None, determined automatically by Snowflake.
+                    - function_type: One of supported model method function types (FUNCTION or TABLE_FUNCTION).
 
         Raises:
             NotImplementedError: `pip_requirements` is not supported.

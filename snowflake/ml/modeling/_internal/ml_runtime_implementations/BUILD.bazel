@@ -15,7 +15,9 @@ py_library(
     srcs = ["ml_runtime_handlers.py"],
     deps = [
         "//snowflake/ml/_internal/exceptions",
+        "//snowflake/ml/modeling/_internal:estimator_utils",
         "//snowflake/ml/modeling/_internal:transformer_protocols",
+        "//snowflake/ml/modeling/_internal/snowpark_implementations:snowpark_handlers",
     ],
 )
 

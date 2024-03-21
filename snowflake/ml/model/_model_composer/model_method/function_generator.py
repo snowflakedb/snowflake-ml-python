@@ -46,7 +46,7 @@ class FunctionGenerator:
 
         function_template = (
             importlib_resources.files("snowflake.ml.model._model_composer.model_method")
-            .joinpath(template_filename)  # type: ignore[no-untyped-call]
+            .joinpath(template_filename)
             .read_text()
         )
 

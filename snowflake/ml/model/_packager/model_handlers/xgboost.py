@@ -76,7 +76,7 @@ class XGBModelHandler(_base.BaseModelHandler[Union["xgboost.Booster", "xgboost.X
         model: Union["xgboost.Booster", "xgboost.XGBModel"],
         model_meta: model_meta_api.ModelMetadata,
         model_blobs_dir_path: str,
-        sample_input: Optional[model_types.SupportedDataType] = None,
+        sample_input_data: Optional[model_types.SupportedDataType] = None,
         is_sub_model: Optional[bool] = False,
         **kwargs: Unpack[model_types.XGBModelSaveOptions],
     ) -> None:
@@ -92,24 +92,24 @@ class XGBModelHandler(_base.BaseModelHandler[Union["xgboost.Booster", "xgboost.X
             )
 
             def get_prediction(
-                target_method_name: str, sample_input: model_types.SupportedLocalDataType
+                target_method_name: str, sample_input_data: model_types.SupportedLocalDataType
             ) -> model_types.SupportedLocalDataType:
-                if not isinstance(sample_input, (pd.DataFrame, np.ndarray)):
-                    sample_input = model_signature._convert_local_data_to_df(sample_input)
+                if not isinstance(sample_input_data, (pd.DataFrame, np.ndarray)):
+                    sample_input_data = model_signature._convert_local_data_to_df(sample_input_data)
 
                 if isinstance(model, xgboost.Booster):
-                    sample_input = xgboost.DMatrix(sample_input)
+                    sample_input_data = xgboost.DMatrix(sample_input_data)
 
                 target_method = getattr(model, target_method_name, None)
                 assert callable(target_method)
-                predictions_df = target_method(sample_input)
+                predictions_df = target_method(sample_input_data)
                 return predictions_df
 
             model_meta = handlers_utils.validate_signature(
                 model=model,
                 model_meta=model_meta,
                 target_methods=target_methods,
-                sample_input=sample_input,
+                sample_input_data=sample_input_data,
                 get_prediction_fn=get_prediction,
             )
 

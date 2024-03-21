@@ -53,7 +53,7 @@ class TestWarehouseMLFlowModelInteg(parameterized.TestCase):
         self,
         name: str,
         model: model_types.SupportedModelType,
-        sample_input: model_types.SupportedDataType,
+        sample_input_data: model_types.SupportedDataType,
         test_input: model_types.SupportedDataType,
         deploy_params: Dict[str, Tuple[Dict[str, Any], Callable[[Union[pd.DataFrame, SnowparkDataFrame]], Any]]],
         permanent_deploy: Optional[bool] = False,
@@ -64,7 +64,7 @@ class TestWarehouseMLFlowModelInteg(parameterized.TestCase):
             full_qual_stage=self.full_qual_stage,
             name=name,
             model=model,
-            sample_input=sample_input,
+            sample_input_data=sample_input_data,
             test_input=test_input,
             deploy_params=deploy_params,
             permanent_deploy=permanent_deploy,
@@ -113,7 +113,7 @@ class TestWarehouseMLFlowModelInteg(parameterized.TestCase):
         self.base_test_case(
             name="mlflow_model_sklearn_df",
             model=mlflow.pyfunc.load_model(f"runs:/{run_id}/model"),
-            sample_input=None,
+            sample_input_data=None,
             test_input=X_test,
             deploy_params={
                 "": (
@@ -169,7 +169,7 @@ class TestWarehouseMLFlowModelInteg(parameterized.TestCase):
         self.base_test_case(
             name="mlflow_model_sklearn",
             model=mlflow.pyfunc.load_model(f"runs:/{run_id}/model"),
-            sample_input=None,
+            sample_input_data=None,
             test_input=X_test_df,
             deploy_params={
                 "": (

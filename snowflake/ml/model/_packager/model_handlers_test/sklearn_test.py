@@ -54,7 +54,7 @@ class SKLearnHandlerTest(absltest.TestCase):
                 model_packager.ModelPackager(local_dir_path=os.path.join(tmpdir, "model1_no_sig_bad")).save(
                     name="model1_no_sig_bad",
                     model=model,
-                    sample_input=iris_X_df,
+                    sample_input_data=iris_X_df,
                     metadata={"author": "halu", "version": "1"},
                     options=model_types.SKLModelSaveOptions({"target_methods": ["random"]}),
                 )
@@ -62,7 +62,7 @@ class SKLearnHandlerTest(absltest.TestCase):
             model_packager.ModelPackager(os.path.join(tmpdir, "model1_no_sig")).save(
                 name="model1_no_sig",
                 model=model,
-                sample_input=iris_X_df,
+                sample_input_data=iris_X_df,
                 metadata={"author": "halu", "version": "1"},
             )
 
@@ -137,7 +137,7 @@ class SKLearnHandlerTest(absltest.TestCase):
             model_packager.ModelPackager(os.path.join(tmpdir, "model1_no_sig")).save(
                 name="model1_no_sig",
                 model=regr,
-                sample_input=iris_X_df,
+                sample_input_data=iris_X_df,
                 metadata={"author": "halu", "version": "1"},
             )
 

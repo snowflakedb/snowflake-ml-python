@@ -45,27 +45,27 @@ class CustomModelHandler(_base.BaseModelHandler["custom_model.CustomModel"]):
         model: "custom_model.CustomModel",
         model_meta: model_meta_api.ModelMetadata,
         model_blobs_dir_path: str,
-        sample_input: Optional[model_types.SupportedDataType] = None,
+        sample_input_data: Optional[model_types.SupportedDataType] = None,
         is_sub_model: Optional[bool] = False,
         **kwargs: Unpack[model_types.CustomModelSaveOption],
     ) -> None:
         assert isinstance(model, custom_model.CustomModel)
 
         def get_prediction(
-            target_method_name: str, sample_input: model_types.SupportedLocalDataType
+            target_method_name: str, sample_input_data: model_types.SupportedLocalDataType
         ) -> model_types.SupportedLocalDataType:
             target_method = getattr(model, target_method_name, None)
             assert callable(target_method) and inspect.ismethod(target_method)
             target_method = target_method.__func__
 
-            if not isinstance(sample_input, pd.DataFrame):
-                sample_input = model_signature._convert_local_data_to_df(sample_input)
+            if not isinstance(sample_input_data, pd.DataFrame):
+                sample_input_data = model_signature._convert_local_data_to_df(sample_input_data)
 
             if inspect.iscoroutinefunction(target_method):
                 with anyio.start_blocking_portal() as portal:
-                    predictions_df = portal.call(target_method, model, sample_input)
+                    predictions_df = portal.call(target_method, model, sample_input_data)
             else:
-                predictions_df = target_method(model, sample_input)
+                predictions_df = target_method(model, sample_input_data)
             return predictions_df
 
         if not is_sub_model:
@@ -73,7 +73,7 @@ class CustomModelHandler(_base.BaseModelHandler["custom_model.CustomModel"]):
                 model=model,
                 model_meta=model_meta,
                 target_methods=[method.__name__ for method in model._get_infer_methods()],
-                sample_input=sample_input,
+                sample_input_data=sample_input_data,
                 get_prediction_fn=get_prediction,
             )
 

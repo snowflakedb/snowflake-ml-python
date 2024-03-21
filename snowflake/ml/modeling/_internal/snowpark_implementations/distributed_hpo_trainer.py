@@ -277,7 +277,7 @@ class DistributedHPOTrainer(SnowparkModelTrainer):
         imports.append(f"@{temp_stage_name}/{estimator_location}")
 
         search_sproc_name = random_name_for_temp_object(TempObjectType.PROCEDURE)
-        random_udtf_name = random_name_for_temp_object(TempObjectType.FUNCTION)
+        random_udtf_name = random_name_for_temp_object(TempObjectType.TABLE_FUNCTION)
 
         required_deps = dependencies + [
             "snowflake-snowpark-python<2",

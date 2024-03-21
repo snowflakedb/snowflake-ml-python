@@ -45,7 +45,7 @@ class MainTest(absltest.TestCase):
         model_packager.ModelPackager(tmpdir.full_path).save(
             name="test_model",
             model=model,
-            sample_input=x,
+            sample_input_data=x,
             metadata={"author": "halu", "version": "1"},
         )
         file_utils.make_archive(zip_full_path, tmpdir.full_path)

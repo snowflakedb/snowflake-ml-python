@@ -14,19 +14,19 @@ def validate_signature(
     model: model_types.SupportedRequireSignatureModelType,
     model_meta: model_meta.ModelMetadata,
     target_methods: Iterable[str],
-    sample_input: Optional[model_types.SupportedDataType],
+    sample_input_data: Optional[model_types.SupportedDataType],
     get_prediction_fn: Callable[[str, model_types.SupportedLocalDataType], model_types.SupportedLocalDataType],
 ) -> model_meta.ModelMetadata:
     if model_meta.signatures:
         validate_target_methods(model, list(model_meta.signatures.keys()))
         return model_meta
 
-    # In this case sample_input should be available, because of the check in save_model.
+    # In this case sample_input_data should be available, because of the check in save_model.
     assert (
-        sample_input is not None
+        sample_input_data is not None
     ), "Model signature and sample input are None at the same time. This should not happen with local model."
-    trunc_sample_input = model_signature._truncate_data(sample_input)
-    if isinstance(sample_input, SnowparkDataFrame):
+    trunc_sample_input = model_signature._truncate_data(sample_input_data)
+    if isinstance(sample_input_data, SnowparkDataFrame):
         # Added because of Any from missing stubs.
         trunc_sample_input = cast(SnowparkDataFrame, trunc_sample_input)
         local_sample_input = snowpark_handler.SnowparkDataFrameHandler.convert_to_df(trunc_sample_input)

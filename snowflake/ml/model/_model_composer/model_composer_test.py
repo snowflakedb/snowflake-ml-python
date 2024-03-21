@@ -71,7 +71,7 @@ class ModelInterfaceTest(absltest.TestCase):
                         m.save(
                             name="model1",
                             model=linear_model.LinearRegression(),
-                            sample_input=d,
+                            sample_input_data=d,
                         )
                 mock_save.assert_called_once()
                 mock_manifest_save.assert_called_once()

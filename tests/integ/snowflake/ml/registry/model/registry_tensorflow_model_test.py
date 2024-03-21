@@ -38,7 +38,7 @@ class TestRegistryTensorflowModelInteg(registry_model_test_base.RegistryModelTes
 
         self._test_registry_model(
             model=model,
-            sample_input=[data_x],
+            sample_input_data=[data_x],
             prediction_assert_fns={
                 "": (
                     x_df,
@@ -60,7 +60,7 @@ class TestRegistryTensorflowModelInteg(registry_model_test_base.RegistryModelTes
 
         self._test_registry_model(
             model=model,
-            sample_input=x_df,
+            sample_input_data=x_df,
             prediction_assert_fns={
                 "": (
                     x_df,
@@ -90,7 +90,7 @@ class TestRegistryTensorflowModelInteg(registry_model_test_base.RegistryModelTes
 
         self._test_registry_model(
             model=model,
-            sample_input=x_df,
+            sample_input_data=x_df,
             prediction_assert_fns={
                 "": (
                     x_df_sp,
@@ -107,7 +107,7 @@ class TestRegistryTensorflowModelInteg(registry_model_test_base.RegistryModelTes
         y_pred = model.predict(data_x)
         self._test_registry_model(
             model=model,
-            sample_input=[data_x],
+            sample_input_data=[data_x],
             prediction_assert_fns={
                 "": (
                     x_df,
@@ -128,7 +128,7 @@ class TestRegistryTensorflowModelInteg(registry_model_test_base.RegistryModelTes
         y_pred = model.predict(data_x)
         self._test_registry_model(
             model=model,
-            sample_input=x_df,
+            sample_input_data=x_df,
             prediction_assert_fns={
                 "": (
                     x_df,
@@ -158,7 +158,7 @@ class TestRegistryTensorflowModelInteg(registry_model_test_base.RegistryModelTes
 
         self._test_registry_model(
             model=model,
-            sample_input=x_df,
+            sample_input_data=x_df,
             prediction_assert_fns={
                 "": (
                     x_df_sp,

@@ -482,14 +482,12 @@ class SnowServiceDeployment:
         if self.options.model_in_image:
             spec_template = (
                 importlib_resources.files(snowservice)
-                .joinpath("templates/service_spec_template_with_model")  # type: ignore[no-untyped-call]
+                .joinpath("templates/service_spec_template_with_model")
                 .read_text("utf-8")
             )
         else:
             spec_template = (
-                importlib_resources.files(snowservice)
-                .joinpath("templates/service_spec_template")  # type: ignore[no-untyped-call]
-                .read_text("utf-8")
+                importlib_resources.files(snowservice).joinpath("templates/service_spec_template").read_text("utf-8")
             )
 
         with _debug_aware_tmp_directory(self.debug_dir) as dir_path:

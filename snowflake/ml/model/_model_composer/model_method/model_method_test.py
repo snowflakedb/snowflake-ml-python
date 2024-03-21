@@ -4,7 +4,7 @@ import tempfile
 import importlib_resources
 from absl.testing import absltest
 
-from snowflake.ml.model import model_signature
+from snowflake.ml.model import model_signature, type_hints
 from snowflake.ml.model._model_composer import model_method as model_method_pkg
 from snowflake.ml.model._model_composer.model_method import (
     function_generator,
@@ -47,7 +47,7 @@ class ModelMethodTest(absltest.TestCase):
                 self.assertEqual(
                     (
                         importlib_resources.files(model_method_pkg)
-                        .joinpath("fixtures")  # type: ignore[no-untyped-call]
+                        .joinpath("fixtures")
                         .joinpath("function_1.py")
                         .read_text()
                     ),
@@ -86,7 +86,7 @@ class ModelMethodTest(absltest.TestCase):
                 self.assertEqual(
                     (
                         importlib_resources.files(model_method_pkg)
-                        .joinpath("fixtures")  # type: ignore[no-untyped-call]
+                        .joinpath("fixtures")
                         .joinpath("function_2.py")
                         .read_text()
                     ),
@@ -151,7 +151,7 @@ class ModelMethodTest(absltest.TestCase):
                 self.assertEqual(
                     (
                         importlib_resources.files(model_method_pkg)
-                        .joinpath("fixtures")  # type: ignore[no-untyped-call]
+                        .joinpath("fixtures")
                         .joinpath("function_1.py")
                         .read_text()
                     ),
@@ -191,7 +191,7 @@ class ModelMethodTest(absltest.TestCase):
                 self.assertEqual(
                     (
                         importlib_resources.files(model_method_pkg)
-                        .joinpath("fixtures")  # type: ignore[no-untyped-call]
+                        .joinpath("fixtures")
                         .joinpath("function_3.py")
                         .read_text()
                     ),
@@ -208,6 +208,23 @@ class ModelMethodTest(absltest.TestCase):
                     "outputs": [{"name": "OUTPUT", "type": "FLOAT"}],
                 },
             )
+
+
+class ModelMethodOptionsTest(absltest.TestCase):
+    def test_get_model_method_options(self) -> None:
+        options: type_hints.ModelSaveOption = {
+            "function_type": model_method.ModelMethodFunctionTypes.TABLE_FUNCTION.value,
+        }
+        method_options = model_method.get_model_method_options_from_options(options=options, target_method="test")
+        assert method_options["function_type"] == model_method.ModelMethodFunctionTypes.TABLE_FUNCTION.value
+
+        # method option overrides global.
+        options = {
+            "function_type": model_method.ModelMethodFunctionTypes.TABLE_FUNCTION.value,
+            "method_options": {"test": {"function_type": model_method.ModelMethodFunctionTypes.FUNCTION.value}},
+        }
+        method_options = model_method.get_model_method_options_from_options(options=options, target_method="test")
+        assert method_options["function_type"] == model_method.ModelMethodFunctionTypes.FUNCTION.value
 
 
 if __name__ == "__main__":

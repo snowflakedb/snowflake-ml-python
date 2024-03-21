@@ -22,6 +22,7 @@ if TYPE_CHECKING:
     import mlflow
     import numpy as np
     import pandas as pd
+    import sentence_transformers
     import sklearn.base
     import sklearn.pipeline
     import tensorflow
@@ -32,6 +33,7 @@ if TYPE_CHECKING:
     import snowflake.ml.model.custom_model
     import snowflake.ml.model.models.huggingface_pipeline
     import snowflake.ml.model.models.llm
+    import snowflake.ml.model.models.sentence_transformers
     import snowflake.snowpark
     from snowflake.ml.modeling.framework import base  # noqa: F401
 
@@ -81,7 +83,9 @@ SupportedNoSignatureRequirementsModelType = Union[
     "base.BaseEstimator",
     "mlflow.pyfunc.PyFuncModel",
     "transformers.Pipeline",
+    "sentence_transformers.SentenceTransformer",
     "snowflake.ml.model.models.huggingface_pipeline.HuggingFacePipelineModel",
+    "snowflake.ml.model.models.sentence_transformers.SentenceTransformer",
     "snowflake.ml.model.models.llm.LLM",
 ]
 
@@ -106,6 +110,7 @@ Here is all acceptable types of Snowflake native model packaging and its handler
 | mlflow.pyfunc.PyFuncModel | mlflow.py   | _MLFlowHandler |
 | transformers.Pipeline | huggingface_pipeline.py | _HuggingFacePipelineHandler |
 | huggingface_pipeline.HuggingFacePipelineModel | huggingface_pipeline.py | _HuggingFacePipelineHandler |
+| sentence_transformers.SentenceTransformer | sentence_transformers.py | _SentenceTransformerHandler |
 """
 
 SupportedModelHandlerType = Literal[
@@ -113,6 +118,7 @@ SupportedModelHandlerType = Literal[
     "huggingface_pipeline",
     "mlflow",
     "pytorch",
+    "sentence_transformers",
     "sklearn",
     "snowml",
     "tensorflow",
@@ -215,6 +221,7 @@ class BaseModelSaveOption(TypedDict):
     embed_local_ml_library: NotRequired[bool]
     relax_version: NotRequired[bool]
     _legacy_save: NotRequired[bool]
+    function_type: NotRequired[Literal["FUNCTION", "TABLE_FUNCTION"]]
     method_options: NotRequired[Dict[str, ModelMethodSaveOptions]]
 
 
@@ -261,6 +268,11 @@ class HuggingFaceSaveOptions(BaseModelSaveOption):
     cuda_version: NotRequired[str]
 
 
+class SentenceTransformersSaveOptions(BaseModelSaveOption):
+    target_methods: NotRequired[Sequence[str]]
+    cuda_version: NotRequired[str]
+
+
 class LLMSaveOptions(BaseModelSaveOption):
     cuda_version: NotRequired[str]
 
@@ -276,6 +288,7 @@ ModelSaveOption = Union[
     TensorflowSaveOptions,
     MLFlowSaveOptions,
     HuggingFaceSaveOptions,
+    SentenceTransformersSaveOptions,
     LLMSaveOptions,
 ]
 

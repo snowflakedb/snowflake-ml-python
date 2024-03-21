@@ -53,7 +53,7 @@ class TestWarehousePytorchModelINteg(parameterized.TestCase):
         self,
         name: str,
         model: model_types.SupportedModelType,
-        sample_input: model_types.SupportedDataType,
+        sample_input_data: model_types.SupportedDataType,
         test_input: model_types.SupportedDataType,
         deploy_params: Dict[str, Tuple[Dict[str, Any], Callable[[Union[pd.DataFrame, SnowparkDataFrame]], Any]]],
         permanent_deploy: Optional[bool] = False,
@@ -64,7 +64,7 @@ class TestWarehousePytorchModelINteg(parameterized.TestCase):
             full_qual_stage=self.full_qual_stage,
             name=name,
             model=model,
-            sample_input=sample_input,
+            sample_input_data=sample_input_data,
             test_input=test_input,
             deploy_params=deploy_params,
             permanent_deploy=permanent_deploy,
@@ -82,7 +82,7 @@ class TestWarehousePytorchModelINteg(parameterized.TestCase):
         self.base_test_case(
             name="pytorch_model_tensor_as_sample",
             model=model,
-            sample_input=[data_x],
+            sample_input_data=[data_x],
             test_input=x_df,
             deploy_params={
                 "": (
@@ -107,7 +107,7 @@ class TestWarehousePytorchModelINteg(parameterized.TestCase):
         self.base_test_case(
             name="pytorch_model_df_as_sample",
             model=model,
-            sample_input=x_df,
+            sample_input_data=x_df,
             test_input=x_df,
             deploy_params={
                 "": (
@@ -137,7 +137,7 @@ class TestWarehousePytorchModelINteg(parameterized.TestCase):
         self.base_test_case(
             name="pytorch_model_sp",
             model=model,
-            sample_input=x_df,
+            sample_input_data=x_df,
             test_input=x_df_sp,
             deploy_params={
                 "": (
@@ -161,7 +161,7 @@ class TestWarehousePytorchModelINteg(parameterized.TestCase):
         self.base_test_case(
             name="torch_script_model_tensor_as_sample",
             model=model_script,
-            sample_input=[data_x],
+            sample_input_data=[data_x],
             test_input=x_df,
             deploy_params={
                 "": (
@@ -187,7 +187,7 @@ class TestWarehousePytorchModelINteg(parameterized.TestCase):
         self.base_test_case(
             name="torch_script_model_df_as_sample",
             model=model_script,
-            sample_input=x_df,
+            sample_input_data=x_df,
             test_input=x_df,
             deploy_params={
                 "": (
@@ -218,7 +218,7 @@ class TestWarehousePytorchModelINteg(parameterized.TestCase):
         self.base_test_case(
             name="torch_script_model_sp",
             model=model_script,
-            sample_input=x_df,
+            sample_input_data=x_df,
             test_input=x_df_sp,
             deploy_params={
                 "": (

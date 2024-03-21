@@ -98,7 +98,8 @@
                 "udf_inference",
                 "spcs_inference",
                 "model_packaging",
-                "build_essential"
+                "build_essential",
+                "build_test_env"
               ],
               "type": "string"
             }

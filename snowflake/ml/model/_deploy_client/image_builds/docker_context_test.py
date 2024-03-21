@@ -34,7 +34,7 @@ class DockerContextTest(absltest.TestCase):
         self.packager.save(
             name="model",
             model=_get_sklearn_model(),
-            sample_input=_IRIS_X,
+            sample_input_data=_IRIS_X,
         )
         assert self.packager.meta
         self.model_meta = self.packager.meta
@@ -89,7 +89,7 @@ class DockerContextTestCuda(absltest.TestCase):
         self.packager.save(
             name="model",
             model=_get_sklearn_model(),
-            sample_input=_IRIS_X,
+            sample_input_data=_IRIS_X,
         )
         assert self.packager.meta
         self.model_meta = self.packager.meta
@@ -148,7 +148,7 @@ class DockerContextTestModelWeights(absltest.TestCase):
         self.packager.save(
             name="model",
             model=_get_sklearn_model(),
-            sample_input=_IRIS_X,
+            sample_input_data=_IRIS_X,
         )
         assert self.packager.meta
         self.model_meta = self.packager.meta

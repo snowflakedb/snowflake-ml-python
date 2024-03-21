@@ -64,11 +64,11 @@ def delete_files_from_snowflake_stage(sp_session: snowpark.Session, snowflake_st
     sp_session.sql(query).collect()
 
 
-def create_tmp_snowflake_stage_if_not_exists(
-    sp_session: snowpark.Session, snowflake_stage: str, sse: bool = True
+def create_snowflake_stage_if_not_exists(
+    sp_session: snowpark.Session, snowflake_stage: str, sse: bool = True, temp: bool = True
 ) -> None:
     """Create a snowflake stage with server side encryption."""
-    query = f"create temp stage {snowflake_stage}"
+    query = f"create {'temp' if temp else ''} stage if not exists {snowflake_stage}"
     if sse:
         query += " ENCRYPTION = (TYPE = 'SNOWFLAKE_SSE')"
     sp_session.sql(query).collect()

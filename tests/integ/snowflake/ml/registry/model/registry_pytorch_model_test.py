@@ -17,7 +17,7 @@ class TestRegistryPytorchModelInteg(registry_model_test_base.RegistryModelTestBa
 
         self._test_registry_model(
             model=model,
-            sample_input=[data_x],
+            sample_input_data=[data_x],
             prediction_assert_fns={
                 "": (
                     x_df,
@@ -37,7 +37,7 @@ class TestRegistryPytorchModelInteg(registry_model_test_base.RegistryModelTestBa
 
         self._test_registry_model(
             model=model,
-            sample_input=x_df,
+            sample_input_data=x_df,
             prediction_assert_fns={
                 "": (
                     x_df,
@@ -62,7 +62,7 @@ class TestRegistryPytorchModelInteg(registry_model_test_base.RegistryModelTestBa
 
         self._test_registry_model(
             model=model,
-            sample_input=x_df,
+            sample_input_data=x_df,
             prediction_assert_fns={
                 "": (
                     x_df_sp,
@@ -81,7 +81,7 @@ class TestRegistryPytorchModelInteg(registry_model_test_base.RegistryModelTestBa
 
         self._test_registry_model(
             model=model_script,
-            sample_input=[data_x],
+            sample_input_data=[data_x],
             prediction_assert_fns={
                 "": (
                     x_df,
@@ -102,7 +102,7 @@ class TestRegistryPytorchModelInteg(registry_model_test_base.RegistryModelTestBa
 
         self._test_registry_model(
             model=model_script,
-            sample_input=x_df,
+            sample_input_data=x_df,
             prediction_assert_fns={
                 "": (
                     x_df,
@@ -128,7 +128,7 @@ class TestRegistryPytorchModelInteg(registry_model_test_base.RegistryModelTestBa
 
         self._test_registry_model(
             model=model_script,
-            sample_input=x_df,
+            sample_input_data=x_df,
             prediction_assert_fns={
                 "": (
                     x_df_sp,

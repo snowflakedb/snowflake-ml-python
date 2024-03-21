@@ -68,7 +68,7 @@ class ModelManager:
             name=model_name_id.resolved(),
             model=model,
             signatures=signatures,
-            sample_input=sample_input_data,
+            sample_input_data=sample_input_data,
             conda_dependencies=conda_dependencies,
             pip_requirements=pip_requirements,
             python_version=python_version,

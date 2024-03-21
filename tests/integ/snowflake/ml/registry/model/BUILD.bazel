@@ -123,3 +123,15 @@ py_test(
         "//snowflake/ml/_internal:env_utils",
     ],
 )
+
+py_test(
+    name = "registry_sentence_transformers_model_test",
+    srcs = ["registry_sentence_transformers_model_test.py"],
+    shard_count = 2,
+    deps = [
+        ":registry_model_test_base",
+        "//snowflake/ml/_internal:env_utils",
+        "//snowflake/ml/model/_signatures:snowpark_handler",
+        "//tests/integ/snowflake/ml/test_utils:dataframe_utils",
+    ],
+)

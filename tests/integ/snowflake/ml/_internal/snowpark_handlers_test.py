@@ -70,9 +70,9 @@ class SnowparkHandlersTest(common_test_base.CommonTestBase):
             dependencies=["snowflake-snowpark-python", "numpy", "scikit-learn", "cloudpickle"],
             inference_method="predict",
             input_cols=self.input_cols,
-            pass_through_cols=list(set(self.input_df.columns) - set(output_cols)),
+            drop_input_cols=False,
             expected_output_cols=output_cols,
-            expected_output_cols_type="INT",
+            expected_output_cols_type="int",
         )
 
         sklearn_numpy_arr = self.fit_estimator.predict(self.input_df_pandas[self.input_cols])

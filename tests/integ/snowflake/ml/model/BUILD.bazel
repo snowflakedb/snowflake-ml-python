@@ -157,6 +157,20 @@ py_test(
 )
 
 py_test(
+    name = "warehouse_sentence_transformers_model_integ_test",
+    timeout = "long",
+    srcs = ["warehouse_sentence_transformers_model_integ_test.py"],
+    shard_count = 4,
+    deps = [
+        ":warehouse_model_integ_test_utils",
+        "//snowflake/ml/_internal:env_utils",
+        "//snowflake/ml/model:type_hints",
+        "//snowflake/ml/utils:connection_params",
+        "//tests/integ/snowflake/ml/test_utils:db_manager",
+    ],
+)
+
+py_test(
     name = "spcs_llm_model_integ_test",
     timeout = "eternal",  # 3600s, GPU image takes very long to build..
     srcs = ["spcs_llm_model_integ_test.py"],
@@ -179,6 +193,7 @@ py_test(
     srcs = ["warehouse_model_compat_v1_test.py"],
     shard_count = 8,
     deps = [
+        "//snowflake/ml/_internal:env",
         "//snowflake/ml/model:_api",
         "//snowflake/ml/model:deploy_platforms",
         "//tests/integ/snowflake/ml/test_utils:common_test_base",

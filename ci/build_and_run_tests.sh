@@ -39,7 +39,6 @@ ENV="pip"
 WITH_SNOWPARK=false
 MODE="continuous_run"
 PYTHON_VERSION=3.8
-PYTHON_JENKINS_ENABLE="/opt/rh/rh-python38/enable"
 PYTHON_ENABLE_SCRIPT="bin/activate"
 SNOWML_DIR="snowml"
 SNOWPARK_DIR="snowpark-python"
@@ -151,7 +150,6 @@ case ${PYTHON_VERSION} in
     else
         PYTHON_EXECUTABLE="python3.8"
     fi
-    PYTHON_JENKINS_ENABLE="/opt/rh/rh-python38/enable"
     ;;
   3.9)
     if [ ${IS_NT} = true ]; then
@@ -159,7 +157,6 @@ case ${PYTHON_VERSION} in
     else
         PYTHON_EXECUTABLE="python3.9"
     fi
-    PYTHON_JENKINS_ENABLE="/opt/rh/rh-python39/enable"
     ;;
   3.10)
     if [ ${IS_NT} = true ]; then
@@ -167,7 +164,6 @@ case ${PYTHON_VERSION} in
     else
         PYTHON_EXECUTABLE="python3.10"
     fi
-    PYTHON_JENKINS_ENABLE="/opt/rh/rh-python310/enable"
     ;;
   3.11)
     if [ ${IS_NT} = true ]; then
@@ -175,23 +171,8 @@ case ${PYTHON_VERSION} in
     else
         PYTHON_EXECUTABLE="python3.11"
     fi
-    PYTHON_JENKINS_ENABLE="/opt/rh/rh-python311/enable"
     ;;
 esac
-
-# TODO(SNOW-901629): Use native python provided in the node once SNOW-1046060 resolved
-if [[ "${ENV}" = "pip" && ${IS_NT} = false ]]; then
-    set +eu
-    # shellcheck source=/dev/null
-    source ${PYTHON_JENKINS_ENABLE}
-    PYTHON_EXIST=$?
-    if [ $PYTHON_EXIST -ne 0 ]; then
-        echo "Failed to execute tests: ${PYTHON_EXECUTABLE} is not installed."
-        rm -rf "${TEMP_TEST_DIR}"
-        exit ${PYTHON_EXIST}
-    fi
-    set -eu
-fi
 
 cd "${WORKSPACE}"
 
@@ -311,7 +292,7 @@ if [ "${ENV}" = "pip" ]; then
     python --version
     python -m pip install --upgrade pip
     python -m pip list
-    python -m pip install "snowflake_ml_python-${VERSION}-py3-none-any.whl[all]" "pytest-xdist[psutil]==2.5.0" -r "${WORKSPACE}/${SNOWML_DIR}/requirements.txt" --no-cache-dir --force-reinstall
+    python -m pip install "snowflake_ml_python-${VERSION}-py3-none-any.whl[all]" -r "${WORKSPACE}/${SNOWML_DIR}/requirements.txt" --no-cache-dir --force-reinstall
     if [ "${WITH_SNOWPARK}" = true ]; then
         cp "$(find "${WORKSPACE}" -maxdepth 1 -iname 'snowflake_snowpark_python-*.whl')" "${TEMP_TEST_DIR}"
         python -m pip install "$(find . -maxdepth 1 -iname 'snowflake_snowpark_python-*.whl')" --no-deps --force-reinstall
@@ -331,7 +312,8 @@ else
     conda clean --all --force-pkgs-dirs -y
 
     # Create testing env
-    conda create -y -p testenv -c "${WORKSPACE}/conda-bld" -c "https://repo.anaconda.com/pkgs/snowflake/" --override-channels "python=${PYTHON_VERSION}" snowflake-ml-python "py==1.9.0" "pytest-xdist==2.5.0" psutil inflection "${OPTIONAL_REQUIREMENTS[@]}"
+    conda create -y -p testenv -c "${WORKSPACE}/conda-bld" -c "https://repo.anaconda.com/pkgs/snowflake/" --override-channels "python=${PYTHON_VERSION}" snowflake-ml-python "${OPTIONAL_REQUIREMENTS[@]}"
+    conda env update -p testenv -f "${WORKSPACE}/${SNOWML_DIR}/bazel/environments/conda-env-build-test.yml"
     conda list -p testenv
 
     # Run integration tests
