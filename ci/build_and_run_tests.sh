@@ -274,6 +274,7 @@ COMMON_PYTEST_FLAG+=(--strict-markers) # Strict the pytest markers to avoid typo
 COMMON_PYTEST_FLAG+=(--import-mode=append)
 COMMON_PYTEST_FLAG+=(--log-cli-level=INFO)
 COMMON_PYTEST_FLAG+=(-n logical)
+COMMON_PYTEST_FLAG+=(--reruns 1)
 
 if [[ -n "${JUNIT_REPORT_PATH}" ]]; then
     COMMON_PYTEST_FLAG+=(--junitxml "${JUNIT_REPORT_PATH}")

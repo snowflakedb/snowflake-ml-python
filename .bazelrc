@@ -2,6 +2,7 @@
 
 # Wrapper to make sure tests are run.
 test --run_under='//bazel:test_wrapper'
+test --flaky_test_attempts=2
 
 # Since integration tests are located in different packages than code under test,
 # the default instrumentation filter would exclude the code under test. This
