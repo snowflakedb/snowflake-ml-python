@@ -1,12 +1,25 @@
 # Release History
 
-## 1.3.1
+## 1.4.0
+
+### Bug Fixes
+
+### Behavior Changes
+
+- Registry: `apply` method is no longer by default logged when logging a xgboost model. If that is required, it could
+  be specified manually when logging the model by `log_model(..., options={"target_methods": ["apply", ...]})`.
+
+### New Features
+
+- Registry: Add support for `sentence-transformers` model (`sentence_transformers.SentenceTransformer`).
+
+## 1.3.1 (2024-03-21)
 
 ### New Features
 
 - FileSet: `snowflake.ml.fileset.sfcfs.SFFileSystem` can now be used in UDFs and stored procedures.
 
-## 1.3.0
+## 1.3.0 (2024-03-12)
 
 ### Bug Fixes
 

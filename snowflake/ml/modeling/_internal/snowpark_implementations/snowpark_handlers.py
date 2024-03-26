@@ -131,6 +131,9 @@ class SnowparkTransformHandlers:
 
             input_df.columns = snowpark_cols
 
+            if hasattr(estimator, "n_jobs"):
+                # Vectorized UDF cannot handle joblib multiprocessing right now, deactivate the n_jobs
+                estimator.n_jobs = 1
             inference_res = getattr(estimator, inference_method)(input_df, *args, **kwargs)
 
             transformed_numpy_array, output_cols = handle_inference_result(
