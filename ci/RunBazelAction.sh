@@ -149,6 +149,7 @@ if [[ "${action}" = "test" ]]; then
     "${bazel}" test \
         "${cache_test_results}" \
         --test_output=errors \
+        --flaky_test_attempts=2 \
         "${tag_filter}" \
         --target_pattern_file "${sf_only_test_targets_file}"
     sf_only_bazel_exit_code=$?
@@ -158,6 +159,7 @@ if [[ "${action}" = "test" ]]; then
         --config=extended \
         "${cache_test_results}" \
         --test_output=errors \
+        --flaky_test_attempts=2 \
         "${tag_filter}" \
         --target_pattern_file "${extended_test_targets_file}"
     extended_bazel_exit_code=$?

@@ -4,6 +4,7 @@ from typing import Any, Dict, List, Optional
 import pandas as pd
 from absl.logging import logging
 
+from snowflake.ml._internal.human_readable_id import hrid_generator
 from snowflake.ml._internal.utils import sql_identifier
 from snowflake.ml.model import model_signature, type_hints as model_types
 from snowflake.ml.model._client.model import model_impl, model_version_impl
@@ -27,13 +28,14 @@ class ModelManager:
         self._model_ops = model_ops.ModelOperator(
             session, database_name=self._database_name, schema_name=self._schema_name
         )
+        self._hrid_generator = hrid_generator.HRID16()
 
     def log_model(
         self,
         model: model_types.SupportedModelType,
         *,
         model_name: str,
-        version_name: str,
+        version_name: Optional[str] = None,
         comment: Optional[str] = None,
         metrics: Optional[Dict[str, Any]] = None,
         conda_dependencies: Optional[List[str]] = None,
@@ -48,6 +50,8 @@ class ModelManager:
     ) -> model_version_impl.ModelVersion:
         model_name_id = sql_identifier.SqlIdentifier(model_name)
 
+        if not version_name:
+            version_name = self._hrid_generator.generate()[1]
         version_name_id = sql_identifier.SqlIdentifier(version_name)
 
         if self._model_ops.validate_existence(

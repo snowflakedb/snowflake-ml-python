@@ -149,7 +149,9 @@ class CustomModel:
         context: A ModelContext object showing sub-models and artifacts related to this model.
     """
 
-    def __init__(self, context: ModelContext) -> None:
+    def __init__(self, context: Optional[ModelContext] = None) -> None:
+        if context is None:
+            context = ModelContext()
         self.context = context
         for method in self._get_infer_methods():
             _validate_predict_function(method)

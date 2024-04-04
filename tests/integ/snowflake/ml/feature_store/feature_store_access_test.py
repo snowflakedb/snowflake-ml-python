@@ -95,7 +95,7 @@ class FeatureStoreAccessTest(parameterized.TestCase):
                 timestamp_col="ts",
                 refresh_freq="DOWNSTREAM",
             )
-            fv1 = cls._feature_store.register_feature_view(feature_view=fv1, version="v1", block=True)
+            fv1 = cls._feature_store.register_feature_view(feature_view=fv1, version="v1")
 
             fv2 = FeatureView(
                 name="fv2",
@@ -104,7 +104,7 @@ class FeatureStoreAccessTest(parameterized.TestCase):
                 timestamp_col="ts",
                 refresh_freq="DOWNSTREAM",
             )
-            fv2 = cls._feature_store.register_feature_view(feature_view=fv2, version="v1", block=True)
+            fv2 = cls._feature_store.register_feature_view(feature_view=fv2, version="v1")
 
             return test_table
 
@@ -247,16 +247,15 @@ class FeatureStoreAccessTest(parameterized.TestCase):
             self._session.use_role(schema_admin)
             self._session.sql(f"DROP SCHEMA IF EXISTS {self._test_database}.{schema}").collect()
 
-    @parameterized.product(required_access=[Role.CONSUMER], test_access=list(Role))  # type: ignore[misc]
-    def test_merge_features(self, required_access: Role, test_access: Role) -> None:
-        fv1 = self._feature_store.get_feature_view("fv1", "v1")
-        fv2 = self._feature_store.get_feature_view("fv2", "v1")
+    @parameterized.product(required_access=[Role.PRODUCER], test_access=list(Role))  # type: ignore[misc]
+    def test_register_entity(self, required_access: Role, test_access: Role) -> None:
+        e = Entity(f"test_entity_{uuid4().hex.upper()}"[:32], ["id"])
 
         self._test_access(
-            lambda: self._feature_store.merge_features([fv1, fv2], "merged_fv"),
+            lambda: self._feature_store.register_entity(e),
             required_access,
             test_access,
-            access_exception_dict={Role.NONE: snowpark_exceptions.SnowparkSQLException},
+            lambda _: self.assertIn(e.name, [r["NAME"] for r in self._feature_store.list_entities().collect()]),
         )
 
     @parameterized.product(required_access=[Role.PRODUCER], test_access=list(Role))  # type: ignore[misc]
@@ -289,7 +288,7 @@ class FeatureStoreAccessTest(parameterized.TestCase):
             timestamp_col="ts",
             refresh_freq="DOWNSTREAM",
         )
-        fv = self._feature_store.register_feature_view(fv, "test", override=True)
+        fv = self._feature_store.register_feature_view(fv, "test", overwrite=True)
 
         try:
             self._test_access(
@@ -311,7 +310,7 @@ class FeatureStoreAccessTest(parameterized.TestCase):
             timestamp_col="ts",
             refresh_freq="DOWNSTREAM",
         )
-        fv = self._feature_store.register_feature_view(fv, "test", override=True)
+        fv = self._feature_store.register_feature_view(fv, "test", overwrite=True)
         fv = self._feature_store.suspend_feature_view(fv)
 
         try:
@@ -352,7 +351,7 @@ class FeatureStoreAccessTest(parameterized.TestCase):
         )
 
         self._session.use_role(self._test_roles[Role.PRODUCER])
-        fv = self._feature_store.register_feature_view(fv, "test", override=True)
+        fv = self._feature_store.register_feature_view(fv, "test", overwrite=True)
 
         try:
             self._test_access(

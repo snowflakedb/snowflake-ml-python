@@ -81,7 +81,7 @@ class FeatureStoreLargeScaleTest(absltest.TestCase):
             refresh_freq="* * * * * America/Los_Angeles",
             desc="wine features",
         )
-        fv = fs.register_feature_view(feature_view=fv, version="v1", block=True)
+        fv = fs.register_feature_view(feature_view=fv, version="v1")
         self.assertEqual(fv.refresh_freq, "DOWNSTREAM")
         self.assertEqual(len(fs.read_feature_view(fv).collect()), 1599)
 
@@ -120,11 +120,7 @@ class FeatureStoreLargeScaleTest(absltest.TestCase):
             desc="location features",
         )
 
-        location_features = fs.register_feature_view(
-            feature_view=location_features,
-            version="V1",
-            block=True,
-        )
+        location_features = fs.register_feature_view(feature_view=location_features, version="V1")
 
         def create_select_query(start: str, end: str) -> str:
             return f"""SELECT DISTINCT DATE_TRUNC('second', TO_TIMESTAMP(TPEP_DROPOFF_DATETIME)) AS DROPOFF_TIME,

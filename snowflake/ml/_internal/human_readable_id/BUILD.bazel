@@ -1,0 +1,36 @@
+load("//bazel:py_rules.bzl", "py_library", "py_test")
+
+package(default_visibility = ["//visibility:public"])
+
+filegroup(
+    name = "hrid_words",
+    srcs = [
+        "adjectives.txt",
+        "animals.txt",
+    ],
+)
+
+py_library(
+    name = "hrid_generator_base",
+    srcs = ["hrid_generator_base.py"],
+)
+
+py_library(
+    name = "hrid_generator",
+    srcs = ["hrid_generator.py"],
+    data = [
+        ":hrid_words",
+    ],
+    deps = [
+        ":hrid_generator_base",
+    ],
+)
+
+py_test(
+    name = "hrid_generator_test",
+    srcs = ["hrid_generator_test.py"],
+    deps = [
+        ":hrid_generator",
+        "//snowflake/ml/_internal/utils:sql_identifier",
+    ],
+)

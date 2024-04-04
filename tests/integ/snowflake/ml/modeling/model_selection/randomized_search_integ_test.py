@@ -137,6 +137,7 @@ class RandomizedSearchCVTest(parameterized.TestCase):
             "params": {"n_estimators": [50, 200], "max_depth": [3, 8]},
             "kwargs": dict(),
             "estimator_kwargs": dict(random_state=0),
+            "enable_efficient_memory_usage": False,
         },
         {
             "is_single_node": False,
@@ -145,6 +146,7 @@ class RandomizedSearchCVTest(parameterized.TestCase):
             "params": {"kernel": ("linear", "rbf"), "C": [1, 10, 80]},
             "kwargs": dict(),
             "estimator_kwargs": dict(random_state=0),
+            "enable_efficient_memory_usage": False,
         },
         {
             "is_single_node": False,
@@ -153,13 +155,55 @@ class RandomizedSearchCVTest(parameterized.TestCase):
             "params": {"max_depth": [2, 6], "learning_rate": [0.1, 0.01]},
             "kwargs": dict(scoring=["accuracy", "f1_macro"], refit="f1_macro"),
             "estimator_kwargs": dict(seed=42),
+            "enable_efficient_memory_usage": False,
+        },
+        {
+            "is_single_node": True,
+            "skmodel": SkRandomForestClassifier,
+            "model": RandomForestClassifier,
+            "params": {"n_estimators": [50, 200], "max_depth": [3, 8]},
+            "kwargs": dict(),
+            "estimator_kwargs": dict(random_state=0),
+            "enable_efficient_memory_usage": True,
+        },
+        {
+            "is_single_node": False,
+            "skmodel": SkSVC,
+            "model": SVC,
+            "params": {"kernel": ("linear", "rbf"), "C": [1, 10, 80]},
+            "kwargs": dict(),
+            "estimator_kwargs": dict(random_state=0),
+            "enable_efficient_memory_usage": True,
+        },
+        {
+            "is_single_node": False,
+            "skmodel": SkXGBClassifier,
+            "model": XGBClassifier,
+            "params": {"max_depth": [2, 6], "learning_rate": [0.1, 0.01]},
+            "kwargs": dict(scoring=["accuracy", "f1_macro"], refit="f1_macro"),
+            "estimator_kwargs": dict(seed=42),
+            "enable_efficient_memory_usage": True,
         },
     )
     @mock.patch("snowflake.ml.modeling._internal.model_trainer_builder.is_single_node")
     def test_fit_and_compare_results(
-        self, mock_is_single_node, is_single_node, skmodel, model, params, kwargs, estimator_kwargs
+        self,
+        mock_is_single_node,
+        is_single_node,
+        skmodel,
+        model,
+        params,
+        kwargs,
+        estimator_kwargs,
+        enable_efficient_memory_usage,
     ) -> None:
         mock_is_single_node.return_value = is_single_node
+
+        from snowflake.ml.modeling._internal.snowpark_implementations import (
+            distributed_hpo_trainer,
+        )
+
+        distributed_hpo_trainer.ENABLE_EFFICIENT_MEMORY_USAGE = enable_efficient_memory_usage
 
         sklearn_reg = SkRandomizedSearchCV(
             estimator=skmodel(**estimator_kwargs), param_distributions=params, random_state=0, cv=3, **kwargs
@@ -254,9 +298,22 @@ class RandomizedSearchCVTest(parameterized.TestCase):
                 actual_pandas_result.flatten(), sklearn_decision_function.flatten(), rtol=1.0e-1, atol=1.0e-2
             )
 
+    @parameterized.parameters(
+        {
+            "enable_efficient_memory_usage": False,
+        },
+        {
+            "enable_efficient_memory_usage": True,
+        },
+    )
     @mock.patch("snowflake.ml.modeling._internal.model_trainer_builder.is_single_node")
-    def test_transform(self, mock_is_single_node) -> None:
+    def test_transform(self, mock_is_single_node, enable_efficient_memory_usage) -> None:
         mock_is_single_node.return_value = False
+        from snowflake.ml.modeling._internal.snowpark_implementations import (
+            distributed_hpo_trainer,
+        )
+
+        distributed_hpo_trainer.ENABLE_EFFICIENT_MEMORY_USAGE = enable_efficient_memory_usage
 
         params = {"n_components": range(1, 3)}
         sk_pca = SkPCA()

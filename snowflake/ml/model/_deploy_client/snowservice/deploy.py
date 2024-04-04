@@ -239,13 +239,16 @@ def _validate_compute_pool(session: Session, *, options: deploy_options.SnowServ
                 ),
             )
 
-    elif state not in ["ACTIVE", "IDLE"]:
+    elif state not in ["STARTING", "ACTIVE", "IDLE"]:
         raise snowml_exceptions.SnowflakeMLException(
             error_code=error_codes.INVALID_SNOWPARK_COMPUTE_POOL,
             original_exception=RuntimeError(
-                "The compute pool you are requesting to use is not in the ACTIVE/IDLE status."
+                "The compute pool you are requesting to use is not in the ACTIVE/IDLE/STARTING status."
             ),
         )
+
+    if state in ["SUSPENDED", "STARTING"]:
+        logger.warning(f"The compute pool you are requesting is in {state} state. We are waiting it to be ready.")
 
     if options.use_gpu:
         assert options.num_gpus is not None
