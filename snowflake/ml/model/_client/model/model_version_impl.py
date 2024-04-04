@@ -21,6 +21,7 @@ class ModelVersion:
     _model_ops: model_ops.ModelOperator
     _model_name: sql_identifier.SqlIdentifier
     _version_name: sql_identifier.SqlIdentifier
+    _functions: List[model_manifest_schema.ModelFunctionInfo]
 
     def __init__(self) -> None:
         raise RuntimeError("ModelVersion's initializer is not meant to be used. Use `version` from model instead.")
@@ -37,6 +38,7 @@ class ModelVersion:
         self._model_ops = model_ops
         self._model_name = model_name
         self._version_name = version_name
+        self._functions = self._get_functions()
         return self
 
     def __eq__(self, __value: object) -> bool:
@@ -239,20 +241,7 @@ class ModelVersion:
             return_functions_info.append(fi)
         return return_functions_info
 
-    @telemetry.send_api_usage_telemetry(
-        project=_TELEMETRY_PROJECT,
-        subproject=_TELEMETRY_SUBPROJECT,
-    )
-    def show_functions(self) -> List[model_manifest_schema.ModelFunctionInfo]:
-        """Show all functions information in a model version that is callable.
-
-        Returns:
-            A list of ModelFunctionInfo objects containing the following information:
-
-            - name: The name of the function to be called (both in SQL and in Python SDK).
-            - target_method: The original method name in the logged Python object.
-            - signature: Python signature of the original method.
-        """
+    def _get_functions(self) -> List[model_manifest_schema.ModelFunctionInfo]:
         statement_params = telemetry.get_statement_params(
             project=_TELEMETRY_PROJECT,
             subproject=_TELEMETRY_SUBPROJECT,
@@ -273,6 +262,22 @@ class ModelVersion:
             ]
         except (NotImplementedError, ValueError, connector.DataError):
             return self._legacy_show_functions()
+
+    @telemetry.send_api_usage_telemetry(
+        project=_TELEMETRY_PROJECT,
+        subproject=_TELEMETRY_SUBPROJECT,
+    )
+    def show_functions(self) -> List[model_manifest_schema.ModelFunctionInfo]:
+        """Show all functions information in a model version that is callable.
+
+        Returns:
+            A list of ModelFunctionInfo objects containing the following information:
+
+            - name: The name of the function to be called (both in SQL and in Python SDK).
+            - target_method: The original method name in the logged Python object.
+            - signature: Python signature of the original method.
+        """
+        return self._functions
 
     @telemetry.send_api_usage_telemetry(
         project=_TELEMETRY_PROJECT,
@@ -306,7 +311,7 @@ class ModelVersion:
             subproject=_TELEMETRY_SUBPROJECT,
         )
 
-        functions: List[model_manifest_schema.ModelFunctionInfo] = self.show_functions()
+        functions: List[model_manifest_schema.ModelFunctionInfo] = self._functions
         if function_name:
             req_method_name = sql_identifier.SqlIdentifier(function_name).identifier()
             find_method: Callable[[model_manifest_schema.ModelFunctionInfo], bool] = (

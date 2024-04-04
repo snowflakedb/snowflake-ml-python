@@ -1,7 +1,7 @@
 """String formatting utilities for general use in the SnowML Reposiory.
 
 This file contains a collection of utilities that help with formatting strings. Functionality is not limited to tests
-only. Anything that is re-usable across different modules and related to string formatting should go here.
+only. Anything that is reusable across different modules and related to string formatting should go here.
 """
 
 import re

@@ -1,6 +1,7 @@
 import glob
 import pathlib
 import tempfile
+import uuid
 import zipfile
 from types import ModuleType
 from typing import Any, Dict, List, Optional
@@ -31,7 +32,6 @@ class ModelComposer:
         will zip it. This would not be required if we make directory import work.
     """
 
-    MODEL_FILE_REL_PATH = "model.zip"
     MODEL_DIR_REL_PATH = "model"
 
     def __init__(
@@ -50,6 +50,8 @@ class ModelComposer:
         self.packager = model_packager.ModelPackager(local_dir_path=str(self._packager_workspace_path))
         self.manifest = model_manifest.ModelManifest(workspace_path=self.workspace_path)
 
+        self.model_file_rel_path = f"model-{uuid.uuid4().hex}.zip"
+
         self._statement_params = statement_params
 
     def __del__(self) -> None:
@@ -66,11 +68,11 @@ class ModelComposer:
 
     @property
     def model_stage_path(self) -> str:
-        return (self.stage_path / ModelComposer.MODEL_FILE_REL_PATH).as_posix()
+        return (self.stage_path / self.model_file_rel_path).as_posix()
 
     @property
     def model_local_path(self) -> str:
-        return str(self.workspace_path / ModelComposer.MODEL_FILE_REL_PATH)
+        return str(self.workspace_path / self.model_file_rel_path)
 
     def save(
         self,
@@ -130,7 +132,7 @@ class ModelComposer:
         self.manifest.save(
             session=self.session,
             model_meta=self.packager.meta,
-            model_file_rel_path=pathlib.PurePosixPath(ModelComposer.MODEL_FILE_REL_PATH),
+            model_file_rel_path=pathlib.PurePosixPath(self.model_file_rel_path),
             options=options,
         )
 
@@ -156,7 +158,7 @@ class ModelComposer:
 
         # TODO (Server-side Model Rollout): Remove this section.
         model_zip_path = pathlib.Path(glob.glob(str(self.workspace_path / "*.zip"))[0])
-        ModelComposer.MODEL_FILE_REL_PATH = str(model_zip_path.relative_to(self.workspace_path))
+        self.model_file_rel_path = str(model_zip_path.relative_to(self.workspace_path))
 
         with zipfile.ZipFile(self.model_local_path, mode="r", compression=zipfile.ZIP_DEFLATED) as zf:
             zf.extractall(path=self._packager_workspace_path)

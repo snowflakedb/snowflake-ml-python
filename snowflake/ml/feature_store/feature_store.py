@@ -233,12 +233,15 @@ class FeatureStore:
         self._default_warehouse = warehouse
 
     @dispatch_decorator(prpr_version="1.0.8")
-    def register_entity(self, entity: Entity) -> None:
+    def register_entity(self, entity: Entity) -> Entity:
         """
         Register Entity in the FeatureStore.
 
         Args:
             entity: Entity object to register.
+
+        Returns:
+            A registered entity object.
 
         Raises:
             SnowflakeMLException: [ValueError] Entity with same name is already registered.
@@ -269,7 +272,10 @@ class FeatureStore:
                 error_code=error_codes.INTERNAL_SNOWPARK_ERROR,
                 original_exception=RuntimeError(f"Failed to register entity `{entity.name}`: {e}."),
             ) from e
+
         logger.info(f"Registered Entity {entity}.")
+
+        return self.get_entity(entity.name)
 
     # TODO: add support to update column desc once SNOW-894249 is fixed
     @dispatch_decorator(prpr_version="1.0.8")
@@ -277,7 +283,7 @@ class FeatureStore:
         self,
         feature_view: FeatureView,
         version: str,
-        block: bool = False,
+        block: bool = True,
         override: bool = False,
     ) -> FeatureView:
         """
@@ -297,7 +303,7 @@ class FeatureStore:
             version: version of the registered FeatureView.
                 NOTE: Version only accepts letters, numbers and underscore. Also version will be capitalized.
             block: Specify whether the FeatureView backend materialization should be blocking or not. If blocking then
-                the API will wait until the initial FeatureView data is generated.
+                the API will wait until the initial FeatureView data is generated. Default to true.
             override: Override the existing FeatureView with same version. This is the same as dropping the FeatureView
                 first then recreate. NOTE: there will be backfill cost associated if the FeatureView is being
                 continuously maintained.
@@ -524,104 +530,6 @@ class FeatureStore:
             )
 
         return self._compose_feature_view(results[0], self.list_entities().collect())
-
-    @dispatch_decorator(prpr_version="1.0.8")
-    def merge_features(
-        self,
-        features: List[Union[FeatureView, FeatureViewSlice]],
-        name: str,
-        desc: str = "",
-    ) -> FeatureView:
-        """
-        Merge multiple registered FeatureView or FeatureViewSlice to form a new FeatureView.
-        This is typically used to add new features to existing FeatureViews since registered FeatureView is immutable.
-        The FeatureViews or FeatureViewSlices to merge should have same Entity and timestamp column setup.
-
-        Args:
-            features: List of FeatureViews or FeatureViewSlices to merge
-            name: name of the new constructed FeatureView
-            desc: description of the new constructed FeatureView
-
-        Returns:
-            a new FeatureView with features merged.
-
-        Raises:
-            SnowflakeMLException: [ValueError] Features length is not valid or if Entitis and timestamp_col is
-                inconsistent.
-            SnowflakeMLException: [ValueError] FeatureView has not been registered.
-            SnowflakeMLException: [ValueError] FeatureView merge failed.
-        """
-        name = SqlIdentifier(name)
-
-        if len(features) < 2:
-            raise snowml_exceptions.SnowflakeMLException(
-                error_code=error_codes.INVALID_ARGUMENT,
-                original_exception=ValueError("features should have at least two entries"),
-            )
-
-        left = features[0]
-        left_columns = None
-        if isinstance(left, FeatureViewSlice):
-            left_columns = ", ".join(left.names)
-            left = left.feature_view_ref
-
-        if left.status == FeatureViewStatus.DRAFT:
-            raise snowml_exceptions.SnowflakeMLException(
-                error_code=error_codes.NOT_FOUND,
-                original_exception=ValueError(f"FeatureView {left.name} has not been registered."),
-            )
-
-        join_keys = [k for e in left.entities for k in e.join_keys]
-
-        ts_col_expr = "" if left.timestamp_col is None else f" , {left.timestamp_col}"
-        left_columns = "*" if left_columns is None else f"{', '.join(join_keys)}, {left_columns}{ts_col_expr}"
-        left_df = self._session.sql(f"SELECT {left_columns} FROM {left.fully_qualified_name()}")
-
-        for right in features[1:]:
-            right_columns = None
-            if isinstance(right, FeatureViewSlice):
-                right_columns = ", ".join(right.names)
-                right = right.feature_view_ref
-
-            if left.entities != right.entities:
-                raise snowml_exceptions.SnowflakeMLException(
-                    error_code=error_codes.INVALID_ARGUMENT,
-                    original_exception=ValueError(
-                        f"Cannot merge FeatureView {left.name} and {right.name} with different Entities: "
-                        f"{left.entities} vs {right.entities}"  # noqa: E501
-                    ),
-                )
-            if left.timestamp_col != right.timestamp_col:
-                raise snowml_exceptions.SnowflakeMLException(
-                    error_code=error_codes.INVALID_ARGUMENT,
-                    original_exception=ValueError(
-                        f"Cannot merge FeatureView {left.name} and {right.name} with different timestamp_col: "
-                        f"{left.timestamp_col} vs {right.timestamp_col}"  # noqa: E501
-                    ),
-                )
-            if right.status == FeatureViewStatus.DRAFT:
-                raise snowml_exceptions.SnowflakeMLException(
-                    error_code=error_codes.NOT_FOUND,
-                    original_exception=ValueError(f"FeatureView {right.name} has not been registered."),
-                )
-
-            right_columns = "*" if right_columns is None else f"{', '.join(join_keys)}, {right_columns}"
-            exclude_ts_expr = (
-                "" if right.timestamp_col is None or right_columns != "*" else f"EXCLUDE {right.timestamp_col}"
-            )
-            right_df = self._session.sql(
-                f"SELECT {right_columns} {exclude_ts_expr} FROM {right.fully_qualified_name()}"
-            )
-
-            left_df = left_df.join(right=right_df, on=join_keys)
-
-        return FeatureView(
-            name=name,
-            entities=left.entities,
-            feature_df=left_df,
-            timestamp_col=left.timestamp_col,
-            desc=desc,
-        )
 
     @dispatch_decorator(prpr_version="1.0.8")
     def resume_feature_view(self, feature_view: FeatureView) -> FeatureView:
@@ -1056,10 +964,7 @@ class FeatureStore:
                 WAREHOUSE = {warehouse}
                 AS {feature_view.query}
             """
-            self._session.sql(query).collect(statement_params=self._telemetry_stmp)
-            self._session.sql(f"ALTER DYNAMIC TABLE {fully_qualified_name} REFRESH").collect(
-                block=block, statement_params=self._telemetry_stmp
-            )
+            self._session.sql(query).collect(block=block, statement_params=self._telemetry_stmp)
 
             if schedule_task:
                 try:
@@ -1092,6 +997,10 @@ class FeatureStore:
                 ),
             ) from e
 
+        if block:
+            self._check_dynamic_table_refresh_mode(feature_view_name)
+
+    def _check_dynamic_table_refresh_mode(self, feature_view_name: SqlIdentifier) -> None:
         found_dts = self._find_object("DYNAMIC TABLES", feature_view_name)
         if len(found_dts) != 1:
             raise snowml_exceptions.SnowflakeMLException(
@@ -1161,7 +1070,7 @@ class FeatureStore:
     def _validate_entity_exists(self, name: SqlIdentifier) -> bool:
         full_entity_tag_name = self._get_entity_name(name)
         found_rows = self._find_object("TAGS", full_entity_tag_name)
-        return len(found_rows) > 0
+        return len(found_rows) == 1
 
     def _join_features(
         self,

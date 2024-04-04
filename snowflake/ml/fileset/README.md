@@ -184,7 +184,7 @@ machine learning libraries like PyTorch and TensorFlow.
 
 ##### Supported data types
 
-For supported data types, the casting will happen implicitly. The followings are supported data types:
+For supported data types, the casting will happen implicitly. The following are supported data types:
 | Snowflake Data Type        | FileSet Casted Data Type |
 | -------------------------- | ------------------------ |
 | NUMBER with zero scale     | int                      |

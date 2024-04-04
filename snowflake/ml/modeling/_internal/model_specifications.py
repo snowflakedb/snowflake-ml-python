@@ -29,7 +29,7 @@ class SKLearnModelSpecifications(ModelSpecifications):
         ]
 
         # A change from previous implementation.
-        # When reusing the Sprocs for all the fit() call in the session, the static dpendencies list should include
+        # When reusing the Sprocs for all the fit() call in the session, the static dependencies list should include
         # all the possible dependencies required during the lifetime.
 
         # Include XGBoost in the dependencies if it is installed.
@@ -67,10 +67,12 @@ class XGBoostModelSpecifications(ModelSpecifications):
 class LightGBMModelSpecifications(ModelSpecifications):
     def __init__(self) -> None:
         import lightgbm
+        import sklearn
 
         imports: List[str] = ["lightgbm"]
         pkgDependencies: List[str] = [
             f"numpy=={np.__version__}",
+            f"scikit-learn=={sklearn.__version__}",
             f"lightgbm=={lightgbm.__version__}",
             f"cloudpickle=={cp.__version__}",
         ]

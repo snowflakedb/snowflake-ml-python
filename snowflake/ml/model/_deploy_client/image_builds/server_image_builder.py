@@ -174,9 +174,7 @@ class ServerImageBuilder(base_image_builder.ImageBuilder):
             .read_text("utf-8")
         )
 
-        spec_file_path = os.path.join(
-            os.path.dirname(self.context_dir), f"{constants.IMAGE_BUILD_JOB_SPEC_TEMPLATE}.yaml"
-        )
+        spec_file_path = os.path.join(self.context_dir, f"{constants.IMAGE_BUILD_JOB_SPEC_TEMPLATE}.yaml")
 
         with file_utils.open_file(spec_file_path, "w+") as spec_file:
             assert self.artifact_stage_location.startswith("@")

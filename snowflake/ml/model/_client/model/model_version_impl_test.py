@@ -27,15 +27,29 @@ class ModelVersionImplTest(absltest.TestCase):
     def setUp(self) -> None:
         self.m_session = mock_session.MockSession(conn=None, test_case=self)
         self.c_session = cast(Session, self.m_session)
-        self.m_mv = model_version_impl.ModelVersion._ref(
-            model_ops.ModelOperator(
-                self.c_session,
-                database_name=sql_identifier.SqlIdentifier("TEMP"),
-                schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
-            ),
-            model_name=sql_identifier.SqlIdentifier("MODEL"),
-            version_name=sql_identifier.SqlIdentifier("v1", case_sensitive=True),
-        )
+        with mock.patch.object(model_version_impl.ModelVersion, "_get_functions", return_value=[]):
+            self.m_mv = model_version_impl.ModelVersion._ref(
+                model_ops.ModelOperator(
+                    self.c_session,
+                    database_name=sql_identifier.SqlIdentifier("TEMP"),
+                    schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
+                ),
+                model_name=sql_identifier.SqlIdentifier("MODEL"),
+                version_name=sql_identifier.SqlIdentifier("v1", case_sensitive=True),
+            )
+
+    def test_ref(self) -> None:
+        with mock.patch.object(model_version_impl.ModelVersion, "_get_functions", return_value=[]) as mock_list_methods:
+            model_version_impl.ModelVersion._ref(
+                model_ops.ModelOperator(
+                    self.c_session,
+                    database_name=sql_identifier.SqlIdentifier("TEMP"),
+                    schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
+                ),
+                model_name=sql_identifier.SqlIdentifier("MODEL"),
+                version_name=sql_identifier.SqlIdentifier("v1", case_sensitive=True),
+            )
+            mock_list_methods.assert_called_once_with()
 
     def test_property(self) -> None:
         self.assertEqual(self.m_mv.model_name, "MODEL")
@@ -141,6 +155,17 @@ class ModelVersionImplTest(absltest.TestCase):
                 )
                 mock_save.assert_not_called()
 
+    def test_show_functions_0(self) -> None:
+        with mock.patch.object(
+            self.m_mv._model_ops, "get_client_data_in_user_data", side_effect=NotImplementedError()
+        ) as mock_get_client_data_in_user_data:
+            methods = self.m_mv.show_functions()
+            mock_get_client_data_in_user_data.assert_not_called()
+            self.assertEqual(
+                methods,
+                [],
+            )
+
     def test_show_functions_1(self) -> None:
         m_manifest = {
             "manifest_version": "1.0",
@@ -219,7 +244,7 @@ class ModelVersionImplTest(absltest.TestCase):
         ) as mock_get_model_version_manifest, mock.patch.object(
             self.m_mv._model_ops, "get_model_version_native_packing_meta", return_value=m_meta_yaml
         ) as mock_get_model_version_native_packing_meta:
-            methods = self.m_mv.show_functions()
+            methods = self.m_mv._get_functions()
             mock_get_model_version_manifest.assert_called_once_with(
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
                 version_name=sql_identifier.SqlIdentifier("v1", case_sensitive=True),
@@ -273,7 +298,7 @@ class ModelVersionImplTest(absltest.TestCase):
         ) as mock_get_model_version_manifest, mock.patch.object(
             self.m_mv._model_ops, "get_model_version_native_packing_meta"
         ) as mock_get_model_version_native_packing_meta:
-            methods = self.m_mv.show_functions()
+            methods = self.m_mv._get_functions()
             mock_get_client_data_in_user_data.assert_called_once_with(
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
                 version_name=sql_identifier.SqlIdentifier("v1", case_sensitive=True),
@@ -300,34 +325,30 @@ class ModelVersionImplTest(absltest.TestCase):
     def test_run(self) -> None:
         m_df = mock_data_frame.MockDataFrame()
         m_methods = [
-            {
-                "name": '"predict"',
-                "target_method": "predict",
-                "signature": _DUMMY_SIG["predict"],
-            },
-            {
-                "name": "__CALL__",
-                "target_method": "__call__",
-                "signature": _DUMMY_SIG["predict"],
-            },
+            model_manifest_schema.ModelFunctionInfo(
+                {
+                    "name": '"predict"',
+                    "target_method": "predict",
+                    "signature": _DUMMY_SIG["predict"],
+                }
+            ),
+            model_manifest_schema.ModelFunctionInfo(
+                {
+                    "name": "__CALL__",
+                    "target_method": "__call__",
+                    "signature": _DUMMY_SIG["predict"],
+                }
+            ),
         ]
-        with mock.patch.object(self.m_mv, "show_functions", return_value=m_methods) as mock_list_methods:
-            with self.assertRaisesRegex(ValueError, "There is no method with name PREDICT available in the model"):
-                self.m_mv.run(m_df, function_name="PREDICT")
-            mock_list_methods.assert_called_once_with()
+        self.m_mv._functions = m_methods
+        with self.assertRaisesRegex(ValueError, "There is no method with name PREDICT available in the model"):
+            self.m_mv.run(m_df, function_name="PREDICT")
 
-        with mock.patch.object(self.m_mv, "show_functions", return_value=m_methods) as mock_list_methods:
-            with self.assertRaisesRegex(ValueError, "There are more than 1 target methods available in the model"):
-                self.m_mv.run(m_df)
-            mock_list_methods.assert_called_once_with()
+        with self.assertRaisesRegex(ValueError, "There are more than 1 target methods available in the model"):
+            self.m_mv.run(m_df)
 
-        with mock.patch.object(
-            self.m_mv, "show_functions", return_value=m_methods
-        ) as mock_list_methods, mock.patch.object(
-            self.m_mv._model_ops, "invoke_method", return_value=m_df
-        ) as mock_invoke_method:
+        with mock.patch.object(self.m_mv._model_ops, "invoke_method", return_value=m_df) as mock_invoke_method:
             self.m_mv.run(m_df, function_name='"predict"')
-            mock_list_methods.assert_called_once_with()
             mock_invoke_method.assert_called_once_with(
                 method_name='"predict"',
                 signature=_DUMMY_SIG["predict"],
@@ -338,13 +359,8 @@ class ModelVersionImplTest(absltest.TestCase):
                 statement_params=mock.ANY,
             )
 
-        with mock.patch.object(
-            self.m_mv, "show_functions", return_value=m_methods
-        ) as mock_list_methods, mock.patch.object(
-            self.m_mv._model_ops, "invoke_method", return_value=m_df
-        ) as mock_invoke_method:
+        with mock.patch.object(self.m_mv._model_ops, "invoke_method", return_value=m_df) as mock_invoke_method:
             self.m_mv.run(m_df, function_name="__call__")
-            mock_list_methods.assert_called_once_with()
             mock_invoke_method.assert_called_once_with(
                 method_name="__CALL__",
                 signature=_DUMMY_SIG["predict"],
@@ -358,20 +374,19 @@ class ModelVersionImplTest(absltest.TestCase):
     def test_run_without_method_name(self) -> None:
         m_df = mock_data_frame.MockDataFrame()
         m_methods = [
-            {
-                "name": '"predict"',
-                "target_method": "predict",
-                "signature": _DUMMY_SIG["predict"],
-            },
+            model_manifest_schema.ModelFunctionInfo(
+                {
+                    "name": '"predict"',
+                    "target_method": "predict",
+                    "signature": _DUMMY_SIG["predict"],
+                }
+            ),
         ]
 
-        with mock.patch.object(
-            self.m_mv, "show_functions", return_value=m_methods
-        ) as mock_list_methods, mock.patch.object(
-            self.m_mv._model_ops, "invoke_method", return_value=m_df
-        ) as mock_invoke_method:
+        self.m_mv._functions = m_methods
+
+        with mock.patch.object(self.m_mv._model_ops, "invoke_method", return_value=m_df) as mock_invoke_method:
             self.m_mv.run(m_df)
-            mock_list_methods.assert_called_once_with()
             mock_invoke_method.assert_called_once_with(
                 method_name='"predict"',
                 signature=_DUMMY_SIG["predict"],
@@ -385,20 +400,19 @@ class ModelVersionImplTest(absltest.TestCase):
     def test_run_strict(self) -> None:
         m_df = mock_data_frame.MockDataFrame()
         m_methods = [
-            {
-                "name": '"predict"',
-                "target_method": "predict",
-                "signature": _DUMMY_SIG["predict"],
-            },
+            model_manifest_schema.ModelFunctionInfo(
+                {
+                    "name": '"predict"',
+                    "target_method": "predict",
+                    "signature": _DUMMY_SIG["predict"],
+                }
+            ),
         ]
 
-        with mock.patch.object(
-            self.m_mv, "show_functions", return_value=m_methods
-        ) as mock_list_methods, mock.patch.object(
-            self.m_mv._model_ops, "invoke_method", return_value=m_df
-        ) as mock_invoke_method:
+        self.m_mv._functions = m_methods
+
+        with mock.patch.object(self.m_mv._model_ops, "invoke_method", return_value=m_df) as mock_invoke_method:
             self.m_mv.run(m_df, strict_input_validation=True)
-            mock_list_methods.assert_called_once_with()
             mock_invoke_method.assert_called_once_with(
                 method_name='"predict"',
                 signature=_DUMMY_SIG["predict"],

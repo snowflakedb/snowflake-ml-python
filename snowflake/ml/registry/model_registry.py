@@ -103,7 +103,10 @@ def _create_registry_database(
 
 
 def _create_registry_schema(
-    session: snowpark.Session, database_name: str, schema_name: str, statement_params: Dict[str, Any]
+    session: snowpark.Session,
+    database_name: str,
+    schema_name: str,
+    statement_params: Dict[str, Any],
 ) -> None:
     """Private helper to create the model registry schema.
 
@@ -161,7 +164,11 @@ def _create_registry_views(
 
     # Create a view on active permanent deployments.
     _create_active_permanent_deployment_view(
-        session, fully_qualified_schema_name, registry_table_name, deployment_table_name, statement_params
+        session,
+        fully_qualified_schema_name,
+        registry_table_name,
+        deployment_table_name,
+        statement_params,
     )
 
     # Create views on most recent metadata items.
@@ -437,10 +444,12 @@ fully integrated into the new registry.
         # Could do a multi-table insert here with some pros and cons:
         # [PRO] Atomic insert across multiple tables.
         # [CON] Code logic becomes messy depending on which fields are set.
-        # [CON] Harder to re-use existing methods like set_model_name.
+        # [CON] Harder to reuse existing methods like set_model_name.
         # Context: https://docs.snowflake.com/en/sql-reference/sql/insert-multi-table.html
         return table_manager.insert_table_entry(
-            self._session, table=self._fully_qualified_registry_table_name(), columns=properties
+            self._session,
+            table=self._fully_qualified_registry_table_name(),
+            columns=properties,
         )
 
     def _insert_metadata_entry(self, *, id: str, attribute: str, value: Any, operation: str) -> List[snowpark.Row]:
@@ -471,7 +480,9 @@ fully integrated into the new registry.
         columns["VALUE"] = value
 
         return table_manager.insert_table_entry(
-            self._session, table=self._fully_qualified_metadata_table_name(), columns=columns
+            self._session,
+            table=self._fully_qualified_metadata_table_name(),
+            columns=columns,
         )
 
     def _insert_deployment_entry(
@@ -484,7 +495,10 @@ fully integrated into the new registry.
         signature: Dict[str, Any],
         target_method: str,
         options: Optional[
-            Union[model_types.WarehouseDeployOptions, model_types.SnowparkContainerServiceDeployOptions]
+            Union[
+                model_types.WarehouseDeployOptions,
+                model_types.SnowparkContainerServiceDeployOptions,
+            ]
         ] = None,
     ) -> List[snowpark.Row]:
         """Insert a new row into the model deployment table.
@@ -521,7 +535,9 @@ fully integrated into the new registry.
         columns["OPTIONS"] = options
 
         return table_manager.insert_table_entry(
-            self._session, table=self._fully_qualified_deployment_table_name(), columns=columns
+            self._session,
+            table=self._fully_qualified_deployment_table_name(),
+            columns=columns,
         )
 
     def _prepare_deployment_stage(self) -> str:
@@ -596,7 +612,11 @@ fully integrated into the new registry.
         return identifier.get_schema_level_object_identifier(db, schema, stage)
 
     def _list_selected_models(
-        self, *, id: Optional[str] = None, model_name: Optional[str] = None, model_version: Optional[str] = None
+        self,
+        *,
+        id: Optional[str] = None,
+        model_name: Optional[str] = None,
+        model_version: Optional[str] = None,
     ) -> snowpark.DataFrame:
         """Retrieve the Snowpark dataframe of models matching the specified ID or (name and version).
 
@@ -724,7 +744,12 @@ fully integrated into the new registry.
         assert id is not None
 
         try:
-            self._insert_metadata_entry(id=id, attribute=attribute, value={attribute: value}, operation=operation)
+            self._insert_metadata_entry(
+                id=id,
+                attribute=attribute,
+                value={attribute: value},
+                operation=operation,
+            )
         except connector.DataError:
             raise connector.DataError(f"Setting {attribute} for mode id {id} failed.")
 
@@ -760,7 +785,10 @@ fully integrated into the new registry.
         return str(result)
 
     def _get_model_path(
-        self, id: Optional[str] = None, model_name: Optional[str] = None, model_version: Optional[str] = None
+        self,
+        id: Optional[str] = None,
+        model_name: Optional[str] = None,
+        model_version: Optional[str] = None,
     ) -> str:
         """Get the stage path for the model with the given (model name + model version) or `id` from the registry.
 
@@ -889,10 +917,17 @@ fully integrated into the new registry.
                 value=new_model,
             )
             if description:
-                self.set_model_description(model_name=model_name, model_version=model_version, description=description)
+                self.set_model_description(
+                    model_name=model_name,
+                    model_version=model_version,
+                    description=description,
+                )
             if tags:
                 self._set_metadata_attribute(
-                    _METADATA_ATTRIBUTE_TAGS, value=tags, model_name=model_name, model_version=model_version
+                    _METADATA_ATTRIBUTE_TAGS,
+                    value=tags,
+                    model_name=model_name,
+                    model_version=model_version,
                 )
         else:
             raise connector.DatabaseError("Failed to insert the model properties to the registry table.")
@@ -961,7 +996,10 @@ fully integrated into the new registry.
         model_tags = self.get_tags(model_name=model_name, model_version=model_version)
         model_tags[tag_name] = tag_value
         self._set_metadata_attribute(
-            _METADATA_ATTRIBUTE_TAGS, model_tags, model_name=model_name, model_version=model_version
+            _METADATA_ATTRIBUTE_TAGS,
+            model_tags,
+            model_name=model_name,
+            model_version=model_version,
         )
 
     @telemetry.send_api_usage_telemetry(
@@ -991,7 +1029,10 @@ fully integrated into the new registry.
             )
 
         self._set_metadata_attribute(
-            _METADATA_ATTRIBUTE_TAGS, model_tags, model_name=model_name, model_version=model_version
+            _METADATA_ATTRIBUTE_TAGS,
+            model_tags,
+            model_name=model_name,
+            model_version=model_version,
         )
 
     @telemetry.send_api_usage_telemetry(
@@ -1089,7 +1130,9 @@ fully integrated into the new registry.
             Description of the model or None.
         """
         result = self._get_metadata_attribute(
-            _METADATA_ATTRIBUTE_DESCRIPTION, model_name=model_name, model_version=model_version
+            _METADATA_ATTRIBUTE_DESCRIPTION,
+            model_name=model_name,
+            model_version=model_version,
         )
         return None if result is None else json.loads(result)
 
@@ -1112,7 +1155,10 @@ fully integrated into the new registry.
             description: Desired new model description.
         """
         self._set_metadata_attribute(
-            _METADATA_ATTRIBUTE_DESCRIPTION, description, model_name=model_name, model_version=model_version
+            _METADATA_ATTRIBUTE_DESCRIPTION,
+            description,
+            model_name=model_name,
+            model_version=model_version,
         )
 
     @telemetry.send_api_usage_telemetry(
@@ -1165,7 +1211,10 @@ fully integrated into the new registry.
             snowpark.DataFrame with the history of the model.
         """
         id = self._get_model_id(model_name=model_name, model_version=model_version)
-        return cast(snowpark.DataFrame, self.get_history().filter(snowpark.Column("MODEL_ID") == id))
+        return cast(
+            snowpark.DataFrame,
+            self.get_history().filter(snowpark.Column("MODEL_ID") == id),
+        )
 
     @telemetry.send_api_usage_telemetry(
         project=_TELEMETRY_PROJECT,
@@ -1194,7 +1243,10 @@ fully integrated into the new registry.
         model_metrics = self.get_metrics(model_name=model_name, model_version=model_version)
         model_metrics[metric_name] = metric_value
         self._set_metadata_attribute(
-            _METADATA_ATTRIBUTE_METRICS, model_metrics, model_name=model_name, model_version=model_version
+            _METADATA_ATTRIBUTE_METRICS,
+            model_metrics,
+            model_name=model_name,
+            model_version=model_version,
         )
 
     @telemetry.send_api_usage_telemetry(
@@ -1230,7 +1282,10 @@ fully integrated into the new registry.
             )
 
         self._set_metadata_attribute(
-            _METADATA_ATTRIBUTE_METRICS, model_metrics, model_name=model_name, model_version=model_version
+            _METADATA_ATTRIBUTE_METRICS,
+            model_metrics,
+            model_name=model_name,
+            model_version=model_version,
         )
 
     @telemetry.send_api_usage_telemetry(
@@ -1290,7 +1345,9 @@ fully integrated into the new registry.
         # Snowpark snowpark.dataframe returns dictionary objects as strings. We need to convert it back to a dictionary
         # here.
         result = self._get_metadata_attribute(
-            _METADATA_ATTRIBUTE_METRICS, model_name=model_name, model_version=model_version
+            _METADATA_ATTRIBUTE_METRICS,
+            model_name=model_name,
+            model_version=model_version,
         )
 
         if result:
@@ -1507,7 +1564,10 @@ fully integrated into the new registry.
         permanent: bool = False,
         platform: deploy_platforms.TargetPlatform = deploy_platforms.TargetPlatform.WAREHOUSE,
         options: Optional[
-            Union[model_types.WarehouseDeployOptions, model_types.SnowparkContainerServiceDeployOptions]
+            Union[
+                model_types.WarehouseDeployOptions,
+                model_types.SnowparkContainerServiceDeployOptions,
+            ]
         ] = None,
     ) -> model_types.Deployment:
         """Deploy the model with the given deployment name.
@@ -1772,7 +1832,9 @@ fully integrated into the new registry.
 
         """
         deployment = self._get_deployment(
-            model_name=model_name, model_version=model_version, deployment_name=deployment_name
+            model_name=model_name,
+            model_version=model_version,
+            deployment_name=deployment_name,
         )
 
         # TODO(SNOW-759526): The following sequence should be a transaction.
@@ -1845,7 +1907,8 @@ fully integrated into the new registry.
 
         # Step 1/3: Delete the registry entry.
         query_result_checker.SqlResultValidator(
-            self._session, f"DELETE FROM {self._fully_qualified_registry_table_name()} WHERE ID='{id}'"
+            self._session,
+            f"DELETE FROM {self._fully_qualified_registry_table_name()} WHERE ID='{id}'",
         ).deletion_success(expected_num_rows=1).validate()
 
         # Step 2/3: Delete the artifact (if desired).
@@ -1966,7 +2029,11 @@ class ModelReference:
 
             def build_method(m: Callable[..., Any]) -> Callable[..., Any]:
                 return lambda self, *args, **kwargs: m(
-                    self._registry, self._model_name, self._model_version, *args, **kwargs
+                    self._registry,
+                    self._model_name,
+                    self._model_version,
+                    *args,
+                    **kwargs,
                 )
 
             method = build_method(m=obj)
@@ -2027,7 +2094,10 @@ class ModelReference:
 
         if di:
             return model_api.predict(
-                session=self._registry._session, deployment=di, X=data, statement_params=statement_params
+                session=self._registry._session,
+                deployment=di,
+                X=data,
+                statement_params=statement_params,
             )
 
         # Mypy enforce to refer to the registry for calling the function
@@ -2059,7 +2129,10 @@ class ModelReference:
             options=options,
         )
         return model_api.predict(
-            session=self._registry._session, deployment=di, X=data, statement_params=statement_params
+            session=self._registry._session,
+            deployment=di,
+            X=data,
+            statement_params=statement_params,
         )
 
 

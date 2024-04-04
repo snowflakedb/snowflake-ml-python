@@ -45,7 +45,7 @@ class XGBModelHandler(_base.BaseModelHandler[Union["xgboost.Booster", "xgboost.X
     _HANDLER_MIGRATOR_PLANS: Dict[str, Type[base_migrator.BaseModelHandlerMigrator]] = {}
 
     MODELE_BLOB_FILE_OR_DIR = "model.ubj"
-    DEFAULT_TARGET_METHODS = ["apply", "predict", "predict_proba"]
+    DEFAULT_TARGET_METHODS = ["predict", "predict_proba"]
 
     @classmethod
     def can_handle(

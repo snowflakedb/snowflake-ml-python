@@ -1127,11 +1127,14 @@ class LightGBMWrapperGenerator(WrapperGeneratorBase):
         super().generate()
 
         # Populate LightGBM specific values
-        self.estimator_imports_list.append("import lightgbm")
+        self.estimator_imports_list.extend(["import sklearn", "import lightgbm"])
         self.test_estimator_input_args_list.extend(["random_state=0", "n_jobs=1"])
-        self.score_sproc_imports = ["lightgbm"]
+        self.score_sproc_imports = ["lightgbm", "sklearn"]
 
-        self.deps = "f'numpy=={np.__version__}', f'lightgbm=={lightgbm.__version__}', f'cloudpickle=={cp.__version__}'"
+        self.deps = (
+            "f'numpy=={np.__version__}', f'lightgbm=={lightgbm.__version__}', f'cloudpickle=={cp.__version__}'"
+            ", f'scikit-learn=={sklearn.__version__}'"
+        )
         self.supported_export_method = "to_lightgbm"
         self.unsupported_export_methods = ["to_sklearn", "to_xgboost"]
         self._construct_string_from_lists()

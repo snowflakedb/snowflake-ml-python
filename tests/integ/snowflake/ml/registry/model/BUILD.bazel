@@ -21,6 +21,27 @@ py_test(
     ],
 )
 
+py_test(
+    name = "multiple_model_test",
+    srcs = ["multiple_model_test.py"],
+    deps = [
+        "//snowflake/ml/model:custom_model",
+        "//snowflake/ml/registry",
+        "//snowflake/ml/utils:connection_params",
+        "//tests/integ/snowflake/ml/test_utils:db_manager",
+    ],
+)
+
+py_test(
+    name = "random_version_name_test",
+    srcs = ["random_version_name_test.py"],
+    deps = [
+        "//snowflake/ml/registry",
+        "//snowflake/ml/utils:connection_params",
+        "//tests/integ/snowflake/ml/test_utils:db_manager",
+    ],
+)
+
 py_library(
     name = "registry_model_test_base",
     testonly = True,
