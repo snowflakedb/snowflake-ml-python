@@ -21,6 +21,15 @@ py_test(
 )
 
 py_test(
+    name = "batch_inference_with_n_jobs_test",
+    srcs = ["batch_inference_with_n_jobs_test.py"],
+    deps = [
+        "//snowflake/ml/modeling/ensemble:bagging_regressor",
+        "//snowflake/ml/utils:connection_params",
+    ],
+)
+
+py_test(
     name = "grid_search_test",
     srcs = ["grid_search_test.py"],
     deps = [

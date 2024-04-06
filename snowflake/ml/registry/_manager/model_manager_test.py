@@ -21,6 +21,12 @@ class RegistryTest(absltest.TestCase):
             database_name=sql_identifier.SqlIdentifier("TEMP"),
             schema_name=sql_identifier.SqlIdentifier("TEST"),
         )
+        with mock.patch.object(model_version_impl.ModelVersion, "_get_functions", return_value=[]):
+            self.m_mv = model_version_impl.ModelVersion._ref(
+                self.m_r._model_ops,
+                model_name=sql_identifier.SqlIdentifier("MODEL"),
+                version_name=sql_identifier.SqlIdentifier("V1"),
+            )
 
     def test_get_model_1(self) -> None:
         m_model = model_impl.Model._ref(
@@ -101,6 +107,63 @@ class RegistryTest(absltest.TestCase):
                 statement_params=mock.ANY,
             )
 
+    def test_log_model_minimal(self) -> None:
+        m_model = mock.MagicMock()
+        m_sample_input_data = mock.MagicMock()
+        m_stage_path = "@TEMP.TEST.MODEL/V1"
+        with mock.patch.object(
+            self.m_r._model_ops, "validate_existence", return_value=False
+        ) as mock_validate_existence, mock.patch.object(
+            self.m_r._model_ops, "prepare_model_stage_path", return_value=m_stage_path
+        ) as mock_prepare_model_stage_path, mock.patch.object(
+            model_composer.ModelComposer, "save"
+        ) as mock_save, mock.patch.object(
+            self.m_r._model_ops, "create_from_stage"
+        ) as mock_create_from_stage, mock.patch.object(
+            self.m_r._hrid_generator, "generate", return_value=(1, "angry_yeti_1")
+        ) as mock_hrid_generate, mock.patch.object(
+            model_version_impl.ModelVersion, "_get_functions", return_value=[]
+        ):
+            mv = self.m_r.log_model(
+                model=m_model,
+                model_name="MODEL",
+                sample_input_data=m_sample_input_data,
+            )
+            mock_validate_existence.assert_called_once_with(
+                model_name=sql_identifier.SqlIdentifier("MODEL"),
+                statement_params=mock.ANY,
+            )
+            mock_prepare_model_stage_path.assert_called_once_with(
+                statement_params=mock.ANY,
+            )
+            mock_save.assert_called_once_with(
+                name="MODEL",
+                model=m_model,
+                signatures=None,
+                sample_input_data=m_sample_input_data,
+                conda_dependencies=None,
+                pip_requirements=None,
+                python_version=None,
+                code_paths=None,
+                ext_modules=None,
+                options=None,
+            )
+            mock_create_from_stage.assert_called_once_with(
+                composed_model=mock.ANY,
+                model_name=sql_identifier.SqlIdentifier("MODEL"),
+                version_name=sql_identifier.SqlIdentifier("angry_yeti_1"),
+                statement_params=mock.ANY,
+            )
+            mock_hrid_generate.assert_called_once_with()
+            self.assertEqual(
+                mv,
+                model_version_impl.ModelVersion._ref(
+                    self.m_r._model_ops,
+                    model_name=sql_identifier.SqlIdentifier("MODEL"),
+                    version_name=sql_identifier.SqlIdentifier("angry_yeti_1"),
+                ),
+            )
+
     def test_log_model_1(self) -> None:
         m_model = mock.MagicMock()
         m_conda_dependency = mock.MagicMock()
@@ -114,7 +177,9 @@ class RegistryTest(absltest.TestCase):
             model_composer.ModelComposer, "save"
         ) as mock_save, mock.patch.object(
             self.m_r._model_ops, "create_from_stage"
-        ) as mock_create_from_stage:
+        ) as mock_create_from_stage, mock.patch.object(
+            model_version_impl.ModelVersion, "_get_functions", return_value=[]
+        ):
             mv = self.m_r.log_model(
                 model=m_model,
                 model_name="MODEL",
@@ -147,14 +212,7 @@ class RegistryTest(absltest.TestCase):
                 version_name=sql_identifier.SqlIdentifier("v1"),
                 statement_params=mock.ANY,
             )
-            self.assertEqual(
-                mv,
-                model_version_impl.ModelVersion._ref(
-                    self.m_r._model_ops,
-                    model_name=sql_identifier.SqlIdentifier("MODEL"),
-                    version_name=sql_identifier.SqlIdentifier("v1"),
-                ),
-            )
+            self.assertEqual(mv, self.m_mv)
 
     def test_log_model_2(self) -> None:
         m_model = mock.MagicMock()
@@ -168,7 +226,9 @@ class RegistryTest(absltest.TestCase):
             model_composer.ModelComposer, "save"
         ) as mock_save, mock.patch.object(
             self.m_r._model_ops, "create_from_stage"
-        ) as mock_create_from_stage:
+        ) as mock_create_from_stage, mock.patch.object(
+            model_version_impl.ModelVersion, "_get_functions", return_value=[]
+        ):
             mv = self.m_r.log_model(
                 model=m_model,
                 model_name="MODEL",
@@ -200,11 +260,7 @@ class RegistryTest(absltest.TestCase):
             )
             self.assertEqual(
                 mv,
-                model_version_impl.ModelVersion._ref(
-                    self.m_r._model_ops,
-                    model_name=sql_identifier.SqlIdentifier("MODEL"),
-                    version_name=sql_identifier.SqlIdentifier("V1"),
-                ),
+                self.m_mv,
             )
 
     def test_log_model_3(self) -> None:
@@ -219,7 +275,9 @@ class RegistryTest(absltest.TestCase):
             model_composer.ModelComposer, "save"
         ) as mock_save, mock.patch.object(
             self.m_r._model_ops, "create_from_stage"
-        ) as mock_create_from_stage:
+        ) as mock_create_from_stage, mock.patch.object(
+            model_version_impl.ModelVersion, "_get_functions", return_value=[]
+        ):
             mv = self.m_r.log_model(
                 model=m_model,
                 model_name="MODEL",
@@ -251,11 +309,7 @@ class RegistryTest(absltest.TestCase):
             )
             self.assertEqual(
                 mv,
-                model_version_impl.ModelVersion._ref(
-                    self.m_r._model_ops,
-                    model_name=sql_identifier.SqlIdentifier("MODEL"),
-                    version_name=sql_identifier.SqlIdentifier("V1"),
-                ),
+                self.m_mv,
             )
 
     def test_log_model_4(self) -> None:
@@ -271,7 +325,9 @@ class RegistryTest(absltest.TestCase):
             self.m_r._model_ops, "set_comment"
         ) as mock_set_comment, mock.patch.object(
             self.m_r._model_ops._metadata_ops, "save"
-        ) as mock_metadata_save:
+        ) as mock_metadata_save, mock.patch.object(
+            model_version_impl.ModelVersion, "_get_functions", return_value=[]
+        ):
             mv = self.m_r.log_model(
                 model=m_model, model_name="MODEL", version_name="V1", comment="this is comment", metrics={"a": 1}
             )
@@ -298,11 +354,7 @@ class RegistryTest(absltest.TestCase):
             )
             self.assertEqual(
                 mv,
-                model_version_impl.ModelVersion._ref(
-                    self.m_r._model_ops,
-                    model_name=sql_identifier.SqlIdentifier("MODEL"),
-                    version_name=sql_identifier.SqlIdentifier("V1"),
-                ),
+                self.m_mv,
             )
             mock_set_comment.assert_called_once_with(
                 comment="this is comment",

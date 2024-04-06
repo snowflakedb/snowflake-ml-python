@@ -129,9 +129,22 @@ class GridSearchCVTest(parameterized.TestCase):
         if not sk_obj.multimetric_:
             self.assertEqual(sk_obj.best_params_, sklearn_reg.best_params_)
 
+    @parameterized.parameters(
+        {
+            "enable_efficient_memory_usage": False,
+        },
+        {
+            "enable_efficient_memory_usage": True,
+        },
+    )
     @mock.patch("snowflake.ml.modeling._internal.model_trainer_builder.is_single_node")
-    def test_fit_and_compare_results(self, mock_is_single_node) -> None:
+    def test_fit_and_compare_results(self, mock_is_single_node, enable_efficient_memory_usage) -> None:
         mock_is_single_node.return_value = True  # falls back to HPO implementation
+        from snowflake.ml.modeling._internal.snowpark_implementations import (
+            distributed_hpo_trainer,
+        )
+
+        distributed_hpo_trainer.ENABLE_EFFICIENT_MEMORY_USAGE = enable_efficient_memory_usage
 
         sklearn_reg = SkGridSearchCV(estimator=SkSVR(), param_grid={"C": [1, 10], "kernel": ("linear", "rbf")})
         reg = GridSearchCV(estimator=SVR(), param_grid={"C": [1, 10], "kernel": ("linear", "rbf")})
@@ -165,6 +178,7 @@ class GridSearchCVTest(parameterized.TestCase):
             "params": {"n_estimators": [50, 200], "min_samples_split": [1.0, 2, 3], "max_depth": [3, 8]},
             "kwargs": dict(),
             "estimator_kwargs": dict(random_state=0),
+            "enable_efficient_memory_usage": False,
         },
         {
             "is_single_node": False,
@@ -173,6 +187,7 @@ class GridSearchCVTest(parameterized.TestCase):
             "params": {"n_estimators": [50, 200], "min_samples_split": [1.0, 2, 3], "max_depth": [3, 8]},
             "kwargs": dict(return_train_score=True),
             "estimator_kwargs": dict(random_state=0),
+            "enable_efficient_memory_usage": False,
         },
         {
             "is_single_node": False,
@@ -181,6 +196,7 @@ class GridSearchCVTest(parameterized.TestCase):
             "params": {"kernel": ("linear", "rbf"), "C": [1, 10, 80]},
             "kwargs": dict(),
             "estimator_kwargs": dict(random_state=0),
+            "enable_efficient_memory_usage": False,
         },
         {
             "is_single_node": False,
@@ -189,6 +205,7 @@ class GridSearchCVTest(parameterized.TestCase):
             "params": {"kernel": ("linear", "rbf"), "C": [1, 10, 80]},
             "kwargs": dict(return_train_score=True),
             "estimator_kwargs": dict(random_state=0),
+            "enable_efficient_memory_usage": False,
         },
         {
             "is_single_node": False,
@@ -197,6 +214,7 @@ class GridSearchCVTest(parameterized.TestCase):
             "params": {"max_depth": [2, 6], "learning_rate": [0.1, 0.01]},
             "kwargs": dict(scoring=["accuracy", "f1_macro"], refit="f1_macro"),
             "estimator_kwargs": dict(seed=42),
+            "enable_efficient_memory_usage": False,
         },
         {
             "is_single_node": False,
@@ -205,13 +223,81 @@ class GridSearchCVTest(parameterized.TestCase):
             "params": {"max_depth": [2, 6], "learning_rate": [0.1, 0.01]},
             "kwargs": dict(scoring=["accuracy", "f1_macro"], refit="f1_macro", return_train_score=True),
             "estimator_kwargs": dict(seed=42),
+            "enable_efficient_memory_usage": False,
+        },
+        {
+            "is_single_node": False,
+            "skmodel": SkRandomForestClassifier,
+            "model": RandomForestClassifier,
+            "params": {"n_estimators": [50, 200], "min_samples_split": [1.0, 2, 3], "max_depth": [3, 8]},
+            "kwargs": dict(),
+            "estimator_kwargs": dict(random_state=0),
+            "enable_efficient_memory_usage": True,
+        },
+        {
+            "is_single_node": False,
+            "skmodel": SkRandomForestClassifier,
+            "model": RandomForestClassifier,
+            "params": {"n_estimators": [50, 200], "min_samples_split": [1.0, 2, 3], "max_depth": [3, 8]},
+            "kwargs": dict(return_train_score=True),
+            "estimator_kwargs": dict(random_state=0),
+            "enable_efficient_memory_usage": True,
+        },
+        {
+            "is_single_node": False,
+            "skmodel": SkSVC,
+            "model": SVC,
+            "params": {"kernel": ("linear", "rbf"), "C": [1, 10, 80]},
+            "kwargs": dict(),
+            "estimator_kwargs": dict(random_state=0),
+            "enable_efficient_memory_usage": True,
+        },
+        {
+            "is_single_node": False,
+            "skmodel": SkSVC,
+            "model": SVC,
+            "params": {"kernel": ("linear", "rbf"), "C": [1, 10, 80]},
+            "kwargs": dict(return_train_score=True),
+            "estimator_kwargs": dict(random_state=0),
+            "enable_efficient_memory_usage": True,
+        },
+        {
+            "is_single_node": False,
+            "skmodel": SkXGBClassifier,
+            "model": XGBClassifier,
+            "params": {"max_depth": [2, 6], "learning_rate": [0.1, 0.01]},
+            "kwargs": dict(scoring=["accuracy", "f1_macro"], refit="f1_macro"),
+            "estimator_kwargs": dict(seed=42),
+            "enable_efficient_memory_usage": True,
+        },
+        {
+            "is_single_node": False,
+            "skmodel": SkXGBClassifier,
+            "model": XGBClassifier,
+            "params": {"max_depth": [2, 6], "learning_rate": [0.1, 0.01]},
+            "kwargs": dict(scoring=["accuracy", "f1_macro"], refit="f1_macro", return_train_score=True),
+            "estimator_kwargs": dict(seed=42),
+            "enable_efficient_memory_usage": True,
         },
     )
     @mock.patch("snowflake.ml.modeling._internal.model_trainer_builder.is_single_node")
     def test_fit_and_compare_results_distributed(
-        self, mock_is_single_node, is_single_node, skmodel, model, params, kwargs, estimator_kwargs
+        self,
+        mock_is_single_node,
+        is_single_node,
+        skmodel,
+        model,
+        params,
+        kwargs,
+        estimator_kwargs,
+        enable_efficient_memory_usage,
     ) -> None:
         mock_is_single_node.return_value = is_single_node
+        from snowflake.ml.modeling._internal.snowpark_implementations import (
+            distributed_hpo_trainer,
+        )
+
+        distributed_hpo_trainer.ENABLE_EFFICIENT_MEMORY_USAGE = enable_efficient_memory_usage
 
         sklearn_reg = SkGridSearchCV(estimator=skmodel(**estimator_kwargs), param_grid=params, cv=3, **kwargs)
         reg = GridSearchCV(estimator=model(**estimator_kwargs), param_grid=params, cv=3, **kwargs)
@@ -302,9 +388,22 @@ class GridSearchCVTest(parameterized.TestCase):
                 actual_pandas_result.flatten(), sklearn_decision_function.flatten(), rtol=1.0e-1, atol=1.0e-2
             )
 
+    @parameterized.parameters(
+        {
+            "enable_efficient_memory_usage": False,
+        },
+        {
+            "enable_efficient_memory_usage": True,
+        },
+    )
     @mock.patch("snowflake.ml.modeling._internal.model_trainer_builder.is_single_node")
-    def test_transform(self, mock_is_single_node) -> None:
+    def test_transform(self, mock_is_single_node, enable_efficient_memory_usage) -> None:
         mock_is_single_node.return_value = False
+        from snowflake.ml.modeling._internal.snowpark_implementations import (
+            distributed_hpo_trainer,
+        )
+
+        distributed_hpo_trainer.ENABLE_EFFICIENT_MEMORY_USAGE = enable_efficient_memory_usage
 
         params = {"n_components": range(1, 3)}
         sk_pca = SkPCA()
@@ -348,7 +447,20 @@ class GridSearchCVTest(parameterized.TestCase):
         ):
             reg.predict_proba(self._input_df)
 
-    def test_score_samples(self) -> None:
+    @parameterized.parameters(
+        {
+            "enable_efficient_memory_usage": False,
+        },
+        {
+            "enable_efficient_memory_usage": True,
+        },
+    )
+    def test_score_samples(self, enable_efficient_memory_usage) -> None:
+        from snowflake.ml.modeling._internal.snowpark_implementations import (
+            distributed_hpo_trainer,
+        )
+
+        distributed_hpo_trainer.ENABLE_EFFICIENT_MEMORY_USAGE = enable_efficient_memory_usage
         param_grid = {"max_features": [1, 2]}
         sklearn_reg = SkGridSearchCV(
             estimator=SkIsolationForest(random_state=0), param_grid=param_grid, scoring="accuracy"

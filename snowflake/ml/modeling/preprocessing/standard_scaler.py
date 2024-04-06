@@ -165,11 +165,11 @@ class StandardScaler(base.BaseTransformer):
 
         for i, input_col in enumerate(self.input_cols):
             if self.mean_ is not None:
-                self.mean_[input_col] = float(sklearn_scaler.mean_[i])
+                self.mean_[input_col] = _utils.to_float_if_valid(sklearn_scaler.mean_[i], input_col, "mean_")
             if self.scale_ is not None:
-                self.scale_[input_col] = float(sklearn_scaler.scale_[i])
+                self.scale_[input_col] = _utils.to_float_if_valid(sklearn_scaler.scale_[i], input_col, "scale_")
             if self.var_ is not None:
-                self.var_[input_col] = float(sklearn_scaler.var_[i])
+                self.var_[input_col] = _utils.to_float_if_valid(sklearn_scaler.var_[i], input_col, "var_")
 
     def _fit_snowpark(self, dataset: snowpark.DataFrame) -> None:
         computed_states = self._compute(dataset, self.input_cols, self.custom_states)
@@ -179,14 +179,18 @@ class StandardScaler(base.BaseTransformer):
             numeric_stats = computed_states[input_col]
 
             if self.mean_ is not None:
-                self.mean_[input_col] = float(numeric_stats[_utils.NumericStatistics.MEAN])
+                self.mean_[input_col] = _utils.to_float_if_valid(
+                    numeric_stats[_utils.NumericStatistics.MEAN], input_col, "mean_"
+                )
 
             if self.var_ is not None:
-                self.var_[input_col] = float(numeric_stats[_utils.NumericStatistics.VAR_POP])
+                self.var_[input_col] = _utils.to_float_if_valid(
+                    numeric_stats[_utils.NumericStatistics.VAR_POP], input_col, "var_"
+                )
 
             if self.scale_ is not None:
                 self.scale_[input_col] = sklearn_preprocessing_data._handle_zeros_in_scale(
-                    float(numeric_stats[_utils.NumericStatistics.STDDEV_POP])
+                    _utils.to_float_if_valid(numeric_stats[_utils.NumericStatistics.STDDEV_POP], input_col, "scale_")
                 )
 
     @telemetry.send_api_usage_telemetry(

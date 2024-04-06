@@ -77,7 +77,7 @@ class Registry:
         model: model_types.SupportedModelType,
         *,
         model_name: str,
-        version_name: str,
+        version_name: Optional[str] = None,
         comment: Optional[str] = None,
         metrics: Optional[Dict[str, Any]] = None,
         conda_dependencies: Optional[List[str]] = None,
@@ -93,11 +93,12 @@ class Registry:
         Log a model with various parameters and metadata.
 
         Args:
-            model: Model object of supported types such as Scikit-learn, XGBoost, Snowpark ML,
+            model: Model object of supported types such as Scikit-learn, XGBoost, LightGBM, Snowpark ML,
                 PyTorch, TorchScript, Tensorflow, Tensorflow Keras, MLFlow, HuggingFace Pipeline,
                 Sentence Transformers, Peft-finetuned LLM, or Custom Model.
             model_name: Name to identify the model.
             version_name: Version identifier for the model. Combination of model_name and version_name must be unique.
+                If not specified, a random name will be generated.
             comment: Comment associated with the model version. Defaults to None.
             metrics: A JSON serializable dictionary containing metrics linked to the model version. Defaults to None.
             signatures: Model data signatures for inputs and outputs for various target methods. If it is None,

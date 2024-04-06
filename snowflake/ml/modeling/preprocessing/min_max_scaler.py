@@ -175,11 +175,13 @@ class MinMaxScaler(base.BaseTransformer):
         sklearn_scaler.fit(dataset[self.input_cols])
 
         for i, input_col in enumerate(self.input_cols):
-            self.min_[input_col] = float(sklearn_scaler.min_[i])
-            self.scale_[input_col] = float(sklearn_scaler.scale_[i])
-            self.data_min_[input_col] = float(sklearn_scaler.data_min_[i])
-            self.data_max_[input_col] = float(sklearn_scaler.data_max_[i])
-            self.data_range_[input_col] = float(sklearn_scaler.data_range_[i])
+            self.min_[input_col] = _utils.to_float_if_valid(sklearn_scaler.min_[i], input_col, "min_")
+            self.scale_[input_col] = _utils.to_float_if_valid(sklearn_scaler.scale_[i], input_col, "scale_")
+            self.data_min_[input_col] = _utils.to_float_if_valid(sklearn_scaler.data_min_[i], input_col, "data_min_")
+            self.data_max_[input_col] = _utils.to_float_if_valid(sklearn_scaler.data_max_[i], input_col, "data_max_")
+            self.data_range_[input_col] = _utils.to_float_if_valid(
+                sklearn_scaler.data_range_[i], input_col, "data_range_"
+            )
 
     def _fit_snowpark(self, dataset: snowpark.DataFrame) -> None:
         self._check_input_column_types(dataset)
@@ -189,8 +191,8 @@ class MinMaxScaler(base.BaseTransformer):
         for input_col in self.input_cols:
             numeric_stats = computed_states[input_col]
 
-            data_min = float(numeric_stats[_utils.NumericStatistics.MIN])
-            data_max = float(numeric_stats[_utils.NumericStatistics.MAX])
+            data_min = _utils.to_float_if_valid(numeric_stats[_utils.NumericStatistics.MIN], input_col, "data_min_")
+            data_max = _utils.to_float_if_valid(numeric_stats[_utils.NumericStatistics.MAX], input_col, "data_max_")
             data_range = data_max - data_min
             self.scale_[input_col] = (
                 self.feature_range[1] - self.feature_range[0]

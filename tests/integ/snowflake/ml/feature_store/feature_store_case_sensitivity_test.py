@@ -95,7 +95,7 @@ class FeatureStoreCaseSensitivityTest(parameterized.TestCase):
         e = Entity(name="e", join_keys=["a"])
         fs.register_entity(e)
         fv = FeatureView(name="fv", entities=[e], feature_df=df, refresh_freq="1 minute")
-        fs.register_feature_view(feature_view=fv, version="v1", block=True)
+        fs.register_feature_view(feature_view=fv, version="v1")
         retrieved_fv = fs.get_feature_view(name="fv", version="v1")
         self.assertEqual(resolve_identifier(database), retrieved_fv.database)
         self.assertEqual(resolve_identifier(schema), retrieved_fv.schema)
@@ -128,10 +128,36 @@ class FeatureStoreCaseSensitivityTest(parameterized.TestCase):
         e = Entity(name="e", join_keys=["a"])
         fs.register_entity(e)
         fv = FeatureView(name="fv", entities=[e], feature_df=df, refresh_freq="1 minute")
-        fs.register_feature_view(feature_view=fv, version="v1", block=True)
+        fs.register_feature_view(feature_view=fv, version="v1")
         retrieved_fv = fs.get_feature_view(name="fv", version="v1")
         self.assertEqual(resolve_identifier(warehouse), retrieved_fv.warehouse)
         self.assertEqual(2, len(fs.read_feature_view(retrieved_fv).to_pandas()))
+
+    # Covered APIs:
+    #   1. FeatureStore
+    def test_feature_store_database_names(self) -> None:
+        db_name_1 = "FS_INTEG_TEST_DB_NAME_TEST"
+        self._session.sql(f"CREATE DATABASE IF NOT EXISTS {db_name_1}").collect()
+        current_schema = create_random_schema(self._session, "TEST_DB_NAMES")
+
+        with self.assertRaisesRegex(ValueError, "Database .* does not exist."):
+            FeatureStore(
+                self._session,
+                '"fs_integ_test_db_name_test"',
+                current_schema,
+                default_warehouse=self._test_warehouse_name,
+                creation_mode=CreationMode.CREATE_IF_NOT_EXIST,
+            )
+
+        FeatureStore(
+            self._session,
+            "fs_integ_test_db_name_test",
+            current_schema,
+            default_warehouse=self._test_warehouse_name,
+            creation_mode=CreationMode.CREATE_IF_NOT_EXIST,
+        )
+
+        self._session.sql(f"DROP DATABASE IF EXISTS {db_name_1}").collect()
 
     # Covered APIs:
     #   1. FeatureStore
@@ -211,7 +237,7 @@ class FeatureStoreCaseSensitivityTest(parameterized.TestCase):
         # register another entity with equivalent name will fail
         for equi_name in equi_names:
             e_1 = Entity(name=equi_name, join_keys=["a"])
-            with self.assertRaisesRegex(ValueError, "Entity .* already exists."):
+            with self.assertWarnsRegex(UserWarning, "Entity .* already exists. Skip registration."):
                 fs.register_entity(e_1)
 
         # retrieve with equivalent name is fine.
@@ -254,7 +280,10 @@ class FeatureStoreCaseSensitivityTest(parameterized.TestCase):
             e = Entity(name="MY_COOL_ENTITY", join_keys=[test_name])
             fv_0 = FeatureView(name="MY_FV", entities=[e], feature_df=df, timestamp_col=test_name)
             fs.register_entity(e)
-            fv_1 = fs.register_feature_view(fv_0, "V1", block=True)
+            fv_1 = fs.register_feature_view(
+                fv_0,
+                "V1",
+            )
 
             retrieved_e = fs.get_entity("MY_COOL_ENTITY")
             self.assertEqual(len(retrieved_e.join_keys), 1)
@@ -311,22 +340,22 @@ class FeatureStoreCaseSensitivityTest(parameterized.TestCase):
         original_fv_name, original_version = equi_full_names[0]
         fv_0 = FeatureView(name=original_fv_name, entities=[e], feature_df=df)
         fs.register_entity(e)
-        fs.register_feature_view(fv_0, original_version, block=True)
+        fs.register_feature_view(fv_0, original_version)
 
         # register with identical full name will fail
         for equi_full_name in equi_full_names:
             fv_name = equi_full_name[0]
             version = equi_full_name[1]
-            with self.assertRaisesRegex(ValueError, "FeatureView .* already exists"):
+            with self.assertWarnsRegex(UserWarning, "FeatureView .* already exists..*"):
                 fv = FeatureView(name=fv_name, entities=[e], feature_df=df)
-                fs.register_feature_view(fv, version, block=True)
+                fs.register_feature_view(fv, version)
 
         # register with different full name is fine
         for diff_full_name in diff_full_names:
             fv_name = diff_full_name[0]
             version = diff_full_name[1]
             fv = FeatureView(name=fv_name, entities=[e], feature_df=df)
-            fv = fs.register_feature_view(fv, version, block=True)
+            fv = fs.register_feature_view(fv, version)
             fs.read_feature_view(fv)
 
         self.assertEqual(len(fs.list_feature_views(as_dataframe=False)), len(diff_full_names) + 1)
@@ -403,28 +432,28 @@ class FeatureStoreCaseSensitivityTest(parameterized.TestCase):
         fv = FeatureView(name="MY_FV", entities=[e], feature_df=df)
 
         # 1: register with lowercase, get it back with lowercase/uppercase
-        fs.register_feature_view(fv, "a1", block=True)
+        fs.register_feature_view(fv, "a1")
         fs.get_feature_view("MY_FV", "A1")
         fs.get_feature_view("MY_FV", "a1")
 
         # 2: register with uppercase, get it back with lowercase/uppercase
-        fs.register_feature_view(fv, "B2", block=True)
+        fs.register_feature_view(fv, "B2")
         fs.get_feature_view("MY_FV", "b2")
         fs.get_feature_view("MY_FV", "B2")
 
         # 3. register with valid characters
-        fs.register_feature_view(fv, "V2_1", block=True)
+        fs.register_feature_view(fv, "V2_1")
         fs.get_feature_view("MY_FV", "v2_1")
-        fs.register_feature_view(fv, "3", block=True)
+        fs.register_feature_view(fv, "3")
         fs.get_feature_view("MY_FV", "3")
 
         # 4: register with invalid characters
         with self.assertRaisesRegex(ValueError, ".* is not a valid feature view version.*"):
-            fs.register_feature_view(fv, "abc$", block=True)
+            fs.register_feature_view(fv, "abc$")
         with self.assertRaisesRegex(ValueError, ".* is not a valid feature view version.*"):
-            fs.register_feature_view(fv, "abc#", block=True)
+            fs.register_feature_view(fv, "abc#")
         with self.assertRaisesRegex(ValueError, ".* is not a valid feature view version.*"):
-            fs.register_feature_view(fv, '"abc"', block=True)
+            fs.register_feature_view(fv, '"abc"')
 
 
 if __name__ == "__main__":

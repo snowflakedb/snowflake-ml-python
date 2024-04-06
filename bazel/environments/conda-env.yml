@@ -12,6 +12,7 @@ dependencies:
   - boto3==1.24.28
   - build==0.10.0
   - cachetools==4.2.2
+  - catboost==1.2.0
   - cloudpickle==2.2.1
   - conda-forge::accelerate==0.22.0
   - conda-forge::mypy==1.5.1
@@ -39,6 +40,7 @@ dependencies:
   - protobuf==3.20.3
   - psutil==5.9.0
   - pyarrow==10.0.1
+  - pytest-rerunfailures==12.0
   - pytest-xdist==3.5.0
   - pytest==7.4.0
   - pytimeparse==1.1.8

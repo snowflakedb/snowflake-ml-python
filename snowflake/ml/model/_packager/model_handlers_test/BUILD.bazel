@@ -3,6 +3,16 @@ load("//bazel:py_rules.bzl", "py_test")
 package(default_visibility = ["//visibility:public"])
 
 py_test(
+    name = "catboost_test",
+    srcs = ["catboost_test.py"],
+    deps = [
+        "//snowflake/ml/model:model_signature",
+        "//snowflake/ml/model:type_hints",
+        "//snowflake/ml/model/_packager:model_packager",
+    ],
+)
+
+py_test(
     name = "custom_test",
     srcs = ["custom_test.py"],
     deps = [
@@ -77,6 +87,15 @@ py_test(
 py_test(
     name = "xgboost_test",
     srcs = ["xgboost_test.py"],
+    deps = [
+        "//snowflake/ml/model:model_signature",
+        "//snowflake/ml/model/_packager:model_packager",
+    ],
+)
+
+py_test(
+    name = "lightgbm_test",
+    srcs = ["lightgbm_test.py"],
     deps = [
         "//snowflake/ml/model:model_signature",
         "//snowflake/ml/model/_packager:model_packager",

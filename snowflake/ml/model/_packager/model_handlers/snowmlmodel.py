@@ -87,7 +87,19 @@ class SnowMLModelHandler(_base.BaseModelHandler["BaseEstimator"]):
                     stacklevel=2,
                 )
             assert hasattr(model, "model_signatures"), "Model does not have model signatures as expected."
-            model_meta.signatures = getattr(model, "model_signatures", {})
+            model_signature_dict = getattr(model, "model_signatures", {})
+            target_methods = kwargs.pop("target_methods", None)
+            if not target_methods:
+                model_meta.signatures = model_signature_dict
+            else:
+                temp_model_signature_dict = {}
+                for method_name in target_methods:
+                    method_model_signature = model_signature_dict.get(method_name, None)
+                    if method_model_signature is not None:
+                        temp_model_signature_dict[method_name] = method_model_signature
+                    else:
+                        raise ValueError(f"Target method {method_name} does not exist in the model.")
+                model_meta.signatures = temp_model_signature_dict
 
         model_blob_path = os.path.join(model_blobs_dir_path, name)
         os.makedirs(model_blob_path, exist_ok=True)

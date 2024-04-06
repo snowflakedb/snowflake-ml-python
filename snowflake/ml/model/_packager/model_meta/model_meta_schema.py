@@ -23,9 +23,17 @@ class BaseModelBlobOptions(TypedDict):
     ...
 
 
+class CatBoostModelBlobOptions(BaseModelBlobOptions):
+    catboost_estimator_type: Required[str]
+
+
 class HuggingFacePipelineModelBlobOptions(BaseModelBlobOptions):
     task: Required[str]
     batch_size: Required[int]
+
+
+class LightGBMModelBlobOptions(BaseModelBlobOptions):
+    lightgbm_estimator_type: Required[str]
 
 
 class LLMModelBlobOptions(BaseModelBlobOptions):

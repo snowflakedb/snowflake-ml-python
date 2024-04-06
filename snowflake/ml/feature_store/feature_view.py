@@ -164,27 +164,19 @@ class FeatureView:
             res.append(name)
         return FeatureViewSlice(self, res)
 
-    def physical_name(self) -> SqlIdentifier:
-        """Returns the physical name for this feature in Snowflake.
-
-        Returns:
-            Physical name string.
-
-        Raises:
-            RuntimeError: if the FeatureView is not materialized.
-        """
-        if self.status == FeatureViewStatus.DRAFT or self.version is None:
-            raise RuntimeError(f"FeatureView {self.name} has not been materialized.")
-        return FeatureView._get_physical_name(self.name, self.version)
-
     def fully_qualified_name(self) -> str:
         """Returns the fully qualified name (<database_name>.<schema_name>.<feature_view_name>) for the
             FeatureView in Snowflake.
 
         Returns:
             fully qualified name string.
+
+        Raises:
+            RuntimeError: if the FeatureView is not registered.
         """
-        return f"{self._database}.{self._schema}.{self.physical_name()}"
+        if self.status == FeatureViewStatus.DRAFT or self.version is None:
+            raise RuntimeError(f"FeatureView {self.name} has not been registered.")
+        return f"{self._database}.{self._schema}.{FeatureView._get_physical_name(self.name, self.version)}"
 
     def attach_feature_desc(self, descs: Dict[str, str]) -> FeatureView:
         """
@@ -386,7 +378,7 @@ Got {len(self._feature_df.queries['queries'])}: {self._feature_df.queries['queri
     def to_df(self, session: Session) -> DataFrame:
         values = list(self._to_dict().values())
         schema = [x.lstrip("_") for x in list(self._to_dict().keys())]
-        values.append(str(self.physical_name()))
+        values.append(str(FeatureView._get_physical_name(self._name, self._version)))  # type: ignore[arg-type]
         schema.append("physical_name")
         return session.create_dataframe([values], schema=schema)
 
