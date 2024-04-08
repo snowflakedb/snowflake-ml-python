@@ -73,5 +73,5 @@ dtype_map = {feature.name: feature.as_dtype() for feature in features}
 # Actual table function
 class infer:
     @vectorized(input=pd.DataFrame)
-    def end_partition(df: pd.DataFrame) -> pd.DataFrame:
+    def end_partition(self, df: pd.DataFrame) -> pd.DataFrame:
         return runner(df)

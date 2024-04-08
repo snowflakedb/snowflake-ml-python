@@ -74,8 +74,6 @@ _NUMERIC_TYPES = [
 ]
 
 
-# TODO(thoyt): Implement logic for `add_indicator` parameter and `indicator_` attribute.Requires
-#  `snowflake.ml.impute.MissingIndicator` to be implemented.
 class SimpleImputer(base.BaseTransformer):
     """
     Univariate imputer for completing missing values with simple strategies.
@@ -96,7 +94,8 @@ class SimpleImputer(base.BaseTransformer):
             * If "most_frequent", replace missing using the most frequent value along each column.
               Can be used with strings or numeric data.
               If there is more than one such value, only the smallest is returned.
-            * If "constant", replace the missing values with `fill_value`. Can be used with strings or numeric data.
+            * If "constant", replace the missing values with `fill_value`, including columns that are entirely
+              null. Can be used with strings or numeric data.
 
         fill_value: Optional[str]
             When `strategy == "constant"`, `fill_value` is used to replace all occurrences of `missing_values`.
@@ -262,18 +261,8 @@ class SimpleImputer(base.BaseTransformer):
                         break
 
             for input_col in self.input_cols:
-                # Check whether input column is empty if necessary.
-                if (
-                    # TODO(hayu): [SNOW-752265] Support SimpleImputer keep_empty_features.
-                    #  Add back when `keep_empty_features` is supported.
-                    # not self.keep_empty_features
-                    # and dataset.filter(F.col(input_col).is_not_null()).count(statement_params=statement_params) == 0
-                    dataset.filter(F.col(input_col).is_not_null()).count(statement_params=statement_params)
-                    == 0
-                ):
-                    self.statistics_[input_col] = np.nan
-                else:
-                    self.statistics_[input_col] = self.fill_value
+                self.statistics_[input_col] = self.fill_value
+
         else:
             state = STRATEGY_TO_STATE_DICT[self.strategy]
             assert state is not None

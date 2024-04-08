@@ -58,7 +58,9 @@ class SFStageFileSystemTest(absltest.TestCase):
             fileobj = s3_resource.Object(cls.bucket_name, file)
             fileobj.put(Body=cls.content)
             cls.urls[file] = s3_client.generate_presigned_url(
-                "get_object", Params={"Bucket": cls.bucket_name, "Key": file}, ExpiresIn=3600
+                "get_object",
+                Params={"Bucket": cls.bucket_name, "Key": file},
+                ExpiresIn=3600,
             )
 
     @classmethod
@@ -82,7 +84,14 @@ class SFStageFileSystemTest(absltest.TestCase):
         res = []
         for file in self.file_list:
             if file.startswith(prefix):
-                res.append(snowpark.Row(name=f"{self.stage}/{file}", size=10, md5="xx", last_modified="00"))
+                res.append(
+                    snowpark.Row(
+                        name=f"{self.stage}/{file}",
+                        size=10,
+                        md5="xx",
+                        last_modified="00",
+                    )
+                )
         return mock_data_frame.MockDataFrame(collect_result=res)
 
     def _add_mock_test_case(self, prefix: str) -> None:
@@ -112,7 +121,7 @@ class SFStageFileSystemTest(absltest.TestCase):
                 self.assertEqual(bytes(response.text, "utf-8"), self.content)
 
     def test_negative_create_new_stagefs(self) -> None:
-        """Test if an invalid input of init a stagefs will raise expcetions."""
+        """Test if an invalid input of init a stagefs will raise exceptions."""
         with self.assertRaises(ValueError):
             stage_fs.SFStageFileSystem(
                 db=self.db,
@@ -153,7 +162,11 @@ class SFStageFileSystemTest(absltest.TestCase):
             (self.file2, [""], True),
             (f"{self.subdir}/{self.file3}", [self.subdir], True),
             (self.file3, ["", self.file3], False),
-            (f"{self.subdir}/{self.file1}", [self.subdir, f"{self.subdir}/{self.file1}"], False),
+            (
+                f"{self.subdir}/{self.file1}",
+                [self.subdir, f"{self.subdir}/{self.file1}"],
+                False,
+            ),
         ]
         stagefs = self._create_new_stagefs()
         for file_path, mock_prefixes, expected_res in test_cases:
@@ -190,7 +203,9 @@ class SFStageFileSystemTest(absltest.TestCase):
     def test_open(self) -> None:
         """Test fsspec overridden method open() could return a Python file-like object."""
         with absltest.mock.patch.object(
-            stage_fs.SFStageFileSystem, "_fetch_presigned_urls", new=self._mock_presigned_url_fetcher
+            stage_fs.SFStageFileSystem,
+            "_fetch_presigned_urls",
+            new=self._mock_presigned_url_fetcher,
         ):
             stagefs = self._create_new_stagefs()
             for file in self.file_list:
@@ -201,7 +216,9 @@ class SFStageFileSystemTest(absltest.TestCase):
     def test_optimize_read(self) -> None:
         """Test if optimize_read() can refresh all the stored presigned_urls."""
         with absltest.mock.patch.object(
-            stage_fs.SFStageFileSystem, "_fetch_presigned_urls", new=self._mock_presigned_url_fetcher
+            stage_fs.SFStageFileSystem,
+            "_fetch_presigned_urls",
+            new=self._mock_presigned_url_fetcher,
         ):
             stagefs = self._create_new_stagefs()
             stagefs.optimize_read(self.file_list)
@@ -216,7 +233,9 @@ class SFStageFileSystemTest(absltest.TestCase):
     def test_open_refresh(self) -> None:
         """Test if fsspec open() could refresh stored presigned_urls when they are expired."""
         with absltest.mock.patch.object(
-            stage_fs.SFStageFileSystem, "_fetch_presigned_urls", new=self._mock_presigned_url_fetcher
+            stage_fs.SFStageFileSystem,
+            "_fetch_presigned_urls",
+            new=self._mock_presigned_url_fetcher,
         ):
             stagefs = self._create_new_stagefs()
             stagefs.optimize_read(self.file_list)

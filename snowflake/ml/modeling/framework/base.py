@@ -51,8 +51,8 @@ class Base:
             input_cols: Input columns.
             output_cols: Output columns.
             label_cols: Label column(s).
-            passthrough_cols: List columns not to be used or modified by the estimator/trasformers.
-                These columns will be passed through all the estimator/trasformer operations without any modifications.
+            passthrough_cols: List columns not to be used or modified by the estimator/transformers.
+                These columns will be passed through all the estimator/transformer operations without any modifications.
         """
         self.input_cols: List[str] = []
         self.output_cols: List[str] = []
@@ -185,7 +185,10 @@ class Base:
                 error_code=error_codes.INVALID_ATTRIBUTE,
                 original_exception=RuntimeError(
                     modeling_error_messages.SIZE_MISMATCH.format(
-                        "input_cols", len(self.input_cols), "output_cols", len(self.output_cols)
+                        "input_cols",
+                        len(self.input_cols),
+                        "output_cols",
+                        len(self.output_cols),
                     )
                 ),
             )
@@ -498,7 +501,11 @@ class BaseTransformer(BaseEstimator):
         sample_weight_col: Optional[str] = None,
     ) -> None:
         """Base class for all transformers."""
-        super().__init__(file_names=file_names, custom_states=custom_states, sample_weight_col=sample_weight_col)
+        super().__init__(
+            file_names=file_names,
+            custom_states=custom_states,
+            sample_weight_col=sample_weight_col,
+        )
         self._sklearn_object = None
         self._is_fitted = False
         self._drop_input_cols = drop_input_cols
@@ -705,7 +712,10 @@ class BaseTransformer(BaseEstimator):
                 error_code=error_codes.INVALID_ATTRIBUTE,
                 original_exception=RuntimeError(
                     modeling_error_messages.SIZE_MISMATCH.format(
-                        "output_cols", len(self.output_cols), "transformed array shape", shape
+                        "output_cols",
+                        len(self.output_cols),
+                        "transformed array shape",
+                        shape,
                     )
                 ),
             )

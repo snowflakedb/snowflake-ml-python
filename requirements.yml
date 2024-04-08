@@ -198,6 +198,10 @@
   dev_version: 7.4.0
   tags:
     - build_test_env
+- name: pytest-rerunfailures
+  dev_version: 12.0
+  tags:
+    - build_test_env
 - name: pytest-xdist
   dev_version: 3.5.0
   tags:

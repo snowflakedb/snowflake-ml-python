@@ -156,6 +156,31 @@ class SimpleImputerTest(TestCase):
 
         np.testing.assert_allclose(statistics_numpy, simple_imputer_sklearn.statistics_, equal_nan=True)
 
+    def test_fit_all_missing_constant(self) -> None:
+        """
+        Verify constant fill value when data is missing.
+
+        Raises
+        ------
+        AssertionError
+            If the fit result statistics do not equal the scikit learn fit result statistics.
+        """
+        input_cols = NUMERIC_COLS
+        output_cols = OUTPUT_COLS
+        df_pandas, df = framework_utils.get_df(self._session, DATA_ALL_NONE, SCHEMA)
+
+        fill_value = "foo"
+        simple_imputer = SimpleImputer(
+            input_cols=input_cols, output_cols=output_cols, strategy="constant", fill_value=fill_value
+        )
+        simple_imputer.fit(df)
+
+        simple_imputer_sklearn = SklearnSimpleImputer(strategy="constant", fill_value=fill_value)
+        simple_imputer_sklearn.fit(df_pandas[input_cols])
+        statistics_numpy = np.array(list(simple_imputer.statistics_.values()))
+
+        np.testing.assert_equal(statistics_numpy, simple_imputer_sklearn.statistics_)
+
     def test_fit_all_missing_categorial_keep_empty_features_false(self) -> None:
         """
         Verify fit statistics when the data is missing.

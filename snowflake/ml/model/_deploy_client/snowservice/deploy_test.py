@@ -105,6 +105,40 @@ class DeployTestCase(absltest.TestCase):
 
     @mock.patch("snowflake.ml.model._deploy_client.snowservice.deploy.model_meta.ModelMetadata")  # type: ignore[misc]
     @mock.patch("snowflake.ml.model._deploy_client.snowservice.deploy.SnowServiceDeployment")  # type: ignore[misc]
+    def test_deploy_with_compute_pool_in_starting(
+        self, m_deployment_class: mock.MagicMock, m_model_meta_class: mock.MagicMock
+    ) -> None:
+        m_model_meta = m_model_meta_class.return_value
+
+        m_model_zip_stage_path = "@mock_model_zip_stage_path/model.zip"
+        m_deployment_stage_path = "@mock_model_deployment_stage_path"
+        m_deployment = m_deployment_class.return_value
+
+        self.m_session.add_mock_sql(
+            query=f"DESC COMPUTE POOL {self.options['compute_pool']}",
+            result=self._get_mocked_compute_pool_res(state="STARTING"),
+        )
+
+        self.m_session.add_mock_sql(
+            query="ALTER SESSION SET PYTHON_CONNECTOR_QUERY_RESULT_FORMAT = 'arrow'",
+            result=mock_data_frame.MockDataFrame(collect_result=[]),
+        )
+
+        _deploy(
+            session=cast(session.Session, self.m_session),
+            model_id="provided_model_id",
+            model_meta=m_model_meta,
+            service_func_name="mock_service_func",
+            model_zip_stage_path=m_model_zip_stage_path,
+            deployment_stage_path=m_deployment_stage_path,
+            target_method=constants.PREDICT,
+            **self.options,
+        )
+
+        m_deployment.deploy.assert_called_once()
+
+    @mock.patch("snowflake.ml.model._deploy_client.snowservice.deploy.model_meta.ModelMetadata")  # type: ignore[misc]
+    @mock.patch("snowflake.ml.model._deploy_client.snowservice.deploy.SnowServiceDeployment")  # type: ignore[misc]
     def test_deploy_with_not_ready_compute_pool(
         self, m_deployment_class: mock.MagicMock, m_model_meta_class: mock.MagicMock
     ) -> None:
@@ -115,7 +149,41 @@ class DeployTestCase(absltest.TestCase):
 
         self.m_session.add_mock_sql(
             query=f"DESC COMPUTE POOL {self.options['compute_pool']}",
-            result=self._get_mocked_compute_pool_res(state="STARTING"),
+            result=self._get_mocked_compute_pool_res(state="STOPPED"),
+        )
+
+        self.m_session.add_mock_sql(
+            query="ALTER SESSION SET PYTHON_CONNECTOR_QUERY_RESULT_FORMAT = 'arrow'",
+            result=mock_data_frame.MockDataFrame(collect_result=[]),
+        )
+
+        with exception_utils.assert_snowml_exceptions(self, expected_original_error_type=RuntimeError):
+            _deploy(
+                session=cast(session.Session, self.m_session),
+                model_id="provided_model_id",
+                model_meta=m_model_meta,
+                service_func_name="mock_service_func",
+                model_zip_stage_path=m_model_zip_stage_path,
+                deployment_stage_path=m_deployment_stage_path,
+                target_method=constants.PREDICT,
+                **self.options,
+            )
+
+        m_deployment_class.assert_not_called()
+
+    @mock.patch("snowflake.ml.model._deploy_client.snowservice.deploy.model_meta.ModelMetadata")  # type: ignore[misc]
+    @mock.patch("snowflake.ml.model._deploy_client.snowservice.deploy.SnowServiceDeployment")  # type: ignore[misc]
+    def test_deploy_with_not_auto_resume_compute_pool(
+        self, m_deployment_class: mock.MagicMock, m_model_meta_class: mock.MagicMock
+    ) -> None:
+        m_model_meta = m_model_meta_class.return_value
+
+        m_model_zip_stage_path = "@mock_model_zip_stage_path/model.zip"
+        m_deployment_stage_path = "@mock_model_deployment_stage_path"
+
+        self.m_session.add_mock_sql(
+            query=f"DESC COMPUTE POOL {self.options['compute_pool']}",
+            result=self._get_mocked_compute_pool_res(state="SUSPENDED", auto_resume=False),
         )
 
         self.m_session.add_mock_sql(
