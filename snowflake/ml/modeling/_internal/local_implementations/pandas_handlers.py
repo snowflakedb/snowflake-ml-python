@@ -99,7 +99,10 @@ class PandasTransformHandlers:
                 original_exception=ValueError(
                     "The feature names should match with those that were passed during fit.\n"
                     f"Features seen during fit call but not present in the input: {missing_features}\n"
-                    f"Features in the input dataframe : {input_cols}\n"
+                    f"Features specified with `input_cols` in estimator "
+                    f"{self.estimator.__class__.__name__} in the input dataframe: {input_cols}\n"
+                    f"In your input dataset for current method '{inference_method}', the features are:"
+                    f" {features_in_dataset}."
                 ),
             )
         input_df = dataset[columns_to_select]

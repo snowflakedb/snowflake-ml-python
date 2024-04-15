@@ -87,7 +87,7 @@ class FeatureViewTest(absltest.TestCase):
         df = self._session.create_dataframe([[1, "bar", 3]], schema=["a", "b", "c"])
         e = Entity(name="foo", join_keys=["a"])
         fv = FeatureView(name="my_fv", entities=[e], feature_df=df)
-        with self.assertRaisesRegex(RuntimeError, ".*has not been materialized."):
+        with self.assertRaisesRegex(RuntimeError, ".*has not been registered."):
             fv.fully_qualified_name()
 
     def test_feature_view_serde(self) -> None:

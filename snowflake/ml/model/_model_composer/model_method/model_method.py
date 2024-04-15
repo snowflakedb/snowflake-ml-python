@@ -1,5 +1,4 @@
 import collections
-import enum
 import pathlib
 from typing import List, Optional, TypedDict, Union
 
@@ -11,11 +10,6 @@ from snowflake.ml.model._model_composer.model_manifest import model_manifest_sch
 from snowflake.ml.model._model_composer.model_method import function_generator
 from snowflake.ml.model._packager.model_meta import model_meta as model_meta_api
 from snowflake.snowpark._internal import type_utils
-
-
-class ModelMethodFunctionTypes(enum.Enum):
-    FUNCTION = "FUNCTION"
-    TABLE_FUNCTION = "TABLE_FUNCTION"
 
 
 class ModelMethodOptions(TypedDict):
@@ -33,9 +27,9 @@ def get_model_method_options_from_options(
     options: type_hints.ModelSaveOption, target_method: str
 ) -> ModelMethodOptions:
     method_option = options.get("method_options", {}).get(target_method, {})
-    global_function_type = options.get("function_type", ModelMethodFunctionTypes.FUNCTION.value)
+    global_function_type = options.get("function_type", model_manifest_schema.ModelMethodFunctionTypes.FUNCTION.value)
     function_type = method_option.get("function_type", global_function_type)
-    if function_type not in [function_type.value for function_type in ModelMethodFunctionTypes]:
+    if function_type not in [function_type.value for function_type in model_manifest_schema.ModelMethodFunctionTypes]:
         raise NotImplementedError
 
     # TODO(TH): enforce minimum snowflake version
@@ -89,7 +83,9 @@ class ModelMethod:
         if self.target_method not in self.model_meta.signatures.keys():
             raise ValueError(f"Target method {self.target_method} is not available in the signatures of the model.")
 
-        self.function_type = self.options.get("function_type", ModelMethodFunctionTypes.FUNCTION.value)
+        self.function_type = self.options.get(
+            "function_type", model_manifest_schema.ModelMethodFunctionTypes.FUNCTION.value
+        )
 
     @staticmethod
     def _get_method_arg_from_feature(
@@ -134,7 +130,7 @@ class ModelMethod:
             List[model_manifest_schema.ModelMethodSignatureField],
             List[model_manifest_schema.ModelMethodSignatureFieldWithName],
         ]
-        if self.function_type == ModelMethodFunctionTypes.TABLE_FUNCTION.value:
+        if self.function_type == model_manifest_schema.ModelMethodFunctionTypes.TABLE_FUNCTION.value:
             outputs = [
                 ModelMethod._get_method_arg_from_feature(ft, case_sensitive=self.options.get("case_sensitive", False))
                 for ft in self.model_meta.signatures[self.target_method].outputs

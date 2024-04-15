@@ -12,6 +12,7 @@ dependencies:
   - boto3==1.24.28
   - build==0.10.0
   - cachetools==4.2.2
+  - catboost==1.2.0
   - cloudpickle==2.2.1
   - conda-libmamba-solver==23.7.0
   - coverage==6.3.2

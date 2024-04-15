@@ -1,12 +1,9 @@
 import posixpath
-import unittest
 import uuid
 from typing import Callable, Tuple
 
 import numpy as np
 import pandas as pd
-import tensorflow as tf
-import torch
 from absl.testing import absltest
 from packaging import version
 from sklearn import datasets
@@ -17,7 +14,7 @@ from snowflake.snowpark import session
 from tests.integ.snowflake.ml.test_utils import common_test_base, db_manager
 
 
-@unittest.skipIf(
+@absltest.skipIf(
     version.Version(env.PYTHON_VERSION) >= version.Version("3.11"),
     "Skip compat test for Python higher than 3.11 since we previously does not support it.",
 )
@@ -471,6 +468,8 @@ class TestWarehouseCustomModelCompat(common_test_base.CommonTestBase):
         additional_packages=["pytorch"],
     )
     def test_deploy_pytorch_model_compat_v1(self) -> None:
+        import torch
+
         deploy_info = model_api.deploy(
             self.session,
             name=db_manager.TestObjectNameGenerator.get_snowml_test_object_name(self.run_id, "forward"),
@@ -547,6 +546,8 @@ class TestWarehouseCustomModelCompat(common_test_base.CommonTestBase):
         additional_packages=["pytorch"],
     )
     def test_deploy_torchscript_model_compat_v1(self) -> None:
+        import torch
+
         deploy_info = model_api.deploy(
             self.session,
             name=db_manager.TestObjectNameGenerator.get_snowml_test_object_name(self.run_id, "forward"),
@@ -606,6 +607,8 @@ class TestWarehouseCustomModelCompat(common_test_base.CommonTestBase):
         additional_packages=["tensorflow"],
     )
     def test_deploy_tensorflow_model_compat_v1(self) -> None:
+        import tensorflow as tf
+
         deploy_info = model_api.deploy(
             self.session,
             name=db_manager.TestObjectNameGenerator.get_snowml_test_object_name(self.run_id, "__call__"),
@@ -674,6 +677,8 @@ class TestWarehouseCustomModelCompat(common_test_base.CommonTestBase):
         additional_packages=["tensorflow"],
     )
     def test_deploy_keras_model_compat_v1(self) -> None:
+        import tensorflow as tf
+
         deploy_info = model_api.deploy(
             self.session,
             name=db_manager.TestObjectNameGenerator.get_snowml_test_object_name(self.run_id, "predict"),

@@ -70,11 +70,7 @@ class Normalizer(base.BaseTransformer):
         """
         pass
 
-    @telemetry.send_api_usage_telemetry(
-        project=base.PROJECT,
-        subproject=base.SUBPROJECT,
-    )
-    def fit(self, dataset: Union[snowpark.DataFrame, pd.DataFrame]) -> "Normalizer":
+    def _fit(self, dataset: Union[snowpark.DataFrame, pd.DataFrame]) -> "Normalizer":
         """
         Does nothing, because the normalizer is a stateless transformer.
 

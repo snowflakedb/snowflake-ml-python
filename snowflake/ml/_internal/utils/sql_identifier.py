@@ -27,15 +27,11 @@ class SqlIdentifier(str):
                 automatically added if necessary to make sure the original input's cases are preserved.
                 Default to False.
 
-        Raises:
-            ValueError: input name is not a valid identifier.
-
         Returns:
             Returns new instance created.
         """
-        # TODO (wezhou) add stronger validation to recognize a valid snowflake identifier.
-        if not name:
-            raise ValueError(f"name:`{name}` is not a valid identifier.")
+        assert name is not None
+
         if case_sensitive:
             return super().__new__(cls, identifier.get_inferred_name(name))
         else:

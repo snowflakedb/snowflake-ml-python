@@ -57,6 +57,7 @@ class TestRegistryMLFlowModelInteg(registry_model_test_base.RegistryModelTestBas
                     lambda res: np.testing.assert_allclose(np.expand_dims(predictions, axis=1), res.to_numpy()),
                 ),
             },
+            options={"relax_version": False},
         )
 
     def test_mlflow_model_deploy_sklearn(
@@ -107,6 +108,7 @@ class TestRegistryMLFlowModelInteg(registry_model_test_base.RegistryModelTestBas
                     lambda res: np.testing.assert_allclose(np.expand_dims(predictions, axis=1), res.to_numpy()),
                 ),
             },
+            options={"relax_version": False},
         )
 
 

@@ -267,11 +267,7 @@ class OneHotEncoder(base.BaseTransformer):
         if hasattr(self, "_state_pandas"):
             del self._state_pandas
 
-    @telemetry.send_api_usage_telemetry(
-        project=base.PROJECT,
-        subproject=base.SUBPROJECT,
-    )
-    def fit(self, dataset: Union[snowpark.DataFrame, pd.DataFrame]) -> "OneHotEncoder":
+    def _fit(self, dataset: Union[snowpark.DataFrame, pd.DataFrame]) -> "OneHotEncoder":
         """
         Fit OneHotEncoder to dataset.
 

@@ -93,7 +93,7 @@ class Registry:
         Log a model with various parameters and metadata.
 
         Args:
-            model: Model object of supported types such as Scikit-learn, XGBoost, Snowpark ML,
+            model: Model object of supported types such as Scikit-learn, XGBoost, LightGBM, Snowpark ML,
                 PyTorch, TorchScript, Tensorflow, Tensorflow Keras, MLFlow, HuggingFace Pipeline,
                 Sentence Transformers, Peft-finetuned LLM, or Custom Model.
             model_name: Name to identify the model.

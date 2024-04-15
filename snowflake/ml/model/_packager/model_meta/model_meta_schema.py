@@ -1,7 +1,7 @@
 # This files contains schema definition of what will be written into model.yml
 # Changing this file should lead to a change of the schema version.
 
-from typing import Any, Dict, Optional, TypedDict, Union
+from typing import Any, Dict, List, Optional, TypedDict, Union
 
 from typing_extensions import NotRequired, Required
 
@@ -9,6 +9,16 @@ from snowflake.ml.model import type_hints
 
 MODEL_METADATA_VERSION = "2023-12-01"
 MODEL_METADATA_MIN_SNOWPARK_ML_VERSION = "1.0.12"
+
+
+class ModelRuntimeDependenciesDict(TypedDict):
+    conda: Required[str]
+    pip: Required[str]
+
+
+class ModelRuntimeDict(TypedDict):
+    imports: Required[List[str]]
+    dependencies: Required[ModelRuntimeDependenciesDict]
 
 
 class ModelEnvDict(TypedDict):
@@ -23,9 +33,17 @@ class BaseModelBlobOptions(TypedDict):
     ...
 
 
+class CatBoostModelBlobOptions(BaseModelBlobOptions):
+    catboost_estimator_type: Required[str]
+
+
 class HuggingFacePipelineModelBlobOptions(BaseModelBlobOptions):
     task: Required[str]
     batch_size: Required[int]
+
+
+class LightGBMModelBlobOptions(BaseModelBlobOptions):
+    lightgbm_estimator_type: Required[str]
 
 
 class LLMModelBlobOptions(BaseModelBlobOptions):
@@ -61,6 +79,7 @@ class ModelBlobMetadataDict(TypedDict):
 class ModelMetadataDict(TypedDict):
     creation_timestamp: Required[str]
     env: Required[ModelEnvDict]
+    runtimes: NotRequired[Dict[str, ModelRuntimeDict]]
     metadata: NotRequired[Optional[Dict[str, str]]]
     model_type: Required[type_hints.SupportedModelHandlerType]
     models: Required[Dict[str, ModelBlobMetadataDict]]

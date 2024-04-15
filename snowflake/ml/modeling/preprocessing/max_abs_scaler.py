@@ -106,11 +106,7 @@ class MaxAbsScaler(base.BaseTransformer):
         self.scale_ = {}
         self.max_abs_ = {}
 
-    @telemetry.send_api_usage_telemetry(
-        project=base.PROJECT,
-        subproject=base.SUBPROJECT,
-    )
-    def fit(self, dataset: Union[snowpark.DataFrame, pd.DataFrame]) -> "MaxAbsScaler":
+    def _fit(self, dataset: Union[snowpark.DataFrame, pd.DataFrame]) -> "MaxAbsScaler":
         """
         Compute the maximum absolute value to be used for later scaling.
 

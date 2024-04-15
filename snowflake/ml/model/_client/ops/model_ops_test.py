@@ -1,8 +1,3 @@
-import json
-import os
-import pathlib
-import tempfile
-import textwrap
 from typing import List, cast
 from unittest import mock
 
@@ -14,7 +9,7 @@ from absl.testing import absltest
 from snowflake.ml._internal.utils import sql_identifier
 from snowflake.ml.model import model_signature
 from snowflake.ml.model._client.ops import model_ops
-from snowflake.ml.model._model_composer.model_manifest import model_manifest_schema
+from snowflake.ml.model._packager.model_meta import model_meta, model_meta_schema
 from snowflake.ml.model._signatures import snowpark_handler
 from snowflake.ml.test_utils import mock_data_frame, mock_session
 from snowflake.snowpark import DataFrame, Row, Session, types as spt
@@ -26,7 +21,13 @@ _DUMMY_SIG = {
             model_signature.FeatureSpec(dtype=model_signature.DataType.FLOAT, name="input"),
         ],
         outputs=[model_signature.FeatureSpec(name="output", dtype=model_signature.DataType.FLOAT)],
-    )
+    ),
+    "predict_table": model_signature.ModelSignature(
+        inputs=[
+            model_signature.FeatureSpec(dtype=model_signature.DataType.FLOAT, name="input"),
+        ],
+        outputs=[model_signature.FeatureSpec(name="output", dtype=model_signature.DataType.FLOAT)],
+    ),
 }
 
 
@@ -388,111 +389,6 @@ class ModelOpsTest(absltest.TestCase):
                 statement_params=self.m_statement_params,
             )
 
-    def test_get_model_version_manifest(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            m_manifest = {
-                "manifest_version": "1.0",
-                "runtimes": {
-                    "python_runtime": {
-                        "language": "PYTHON",
-                        "version": "3.8",
-                        "imports": ["model.zip", "runtimes/python_runtime/snowflake-ml-python.zip"],
-                        "dependencies": {"conda": "runtimes/python_runtime/env/conda.yml"},
-                    }
-                },
-                "methods": [
-                    {
-                        "name": "predict",
-                        "runtime": "python_runtime",
-                        "type": "FUNCTION",
-                        "handler": "functions.predict.infer",
-                        "inputs": [{"name": "input", "type": "FLOAT"}],
-                        "outputs": [{"type": "OBJECT"}],
-                    },
-                    {
-                        "name": "__CALL__",
-                        "runtime": "python_runtime",
-                        "type": "FUNCTION",
-                        "handler": "functions.__call__.infer",
-                        "inputs": [{"name": "INPUT", "type": "FLOAT"}],
-                        "outputs": [{"type": "OBJECT"}],
-                    },
-                ],
-            }
-            m_manifest_path = os.path.join(tmpdir, "MANIFEST.yml")
-            with open(m_manifest_path, "w", encoding="utf-8") as f:
-                yaml.safe_dump(m_manifest, f)
-            with mock.patch.object(tempfile.TemporaryDirectory, "__enter__", return_value=tmpdir), mock.patch.object(
-                self.m_ops._model_version_client, "get_file", return_value=m_manifest_path
-            ) as mock_get_file:
-                manifest_res = self.m_ops.get_model_version_manifest(
-                    model_name=sql_identifier.SqlIdentifier("MODEL"),
-                    version_name=sql_identifier.SqlIdentifier("v1", case_sensitive=True),
-                    statement_params=self.m_statement_params,
-                )
-                mock_get_file.assert_called_once_with(
-                    model_name=sql_identifier.SqlIdentifier("MODEL"),
-                    version_name=sql_identifier.SqlIdentifier("v1", case_sensitive=True),
-                    file_path=pathlib.PurePosixPath("MANIFEST.yml"),
-                    target_path=mock.ANY,
-                    statement_params=self.m_statement_params,
-                )
-                self.assertDictEqual(manifest_res, m_manifest)
-
-    def test_get_model_version_native_packing_meta(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            m_meta_yaml = textwrap.dedent(
-                """
-                creation_timestamp: '2023-11-20 18:14:06.357187'
-                env:
-                    conda: env/conda.yml
-                    cuda_version: null
-                    pip: env/requirements.txt
-                    python_version: '3.8'
-                    snowpark_ml_version: 1.0.13+ca79e1b0720d35abd021c33707de789dc63918cc
-                metadata: null
-                min_snowpark_ml_version: 1.0.12
-                model_type: sklearn
-                models:
-                    SKLEARN_MODEL:
-                        artifacts: {}
-                        handler_version: '2023-12-01'
-                        model_type: sklearn
-                        name: SKLEARN_MODEL
-                        options: {}
-                        path: model.pkl
-                name: SKLEARN_MODEL
-                signatures:
-                    predict:
-                        inputs:
-                        - name: input_feature_0
-                          type: DOUBLE
-                        outputs:
-                        - name: output_feature_0
-                          type: BOOL
-                version: '2023-12-01'
-                """
-            )
-            m_meta_path = os.path.join(tmpdir, "model.yaml")
-            with open(m_meta_path, "w", encoding="utf-8") as f:
-                f.write(m_meta_yaml)
-            with mock.patch.object(
-                self.m_ops._model_version_client, "get_file", return_value=m_meta_path
-            ) as mock_get_file:
-                manifest_res = self.m_ops.get_model_version_native_packing_meta(
-                    model_name=sql_identifier.SqlIdentifier("MODEL"),
-                    version_name=sql_identifier.SqlIdentifier("v1", case_sensitive=True),
-                    statement_params=self.m_statement_params,
-                )
-                mock_get_file.assert_called_once_with(
-                    model_name=sql_identifier.SqlIdentifier("MODEL"),
-                    version_name=sql_identifier.SqlIdentifier("v1", case_sensitive=True),
-                    file_path=pathlib.PurePosixPath("model/model.yaml"),
-                    target_path=mock.ANY,
-                    statement_params=self.m_statement_params,
-                )
-                self.assertDictEqual(manifest_res, yaml.safe_load(m_meta_yaml))
-
     def test_create_from_stage_1(self) -> None:
         mock_composer = mock.MagicMock()
         mock_composer.stage_path = '@TEMP."test".MODEL/V1'
@@ -596,45 +492,6 @@ class ModelOpsTest(absltest.TestCase):
                 )
             mock_create_from_stage.assert_not_called()
             mock_add_version_from_stagel.assert_not_called()
-
-    def test_get_client_data_in_user_data_1(self) -> None:
-        m_client_data = {
-            "schema_version": model_manifest_schema.MANIFEST_CLIENT_DATA_SCHEMA_VERSION,
-            "functions": [
-                model_manifest_schema.ModelFunctionInfoDict(
-                    name="PREDICT",
-                    target_method="predict",
-                    signature=_DUMMY_SIG["predict"].to_dict(),
-                )
-            ],
-        }
-        m_list_res = [
-            Row(
-                create_on="06/01",
-                name="v1",
-                comment="This is a comment",
-                model_name="MODEL",
-                user_data=json.dumps({model_manifest_schema.MANIFEST_CLIENT_DATA_KEY_NAME: m_client_data}),
-                is_default_version=True,
-            ),
-        ]
-        with mock.patch.object(
-            self.m_ops._model_client, "show_versions", return_value=m_list_res
-        ) as mock_show_versions:
-            res = self.m_ops.get_client_data_in_user_data(
-                model_name=sql_identifier.SqlIdentifier("MODEL"),
-                version_name=sql_identifier.SqlIdentifier('"v1"'),
-                statement_params=self.m_statement_params,
-            )
-            self.assertDictEqual(
-                res,
-                m_client_data,
-            )
-            mock_show_versions.assert_called_once_with(
-                model_name=sql_identifier.SqlIdentifier("MODEL"),
-                version_name=sql_identifier.SqlIdentifier('"v1"'),
-                statement_params=self.m_statement_params,
-            )
 
     def test_invoke_method_1(self) -> None:
         pd_df = pd.DataFrame([["1.0"]], columns=["input"], dtype=np.float32)
@@ -961,6 +818,91 @@ class ModelOpsTest(absltest.TestCase):
                 version_name=sql_identifier.SqlIdentifier("V2"),
                 statement_params=self.m_statement_params,
             )
+
+    def test_enable_model_details(self) -> None:
+        with mock.patch.object(
+            self.m_ops._model_client,
+            "config_model_details",
+        ) as mock_config_model_details:
+            with self.m_ops._enable_model_details(statement_params=self.m_statement_params):
+                mock_config_model_details.assert_called_with(
+                    enable=True,
+                    statement_params=self.m_statement_params,
+                )
+            mock_config_model_details.assert_called_with(
+                enable=False,
+                statement_params=self.m_statement_params,
+            )
+
+    def test_match_model_spec_with_sql_functions(self) -> None:
+        with self.assertRaises(AssertionError):
+            model_ops.ModelOperator._match_model_spec_with_sql_functions(
+                [sql_identifier.SqlIdentifier("ABC")], ["predict"]
+            )
+
+        self.assertDictEqual(
+            {sql_identifier.SqlIdentifier("PREDICT"): "predict"},
+            model_ops.ModelOperator._match_model_spec_with_sql_functions(
+                [sql_identifier.SqlIdentifier("PREDICT")], ["predict"]
+            ),
+        )
+
+        self.assertDictEqual(
+            {sql_identifier.SqlIdentifier('"predict"'): "predict"},
+            model_ops.ModelOperator._match_model_spec_with_sql_functions(
+                [sql_identifier.SqlIdentifier('"predict"')], ["predict"]
+            ),
+        )
+
+        self.assertDictEqual(
+            {sql_identifier.SqlIdentifier('"predict"'): "predict", sql_identifier.SqlIdentifier("PREDICT"): "PREDICT"},
+            model_ops.ModelOperator._match_model_spec_with_sql_functions(
+                [sql_identifier.SqlIdentifier("PREDICT"), sql_identifier.SqlIdentifier('"predict"')],
+                ["predict", "PREDICT"],
+            ),
+        )
+
+    def test_get_functions(self) -> None:
+        m_spec = {
+            "signatures": {
+                "predict": _DUMMY_SIG["predict"].to_dict(),
+                "predict_table": _DUMMY_SIG["predict_table"].to_dict(),
+            }
+        }
+        m_show_versions_result = [Row(model_spec=yaml.safe_dump(m_spec))]
+        m_show_functions_result = [
+            Row(name="predict", return_type="NUMBER"),
+            Row(name="predict_table", return_type="TABLE (RESULTS VARCHAR)"),
+        ]
+        with mock.patch.object(self.m_ops, "_enable_model_details",) as mock_enable_model_details, mock.patch.object(
+            self.m_ops._model_client,
+            "show_versions",
+            return_value=m_show_versions_result,
+        ) as mock_show_versions, mock.patch.object(
+            self.m_ops._model_version_client, "show_functions", return_value=m_show_functions_result
+        ) as mock_show_functions, mock.patch.object(
+            model_meta.ModelMetadata,
+            "_validate_model_metadata",
+            return_value=cast(model_meta_schema.ModelMetadataDict, m_spec),
+        ) as mock_validate_model_metadata:
+            self.m_ops.get_functions(
+                model_name=sql_identifier.SqlIdentifier("MODEL"),
+                version_name=sql_identifier.SqlIdentifier('"v1"'),
+                statement_params=self.m_statement_params,
+            )
+            mock_enable_model_details.assert_called_once_with(statement_params=self.m_statement_params)
+            mock_show_versions.assert_called_once_with(
+                model_name=sql_identifier.SqlIdentifier("MODEL"),
+                version_name=sql_identifier.SqlIdentifier('"v1"'),
+                check_model_details=True,
+                statement_params=self.m_statement_params,
+            )
+            mock_show_functions.assert_called_once_with(
+                model_name=sql_identifier.SqlIdentifier("MODEL"),
+                version_name=sql_identifier.SqlIdentifier('"v1"'),
+                statement_params=self.m_statement_params,
+            )
+            mock_validate_model_metadata.assert_called_once_with(m_spec)
 
 
 if __name__ == "__main__":

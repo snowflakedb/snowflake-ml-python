@@ -7,15 +7,16 @@
 - Registry: Fix a bug when multiple models are being called from the same query, models other than the first one will
   have incorrect result. This fix only works for newly logged model.
 - Modeling: When registering a model, only method(s) that is mentioned in `save_model` would be added to model signature
-in SnowML models.
+  in SnowML models.
 - Modeling: Fix a bug that when n_jobs is not 1, model cannot execute methods such as
-predict, predict_log_proba, and other batch inference methods. The n_jobs would automatically
-set to 1 because vectorized udf currently doesn't support joblib parallel backend.
+  predict, predict_log_proba, and other batch inference methods. The n_jobs would automatically
+  set to 1 because vectorized udf currently doesn't support joblib parallel backend.
 - Modeling: Fix a bug that batch inference methods cannot infer the datatype when the first row of data contains NULL.
 - Modeling: Matches Distributed HPO output column names with the snowflake identifier.
 - Modeling: Relax package versions for all Distributed HPO methods if the installed version
   is not available in the Snowflake conda channel
 - Modeling: Add sklearn as required dependency for LightGBM package.
+- Registry: Fix a bug that leads to `relax_version` option is not working.
 
 ### Behavior Changes
 
@@ -24,6 +25,8 @@ set to 1 because vectorized udf currently doesn't support joblib parallel backen
 
 ### New Features
 
+- Registry: Add support for `catboost` model (`catboost.CatBoostClassifier`, `catboost.CatBoostRegressor`).
+- Registry: Add support for `lightgbm` model (`lightgbm.Booster`, `lightgbm.LightGBMClassifier`, `lightgbm.LightGBMRegressor`).
 - Registry: Add support for `sentence-transformers` model (`sentence_transformers.SentenceTransformer`).
 - Registry: Now version name is no longer required when logging a model. If not provided, a random human readable ID
   will be generated.
@@ -70,8 +73,7 @@ set to 1 because vectorized udf currently doesn't support joblib parallel backen
 - Registry: Improve the error message when specifying currently unsupported `pip_requirements` argument.
 - Model Development: Fix precision_recall_fscore_support incorrect results when `average="samples"`.
 - Model Registry: Fix an issue that leads to description, metrics or tags are not correctly returned in newly created
-  Model Registry (PrPr) due to Snowflake BCR [2024_01](
-  https://docs.snowflake.com/en/release-notes/bcr-bundles/2024_01/bcr-1483)
+  Model Registry (PrPr) due to Snowflake BCR [2024_01](https://docs.snowflake.com/en/release-notes/bcr-bundles/2024_01/bcr-1483)
 
 ### Behavior Changes
 
@@ -123,9 +125,9 @@ set to 1 because vectorized udf currently doesn't support joblib parallel backen
 ### Additional Notes
 
 - Model Registry: The `snowflake.ml.registry.model_registry.ModelRegistry` has been deprecated starting from version
-1.2.0. It will stay in the Private Preview phase. For future implementations, kindly utilize
-`snowflake.ml.registry.Registry`, except when specifically required. The old model registry will be removed once all
-its primary functionalities are fully integrated into the new registry.
+  1.2.0. It will stay in the Private Preview phase. For future implementations, kindly utilize
+  `snowflake.ml.registry.Registry`, except when specifically required. The old model registry will be removed once all
+  its primary functionalities are fully integrated into the new registry.
 
 ## 1.1.2 (2023-12-18)
 
@@ -180,7 +182,7 @@ its primary functionalities are fully integrated into the new registry.
 - Model Registry: Fix regression issue that container logging is not shown during model deployment to SPCS.
 - Model Development: Enhance the column capacity of OrdinalEncoder.
 - Model Registry: Fix unbound `batch_size` error when deploying a model other than Hugging Face Pipeline
-   and LLM with GPU on SPCS.
+  and LLM with GPU on SPCS.
 
 ### Behavior Changes
 
@@ -222,7 +224,7 @@ its primary functionalities are fully integrated into the new registry.
 ### Behavior Changes
 
 - Model Development: precision_score, recall_score, f1_score, fbeta_score, precision_recall_fscore_support,
-mean_absolute_error, mean_squared_error, and mean_absolute_percentage_error metric calculations are now distributed.
+  mean_absolute_error, mean_squared_error, and mean_absolute_percentage_error metric calculations are now distributed.
 - Model Registry: `deploy` will now return `Deployment` for deployment information.
 
 ### New Features
@@ -236,7 +238,7 @@ mean_absolute_error, mean_squared_error, and mean_absolute_percentage_error metr
 - Model Development: Fix an issue that alias definitions cause `SnowparkSQLUnexpectedAliasException` in inference.
 - Model Registry: Fix an issue that signature inference could be incorrect when using Snowpark DataFrame as sample input.
 - Model Registry: Fix too strict data type validation when predicting. Now, for example, if you have a INT8
- type feature in the signature, if providing a INT64 dataframe but all values are within the range, it would not fail.
+  type feature in the signature, if providing a INT64 dataframe but all values are within the range, it would not fail.
 
 ## 1.0.9 (2023-09-28)
 
@@ -259,7 +261,7 @@ mean_absolute_error, mean_squared_error, and mean_absolute_percentage_error metr
 - Model Development: Fix an issue when the sklearn default value is `np.nan`.
 - Model Registry: Fix an issue that incorrect docker executable is used when building images.
 - Model Registry: Fix an issue that specifying `token` argument when using
-`snowflake.ml.model.models.huggingface_pipeline.HuggingFacePipelineModel` with `transformers < 4.32.0` is not effective.
+  `snowflake.ml.model.models.huggingface_pipeline.HuggingFacePipelineModel` with `transformers < 4.32.0` is not effective.
 - Model Registry: Fix an issue that incorrect system function call is used when deploying to SPCS.
 - Model Registry: Fix an issue when using a `transformers.pipeline` that does not have a `tokenizer`.
 - Model Registry: Fix incorrectly-inferred image repository name during model deployment to SPCS.
@@ -279,17 +281,17 @@ mean_absolute_error, mean_squared_error, and mean_absolute_percentage_error metr
 - Model Registry: add `create_if_not_exists` parameter in constructor.
 - Model Registry: Added get_or_create_model_registry API.
 - Model Registry: Added support for using GPU inference when deploying XGBoost (`xgboost.XGBModel` and `xgboost.Booster`
-), PyTorch (`torch.nn.Module` and `torch.jit.ScriptModule`) and TensorFlow (`tensorflow.Module` and
-`tensorflow.keras.Model`) models to Snowpark Container Services.
+  ), PyTorch (`torch.nn.Module` and `torch.jit.ScriptModule`) and TensorFlow (`tensorflow.Module` and
+  `tensorflow.keras.Model`) models to Snowpark Container Services.
 - Model Registry: When inferring model signature, `Sequence` of built-in types, `Sequence` of `numpy.ndarray`,
-`Sequence` of `torch.Tensor`, `Sequence` of `tensorflow.Tensor` and `Sequence` of `tensorflow.Tensor` can be used
- instead of only `List` of them.
+  `Sequence` of `torch.Tensor`, `Sequence` of `tensorflow.Tensor` and `Sequence` of `tensorflow.Tensor` can be used
+  instead of only `List` of them.
 - Model Registry: Added `get_training_dataset` API.
 - Model Development: Size of metrics result can exceed previous 8MB limit.
 - Model Registry: Added support save/load/deploy HuggingFace pipeline object (`transformers.Pipeline`) and our wrapper
-(`snowflake.ml.model.models.huggingface_pipeline.HuggingFacePipelineModel`) to it. Using the wrapper to specify
-configurations and the model for the pipeline will be loaded dynamically when deploying. Currently, following tasks
-are supported to log without manually specifying model signatures:
+  (`snowflake.ml.model.models.huggingface_pipeline.HuggingFacePipelineModel`) to it. Using the wrapper to specify
+  configurations and the model for the pipeline will be loaded dynamically when deploying. Currently, following tasks
+  are supported to log without manually specifying model signatures:
   - "conversational"
   - "fill-mask"
   - "question-answering"
@@ -313,18 +315,18 @@ are supported to log without manually specifying model signatures:
 - Model Registry: `log_model()` now return a `ModelReference` object instead of a model ID.
 - Model Registry: When deploying a model with 1 `target method` only, the `target_method` argument can be omitted.
 - Model Registry: When using the snowflake-ml-python with version newer than what is available in Snowflake Anaconda
-Channel, `embed_local_ml_library` option will be set as `True` automatically if not.
+  Channel, `embed_local_ml_library` option will be set as `True` automatically if not.
 - Model Registry: When deploying a model to Snowpark Container Services and using GPU, the default value of num_workers
-will be 1.
+  will be 1.
 - Model Registry: `keep_order` and `output_with_input_features` in the deploy options have been removed. Now the
-behavior is controlled by the type of the input when calling `model.predict()`. If the input is a `pandas.DataFrame`,
-the behavior will be the same as `keep_order=True` and `output_with_input_features=False` before. If the input is a
-`snowpark.DataFrame`, the behavior will be the same as `keep_order=False` and `output_with_input_features=True` before.
+  behavior is controlled by the type of the input when calling `model.predict()`. If the input is a `pandas.DataFrame`,
+  the behavior will be the same as `keep_order=True` and `output_with_input_features=False` before. If the input is a
+  `snowpark.DataFrame`, the behavior will be the same as `keep_order=False` and `output_with_input_features=True` before.
 - Model Registry: When logging and deploying PyTorch (`torch.nn.Module` and `torch.jit.ScriptModule`) and TensorFlow
-(`tensorflow.Module` and `tensorflow.keras.Model`) models, we no longer accept models whose input is a list of tensor
-and output is a list of tensors. Instead, now we accept models whose input is 1 or more tensors as positional arguments,
- and output is a tensor or a tuple of tensors. The input and output dataframe when predicting keep the same as before,
- that is every column is an array feature and contains a tensor.
+  (`tensorflow.Module` and `tensorflow.keras.Model`) models, we no longer accept models whose input is a list of tensor
+  and output is a list of tensors. Instead, now we accept models whose input is 1 or more tensors as positional arguments,
+  and output is a tensor or a tuple of tensors. The input and output dataframe when predicting keep the same as before,
+  that is every column is an array feature and contains a tensor.
 
 ## 1.0.5 (2023-08-17)
 
@@ -337,7 +339,7 @@ and output is a list of tensors. Instead, now we accept models whose input is 1 
 
 - Model Registry: Restore the db/schema back to the session after `create_model_registry()`.
 - Model Registry: Fixed an issue that the UDF name created when deploying a model is not identical to what is provided
-and cannot be correctly dropped when deployment getting dropped.
+  and cannot be correctly dropped when deployment getting dropped.
 - connection_params.SnowflakeLoginOptions(): Added support for `private_key_path`.
 
 ## 1.0.4 (2023-07-28)
@@ -358,7 +360,7 @@ and cannot be correctly dropped when deployment getting dropped.
 ### Behavior Changes
 
 - Model Registry: When predicting a model whose output is a list of NumPy ndarray, the output would not be flattened,
-instead, every ndarray will act as a feature(column) in the output.
+  instead, every ndarray will act as a feature(column) in the output.
 
 ### New Features
 
@@ -367,18 +369,18 @@ instead, every ndarray will act as a feature(column) in the output.
 ### Bug Fixes
 
 - Model Registry: Fix an issue that when database or schema name provided to `create_model_registry` contains special
-characters, the model registry cannot be created.
+  characters, the model registry cannot be created.
 - Model Registry: Fix an issue that `get_model_description` returns with additional quotes.
 - Model Registry: Fix incorrect error message when attempting to remove a unset tag of a model.
 - Model Registry: Fix a typo in the default deployment table name.
 - Model Registry: Snowpark dataframe for sample input or input for `predict` method that contains a column with
-Snowflake `NUMBER(precision, scale)` data type where `scale = 0` will not lead to error, and will now correctly
-recognized as `INT64` data type in model signature.
+  Snowflake `NUMBER(precision, scale)` data type where `scale = 0` will not lead to error, and will now correctly
+  recognized as `INT64` data type in model signature.
 - Model Registry: Fix an issue that prevent model logged in the system whose default encoding is not UTF-8 compatible
-from deploying.
+  from deploying.
 - Model Registry: Added earlier and better error message when any file name in the model or the file name of model
-itself contains characters that are unable to be encoded using ASCII. It is currently not supported to deploy such a
-model.
+  itself contains characters that are unable to be encoded using ASCII. It is currently not supported to deploy such a
+  model.
 
 ## 1.0.2 (2023-06-22)
 
@@ -387,16 +389,16 @@ model.
 - Model Registry: Prohibit non-snowflake-native models from being logged.
 - Model Registry: `_use_local_snowml` parameter in options of `deploy()` has been removed.
 - Model Registry: A default `False` `embed_local_ml_library` parameter has been added to the options of `log_model()`.
-With this set to `False` (default), the version of the local snowflake-ml-python library will be recorded and used when
-deploying the model. With this set to `True`, local snowflake-ml-python library will be embedded into the logged model,
-and will be used when you load or deploy the model.
+  With this set to `False` (default), the version of the local snowflake-ml-python library will be recorded and used when
+  deploying the model. With this set to `True`, local snowflake-ml-python library will be embedded into the logged model,
+  and will be used when you load or deploy the model.
 
 ### New Features
 
 - Model Registry: A new optional argument named `code_paths` has been added to the arguments of `log_model()` for users
-to specify additional code paths to be imported when loading and deploying the model.
+  to specify additional code paths to be imported when loading and deploying the model.
 - Model Registry: A new optional argument named `options` has been added to the arguments of `log_model()` to specify
-any additional options when saving the model.
+  any additional options when saving the model.
 - Model Development: Added metrics:
   - d2_absolute_error_score
   - d2_pinball_score
@@ -415,14 +417,14 @@ any additional options when saving the model.
 
 - Model Development: Changed Metrics APIs to imitate sklearn metrics modules:
   - `accuracy_score()`, `confusion_matrix()`, `precision_recall_fscore_support()`, `precision_score()` methods move from
-  respective modules to `metrics.classification`.
+    respective modules to `metrics.classification`.
 - Model Registry: The default table/stage created by the Registry now uses "_SYSTEM_" as a prefix.
 - Model Registry: `get_model_history()` method as been enhanced to include the history of model deployment.
 
 ### New Features
 
 - Model Registry: A default `False` flag named `replace_udf` has been added to the options of `deploy()`. Setting this
-to `True` will allow overwrite existing UDF with the same name when deploying.
+  to `True` will allow overwrite existing UDF with the same name when deploying.
 - Model Development: Added metrics:
   - f1_score
   - fbeta_score
@@ -432,9 +434,9 @@ to `True` will allow overwrite existing UDF with the same name when deploying.
   - log_loss
   - precision_recall_curve
 - Model Registry: A new argument named `permanent` has been added to the argument of `deploy()`. Setting this to `True`
-allows the creation of a permanent deployment without needing to specify the UDF location.
+  allows the creation of a permanent deployment without needing to specify the UDF location.
 - Model Registry: A new method `list_deployments()` has been added to enumerate all permanent deployments originating
-from a specific model.
+  from a specific model.
 - Model Registry: A new method `get_deployment()` has been added to fetch a deployment by its deployment name.
 - Model Registry: A new method `delete_deployment()` has been added to remove an existing permanent deployment.
 
@@ -444,13 +446,13 @@ from a specific model.
 
 - Model Registry: `predict()` method moves from Registry to ModelReference.
 - Model Registry: `_snowml_wheel_path` parameter in options of `deploy()`, is replaced with `_use_local_snowml` with
-default value of `False`. Setting this to `True` will have the same effect of uploading local SnowML code when executing
-model in the warehouse.
+  default value of `False`. Setting this to `True` will have the same effect of uploading local SnowML code when executing
+  model in the warehouse.
 - Model Registry: Removed `id` field from `ModelReference` constructor.
 - Model Development: Preprocessing and Metrics move to the modeling package: `snowflake.ml.modeling.preprocessing` and
-`snowflake.ml.modeling.metrics`.
+  `snowflake.ml.modeling.metrics`.
 - Model Development: `get_sklearn_object()` method is renamed to `to_sklearn()`, `to_xgboost()`, and `to_lightgbm()` for
-respective native models.
+  respective native models.
 
 ### New Features
 
@@ -512,7 +514,7 @@ respective native models.
 ### New Features
 
 - Model Registry: Added support for delete_model. Use delete_artifact = False to not delete the underlying model data
-but just unregister.
+  but just unregister.
 
 ## 0.2.2 (2023-04-11)
 

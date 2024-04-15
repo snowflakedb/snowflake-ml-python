@@ -11,7 +11,7 @@ class TestRegistryPytorchModelInteg(registry_model_test_base.RegistryModelTestBa
     def test_pytorch_tensor_as_sample(
         self,
     ) -> None:
-        model, data_x, data_y = model_factory.ModelFactory.prepare_torch_model()
+        model, data_x, data_y = model_factory.ModelFactory.prepare_torch_model(torch.float32)
         x_df = pytorch_handler.SeqOfPyTorchTensorHandler.convert_to_df([data_x], ensure_serializable=False)
         y_pred = model.forward(data_x).detach()
 
@@ -74,7 +74,7 @@ class TestRegistryPytorchModelInteg(registry_model_test_base.RegistryModelTestBa
     def test_torchscript_tensor_as_sample(
         self,
     ) -> None:
-        model, data_x, data_y = model_factory.ModelFactory.prepare_jittable_torch_model()
+        model, data_x, data_y = model_factory.ModelFactory.prepare_jittable_torch_model(torch.float32)
         x_df = pytorch_handler.SeqOfPyTorchTensorHandler.convert_to_df([data_x], ensure_serializable=False)
         model_script = torch.jit.script(model)  # type:ignore[attr-defined]
         y_pred = model_script.forward(data_x).detach()
