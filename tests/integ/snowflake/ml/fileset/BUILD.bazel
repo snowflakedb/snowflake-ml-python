@@ -20,15 +20,46 @@ py_test(
 )
 
 py_test(
-    name = "fileset_integ_test",
-    timeout = "long",
-    srcs = ["fileset_integ_test.py"],
-    shard_count = 8,
+    name = "snowfs_integ_test",
+    srcs = ["snowfs_integ_test.py"],
+    deps = [
+        ":fileset_integ_utils",
+        "//snowflake/ml/fileset:snowfs",
+        "//snowflake/ml/utils:connection_params",
+    ],
+)
+
+py_library(
+    name = "fileset_integ_test_base",
+    testonly = True,
+    srcs = ["fileset_integ_test_base.py"],
     deps = [
         ":fileset_integ_utils",
         "//snowflake/ml/_internal/exceptions:fileset_errors",
         "//snowflake/ml/fileset",
         "//snowflake/ml/utils:connection_params",
         "//tests/integ/snowflake/ml/test_utils:common_test_base",
+    ],
+)
+
+py_test(
+    name = "fileset_integ_test",
+    timeout = "long",
+    srcs = ["fileset_integ_test.py"],
+    shard_count = 8,
+    deps = [
+        ":fileset_integ_test_base",
+        "//snowflake/ml/fileset",
+    ],
+)
+
+py_test(
+    name = "fileset_tensorflow_integ_test",
+    timeout = "long",
+    srcs = ["fileset_tensorflow_integ_test.py"],
+    shard_count = 4,
+    deps = [
+        ":fileset_integ_test_base",
+        "//snowflake/ml/fileset",
     ],
 )

@@ -35,6 +35,8 @@ py_test(
         ":model_ops",
         "//snowflake/ml/_internal/utils:sql_identifier",
         "//snowflake/ml/model:model_signature",
+        "//snowflake/ml/model/_packager/model_meta",
+        "//snowflake/ml/model/_packager/model_meta:model_meta_schema",
         "//snowflake/ml/model/_signatures:snowpark_handler",
         "//snowflake/ml/test_utils:mock_data_frame",
         "//snowflake/ml/test_utils:mock_session",

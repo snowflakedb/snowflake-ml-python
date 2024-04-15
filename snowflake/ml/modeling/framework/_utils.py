@@ -200,7 +200,7 @@ def get_filtered_valid_sklearn_args(
         ):
             deprecated_version = sklearn_deprecated_keyword_to_version_dict[key]
             msg = f"Incompatible scikit-learn version: '{key}' deprecated since scikit-learn={deprecated_version}.."
-            warnings.warn(msg, DeprecationWarning)
+            warnings.warn(msg, DeprecationWarning, stacklevel=2)
 
         # removed sklearn keyword
         if (
@@ -247,3 +247,10 @@ def table_exists(session: snowpark.Session, table_name: str, statement_params: D
         return True
     except snowpark_exceptions.SnowparkSQLException:
         return False
+
+
+def to_float_if_valid(val: Any, col: str, stat: str) -> float:
+    try:
+        return float(val)
+    except TypeError:
+        raise TypeError(f"Invalid stat: {stat}[{col}]: {val} cannot be converted to float.")

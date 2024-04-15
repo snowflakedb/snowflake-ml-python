@@ -135,6 +135,32 @@ class FeatureStoreCaseSensitivityTest(parameterized.TestCase):
 
     # Covered APIs:
     #   1. FeatureStore
+    def test_feature_store_database_names(self) -> None:
+        db_name_1 = "FS_INTEG_TEST_DB_NAME_TEST"
+        self._session.sql(f"CREATE DATABASE IF NOT EXISTS {db_name_1}").collect()
+        current_schema = create_random_schema(self._session, "TEST_DB_NAMES")
+
+        with self.assertRaisesRegex(ValueError, "Database .* does not exist."):
+            FeatureStore(
+                self._session,
+                '"fs_integ_test_db_name_test"',
+                current_schema,
+                default_warehouse=self._test_warehouse_name,
+                creation_mode=CreationMode.CREATE_IF_NOT_EXIST,
+            )
+
+        FeatureStore(
+            self._session,
+            "fs_integ_test_db_name_test",
+            current_schema,
+            default_warehouse=self._test_warehouse_name,
+            creation_mode=CreationMode.CREATE_IF_NOT_EXIST,
+        )
+
+        self._session.sql(f"DROP DATABASE IF EXISTS {db_name_1}").collect()
+
+    # Covered APIs:
+    #   1. FeatureStore
     #   2. delete_feature_store
     @parameterized.parameters(TEST_NAMES)  # type: ignore[misc]
     def test_feature_store_names(self, equi_names: List[str], diff_names: List[str]) -> None:
@@ -211,7 +237,7 @@ class FeatureStoreCaseSensitivityTest(parameterized.TestCase):
         # register another entity with equivalent name will fail
         for equi_name in equi_names:
             e_1 = Entity(name=equi_name, join_keys=["a"])
-            with self.assertRaisesRegex(ValueError, "Entity .* already exists."):
+            with self.assertWarnsRegex(UserWarning, "Entity .* already exists. Skip registration."):
                 fs.register_entity(e_1)
 
         # retrieve with equivalent name is fine.
@@ -320,7 +346,7 @@ class FeatureStoreCaseSensitivityTest(parameterized.TestCase):
         for equi_full_name in equi_full_names:
             fv_name = equi_full_name[0]
             version = equi_full_name[1]
-            with self.assertRaisesRegex(ValueError, "FeatureView .* already exists"):
+            with self.assertWarnsRegex(UserWarning, "FeatureView .* already exists..*"):
                 fv = FeatureView(name=fv_name, entities=[e], feature_df=df)
                 fs.register_feature_view(fv, version)
 
@@ -418,16 +444,14 @@ class FeatureStoreCaseSensitivityTest(parameterized.TestCase):
         # 3. register with valid characters
         fs.register_feature_view(fv, "V2_1")
         fs.get_feature_view("MY_FV", "v2_1")
-        fs.register_feature_view(fv, "3")
-        fs.get_feature_view("MY_FV", "3")
 
         # 4: register with invalid characters
-        with self.assertRaisesRegex(ValueError, ".* is not a valid feature view version.*"):
+        with self.assertRaisesRegex(ValueError, "3 is not a valid SQL identifier: .*"):
+            fs.register_feature_view(fv, "3")
+        with self.assertRaisesRegex(ValueError, ".* is not allowed in version: .*"):
             fs.register_feature_view(fv, "abc$")
-        with self.assertRaisesRegex(ValueError, ".* is not a valid feature view version.*"):
+        with self.assertRaisesRegex(ValueError, "abc# is not a valid SQL identifier: .*"):
             fs.register_feature_view(fv, "abc#")
-        with self.assertRaisesRegex(ValueError, ".* is not a valid feature view version.*"):
-            fs.register_feature_view(fv, '"abc"')
 
 
 if __name__ == "__main__":

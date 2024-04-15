@@ -1,6 +1,7 @@
 "Define Sphinx build rules"
 
 load("@//bazel:py_rules.bzl", "py_binary")
+load("@rules_sphinx//:latex_engine.bzl", "LatexEngineInfo", "latex_engine")
 
 # Borrowed from Rules Go, licensed under Apache 2.
 # https://github.com/bazelbuild/rules_go/blob/67f44035d84a352cffb9465159e199066ecb814c/proto/compiler.bzl#L72
@@ -73,8 +74,20 @@ def _sphinx_docs_impl(ctx):
     sphinx_src_dir_path = sphinx_input[0].path.split("sphinx_input/")[0] + "sphinx_input/"
 
     sphinx_output_dir = ctx.actions.declare_directory("html")
+
+    latex_toolchain = ctx.attr.latex_main[LatexEngineInfo]
+
+    env = {
+        "BAZEL_SPHINX_DVISVGM": latex_toolchain.toolchain.dvisvgm.files.to_list()[0].path,
+        "BAZEL_SPHINX_DVISVGM_FONTMAPS": ":".join(latex_toolchain.fontmaps),
+        "BAZEL_SPHINX_LATEX": latex_toolchain.toolchain.luahbtex.files.to_list()[0].path,
+        "BAZEL_SPHINX_LATEX_FMT": latex_toolchain.fmt.path,
+    }
+
+    env.update(latex_toolchain.env)
+
     ctx.actions.run(
-        inputs = sphinx_input + [ctx.file.conf],
+        inputs = sphinx_input + [ctx.file.conf] + latex_toolchain.deps.to_list(),
         outputs = [sphinx_output_dir],
         executable = ctx.executable.sphinx_main,
         arguments = [
@@ -93,6 +106,7 @@ def _sphinx_docs_impl(ctx):
         ],
         progress_message = "Building documentation",
         mnemonic = "SphinxDoc",
+        env = env,
     )
 
     return [DefaultInfo(files = depset([sphinx_output_dir]))]
@@ -106,6 +120,10 @@ _sphinx_docs = rule(
         "includes": attr.label_list(
             allow_files = True,
         ),
+        "latex_main": attr.label(
+            mandatory = True,
+            providers = [[LatexEngineInfo]],
+        ),
         "sphinx_main": attr.label(
             executable = True,
             cfg = "exec",
@@ -117,7 +135,7 @@ _sphinx_docs = rule(
     implementation = _sphinx_docs_impl,
 )
 
-def sphinx_docs(name, deps, extensions = [], **kwargs):
+def sphinx_docs(name, deps, extensions = [], latex_dependencies = [], latex_font_maps = None, **kwargs):
     sphinx_main_name = name + "_sphinx_main"
     py_binary(
         name = sphinx_main_name,
@@ -126,4 +144,10 @@ def sphinx_docs(name, deps, extensions = [], **kwargs):
         main = "sphinx_main.py",
         deps = deps + extensions,
     )
-    _sphinx_docs(name = name, sphinx_main = sphinx_main_name, **kwargs)
+    latex_engine_name = name + "_latex_engine"
+    latex_engine(
+        name = latex_engine_name,
+        dependencies = latex_dependencies,
+        font_maps = latex_font_maps,
+    )
+    _sphinx_docs(name = name, sphinx_main = sphinx_main_name, latex_main = latex_engine_name, **kwargs)

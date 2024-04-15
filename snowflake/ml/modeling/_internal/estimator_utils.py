@@ -195,21 +195,26 @@ def handle_inference_result(
     shape = transformed_numpy_array.shape
     if len(shape) > 1:
         if shape[1] != len(output_cols):
-            # HeterogeneousEnsemble's transform method produce results with variying shapes
-            # from (n_samples, n_estimators) to (n_samples, n_estimators * n_classes).
-            # It is hard to predict the response shape without using fragile introspection logic.
-            # So, to avoid that we are packing the results into a dataframe of shape (n_samples, 1) with
-            # each element being a list.
-            if len(output_cols) != 1:
-                raise TypeError(
-                    "expected_output_cols must be same length as transformed array or should be of length 1."
-                    f"Currently expected_output_cols shape is {len(output_cols)}, "
-                    f"transformed array shape is {shape}. "
-                )
+            # Within UDF, it is not feasible to change the output cols because we need to
+            # query the output cols after UDF by the expected output cols
             if not within_udf:
+                # The following lines are to generate the output cols to match the length of
+                # transformed_numpy_array
                 actual_output_cols = []
                 for i in range(shape[1]):
                     actual_output_cols.append(f"{output_cols[0]}_{i}")
                 output_cols = actual_output_cols
+            else:
+                # HeterogeneousEnsemble's transform method produce results with varying shapes
+                # from (n_samples, n_estimators) to (n_samples, n_estimators * n_classes).
+                # It is hard to predict the response shape without using fragile introspection logic.
+                # So, to avoid that we are packing the results into a dataframe of shape (n_samples, 1) with
+                # each element being a list.
+                if len(output_cols) != 1:
+                    raise TypeError(
+                        "expected_output_cols must be same length as transformed array or should be of length 1."
+                        f"Currently expected_output_cols shape is {len(output_cols)}, "
+                        f"transformed array shape is {shape}. "
+                    )
 
     return transformed_numpy_array, output_cols

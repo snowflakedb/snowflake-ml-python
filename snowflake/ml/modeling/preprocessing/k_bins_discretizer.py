@@ -146,11 +146,7 @@ class KBinsDiscretizer(base.BaseTransformer):
         self.bin_edges_: Optional[npt.NDArray[np.float32]] = None
         self.n_bins_: Optional[npt.NDArray[np.int32]] = None
 
-    @telemetry.send_api_usage_telemetry(
-        project=base.PROJECT,
-        subproject=base.SUBPROJECT,
-    )
-    def fit(self, dataset: Union[snowpark.DataFrame, pd.DataFrame]) -> KBinsDiscretizer:
+    def _fit(self, dataset: Union[snowpark.DataFrame, pd.DataFrame]) -> KBinsDiscretizer:
         """
         Fit KBinsDiscretizer with dataset.
 

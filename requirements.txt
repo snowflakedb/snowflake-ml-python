@@ -8,6 +8,7 @@ anyio==3.5.0
 boto3==1.24.28
 build==0.10.0
 cachetools==4.2.2
+catboost==1.2.0
 cloudpickle==2.2.1
 coverage==6.3.2
 cryptography==39.0.1

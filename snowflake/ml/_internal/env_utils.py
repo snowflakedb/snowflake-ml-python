@@ -18,7 +18,7 @@ from snowflake.ml._internal.exceptions import (
     exceptions as snowml_exceptions,
 )
 from snowflake.ml._internal.utils import query_result_checker
-from snowflake.snowpark import session
+from snowflake.snowpark import context, exceptions, session
 from snowflake.snowpark._internal import utils as snowpark_utils
 
 
@@ -330,6 +330,16 @@ def get_matched_package_versions_in_snowflake_conda_channel(
 
     matched_versions = list(req.specifier.filter(set(_SNOWFLAKE_CONDA_PACKAGE_CACHE.get(req.name, []))))
     return matched_versions
+
+
+def get_matched_package_versions_in_information_schema_with_active_session(
+    reqs: List[requirements.Requirement], python_version: str
+) -> Dict[str, List[version.Version]]:
+    try:
+        session = context.get_active_session()
+    except exceptions.SnowparkSessionException:
+        return {}
+    return get_matched_package_versions_in_information_schema(session, reqs, python_version)
 
 
 def get_matched_package_versions_in_information_schema(

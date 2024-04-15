@@ -1,12 +1,9 @@
-import re
 from typing import Any, Callable, Dict, List, Optional, Union
 
 import pandas as pd
 
-from snowflake import connector
 from snowflake.ml._internal import telemetry
 from snowflake.ml._internal.utils import sql_identifier
-from snowflake.ml.model import model_signature
 from snowflake.ml.model._client.ops import metadata_ops, model_ops
 from snowflake.ml.model._model_composer.model_manifest import model_manifest_schema
 from snowflake.snowpark import dataframe
@@ -207,61 +204,16 @@ class ModelVersion:
             statement_params=statement_params,
         )
 
-    # Only used when the model does not contains user_data with client SDK information.
-    def _legacy_show_functions(self) -> List[model_manifest_schema.ModelFunctionInfo]:
-        statement_params = telemetry.get_statement_params(
-            project=_TELEMETRY_PROJECT,
-            subproject=_TELEMETRY_SUBPROJECT,
-        )
-        manifest = self._model_ops.get_model_version_manifest(
-            model_name=self._model_name,
-            version_name=self._version_name,
-            statement_params=statement_params,
-        )
-        model_meta = self._model_ops.get_model_version_native_packing_meta(
-            model_name=self._model_name,
-            version_name=self._version_name,
-            statement_params=statement_params,
-        )
-        return_functions_info: List[model_manifest_schema.ModelFunctionInfo] = []
-        for method in manifest["methods"]:
-            # Method's name is resolved so we need to use case_sensitive as True to get the user-facing identifier.
-            method_name = sql_identifier.SqlIdentifier(method["name"], case_sensitive=True).identifier()
-            # Method's handler is `functions.<target_method>.infer`
-            assert re.match(
-                r"^functions\.([^\d\W]\w*)\.infer$", method["handler"]
-            ), f"Get unexpected handler name {method['handler']}"
-            target_method = method["handler"].split(".")[1]
-            signature_dict = model_meta["signatures"][target_method]
-            fi = model_manifest_schema.ModelFunctionInfo(
-                name=method_name,
-                target_method=target_method,
-                signature=model_signature.ModelSignature.from_dict(signature_dict),
-            )
-            return_functions_info.append(fi)
-        return return_functions_info
-
     def _get_functions(self) -> List[model_manifest_schema.ModelFunctionInfo]:
         statement_params = telemetry.get_statement_params(
             project=_TELEMETRY_PROJECT,
             subproject=_TELEMETRY_SUBPROJECT,
         )
-        try:
-            client_data = self._model_ops.get_client_data_in_user_data(
-                model_name=self._model_name,
-                version_name=self._version_name,
-                statement_params=statement_params,
-            )
-            return [
-                model_manifest_schema.ModelFunctionInfo(
-                    name=fi["name"],
-                    target_method=fi["target_method"],
-                    signature=model_signature.ModelSignature.from_dict(fi["signature"]),
-                )
-                for fi in client_data["functions"]
-            ]
-        except (NotImplementedError, ValueError, connector.DataError):
-            return self._legacy_show_functions()
+        return self._model_ops.get_functions(
+            model_name=self._model_name,
+            version_name=self._version_name,
+            statement_params=statement_params,
+        )
 
     @telemetry.send_api_usage_telemetry(
         project=_TELEMETRY_PROJECT,

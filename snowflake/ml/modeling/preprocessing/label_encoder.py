@@ -87,11 +87,7 @@ class LabelEncoder(base.BaseTransformer):
             self._ordinal_encoder = None
             self.classes_ = None
 
-    @telemetry.send_api_usage_telemetry(
-        project=base.PROJECT,
-        subproject=base.SUBPROJECT,
-    )
-    def fit(self, dataset: Union[snowpark.DataFrame, pd.DataFrame]) -> "LabelEncoder":
+    def _fit(self, dataset: Union[snowpark.DataFrame, pd.DataFrame]) -> "LabelEncoder":
         """
         Fit label encoder with label column in dataset.
 

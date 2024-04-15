@@ -48,6 +48,7 @@ def base_test_case(
         metadata={"author": "halu", "version": "1"},
         session=db._session,
         stage_path=posixpath.join(tmp_stage, f"{actual_name}_{run_id}"),
+        options={"relax_version": False},
     )
 
     for target_method, (additional_deploy_options, check_func) in deploy_params.items():

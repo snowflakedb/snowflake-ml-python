@@ -9,7 +9,7 @@ from snowflake.ml._internal.utils import (
     query_result_checker,
     sql_identifier,
 )
-from snowflake.snowpark import dataframe, functions as F, session, types as spt
+from snowflake.snowpark import dataframe, functions as F, row, session, types as spt
 from snowflake.snowpark._internal import utils as snowpark_utils
 
 
@@ -21,6 +21,9 @@ def _normalize_url_for_sql(url: str) -> str:
 
 
 class ModelVersionSQLClient:
+    FUNCTION_NAME_COL_NAME = "name"
+    FUNCTION_RETURN_TYPE_COL_NAME = "return_type"
+
     def __init__(
         self,
         session: session.Session,
@@ -123,6 +126,24 @@ class ModelVersionSQLClient:
                 statement_params=statement_params,
             ).has_dimensions(expected_rows=1).validate()
         return target_path / file_path.name
+
+    def show_functions(
+        self,
+        *,
+        model_name: sql_identifier.SqlIdentifier,
+        version_name: sql_identifier.SqlIdentifier,
+        statement_params: Optional[Dict[str, Any]] = None,
+    ) -> List[row.Row]:
+        res = query_result_checker.SqlResultValidator(
+            self._session,
+            (
+                f"SHOW FUNCTIONS IN MODEL {self.fully_qualified_model_name(model_name)}"
+                f" VERSION {version_name.identifier()}"
+            ),
+            statement_params=statement_params,
+        ).has_column(ModelVersionSQLClient.FUNCTION_NAME_COL_NAME, allow_empty=True)
+
+        return res.validate()
 
     def set_comment(
         self,
