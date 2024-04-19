@@ -102,8 +102,8 @@ class ModelPackager:
             if signatures is None:
                 logging.info(f"Model signatures are auto inferred as:\n\n{meta.signatures}")
 
-            self.model = model
-            self.meta = meta
+        self.model = model
+        self.meta = meta
 
     def load(
         self,

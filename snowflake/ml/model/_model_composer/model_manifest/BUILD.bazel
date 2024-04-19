@@ -20,7 +20,6 @@ py_library(
         ":model_manifest_schema",
         "//snowflake/ml/model/_model_composer/model_method",
         "//snowflake/ml/model/_model_composer/model_method:function_generator",
-        "//snowflake/ml/model/_model_composer/model_runtime",
         "//snowflake/ml/model/_packager/model_meta",
     ],
 )

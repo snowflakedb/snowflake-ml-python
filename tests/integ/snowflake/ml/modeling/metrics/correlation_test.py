@@ -33,7 +33,7 @@ class CorrelationTest(TestCase):
         )
 
         corr_matrix = metrics.correlation(df=input_df).to_numpy()
-        expected_corr_matrix = input_df.to_pandas().corr().to_numpy()
+        expected_corr_matrix = input_df.to_pandas().corr(numeric_only=True).to_numpy()
         assert np.allclose(corr_matrix, expected_corr_matrix)
 
     def test_with_nans(self) -> None:

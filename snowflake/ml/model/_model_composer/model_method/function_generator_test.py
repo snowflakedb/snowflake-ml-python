@@ -4,10 +4,8 @@ import tempfile
 import importlib_resources
 from absl.testing import absltest
 
-from snowflake.ml.model._model_composer.model_method import (
-    function_generator,
-    model_method,
-)
+from snowflake.ml.model._model_composer.model_manifest import model_manifest_schema
+from snowflake.ml.model._model_composer.model_method import function_generator
 
 
 class FunctionGeneratorTest(absltest.TestCase):
@@ -18,7 +16,7 @@ class FunctionGeneratorTest(absltest.TestCase):
             fg.generate(
                 pathlib.Path(tmpdir, "handler.py"),
                 "predict",
-                model_method.ModelMethodFunctionTypes.FUNCTION.value,
+                model_manifest_schema.ModelMethodFunctionTypes.FUNCTION.value,
             )
             with open(pathlib.Path(tmpdir, "handler.py"), encoding="utf-8") as f:
                 self.assertEqual(
@@ -35,7 +33,7 @@ class FunctionGeneratorTest(absltest.TestCase):
             fg.generate(
                 pathlib.Path(tmpdir, "another_handler.py"),
                 "__call__",
-                model_method.ModelMethodFunctionTypes.FUNCTION.value,
+                model_manifest_schema.ModelMethodFunctionTypes.FUNCTION.value,
                 options=function_generator.FunctionGenerateOptions(
                     max_batch_size=10,
                 ),
@@ -55,7 +53,7 @@ class FunctionGeneratorTest(absltest.TestCase):
             fg.generate(
                 pathlib.Path(tmpdir, "table_function_handler.py"),
                 "predict",
-                model_method.ModelMethodFunctionTypes.TABLE_FUNCTION.value,
+                model_manifest_schema.ModelMethodFunctionTypes.TABLE_FUNCTION.value,
             )
             with open(pathlib.Path(tmpdir, "table_function_handler.py"), encoding="utf-8") as f:
                 self.assertEqual(

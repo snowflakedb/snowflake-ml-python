@@ -254,7 +254,7 @@ class Pipeline(base.BaseTransformer):
                 step_name=estimator[0], all_cols=all_cols, input_cols=estimator[1].get_input_cols()
             )
 
-        self._get_model_signatures(dataset=dataset)
+        self._generate_model_signatures(dataset=dataset)
         self._is_fitted = True
         return self
 
@@ -328,7 +328,7 @@ class Pipeline(base.BaseTransformer):
                 res = estimator[1].fit(transformed_dataset).transform(transformed_dataset)
             return res
 
-        self._get_model_signatures(dataset=dataset)
+        self._generate_model_signatures(dataset=dataset)
         self._is_fitted = True
         return transformed_dataset
 
@@ -371,7 +371,7 @@ class Pipeline(base.BaseTransformer):
             else:
                 transformed_dataset = estimator[1].fit(transformed_dataset).predict(transformed_dataset)
 
-        self._get_model_signatures(dataset=dataset)
+        self._generate_model_signatures(dataset=dataset)
         self._is_fitted = True
         return transformed_dataset
 
@@ -611,7 +611,7 @@ class Pipeline(base.BaseTransformer):
     def _get_dependencies(self) -> List[str]:
         return self._deps
 
-    def _get_model_signatures(self, dataset: Union[snowpark.DataFrame, pd.DataFrame]) -> None:
+    def _generate_model_signatures(self, dataset: Union[snowpark.DataFrame, pd.DataFrame]) -> None:
         self._model_signature_dict = dict()
 
         input_columns = self._get_sanitized_list_of_columns(dataset.columns)

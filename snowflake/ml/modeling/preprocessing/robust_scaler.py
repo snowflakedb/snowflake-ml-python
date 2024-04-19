@@ -144,11 +144,7 @@ class RobustScaler(base.BaseTransformer):
     def scale_(self) -> Optional[Dict[str, float]]:
         return None if (not self.with_scaling or not self._state_is_set) else self._scale
 
-    @telemetry.send_api_usage_telemetry(
-        project=base.PROJECT,
-        subproject=base.SUBPROJECT,
-    )
-    def fit(self, dataset: Union[snowpark.DataFrame, pd.DataFrame]) -> "RobustScaler":
+    def _fit(self, dataset: Union[snowpark.DataFrame, pd.DataFrame]) -> "RobustScaler":
         """
         Compute center, scale and quantile values of the dataset.
 

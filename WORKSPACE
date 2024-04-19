@@ -1,6 +1,7 @@
 workspace(name = "SnowML")
 
 load("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive", "http_jar")
+load("@bazel_tools//tools/build_defs/repo:git.bzl", "git_repository")
 
 http_jar(
     name = "bazel_diff",
@@ -50,6 +51,23 @@ load("@aspect_bazel_lib//lib:repositories.bzl", "aspect_bazel_lib_dependencies",
 aspect_bazel_lib_dependencies()
 
 register_yq_toolchains()
+
+git_repository(
+    name = "bazel_latex",
+    commit = "f9e1532513760f1379396e55e9e38013869d2a8c",
+    remote = "https://github.com/ProdriveTechnologies/bazel-latex.git",
+)
+
+load("@bazel_latex//:repositories.bzl", "latex_repositories")
+
+latex_repositories()
+
+register_toolchains(
+    "@bazel_latex//:latex_toolchain_aarch64-darwin",
+    "@bazel_latex//:latex_toolchain_amd64-freebsd",
+    "@bazel_latex//:latex_toolchain_x86_64-darwin",
+    "@bazel_latex//:latex_toolchain_x86_64-linux",
+)
 
 local_repository(
     name = "rules_sphinx",

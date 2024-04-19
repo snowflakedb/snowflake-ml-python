@@ -42,7 +42,7 @@ class TestEstimator(BaseTransformer):
     def _get_dependencies(self) -> List[str]:
         return self._deps or []
 
-    def fit(self, dataset: snowpark.DataFrame) -> "BaseTransformer":
+    def _fit(self, dataset: snowpark.DataFrame) -> "BaseTransformer":
         return self
 
 

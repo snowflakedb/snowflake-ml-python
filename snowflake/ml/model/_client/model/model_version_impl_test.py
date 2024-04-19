@@ -1,8 +1,6 @@
-import textwrap
 from typing import cast
 from unittest import mock
 
-import yaml
 from absl.testing import absltest
 
 from snowflake.ml._internal.utils import sql_identifier
@@ -155,172 +153,23 @@ class ModelVersionImplTest(absltest.TestCase):
                 )
                 mock_save.assert_not_called()
 
-    def test_show_functions_0(self) -> None:
+    def test_show_functions(self) -> None:
         with mock.patch.object(
-            self.m_mv._model_ops, "get_client_data_in_user_data", side_effect=NotImplementedError()
-        ) as mock_get_client_data_in_user_data:
-            methods = self.m_mv.show_functions()
-            mock_get_client_data_in_user_data.assert_not_called()
-            self.assertEqual(
-                methods,
-                [],
-            )
+            self.m_mv._model_ops, attribute="get_functions", return_value=[123]
+        ) as mock_get_functions:
+            self.assertListEqual([], self.m_mv.show_functions())
+            mock_get_functions.assert_not_called()
 
-    def test_show_functions_1(self) -> None:
-        m_manifest = {
-            "manifest_version": "1.0",
-            "runtimes": {
-                "python_runtime": {
-                    "language": "PYTHON",
-                    "version": "3.8",
-                    "imports": ["model.zip", "runtimes/python_runtime/snowflake-ml-python.zip"],
-                    "dependencies": {"conda": "runtimes/python_runtime/env/conda.yml"},
-                }
-            },
-            "methods": [
-                {
-                    "name": "predict",
-                    "runtime": "python_runtime",
-                    "type": "FUNCTION",
-                    "handler": "functions.predict.infer",
-                    "inputs": [{"name": "input", "type": "FLOAT"}],
-                    "outputs": [{"type": "OBJECT"}],
-                },
-                {
-                    "name": "__CALL__",
-                    "runtime": "python_runtime",
-                    "type": "FUNCTION",
-                    "handler": "functions.__call__.infer",
-                    "inputs": [{"name": "INPUT", "type": "FLOAT"}],
-                    "outputs": [{"type": "OBJECT"}],
-                },
-            ],
-        }
-        m_meta_yaml = yaml.safe_load(
-            textwrap.dedent(
-                """
-                creation_timestamp: '2023-11-20 18:14:06.357187'
-                env:
-                    conda: env/conda.yml
-                    cuda_version: null
-                    pip: env/requirements.txt
-                    python_version: '3.8'
-                    snowpark_ml_version: 1.0.13+ca79e1b0720d35abd021c33707de789dc63918cc
-                metadata: null
-                min_snowpark_ml_version: 1.0.12
-                model_type: sklearn
-                models:
-                    SKLEARN_MODEL:
-                        artifacts: {}
-                        handler_version: '2023-12-01'
-                        model_type: sklearn
-                        name: SKLEARN_MODEL
-                        options: {}
-                        path: model.pkl
-                name: SKLEARN_MODEL
-                signatures:
-                    predict:
-                        inputs:
-                        - name: input
-                          type: FLOAT
-                        outputs:
-                        - name: output
-                          type: FLOAT
-                    __call__:
-                        inputs:
-                        - name: input
-                          type: FLOAT
-                        outputs:
-                        - name: output
-                          type: FLOAT
-                version: '2023-12-01'
-                """
-            )
-        )
+    def test_get_functions(self) -> None:
         with mock.patch.object(
-            self.m_mv._model_ops, "get_client_data_in_user_data", side_effect=NotImplementedError()
-        ), mock.patch.object(
-            self.m_mv._model_ops, "get_model_version_manifest", return_value=m_manifest
-        ) as mock_get_model_version_manifest, mock.patch.object(
-            self.m_mv._model_ops, "get_model_version_native_packing_meta", return_value=m_meta_yaml
-        ) as mock_get_model_version_native_packing_meta:
-            methods = self.m_mv._get_functions()
-            mock_get_model_version_manifest.assert_called_once_with(
+            self.m_mv._model_ops, attribute="get_functions", return_value=[123]
+        ) as mock_get_functions:
+            self.assertListEqual([123], self.m_mv._get_functions())
+            mock_get_functions.assert_called_once_with(
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
                 version_name=sql_identifier.SqlIdentifier("v1", case_sensitive=True),
                 statement_params=mock.ANY,
             )
-            mock_get_model_version_native_packing_meta.assert_called_once_with(
-                model_name=sql_identifier.SqlIdentifier("MODEL"),
-                version_name=sql_identifier.SqlIdentifier("v1", case_sensitive=True),
-                statement_params=mock.ANY,
-            )
-            self.assertEqual(
-                methods,
-                [
-                    {
-                        "name": '"predict"',
-                        "target_method": "predict",
-                        "signature": _DUMMY_SIG["predict"],
-                    },
-                    {
-                        "name": "__CALL__",
-                        "target_method": "__call__",
-                        "signature": _DUMMY_SIG["predict"],
-                    },
-                ],
-            )
-
-    def test_show_functions_2(self) -> None:
-        m_function_info = [
-            model_manifest_schema.ModelFunctionInfoDict(
-                {
-                    "name": '"predict"',
-                    "target_method": "predict",
-                    "signature": _DUMMY_SIG["predict"].to_dict(),
-                }
-            ),
-            model_manifest_schema.ModelFunctionInfoDict(
-                {
-                    "name": "__CALL__",
-                    "target_method": "__call__",
-                    "signature": _DUMMY_SIG["predict"].to_dict(),
-                }
-            ),
-        ]
-        m_user_data = model_manifest_schema.SnowparkMLDataDict(
-            schema_version=model_manifest_schema.MANIFEST_CLIENT_DATA_SCHEMA_VERSION, functions=m_function_info
-        )
-        with mock.patch.object(
-            self.m_mv._model_ops, "get_client_data_in_user_data", return_value=m_user_data
-        ) as mock_get_client_data_in_user_data, mock.patch.object(
-            self.m_mv._model_ops, "get_model_version_manifest"
-        ) as mock_get_model_version_manifest, mock.patch.object(
-            self.m_mv._model_ops, "get_model_version_native_packing_meta"
-        ) as mock_get_model_version_native_packing_meta:
-            methods = self.m_mv._get_functions()
-            mock_get_client_data_in_user_data.assert_called_once_with(
-                model_name=sql_identifier.SqlIdentifier("MODEL"),
-                version_name=sql_identifier.SqlIdentifier("v1", case_sensitive=True),
-                statement_params=mock.ANY,
-            )
-            self.assertEqual(
-                methods,
-                [
-                    {
-                        "name": '"predict"',
-                        "target_method": "predict",
-                        "signature": _DUMMY_SIG["predict"],
-                    },
-                    {
-                        "name": "__CALL__",
-                        "target_method": "__call__",
-                        "signature": _DUMMY_SIG["predict"],
-                    },
-                ],
-            )
-            mock_get_model_version_manifest.assert_not_called()
-            mock_get_model_version_native_packing_meta.assert_not_called()
 
     def test_run(self) -> None:
         m_df = mock_data_frame.MockDataFrame()
@@ -329,6 +178,7 @@ class ModelVersionImplTest(absltest.TestCase):
                 {
                     "name": '"predict"',
                     "target_method": "predict",
+                    "target_method_function_type": "FUNCTION",
                     "signature": _DUMMY_SIG["predict"],
                 }
             ),
@@ -336,6 +186,7 @@ class ModelVersionImplTest(absltest.TestCase):
                 {
                     "name": "__CALL__",
                     "target_method": "__call__",
+                    "target_method_function_type": "FUNCTION",
                     "signature": _DUMMY_SIG["predict"],
                 }
             ),
@@ -378,6 +229,7 @@ class ModelVersionImplTest(absltest.TestCase):
                 {
                     "name": '"predict"',
                     "target_method": "predict",
+                    "target_method_function_type": "FUNCTION",
                     "signature": _DUMMY_SIG["predict"],
                 }
             ),
@@ -404,6 +256,7 @@ class ModelVersionImplTest(absltest.TestCase):
                 {
                     "name": '"predict"',
                     "target_method": "predict",
+                    "target_method_function_type": "FUNCTION",
                     "signature": _DUMMY_SIG["predict"],
                 }
             ),

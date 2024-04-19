@@ -267,11 +267,7 @@ class OneHotEncoder(base.BaseTransformer):
         if hasattr(self, "_state_pandas"):
             del self._state_pandas
 
-    @telemetry.send_api_usage_telemetry(
-        project=base.PROJECT,
-        subproject=base.SUBPROJECT,
-    )
-    def fit(self, dataset: Union[snowpark.DataFrame, pd.DataFrame]) -> "OneHotEncoder":
+    def _fit(self, dataset: Union[snowpark.DataFrame, pd.DataFrame]) -> "OneHotEncoder":
         """
         Fit OneHotEncoder to dataset.
 
@@ -836,6 +832,18 @@ class OneHotEncoder(base.BaseTransformer):
 
         # columns: COLUMN_NAME, CATEGORY, COUNT, FITTED_CATEGORY, ENCODING, N_FEATURES_OUT, ENCODED_VALUE, OUTPUT_CATs
         assert dataset._session is not None
+
+        def convert_to_string_excluding_nan(item: Any) -> Union[None, str]:
+            if pd.isna(item):
+                return None  # or np.nan if you prefer to keep as NaN
+            else:
+                return str(item)
+
+        # In case of fitting with pandas dataframe and transforming with snowpark dataframe
+        # state_pandas cannot recognize the datatype of _CATEGORY and _FITTED_CATEGORY column
+        # Therefore, apply the convert_to_string_excluding_nan function to _CATEGORY and _FITTED_CATEGORY
+        state_pandas[[_CATEGORY]] = state_pandas[[_CATEGORY]].applymap(convert_to_string_excluding_nan)
+        state_pandas[[_FITTED_CATEGORY]] = state_pandas[[_FITTED_CATEGORY]].applymap(convert_to_string_excluding_nan)
         state_df = dataset._session.create_dataframe(state_pandas)
 
         transformed_dataset = dataset

@@ -17,6 +17,7 @@ from snowflake.ml.model.model_signature import (
     FeatureSpec,
     ModelSignature,
     _infer_signature,
+    _rename_signature_with_snowflake_identifiers,
 )
 from snowflake.ml.modeling._internal.estimator_utils import (
     gather_dependencies,
@@ -343,7 +344,7 @@ class RandomizedSearchCV(BaseTransformer):
         )
         self._sklearn_object = model_trainer.train()
         self._is_fitted = True
-        self._get_model_signatures(dataset)
+        self._generate_model_signatures(dataset)
         return self
 
     def _batch_inference_validate_snowpark(self, dataset: DataFrame, inference_method: str) -> List[str]:
@@ -383,6 +384,9 @@ class RandomizedSearchCV(BaseTransformer):
 
         Returns:
             Transformed dataset.
+
+        Raises:
+            SnowflakeMLException: when the output column(s) doesn't exist in the model signature, raise error
         """
         super()._check_dataset_type(dataset)
 
@@ -395,9 +399,21 @@ class RandomizedSearchCV(BaseTransformer):
             expected_type_inferred = ""
             # infer the datatype from label columns
             if "predict" in self.model_signatures:
-                expected_type_inferred = convert_sp_to_sf_type(
-                    self.model_signatures["predict"].outputs[0].as_snowpark_type()
-                )
+                # Batch inference takes a single expected output column type. Use the first columns type for now.
+                label_cols_signatures = [
+                    row for row in self.model_signatures["predict"].outputs if row.name in self.output_cols
+                ]
+                if len(label_cols_signatures) == 0:
+                    error_str = (
+                        f"Output columns {self.output_cols} do not match"
+                        f"model signatures {self.model_signatures['predict'].outputs}."
+                    )
+                    raise exceptions.SnowflakeMLException(
+                        error_code=error_codes.INVALID_ATTRIBUTE,
+                        original_exception=ValueError(error_str),
+                    )
+
+                expected_type_inferred = convert_sp_to_sf_type(label_cols_signatures[0].as_snowpark_type())
             self._deps = self._batch_inference_validate_snowpark(
                 dataset=dataset,
                 inference_method=inference_method,
@@ -780,57 +796,6 @@ class RandomizedSearchCV(BaseTransformer):
 
         return output_score
 
-    def _get_model_signatures(self, dataset: Union[DataFrame, pd.DataFrame]) -> None:
-        self._model_signature_dict = dict()
-
-        PROB_FUNCTIONS = ["predict_log_proba", "predict_proba", "decision_function"]
-
-        inputs = list(_infer_signature(dataset[self.input_cols], "input"))
-        outputs: List[BaseFeatureSpec] = []
-        if hasattr(self, "predict"):
-            # keep mypy happy
-            assert self._sklearn_object is not None and hasattr(self._sklearn_object, "_estimator_type")
-            # For classifier, the type of predict is the same as the type of label
-            if self._sklearn_object._estimator_type == "classifier":
-                # label columns is the desired type for output
-                outputs = list(_infer_signature(dataset[self.label_cols], "output"))
-                # rename the output columns
-                outputs = list(model_signature_utils.rename_features(outputs, self.output_cols))
-                self._model_signature_dict["predict"] = ModelSignature(
-                    inputs, ([] if self._drop_input_cols else inputs) + outputs
-                )
-            # For regressor, the type of predict is float64
-            elif self._sklearn_object._estimator_type == "regressor":
-                outputs = [FeatureSpec(dtype=DataType.DOUBLE, name=c) for c in self.output_cols]
-                self._model_signature_dict["predict"] = ModelSignature(
-                    inputs, ([] if self._drop_input_cols else inputs) + outputs
-                )
-        for prob_func in PROB_FUNCTIONS:
-            if hasattr(self, prob_func):
-                output_cols_prefix: str = f"{prob_func}_"
-                output_column_names = self._get_output_column_names(output_cols_prefix)
-                outputs = [FeatureSpec(dtype=DataType.DOUBLE, name=c) for c in output_column_names]
-                self._model_signature_dict[prob_func] = ModelSignature(
-                    inputs, ([] if self._drop_input_cols else inputs) + outputs
-                )
-
-    @property
-    def model_signatures(self) -> Dict[str, ModelSignature]:
-        """Returns model signature of current class.
-
-        Raises:
-            SnowflakeMLException: If estimator is not fitted, then model signature cannot be inferred
-
-        Returns:
-            Dict[str, ModelSignature]: each method and its input output signature
-        """
-        if self._model_signature_dict is None:
-            raise exceptions.SnowflakeMLException(
-                error_code=error_codes.INVALID_ATTRIBUTE,
-                original_exception=RuntimeError("Estimator not fitted before accessing property model_signatures!"),
-            )
-        return self._model_signature_dict
-
     def to_sklearn(self) -> sklearn.model_selection.RandomizedSearchCV:
         """
         Get sklearn.model_selection.RandomizedSearchCV object.
@@ -840,3 +805,62 @@ class RandomizedSearchCV(BaseTransformer):
 
     def _get_dependencies(self) -> List[str]:
         return self._deps
+
+    def _generate_model_signatures(self, dataset: Union[DataFrame, pd.DataFrame]) -> None:
+        self._model_signature_dict = dict()
+
+        PROB_FUNCTIONS = ["predict_log_proba", "predict_proba", "decision_function"]
+
+        inputs = list(_infer_signature(dataset[self.input_cols], "input", use_snowflake_identifiers=True))
+        outputs: List[BaseFeatureSpec] = []
+        if hasattr(self, "predict"):
+            # keep mypy happy
+            assert self._sklearn_object is not None and hasattr(self._sklearn_object, "_estimator_type")
+            # For classifier, the type of predict is the same as the type of label
+            if self._sklearn_object._estimator_type == "classifier":
+                # label columns is the desired type for output
+                outputs = list(_infer_signature(dataset[self.label_cols], "output", use_snowflake_identifiers=True))
+                # rename the output columns
+                outputs = list(model_signature_utils.rename_features(outputs, self.output_cols))
+                self._model_signature_dict["predict"] = ModelSignature(
+                    inputs, ([] if self._drop_input_cols else inputs) + outputs
+                )
+
+            # For regressor, the type of predict is float64
+            elif self._sklearn_object._estimator_type == "regressor":
+                outputs = [FeatureSpec(dtype=DataType.DOUBLE, name=c) for c in self.output_cols]
+                self._model_signature_dict["predict"] = ModelSignature(
+                    inputs, ([] if self._drop_input_cols else inputs) + outputs
+                )
+
+        for prob_func in PROB_FUNCTIONS:
+            if hasattr(self, prob_func):
+                output_cols_prefix: str = f"{prob_func}_"
+                output_column_names = self._get_output_column_names(output_cols_prefix)
+                outputs = [FeatureSpec(dtype=DataType.DOUBLE, name=c) for c in output_column_names]
+                self._model_signature_dict[prob_func] = ModelSignature(
+                    inputs, ([] if self._drop_input_cols else inputs) + outputs
+                )
+
+        # Output signature names may still need to be renamed, since they were not created with `_infer_signature`.
+        items = list(self._model_signature_dict.items())
+        for method, signature in items:
+            signature._outputs = _rename_signature_with_snowflake_identifiers(signature._outputs)
+            self._model_signature_dict[method] = signature
+
+    @property
+    def model_signatures(self) -> Dict[str, ModelSignature]:
+        """Returns model signature of current class.
+
+        Raises:
+            SnowflakeMLException: If estimator is not fitted, then model signature cannot be inferred
+
+        Returns:
+            each method and its input output signature
+        """
+        if self._model_signature_dict is None:
+            raise exceptions.SnowflakeMLException(
+                error_code=error_codes.INVALID_ATTRIBUTE,
+                original_exception=RuntimeError("Estimator not fitted before accessing property model_signatures!"),
+            )
+        return self._model_signature_dict

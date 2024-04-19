@@ -69,6 +69,7 @@ py_library(
         "//snowflake/ml/model:type_hints",
         "//snowflake/ml/model/_packager/model_env",
         "//snowflake/ml/model/_packager/model_meta_migrator:migrator_plans",
+        "//snowflake/ml/model/_packager/model_runtime",
     ],
 )
 

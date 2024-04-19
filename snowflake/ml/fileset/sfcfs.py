@@ -60,6 +60,8 @@ class SFFileSystem(fsspec.AbstractFileSystem):
     b'2014-02-05 14:35:00.00000054,13,2014-02-05 14:35:00 UTC,-74.00688,40.73049,-74.00563,40.70676,2\n'
     """
 
+    protocol = PROTOCOL_NAME
+
     def __init__(
         self,
         sf_connection: Optional[connection.SnowflakeConnection] = None,
@@ -204,7 +206,7 @@ class SFFileSystem(fsspec.AbstractFileSystem):
         >>> sffs.ls("@MYDB.public.FOO/nytrain/")
         ['@MYDB.public.FOO/nytrain/data_0_0_0.csv', '@MYDB.public.FOO/nytrain/data_0_0_1.csv']
         """
-        file_path = _parse_sfc_file_path(path)
+        file_path = self._parse_file_path(path)
         stage_fs = self._get_stage_fs(file_path)
         stage_path_list = stage_fs.ls(file_path.filepath, detail=True, **kwargs)
         stage_path_list = cast(List[Dict[str, Any]], stage_path_list)
@@ -226,13 +228,15 @@ class SFFileSystem(fsspec.AbstractFileSystem):
         """
         if not files:
             return
-        stage_file_paths: Dict[Tuple[str, str, str], List[str]] = collections.defaultdict(list)
+        stage_fs_dict: Dict[str, stage_fs.SFStageFileSystem] = {}
+        stage_file_paths: Dict[str, List[str]] = collections.defaultdict(list)
         for file in files:
-            file_path = _parse_sfc_file_path(file)
-            stage_file_paths[(file_path.database, file_path.schema, file_path.stage)].append(file_path.filepath)
+            path_info = self._parse_file_path(file)
+            fs = self._get_stage_fs(path_info)
+            stage_fs_dict[fs.stage_name] = fs
+            stage_file_paths[fs.stage_name].append(path_info.filepath)
         for k, v in stage_file_paths.items():
-            stage_fs = self._get_stage_fs(_SFFilePath(k[0], k[1], k[2], "*"))
-            stage_fs.optimize_read(v)
+            stage_fs_dict[k].optimize_read(v)
 
     @telemetry.send_api_usage_telemetry(
         project=_PROJECT,
@@ -256,7 +260,7 @@ class SFFileSystem(fsspec.AbstractFileSystem):
         Returns:
             A fsspec AbstractBufferedFile which supports python file operations.
         """
-        file_path = _parse_sfc_file_path(path)
+        file_path = self._parse_file_path(path)
         stage_fs = self._get_stage_fs(file_path)
         return stage_fs._open(file_path.filepath, **kwargs)
 
@@ -267,7 +271,7 @@ class SFFileSystem(fsspec.AbstractFileSystem):
     @snowpark._internal.utils.private_preview(version="0.2.0")
     def info(self, path: str, **kwargs: Any) -> Dict[str, Any]:
         """Override fsspec `info` method. Give details of entry at path."""
-        file_path = _parse_sfc_file_path(path)
+        file_path = self._parse_file_path(path)
         stage_fs = self._get_stage_fs(file_path)
         res: Dict[str, Any] = stage_fs.info(file_path.filepath, **kwargs)
         if res:
@@ -292,52 +296,54 @@ class SFFileSystem(fsspec.AbstractFileSystem):
         """Convert the relative path in a stage to an absolute path starts with the location of the stage."""
         return stage_fs.stage_name + "/" + path
 
+    @classmethod
+    def _parse_file_path(cls, path: str) -> _SFFilePath:
+        """Parse a snowflake location path.
+
+        The following propertis will be extracted from the path input:
+        - database
+        - schema
+        - stage
+        - path (optional)
+
+        Args:
+            path: A string in the format of "@{database}.{schema}.{stage}/{path}".
+
+                Example:
+                    "@my_db.my_schema.my_stage/"
+                    "@my_db.my_schema.my_stage/file1"
+                    "@my_db.my_schema.my_stage/dir1/"
+                    "@my_db.my_schema.my_stage/dir1/file2"
+
+        Returns:
+            A namedtuple consists of database name, schema name, stage name and path.
+
+        Raises:
+            SnowflakeMLException: An error occurred when invalid path is given.
+        """
+        sfc_prefix = f"{PROTOCOL_NAME}://"
+        if path.startswith(sfc_prefix):
+            path = path[len(sfc_prefix) :]
+        if not path.startswith("@"):
+            raise snowml_exceptions.SnowflakeMLException(
+                error_code=error_codes.SNOWML_INVALID_STAGE,
+                original_exception=ValueError(
+                    'Invalid path. Expected path to start with "@". Example: @database.schema.stage/optional_path.'
+                ),
+            )
+        try:
+            res = identifier.parse_schema_level_object_identifier(path[1:])
+            if res[1] is None or res[0] is None or (res[3] and not res[3].startswith("/")):
+                raise ValueError("Invalid path. Missing database or schema identifier.")
+            logging.debug(f"Parsed path: {res}")
+            return _SFFilePath(res[0], res[1], res[2], res[3][1:])
+        except ValueError:
+            raise snowml_exceptions.SnowflakeMLException(
+                error_code=error_codes.SNOWML_INVALID_STAGE,
+                original_exception=ValueError(
+                    f"Invalid path. Expected format: @database.schema.stage/optional_path. Getting {path}"
+                ),
+            )
+
 
 fsspec.register_implementation(PROTOCOL_NAME, SFFileSystem)
-
-
-def _parse_sfc_file_path(path: str) -> _SFFilePath:
-    """Parse a snowflake location path.
-
-    The following propertis will be extracted from the path input:
-    - database
-    - schema
-    - stage
-    - path (optional)
-
-    Args:
-        path: A string in the format of "@{database}.{schema}.{stage}/{path}".
-
-            Example:
-                "@my_db.my_schema.my_stage/"
-                "@my_db.my_schema.my_stage/file1"
-                "@my_db.my_schema.my_stage/dir1/"
-                "@my_db.my_schema.my_stage/dir1/file2"
-
-    Returns:
-        A namedtuple consists of database name, schema name, stage name and path.
-
-    Raises:
-        SnowflakeMLException: An error occurred when invalid path is given.
-    """
-    sfc_prefix = f"{PROTOCOL_NAME}://"
-    if path.startswith(sfc_prefix):
-        path = path[len(sfc_prefix) :]
-    if not path.startswith("@"):
-        raise snowml_exceptions.SnowflakeMLException(
-            error_code=error_codes.SNOWML_INVALID_STAGE,
-            original_exception=ValueError(
-                'Invalid path. Expected path to start with "@". Example: @database.schema.stage/optional_path.'
-            ),
-        )
-    try:
-        res = identifier.parse_schema_level_object_identifier(path[1:])
-        logging.debug(f"Parsed path: {res}")
-        return _SFFilePath(res[0], res[1], res[2], res[3][1:])
-    except ValueError:
-        raise snowml_exceptions.SnowflakeMLException(
-            error_code=error_codes.SNOWML_INVALID_STAGE,
-            original_exception=ValueError(
-                f"Invalid path. Expected format: @database.schema.stage/optional_path. Getting {path}"
-            ),
-        )

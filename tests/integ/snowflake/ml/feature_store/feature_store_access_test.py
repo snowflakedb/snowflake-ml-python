@@ -288,7 +288,7 @@ class FeatureStoreAccessTest(parameterized.TestCase):
             timestamp_col="ts",
             refresh_freq="DOWNSTREAM",
         )
-        fv = self._feature_store.register_feature_view(fv, "test", override=True)
+        fv = self._feature_store.register_feature_view(fv, "test", overwrite=True)
 
         try:
             self._test_access(
@@ -310,7 +310,7 @@ class FeatureStoreAccessTest(parameterized.TestCase):
             timestamp_col="ts",
             refresh_freq="DOWNSTREAM",
         )
-        fv = self._feature_store.register_feature_view(fv, "test", override=True)
+        fv = self._feature_store.register_feature_view(fv, "test", overwrite=True)
         fv = self._feature_store.suspend_feature_view(fv)
 
         try:
@@ -351,7 +351,7 @@ class FeatureStoreAccessTest(parameterized.TestCase):
         )
 
         self._session.use_role(self._test_roles[Role.PRODUCER])
-        fv = self._feature_store.register_feature_view(fv, "test", override=True)
+        fv = self._feature_store.register_feature_view(fv, "test", overwrite=True)
 
         try:
             self._test_access(

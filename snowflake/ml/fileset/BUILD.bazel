@@ -24,6 +24,25 @@ py_test(
 )
 
 py_library(
+    name = "embedded_stage_fs",
+    srcs = ["embedded_stage_fs.py"],
+    deps = [
+        ":stage_fs",
+        "//snowflake/ml/_internal/utils:identifier",
+    ],
+)
+
+py_test(
+    name = "embedded_stage_fs_test",
+    srcs = ["embedded_stage_fs_test.py"],
+    deps = [
+        ":embedded_stage_fs",
+        "//snowflake/ml/test_utils:mock_data_frame",
+        "//snowflake/ml/test_utils:mock_session",
+    ],
+)
+
+py_library(
     name = "sfcfs",
     srcs = ["sfcfs.py"],
     deps = [
@@ -39,6 +58,23 @@ py_test(
     srcs = ["sfcfs_test.py"],
     deps = [
         ":sfcfs",
+    ],
+)
+
+py_library(
+    name = "snowfs",
+    srcs = ["snowfs.py"],
+    deps = [
+        ":embedded_stage_fs",
+        ":sfcfs",
+    ],
+)
+
+py_test(
+    name = "snowfs_test",
+    srcs = ["snowfs_test.py"],
+    deps = [
+        ":snowfs",
     ],
 )
 

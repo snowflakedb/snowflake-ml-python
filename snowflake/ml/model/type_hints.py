@@ -19,6 +19,8 @@ from snowflake.ml.model import deploy_platforms
 from snowflake.ml.model._signatures import core
 
 if TYPE_CHECKING:
+    import catboost
+    import lightgbm
     import mlflow
     import numpy as np
     import pandas as pd
@@ -33,7 +35,6 @@ if TYPE_CHECKING:
     import snowflake.ml.model.custom_model
     import snowflake.ml.model.models.huggingface_pipeline
     import snowflake.ml.model.models.llm
-    import snowflake.ml.model.models.sentence_transformers
     import snowflake.snowpark
     from snowflake.ml.modeling.framework import base  # noqa: F401
 
@@ -69,6 +70,9 @@ _DataType = TypeVar("_DataType", bound=SupportedDataType)
 CustomModelType = TypeVar("CustomModelType", bound="snowflake.ml.model.custom_model.CustomModel")
 
 SupportedRequireSignatureModelType = Union[
+    "catboost.CatBoost",
+    "lightgbm.LGBMModel",
+    "lightgbm.Booster",
     "snowflake.ml.model.custom_model.CustomModel",
     "sklearn.base.BaseEstimator",
     "sklearn.pipeline.Pipeline",
@@ -85,7 +89,6 @@ SupportedNoSignatureRequirementsModelType = Union[
     "transformers.Pipeline",
     "sentence_transformers.SentenceTransformer",
     "snowflake.ml.model.models.huggingface_pipeline.HuggingFacePipelineModel",
-    "snowflake.ml.model.models.sentence_transformers.SentenceTransformer",
     "snowflake.ml.model.models.llm.LLM",
 ]
 
@@ -98,11 +101,14 @@ Here is all acceptable types of Snowflake native model packaging and its handler
 
 | Type                            | Handler File | Handler             |
 |---------------------------------|--------------|---------------------|
+| catboost.CatBoost       | catboost.py   | _CatBoostModelHandler    |
 | snowflake.ml.model.custom_model.CustomModel | custom.py    | _CustomModelHandler |
 | sklearn.base.BaseEstimator      | sklearn.py   | _SKLModelHandler    |
 | sklearn.pipeline.Pipeline       | sklearn.py   | _SKLModelHandler    |
 | xgboost.XGBModel       | xgboost.py   | _XGBModelHandler    |
 | xgboost.Booster        | xgboost.py   | _XGBModelHandler    |
+| lightgbm.LGBMModel       | lightgbm.py   | _LGBMModelHandler    |
+| lightgbm.Booster        | lightgbm.py   | _LGBMModelHandler    |
 | snowflake.ml.framework.base.BaseEstimator      | snowmlmodel.py   | _SnowMLModelHandler    |
 | torch.nn.Module      | pytroch.py   | _PyTorchHandler    |
 | torch.jit.ScriptModule      | torchscript.py   | _TorchScriptHandler    |
@@ -114,8 +120,10 @@ Here is all acceptable types of Snowflake native model packaging and its handler
 """
 
 SupportedModelHandlerType = Literal[
+    "catboost",
     "custom",
     "huggingface_pipeline",
+    "lightgbm",
     "mlflow",
     "pytorch",
     "sentence_transformers",
@@ -225,6 +233,11 @@ class BaseModelSaveOption(TypedDict):
     method_options: NotRequired[Dict[str, ModelMethodSaveOptions]]
 
 
+class CatBoostModelSaveOptions(BaseModelSaveOption):
+    target_methods: NotRequired[Sequence[str]]
+    cuda_version: NotRequired[str]
+
+
 class CustomModelSaveOption(BaseModelSaveOption):
     cuda_version: NotRequired[str]
 
@@ -236,6 +249,10 @@ class SKLModelSaveOptions(BaseModelSaveOption):
 class XGBModelSaveOptions(BaseModelSaveOption):
     target_methods: NotRequired[Sequence[str]]
     cuda_version: NotRequired[str]
+
+
+class LGBMModelSaveOptions(BaseModelSaveOption):
+    target_methods: NotRequired[Sequence[str]]
 
 
 class SNOWModelSaveOptions(BaseModelSaveOption):
@@ -279,7 +296,9 @@ class LLMSaveOptions(BaseModelSaveOption):
 
 ModelSaveOption = Union[
     BaseModelSaveOption,
+    CatBoostModelSaveOptions,
     CustomModelSaveOption,
+    LGBMModelSaveOptions,
     SKLModelSaveOptions,
     XGBModelSaveOptions,
     SNOWModelSaveOptions,
