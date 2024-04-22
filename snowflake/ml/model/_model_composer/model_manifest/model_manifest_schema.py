@@ -1,5 +1,5 @@
 # This files contains schema definition of what will be written into MANIFEST.yml
-
+import enum
 from typing import Any, Dict, List, Literal, TypedDict, Union
 
 from typing_extensions import NotRequired, Required
@@ -10,6 +10,11 @@ MODEL_MANIFEST_VERSION = "1.0"
 
 MANIFEST_CLIENT_DATA_KEY_NAME = "snowpark_ml_data"
 MANIFEST_CLIENT_DATA_SCHEMA_VERSION = "2024-02-01"
+
+
+class ModelMethodFunctionTypes(enum.Enum):
+    FUNCTION = "FUNCTION"
+    TABLE_FUNCTION = "TABLE_FUNCTION"
 
 
 class ModelRuntimeDependenciesDict(TypedDict):
@@ -49,11 +54,13 @@ class ModelFunctionInfo(TypedDict):
     Attributes:
         name: Name of the function to be called via SQL.
         target_method: actual target method name to be called.
+        target_method_function_type: target method function type (FUNCTION or TABLE_FUNCTION).
         signature: The signature of the model method.
     """
 
     name: Required[str]
     target_method: Required[str]
+    target_method_function_type: Required[str]
     signature: Required[model_signature.ModelSignature]
 
 

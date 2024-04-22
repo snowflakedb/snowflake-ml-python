@@ -33,7 +33,7 @@ class CovarianceTest(TestCase):
         )
 
         cov_matrix = metrics.covariance(df=input_df).to_numpy()
-        expected_cov_matrix = input_df.to_pandas().cov().to_numpy()
+        expected_cov_matrix = input_df.to_pandas().cov(numeric_only=True).to_numpy()
         assert np.allclose(cov_matrix, expected_cov_matrix)
 
     def test_with_nans(self) -> None:

@@ -1,10 +1,12 @@
 import os
 import sys
 import tempfile
+from importlib import metadata as importlib_metadata
 
 import numpy as np
 import pandas as pd
 from absl.testing import absltest
+from packaging import version
 from sklearn import datasets, linear_model
 
 from snowflake.ml._internal import file_utils
@@ -89,6 +91,10 @@ class ModelLoadHygieneTest(absltest.TestCase):
                         code_paths=[py_file_path],
                     )
 
+    @absltest.skipIf(  # type: ignore[misc]
+        version.parse(importlib_metadata.distribution("importlib-resources").version) <= version.parse("6.1.2"),
+        "importlib-resources has a bug when finding files in a zip-imported namespace package.",
+    )
     def test_zipimport_snowml(self) -> None:
         with tempfile.TemporaryDirectory() as workspace:
             zipped_snowml_path = os.path.join(workspace, "snowml.zip")

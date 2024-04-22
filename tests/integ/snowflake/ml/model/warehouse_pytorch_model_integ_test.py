@@ -75,7 +75,7 @@ class TestWarehousePytorchModelINteg(parameterized.TestCase):
         self,
         permanent_deploy: Optional[bool] = False,
     ) -> None:
-        model, data_x, data_y = model_factory.ModelFactory.prepare_torch_model()
+        model, data_x, data_y = model_factory.ModelFactory.prepare_torch_model(torch.float32)
         x_df = pytorch_handler.SeqOfPyTorchTensorHandler.convert_to_df([data_x], ensure_serializable=False)
         y_pred = model.forward(data_x).detach()
 
@@ -153,7 +153,7 @@ class TestWarehousePytorchModelINteg(parameterized.TestCase):
         self,
         permanent_deploy: Optional[bool] = False,
     ) -> None:
-        model, data_x, data_y = model_factory.ModelFactory.prepare_jittable_torch_model()
+        model, data_x, data_y = model_factory.ModelFactory.prepare_jittable_torch_model(torch.float32)
         x_df = pytorch_handler.SeqOfPyTorchTensorHandler.convert_to_df([data_x], ensure_serializable=False)
         model_script = torch.jit.script(model)  # type:ignore[attr-defined]
         y_pred = model_script.forward(data_x).detach()

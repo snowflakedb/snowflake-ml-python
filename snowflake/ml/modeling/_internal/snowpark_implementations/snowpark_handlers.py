@@ -136,7 +136,7 @@ class SnowparkTransformHandlers:
                 estimator.n_jobs = 1
             inference_res = getattr(estimator, inference_method)(input_df, *args, **kwargs)
 
-            transformed_numpy_array, output_cols = handle_inference_result(
+            transformed_numpy_array, _ = handle_inference_result(
                 inference_res=inference_res,
                 output_cols=expected_output_cols,
                 inference_method=inference_method,
@@ -144,13 +144,13 @@ class SnowparkTransformHandlers:
             )
 
             if len(transformed_numpy_array.shape) > 1:
-                if transformed_numpy_array.shape[1] != len(output_cols):
+                if transformed_numpy_array.shape[1] != len(expected_output_cols):
                     series = pd.Series(transformed_numpy_array.tolist())
-                    transformed_pandas_df = pd.DataFrame(series, columns=output_cols)
+                    transformed_pandas_df = pd.DataFrame(series, columns=expected_output_cols)
                 else:
-                    transformed_pandas_df = pd.DataFrame(transformed_numpy_array.tolist(), columns=output_cols)
+                    transformed_pandas_df = pd.DataFrame(transformed_numpy_array.tolist(), columns=expected_output_cols)
             else:
-                transformed_pandas_df = pd.DataFrame(transformed_numpy_array, columns=output_cols)
+                transformed_pandas_df = pd.DataFrame(transformed_numpy_array, columns=expected_output_cols)
 
             return transformed_pandas_df.to_dict("records")  # type: ignore[no-any-return]
 

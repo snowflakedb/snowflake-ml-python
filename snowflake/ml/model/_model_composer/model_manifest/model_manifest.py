@@ -1,6 +1,7 @@
 import collections
+import copy
 import pathlib
-from typing import Any, Dict, List, Optional, cast
+from typing import List, Optional, cast
 
 import yaml
 
@@ -10,7 +11,6 @@ from snowflake.ml.model._model_composer.model_method import (
     function_generator,
     model_method,
 )
-from snowflake.ml.model._model_composer.model_runtime import model_runtime
 from snowflake.ml.model._packager.model_meta import model_meta as model_meta_api
 from snowflake.snowpark import Session
 
@@ -39,21 +39,19 @@ class ModelManifest:
     ) -> None:
         if options is None:
             options = {}
-        self.runtimes = [
-            model_runtime.ModelRuntime(
-                session=session,
-                name=ModelManifest._DEFAULT_RUNTIME_NAME,
-                model_meta=model_meta,
-                imports=[model_file_rel_path],
-            )
-        ]
+
+        runtime_to_use = copy.deepcopy(model_meta.runtimes["cpu"])
+        runtime_to_use.name = self._DEFAULT_RUNTIME_NAME
+        runtime_to_use.imports.append(model_file_rel_path)
+        runtime_dict = runtime_to_use.save(self.workspace_path)
+
         self.function_generator = function_generator.FunctionGenerator(model_file_rel_path=model_file_rel_path)
         self.methods: List[model_method.ModelMethod] = []
         for target_method in model_meta.signatures.keys():
             method = model_method.ModelMethod(
                 model_meta=model_meta,
                 target_method=target_method,
-                runtime_name=self.runtimes[0].name,
+                runtime_name=self._DEFAULT_RUNTIME_NAME,
                 function_generator=self.function_generator,
                 options=model_method.get_model_method_options_from_options(options, target_method),
             )
@@ -71,7 +69,16 @@ class ModelManifest:
 
         manifest_dict = model_manifest_schema.ModelManifestDict(
             manifest_version=model_manifest_schema.MODEL_MANIFEST_VERSION,
-            runtimes={runtime.name: runtime.save(self.workspace_path) for runtime in self.runtimes},
+            runtimes={
+                self._DEFAULT_RUNTIME_NAME: model_manifest_schema.ModelRuntimeDict(
+                    language="PYTHON",
+                    version=runtime_to_use.runtime_env.python_version,
+                    imports=runtime_dict["imports"],
+                    dependencies=model_manifest_schema.ModelRuntimeDependenciesDict(
+                        conda=runtime_dict["dependencies"]["conda"]
+                    ),
+                )
+            },
             methods=[
                 method.save(
                     self.workspace_path,
@@ -82,8 +89,6 @@ class ModelManifest:
                 for method in self.methods
             ],
         )
-
-        manifest_dict["user_data"] = self.generate_user_data_with_client_data(model_meta)
 
         with (self.workspace_path / ModelManifest.MANIFEST_FILE_REL_PATH).open("w", encoding="utf-8") as f:
             # Anchors are not supported in the server, avoid that.
@@ -103,43 +108,3 @@ class ModelManifest:
         res = cast(model_manifest_schema.ModelManifestDict, raw_input)
 
         return res
-
-    def generate_user_data_with_client_data(self, model_meta: model_meta_api.ModelMetadata) -> Dict[str, Any]:
-        client_data = model_manifest_schema.SnowparkMLDataDict(
-            schema_version=model_manifest_schema.MANIFEST_CLIENT_DATA_SCHEMA_VERSION,
-            functions=[
-                model_manifest_schema.ModelFunctionInfoDict(
-                    name=method.method_name.identifier(),
-                    target_method=method.target_method,
-                    signature=model_meta.signatures[method.target_method].to_dict(),
-                )
-                for method in self.methods
-            ],
-        )
-        return {model_manifest_schema.MANIFEST_CLIENT_DATA_KEY_NAME: client_data}
-
-    @staticmethod
-    def parse_client_data_from_user_data(raw_user_data: Dict[str, Any]) -> model_manifest_schema.SnowparkMLDataDict:
-        raw_client_data = raw_user_data.get(model_manifest_schema.MANIFEST_CLIENT_DATA_KEY_NAME, {})
-        if not isinstance(raw_client_data, dict) or "schema_version" not in raw_client_data:
-            raise ValueError(f"Ill-formatted client data {raw_client_data} in user data found.")
-        loaded_client_data_schema_version = raw_client_data["schema_version"]
-        if (
-            not isinstance(loaded_client_data_schema_version, str)
-            or loaded_client_data_schema_version != model_manifest_schema.MANIFEST_CLIENT_DATA_SCHEMA_VERSION
-        ):
-            raise ValueError(f"Unsupported client data schema version {loaded_client_data_schema_version} confronted.")
-
-        return_functions_info: List[model_manifest_schema.ModelFunctionInfoDict] = []
-        loaded_functions_info = raw_client_data.get("functions", [])
-        for func in loaded_functions_info:
-            fi = model_manifest_schema.ModelFunctionInfoDict(
-                name=func["name"],
-                target_method=func["target_method"],
-                signature=func["signature"],
-            )
-            return_functions_info.append(fi)
-
-        return model_manifest_schema.SnowparkMLDataDict(
-            schema_version=loaded_client_data_schema_version, functions=return_functions_info
-        )

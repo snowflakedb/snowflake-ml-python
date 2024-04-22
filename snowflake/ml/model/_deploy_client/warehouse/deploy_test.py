@@ -85,16 +85,20 @@ class TestFinalPackagesWithoutConda(absltest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             env_utils._SNOWFLAKE_INFO_SCHEMA_PACKAGE_CACHE = {}
             with model_meta.create_model_metadata(
-                model_dir_path=tmpdir, name="model1", model_type="custom", signatures=_DUMMY_SIG, _legacy_save=True
+                model_dir_path=tmpdir,
+                name="model1",
+                model_type="custom",
+                signatures=_DUMMY_SIG,
+                _legacy_save=True,
             ) as meta:
                 meta.models["model1"] = _DUMMY_BLOB
-                c_session = cast(session.Session, self.m_session)
 
-                final_packages = deploy._get_model_final_packages(meta, c_session)
-                self.assertListEqual(
-                    final_packages,
-                    list(map(str, map(env_utils.relax_requirement_version, _BASIC_DEPENDENCIES_FINAL_PACKAGES))),
-                )
+            c_session = cast(session.Session, self.m_session)
+            final_packages = deploy._get_model_final_packages(meta, c_session)
+            self.assertListEqual(
+                final_packages,
+                list(map(str, map(env_utils.relax_requirement_version, _BASIC_DEPENDENCIES_FINAL_PACKAGES))),
+            )
 
     def test_get_model_final_packages_no_relax(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -106,26 +110,33 @@ class TestFinalPackagesWithoutConda(absltest.TestCase):
                 signatures=_DUMMY_SIG,
                 conda_dependencies=["pandas==1.0.*"],
                 _legacy_save=True,
+                relax_version=False,
             ) as meta:
                 meta.models["model1"] = _DUMMY_BLOB
-                c_session = cast(session.Session, self.m_session)
-                with exception_utils.assert_snowml_exceptions(self, expected_original_error_type=RuntimeError):
-                    deploy._get_model_final_packages(meta, c_session)
+
+            c_session = cast(session.Session, self.m_session)
+            with exception_utils.assert_snowml_exceptions(self, expected_original_error_type=RuntimeError):
+                deploy._get_model_final_packages(meta, c_session)
 
     def test_get_model_final_packages_relax(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             env_utils._SNOWFLAKE_INFO_SCHEMA_PACKAGE_CACHE = {}
             with model_meta.create_model_metadata(
-                model_dir_path=tmpdir, name="model1", model_type="custom", signatures=_DUMMY_SIG, _legacy_save=True
+                model_dir_path=tmpdir,
+                name="model1",
+                model_type="custom",
+                signatures=_DUMMY_SIG,
+                _legacy_save=True,
+                relax_version=True,
             ) as meta:
                 meta.models["model1"] = _DUMMY_BLOB
-                c_session = cast(session.Session, self.m_session)
 
-                final_packages = deploy._get_model_final_packages(meta, c_session, relax_version=True)
-                self.assertListEqual(
-                    final_packages,
-                    list(map(str, map(env_utils.relax_requirement_version, _BASIC_DEPENDENCIES_FINAL_PACKAGES))),
-                )
+            c_session = cast(session.Session, self.m_session)
+            final_packages = deploy._get_model_final_packages(meta, c_session, relax_version=True)
+            self.assertListEqual(
+                final_packages,
+                list(map(str, map(env_utils.relax_requirement_version, _BASIC_DEPENDENCIES_FINAL_PACKAGES))),
+            )
 
     def test_get_model_final_packages_with_pip(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -137,11 +148,13 @@ class TestFinalPackagesWithoutConda(absltest.TestCase):
                 signatures=_DUMMY_SIG,
                 pip_requirements=["python-package"],
                 _legacy_save=True,
+                relax_version=False,
             ) as meta:
                 meta.models["model1"] = _DUMMY_BLOB
-                c_session = cast(session.Session, self.m_session)
-                with exception_utils.assert_snowml_exceptions(self, expected_original_error_type=RuntimeError):
-                    deploy._get_model_final_packages(meta, c_session)
+
+            c_session = cast(session.Session, self.m_session)
+            with exception_utils.assert_snowml_exceptions(self, expected_original_error_type=RuntimeError):
+                deploy._get_model_final_packages(meta, c_session)
 
     def test_get_model_final_packages_with_other_channel(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -153,11 +166,13 @@ class TestFinalPackagesWithoutConda(absltest.TestCase):
                 signatures=_DUMMY_SIG,
                 conda_dependencies=["conda-forge::python_package"],
                 _legacy_save=True,
+                relax_version=False,
             ) as meta:
                 meta.models["model1"] = _DUMMY_BLOB
-                c_session = cast(session.Session, self.m_session)
-                with exception_utils.assert_snowml_exceptions(self, expected_original_error_type=RuntimeError):
-                    deploy._get_model_final_packages(meta, c_session)
+
+            c_session = cast(session.Session, self.m_session)
+            with exception_utils.assert_snowml_exceptions(self, expected_original_error_type=RuntimeError):
+                deploy._get_model_final_packages(meta, c_session)
 
     def test_get_model_final_packages_with_non_exist_package(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -180,12 +195,13 @@ class TestFinalPackagesWithoutConda(absltest.TestCase):
                 signatures=_DUMMY_SIG,
                 conda_dependencies=["python-package"],
                 _legacy_save=True,
+                relax_version=False,
             ) as meta:
                 meta.models["model1"] = _DUMMY_BLOB
-                c_session = cast(session.Session, self.m_session)
 
-                with exception_utils.assert_snowml_exceptions(self, expected_original_error_type=RuntimeError):
-                    deploy._get_model_final_packages(meta, c_session)
+            c_session = cast(session.Session, self.m_session)
+            with exception_utils.assert_snowml_exceptions(self, expected_original_error_type=RuntimeError):
+                deploy._get_model_final_packages(meta, c_session)
 
 
 if __name__ == "__main__":

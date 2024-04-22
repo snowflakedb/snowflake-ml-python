@@ -1,11 +1,9 @@
 from enum import Enum
-from typing import List, Optional, Tuple, cast
+from typing import TYPE_CHECKING, List, Optional, Tuple, cast
 
 import numpy as np
 import numpy.typing as npt
 import pandas as pd
-import tensorflow as tf
-import torch
 from sklearn import datasets, svm
 
 from snowflake.ml.model import custom_model
@@ -20,6 +18,10 @@ from snowflake.ml.modeling.preprocessing import (  # type: ignore[attr-defined]
 )
 from snowflake.ml.modeling.xgboost import XGBClassifier  # type: ignore[attr-defined]
 from snowflake.snowpark import DataFrame, Session, functions, types
+
+if TYPE_CHECKING:
+    import tensorflow as tf
+    import torch
 
 
 class DEVICE(Enum):
@@ -207,8 +209,10 @@ class ModelFactory:
 
     @staticmethod
     def prepare_torch_model(
-        dtype: torch.dtype = torch.float32, force_remote_gpu_inference: bool = False
-    ) -> Tuple[torch.nn.Module, torch.Tensor, torch.Tensor]:
+        dtype: "torch.dtype", force_remote_gpu_inference: bool = False
+    ) -> Tuple["torch.nn.Module", "torch.Tensor", "torch.Tensor"]:
+        import torch
+
         class TorchModel(torch.nn.Module):
             def __init__(self, n_input: int, n_hidden: int, n_out: int, dtype: torch.dtype = torch.float32) -> None:
                 super().__init__()
@@ -251,8 +255,10 @@ class ModelFactory:
 
     @staticmethod
     def prepare_jittable_torch_model(
-        dtype: torch.dtype = torch.float32, force_remote_gpu_inference: bool = False
-    ) -> Tuple[torch.nn.Module, torch.Tensor, torch.Tensor]:
+        dtype: "torch.dtype", force_remote_gpu_inference: bool = False
+    ) -> Tuple["torch.nn.Module", "torch.Tensor", "torch.Tensor"]:
+        import torch
+
         class TorchModel(torch.nn.Module):
             def __init__(self, n_input: int, n_hidden: int, n_out: int, dtype: torch.dtype = torch.float32) -> None:
                 super().__init__()
@@ -283,31 +289,19 @@ class ModelFactory:
         return model, data_x, data_y
 
     @staticmethod
-    def prepare_keras_model(
-        dtype: tf.dtypes.DType = tf.float32,
-    ) -> Tuple[tf.keras.Model, tf.Tensor, tf.Tensor]:
-        class KerasModel(tf.keras.Model):
-            def __init__(self, n_hidden: int, n_out: int) -> None:
-                super().__init__()
-                self.fc_1 = tf.keras.layers.Dense(n_hidden, activation="relu")
-                self.fc_2 = tf.keras.layers.Dense(n_out, activation="sigmoid")
+    def prepare_tf_model() -> Tuple["tf.keras.Model", "tf.Tensor"]:
+        import tensorflow as tf
 
-            def call(self, tensor: tf.Tensor) -> tf.Tensor:
-                input = tensor
-                x = self.fc_1(input)
-                x = self.fc_2(x)
-                return x
+        class SimpleModule(tf.Module):
+            def __init__(self, name: Optional[str] = None) -> None:
+                super().__init__(name=name)
+                self.a_variable = tf.Variable(5.0, name="train_me")
+                self.non_trainable_variable = tf.Variable(5.0, trainable=False, name="do_not_train_me")
 
-        n_input, n_hidden, n_out, batch_size, learning_rate = 10, 15, 1, 100, 0.01
-        x = np.random.rand(batch_size, n_input)
-        data_x = tf.convert_to_tensor(x, dtype=dtype)
-        raw_data_y = tf.random.uniform((batch_size, 1))
-        raw_data_y = tf.where(raw_data_y > 0.5, tf.ones_like(raw_data_y), tf.zeros_like(raw_data_y))
-        data_y = tf.cast(raw_data_y, dtype=dtype)
+            @tf.function(input_signature=[tf.TensorSpec(shape=(None, 1), dtype=tf.float32)])  # type: ignore[misc]
+            def __call__(self, tensor: tf.Tensor) -> tf.Tensor:
+                return self.a_variable * tensor + self.non_trainable_variable
 
-        model = KerasModel(n_hidden, n_out)
-        model.compile(
-            optimizer=tf.keras.optimizers.SGD(learning_rate=learning_rate), loss=tf.keras.losses.MeanSquaredError()
-        )
-        model.fit(data_x, data_y, batch_size=batch_size, epochs=100)
-        return model, data_x, data_y
+        model = SimpleModule(name="simple")
+        data_x = tf.constant([[5.0], [10.0]])
+        return model, data_x

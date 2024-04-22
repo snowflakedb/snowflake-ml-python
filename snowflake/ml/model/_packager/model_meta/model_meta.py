@@ -23,6 +23,7 @@ from snowflake.ml.model._packager.model_meta import (
     model_meta_schema,
 )
 from snowflake.ml.model._packager.model_meta_migrator import migrator_plans
+from snowflake.ml.model._packager.model_runtime import model_runtime
 
 MODEL_METADATA_FILE = "model.yaml"
 MODEL_CODE_DIR = "code"
@@ -115,7 +116,6 @@ def create_model_metadata(
         python_version=python_version,
         embed_local_ml_library=embed_local_ml_library,
         legacy_save=legacy_save,
-        relax_version=relax_version,
     )
 
     if embed_local_ml_library:
@@ -156,6 +156,8 @@ def create_model_metadata(
                     cloudpickle.register_pickle_by_value(mod)
                     imported_modules.append(mod)
         yield model_meta
+        if relax_version:
+            model_meta.env.relax_version()
         model_meta.save(model_dir_path)
     finally:
         for mod in imported_modules:
@@ -169,7 +171,6 @@ def _create_env_for_model_metadata(
     python_version: Optional[str] = None,
     embed_local_ml_library: bool = False,
     legacy_save: bool = False,
-    relax_version: bool = False,
 ) -> model_env.ModelEnv:
     env = model_env.ModelEnv()
 
@@ -197,10 +198,6 @@ def _create_env_for_model_metadata(
             ],
             check_local_version=True,
         )
-
-    if relax_version:
-        env.relax_version()
-
     return env
 
 
@@ -237,6 +234,7 @@ class ModelMetadata:
         name: str,
         env: model_env.ModelEnv,
         model_type: model_types.SupportedModelHandlerType,
+        runtimes: Optional[Dict[str, model_runtime.ModelRuntime]] = None,
         signatures: Optional[Dict[str, model_signature.ModelSignature]] = None,
         metadata: Optional[Dict[str, str]] = None,
         creation_timestamp: Optional[str] = None,
@@ -262,6 +260,8 @@ class ModelMetadata:
         if models:
             self.models = models
 
+        self._runtimes = runtimes
+
         self.original_metadata_version = original_metadata_version
 
     @property
@@ -272,6 +272,19 @@ class ModelMetadata:
     def min_snowpark_ml_version(self, min_snowpark_ml_version: str) -> None:
         parsed_min_snowpark_ml_version = version.parse(min_snowpark_ml_version)
         self._min_snowpark_ml_version = max(self._min_snowpark_ml_version, parsed_min_snowpark_ml_version)
+
+    @property
+    def runtimes(self) -> Dict[str, model_runtime.ModelRuntime]:
+        if self._runtimes and "cpu" in self._runtimes:
+            return self._runtimes
+        runtimes = {
+            "cpu": model_runtime.ModelRuntime("cpu", self.env),
+        }
+        if self.env.cuda_version:
+            runtimes.update(
+                {"gpu": model_runtime.ModelRuntime("gpu", self.env, is_gpu=True, server_availability_source="conda")}
+            )
+        return runtimes
 
     def save(self, model_dir_path: str) -> None:
         """Save the model metadata
@@ -291,6 +304,10 @@ class ModelMetadata:
             {
                 "creation_timestamp": self.creation_timestamp,
                 "env": self.env.save_as_dict(pathlib.Path(model_dir_path)),
+                "runtimes": {
+                    runtime_name: runtime.save(pathlib.Path(model_dir_path))
+                    for runtime_name, runtime in self.runtimes.items()
+                },
                 "metadata": self.metadata,
                 "model_type": self.model_type,
                 "models": {model_name: blob.to_dict() for model_name, blob in self.models.items()},
@@ -302,6 +319,7 @@ class ModelMetadata:
         )
 
         with open(model_yaml_path, "w", encoding="utf-8") as out:
+            yaml.SafeDumper.ignore_aliases = lambda *args: True  # type: ignore[method-assign]
             yaml.safe_dump(
                 model_dict,
                 stream=out,
@@ -330,6 +348,7 @@ class ModelMetadata:
         return model_meta_schema.ModelMetadataDict(
             creation_timestamp=loaded_meta["creation_timestamp"],
             env=loaded_meta["env"],
+            runtimes=loaded_meta.get("runtimes", None),
             metadata=loaded_meta.get("metadata", None),
             model_type=loaded_meta["model_type"],
             models=loaded_meta["models"],
@@ -363,10 +382,21 @@ class ModelMetadata:
         models = {name: model_blob_meta.ModelBlobMeta(**blob_meta) for name, blob_meta in model_dict["models"].items()}
         env = model_env.ModelEnv()
         env.load_from_dict(pathlib.Path(model_dir_path), model_dict["env"])
+
+        runtimes: Optional[Dict[str, model_runtime.ModelRuntime]]
+        if model_dict.get("runtimes", None):
+            runtimes = {
+                name: model_runtime.ModelRuntime.load(pathlib.Path(model_dir_path), name, env, runtime_dict)
+                for name, runtime_dict in model_dict["runtimes"].items()
+            }
+        else:
+            runtimes = None
+
         return cls(
             name=model_dict["name"],
             model_type=model_dict["model_type"],
             env=env,
+            runtimes=runtimes,
             signatures=signatures,
             metadata=model_dict.get("metadata", None),
             creation_timestamp=model_dict["creation_timestamp"],

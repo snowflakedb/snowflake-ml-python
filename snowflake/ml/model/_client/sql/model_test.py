@@ -138,6 +138,36 @@ class ModelSQLTest(absltest.TestCase):
             statement_params=m_statement_params,
         )
 
+    def test_show_versions_3(self) -> None:
+        m_statement_params = {"test": "1"}
+        m_df_final = mock_data_frame.MockDataFrame(
+            collect_result=[
+                Row(
+                    create_on="06/01",
+                    name="v1",
+                    comment="This is a comment",
+                    model_name="MODEL",
+                    metadata="{}",
+                    user_data="{}",
+                    is_default_version=True,
+                    model_spec="{}",
+                ),
+            ],
+            collect_statement_params=m_statement_params,
+        )
+        self.m_session.add_mock_sql("""SHOW VERSIONS LIKE 'v1' IN MODEL TEMP."test".MODEL""", m_df_final)
+        c_session = cast(Session, self.m_session)
+        model_sql.ModelSQLClient(
+            c_session,
+            database_name=sql_identifier.SqlIdentifier("TEMP"),
+            schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
+        ).show_versions(
+            model_name=sql_identifier.SqlIdentifier("MODEL"),
+            version_name=sql_identifier.SqlIdentifier("v1", case_sensitive=True),
+            check_model_details=True,
+            statement_params=m_statement_params,
+        )
+
     def test_set_comment_for_model(self) -> None:
         m_statement_params = {"test": "1"}
         m_df = mock_data_frame.MockDataFrame(collect_result=[Row("")], collect_statement_params=m_statement_params)
@@ -165,6 +195,38 @@ class ModelSQLTest(absltest.TestCase):
             schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
         ).drop_model(
             model_name=sql_identifier.SqlIdentifier("MODEL"),
+            statement_params=m_statement_params,
+        )
+
+    def test_config_model_details_enable(self) -> None:
+        m_statement_params = {"test": "1"}
+        m_df = mock_data_frame.MockDataFrame(
+            collect_result=[Row("Session successfully altered.")], collect_statement_params=m_statement_params
+        )
+        self.m_session.add_mock_sql("""ALTER SESSION SET SHOW_MODEL_DETAILS_IN_SHOW_VERSIONS_IN_MODEL=true""", m_df)
+        c_session = cast(Session, self.m_session)
+        model_sql.ModelSQLClient(
+            c_session,
+            database_name=sql_identifier.SqlIdentifier("TEMP"),
+            schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
+        ).config_model_details(
+            enable=True,
+            statement_params=m_statement_params,
+        )
+
+    def test_config_model_details_false(self) -> None:
+        m_statement_params = {"test": "1"}
+        m_df = mock_data_frame.MockDataFrame(
+            collect_result=[Row("Session successfully altered.")], collect_statement_params=m_statement_params
+        )
+        self.m_session.add_mock_sql("""ALTER SESSION UNSET SHOW_MODEL_DETAILS_IN_SHOW_VERSIONS_IN_MODEL""", m_df)
+        c_session = cast(Session, self.m_session)
+        model_sql.ModelSQLClient(
+            c_session,
+            database_name=sql_identifier.SqlIdentifier("TEMP"),
+            schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
+        ).config_model_details(
+            enable=False,
             statement_params=m_statement_params,
         )
 

@@ -95,8 +95,7 @@
             {
               "enum": [
                 "deployment_core",
-                "udf_inference",
-                "spcs_inference",
+                "snowml_inference_alternative",
                 "model_packaging",
                 "build_essential",
                 "build_test_env"

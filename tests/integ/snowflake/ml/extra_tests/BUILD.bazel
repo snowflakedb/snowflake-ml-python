@@ -165,6 +165,17 @@ py_test(
 )
 
 py_test(
+    name = "multi_label_column_name_test",
+    srcs = ["multi_label_column_name_test.py"],
+    deps = [
+        "//snowflake/ml/modeling/ensemble:random_forest_classifier",
+        "//snowflake/ml/modeling/metrics:classification",
+        "//snowflake/ml/modeling/xgboost:xgb_classifier",
+        "//snowflake/ml/utils:connection_params",
+    ],
+)
+
+py_test(
     name = "fit_transform_test",
     srcs = ["fit_transform_test.py"],
     shard_count = 3,
