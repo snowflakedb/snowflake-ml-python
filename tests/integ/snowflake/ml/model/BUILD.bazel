@@ -16,6 +16,23 @@ py_library(
 )
 
 py_test(
+    name = "warehouse_catboost_model_integ_test",
+    timeout = "long",
+    srcs = ["warehouse_catboost_model_integ_test.py"],
+    shard_count = 2,
+    deps = [
+        ":warehouse_model_integ_test_utils",
+        "//snowflake/ml/model:custom_model",
+        "//snowflake/ml/model:deploy_platforms",
+        "//snowflake/ml/model:type_hints",
+        "//snowflake/ml/utils:connection_params",
+        "//tests/integ/snowflake/ml/test_utils:dataframe_utils",
+        "//tests/integ/snowflake/ml/test_utils:db_manager",
+        "//tests/integ/snowflake/ml/test_utils:test_env_utils",
+    ],
+)
+
+py_test(
     name = "warehouse_custom_model_integ_test",
     timeout = "long",
     srcs = ["warehouse_custom_model_integ_test.py"],
@@ -71,6 +88,20 @@ py_test(
     timeout = "long",
     srcs = ["warehouse_sklearn_xgboost_model_integ_test.py"],
     shard_count = 6,
+    deps = [
+        ":warehouse_model_integ_test_utils",
+        "//snowflake/ml/model:type_hints",
+        "//snowflake/ml/utils:connection_params",
+        "//tests/integ/snowflake/ml/test_utils:dataframe_utils",
+        "//tests/integ/snowflake/ml/test_utils:db_manager",
+    ],
+)
+
+py_test(
+    name = "warehouse_lightgbm_model_integ_test",
+    timeout = "long",
+    srcs = ["warehouse_lightgbm_model_integ_test.py"],
+    shard_count = 2,
     deps = [
         ":warehouse_model_integ_test_utils",
         "//snowflake/ml/model:type_hints",

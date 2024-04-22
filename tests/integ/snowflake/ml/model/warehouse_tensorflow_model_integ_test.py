@@ -23,15 +23,34 @@ from tests.integ.snowflake.ml.test_utils import (
 )
 
 
-class SimpleModule(tf.Module):
-    def __init__(self, name: Optional[str] = None) -> None:
-        super().__init__(name=name)
-        self.a_variable = tf.Variable(5.0, name="train_me")
-        self.non_trainable_variable = tf.Variable(5.0, trainable=False, name="do_not_train_me")
+def prepare_keras_model(
+    dtype: "tf.dtypes.DType" = tf.float32,
+) -> Tuple["tf.keras.Model", "tf.Tensor", "tf.Tensor"]:
+    class KerasModel(tf.keras.Model):
+        def __init__(self, n_hidden: int, n_out: int) -> None:
+            super().__init__()
+            self.fc_1 = tf.keras.layers.Dense(n_hidden, activation="relu")
+            self.fc_2 = tf.keras.layers.Dense(n_out, activation="sigmoid")
 
-    @tf.function(input_signature=[tf.TensorSpec(shape=(None, 1), dtype=tf.float32)])  # type: ignore[misc]
-    def __call__(self, tensor: tf.Tensor) -> tf.Tensor:
-        return self.a_variable * tensor + self.non_trainable_variable
+        def call(self, tensor: "tf.Tensor") -> "tf.Tensor":
+            input = tensor
+            x = self.fc_1(input)
+            x = self.fc_2(x)
+            return x
+
+    n_input, n_hidden, n_out, batch_size, learning_rate = 10, 15, 1, 100, 0.01
+    x = np.random.rand(batch_size, n_input)
+    data_x = tf.convert_to_tensor(x, dtype=dtype)
+    raw_data_y = tf.random.uniform((batch_size, 1))
+    raw_data_y = tf.where(raw_data_y > 0.5, tf.ones_like(raw_data_y), tf.zeros_like(raw_data_y))
+    data_y = tf.cast(raw_data_y, dtype=dtype)
+
+    model = KerasModel(n_hidden, n_out)
+    model.compile(
+        optimizer=tf.keras.optimizers.SGD(learning_rate=learning_rate), loss=tf.keras.losses.MeanSquaredError()
+    )
+    model.fit(data_x, data_y, batch_size=batch_size, epochs=100)
+    return model, data_x, data_y
 
 
 @pytest.mark.pip_incompatible
@@ -93,8 +112,8 @@ class TestWarehouseTensorflowModelInteg(parameterized.TestCase):
         self,
         permanent_deploy: Optional[bool] = False,
     ) -> None:
-        model = SimpleModule(name="simple")
-        data_x = tf.constant([[5.0], [10.0]])
+
+        model, data_x = model_factory.ModelFactory.prepare_tf_model()
         x_df = tensorflow_handler.SeqOfTensorflowTensorHandler.convert_to_df([data_x], ensure_serializable=False)
         y_pred = model(data_x)
 
@@ -120,8 +139,7 @@ class TestWarehouseTensorflowModelInteg(parameterized.TestCase):
         self,
         permanent_deploy: Optional[bool] = False,
     ) -> None:
-        model = SimpleModule(name="simple")
-        data_x = tf.constant([[5.0], [10.0]])
+        model, data_x = model_factory.ModelFactory.prepare_tf_model()
         x_df = tensorflow_handler.SeqOfTensorflowTensorHandler.convert_to_df([data_x], ensure_serializable=False)
         y_pred = model(data_x)
 
@@ -147,8 +165,7 @@ class TestWarehouseTensorflowModelInteg(parameterized.TestCase):
         self,
         permanent_deploy: Optional[bool] = False,
     ) -> None:
-        model = SimpleModule(name="simple")
-        data_x = tf.constant([[5.0], [10.0]])
+        model, data_x = model_factory.ModelFactory.prepare_tf_model()
         x_df = tensorflow_handler.SeqOfTensorflowTensorHandler.convert_to_df([data_x], ensure_serializable=False)
         x_df.columns = ["col_0"]
         y_pred = model(data_x)
@@ -179,7 +196,7 @@ class TestWarehouseTensorflowModelInteg(parameterized.TestCase):
         self,
         permanent_deploy: Optional[bool] = False,
     ) -> None:
-        model, data_x, data_y = model_factory.ModelFactory.prepare_keras_model()
+        model, data_x, data_y = prepare_keras_model()
         x_df = tensorflow_handler.SeqOfTensorflowTensorHandler.convert_to_df([data_x], ensure_serializable=False)
         y_pred = model.predict(data_x)
 
@@ -206,7 +223,7 @@ class TestWarehouseTensorflowModelInteg(parameterized.TestCase):
         self,
         permanent_deploy: Optional[bool] = False,
     ) -> None:
-        model, data_x, data_y = model_factory.ModelFactory.prepare_keras_model()
+        model, data_x, data_y = prepare_keras_model()
         x_df = tensorflow_handler.SeqOfTensorflowTensorHandler.convert_to_df([data_x], ensure_serializable=False)
         y_pred = model.predict(data_x)
 
@@ -233,7 +250,7 @@ class TestWarehouseTensorflowModelInteg(parameterized.TestCase):
         self,
         permanent_deploy: Optional[bool] = False,
     ) -> None:
-        model, data_x, data_y = model_factory.ModelFactory.prepare_keras_model()
+        model, data_x, data_y = prepare_keras_model()
         x_df = tensorflow_handler.SeqOfTensorflowTensorHandler.convert_to_df([data_x], ensure_serializable=False)
         x_df.columns = ["col_0"]
         y_pred = model.predict(data_x)

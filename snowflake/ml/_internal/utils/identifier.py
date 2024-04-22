@@ -338,4 +338,6 @@ def resolve_identifier(name: str) -> str:
     elif UNQUOTED_CASE_INSENSITIVE_RE.match(name):
         return name.upper()
     else:
-        raise ValueError(f"Invalid name {name} passed. ID is not quoted and cannot normalized.")
+        raise ValueError(
+            f"{name} is not a valid SQL identifier: https://docs.snowflake.com/en/sql-reference/identifiers-syntax"
+        )

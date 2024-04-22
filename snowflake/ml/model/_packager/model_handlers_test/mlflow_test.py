@@ -55,10 +55,7 @@ class MLFlowHandlerTest(absltest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             mlflow_pyfunc_model = mlflow.pyfunc.load_model(f"runs:/{run_id}/model")
             pk = model_packager.ModelPackager(os.path.join(tmpdir, "model1"))
-            pk.save(
-                name="model1",
-                model=mlflow_pyfunc_model,
-            )
+            pk.save(name="model1", model=mlflow_pyfunc_model, options={"relax_version": False})
             assert pk.model
             assert pk.meta
 
@@ -102,8 +99,7 @@ class MLFlowHandlerTest(absltest.TestCase):
             self.assertNotEqual(pk.model.metadata.run_id, run_id)
 
             model_packager.ModelPackager(os.path.join(tmpdir, "model1_again")).save(
-                name="model1_again",
-                model=mlflow_pyfunc_model,
+                name="model1_again", model=mlflow_pyfunc_model, options={"relax_version": False}
             )
 
             self.assertEqual(pk.meta.env.python_version, "3.8")
@@ -170,8 +166,7 @@ class MLFlowHandlerTest(absltest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             mlflow_pyfunc_model = mlflow.pyfunc.load_model(f"runs:/{run_id}/model")
             model_packager.ModelPackager(os.path.join(tmpdir, "model1")).save(
-                name="model1",
-                model=mlflow_pyfunc_model,
+                name="model1", model=mlflow_pyfunc_model, options={"relax_version": False}
             )
 
             pk = model_packager.ModelPackager(os.path.join(tmpdir, "model1"))
@@ -225,7 +220,7 @@ class MLFlowHandlerTest(absltest.TestCase):
             pk.save(
                 name="model1",
                 model=mlflow_pyfunc_model,
-                options={"model_uri": local_path, "ignore_mlflow_dependencies": True},
+                options={"model_uri": local_path, "ignore_mlflow_dependencies": True, "relax_version": False},
             )
             assert pk.model
             assert pk.meta
@@ -234,15 +229,14 @@ class MLFlowHandlerTest(absltest.TestCase):
 
             with self.assertRaisesRegex(ValueError, "Cannot load MLFlow model dependencies."):
                 model_packager.ModelPackager(os.path.join(tmpdir, "model1")).save(
-                    name="model1",
-                    model=mlflow_pyfunc_model,
+                    name="model1", model=mlflow_pyfunc_model, options={"relax_version": False}
                 )
 
             pk = model_packager.ModelPackager(os.path.join(tmpdir, "model2"))
             pk.save(
                 name="model2",
                 model=mlflow_pyfunc_model,
-                options={"model_uri": local_path, "ignore_mlflow_metadata": True},
+                options={"model_uri": local_path, "ignore_mlflow_metadata": True, "relax_version": False},
             )
             assert pk.model
             assert pk.meta
@@ -299,8 +293,7 @@ class MLFlowHandlerTest(absltest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmpdir:
             model_packager.ModelPackager(os.path.join(tmpdir, "model1")).save(
-                name="model1",
-                model=pytorch_pyfunc,
+                name="model1", model=pytorch_pyfunc, options={"relax_version": False}
             )
 
             pk = model_packager.ModelPackager(os.path.join(tmpdir, "model1"))

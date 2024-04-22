@@ -3,7 +3,9 @@ from typing import Any, Dict, Type
 from snowflake.ml.model._packager.model_meta import model_meta_schema
 from snowflake.ml.model._packager.model_meta_migrator import base_migrator, migrator_v1
 
-MODEL_META_MIGRATOR_PLANS: Dict[str, Type[base_migrator.BaseModelMetaMigrator]] = {"1": migrator_v1.MetaMigrator_v1}
+MODEL_META_MIGRATOR_PLANS: Dict[str, Type[base_migrator.BaseModelMetaMigrator]] = {
+    "1": migrator_v1.MetaMigrator_v1,
+}
 
 
 def migrate_metadata(loaded_meta: Dict[str, Any]) -> Dict[str, Any]:

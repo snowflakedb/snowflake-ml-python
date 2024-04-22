@@ -50,6 +50,7 @@ class DockerContextTest(absltest.TestCase):
             "Dockerfile",
             constants.INFERENCE_SERVER_DIR,
             constants.ENTRYPOINT_SCRIPT,
+            "runtimes",
             "env",
             "model.yaml",
         ]
@@ -108,6 +109,7 @@ class DockerContextTestCuda(absltest.TestCase):
             constants.INFERENCE_SERVER_DIR,
             constants.ENTRYPOINT_SCRIPT,
             "env",
+            "runtimes",
             "model.yaml",
         ]
         self.docker_context.build()
@@ -177,6 +179,7 @@ class DockerContextTestModelWeights(absltest.TestCase):
                 constants.INFERENCE_SERVER_DIR,
                 constants.ENTRYPOINT_SCRIPT,
                 "env",
+                "runtimes",
                 "model.yaml",
             ]
             self.docker_context.build()

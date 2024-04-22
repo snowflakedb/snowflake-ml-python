@@ -46,7 +46,7 @@ class TestBaseFunctions(TestCase):
                 super().__init__()
                 self._sklearn_object: Optional[Any] = None
 
-            def fit(self, dataset: DataFrame) -> "TestTransformer":
+            def _fit(self, dataset: DataFrame) -> "TestTransformer":
                 return self
 
         with self.subTest("Test with regressor"):

@@ -419,8 +419,16 @@ class BaseEstimator(Base):
         """
         return []
 
+    @telemetry.send_api_usage_telemetry(
+        project=PROJECT,
+        subproject=SUBPROJECT,
+    )
+    def fit(self, dataset: Union[snowpark.DataFrame, pd.DataFrame]) -> "BaseEstimator":
+        """Runs universal logics for all fit implementations."""
+        return self._fit(dataset)
+
     @abstractmethod
-    def fit(self, dataset: snowpark.DataFrame) -> "BaseEstimator":
+    def _fit(self, dataset: Union[snowpark.DataFrame, pd.DataFrame]) -> "BaseEstimator":
         raise NotImplementedError()
 
     def _use_input_cols_only(self, dataset: pd.DataFrame) -> pd.DataFrame:

@@ -86,11 +86,7 @@ class Binarizer(base.BaseTransformer):
         """
         super()._reset()
 
-    @telemetry.send_api_usage_telemetry(
-        project=base.PROJECT,
-        subproject=base.SUBPROJECT,
-    )
-    def fit(self, dataset: Union[snowpark.DataFrame, pd.DataFrame]) -> "Binarizer":
+    def _fit(self, dataset: Union[snowpark.DataFrame, pd.DataFrame]) -> "Binarizer":
         """
         This is a stateless transformer, so there is nothing to fit. Validates the transformer arguments.
         Returns the transformer instance.

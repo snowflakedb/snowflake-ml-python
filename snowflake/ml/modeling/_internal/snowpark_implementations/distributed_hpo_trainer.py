@@ -955,22 +955,21 @@ class DistributedHPOTrainer(SnowparkModelTrainer):
                     X, y, indices, params_to_evaluate, base_estimator, fit_and_score_kwargs = _load_data_into_udf()
                     self.X = X
                     self.y = y
-                    self.indices = indices
+                    self.test_indices = indices
                     self.params_to_evaluate = params_to_evaluate
                     self.base_estimator = base_estimator
                     self.fit_and_score_kwargs = fit_and_score_kwargs
                     self.fit_score_params: List[Any] = []
+                    self.cached_train_test_indices = []
+                    # Calculate the full index here to avoid duplicate calculation (which consumes a lot of memory)
+                    full_index = np.arange(DATA_LENGTH)
+                    for i in range(n_splits):
+                        self.cached_train_test_indices.extend(
+                            [[np.setdiff1d(full_index, self.test_indices[i]), self.test_indices[i]]]
+                        )
 
                 def process(self, idx: int, params_idx: int, cv_idx: int) -> None:
-                    # 1. Calculate the parameter list
-                    parameters = self.params_to_evaluate[params_idx]
-                    # 2. Calculate the cross validator indices
-                    # cross validator's indices: we stored test indices only (to save space);
-                    # use the full index to re-construct each train index back.
-                    full_index = np.array([i for i in range(DATA_LENGTH)])
-                    test_index = self.indices[cv_idx]
-                    train_index = np.setdiff1d(full_index, test_index)
-                    self.fit_score_params.extend([[idx, (params_idx, parameters), (cv_idx, (train_index, test_index))]])
+                    self.fit_score_params.extend([[idx, params_idx, cv_idx]])
 
                 def end_partition(self) -> Iterator[Tuple[int, str]]:
                     from sklearn.base import clone
@@ -984,14 +983,14 @@ class DistributedHPOTrainer(SnowparkModelTrainer):
                             clone(self.base_estimator),
                             self.X,
                             self.y,
-                            train=train,
-                            test=test,
-                            parameters=parameters,
+                            train=self.cached_train_test_indices[split_idx][0],
+                            test=self.cached_train_test_indices[split_idx][1],
+                            parameters=self.params_to_evaluate[cand_idx],
                             split_progress=(split_idx, n_splits),
                             candidate_progress=(cand_idx, n_candidates),
                             **self.fit_and_score_kwargs,  # load sample weight here
                         )
-                        for _, (cand_idx, parameters), (split_idx, (train, test)) in self.fit_score_params
+                        for _, cand_idx, split_idx in self.fit_score_params
                     )
 
                     binary_cv_results = None

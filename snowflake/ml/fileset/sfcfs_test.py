@@ -1,14 +1,15 @@
 import pickle
+from typing import List
 
 import fsspec
-from absl.testing import absltest
+from absl.testing import absltest, parameterized
 
 from snowflake import snowpark
 from snowflake.connector import connection
 from snowflake.ml.fileset import sfcfs
 
 
-class SFFileSystemTest(absltest.TestCase):
+class SFFileSystemTest(parameterized.TestCase):
     def setUp(self) -> None:
         self.mock_connection = absltest.mock.MagicMock(spec=connection.SnowflakeConnection)
         self.mock_connection._telemetry = absltest.mock.Mock()
@@ -28,56 +29,49 @@ class SFFileSystemTest(absltest.TestCase):
         with self.assertRaises(ValueError):
             sfcfs.SFFileSystem()
 
-    def test_parse_sfc_file_path(self) -> None:
+    @parameterized.parameters(  # type: ignore[misc]
+        ("sfc://@_testdb.testschema._foo/", "_testdb", "testschema", "_foo", ""),
+        ('@testdb$."test""s""chema"._foo/', "testdb$", '"test""s""chema"', "_foo", ""),
+        ("@test1db.test$schema.foo/nytrain/", "test1db", "test$schema", "foo", "nytrain/"),
+        ("@test_db.test_schema.foo/nytrain/1.txt", "test_db", "test_schema", "foo", "nytrain/1.txt"),
+        ('@test_d$b."test.schema".foo$_o/nytrain/', "test_d$b", '"test.schema"', "foo$_o", "nytrain/"),
+        (
+            '@"идентификатор"."test schema"."f.o_o1"/nytrain/',
+            '"идентификатор"',
+            '"test schema"',
+            '"f.o_o1"',
+            "nytrain/",
+        ),
+    )
+    def test_parse_sfc_file_path(self, *test_case: List[str]) -> None:
         """Test if the FS could parse the input stage location correctly"""
-        test_cases = [
-            ("sfc://@_testdb.testschema._foo/", "_testdb", "testschema", "_foo", ""),
-            ('@testdb$."test""s""chema"._foo/', "testdb$", '"test""s""chema"', "_foo", ""),
-            ("@test1db.test$schema.foo/nytrain/", "test1db", "test$schema", "foo", "nytrain/"),
-            ("@test_db.test_schema.foo/nytrain/1.txt", "test_db", "test_schema", "foo", "nytrain/1.txt"),
-            ('@test_d$b."test.schema".foo$_o/nytrain/', "test_d$b", '"test.schema"', "foo$_o", "nytrain/"),
-            (
-                '@"идентификатор"."test schema"."f.o_o1"/nytrain/',
-                '"идентификатор"',
-                '"test schema"',
-                '"f.o_o1"',
-                "nytrain/",
-            ),
-        ]
+        with absltest.mock.patch(
+            "snowflake.ml.fileset.stage_fs.SFStageFileSystem", autospec=True
+        ) as MockSFStageFileSystem:
+            instance = MockSFStageFileSystem.return_value
+            sffs = sfcfs.SFFileSystem(snowpark_session=self.snowpark_session)
+            sffs.ls(test_case[0])
+            MockSFStageFileSystem.assert_any_call(
+                snowpark_session=self.snowpark_session,
+                db=test_case[1],
+                schema=test_case[2],
+                stage=test_case[3],
+            )
+            instance.ls.assert_any_call(test_case[4], detail=True)
 
-        for test_case in test_cases:
-            with self.subTest():
-                with absltest.mock.patch(
-                    "snowflake.ml.fileset.stage_fs.SFStageFileSystem", autospec=True
-                ) as MockSFStageFileSystem:
-                    instance = MockSFStageFileSystem.return_value
-                    sffs = sfcfs.SFFileSystem(snowpark_session=self.snowpark_session)
-                    sffs.ls(test_case[0])
-                    MockSFStageFileSystem.assert_any_call(
-                        snowpark_session=self.snowpark_session,
-                        db=test_case[1],
-                        schema=test_case[2],
-                        stage=test_case[3],
-                    )
-                    instance.ls.assert_any_call(test_case[4], detail=True)
-
-    def test_negative_parse_sfc_file_path(self) -> None:
+    @parameterized.parameters(  # type: ignore[misc]
+        "@foo/",  # Missing database and schema
+        "@schema.foo/",  # Missing database
+        "db.schema.foo/",  # Missing leading "@"
+        "@db.schema.foo.file",  # Missing "/" after the stage name
+        '@db."s"chema".foo/',  # Double quoted identifier contains a single \"
+        "@3db.schema.foo/1.txt",  # Database name starts with digit
+    )
+    def test_negative_parse_sfc_file_path(self, test_case: str) -> None:
         """Test if the FS could fail the invalid input stage path"""
-        test_cases = [
-            "@foo/",  # Missing database and schema
-            "@schema.foo/",  # Missing database
-            "db.schema.foo/",  # Missing leading "@"
-            "@db.schema.foo.file",  # Missing "/" after the stage name
-            "@db.schema.foo",  # Missing "/" after the stage name
-            '@db."s"chema".foo/',  # Double quoted identifier contains a single \"
-            "@3db.schema.foo/1.txt",  # Database name starts with digit
-        ]
-
-        for test_case in test_cases:
-            with self.subTest():
-                with absltest.mock.patch("snowflake.ml.fileset.stage_fs.SFStageFileSystem", autospec=True):
-                    sffs = sfcfs.SFFileSystem(snowpark_session=self.snowpark_session)
-                    self.assertRaises(ValueError, sffs.ls, test_case[0])
+        with absltest.mock.patch("snowflake.ml.fileset.stage_fs.SFStageFileSystem", autospec=True):
+            sffs = sfcfs.SFFileSystem(snowpark_session=self.snowpark_session)
+            self.assertRaises(ValueError, sffs.ls, test_case)
 
     def test_ls(self) -> None:
         """Test if `ls` is able to retrieve correct results by initializing file system object directly."""

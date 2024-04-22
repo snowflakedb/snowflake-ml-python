@@ -47,6 +47,9 @@ class SKLModelHandler(_base.BaseModelHandler[Union["sklearn.base.BaseEstimator",
                 or type_utils.LazyType("sklearn.pipeline.Pipeline").isinstance(model)
             )
             and (not type_utils.LazyType("xgboost.XGBModel").isinstance(model))  # XGBModel is actually a BaseEstimator
+            and (
+                not type_utils.LazyType("lightgbm.LGBMModel").isinstance(model)
+            )  # LGBMModel is actually a BaseEstimator
             and any(
                 (hasattr(model, method) and callable(getattr(model, method, None)))
                 for method in cls.DEFAULT_TARGET_METHODS

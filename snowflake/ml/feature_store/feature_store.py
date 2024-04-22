@@ -52,6 +52,15 @@ _ENTITY_TAG_PREFIX = "SNOWML_FEATURE_STORE_ENTITY_"
 _FEATURE_VIEW_ENTITY_TAG = "SNOWML_FEATURE_STORE_FV_ENTITIES"
 _FEATURE_VIEW_TS_COL_TAG = "SNOWML_FEATURE_STORE_FV_TS_COL"
 _FEATURE_STORE_OBJECT_TAG = "SNOWML_FEATURE_STORE_OBJECT"
+
+
+# TODO: remove "" after dataset is updated
+class _FeatureStoreObjTypes(Enum):
+    FEATURE_VIEW = "FEATURE_VIEW"
+    FEATURE_VIEW_REFRESH_TASK = "FEATURE_VIEW_REFRESH_TASK"
+    TRAINING_DATA = ""
+
+
 _PROJECT = "FeatureStore"
 _DT_OR_VIEW_QUERY_PATTERN = re.compile(
     r"""CREATE\ (OR\ REPLACE\ )?(?P<obj_type>(DYNAMIC\ TABLE|VIEW))\ .*
@@ -143,14 +152,17 @@ class FeatureStore:
             database: Database to create the FeatureStore instance.
             name: Target FeatureStore name, maps to a schema in the database.
             default_warehouse: Default warehouse for feature store compute.
-            creation_mode: Create new backend or fail if not exist upon feature store creation.
+            creation_mode: If FAIL_IF_NOT_EXIST, feature store throws when required resources not already exist; If
+                CREATE_IF_NOT_EXIST, feature store will create required resources if they not already exist. Required
+                resources include schema and tags. Note database must already exist in either mode.
 
         Raises:
             SnowflakeMLException: [ValueError] default_warehouse does not exist.
-            SnowflakeMLException: [ValueError] FAIL_IF_NOT_EXIST is set and feature store not exists.
+            SnowflakeMLException: [ValueError] Required resources not exist when mode is FAIL_IF_NOT_EXIST.
             SnowflakeMLException: [RuntimeError] Failed to find resources.
             SnowflakeMLException: [RuntimeError] Failed to create feature store.
         """
+
         database = SqlIdentifier(database)
         name = SqlIdentifier(name)
 
@@ -177,18 +189,12 @@ class FeatureStore:
 
         self.update_default_warehouse(default_warehouse)
 
+        self._check_database_exists_or_throw()
         if creation_mode == CreationMode.FAIL_IF_NOT_EXIST:
-            schema_result = self._find_object("SCHEMAS", self._config.schema)
-            if len(schema_result) == 0:
-                raise snowml_exceptions.SnowflakeMLException(
-                    error_code=error_codes.NOT_FOUND,
-                    original_exception=ValueError(f"Feature store {name} does not exist."),
-                )
+            self._check_internal_objects_exist_or_throw()
+
         else:
             try:
-                self._session.sql(f"CREATE DATABASE IF NOT EXISTS {self._config.database}").collect(
-                    statement_params=self._telemetry_stmp
-                )
                 self._session.sql(f"CREATE SCHEMA IF NOT EXISTS {self._config.full_schema_path}").collect(
                     statement_params=self._telemetry_stmp
                 )
@@ -196,12 +202,16 @@ class FeatureStore:
                     [
                         _FEATURE_VIEW_ENTITY_TAG,
                         _FEATURE_VIEW_TS_COL_TAG,
-                        _FEATURE_STORE_OBJECT_TAG,
                     ]
                 ):
                     self._session.sql(f"CREATE TAG IF NOT EXISTS {self._get_fully_qualified_name(tag)}").collect(
                         statement_params=self._telemetry_stmp
                     )
+
+                self._session.sql(
+                    f"""CREATE TAG IF NOT EXISTS {self._get_fully_qualified_name(_FEATURE_STORE_OBJECT_TAG)}
+                    ALLOWED_VALUES {','.join([f"'{v.value}'" for v in _FeatureStoreObjTypes])}"""
+                ).collect(statement_params=self._telemetry_stmp)
             except Exception as e:
                 self.clear()
                 raise snowml_exceptions.SnowflakeMLException(
@@ -244,17 +254,18 @@ class FeatureStore:
             A registered entity object.
 
         Raises:
-            SnowflakeMLException: [ValueError] Entity with same name is already registered.
             SnowflakeMLException: [RuntimeError] Failed to find resources.
         """
+
         tag_name = self._get_entity_name(entity.name)
         found_rows = self._find_object("TAGS", tag_name)
         if len(found_rows) > 0:
-            raise snowml_exceptions.SnowflakeMLException(
-                error_code=error_codes.OBJECT_ALREADY_EXISTS,
-                original_exception=ValueError(f"Entity {entity.name} already exists."),
-                suppress_source_trace=True,
+            warnings.warn(
+                f"Entity {entity.name} already exists. Skip registration.",
+                stacklevel=2,
+                category=UserWarning,
             )
+            return entity
 
         # allowed_values will add double-quotes around each value, thus use resolved str here.
         join_keys = [f"'{key.resolved()}'" for key in entity.join_keys]
@@ -284,7 +295,7 @@ class FeatureStore:
         feature_view: FeatureView,
         version: str,
         block: bool = True,
-        override: bool = False,
+        overwrite: bool = False,
     ) -> FeatureView:
         """
         Materialize a FeatureView to Snowflake backend.
@@ -304,16 +315,14 @@ class FeatureStore:
                 NOTE: Version only accepts letters, numbers and underscore. Also version will be capitalized.
             block: Specify whether the FeatureView backend materialization should be blocking or not. If blocking then
                 the API will wait until the initial FeatureView data is generated. Default to true.
-            override: Override the existing FeatureView with same version. This is the same as dropping the FeatureView
-                first then recreate. NOTE: there will be backfill cost associated if the FeatureView is being
-                continuously maintained.
+            overwrite: Overwrite the existing FeatureView with same version. This is the same as dropping the
+                FeatureView first then recreate. NOTE: there will be backfill cost associated if the FeatureView is
+                being continuously maintained.
 
         Returns:
             A materialized FeatureView object.
 
         Raises:
-            SnowflakeMLException: [ValueError] FeatureView is already registered, or duplicate name and version
-                are detected.
             SnowflakeMLException: [ValueError] FeatureView entity has not been registered.
             SnowflakeMLException: [ValueError] Warehouse or default warehouse is not specified.
             SnowflakeMLException: [RuntimeError] Failed to create dynamic table, task, or view.
@@ -322,13 +331,16 @@ class FeatureStore:
         version = FeatureViewVersion(version)
 
         if feature_view.status != FeatureViewStatus.DRAFT:
-            warnings.warn(
-                f"FeatureView {feature_view.name}/{feature_view.version} has already been registered. "
-                + "Skipping registration.",
-                stacklevel=2,
-                category=UserWarning,
-            )
-            return feature_view
+            try:
+                return self._get_feature_view_if_exists(feature_view.name, str(version))
+            except Exception:
+                raise snowml_exceptions.SnowflakeMLException(
+                    error_code=error_codes.NOT_FOUND,
+                    original_exception=ValueError(
+                        f"FeatureView {feature_view.name}/{feature_view.version} status is {feature_view.status}, "
+                        + "but it doesn't exist."
+                    ),
+                )
 
         # TODO: ideally we should move this to FeatureView creation time
         for e in feature_view.entities:
@@ -339,15 +351,11 @@ class FeatureStore:
                 )
 
         feature_view_name = FeatureView._get_physical_name(feature_view.name, version)
-        if not override:
-            dynamic_table_results = self._find_object("DYNAMIC TABLES", feature_view_name)
-            view_results = self._find_object("VIEWS", feature_view_name)
-            if len(dynamic_table_results) > 0 or len(view_results) > 0:
-                raise snowml_exceptions.SnowflakeMLException(
-                    error_code=error_codes.OBJECT_ALREADY_EXISTS,
-                    original_exception=ValueError(f"FeatureView {feature_view.name}/{version} already exists."),
-                    suppress_source_trace=True,
-                )
+        if not overwrite:
+            try:
+                return self._get_feature_view_if_exists(feature_view.name, str(version))
+            except Exception:
+                pass
 
         fully_qualified_name = self._get_fully_qualified_name(feature_view_name)
         entities = _FEATURE_VIEW_ENTITY_TAG_DELIMITER.join([e.name for e in feature_view.entities])
@@ -377,17 +385,17 @@ class FeatureStore:
                 self._default_warehouse,
                 timestamp_col,
                 block,
-                override,
+                overwrite,
             )
         else:
             try:
-                override_clause = " OR REPLACE" if override else ""
-                query = f"""CREATE{override_clause} VIEW {fully_qualified_name} ({column_descs})
+                overwrite_clause = " OR REPLACE" if overwrite else ""
+                query = f"""CREATE{overwrite_clause} VIEW {fully_qualified_name} ({column_descs})
                     COMMENT = '{feature_view.desc}'
                     TAG (
                         {_FEATURE_VIEW_ENTITY_TAG} = '{entities}',
                         {_FEATURE_VIEW_TS_COL_TAG} = '{timestamp_col}',
-                        {_FEATURE_STORE_OBJECT_TAG} = ''
+                        {_FEATURE_STORE_OBJECT_TAG} = '{_FeatureStoreObjTypes.FEATURE_VIEW.value}'
                     )
                     AS {feature_view.query}
                 """
@@ -402,41 +410,51 @@ class FeatureStore:
         return self.get_feature_view(feature_view.name, str(version))
 
     @dispatch_decorator(prpr_version="1.1.0")
-    def update_feature_view(self, feature_view: FeatureView) -> None:
+    def update_feature_view(
+        self, name: str, version: str, refresh_freq: Optional[str] = None, warehouse: Optional[str] = None
+    ) -> FeatureView:
         """Update a registered feature view.
             Check feature_view.py for which fields are allowed to be updated after registration.
 
         Args:
-            feature_view: The feature view to be updated.
+            name: name of the FeatureView to be updated.
+            version: version of the FeatureView to be updated.
+            refresh_freq: updated refresh frequency.
+            warehouse: updated warehouse.
+
+        Returns:
+            Updated FeatureView.
 
         Raises:
-            SnowflakeMLException: [RuntimeError] Feature view must be registered before updating.
+            SnowflakeMLException: [RuntimeError] If FeatureView is not managed and refresh_freq is defined.
             SnowflakeMLException: [RuntimeError] Failed to update feature view.
         """
-        if feature_view.status == FeatureViewStatus.DRAFT or feature_view.status == FeatureViewStatus.STATIC:
+        feature_view = self.get_feature_view(name=name, version=version)
+        if refresh_freq is not None and feature_view.status == FeatureViewStatus.STATIC:
             full_name = f"{feature_view.name}/{feature_view.version}"
             raise snowml_exceptions.SnowflakeMLException(
                 error_code=error_codes.INVALID_ARGUMENT,
-                original_exception=RuntimeError(
-                    f"Feature view {full_name} must be registered and non-static so that can be updated."
-                ),
+                original_exception=RuntimeError(f"Feature view {full_name} must be non-static so that can be updated."),
             )
 
-        if feature_view.refresh_freq is not None:
-            try:
-                self._session.sql(
-                    f"""ALTER DYNAMIC TABLE {feature_view.fully_qualified_name()} SET
-                        TARGET_LAG = '{feature_view.refresh_freq}'
-                        WAREHOUSE = {feature_view.warehouse}
-                    """
-                ).collect()
-            except Exception as e:
-                raise snowml_exceptions.SnowflakeMLException(
-                    error_code=error_codes.INTERNAL_SNOWPARK_ERROR,
-                    original_exception=RuntimeError(
-                        f"Update feature view {feature_view.name}/{feature_view.version} failed: {e}"
-                    ),
-                ) from e
+        warehouse = SqlIdentifier(warehouse) if warehouse else feature_view.warehouse
+
+        # TODO(@wezhou): we need to properly handle cron expr
+        try:
+            self._session.sql(
+                f"""ALTER DYNAMIC TABLE {feature_view.fully_qualified_name()} SET
+                    TARGET_LAG = '{refresh_freq or feature_view.refresh_freq}'
+                    WAREHOUSE = {warehouse}
+                """
+            ).collect(statement_params=self._telemetry_stmp)
+        except Exception as e:
+            raise snowml_exceptions.SnowflakeMLException(
+                error_code=error_codes.INTERNAL_SNOWPARK_ERROR,
+                original_exception=RuntimeError(
+                    f"Update feature view {feature_view.name}/{feature_view.version} failed: {e}"
+                ),
+            ) from e
+        return self.get_feature_view(name=name, version=version)
 
     @dispatch_decorator(prpr_version="1.0.8")
     def read_feature_view(self, feature_view: FeatureView) -> DataFrame:
@@ -937,6 +955,16 @@ class FeatureStore:
             ) from e
         logger.info(f"Feature store {self._config.full_schema_path} has been cleared.")
 
+    def _get_feature_view_if_exists(self, name: str, version: str) -> FeatureView:
+        existing_fv = self.get_feature_view(name, version)
+        warnings.warn(
+            f"FeatureView {name}/{version} already exists. Skip registration."
+            + " Set `overwrite` to True if you want to replace existing FeatureView.",
+            stacklevel=2,
+            category=UserWarning,
+        )
+        return existing_fv
+
     def _create_dynamic_table(
         self,
         feature_view_name: SqlIdentifier,
@@ -951,19 +979,20 @@ class FeatureStore:
         override: bool,
     ) -> None:
         # TODO: cluster by join keys once DT supports that
+        override_clause = " OR REPLACE" if override else ""
+        query = f"""CREATE{override_clause} DYNAMIC TABLE {fully_qualified_name} ({column_descs})
+            TARGET_LAG = '{'DOWNSTREAM' if schedule_task else feature_view.refresh_freq}'
+            COMMENT = '{feature_view.desc}'
+            TAG (
+                {self._get_fully_qualified_name(_FEATURE_VIEW_ENTITY_TAG)} = '{entities}',
+                {self._get_fully_qualified_name(_FEATURE_VIEW_TS_COL_TAG)} = '{timestamp_col}',
+                {self._get_fully_qualified_name(_FEATURE_STORE_OBJECT_TAG)} =
+                    '{_FeatureStoreObjTypes.FEATURE_VIEW.value}'
+            )
+            WAREHOUSE = {warehouse}
+            AS {feature_view.query}
+        """
         try:
-            override_clause = " OR REPLACE" if override else ""
-            query = f"""CREATE{override_clause} DYNAMIC TABLE {fully_qualified_name} ({column_descs})
-                TARGET_LAG = '{'DOWNSTREAM' if schedule_task else feature_view.refresh_freq}'
-                COMMENT = '{feature_view.desc}'
-                TAG (
-                    {self._get_fully_qualified_name(_FEATURE_VIEW_ENTITY_TAG)} = '{entities}',
-                    {self._get_fully_qualified_name(_FEATURE_VIEW_TS_COL_TAG)} = '{timestamp_col}',
-                    {self._get_fully_qualified_name(_FEATURE_STORE_OBJECT_TAG)} = ''
-                )
-                WAREHOUSE = {warehouse}
-                AS {feature_view.query}
-            """
             self._session.sql(query).collect(block=block, statement_params=self._telemetry_stmp)
 
             if schedule_task:
@@ -978,7 +1007,8 @@ class FeatureStore:
                     self._session.sql(
                         f"""
                         ALTER TASK {fully_qualified_name}
-                        SET TAG {self._get_fully_qualified_name(_FEATURE_STORE_OBJECT_TAG)} = ''
+                        SET TAG {self._get_fully_qualified_name(_FEATURE_STORE_OBJECT_TAG)}
+                            ='{_FeatureStoreObjTypes.FEATURE_VIEW_REFRESH_TASK.value}'
                     """
                     ).collect(statement_params=self._telemetry_stmp)
                     self._session.sql(f"ALTER TASK {fully_qualified_name} RESUME").collect(
@@ -986,6 +1016,9 @@ class FeatureStore:
                     )
                 except Exception:
                     self._session.sql(f"DROP DYNAMIC TABLE IF EXISTS {fully_qualified_name}").collect(
+                        statement_params=self._telemetry_stmp
+                    )
+                    self._session.sql(f"DROP TASK IF EXISTS {fully_qualified_name}").collect(
                         statement_params=self._telemetry_stmp
                     )
                     raise
@@ -1167,6 +1200,46 @@ class FeatureStore:
             layer += 1
 
         return self._session.sql(query), join_keys
+
+    def _check_database_exists_or_throw(self) -> None:
+        resolved_db_name = self._config.database.resolved()
+        dbs = self._session.sql(
+            f"""
+            SHOW DATABASES LIKE '{resolved_db_name}' STARTS WITH '{resolved_db_name}'
+        """
+        ).collect(statement_params=self._telemetry_stmp)
+        if len(dbs) == 0:
+            raise snowml_exceptions.SnowflakeMLException(
+                error_code=error_codes.NOT_FOUND,
+                original_exception=ValueError(f"Database {resolved_db_name} does not exist."),
+            )
+
+    def _check_internal_objects_exist_or_throw(self) -> None:
+        schema_result = self._find_object("SCHEMAS", self._config.schema)
+        if len(schema_result) == 0:
+            raise snowml_exceptions.SnowflakeMLException(
+                error_code=error_codes.NOT_FOUND,
+                original_exception=ValueError(
+                    f"Feature store schema {self._config.schema} does not exist. "
+                    "Use CreationMode.CREATE_IF_NOT_EXIST mode instead if you want to create one."
+                ),
+            )
+        for tag_name in to_sql_identifiers(
+            [
+                _FEATURE_STORE_OBJECT_TAG,
+                _FEATURE_VIEW_ENTITY_TAG,
+                _FEATURE_VIEW_TS_COL_TAG,
+            ]
+        ):
+            tag_result = self._find_object("TAGS", tag_name)
+            if len(tag_result) == 0:
+                raise snowml_exceptions.SnowflakeMLException(
+                    error_code=error_codes.NOT_FOUND,
+                    original_exception=ValueError(
+                        f"Feature store internal tag {tag_name} does not exist. "
+                        "Use CreationMode.CREATE_IF_NOT_EXIST mode instead if you want to create one."
+                    ),
+                )
 
     def _is_asof_join_enabled(self) -> bool:
         result = None

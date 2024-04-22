@@ -8,7 +8,7 @@ import fsspec
 from fsspec.implementations import http as httpfs
 
 from snowflake import snowpark
-from snowflake.connector import connection
+from snowflake.connector import connection, errorcode
 from snowflake.ml._internal import telemetry
 from snowflake.ml._internal.exceptions import (
     error_codes,
@@ -17,6 +17,7 @@ from snowflake.ml._internal.exceptions import (
     fileset_errors,
 )
 from snowflake.snowpark import exceptions as snowpark_exceptions
+from snowflake.snowpark._internal import utils as snowpark_utils
 
 # The default length of how long a presigned url stays active in seconds.
 # Presigned url here is used to fetch file objects from Snowflake when SFStageFileSystem.open() is called.
@@ -79,7 +80,9 @@ class SFStageFileSystem(fsspec.AbstractFileSystem):
     #   None -> Try pre-signed URL access, fall back to file download
     #   True -> Use file download path without trying pre-signed URL access
     #   False -> Use pre-signed URL access, skip download fallback on failure
-    _USE_FALLBACK_FILE_ACCESS = None
+    _USE_FALLBACK_FILE_ACCESS = (
+        True if snowpark_utils.is_in_stored_procedure() else None  # type: ignore[no-untyped-call]
+    )
 
     def __init__(
         self,
@@ -164,6 +167,7 @@ class SFStageFileSystem(fsspec.AbstractFileSystem):
         """
         try:
             loc = self.stage_name
+            path = path.lstrip("/")
             objects = self._session.sql(f"LIST {loc}/{path}").collect()
         except snowpark_exceptions.SnowparkClientException as e:
             if e.message.startswith(fileset_errors.ERRNO_DOMAIN_NOT_EXIST):
@@ -234,7 +238,7 @@ class SFStageFileSystem(fsspec.AbstractFileSystem):
         """
         path = path.lstrip("/")
         if self._USE_FALLBACK_FILE_ACCESS:
-            return self._session.file.get_stream(f"{self.stage_name}/{path}")
+            return self._open_with_snowpark(path)
         cached_presigned_url = self._url_cache.get(path, None)
         if not cached_presigned_url:
             res = self._fetch_presigned_urls([path])
@@ -252,18 +256,41 @@ class SFStageFileSystem(fsspec.AbstractFileSystem):
         except FileNotFoundError:
             # Enable fallback if _USE_FALLBACK_FILE_ACCESS is True or None; set to False to disable
             if self._USE_FALLBACK_FILE_ACCESS != False:  # noqa: E712
-                try:
-                    # Try falling back to Snowpark file read if presigned URL access failed
-                    # If fallback is successful, most likely in sproc without External Access Integration
-                    content = self._session.file.get_stream(f"{self.stage_name}/{path}")
-                    self._USE_FALLBACK_FILE_ACCESS = True
-                    return content
-                except Exception:
-                    pass
+                content = self._open_with_snowpark(path)
+                self._USE_FALLBACK_FILE_ACCESS = True
+                return content
             raise snowml_exceptions.SnowflakeMLException(
                 error_code=error_codes.SNOWML_NOT_FOUND,
                 original_exception=fileset_errors.StageFileNotFoundError(f"Stage file {path} doesn't exist."),
             )
+
+    def _open_with_snowpark(self, path: str, **kwargs: Dict[str, Any]) -> fsspec.spec.AbstractBufferedFile:
+        """Open the a file for reading using snowflake.snowpark.file_operation
+
+        Args:
+            path: Path of file in Snowflake stage.
+            **kwargs: Extra options to pass to snowflake.snowpark.file_operation.get_stream
+
+        Returns:
+            A fsspec file-like object.
+
+        Raises:
+            SnowflakeMLException: An error occurred when the given path points to a file that cannot be found.
+            SnowflakeMLException: An unknown Snowpark error occurred during file read.
+        """
+        try:
+            return self._session.file.get_stream(f"{self.stage_name}/{path}", **kwargs)
+        except snowpark_exceptions.SnowparkSQLException as e:
+            if _match_error_code(e, errorcode.ER_FILE_NOT_EXISTS):
+                raise snowml_exceptions.SnowflakeMLException(
+                    error_code=error_codes.SNOWML_NOT_FOUND,
+                    original_exception=fileset_errors.StageFileNotFoundError(f"Stage file {path} doesn't exist."),
+                )
+            else:
+                raise snowml_exceptions.SnowflakeMLException(
+                    error_code=error_codes.INTERNAL_SNOWPARK_ERROR,
+                    original_exception=e,
+                )
 
     def _parse_list_result(
         self, list_result: List[Tuple[str, int, str, str]], search_path: str
@@ -352,7 +379,7 @@ class SFStageFileSystem(fsspec.AbstractFileSystem):
         file_df = self._session.create_dataframe(files).to_df("name")
         try:
             presigned_urls: List[Tuple[str, str]] = file_df.select_expr(
-                f"name, get_presigned_url({self.stage_name}, name, {url_lifetime}) as url"
+                f"name, get_presigned_url('{self.stage_name}', name, {url_lifetime}) as url"
             ).collect(
                 statement_params=telemetry.get_function_usage_statement_params(
                     project=_PROJECT,
@@ -363,7 +390,9 @@ class SFStageFileSystem(fsspec.AbstractFileSystem):
                 ),
             )
         except snowpark_exceptions.SnowparkClientException as e:
-            if e.message.startswith(fileset_errors.ERRNO_STAGE_NOT_EXIST):
+            if e.message.startswith(fileset_errors.ERRNO_DOMAIN_NOT_EXIST) or e.message.startswith(
+                fileset_errors.ERRNO_STAGE_NOT_EXIST
+            ):
                 raise snowml_exceptions.SnowflakeMLException(
                     error_code=error_codes.SNOWML_NOT_FOUND,
                     original_exception=fileset_errors.StageNotFoundError(
@@ -376,3 +405,9 @@ class SFStageFileSystem(fsspec.AbstractFileSystem):
                     original_exception=fileset_errors.FileSetError(str(e)),
                 )
         return presigned_urls
+
+
+def _match_error_code(ex: snowpark_exceptions.SnowparkSQLException, error_code: int) -> bool:
+    # Snowpark writes error code to message instead of populating e.error_code
+    error_code_str = str(error_code)
+    return ex.error_code == error_code_str or error_code_str in ex.message
