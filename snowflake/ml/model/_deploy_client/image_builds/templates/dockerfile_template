@@ -30,6 +30,7 @@ USER mambauser
 
 # Set MAMBA_DOCKERFILE_ACTIVATE=1 to activate the conda environment during build time.
 ARG MAMBA_DOCKERFILE_ACTIVATE=1
+ARG MAMBA_NO_LOW_SPEED_LIMIT=1
 
 # Bitsandbytes uses this ENVVAR to determine CUDA library location
 ENV CONDA_PREFIX=/opt/conda

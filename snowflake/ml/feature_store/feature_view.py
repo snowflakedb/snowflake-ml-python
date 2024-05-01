@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import json
+import re
 from collections import OrderedDict
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from enum import Enum
 from typing import Dict, List, Optional
 
@@ -28,19 +29,42 @@ from snowflake.snowpark.types import (
 _FEATURE_VIEW_NAME_DELIMITER = "$"
 _TIMESTAMP_COL_PLACEHOLDER = "FS_TIMESTAMP_COL_PLACEHOLDER_VAL"
 _FEATURE_OBJ_TYPE = "FEATURE_OBJ_TYPE"
+# Feature view version rule is aligned with dataset version rule in SQL.
+_FEATURE_VIEW_VERSION_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9_.\-]*$")
+_FEATURE_VIEW_VERSION_MAX_LENGTH = 128
 
 
-class FeatureViewVersion(SqlIdentifier):
+@dataclass(frozen=True)
+class _FeatureViewMetadata:
+    """Represent metadata tracked on top of FV backend object"""
+
+    entities: List[str]
+    timestamp_col: str
+
+    def to_json(self) -> str:
+        return json.dumps(asdict(self))
+
+    @classmethod
+    def from_json(cls, json_str: str) -> _FeatureViewMetadata:
+        state_dict = json.loads(json_str)
+        return cls(**state_dict)
+
+
+class FeatureViewVersion(str):
     def __new__(cls, version: str) -> FeatureViewVersion:
-        if _FEATURE_VIEW_NAME_DELIMITER in version:
+        if not _FEATURE_VIEW_VERSION_RE.match(version) or len(version) > _FEATURE_VIEW_VERSION_MAX_LENGTH:
             raise snowml_exceptions.SnowflakeMLException(
                 error_code=error_codes.INVALID_ARGUMENT,
-                original_exception=ValueError(f"{_FEATURE_VIEW_NAME_DELIMITER} is not allowed in version: {version}."),
+                original_exception=ValueError(
+                    f"`{version}` is not a valid feature view version. "
+                    "It must start with letter or digit, and followed by letter, digit, '_', '-' or '.'. "
+                    f"The length limit is {_FEATURE_VIEW_VERSION_MAX_LENGTH}."
+                ),
             )
-        return super().__new__(cls, version)  # type: ignore[return-value]
+        return super().__new__(cls, version)
 
     def __init__(self, version: str) -> None:
-        super().__init__(version)
+        super().__init__()
 
 
 class FeatureViewStatus(Enum):
@@ -285,6 +309,11 @@ class FeatureView:
     def owner(self) -> Optional[str]:
         return self._owner
 
+    def _metadata(self) -> _FeatureViewMetadata:
+        entity_names = [e.name.identifier() for e in self.entities]
+        ts_col = self.timestamp_col.identifier() if self.timestamp_col is not None else _TIMESTAMP_COL_PLACEHOLDER
+        return _FeatureViewMetadata(entity_names, ts_col)
+
     def _get_query(self) -> str:
         if len(self._feature_df.queries["queries"]) != 1:
             raise ValueError(
@@ -436,8 +465,8 @@ Got {len(self._feature_df.queries['queries'])}: {self._feature_df.queries['queri
         status: FeatureViewStatus,
         feature_descs: Dict[str, str],
         refresh_freq: Optional[str],
-        database: Optional[str],
-        schema: Optional[str],
+        database: str,
+        schema: str,
         warehouse: Optional[str],
         refresh_mode: Optional[str],
         refresh_mode_reason: Optional[str],

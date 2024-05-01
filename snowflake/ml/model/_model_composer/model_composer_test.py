@@ -9,7 +9,9 @@ from absl.testing import absltest
 from sklearn import linear_model
 
 from snowflake.ml._internal import env_utils, file_utils
+from snowflake.ml.model import type_hints as model_types
 from snowflake.ml.model._model_composer import model_composer
+from snowflake.ml.model._packager import model_packager
 from snowflake.ml.modeling.linear_model import (  # type:ignore[attr-defined]
     LinearRegression,
 )
@@ -78,6 +80,12 @@ class ModelInterfaceTest(absltest.TestCase):
                 mock_upload_directory_to_stage.assert_called_once_with(
                     c_session, local_path=mock.ANY, stage_path=pathlib.PurePosixPath(stage_path), statement_params=None
                 )
+
+    def test_load(self) -> None:
+        m_options = model_types.ModelLoadOption(use_gpu=False)
+        with mock.patch.object(model_packager.ModelPackager, "load") as mock_load:
+            model_composer.ModelComposer.load(pathlib.Path("workspace"), meta_only=True, options=m_options)
+            mock_load.assert_called_once_with(meta_only=True, options=m_options)
 
 
 if __name__ == "__main__":

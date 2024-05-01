@@ -3,6 +3,7 @@ import os
 import pathlib
 import tempfile
 import warnings
+from unittest import mock
 
 import yaml
 from absl.testing import absltest
@@ -952,6 +953,99 @@ class ModelEnvTest(absltest.TestCase):
             loaded_env = model_env.ModelEnv()
             loaded_env.load_from_dict(tmpdir_path, saved_dict)
             self.assertTrue(check_env_equality(env, loaded_env), "Loaded env object is different.")
+
+    def test_validate_with_local_env(self) -> None:
+        with mock.patch.object(
+            env_utils, "validate_py_runtime_version"
+        ) as mock_validate_py_runtime_version, mock.patch.object(
+            env_utils, "validate_local_installed_version_of_pip_package"
+        ) as mock_validate_local_installed_version_of_pip_package:
+            env = model_env.ModelEnv()
+            env.conda_dependencies = ["pytorch==1.3", "channel::some_package<1.2,>=1.0.1"]
+            env.pip_requirements = ["pip-package<1.2,>=1.0.1"]
+            env.python_version = "3.10.2"
+            env.cuda_version = "11.7.1"
+            env.snowpark_ml_version = "1.1.0"
+
+            self.assertListEqual(env.validate_with_local_env(), [])
+            mock_validate_py_runtime_version.assert_called_once_with("3.10.2")
+            mock_validate_local_installed_version_of_pip_package.assert_has_calls(
+                [
+                    mock.call(requirements.Requirement("torch==1.3")),
+                    mock.call(requirements.Requirement("some-package<1.2,>=1.0.1")),
+                    mock.call(requirements.Requirement("pip-package<1.2,>=1.0.1")),
+                ]
+            )
+
+        with mock.patch.object(
+            env_utils, "validate_py_runtime_version", side_effect=env_utils.IncorrectLocalEnvironmentError()
+        ) as mock_validate_py_runtime_version, mock.patch.object(
+            env_utils,
+            "validate_local_installed_version_of_pip_package",
+            side_effect=env_utils.IncorrectLocalEnvironmentError(),
+        ) as mock_validate_local_installed_version_of_pip_package:
+            env = model_env.ModelEnv()
+            env.conda_dependencies = ["pytorch==1.3", "channel::some_package<1.2,>=1.0.1"]
+            env.pip_requirements = ["pip-package<1.2,>=1.0.1"]
+            env.python_version = "3.10.2"
+            env.cuda_version = "11.7.1"
+            env.snowpark_ml_version = "1.1.0"
+
+            self.assertLen(env.validate_with_local_env(), 4)
+            mock_validate_py_runtime_version.assert_called_once_with("3.10.2")
+            mock_validate_local_installed_version_of_pip_package.assert_has_calls(
+                [
+                    mock.call(requirements.Requirement("torch==1.3")),
+                    mock.call(requirements.Requirement("some-package<1.2,>=1.0.1")),
+                    mock.call(requirements.Requirement("pip-package<1.2,>=1.0.1")),
+                ]
+            )
+
+        with mock.patch.object(
+            env_utils, "validate_py_runtime_version"
+        ) as mock_validate_py_runtime_version, mock.patch.object(
+            env_utils, "validate_local_installed_version_of_pip_package"
+        ) as mock_validate_local_installed_version_of_pip_package:
+            env = model_env.ModelEnv()
+            env.conda_dependencies = ["pytorch==1.3", "channel::some_package<1.2,>=1.0.1"]
+            env.pip_requirements = ["pip-package<1.2,>=1.0.1"]
+            env.python_version = "3.10.2"
+            env.cuda_version = "11.7.1"
+            env.snowpark_ml_version = f"{snowml_env.VERSION}+abcdef"
+
+            self.assertListEqual(env.validate_with_local_env(check_snowpark_ml_version=True), [])
+            mock_validate_py_runtime_version.assert_called_once_with("3.10.2")
+            mock_validate_local_installed_version_of_pip_package.assert_has_calls(
+                [
+                    mock.call(requirements.Requirement("torch==1.3")),
+                    mock.call(requirements.Requirement("some-package<1.2,>=1.0.1")),
+                    mock.call(requirements.Requirement("pip-package<1.2,>=1.0.1")),
+                ]
+            )
+
+        with mock.patch.object(
+            env_utils, "validate_py_runtime_version", side_effect=env_utils.IncorrectLocalEnvironmentError()
+        ) as mock_validate_py_runtime_version, mock.patch.object(
+            env_utils,
+            "validate_local_installed_version_of_pip_package",
+            side_effect=env_utils.IncorrectLocalEnvironmentError(),
+        ) as mock_validate_local_installed_version_of_pip_package:
+            env = model_env.ModelEnv()
+            env.conda_dependencies = ["pytorch==1.3", "channel::some_package<1.2,>=1.0.1"]
+            env.pip_requirements = ["pip-package<1.2,>=1.0.1"]
+            env.python_version = "3.10.2"
+            env.cuda_version = "11.7.1"
+            env.snowpark_ml_version = "0.0.0"
+
+            self.assertLen(env.validate_with_local_env(check_snowpark_ml_version=True), 5)
+            mock_validate_py_runtime_version.assert_called_once_with("3.10.2")
+            mock_validate_local_installed_version_of_pip_package.assert_has_calls(
+                [
+                    mock.call(requirements.Requirement("torch==1.3")),
+                    mock.call(requirements.Requirement("some-package<1.2,>=1.0.1")),
+                    mock.call(requirements.Requirement("pip-package<1.2,>=1.0.1")),
+                ]
+            )
 
 
 if __name__ == "__main__":

@@ -4,7 +4,9 @@ package(default_visibility = ["//visibility:public"])
 
 py_library(
     name = "snowpark_dataframe_utils",
-    srcs = ["snowpark_dataframe_utils.py"],
+    srcs = [
+        "snowpark_dataframe_utils.py",
+    ],
 )
 
 py_library(

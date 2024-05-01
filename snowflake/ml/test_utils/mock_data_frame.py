@@ -163,6 +163,10 @@ class MockDataFrame(mock_snowml_base.MockSnowMLBase):
         mdfo = self._check_operation("collect", args, kwargs)
         return mdfo.result
 
+    def collect_nowait(self, *args: Any, **kwargs: Any) -> Any:
+        """Collect a dataframe. Corresponds to DataFrame.collect_nowait."""
+        return self.collect(*args, **kwargs)
+
     def filter(self, *args: Any, **kwargs: Any) -> Any:
         """Filter a dataframe. Corresponds to DataFrame.filter.
 

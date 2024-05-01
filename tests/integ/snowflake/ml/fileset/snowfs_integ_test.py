@@ -1,3 +1,5 @@
+from uuid import uuid4
+
 import fsspec
 from absl.testing import absltest
 
@@ -17,7 +19,7 @@ class TestSnowFileSystem(absltest.TestCase):
     schema = snowpark_session.get_current_schema()
 
     domain = "dataset"
-    entity = f"{db}.{schema}.snowfs_fbe_integ"
+    entity = f"{db}.{schema}.snowfs_fbe_integ_{uuid4().hex}"
     version1 = "version1"
     version2 = "version2"
     row_counts = {
@@ -27,7 +29,6 @@ class TestSnowFileSystem(absltest.TestCase):
 
     @classmethod
     def setUpClass(cls) -> None:
-        cls.snowpark_session.sql("ALTER SESSION SET ENABLE_DATASET=true").collect()
         cls.snowpark_session.sql(f"CREATE OR REPLACE {cls.domain} {cls.entity}").collect()
         _create_file_based_entity(
             cls.snowpark_session, "dataset", cls.entity, cls.version1, row_count=cls.row_counts[cls.version1], seed=42
@@ -38,7 +39,8 @@ class TestSnowFileSystem(absltest.TestCase):
 
         cls.files = [
             f"{cls.domain}/{cls.entity}/{r['name']}"
-            for r in cls.snowpark_session.sql(f"LIST 'snow://{cls.domain}/{cls.entity}/versions'").collect()
+            for version in [cls.version1, cls.version2]
+            for r in cls.snowpark_session.sql(f"LIST 'snow://{cls.domain}/{cls.entity}/versions/{version}'").collect()
         ]
         assert len(cls.files) > 0, "LIST returned no files"
 

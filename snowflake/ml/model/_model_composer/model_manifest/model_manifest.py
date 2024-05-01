@@ -5,6 +5,7 @@ from typing import List, Optional, cast
 
 import yaml
 
+from snowflake.ml._internal.lineage import data_source
 from snowflake.ml.model import type_hints
 from snowflake.ml.model._model_composer.model_manifest import model_manifest_schema
 from snowflake.ml.model._model_composer.model_method import (
@@ -36,6 +37,7 @@ class ModelManifest:
         model_meta: model_meta_api.ModelMetadata,
         model_file_rel_path: pathlib.PurePosixPath,
         options: Optional[type_hints.ModelSaveOption] = None,
+        data_sources: Optional[List[data_source.DataSource]] = None,
     ) -> None:
         if options is None:
             options = {}
@@ -90,6 +92,10 @@ class ModelManifest:
             ],
         )
 
+        lineage_sources = self._extract_lineage_info(data_sources)
+        if lineage_sources:
+            manifest_dict["lineage_sources"] = lineage_sources
+
         with (self.workspace_path / ModelManifest.MANIFEST_FILE_REL_PATH).open("w", encoding="utf-8") as f:
             # Anchors are not supported in the server, avoid that.
             yaml.SafeDumper.ignore_aliases = lambda *args: True  # type: ignore[method-assign]
@@ -108,3 +114,19 @@ class ModelManifest:
         res = cast(model_manifest_schema.ModelManifestDict, raw_input)
 
         return res
+
+    def _extract_lineage_info(
+        self, data_sources: Optional[List[data_source.DataSource]]
+    ) -> List[model_manifest_schema.LineageSourceDict]:
+        result = []
+        if data_sources:
+            for source in data_sources:
+                result.append(
+                    model_manifest_schema.LineageSourceDict(
+                        # Currently, we only support lineage from Dataset.
+                        type=model_manifest_schema.LineageSourceTypes.DATASET.value,
+                        entity=source.fully_qualified_name,
+                        version=source.version,
+                    )
+                )
+        return result

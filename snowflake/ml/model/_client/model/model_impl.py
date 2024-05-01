@@ -350,3 +350,30 @@ class Model:
             tag_name=tag_name_id,
             statement_params=statement_params,
         )
+
+    @telemetry.send_api_usage_telemetry(
+        project=_TELEMETRY_PROJECT,
+        subproject=_TELEMETRY_SUBPROJECT,
+    )
+    def rename(self, model_name: str) -> None:
+        """Rename a model. Can be used to move a model when a fully qualified name is provided.
+
+        Args:
+            model_name: The new model name.
+        """
+        statement_params = telemetry.get_statement_params(
+            project=_TELEMETRY_PROJECT,
+            subproject=_TELEMETRY_SUBPROJECT,
+        )
+        db, schema, model, _ = identifier.parse_schema_level_object_identifier(model_name)
+        new_model_db = sql_identifier.SqlIdentifier(db) if db else None
+        new_model_schema = sql_identifier.SqlIdentifier(schema) if schema else None
+        new_model_id = sql_identifier.SqlIdentifier(model)
+        self._model_ops.rename(
+            model_name=self._model_name,
+            new_model_db=new_model_db,
+            new_model_schema=new_model_schema,
+            new_model_name=new_model_id,
+            statement_params=statement_params,
+        )
+        self._model_name = new_model_id

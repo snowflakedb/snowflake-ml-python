@@ -6,6 +6,7 @@ import tempfile
 import textwrap
 from importlib import metadata as importlib_metadata
 from typing import DefaultDict, List, cast
+from unittest import mock
 
 import yaml
 from absl.testing import absltest
@@ -966,6 +967,63 @@ class EnvFileTest(absltest.TestCase):
             env_utils.save_requirements_file(pip_file_path, rl)
             loaded_rl = env_utils.load_requirements_file(pip_file_path)
             self.assertEqual(rl, loaded_rl)
+
+    def test_validate_local_installed_version_of_pip_package(self) -> None:
+        with mock.patch.object(
+            importlib_metadata, "distribution", side_effect=importlib_metadata.PackageNotFoundError()
+        ) as mock_distribution:
+            with self.assertRaisesRegex(
+                env_utils.IncorrectLocalEnvironmentError, "Cannot find the local installation of the requested package"
+            ):
+                env_utils.validate_local_installed_version_of_pip_package(
+                    requirements.Requirement("my_package >=1.3,<2")
+                )
+                mock_distribution.assert_called_once_with("my_package")
+
+        m_distribution = mock.MagicMock()
+        m_distribution.version = "2.3.0"
+        with mock.patch.object(importlib_metadata, "distribution", return_value=m_distribution) as mock_distribution:
+            with self.assertRaisesRegex(
+                env_utils.IncorrectLocalEnvironmentError,
+                "The local installed version 2.3.0 cannot meet the requirement",
+            ):
+                env_utils.validate_local_installed_version_of_pip_package(
+                    requirements.Requirement("my_package >=1.3,<2")
+                )
+                mock_distribution.assert_called_once_with("my_package")
+
+        m_distribution = mock.MagicMock()
+        m_distribution.version = "1.3.0"
+        with mock.patch.object(importlib_metadata, "distribution", return_value=m_distribution) as mock_distribution:
+            env_utils.validate_local_installed_version_of_pip_package(requirements.Requirement("my_package >=1.3,<2"))
+            mock_distribution.assert_called_once_with("my_package")
+
+    def test_try_convert_conda_requirement_to_pip(self) -> None:
+        self.assertEqual(
+            env_utils.try_convert_conda_requirement_to_pip(requirements.Requirement("my_package==1.3")),
+            requirements.Requirement("my_package==1.3"),
+        )
+
+        self.assertEqual(
+            env_utils.try_convert_conda_requirement_to_pip(requirements.Requirement("pytorch==1.3")),
+            requirements.Requirement("torch==1.3"),
+        )
+
+        self.assertEqual(
+            env_utils.try_convert_conda_requirement_to_pip(requirements.Requirement("numpy==1.3")),
+            requirements.Requirement("numpy==1.3"),
+        )
+
+    def test_validate_py_runtime_version(self) -> None:
+        with mock.patch.object(snowml_env, "PYTHON_VERSION", "3.8.13"):
+            env_utils.validate_py_runtime_version("3.8.13")
+            env_utils.validate_py_runtime_version("3.8.18")
+
+            with self.assertRaisesRegex(
+                env_utils.IncorrectLocalEnvironmentError,
+                "Requested python version is 3.10.10 while current Python version is 3.8.13",
+            ):
+                env_utils.validate_py_runtime_version("3.10.10")
 
 
 if __name__ == "__main__":

@@ -28,6 +28,7 @@ py_test(
         "//snowflake/ml/_internal:env_utils",
         "//snowflake/ml/modeling/_internal:estimator_utils",
         "//snowflake/ml/modeling/_internal/snowpark_implementations:snowpark_handlers",
+        "//snowflake/ml/modeling/linear_model:linear_regression",
         "//snowflake/ml/utils:connection_params",
         "//tests/integ/snowflake/ml/test_utils:common_test_base",
     ],

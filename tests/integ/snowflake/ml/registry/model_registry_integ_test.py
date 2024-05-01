@@ -7,9 +7,7 @@ from absl.testing import absltest, parameterized
 from sklearn import metrics
 
 from snowflake import connector
-from snowflake.ml.dataset import dataset
 from snowflake.ml.registry import model_registry
-from snowflake.ml.registry.artifact import ArtifactType
 from snowflake.ml.utils import connection_params
 from snowflake.snowpark import Session
 from tests.integ.snowflake.ml.test_utils import (
@@ -362,97 +360,6 @@ class TestModelRegistryInteg(parameterized.TestCase):
             remote_prediction_temp,
             local_prediction.to_pandas().astype(dtype={"OUTPUT_TARGET": np.float64}),
         )
-
-    def test_log_model_with_dataset(self) -> None:
-        registry = model_registry.ModelRegistry(session=self._session, database_name=self.registry_name)
-
-        model_name = "snowml_test_dataset"
-        model_version = self.run_id
-        model, test_features, dataset_df = model_factory.ModelFactory.prepare_snowml_model_xgb()
-
-        dummy_materialized_table_full_path = f"{registry._fully_qualified_schema_name()}.DUMMY_MATERIALIZED_TABLE"
-        dummy_snapshot_table_full_path = f"{dummy_materialized_table_full_path}_SNAPSHOT"
-        self._session.create_dataframe(dataset_df).write.mode("overwrite").save_as_table(
-            f"{dummy_materialized_table_full_path}"
-        )
-        self._session.create_dataframe(dataset_df).write.mode("overwrite").save_as_table(
-            f"{dummy_snapshot_table_full_path}"
-        )
-
-        spine_query = f"SELECT * FROM {dummy_materialized_table_full_path}"
-
-        fs_metadata = dataset.FeatureStoreMetadata(
-            spine_query=spine_query,
-            connection_params={
-                "database": "test_db",
-                "schema": "test_schema",
-                "default_warehouse": "test_warehouse",
-            },
-            features=[],
-        )
-        dummy_dataset = dataset.Dataset(
-            self._session,
-            df=self._session.sql(spine_query),
-            materialized_table=dummy_materialized_table_full_path,
-            snapshot_table=dummy_snapshot_table_full_path,
-            timestamp_col="ts",
-            label_cols=["TARGET"],
-            feature_store_metadata=fs_metadata,
-            desc="a dummy dataset metadata",
-        )
-        cur_user = self._session.sql("SELECT CURRENT_USER()").collect()[0]["CURRENT_USER()"]
-        self.assertEqual(dummy_dataset.owner, cur_user)
-        self.assertIsNone(dummy_dataset.name)
-        self.assertIsNotNone(dummy_dataset.generation_timestamp)
-
-        minimal_dataset = dataset.Dataset(
-            self._session,
-            df=self._session.sql(spine_query),
-        )
-        self.assertEqual(minimal_dataset.owner, cur_user)
-        self.assertIsNone(minimal_dataset.name)
-        self.assertIsNone(minimal_dataset.version)
-        self.assertIsNotNone(minimal_dataset.generation_timestamp)
-
-        test_combinations = [
-            (model_version, dummy_dataset),
-            (f"{model_version}.2", dummy_dataset),
-            (f"{model_version}.3", minimal_dataset),
-        ]
-        for version, ds in test_combinations:
-            atf_ref = registry.log_artifact(
-                artifact=ds,
-                name=f"ds_{version}",
-                version=f"{version}.ds",
-            )
-            self.assertEqual(atf_ref.name, f"ds_{version}")
-            self.assertEqual(atf_ref.version, f"{version}.ds")
-
-            registry.log_model(
-                model_name=model_name,
-                model_version=version,
-                model=model,
-                conda_dependencies=[
-                    test_env_utils.get_latest_package_version_spec_in_server(
-                        self._session, "snowflake-snowpark-python!=1.12.0"
-                    )
-                ],
-                options={"embed_local_ml_library": True},
-                artifacts=[atf_ref],
-            )
-
-            # test deserialized dataset from get_artifact
-            des_ds_0 = registry.get_artifact(atf_ref.name, atf_ref.version)
-            self.assertIsNotNone(des_ds_0)
-            self.assertEqual(des_ds_0, ds)
-
-            # test deserialized dataset from list_artifacts
-            rows_list = registry.list_artifacts(model_name, version).collect()
-            self.assertEqual(len(rows_list), 1)
-            self.assertEqual(rows_list[0]["ID"], des_ds_0._id)
-            self.assertEqual(ArtifactType[rows_list[0]["TYPE"]], ArtifactType.DATASET)
-            des_ds_1 = dataset.Dataset.from_json(rows_list[0]["ARTIFACT_SPEC"], self._session)
-            self.assertEqual(des_ds_1, ds)
 
 
 if __name__ == "__main__":

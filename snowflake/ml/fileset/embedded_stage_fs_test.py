@@ -90,7 +90,7 @@ class SFEmbeddedStageFileSystemTest(parameterized.TestCase):
 
     def _add_mock_test_case(self, prefix: str) -> None:
         self.session.add_mock_sql(
-            query=f"LIST snow://{self.domain}/{self.name}/{prefix}",
+            query=f"LIST 'snow://{self.domain}/{self.name}/{prefix}'",
             result=self._mock_collect_res(prefix),
         )
 

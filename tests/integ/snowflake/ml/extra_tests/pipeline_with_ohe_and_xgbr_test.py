@@ -230,6 +230,42 @@ class PipelineXGBRTest(absltest.TestCase):
         sk_results = sk_pipeline.predict(pd_df)
         np.testing.assert_allclose(snow_results.flatten(), sk_results.flatten(), rtol=1.0e-1, atol=1.0e-2)
 
+    def test_pipeline_squash(self) -> None:
+        pd_data = self._test_data
+        pd_data["ROW_INDEX"] = pd_data.reset_index().index
+        raw_data = self._session.create_dataframe(pd_data)
+
+        pipeline = Pipeline(
+            steps=[
+                (
+                    "OHE",
+                    OneHotEncoder(
+                        input_cols=categorical_columns, output_cols=categorical_columns, drop_input_cols=True
+                    ),
+                ),
+                (
+                    "MMS",
+                    MinMaxScaler(
+                        clip=True,
+                        input_cols=numerical_columns,
+                        output_cols=numerical_columns,
+                    ),
+                ),
+                ("KNNImputer", KNNImputer(input_cols=numerical_columns, output_cols=numerical_columns)),
+                ("regression", XGBClassifier(label_cols=label_column, passthrough_cols="ROW_INDEX")),
+            ]
+        )
+
+        p1 = pipeline.fit(raw_data)
+        results1 = p1.predict(raw_data).to_pandas().sort_values(by=["ROW_INDEX"])["OUTPUT_LABEL"].to_numpy()
+
+        p2 = pipeline.fit(raw_data, squash=True)
+        results2 = p2.predict(raw_data).to_pandas().sort_values(by=["ROW_INDEX"])["OUTPUT_LABEL"].to_numpy()
+
+        self.assertEqual(hash(p1), hash(p2))
+
+        np.testing.assert_allclose(results1.flatten(), results2.flatten(), rtol=1.0e-1, atol=1.0e-2)
+
 
 if __name__ == "__main__":
     absltest.main()

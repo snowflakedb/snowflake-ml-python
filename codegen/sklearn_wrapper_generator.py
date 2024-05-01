@@ -13,6 +13,7 @@ from sklearn.experimental import enable_iterative_imputer  # noqa: F401
 NP_CONSTANTS = [c for c in dir(np) if type(getattr(np, c, None)) == float or type(getattr(np, c, None)) == int]
 LOAD_BREAST_CANCER = "load_breast_cancer"
 LOAD_IRIS = "load_iris"
+LOAD_DIGITS = "load_digits"
 LOAD_DIABETES = "load_diabetes"
 
 
@@ -278,6 +279,7 @@ class WrapperGeneratorFactory:
         return not (
             WrapperGeneratorFactory._is_class_of_type(class_object[1], "LinearDiscriminantAnalysis")
             or WrapperGeneratorFactory._is_class_of_type(class_object[1], "BernoulliRBM")
+            or WrapperGeneratorFactory._is_class_of_type(class_object[1], "TSNE")
         )
 
     @staticmethod
@@ -739,6 +741,7 @@ class WrapperGeneratorBase:
         _METHODS = [
             "fit",
             "fit_predict",
+            "fit_transform",
             "predict",
             "predict_log_proba",
             "predict_proba",
@@ -775,6 +778,7 @@ class WrapperGeneratorBase:
         self.transform_docstring = self.estimator_function_docstring["transform"]
         self.predict_docstring = self.estimator_function_docstring["predict"]
         self.fit_predict_docstring = self.estimator_function_docstring["fit_predict"]
+        self.fit_transform_docstring = self.estimator_function_docstring["fit_transform"]
         self.predict_proba_docstring = self.estimator_function_docstring["predict_proba"]
         self.score_samples_docstring = self.estimator_function_docstring["score_samples"]
         self.predict_log_proba_docstring = self.estimator_function_docstring["predict_log_proba"]
@@ -898,6 +902,8 @@ label_cols: Optional[Union[str, List[str]]]
             self.test_dataset_func = LOAD_BREAST_CANCER
         elif self._is_regressor:
             self.test_dataset_func = LOAD_DIABETES
+        elif WrapperGeneratorFactory._is_class_of_type(self.class_object[1], "SpectralEmbedding"):
+            self.test_dataset_func = LOAD_DIGITS
         else:
             self.test_dataset_func = LOAD_IRIS
 

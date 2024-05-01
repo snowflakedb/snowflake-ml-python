@@ -1,3 +1,4 @@
+import os
 import pathlib
 from typing import cast
 from unittest import mock
@@ -89,6 +90,49 @@ class ModelVersionSQLTest(absltest.TestCase):
             statement_params=m_statement_params,
         )
 
+    def test_list_file(self) -> None:
+        m_statement_params = {"test": "1"}
+        m_res = [Row(name="versions/v1/model.yaml", size=419, md5="1234", last_modified="")]
+        m_df = mock_data_frame.MockDataFrame(
+            collect_result=m_res,
+            collect_statement_params=m_statement_params,
+        )
+        self.m_session.add_mock_sql("""LIST 'snow://model/TEMP."test".MODEL/versions/v1/model.yaml'""", m_df)
+        c_session = cast(Session, self.m_session)
+        res = model_version_sql.ModelVersionSQLClient(
+            c_session,
+            database_name=sql_identifier.SqlIdentifier("TEMP"),
+            schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
+        ).list_file(
+            model_name=sql_identifier.SqlIdentifier("MODEL"),
+            version_name=sql_identifier.SqlIdentifier("v1", case_sensitive=True),
+            file_path=pathlib.PurePosixPath("model.yaml"),
+            statement_params=m_statement_params,
+        )
+        self.assertEqual(res, m_res)
+
+    def test_list_file_curdir_dir(self) -> None:
+        m_statement_params = {"test": "1"}
+        m_res = [Row(name="versions/v1/MANIFEST.yml", size=419, md5="1234", last_modified="")]
+        m_df = mock_data_frame.MockDataFrame(
+            collect_result=m_res,
+            collect_statement_params=m_statement_params,
+        )
+        self.m_session.add_mock_sql("""LIST 'snow://model/TEMP."test".MODEL/versions/v1/'""", m_df)
+        c_session = cast(Session, self.m_session)
+        res = model_version_sql.ModelVersionSQLClient(
+            c_session,
+            database_name=sql_identifier.SqlIdentifier("TEMP"),
+            schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
+        ).list_file(
+            model_name=sql_identifier.SqlIdentifier("MODEL"),
+            version_name=sql_identifier.SqlIdentifier("v1", case_sensitive=True),
+            file_path=pathlib.PurePosixPath(os.curdir),
+            is_dir=True,
+            statement_params=m_statement_params,
+        )
+        self.assertEqual(res, m_res)
+
     def test_get_file(self) -> None:
         m_statement_params = {"test": "1"}
         m_df = mock_data_frame.MockDataFrame(
@@ -113,7 +157,7 @@ class ModelVersionSQLTest(absltest.TestCase):
         )
         self.assertEqual(res, pathlib.Path("/tmp/model.yaml"))
 
-    def test_invoke_method(self) -> None:
+    def test_invoke_function_method(self) -> None:
         m_statement_params = {"test": "1"}
         m_df = mock_data_frame.MockDataFrame()
         self.m_session.add_mock_sql(
@@ -135,7 +179,7 @@ class ModelVersionSQLTest(absltest.TestCase):
                 c_session,
                 database_name=sql_identifier.SqlIdentifier("TEMP"),
                 schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
-            ).invoke_method(
+            ).invoke_function_method(
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
                 version_name=sql_identifier.SqlIdentifier("V1"),
                 method_name=sql_identifier.SqlIdentifier("PREDICT"),
@@ -152,7 +196,7 @@ class ModelVersionSQLTest(absltest.TestCase):
                 statement_params=m_statement_params,
             )
 
-    def test_invoke_method_1(self) -> None:
+    def test_invoke_function_method_1(self) -> None:
         m_statement_params = {"test": "1"}
         m_df = mock_data_frame.MockDataFrame()
         self.m_session.add_mock_sql(
@@ -174,7 +218,7 @@ class ModelVersionSQLTest(absltest.TestCase):
                 c_session,
                 database_name=sql_identifier.SqlIdentifier("TEMP"),
                 schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
-            ).invoke_method(
+            ).invoke_function_method(
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
                 version_name=sql_identifier.SqlIdentifier("V1"),
                 method_name=sql_identifier.SqlIdentifier("PREDICT"),
@@ -191,7 +235,7 @@ class ModelVersionSQLTest(absltest.TestCase):
                 statement_params=m_statement_params,
             )
 
-    def test_invoke_method_2(self) -> None:
+    def test_invoke_function_method_2(self) -> None:
         m_statement_params = {"test": "1"}
         m_df = mock_data_frame.MockDataFrame()
         self.m_session.add_mock_sql(
@@ -209,7 +253,7 @@ class ModelVersionSQLTest(absltest.TestCase):
             c_session,
             database_name=sql_identifier.SqlIdentifier("TEMP"),
             schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
-        ).invoke_method(
+        ).invoke_function_method(
             model_name=sql_identifier.SqlIdentifier("MODEL"),
             version_name=sql_identifier.SqlIdentifier("V1"),
             method_name=sql_identifier.SqlIdentifier("PREDICT"),
@@ -218,6 +262,48 @@ class ModelVersionSQLTest(absltest.TestCase):
             returns=[("output_1", spt.IntegerType(), sql_identifier.SqlIdentifier("OUTPUT_1"))],
             statement_params=m_statement_params,
         )
+
+    def test_invoke_table_function_method_partition_col(self) -> None:
+        m_statement_params = {"test": "1"}
+        m_df = mock_data_frame.MockDataFrame()
+        partition_column = "partition_col"
+        self.m_session.add_mock_sql(
+            f"""WITH MODEL_VERSION_ALIAS AS MODEL TEMP."test".MODEL VERSION V1
+            SELECT *,
+            FROM TEMP."test".SNOWPARK_TEMP_TABLE_ABCDEF0123,
+                 TABLE(MODEL_VERSION_ALIAS!PREDICT_TABLE(COL1, COL2) OVER (PARTITION BY {partition_column}))
+            """,
+            m_df,
+        )
+        m_df.add_mock_with_columns(["OUTPUT_1"], [F.col("OUTPUT_1")])
+        c_session = cast(Session, self.m_session)
+        mock_writer = mock.MagicMock()
+        m_df.__setattr__("write", mock_writer)
+        m_df.__setattr__("queries", {"queries": ["query_1", "query_2"], "post_actions": []})
+        with mock.patch.object(mock_writer, "save_as_table") as mock_save_as_table, mock.patch.object(
+            snowpark_utils, "random_name_for_temp_object", return_value="SNOWPARK_TEMP_TABLE_ABCDEF0123"
+        ) as mock_random_name_for_temp_object:
+            model_version_sql.ModelVersionSQLClient(
+                c_session,
+                database_name=sql_identifier.SqlIdentifier("TEMP"),
+                schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
+            ).invoke_table_function_method(
+                model_name=sql_identifier.SqlIdentifier("MODEL"),
+                version_name=sql_identifier.SqlIdentifier("V1"),
+                method_name=sql_identifier.SqlIdentifier("PREDICT_TABLE"),
+                input_df=cast(DataFrame, m_df),
+                input_args=[sql_identifier.SqlIdentifier("COL1"), sql_identifier.SqlIdentifier("COL2")],
+                returns=[("output_1", spt.IntegerType(), sql_identifier.SqlIdentifier("OUTPUT_1"))],
+                partition_column=sql_identifier.SqlIdentifier(partition_column),
+                statement_params=m_statement_params,
+            )
+            mock_random_name_for_temp_object.assert_called_once_with(snowpark_utils.TempObjectType.TABLE)
+            mock_save_as_table.assert_called_once_with(
+                table_name='TEMP."test".SNOWPARK_TEMP_TABLE_ABCDEF0123',
+                mode="errorifexists",
+                table_type="temporary",
+                statement_params=m_statement_params,
+            )
 
     def test_set_metadata(self) -> None:
         m_statement_params = {"test": "1"}

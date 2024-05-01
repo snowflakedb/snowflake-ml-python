@@ -185,7 +185,6 @@ class SFFileSystem(fsspec.AbstractFileSystem):
         func_params_to_log=["detail"],
         conn_attr_name="_conn",
     )
-    @snowpark._internal.utils.private_preview(version="0.2.0")
     def ls(self, path: str, detail: bool = False, **kwargs: Any) -> Union[List[str], List[Dict[str, Any]]]:
         """Override fsspec `ls` method. List single "directory" with or without details.
 
@@ -216,7 +215,6 @@ class SFFileSystem(fsspec.AbstractFileSystem):
         project=_PROJECT,
         conn_attr_name="_conn",
     )
-    @snowpark._internal.utils.private_preview(version="0.2.0")
     def optimize_read(self, files: Optional[List[str]] = None) -> None:
         """Prefetch and cache the presigned urls for all the given files to speed up the file opening.
 
@@ -242,7 +240,6 @@ class SFFileSystem(fsspec.AbstractFileSystem):
         project=_PROJECT,
         conn_attr_name="_conn",
     )
-    @snowpark._internal.utils.private_preview(version="0.2.0")
     def _open(self, path: str, **kwargs: Any) -> fsspec.spec.AbstractBufferedFile:
         """Override fsspec `_open` method. Open a file for reading in 'rb' mode.
 
@@ -268,7 +265,6 @@ class SFFileSystem(fsspec.AbstractFileSystem):
         project=_PROJECT,
         conn_attr_name="_conn",
     )
-    @snowpark._internal.utils.private_preview(version="0.2.0")
     def info(self, path: str, **kwargs: Any) -> Dict[str, Any]:
         """Override fsspec `info` method. Give details of entry at path."""
         file_path = self._parse_file_path(path)

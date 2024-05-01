@@ -8,8 +8,10 @@ from typing import Any, Dict, List, Optional
 
 from absl import logging
 from packaging import requirements
+from typing_extensions import deprecated
 
 from snowflake.ml._internal import env as snowml_env, env_utils, file_utils
+from snowflake.ml._internal.lineage import data_source
 from snowflake.ml.model import model_signature, type_hints as model_types
 from snowflake.ml.model._model_composer.model_manifest import model_manifest
 from snowflake.ml.model._packager import model_packager
@@ -134,6 +136,7 @@ class ModelComposer:
             model_meta=self.packager.meta,
             model_file_rel_path=pathlib.PurePosixPath(self.model_file_rel_path),
             options=options,
+            data_sources=self._get_data_sources(model),
         )
 
         file_utils.upload_directory_to_stage(
@@ -143,7 +146,8 @@ class ModelComposer:
             statement_params=self._statement_params,
         )
 
-    def load(
+    @deprecated("Only used by PrPr model registry. Use static method version of load instead.")
+    def legacy_load(
         self,
         *,
         meta_only: bool = False,
@@ -163,3 +167,20 @@ class ModelComposer:
         with zipfile.ZipFile(self.model_local_path, mode="r", compression=zipfile.ZIP_DEFLATED) as zf:
             zf.extractall(path=self._packager_workspace_path)
         self.packager.load(meta_only=meta_only, options=options)
+
+    @staticmethod
+    def load(
+        workspace_path: pathlib.Path,
+        *,
+        meta_only: bool = False,
+        options: Optional[model_types.ModelLoadOption] = None,
+    ) -> model_packager.ModelPackager:
+        mp = model_packager.ModelPackager(str(workspace_path / ModelComposer.MODEL_DIR_REL_PATH))
+        mp.load(meta_only=meta_only, options=options)
+        return mp
+
+    def _get_data_sources(self, model: model_types.SupportedModelType) -> Optional[List[data_source.DataSource]]:
+        data_sources = getattr(model, "_data_sources", None)
+        if isinstance(data_sources, list) and all(isinstance(item, data_source.DataSource) for item in data_sources):
+            return data_sources
+        return None

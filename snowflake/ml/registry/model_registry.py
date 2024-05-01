@@ -29,19 +29,13 @@ from snowflake.ml._internal.utils import (
     table_manager,
     uri,
 )
-from snowflake.ml.dataset import dataset
 from snowflake.ml.model import (
     _api as model_api,
     deploy_platforms,
     model_signature,
     type_hints as model_types,
 )
-from snowflake.ml.registry import (
-    _artifact_manager,
-    _initial_schema,
-    _schema_version_manager,
-    artifact,
-)
+from snowflake.ml.registry import _initial_schema, _schema_version_manager
 from snowflake.snowpark._internal import utils as snowpark_utils
 
 if TYPE_CHECKING:
@@ -142,7 +136,6 @@ def _create_registry_views(
     registry_table_name: str,
     metadata_table_name: str,
     deployment_table_name: str,
-    artifact_table_name: str,
     statement_params: Dict[str, Any],
 ) -> None:
     """Create views on underlying ModelRegistry tables.
@@ -154,7 +147,6 @@ def _create_registry_views(
         registry_table_name: Name for the main model registry table.
         metadata_table_name: Name for the metadata table used by the model registry.
         deployment_table_name: Name for the deployment event table.
-        artifact_table_name: Name for the artifact table.
         statement_params: Function usage statement parameters used in sql query executions.
     """
     fully_qualified_schema_name = table_manager.get_fully_qualified_schema_name(database_name, schema_name)
@@ -233,23 +225,6 @@ def _create_registry_views(
         f"""CREATE OR REPLACE TEMPORARY VIEW {fully_qualified_schema_name}.{registry_view_name} COPY GRANTS AS
                 SELECT {registry_table_name}.*, {metadata_select_fields_formatted}
                 FROM {registry_table_name} {metadata_views_join}"""
-    ).collect(statement_params=statement_params)
-
-    # Create artifact view. it joins artifact tables with registry table on model id.
-    artifact_view_name = identifier.concat_names([artifact_table_name, "_VIEW"])
-    session.sql(
-        f"""CREATE OR REPLACE TEMPORARY VIEW {fully_qualified_schema_name}.{artifact_view_name} COPY GRANTS AS
-                SELECT
-                    {registry_table_name}.NAME AS MODEL_NAME,
-                    {registry_table_name}.VERSION AS MODEL_VERSION,
-                    {artifact_table_name}.*
-                FROM {registry_table_name}
-                LEFT JOIN {artifact_table_name}
-                ON (ARRAY_CONTAINS(
-                    {artifact_table_name}.ID::VARIANT,
-                    {registry_table_name}.ARTIFACT_IDS)
-                )
-        """
     ).collect(statement_params=statement_params)
 
 
@@ -337,11 +312,8 @@ fully integrated into the new registry.
         self._deployment_table = identifier.get_inferred_name(_DEPLOYMENT_TABLE_NAME)
         self._permanent_deployment_view = identifier.concat_names([self._deployment_table, "_VIEW"])
         self._permanent_deployment_stage = identifier.concat_names([self._deployment_table, "_STAGE"])
-        self._artifact_table = identifier.get_inferred_name(_initial_schema._ARTIFACT_TABLE_NAME)
-        self._artifact_view = identifier.concat_names([self._artifact_table, "_VIEW"])
         self._session = session
         self._svm = _schema_version_manager.SchemaVersionManager(self._session, self._name, self._schema)
-        self._artifact_manager = _artifact_manager.ArtifactManager(self._session, self._name, self._schema)
 
         # A in-memory deployment info cache to store information of temporary deployments
         # TODO(zhe): Use a temporary table to replace the in-memory cache.
@@ -359,7 +331,6 @@ fully integrated into the new registry.
             self._registry_table,
             self._metadata_table,
             self._deployment_table,
-            self._artifact_table,
             statement_params,
         )
 
@@ -398,9 +369,6 @@ fully integrated into the new registry.
     def _fully_qualified_permanent_deployment_view_name(self) -> str:
         """Get the fully qualified name to the permanent deployment view."""
         return table_manager.get_fully_qualified_table_name(self._name, self._schema, self._permanent_deployment_view)
-
-    def _fully_qualified_artifact_view_name(self) -> str:
-        return table_manager.get_fully_qualified_table_name(self._name, self._schema, self._artifact_view)
 
     def _fully_qualified_schema_name(self) -> str:
         """Get the fully qualified name to the current registry schema."""
@@ -858,7 +826,6 @@ fully integrated into the new registry.
         output_spec: Optional[Dict[str, str]] = None,
         description: Optional[str] = None,
         tags: Optional[Dict[str, str]] = None,
-        artifacts: Optional[List[artifact.Artifact]] = None,
     ) -> None:
         """Helper function to register model metadata.
 
@@ -878,10 +845,8 @@ fully integrated into the new registry.
             description: A description for the model. The description can be changed later.
             tags: Key-value pairs of tags to be set for this model. Tags can be modified
                 after model registration.
-            artifacts: A list of artifact references.
 
         Raises:
-            ValueError: Artifact ids not found in model registry.
             DataError: The given model already exists.
             DatabaseError: Unable to register the model properties into table.
         """
@@ -896,12 +861,6 @@ fully integrated into the new registry.
         new_model["CREATION_TIME"] = formatting.SqlStr("CURRENT_TIMESTAMP()")
         new_model["CREATION_ROLE"] = self._session.get_current_role()
         new_model["CREATION_ENVIRONMENT_SPEC"] = {"python": ".".join(map(str, sys.version_info[:3]))}
-
-        if artifacts is not None:
-            for atf in artifacts:
-                if not self._artifact_manager.exists(atf.name if atf.name is not None else "", atf.version):
-                    raise ValueError(f"Artifact {atf.name}/{atf.version} not found in model registry.")
-            new_model["ARTIFACT_IDS"] = [art._id for art in artifacts]
 
         existing_model_nums = self._list_selected_models(model_name=model_name, model_version=model_version).count()
         if existing_model_nums:
@@ -1356,42 +1315,6 @@ fully integrated into the new registry.
         else:
             return dict()
 
-    @telemetry.send_api_usage_telemetry(
-        project=_TELEMETRY_PROJECT,
-        subproject=_TELEMETRY_SUBPROJECT,
-    )
-    @snowpark._internal.utils.private_preview(version="1.0.10")
-    def log_artifact(
-        self,
-        artifact: artifact.Artifact,
-        name: str,
-        version: Optional[str] = None,
-    ) -> artifact.Artifact:
-        """Upload and register an artifact to the Model Registry.
-
-        Args:
-            artifact: artifact object.
-            name: name of artifact.
-            version: version of artifact.
-
-        Raises:
-            DataError: Artifact with same name and version already exists.
-
-        Returns:
-            Return a reference to the artifact.
-        """
-
-        if self._artifact_manager.exists(name, version):
-            raise connector.DataError(f"Artifact {name}/{version} already exists.")
-
-        artifact_id = self._get_new_unique_identifier()
-        return self._artifact_manager.add(
-            artifact=artifact,
-            artifact_id=artifact_id,
-            artifact_name=name,
-            artifact_version=version,
-        )
-
     # Combined Registry and Repository operations.
     @telemetry.send_api_usage_telemetry(
         project=_TELEMETRY_PROJECT,
@@ -1410,7 +1333,6 @@ fully integrated into the new registry.
         pip_requirements: Optional[List[str]] = None,
         signatures: Optional[Dict[str, model_signature.ModelSignature]] = None,
         sample_input_data: Optional[Any] = None,
-        artifacts: Optional[List[artifact.Artifact]] = None,
         code_paths: Optional[List[str]] = None,
         options: Optional[model_types.BaseModelSaveOption] = None,
     ) -> Optional["ModelReference"]:
@@ -1431,19 +1353,15 @@ fully integrated into the new registry.
                 pip requirements.
             signatures: Signatures of the model, which is a mapping from target method name to signatures of input and
                 output, which could be inferred by calling `infer_signature` method with sample input data.
-            sample_input_data: Sample of the input data for the model. If artifacts contains a feature store
-                generated dataset, then sample_input_data is not needed. If both sample_input_data and dataset provided
-                , then sample_input_data will be used to infer model signature.
-            artifacts: A list of artifact ids, which are generated from log_artifact().
+            sample_input_data: Sample of the input data for the model.
             code_paths: Directory of code to import when loading and deploying the model.
             options: Additional options when saving the model.
 
         Raises:
             DataError: Raised when:
                 1) the given model already exists;
-                2) given artifacts does not exists in this registry.
             ValueError: Raised when:  # noqa: DAR402
-                1) Signatures, sample_input_data and artifact(dataset) are both not provided and model is not a
+                1) Signatures and sample_input_data are both not provided and model is not a
                     snowflake estimator.
             Exception: Raised when there is any error raised when saving the model.
 
@@ -1457,18 +1375,6 @@ fully integrated into the new registry.
         self._svm.validate_schema_version(statement_params)
 
         self._model_identifier_is_nonempty_or_raise(model_name, model_version)
-
-        if artifacts is not None:
-            for atf in artifacts:
-                if not self._artifact_manager.exists(atf.name if atf.name is not None else "", atf.version):
-                    raise connector.DataError(f"Artifact {atf.name}/{atf.version} does not exists.")
-
-        if sample_input_data is None and artifacts is not None:
-            for atf in artifacts:
-                if atf.type == artifact.ArtifactType.DATASET:
-                    ds = self.get_artifact(atf.name if atf.name is not None else "", atf.version)
-                    sample_input_data = ds.features_df()
-                    break
 
         existing_model_nums = self._list_selected_models(model_name=model_name, model_version=model_version).count()
         if existing_model_nums:
@@ -1508,7 +1414,6 @@ fully integrated into the new registry.
             uri=uri.get_uri_from_snowflake_stage_path(stage_path),
             description=description,
             tags=tags,
-            artifacts=artifacts,
         )
 
         return ModelReference(registry=self, model_name=model_name, model_version=model_version)
@@ -1733,25 +1638,6 @@ fully integrated into the new registry.
         )
         return cast(snowpark.DataFrame, res)
 
-    @snowpark._internal.utils.private_preview(version="1.0.1")
-    def list_artifacts(self, model_name: str, model_version: Optional[str] = None) -> snowpark.DataFrame:
-        """List all artifacts that associated with given model name and version.
-
-        Args:
-            model_name: Name of model.
-            model_version: Version of model. If version is none then only filter on name.
-                Defaults to none.
-
-        Returns:
-            A snowpark dataframe that contains all artifacts that associated with the given model.
-        """
-        artifacts = self._session.sql(f"SELECT * FROM {self._fully_qualified_artifact_view_name()}").filter(
-            snowpark.Column("MODEL_NAME") == model_name
-        )
-        if model_version is not None:
-            artifacts = artifacts.filter(snowpark.Column("MODEL_VERSION") == model_version)
-        return cast(snowpark.DataFrame, artifacts)
-
     @telemetry.send_api_usage_telemetry(
         project=_TELEMETRY_PROJECT,
         subproject=_TELEMETRY_SUBPROJECT,
@@ -1781,38 +1667,6 @@ fully integrated into the new registry.
                 f"Unable to find deployment named {deployment_name} in the model {model_name}/{model_version}."
             )
         return cast(snowpark.DataFrame, deployment)
-
-    @telemetry.send_api_usage_telemetry(
-        project=_TELEMETRY_PROJECT,
-        subproject=_TELEMETRY_SUBPROJECT,
-    )
-    @snowpark._internal.utils.private_preview(version="1.0.11")
-    def get_artifact(self, name: str, version: Optional[str] = None) -> Optional[artifact.Artifact]:
-        """Get artifact with the given (name, version).
-
-        Args:
-            name: Name of artifact.
-            version: Version of artifact.
-
-        Returns:
-            A reference to artifact if found, otherwise none.
-        """
-        artifacts = self._artifact_manager.get(
-            name,
-            version,
-        ).collect()
-
-        if len(artifacts) == 0:
-            return None
-
-        atf = artifacts[0]
-        if atf["TYPE"] == artifact.ArtifactType.DATASET.value:
-            ds = dataset.Dataset.from_json(atf["ARTIFACT_SPEC"], self._session)
-            ds._log(name=atf["NAME"], version=atf["VERSION"], id=atf["ID"])
-            return ds
-
-        assert f"Unrecognized artifact type: {atf['TYPE']}"
-        return None
 
     @telemetry.send_api_usage_telemetry(
         project=_TELEMETRY_PROJECT,

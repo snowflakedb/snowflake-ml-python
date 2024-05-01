@@ -131,6 +131,32 @@ class TestModelImplInteg(parameterized.TestCase):
         self._model.unset_tag(self._tag_name1)
         self.assertDictEqual({}, self._model.show_tags())
 
+    def test_rename(self) -> None:
+        model, test_features, _ = model_factory.ModelFactory.prepare_sklearn_model()
+        self.registry.log_model(
+            model=model,
+            model_name="MODEL",
+            version_name="V1",
+            sample_input_data=test_features,
+        )
+        model = self.registry.get_model(model_name="MODEL")
+        model.rename("MODEL2")
+        self.assertEqual(model.name, "MODEL2")
+        self.registry.delete_model("MODEL2")
+
+    def test_rename_fully_qualified_name(self) -> None:
+        model, test_features, _ = model_factory.ModelFactory.prepare_sklearn_model()
+        self.registry.log_model(
+            model=model,
+            model_name="MODEL",
+            version_name="V1",
+            sample_input_data=test_features,
+        )
+        model = self.registry.get_model(model_name="MODEL")
+        model.rename(f"{self._test_db}.{self._test_schema}.MODEL2")
+        self.assertEqual(model.name, "MODEL2")
+        self.registry.delete_model("MODEL2")
+
 
 if __name__ == "__main__":
     absltest.main()

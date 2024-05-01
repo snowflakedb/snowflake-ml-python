@@ -96,6 +96,38 @@ class ModelVersionSQLClient:
             statement_params=statement_params,
         ).has_dimensions(expected_rows=1, expected_cols=1).validate()
 
+    def list_file(
+        self,
+        *,
+        model_name: sql_identifier.SqlIdentifier,
+        version_name: sql_identifier.SqlIdentifier,
+        file_path: pathlib.PurePosixPath,
+        is_dir: bool = False,
+        statement_params: Optional[Dict[str, Any]] = None,
+    ) -> List[row.Row]:
+        # Workaround for snowURL bug.
+        trailing_slash = "/" if is_dir else ""
+
+        stage_location = (
+            pathlib.PurePosixPath(
+                self.fully_qualified_model_name(model_name), "versions", version_name.resolved(), file_path
+            ).as_posix()
+            + trailing_slash
+        )
+        stage_location_url = ParseResult(
+            scheme="snow", netloc="model", path=stage_location, params="", query="", fragment=""
+        ).geturl()
+
+        return (
+            query_result_checker.SqlResultValidator(
+                self._session,
+                f"List {_normalize_url_for_sql(stage_location_url)}",
+                statement_params=statement_params,
+            )
+            .has_column("name")
+            .validate()
+        )
+
     def get_file(
         self,
         *,
@@ -162,7 +194,7 @@ class ModelVersionSQLClient:
             statement_params=statement_params,
         ).has_dimensions(expected_rows=1, expected_cols=1).validate()
 
-    def invoke_method(
+    def invoke_function_method(
         self,
         *,
         model_name: sql_identifier.SqlIdentifier,
@@ -226,6 +258,82 @@ class ModelVersionSQLClient:
             col_names=output_names,
             values=output_cols,
         ).drop(INTERMEDIATE_OBJ_NAME)
+
+        if statement_params:
+            output_df._statement_params = statement_params  # type: ignore[assignment]
+
+        return output_df
+
+    def invoke_table_function_method(
+        self,
+        *,
+        model_name: sql_identifier.SqlIdentifier,
+        version_name: sql_identifier.SqlIdentifier,
+        method_name: sql_identifier.SqlIdentifier,
+        input_df: dataframe.DataFrame,
+        input_args: List[sql_identifier.SqlIdentifier],
+        returns: List[Tuple[str, spt.DataType, sql_identifier.SqlIdentifier]],
+        partition_column: Optional[sql_identifier.SqlIdentifier],
+        statement_params: Optional[Dict[str, Any]] = None,
+    ) -> dataframe.DataFrame:
+        with_statements = []
+        if len(input_df.queries["queries"]) == 1 and len(input_df.queries["post_actions"]) == 0:
+            INTERMEDIATE_TABLE_NAME = "SNOWPARK_ML_MODEL_INFERENCE_INPUT"
+            with_statements.append(f"{INTERMEDIATE_TABLE_NAME} AS ({input_df.queries['queries'][0]})")
+        else:
+            tmp_table_name = snowpark_utils.random_name_for_temp_object(snowpark_utils.TempObjectType.TABLE)
+            INTERMEDIATE_TABLE_NAME = identifier.get_schema_level_object_identifier(
+                self._database_name.identifier(),
+                self._schema_name.identifier(),
+                tmp_table_name,
+            )
+            input_df.write.save_as_table(  # type: ignore[call-overload]
+                table_name=INTERMEDIATE_TABLE_NAME,
+                mode="errorifexists",
+                table_type="temporary",
+                statement_params=statement_params,
+            )
+
+        module_version_alias = "MODEL_VERSION_ALIAS"
+        with_statements.append(
+            f"{module_version_alias} AS "
+            f"MODEL {self.fully_qualified_model_name(model_name)} VERSION {version_name.identifier()}"
+        )
+
+        partition_by = partition_column.identifier() if partition_column is not None else "1"
+
+        args_sql_list = []
+        for input_arg_value in input_args:
+            args_sql_list.append(input_arg_value)
+
+        args_sql = ", ".join(args_sql_list)
+
+        sql = textwrap.dedent(
+            f"""WITH {','.join(with_statements)}
+                 SELECT *,
+                 FROM {INTERMEDIATE_TABLE_NAME},
+                     TABLE({module_version_alias}!{method_name.identifier()}({args_sql})
+                     OVER (PARTITION BY {partition_by}))"""
+        )
+
+        output_df = self._session.sql(sql)
+
+        # Prepare the output
+        output_cols = []
+        output_names = []
+
+        for output_name, output_type, output_col_name in returns:
+            output_cols.append(F.col(output_name).astype(output_type))
+            output_names.append(output_col_name)
+
+        if partition_column is not None:
+            output_cols.append(F.col(partition_column.identifier()))
+            output_names.append(partition_column)
+
+        output_df = output_df.with_columns(
+            col_names=output_names,
+            values=output_cols,
+        )
 
         if statement_params:
             output_df._statement_params = statement_params  # type: ignore[assignment]

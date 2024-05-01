@@ -2,6 +2,7 @@ from types import ModuleType
 from typing import Any, Dict, List, Literal, Optional, Union, cast, overload
 
 import pandas as pd
+from typing_extensions import deprecated
 
 from snowflake.ml._internal.exceptions import (
     error_codes,
@@ -23,6 +24,7 @@ from snowflake.ml.model._signatures import snowpark_handler
 from snowflake.snowpark import DataFrame as SnowparkDataFrame, Session, functions as F
 
 
+@deprecated("Only used by PrPr model registry.")
 @overload
 def save_model(
     *,
@@ -61,6 +63,7 @@ def save_model(
     ...
 
 
+@deprecated("Only used by PrPr model registry.")
 @overload
 def save_model(
     *,
@@ -101,6 +104,7 @@ def save_model(
     ...
 
 
+@deprecated("Only used by PrPr model registry.")
 @overload
 def save_model(
     *,
@@ -142,6 +146,7 @@ def save_model(
     ...
 
 
+@deprecated("Only used by PrPr model registry.")
 def save_model(
     *,
     name: str,
@@ -208,6 +213,7 @@ def save_model(
     return m
 
 
+@deprecated("Only used by PrPr model registry.")
 @overload
 def load_model(*, session: Session, stage_path: str) -> model_composer.ModelComposer:
     """Load the model into memory from a zip file in the stage.
@@ -219,6 +225,7 @@ def load_model(*, session: Session, stage_path: str) -> model_composer.ModelComp
     ...
 
 
+@deprecated("Only used by PrPr model registry.")
 @overload
 def load_model(*, session: Session, stage_path: str, meta_only: Literal[False]) -> model_composer.ModelComposer:
     """Load the model into memory from a zip file in the stage.
@@ -231,6 +238,7 @@ def load_model(*, session: Session, stage_path: str, meta_only: Literal[False]) 
     ...
 
 
+@deprecated("Only used by PrPr model registry.")
 @overload
 def load_model(*, session: Session, stage_path: str, meta_only: Literal[True]) -> model_composer.ModelComposer:
     """Load the model into memory from a zip file in the stage with metadata only.
@@ -243,6 +251,7 @@ def load_model(*, session: Session, stage_path: str, meta_only: Literal[True]) -
     ...
 
 
+@deprecated("Only used by PrPr model registry.")
 def load_model(
     *,
     session: Session,
@@ -261,10 +270,11 @@ def load_model(
         Loaded model.
     """
     m = model_composer.ModelComposer(session=session, stage_path=stage_path)
-    m.load(meta_only=meta_only)
+    m.legacy_load(meta_only=meta_only)
     return m
 
 
+@deprecated("Only used by PrPr model registry.")
 @overload
 def deploy(
     session: Session,
@@ -290,6 +300,7 @@ def deploy(
     ...
 
 
+@deprecated("Only used by PrPr model registry.")
 @overload
 def deploy(
     session: Session,
@@ -319,6 +330,7 @@ def deploy(
     ...
 
 
+@deprecated("Only used by PrPr model registry.")
 def deploy(
     session: Session,
     *,
@@ -423,6 +435,7 @@ def deploy(
     return info
 
 
+@deprecated("Only used by PrPr model registry.")
 @overload
 def predict(
     session: Session,
@@ -443,6 +456,7 @@ def predict(
     ...
 
 
+@deprecated("Only used by PrPr model registry.")
 @overload
 def predict(
     session: Session,
@@ -462,6 +476,7 @@ def predict(
     ...
 
 
+@deprecated("Only used by PrPr model registry.")
 def predict(
     session: Session,
     *,

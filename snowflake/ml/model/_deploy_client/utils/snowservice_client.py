@@ -70,13 +70,16 @@ class SnowServiceClient:
         logger.debug(f"Create service with SQL: \n {sql}")
         self.session.sql(sql).collect()
 
-    def create_job(self, compute_pool: str, spec_stage_location: str, external_access_integrations: List[str]) -> None:
+    def create_job(
+        self, job_name: str, compute_pool: str, spec_stage_location: str, external_access_integrations: List[str]
+    ) -> None:
         """Execute the job creation SQL command. Note that the job creation is synchronous, hence we execute it in a
         async way so that we can query the log in the meantime.
 
         Upon job failure, full job container log will be logged.
 
         Args:
+            job_name: name of the job
             compute_pool: name of the compute pool
             spec_stage_location: path to the stage location where the spec is located at.
             external_access_integrations: EAIs for network connection.
@@ -84,19 +87,18 @@ class SnowServiceClient:
         stage, path = uri.get_stage_and_path(spec_stage_location)
         sql = textwrap.dedent(
             f"""
-            EXECUTE SERVICE
+            EXECUTE JOB SERVICE
             IN COMPUTE POOL {compute_pool}
             FROM {stage}
-            SPEC = '{path}'
+            SPECIFICATION_FILE = '{path}'
+            NAME = {job_name}
             EXTERNAL_ACCESS_INTEGRATIONS = ({', '.join(external_access_integrations)})
             """
         )
         logger.debug(f"Create job with SQL: \n {sql}")
-        cur = self.session._conn._conn.cursor()
-        cur.execute_async(sql)
-        job_id = cur._sfqid
+        self.session.sql(sql).collect_nowait()
         self.block_until_resource_is_ready(
-            resource_name=str(job_id),
+            resource_name=job_name,
             resource_type=constants.ResourceType.JOB,
             container_name=constants.KANIKO_CONTAINER_NAME,
             max_retries=240,
@@ -182,10 +184,7 @@ class SnowServiceClient:
         """
         assert resource_type == constants.ResourceType.SERVICE or resource_type == constants.ResourceType.JOB
         query_command = ""
-        if resource_type == constants.ResourceType.SERVICE:
-            query_command = f"CALL SYSTEM$GET_SERVICE_LOGS('{resource_name}', '0', '{container_name}')"
-        elif resource_type == constants.ResourceType.JOB:
-            query_command = f"CALL SYSTEM$GET_JOB_LOGS('{resource_name}', '{container_name}')"
+        query_command = f"CALL SYSTEM$GET_SERVICE_LOGS('{resource_name}', '0', '{container_name}')"
         logger.warning(
             f"Best-effort log streaming from SPCS will be enabled when python logging level is set to INFO."
             f"Alternatively, you can also query the logs by running the query '{query_command}'"
@@ -201,7 +200,7 @@ class SnowServiceClient:
                 )
                 lsp.process_new_logs(resource_log, log_level=logging.INFO)
 
-            status = self.get_resource_status(resource_name=resource_name, resource_type=resource_type)
+            status = self.get_resource_status(resource_name=resource_name)
 
             if resource_type == constants.ResourceType.JOB and status == constants.ResourceStatus.DONE:
                 return
@@ -246,52 +245,24 @@ class SnowServiceClient:
     def get_resource_log(
         self, resource_name: str, resource_type: constants.ResourceType, container_name: str
     ) -> Optional[str]:
-        if resource_type == constants.ResourceType.SERVICE:
-            try:
-                row = self.session.sql(
-                    f"CALL SYSTEM$GET_SERVICE_LOGS('{resource_name}', '0', '{container_name}')"
-                ).collect()
-                return str(row[0]["SYSTEM$GET_SERVICE_LOGS"])
-            except Exception:
-                return None
-        elif resource_type == constants.ResourceType.JOB:
-            try:
-                row = self.session.sql(f"CALL SYSTEM$GET_JOB_LOGS('{resource_name}', '{container_name}')").collect()
-                return str(row[0]["SYSTEM$GET_JOB_LOGS"])
-            except Exception:
-                return None
-        else:
-            raise snowml_exceptions.SnowflakeMLException(
-                error_code=error_codes.NOT_IMPLEMENTED,
-                original_exception=NotImplementedError(
-                    f"{resource_type.name} is not yet supported in get_resource_log function"
-                ),
-            )
+        try:
+            row = self.session.sql(
+                f"CALL SYSTEM$GET_SERVICE_LOGS('{resource_name}', '0', '{container_name}')"
+            ).collect()
+            return str(row[0]["SYSTEM$GET_SERVICE_LOGS"])
+        except Exception:
+            return None
 
-    def get_resource_status(
-        self, resource_name: str, resource_type: constants.ResourceType
-    ) -> Optional[constants.ResourceStatus]:
+    def get_resource_status(self, resource_name: str) -> Optional[constants.ResourceStatus]:
         """Get resource status.
 
         Args:
             resource_name: Name of the resource.
-            resource_type: Type of the resource.
-
-        Raises:
-            SnowflakeMLException: If resource type does not have a corresponding system function for querying status.
-            SnowflakeMLException: If corresponding status call failed.
 
         Returns:
             Optional[constants.ResourceStatus]: The status of the resource, or None if the resource status is empty.
         """
-        if resource_type not in constants.RESOURCE_TO_STATUS_FUNCTION_MAPPING:
-            raise snowml_exceptions.SnowflakeMLException(
-                error_code=error_codes.INVALID_ARGUMENT,
-                original_exception=ValueError(
-                    f"Status querying is not supported for resources of type '{resource_type}'."
-                ),
-            )
-        status_func = constants.RESOURCE_TO_STATUS_FUNCTION_MAPPING[resource_type]
+        status_func = "SYSTEM$GET_SERVICE_STATUS"
         try:
             row = self.session.sql(f"CALL {status_func}('{resource_name}');").collect()
         except Exception:

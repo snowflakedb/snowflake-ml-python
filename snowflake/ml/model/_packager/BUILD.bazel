@@ -15,7 +15,6 @@ py_library(
     name = "model_packager",
     srcs = ["model_packager.py"],
     deps = [
-        "//snowflake/ml/_internal:env_utils",
         "//snowflake/ml/_internal/exceptions",
         "//snowflake/ml/model:custom_model",
         "//snowflake/ml/model:model_signature",
