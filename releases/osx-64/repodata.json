@@ -1,9 +1,1 @@
-{
-  "info": {
-    "subdir": "osx-64"
-  },
-  "packages": {},
-  "packages.conda": {},
-  "removed": [],
-  "repodata_version": 1
-}
+{"info":{"subdir":"osx-64"},"packages":{},"packages.conda":{},"removed":[],"repodata_version":1}
