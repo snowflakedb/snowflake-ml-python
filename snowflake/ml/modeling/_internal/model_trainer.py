@@ -22,3 +22,10 @@ class ModelTrainer(Protocol):
         drop_input_cols: Optional[bool] = False,
     ) -> Tuple[Union[DataFrame, pd.DataFrame], object]:
         raise NotImplementedError
+
+    def train_fit_transform(
+        self,
+        expected_output_cols_list: List[str],
+        drop_input_cols: Optional[bool] = False,
+    ) -> Tuple[Union[DataFrame, pd.DataFrame], object]:
+        raise NotImplementedError

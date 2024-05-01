@@ -334,9 +334,12 @@ class GridSearchCV(BaseTransformer):
         self._generate_model_signatures(dataset)
         return self
 
-    def _batch_inference_validate_snowpark(self, dataset: DataFrame, inference_method: str) -> List[str]:
-        """Util method to run validate that batch inference can be run on a snowpark dataframe and
-        return the available package that exists in the snowflake anaconda channel
+    def _batch_inference_validate_snowpark(
+        self,
+        dataset: DataFrame,
+        inference_method: str,
+    ) -> None:
+        """Util method to run validate that batch inference can be run on a snowpark dataframe.
 
         Args:
             dataset: snowpark dataframe
@@ -346,8 +349,6 @@ class GridSearchCV(BaseTransformer):
             SnowflakeMLException: If the estimator is not fitted, raise error
             SnowflakeMLException: If the session is None, raise error
 
-        Returns:
-            A list of available package that exists in the snowflake anaconda channel
         """
         if not self._is_fitted:
             raise exceptions.SnowflakeMLException(
@@ -363,10 +364,6 @@ class GridSearchCV(BaseTransformer):
                 error_code=error_codes.NOT_FOUND,
                 original_exception=ValueError("Session must not specified for snowpark dataset."),
             )
-        # Validate that key package version in user workspace are supported in snowflake conda channel
-        return pkg_version_utils.get_valid_pkg_versions_supported_in_snowflake_conda_channel(
-            pkg_versions=self._get_dependencies(), session=session, subproject=_SUBPROJECT
-        )
 
     @available_if(original_estimator_has_callable("predict"))  # type: ignore[misc]
     @telemetry.send_api_usage_telemetry(
@@ -415,10 +412,8 @@ class GridSearchCV(BaseTransformer):
                     )
 
                 expected_type_inferred = convert_sp_to_sf_type(label_cols_signatures[0].as_snowpark_type())
-            self._deps = self._batch_inference_validate_snowpark(
-                dataset=dataset,
-                inference_method=inference_method,
-            )
+            self._batch_inference_validate_snowpark(dataset=dataset, inference_method=inference_method)
+            self._deps = self._get_dependencies()
 
             assert isinstance(
                 dataset._session, Session
@@ -476,7 +471,8 @@ class GridSearchCV(BaseTransformer):
         inference_method = "transform"
 
         if isinstance(dataset, DataFrame):
-            self._deps = self._batch_inference_validate_snowpark(dataset=dataset, inference_method=inference_method)
+            self._batch_inference_validate_snowpark(dataset=dataset, inference_method=inference_method)
+            self._deps = self._get_dependencies()
             assert isinstance(
                 dataset._session, Session
             )  # mypy does not recognize the check in _batch_inference_validate_snowpark()
@@ -535,7 +531,8 @@ class GridSearchCV(BaseTransformer):
         inference_method = "predict_proba"
 
         if isinstance(dataset, DataFrame):
-            self._deps = self._batch_inference_validate_snowpark(dataset=dataset, inference_method=inference_method)
+            self._batch_inference_validate_snowpark(dataset=dataset, inference_method=inference_method)
+            self._deps = self._get_dependencies()
             assert isinstance(
                 dataset._session, Session
             )  # mypy does not recognize the check in _batch_inference_validate_snowpark()
@@ -595,7 +592,8 @@ class GridSearchCV(BaseTransformer):
         inference_method = "predict_log_proba"
 
         if isinstance(dataset, DataFrame):
-            self._deps = self._batch_inference_validate_snowpark(dataset=dataset, inference_method=inference_method)
+            self._batch_inference_validate_snowpark(dataset=dataset, inference_method=inference_method)
+            self._deps = self._get_dependencies()
             assert isinstance(
                 dataset._session, Session
             )  # mypy does not recognize the check in _batch_inference_validate_snowpark()
@@ -655,7 +653,8 @@ class GridSearchCV(BaseTransformer):
         inference_method = "decision_function"
 
         if isinstance(dataset, DataFrame):
-            self._deps = self._batch_inference_validate_snowpark(dataset=dataset, inference_method=inference_method)
+            self._batch_inference_validate_snowpark(dataset=dataset, inference_method=inference_method)
+            self._deps = self._get_dependencies()
             assert isinstance(
                 dataset._session, Session
             )  # mypy does not recognize the check in _batch_inference_validate_snowpark()
@@ -716,7 +715,8 @@ class GridSearchCV(BaseTransformer):
         transform_kwargs: BatchInferenceKwargsTypedDict = dict()
 
         if isinstance(dataset, DataFrame):
-            self._deps = self._batch_inference_validate_snowpark(dataset=dataset, inference_method=inference_method)
+            self._batch_inference_validate_snowpark(dataset=dataset, inference_method=inference_method)
+            self._deps = self._get_dependencies()
             assert isinstance(
                 dataset._session, Session
             )  # mypy does not recognize the check in _batch_inference_validate_snowpark()
@@ -767,17 +767,15 @@ class GridSearchCV(BaseTransformer):
         transform_kwargs: ScoreKwargsTypedDict = dict()
 
         if isinstance(dataset, DataFrame):
-            self._deps = self._batch_inference_validate_snowpark(
-                dataset=dataset,
-                inference_method="score",
-            )
+            self._batch_inference_validate_snowpark(dataset=dataset, inference_method="score")
+            self._deps = self._get_dependencies()
             selected_cols = self._get_active_columns()
             if len(selected_cols) > 0:
                 dataset = dataset.select(selected_cols)
             assert isinstance(dataset._session, Session)  # keep mypy happy
             transform_kwargs = dict(
                 session=dataset._session,
-                dependencies=["snowflake-snowpark-python"] + self._deps,
+                dependencies=self._deps,
                 score_sproc_imports=["sklearn"],
             )
         elif isinstance(dataset, pd.DataFrame):

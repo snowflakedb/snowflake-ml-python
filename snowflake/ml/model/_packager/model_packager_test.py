@@ -182,43 +182,6 @@ class ModelPackagerTest(absltest.TestCase):
             assert isinstance(pk.model, LinearRegression)
             np.testing.assert_allclose(predictions, desired=pk.model.predict(df[:1])[[OUTPUT_COLUMNS]])
 
-    def test_bad_save_model(self) -> None:
-        with tempfile.TemporaryDirectory() as workspace:
-            os.mkdir(os.path.join(workspace, "bias"))
-            with open(os.path.join(workspace, "bias", "bias1"), "w", encoding="utf-8") as f:
-                f.write("25")
-            with open(os.path.join(workspace, "bias", "bias2"), "w", encoding="utf-8") as f:
-                f.write("68")
-            lm = DemoModelWithManyArtifacts(
-                custom_model.ModelContext(models={}, artifacts={"bias": os.path.join(workspace, "bias")})
-            )
-            arr = np.array([[1, 2, 3], [4, 2, 5]])
-            d = pd.DataFrame(arr, columns=["c1", "c2", "c3"])
-            s = {"predict": model_signature.infer_signature(d, lm.predict(d))}
-
-            with self.assertRaises(ValueError):
-                model_packager.ModelPackager(os.path.join(workspace, "model1")).save(
-                    name="model1",
-                    model=lm,
-                    signatures={**s, "another_predict": s["predict"]},
-                    metadata={"author": "halu", "version": "1"},
-                )
-
-            model_packager.ModelPackager(os.path.join(workspace, "model1")).save(
-                name="model1",
-                model=lm,
-                signatures=s,
-                metadata={"author": "halu", "version": "1"},
-                python_version="3.5.2",
-            )
-
-            pk = model_packager.ModelPackager(os.path.join(workspace, "model1"))
-            pk.load(meta_only=True)
-
-            with exception_utils.assert_snowml_exceptions(self, expected_original_error_type=RuntimeError):
-                pk = model_packager.ModelPackager(os.path.join(workspace, "model1"))
-                pk.load()
-
 
 if __name__ == "__main__":
     absltest.main()

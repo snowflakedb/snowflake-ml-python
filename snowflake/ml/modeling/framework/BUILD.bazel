@@ -14,6 +14,7 @@ py_library(
         "//snowflake/ml/_internal/exceptions",
         "//snowflake/ml/_internal/exceptions:error_messages",
         "//snowflake/ml/_internal/exceptions:modeling_error_messages",
+        "//snowflake/ml/_internal/lineage:dataset_dataframe",
         "//snowflake/ml/_internal/utils:identifier",
         "//snowflake/ml/_internal/utils:parallelize",
         "//snowflake/ml/modeling/_internal:transformer_protocols",

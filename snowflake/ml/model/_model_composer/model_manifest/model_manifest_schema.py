@@ -75,8 +75,19 @@ class SnowparkMLDataDict(TypedDict):
     functions: Required[List[ModelFunctionInfoDict]]
 
 
+class LineageSourceTypes(enum.Enum):
+    DATASET = "DATASET"
+
+
+class LineageSourceDict(TypedDict):
+    type: Required[str]
+    entity: Required[str]
+    version: NotRequired[str]
+
+
 class ModelManifestDict(TypedDict):
     manifest_version: Required[str]
     runtimes: Required[Dict[str, ModelRuntimeDict]]
     methods: Required[List[ModelMethodDict]]
     user_data: NotRequired[Dict[str, Any]]
+    lineage_sources: NotRequired[List[LineageSourceDict]]

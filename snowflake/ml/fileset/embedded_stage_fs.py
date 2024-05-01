@@ -1,10 +1,21 @@
-from typing import Any, Optional
+import re
+from collections import defaultdict
+from typing import Any, List, Optional, Tuple
 
 from snowflake import snowpark
 from snowflake.connector import connection
+from snowflake.ml._internal import telemetry
+from snowflake.ml._internal.exceptions import (
+    error_codes,
+    exceptions as snowml_exceptions,
+    fileset_errors,
+)
 from snowflake.ml._internal.utils import identifier
+from snowflake.snowpark import exceptions as snowpark_exceptions
 
 from . import stage_fs
+
+_SNOWURL_PATH_RE = re.compile(r"versions/(?P<version>[^/]+)(?:/+(?P<filepath>.*))?")
 
 
 class SFEmbeddedStageFileSystem(stage_fs.SFStageFileSystem):
@@ -56,3 +67,80 @@ class SFEmbeddedStageFileSystem(stage_fs.SFStageFileSystem):
             A string of the relative stage path.
         """
         return stage_path
+
+    def _fetch_presigned_urls(
+        self, files: List[str], url_lifetime: float = stage_fs._PRESIGNED_URL_LIFETIME_SEC
+    ) -> List[Tuple[str, str]]:
+        """Fetch presigned urls for the given files."""
+        # SnowURL requires full snow://<domain>/<entity>/versions/<version> as the stage path arg to get_presigned_Url
+        versions_dict = defaultdict(list)
+        for file in files:
+            match = _SNOWURL_PATH_RE.fullmatch(file)
+            assert match is not None and match.group("filepath") is not None
+            versions_dict[match.group("version")].append(match.group("filepath"))
+        presigned_urls: List[Tuple[str, str]] = []
+        try:
+            for version, version_files in versions_dict.items():
+                for file in version_files:
+                    stage_loc = f"{self.stage_name}/versions/{version}"
+                    presigned_urls.extend(
+                        self._session.sql(
+                            f"select '{version}/{file}' as name,"
+                            f" get_presigned_url('{stage_loc}', '{file}', {url_lifetime}) as url"
+                        ).collect(
+                            statement_params=telemetry.get_function_usage_statement_params(
+                                project=stage_fs._PROJECT,
+                                api_calls=[snowpark.DataFrame.collect],
+                            ),
+                        )
+                    )
+        except snowpark_exceptions.SnowparkClientException as e:
+            if e.message.startswith(fileset_errors.ERRNO_DOMAIN_NOT_EXIST) or e.message.startswith(
+                fileset_errors.ERRNO_STAGE_NOT_EXIST
+            ):
+                raise snowml_exceptions.SnowflakeMLException(
+                    error_code=error_codes.SNOWML_NOT_FOUND,
+                    original_exception=fileset_errors.StageNotFoundError(
+                        f"Stage {self.stage_name} does not exist or is not authorized."
+                    ),
+                )
+            else:
+                raise snowml_exceptions.SnowflakeMLException(
+                    error_code=error_codes.INTERNAL_SNOWML_ERROR,
+                    original_exception=fileset_errors.FileSetError(str(e)),
+                )
+        return presigned_urls
+
+    @classmethod
+    def _parent(cls, path: str) -> str:
+        """Get parent of specified path up to minimally valid root path.
+
+        For SnowURL, the minimum valid path is snow://<domain>/<entity>/versions/<version>
+
+        Args:
+            path: File or directory path
+
+        Returns:
+            Parent path
+
+        Examples:
+        ----
+        >>> fs._parent("snow://dataset/my_ds/versions/my_version/file.ext")
+        "snow://dataset/my_ds/versions/my_version/"
+        >>> fs._parent("snow://dataset/my_ds/versions/my_version/subdir/file.ext")
+        "snow://dataset/my_ds/versions/my_version/subdir/"
+        >>> fs._parent("snow://dataset/my_ds/versions/my_version/")
+        "snow://dataset/my_ds/versions/my_version/"
+        >>> fs._parent("snow://dataset/my_ds/versions/my_version")
+        "snow://dataset/my_ds/versions/my_version"
+        """
+        path_match = _SNOWURL_PATH_RE.fullmatch(path)
+        if not path_match:
+            return super()._parent(path)  # type: ignore[no-any-return]
+        filepath: str = path_match.group("filepath") or ""
+        root: str = path[: path_match.start("filepath")] if filepath else path
+        if "/" in filepath:
+            parent = filepath.rsplit("/", 1)[0]
+            return root + parent
+        else:
+            return root

@@ -320,11 +320,7 @@ class ModelMetadata:
 
         with open(model_yaml_path, "w", encoding="utf-8") as out:
             yaml.SafeDumper.ignore_aliases = lambda *args: True  # type: ignore[method-assign]
-            yaml.safe_dump(
-                model_dict,
-                stream=out,
-                default_flow_style=False,
-            )
+            yaml.safe_dump(model_dict, stream=out, default_flow_style=False)
 
     @staticmethod
     def _validate_model_metadata(loaded_meta: Any) -> model_meta_schema.ModelMetadataDict:

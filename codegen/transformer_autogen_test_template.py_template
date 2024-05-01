@@ -13,7 +13,6 @@ from snowflake.ml.utils.connection_params import SnowflakeLoginOptions
 from snowflake.snowpark import Session, DataFrame
 
 
-
 class {transform.test_class_name}(TestCase):
     def setUp(self) -> None:
         """Creates Snowpark and Snowflake environments for testing."""
@@ -125,7 +124,7 @@ class {transform.test_class_name}(TestCase):
 
         sklearn_reg.fit(**args)
 
-        inference_methods = ["transform", "predict", "fit_predict"]
+        inference_methods = ["transform", "predict", "fit_predict", "fit_transform"]
         for m in inference_methods:
             if callable(getattr(sklearn_reg, m, None)):
                 if m == 'predict':
@@ -151,7 +150,7 @@ class {transform.test_class_name}(TestCase):
 
                     # TODO(snandamuri): Implement type inference for transform and predict methods to return results with
                     # correct datatype.
-                    if m == 'transform':
+                    if m == 'transform' or m == 'fit_transform':
                         actual_arr = output_df_pandas.astype("float64").to_numpy()
                     else:
                         actual_arr = output_df_pandas.to_numpy()
@@ -163,7 +162,12 @@ class {transform.test_class_name}(TestCase):
                     ]
                     actual_arr = output_df_pandas[actual_output_cols].to_numpy()
 
-                sklearn_numpy_arr = getattr(sklearn_reg, m)(input_df_pandas[input_cols])
+                if m == 'fit_transform':
+                    sklearn_numpy_arr = sklearn_reg.fit_transform(**args)
+                else:
+                    sklearn_numpy_arr = getattr(sklearn_reg, m)(input_df_pandas[input_cols])
+                
+                
                 if len(sklearn_numpy_arr.shape) == 3:
                     # VotingClassifier will return results of shape (n_classifiers, n_samples, n_classes)
                     # when voting = "soft" and flatten_transform = False. We can't handle unflatten transforms,

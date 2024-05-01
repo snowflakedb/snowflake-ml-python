@@ -198,35 +198,41 @@ class ModelSQLTest(absltest.TestCase):
             statement_params=m_statement_params,
         )
 
-    def test_config_model_details_enable(self) -> None:
+    def test_rename(self) -> None:
         m_statement_params = {"test": "1"}
         m_df = mock_data_frame.MockDataFrame(
-            collect_result=[Row("Session successfully altered.")], collect_statement_params=m_statement_params
+            collect_result=[Row("Model MODEL successfully dropped.")], collect_statement_params=m_statement_params
         )
-        self.m_session.add_mock_sql("""ALTER SESSION SET SHOW_MODEL_DETAILS_IN_SHOW_VERSIONS_IN_MODEL=true""", m_df)
+        self.m_session.add_mock_sql("""ALTER MODEL TEMP."test".MODEL RENAME TO TEMP."test".MODEL2""", m_df)
         c_session = cast(Session, self.m_session)
         model_sql.ModelSQLClient(
             c_session,
             database_name=sql_identifier.SqlIdentifier("TEMP"),
             schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
-        ).config_model_details(
-            enable=True,
+        ).rename(
+            model_name=sql_identifier.SqlIdentifier("MODEL"),
+            new_model_db=None,
+            new_model_schema=None,
+            new_model_name=sql_identifier.SqlIdentifier("MODEL2"),
             statement_params=m_statement_params,
         )
 
-    def test_config_model_details_false(self) -> None:
+    def test_rename_fully_qualified_name(self) -> None:
         m_statement_params = {"test": "1"}
         m_df = mock_data_frame.MockDataFrame(
-            collect_result=[Row("Session successfully altered.")], collect_statement_params=m_statement_params
+            collect_result=[Row("Model MODEL successfully dropped.")], collect_statement_params=m_statement_params
         )
-        self.m_session.add_mock_sql("""ALTER SESSION UNSET SHOW_MODEL_DETAILS_IN_SHOW_VERSIONS_IN_MODEL""", m_df)
+        self.m_session.add_mock_sql("""ALTER MODEL TEMP."test".MODEL RENAME TO TEMP2."test2".MODEL2""", m_df)
         c_session = cast(Session, self.m_session)
         model_sql.ModelSQLClient(
             c_session,
             database_name=sql_identifier.SqlIdentifier("TEMP"),
             schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
-        ).config_model_details(
-            enable=False,
+        ).rename(
+            model_name=sql_identifier.SqlIdentifier("MODEL"),
+            new_model_db=sql_identifier.SqlIdentifier("TEMP2"),
+            new_model_schema=sql_identifier.SqlIdentifier("test2", case_sensitive=True),
+            new_model_name=sql_identifier.SqlIdentifier("MODEL2"),
             statement_params=m_statement_params,
         )
 

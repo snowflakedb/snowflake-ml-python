@@ -1,4 +1,4 @@
-from typing import List, Tuple
+from typing import List
 from uuid import uuid4
 
 from absl.testing import absltest, parameterized
@@ -311,19 +311,19 @@ class FeatureStoreCaseSensitivityTest(parameterized.TestCase):
     @parameterized.parameters(
         [
             (
-                [("foo", "bar"), ("foo", "BAR"), ("FOO", "BAR"), ('"FOO"', "BAR")],
-                [('"foo"', "bar")],
+                ["foo", "Foo", "FOO"],
+                ['"foo"'],
             ),
             (
-                [('"abc"', "def"), ('"abc"', "DEF")],
-                [("abc", "def")],
+                ['"abc"'],
+                ["abc", '"Abc"', '"aBC"'],
             ),
         ]
     )  # type: ignore[misc]
-    def test_feature_view_names_and_versions_combination(
+    def test_feature_view_names(
         self,
-        equi_full_names: List[Tuple[str, str]],
-        diff_full_names: List[Tuple[str, str]],
+        equi_full_names: List[str],
+        diff_full_names: List[str],
     ) -> None:
         current_schema = create_random_schema(self._session, "TEST_FEATURE_VIEW_NAMES")
         fs = FeatureStore(
@@ -337,30 +337,26 @@ class FeatureStoreCaseSensitivityTest(parameterized.TestCase):
 
         df = self._session.create_dataframe([1, 2, 3], schema=["a"])
         e = Entity(name="my_cool_entity", join_keys=["a"])
-        original_fv_name, original_version = equi_full_names[0]
+        original_fv_name = equi_full_names[0]
         fv_0 = FeatureView(name=original_fv_name, entities=[e], feature_df=df)
         fs.register_entity(e)
-        fs.register_feature_view(fv_0, original_version)
+        fs.register_feature_view(fv_0, "LATEST")
 
         # register with identical full name will fail
-        for equi_full_name in equi_full_names:
-            fv_name = equi_full_name[0]
-            version = equi_full_name[1]
+        for name in equi_full_names:
             with self.assertWarnsRegex(UserWarning, "FeatureView .* already exists..*"):
-                fv = FeatureView(name=fv_name, entities=[e], feature_df=df)
-                fs.register_feature_view(fv, version)
+                fv = FeatureView(name=name, entities=[e], feature_df=df)
+                fs.register_feature_view(fv, "LATEST")
 
         # register with different full name is fine
-        for diff_full_name in diff_full_names:
-            fv_name = diff_full_name[0]
-            version = diff_full_name[1]
-            fv = FeatureView(name=fv_name, entities=[e], feature_df=df)
-            fv = fs.register_feature_view(fv, version)
+        for name in diff_full_names:
+            fv = FeatureView(name=name, entities=[e], feature_df=df)
+            fv = fs.register_feature_view(fv, "LATEST")
             fs.read_feature_view(fv)
 
-        self.assertEqual(len(fs.list_feature_views(as_dataframe=False)), len(diff_full_names) + 1)
+        self.assertEqual(len(fs.list_feature_views().collect()), len(diff_full_names) + 1)
         self.assertEqual(
-            len(fs.list_feature_views(entity_name="my_cool_entity", as_dataframe=False)),
+            len(fs.list_feature_views(entity_name="my_cool_entity").collect()),
             len(diff_full_names) + 1,
         )
         self.assertGreaterEqual(
@@ -368,33 +364,26 @@ class FeatureStoreCaseSensitivityTest(parameterized.TestCase):
                 fs.list_feature_views(
                     entity_name="my_cool_entity",
                     feature_view_name=original_fv_name,
-                    as_dataframe=False,
-                )
+                ).collect()
             ),
             1,
         )
-        for diff_full_name in diff_full_names:
-            fv_name = diff_full_name[0]
+        for name in diff_full_names:
             self.assertGreaterEqual(
                 len(
                     fs.list_feature_views(
                         entity_name="my_cool_entity",
-                        feature_view_name=fv_name,
-                        as_dataframe=False,
-                    )
+                        feature_view_name=name,
+                    ).collect()
                 ),
                 1,
             )
 
-        for equi_name in equi_full_names:
-            fv_name = equi_name[0]
-            version = equi_name[1]
-            fs.get_feature_view(fv_name, version)
+        for name in equi_full_names:
+            fs.get_feature_view(name, "LATEST")
 
-        for diff_name in diff_full_names:
-            fv_name = diff_name[0]
-            version = diff_name[1]
-            fs.get_feature_view(fv_name, version)
+        for name in diff_full_names:
+            fs.get_feature_view(name, "LATEST")
 
     @parameterized.parameters(TEST_NAMES)  # type: ignore[misc]
     def test_find_objects(self, equi_names: List[str], diff_names: List[str]) -> None:
@@ -431,27 +420,42 @@ class FeatureStoreCaseSensitivityTest(parameterized.TestCase):
         fs.register_entity(e)
         fv = FeatureView(name="MY_FV", entities=[e], feature_df=df)
 
-        # 1: register with lowercase, get it back with lowercase/uppercase
-        fs.register_feature_view(fv, "a1")
-        fs.get_feature_view("MY_FV", "A1")
-        fs.get_feature_view("MY_FV", "a1")
+        valid_versions = [
+            "v2",  # start with letter
+            "3x",  # start with digit
+            "1",  # single digit
+            "2.1",  # digit with period
+            "3_1",  # digit with underscore
+            "4-1",  # digit with hyphen
+            "4-1_2.3",  # digit with period, underscore and hyphen
+            "x",  # single letter
+            "4x_1",  # digit, letter and underscore
+            "latest",  # pure lowercase letters
+            "OLD",  # pure uppercase letters
+            "OLap",  # pure uppercase letters
+            "a" * 128,  # within maximum allowed length
+        ]
 
-        # 2: register with uppercase, get it back with lowercase/uppercase
-        fs.register_feature_view(fv, "B2")
-        fs.get_feature_view("MY_FV", "b2")
-        fs.get_feature_view("MY_FV", "B2")
+        invalid_dataset_versions = [
+            "",  # empty
+            "_v1",  # start with underscore
+            ".2",  # start with period
+            "3/1",  # digit with slash
+            "-4",  # start with hyphen
+            "v1$",  # start with letter, contains invalid character
+            "9^",  # start with digit, contains invalid character
+            "a" * 129,  # exceed maximum allowed length
+        ]
 
-        # 3. register with valid characters
-        fs.register_feature_view(fv, "V2_1")
-        fs.get_feature_view("MY_FV", "v2_1")
+        for version in valid_versions:
+            fv_1 = fs.register_feature_view(fv, version)
+            self.assertTrue(("$" + version) in fv_1.fully_qualified_name())
+            fv_2 = fs.get_feature_view("MY_FV", version)
+            self.assertTrue(("$" + version) in fv_2.fully_qualified_name())
 
-        # 4: register with invalid characters
-        with self.assertRaisesRegex(ValueError, "3 is not a valid SQL identifier: .*"):
-            fs.register_feature_view(fv, "3")
-        with self.assertRaisesRegex(ValueError, ".* is not allowed in version: .*"):
-            fs.register_feature_view(fv, "abc$")
-        with self.assertRaisesRegex(ValueError, "abc# is not a valid SQL identifier: .*"):
-            fs.register_feature_view(fv, "abc#")
+        for version in invalid_dataset_versions:
+            with self.assertRaisesRegex(ValueError, ".* is not a valid feature view version.*"):
+                fs.register_feature_view(fv, version)
 
 
 if __name__ == "__main__":

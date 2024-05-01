@@ -1,5 +1,5 @@
 import json
-from typing import Optional, cast
+from typing import cast
 
 from absl.testing import absltest
 from absl.testing.absltest import mock
@@ -52,29 +52,32 @@ class SnowServiceClientTest(absltest.TestCase):
             external_access_integrations=["eai_a", "eai_b"],
         )
 
-    def _add_mock_cursor_to_session(self, *, expected_job_id: Optional[str] = None) -> None:
-        mock_cursor = mock.Mock()
-        mock_cursor.execute_async.return_value = None
-        mock_cursor._sfqid = expected_job_id
-
-        # Replace the cursor in the m_session with the mock_cursor
-        self.m_session._conn = mock.Mock()
-        self.m_session._conn._conn = mock.Mock()
-        self.m_session._conn._conn.cursor.return_value = mock_cursor
-
     def test_create_job_successfully(self) -> None:
-        with mock.patch.object(self.client, "get_resource_status", return_value=constants.ResourceStatus.DONE):
+        with mock.patch.object(
+            self.client, "get_resource_status", return_value=constants.ResourceStatus.DONE
+        ) as mock_get_resource_status:
             m_compute_pool = "mock_compute_pool"
             m_stage = "@mock_spec_stage"
             m_stage_path = "a/hello.yaml"
             m_spec_storgae_location = f"{m_stage}/{m_stage_path}"
-            expected_job_id = "abcd"
-            self._add_mock_cursor_to_session(expected_job_id=expected_job_id)
+            m_job_name = "abcd"
+            self.m_session.add_mock_sql(
+                query=f"""
+                EXECUTE JOB SERVICE
+                IN COMPUTE POOL {m_compute_pool}
+                FROM {m_stage}
+                SPECIFICATION_FILE = '{m_stage_path}'
+                NAME = {m_job_name}
+                EXTERNAL_ACCESS_INTEGRATIONS = (eai_a, eai_b)""",
+                result=mock_data_frame.MockDataFrame(collect_result=[]),
+            )
             self.client.create_job(
+                job_name=m_job_name,
                 compute_pool=m_compute_pool,
                 spec_stage_location=m_spec_storgae_location,
                 external_access_integrations=["eai_a", "eai_b"],
             )
+            mock_get_resource_status.assert_called_once_with(resource_name=m_job_name)
 
     def test_create_job_failed(self) -> None:
         with self.assertLogs(level="INFO") as cm:
@@ -85,18 +88,28 @@ class SnowServiceClientTest(absltest.TestCase):
                     m_stage = "@mock_spec_stage"
                     m_stage_path = "a/hello.yaml"
                     m_spec_storgae_location = f"{m_stage}/{m_stage_path}"
-                    expected_job_id = "abcd"
+                    m_job_name = "abcd"
 
                     self.m_session.add_mock_sql(
-                        query=f"CALL SYSTEM$GET_JOB_LOGS('{expected_job_id}', '{constants.KANIKO_CONTAINER_NAME}')",
+                        query=f"""
+                    EXECUTE JOB SERVICE
+                    IN COMPUTE POOL {m_compute_pool}
+                    FROM {m_stage}
+                    SPECIFICATION_FILE = '{m_stage_path}'
+                    NAME = {m_job_name}
+                    EXTERNAL_ACCESS_INTEGRATIONS = (eai_a, eai_b)""",
+                        result=mock_data_frame.MockDataFrame(collect_result=[]),
+                    )
+
+                    self.m_session.add_mock_sql(
+                        query=f"CALL SYSTEM$GET_SERVICE_LOGS('{m_job_name}', '0', '{constants.KANIKO_CONTAINER_NAME}')",
                         result=mock_data_frame.MockDataFrame(
-                            collect_result=[snowpark.Row(**{"SYSTEM$GET_JOB_LOGS": test_log})]
+                            collect_result=[snowpark.Row(**{"SYSTEM$GET_SERVICE_LOGS": test_log})]
                         ),
                     )
 
-                    self._add_mock_cursor_to_session(expected_job_id=expected_job_id)
-
                     self.client.create_job(
+                        job_name=m_job_name,
                         compute_pool=m_compute_pool,
                         spec_stage_location=m_spec_storgae_location,
                         external_access_integrations=["eai_a", "eai_b"],
@@ -183,7 +196,7 @@ class SnowServiceClientTest(absltest.TestCase):
         )
 
         self.assertEqual(
-            self.client.get_resource_status(self.m_service_name, constants.ResourceType.SERVICE),
+            self.client.get_resource_status(self.m_service_name),
             constants.ResourceStatus("READY"),
         )
 
@@ -210,7 +223,7 @@ class SnowServiceClientTest(absltest.TestCase):
         )
 
         self.assertEqual(
-            self.client.get_resource_status(self.m_service_name, constants.ResourceType.SERVICE),
+            self.client.get_resource_status(self.m_service_name),
             constants.ResourceStatus("FAILED"),
         )
 
@@ -235,7 +248,7 @@ class SnowServiceClientTest(absltest.TestCase):
             query="call system$GET_SERVICE_STATUS('mock_service_name');",
             result=mock_data_frame.MockDataFrame(collect_result=[row]),
         )
-        self.assertEqual(self.client.get_resource_status(self.m_service_name, constants.ResourceType.SERVICE), None)
+        self.assertEqual(self.client.get_resource_status(self.m_service_name), None)
 
     def test_block_until_service_is_ready_happy_path(self) -> None:
         with mock.patch.object(self.client, "get_resource_status", return_value=constants.ResourceStatus("READY")):

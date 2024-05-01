@@ -105,3 +105,6 @@ UNFEASIBLE_ENVIRONMENT_ERROR = "2502"
 
 # Missing required client side dependency.
 CLIENT_DEPENDENCY_MISSING_ERROR = "2511"
+
+# Current client side snowpark-ml-python version is outdated and may have forward compatibility issue
+SNOWML_PACKAGE_OUTDATED = "2700"

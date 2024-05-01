@@ -1,5 +1,4 @@
 import pickle
-from typing import List
 
 import fsspec
 from absl.testing import absltest, parameterized
@@ -43,7 +42,7 @@ class SFFileSystemTest(parameterized.TestCase):
             "nytrain/",
         ),
     )
-    def test_parse_sfc_file_path(self, *test_case: List[str]) -> None:
+    def test_parse_sfc_file_path(self, *test_case: str) -> None:
         """Test if the FS could parse the input stage location correctly"""
         with absltest.mock.patch(
             "snowflake.ml.fileset.stage_fs.SFStageFileSystem", autospec=True

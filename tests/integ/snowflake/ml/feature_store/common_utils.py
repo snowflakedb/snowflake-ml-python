@@ -42,7 +42,14 @@ def create_random_schema(
     return schema
 
 
-def compare_dataframe(actual_df: pd.DataFrame, target_data: Dict[str, Any], sort_cols: List[str]) -> None:
+def compare_dataframe(
+    actual_df: pd.DataFrame, target_data: Dict[str, Any], sort_cols: List[str], exclude_cols: Optional[List[str]] = None
+) -> None:
+    if exclude_cols is not None:
+        for c in exclude_cols:
+            assert c.upper() in actual_df, f"{c.upper()} is missing in actual_df"
+        actual_df = actual_df.drop([c.upper() for c in exclude_cols], axis=1)
+
     target_df = pd.DataFrame(target_data).sort_values(by=sort_cols)
     assert_frame_equal(
         actual_df.sort_values(by=sort_cols).reset_index(drop=True), target_df.reset_index(drop=True), check_dtype=False

@@ -1,6 +1,67 @@
 # Release History
 
-## 1.4.1
+## 1.5.0
+
+### Bug Fixes
+
+- Registry: Fix invalid parameter 'SHOW_MODEL_DETAILS_IN_SHOW_VERSIONS_IN_MODEL' error.
+
+### Behavior Changes
+
+- Model Development: The behavior of `fit_transform` for all estimators is changed.
+  Firstly, it will cover all the estimator that contains this function,
+  secondly, the output would be the union of pandas DataFrame and snowpark DataFrame.
+
+#### Model Registry (PrPr)
+
+`snowflake.ml.registry.artifact` and related `snowflake.ml.model_registry.ModelRegistry` APIs have been removed.
+
+- Removed `snowflake.ml.registry.artifact` module.
+- Removed `ModelRegistry.log_artifact()`, `ModelRegistry.list_artifacts()`, `ModelRegistry.get_artifact()`
+- Removed `artifacts` argument from `ModelRegistry.log_model()`
+
+#### Dataset (PrPr)
+
+`snowflake.ml.dataset.Dataset` has been redesigned to be backed by Snowflake Dataset entities.
+
+- New `Dataset`s can be created with `Dataset.create()` and existing `Dataset`s may be loaded
+  with `Dataset.load()`.
+- `Dataset`s now maintain an immutable `selected_version` state. The `Dataset.create_version()` and
+  `Dataset.load_version()` APIs return new `Dataset` objects with the requested `selected_version` state.
+- Added `dataset.create_from_dataframe()` and `dataset.load_dataset()` convenience APIs as a shortcut
+  to creating and loading `Dataset`s with a pre-selected version.
+- `Dataset.materialized_table` and `Dataset.snapshot_table` no longer exist with `Dataset.fully_qualified_name`
+  as the closest equivalent.
+- `Dataset.df` no longer exists. Instead, use `DatasetReader.read.to_snowpark_dataframe()`.
+- `Dataset.owner` has been moved to `Dataset.selected_version.owner`
+- `Dataset.desc` has been moved to `DatasetVersion.selected_version.comment`
+- `Dataset.timestamp_col`, `Dataset.label_cols`, `Dataset.feature_store_metadata`, and
+  `Dataset.schema_version` have been removed.
+
+#### Feature Store (PrPr)
+
+`FeatureStore.generate_dataset` argument list has been changed to match the new
+`snowflake.ml.dataset.Dataset` definition
+
+- `materialized_table` has been removed and replaced with `name` and `version`.
+- `name` moved to first positional argument
+- `save_mode` has been removed as `merge` behavior is no longer supported. The new behavior is always `errorifexists`.
+
+### New Features
+
+- Registry: Add `export` method to `ModelVersion` instance to export model files.
+- Registry: Add `load` method to `ModelVersion` instance to load the underlying object from the model.
+- Registry: Add `Model.rename` method to `Model` instance to rename or move a model.
+
+#### Dataset (PrPr)
+
+- Added Snowpark DataFrame integration using `Dataset.read.to_snowpark_dataframe()`
+- Added Pandas DataFrame integration using `Dataset.read.to_pandas()`
+- Added PyTorch and TensorFlow integrations using `Dataset.read.to_torch_datapipe()`
+    and `Dataset.read.to_tf_dataset()` respectively.
+- Added `fsspec` style file integration using `Dataset.read.files()` and `Dataset.read.filesystem()`
+
+## 1.4.1 (2024-04-18)
 
 ### New Features
 

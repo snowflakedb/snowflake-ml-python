@@ -555,25 +555,6 @@ class ModelRegistryTest(absltest.TestCase):
                 [snowpark.Row(status=f"View {_REGISTRY_TABLE_NAME}_VIEW successfully created.")]
             ),
         )
-        self.add_session_mock_sql(
-            query=(
-                f"""CREATE OR REPLACE TEMPORARY VIEW {_DATABASE_NAME}.{_SCHEMA_NAME}.{_ARTIFACTS_TABLE_NAME}_VIEW
-                    COPY GRANTS AS
-                    SELECT
-                        {_REGISTRY_TABLE_NAME}.NAME AS MODEL_NAME,
-                        {_REGISTRY_TABLE_NAME}.VERSION AS MODEL_VERSION,
-                        {_ARTIFACTS_TABLE_NAME}.*
-                    FROM {_REGISTRY_TABLE_NAME}
-                    LEFT JOIN {_ARTIFACTS_TABLE_NAME}
-                    ON (ARRAY_CONTAINS(
-                        {_ARTIFACTS_TABLE_NAME}.ID::VARIANT,
-                        {_REGISTRY_TABLE_NAME}.ARTIFACT_IDS))
-                """
-            ),
-            result=mock_data_frame.MockDataFrame(
-                [snowpark.Row(status=f"View {_ARTIFACTS_TABLE_NAME}_VIEW successfully created.")]
-            ),
-        )
 
     def setup_open_existing(self) -> None:
         self.add_session_mock_sql(
@@ -1169,7 +1150,6 @@ class ModelRegistryTest(absltest.TestCase):
                                 uri=uri.get_uri_from_snowflake_stage_path(model_path),
                                 description="description",
                                 tags=None,
-                                artifacts=None,
                             )
 
         self._mock_show_version_table_exists({})

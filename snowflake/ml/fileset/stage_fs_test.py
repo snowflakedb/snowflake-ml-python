@@ -96,7 +96,7 @@ class SFStageFileSystemTest(absltest.TestCase):
 
     def _add_mock_test_case(self, prefix: str) -> None:
         self.session.add_mock_sql(
-            query=f"LIST @{self.db}.{self.schema}.{self.stage}/{prefix}",
+            query=f"LIST '@{self.db}.{self.schema}.{self.stage}/{prefix}'",
             result=self._mock_collect_res(prefix),
         )
 

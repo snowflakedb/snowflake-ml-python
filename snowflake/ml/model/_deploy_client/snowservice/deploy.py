@@ -346,6 +346,7 @@ class SnowServiceDeployment:
         (db, schema, _, _) = identifier.parse_schema_level_object_identifier(service_func_name)
 
         self._service_name = identifier.get_schema_level_object_identifier(db, schema, f"service_{model_id}")
+        self._job_name = identifier.get_schema_level_object_identifier(db, schema, f"build_{model_id}")
         # Spec file and future deployment related artifacts will be stored under {stage}/models/{model_id}
         self._model_artifact_stage_location = posixpath.join(deployment_stage_path, "models", self.id)
         self.debug_dir: Optional[str] = None
@@ -468,6 +469,7 @@ class SnowServiceDeployment:
                 session=self.session,
                 artifact_stage_location=self._model_artifact_stage_location,
                 compute_pool=self.options.compute_pool,
+                job_name=self._job_name,
                 external_access_integrations=self.options.external_access_integrations,
             )
         else:

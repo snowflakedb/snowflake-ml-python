@@ -13,10 +13,6 @@ from packaging import requirements, specifiers, utils as packaging_utils, versio
 
 import snowflake.connector
 from snowflake.ml._internal import env as snowml_env
-from snowflake.ml._internal.exceptions import (
-    error_codes,
-    exceptions as snowml_exceptions,
-)
 from snowflake.ml._internal.utils import query_result_checker
 from snowflake.snowpark import context, exceptions, session
 from snowflake.snowpark._internal import utils as snowpark_utils
@@ -235,6 +231,72 @@ def get_local_installed_version_of_pip_package(pip_req: requirements.Requirement
         )
         return pip_req
     return new_pip_req
+
+
+class IncorrectLocalEnvironmentError(Exception):
+    ...
+
+
+def validate_local_installed_version_of_pip_package(pip_req: requirements.Requirement) -> None:
+    """Validate if the package is locally installed, and the local version meet the specifier of the requirements.
+
+    Args:
+        pip_req: A requirements.Requirement object showing the requirement.
+
+    Raises:
+        IncorrectLocalEnvironmentError: Raised when cannot find the local installation of the requested package.
+        IncorrectLocalEnvironmentError: Raised when the local installed version cannot meet the requirement.
+    """
+    try:
+        local_dist = importlib_metadata.distribution(pip_req.name)
+        local_dist_version = version.parse(local_dist.version)
+    except importlib_metadata.PackageNotFoundError:
+        raise IncorrectLocalEnvironmentError(f"Cannot find the local installation of the requested package {pip_req}.")
+
+    if not pip_req.specifier.contains(local_dist_version):
+        raise IncorrectLocalEnvironmentError(
+            f"The local installed version {local_dist_version} cannot meet the requirement {pip_req}."
+        )
+
+
+CONDA_PKG_NAME_TO_PYPI_MAP = {"pytorch": "torch"}
+
+
+def try_convert_conda_requirement_to_pip(conda_req: requirements.Requirement) -> requirements.Requirement:
+    """Return a new requirements.Requirement object whose name has been attempted to convert to name in pypi from conda.
+
+    Args:
+        conda_req: A requirements.Requirement object showing the requirement in conda.
+
+    Returns:
+        A new requirements.Requirement object showing the requirement in pypi.
+    """
+    pip_req = copy.deepcopy(conda_req)
+    pip_req.name = CONDA_PKG_NAME_TO_PYPI_MAP.get(conda_req.name, conda_req.name)
+    return pip_req
+
+
+def validate_py_runtime_version(provided_py_version_str: str) -> None:
+    """Validate the provided python version string with python version in current runtime.
+        If the major or minor is different, errors out.
+
+    Args:
+        provided_py_version_str: the provided python version string.
+
+    Raises:
+        IncorrectLocalEnvironmentError: Raised when the provided python version has different major or minor.
+    """
+    if provided_py_version_str != snowml_env.PYTHON_VERSION:
+        provided_py_version = version.parse(provided_py_version_str)
+        current_py_version = version.parse(snowml_env.PYTHON_VERSION)
+        if (
+            provided_py_version.major != current_py_version.major
+            or provided_py_version.minor != current_py_version.minor
+        ):
+            raise IncorrectLocalEnvironmentError(
+                f"Requested python version is {provided_py_version_str} "
+                f"while current Python version is {snowml_env.PYTHON_VERSION}. "
+            )
 
 
 def get_package_spec_with_supported_ops_only(req: requirements.Requirement) -> requirements.Requirement:
@@ -566,33 +628,6 @@ def parse_python_version_string(dep: str) -> Optional[str]:
             # "python" only, no specifier
             return ""
     return None
-
-
-def validate_py_runtime_version(provided_py_version_str: str) -> None:
-    """Validate the provided python version string with python version in current runtime.
-        If the major or minor is different, errors out.
-
-    Args:
-        provided_py_version_str: the provided python version string.
-
-    Raises:
-        SnowflakeMLException: Raised when the provided python version has different major or minor.
-    """
-    if provided_py_version_str != snowml_env.PYTHON_VERSION:
-        provided_py_version = version.parse(provided_py_version_str)
-        current_py_version = version.parse(snowml_env.PYTHON_VERSION)
-        if (
-            provided_py_version.major != current_py_version.major
-            or provided_py_version.minor != current_py_version.minor
-        ):
-            raise snowml_exceptions.SnowflakeMLException(
-                error_code=error_codes.LOCAL_ENVIRONMENT_ERROR,
-                original_exception=RuntimeError(
-                    f"Unable to load model which is saved with Python {provided_py_version_str} "
-                    f"while current Python version is {snowml_env.PYTHON_VERSION}. "
-                    "To load model metadata only, set meta_only to True."
-                ),
-            )
 
 
 def _find_conda_dep_spec(

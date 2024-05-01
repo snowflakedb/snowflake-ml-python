@@ -2,27 +2,26 @@ import datetime
 from typing import List, Optional, Tuple, Union, cast
 from uuid import uuid4
 
-from absl.testing import absltest
+from absl.testing import absltest, parameterized
 from common_utils import (
     FS_INTEG_TEST_DATASET_SCHEMA,
     FS_INTEG_TEST_DB,
     FS_INTEG_TEST_DUMMY_DB,
     cleanup_temporary_objects,
     compare_dataframe,
-    compare_feature_views,
     create_mock_session,
     create_random_schema,
     get_test_warehouse_name,
 )
+from snowflake.ml.version import VERSION
 
+from snowflake.ml import dataset
 from snowflake.ml._internal.utils.sql_identifier import SqlIdentifier
-from snowflake.ml.dataset.dataset import Dataset
 from snowflake.ml.feature_store.entity import Entity
 from snowflake.ml.feature_store.feature_store import (
     _ENTITY_TAG_PREFIX,
     _FEATURE_STORE_OBJECT_TAG,
-    _FEATURE_VIEW_ENTITY_TAG,
-    _FEATURE_VIEW_TS_COL_TAG,
+    _FEATURE_VIEW_METADATA_TAG,
     CreationMode,
     FeatureStore,
 )
@@ -32,11 +31,11 @@ from snowflake.ml.feature_store.feature_view import (
     FeatureViewStatus,
 )
 from snowflake.ml.utils.connection_params import SnowflakeLoginOptions
-from snowflake.snowpark import DataFrame, Session, exceptions as snowpark_exceptions
+from snowflake.snowpark import Session, exceptions as snowpark_exceptions
 from snowflake.snowpark.functions import call_udf, col, udf
 
 
-class FeatureStoreTest(absltest.TestCase):
+class FeatureStoreTest(parameterized.TestCase):
     @classmethod
     def setUpClass(self) -> None:
         self._session = Session.builder.configs(SnowflakeLoginOptions()).create()
@@ -85,7 +84,7 @@ class FeatureStoreTest(absltest.TestCase):
         ).collect()
         return table_full_path
 
-    def _create_feature_store(self, name: Optional[str] = None) -> FeatureStore:
+    def _create_feature_store(self, name: Optional[str] = None, use_optimized_tag_ref: bool = False) -> FeatureStore:
         current_schema = create_random_schema(self._session, "FS_TEST") if name is None else name
         fs = FeatureStore(
             self._session,
@@ -98,6 +97,7 @@ class FeatureStoreTest(absltest.TestCase):
         # Intentionally point session to a different database to make sure feature store code is resilient to
         # session location.
         self._session.use_database(FS_INTEG_TEST_DUMMY_DB)
+        fs._use_optimized_tag_ref = use_optimized_tag_ref
         return fs
 
     def _check_tag_value(
@@ -227,13 +227,14 @@ class FeatureStoreTest(absltest.TestCase):
             fs.clear()
         fs._session = original_session
 
-    def test_create_and_delete_entities(self) -> None:
-        fs = self._create_feature_store()
+    @parameterized.parameters(True, False)  # type: ignore[misc]
+    def test_create_and_delete_entities(self, use_optimized_tag_ref: bool) -> None:
+        fs = self._create_feature_store(use_optimized_tag_ref=use_optimized_tag_ref)
 
         entities = {
             "User": Entity("USER", ['"uid"']),
             "Ad": Entity('"aD"', ["aid"]),
-            "Product": Entity("Product", ["pid", "cid"]),
+            "Product": Entity("Product", ['"pid"', "cid"]),
         }
 
         # create new entities
@@ -247,7 +248,7 @@ class FeatureStoreTest(absltest.TestCase):
             actual_df=actual_result.drop(columns="OWNER"),
             target_data={
                 "NAME": ["aD", "PRODUCT", "USER"],
-                "JOIN_KEYS": ['["AID"]', '["CID","PID"]', '["uid"]'],
+                "JOIN_KEYS": ['["AID"]', '["pid,CID"]', '["uid"]'],
                 "DESC": ["", "", ""],
             },
             sort_cols=["NAME"],
@@ -271,7 +272,7 @@ class FeatureStoreTest(absltest.TestCase):
             actual_df=actual_result.drop(columns="OWNER"),
             target_data={
                 "NAME": ["PRODUCT", "USER"],
-                "JOIN_KEYS": ['["CID","PID"]', '["uid"]'],
+                "JOIN_KEYS": ['["pid,CID"]', '["uid"]'],
                 "DESC": ["", ""],
             },
             sort_cols=["NAME"],
@@ -286,10 +287,10 @@ class FeatureStoreTest(absltest.TestCase):
 
         # test delete entity failure with active feature views
         # create a new feature view
-        sql = f'SELECT name, id AS "uid" FROM {self._mock_table}'
+        sql = f'SELECT name, id AS "uid", id AS CID, id AS "pid" FROM {self._mock_table}'
         fv = FeatureView(
             name="fv",
-            entities=[entities["User"]],
+            entities=[entities["User"], entities["Product"]],
             feature_df=self._session.sql(sql),
             refresh_freq="1m",
         )
@@ -297,8 +298,9 @@ class FeatureStoreTest(absltest.TestCase):
         with self.assertRaisesRegex(ValueError, "Cannot delete Entity .* due to active FeatureViews.*"):
             fs.delete_entity("User")
 
-    def test_retrieve_entity(self) -> None:
-        fs = self._create_feature_store()
+    @parameterized.parameters(True, False)  # type: ignore[misc]
+    def test_retrieve_entity(self, use_optimized_tag_ref: bool) -> None:
+        fs = self._create_feature_store(use_optimized_tag_ref=use_optimized_tag_ref)
 
         e1 = Entity(name="foo", join_keys=["a", "b"], desc="my foo")
         e2 = Entity(name="bar", join_keys=["c"])
@@ -321,7 +323,7 @@ class FeatureStoreTest(absltest.TestCase):
             actual_df=actual_result.drop(columns="OWNER"),
             target_data={
                 "NAME": ["FOO", "BAR"],
-                "JOIN_KEYS": ['["A","B"]', '["C"]'],
+                "JOIN_KEYS": ['["A,B"]', '["C"]'],
                 "DESC": ["my foo", ""],
             },
             sort_cols=["NAME"],
@@ -348,8 +350,9 @@ class FeatureStoreTest(absltest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "Failed to find object .*"):
             fs.register_entity(e)
 
-    def test_register_feature_view_with_unregistered_entity(self) -> None:
-        fs = self._create_feature_store()
+    @parameterized.parameters(True, False)  # type: ignore[misc]
+    def test_register_feature_view_with_unregistered_entity(self, use_optimized_tag_ref: bool) -> None:
+        fs = self._create_feature_store(use_optimized_tag_ref=use_optimized_tag_ref)
 
         e = Entity("foo", ["id"])
 
@@ -364,7 +367,8 @@ class FeatureStoreTest(absltest.TestCase):
         with self.assertRaisesRegex(ValueError, "Entity .* has not been registered."):
             fs.register_feature_view(feature_view=fv, version="v1")
 
-    def test_register_feature_view_as_view(self) -> None:
+    @parameterized.parameters(True, False)  # type: ignore[misc]
+    def test_register_feature_view_as_view(self, use_optimized_tag_ref: bool) -> None:
         """
         APIs covered by test:
             1. register_feature_view
@@ -375,7 +379,7 @@ class FeatureStoreTest(absltest.TestCase):
             6. generate_dataset (covers retrieve_feature_values)
         """
 
-        fs = self._create_feature_store()
+        fs = self._create_feature_store(use_optimized_tag_ref=use_optimized_tag_ref)
 
         e = Entity("foo", ["id"])
         fs.register_entity(e)
@@ -388,11 +392,17 @@ class FeatureStoreTest(absltest.TestCase):
             timestamp_col="ts",
             desc="foobar",
         ).attach_feature_desc({"AGE": "my age", "TITLE": '"my title"'})
-        fv = fs.register_feature_view(feature_view=fv, version="v1")
+        fv = fs.register_feature_view(feature_view=fv, version="2.0")
 
-        self._check_tag_value(fs, fv.fully_qualified_name(), "table", _FEATURE_STORE_OBJECT_TAG, "FEATURE_VIEW")
+        self._check_tag_value(
+            fs,
+            fv.fully_qualified_name(),
+            "table",
+            _FEATURE_STORE_OBJECT_TAG,
+            f"""{{"type": "EXTERNAL_FEATURE_VIEW", "pkg_version": "{VERSION}"}}""",
+        )
 
-        self.assertEqual(fv, fs.get_feature_view("fv", "v1"))
+        self.assertEqual(fv, fs.get_feature_view("fv", "2.0"))
 
         compare_dataframe(
             actual_df=fs.read_feature_view(fv).to_pandas(),
@@ -405,8 +415,6 @@ class FeatureStoreTest(absltest.TestCase):
             },
             sort_cols=["ID", "TS"],
         )
-        compare_feature_views(fs.list_feature_views(as_dataframe=False), [fv])
-        compare_feature_views(fs.list_feature_views(entity_name="FOO", as_dataframe=False), [fv])
 
         # create another feature view
         new_fv = FeatureView(
@@ -417,20 +425,37 @@ class FeatureStoreTest(absltest.TestCase):
             desc="foobar",
         )
         new_fv = fs.register_feature_view(feature_view=new_fv, version="V1")
-        compare_feature_views(fs.list_feature_views(as_dataframe=False), [fv, new_fv])
+
+        compare_dataframe(
+            actual_df=fs.list_feature_views(entity_name="FOO").to_pandas(),
+            target_data={
+                "NAME": ["FV", "NEW_FV"],
+                "VERSION": ["2.0", "V1"],
+                "DATABASE_NAME": [fs._config.database] * 2,
+                "SCHEMA_NAME": [fs._config.schema] * 2,
+                "DESC": ["foobar", "foobar"],
+                "ENTITIES": ['[\n  "FOO"\n]'] * 2,
+            },
+            sort_cols=["NAME"],
+            exclude_cols=["CREATED_ON", "OWNER"],
+        )
 
         # generate data on multiple feature views
         spine_df = self._session.create_dataframe([(1, 101)], schema=["id", "ts"])
         ds = fs.generate_dataset(
-            spine_df=spine_df, features=[fv, new_fv], spine_timestamp_col="ts", include_feature_view_timestamp_col=True
+            spine_df=spine_df,
+            features=[fv, new_fv],
+            spine_timestamp_col="ts",
+            include_feature_view_timestamp_col=True,
+            name="test_ds",
         )
 
         compare_dataframe(
-            actual_df=ds.df.to_pandas(),
+            actual_df=ds.read.to_pandas(),
             target_data={
                 "ID": [1],
                 "TS": [101],
-                "FV_V1_TS": [100],
+                "FV_2.0_TS": [100],
                 "NAME": ["jonh"],
                 "TITLE": ["boss"],
                 "AGE": [20],
@@ -471,8 +496,9 @@ class FeatureStoreTest(absltest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "(?s)Create dynamic table .* failed.*"):
             fs.register_feature_view(feature_view=fv2, version="v2")
 
-    def test_create_and_delete_feature_views(self) -> None:
-        fs = self._create_feature_store()
+    @parameterized.parameters(True, False)  # type: ignore[misc]
+    def test_create_and_delete_feature_views(self, use_optimized_tag_ref: bool) -> None:
+        fs = self._create_feature_store(use_optimized_tag_ref=use_optimized_tag_ref)
 
         e1 = Entity("foo", ["aid"])
         e2 = Entity("bar", ["uid"])
@@ -501,7 +527,13 @@ class FeatureStoreTest(absltest.TestCase):
         )  # fv0.status == FeatureViewStatus.RUNNING can be removed after BCR 2024_02 gets fully deployed
         self.assertEqual(fv0.refresh_freq, "1 minute")
         self.assertEqual(fv0, fs.get_feature_view("fv0", "FIRST"))
-        self._check_tag_value(fs, fv0.fully_qualified_name(), "table", _FEATURE_STORE_OBJECT_TAG, "FEATURE_VIEW")
+        self._check_tag_value(
+            fs,
+            fv0.fully_qualified_name(),
+            "table",
+            _FEATURE_STORE_OBJECT_TAG,
+            f"""{{"type": "MANAGED_FEATURE_VIEW", "pkg_version": "{VERSION}"}}""",
+        )
 
         # suspend feature view
         fv0 = fs.suspend_feature_view(fv0)
@@ -533,7 +565,19 @@ class FeatureStoreTest(absltest.TestCase):
         fs.update_default_warehouse(alternate_warehouse)
         fv1 = fs.register_feature_view(feature_view=fv1, version="FIRST")
 
-        compare_feature_views(fs.list_feature_views(as_dataframe=False), [fv0, new_fv0, fv1])
+        compare_dataframe(
+            actual_df=fs.list_feature_views().to_pandas(),
+            target_data={
+                "NAME": ["FV0", "FV0", "FV1"],
+                "VERSION": ["FIRST", "SECOND", "FIRST"],
+                "DATABASE_NAME": [fs._config.database] * 3,
+                "SCHEMA_NAME": [fs._config.schema] * 3,
+                "DESC": ["my_fv0", "my_new_fv0", "my_fv1"],
+                "ENTITIES": ['[\n  "FOO",\n  "BAR"\n]'] * 3,
+            },
+            sort_cols=["NAME"],
+            exclude_cols=["CREATED_ON", "OWNER"],
+        )
 
         # delete feature view
         with self.assertRaisesRegex(ValueError, "FeatureView .* has not been registered."):
@@ -542,7 +586,19 @@ class FeatureStoreTest(absltest.TestCase):
 
         fs.delete_feature_view(fs.get_feature_view("FV0", "FIRST"))
 
-        compare_feature_views(fs.list_feature_views(as_dataframe=False), [new_fv0, fv1])
+        compare_dataframe(
+            actual_df=fs.list_feature_views().to_pandas(),
+            target_data={
+                "NAME": ["FV0", "FV1"],
+                "VERSION": ["SECOND", "FIRST"],
+                "DATABASE_NAME": [fs._config.database] * 2,
+                "SCHEMA_NAME": [fs._config.schema] * 2,
+                "DESC": ["my_new_fv0", "my_fv1"],
+                "ENTITIES": ['[\n  "FOO",\n  "BAR"\n]'] * 2,
+            },
+            sort_cols=["NAME"],
+            exclude_cols=["CREATED_ON", "OWNER"],
+        )
 
         # test get feature view obj
         fv = fs.get_feature_view(name="fv1", version="FIRST")
@@ -560,8 +616,9 @@ class FeatureStoreTest(absltest.TestCase):
         fv = fs.get_feature_view(name="fv0", version="SECOND")
         self.assertEqual(str(fv.timestamp_col).upper(), "TS")
 
-    def test_create_duplicated_feature_view(self) -> None:
-        fs = self._create_feature_store()
+    @parameterized.parameters(True, False)  # type: ignore[misc]
+    def test_create_duplicated_feature_view(self, use_optimized_tag_ref: bool) -> None:
+        fs = self._create_feature_store(use_optimized_tag_ref=use_optimized_tag_ref)
 
         e = Entity("foo", ["id"])
         fs.register_entity(e)
@@ -573,10 +630,10 @@ class FeatureStoreTest(absltest.TestCase):
             feature_df=self._session.sql(sql),
             refresh_freq="1m",
         )
-        fv = fs.register_feature_view(feature_view=fv, version="v1")
+        fv = fs.register_feature_view(feature_view=fv, version="r1")
 
-        with self.assertWarnsRegex(UserWarning, "FeatureView FV/V1 already exists. Skip registration. .*"):
-            fv = fs.register_feature_view(feature_view=fv, version="v1")
+        with self.assertWarnsRegex(UserWarning, "FeatureView FV/r1 already exists. Skip registration. .*"):
+            fv = fs.register_feature_view(feature_view=fv, version="r1")
             self.assertIsNotNone(fv)
 
         fv = FeatureView(
@@ -586,7 +643,7 @@ class FeatureStoreTest(absltest.TestCase):
             refresh_freq="1m",
         )
         with self.assertWarnsRegex(UserWarning, "FeatureView .* already exists..*"):
-            fv = fs.register_feature_view(feature_view=fv, version="v1")
+            fv = fs.register_feature_view(feature_view=fv, version="r1")
 
     def test_resume_and_suspend_feature_view(self) -> None:
         fs = self._create_feature_store()
@@ -641,8 +698,9 @@ class FeatureStoreTest(absltest.TestCase):
 
         fs._session = original_session
 
-    def test_read_feature_view(self) -> None:
-        fs = self._create_feature_store()
+    @parameterized.parameters(True, False)  # type: ignore[misc]
+    def test_read_feature_view(self, use_optimized_tag_ref: bool) -> None:
+        fs = self._create_feature_store(use_optimized_tag_ref=use_optimized_tag_ref)
 
         e = Entity("foo", ["id"])
         fs.register_entity(e)
@@ -669,8 +727,9 @@ class FeatureStoreTest(absltest.TestCase):
             sort_cols=["NAME"],
         )
 
-    def test_register_with_cron_expr(self) -> None:
-        fs = self._create_feature_store()
+    @parameterized.parameters(True, False)  # type: ignore[misc]
+    def test_register_with_cron_expr(self, use_optimized_tag_ref: bool) -> None:
+        fs = self._create_feature_store(use_optimized_tag_ref=use_optimized_tag_ref)
 
         e = Entity("foo", ["id"])
         fs.register_entity(e)
@@ -686,13 +745,17 @@ class FeatureStoreTest(absltest.TestCase):
         fv = fs.get_feature_view("my_fv", "v1")
         self.assertEqual(my_fv, fv)
 
-        task_name = FeatureView._get_physical_name(fv.name, fv.version)  # type: ignore[arg-type]
+        task_name = FeatureView._get_physical_name(fv.name, fv.version).resolved()  # type: ignore[arg-type]
         res = self._session.sql(f"SHOW TASKS LIKE '{task_name}' IN SCHEMA {fs._config.full_schema_path}").collect()
         self.assertEqual(len(res), 1)
         self.assertEqual(res[0]["state"], "started")
         self.assertEqual(fv.refresh_freq, "DOWNSTREAM")
         self._check_tag_value(
-            fs, fv.fully_qualified_name(), "task", _FEATURE_STORE_OBJECT_TAG, "FEATURE_VIEW_REFRESH_TASK"
+            fs,
+            fv.fully_qualified_name(),
+            "task",
+            _FEATURE_STORE_OBJECT_TAG,
+            f"""{{"type": "FEATURE_VIEW_REFRESH_TASK", "pkg_version": "{VERSION}"}}""",
         )
 
         fv = fs.suspend_feature_view(fv)
@@ -707,8 +770,9 @@ class FeatureStoreTest(absltest.TestCase):
         res = self._session.sql(f"SHOW TASKS LIKE '{task_name}' IN SCHEMA {fs._config.full_schema_path}").collect()
         self.assertEqual(len(res), 0)
 
-    def test_retrieve_time_series_feature_values(self) -> None:
-        fs = self._create_feature_store()
+    @parameterized.parameters(True, False)  # type: ignore[misc]
+    def test_retrieve_time_series_feature_values(self, use_optimized_tag_ref: bool) -> None:
+        fs = self._create_feature_store(use_optimized_tag_ref=use_optimized_tag_ref)
 
         e = Entity("foo", ["id"])
         fs.register_entity(e)
@@ -721,7 +785,7 @@ class FeatureStoreTest(absltest.TestCase):
             timestamp_col="ts",
             refresh_freq="DOWNSTREAM",
         )
-        fv1 = fs.register_feature_view(feature_view=fv1, version="v1")
+        fv1 = fs.register_feature_view(feature_view=fv1, version="1.0")
 
         sql2 = f"SELECT id, age, ts FROM {self._mock_table}"
         fv2 = FeatureView(
@@ -731,7 +795,7 @@ class FeatureStoreTest(absltest.TestCase):
             timestamp_col="ts",
             refresh_freq="DOWNSTREAM",
         )
-        fv2 = fs.register_feature_view(feature_view=fv2, version="v1")
+        fv2 = fs.register_feature_view(feature_view=fv2, version="1.0")
 
         sql3 = f"SELECT id, dept FROM {self._mock_table}"
         fv3 = FeatureView(
@@ -740,7 +804,7 @@ class FeatureStoreTest(absltest.TestCase):
             feature_df=self._session.sql(sql3),
             refresh_freq="DOWNSTREAM",
         )
-        fv3 = fs.register_feature_view(feature_view=fv3, version="v1")
+        fv3 = fs.register_feature_view(feature_view=fv3, version="1.0")
 
         spine_df = self._session.create_dataframe([(1, 101), (2, 202), (1, 90)], schema=["id", "ts"])
         df = fs.retrieve_feature_values(
@@ -755,10 +819,10 @@ class FeatureStoreTest(absltest.TestCase):
             target_data={
                 "ID": [1, 1, 2],
                 "TS": [90, 101, 202],
-                "FV1_V1_TS": [None, 100, 200],
+                "FV1_1.0_TS": [None, 100, 200],
                 "NAME": [None, "jonh", "porter"],
                 "TITLE": [None, "boss", "manager"],
-                "FV2_V1_TS": [None, 100, 200],
+                "FV2_1.0_TS": [None, 100, 200],
                 "AGE": [None, 20, 30],
                 "DEPT": ["sales", "sales", "engineer"],
             },
@@ -836,8 +900,9 @@ class FeatureStoreTest(absltest.TestCase):
 
         # test retrieve_feature_values with serialized feature objects
         fv1_slice = fv1.slice(["name"])
-        dataset = fs.generate_dataset(spine_df, features=[fv1_slice, fv2])
-        df = fs.retrieve_feature_values(spine_df=spine_df, features=cast(List[str], dataset.load_features()))
+        dataset = fs.generate_dataset(spine_df=spine_df, features=[fv1_slice, fv2], name="test_ds")
+        features = fs.load_feature_views_from_dataset(dataset)
+        df = fs.retrieve_feature_values(spine_df=spine_df, features=features)
         compare_dataframe(
             actual_df=df.to_pandas(),
             target_data={
@@ -851,77 +916,155 @@ class FeatureStoreTest(absltest.TestCase):
 
     def test_invalid_load_feature_views_from_dataset(self) -> None:
         fs = self._create_feature_store()
-        dataset = Dataset(self._session, self._session.create_dataframe([1, 2, 3], schema=["foo"]))
+        ds = dataset.create_from_dataframe(
+            self._session,
+            "test_ds",
+            uuid4().hex,
+            input_dataframe=self._session.create_dataframe([1, 2, 3], schema=["foo"]),
+        )
         with self.assertRaisesRegex(ValueError, "Dataset.*does not contain valid feature view information."):
-            fs.load_feature_views_from_dataset(dataset)
+            fs.load_feature_views_from_dataset(ds)
 
-    def test_list_feature_views(self) -> None:
-        fs = self._create_feature_store()
+    @parameterized.parameters(True, False)  # type: ignore[misc]
+    def test_list_feature_views(self, use_optimized_tag_ref: bool) -> None:
+        fs = self._create_feature_store(use_optimized_tag_ref=use_optimized_tag_ref)
 
-        e = Entity("foo", ["id"])
-        fs.register_entity(e)
+        e1 = Entity("foo", ["id"])
+        fs.register_entity(e1)
+        e2 = Entity("bar", ["name"])
+        fs.register_entity(e2)
 
-        self.assertEqual(fs.list_feature_views(entity_name="foo", as_dataframe=False), [])
+        compare_dataframe(
+            actual_df=fs.list_feature_views(entity_name="FOO").to_pandas(),
+            target_data={
+                "NAME": [],
+                "VERSION": [],
+                "DATABASE_NAME": [],
+                "SCHEMA_NAME": [],
+                "CREATED_ON": [],
+                "OWNER": [],
+                "DESC": [],
+                "ENTITIES": [],
+            },
+            sort_cols=["NAME"],
+        )
 
         # 1. Right side is FeatureViewSlice
         sql1 = f"SELECT id, name, ts FROM {self._mock_table}"
         fv1 = FeatureView(
             name="fv1",
-            entities=[e],
+            entities=[e1],
             feature_df=self._session.sql(sql1),
             timestamp_col="ts",
             refresh_freq="DOWNSTREAM",
         )
         fv1.attach_feature_desc({"name": "this is my name col"})
-        fv1 = fs.register_feature_view(feature_view=fv1, version="v1")
+        fs.register_feature_view(feature_view=fv1, version="v1")
 
-        sql2 = f"SELECT id, title, age FROM {self._mock_table}"
+        sql2 = f"SELECT id, name, title, age FROM {self._mock_table}"
         fv2 = FeatureView(
             name="fv2",
-            entities=[e],
+            entities=[e2],
             feature_df=self._session.sql(sql2),
             refresh_freq="DOWNSTREAM",
+            desc="foobar",
         )
-        fv2 = fs.register_feature_view(feature_view=fv2, version="v1")
-        self.assertEqual(
-            sorted(
-                cast(
-                    List[FeatureView],
-                    fs.list_feature_views(entity_name="Foo", as_dataframe=False),
-                ),
-                key=lambda fv: fv.name,
-            ),
-            [fv1, fv2],
+        fs.register_feature_view(feature_view=fv2, version="v1")
+
+        fv3 = FeatureView(
+            name="fv3",
+            entities=[e1, e2],
+            feature_df=self._session.sql(sql2),
+            refresh_freq="DOWNSTREAM",
+            desc="foobar",
         )
-        self.assertEqual(
-            fs.list_feature_views(entity_name="foo", feature_view_name="fv1", as_dataframe=False),
-            [fv1],
+        fs.register_feature_view(feature_view=fv3, version="v1")
+
+        compare_dataframe(
+            actual_df=fs.list_feature_views().to_pandas(),
+            target_data={
+                "NAME": ["FV1", "FV2", "FV3"],
+                "VERSION": ["v1", "v1", "v1"],
+                "DATABASE_NAME": [fs._config.database] * 3,
+                "SCHEMA_NAME": [fs._config.schema] * 3,
+                "DESC": ["", "foobar", "foobar"],
+                "ENTITIES": ['[\n  "FOO"\n]', '[\n  "BAR"\n]', '[\n  "FOO",\n  "BAR"\n]'],
+            },
+            sort_cols=["NAME"],
+            exclude_cols=["CREATED_ON", "OWNER"],
         )
 
-        df = cast(DataFrame, fs.list_feature_views())
-        self.assertListEqual(
-            df.columns,
-            [
-                "NAME",
-                "ENTITIES",
-                "TIMESTAMP_COL",
-                "DESC",
-                "QUERY",
-                "VERSION",
-                "STATUS",
-                "FEATURE_DESC",
-                "REFRESH_FREQ",
-                "DATABASE",
-                "SCHEMA",
-                "WAREHOUSE",
-                "REFRESH_MODE",
-                "REFRESH_MODE_REASON",
-                "OWNER",
-                "PHYSICAL_NAME",
-            ],
+        compare_dataframe(
+            actual_df=fs.list_feature_views(entity_name="FOO").to_pandas(),
+            target_data={
+                "NAME": ["FV1", "FV3"],
+                "VERSION": ["v1", "v1"],
+                "DATABASE_NAME": [fs._config.database, fs._config.database],
+                "SCHEMA_NAME": [fs._config.schema, fs._config.schema],
+                "DESC": ["", "foobar"],
+                "ENTITIES": ['[\n  "FOO"\n]', '[\n  "FOO",\n  "BAR"\n]'],
+            },
+            sort_cols=["NAME"],
+            exclude_cols=["CREATED_ON", "OWNER"],
         )
-        result = df.collect()
-        self.assertEqual(len(result), 2)
+
+        compare_dataframe(
+            actual_df=fs.list_feature_views(feature_view_name="FV2").to_pandas(),
+            target_data={
+                "NAME": ["FV2"],
+                "VERSION": ["v1"],
+                "DATABASE_NAME": [fs._config.database],
+                "SCHEMA_NAME": [fs._config.schema],
+                "DESC": ["foobar"],
+                "ENTITIES": ['[\n  "BAR"\n]'],
+            },
+            sort_cols=["NAME"],
+            exclude_cols=["CREATED_ON", "OWNER"],
+        )
+
+        compare_dataframe(
+            actual_df=fs.list_feature_views(entity_name="BAR", feature_view_name="FV2").to_pandas(),
+            target_data={
+                "NAME": ["FV2"],
+                "VERSION": ["v1"],
+                "DATABASE_NAME": [fs._config.database],
+                "SCHEMA_NAME": [fs._config.schema],
+                "DESC": ["foobar"],
+                "ENTITIES": ['[\n  "BAR"\n]'],
+            },
+            sort_cols=["NAME"],
+            exclude_cols=["CREATED_ON", "OWNER"],
+        )
+
+        compare_dataframe(
+            actual_df=fs.list_feature_views(entity_name="FOO", feature_view_name="FV3").to_pandas(),
+            target_data={
+                "NAME": ["FV3"],
+                "VERSION": ["v1"],
+                "DATABASE_NAME": [fs._config.database],
+                "SCHEMA_NAME": [fs._config.schema],
+                "DESC": ["foobar"],
+                "ENTITIES": ['[\n  "FOO",\n  "BAR"\n]'],
+            },
+            sort_cols=["NAME"],
+            exclude_cols=["CREATED_ON", "OWNER"],
+        )
+
+        compare_dataframe(
+            actual_df=fs.list_feature_views(entity_name="BAR", feature_view_name="BAZ").to_pandas(),
+            target_data={
+                "NAME": [],
+                "VERSION": [],
+                "DATABASE_NAME": [],
+                "SCHEMA_NAME": [],
+                "CREATED_ON": [],
+                "OWNER": [],
+                "DESC": [],
+                "ENTITIES": [],
+            },
+            sort_cols=["NAME"],
+        )
+        fs._check_feature_store_object_versions()
 
     def test_list_feature_views_system_error(self) -> None:
         fs = self._create_feature_store()
@@ -952,30 +1095,6 @@ class FeatureStoreTest(absltest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "Failed to find object"):
             fs.list_feature_views(entity_name="foo")
 
-    def test_create_and_cleanup_tags(self) -> None:
-        current_schema = create_random_schema(self._session, "TEST_CREATE_AND_CLEANUP_TAGS")
-        fs = FeatureStore(
-            self._session,
-            FS_INTEG_TEST_DB,
-            current_schema,
-            default_warehouse=self._test_warehouse_name,
-            creation_mode=CreationMode.CREATE_IF_NOT_EXIST,
-        )
-        self.assertIsNotNone(fs)
-
-        res = self._session.sql(
-            f"SHOW TAGS LIKE '{_FEATURE_VIEW_ENTITY_TAG}' IN SCHEMA {fs._config.full_schema_path}"
-        ).collect()
-        self.assertEqual(len(res), 1)
-
-        self._session.sql(f"DROP SCHEMA IF EXISTS {FS_INTEG_TEST_DB}.{current_schema}").collect()
-
-        row_list = self._session.sql(
-            f"SHOW TAGS LIKE '{_FEATURE_VIEW_ENTITY_TAG}' IN DATABASE {fs._config.database}"
-        ).collect()
-        for row in row_list:
-            self.assertNotEqual(row["schema_name"], current_schema)
-
     def test_generate_dataset(self) -> None:
         fs = self._create_feature_store()
 
@@ -1002,16 +1121,17 @@ class FeatureStoreTest(absltest.TestCase):
         fv2 = fs.register_feature_view(feature_view=fv2, version="v1")
         spine_df = self._session.create_dataframe([(1, 100), (1, 101)], schema=["id", "ts"])
 
-        # Generate dataset the first time
+        # Generate dataset
         ds1 = fs.generate_dataset(
             spine_df=spine_df,
             features=[fv1, fv2],
-            materialized_table="foobar",
+            name="foobar",
+            version="test",
             spine_timestamp_col="ts",
         )
 
         compare_dataframe(
-            actual_df=ds1.df.to_pandas(),
+            actual_df=ds1.read.to_pandas(),
             target_data={
                 "ID": [1, 1],
                 "TS": [100, 101],
@@ -1023,85 +1143,18 @@ class FeatureStoreTest(absltest.TestCase):
         )
         self.assertEqual([fv1, fv2], fs.load_feature_views_from_dataset(ds1))
 
-        # Re-generate dataset with same source should not cause any duplication
-        ds2 = fs.generate_dataset(
-            spine_df=spine_df,
-            features=[fv1, fv2],
-            materialized_table="foobar",
-            spine_timestamp_col="ts",
-            save_mode="merge",
-        )
-
-        compare_dataframe(
-            actual_df=ds2.df.to_pandas(),
-            target_data={
-                "ID": [1, 1],
-                "TS": [100, 101],
-                "NAME": ["jonh", "jonh"],
-                "TITLE": ["boss", "boss"],
-                "AGE": [20, 20],
-            },
-            sort_cols=["ID", "TS"],
-        )
-
-        # New data should properly appear
-        spine_df = self._session.create_dataframe([(2, 202)], schema=["id", "ts"])
-        ds3 = fs.generate_dataset(
-            spine_df=spine_df,
-            features=[fv1, fv2],
-            materialized_table="foobar",
-            spine_timestamp_col="ts",
-            save_mode="merge",
-        )
-
-        compare_dataframe(
-            actual_df=ds3.df.to_pandas(),
-            target_data={
-                "ID": [1, 1, 2],
-                "TS": [100, 101, 202],
-                "NAME": ["jonh", "jonh", "porter"],
-                "TITLE": ["boss", "boss", "manager"],
-                "AGE": [20, 20, 30],
-            },
-            sort_cols=["ID", "TS"],
-        )
-
-        # Snapshot should remain the same
-        compare_dataframe(
-            actual_df=self._session.sql(f"SELECT * FROM {ds1.snapshot_table}").to_pandas(),
-            target_data={
-                "ID": [1, 1],
-                "TS": [100, 101],
-                "NAME": ["jonh", "jonh"],
-                "TITLE": ["boss", "boss"],
-                "AGE": [20, 20],
-            },
-            sort_cols=["ID", "TS"],
-        )
-        compare_dataframe(
-            actual_df=self._session.sql(f"SELECT * FROM {ds3.snapshot_table}").to_pandas(),
-            target_data={
-                "ID": [1, 1, 2],
-                "TS": [100, 101, 202],
-                "NAME": ["jonh", "jonh", "porter"],
-                "TITLE": ["boss", "boss", "manager"],
-                "AGE": [20, 20, 30],
-            },
-            sort_cols=["ID", "TS"],
-        )
-
         # Generate dataset with exclude_columns and check both materialization and non-materialization path
         spine_df = self._session.create_dataframe([(1, 101), (2, 202)], schema=["id", "ts"])
 
         ds4 = fs.generate_dataset(
             spine_df=spine_df,
             features=[fv1, fv2],
-            materialized_table="foobar2",
+            name="foobar2",
             spine_timestamp_col="ts",
             exclude_columns=["id", "ts"],
         )
         compare_dataframe(
-            actual_df=ds4.df.to_pandas(),
+            actual_df=ds4.read.to_pandas(),
             target_data={
                 "NAME": ["jonh", "porter"],
                 "TITLE": ["boss", "manager"],
@@ -1115,9 +1168,10 @@ class FeatureStoreTest(absltest.TestCase):
             features=[fv1, fv2],
             spine_timestamp_col="ts",
             exclude_columns=["id", "ts"],
+            name="test_ds",
         )
         compare_dataframe(
-            actual_df=ds5.df.to_pandas(),
+            actual_df=ds5.read.to_pandas(),
             target_data={
                 "NAME": ["jonh", "porter"],
                 "TITLE": ["boss", "manager"],
@@ -1127,23 +1181,22 @@ class FeatureStoreTest(absltest.TestCase):
         )
 
         # Generate data should fail with errorifexists if table already exist
-        with self.assertRaisesRegex(ValueError, "Dataset table .* already exists."):
+        with self.assertRaisesRegex(ValueError, "already exists"):
             fs.generate_dataset(
                 spine_df=spine_df,
                 features=[fv1, fv2],
-                materialized_table="foobar",
+                name="foobar",
+                version="test",
                 spine_timestamp_col="ts",
-                save_mode="errorifexists",
             )
 
-        # registered table should fail with invalid char `.`
-        with self.assertRaisesRegex(ValueError, "materialized_table .* contains invalid char `.`"):
+        # Invalid dataset names should be rejected
+        with self.assertRaisesRegex(ValueError, "Invalid identifier"):
             fs.generate_dataset(
                 spine_df=spine_df,
                 features=[fv1, fv2],
-                materialized_table="foo.bar",
+                name=".bar",
                 spine_timestamp_col="ts",
-                save_mode="errorifexists",
             )
 
         # invalid columns in exclude_columns should fail
@@ -1151,9 +1204,62 @@ class FeatureStoreTest(absltest.TestCase):
             fs.generate_dataset(
                 spine_df=spine_df,
                 features=[fv1, fv2],
-                materialized_table="foobar3",
+                name="foobar3",
                 spine_timestamp_col="ts",
                 exclude_columns=["foo"],
+            )
+
+    def test_generate_dataset_external_schema(self) -> None:
+        database_name = self._session.get_current_database()
+        schema_name = create_random_schema(self._session, "FS_TEST_EXTERNAL_SCHEMA", database=database_name)
+        fs = self._create_feature_store()
+        self.assertNotEqual(fs._config.schema, schema_name)
+
+        e = Entity('"fOO"', ["id"])
+        fs.register_entity(e)
+
+        sql1 = f"SELECT id, name, title FROM {self._mock_table}"
+        fv1 = FeatureView(
+            name="fv1",
+            entities=[e],
+            feature_df=self._session.sql(sql1),
+            refresh_freq="DOWNSTREAM",
+        )
+        fv1 = fs.register_feature_view(feature_view=fv1, version="v1", block=True)
+
+        # Generate dataset on external schema
+        spine_df = self._session.create_dataframe([(1, 100), (1, 101)], schema=["id", "ts"])
+        ds_name = "dataset_external_schema"
+        ds = fs.generate_dataset(
+            spine_df=spine_df,
+            features=[fv1],
+            name=f"{database_name}.{schema_name}.{ds_name}",
+            spine_timestamp_col="ts",
+        )
+
+        # Generated dataset should be in external schema
+        self.assertGreater(len(ds.read.files()), 0)
+        for file in ds.read.files():
+            self.assertContainsExactSubsequence(file, f"{database_name}.{schema_name}.{ds_name}")
+
+        ds_df = ds.read.to_snowpark_dataframe()
+        compare_dataframe(
+            actual_df=ds_df.to_pandas(),
+            target_data={
+                "ID": [1, 1],
+                "TS": [100, 101],
+                "NAME": ["jonh", "jonh"],
+                "TITLE": ["boss", "boss"],
+            },
+            sort_cols=["ID", "TS"],
+        )
+
+        # Fail on non-existent schema
+        with self.assertRaisesRegex(RuntimeError, "does not exist"):
+            fs.generate_dataset(
+                spine_df=spine_df,
+                features=[fv1],
+                name="NONEXISTENT_SCHEMA.foobar",
             )
 
     def test_clear_feature_store_in_existing_schema(self) -> None:
@@ -1191,21 +1297,19 @@ class FeatureStoreTest(absltest.TestCase):
         fs.generate_dataset(
             spine_df=spine_df,
             features=[fv],
-            materialized_table="foo_mt",
+            name="foo_mt",
             spine_timestamp_col="ts",
-            save_mode="errorifexists",
         )
 
         def check_fs_objects(expected_count: int) -> None:
             result = self._session.sql(f"SHOW DYNAMIC TABLES LIKE 'FV$V1' IN SCHEMA {full_schema_path}").collect()
             self.assertEqual(len(result), expected_count)
-            result = self._session.sql(f"SHOW TABLES LIKE 'foo_mt' IN SCHEMA {full_schema_path}").collect()
+            result = self._session.sql(f"SHOW DATASETS LIKE 'foo_mt' IN SCHEMA {full_schema_path}").collect()
             self.assertEqual(len(result), expected_count)
             result = self._session.sql(f"SHOW TASKS LIKE 'FV$V1' IN SCHEMA {full_schema_path}").collect()
             self.assertEqual(len(result), expected_count)
             expected_tags = [
-                _FEATURE_VIEW_ENTITY_TAG,
-                _FEATURE_VIEW_TS_COL_TAG,
+                _FEATURE_VIEW_METADATA_TAG,
                 _FEATURE_STORE_OBJECT_TAG,
                 f"{_ENTITY_TAG_PREFIX}foo",
             ]
@@ -1380,7 +1484,6 @@ class FeatureStoreTest(absltest.TestCase):
             },
             sort_cols=["ID"],
         )
-        compare_feature_views(fs.list_feature_views(as_dataframe=False), [fv1, fv2, fv3])
 
         # Replace existing feature views
         sql = f"SELECT id, name, title FROM {self._mock_table}"
@@ -1395,7 +1498,6 @@ class FeatureStoreTest(absltest.TestCase):
             },
             sort_cols=["ID"],
         )
-        compare_feature_views(fs.list_feature_views(as_dataframe=False), [fv1, fv2, fv3])
 
         # Replace non-existing feature view
         non_existing_fv = FeatureView(
@@ -1458,7 +1560,7 @@ class FeatureStoreTest(absltest.TestCase):
             refresh_freq=None,
         )
 
-        customers_fv = fs.register_feature_view(feature_view=customers_fv, version="v1")
+        customers_fv = fs.register_feature_view(feature_view=customers_fv, version="V1")
 
         spine_df = self._session.create_dataframe(
             [
@@ -1474,12 +1576,12 @@ class FeatureStoreTest(absltest.TestCase):
         dataset = fs.generate_dataset(
             spine_df=spine_df,
             features=[customers_fv],
-            materialized_table="customer_frad_training_data",
+            name="customer_frad_training_data",
             spine_timestamp_col="EVENT_TS",
             spine_label_cols=[],
             include_feature_view_timestamp_col=True,
         )
-        actual_df = dataset.df.to_pandas()
+        actual_df = dataset.read.to_pandas()
         actual_df["CUSTOMER_FV_V1_FEATURE_TS"] = actual_df["CUSTOMER_FV_V1_FEATURE_TS"].dt.date
 
         # CUST_AVG_AMOUNT_7 and CUST_AVG_AMOUNT_30 are expected to be same as the values
@@ -1502,9 +1604,10 @@ class FeatureStoreTest(absltest.TestCase):
             sort_cols=["CUSTOMER_ID"],
         )
 
-    def test_cross_feature_store_interop(self) -> None:
+    @parameterized.parameters(True, False)  # type: ignore[misc]
+    def test_cross_feature_store_interop(self, use_optimized_tag_ref: bool) -> None:
         # create first feature store and register feature views
-        first_fs = self._create_feature_store()
+        first_fs = self._create_feature_store(use_optimized_tag_ref=use_optimized_tag_ref)
 
         first_entity = Entity("foo", ["id"])
         first_fs.register_entity(first_entity)
@@ -1541,9 +1644,10 @@ class FeatureStoreTest(absltest.TestCase):
                 spine_df=spine_df,
                 features=[first_fv, second_fv],
                 spine_timestamp_col="ts",
+                name="test_ds",
             )
             compare_dataframe(
-                actual_df=ds.df.to_pandas(),
+                actual_df=ds.read.to_pandas(),
                 target_data={
                     "ID": [1],
                     "TS": [101],
@@ -1587,10 +1691,11 @@ class FeatureStoreTest(absltest.TestCase):
         ds = fs.generate_dataset(
             spine_df=spine_df,
             features=[fv1, fv2],
+            name="test_ds",
         )
 
         compare_dataframe(
-            actual_df=ds.df.to_pandas(),
+            actual_df=ds.read.to_pandas(),
             target_data={
                 "ID": [1, 2, 3],
                 "NAME": ["jonh", "porter", "johnny"],

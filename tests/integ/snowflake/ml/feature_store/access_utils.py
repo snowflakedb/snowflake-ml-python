@@ -3,8 +3,7 @@ from typing import Dict, List
 
 from snowflake.ml.feature_store.feature_store import (
     _FEATURE_STORE_OBJECT_TAG,
-    _FEATURE_VIEW_ENTITY_TAG,
-    _FEATURE_VIEW_TS_COL_TAG,
+    _FEATURE_VIEW_METADATA_TAG,
     FeatureStore,
 )
 from snowflake.snowpark import Session, exceptions
@@ -21,26 +20,24 @@ class FeatureStoreRole(Enum):
 _PRIVILEGE_LEVELS: Dict[FeatureStoreRole, Dict[str, List[str]]] = {
     FeatureStoreRole.ADMIN: {
         "database {database}": ["CREATE SCHEMA"],
-        f"tag {{database}}.{{schema}}.{_FEATURE_VIEW_ENTITY_TAG}": ["OWNERSHIP"],
-        f"tag {{database}}.{{schema}}.{_FEATURE_VIEW_TS_COL_TAG}": ["OWNERSHIP"],
+        f"tag {{database}}.{{schema}}.{_FEATURE_VIEW_METADATA_TAG}": ["OWNERSHIP"],
         f"tag {{database}}.{{schema}}.{_FEATURE_STORE_OBJECT_TAG}": ["OWNERSHIP"],
         "schema {database}.{schema}": ["OWNERSHIP"],
     },
     FeatureStoreRole.PRODUCER: {
         "schema {database}.{schema}": [
+            "CREATE TABLE",  # Necessary for testing only (create mock table)
             "CREATE DYNAMIC TABLE",
-            "CREATE TABLE",
             "CREATE TAG",
             "CREATE VIEW",
+            # FIXME(dhung): Dataset RBAC won't be ready until 8.17 release
+            # "CREATE DATASET",
         ],
-        f"tag {{database}}.{{schema}}.{_FEATURE_VIEW_ENTITY_TAG}": ["APPLY"],
-        f"tag {{database}}.{{schema}}.{_FEATURE_VIEW_TS_COL_TAG}": ["APPLY"],
+        f"tag {{database}}.{{schema}}.{_FEATURE_VIEW_METADATA_TAG}": ["APPLY"],
         f"tag {{database}}.{{schema}}.{_FEATURE_STORE_OBJECT_TAG}": ["APPLY"],
         # TODO: The below privileges should be granted on a per-resource level
         #       between producers (e.g. PRODUCER_A grants PRODUCER_B operate access
         #       to FEATURE_VIEW_0, but not FEATURE_VIEW_1)
-        "future tables in schema {database}.{schema}": ["INSERT"],
-        "all tables in schema {database}.{schema}": ["INSERT"],
         "future dynamic tables in schema {database}.{schema}": ["OPERATE"],
         "all dynamic tables in schema {database}.{schema}": ["OPERATE"],
         "future tasks in schema {database}.{schema}": ["OPERATE"],
@@ -66,6 +63,9 @@ _PRIVILEGE_LEVELS: Dict[FeatureStoreRole, Dict[str, List[str]]] = {
             "SELECT",
             "REFERENCES",
         ],
+        # FIXME(dhung): Dataset RBAC won't be ready until 8.17 release
+        # "future datasets in schema {database}.{schema}": ["USAGE"],
+        # "all datasets in schema {database}.{schema}": ["USAGE"],
     },
     FeatureStoreRole.NONE: {},
 }

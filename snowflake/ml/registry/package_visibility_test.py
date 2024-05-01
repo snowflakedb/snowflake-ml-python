@@ -3,7 +3,7 @@ from types import ModuleType
 from absl.testing import absltest
 
 from snowflake.ml import registry
-from snowflake.ml.registry import artifact, model_registry
+from snowflake.ml.registry import model_registry
 
 
 class PackageVisibilityTest(absltest.TestCase):
@@ -14,7 +14,6 @@ class PackageVisibilityTest(absltest.TestCase):
 
     def test_module_visible(self) -> None:
         self.assertIsInstance(model_registry, ModuleType)
-        self.assertIsInstance(artifact, ModuleType)
 
 
 if __name__ == "__main__":

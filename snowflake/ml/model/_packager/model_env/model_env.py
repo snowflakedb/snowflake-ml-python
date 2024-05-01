@@ -284,6 +284,7 @@ class ModelEnv:
                         " This may prevent model deploying to Snowflake Warehouse."
                     ),
                     category=UserWarning,
+                    stacklevel=2,
                 )
             if len(channel_dependencies) == 0 and channel not in self._conda_dependencies:
                 warnings.warn(
@@ -292,6 +293,7 @@ class ModelEnv:
                         " This may prevent model deploying to Snowflake Warehouse."
                     ),
                     category=UserWarning,
+                    stacklevel=2,
                 )
                 self._conda_dependencies[channel] = []
 
@@ -307,6 +309,7 @@ class ModelEnv:
                             " This may be unintentional."
                         ),
                         category=UserWarning,
+                        stacklevel=2,
                     )
 
         if pip_requirements_list:
@@ -316,6 +319,7 @@ class ModelEnv:
                     " This may prevent model deploying to Snowflake Warehouse."
                 ),
                 category=UserWarning,
+                stacklevel=2,
             )
             for pip_dependency in pip_requirements_list:
                 if any(
@@ -338,6 +342,7 @@ class ModelEnv:
                     " This may prevent model deploying to Snowflake Warehouse."
                 ),
                 category=UserWarning,
+                stacklevel=2,
             )
             for pip_dependency in pip_requirements_list:
                 if any(
@@ -372,3 +377,39 @@ class ModelEnv:
             "cuda_version": self.cuda_version,
             "snowpark_ml_version": self.snowpark_ml_version,
         }
+
+    def validate_with_local_env(
+        self, check_snowpark_ml_version: bool = False
+    ) -> List[env_utils.IncorrectLocalEnvironmentError]:
+        errors = []
+        try:
+            env_utils.validate_py_runtime_version(str(self._python_version))
+        except env_utils.IncorrectLocalEnvironmentError as e:
+            errors.append(e)
+
+        for conda_reqs in self._conda_dependencies.values():
+            for conda_req in conda_reqs:
+                try:
+                    env_utils.validate_local_installed_version_of_pip_package(
+                        env_utils.try_convert_conda_requirement_to_pip(conda_req)
+                    )
+                except env_utils.IncorrectLocalEnvironmentError as e:
+                    errors.append(e)
+
+        for pip_req in self._pip_requirements:
+            try:
+                env_utils.validate_local_installed_version_of_pip_package(pip_req)
+            except env_utils.IncorrectLocalEnvironmentError as e:
+                errors.append(e)
+
+        if check_snowpark_ml_version:
+            # For Modeling model
+            if self._snowpark_ml_version.base_version != snowml_env.VERSION:
+                errors.append(
+                    env_utils.IncorrectLocalEnvironmentError(
+                        f"The local installed version of Snowpark ML library is {snowml_env.VERSION} "
+                        f"which differs from required version {self.snowpark_ml_version}."
+                    )
+                )
+
+        return errors

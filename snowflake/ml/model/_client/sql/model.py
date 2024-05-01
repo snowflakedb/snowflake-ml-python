@@ -121,21 +121,23 @@ class ModelSQLClient:
             statement_params=statement_params,
         ).has_dimensions(expected_rows=1, expected_cols=1).validate()
 
-    def config_model_details(
+    def rename(
         self,
         *,
-        enable: bool,
+        model_name: sql_identifier.SqlIdentifier,
+        new_model_db: Optional[sql_identifier.SqlIdentifier],
+        new_model_schema: Optional[sql_identifier.SqlIdentifier],
+        new_model_name: sql_identifier.SqlIdentifier,
         statement_params: Optional[Dict[str, Any]] = None,
     ) -> None:
-        if enable:
-            query_result_checker.SqlResultValidator(
-                self._session,
-                "ALTER SESSION SET SHOW_MODEL_DETAILS_IN_SHOW_VERSIONS_IN_MODEL=true",
-                statement_params=statement_params,
-            ).has_dimensions(expected_rows=1, expected_cols=1).validate()
-        else:
-            query_result_checker.SqlResultValidator(
-                self._session,
-                "ALTER SESSION UNSET SHOW_MODEL_DETAILS_IN_SHOW_VERSIONS_IN_MODEL",
-                statement_params=statement_params,
-            ).has_dimensions(expected_rows=1, expected_cols=1).validate()
+        # Use registry's database and schema if a non fully qualified new model name is provided.
+        new_fully_qualified_name = identifier.get_schema_level_object_identifier(
+            new_model_db.identifier() if new_model_db else self._database_name.identifier(),
+            new_model_schema.identifier() if new_model_schema else self._schema_name.identifier(),
+            new_model_name.identifier(),
+        )
+        query_result_checker.SqlResultValidator(
+            self._session,
+            f"ALTER MODEL {self.fully_qualified_model_name(model_name)} RENAME TO {new_fully_qualified_name}",
+            statement_params=statement_params,
+        ).has_dimensions(expected_rows=1, expected_cols=1).validate()

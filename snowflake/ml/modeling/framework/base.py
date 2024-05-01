@@ -16,6 +16,7 @@ from snowflake.ml._internal.exceptions import (
     exceptions,
     modeling_error_messages,
 )
+from snowflake.ml._internal.lineage import data_source, dataset_dataframe
 from snowflake.ml._internal.utils import identifier, parallelize
 from snowflake.ml.modeling.framework import _utils
 from snowflake.snowpark import functions as F
@@ -385,6 +386,7 @@ class BaseEstimator(Base):
         self.file_names = file_names
         self.custom_states = custom_states
         self.sample_weight_col = sample_weight_col
+        self._data_sources: Optional[List[data_source.DataSource]] = None
 
         self.start_time = datetime.now().strftime(_utils.DATETIME_FORMAT)[:-3]
 
@@ -419,12 +421,17 @@ class BaseEstimator(Base):
         """
         return []
 
+    def _get_data_sources(self) -> Optional[List[data_source.DataSource]]:
+        return self._data_sources
+
     @telemetry.send_api_usage_telemetry(
         project=PROJECT,
         subproject=SUBPROJECT,
     )
     def fit(self, dataset: Union[snowpark.DataFrame, pd.DataFrame]) -> "BaseEstimator":
         """Runs universal logics for all fit implementations."""
+        if isinstance(dataset, dataset_dataframe.DatasetDataFrame):
+            self._data_sources = dataset._get_sources()
         return self._fit(dataset)
 
     @abstractmethod
@@ -539,58 +546,78 @@ class BaseTransformer(BaseEstimator):
                 ),
             )
 
+    def _infer_input_cols(self, dataset: Union[snowpark.DataFrame, pd.DataFrame]) -> List[str]:
+        """
+        Infer input_cols from the dataset. Input column are all columns in the input dataset that are not
+        designated as label, passthrough, or sample weight columns.
+
+        Args:
+            dataset: Input dataset.
+
+        Returns:
+            The list of input columns.
+        """
+        cols = [
+            c
+            for c in dataset.columns
+            if (c not in self.get_label_cols() and c not in self.get_passthrough_cols() and c != self.sample_weight_col)
+        ]
+        return cols
+
+    def _infer_output_cols(self) -> List[str]:
+        """Infer output column names from based on the estimator.
+
+        Returns:
+            The list of output columns.
+
+        Raises:
+            SnowflakeMLException: If unable to infer output columns
+
+        """
+
+        # keep mypy happy
+        assert self._sklearn_object is not None
+        if hasattr(self._sklearn_object, "_estimator_type"):
+            # For supervised estimators, infer the output columns from the label columns
+            if self._sklearn_object._estimator_type in SKLEARN_SUPERVISED_ESTIMATORS:
+                cols = [identifier.concat_names(["OUTPUT_", c]) for c in self.label_cols]
+                return cols
+
+            # For density estimators, clusterers, and outlier detectors, there is always exactly one output column.
+            elif self._sklearn_object._estimator_type in SKLEARN_SINGLE_OUTPUT_ESTIMATORS:
+                return ["OUTPUT_0"]
+
+            else:
+                raise exceptions.SnowflakeMLException(
+                    error_code=error_codes.INVALID_ARGUMENT,
+                    original_exception=ValueError(
+                        f"Unable to infer output columns for estimator type {self._sklearn_object._estimator_type}."
+                        f"Please include `output_cols` explicitly."
+                    ),
+                )
+        else:
+            raise exceptions.SnowflakeMLException(
+                error_code=error_codes.INVALID_ARGUMENT,
+                original_exception=ValueError(
+                    f"Unable to infer output columns for object {self._sklearn_object}."
+                    f"Please include `output_cols` explicitly."
+                ),
+            )
+
     def _infer_input_output_cols(self, dataset: Union[snowpark.DataFrame, pd.DataFrame]) -> None:
         """
         Infer `self.input_cols` and `self.output_cols` if they are not explicitly set.
 
         Args:
             dataset: Input dataset.
-
-        Raises:
-            SnowflakeMLException: If unable to infer output columns
         """
         if not self.input_cols:
-            cols = [
-                c
-                for c in dataset.columns
-                if (
-                    c not in self.get_label_cols()
-                    and c not in self.get_passthrough_cols()
-                    and c != self.sample_weight_col
-                )
-            ]
+            cols = self._infer_input_cols(dataset=dataset)
             self.set_input_cols(input_cols=cols)
 
         if not self.output_cols:
-            # keep mypy happy
-            assert self._sklearn_object is not None
-
-            if hasattr(self._sklearn_object, "_estimator_type"):
-                # For supervised estimators, infer the output columns from the label columns
-                if self._sklearn_object._estimator_type in SKLEARN_SUPERVISED_ESTIMATORS:
-                    cols = [identifier.concat_names(["OUTPUT_", c]) for c in self.label_cols]
-                    self.set_output_cols(output_cols=cols)
-
-                # For density estimators, clusterers, and outlier detectors, there is always exactly one output column.
-                elif self._sklearn_object._estimator_type in SKLEARN_SINGLE_OUTPUT_ESTIMATORS:
-                    self.set_output_cols(output_cols=["OUTPUT_0"])
-
-                else:
-                    raise exceptions.SnowflakeMLException(
-                        error_code=error_codes.INVALID_ARGUMENT,
-                        original_exception=ValueError(
-                            f"Unable to infer output columns for estimator type {self._sklearn_object._estimator_type}."
-                            f"Please include `output_cols` explicitly."
-                        ),
-                    )
-            else:
-                raise exceptions.SnowflakeMLException(
-                    error_code=error_codes.INVALID_ARGUMENT,
-                    original_exception=ValueError(
-                        f"Unable to infer output columns for object {self._sklearn_object}."
-                        f"Please include `output_cols` explicitly."
-                    ),
-                )
+            cols = self._infer_output_cols()
+            self.set_output_cols(output_cols=cols)
 
     def _get_output_column_names(self, output_cols_prefix: str, output_cols: Optional[List[str]] = None) -> List[str]:
         """Returns the list of output columns for predict_proba(), decision_function(), etc.. functions.

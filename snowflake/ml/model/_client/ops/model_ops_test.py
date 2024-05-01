@@ -1,3 +1,4 @@
+import pathlib
 from typing import List, cast
 from unittest import mock
 
@@ -9,6 +10,7 @@ from absl.testing import absltest
 from snowflake.ml._internal.utils import sql_identifier
 from snowflake.ml.model import model_signature
 from snowflake.ml.model._client.ops import model_ops
+from snowflake.ml.model._model_composer.model_manifest import model_manifest_schema
 from snowflake.ml.model._packager.model_meta import model_meta, model_meta_schema
 from snowflake.ml.model._signatures import snowpark_handler
 from snowflake.ml.test_utils import mock_data_frame, mock_session
@@ -503,12 +505,13 @@ class ModelOpsTest(absltest.TestCase):
         with mock.patch.object(
             snowpark_handler.SnowparkDataFrameHandler, "convert_from_df", return_value=m_df
         ) as mock_convert_from_df, mock.patch.object(
-            self.m_ops._model_version_client, "invoke_method", return_value=m_df
+            self.m_ops._model_version_client, "invoke_function_method", return_value=m_df
         ) as mock_invoke_method, mock.patch.object(
             snowpark_handler.SnowparkDataFrameHandler, "convert_to_df", return_value=pd_df
         ) as mock_convert_to_df:
             self.m_ops.invoke_method(
                 method_name=sql_identifier.SqlIdentifier("PREDICT"),
+                method_function_type=model_manifest_schema.ModelMethodFunctionTypes.FUNCTION.value,
                 signature=m_sig,
                 X=pd_df,
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
@@ -539,12 +542,13 @@ class ModelOpsTest(absltest.TestCase):
         with mock.patch.object(
             snowpark_handler.SnowparkDataFrameHandler, "convert_from_df", return_value=m_df
         ) as mock_convert_from_df, mock.patch.object(
-            self.m_ops._model_version_client, "invoke_method", return_value=m_df
+            self.m_ops._model_version_client, "invoke_function_method", return_value=m_df
         ) as mock_invoke_method, mock.patch.object(
             snowpark_handler.SnowparkDataFrameHandler, "convert_to_df", return_value=pd_df
         ) as mock_convert_to_df:
             self.m_ops.invoke_method(
                 method_name=sql_identifier.SqlIdentifier("PREDICT"),
+                method_function_type=model_manifest_schema.ModelMethodFunctionTypes.FUNCTION.value,
                 signature=m_sig,
                 X=pd_df,
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
@@ -574,12 +578,13 @@ class ModelOpsTest(absltest.TestCase):
         ) as mock_convert_from_df, mock.patch.object(
             model_signature, "_validate_snowpark_data", return_value=model_signature.SnowparkIdentifierRule.NORMALIZED
         ) as mock_validate_snowpark_data, mock.patch.object(
-            self.m_ops._model_version_client, "invoke_method", return_value=m_df
+            self.m_ops._model_version_client, "invoke_function_method", return_value=m_df
         ) as mock_invoke_method, mock.patch.object(
             snowpark_handler.SnowparkDataFrameHandler, "convert_to_df"
         ) as mock_convert_to_df:
             self.m_ops.invoke_method(
                 method_name=sql_identifier.SqlIdentifier("PREDICT"),
+                method_function_type=model_manifest_schema.ModelMethodFunctionTypes.FUNCTION.value,
                 signature=m_sig,
                 X=cast(DataFrame, m_df),
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
@@ -609,12 +614,13 @@ class ModelOpsTest(absltest.TestCase):
         ) as mock_convert_from_df, mock.patch.object(
             model_signature, "_validate_snowpark_data", return_value=model_signature.SnowparkIdentifierRule.NORMALIZED
         ) as mock_validate_snowpark_data, mock.patch.object(
-            self.m_ops._model_version_client, "invoke_method", return_value=m_df
+            self.m_ops._model_version_client, "invoke_function_method", return_value=m_df
         ) as mock_invoke_method, mock.patch.object(
             snowpark_handler.SnowparkDataFrameHandler, "convert_to_df"
         ) as mock_convert_to_df:
             self.m_ops.invoke_method(
                 method_name=sql_identifier.SqlIdentifier("PREDICT"),
+                method_function_type=model_manifest_schema.ModelMethodFunctionTypes.FUNCTION.value,
                 signature=m_sig,
                 X=cast(DataFrame, m_df),
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
@@ -635,6 +641,84 @@ class ModelOpsTest(absltest.TestCase):
                 statement_params=self.m_statement_params,
             )
             mock_convert_to_df.assert_not_called()
+
+    def test_invoke_method_table_function(self) -> None:
+        pd_df = pd.DataFrame([["1.0"]], columns=["input"], dtype=np.float32)
+        m_sig = _DUMMY_SIG["predict_table"]
+        m_df = mock_data_frame.MockDataFrame()
+        m_df.__setattr__("_statement_params", None)
+        m_df.__setattr__("columns", ["COL1", "COL2"])
+        m_df.add_mock_sort("_ID", ascending=True).add_mock_drop("COL1", "COL2")
+        with mock.patch.object(
+            snowpark_handler.SnowparkDataFrameHandler, "convert_from_df", return_value=m_df
+        ) as mock_convert_from_df, mock.patch.object(
+            self.m_ops._model_version_client, "invoke_table_function_method", return_value=m_df
+        ) as mock_invoke_method, mock.patch.object(
+            snowpark_handler.SnowparkDataFrameHandler, "convert_to_df", return_value=pd_df
+        ) as mock_convert_to_df:
+            self.m_ops.invoke_method(
+                method_name=sql_identifier.SqlIdentifier("PREDICT_TABLE"),
+                method_function_type=model_manifest_schema.ModelMethodFunctionTypes.TABLE_FUNCTION.value,
+                signature=m_sig,
+                X=pd_df,
+                model_name=sql_identifier.SqlIdentifier("MODEL"),
+                version_name=sql_identifier.SqlIdentifier("V1"),
+                statement_params=self.m_statement_params,
+            )
+            mock_convert_from_df.assert_called_once_with(
+                self.c_session, mock.ANY, keep_order=True, features=m_sig.inputs
+            )
+            mock_invoke_method.assert_called_once_with(
+                method_name=sql_identifier.SqlIdentifier("PREDICT_TABLE"),
+                input_df=m_df,
+                input_args=['"input"'],
+                partition_column=None,
+                returns=[("output", spt.FloatType(), '"output"')],
+                model_name=sql_identifier.SqlIdentifier("MODEL"),
+                version_name=sql_identifier.SqlIdentifier("V1"),
+                statement_params=self.m_statement_params,
+            )
+            mock_convert_to_df.assert_called_once_with(m_df, features=m_sig.outputs)
+
+    def test_invoke_method_table_function_partition_column(self) -> None:
+        pd_df = pd.DataFrame([["1.0"]], columns=["input"], dtype=np.float32)
+        m_sig = _DUMMY_SIG["predict_table"]
+        m_df = mock_data_frame.MockDataFrame()
+        m_df.__setattr__("_statement_params", None)
+        m_df.__setattr__("columns", ["COL1", "COL2", "PARTITION_COLUMN"])
+        m_df.add_mock_sort("_ID", ascending=True).add_mock_drop("COL1", "COL2")
+        partition_column = sql_identifier.SqlIdentifier("PARTITION_COLUMN")
+        with mock.patch.object(
+            snowpark_handler.SnowparkDataFrameHandler, "convert_from_df", return_value=m_df
+        ) as mock_convert_from_df, mock.patch.object(
+            self.m_ops._model_version_client, "invoke_table_function_method", return_value=m_df
+        ) as mock_invoke_method, mock.patch.object(
+            snowpark_handler.SnowparkDataFrameHandler, "convert_to_df", return_value=pd_df
+        ) as mock_convert_to_df:
+            self.m_ops.invoke_method(
+                method_name=sql_identifier.SqlIdentifier("PREDICT_TABLE"),
+                method_function_type=model_manifest_schema.ModelMethodFunctionTypes.TABLE_FUNCTION.value,
+                signature=m_sig,
+                X=pd_df,
+                model_name=sql_identifier.SqlIdentifier("MODEL"),
+                version_name=sql_identifier.SqlIdentifier("V1"),
+                partition_column=partition_column,
+                statement_params=self.m_statement_params,
+            )
+            mock_convert_from_df.assert_called_once_with(
+                self.c_session, mock.ANY, keep_order=True, features=m_sig.inputs
+            )
+            mock_invoke_method.assert_called_once_with(
+                method_name=sql_identifier.SqlIdentifier("PREDICT_TABLE"),
+                input_df=m_df,
+                input_args=['"input"'],
+                partition_column=partition_column,
+                returns=[("output", spt.FloatType(), '"output"')],
+                model_name=sql_identifier.SqlIdentifier("MODEL"),
+                version_name=sql_identifier.SqlIdentifier("V1"),
+                statement_params=self.m_statement_params,
+            )
+            mock_convert_to_df.assert_called_once_with(m_df, features=m_sig.outputs)
 
     def test_get_comment_1(self) -> None:
         m_list_res = [
@@ -819,18 +903,43 @@ class ModelOpsTest(absltest.TestCase):
                 statement_params=self.m_statement_params,
             )
 
-    def test_enable_model_details(self) -> None:
+    def test_rename(self) -> None:
         with mock.patch.object(
             self.m_ops._model_client,
-            "config_model_details",
-        ) as mock_config_model_details:
-            with self.m_ops._enable_model_details(statement_params=self.m_statement_params):
-                mock_config_model_details.assert_called_with(
-                    enable=True,
-                    statement_params=self.m_statement_params,
-                )
-            mock_config_model_details.assert_called_with(
-                enable=False,
+            "rename",
+        ) as mock_rename:
+            self.m_ops.rename(
+                model_name=sql_identifier.SqlIdentifier("MODEL"),
+                new_model_db=None,
+                new_model_schema=None,
+                new_model_name=sql_identifier.SqlIdentifier("MODEL2"),
+                statement_params=self.m_statement_params,
+            )
+            mock_rename.assert_called_once_with(
+                model_name=sql_identifier.SqlIdentifier("MODEL"),
+                new_model_db=None,
+                new_model_schema=None,
+                new_model_name=sql_identifier.SqlIdentifier("MODEL2"),
+                statement_params=self.m_statement_params,
+            )
+
+    def test_rename_fully_qualified_name(self) -> None:
+        with mock.patch.object(
+            self.m_ops._model_client,
+            "rename",
+        ) as mock_rename:
+            self.m_ops.rename(
+                model_name=sql_identifier.SqlIdentifier("MODEL"),
+                new_model_db=sql_identifier.SqlIdentifier("TEMP"),
+                new_model_schema=sql_identifier.SqlIdentifier("test", case_sensitive=True),
+                new_model_name=sql_identifier.SqlIdentifier("MODEL2"),
+                statement_params=self.m_statement_params,
+            )
+            mock_rename.assert_called_once_with(
+                model_name=sql_identifier.SqlIdentifier("MODEL"),
+                new_model_db=sql_identifier.SqlIdentifier("TEMP"),
+                new_model_schema=sql_identifier.SqlIdentifier("test", case_sensitive=True),
+                new_model_name=sql_identifier.SqlIdentifier("MODEL2"),
                 statement_params=self.m_statement_params,
             )
 
@@ -874,7 +983,7 @@ class ModelOpsTest(absltest.TestCase):
             Row(name="predict", return_type="NUMBER"),
             Row(name="predict_table", return_type="TABLE (RESULTS VARCHAR)"),
         ]
-        with mock.patch.object(self.m_ops, "_enable_model_details",) as mock_enable_model_details, mock.patch.object(
+        with mock.patch.object(
             self.m_ops._model_client,
             "show_versions",
             return_value=m_show_versions_result,
@@ -890,12 +999,11 @@ class ModelOpsTest(absltest.TestCase):
                 version_name=sql_identifier.SqlIdentifier('"v1"'),
                 statement_params=self.m_statement_params,
             )
-            mock_enable_model_details.assert_called_once_with(statement_params=self.m_statement_params)
             mock_show_versions.assert_called_once_with(
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
                 version_name=sql_identifier.SqlIdentifier('"v1"'),
                 check_model_details=True,
-                statement_params=self.m_statement_params,
+                statement_params={**self.m_statement_params, "SHOW_MODEL_DETAILS_IN_SHOW_VERSIONS_IN_MODEL": True},
             )
             mock_show_functions.assert_called_once_with(
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
@@ -903,6 +1011,232 @@ class ModelOpsTest(absltest.TestCase):
                 statement_params=self.m_statement_params,
             )
             mock_validate_model_metadata.assert_called_once_with(m_spec)
+
+    def test_download_files_minimal(self) -> None:
+        m_list_files_res = [
+            [Row(name="versions/v1/model/model.yaml", size=419, md5="1234", last_modified="")],
+            [
+                Row(name="versions/v1/model/env/conda.yml", size=419, md5="1234", last_modified=""),
+                Row(name="versions/v1/model/env/requirements.txt", size=419, md5="1234", last_modified=""),
+            ],
+            [
+                Row(name="versions/v1/model/runtimes/cpu/env/conda.yml", size=419, md5="1234", last_modified=""),
+                Row(name="versions/v1/model/runtimes/cpu/env/requirements.txt", size=419, md5="1234", last_modified=""),
+            ],
+        ]
+        m_local_path = pathlib.Path("/tmp")
+        with mock.patch.object(
+            self.m_ops._model_version_client,
+            "list_file",
+            side_effect=m_list_files_res,
+        ) as mock_list_file, mock.patch.object(
+            self.m_ops._model_version_client, "get_file"
+        ) as mock_get_file, mock.patch.object(
+            pathlib.Path, "mkdir"
+        ):
+            self.m_ops.download_files(
+                model_name=sql_identifier.SqlIdentifier("MODEL"),
+                version_name=sql_identifier.SqlIdentifier('"v1"'),
+                target_path=m_local_path,
+                mode="minimal",
+                statement_params=self.m_statement_params,
+            )
+            mock_list_file.assert_has_calls(
+                [
+                    mock.call(
+                        model_name=sql_identifier.SqlIdentifier("MODEL"),
+                        version_name=sql_identifier.SqlIdentifier('"v1"'),
+                        file_path=pathlib.PurePosixPath("model/model.yaml"),
+                        is_dir=False,
+                        statement_params=self.m_statement_params,
+                    ),
+                    mock.call(
+                        model_name=sql_identifier.SqlIdentifier("MODEL"),
+                        version_name=sql_identifier.SqlIdentifier('"v1"'),
+                        file_path=pathlib.PurePosixPath("model/env"),
+                        is_dir=True,
+                        statement_params=self.m_statement_params,
+                    ),
+                    mock.call(
+                        model_name=sql_identifier.SqlIdentifier("MODEL"),
+                        version_name=sql_identifier.SqlIdentifier('"v1"'),
+                        file_path=pathlib.PurePosixPath("model/runtimes"),
+                        is_dir=True,
+                        statement_params=self.m_statement_params,
+                    ),
+                ]
+            )
+            mock_get_file.assert_has_calls(
+                [
+                    mock.call(
+                        model_name=sql_identifier.SqlIdentifier("MODEL"),
+                        version_name=sql_identifier.SqlIdentifier('"v1"'),
+                        file_path=pathlib.PurePosixPath("model/model.yaml"),
+                        target_path=m_local_path / "model",
+                        statement_params=self.m_statement_params,
+                    ),
+                    mock.call(
+                        model_name=sql_identifier.SqlIdentifier("MODEL"),
+                        version_name=sql_identifier.SqlIdentifier('"v1"'),
+                        file_path=pathlib.PurePosixPath("model/env/conda.yml"),
+                        target_path=m_local_path / "model" / "env",
+                        statement_params=self.m_statement_params,
+                    ),
+                    mock.call(
+                        model_name=sql_identifier.SqlIdentifier("MODEL"),
+                        version_name=sql_identifier.SqlIdentifier('"v1"'),
+                        file_path=pathlib.PurePosixPath("model/env/requirements.txt"),
+                        target_path=m_local_path / "model" / "env",
+                        statement_params=self.m_statement_params,
+                    ),
+                    mock.call(
+                        model_name=sql_identifier.SqlIdentifier("MODEL"),
+                        version_name=sql_identifier.SqlIdentifier('"v1"'),
+                        file_path=pathlib.PurePosixPath("model/runtimes/cpu/env/conda.yml"),
+                        target_path=m_local_path / "model" / "runtimes" / "cpu" / "env",
+                        statement_params=self.m_statement_params,
+                    ),
+                    mock.call(
+                        model_name=sql_identifier.SqlIdentifier("MODEL"),
+                        version_name=sql_identifier.SqlIdentifier('"v1"'),
+                        file_path=pathlib.PurePosixPath("model/runtimes/cpu/env/requirements.txt"),
+                        target_path=m_local_path / "model" / "runtimes" / "cpu" / "env",
+                        statement_params=self.m_statement_params,
+                    ),
+                ]
+            )
+
+    def test_download_files_model(self) -> None:
+        m_list_files_res = [
+            [
+                Row(name="versions/v1/model/model.yaml", size=419, md5="1234", last_modified=""),
+                Row(name="versions/v1/model/env/conda.yml", size=419, md5="1234", last_modified=""),
+                Row(name="versions/v1/model/env/requirements.txt", size=419, md5="1234", last_modified=""),
+            ],
+        ]
+        m_local_path = pathlib.Path("/tmp")
+        with mock.patch.object(
+            self.m_ops._model_version_client,
+            "list_file",
+            side_effect=m_list_files_res,
+        ) as mock_list_file, mock.patch.object(
+            self.m_ops._model_version_client, "get_file"
+        ) as mock_get_file, mock.patch.object(
+            pathlib.Path, "mkdir"
+        ):
+            self.m_ops.download_files(
+                model_name=sql_identifier.SqlIdentifier("MODEL"),
+                version_name=sql_identifier.SqlIdentifier('"v1"'),
+                target_path=m_local_path,
+                mode="model",
+                statement_params=self.m_statement_params,
+            )
+            mock_list_file.assert_has_calls(
+                [
+                    mock.call(
+                        model_name=sql_identifier.SqlIdentifier("MODEL"),
+                        version_name=sql_identifier.SqlIdentifier('"v1"'),
+                        file_path=pathlib.PurePosixPath("model"),
+                        is_dir=True,
+                        statement_params=self.m_statement_params,
+                    ),
+                ]
+            )
+            mock_get_file.assert_has_calls(
+                [
+                    mock.call(
+                        model_name=sql_identifier.SqlIdentifier("MODEL"),
+                        version_name=sql_identifier.SqlIdentifier('"v1"'),
+                        file_path=pathlib.PurePosixPath("model/model.yaml"),
+                        target_path=m_local_path / "model",
+                        statement_params=self.m_statement_params,
+                    ),
+                    mock.call(
+                        model_name=sql_identifier.SqlIdentifier("MODEL"),
+                        version_name=sql_identifier.SqlIdentifier('"v1"'),
+                        file_path=pathlib.PurePosixPath("model/env/conda.yml"),
+                        target_path=m_local_path / "model" / "env",
+                        statement_params=self.m_statement_params,
+                    ),
+                    mock.call(
+                        model_name=sql_identifier.SqlIdentifier("MODEL"),
+                        version_name=sql_identifier.SqlIdentifier('"v1"'),
+                        file_path=pathlib.PurePosixPath("model/env/requirements.txt"),
+                        target_path=m_local_path / "model" / "env",
+                        statement_params=self.m_statement_params,
+                    ),
+                ]
+            )
+
+    def test_download_files_full(self) -> None:
+        m_list_files_res = [
+            [
+                Row(name="versions/v1/MANIFEST.yml", size=419, md5="1234", last_modified=""),
+                Row(name="versions/v1/model/model.yaml", size=419, md5="1234", last_modified=""),
+                Row(name="versions/v1/model/env/conda.yml", size=419, md5="1234", last_modified=""),
+                Row(name="versions/v1/model/env/requirements.txt", size=419, md5="1234", last_modified=""),
+            ],
+        ]
+        m_local_path = pathlib.Path("/tmp")
+        with mock.patch.object(
+            self.m_ops._model_version_client,
+            "list_file",
+            side_effect=m_list_files_res,
+        ) as mock_list_file, mock.patch.object(
+            self.m_ops._model_version_client, "get_file"
+        ) as mock_get_file, mock.patch.object(
+            pathlib.Path, "mkdir"
+        ):
+            self.m_ops.download_files(
+                model_name=sql_identifier.SqlIdentifier("MODEL"),
+                version_name=sql_identifier.SqlIdentifier('"v1"'),
+                target_path=m_local_path,
+                mode="full",
+                statement_params=self.m_statement_params,
+            )
+            mock_list_file.assert_has_calls(
+                [
+                    mock.call(
+                        model_name=sql_identifier.SqlIdentifier("MODEL"),
+                        version_name=sql_identifier.SqlIdentifier('"v1"'),
+                        file_path=pathlib.PurePosixPath("."),
+                        is_dir=True,
+                        statement_params=self.m_statement_params,
+                    ),
+                ]
+            )
+            mock_get_file.assert_has_calls(
+                [
+                    mock.call(
+                        model_name=sql_identifier.SqlIdentifier("MODEL"),
+                        version_name=sql_identifier.SqlIdentifier('"v1"'),
+                        file_path=pathlib.PurePosixPath("MANIFEST.yml"),
+                        target_path=m_local_path,
+                        statement_params=self.m_statement_params,
+                    ),
+                    mock.call(
+                        model_name=sql_identifier.SqlIdentifier("MODEL"),
+                        version_name=sql_identifier.SqlIdentifier('"v1"'),
+                        file_path=pathlib.PurePosixPath("model/model.yaml"),
+                        target_path=m_local_path / "model",
+                        statement_params=self.m_statement_params,
+                    ),
+                    mock.call(
+                        model_name=sql_identifier.SqlIdentifier("MODEL"),
+                        version_name=sql_identifier.SqlIdentifier('"v1"'),
+                        file_path=pathlib.PurePosixPath("model/env/conda.yml"),
+                        target_path=m_local_path / "model" / "env",
+                        statement_params=self.m_statement_params,
+                    ),
+                    mock.call(
+                        model_name=sql_identifier.SqlIdentifier("MODEL"),
+                        version_name=sql_identifier.SqlIdentifier('"v1"'),
+                        file_path=pathlib.PurePosixPath("model/env/requirements.txt"),
+                        target_path=m_local_path / "model" / "env",
+                        statement_params=self.m_statement_params,
+                    ),
+                ]
+            )
 
 
 if __name__ == "__main__":

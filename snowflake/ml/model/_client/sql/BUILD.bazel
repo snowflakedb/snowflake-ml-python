@@ -11,7 +11,6 @@ py_library(
     deps = [
         "//snowflake/ml/_internal/utils:identifier",
         "//snowflake/ml/_internal/utils:query_result_checker",
-        "//snowflake/ml/_internal/utils:snowflake_env",
         "//snowflake/ml/_internal/utils:sql_identifier",
         "//snowflake/ml/model/_model_composer/model_manifest:model_manifest_schema",
     ],
