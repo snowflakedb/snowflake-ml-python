@@ -11,6 +11,7 @@ py_library(
         "//snowflake/ml/_internal/exceptions",
         "//snowflake/ml/_internal/exceptions:modeling_error_messages",
         "//snowflake/ml/_internal/utils:identifier",
+        "//snowflake/ml/_internal/utils:pkg_version_utils",
         "//snowflake/ml/_internal/utils:query_result_checker",
         "//snowflake/ml/_internal/utils:snowpark_dataframe_utils",
         "//snowflake/ml/_internal/utils:temp_file_utils",

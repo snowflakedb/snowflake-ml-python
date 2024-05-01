@@ -144,7 +144,6 @@ class SFStageFileSystem(fsspec.AbstractFileSystem):
         project=_PROJECT,
         func_params_to_log=["detail"],
     )
-    @snowpark._internal.utils.private_preview(version="0.2.0")
     def ls(self, path: str, detail: bool = False) -> Union[List[str], List[Dict[str, Any]]]:
         """Override fsspec `ls` method. List single "directory" with or without details.
 
@@ -168,7 +167,7 @@ class SFStageFileSystem(fsspec.AbstractFileSystem):
         try:
             loc = self.stage_name
             path = path.lstrip("/")
-            objects = self._session.sql(f"LIST {loc}/{path}").collect()
+            objects = self._session.sql(f"LIST '{loc}/{path}'").collect()
         except snowpark_exceptions.SnowparkClientException as e:
             if e.message.startswith(fileset_errors.ERRNO_DOMAIN_NOT_EXIST):
                 raise snowml_exceptions.SnowflakeMLException(
@@ -191,7 +190,6 @@ class SFStageFileSystem(fsspec.AbstractFileSystem):
     @telemetry.send_api_usage_telemetry(
         project=_PROJECT,
     )
-    @snowpark._internal.utils.private_preview(version="0.2.0")
     def optimize_read(self, files: Optional[List[str]] = None) -> None:
         """Prefetch and cache the presigned urls for all the given files to speed up the read performance.
 
@@ -218,7 +216,6 @@ class SFStageFileSystem(fsspec.AbstractFileSystem):
     @telemetry.send_api_usage_telemetry(
         project=_PROJECT,
     )
-    @snowpark._internal.utils.private_preview(version="0.2.0")
     def _open(self, path: str, mode: str = "rb", **kwargs: Any) -> fsspec.spec.AbstractBufferedFile:
         """Override fsspec `_open` method. Open a file for reading.
 

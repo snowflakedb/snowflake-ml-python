@@ -174,15 +174,3 @@ py_test(
         "//snowflake/ml/utils:connection_params",
     ],
 )
-
-py_test(
-    name = "fit_transform_test",
-    srcs = ["fit_transform_test.py"],
-    shard_count = 3,
-    deps = [
-        "//snowflake/ml/modeling/manifold:mds",
-        "//snowflake/ml/modeling/manifold:spectral_embedding",
-        "//snowflake/ml/modeling/manifold:tsne",
-        "//snowflake/ml/utils:connection_params",
-    ],
-)

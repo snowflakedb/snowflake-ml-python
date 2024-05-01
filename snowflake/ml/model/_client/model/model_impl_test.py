@@ -318,6 +318,28 @@ class ModelImplTest(absltest.TestCase):
                 statement_params=mock.ANY,
             )
 
+    def test_rename(self) -> None:
+        with mock.patch.object(self.m_model._model_ops, "rename") as mock_rename:
+            self.m_model.rename(model_name="MODEL2")
+            mock_rename.assert_called_once_with(
+                model_name=sql_identifier.SqlIdentifier("MODEL"),
+                new_model_db=None,
+                new_model_schema=None,
+                new_model_name=sql_identifier.SqlIdentifier("MODEL2"),
+                statement_params=mock.ANY,
+            )
+
+    def test_rename_fully_qualified_name(self) -> None:
+        with mock.patch.object(self.m_model._model_ops, "rename") as mock_rename:
+            self.m_model.rename(model_name='TEMP."test".MODEL2')
+            mock_rename.assert_called_once_with(
+                model_name=sql_identifier.SqlIdentifier("MODEL"),
+                new_model_db=sql_identifier.SqlIdentifier("TEMP"),
+                new_model_schema=sql_identifier.SqlIdentifier("test", case_sensitive=True),
+                new_model_name=sql_identifier.SqlIdentifier("MODEL2"),
+                statement_params=mock.ANY,
+            )
+
 
 if __name__ == "__main__":
     absltest.main()

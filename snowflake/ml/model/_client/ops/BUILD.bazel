@@ -22,6 +22,7 @@ py_library(
         "//snowflake/ml/model/_model_composer:model_composer",
         "//snowflake/ml/model/_model_composer/model_manifest",
         "//snowflake/ml/model/_model_composer/model_manifest:model_manifest_schema",
+        "//snowflake/ml/model/_packager/model_env",
         "//snowflake/ml/model/_packager/model_meta",
         "//snowflake/ml/model/_packager/model_meta:model_meta_schema",
         "//snowflake/ml/model/_signatures:snowpark_handler",

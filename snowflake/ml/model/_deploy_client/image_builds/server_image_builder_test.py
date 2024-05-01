@@ -14,6 +14,7 @@ class ServerImageBuilderTestCase(absltest.TestCase):
         self.image_repo = "mock_image_repo"
         self.artifact_stage_location = "@stage/models/id"
         self.compute_pool = "test_pool"
+        self.job_name = "abcd"
         self.context_tarball_stage_location = f"{self.artifact_stage_location}/context.tar.gz"
         self.full_image_name = "org-account.registry.snowflakecomputing.com/db/schema/repo/image:latest"
         self.eais = ["eai_1"]
@@ -34,6 +35,7 @@ class ServerImageBuilderTestCase(absltest.TestCase):
                 session=m_session,
                 artifact_stage_location=self.artifact_stage_location,
                 compute_pool=self.compute_pool,
+                job_name=self.job_name,
                 external_access_integrations=self.eais,
             )
 

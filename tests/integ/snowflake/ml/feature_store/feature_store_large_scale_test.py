@@ -14,7 +14,6 @@ from common_utils import (
 )
 from pandas.testing import assert_frame_equal
 
-from snowflake.ml._internal.utils.sql_identifier import SqlIdentifier
 from snowflake.ml.feature_store import (  # type: ignore[attr-defined]
     CreationMode,
     Entity,
@@ -123,7 +122,8 @@ class FeatureStoreLargeScaleTest(absltest.TestCase):
         location_features = fs.register_feature_view(feature_view=location_features, version="V1")
 
         def create_select_query(start: str, end: str) -> str:
-            return f"""SELECT DISTINCT DATE_TRUNC('second', TO_TIMESTAMP(TPEP_DROPOFF_DATETIME)) AS DROPOFF_TIME,
+            return f"""SELECT
+                    DISTINCT DATE_TRUNC('second', TO_TIMESTAMP(TO_VARCHAR(TPEP_DROPOFF_DATETIME))) AS DROPOFF_TIME,
                     PULOCATIONID, TIP_AMOUNT, TOTAL_AMOUNT
                 FROM {raw_dataset}
                 WHERE DROPOFF_TIME >= '{start}' AND DROPOFF_TIME < '{end}'
@@ -131,41 +131,41 @@ class FeatureStoreLargeScaleTest(absltest.TestCase):
 
         spine_df_1 = self._session.sql(create_select_query("2016-01-01 00:00:00", "2016-01-03 00:00:00"))
 
-        result_table_name = f"FS_INTEG_TEST_{uuid4().hex.upper()}"
+        dataset_name = f"FS_INTEG_TEST_{uuid4().hex.upper()}"
+        dataset_version = "test_version"
 
         fv_slice = location_features.slice(["F_AVG_TIP", "F_AVG_TOTAL_AMOUNT"])
         ds0 = fs.generate_dataset(
             spine_df=spine_df_1,
             features=[fv_slice],
-            materialized_table=result_table_name,
+            name=dataset_name,
+            version=dataset_version,
             spine_timestamp_col="DROPOFF_TIME",
             spine_label_cols=None,
-            save_mode="merge",
         )
 
         # verify dataset metadata is correct
-        self.assertEqual(ds0.materialized_table, f"{FS_INTEG_TEST_DB}.{current_schema}.{result_table_name}")
-        self.assertIsNotNone(ds0.feature_store_metadata)
-        self.assertEqual(len(ds0.feature_store_metadata.features), 1)
-        deserialized_fv_slice = FeatureViewSlice.from_json(ds0.feature_store_metadata.features[0], self._session)
-        # verify snapshot 0 rows count equal to spine df rows count
+        dsv0 = ds0.selected_version
+        dsv0_meta = dsv0._get_metadata()
+        self.assertEqual(
+            dsv0.url(), f"snow://dataset/{FS_INTEG_TEST_DB}.{current_schema}.{dataset_name}/versions/{dataset_version}/"
+        )
+        self.assertIsNotNone(dsv0_meta.properties)
+        self.assertEqual(len(dsv0_meta.properties.serialized_feature_views), 1)
+        deserialized_fv_slice = FeatureViewSlice.from_json(
+            dsv0_meta.properties.serialized_feature_views[0], self._session
+        )
+        # verify dataset rows count equal to spine df rows count
         df1_row_count = len(spine_df_1.collect())
-        self.assertEqual(self._session.sql(f"SELECT COUNT(*) FROM {ds0.snapshot_table}").collect()[0][0], df1_row_count)
-        self.assertEqual(len(ds0.df.collect()), df1_row_count)
+        self.assertEqual(len(ds0.read.to_snowpark_dataframe().collect()), df1_row_count)
 
         self.assertEqual(deserialized_fv_slice, fv_slice)
-        self.assertIsNone(ds0.label_cols)
-        self.assertDictEqual(
-            ds0.feature_store_metadata.connection_params,
-            {
-                "database": SqlIdentifier(FS_INTEG_TEST_DB).identifier(),
-                "schema": SqlIdentifier(current_schema).identifier(),
-            },
-        )
+        self.assertIsNone(dsv0_meta.label_cols)
 
         # verify materialized table value is correct
         actual_pdf = (
-            self._session.sql(f"SELECT PULOCATIONID, F_AVG_TIP, F_AVG_TOTAL_AMOUNT FROM {ds0.materialized_table}")
+            ds0.read.to_snowpark_dataframe()
+            .select(["PULOCATIONID", "F_AVG_TIP", "F_AVG_TOTAL_AMOUNT"])
             .to_pandas()
             .sort_values(by="PULOCATIONID")
             .reset_index(drop=True)
@@ -178,28 +178,6 @@ class FeatureStoreLargeScaleTest(absltest.TestCase):
             .reset_index(drop=True)
         )
         assert_frame_equal(expected_pdf, actual_pdf, check_dtype=True)
-
-        # generate another dataset and merge with original materialized table
-        spine_df_2 = self._session.sql(create_select_query("2016-01-04 00:00:00", "2016-01-05 00:00:00"))
-        ds1 = fs.generate_dataset(
-            spine_df=spine_df_2,
-            features=[fv_slice],
-            materialized_table=result_table_name,
-            spine_timestamp_col="DROPOFF_TIME",
-            spine_label_cols=None,
-            save_mode="merge",
-        )
-
-        df2_row_count = len(spine_df_2.collect())
-        # verify snapshot 1 rows count equal to 2x of spine df rows count (as it appends same amount of rows)
-        self.assertEqual(
-            self._session.sql(f"SELECT COUNT(*) FROM {ds1.snapshot_table}").collect()[0][0],
-            df1_row_count + df2_row_count,
-        )
-        self.assertEqual(len(ds1.df.collect()), df1_row_count + df2_row_count)
-        # verify snapshort 0 is not impacted after new data is merged with materialized table.
-        self.assertEqual(self._session.sql(f"SELECT COUNT(*) FROM {ds0.snapshot_table}").collect()[0][0], df1_row_count)
-        self.assertEqual(len(ds0.df.collect()), df1_row_count)
 
 
 if __name__ == "__main__":

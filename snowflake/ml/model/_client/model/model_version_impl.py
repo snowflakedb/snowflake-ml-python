@@ -1,15 +1,27 @@
+import enum
+import pathlib
+import tempfile
+import warnings
 from typing import Any, Callable, Dict, List, Optional, Union
 
 import pandas as pd
 
 from snowflake.ml._internal import telemetry
 from snowflake.ml._internal.utils import sql_identifier
+from snowflake.ml.model import type_hints as model_types
 from snowflake.ml.model._client.ops import metadata_ops, model_ops
+from snowflake.ml.model._model_composer import model_composer
 from snowflake.ml.model._model_composer.model_manifest import model_manifest_schema
+from snowflake.ml.model._packager.model_handlers import snowmlmodel
 from snowflake.snowpark import dataframe
 
 _TELEMETRY_PROJECT = "MLOps"
 _TELEMETRY_SUBPROJECT = "ModelManagement"
+
+
+class ExportMode(enum.Enum):
+    MODEL = "model"
+    FULL = "full"
 
 
 class ModelVersion:
@@ -240,6 +252,7 @@ class ModelVersion:
         X: Union[pd.DataFrame, dataframe.DataFrame],
         *,
         function_name: Optional[str] = None,
+        partition_column: Optional[str] = None,
         strict_input_validation: bool = False,
     ) -> Union[pd.DataFrame, dataframe.DataFrame]:
         """Invoke a method in a model version object.
@@ -248,12 +261,14 @@ class ModelVersion:
             X: The input data, which could be a pandas DataFrame or Snowpark DataFrame.
             function_name: The function name to run. It is the name used to call a function in SQL.
                 Defaults to None. It can only be None if there is only 1 method.
+            partition_column: The partition column name to partition by.
             strict_input_validation: Enable stricter validation for the input data. This will result value range based
                 type validation to make sure your input data won't overflow when providing to the model.
 
         Raises:
             ValueError: When no method with the corresponding name is available.
             ValueError: When there are more than 1 target methods available in the model but no function name specified.
+            ValueError: When the partition column is not a valid Snowflake identifier.
 
         Returns:
             The prediction data. It would be the same type dataframe as your input.
@@ -262,6 +277,10 @@ class ModelVersion:
             project=_TELEMETRY_PROJECT,
             subproject=_TELEMETRY_SUBPROJECT,
         )
+
+        if partition_column is not None:
+            # Partition column must be a valid identifier
+            partition_column = sql_identifier.SqlIdentifier(partition_column)
 
         functions: List[model_manifest_schema.ModelFunctionInfo] = self._functions
         if function_name:
@@ -287,10 +306,126 @@ class ModelVersion:
             target_function_info = functions[0]
         return self._model_ops.invoke_method(
             method_name=sql_identifier.SqlIdentifier(target_function_info["name"]),
+            method_function_type=target_function_info["target_method_function_type"],
             signature=target_function_info["signature"],
             X=X,
             model_name=self._model_name,
             version_name=self._version_name,
             strict_input_validation=strict_input_validation,
+            partition_column=partition_column,
             statement_params=statement_params,
         )
+
+    @telemetry.send_api_usage_telemetry(
+        project=_TELEMETRY_PROJECT, subproject=_TELEMETRY_SUBPROJECT, func_params_to_log=["export_mode"]
+    )
+    def export(self, target_path: str, *, export_mode: ExportMode = ExportMode.MODEL) -> None:
+        """Export model files to a local directory.
+
+        Args:
+            target_path: Path to a local directory to export files to. A directory will be created if does not exist.
+            export_mode: The mode to export the model. Defaults to ExportMode.MODEL.
+                ExportMode.MODEL: All model files including environment to load the model and model weights.
+                ExportMode.FULL: Additional files to run the model in Warehouse, besides all files in MODEL mode,
+
+        Raises:
+            ValueError: Raised when the target path is a file or an non-empty folder.
+        """
+        target_local_path = pathlib.Path(target_path)
+        if target_local_path.is_file() or any(target_local_path.iterdir()):
+            raise ValueError(f"Target path {target_local_path} is a file or an non-empty folder.")
+
+        target_local_path.mkdir(parents=False, exist_ok=True)
+        statement_params = telemetry.get_statement_params(
+            project=_TELEMETRY_PROJECT,
+            subproject=_TELEMETRY_SUBPROJECT,
+        )
+        self._model_ops.download_files(
+            model_name=self._model_name,
+            version_name=self._version_name,
+            target_path=target_local_path,
+            mode=export_mode.value,
+            statement_params=statement_params,
+        )
+
+    @telemetry.send_api_usage_telemetry(
+        project=_TELEMETRY_PROJECT, subproject=_TELEMETRY_SUBPROJECT, func_params_to_log=["force", "options"]
+    )
+    def load(
+        self,
+        *,
+        force: bool = False,
+        options: Optional[model_types.ModelLoadOption] = None,
+    ) -> model_types.SupportedModelType:
+        """Load the underlying original Python object back from a model.
+            This operation requires to have the exact the same environment as the one when logging the model, otherwise,
+            the model might be not functional or some other problems might occur.
+
+        Args:
+            force: Bypass the best-effort environment validation. Defaults to False.
+            options: Options to specify when loading the model, check `snowflake.ml.model.type_hints` for available
+                options. Defaults to None.
+
+        Raises:
+            ValueError: Raised when the best-effort environment validation fails.
+
+        Returns:
+            The original Python object loaded from the model object.
+        """
+        statement_params = telemetry.get_statement_params(
+            project=_TELEMETRY_PROJECT,
+            subproject=_TELEMETRY_SUBPROJECT,
+        )
+        if not force:
+            with tempfile.TemporaryDirectory() as tmp_workspace_for_validation:
+                ws_path_for_validation = pathlib.Path(tmp_workspace_for_validation)
+                self._model_ops.download_files(
+                    model_name=self._model_name,
+                    version_name=self._version_name,
+                    target_path=ws_path_for_validation,
+                    mode="minimal",
+                    statement_params=statement_params,
+                )
+                pk_for_validation = model_composer.ModelComposer.load(
+                    ws_path_for_validation, meta_only=True, options=options
+                )
+                assert pk_for_validation.meta, (
+                    "Unable to load model metadata for validation. "
+                    f"model_name={self._model_name}, version_name={self._version_name}"
+                )
+
+                validation_errors = pk_for_validation.meta.env.validate_with_local_env(
+                    check_snowpark_ml_version=(
+                        pk_for_validation.meta.model_type == snowmlmodel.SnowMLModelHandler.HANDLER_TYPE
+                    )
+                )
+                if validation_errors:
+                    raise ValueError(
+                        f"Unable to load this model due to following validation errors: {validation_errors}. "
+                        "Make sure your local environment is the same as that when you logged the model, "
+                        "or if you believe it should work, specify `force=True` to bypass this check."
+                    )
+
+        warnings.warn(
+            "Loading model requires to have the exact the same environment as the one when "
+            "logging the model, otherwise, the model might be not functional or "
+            "some other problems might occur.",
+            category=RuntimeWarning,
+            stacklevel=2,
+        )
+
+        # We need the folder to be existed.
+        workspace = pathlib.Path(tempfile.mkdtemp())
+        self._model_ops.download_files(
+            model_name=self._model_name,
+            version_name=self._version_name,
+            target_path=workspace,
+            mode="model",
+            statement_params=statement_params,
+        )
+        pk = model_composer.ModelComposer.load(workspace, meta_only=False, options=options)
+        assert pk.model, (
+            "Unable to load model. "
+            f"model_name={self._model_name}, version_name={self._version_name}, metadata={pk.meta}"
+        )
+        return pk.model

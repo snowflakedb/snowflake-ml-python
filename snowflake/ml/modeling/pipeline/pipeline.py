@@ -1,7 +1,12 @@
 #!/usr/bin/env python3
+import inspect
+import os
+import posixpath
+import tempfile
 from itertools import chain
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple, Union
 
+import cloudpickle as cp
 import numpy as np
 import pandas as pd
 from sklearn import __version__ as skversion, pipeline
@@ -10,14 +15,20 @@ from sklearn.preprocessing import FunctionTransformer
 from sklearn.utils import metaestimators
 
 from snowflake import snowpark
-from snowflake.ml._internal import telemetry
+from snowflake.ml._internal import file_utils, telemetry
 from snowflake.ml._internal.exceptions import error_codes, exceptions
-from snowflake.ml._internal.utils import snowpark_dataframe_utils
+from snowflake.ml._internal.utils import snowpark_dataframe_utils, temp_file_utils
 from snowflake.ml.model.model_signature import ModelSignature, _infer_signature
+from snowflake.ml.modeling._internal.model_transformer_builder import (
+    ModelTransformerBuilder,
+)
 from snowflake.ml.modeling.framework import _utils, base
+from snowflake.snowpark import Session, functions as F
+from snowflake.snowpark._internal import utils as snowpark_utils
 
 _PROJECT = "ModelDevelopment"
 _SUBPROJECT = "Framework"
+IN_ML_RUNTIME_ENV_VAR = "IN_SPCS_ML_RUNTIME"
 
 
 def _final_step_has(attr: str) -> Callable[..., bool]:
@@ -113,6 +124,8 @@ class Pipeline(base.BaseTransformer):
             if isinstance(obj, base.BaseTransformer):
                 deps = deps | set(obj._get_dependencies())
         self._deps = list(deps)
+        self._sklearn_object = None
+        self.label_cols = self._get_label_cols()
 
     @staticmethod
     def _is_estimator(obj: object) -> bool:
@@ -146,6 +159,33 @@ class Pipeline(base.BaseTransformer):
         self._feature_names_in = []
         self._n_features_in = []
         self._transformers_to_input_indices = {}
+
+    def _is_convertible_to_sklearn_object(self) -> bool:
+        """Checks if the pipeline can be converted to a native sklearn pipeline.
+        - We can not create an sklearn pipeline if its label or sample weight column are
+          modified in the pipeline.
+        - We can not create an sklearn pipeline if any of its steps cannot be converted to an sklearn pipeline
+        - We can not create an sklearn pipeline if input columns are specified in any step other than
+          the first step
+
+        Returns:
+            True if the pipeline can be converted to a native sklearn pipeline, else false.
+        """
+        if self._is_pipeline_modifying_label_or_sample_weight():
+            return False
+
+        # check that nested pipelines can be converted to sklearn
+        for _, base_estimator in self.steps:
+            if hasattr(base_estimator, "_is_convertible_to_sklearn_object"):
+                if not base_estimator._is_convertible_to_sklearn_object():
+                    return False
+
+        # check that no column after the first column has 'input columns' set.
+        for _, base_estimator in self.steps[1:]:
+            if base_estimator.get_input_cols():
+                # We only want Falsy values - None and []
+                return False
+        return True
 
     def _is_pipeline_modifying_label_or_sample_weight(self) -> bool:
         """
@@ -214,27 +254,167 @@ class Pipeline(base.BaseTransformer):
             self._append_step_feature_consumption_info(
                 step_name=name, all_cols=transformed_dataset.columns[:], input_cols=trans.get_input_cols()
             )
-            if has_callable_attr(trans, "fit_transform"):
-                transformed_dataset = trans.fit_transform(transformed_dataset)
-            else:
-                trans.fit(transformed_dataset)
-                transformed_dataset = trans.transform(transformed_dataset)
+            trans.fit(transformed_dataset)
+            transformed_dataset = trans.transform(transformed_dataset)
 
         return transformed_dataset
+
+    def _upload_model_to_stage(self, stage_name: str, estimator: object, session: Session) -> Tuple[str, str]:
+        """
+        Util method to pickle and upload the model to a temp Snowflake stage.
+
+        Args:
+            stage_name: Stage name to save model.
+            estimator: the pipeline estimator itself
+            session: Session object
+
+        Returns:
+            a tuple containing stage file paths for pickled input model for training and location to store trained
+            models(response from training sproc).
+        """
+        # Create a temp file and dump the transform to that file.
+        local_transform_file_name = temp_file_utils.get_temp_file_path()
+        with open(local_transform_file_name, mode="w+b") as local_transform_file:
+            cp.dump(estimator, local_transform_file)
+
+        # Use posixpath to construct stage paths
+        stage_transform_file_name = posixpath.join(stage_name, os.path.basename(local_transform_file_name))
+        stage_result_file_name = posixpath.join(stage_name, os.path.basename(local_transform_file_name))
+
+        # Put locally serialized transform on stage.
+        session.file.put(
+            local_transform_file_name,
+            stage_transform_file_name,
+            auto_compress=False,
+            overwrite=True,
+        )
+
+        temp_file_utils.cleanup_temp_files([local_transform_file_name])
+        return (stage_transform_file_name, stage_result_file_name)
+
+    def _fit_snowpark_dataframe_within_one_sproc(self, session: Session, dataset: snowpark.DataFrame) -> None:
+        # Extract queries that generated the dataframe. We will need to pass it to score procedure.
+        sql_queries = dataset.queries["queries"]
+
+        # Zip the current snowml package
+        with tempfile.TemporaryDirectory() as tmpdir:
+            snowml_zip_module_filename = os.path.join(tmpdir, "snowflake-ml-python.zip")
+            file_utils.zip_python_package(snowml_zip_module_filename, "snowflake.ml")
+            imports = [snowml_zip_module_filename]
+
+            sproc_name = snowpark_utils.random_name_for_temp_object(snowpark_utils.TempObjectType.PROCEDURE)
+            required_deps = self._deps
+            sproc_statement_params = telemetry.get_function_usage_statement_params(
+                project=_PROJECT,
+                subproject="PIPELINE",
+                function_name=telemetry.get_statement_params_full_func_name(
+                    inspect.currentframe(), self.__class__.__name__
+                ),
+                api_calls=[F.sproc],
+            )
+            transform_stage_name = snowpark_utils.random_name_for_temp_object(snowpark_utils.TempObjectType.STAGE)
+            stage_creation_query = f"CREATE OR REPLACE TEMPORARY STAGE {transform_stage_name};"
+            session.sql(stage_creation_query).collect()
+            (stage_estimator_file_name, stage_result_file_name) = self._upload_model_to_stage(
+                transform_stage_name, self, session
+            )
+
+            def pipeline_within_one_sproc(
+                session: Session,
+                sql_queries: List[str],
+                stage_estimator_file_name: str,
+                stage_result_file_name: str,
+                sproc_statement_params: Dict[str, str],
+            ) -> str:
+                import os
+
+                import cloudpickle as cp
+                import pandas as pd
+
+                for query in sql_queries[:-1]:
+                    _ = session.sql(query).collect(statement_params=sproc_statement_params)
+                sp_df = session.sql(sql_queries[-1])
+                df: pd.DataFrame = sp_df.to_pandas(statement_params=sproc_statement_params)
+                df.columns = sp_df.columns
+
+                local_estimator_file_name = temp_file_utils.get_temp_file_path()
+
+                session.file.get(stage_estimator_file_name, local_estimator_file_name)
+
+                local_estimator_file_path = os.path.join(
+                    local_estimator_file_name, os.listdir(local_estimator_file_name)[0]
+                )
+                with open(local_estimator_file_path, mode="r+b") as local_estimator_file_obj:
+                    estimator = cp.load(local_estimator_file_obj)
+
+                estimator.fit(df)
+
+                local_result_file_name = temp_file_utils.get_temp_file_path()
+
+                with open(local_result_file_name, mode="w+b") as local_result_file_obj:
+                    cp.dump(estimator, local_result_file_obj)
+
+                session.file.put(
+                    local_result_file_name,
+                    stage_result_file_name,
+                    auto_compress=False,
+                    overwrite=True,
+                    statement_params=sproc_statement_params,
+                )
+
+                return str(os.path.basename(local_result_file_name))
+
+            session.sproc.register(
+                func=pipeline_within_one_sproc,
+                is_permanent=False,
+                name=sproc_name,
+                packages=required_deps,  # type: ignore[arg-type]
+                replace=True,
+                session=session,
+                anonymous=True,
+                imports=imports,  # type: ignore[arg-type]
+                statement_params=sproc_statement_params,
+            )
+
+            sproc_export_file_name: str = pipeline_within_one_sproc(
+                session,
+                sql_queries,
+                stage_estimator_file_name,
+                stage_result_file_name,
+                sproc_statement_params,
+            )
+
+            local_result_file_name = temp_file_utils.get_temp_file_path()
+            session.file.get(
+                posixpath.join(stage_estimator_file_name, sproc_export_file_name),
+                local_result_file_name,
+                statement_params=sproc_statement_params,
+            )
+
+            with open(os.path.join(local_result_file_name, sproc_export_file_name), mode="r+b") as result_file_obj:
+                fit_estimator = cp.load(result_file_obj)
+
+            temp_file_utils.cleanup_temp_files([local_result_file_name])
+            for key, val in vars(fit_estimator).items():
+                setattr(self, key, val)
 
     @telemetry.send_api_usage_telemetry(
         project=_PROJECT,
         subproject=_SUBPROJECT,
     )
-    def fit(self, dataset: Union[snowpark.DataFrame, pd.DataFrame]) -> "Pipeline":
+    def fit(self, dataset: Union[snowpark.DataFrame, pd.DataFrame], squash: Optional[bool] = False) -> "Pipeline":
         """
         Fit the entire pipeline using the dataset.
 
         Args:
             dataset: Input dataset.
+            squash: Run the whole pipeline within a stored procedure
 
         Returns:
             Fitted pipeline.
+
+        Raises:
+            ValueError: A pipeline incompatible with sklearn is used on MLRS
         """
 
         self._validate_steps()
@@ -243,19 +423,33 @@ class Pipeline(base.BaseTransformer):
             if isinstance(dataset, snowpark.DataFrame)
             else dataset
         )
-        transformed_dataset = self._fit_transform_dataset(dataset)
 
-        estimator = self._get_estimator()
-        if estimator:
-            all_cols = transformed_dataset.columns[:]
-            estimator[1].fit(transformed_dataset)
+        if self._can_be_trained_in_ml_runtime(dataset):
+            if not self._is_convertible_to_sklearn_object():
+                raise ValueError("This pipeline cannot be converted to an sklearn pipeline.")
+            self._fit_ml_runtime(dataset)
 
-            self._append_step_feature_consumption_info(
-                step_name=estimator[0], all_cols=all_cols, input_cols=estimator[1].get_input_cols()
-            )
+        elif squash and isinstance(dataset, snowpark.DataFrame):
+            session = dataset._session
+            assert session is not None
+            self._fit_snowpark_dataframe_within_one_sproc(session=session, dataset=dataset)
 
-        self._generate_model_signatures(dataset=dataset)
+        else:
+            transformed_dataset = self._fit_transform_dataset(dataset)
+
+            estimator = self._get_estimator()
+            if estimator:
+                all_cols = transformed_dataset.columns[:]
+                estimator[1].fit(transformed_dataset)
+
+                self._append_step_feature_consumption_info(
+                    step_name=estimator[0], all_cols=all_cols, input_cols=estimator[1].get_input_cols()
+                )
+
+            self._generate_model_signatures(dataset=dataset)
+
         self._is_fitted = True
+
         return self
 
     @metaestimators.available_if(_final_step_has("transform"))  # type: ignore[misc]
@@ -279,6 +473,22 @@ class Pipeline(base.BaseTransformer):
             if isinstance(dataset, snowpark.DataFrame)
             else dataset
         )
+
+        if self._sklearn_object is not None:
+            handler = ModelTransformerBuilder.build(
+                dataset=dataset,
+                estimator=self._sklearn_object,
+                class_name="Pipeline",
+                subproject="",
+                autogenerated=False,
+            )
+            return handler.batch_inference(
+                inference_method="transform",
+                input_cols=self.input_cols if self.input_cols else self._infer_input_cols(dataset),
+                expected_output_cols=self._infer_output_cols(),
+                session=dataset._session,
+                dependencies=self._deps,
+            )
 
         transformed_dataset = self._transform_dataset(dataset=dataset)
         estimator = self._get_estimator()
@@ -389,8 +599,32 @@ class Pipeline(base.BaseTransformer):
 
         Returns:
             Output dataset.
+
+        Raises:
+            ValueError: An sklearn object has not been fit and stored before calling this function.
         """
-        return self._invoke_estimator_func("predict", dataset)
+        if os.environ.get(IN_ML_RUNTIME_ENV_VAR):
+            if self._sklearn_object is None:
+                raise ValueError("Model must be fit before inference.")
+
+            expected_output_cols = self._infer_output_cols()
+            handler = ModelTransformerBuilder.build(
+                dataset=dataset,
+                estimator=self._sklearn_object,
+                class_name="Pipeline",
+                subproject="",
+                autogenerated=False,
+            )
+            return handler.batch_inference(
+                inference_method="predict",
+                input_cols=self.input_cols if self.input_cols else self._infer_input_cols(dataset),
+                expected_output_cols=expected_output_cols,
+                session=dataset._session,
+                dependencies=self._deps,
+            )
+
+        else:
+            return self._invoke_estimator_func("predict", dataset)
 
     @metaestimators.available_if(_final_step_has("score_samples"))  # type: ignore[misc]
     @telemetry.send_api_usage_telemetry(
@@ -408,8 +642,32 @@ class Pipeline(base.BaseTransformer):
 
         Returns:
             Output dataset.
+
+        Raises:
+            ValueError: An sklearn object has not been fit before calling this function
         """
-        return self._invoke_estimator_func("score_samples", dataset)
+
+        if os.environ.get(IN_ML_RUNTIME_ENV_VAR):
+            if self._sklearn_object is None:
+                raise ValueError("Model must be fit before inference.")
+
+            expected_output_cols = self._get_output_column_names("score_samples")
+            handler = ModelTransformerBuilder.build(
+                dataset=dataset,
+                estimator=self._sklearn_object,
+                class_name="Pipeline",
+                subproject="",
+                autogenerated=False,
+            )
+            return handler.batch_inference(
+                inference_method="score_samples",
+                input_cols=self.input_cols if self.input_cols else self._infer_input_cols(dataset),
+                expected_output_cols=expected_output_cols,
+                session=dataset._session,
+                dependencies=self._deps,
+            )
+        else:
+            return self._invoke_estimator_func("score_samples", dataset)
 
     @metaestimators.available_if(_final_step_has("predict_proba"))  # type: ignore[misc]
     @telemetry.send_api_usage_telemetry(
@@ -427,8 +685,32 @@ class Pipeline(base.BaseTransformer):
 
         Returns:
             Output dataset.
+
+        Raises:
+            ValueError: An sklearn object has not been fit before calling this function
         """
-        return self._invoke_estimator_func("predict_proba", dataset)
+
+        if os.environ.get(IN_ML_RUNTIME_ENV_VAR):
+            if self._sklearn_object is None:
+                raise ValueError("Model must be fit before inference.")
+            expected_output_cols = self._get_output_column_names("predict_proba")
+
+            handler = ModelTransformerBuilder.build(
+                dataset=dataset,
+                estimator=self._sklearn_object,
+                class_name="Pipeline",
+                subproject="",
+                autogenerated=False,
+            )
+            return handler.batch_inference(
+                inference_method="predict_proba",
+                input_cols=self.input_cols if self.input_cols else self._infer_input_cols(dataset),
+                expected_output_cols=expected_output_cols,
+                session=dataset._session,
+                dependencies=self._deps,
+            )
+        else:
+            return self._invoke_estimator_func("predict_proba", dataset)
 
     @metaestimators.available_if(_final_step_has("predict_log_proba"))  # type: ignore[misc]
     @telemetry.send_api_usage_telemetry(
@@ -447,8 +729,31 @@ class Pipeline(base.BaseTransformer):
 
         Returns:
             Output dataset.
+
+        Raises:
+            ValueError: An sklearn object has not been fit before calling this function
         """
-        return self._invoke_estimator_func("predict_log_proba", dataset)
+        if os.environ.get(IN_ML_RUNTIME_ENV_VAR):
+            if self._sklearn_object is None:
+                raise ValueError("Model must be fit before inference.")
+
+            expected_output_cols = self._get_output_column_names("predict_log_proba")
+            handler = ModelTransformerBuilder.build(
+                dataset=dataset,
+                estimator=self._sklearn_object,
+                class_name="Pipeline",
+                subproject="",
+                autogenerated=False,
+            )
+            return handler.batch_inference(
+                inference_method="predict_log_proba",
+                input_cols=self.input_cols if self.input_cols else self._infer_input_cols(dataset),
+                expected_output_cols=expected_output_cols,
+                session=dataset._session,
+                dependencies=self._deps,
+            )
+        else:
+            return self._invoke_estimator_func("predict_log_proba", dataset)
 
     @metaestimators.available_if(_final_step_has("score"))  # type: ignore[misc]
     @telemetry.send_api_usage_telemetry(
@@ -464,8 +769,30 @@ class Pipeline(base.BaseTransformer):
 
         Returns:
             Output dataset.
+
+        Raises:
+            ValueError: An sklearn object has not been fit before calling this function
         """
-        return self._invoke_estimator_func("score", dataset)
+
+        if os.environ.get(IN_ML_RUNTIME_ENV_VAR):
+            if self._sklearn_object is None:
+                raise ValueError("Model must be fit before scoreing.")
+            handler = ModelTransformerBuilder.build(
+                dataset=dataset,
+                estimator=self._sklearn_object,
+                class_name="Pipeline",
+                subproject="",
+                autogenerated=False,
+            )
+            return handler.score(
+                input_cols=self._infer_input_cols(),
+                label_cols=self._get_label_cols(),
+                session=dataset._session,
+                dependencies=self._deps,
+                score_sproc_imports=[],
+            )
+        else:
+            return self._invoke_estimator_func("score", dataset)
 
     def _invoke_estimator_func(
         self, func_name: str, dataset: Union[snowpark.DataFrame, pd.DataFrame]
@@ -494,15 +821,6 @@ class Pipeline(base.BaseTransformer):
         assert estimator is not None
         res: snowpark.DataFrame = getattr(estimator[1], func_name)(transformed_dataset)
         return res
-
-    def _create_unfitted_sklearn_object(self) -> pipeline.Pipeline:
-        sksteps = []
-        for step in self.steps:
-            if isinstance(step[1], base.BaseTransformer):
-                sksteps.append(tuple([step[0], _utils.to_native_format(step[1])]))
-            else:
-                sksteps.append(tuple([step[0], step[1]]))
-        return pipeline.Pipeline(steps=sksteps)
 
     def _construct_fitted_column_transformer_object(
         self,
@@ -562,6 +880,125 @@ class Pipeline(base.BaseTransformer):
             ct._name_to_fitted_passthrough = {step_name_in_ct: ft}
         return ct
 
+    def _fit_ml_runtime(self, dataset: snowpark.DataFrame) -> None:
+        """Train the pipeline in the ML Runtime.
+
+        Args:
+            dataset: The training Snowpark dataframe
+
+        Raises:
+            ModuleNotFoundError: The ML Runtime Client is not installed.
+        """
+        try:
+            from snowflake.ml.runtime import MLRuntimeClient
+        except ModuleNotFoundError as e:
+            # The snowflake.ml.runtime module should always be present when
+            # the env var IN_SPCS_ML_RUNTIME is present.
+            raise ModuleNotFoundError("ML Runtime Python Client is not installed.") from e
+
+        client = MLRuntimeClient()
+        ml_runtime_compatible_pipeline = self._create_unfitted_sklearn_object()
+
+        label_cols = self._get_label_cols()
+        all_df_cols = dataset.columns
+        input_cols = [col for col in all_df_cols if col not in label_cols]
+
+        trained_pipeline = client.train(
+            estimator=ml_runtime_compatible_pipeline,
+            dataset=dataset,
+            input_cols=input_cols,
+            label_cols=label_cols,
+            sample_weight_col=self.sample_weight_col,
+        )
+
+        self._sklearn_object = trained_pipeline
+
+    def _get_label_cols(self) -> List[str]:
+        """Util function to get the label columns from the pipeline.
+        The label column is only present in the estimator
+
+        Returns:
+            List of label columns, or empty list if no label cols.
+        """
+        label_cols = []
+        estimator = self._get_estimator()
+        if estimator is not None:
+            label_cols = estimator[1].get_label_cols()
+
+        return label_cols
+
+    def _can_be_trained_in_ml_runtime(self, dataset: Union[snowpark.DataFrame, pd.DataFrame]) -> bool:
+        """A utility function to determine if the pipeline cam be pushed down to the ML Runtime for training.
+        Currently, this is true if:
+        - The training dataset is a snowpark dataframe,
+        - The IN_SPCS_ML_RUNTIME environment is present and
+        - The pipeline can be converted to an sklearn pipeline.
+
+        Args:
+            dataset: The training dataset
+
+        Returns:
+            True if the dataset can be fit in the ml runtime, else false.
+
+        """
+        if not isinstance(dataset, snowpark.DataFrame):
+            return False
+
+        if not os.environ.get(IN_ML_RUNTIME_ENV_VAR):
+            return False
+
+        return self._is_convertible_to_sklearn_object()
+
+    @staticmethod
+    def _wrap_transformer_in_column_transformer(
+        transformer_name: str, transformer: base.BaseTransformer
+    ) -> ColumnTransformer:
+        """A helper function to convert a transformer object to an sklearn object and wrap in an sklearn
+            ColumnTransformer.
+
+        Args:
+            transformer_name: Name of the transformer to be wrapped.
+            transformer: The transformer object to be wrapped.
+
+        Returns:
+            A column transformer sklearn object that uses the input columns from the initial snowpark ml transformer.
+        """
+        column_transformer = ColumnTransformer(
+            transformers=[(transformer_name, Pipeline._get_native_object(transformer), transformer.get_input_cols())],
+            remainder="passthrough",
+        )
+        return column_transformer
+
+    def _create_unfitted_sklearn_object(self) -> pipeline.Pipeline:
+        """Create a sklearn pipeline from the current snowml pipeline.
+        ColumnTransformers are used to wrap transformers as their input columns can be specified
+        as a subset of the pipeline's input columns.
+
+        Returns:
+            An unfit pipeline that can be fit using the ML runtime client.
+        """
+
+        sklearn_pipeline_steps = []
+
+        first_step_name, first_step_object = self.steps[0]
+
+        # Only the first step can have the input_cols field not None/empty.
+        if first_step_object.get_input_cols():
+            first_step_column_transformer = Pipeline._wrap_transformer_in_column_transformer(
+                first_step_name, first_step_object
+            )
+            first_step_skl = (first_step_name, first_step_column_transformer)
+        else:
+            first_step_skl = (first_step_name, Pipeline._get_native_object(first_step_object))
+
+        sklearn_pipeline_steps.append(first_step_skl)
+
+        for step_name, step_object in self.steps[1:]:
+            skl_step = (step_name, Pipeline._get_native_object(step_object))
+            sklearn_pipeline_steps.append(skl_step)
+
+        return pipeline.Pipeline(sklearn_pipeline_steps)
+
     def _create_sklearn_object(self) -> pipeline.Pipeline:
         if not self._is_fitted:
             return self._create_unfitted_sklearn_object()
@@ -570,7 +1007,7 @@ class Pipeline(base.BaseTransformer):
             raise exceptions.SnowflakeMLException(
                 error_code=error_codes.METHOD_NOT_ALLOWED,
                 original_exception=ValueError(
-                    "The pipeline can't be converted to SKLearn equivalent because it processing label or "
+                    "The pipeline can't be converted to SKLearn equivalent because it modifies processing label or "
                     "sample_weight columns as part of pipeline preprocessing steps which is not allowed in SKLearn."
                 ),
             )
@@ -631,3 +1068,48 @@ class Pipeline(base.BaseTransformer):
                 original_exception=RuntimeError("Estimator not fitted before accessing property model_signatures!"),
             )
         return self._model_signature_dict
+
+    @staticmethod
+    def _get_native_object(estimator: base.BaseEstimator) -> object:
+        """A helper function to get the native(sklearn, xgboost, or lightgbm)
+        object from a snowpark ml estimator.
+        TODO - better type hinting - is there a common base class for all xgb/lgbm estimators?
+
+        Args:
+            estimator: the estimator from which to derive the native object.
+
+        Returns:
+            a native estimator object
+
+        Raises:
+            ValueError: The estimator is not an sklearn, xgboost, or lightgbm estimator.
+        """
+        methods = ["to_sklearn", "to_xgboost", "to_lightgbm"]
+        for method_name in methods:
+            if hasattr(estimator, method_name):
+                try:
+                    result = getattr(estimator, method_name)()
+                    return result
+                except exceptions.SnowflakeMLException:
+                    pass  # Do nothing and continue to the next method
+        raise ValueError("The estimator must be an sklearn, xgboost, or lightgbm estimator.")
+
+    def to_sklearn(self) -> pipeline.Pipeline:
+        """Returns an sklearn Pipeline representing the object, if possible.
+
+        Returns:
+            previously fit sklearn Pipeline if present, else an unfit pipeline
+
+        Raises:
+            ValueError: The pipeline cannot be represented as an sklearn pipeline.
+        """
+        if self._is_fitted:
+            if self._sklearn_object is not None:
+                return self._sklearn_object
+            else:
+                return self._create_sklearn_object()
+        else:
+            if self._is_convertible_to_sklearn_object():
+                return self._create_unfitted_sklearn_object()
+            else:
+                raise ValueError("This pipeline can not be converted to an sklearn pipeline.")

@@ -2,11 +2,13 @@ import json
 
 from absl.testing import absltest
 
+from snowflake.ml._internal.exceptions import exceptions as snowml_exceptions
 from snowflake.ml.feature_store import (  # type: ignore[attr-defined]
     Entity,
     FeatureView,
     FeatureViewSlice,
     FeatureViewStatus,
+    FeatureViewVersion,
 )
 from snowflake.ml.feature_store.feature_view import (
     _FEATURE_OBJ_TYPE,
@@ -112,6 +114,43 @@ class FeatureViewTest(absltest.TestCase):
         malformed = json.dumps({_FEATURE_OBJ_TYPE: "foobar"})
         with self.assertRaisesRegex(ValueError, "Invalid json str for FeatureViewSlice.*"):
             FeatureViewSlice.from_json(malformed, self._session)
+
+    def test_feature_view_versions(self) -> None:
+        valid_versions = [
+            "v2",  # start with letter
+            "3x",  # start with digit
+            "1",  # single digit
+            "2.1",  # digit with period
+            "3_1",  # digit with underscore
+            "4-1",  # digit with hyphen
+            "4-1_2.3",  # digit with period, underscore and hyphen
+            "x",  # single letter
+            "4x_1",  # digit, letter and underscore
+            "latest",  # pure lowercase letters
+            "OLD",  # pure uppercase letters
+            "OLap",  # pure uppercase letters
+            "a" * 128,  # within maximum allowed length
+        ]
+
+        invalid_dataset_versions = [
+            "",  # empty
+            "_v1",  # start with underscore
+            ".2",  # start with period
+            "3/1",  # digit with slash
+            "-4",  # start with hyphen
+            "v1$",  # start with letter, contains invalid character
+            "9^",  # start with digit, contains invalid character
+            "a" * 129,  # exceed maximum allowed length
+        ]
+
+        for version in valid_versions:
+            FeatureViewVersion(version)
+
+        for version in invalid_dataset_versions:
+            with self.assertRaisesRegex(
+                snowml_exceptions.SnowflakeMLException, ".* is not a valid feature view version.*"
+            ):
+                FeatureViewVersion(version)
 
 
 class EntityTest(absltest.TestCase):

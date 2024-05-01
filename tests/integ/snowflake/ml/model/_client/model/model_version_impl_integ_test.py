@@ -1,7 +1,13 @@
+import glob
+import os
+import tempfile
 import uuid
 
+import numpy as np
 from absl.testing import absltest, parameterized
+from sklearn import svm
 
+from snowflake.ml.model import ExportMode
 from snowflake.ml.registry import registry
 from snowflake.ml.utils import connection_params
 from snowflake.snowpark import Session
@@ -36,12 +42,12 @@ class TestModelVersionImplInteg(parameterized.TestCase):
         self._db_manager.cleanup_databases(expire_hours=6)
         self.registry = registry.Registry(self._session)
 
-        model, test_features, _ = model_factory.ModelFactory.prepare_sklearn_model()
+        self.model, self.test_features, _ = model_factory.ModelFactory.prepare_sklearn_model()
         self._mv = self.registry.log_model(
-            model=model,
+            model=self.model,
             model_name=MODEL_NAME,
             version_name=VERSION_NAME,
-            sample_input_data=test_features,
+            sample_input_data=self.test_features,
         )
 
     @classmethod
@@ -68,6 +74,20 @@ class TestModelVersionImplInteg(parameterized.TestCase):
         self.assertDictEqual(self._mv.show_metrics(), expected_metrics)
         with self.assertRaises(KeyError):
             self._mv.get_metric("b")
+
+    def test_export(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            self._mv.export(tmpdir)
+            self.assertLen(list(glob.iglob(os.path.join(tmpdir, "**", "*"), recursive=True)), 14)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            self._mv.export(tmpdir, export_mode=ExportMode.FULL)
+            self.assertLen(list(glob.iglob(os.path.join(tmpdir, "**", "*"), recursive=True)), 27)
+
+    def test_load(self) -> None:
+        loaded_model = self._mv.load()
+        assert isinstance(loaded_model, svm.SVC)
+        np.testing.assert_allclose(loaded_model.predict(self.test_features), self.model.predict(self.test_features))
 
 
 if __name__ == "__main__":

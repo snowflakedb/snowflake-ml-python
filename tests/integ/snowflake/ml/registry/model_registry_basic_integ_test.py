@@ -4,7 +4,6 @@ from typing import Optional
 from absl.testing import absltest, parameterized
 
 from snowflake.ml.registry import model_registry
-from snowflake.ml.registry.artifact import Artifact, ArtifactType
 from snowflake.ml.utils import connection_params
 from snowflake.snowpark import Session
 from tests.integ.snowflake.ml.test_utils import db_manager
@@ -166,68 +165,6 @@ class TestModelRegistryBasicInteg(parameterized.TestCase):
             self._db_manager.drop_database(database_name)
             self.assertTrue(self._db_manager.assert_database_existence(database_name, exists=False))
             self._validate_restore_db_and_schema()
-
-    def test_add_and_delete_ml_artifacts(self) -> None:
-        """Test add() and delete() in `_artifact_manager.py` works as expected."""
-
-        artifact_registry = db_manager.TestObjectNameGenerator.get_snowml_test_object_name(
-            _RUN_ID, "artifact_registry"
-        ).upper()
-        artifact_registry_schema = "PUBLIC"
-
-        try:
-            model_registry.create_model_registry(
-                session=self._session, database_name=artifact_registry, schema_name=artifact_registry_schema
-            )
-            registry = model_registry.ModelRegistry(
-                session=self._session, database_name=artifact_registry, schema_name=artifact_registry_schema
-            )
-        except Exception as e:
-            self._db_manager.drop_database(artifact_registry)
-            raise Exception(f"Test failed with exception:{e}")
-
-        artifact_id = "test_art_123"
-        artifact_version = "test_artifact_version"
-        artifact_name = "test_artifact"
-        artifact = Artifact(type=ArtifactType.DATASET, spec='{"test_property": "test_value"}')
-
-        try:
-            art_ref = registry._artifact_manager.add(
-                artifact=artifact,
-                artifact_id=artifact_id,
-                artifact_name=artifact_name,
-                artifact_version=artifact_version,
-            )
-
-            self.assertTrue(
-                registry._artifact_manager.exists(
-                    art_ref.name,
-                    art_ref.version,
-                )
-            )
-
-            # Validate the artifact_spec can be parsed as expected
-            retrieved_art_df = registry._artifact_manager.get(
-                art_ref.name,
-                art_ref.version,
-            )
-
-            actual_artifact_spec = retrieved_art_df.collect()[0]["ARTIFACT_SPEC"]
-            self.assertEqual(artifact._spec, actual_artifact_spec)
-
-            # Validate that `delete_artifact` can remove entries from the artifact table.
-            registry._artifact_manager.delete(
-                art_ref.name,
-                art_ref.version,
-            )
-            self.assertFalse(
-                registry._artifact_manager.exists(
-                    art_ref.name,
-                    art_ref.version,
-                )
-            )
-        finally:
-            self._db_manager.drop_database(artifact_registry, if_exists=True)
 
 
 if __name__ == "__main__":

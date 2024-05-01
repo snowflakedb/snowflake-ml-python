@@ -8,6 +8,7 @@ from typing import Any, Dict, List, Optional
 
 from absl import logging
 from packaging import requirements
+from typing_extensions import deprecated
 
 from snowflake.ml._internal import env as snowml_env, env_utils, file_utils
 from snowflake.ml.model import model_signature, type_hints as model_types
@@ -143,7 +144,8 @@ class ModelComposer:
             statement_params=self._statement_params,
         )
 
-    def load(
+    @deprecated("Only used by PrPr model registry. Use static method version of load instead.")
+    def legacy_load(
         self,
         *,
         meta_only: bool = False,
@@ -163,3 +165,14 @@ class ModelComposer:
         with zipfile.ZipFile(self.model_local_path, mode="r", compression=zipfile.ZIP_DEFLATED) as zf:
             zf.extractall(path=self._packager_workspace_path)
         self.packager.load(meta_only=meta_only, options=options)
+
+    @staticmethod
+    def load(
+        workspace_path: pathlib.Path,
+        *,
+        meta_only: bool = False,
+        options: Optional[model_types.ModelLoadOption] = None,
+    ) -> model_packager.ModelPackager:
+        mp = model_packager.ModelPackager(str(workspace_path / ModelComposer.MODEL_DIR_REL_PATH))
+        mp.load(meta_only=meta_only, options=options)
+        return mp

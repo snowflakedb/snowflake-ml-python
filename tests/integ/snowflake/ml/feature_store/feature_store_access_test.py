@@ -81,7 +81,7 @@ class FeatureStoreAccessTest(parameterized.TestCase):
     def _init_test_data(cls) -> str:
         prev_role = cls._session.get_current_role()
         try:
-            cls._session.use_role(cls._test_roles[Role.ADMIN])
+            cls._session.use_role(cls._test_roles[Role.PRODUCER])
             test_table: str = create_mock_table(cls._session, cls._test_database, cls._test_schema)
 
             # Create Entities
@@ -325,6 +325,8 @@ class FeatureStoreAccessTest(parameterized.TestCase):
         finally:
             self._feature_store.delete_feature_view(fv)
 
+    # FIXME(dhung): SNOW-1346923
+    @absltest.skip("Dataset RBAC won't be ready until 8.17 release")  # type: ignore[misc]
     @parameterized.product(required_access=[Role.PRODUCER], test_access=list(Role))  # type: ignore[misc]
     def test_generate_dataset(self, required_access: Role, test_access: Role) -> None:
         spine_df = self._session.sql(f"SELECT id FROM {self._mock_table}")
@@ -333,9 +335,27 @@ class FeatureStoreAccessTest(parameterized.TestCase):
         dataset_name = f"FS_TEST_DATASET_{uuid4().hex.upper()}"
 
         self._test_access(
-            lambda: self._feature_store.generate_dataset(spine_df, [fv1, fv2], materialized_table=dataset_name),
+            lambda: self._feature_store.generate_dataset(dataset_name, spine_df, [fv1, fv2]),
             required_access,
             test_access,
+            access_exception_dict={Role.NONE: snowpark_exceptions.SnowparkSQLException},
+        )
+
+    # FIXME(dhung): SNOW-1346923
+    @absltest.skip("Dataset RBAC won't be ready until 8.17 release")  # type: ignore[misc]
+    @parameterized.product(required_access=[Role.CONSUMER], test_access=list(Role))  # type: ignore[misc]
+    def test_access_dataset(self, required_access: Role, test_access: Role) -> None:
+        spine_df = self._session.sql(f"SELECT id FROM {self._mock_table}")
+        fv1 = self._feature_store.get_feature_view("fv1", "v1")
+        fv2 = self._feature_store.get_feature_view("fv2", "v1")
+        dataset_name = f"FS_TEST_DATASET_{uuid4().hex.upper()}"
+        dataset = self._feature_store.generate_dataset(dataset_name, spine_df, [fv1, fv2])
+
+        self._test_access(
+            lambda: dataset.to_pandas(),
+            required_access,
+            test_access,
+            expected_result=lambda _pd: self.assertNotEmpty(_pd),
             access_exception_dict={Role.NONE: snowpark_exceptions.SnowparkSQLException},
         )
 
@@ -399,11 +419,10 @@ class FeatureStoreAccessTest(parameterized.TestCase):
     @parameterized.product(required_access=[Role.CONSUMER], test_access=list(Role))  # type: ignore[misc]
     def test_list_feature_views(self, required_access: Role, test_access: Role) -> None:
         self._test_access(
-            lambda: self._feature_store.list_feature_views(as_dataframe=False),
+            lambda: self._feature_store.list_feature_views().collect(),
             required_access,
             test_access,
             expected_result=lambda rst: self.assertGreater(len(rst), 0),
-            access_exception_dict={Role.NONE: snowpark_exceptions.SnowparkSQLException},
         )
 
     @parameterized.product(required_access=[Role.CONSUMER], test_access=list(Role))  # type: ignore[misc]

@@ -112,7 +112,9 @@ class OneHotEncoderTest(parameterized.TestCase):
         base_encoding = 0
         for idx in range(1, len(mapped_pandas.columns)):
             base_encoding += mapped_pandas.iloc[0, idx - 1][1]
-            mapped_pandas.iloc[:, idx] = mapped_pandas.iloc[:, idx].apply(lambda x: [x[0] + base_encoding, x[1]])
+            mapped_pandas.iloc[:, idx] = mapped_pandas.iloc[:, idx].apply(
+                lambda x: [x[0] + base_encoding, x[1]]  # noqa: B023
+            )
 
         values = []
         for row_idx, row in mapped_pandas.iterrows():
@@ -1768,6 +1770,23 @@ class OneHotEncoderTest(parameterized.TestCase):
         lower_cols = [c.lower() for c in cols]
 
         ohe = OneHotEncoder(input_cols=lower_cols, output_cols=cols, sparse=False).fit(snow_df)
+        ohe.transform(snow_df)
+
+    def test_fit_pd_transform_sp(self) -> None:
+        pd_data = pd.read_csv(TEST_DATA_PATH, index_col=0)
+        snow_df = self._session.create_dataframe(pd_data)
+        cols = [
+            "AGE",
+            "CAMPAIGN",
+            "CONTACT",
+            "DAY_OF_WEEK",
+            "EDUCATION",
+            "JOB",
+            "MONTH",
+            "DURATION",
+        ]
+
+        ohe = OneHotEncoder(input_cols=cols, output_cols=cols, sparse=False).fit(pd_data)
         ohe.transform(snow_df)
 
 

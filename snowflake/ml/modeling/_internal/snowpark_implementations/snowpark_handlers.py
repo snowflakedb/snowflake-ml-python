@@ -9,7 +9,11 @@ import cloudpickle as cp
 import pandas as pd
 
 from snowflake.ml._internal import telemetry
-from snowflake.ml._internal.utils import identifier, snowpark_dataframe_utils
+from snowflake.ml._internal.utils import (
+    identifier,
+    pkg_version_utils,
+    snowpark_dataframe_utils,
+)
 from snowflake.ml._internal.utils.query_result_checker import SqlResultValidator
 from snowflake.ml._internal.utils.temp_file_utils import (
     cleanup_temp_files,
@@ -91,6 +95,7 @@ class SnowparkTransformHandlers:
             A new dataset of the same type as the input dataset.
         """
 
+        dependencies = self._get_validated_snowpark_dependencies(session, dependencies)
         dataset = self.dataset
         estimator = self.estimator
         # Register vectorized UDF for batch inference
@@ -210,7 +215,8 @@ class SnowparkTransformHandlers:
         Returns:
             An accuracy score for the model on the given test data.
         """
-
+        dependencies = self._get_validated_snowpark_dependencies(session, dependencies)
+        dependencies.append("snowflake-snowpark-python")
         dataset = self.dataset
         estimator = self.estimator
         dataset = snowpark_dataframe_utils.cast_snowpark_dataframe_column_types(dataset)
@@ -335,3 +341,19 @@ class SnowparkTransformHandlers:
         cleanup_temp_files([local_score_file_name])
 
         return score
+
+    def _get_validated_snowpark_dependencies(self, session: Session, dependencies: List[str]) -> List[str]:
+        """A helper function to validate dependencies and return the available packages that exists
+        in the snowflake anaconda channel
+
+        Args:
+            session: the active snowpark Session
+            dependencies: unvalidated dependencies
+
+        Returns:
+            A list of packages present in the snoflake conda channel.
+        """
+
+        return pkg_version_utils.get_valid_pkg_versions_supported_in_snowflake_conda_channel(
+            pkg_versions=dependencies, session=session, subproject=self._subproject
+        )

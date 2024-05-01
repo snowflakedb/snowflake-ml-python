@@ -67,6 +67,7 @@ py_library(
     deps = [
         ":embedded_stage_fs",
         ":sfcfs",
+        "//snowflake/ml/_internal/utils:snowflake_env",  # FIXME(dhung) temporary workaround for SnowURL bug in GS 8.17
     ],
 )
 

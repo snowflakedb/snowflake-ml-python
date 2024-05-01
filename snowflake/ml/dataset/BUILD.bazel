@@ -1,14 +1,57 @@
-load("//bazel:py_rules.bzl", "py_library")
+load("//bazel:py_rules.bzl", "py_library", "py_package", "py_test")
 
 package(default_visibility = ["//visibility:public"])
+
+py_package(
+    name = "dataset_pkg",
+    packages = ["snowflake.ml"],
+    deps = [
+        ":dataset",
+    ],
+)
+
+py_library(
+    name = "dataset_reader",
+    srcs = [
+        "dataset_reader.py",
+    ],
+    deps = [
+        "//snowflake/ml/_internal:telemetry",
+        "//snowflake/ml/fileset:snowfs",
+        "//snowflake/ml/fileset:tf_dataset",
+        "//snowflake/ml/fileset:torch_datapipe",
+    ],
+)
+
+py_library(
+    name = "dataset_metadata",
+    srcs = ["dataset_metadata.py"],
+)
+
+py_test(
+    name = "dataset_metadata_test",
+    srcs = ["dataset_metadata_test.py"],
+    deps = [
+        ":dataset",
+        "//snowflake/ml/feature_store:feature_store_lib",
+    ],
+)
 
 py_library(
     name = "dataset",
     srcs = [
+        "__init__.py",
         "dataset.py",
+        "dataset_factory.py",
     ],
     deps = [
-        "//snowflake/ml/_internal/utils:query_result_checker",
-        "//snowflake/ml/registry:artifact_manager",
+        ":dataset_metadata",
+        ":dataset_reader",
+        "//snowflake/ml/_internal:telemetry",
+        "//snowflake/ml/_internal/exceptions",
+        "//snowflake/ml/_internal/exceptions:dataset_error_messages",
+        "//snowflake/ml/_internal/exceptions:dataset_errors",
+        "//snowflake/ml/_internal/utils:import_utils",
+        "//snowflake/ml/_internal/utils:snowpark_dataframe_utils",
     ],
 )

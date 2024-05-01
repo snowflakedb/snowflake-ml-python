@@ -17,11 +17,6 @@ class ResourceStatus(Enum):
     INTERNAL_ERROR = "INTERNAL_ERROR"  # there was an internal service error.
 
 
-RESOURCE_TO_STATUS_FUNCTION_MAPPING = {
-    ResourceType.SERVICE: "SYSTEM$GET_SERVICE_STATUS",
-    ResourceType.JOB: "SYSTEM$GET_JOB_STATUS",
-}
-
 PREDICT = "predict"
 STAGE = "stage"
 COMPUTE_POOL = "compute_pool"

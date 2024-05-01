@@ -4,7 +4,6 @@ from typing import Dict, List, Optional
 
 from absl import logging
 
-from snowflake.ml._internal import env_utils
 from snowflake.ml._internal.exceptions import (
     error_codes,
     exceptions as snowml_exceptions,
@@ -128,8 +127,6 @@ class ModelPackager:
             return
 
         model_meta.load_code_path(self.local_dir_path)
-
-        env_utils.validate_py_runtime_version(self.meta.env.python_version)
 
         handler = model_handler.load_handler(self.meta.model_type)
         if handler is None:

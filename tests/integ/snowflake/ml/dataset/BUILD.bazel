@@ -1,0 +1,39 @@
+load("//bazel:py_rules.bzl", "py_library", "py_test")
+
+package(default_visibility = [
+    "//bazel:snowml_public_common",
+])
+
+py_library(
+    name = "dataset_integ_test_base",
+    testonly = True,
+    srcs = ["dataset_integ_test_base.py"],
+    deps = [
+        "//snowflake/ml/dataset",
+        "//snowflake/ml/utils:connection_params",
+        "//tests/integ/snowflake/ml/fileset:fileset_integ_utils",
+        "//tests/integ/snowflake/ml/test_utils:common_test_base",
+    ],
+)
+
+py_test(
+    name = "dataset_integ_test",
+    timeout = "long",
+    srcs = ["dataset_integ_test.py"],
+    shard_count = 6,
+    deps = [
+        ":dataset_integ_test_base",
+        "//snowflake/ml/dataset",
+    ],
+)
+
+py_test(
+    name = "dataset_tensorflow_integ_test",
+    timeout = "long",
+    srcs = ["dataset_tensorflow_integ_test.py"],
+    shard_count = 4,
+    deps = [
+        ":dataset_integ_test_base",
+        "//snowflake/ml/dataset",
+    ],
+)

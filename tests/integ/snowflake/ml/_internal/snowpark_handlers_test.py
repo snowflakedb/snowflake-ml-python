@@ -10,6 +10,7 @@ from sklearn.linear_model import LinearRegression as SkLinearRegression
 from snowflake.ml.modeling._internal.snowpark_implementations.snowpark_handlers import (
     SnowparkTransformHandlers,
 )
+from snowflake.ml.modeling.linear_model import LinearRegression
 from tests.integ.snowflake.ml.test_utils import common_test_base
 
 
@@ -28,6 +29,7 @@ class SnowparkHandlersTest(common_test_base.CommonTestBase):
         self._handlers = SnowparkTransformHandlers(
             dataset=self.input_df, estimator=self.fit_estimator, class_name="test", subproject="subproject"
         )
+        self.dependencies = LinearRegression()._get_dependencies()
 
     def _get_test_dataset(self) -> Tuple[pd.DataFrame, List[str], List[str]]:
         """Constructs input dataset to be used in the integration test.
@@ -67,7 +69,7 @@ class SnowparkHandlersTest(common_test_base.CommonTestBase):
 
         predictions = self._handlers.batch_inference(
             session=self.session,
-            dependencies=["snowflake-snowpark-python", "numpy", "scikit-learn", "cloudpickle"],
+            dependencies=self.dependencies,
             inference_method="predict",
             input_cols=self.input_cols,
             drop_input_cols=False,
@@ -85,7 +87,7 @@ class SnowparkHandlersTest(common_test_base.CommonTestBase):
 
         score = self._handlers.score(
             session=self.session,
-            dependencies=["snowflake-snowpark-python", "numpy", "scikit-learn", "cloudpickle"],
+            dependencies=self.dependencies,
             score_sproc_imports=["sklearn"],
             input_cols=self.input_cols,
             label_cols=self.label_cols,

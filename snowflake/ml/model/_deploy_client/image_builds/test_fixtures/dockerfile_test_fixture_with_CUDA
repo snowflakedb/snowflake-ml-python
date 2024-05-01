@@ -27,6 +27,7 @@ RUN chmod +x ./gunicorn_run.sh
 
 USER mambauser
 ARG MAMBA_DOCKERFILE_ACTIVATE=1
+ARG MAMBA_NO_LOW_SPEED_LIMIT=1
 ENV CONDA_PREFIX=/opt/conda
 RUN --mount=type=cache,target=/opt/conda/pkgs CONDA_OVERRIDE_CUDA="11.7" \
     micromamba install -y -n base -f conda.yml && \

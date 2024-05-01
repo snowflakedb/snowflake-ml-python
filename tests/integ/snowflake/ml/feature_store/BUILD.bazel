@@ -48,7 +48,7 @@ py_test(
     srcs = [
         "feature_store_large_scale_test.py",
     ],
-    shard_count = 4,
+    shard_count = 2,
     deps = [
         ":common_utils",
         "//snowflake/ml/feature_store:feature_store_lib",
@@ -78,6 +78,19 @@ py_test(
         "feature_store_access_test.py",
     ],
     shard_count = 16,
+    deps = [
+        ":common_utils",
+        "//snowflake/ml/feature_store:feature_store_lib",
+        "//snowflake/ml/utils:connection_params",
+    ],
+)
+
+py_test(
+    name = "feature_store_compatibility_test",
+    srcs = [
+        "feature_store_compatibility_test.py",
+    ],
+    shard_count = 1,
     deps = [
         ":common_utils",
         "//snowflake/ml/feature_store:feature_store_lib",
