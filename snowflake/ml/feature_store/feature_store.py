@@ -242,9 +242,11 @@ class FeatureStore:
 
         else:
             try:
-                self._session.sql(f"CREATE SCHEMA IF NOT EXISTS {self._config.full_schema_path}").collect(
-                    statement_params=self._telemetry_stmp
-                )
+                # Explicitly check if schema exists first since we may not have CREATE SCHEMA privilege
+                if len(self._find_object("SCHEMAS", self._config.schema)) == 0:
+                    self._session.sql(f"CREATE SCHEMA IF NOT EXISTS {self._config.full_schema_path}").collect(
+                        statement_params=self._telemetry_stmp
+                    )
                 for tag in to_sql_identifiers(
                     [
                         _FEATURE_VIEW_METADATA_TAG,

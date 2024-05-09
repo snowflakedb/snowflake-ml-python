@@ -3,7 +3,6 @@ from typing import Any, Callable, Dict, Optional, Type, Union
 from uuid import uuid4
 
 from absl.testing import absltest, parameterized
-from access_utils import FeatureStoreRole as Role, configure_roles
 from common_utils import (
     FS_INTEG_TEST_DB,
     cleanup_temporary_objects,
@@ -12,16 +11,21 @@ from common_utils import (
     get_test_warehouse_name,
 )
 
+from snowflake.ml.feature_store.access_manager import (
+    _configure_pre_init_privileges,
+    _FeatureStoreRole as Role,
+    _SessionInfo,
+    setup_feature_store,
+)
 from snowflake.ml.feature_store.entity import Entity
 from snowflake.ml.feature_store.feature_store import CreationMode, FeatureStore
 from snowflake.ml.feature_store.feature_view import FeatureView, FeatureViewStatus
 from snowflake.ml.utils.connection_params import SnowflakeLoginOptions
 from snowflake.snowpark import Session, exceptions as snowpark_exceptions
 
-_TEST_ROLE_ADMIN = "FS_ROLE_ADMIN"
 _TEST_ROLE_PRODUCER = "FS_ROLE_PRODUCER"
 _TEST_ROLE_CONSUMER = "FS_ROLE_CONSUMER"
-_TEST_ROLE_NONE = "FS_ROLE_NONE"
+_TEST_ROLE_NONE = "FS_ROLE_NONE"  # For testing access attempts with no privileges
 
 
 class FeatureStoreAccessTest(parameterized.TestCase):
@@ -30,7 +34,6 @@ class FeatureStoreAccessTest(parameterized.TestCase):
         cls._session = Session.builder.configs(SnowflakeLoginOptions()).create()
         cleanup_temporary_objects(cls._session)
         cls._test_roles = {
-            Role.ADMIN: _TEST_ROLE_ADMIN,
             Role.PRODUCER: _TEST_ROLE_PRODUCER,
             Role.CONSUMER: _TEST_ROLE_CONSUMER,
             Role.NONE: _TEST_ROLE_NONE,
@@ -44,19 +47,13 @@ class FeatureStoreAccessTest(parameterized.TestCase):
             cls._test_schema = create_random_schema(
                 cls._session, "FS_TEST", database=cls._test_database, additional_options="WITH MANAGED ACCESS"
             )
-            cls._feature_store = FeatureStore(
+            cls._feature_store = setup_feature_store(
                 cls._session,
                 cls._test_database,
                 cls._test_schema,
                 cls._test_warehouse,
-                creation_mode=CreationMode.CREATE_IF_NOT_EXIST,
-            )
-
-            configure_roles(
-                cls._feature_store,
-                admin_role_name=cls._test_roles[Role.ADMIN],
-                producer_role_name=cls._test_roles[Role.PRODUCER],
-                consumer_role_name=cls._test_roles[Role.CONSUMER],
+                producer_role=cls._test_roles[Role.PRODUCER],
+                consumer_role=cls._test_roles[Role.CONSUMER],
             )
 
             cls._mock_table = cls._init_test_data()
@@ -166,7 +163,7 @@ class FeatureStoreAccessTest(parameterized.TestCase):
         [
             {
                 "init_args": {"creation_mode": CreationMode.CREATE_IF_NOT_EXIST},
-                "required_access": Role.ADMIN,
+                "required_access": Role.PRODUCER,
                 "expected_result": None,
             },
             {
@@ -184,13 +181,21 @@ class FeatureStoreAccessTest(parameterized.TestCase):
         test_access: Role,
         expected_result: Optional[Type[Exception]],
     ) -> None:
-        schema_name = f"FS_TEST_{uuid4().hex.upper()}"
+        schema = create_random_schema(
+            self._session, "FS_TEST", database=self._test_database, additional_options="WITH MANAGED ACCESS"
+        )
+        _configure_pre_init_privileges(
+            self._session,
+            _SessionInfo(self._test_database, schema, self._test_warehouse),
+            producer_role=self._test_roles[Role.PRODUCER],
+            consumer_role=self._test_roles[Role.CONSUMER],
+        )
 
         def unit_under_test() -> FeatureStore:
             return FeatureStore(
                 self._session,
                 self._test_database,
-                schema_name,
+                schema,
                 self._test_warehouse,
                 **init_args,
             )
@@ -204,9 +209,9 @@ class FeatureStoreAccessTest(parameterized.TestCase):
                 access_exception_dict={Role.NONE: ValueError},
             )
         finally:
-            self._session.sql(f"DROP SCHEMA IF EXISTS {self._test_database}.{schema_name}").collect()
+            self._session.sql(f"DROP SCHEMA IF EXISTS {self._test_database}.{schema}").collect()
 
-    @parameterized.product(required_access=[Role.ADMIN], test_access=list(Role))  # type: ignore[misc]
+    @parameterized.product(required_access=[Role.PRODUCER], test_access=list(Role))  # type: ignore[misc]
     def test_clear(self, required_access: Role, test_access: Role) -> None:
         # Create isolated Feature Store to test clearing
         schema_admin = self._session.get_current_role()
@@ -214,21 +219,16 @@ class FeatureStoreAccessTest(parameterized.TestCase):
             self._session, "FS_TEST", database=self._test_database, additional_options="WITH MANAGED ACCESS"
         )
         try:
-            fs = FeatureStore(
+            fs = setup_feature_store(
                 self._session,
                 self._test_database,
                 schema,
                 self._test_warehouse,
-                creation_mode=CreationMode.CREATE_IF_NOT_EXIST,
-            )
-            configure_roles(
-                fs,
-                admin_role_name=self._test_roles[Role.ADMIN],
-                producer_role_name=self._test_roles[Role.PRODUCER],
-                consumer_role_name=self._test_roles[Role.CONSUMER],
+                producer_role=self._test_roles[Role.PRODUCER],
+                consumer_role=self._test_roles[Role.CONSUMER],
             )
 
-            self._session.use_role(self._test_roles[Role.ADMIN])
+            self._session.use_role(self._test_roles[Role.PRODUCER])
             e = Entity(f"test_entity_{uuid4().hex.upper()}"[:32], ["test_key"])
             fs.register_entity(e)
 
@@ -241,7 +241,7 @@ class FeatureStoreAccessTest(parameterized.TestCase):
             )
 
             # Do validation on FileSet contents outside _test_access since we need admin access
-            expected_entity_count = entity_count if test_access.value < Role.ADMIN.value else 0
+            expected_entity_count = entity_count if test_access.value < Role.PRODUCER.value else 0
             self.assertEqual(len(fs.list_entities().collect()), expected_entity_count)
         finally:
             self._session.use_role(schema_admin)
@@ -280,6 +280,7 @@ class FeatureStoreAccessTest(parameterized.TestCase):
 
     @parameterized.product(required_access=[Role.PRODUCER], test_access=list(Role))  # type: ignore[misc]
     def test_suspend_feature_view(self, required_access: Role, test_access: Role) -> None:
+        self._session.use_role(self._test_roles[Role.PRODUCER])  # Expected case is FeatureView owned by PRODUCER
         e = self._feature_store.get_entity("foo")
         fv = FeatureView(
             name="test_fv",
@@ -302,6 +303,7 @@ class FeatureStoreAccessTest(parameterized.TestCase):
 
     @parameterized.product(required_access=[Role.PRODUCER], test_access=list(Role))  # type: ignore[misc]
     def test_resume_feature_view(self, required_access: Role, test_access: Role) -> None:
+        self._session.use_role(self._test_roles[Role.PRODUCER])  # Expected case is FeatureView owned by PRODUCER
         e = self._feature_store.get_entity("foo")
         fv = FeatureView(
             name="test_fv",

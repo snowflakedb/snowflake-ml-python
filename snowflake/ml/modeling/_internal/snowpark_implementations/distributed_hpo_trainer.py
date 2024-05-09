@@ -154,7 +154,7 @@ def construct_cv_results(
     return multimetric, estimator._format_results(param_grid, n_split, out)
 
 
-def construct_cv_results_new_implementation(
+def construct_cv_results_memory_efficient_version(
     estimator: Union[GridSearchCV, RandomizedSearchCV],
     n_split: int,
     param_grid: List[Dict[str, Any]],
@@ -210,7 +210,7 @@ def construct_cv_results_new_implementation(
 
 
 cp.register_pickle_by_value(inspect.getmodule(construct_cv_results))
-cp.register_pickle_by_value(inspect.getmodule(construct_cv_results_new_implementation))
+cp.register_pickle_by_value(inspect.getmodule(construct_cv_results_memory_efficient_version))
 
 
 class DistributedHPOTrainer(SnowparkModelTrainer):
@@ -661,7 +661,7 @@ class DistributedHPOTrainer(SnowparkModelTrainer):
 
         return fit_estimator
 
-    def fit_search_snowpark_new_implementation(
+    def fit_search_snowpark_enable_efficient_memory_usage(
         self,
         param_grid: Union[model_selection.ParameterGrid, model_selection.ParameterSampler],
         dataset: DataFrame,
@@ -718,7 +718,7 @@ class DistributedHPOTrainer(SnowparkModelTrainer):
                 inspect.currentframe(), self.__class__.__name__
             ),
             api_calls=[udtf],
-            custom_tags=dict([("hpo_udtf", True)]),
+            custom_tags=dict([("hpo_memory_efficient", True)]),
         )
 
         # Put locally serialized estimator on stage.
@@ -1005,7 +1005,9 @@ class DistributedHPOTrainer(SnowparkModelTrainer):
 
             session.udtf.register(
                 SearchCV,
-                output_schema=StructType([StructField("IDX", IntegerType()), StructField("CV_RESULTS", StringType())]),
+                output_schema=StructType(
+                    [StructField("FIRST_IDX", IntegerType()), StructField("EACH_CV_RESULTS", StringType())]
+                ),
                 input_types=[IntegerType(), IntegerType(), IntegerType()],
                 name=random_udtf_name,
                 packages=required_deps,  # type: ignore[arg-type]
@@ -1042,11 +1044,11 @@ class DistributedHPOTrainer(SnowparkModelTrainer):
                 ),
             )
 
-            first_test_score, cv_results_ = construct_cv_results_new_implementation(
+            first_test_score, cv_results_ = construct_cv_results_memory_efficient_version(
                 estimator,
                 n_splits,
                 list(param_grid),
-                HP_raw_results.select("CV_RESULTS").sort(F.col("IDX")).collect(),
+                HP_raw_results.select("EACH_CV_RESULTS").sort(F.col("FIRST_IDX")).collect(),
                 cross_validator_indices_length,
                 parameter_grid_length,
             )
@@ -1163,7 +1165,7 @@ class DistributedHPOTrainer(SnowparkModelTrainer):
             pkg_versions=model_spec.pkgDependencies, session=self.session
         )
         if ENABLE_EFFICIENT_MEMORY_USAGE:
-            return self.fit_search_snowpark_new_implementation(
+            return self.fit_search_snowpark_enable_efficient_memory_usage(
                 param_grid=param_grid,
                 dataset=self.dataset,
                 session=self.session,

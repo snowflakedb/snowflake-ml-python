@@ -1,5 +1,15 @@
 # Release History
 
+## 1.5.1
+
+### Bug Fixes
+
+### Behavior Changes
+
+### New Features
+
+- Feature Store: Added new `snowflake.ml.feature_store.setup_feature_store()` API to assist Feature Store RBAC setup.
+
 ## 1.5.0
 
 ### Bug Fixes
