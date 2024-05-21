@@ -1,4 +1,5 @@
 import os
+import pathlib
 import tempfile
 from typing import TYPE_CHECKING, Callable, Dict, Optional, Type, cast, final
 
@@ -45,7 +46,7 @@ def _parse_mlflow_env(model_uri: str, env: model_env.ModelEnv) -> model_env.Mode
     if not os.path.exists(conda_env_file_path):
         raise ValueError("Cannot load MLFlow model dependencies.")
 
-    env.load_from_conda_file(conda_env_file_path)
+    env.load_from_conda_file(pathlib.Path(conda_env_file_path))
 
     return env
 

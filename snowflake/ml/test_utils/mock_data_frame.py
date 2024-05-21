@@ -14,7 +14,7 @@ class MockAsyncJob:
     def __init__(self, result: Any) -> None:
         self._result = result
 
-    def result(self) -> Any:
+    def result(self, *args: Any, **kwargs: Any) -> Any:
         return self._result
 
 

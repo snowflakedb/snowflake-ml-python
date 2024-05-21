@@ -5,7 +5,7 @@ import re
 from collections import OrderedDict
 from dataclasses import asdict, dataclass
 from enum import Enum
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 from snowflake.ml._internal.exceptions import (
     error_codes,
@@ -27,7 +27,8 @@ from snowflake.snowpark.types import (
 )
 
 _FEATURE_VIEW_NAME_DELIMITER = "$"
-_TIMESTAMP_COL_PLACEHOLDER = "FS_TIMESTAMP_COL_PLACEHOLDER_VAL"
+_LEGACY_TIMESTAMP_COL_PLACEHOLDER_VALS = ["FS_TIMESTAMP_COL_PLACEHOLDER_VAL", "NULL"]
+_TIMESTAMP_COL_PLACEHOLDER = "NULL"
 _FEATURE_OBJ_TYPE = "FEATURE_OBJ_TYPE"
 # Feature view version rule is aligned with dataset version rule in SQL.
 _FEATURE_VIEW_VERSION_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9_.\-]*$")
@@ -121,12 +122,13 @@ class FeatureView:
         timestamp_col: Optional[str] = None,
         refresh_freq: Optional[str] = None,
         desc: str = "",
+        **_kwargs: Any,
     ) -> None:
         """
         Create a FeatureView instance.
 
         Args:
-            name: name of the FeatureView. NOTE: FeatureView name will be capitalized.
+            name: name of the FeatureView. NOTE: following Snowflake identifier rule
             entities: entities that the FeatureView is associated with.
             feature_df: Snowpark DataFrame containing data source and all feature feature_df logics.
                 Final projection of the DataFrame should contain feature names, join keys and timestamp(if applicable).
@@ -140,6 +142,7 @@ class FeatureView:
                 NOTE: If refresh_freq is not provided, then FeatureView will be registered as View on Snowflake backend
                     and there won't be extra storage cost.
             desc: description of the FeatureView.
+            _kwargs: reserved kwargs for system generated args. NOTE: DO NOT USE.
         """
 
         self._name: SqlIdentifier = SqlIdentifier(name)
@@ -149,6 +152,7 @@ class FeatureView:
             SqlIdentifier(timestamp_col) if timestamp_col is not None else None
         )
         self._desc: str = desc
+        self._infer_schema_df: DataFrame = _kwargs.get("_infer_schema_df", self._feature_df)
         self._query: str = self._get_query()
         self._version: Optional[FeatureViewVersion] = None
         self._status: FeatureViewStatus = FeatureViewStatus.DRAFT
@@ -295,7 +299,7 @@ class FeatureView:
 
     @property
     def output_schema(self) -> StructType:
-        return self._feature_df.schema
+        return self._infer_schema_df.schema
 
     @property
     def refresh_mode(self) -> Optional[str]:
@@ -329,7 +333,7 @@ Got {len(self._feature_df.queries['queries'])}: {self._feature_df.queries['queri
                 f"FeatureView name `{self._name}` contains invalid character `{_FEATURE_VIEW_NAME_DELIMITER}`."
             )
 
-        unescaped_df_cols = to_sql_identifiers(self._feature_df.columns)
+        unescaped_df_cols = to_sql_identifiers(self._infer_schema_df.columns)
         for e in self._entities:
             for k in e.join_keys:
                 if k not in unescaped_df_cols:
@@ -341,17 +345,17 @@ Got {len(self._feature_df.queries['queries'])}: {self._feature_df.queries['queri
             ts_col = self._timestamp_col
             if ts_col == SqlIdentifier(_TIMESTAMP_COL_PLACEHOLDER):
                 raise ValueError(f"Invalid timestamp_col name, cannot be {_TIMESTAMP_COL_PLACEHOLDER}.")
-            if ts_col not in to_sql_identifiers(self._feature_df.columns):
+            if ts_col not in to_sql_identifiers(self._infer_schema_df.columns):
                 raise ValueError(f"timestamp_col {ts_col} is not found in input dataframe.")
 
-            col_type = self._feature_df.schema[ts_col].datatype
+            col_type = self._infer_schema_df.schema[ts_col].datatype
             if not isinstance(col_type, (DateType, TimeType, TimestampType, _NumericType)):
                 raise ValueError(f"Invalid data type for timestamp_col {ts_col}: {col_type}.")
 
     def _get_feature_names(self) -> List[SqlIdentifier]:
         join_keys = [k for e in self._entities for k in e.join_keys]
         ts_col = [self._timestamp_col] if self._timestamp_col is not None else []
-        feature_names = to_sql_identifiers(self._feature_df.columns, case_sensitive=True)
+        feature_names = to_sql_identifiers(self._infer_schema_df.columns, case_sensitive=False)
         return [c for c in feature_names if c not in join_keys + ts_col]
 
     def __repr__(self) -> str:
@@ -384,6 +388,9 @@ Got {len(self._feature_df.queries['queries'])}: {self._feature_df.queries['queri
         fv_dict = self.__dict__.copy()
         if "_feature_df" in fv_dict:
             fv_dict.pop("_feature_df")
+        if "_infer_schema_df" in fv_dict:
+            infer_schema_df = fv_dict.pop("_infer_schema_df")
+            fv_dict["_infer_schema_query"] = infer_schema_df.queries["queries"][0]
         fv_dict["_entities"] = [e._to_dict() for e in self._entities]
         fv_dict["_status"] = str(self._status)
         fv_dict["_name"] = str(self._name) if self._name is not None else None
@@ -440,6 +447,7 @@ Got {len(self._feature_df.queries['queries'])}: {self._feature_df.queries['queri
             refresh_mode=json_dict["_refresh_mode"],
             refresh_mode_reason=json_dict["_refresh_mode_reason"],
             owner=json_dict["_owner"],
+            infer_schema_df=session.sql(json_dict.get("_infer_schema_query", None)),
         )
 
     @staticmethod
@@ -471,6 +479,7 @@ Got {len(self._feature_df.queries['queries'])}: {self._feature_df.queries['queri
         refresh_mode: Optional[str],
         refresh_mode_reason: Optional[str],
         owner: Optional[str],
+        infer_schema_df: Optional[DataFrame],
     ) -> FeatureView:
         fv = FeatureView(
             name=name,
@@ -478,6 +487,7 @@ Got {len(self._feature_df.queries['queries'])}: {self._feature_df.queries['queri
             feature_df=feature_df,
             timestamp_col=timestamp_col,
             desc=desc,
+            _infer_schema_df=infer_schema_df,
         )
         fv._version = FeatureViewVersion(version) if version is not None else None
         fv._status = status

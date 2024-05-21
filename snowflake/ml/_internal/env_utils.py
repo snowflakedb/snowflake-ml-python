@@ -553,6 +553,9 @@ def load_conda_env_file(
         A tuple of Dict of conda dependencies after validated, optional pip requirements if exist
         and a string 'major.minor.patchlevel' of python version.
     """
+    if not path.exists():
+        return collections.defaultdict(list), None, None
+
     with open(path, encoding="utf-8") as f:
         env = yaml.safe_load(stream=f)
 
@@ -603,6 +606,9 @@ def load_requirements_file(path: pathlib.Path) -> List[requirements.Requirement]
     Returns:
         List of dependencies string after validated.
     """
+    if not path.exists():
+        return []
+
     with open(path, encoding="utf-8") as f:
         reqs = f.readlines()
 

@@ -1,9 +1,9 @@
-from typing import Dict, List, Optional, Tuple, Union
+from typing import Dict, List, Optional, Union
 
 import pandas as pd
 
 from snowflake.ml._internal import telemetry
-from snowflake.ml._internal.utils import identifier, sql_identifier
+from snowflake.ml._internal.utils import sql_identifier
 from snowflake.ml.model._client.model import model_version_impl
 from snowflake.ml.model._client.ops import model_ops
 
@@ -45,7 +45,7 @@ class Model:
     @property
     def fully_qualified_name(self) -> str:
         """Return the fully qualified name of the model that can be used to refer to it in SQL."""
-        return self._model_ops._model_version_client.fully_qualified_model_name(self._model_name)
+        return self._model_ops._model_version_client.fully_qualified_object_name(None, None, self._model_name)
 
     @property
     @telemetry.send_api_usage_telemetry(
@@ -76,6 +76,8 @@ class Model:
             subproject=_TELEMETRY_SUBPROJECT,
         )
         return self._model_ops.get_comment(
+            database_name=None,
+            schema_name=None,
             model_name=self._model_name,
             statement_params=statement_params,
         )
@@ -92,6 +94,8 @@ class Model:
         )
         return self._model_ops.set_comment(
             comment=comment,
+            database_name=None,
+            schema_name=None,
             model_name=self._model_name,
             statement_params=statement_params,
         )
@@ -109,7 +113,7 @@ class Model:
             class_name=self.__class__.__name__,
         )
         default_version_name = self._model_ops.get_default_version(
-            model_name=self._model_name, statement_params=statement_params
+            database_name=None, schema_name=None, model_name=self._model_name, statement_params=statement_params
         )
         return self.version(default_version_name)
 
@@ -129,7 +133,11 @@ class Model:
         else:
             version_name = version._version_name
         self._model_ops.set_default_version(
-            model_name=self._model_name, version_name=version_name, statement_params=statement_params
+            database_name=None,
+            schema_name=None,
+            model_name=self._model_name,
+            version_name=version_name,
+            statement_params=statement_params,
         )
 
     @telemetry.send_api_usage_telemetry(
@@ -155,6 +163,8 @@ class Model:
         )
         version_id = sql_identifier.SqlIdentifier(version_name)
         if self._model_ops.validate_existence(
+            database_name=None,
+            schema_name=None,
             model_name=self._model_name,
             version_name=version_id,
             statement_params=statement_params,
@@ -184,6 +194,8 @@ class Model:
             subproject=_TELEMETRY_SUBPROJECT,
         )
         version_names = self._model_ops.list_models_or_versions(
+            database_name=None,
+            schema_name=None,
             model_name=self._model_name,
             statement_params=statement_params,
         )
@@ -211,6 +223,8 @@ class Model:
             subproject=_TELEMETRY_SUBPROJECT,
         )
         rows = self._model_ops.show_models_or_versions(
+            database_name=None,
+            schema_name=None,
             model_name=self._model_name,
             statement_params=statement_params,
         )
@@ -231,6 +245,8 @@ class Model:
             subproject=_TELEMETRY_SUBPROJECT,
         )
         self._model_ops.delete_model_or_version(
+            database_name=None,
+            schema_name=None,
             model_name=self._model_name,
             version_name=sql_identifier.SqlIdentifier(version_name),
             statement_params=statement_params,
@@ -250,29 +266,9 @@ class Model:
             project=_TELEMETRY_PROJECT,
             subproject=_TELEMETRY_SUBPROJECT,
         )
-        return self._model_ops.show_tags(model_name=self._model_name, statement_params=statement_params)
-
-    def _parse_tag_name(
-        self,
-        tag_name: str,
-    ) -> Tuple[sql_identifier.SqlIdentifier, sql_identifier.SqlIdentifier, sql_identifier.SqlIdentifier]:
-        _tag_db, _tag_schema, _tag_name, _ = identifier.parse_schema_level_object_identifier(tag_name)
-        if _tag_db is None:
-            tag_db_id = self._model_ops._model_client._database_name
-        else:
-            tag_db_id = sql_identifier.SqlIdentifier(_tag_db)
-
-        if _tag_schema is None:
-            tag_schema_id = self._model_ops._model_client._schema_name
-        else:
-            tag_schema_id = sql_identifier.SqlIdentifier(_tag_schema)
-
-        if _tag_name is None:
-            raise ValueError(f"Unable parse the tag name `{tag_name}` you input.")
-
-        tag_name_id = sql_identifier.SqlIdentifier(_tag_name)
-
-        return tag_db_id, tag_schema_id, tag_name_id
+        return self._model_ops.show_tags(
+            database_name=None, schema_name=None, model_name=self._model_name, statement_params=statement_params
+        )
 
     @telemetry.send_api_usage_telemetry(
         project=_TELEMETRY_PROJECT,
@@ -292,8 +288,10 @@ class Model:
             project=_TELEMETRY_PROJECT,
             subproject=_TELEMETRY_SUBPROJECT,
         )
-        tag_db_id, tag_schema_id, tag_name_id = self._parse_tag_name(tag_name)
+        tag_db_id, tag_schema_id, tag_name_id = sql_identifier.parse_fully_qualified_name(tag_name)
         return self._model_ops.get_tag_value(
+            database_name=None,
+            schema_name=None,
             model_name=self._model_name,
             tag_database_name=tag_db_id,
             tag_schema_name=tag_schema_id,
@@ -317,8 +315,10 @@ class Model:
             project=_TELEMETRY_PROJECT,
             subproject=_TELEMETRY_SUBPROJECT,
         )
-        tag_db_id, tag_schema_id, tag_name_id = self._parse_tag_name(tag_name)
+        tag_db_id, tag_schema_id, tag_name_id = sql_identifier.parse_fully_qualified_name(tag_name)
         self._model_ops.set_tag(
+            database_name=None,
+            schema_name=None,
             model_name=self._model_name,
             tag_database_name=tag_db_id,
             tag_schema_name=tag_schema_id,
@@ -342,8 +342,10 @@ class Model:
             project=_TELEMETRY_PROJECT,
             subproject=_TELEMETRY_SUBPROJECT,
         )
-        tag_db_id, tag_schema_id, tag_name_id = self._parse_tag_name(tag_name)
+        tag_db_id, tag_schema_id, tag_name_id = sql_identifier.parse_fully_qualified_name(tag_name)
         self._model_ops.unset_tag(
+            database_name=None,
+            schema_name=None,
             model_name=self._model_name,
             tag_database_name=tag_db_id,
             tag_schema_name=tag_schema_id,
@@ -365,15 +367,20 @@ class Model:
             project=_TELEMETRY_PROJECT,
             subproject=_TELEMETRY_SUBPROJECT,
         )
-        db, schema, model, _ = identifier.parse_schema_level_object_identifier(model_name)
-        new_model_db = sql_identifier.SqlIdentifier(db) if db else None
-        new_model_schema = sql_identifier.SqlIdentifier(schema) if schema else None
-        new_model_id = sql_identifier.SqlIdentifier(model)
+        new_db, new_schema, new_model = sql_identifier.parse_fully_qualified_name(model_name)
+
         self._model_ops.rename(
+            database_name=None,
+            schema_name=None,
             model_name=self._model_name,
-            new_model_db=new_model_db,
-            new_model_schema=new_model_schema,
-            new_model_name=new_model_id,
+            new_model_db=new_db,
+            new_model_schema=new_schema,
+            new_model_name=new_model,
             statement_params=statement_params,
         )
-        self._model_name = new_model_id
+        self._model_ops = model_ops.ModelOperator(
+            self._model_ops._session,
+            database_name=new_db or self._model_ops._model_client._database_name,
+            schema_name=new_schema or self._model_ops._model_client._schema_name,
+        )
+        self._model_name = new_model

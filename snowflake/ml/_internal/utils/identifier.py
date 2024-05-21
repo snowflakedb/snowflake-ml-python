@@ -156,7 +156,7 @@ def parse_schema_level_object_identifier(
     """
     res = _SF_SCHEMA_LEVEL_OBJECT_RE.fullmatch(path)
     if not res:
-        raise ValueError(f"Invalid identifier. It should start with database.schema.stage. Getting {path}")
+        raise ValueError(f"Invalid identifier. It should start with database.schema.object. Getting {path}")
     return (
         res.group("db"),
         res.group("schema"),

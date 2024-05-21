@@ -1,16 +1,12 @@
 import os
 import tempfile
-import uuid
 
 import numpy as np
 import pandas as pd
 from absl.testing import absltest
 
-from snowflake.ml import registry
 from snowflake.ml.model import custom_model
-from snowflake.ml.utils import connection_params
-from snowflake.snowpark import Session
-from tests.integ.snowflake.ml.test_utils import db_manager
+from tests.integ.snowflake.ml.registry.model import registry_model_test_base
 
 
 class DemoModelWithArtifacts(custom_model.CustomModel):
@@ -25,34 +21,7 @@ class DemoModelWithArtifacts(custom_model.CustomModel):
         return pd.DataFrame({"output": input["c1"] + self.bias})
 
 
-class ModelWithAdditionalImportTest(absltest.TestCase):
-    def setUp(self) -> None:
-        """Creates Snowpark and Snowflake environments for testing."""
-        login_options = connection_params.SnowflakeLoginOptions()
-
-        self._run_id = uuid.uuid4().hex
-        self._test_db = db_manager.TestObjectNameGenerator.get_snowml_test_object_name(self._run_id, "db").upper()
-        self._test_schema = db_manager.TestObjectNameGenerator.get_snowml_test_object_name(
-            self._run_id, "schema"
-        ).upper()
-
-        self._session = Session.builder.configs(
-            {
-                **login_options,
-                **{"database": self._test_db, "schema": self._test_schema},
-            }
-        ).create()
-
-        self._db_manager = db_manager.DBManager(self._session)
-        self._db_manager.create_database(self._test_db)
-        self._db_manager.create_schema(self._test_schema)
-        self._db_manager.cleanup_databases(expire_hours=6)
-        self.registry = registry.Registry(self._session)
-
-    def tearDown(self) -> None:
-        self._db_manager.drop_database(self._test_db)
-        self._session.close()
-
+class ModelWithAdditionalImportTest(registry_model_test_base.RegistryModelTestBase):
     def test_multiple_model(self) -> None:
         version = "v1"
         arr = np.array([[1], [4]])

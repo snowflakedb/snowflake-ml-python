@@ -115,7 +115,7 @@ class Pipeline(base.BaseTransformer):
         self._feature_names_in: List[np.ndarray[Any, np.dtype[Any]]] = []
         self._n_features_in: List[int] = []
         self._transformers_to_input_indices: Dict[str, List[int]] = {}
-        self._is_convertible_to_sklearn = True
+        self._modifies_label_or_sample_weight = True
 
         self._model_signature_dict: Optional[Dict[str, ModelSignature]] = None
 
@@ -126,6 +126,9 @@ class Pipeline(base.BaseTransformer):
         self._deps = list(deps)
         self._sklearn_object = None
         self.label_cols = self._get_label_cols()
+        self._is_convertible_to_sklearn = self._is_convertible_to_sklearn_object()
+
+        self._send_pipeline_configuration_telemetry()
 
     @staticmethod
     def _is_estimator(obj: object) -> bool:
@@ -228,7 +231,7 @@ class Pipeline(base.BaseTransformer):
         return [c for c in columns if c not in target_cols]
 
     def _append_step_feature_consumption_info(self, step_name: str, all_cols: List[str], input_cols: List[str]) -> None:
-        if self._is_convertible_to_sklearn:
+        if self._modifies_label_or_sample_weight:
             all_cols = self._get_sanitized_list_of_columns(all_cols)
             self._feature_names_in.append(np.asarray(all_cols, dtype=object))
             self._n_features_in.append(len(all_cols))
@@ -248,7 +251,7 @@ class Pipeline(base.BaseTransformer):
         self, dataset: Union[snowpark.DataFrame, pd.DataFrame]
     ) -> Union[snowpark.DataFrame, pd.DataFrame]:
         self._reset()
-        self._is_convertible_to_sklearn = not self._is_pipeline_modifying_label_or_sample_weight()
+        self._modifies_label_or_sample_weight = not self._is_pipeline_modifying_label_or_sample_weight()
         transformed_dataset = dataset
         for name, trans in self._get_transformers():
             self._append_step_feature_consumption_info(
@@ -425,7 +428,7 @@ class Pipeline(base.BaseTransformer):
         )
 
         if self._can_be_trained_in_ml_runtime(dataset):
-            if not self._is_convertible_to_sklearn_object():
+            if not self._is_convertible_to_sklearn:
                 raise ValueError("This pipeline cannot be converted to an sklearn pipeline.")
             self._fit_ml_runtime(dataset)
 
@@ -947,7 +950,7 @@ class Pipeline(base.BaseTransformer):
         if not os.environ.get(IN_ML_RUNTIME_ENV_VAR):
             return False
 
-        return self._is_convertible_to_sklearn_object()
+        return self._is_convertible_to_sklearn
 
     @staticmethod
     def _wrap_transformer_in_column_transformer(
@@ -1003,7 +1006,7 @@ class Pipeline(base.BaseTransformer):
         if not self._is_fitted:
             return self._create_unfitted_sklearn_object()
 
-        if not self._is_convertible_to_sklearn:
+        if not self._modifies_label_or_sample_weight:
             raise exceptions.SnowflakeMLException(
                 error_code=error_codes.METHOD_NOT_ALLOWED,
                 original_exception=ValueError(
@@ -1109,7 +1112,24 @@ class Pipeline(base.BaseTransformer):
             else:
                 return self._create_sklearn_object()
         else:
-            if self._is_convertible_to_sklearn_object():
+            if self._is_convertible_to_sklearn:
                 return self._create_unfitted_sklearn_object()
             else:
                 raise ValueError("This pipeline can not be converted to an sklearn pipeline.")
+
+    def _send_pipeline_configuration_telemetry(self) -> None:
+        """Track information about the pipeline setup. Currently, we want to track:
+        - Whether the pipeline is converible to an sklearn pipeline
+        - Whether the pipeline is being used in the SPCS ml runtime.
+        """
+
+        telemetry_data = {
+            "pipeline_is_convertible_to_sklearn": self._is_convertible_to_sklearn,
+            "in_spcs_ml_runtime": bool(os.environ.get(IN_ML_RUNTIME_ENV_VAR)),
+        }
+        telemetry.send_custom_usage(
+            project=_PROJECT,
+            subproject=_SUBPROJECT,
+            telemetry_type=telemetry.TelemetryField.TYPE_SNOWML_PIPELINE_USAGE.value,
+            data=telemetry_data,
+        )

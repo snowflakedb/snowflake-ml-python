@@ -114,11 +114,12 @@ def cleanup_temporary_objects(session: Session) -> None:
         time_diff: timedelta = current_time - row["created_on"]
         return time_diff >= timedelta(hours=DB_OBJECT_EXPIRE_HOURS)
 
-    result = session.sql(f"SHOW SCHEMAS IN DATABASE {FS_INTEG_TEST_DB}").collect()
-    permanent_schemas = to_sql_identifiers(["INFORMATION_SCHEMA", "PUBLIC", FS_INTEG_TEST_DATASET_SCHEMA])
-    for row in result:
-        if SqlIdentifier(row["name"]) not in permanent_schemas and is_object_expired(row):
-            session.sql(f"DROP SCHEMA IF EXISTS {FS_INTEG_TEST_DB}.{row['name']}").collect()
+    for db in [FS_INTEG_TEST_DB, FS_INTEG_TEST_DUMMY_DB]:
+        result = session.sql(f"SHOW SCHEMAS IN DATABASE {db}").collect()
+        permanent_schemas = to_sql_identifiers(["INFORMATION_SCHEMA", "PUBLIC", FS_INTEG_TEST_DATASET_SCHEMA])
+        for row in result:
+            if SqlIdentifier(row["name"]) not in permanent_schemas and is_object_expired(row):
+                session.sql(f"DROP SCHEMA IF EXISTS {db}.{row['name']}").collect()
 
     full_schema_path = f"{FS_INTEG_TEST_DB}.{FS_INTEG_TEST_DATASET_SCHEMA}"
     result = session.sql(f"SHOW TABLES IN {full_schema_path}").collect()

@@ -9,7 +9,8 @@ from snowflake.ml._internal.utils import (
     query_result_checker,
     sql_identifier,
 )
-from snowflake.snowpark import dataframe, functions as F, row, session, types as spt
+from snowflake.ml.model._client.sql import _base
+from snowflake.snowpark import dataframe, functions as F, row, types as spt
 from snowflake.snowpark._internal import utils as snowpark_utils
 
 
@@ -20,34 +21,15 @@ def _normalize_url_for_sql(url: str) -> str:
     return f"'{url}'"
 
 
-class ModelVersionSQLClient:
+class ModelVersionSQLClient(_base._BaseSQLClient):
     FUNCTION_NAME_COL_NAME = "name"
     FUNCTION_RETURN_TYPE_COL_NAME = "return_type"
-
-    def __init__(
-        self,
-        session: session.Session,
-        *,
-        database_name: sql_identifier.SqlIdentifier,
-        schema_name: sql_identifier.SqlIdentifier,
-    ) -> None:
-        self._session = session
-        self._database_name = database_name
-        self._schema_name = schema_name
-
-    def __eq__(self, __value: object) -> bool:
-        if not isinstance(__value, ModelVersionSQLClient):
-            return False
-        return self._database_name == __value._database_name and self._schema_name == __value._schema_name
-
-    def fully_qualified_model_name(self, model_name: sql_identifier.SqlIdentifier) -> str:
-        return identifier.get_schema_level_object_identifier(
-            self._database_name.identifier(), self._schema_name.identifier(), model_name.identifier()
-        )
 
     def create_from_stage(
         self,
         *,
+        database_name: Optional[sql_identifier.SqlIdentifier],
+        schema_name: Optional[sql_identifier.SqlIdentifier],
         model_name: sql_identifier.SqlIdentifier,
         version_name: sql_identifier.SqlIdentifier,
         stage_path: str,
@@ -56,8 +38,8 @@ class ModelVersionSQLClient:
         query_result_checker.SqlResultValidator(
             self._session,
             (
-                f"CREATE MODEL {self.fully_qualified_model_name(model_name)} WITH VERSION {version_name.identifier()}"
-                f" FROM {stage_path}"
+                f"CREATE MODEL {self.fully_qualified_object_name(database_name, schema_name, model_name)}"
+                f" WITH VERSION {version_name.identifier()} FROM {stage_path}"
             ),
             statement_params=statement_params,
         ).has_dimensions(expected_rows=1, expected_cols=1).validate()
@@ -66,6 +48,8 @@ class ModelVersionSQLClient:
     def add_version_from_stage(
         self,
         *,
+        database_name: Optional[sql_identifier.SqlIdentifier],
+        schema_name: Optional[sql_identifier.SqlIdentifier],
         model_name: sql_identifier.SqlIdentifier,
         version_name: sql_identifier.SqlIdentifier,
         stage_path: str,
@@ -74,8 +58,8 @@ class ModelVersionSQLClient:
         query_result_checker.SqlResultValidator(
             self._session,
             (
-                f"ALTER MODEL {self.fully_qualified_model_name(model_name)} ADD VERSION {version_name.identifier()}"
-                f" FROM {stage_path}"
+                f"ALTER MODEL {self.fully_qualified_object_name(database_name, schema_name, model_name)}"
+                f" ADD VERSION {version_name.identifier()} FROM {stage_path}"
             ),
             statement_params=statement_params,
         ).has_dimensions(expected_rows=1, expected_cols=1).validate()
@@ -83,6 +67,8 @@ class ModelVersionSQLClient:
     def set_default_version(
         self,
         *,
+        database_name: Optional[sql_identifier.SqlIdentifier],
+        schema_name: Optional[sql_identifier.SqlIdentifier],
         model_name: sql_identifier.SqlIdentifier,
         version_name: sql_identifier.SqlIdentifier,
         statement_params: Optional[Dict[str, Any]] = None,
@@ -90,7 +76,7 @@ class ModelVersionSQLClient:
         query_result_checker.SqlResultValidator(
             self._session,
             (
-                f"ALTER MODEL {self.fully_qualified_model_name(model_name)} "
+                f"ALTER MODEL {self.fully_qualified_object_name(database_name, schema_name, model_name)} "
                 f"SET DEFAULT_VERSION = {version_name.identifier()}"
             ),
             statement_params=statement_params,
@@ -99,6 +85,8 @@ class ModelVersionSQLClient:
     def list_file(
         self,
         *,
+        database_name: Optional[sql_identifier.SqlIdentifier],
+        schema_name: Optional[sql_identifier.SqlIdentifier],
         model_name: sql_identifier.SqlIdentifier,
         version_name: sql_identifier.SqlIdentifier,
         file_path: pathlib.PurePosixPath,
@@ -110,7 +98,10 @@ class ModelVersionSQLClient:
 
         stage_location = (
             pathlib.PurePosixPath(
-                self.fully_qualified_model_name(model_name), "versions", version_name.resolved(), file_path
+                self.fully_qualified_object_name(database_name, schema_name, model_name),
+                "versions",
+                version_name.resolved(),
+                file_path,
             ).as_posix()
             + trailing_slash
         )
@@ -124,13 +115,15 @@ class ModelVersionSQLClient:
                 f"List {_normalize_url_for_sql(stage_location_url)}",
                 statement_params=statement_params,
             )
-            .has_column("name")
+            .has_column("name", allow_empty=True)
             .validate()
         )
 
     def get_file(
         self,
         *,
+        database_name: Optional[sql_identifier.SqlIdentifier],
+        schema_name: Optional[sql_identifier.SqlIdentifier],
         model_name: sql_identifier.SqlIdentifier,
         version_name: sql_identifier.SqlIdentifier,
         file_path: pathlib.PurePosixPath,
@@ -138,7 +131,10 @@ class ModelVersionSQLClient:
         statement_params: Optional[Dict[str, Any]] = None,
     ) -> pathlib.Path:
         stage_location = pathlib.PurePosixPath(
-            self.fully_qualified_model_name(model_name), "versions", version_name.resolved(), file_path
+            self.fully_qualified_object_name(database_name, schema_name, model_name),
+            "versions",
+            version_name.resolved(),
+            file_path,
         ).as_posix()
         stage_location_url = ParseResult(
             scheme="snow", netloc="model", path=stage_location, params="", query="", fragment=""
@@ -162,6 +158,8 @@ class ModelVersionSQLClient:
     def show_functions(
         self,
         *,
+        database_name: Optional[sql_identifier.SqlIdentifier],
+        schema_name: Optional[sql_identifier.SqlIdentifier],
         model_name: sql_identifier.SqlIdentifier,
         version_name: sql_identifier.SqlIdentifier,
         statement_params: Optional[Dict[str, Any]] = None,
@@ -169,7 +167,7 @@ class ModelVersionSQLClient:
         res = query_result_checker.SqlResultValidator(
             self._session,
             (
-                f"SHOW FUNCTIONS IN MODEL {self.fully_qualified_model_name(model_name)}"
+                f"SHOW FUNCTIONS IN MODEL {self.fully_qualified_object_name(database_name, schema_name, model_name)}"
                 f" VERSION {version_name.identifier()}"
             ),
             statement_params=statement_params,
@@ -180,15 +178,17 @@ class ModelVersionSQLClient:
     def set_comment(
         self,
         *,
-        comment: str,
+        database_name: Optional[sql_identifier.SqlIdentifier],
+        schema_name: Optional[sql_identifier.SqlIdentifier],
         model_name: sql_identifier.SqlIdentifier,
         version_name: sql_identifier.SqlIdentifier,
+        comment: str,
         statement_params: Optional[Dict[str, Any]] = None,
     ) -> None:
         query_result_checker.SqlResultValidator(
             self._session,
             (
-                f"ALTER MODEL {self.fully_qualified_model_name(model_name)} "
+                f"ALTER MODEL {self.fully_qualified_object_name(database_name, schema_name, model_name)} "
                 f"MODIFY VERSION {version_name.identifier()} SET COMMENT=$${comment}$$"
             ),
             statement_params=statement_params,
@@ -197,6 +197,8 @@ class ModelVersionSQLClient:
     def invoke_function_method(
         self,
         *,
+        database_name: Optional[sql_identifier.SqlIdentifier],
+        schema_name: Optional[sql_identifier.SqlIdentifier],
         model_name: sql_identifier.SqlIdentifier,
         version_name: sql_identifier.SqlIdentifier,
         method_name: sql_identifier.SqlIdentifier,
@@ -210,10 +212,12 @@ class ModelVersionSQLClient:
             INTERMEDIATE_TABLE_NAME = "SNOWPARK_ML_MODEL_INFERENCE_INPUT"
             with_statements.append(f"{INTERMEDIATE_TABLE_NAME} AS ({input_df.queries['queries'][0]})")
         else:
+            actual_database_name = database_name or self._database_name
+            actual_schema_name = schema_name or self._schema_name
             tmp_table_name = snowpark_utils.random_name_for_temp_object(snowpark_utils.TempObjectType.TABLE)
             INTERMEDIATE_TABLE_NAME = identifier.get_schema_level_object_identifier(
-                self._database_name.identifier(),
-                self._schema_name.identifier(),
+                actual_database_name.identifier(),
+                actual_schema_name.identifier(),
                 tmp_table_name,
             )
             input_df.write.save_as_table(  # type: ignore[call-overload]
@@ -228,7 +232,8 @@ class ModelVersionSQLClient:
         module_version_alias = "MODEL_VERSION_ALIAS"
         with_statements.append(
             f"{module_version_alias} AS "
-            f"MODEL {self.fully_qualified_model_name(model_name)} VERSION {version_name.identifier()}"
+            f"MODEL {self.fully_qualified_object_name(database_name, schema_name, model_name)}"
+            f" VERSION {version_name.identifier()}"
         )
 
         args_sql_list = []
@@ -267,6 +272,8 @@ class ModelVersionSQLClient:
     def invoke_table_function_method(
         self,
         *,
+        database_name: Optional[sql_identifier.SqlIdentifier],
+        schema_name: Optional[sql_identifier.SqlIdentifier],
         model_name: sql_identifier.SqlIdentifier,
         version_name: sql_identifier.SqlIdentifier,
         method_name: sql_identifier.SqlIdentifier,
@@ -281,10 +288,12 @@ class ModelVersionSQLClient:
             INTERMEDIATE_TABLE_NAME = "SNOWPARK_ML_MODEL_INFERENCE_INPUT"
             with_statements.append(f"{INTERMEDIATE_TABLE_NAME} AS ({input_df.queries['queries'][0]})")
         else:
+            actual_database_name = database_name or self._database_name
+            actual_schema_name = schema_name or self._schema_name
             tmp_table_name = snowpark_utils.random_name_for_temp_object(snowpark_utils.TempObjectType.TABLE)
             INTERMEDIATE_TABLE_NAME = identifier.get_schema_level_object_identifier(
-                self._database_name.identifier(),
-                self._schema_name.identifier(),
+                actual_database_name.identifier(),
+                actual_schema_name.identifier(),
                 tmp_table_name,
             )
             input_df.write.save_as_table(  # type: ignore[call-overload]
@@ -297,7 +306,8 @@ class ModelVersionSQLClient:
         module_version_alias = "MODEL_VERSION_ALIAS"
         with_statements.append(
             f"{module_version_alias} AS "
-            f"MODEL {self.fully_qualified_model_name(model_name)} VERSION {version_name.identifier()}"
+            f"MODEL {self.fully_qualified_object_name(database_name, schema_name, model_name)}"
+            f" VERSION {version_name.identifier()}"
         )
 
         partition_by = partition_column.identifier() if partition_column is not None else "1"
@@ -344,6 +354,8 @@ class ModelVersionSQLClient:
         self,
         metadata_dict: Dict[str, Any],
         *,
+        database_name: Optional[sql_identifier.SqlIdentifier],
+        schema_name: Optional[sql_identifier.SqlIdentifier],
         model_name: sql_identifier.SqlIdentifier,
         version_name: sql_identifier.SqlIdentifier,
         statement_params: Optional[Dict[str, Any]] = None,
@@ -352,8 +364,8 @@ class ModelVersionSQLClient:
         query_result_checker.SqlResultValidator(
             self._session,
             (
-                f"ALTER MODEL {self.fully_qualified_model_name(model_name)} MODIFY VERSION {version_name.identifier()}"
-                f" SET METADATA=$${json_metadata}$$"
+                f"ALTER MODEL {self.fully_qualified_object_name(database_name, schema_name, model_name)}"
+                f" MODIFY VERSION {version_name.identifier()} SET METADATA=$${json_metadata}$$"
             ),
             statement_params=statement_params,
         ).has_dimensions(expected_rows=1, expected_cols=1).validate()
@@ -361,12 +373,17 @@ class ModelVersionSQLClient:
     def drop_version(
         self,
         *,
+        database_name: Optional[sql_identifier.SqlIdentifier],
+        schema_name: Optional[sql_identifier.SqlIdentifier],
         model_name: sql_identifier.SqlIdentifier,
         version_name: sql_identifier.SqlIdentifier,
         statement_params: Optional[Dict[str, Any]] = None,
     ) -> None:
         query_result_checker.SqlResultValidator(
             self._session,
-            f"ALTER MODEL {self.fully_qualified_model_name(model_name)} DROP VERSION {version_name.identifier()}",
+            (
+                f"ALTER MODEL {self.fully_qualified_object_name(database_name, schema_name, model_name)}"
+                f" DROP VERSION {version_name.identifier()}"
+            ),
             statement_params=statement_params,
         ).has_dimensions(expected_rows=1, expected_cols=1).validate()

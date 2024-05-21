@@ -18,6 +18,10 @@ from snowflake.snowpark import DataFrame
 class PipelineTest(absltest.TestCase):
     def setUp(self) -> None:
         self.dataframe_snowpark = absltest.mock.MagicMock(spec=DataFrame)
+        self.send_custom_usage_mock = absltest.mock.patch(
+            "snowflake.ml.modeling.pipeline.pipeline.telemetry.send_custom_usage", return_value=None
+        )
+        self.send_custom_usage_mock.start()
         self.simple_pipeline = Pipeline(
             steps=[
                 (
@@ -46,6 +50,7 @@ class PipelineTest(absltest.TestCase):
                 ("model", LinearRegression(label_cols=["col3"])),
             ]
         )
+
         return super().setUp()
 
     def test_dataset_can_be_trained_in_ml_runtime(self) -> None:
@@ -230,6 +235,7 @@ class PipelineTest(absltest.TestCase):
 
     def tearDown(self) -> None:
         os.environ.pop(IN_ML_RUNTIME_ENV_VAR, None)
+        self.send_custom_usage_mock.stop()
         return super().tearDown()
 
 

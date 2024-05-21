@@ -48,20 +48,29 @@ class ModelManager:
         options: Optional[model_types.ModelSaveOption] = None,
         statement_params: Optional[Dict[str, Any]] = None,
     ) -> model_version_impl.ModelVersion:
-        model_name_id = sql_identifier.SqlIdentifier(model_name)
+        database_name_id, schema_name_id, model_name_id = sql_identifier.parse_fully_qualified_name(model_name)
 
         if not version_name:
             version_name = self._hrid_generator.generate()[1]
         version_name_id = sql_identifier.SqlIdentifier(version_name)
 
         if self._model_ops.validate_existence(
-            model_name=model_name_id, statement_params=statement_params
+            database_name=database_name_id,
+            schema_name=schema_name_id,
+            model_name=model_name_id,
+            statement_params=statement_params,
         ) and self._model_ops.validate_existence(
-            model_name=model_name_id, version_name=version_name_id, statement_params=statement_params
+            database_name=database_name_id,
+            schema_name=schema_name_id,
+            model_name=model_name_id,
+            version_name=version_name_id,
+            statement_params=statement_params,
         ):
             raise ValueError(f"Model {model_name} version {version_name} already existed.")
 
         stage_path = self._model_ops.prepare_model_stage_path(
+            database_name=database_name_id,
+            schema_name=schema_name_id,
             statement_params=statement_params,
         )
 
@@ -85,13 +94,19 @@ class ModelManager:
 
         self._model_ops.create_from_stage(
             composed_model=mc,
+            database_name=database_name_id,
+            schema_name=schema_name_id,
             model_name=model_name_id,
             version_name=version_name_id,
             statement_params=statement_params,
         )
 
         mv = model_version_impl.ModelVersion._ref(
-            self._model_ops,
+            model_ops.ModelOperator(
+                self._model_ops._session,
+                database_name=database_name_id or self._database_name,
+                schema_name=schema_name_id or self._schema_name,
+            ),
             model_name=model_name_id,
             version_name=version_name_id,
         )
@@ -102,6 +117,8 @@ class ModelManager:
         if metrics:
             self._model_ops._metadata_ops.save(
                 metadata_ops.ModelVersionMetadataSchema(metrics=metrics),
+                database_name=database_name_id,
+                schema_name=schema_name_id,
                 model_name=model_name_id,
                 version_name=version_name_id,
                 statement_params=statement_params,
@@ -115,13 +132,19 @@ class ModelManager:
         *,
         statement_params: Optional[Dict[str, Any]] = None,
     ) -> model_impl.Model:
-        model_name_id = sql_identifier.SqlIdentifier(model_name)
+        database_name_id, schema_name_id, model_name_id = sql_identifier.parse_fully_qualified_name(model_name)
         if self._model_ops.validate_existence(
+            database_name=database_name_id,
+            schema_name=schema_name_id,
             model_name=model_name_id,
             statement_params=statement_params,
         ):
             return model_impl.Model._ref(
-                self._model_ops,
+                model_ops.ModelOperator(
+                    self._model_ops._session,
+                    database_name=database_name_id or self._database_name,
+                    schema_name=schema_name_id or self._schema_name,
+                ),
                 model_name=model_name_id,
             )
         else:
@@ -133,6 +156,8 @@ class ModelManager:
         statement_params: Optional[Dict[str, Any]] = None,
     ) -> List[model_impl.Model]:
         model_names = self._model_ops.list_models_or_versions(
+            database_name=None,
+            schema_name=None,
             statement_params=statement_params,
         )
         return [
@@ -149,6 +174,8 @@ class ModelManager:
         statement_params: Optional[Dict[str, Any]] = None,
     ) -> pd.DataFrame:
         rows = self._model_ops.show_models_or_versions(
+            database_name=None,
+            schema_name=None,
             statement_params=statement_params,
         )
         return pd.DataFrame([row.as_dict() for row in rows])
@@ -159,9 +186,11 @@ class ModelManager:
         *,
         statement_params: Optional[Dict[str, Any]] = None,
     ) -> None:
-        model_name_id = sql_identifier.SqlIdentifier(model_name)
+        database_name_id, schema_name_id, model_name_id = sql_identifier.parse_fully_qualified_name(model_name)
 
         self._model_ops.delete_model_or_version(
+            database_name=database_name_id,
+            schema_name=schema_name_id,
             model_name=model_name_id,
             statement_params=statement_params,
         )

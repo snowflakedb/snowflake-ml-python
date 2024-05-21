@@ -42,7 +42,7 @@ class TestSnowflakeDataseTensorflow(dataset_integ_test_base.TestSnowflakeDataset
             dataset_shuffle, datapipe_shuffle, drop_last_batch, dataset_prefix=f"dataset_integ_sproc_{uuid4().hex}"
         )
 
-    def validate_dataset(
+    def validate_dataset_connectors(
         self, datapipe_shuffle: bool, drop_last_batch: bool, batch_size: int, ds: dataset.Dataset
     ) -> None:
         tf_ds = ds.read.to_tf_dataset(batch_size=batch_size, shuffle=datapipe_shuffle, drop_last_batch=drop_last_batch)

@@ -93,6 +93,7 @@ py_test(
         "//snowflake/ml/modeling/preprocessing:standard_scaler",
         "//snowflake/ml/modeling/xgboost:xgb_classifier",
         "//snowflake/ml/utils:connection_params",
+        "//tests/integ/snowflake/ml/test_utils:test_env_utils",
     ],
 )
 
@@ -141,6 +142,7 @@ py_test(
         "//snowflake/ml/modeling/preprocessing:one_hot_encoder",
         "//snowflake/ml/modeling/preprocessing:ordinal_encoder",
         "//snowflake/ml/modeling/preprocessing:standard_scaler",
+        "//snowflake/ml/registry",
         "//snowflake/ml/utils:connection_params",
     ],
 )

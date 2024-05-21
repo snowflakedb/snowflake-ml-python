@@ -61,12 +61,18 @@ class MetadataOperator:
     def _get_current_metadata_dict(
         self,
         *,
+        database_name: Optional[sql_identifier.SqlIdentifier],
+        schema_name: Optional[sql_identifier.SqlIdentifier],
         model_name: sql_identifier.SqlIdentifier,
         version_name: sql_identifier.SqlIdentifier,
         statement_params: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         version_info_list = self._model_client.show_versions(
-            model_name=model_name, version_name=version_name, statement_params=statement_params
+            database_name=database_name,
+            schema_name=schema_name,
+            model_name=model_name,
+            version_name=version_name,
+            statement_params=statement_params,
         )
         metadata_str = version_info_list[0][self._model_client.MODEL_VERSION_METADATA_COL_NAME]
         if not metadata_str:
@@ -79,12 +85,18 @@ class MetadataOperator:
     def load(
         self,
         *,
+        database_name: Optional[sql_identifier.SqlIdentifier],
+        schema_name: Optional[sql_identifier.SqlIdentifier],
         model_name: sql_identifier.SqlIdentifier,
         version_name: sql_identifier.SqlIdentifier,
         statement_params: Optional[Dict[str, Any]] = None,
     ) -> ModelVersionMetadataSchema:
         metadata_dict = self._get_current_metadata_dict(
-            model_name=model_name, version_name=version_name, statement_params=statement_params
+            database_name=database_name,
+            schema_name=schema_name,
+            model_name=model_name,
+            version_name=version_name,
+            statement_params=statement_params,
         )
         return MetadataOperator._parse(metadata_dict)
 
@@ -92,14 +104,25 @@ class MetadataOperator:
         self,
         metadata: ModelVersionMetadataSchema,
         *,
+        database_name: Optional[sql_identifier.SqlIdentifier],
+        schema_name: Optional[sql_identifier.SqlIdentifier],
         model_name: sql_identifier.SqlIdentifier,
         version_name: sql_identifier.SqlIdentifier,
         statement_params: Optional[Dict[str, Any]] = None,
     ) -> None:
         metadata_dict = self._get_current_metadata_dict(
-            model_name=model_name, version_name=version_name, statement_params=statement_params
+            database_name=database_name,
+            schema_name=schema_name,
+            model_name=model_name,
+            version_name=version_name,
+            statement_params=statement_params,
         )
         metadata_dict.update({**metadata, "snowpark_ml_schema_version": MODEL_VERSION_METADATA_SCHEMA_VERSION})
         self._model_version_client.set_metadata(
-            metadata_dict, model_name=model_name, version_name=version_name, statement_params=statement_params
+            metadata_dict,
+            database_name=database_name,
+            schema_name=schema_name,
+            model_name=model_name,
+            version_name=version_name,
+            statement_params=statement_params,
         )

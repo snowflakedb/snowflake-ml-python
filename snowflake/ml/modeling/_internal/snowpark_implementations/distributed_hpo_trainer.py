@@ -4,7 +4,7 @@ import io
 import os
 import posixpath
 import sys
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Set, Tuple, Union
 
 import cloudpickle as cp
 import numpy as np
@@ -154,7 +154,7 @@ def construct_cv_results(
     return multimetric, estimator._format_results(param_grid, n_split, out)
 
 
-def construct_cv_results_new_implementation(
+def construct_cv_results_memory_efficient_version(
     estimator: Union[GridSearchCV, RandomizedSearchCV],
     n_split: int,
     param_grid: List[Dict[str, Any]],
@@ -205,12 +205,35 @@ def construct_cv_results_new_implementation(
         with io.BytesIO(hex_str) as f_reload:
             out = cp.load(f_reload)
             all_out.extend(out)
+
+    # because original SearchCV is ranked by parameter first and cv second,
+    # to make the memory efficient, we implemented by fitting on cv first and parameter second
+    # when retrieving the results back, the ordering should revert back to remain the same result as original SearchCV
+    def generate_the_order_by_parameter_index(all_combination_length: int) -> List[int]:
+        pattern = []
+        for i in range(all_combination_length):
+            if i % parameter_grid_length == 0:
+                pattern.append(i)
+        for i in range(1, parameter_grid_length):
+            for j in range(all_combination_length):
+                if j % parameter_grid_length == i:
+                    pattern.append(j)
+        return pattern
+
+    def rerank_array(original_array: List[Any], pattern: List[int]) -> List[Any]:
+        reranked_array = []
+        for index in pattern:
+            reranked_array.append(original_array[index])
+        return reranked_array
+
+    pattern = generate_the_order_by_parameter_index(len(all_out))
+    reranked_all_out = rerank_array(all_out, pattern)
     first_test_score = all_out[0]["test_scores"]
-    return first_test_score, estimator._format_results(param_grid, n_split, all_out)
+    return first_test_score, estimator._format_results(param_grid, n_split, reranked_all_out)
 
 
 cp.register_pickle_by_value(inspect.getmodule(construct_cv_results))
-cp.register_pickle_by_value(inspect.getmodule(construct_cv_results_new_implementation))
+cp.register_pickle_by_value(inspect.getmodule(construct_cv_results_memory_efficient_version))
 
 
 class DistributedHPOTrainer(SnowparkModelTrainer):
@@ -661,7 +684,7 @@ class DistributedHPOTrainer(SnowparkModelTrainer):
 
         return fit_estimator
 
-    def fit_search_snowpark_new_implementation(
+    def fit_search_snowpark_enable_efficient_memory_usage(
         self,
         param_grid: Union[model_selection.ParameterGrid, model_selection.ParameterSampler],
         dataset: DataFrame,
@@ -718,7 +741,7 @@ class DistributedHPOTrainer(SnowparkModelTrainer):
                 inspect.currentframe(), self.__class__.__name__
             ),
             api_calls=[udtf],
-            custom_tags=dict([("hpo_udtf", True)]),
+            custom_tags=dict([("hpo_memory_efficient", True)]),
         )
 
         # Put locally serialized estimator on stage.
@@ -960,21 +983,25 @@ class DistributedHPOTrainer(SnowparkModelTrainer):
                     self.base_estimator = base_estimator
                     self.fit_and_score_kwargs = fit_and_score_kwargs
                     self.fit_score_params: List[Any] = []
-                    self.cached_train_test_indices = []
-                    # Calculate the full index here to avoid duplicate calculation (which consumes a lot of memory)
-                    full_index = np.arange(DATA_LENGTH)
-                    for i in range(n_splits):
-                        self.cached_train_test_indices.extend(
-                            [[np.setdiff1d(full_index, self.test_indices[i]), self.test_indices[i]]]
-                        )
+                    self.cv_indices_set: Set[int] = set()
 
                 def process(self, idx: int, params_idx: int, cv_idx: int) -> None:
                     self.fit_score_params.extend([[idx, params_idx, cv_idx]])
+                    self.cv_indices_set.add(cv_idx)
 
                 def end_partition(self) -> Iterator[Tuple[int, str]]:
                     from sklearn.base import clone
                     from sklearn.model_selection._validation import _fit_and_score
                     from sklearn.utils.parallel import Parallel, delayed
+
+                    cached_train_test_indices = {}
+                    # Calculate the full index here to avoid duplicate calculation (which consumes a lot of memory)
+                    full_index = np.arange(DATA_LENGTH)
+                    for i in self.cv_indices_set:
+                        cached_train_test_indices[i] = [
+                            np.setdiff1d(full_index, self.test_indices[i]),
+                            self.test_indices[i],
+                        ]
 
                     parallel = Parallel(n_jobs=_N_JOBS, pre_dispatch=_PRE_DISPATCH)
 
@@ -983,8 +1010,8 @@ class DistributedHPOTrainer(SnowparkModelTrainer):
                             clone(self.base_estimator),
                             self.X,
                             self.y,
-                            train=self.cached_train_test_indices[split_idx][0],
-                            test=self.cached_train_test_indices[split_idx][1],
+                            train=cached_train_test_indices[split_idx][0],
+                            test=cached_train_test_indices[split_idx][1],
                             parameters=self.params_to_evaluate[cand_idx],
                             split_progress=(split_idx, n_splits),
                             candidate_progress=(cand_idx, n_candidates),
@@ -1005,7 +1032,9 @@ class DistributedHPOTrainer(SnowparkModelTrainer):
 
             session.udtf.register(
                 SearchCV,
-                output_schema=StructType([StructField("IDX", IntegerType()), StructField("CV_RESULTS", StringType())]),
+                output_schema=StructType(
+                    [StructField("FIRST_IDX", IntegerType()), StructField("EACH_CV_RESULTS", StringType())]
+                ),
                 input_types=[IntegerType(), IntegerType(), IntegerType()],
                 name=random_udtf_name,
                 packages=required_deps,  # type: ignore[arg-type]
@@ -1020,8 +1049,8 @@ class DistributedHPOTrainer(SnowparkModelTrainer):
             # param_indices is for the index for each parameter grid;
             # cv_indices is for the index for each cross_validator's fold;
             # param_cv_indices is for the index for the product of (len(param_indices) * len(cv_indices))
-            param_indices, cv_indices = zip(
-                *product(range(parameter_grid_length), range(cross_validator_indices_length))
+            cv_indices, param_indices = zip(
+                *product(range(cross_validator_indices_length), range(parameter_grid_length))
             )
 
             indices_info_pandas = pd.DataFrame(
@@ -1042,11 +1071,11 @@ class DistributedHPOTrainer(SnowparkModelTrainer):
                 ),
             )
 
-            first_test_score, cv_results_ = construct_cv_results_new_implementation(
+            first_test_score, cv_results_ = construct_cv_results_memory_efficient_version(
                 estimator,
                 n_splits,
                 list(param_grid),
-                HP_raw_results.select("CV_RESULTS").sort(F.col("IDX")).collect(),
+                HP_raw_results.select("EACH_CV_RESULTS").sort(F.col("FIRST_IDX")).collect(),
                 cross_validator_indices_length,
                 parameter_grid_length,
             )
@@ -1163,7 +1192,7 @@ class DistributedHPOTrainer(SnowparkModelTrainer):
             pkg_versions=model_spec.pkgDependencies, session=self.session
         )
         if ENABLE_EFFICIENT_MEMORY_USAGE:
-            return self.fit_search_snowpark_new_implementation(
+            return self.fit_search_snowpark_enable_efficient_memory_usage(
                 param_grid=param_grid,
                 dataset=self.dataset,
                 session=self.session,

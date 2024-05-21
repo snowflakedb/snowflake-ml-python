@@ -1,3 +1,4 @@
+import copy
 from typing import cast
 
 from absl.testing import absltest
@@ -17,13 +18,28 @@ class StageSQLTest(absltest.TestCase):
         m_df = mock_data_frame.MockDataFrame(
             collect_result=[Row("Stage MODEL successfully created.")], collect_statement_params=m_statement_params
         )
-        self.m_session.add_mock_sql("""CREATE TEMPORARY STAGE TEMP."test".MODEL""", m_df)
+        self.m_session.add_mock_sql("""CREATE TEMPORARY STAGE TEMP."test".MODEL""", copy.deepcopy(m_df))
         c_session = cast(Session, self.m_session)
         stage_sql.StageSQLClient(
             c_session,
             database_name=sql_identifier.SqlIdentifier("TEMP"),
             schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
         ).create_tmp_stage(
+            database_name=None,
+            schema_name=None,
+            stage_name=sql_identifier.SqlIdentifier("MODEL"),
+            statement_params=m_statement_params,
+        )
+
+        self.m_session.add_mock_sql("""CREATE TEMPORARY STAGE TEMP."test".MODEL""", copy.deepcopy(m_df))
+        c_session = cast(Session, self.m_session)
+        stage_sql.StageSQLClient(
+            c_session,
+            database_name=sql_identifier.SqlIdentifier("foo"),
+            schema_name=sql_identifier.SqlIdentifier("bar", case_sensitive=True),
+        ).create_tmp_stage(
+            database_name=sql_identifier.SqlIdentifier("TEMP"),
+            schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
             stage_name=sql_identifier.SqlIdentifier("MODEL"),
             statement_params=m_statement_params,
         )

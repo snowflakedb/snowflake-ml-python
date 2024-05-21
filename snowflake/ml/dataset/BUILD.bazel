@@ -17,7 +17,7 @@ py_library(
     ],
     deps = [
         "//snowflake/ml/_internal:telemetry",
-        "//snowflake/ml/_internal/lineage:dataset_dataframe",
+        "//snowflake/ml/_internal/lineage:lineage_utils",
         "//snowflake/ml/fileset:snowfs",
         "//snowflake/ml/fileset:tf_dataset",
         "//snowflake/ml/fileset:torch_datapipe",

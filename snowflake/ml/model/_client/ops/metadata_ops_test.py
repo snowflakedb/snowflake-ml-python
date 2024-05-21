@@ -36,12 +36,16 @@ class metadataOpsTest(absltest.TestCase):
             self.m_ops._model_client, "show_versions", return_value=m_list_res
         ) as mock_show_versions:
             metadata_dict = self.m_ops._get_current_metadata_dict(
+                database_name=sql_identifier.SqlIdentifier("TEMP"),
+                schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
                 version_name=sql_identifier.SqlIdentifier("V1"),
                 statement_params=self.m_statement_params,
             )
             self.assertDictEqual(metadata_dict, {})
             mock_show_versions.assert_called_once_with(
+                database_name=sql_identifier.SqlIdentifier("TEMP"),
+                schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
                 version_name=sql_identifier.SqlIdentifier("V1"),
                 statement_params=self.m_statement_params,
@@ -63,12 +67,16 @@ class metadataOpsTest(absltest.TestCase):
             self.m_ops._model_client, "show_versions", return_value=m_list_res
         ) as mock_show_versions:
             metadata_dict = self.m_ops._get_current_metadata_dict(
+                database_name=sql_identifier.SqlIdentifier("TEMP"),
+                schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
                 version_name=sql_identifier.SqlIdentifier("V1"),
                 statement_params=self.m_statement_params,
             )
             self.assertDictEqual(metadata_dict, m_meta)
             mock_show_versions.assert_called_once_with(
+                database_name=sql_identifier.SqlIdentifier("TEMP"),
+                schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
                 version_name=sql_identifier.SqlIdentifier("V1"),
                 statement_params=self.m_statement_params,
@@ -90,12 +98,16 @@ class metadataOpsTest(absltest.TestCase):
             self.m_ops._model_client, "show_versions", return_value=m_list_res
         ) as mock_show_versions:
             metadata_dict = self.m_ops._get_current_metadata_dict(
+                database_name=sql_identifier.SqlIdentifier("TEMP"),
+                schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
                 version_name=sql_identifier.SqlIdentifier("V1"),
                 statement_params=self.m_statement_params,
             )
             self.assertDictEqual(metadata_dict, m_meta)
             mock_show_versions.assert_called_once_with(
+                database_name=sql_identifier.SqlIdentifier("TEMP"),
+                schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
                 version_name=sql_identifier.SqlIdentifier("V1"),
                 statement_params=self.m_statement_params,
@@ -118,11 +130,15 @@ class metadataOpsTest(absltest.TestCase):
         ) as mock_show_versions:
             with self.assertRaisesRegex(ValueError, "Metadata is expected to be a dictionary"):
                 self.m_ops._get_current_metadata_dict(
+                    database_name=sql_identifier.SqlIdentifier("TEMP"),
+                    schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
                     model_name=sql_identifier.SqlIdentifier("MODEL"),
                     version_name=sql_identifier.SqlIdentifier("V1"),
                     statement_params=self.m_statement_params,
                 )
             mock_show_versions.assert_called_once_with(
+                database_name=sql_identifier.SqlIdentifier("TEMP"),
+                schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
                 version_name=sql_identifier.SqlIdentifier("V1"),
                 statement_params=self.m_statement_params,
@@ -134,6 +150,8 @@ class metadataOpsTest(absltest.TestCase):
             self.m_ops, "_get_current_metadata_dict", return_value=m_meta
         ) as mock_get_current_metadata_dict:
             loaded_meta = self.m_ops.load(
+                database_name=sql_identifier.SqlIdentifier("TEMP"),
+                schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
                 version_name=sql_identifier.SqlIdentifier("V1"),
                 statement_params=self.m_statement_params,
@@ -143,6 +161,8 @@ class metadataOpsTest(absltest.TestCase):
                 metadata_ops.ModelVersionMetadataSchema(metrics={}),
             )
             mock_get_current_metadata_dict.assert_called_once_with(
+                database_name=sql_identifier.SqlIdentifier("TEMP"),
+                schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
                 version_name=sql_identifier.SqlIdentifier("V1"),
                 statement_params=self.m_statement_params,
@@ -154,6 +174,8 @@ class metadataOpsTest(absltest.TestCase):
             self.m_ops, "_get_current_metadata_dict", return_value=m_meta
         ) as mock_get_current_metadata_dict:
             loaded_meta = self.m_ops.load(
+                database_name=sql_identifier.SqlIdentifier("TEMP"),
+                schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
                 version_name=sql_identifier.SqlIdentifier("V1"),
                 statement_params=self.m_statement_params,
@@ -163,6 +185,8 @@ class metadataOpsTest(absltest.TestCase):
                 metadata_ops.ModelVersionMetadataSchema(metrics={}),
             )
             mock_get_current_metadata_dict.assert_called_once_with(
+                database_name=sql_identifier.SqlIdentifier("TEMP"),
+                schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
                 version_name=sql_identifier.SqlIdentifier("V1"),
                 statement_params=self.m_statement_params,
@@ -175,11 +199,15 @@ class metadataOpsTest(absltest.TestCase):
         ) as mock_get_current_metadata_dict:
             with self.assertRaisesRegex(ValueError, "Unsupported model metadata schema version"):
                 self.m_ops.load(
+                    database_name=sql_identifier.SqlIdentifier("TEMP"),
+                    schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
                     model_name=sql_identifier.SqlIdentifier("MODEL"),
                     version_name=sql_identifier.SqlIdentifier("V1"),
                     statement_params=self.m_statement_params,
                 )
             mock_get_current_metadata_dict.assert_called_once_with(
+                database_name=sql_identifier.SqlIdentifier("TEMP"),
+                schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
                 version_name=sql_identifier.SqlIdentifier("V1"),
                 statement_params=self.m_statement_params,
@@ -192,11 +220,15 @@ class metadataOpsTest(absltest.TestCase):
         ) as mock_get_current_metadata_dict:
             with self.assertRaisesRegex(ValueError, "Unsupported model metadata schema version"):
                 self.m_ops.load(
+                    database_name=sql_identifier.SqlIdentifier("TEMP"),
+                    schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
                     model_name=sql_identifier.SqlIdentifier("MODEL"),
                     version_name=sql_identifier.SqlIdentifier("V1"),
                     statement_params=self.m_statement_params,
                 )
             mock_get_current_metadata_dict.assert_called_once_with(
+                database_name=sql_identifier.SqlIdentifier("TEMP"),
+                schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
                 version_name=sql_identifier.SqlIdentifier("V1"),
                 statement_params=self.m_statement_params,
@@ -208,6 +240,8 @@ class metadataOpsTest(absltest.TestCase):
             self.m_ops, "_get_current_metadata_dict", return_value=m_meta
         ) as mock_get_current_metadata_dict:
             loaded_meta = self.m_ops.load(
+                database_name=sql_identifier.SqlIdentifier("TEMP"),
+                schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
                 version_name=sql_identifier.SqlIdentifier("V1"),
                 statement_params=self.m_statement_params,
@@ -217,6 +251,8 @@ class metadataOpsTest(absltest.TestCase):
                 metadata_ops.ModelVersionMetadataSchema(metrics={}),
             )
             mock_get_current_metadata_dict.assert_called_once_with(
+                database_name=sql_identifier.SqlIdentifier("TEMP"),
+                schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
                 version_name=sql_identifier.SqlIdentifier("V1"),
                 statement_params=self.m_statement_params,
@@ -232,11 +268,15 @@ class metadataOpsTest(absltest.TestCase):
         ) as mock_get_current_metadata_dict:
             with self.assertRaisesRegex(ValueError, "Metrics in the metadata is expected to be a dictionary"):
                 self.m_ops.load(
+                    database_name=sql_identifier.SqlIdentifier("TEMP"),
+                    schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
                     model_name=sql_identifier.SqlIdentifier("MODEL"),
                     version_name=sql_identifier.SqlIdentifier("V1"),
                     statement_params=self.m_statement_params,
                 )
             mock_get_current_metadata_dict.assert_called_once_with(
+                database_name=sql_identifier.SqlIdentifier("TEMP"),
+                schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
                 version_name=sql_identifier.SqlIdentifier("V1"),
                 statement_params=self.m_statement_params,
@@ -251,6 +291,8 @@ class metadataOpsTest(absltest.TestCase):
             self.m_ops, "_get_current_metadata_dict", return_value=m_meta
         ) as mock_get_current_metadata_dict:
             loaded_meta = self.m_ops.load(
+                database_name=sql_identifier.SqlIdentifier("TEMP"),
+                schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
                 version_name=sql_identifier.SqlIdentifier("V1"),
                 statement_params=self.m_statement_params,
@@ -262,6 +304,8 @@ class metadataOpsTest(absltest.TestCase):
                 ),
             )
             mock_get_current_metadata_dict.assert_called_once_with(
+                database_name=sql_identifier.SqlIdentifier("TEMP"),
+                schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
                 version_name=sql_identifier.SqlIdentifier("V1"),
                 statement_params=self.m_statement_params,
@@ -277,6 +321,8 @@ class metadataOpsTest(absltest.TestCase):
             self.m_ops, "_get_current_metadata_dict", return_value=m_meta
         ) as mock_get_current_metadata_dict:
             loaded_meta = self.m_ops.load(
+                database_name=sql_identifier.SqlIdentifier("TEMP"),
+                schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
                 version_name=sql_identifier.SqlIdentifier("V1"),
                 statement_params=self.m_statement_params,
@@ -288,6 +334,8 @@ class metadataOpsTest(absltest.TestCase):
                 ),
             )
             mock_get_current_metadata_dict.assert_called_once_with(
+                database_name=sql_identifier.SqlIdentifier("TEMP"),
+                schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
                 version_name=sql_identifier.SqlIdentifier("V1"),
                 statement_params=self.m_statement_params,
@@ -300,12 +348,16 @@ class metadataOpsTest(absltest.TestCase):
         ) as mock_set_metadata:
             self.m_ops.save(
                 metadata_ops.ModelVersionMetadataSchema(metrics={}),
+                database_name=sql_identifier.SqlIdentifier("TEMP"),
+                schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
                 version_name=sql_identifier.SqlIdentifier("V1"),
                 statement_params=self.m_statement_params,
             )
             mock_set_metadata.assert_called_once_with(
                 {"snowpark_ml_schema_version": metadata_ops.MODEL_VERSION_METADATA_SCHEMA_VERSION, "metrics": {}},
+                database_name=sql_identifier.SqlIdentifier("TEMP"),
+                schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
                 version_name=sql_identifier.SqlIdentifier("V1"),
                 statement_params=self.m_statement_params,
@@ -318,12 +370,16 @@ class metadataOpsTest(absltest.TestCase):
         ) as mock_set_metadata:
             self.m_ops.save(
                 metadata_ops.ModelVersionMetadataSchema(metrics={}),
+                database_name=sql_identifier.SqlIdentifier("TEMP"),
+                schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
                 version_name=sql_identifier.SqlIdentifier("V1"),
                 statement_params=self.m_statement_params,
             )
             mock_set_metadata.assert_called_once_with(
                 {"snowpark_ml_schema_version": metadata_ops.MODEL_VERSION_METADATA_SCHEMA_VERSION, "metrics": {}},
+                database_name=sql_identifier.SqlIdentifier("TEMP"),
+                schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
                 version_name=sql_identifier.SqlIdentifier("V1"),
                 statement_params=self.m_statement_params,
@@ -336,12 +392,16 @@ class metadataOpsTest(absltest.TestCase):
         ) as mock_set_metadata:
             self.m_ops.save(
                 metadata_ops.ModelVersionMetadataSchema(),
+                database_name=sql_identifier.SqlIdentifier("TEMP"),
+                schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
                 version_name=sql_identifier.SqlIdentifier("V1"),
                 statement_params=self.m_statement_params,
             )
             mock_set_metadata.assert_called_once_with(
                 {"snowpark_ml_schema_version": metadata_ops.MODEL_VERSION_METADATA_SCHEMA_VERSION},
+                database_name=sql_identifier.SqlIdentifier("TEMP"),
+                schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
                 version_name=sql_identifier.SqlIdentifier("V1"),
                 statement_params=self.m_statement_params,
@@ -356,12 +416,16 @@ class metadataOpsTest(absltest.TestCase):
         ) as mock_set_metadata:
             self.m_ops.save(
                 metadata_ops.ModelVersionMetadataSchema(metrics={}),
+                database_name=sql_identifier.SqlIdentifier("TEMP"),
+                schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
                 version_name=sql_identifier.SqlIdentifier("V1"),
                 statement_params=self.m_statement_params,
             )
             mock_set_metadata.assert_called_once_with(
                 {"snowpark_ml_schema_version": metadata_ops.MODEL_VERSION_METADATA_SCHEMA_VERSION, "metrics": {}},
+                database_name=sql_identifier.SqlIdentifier("TEMP"),
+                schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
                 version_name=sql_identifier.SqlIdentifier("V1"),
                 statement_params=self.m_statement_params,
@@ -377,6 +441,8 @@ class metadataOpsTest(absltest.TestCase):
         ) as mock_set_metadata:
             self.m_ops.save(
                 metadata_ops.ModelVersionMetadataSchema(metrics={}),
+                database_name=sql_identifier.SqlIdentifier("TEMP"),
+                schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
                 version_name=sql_identifier.SqlIdentifier("V1"),
                 statement_params=self.m_statement_params,
@@ -387,6 +453,8 @@ class metadataOpsTest(absltest.TestCase):
                     "metrics": {},
                     "metrics_2": {},
                 },
+                database_name=sql_identifier.SqlIdentifier("TEMP"),
+                schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
                 version_name=sql_identifier.SqlIdentifier("V1"),
                 statement_params=self.m_statement_params,
@@ -402,12 +470,16 @@ class metadataOpsTest(absltest.TestCase):
         ) as mock_set_metadata:
             self.m_ops.save(
                 metadata_ops.ModelVersionMetadataSchema(metrics={}),
+                database_name=sql_identifier.SqlIdentifier("TEMP"),
+                schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
                 version_name=sql_identifier.SqlIdentifier("V1"),
                 statement_params=self.m_statement_params,
             )
             mock_set_metadata.assert_called_once_with(
                 {"snowpark_ml_schema_version": metadata_ops.MODEL_VERSION_METADATA_SCHEMA_VERSION, "metrics": {}},
+                database_name=sql_identifier.SqlIdentifier("TEMP"),
+                schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
                 version_name=sql_identifier.SqlIdentifier("V1"),
                 statement_params=self.m_statement_params,

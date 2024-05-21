@@ -50,6 +50,7 @@ class TelemetryField(enum.Enum):
     # types of telemetry
     TYPE_FUNCTION_USAGE = "function_usage"
     TYPE_SNOWML_SPCS_USAGE = "snowml_spcs_usage"
+    TYPE_SNOWML_PIPELINE_USAGE = "snowml_pipeline_usage"
     # message keys for telemetry
     KEY_PROJECT = "project"
     KEY_SUBPROJECT = "subproject"

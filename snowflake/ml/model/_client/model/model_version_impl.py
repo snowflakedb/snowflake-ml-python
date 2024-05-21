@@ -72,7 +72,7 @@ class ModelVersion:
     @property
     def fully_qualified_model_name(self) -> str:
         """Return the fully qualified name of the model to which the model version belongs."""
-        return self._model_ops._model_version_client.fully_qualified_model_name(self._model_name)
+        return self._model_ops._model_version_client.fully_qualified_object_name(None, None, self._model_name)
 
     @property
     @telemetry.send_api_usage_telemetry(
@@ -103,6 +103,8 @@ class ModelVersion:
             subproject=_TELEMETRY_SUBPROJECT,
         )
         return self._model_ops.get_comment(
+            database_name=None,
+            schema_name=None,
             model_name=self._model_name,
             version_name=self._version_name,
             statement_params=statement_params,
@@ -120,6 +122,8 @@ class ModelVersion:
         )
         return self._model_ops.set_comment(
             comment=comment,
+            database_name=None,
+            schema_name=None,
             model_name=self._model_name,
             version_name=self._version_name,
             statement_params=statement_params,
@@ -140,7 +144,11 @@ class ModelVersion:
             subproject=_TELEMETRY_SUBPROJECT,
         )
         return self._model_ops._metadata_ops.load(
-            model_name=self._model_name, version_name=self._version_name, statement_params=statement_params
+            database_name=None,
+            schema_name=None,
+            model_name=self._model_name,
+            version_name=self._version_name,
+            statement_params=statement_params,
         )["metrics"]
 
     @telemetry.send_api_usage_telemetry(
@@ -183,6 +191,8 @@ class ModelVersion:
         metrics[metric_name] = value
         self._model_ops._metadata_ops.save(
             metadata_ops.ModelVersionMetadataSchema(metrics=metrics),
+            database_name=None,
+            schema_name=None,
             model_name=self._model_name,
             version_name=self._version_name,
             statement_params=statement_params,
@@ -211,6 +221,8 @@ class ModelVersion:
         del metrics[metric_name]
         self._model_ops._metadata_ops.save(
             metadata_ops.ModelVersionMetadataSchema(metrics=metrics),
+            database_name=None,
+            schema_name=None,
             model_name=self._model_name,
             version_name=self._version_name,
             statement_params=statement_params,
@@ -222,6 +234,8 @@ class ModelVersion:
             subproject=_TELEMETRY_SUBPROJECT,
         )
         return self._model_ops.get_functions(
+            database_name=None,
+            schema_name=None,
             model_name=self._model_name,
             version_name=self._version_name,
             statement_params=statement_params,
@@ -309,6 +323,8 @@ class ModelVersion:
             method_function_type=target_function_info["target_method_function_type"],
             signature=target_function_info["signature"],
             X=X,
+            database_name=None,
+            schema_name=None,
             model_name=self._model_name,
             version_name=self._version_name,
             strict_input_validation=strict_input_validation,
@@ -341,6 +357,8 @@ class ModelVersion:
             subproject=_TELEMETRY_SUBPROJECT,
         )
         self._model_ops.download_files(
+            database_name=None,
+            schema_name=None,
             model_name=self._model_name,
             version_name=self._version_name,
             target_path=target_local_path,
@@ -380,6 +398,8 @@ class ModelVersion:
             with tempfile.TemporaryDirectory() as tmp_workspace_for_validation:
                 ws_path_for_validation = pathlib.Path(tmp_workspace_for_validation)
                 self._model_ops.download_files(
+                    database_name=None,
+                    schema_name=None,
                     model_name=self._model_name,
                     version_name=self._version_name,
                     target_path=ws_path_for_validation,
@@ -417,6 +437,8 @@ class ModelVersion:
         # We need the folder to be existed.
         workspace = pathlib.Path(tempfile.mkdtemp())
         self._model_ops.download_files(
+            database_name=None,
+            schema_name=None,
             model_name=self._model_name,
             version_name=self._version_name,
             target_path=workspace,

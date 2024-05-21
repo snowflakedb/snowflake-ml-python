@@ -1,11 +1,20 @@
-load("//bazel:py_rules.bzl", "py_library")
+load("//bazel:py_rules.bzl", "py_library", "py_test")
 
 package(default_visibility = ["//visibility:public"])
 
 py_library(
-    name = "dataset_dataframe",
+    name = "lineage_utils",
     srcs = [
         "data_source.py",
-        "dataset_dataframe.py",
+        "lineage_utils.py",
+    ],
+)
+
+py_test(
+    name = "lineage_utils_test",
+    srcs = ["lineage_utils_test.py"],
+    deps = [
+        ":lineage_utils",
+        "//snowflake/ml/utils:connection_params",
     ],
 )

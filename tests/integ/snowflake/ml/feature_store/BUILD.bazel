@@ -74,7 +74,6 @@ py_test(
 py_test(
     name = "feature_store_access_test",
     srcs = [
-        "access_utils.py",
         "feature_store_access_test.py",
     ],
     shard_count = 16,

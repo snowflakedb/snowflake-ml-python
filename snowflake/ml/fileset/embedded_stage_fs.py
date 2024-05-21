@@ -78,22 +78,26 @@ class SFEmbeddedStageFileSystem(stage_fs.SFStageFileSystem):
             match = _SNOWURL_PATH_RE.fullmatch(file)
             assert match is not None and match.group("filepath") is not None
             versions_dict[match.group("version")].append(match.group("filepath"))
-        presigned_urls: List[Tuple[str, str]] = []
         try:
+            async_jobs: List[snowpark.AsyncJob] = []
             for version, version_files in versions_dict.items():
                 for file in version_files:
                     stage_loc = f"{self.stage_name}/versions/{version}"
-                    presigned_urls.extend(
-                        self._session.sql(
-                            f"select '{version}/{file}' as name,"
-                            f" get_presigned_url('{stage_loc}', '{file}', {url_lifetime}) as url"
-                        ).collect(
-                            statement_params=telemetry.get_function_usage_statement_params(
-                                project=stage_fs._PROJECT,
-                                api_calls=[snowpark.DataFrame.collect],
-                            ),
-                        )
+                    query_result = self._session.sql(
+                        f"select '{version}/{file}' as name,"
+                        f" get_presigned_url('{stage_loc}', '{file}', {url_lifetime}) as url"
+                    ).collect(
+                        block=False,
+                        statement_params=telemetry.get_function_usage_statement_params(
+                            project=stage_fs._PROJECT,
+                            api_calls=[snowpark.DataFrame.collect],
+                        ),
                     )
+                    async_jobs.append(query_result)
+            presigned_urls: List[Tuple[str, str]] = [
+                (r["NAME"], r["URL"]) for job in async_jobs for r in stage_fs._resolve_async_job(job)
+            ]
+            return presigned_urls
         except snowpark_exceptions.SnowparkClientException as e:
             if e.message.startswith(fileset_errors.ERRNO_DOMAIN_NOT_EXIST) or e.message.startswith(
                 fileset_errors.ERRNO_STAGE_NOT_EXIST
@@ -109,7 +113,6 @@ class SFEmbeddedStageFileSystem(stage_fs.SFStageFileSystem):
                     error_code=error_codes.INTERNAL_SNOWML_ERROR,
                     original_exception=fileset_errors.FileSetError(str(e)),
                 )
-        return presigned_urls
 
     @classmethod
     def _parent(cls, path: str) -> str:

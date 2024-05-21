@@ -39,7 +39,7 @@ class FeatureStoreLargeScaleTest(absltest.TestCase):
     @classmethod
     def tearDownClass(self) -> None:
         for fs in self._active_feature_store:
-            fs.clear()
+            fs._clear(dryrun=False)
             self._session.sql(f"DROP SCHEMA IF EXISTS {fs._config.full_schema_path}").collect()
         self._session.close()
 
@@ -95,8 +95,6 @@ class FeatureStoreLargeScaleTest(absltest.TestCase):
         time.sleep(90)
         self.assertEqual(len(fs.read_feature_view(fv).collect()), 1699)
 
-        self._session.sql(f"DROP TABLE {cloned_wine_data}").collect()
-
     def test_external_table(self) -> None:
         current_schema = create_random_schema(self._session, "TEST_EXTERNAL_TABLE")
         fs = self._create_feature_store(current_schema)
@@ -142,6 +140,7 @@ class FeatureStoreLargeScaleTest(absltest.TestCase):
             version=dataset_version,
             spine_timestamp_col="DROPOFF_TIME",
             spine_label_cols=None,
+            output_type="dataset",
         )
 
         # verify dataset metadata is correct
@@ -157,15 +156,15 @@ class FeatureStoreLargeScaleTest(absltest.TestCase):
         )
         # verify dataset rows count equal to spine df rows count
         df1_row_count = len(spine_df_1.collect())
-        self.assertEqual(len(ds0.read.to_snowpark_dataframe().collect()), df1_row_count)
+        ds0_df = ds0.read.to_snowpark_dataframe()
+        self.assertEqual(len(ds0_df.collect()), df1_row_count)
 
         self.assertEqual(deserialized_fv_slice, fv_slice)
         self.assertIsNone(dsv0_meta.label_cols)
 
         # verify materialized table value is correct
         actual_pdf = (
-            ds0.read.to_snowpark_dataframe()
-            .select(["PULOCATIONID", "F_AVG_TIP", "F_AVG_TOTAL_AMOUNT"])
+            ds0_df.select(["PULOCATIONID", "F_AVG_TIP", "F_AVG_TOTAL_AMOUNT"])
             .to_pandas()
             .sort_values(by="PULOCATIONID")
             .reset_index(drop=True)

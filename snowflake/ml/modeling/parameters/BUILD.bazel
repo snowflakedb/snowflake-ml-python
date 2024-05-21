@@ -12,6 +12,27 @@ py_library(
     ],
 )
 
+py_library(
+    name = "enable_anonymous_sproc",
+    srcs = [
+        "enable_anonymous_sproc.py",
+    ],
+    deps = [
+        "//snowflake/ml/modeling/_internal/snowpark_implementations:snowpark_handlers",
+    ],
+)
+
+py_test(
+    name = "enable_anonymous_sproc_test",
+    srcs = [
+        "enable_anonymous_sproc_test.py",
+    ],
+    deps = [
+        ":enable_anonymous_sproc",
+        "//snowflake/ml/modeling/_internal/snowpark_implementations:snowpark_trainer",
+    ],
+)
+
 py_test(
     name = "disable_distributed_hpo_test",
     srcs = [

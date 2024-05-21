@@ -16,6 +16,7 @@ from snowflake.ml.modeling.preprocessing import (
     OrdinalEncoder,
     StandardScaler,
 )
+from snowflake.ml.registry import Registry
 from snowflake.ml.utils.connection_params import SnowflakeLoginOptions
 from snowflake.snowpark import Session
 
@@ -139,7 +140,38 @@ class QuotedIdentifierTest(parameterized.TestCase):
             rf_algo, preprocessor, "roc_auc", LABEL_COLUMNS, ALL_FEATURE_COLUMNS, diamonds_train_df, 3, 4
         )
 
-        trained_rf_model["trained_model"].predict(test_df)
+        trained_model = trained_rf_model["trained_model"]
+
+        trained_model.predict(test_df)
+
+        registry = Registry(session=self._session)
+        snowflake_registry_model_description = "Example on model registry"
+        snowflake_model_name = f"Registry_Model_{os.urandom(9).hex().upper()}"
+
+        registry.log_model(
+            model=trained_model,
+            model_name=snowflake_model_name,
+            version_name="v1",
+            comment=snowflake_registry_model_description,
+        )
+
+        # Need to set tags at the parent model level
+        parent_model = registry.get_model(snowflake_model_name)
+
+        # Need to create the tag object in Snowflake if it doesn't exist
+        self._session.sql("CREATE TAG IF NOT EXISTS APPLICATION;").collect()
+        self._session.sql("CREATE TAG IF NOT EXISTS DATAIKU_PROJECT_KEY;").collect()
+        self._session.sql("CREATE TAG IF NOT EXISTS DATAIKU_SAVED_MODEL_ID;").collect()
+
+        parent_model.set_tag("application", "Dataiku")
+
+        model_for_scoring = registry.get_model(snowflake_model_name).version("v1")
+
+        predictions = model_for_scoring.run(test_df, function_name="predict_proba")
+
+        predictions.to_pandas()
+
+        registry.delete_model(snowflake_model_name)
 
 
 if __name__ == "__main__":
