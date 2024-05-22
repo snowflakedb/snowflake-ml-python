@@ -8,7 +8,6 @@ py_library(
     deps = [
         ":model_version_impl",
         "//snowflake/ml/_internal:telemetry",
-        "//snowflake/ml/_internal/utils:identifier",
         "//snowflake/ml/_internal/utils:sql_identifier",
         "//snowflake/ml/model/_client/ops:model_ops",
     ],

@@ -1,5 +1,30 @@
 # Release History
 
+## 1.5.1
+
+### Bug Fixes
+
+- Dataset: Fix `snowflake.connector.errors.DataError: Query Result did not match expected number of rows` when accessing
+  DatasetVersion properties when case insensitive `SHOW VERSIONS IN DATASET` check matches multiple version names.
+- Dataset: Fix bug in SnowFS bulk file read when used with DuckDB
+- Registry: Fixed a bug when loading old models.
+- Lineage: Fix Dataset source lineage propagation through `snowpark.DataFrame` transformations
+
+### Behavior Changes
+
+- Feature Store: convert clear() into a private function. Also make it deletes feature views and entities only.
+- Feature Store: Use NULL as default value for timestamp tag value.
+
+### New Features
+
+- Feature Store: Added new `snowflake.ml.feature_store.setup_feature_store()` API to assist Feature Store RBAC setup.
+- Feature Store: Add `output_type` argument to `FeatureStore.generate_dataset()` to allow generating data snapshots
+  as Datasets or Tables.
+- Registry: `log_model`, `get_model`, `delete_model` now supports fully qualified name.
+- Modeling: Supports anonymous stored procedure during fit calls so that modeling would not require sufficient
+  permissions to operate on schema. Please call
+  `import snowflake.ml.modeling.parameters.enable_anonymous_sproc  # noqa: F401`
+
 ## 1.5.0
 
 ### Bug Fixes
@@ -40,12 +65,19 @@
 
 #### Feature Store (PrPr)
 
-`FeatureStore.generate_dataset` argument list has been changed to match the new
+- `FeatureStore.generate_dataset` argument list has been changed to match the new
 `snowflake.ml.dataset.Dataset` definition
 
-- `materialized_table` has been removed and replaced with `name` and `version`.
-- `name` moved to first positional argument
-- `save_mode` has been removed as `merge` behavior is no longer supported. The new behavior is always `errorifexists`.
+  - `materialized_table` has been removed and replaced with `name` and `version`.
+  - `name` moved to first positional argument
+  - `save_mode` has been removed as `merge` behavior is no longer supported. The new behavior is always `errorifexists`.
+
+- Change feature view version type from str to `FeatureViewVersion`. It is a restricted string literal.
+
+- Remove as_dataframe arg from FeatureStore.list_feature_views(), now always returns result as DataFrame.
+
+- Combines few metadata tags into a new tag: SNOWML_FEATURE_VIEW_METADATA. This will make previously created feature views
+not readable by new SDK.
 
 ### New Features
 
@@ -61,6 +93,10 @@
     and `Dataset.read.to_tf_dataset()` respectively.
 - Added `fsspec` style file integration using `Dataset.read.files()` and `Dataset.read.filesystem()`
 
+#### Feature Store
+
+- use new tag_reference_internal to speed up metadata lookup.
+
 ## 1.4.1 (2024-04-18)
 
 ### New Features
@@ -71,6 +107,10 @@
 ### Bug Fixes
 
 - Registry: Fix a bug that leads to relax_version option is not working.
+
+### Behavior changes
+
+- Feature Store: update_feature_view takes refresh_freq and warehouse as argument.
 
 ## 1.4.0 (2024-04-08)
 
@@ -93,6 +133,8 @@
 
 - Registry: `apply` method is no longer by default logged when logging a xgboost model. If that is required, it could
   be specified manually when logging the model by `log_model(..., options={"target_methods": ["apply", ...]})`.
+- Feature Store: register_entity returns an entity object.
+- Feature Store: register_feature_view `block=true` becomes default.
 
 ### New Features
 

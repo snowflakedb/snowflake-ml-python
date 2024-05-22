@@ -111,6 +111,7 @@ py_test(
     deps = [
         ":fileset",
         "//snowflake/ml/_internal/exceptions:fileset_errors",
+        "//snowflake/ml/test_utils:mock_data_frame",
     ],
 )
 

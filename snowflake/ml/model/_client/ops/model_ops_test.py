@@ -49,11 +49,15 @@ class ModelOpsTest(absltest.TestCase):
             snowpark_utils, "random_name_for_temp_object", return_value="SNOWPARK_TEMP_STAGE_ABCDEF0123"
         ) as mock_random_name_for_temp_object:
             stage_path = self.m_ops.prepare_model_stage_path(
+                database_name=sql_identifier.SqlIdentifier("TEMP"),
+                schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
                 statement_params=self.m_statement_params,
             )
             self.assertEqual(stage_path, '@TEMP."test".SNOWPARK_TEMP_STAGE_ABCDEF0123/model')
             mock_random_name_for_temp_object.assert_called_once_with(snowpark_utils.TempObjectType.STAGE)
             mock_create_stage.assert_called_once_with(
+                database_name=sql_identifier.SqlIdentifier("TEMP"),
+                schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
                 stage_name=sql_identifier.SqlIdentifier("SNOWPARK_TEMP_STAGE_ABCDEF0123"),
                 statement_params=self.m_statement_params,
             )
@@ -81,6 +85,8 @@ class ModelOpsTest(absltest.TestCase):
         ]
         with mock.patch.object(self.m_ops._model_client, "show_models", return_value=m_list_res) as mock_show_models:
             res = self.m_ops.show_models_or_versions(
+                database_name=sql_identifier.SqlIdentifier("TEMP"),
+                schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
                 statement_params=self.m_statement_params,
             )
             self.assertListEqual(
@@ -88,6 +94,8 @@ class ModelOpsTest(absltest.TestCase):
                 m_list_res,
             )
             mock_show_models.assert_called_once_with(
+                database_name=sql_identifier.SqlIdentifier("TEMP"),
+                schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
                 validate_result=False,
                 statement_params=self.m_statement_params,
             )
@@ -113,6 +121,8 @@ class ModelOpsTest(absltest.TestCase):
             self.m_ops._model_client, "show_versions", return_value=m_list_res
         ) as mock_show_versions:
             res = self.m_ops.show_models_or_versions(
+                database_name=sql_identifier.SqlIdentifier("TEMP"),
+                schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
                 statement_params=self.m_statement_params,
             )
@@ -121,6 +131,8 @@ class ModelOpsTest(absltest.TestCase):
                 m_list_res,
             )
             mock_show_versions.assert_called_once_with(
+                database_name=sql_identifier.SqlIdentifier("TEMP"),
+                schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
                 validate_result=False,
                 statement_params=self.m_statement_params,
@@ -149,6 +161,8 @@ class ModelOpsTest(absltest.TestCase):
         ]
         with mock.patch.object(self.m_ops._model_client, "show_models", return_value=m_list_res) as mock_show_models:
             res = self.m_ops.list_models_or_versions(
+                database_name=sql_identifier.SqlIdentifier("TEMP"),
+                schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
                 statement_params=self.m_statement_params,
             )
             self.assertListEqual(
@@ -159,6 +173,8 @@ class ModelOpsTest(absltest.TestCase):
                 ],
             )
             mock_show_models.assert_called_once_with(
+                database_name=sql_identifier.SqlIdentifier("TEMP"),
+                schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
                 validate_result=False,
                 statement_params=self.m_statement_params,
             )
@@ -184,6 +200,8 @@ class ModelOpsTest(absltest.TestCase):
             self.m_ops._model_client, "show_versions", return_value=m_list_res
         ) as mock_show_versions:
             res = self.m_ops.list_models_or_versions(
+                database_name=sql_identifier.SqlIdentifier("TEMP"),
+                schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
                 statement_params=self.m_statement_params,
             )
@@ -195,6 +213,8 @@ class ModelOpsTest(absltest.TestCase):
                 ],
             )
             mock_show_versions.assert_called_once_with(
+                database_name=sql_identifier.SqlIdentifier("TEMP"),
+                schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
                 validate_result=False,
                 statement_params=self.m_statement_params,
@@ -214,11 +234,15 @@ class ModelOpsTest(absltest.TestCase):
         ]
         with mock.patch.object(self.m_ops._model_client, "show_models", return_value=m_list_res) as mock_show_models:
             res = self.m_ops.validate_existence(
+                database_name=sql_identifier.SqlIdentifier("TEMP"),
+                schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
                 model_name=sql_identifier.SqlIdentifier("Model", case_sensitive=True),
                 statement_params=self.m_statement_params,
             )
             self.assertTrue(res)
             mock_show_models.assert_called_once_with(
+                database_name=sql_identifier.SqlIdentifier("TEMP"),
+                schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
                 model_name=sql_identifier.SqlIdentifier("Model", case_sensitive=True),
                 validate_result=False,
                 statement_params=self.m_statement_params,
@@ -228,11 +252,15 @@ class ModelOpsTest(absltest.TestCase):
         m_list_res: List[Row] = []
         with mock.patch.object(self.m_ops._model_client, "show_models", return_value=m_list_res) as mock_show_models:
             res = self.m_ops.validate_existence(
+                database_name=sql_identifier.SqlIdentifier("TEMP"),
+                schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
                 model_name=sql_identifier.SqlIdentifier("Model", case_sensitive=True),
                 statement_params=self.m_statement_params,
             )
             self.assertFalse(res)
             mock_show_models.assert_called_once_with(
+                database_name=sql_identifier.SqlIdentifier("TEMP"),
+                schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
                 model_name=sql_identifier.SqlIdentifier("Model", case_sensitive=True),
                 validate_result=False,
                 statement_params=self.m_statement_params,
@@ -252,12 +280,16 @@ class ModelOpsTest(absltest.TestCase):
             self.m_ops._model_client, "show_versions", return_value=m_list_res
         ) as mock_show_versions:
             res = self.m_ops.validate_existence(
+                database_name=sql_identifier.SqlIdentifier("TEMP"),
+                schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
                 version_name=sql_identifier.SqlIdentifier("v1", case_sensitive=True),
                 statement_params=self.m_statement_params,
             )
             self.assertTrue(res)
             mock_show_versions.assert_called_once_with(
+                database_name=sql_identifier.SqlIdentifier("TEMP"),
+                schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
                 version_name=sql_identifier.SqlIdentifier("v1", case_sensitive=True),
                 validate_result=False,
@@ -270,12 +302,16 @@ class ModelOpsTest(absltest.TestCase):
             self.m_ops._model_client, "show_versions", return_value=m_list_res
         ) as mock_show_versions:
             res = self.m_ops.validate_existence(
+                database_name=sql_identifier.SqlIdentifier("TEMP"),
+                schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
                 version_name=sql_identifier.SqlIdentifier("v1", case_sensitive=True),
                 statement_params=self.m_statement_params,
             )
             self.assertFalse(res)
             mock_show_versions.assert_called_once_with(
+                database_name=sql_identifier.SqlIdentifier("TEMP"),
+                schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
                 version_name=sql_identifier.SqlIdentifier("v1", case_sensitive=True),
                 validate_result=False,
@@ -286,6 +322,8 @@ class ModelOpsTest(absltest.TestCase):
         m_list_res: Row = Row(TAG_VALUE="a")
         with mock.patch.object(self.m_ops._tag_client, "get_tag_value", return_value=m_list_res) as mock_get_tag_value:
             res = self.m_ops.get_tag_value(
+                database_name=sql_identifier.SqlIdentifier("TEMP"),
+                schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
                 tag_database_name=sql_identifier.SqlIdentifier("DB"),
                 tag_schema_name=sql_identifier.SqlIdentifier("schema", case_sensitive=True),
@@ -294,7 +332,9 @@ class ModelOpsTest(absltest.TestCase):
             )
             self.assertEqual(res, "a")
             mock_get_tag_value.assert_called_once_with(
-                module_name=sql_identifier.SqlIdentifier("MODEL"),
+                database_name=sql_identifier.SqlIdentifier("TEMP"),
+                schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
+                model_name=sql_identifier.SqlIdentifier("MODEL"),
                 tag_database_name=sql_identifier.SqlIdentifier("DB"),
                 tag_schema_name=sql_identifier.SqlIdentifier("schema", case_sensitive=True),
                 tag_name=sql_identifier.SqlIdentifier("MYTAG"),
@@ -305,6 +345,8 @@ class ModelOpsTest(absltest.TestCase):
         m_list_res: Row = Row(TAG_VALUE=1)
         with mock.patch.object(self.m_ops._tag_client, "get_tag_value", return_value=m_list_res) as mock_get_tag_value:
             res = self.m_ops.get_tag_value(
+                database_name=sql_identifier.SqlIdentifier("TEMP"),
+                schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
                 tag_database_name=sql_identifier.SqlIdentifier("DB"),
                 tag_schema_name=sql_identifier.SqlIdentifier("schema", case_sensitive=True),
@@ -313,7 +355,9 @@ class ModelOpsTest(absltest.TestCase):
             )
             self.assertEqual(res, "1")
             mock_get_tag_value.assert_called_once_with(
-                module_name=sql_identifier.SqlIdentifier("MODEL"),
+                database_name=sql_identifier.SqlIdentifier("TEMP"),
+                schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
+                model_name=sql_identifier.SqlIdentifier("MODEL"),
                 tag_database_name=sql_identifier.SqlIdentifier("DB"),
                 tag_schema_name=sql_identifier.SqlIdentifier("schema", case_sensitive=True),
                 tag_name=sql_identifier.SqlIdentifier("MYTAG"),
@@ -324,6 +368,8 @@ class ModelOpsTest(absltest.TestCase):
         m_list_res: Row = Row(TAG_VALUE=None)
         with mock.patch.object(self.m_ops._tag_client, "get_tag_value", return_value=m_list_res) as mock_get_tag_value:
             res = self.m_ops.get_tag_value(
+                database_name=sql_identifier.SqlIdentifier("TEMP"),
+                schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
                 tag_database_name=sql_identifier.SqlIdentifier("DB"),
                 tag_schema_name=sql_identifier.SqlIdentifier("schema", case_sensitive=True),
@@ -332,7 +378,9 @@ class ModelOpsTest(absltest.TestCase):
             )
             self.assertIsNone(res)
             mock_get_tag_value.assert_called_once_with(
-                module_name=sql_identifier.SqlIdentifier("MODEL"),
+                database_name=sql_identifier.SqlIdentifier("TEMP"),
+                schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
+                model_name=sql_identifier.SqlIdentifier("MODEL"),
                 tag_database_name=sql_identifier.SqlIdentifier("DB"),
                 tag_schema_name=sql_identifier.SqlIdentifier("schema", case_sensitive=True),
                 tag_name=sql_identifier.SqlIdentifier("MYTAG"),
@@ -346,18 +394,24 @@ class ModelOpsTest(absltest.TestCase):
         ]
         with mock.patch.object(self.m_ops._tag_client, "get_tag_list", return_value=m_list_res) as mock_get_tag_list:
             res = self.m_ops.show_tags(
+                database_name=sql_identifier.SqlIdentifier("TEMP"),
+                schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
                 statement_params=self.m_statement_params,
             )
             self.assertDictEqual(res, {'DB."schema".MYTAG': "tag content", 'MYDB.SCHEMA."my_another_tag"': "1"})
             mock_get_tag_list.assert_called_once_with(
-                module_name=sql_identifier.SqlIdentifier("MODEL"),
+                database_name=sql_identifier.SqlIdentifier("TEMP"),
+                schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
+                model_name=sql_identifier.SqlIdentifier("MODEL"),
                 statement_params=self.m_statement_params,
             )
 
     def test_set_tag(self) -> None:
         with mock.patch.object(self.m_ops._tag_client, "set_tag_on_model") as mock_set_tag:
             self.m_ops.set_tag(
+                database_name=sql_identifier.SqlIdentifier("TEMP"),
+                schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
                 tag_database_name=sql_identifier.SqlIdentifier("DB"),
                 tag_schema_name=sql_identifier.SqlIdentifier("schema", case_sensitive=True),
@@ -366,6 +420,8 @@ class ModelOpsTest(absltest.TestCase):
                 statement_params=self.m_statement_params,
             )
             mock_set_tag.assert_called_once_with(
+                database_name=sql_identifier.SqlIdentifier("TEMP"),
+                schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
                 tag_database_name=sql_identifier.SqlIdentifier("DB"),
                 tag_schema_name=sql_identifier.SqlIdentifier("schema", case_sensitive=True),
@@ -377,6 +433,8 @@ class ModelOpsTest(absltest.TestCase):
     def test_unset_tag(self) -> None:
         with mock.patch.object(self.m_ops._tag_client, "unset_tag_on_model") as mock_unset_tag:
             self.m_ops.unset_tag(
+                database_name=sql_identifier.SqlIdentifier("TEMP"),
+                schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
                 tag_database_name=sql_identifier.SqlIdentifier("DB"),
                 tag_schema_name=sql_identifier.SqlIdentifier("schema", case_sensitive=True),
@@ -384,6 +442,8 @@ class ModelOpsTest(absltest.TestCase):
                 statement_params=self.m_statement_params,
             )
             mock_unset_tag.assert_called_once_with(
+                database_name=sql_identifier.SqlIdentifier("TEMP"),
+                schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
                 tag_database_name=sql_identifier.SqlIdentifier("DB"),
                 tag_schema_name=sql_identifier.SqlIdentifier("schema", case_sensitive=True),
@@ -404,12 +464,16 @@ class ModelOpsTest(absltest.TestCase):
         ):
             self.m_ops.create_from_stage(
                 composed_model=mock_composer,
+                database_name=sql_identifier.SqlIdentifier("TEMP"),
+                schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
                 version_name=sql_identifier.SqlIdentifier("V1"),
                 statement_params=self.m_statement_params,
             )
             mock_create_from_stage.assert_called_once_with(
                 stage_path='@TEMP."test".MODEL/V1',
+                database_name=sql_identifier.SqlIdentifier("TEMP"),
+                schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
                 version_name=sql_identifier.SqlIdentifier("V1"),
                 statement_params=self.m_statement_params,
@@ -441,6 +505,8 @@ class ModelOpsTest(absltest.TestCase):
         ):
             self.m_ops.create_from_stage(
                 composed_model=mock_composer,
+                database_name=sql_identifier.SqlIdentifier("TEMP"),
+                schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
                 version_name=sql_identifier.SqlIdentifier("V1"),
                 statement_params=self.m_statement_params,
@@ -448,6 +514,8 @@ class ModelOpsTest(absltest.TestCase):
             mock_create_from_stage.assert_not_called()
             mock_add_version_from_stage.assert_called_once_with(
                 stage_path='@TEMP."test".MODEL/V1',
+                database_name=sql_identifier.SqlIdentifier("TEMP"),
+                schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
                 version_name=sql_identifier.SqlIdentifier("V1"),
                 statement_params=self.m_statement_params,
@@ -488,6 +556,8 @@ class ModelOpsTest(absltest.TestCase):
             with self.assertRaisesRegex(ValueError, 'Model TEMP."test".MODEL version V1 already existed.'):
                 self.m_ops.create_from_stage(
                     composed_model=mock_composer,
+                    database_name=sql_identifier.SqlIdentifier("TEMP"),
+                    schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
                     model_name=sql_identifier.SqlIdentifier("MODEL"),
                     version_name=sql_identifier.SqlIdentifier("V1"),
                     statement_params=self.m_statement_params,
@@ -514,6 +584,8 @@ class ModelOpsTest(absltest.TestCase):
                 method_function_type=model_manifest_schema.ModelMethodFunctionTypes.FUNCTION.value,
                 signature=m_sig,
                 X=pd_df,
+                database_name=sql_identifier.SqlIdentifier("TEMP"),
+                schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
                 version_name=sql_identifier.SqlIdentifier("V1"),
                 statement_params=self.m_statement_params,
@@ -526,6 +598,8 @@ class ModelOpsTest(absltest.TestCase):
                 input_df=m_df,
                 input_args=['"input"'],
                 returns=[("output", spt.FloatType(), '"output"')],
+                database_name=sql_identifier.SqlIdentifier("TEMP"),
+                schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
                 version_name=sql_identifier.SqlIdentifier("V1"),
                 statement_params=self.m_statement_params,
@@ -551,6 +625,8 @@ class ModelOpsTest(absltest.TestCase):
                 method_function_type=model_manifest_schema.ModelMethodFunctionTypes.FUNCTION.value,
                 signature=m_sig,
                 X=pd_df,
+                database_name=sql_identifier.SqlIdentifier("TEMP"),
+                schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
                 version_name=sql_identifier.SqlIdentifier("V1"),
                 statement_params=self.m_statement_params,
@@ -563,6 +639,8 @@ class ModelOpsTest(absltest.TestCase):
                 input_df=m_df,
                 input_args=['"input"'],
                 returns=[("output", spt.FloatType(), '"output"')],
+                database_name=sql_identifier.SqlIdentifier("TEMP"),
+                schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
                 version_name=sql_identifier.SqlIdentifier("V1"),
                 statement_params=self.m_statement_params,
@@ -587,6 +665,8 @@ class ModelOpsTest(absltest.TestCase):
                 method_function_type=model_manifest_schema.ModelMethodFunctionTypes.FUNCTION.value,
                 signature=m_sig,
                 X=cast(DataFrame, m_df),
+                database_name=sql_identifier.SqlIdentifier("TEMP"),
+                schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
                 version_name=sql_identifier.SqlIdentifier("V1"),
                 statement_params=self.m_statement_params,
@@ -599,6 +679,8 @@ class ModelOpsTest(absltest.TestCase):
                 input_df=m_df,
                 input_args=["INPUT"],
                 returns=[("output", spt.FloatType(), "OUTPUT")],
+                database_name=sql_identifier.SqlIdentifier("TEMP"),
+                schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
                 version_name=sql_identifier.SqlIdentifier("V1"),
                 statement_params=self.m_statement_params,
@@ -623,6 +705,8 @@ class ModelOpsTest(absltest.TestCase):
                 method_function_type=model_manifest_schema.ModelMethodFunctionTypes.FUNCTION.value,
                 signature=m_sig,
                 X=cast(DataFrame, m_df),
+                database_name=sql_identifier.SqlIdentifier("TEMP"),
+                schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
                 version_name=sql_identifier.SqlIdentifier("V1"),
                 strict_input_validation=True,
@@ -636,6 +720,8 @@ class ModelOpsTest(absltest.TestCase):
                 input_df=m_df,
                 input_args=["INPUT"],
                 returns=[("output", spt.FloatType(), "OUTPUT")],
+                database_name=sql_identifier.SqlIdentifier("TEMP"),
+                schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
                 version_name=sql_identifier.SqlIdentifier("V1"),
                 statement_params=self.m_statement_params,
@@ -661,6 +747,8 @@ class ModelOpsTest(absltest.TestCase):
                 method_function_type=model_manifest_schema.ModelMethodFunctionTypes.TABLE_FUNCTION.value,
                 signature=m_sig,
                 X=pd_df,
+                database_name=sql_identifier.SqlIdentifier("TEMP"),
+                schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
                 version_name=sql_identifier.SqlIdentifier("V1"),
                 statement_params=self.m_statement_params,
@@ -674,6 +762,8 @@ class ModelOpsTest(absltest.TestCase):
                 input_args=['"input"'],
                 partition_column=None,
                 returns=[("output", spt.FloatType(), '"output"')],
+                database_name=sql_identifier.SqlIdentifier("TEMP"),
+                schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
                 version_name=sql_identifier.SqlIdentifier("V1"),
                 statement_params=self.m_statement_params,
@@ -700,6 +790,8 @@ class ModelOpsTest(absltest.TestCase):
                 method_function_type=model_manifest_schema.ModelMethodFunctionTypes.TABLE_FUNCTION.value,
                 signature=m_sig,
                 X=pd_df,
+                database_name=sql_identifier.SqlIdentifier("TEMP"),
+                schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
                 version_name=sql_identifier.SqlIdentifier("V1"),
                 partition_column=partition_column,
@@ -714,6 +806,8 @@ class ModelOpsTest(absltest.TestCase):
                 input_args=['"input"'],
                 partition_column=partition_column,
                 returns=[("output", spt.FloatType(), '"output"')],
+                database_name=sql_identifier.SqlIdentifier("TEMP"),
+                schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
                 version_name=sql_identifier.SqlIdentifier("V1"),
                 statement_params=self.m_statement_params,
@@ -732,11 +826,15 @@ class ModelOpsTest(absltest.TestCase):
         ]
         with mock.patch.object(self.m_ops._model_client, "show_models", return_value=m_list_res) as mock_show_models:
             res = self.m_ops.get_comment(
+                database_name=sql_identifier.SqlIdentifier("TEMP"),
+                schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
                 statement_params=self.m_statement_params,
             )
             self.assertEqual(res, "This is a comment")
             mock_show_models.assert_called_once_with(
+                database_name=sql_identifier.SqlIdentifier("TEMP"),
+                schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
                 statement_params=self.m_statement_params,
             )
@@ -757,12 +855,16 @@ class ModelOpsTest(absltest.TestCase):
             self.m_ops._model_client, "show_versions", return_value=m_list_res
         ) as mock_show_versions:
             res = self.m_ops.get_comment(
+                database_name=sql_identifier.SqlIdentifier("TEMP"),
+                schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
                 version_name=sql_identifier.SqlIdentifier("V1"),
                 statement_params=self.m_statement_params,
             )
             self.assertEqual(res, "This is a comment")
             mock_show_versions.assert_called_once_with(
+                database_name=sql_identifier.SqlIdentifier("TEMP"),
+                schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
                 version_name=sql_identifier.SqlIdentifier("V1"),
                 statement_params=self.m_statement_params,
@@ -772,11 +874,15 @@ class ModelOpsTest(absltest.TestCase):
         with mock.patch.object(self.m_ops._model_client, "set_comment") as mock_set_comment:
             self.m_ops.set_comment(
                 comment="This is a comment",
+                database_name=sql_identifier.SqlIdentifier("TEMP"),
+                schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
                 statement_params=self.m_statement_params,
             )
             mock_set_comment.assert_called_once_with(
                 comment="This is a comment",
+                database_name=sql_identifier.SqlIdentifier("TEMP"),
+                schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
                 statement_params=self.m_statement_params,
             )
@@ -785,12 +891,16 @@ class ModelOpsTest(absltest.TestCase):
         with mock.patch.object(self.m_ops._model_version_client, "set_comment") as mock_set_comment:
             self.m_ops.set_comment(
                 comment="This is a comment",
+                database_name=sql_identifier.SqlIdentifier("TEMP"),
+                schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
                 version_name=sql_identifier.SqlIdentifier("V1"),
                 statement_params=self.m_statement_params,
             )
             mock_set_comment.assert_called_once_with(
                 comment="This is a comment",
+                database_name=sql_identifier.SqlIdentifier("TEMP"),
+                schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
                 version_name=sql_identifier.SqlIdentifier("V1"),
                 statement_params=self.m_statement_params,
@@ -810,11 +920,15 @@ class ModelOpsTest(absltest.TestCase):
         ]
         with mock.patch.object(self.m_ops._model_client, "show_models", return_value=m_list_res) as mock_show_models:
             res = self.m_ops.get_default_version(
+                database_name=sql_identifier.SqlIdentifier("TEMP"),
+                schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
                 statement_params=self.m_statement_params,
             )
             self.assertEqual(res, sql_identifier.SqlIdentifier("v1", case_sensitive=True))
             mock_show_models.assert_called_once_with(
+                database_name=sql_identifier.SqlIdentifier("TEMP"),
+                schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
                 statement_params=self.m_statement_params,
             )
@@ -835,17 +949,23 @@ class ModelOpsTest(absltest.TestCase):
             self.m_ops._model_version_client, "set_default_version"
         ) as mock_set_default_version:
             self.m_ops.set_default_version(
+                database_name=sql_identifier.SqlIdentifier("TEMP"),
+                schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
                 version_name=sql_identifier.SqlIdentifier('"v1"'),
                 statement_params=self.m_statement_params,
             )
             mock_show_versions.assert_called_once_with(
+                database_name=sql_identifier.SqlIdentifier("TEMP"),
+                schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
                 version_name=sql_identifier.SqlIdentifier('"v1"'),
                 validate_result=False,
                 statement_params=self.m_statement_params,
             )
             mock_set_default_version.assert_called_once_with(
+                database_name=sql_identifier.SqlIdentifier("TEMP"),
+                schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
                 version_name=sql_identifier.SqlIdentifier('"v1"'),
                 statement_params=self.m_statement_params,
@@ -861,11 +981,15 @@ class ModelOpsTest(absltest.TestCase):
                 ValueError, "You cannot set version V1 as default version as it does not exist."
             ):
                 self.m_ops.set_default_version(
+                    database_name=sql_identifier.SqlIdentifier("TEMP"),
+                    schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
                     model_name=sql_identifier.SqlIdentifier("MODEL"),
                     version_name=sql_identifier.SqlIdentifier("V1"),
                     statement_params=self.m_statement_params,
                 )
             mock_show_versions.assert_called_once_with(
+                database_name=sql_identifier.SqlIdentifier("TEMP"),
+                schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
                 version_name=sql_identifier.SqlIdentifier("V1"),
                 validate_result=False,
@@ -879,10 +1003,14 @@ class ModelOpsTest(absltest.TestCase):
             "drop_model",
         ) as mock_drop_model:
             self.m_ops.delete_model_or_version(
+                database_name=sql_identifier.SqlIdentifier("TEMP"),
+                schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
                 statement_params=self.m_statement_params,
             )
             mock_drop_model.assert_called_once_with(
+                database_name=sql_identifier.SqlIdentifier("TEMP"),
+                schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
                 statement_params=self.m_statement_params,
             )
@@ -893,11 +1021,15 @@ class ModelOpsTest(absltest.TestCase):
             "drop_version",
         ) as mock_drop_version:
             self.m_ops.delete_model_or_version(
+                database_name=sql_identifier.SqlIdentifier("TEMP"),
+                schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
                 version_name=sql_identifier.SqlIdentifier("V2"),
                 statement_params=self.m_statement_params,
             )
             mock_drop_version.assert_called_once_with(
+                database_name=sql_identifier.SqlIdentifier("TEMP"),
+                schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
                 version_name=sql_identifier.SqlIdentifier("V2"),
                 statement_params=self.m_statement_params,
@@ -909,6 +1041,8 @@ class ModelOpsTest(absltest.TestCase):
             "rename",
         ) as mock_rename:
             self.m_ops.rename(
+                database_name=sql_identifier.SqlIdentifier("TEMP"),
+                schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
                 new_model_db=None,
                 new_model_schema=None,
@@ -916,6 +1050,8 @@ class ModelOpsTest(absltest.TestCase):
                 statement_params=self.m_statement_params,
             )
             mock_rename.assert_called_once_with(
+                database_name=sql_identifier.SqlIdentifier("TEMP"),
+                schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
                 new_model_db=None,
                 new_model_schema=None,
@@ -929,6 +1065,8 @@ class ModelOpsTest(absltest.TestCase):
             "rename",
         ) as mock_rename:
             self.m_ops.rename(
+                database_name=sql_identifier.SqlIdentifier("TEMP"),
+                schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
                 new_model_db=sql_identifier.SqlIdentifier("TEMP"),
                 new_model_schema=sql_identifier.SqlIdentifier("test", case_sensitive=True),
@@ -936,6 +1074,8 @@ class ModelOpsTest(absltest.TestCase):
                 statement_params=self.m_statement_params,
             )
             mock_rename.assert_called_once_with(
+                database_name=sql_identifier.SqlIdentifier("TEMP"),
+                schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
                 new_model_db=sql_identifier.SqlIdentifier("TEMP"),
                 new_model_schema=sql_identifier.SqlIdentifier("test", case_sensitive=True),
@@ -995,17 +1135,23 @@ class ModelOpsTest(absltest.TestCase):
             return_value=cast(model_meta_schema.ModelMetadataDict, m_spec),
         ) as mock_validate_model_metadata:
             self.m_ops.get_functions(
+                database_name=sql_identifier.SqlIdentifier("TEMP"),
+                schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
                 version_name=sql_identifier.SqlIdentifier('"v1"'),
                 statement_params=self.m_statement_params,
             )
             mock_show_versions.assert_called_once_with(
+                database_name=sql_identifier.SqlIdentifier("TEMP"),
+                schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
                 version_name=sql_identifier.SqlIdentifier('"v1"'),
                 check_model_details=True,
                 statement_params={**self.m_statement_params, "SHOW_MODEL_DETAILS_IN_SHOW_VERSIONS_IN_MODEL": True},
             )
             mock_show_functions.assert_called_once_with(
+                database_name=sql_identifier.SqlIdentifier("TEMP"),
+                schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
                 version_name=sql_identifier.SqlIdentifier('"v1"'),
                 statement_params=self.m_statement_params,
@@ -1035,6 +1181,8 @@ class ModelOpsTest(absltest.TestCase):
             pathlib.Path, "mkdir"
         ):
             self.m_ops.download_files(
+                database_name=sql_identifier.SqlIdentifier("TEMP"),
+                schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
                 version_name=sql_identifier.SqlIdentifier('"v1"'),
                 target_path=m_local_path,
@@ -1044,6 +1192,8 @@ class ModelOpsTest(absltest.TestCase):
             mock_list_file.assert_has_calls(
                 [
                     mock.call(
+                        database_name=sql_identifier.SqlIdentifier("TEMP"),
+                        schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
                         model_name=sql_identifier.SqlIdentifier("MODEL"),
                         version_name=sql_identifier.SqlIdentifier('"v1"'),
                         file_path=pathlib.PurePosixPath("model/model.yaml"),
@@ -1051,6 +1201,8 @@ class ModelOpsTest(absltest.TestCase):
                         statement_params=self.m_statement_params,
                     ),
                     mock.call(
+                        database_name=sql_identifier.SqlIdentifier("TEMP"),
+                        schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
                         model_name=sql_identifier.SqlIdentifier("MODEL"),
                         version_name=sql_identifier.SqlIdentifier('"v1"'),
                         file_path=pathlib.PurePosixPath("model/env"),
@@ -1058,6 +1210,8 @@ class ModelOpsTest(absltest.TestCase):
                         statement_params=self.m_statement_params,
                     ),
                     mock.call(
+                        database_name=sql_identifier.SqlIdentifier("TEMP"),
+                        schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
                         model_name=sql_identifier.SqlIdentifier("MODEL"),
                         version_name=sql_identifier.SqlIdentifier('"v1"'),
                         file_path=pathlib.PurePosixPath("model/runtimes"),
@@ -1069,6 +1223,8 @@ class ModelOpsTest(absltest.TestCase):
             mock_get_file.assert_has_calls(
                 [
                     mock.call(
+                        database_name=sql_identifier.SqlIdentifier("TEMP"),
+                        schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
                         model_name=sql_identifier.SqlIdentifier("MODEL"),
                         version_name=sql_identifier.SqlIdentifier('"v1"'),
                         file_path=pathlib.PurePosixPath("model/model.yaml"),
@@ -1076,6 +1232,8 @@ class ModelOpsTest(absltest.TestCase):
                         statement_params=self.m_statement_params,
                     ),
                     mock.call(
+                        database_name=sql_identifier.SqlIdentifier("TEMP"),
+                        schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
                         model_name=sql_identifier.SqlIdentifier("MODEL"),
                         version_name=sql_identifier.SqlIdentifier('"v1"'),
                         file_path=pathlib.PurePosixPath("model/env/conda.yml"),
@@ -1083,6 +1241,8 @@ class ModelOpsTest(absltest.TestCase):
                         statement_params=self.m_statement_params,
                     ),
                     mock.call(
+                        database_name=sql_identifier.SqlIdentifier("TEMP"),
+                        schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
                         model_name=sql_identifier.SqlIdentifier("MODEL"),
                         version_name=sql_identifier.SqlIdentifier('"v1"'),
                         file_path=pathlib.PurePosixPath("model/env/requirements.txt"),
@@ -1090,6 +1250,8 @@ class ModelOpsTest(absltest.TestCase):
                         statement_params=self.m_statement_params,
                     ),
                     mock.call(
+                        database_name=sql_identifier.SqlIdentifier("TEMP"),
+                        schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
                         model_name=sql_identifier.SqlIdentifier("MODEL"),
                         version_name=sql_identifier.SqlIdentifier('"v1"'),
                         file_path=pathlib.PurePosixPath("model/runtimes/cpu/env/conda.yml"),
@@ -1097,6 +1259,8 @@ class ModelOpsTest(absltest.TestCase):
                         statement_params=self.m_statement_params,
                     ),
                     mock.call(
+                        database_name=sql_identifier.SqlIdentifier("TEMP"),
+                        schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
                         model_name=sql_identifier.SqlIdentifier("MODEL"),
                         version_name=sql_identifier.SqlIdentifier('"v1"'),
                         file_path=pathlib.PurePosixPath("model/runtimes/cpu/env/requirements.txt"),
@@ -1125,6 +1289,8 @@ class ModelOpsTest(absltest.TestCase):
             pathlib.Path, "mkdir"
         ):
             self.m_ops.download_files(
+                database_name=sql_identifier.SqlIdentifier("TEMP"),
+                schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
                 version_name=sql_identifier.SqlIdentifier('"v1"'),
                 target_path=m_local_path,
@@ -1134,6 +1300,8 @@ class ModelOpsTest(absltest.TestCase):
             mock_list_file.assert_has_calls(
                 [
                     mock.call(
+                        database_name=sql_identifier.SqlIdentifier("TEMP"),
+                        schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
                         model_name=sql_identifier.SqlIdentifier("MODEL"),
                         version_name=sql_identifier.SqlIdentifier('"v1"'),
                         file_path=pathlib.PurePosixPath("model"),
@@ -1145,6 +1313,8 @@ class ModelOpsTest(absltest.TestCase):
             mock_get_file.assert_has_calls(
                 [
                     mock.call(
+                        database_name=sql_identifier.SqlIdentifier("TEMP"),
+                        schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
                         model_name=sql_identifier.SqlIdentifier("MODEL"),
                         version_name=sql_identifier.SqlIdentifier('"v1"'),
                         file_path=pathlib.PurePosixPath("model/model.yaml"),
@@ -1152,6 +1322,8 @@ class ModelOpsTest(absltest.TestCase):
                         statement_params=self.m_statement_params,
                     ),
                     mock.call(
+                        database_name=sql_identifier.SqlIdentifier("TEMP"),
+                        schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
                         model_name=sql_identifier.SqlIdentifier("MODEL"),
                         version_name=sql_identifier.SqlIdentifier('"v1"'),
                         file_path=pathlib.PurePosixPath("model/env/conda.yml"),
@@ -1159,6 +1331,8 @@ class ModelOpsTest(absltest.TestCase):
                         statement_params=self.m_statement_params,
                     ),
                     mock.call(
+                        database_name=sql_identifier.SqlIdentifier("TEMP"),
+                        schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
                         model_name=sql_identifier.SqlIdentifier("MODEL"),
                         version_name=sql_identifier.SqlIdentifier('"v1"'),
                         file_path=pathlib.PurePosixPath("model/env/requirements.txt"),
@@ -1188,6 +1362,8 @@ class ModelOpsTest(absltest.TestCase):
             pathlib.Path, "mkdir"
         ):
             self.m_ops.download_files(
+                database_name=sql_identifier.SqlIdentifier("TEMP"),
+                schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
                 version_name=sql_identifier.SqlIdentifier('"v1"'),
                 target_path=m_local_path,
@@ -1197,6 +1373,8 @@ class ModelOpsTest(absltest.TestCase):
             mock_list_file.assert_has_calls(
                 [
                     mock.call(
+                        database_name=sql_identifier.SqlIdentifier("TEMP"),
+                        schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
                         model_name=sql_identifier.SqlIdentifier("MODEL"),
                         version_name=sql_identifier.SqlIdentifier('"v1"'),
                         file_path=pathlib.PurePosixPath("."),
@@ -1208,6 +1386,8 @@ class ModelOpsTest(absltest.TestCase):
             mock_get_file.assert_has_calls(
                 [
                     mock.call(
+                        database_name=sql_identifier.SqlIdentifier("TEMP"),
+                        schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
                         model_name=sql_identifier.SqlIdentifier("MODEL"),
                         version_name=sql_identifier.SqlIdentifier('"v1"'),
                         file_path=pathlib.PurePosixPath("MANIFEST.yml"),
@@ -1215,6 +1395,8 @@ class ModelOpsTest(absltest.TestCase):
                         statement_params=self.m_statement_params,
                     ),
                     mock.call(
+                        database_name=sql_identifier.SqlIdentifier("TEMP"),
+                        schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
                         model_name=sql_identifier.SqlIdentifier("MODEL"),
                         version_name=sql_identifier.SqlIdentifier('"v1"'),
                         file_path=pathlib.PurePosixPath("model/model.yaml"),
@@ -1222,6 +1404,8 @@ class ModelOpsTest(absltest.TestCase):
                         statement_params=self.m_statement_params,
                     ),
                     mock.call(
+                        database_name=sql_identifier.SqlIdentifier("TEMP"),
+                        schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
                         model_name=sql_identifier.SqlIdentifier("MODEL"),
                         version_name=sql_identifier.SqlIdentifier('"v1"'),
                         file_path=pathlib.PurePosixPath("model/env/conda.yml"),
@@ -1229,6 +1413,8 @@ class ModelOpsTest(absltest.TestCase):
                         statement_params=self.m_statement_params,
                     ),
                     mock.call(
+                        database_name=sql_identifier.SqlIdentifier("TEMP"),
+                        schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
                         model_name=sql_identifier.SqlIdentifier("MODEL"),
                         version_name=sql_identifier.SqlIdentifier('"v1"'),
                         file_path=pathlib.PurePosixPath("model/env/requirements.txt"),

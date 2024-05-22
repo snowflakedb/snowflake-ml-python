@@ -6,9 +6,19 @@ package(default_visibility = [
 ])
 
 py_library(
+    name = "_base",
+    srcs = ["_base.py"],
+    deps = [
+        "//snowflake/ml/_internal/utils:identifier",
+        "//snowflake/ml/_internal/utils:sql_identifier",
+    ],
+)
+
+py_library(
     name = "model",
     srcs = ["model.py"],
     deps = [
+        ":_base",
         "//snowflake/ml/_internal/utils:identifier",
         "//snowflake/ml/_internal/utils:query_result_checker",
         "//snowflake/ml/_internal/utils:sql_identifier",
@@ -32,7 +42,7 @@ py_library(
     name = "model_version",
     srcs = ["model_version.py"],
     deps = [
-        "//snowflake/ml/_internal/utils:identifier",
+        ":_base",
         "//snowflake/ml/_internal/utils:query_result_checker",
         "//snowflake/ml/_internal/utils:sql_identifier",
     ],
@@ -53,7 +63,7 @@ py_library(
     name = "stage",
     srcs = ["stage.py"],
     deps = [
-        "//snowflake/ml/_internal/utils:identifier",
+        ":_base",
         "//snowflake/ml/_internal/utils:query_result_checker",
         "//snowflake/ml/_internal/utils:sql_identifier",
     ],
@@ -74,7 +84,7 @@ py_library(
     name = "tag",
     srcs = ["tag.py"],
     deps = [
-        "//snowflake/ml/_internal/utils:identifier",
+        ":_base",
         "//snowflake/ml/_internal/utils:query_result_checker",
         "//snowflake/ml/_internal/utils:sql_identifier",
     ],

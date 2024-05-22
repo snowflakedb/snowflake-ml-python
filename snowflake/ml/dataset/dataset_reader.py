@@ -1,10 +1,11 @@
 from typing import Any, List
 
 import pandas as pd
+from pyarrow import parquet as pq
 
 from snowflake import snowpark
 from snowflake.ml._internal import telemetry
-from snowflake.ml._internal.lineage import data_source, dataset_dataframe
+from snowflake.ml._internal.lineage import data_source, lineage_utils
 from snowflake.ml._internal.utils import import_utils
 from snowflake.ml.fileset import snowfs
 
@@ -185,7 +186,7 @@ class DatasetReader:
         combined_df = dfs[0]
         for df in dfs[1:]:
             combined_df = combined_df.union_all_by_name(df)
-        return dataset_dataframe.DatasetDataFrame.from_dataframe(combined_df, data_sources=self._sources, inplace=True)
+        return lineage_utils.patch_dataframe(combined_df, data_sources=self._sources, inplace=True)
 
     @telemetry.send_api_usage_telemetry(project=_PROJECT, subproject=_SUBPROJECT)
     def to_pandas(self) -> pd.DataFrame:
@@ -194,9 +195,5 @@ class DatasetReader:
         if not files:
             return pd.DataFrame()  # Return empty DataFrame
         self._fs.optimize_read(files)
-        pd_dfs = []
-        for file in files:
-            with self._fs.open(file) as fp:
-                pd_dfs.append(pd.read_parquet(fp))
-        pd_df = pd_dfs[0] if len(pd_dfs) == 1 else pd.concat(pd_dfs, ignore_index=True, copy=False)
-        return pd_df
+        pd_ds = pq.ParquetDataset(files, filesystem=self._fs)
+        return pd_ds.read_pandas().to_pandas()

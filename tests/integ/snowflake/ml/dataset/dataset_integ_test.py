@@ -79,24 +79,36 @@ class TestSnowflakeDataset(dataset_integ_test_base.TestSnowflakeDatasetBase):
             f'"{dataset_name}"',
             dataset_version,
             self.session.table(self.test_table).limit(1000),
+            comment="lowercase",
         )
+        self.assertRegex(ds.selected_version.url(), rf"snow://dataset/[\"\w.]*\"{dataset_name}\"/versions/v1")
 
-        # Test loading with dataset.Dataset.load()
+        # Test dataset name case sensitivity
         with self.assertRaises(dataset_errors.DatasetNotExistError):
             dataset.Dataset.load(self.session, dataset_name)
-
+        with self.assertRaises(dataset_errors.DatasetNotExistError):
+            dataset.Dataset.load(self.session, dataset_name)
         loaded_ds = dataset.load_dataset(self.session, f'"{dataset_name}"', dataset_version)
+
         self.assertEqual([dataset_version], loaded_ds.list_versions())
         self.assertEqual(ds.selected_version.url(), loaded_ds.selected_version.url())
-
-        # Test loading with dataset.load_dataset()
-        with self.assertRaises(dataset_errors.DatasetNotExistError):
-            dataset.Dataset.load(self.session, dataset_name)
+        self.assertEqual("lowercase", loaded_ds.selected_version.comment)
 
         # Test version case sensitivity
         _ = ds.select_version("v1")
         with self.assertRaises(dataset_errors.DatasetNotExistError):
             _ = ds.select_version("V1")
+
+        uppercase_ds = ds.create_version("V1", self.session.table(self.test_table).limit(100), comment="uppercase")
+        self.assertRegex(uppercase_ds.selected_version.url(), rf"snow://dataset/[\"\w.]*\"{dataset_name}\"/versions/V1")
+        self.assertEqual("uppercase", uppercase_ds.selected_version.comment)
+
+        # Make sure versions are kept distinct
+        loaded_uppercase_ds = ds.select_version("V1")
+        self.assertEqual("lowercase", loaded_ds.selected_version.comment)
+        self.assertEqual("uppercase", loaded_uppercase_ds.selected_version.comment)
+        self.assertEqual(1000, loaded_ds.read.to_snowpark_dataframe().count())
+        self.assertEqual(100, loaded_uppercase_ds.read.to_snowpark_dataframe().count())
 
     def test_dataset_properties(self) -> None:
         """Test Dataset version property loading"""
@@ -301,6 +313,33 @@ class TestSnowflakeDataset(dataset_integ_test_base.TestSnowflakeDatasetBase):
                 session=self.session,
             )
 
+    @parameterized.parameters(
+        '"name/slash"',
+        '"lots/of///slashes"',
+        '"trailing_slash/"',
+        '"/leading_slash"',
+        '"😃"',
+        '"😃_with_text"',
+        '"spaces   in name"',
+        "versions",
+        '"versions/v1"',
+        '"my_ds/versions/"',
+        '"i have\n\t\rspecial characters"',
+        '"-=Σ(( つ•̀ω•́)つ"',
+        ("versions", "versions"),
+    )
+    def test_dataset_names(self, dataset_name: str, dataset_version: str = "v1") -> None:
+        """Test datasets with challenging names"""
+        row_count = 10
+        ds = dataset.create_from_dataframe(
+            session=self.session,
+            name=dataset_name,
+            version=dataset_version,
+            input_dataframe=self.session.table(self.test_table).limit(row_count),
+        )
+
+        self.assertEqual(row_count, len(ds.read.to_pandas()))
+
     @common_test_base.CommonTestBase.sproc_test(local=True, additional_packages=[])
     def test_file_access(self) -> None:
         import pyarrow.parquet as pq
@@ -386,7 +425,7 @@ class TestSnowflakeDataset(dataset_integ_test_base.TestSnowflakeDatasetBase):
             dataset_shuffle, datapipe_shuffle, drop_last_batch, dataset_prefix=f"dataset_integ_sproc_{uuid4().hex}"
         )
 
-    def validate_dataset(
+    def validate_dataset_connectors(
         self, datapipe_shuffle: bool, drop_last_batch: bool, batch_size: int, ds: dataset.Dataset
     ) -> None:
         pt_dp = ds.read.to_torch_datapipe(

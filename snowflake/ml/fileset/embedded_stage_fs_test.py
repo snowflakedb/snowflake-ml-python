@@ -81,17 +81,20 @@ class SFEmbeddedStageFileSystemTest(parameterized.TestCase):
         )
         return stagefs
 
-    def _mock_collect_res(self, prefix: str) -> mock_data_frame.MockDataFrame:
+    def _mock_collect_res(self, prefix: str, collect_block: bool = True) -> mock_data_frame.MockDataFrame:
         res = []
         for file in self.file_list:
             if file.startswith(prefix):
                 res.append(snowpark.Row(name=file, size=10, md5="xx", last_modified="00"))
-        return mock_data_frame.MockDataFrame(collect_result=res)
+        return mock_data_frame.MockDataFrame(
+            collect_result=(res if collect_block else mock_data_frame.MockAsyncJob(res)),
+            collect_block=collect_block,
+        )
 
     def _add_mock_test_case(self, prefix: str) -> None:
         self.session.add_mock_sql(
             query=f"LIST 'snow://{self.domain}/{self.name}/{prefix}'",
-            result=self._mock_collect_res(prefix),
+            result=self._mock_collect_res(prefix, collect_block=False),
         )
 
     def _mock_presigned_url_fetcher(self, files: str, lifetime: int = 0) -> List[snowpark.Row]:

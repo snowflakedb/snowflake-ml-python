@@ -74,37 +74,57 @@ class ModelOperator:
             and self._model_version_client == __value._model_version_client
         )
 
-    def prepare_model_stage_path(self, *, statement_params: Optional[Dict[str, Any]] = None) -> str:
+    def prepare_model_stage_path(
+        self,
+        *,
+        database_name: Optional[sql_identifier.SqlIdentifier],
+        schema_name: Optional[sql_identifier.SqlIdentifier],
+        statement_params: Optional[Dict[str, Any]] = None,
+    ) -> str:
         stage_name = sql_identifier.SqlIdentifier(
             snowpark_utils.random_name_for_temp_object(snowpark_utils.TempObjectType.STAGE)
         )
-        self._stage_client.create_tmp_stage(stage_name=stage_name, statement_params=statement_params)
-        return f"@{self._stage_client.fully_qualified_stage_name(stage_name)}/model"
+        self._stage_client.create_tmp_stage(
+            database_name=database_name,
+            schema_name=schema_name,
+            stage_name=stage_name,
+            statement_params=statement_params,
+        )
+        return f"@{self._stage_client.fully_qualified_object_name(database_name, schema_name, stage_name)}/model"
 
     def create_from_stage(
         self,
         composed_model: model_composer.ModelComposer,
         *,
+        database_name: Optional[sql_identifier.SqlIdentifier],
+        schema_name: Optional[sql_identifier.SqlIdentifier],
         model_name: sql_identifier.SqlIdentifier,
         version_name: sql_identifier.SqlIdentifier,
         statement_params: Optional[Dict[str, Any]] = None,
     ) -> None:
         stage_path = str(composed_model.stage_path)
         if self.validate_existence(
+            database_name=database_name,
+            schema_name=schema_name,
             model_name=model_name,
             statement_params=statement_params,
         ):
             if self.validate_existence(
+                database_name=database_name,
+                schema_name=schema_name,
                 model_name=model_name,
                 version_name=version_name,
                 statement_params=statement_params,
             ):
                 raise ValueError(
-                    f"Model {self._model_version_client.fully_qualified_model_name(model_name)} "
-                    f"version {version_name} already existed."
+                    "Model "
+                    f"{self._model_version_client.fully_qualified_object_name(database_name, schema_name, model_name)}"
+                    f" version {version_name} already existed."
                 )
             else:
                 self._model_version_client.add_version_from_stage(
+                    database_name=database_name,
+                    schema_name=schema_name,
                     stage_path=stage_path,
                     model_name=model_name,
                     version_name=version_name,
@@ -112,6 +132,8 @@ class ModelOperator:
                 )
         else:
             self._model_version_client.create_from_stage(
+                database_name=database_name,
+                schema_name=schema_name,
                 stage_path=stage_path,
                 model_name=model_name,
                 version_name=version_name,
@@ -121,17 +143,23 @@ class ModelOperator:
     def show_models_or_versions(
         self,
         *,
+        database_name: Optional[sql_identifier.SqlIdentifier],
+        schema_name: Optional[sql_identifier.SqlIdentifier],
         model_name: Optional[sql_identifier.SqlIdentifier] = None,
         statement_params: Optional[Dict[str, Any]] = None,
     ) -> List[row.Row]:
         if model_name:
             return self._model_client.show_versions(
+                database_name=database_name,
+                schema_name=schema_name,
                 model_name=model_name,
                 validate_result=False,
                 statement_params=statement_params,
             )
         else:
             return self._model_client.show_models(
+                database_name=database_name,
+                schema_name=schema_name,
                 validate_result=False,
                 statement_params=statement_params,
             )
@@ -139,10 +167,14 @@ class ModelOperator:
     def list_models_or_versions(
         self,
         *,
+        database_name: Optional[sql_identifier.SqlIdentifier],
+        schema_name: Optional[sql_identifier.SqlIdentifier],
         model_name: Optional[sql_identifier.SqlIdentifier] = None,
         statement_params: Optional[Dict[str, Any]] = None,
     ) -> List[sql_identifier.SqlIdentifier]:
         res = self.show_models_or_versions(
+            database_name=database_name,
+            schema_name=schema_name,
             model_name=model_name,
             statement_params=statement_params,
         )
@@ -155,12 +187,16 @@ class ModelOperator:
     def validate_existence(
         self,
         *,
+        database_name: Optional[sql_identifier.SqlIdentifier],
+        schema_name: Optional[sql_identifier.SqlIdentifier],
         model_name: sql_identifier.SqlIdentifier,
         version_name: Optional[sql_identifier.SqlIdentifier] = None,
         statement_params: Optional[Dict[str, Any]] = None,
     ) -> bool:
         if version_name:
             res = self._model_client.show_versions(
+                database_name=database_name,
+                schema_name=schema_name,
                 model_name=model_name,
                 version_name=version_name,
                 validate_result=False,
@@ -168,6 +204,8 @@ class ModelOperator:
             )
         else:
             res = self._model_client.show_models(
+                database_name=database_name,
+                schema_name=schema_name,
                 model_name=model_name,
                 validate_result=False,
                 statement_params=statement_params,
@@ -177,12 +215,16 @@ class ModelOperator:
     def get_comment(
         self,
         *,
+        database_name: Optional[sql_identifier.SqlIdentifier],
+        schema_name: Optional[sql_identifier.SqlIdentifier],
         model_name: sql_identifier.SqlIdentifier,
         version_name: Optional[sql_identifier.SqlIdentifier] = None,
         statement_params: Optional[Dict[str, Any]] = None,
     ) -> str:
         if version_name:
             res = self._model_client.show_versions(
+                database_name=database_name,
+                schema_name=schema_name,
                 model_name=model_name,
                 version_name=version_name,
                 statement_params=statement_params,
@@ -190,6 +232,8 @@ class ModelOperator:
             col_name = self._model_client.MODEL_VERSION_COMMENT_COL_NAME
         else:
             res = self._model_client.show_models(
+                database_name=database_name,
+                schema_name=schema_name,
                 model_name=model_name,
                 statement_params=statement_params,
             )
@@ -200,6 +244,8 @@ class ModelOperator:
         self,
         *,
         comment: str,
+        database_name: Optional[sql_identifier.SqlIdentifier],
+        schema_name: Optional[sql_identifier.SqlIdentifier],
         model_name: sql_identifier.SqlIdentifier,
         version_name: Optional[sql_identifier.SqlIdentifier] = None,
         statement_params: Optional[Dict[str, Any]] = None,
@@ -207,6 +253,8 @@ class ModelOperator:
         if version_name:
             self._model_version_client.set_comment(
                 comment=comment,
+                database_name=database_name,
+                schema_name=schema_name,
                 model_name=model_name,
                 version_name=version_name,
                 statement_params=statement_params,
@@ -214,6 +262,8 @@ class ModelOperator:
         else:
             self._model_client.set_comment(
                 comment=comment,
+                database_name=database_name,
+                schema_name=schema_name,
                 model_name=model_name,
                 statement_params=statement_params,
             )
@@ -221,25 +271,42 @@ class ModelOperator:
     def set_default_version(
         self,
         *,
+        database_name: Optional[sql_identifier.SqlIdentifier],
+        schema_name: Optional[sql_identifier.SqlIdentifier],
         model_name: sql_identifier.SqlIdentifier,
         version_name: sql_identifier.SqlIdentifier,
         statement_params: Optional[Dict[str, Any]] = None,
     ) -> None:
         if not self.validate_existence(
-            model_name=model_name, version_name=version_name, statement_params=statement_params
+            database_name=database_name,
+            schema_name=schema_name,
+            model_name=model_name,
+            version_name=version_name,
+            statement_params=statement_params,
         ):
             raise ValueError(f"You cannot set version {version_name} as default version as it does not exist.")
         self._model_version_client.set_default_version(
-            model_name=model_name, version_name=version_name, statement_params=statement_params
+            database_name=database_name,
+            schema_name=schema_name,
+            model_name=model_name,
+            version_name=version_name,
+            statement_params=statement_params,
         )
 
     def get_default_version(
         self,
         *,
+        database_name: Optional[sql_identifier.SqlIdentifier],
+        schema_name: Optional[sql_identifier.SqlIdentifier],
         model_name: sql_identifier.SqlIdentifier,
         statement_params: Optional[Dict[str, Any]] = None,
     ) -> sql_identifier.SqlIdentifier:
-        res = self._model_client.show_models(model_name=model_name, statement_params=statement_params)[0]
+        res = self._model_client.show_models(
+            database_name=database_name,
+            schema_name=schema_name,
+            model_name=model_name,
+            statement_params=statement_params,
+        )[0]
         return sql_identifier.SqlIdentifier(
             res[self._model_client.MODEL_DEFAULT_VERSION_NAME_COL_NAME], case_sensitive=True
         )
@@ -247,14 +314,18 @@ class ModelOperator:
     def get_tag_value(
         self,
         *,
+        database_name: Optional[sql_identifier.SqlIdentifier],
+        schema_name: Optional[sql_identifier.SqlIdentifier],
         model_name: sql_identifier.SqlIdentifier,
-        tag_database_name: sql_identifier.SqlIdentifier,
-        tag_schema_name: sql_identifier.SqlIdentifier,
+        tag_database_name: Optional[sql_identifier.SqlIdentifier],
+        tag_schema_name: Optional[sql_identifier.SqlIdentifier],
         tag_name: sql_identifier.SqlIdentifier,
         statement_params: Optional[Dict[str, Any]] = None,
     ) -> Optional[str]:
         r = self._tag_client.get_tag_value(
-            module_name=model_name,
+            database_name=database_name,
+            schema_name=schema_name,
+            model_name=model_name,
             tag_database_name=tag_database_name,
             tag_schema_name=tag_schema_name,
             tag_name=tag_name,
@@ -268,11 +339,15 @@ class ModelOperator:
     def show_tags(
         self,
         *,
+        database_name: Optional[sql_identifier.SqlIdentifier],
+        schema_name: Optional[sql_identifier.SqlIdentifier],
         model_name: sql_identifier.SqlIdentifier,
         statement_params: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, str]:
         tags_info = self._tag_client.get_tag_list(
-            module_name=model_name,
+            database_name=database_name,
+            schema_name=schema_name,
+            model_name=model_name,
             statement_params=statement_params,
         )
         res: Dict[str, str] = {
@@ -288,14 +363,18 @@ class ModelOperator:
     def set_tag(
         self,
         *,
+        database_name: Optional[sql_identifier.SqlIdentifier],
+        schema_name: Optional[sql_identifier.SqlIdentifier],
         model_name: sql_identifier.SqlIdentifier,
-        tag_database_name: sql_identifier.SqlIdentifier,
-        tag_schema_name: sql_identifier.SqlIdentifier,
+        tag_database_name: Optional[sql_identifier.SqlIdentifier],
+        tag_schema_name: Optional[sql_identifier.SqlIdentifier],
         tag_name: sql_identifier.SqlIdentifier,
         tag_value: str,
         statement_params: Optional[Dict[str, Any]] = None,
     ) -> None:
         self._tag_client.set_tag_on_model(
+            database_name=database_name,
+            schema_name=schema_name,
             model_name=model_name,
             tag_database_name=tag_database_name,
             tag_schema_name=tag_schema_name,
@@ -307,13 +386,17 @@ class ModelOperator:
     def unset_tag(
         self,
         *,
+        database_name: Optional[sql_identifier.SqlIdentifier],
+        schema_name: Optional[sql_identifier.SqlIdentifier],
         model_name: sql_identifier.SqlIdentifier,
-        tag_database_name: sql_identifier.SqlIdentifier,
-        tag_schema_name: sql_identifier.SqlIdentifier,
+        tag_database_name: Optional[sql_identifier.SqlIdentifier],
+        tag_schema_name: Optional[sql_identifier.SqlIdentifier],
         tag_name: sql_identifier.SqlIdentifier,
         statement_params: Optional[Dict[str, Any]] = None,
     ) -> None:
         self._tag_client.unset_tag_on_model(
+            database_name=database_name,
+            schema_name=schema_name,
             model_name=model_name,
             tag_database_name=tag_database_name,
             tag_schema_name=tag_schema_name,
@@ -324,12 +407,16 @@ class ModelOperator:
     def get_model_version_manifest(
         self,
         *,
+        database_name: Optional[sql_identifier.SqlIdentifier],
+        schema_name: Optional[sql_identifier.SqlIdentifier],
         model_name: sql_identifier.SqlIdentifier,
         version_name: sql_identifier.SqlIdentifier,
         statement_params: Optional[Dict[str, Any]] = None,
     ) -> model_manifest_schema.ModelManifestDict:
         with tempfile.TemporaryDirectory() as tmpdir:
             self._model_version_client.get_file(
+                database_name=database_name,
+                schema_name=schema_name,
                 model_name=model_name,
                 version_name=version_name,
                 file_path=pathlib.PurePosixPath(model_manifest.ModelManifest.MANIFEST_FILE_REL_PATH),
@@ -362,11 +449,15 @@ class ModelOperator:
     def get_functions(
         self,
         *,
+        database_name: Optional[sql_identifier.SqlIdentifier],
+        schema_name: Optional[sql_identifier.SqlIdentifier],
         model_name: sql_identifier.SqlIdentifier,
         version_name: sql_identifier.SqlIdentifier,
         statement_params: Optional[Dict[str, Any]] = None,
     ) -> List[model_manifest_schema.ModelFunctionInfo]:
         raw_model_spec_res = self._model_client.show_versions(
+            database_name=database_name,
+            schema_name=schema_name,
             model_name=model_name,
             version_name=version_name,
             check_model_details=True,
@@ -375,6 +466,8 @@ class ModelOperator:
         model_spec_dict = yaml.safe_load(raw_model_spec_res)
         model_spec = model_meta.ModelMetadata._validate_model_metadata(model_spec_dict)
         show_functions_res = self._model_version_client.show_functions(
+            database_name=database_name,
+            schema_name=schema_name,
             model_name=model_name,
             version_name=version_name,
             statement_params=statement_params,
@@ -419,6 +512,8 @@ class ModelOperator:
         method_function_type: str,
         signature: model_signature.ModelSignature,
         X: Union[type_hints.SupportedDataType, dataframe.DataFrame],
+        database_name: Optional[sql_identifier.SqlIdentifier],
+        schema_name: Optional[sql_identifier.SqlIdentifier],
         model_name: sql_identifier.SqlIdentifier,
         version_name: sql_identifier.SqlIdentifier,
         strict_input_validation: bool = False,
@@ -466,6 +561,8 @@ class ModelOperator:
                 input_df=s_df,
                 input_args=input_args,
                 returns=returns,
+                database_name=database_name,
+                schema_name=schema_name,
                 model_name=model_name,
                 version_name=version_name,
                 statement_params=statement_params,
@@ -477,6 +574,8 @@ class ModelOperator:
                 input_args=input_args,
                 partition_column=partition_column,
                 returns=returns,
+                database_name=database_name,
+                schema_name=schema_name,
                 model_name=model_name,
                 version_name=version_name,
                 statement_params=statement_params,
@@ -504,18 +603,24 @@ class ModelOperator:
     def delete_model_or_version(
         self,
         *,
+        database_name: Optional[sql_identifier.SqlIdentifier],
+        schema_name: Optional[sql_identifier.SqlIdentifier],
         model_name: sql_identifier.SqlIdentifier,
         version_name: Optional[sql_identifier.SqlIdentifier] = None,
         statement_params: Optional[Dict[str, Any]] = None,
     ) -> None:
         if version_name:
             self._model_version_client.drop_version(
+                database_name=database_name,
+                schema_name=schema_name,
                 model_name=model_name,
                 version_name=version_name,
                 statement_params=statement_params,
             )
         else:
             self._model_client.drop_model(
+                database_name=database_name,
+                schema_name=schema_name,
                 model_name=model_name,
                 statement_params=statement_params,
             )
@@ -523,6 +628,8 @@ class ModelOperator:
     def rename(
         self,
         *,
+        database_name: Optional[sql_identifier.SqlIdentifier],
+        schema_name: Optional[sql_identifier.SqlIdentifier],
         model_name: sql_identifier.SqlIdentifier,
         new_model_db: Optional[sql_identifier.SqlIdentifier],
         new_model_schema: Optional[sql_identifier.SqlIdentifier],
@@ -530,6 +637,8 @@ class ModelOperator:
         statement_params: Optional[Dict[str, Any]] = None,
     ) -> None:
         self._model_client.rename(
+            database_name=database_name,
+            schema_name=schema_name,
             model_name=model_name,
             new_model_db=new_model_db,
             new_model_schema=new_model_schema,
@@ -554,6 +663,8 @@ class ModelOperator:
     def download_files(
         self,
         *,
+        database_name: Optional[sql_identifier.SqlIdentifier],
+        schema_name: Optional[sql_identifier.SqlIdentifier],
         model_name: sql_identifier.SqlIdentifier,
         version_name: sql_identifier.SqlIdentifier,
         target_path: pathlib.Path,
@@ -562,6 +673,8 @@ class ModelOperator:
     ) -> None:
         for remote_rel_path, is_dir in self.MODEL_FILE_DOWNLOAD_PATTERN[mode].items():
             list_file_res = self._model_version_client.list_file(
+                database_name=database_name,
+                schema_name=schema_name,
                 model_name=model_name,
                 version_name=version_name,
                 file_path=remote_rel_path,
@@ -576,6 +689,8 @@ class ModelOperator:
                 local_file_dir = target_path / stage_file_path.parent
                 local_file_dir.mkdir(parents=True, exist_ok=True)
                 self._model_version_client.get_file(
+                    database_name=database_name,
+                    schema_name=schema_name,
                     model_name=model_name,
                     version_name=version_name,
                     file_path=stage_file_path,

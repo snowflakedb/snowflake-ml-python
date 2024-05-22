@@ -1,3 +1,4 @@
+import copy
 from typing import cast
 
 from absl.testing import absltest
@@ -37,13 +38,27 @@ class ModelSQLTest(absltest.TestCase):
             ],
             collect_statement_params=m_statement_params,
         )
-        self.m_session.add_mock_sql("""SHOW MODELS IN SCHEMA TEMP."test" """, m_df_final)
+        self.m_session.add_mock_sql("""SHOW MODELS IN SCHEMA TEMP."test" """, copy.deepcopy(m_df_final))
         c_session = cast(Session, self.m_session)
         model_sql.ModelSQLClient(
             c_session,
             database_name=sql_identifier.SqlIdentifier("TEMP"),
             schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
         ).show_models(
+            database_name=None,
+            schema_name=None,
+            statement_params=m_statement_params,
+        )
+
+        self.m_session.add_mock_sql("""SHOW MODELS IN SCHEMA TEMP."test" """, copy.deepcopy(m_df_final))
+        c_session = cast(Session, self.m_session)
+        model_sql.ModelSQLClient(
+            c_session,
+            database_name=sql_identifier.SqlIdentifier("foo"),
+            schema_name=sql_identifier.SqlIdentifier("bar", case_sensitive=True),
+        ).show_models(
+            database_name=sql_identifier.SqlIdentifier("TEMP"),
+            schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
             statement_params=m_statement_params,
         )
 
@@ -63,13 +78,15 @@ class ModelSQLTest(absltest.TestCase):
             ],
             collect_statement_params=m_statement_params,
         )
-        self.m_session.add_mock_sql("""SHOW MODELS LIKE 'Model' IN SCHEMA TEMP."test" """, m_df_final)
+        self.m_session.add_mock_sql("""SHOW MODELS LIKE 'Model' IN SCHEMA TEMP."test" """, copy.deepcopy(m_df_final))
         c_session = cast(Session, self.m_session)
         model_sql.ModelSQLClient(
             c_session,
             database_name=sql_identifier.SqlIdentifier("TEMP"),
             schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
         ).show_models(
+            database_name=None,
+            schema_name=None,
             model_name=sql_identifier.SqlIdentifier("Model", case_sensitive=True),
             statement_params=m_statement_params,
         )
@@ -99,13 +116,28 @@ class ModelSQLTest(absltest.TestCase):
             ],
             collect_statement_params=m_statement_params,
         )
-        self.m_session.add_mock_sql("""SHOW VERSIONS IN MODEL TEMP."test".MODEL""", m_df_final)
+        self.m_session.add_mock_sql("""SHOW VERSIONS IN MODEL TEMP."test".MODEL""", copy.deepcopy(m_df_final))
         c_session = cast(Session, self.m_session)
         model_sql.ModelSQLClient(
             c_session,
             database_name=sql_identifier.SqlIdentifier("TEMP"),
             schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
         ).show_versions(
+            database_name=None,
+            schema_name=None,
+            model_name=sql_identifier.SqlIdentifier("MODEL"),
+            statement_params=m_statement_params,
+        )
+
+        self.m_session.add_mock_sql("""SHOW VERSIONS IN MODEL TEMP."test".MODEL""", copy.deepcopy(m_df_final))
+        c_session = cast(Session, self.m_session)
+        model_sql.ModelSQLClient(
+            c_session,
+            database_name=sql_identifier.SqlIdentifier("foo"),
+            schema_name=sql_identifier.SqlIdentifier("bar", case_sensitive=True),
+        ).show_versions(
+            database_name=sql_identifier.SqlIdentifier("TEMP"),
+            schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
             model_name=sql_identifier.SqlIdentifier("MODEL"),
             statement_params=m_statement_params,
         )
@@ -126,13 +158,15 @@ class ModelSQLTest(absltest.TestCase):
             ],
             collect_statement_params=m_statement_params,
         )
-        self.m_session.add_mock_sql("""SHOW VERSIONS LIKE 'v1' IN MODEL TEMP."test".MODEL""", m_df_final)
+        self.m_session.add_mock_sql("""SHOW VERSIONS LIKE 'v1' IN MODEL TEMP."test".MODEL""", copy.deepcopy(m_df_final))
         c_session = cast(Session, self.m_session)
         model_sql.ModelSQLClient(
             c_session,
             database_name=sql_identifier.SqlIdentifier("TEMP"),
             schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
         ).show_versions(
+            database_name=None,
+            schema_name=None,
             model_name=sql_identifier.SqlIdentifier("MODEL"),
             version_name=sql_identifier.SqlIdentifier("v1", case_sensitive=True),
             statement_params=m_statement_params,
@@ -162,6 +196,8 @@ class ModelSQLTest(absltest.TestCase):
             database_name=sql_identifier.SqlIdentifier("TEMP"),
             schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
         ).show_versions(
+            database_name=None,
+            schema_name=None,
             model_name=sql_identifier.SqlIdentifier("MODEL"),
             version_name=sql_identifier.SqlIdentifier("v1", case_sensitive=True),
             check_model_details=True,
@@ -172,14 +208,32 @@ class ModelSQLTest(absltest.TestCase):
         m_statement_params = {"test": "1"}
         m_df = mock_data_frame.MockDataFrame(collect_result=[Row("")], collect_statement_params=m_statement_params)
         comment = "This is my comment"
-        self.m_session.add_mock_sql(f"""COMMENT ON MODEL TEMP."test".MODEL IS $${comment}$$""", m_df)
+        self.m_session.add_mock_sql(f"""COMMENT ON MODEL TEMP."test".MODEL IS $${comment}$$""", copy.deepcopy(m_df))
         c_session = cast(Session, self.m_session)
         model_sql.ModelSQLClient(
             c_session,
             database_name=sql_identifier.SqlIdentifier("TEMP"),
             schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
         ).set_comment(
-            model_name=sql_identifier.SqlIdentifier("MODEL"), comment=comment, statement_params=m_statement_params
+            database_name=None,
+            schema_name=None,
+            model_name=sql_identifier.SqlIdentifier("MODEL"),
+            comment=comment,
+            statement_params=m_statement_params,
+        )
+
+        self.m_session.add_mock_sql(f"""COMMENT ON MODEL TEMP."test".MODEL IS $${comment}$$""", copy.deepcopy(m_df))
+        c_session = cast(Session, self.m_session)
+        model_sql.ModelSQLClient(
+            c_session,
+            database_name=sql_identifier.SqlIdentifier("foo"),
+            schema_name=sql_identifier.SqlIdentifier("bar", case_sensitive=True),
+        ).set_comment(
+            database_name=sql_identifier.SqlIdentifier("TEMP"),
+            schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
+            model_name=sql_identifier.SqlIdentifier("MODEL"),
+            comment=comment,
+            statement_params=m_statement_params,
         )
 
     def test_drop_model(self) -> None:
@@ -187,13 +241,28 @@ class ModelSQLTest(absltest.TestCase):
         m_df = mock_data_frame.MockDataFrame(
             collect_result=[Row("Model MODEL successfully dropped.")], collect_statement_params=m_statement_params
         )
-        self.m_session.add_mock_sql("""DROP MODEL TEMP."test".MODEL""", m_df)
+        self.m_session.add_mock_sql("""DROP MODEL TEMP."test".MODEL""", copy.deepcopy(m_df))
         c_session = cast(Session, self.m_session)
         model_sql.ModelSQLClient(
             c_session,
             database_name=sql_identifier.SqlIdentifier("TEMP"),
             schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
         ).drop_model(
+            database_name=None,
+            schema_name=None,
+            model_name=sql_identifier.SqlIdentifier("MODEL"),
+            statement_params=m_statement_params,
+        )
+
+        self.m_session.add_mock_sql("""DROP MODEL TEMP."test".MODEL""", copy.deepcopy(m_df))
+        c_session = cast(Session, self.m_session)
+        model_sql.ModelSQLClient(
+            c_session,
+            database_name=sql_identifier.SqlIdentifier("foo"),
+            schema_name=sql_identifier.SqlIdentifier("bar", case_sensitive=True),
+        ).drop_model(
+            database_name=sql_identifier.SqlIdentifier("TEMP"),
+            schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
             model_name=sql_identifier.SqlIdentifier("MODEL"),
             statement_params=m_statement_params,
         )
@@ -203,13 +272,33 @@ class ModelSQLTest(absltest.TestCase):
         m_df = mock_data_frame.MockDataFrame(
             collect_result=[Row("Model MODEL successfully dropped.")], collect_statement_params=m_statement_params
         )
-        self.m_session.add_mock_sql("""ALTER MODEL TEMP."test".MODEL RENAME TO TEMP."test".MODEL2""", m_df)
+        self.m_session.add_mock_sql(
+            """ALTER MODEL TEMP."test".MODEL RENAME TO TEMP."test".MODEL2""", copy.deepcopy(m_df)
+        )
         c_session = cast(Session, self.m_session)
         model_sql.ModelSQLClient(
             c_session,
             database_name=sql_identifier.SqlIdentifier("TEMP"),
             schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
         ).rename(
+            database_name=None,
+            schema_name=None,
+            model_name=sql_identifier.SqlIdentifier("MODEL"),
+            new_model_db=None,
+            new_model_schema=None,
+            new_model_name=sql_identifier.SqlIdentifier("MODEL2"),
+            statement_params=m_statement_params,
+        )
+
+        self.m_session.add_mock_sql("""ALTER MODEL TEMP."test".MODEL RENAME TO FOO."bar".MODEL2""", copy.deepcopy(m_df))
+        c_session = cast(Session, self.m_session)
+        model_sql.ModelSQLClient(
+            c_session,
+            database_name=sql_identifier.SqlIdentifier("foo"),
+            schema_name=sql_identifier.SqlIdentifier("bar", case_sensitive=True),
+        ).rename(
+            database_name=sql_identifier.SqlIdentifier("TEMP"),
+            schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
             model_name=sql_identifier.SqlIdentifier("MODEL"),
             new_model_db=None,
             new_model_schema=None,
@@ -222,13 +311,35 @@ class ModelSQLTest(absltest.TestCase):
         m_df = mock_data_frame.MockDataFrame(
             collect_result=[Row("Model MODEL successfully dropped.")], collect_statement_params=m_statement_params
         )
-        self.m_session.add_mock_sql("""ALTER MODEL TEMP."test".MODEL RENAME TO TEMP2."test2".MODEL2""", m_df)
+        self.m_session.add_mock_sql(
+            """ALTER MODEL TEMP."test".MODEL RENAME TO TEMP2."test2".MODEL2""", copy.deepcopy(m_df)
+        )
         c_session = cast(Session, self.m_session)
         model_sql.ModelSQLClient(
             c_session,
             database_name=sql_identifier.SqlIdentifier("TEMP"),
             schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
         ).rename(
+            database_name=None,
+            schema_name=None,
+            model_name=sql_identifier.SqlIdentifier("MODEL"),
+            new_model_db=sql_identifier.SqlIdentifier("TEMP2"),
+            new_model_schema=sql_identifier.SqlIdentifier("test2", case_sensitive=True),
+            new_model_name=sql_identifier.SqlIdentifier("MODEL2"),
+            statement_params=m_statement_params,
+        )
+
+        self.m_session.add_mock_sql(
+            """ALTER MODEL TEMP."test".MODEL RENAME TO TEMP2."test2".MODEL2""", copy.deepcopy(m_df)
+        )
+        c_session = cast(Session, self.m_session)
+        model_sql.ModelSQLClient(
+            c_session,
+            database_name=sql_identifier.SqlIdentifier("foo"),
+            schema_name=sql_identifier.SqlIdentifier("bar", case_sensitive=True),
+        ).rename(
+            database_name=sql_identifier.SqlIdentifier("TEMP"),
+            schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
             model_name=sql_identifier.SqlIdentifier("MODEL"),
             new_model_db=sql_identifier.SqlIdentifier("TEMP2"),
             new_model_schema=sql_identifier.SqlIdentifier("test2", case_sensitive=True),

@@ -73,10 +73,11 @@ class DatasetVersion:
                     f"SHOW VERSIONS LIKE '{self._version}' IN DATASET {self._parent.fully_qualified_name}",
                     statement_params=_TELEMETRY_STATEMENT_PARAMS,
                 )
-                .has_dimensions(expected_rows=1)
+                .has_column(_DATASET_VERSION_NAME_COL, allow_empty=False)
                 .validate()
             )
-            self._properties = sql_result[0].as_dict(True)
+            (match_row,) = (r for r in sql_result if r[_DATASET_VERSION_NAME_COL] == self._version)
+            self._properties = match_row.as_dict(True)
         return self._properties.get(property_name, default)
 
     def _get_metadata(self) -> Optional[dataset_metadata.DatasetMetadata]:
@@ -283,7 +284,7 @@ class Dataset:
             exclude_cols: Name of column(s) in dataset to be excluded during training/testing (e.g. timestamp).
             label_cols: Name of column(s) in dataset that contains labels.
             properties: Custom metadata properties, saved under `DatasetMetadata.properties`
-            partition_by: Optional partitioning scheme within the new Dataset version.
+            partition_by: Optional SQL expression to use as the partitioning scheme within the new Dataset version.
             comment: A descriptive comment about this dataset.
 
         Returns:

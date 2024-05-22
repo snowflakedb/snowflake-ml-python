@@ -69,6 +69,8 @@ class ModelVersionImplTest(absltest.TestCase):
         with mock.patch.object(self.m_mv._model_ops._metadata_ops, "load", return_value=m_metadata) as mock_load:
             self.assertDictEqual({}, self.m_mv.show_metrics())
             mock_load.assert_called_once_with(
+                database_name=None,
+                schema_name=None,
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
                 version_name=sql_identifier.SqlIdentifier("v1", case_sensitive=True),
                 statement_params=mock.ANY,
@@ -79,6 +81,8 @@ class ModelVersionImplTest(absltest.TestCase):
         with mock.patch.object(self.m_mv._model_ops._metadata_ops, "load", return_value=m_metadata) as mock_load:
             self.assertEqual(1, self.m_mv.get_metric("a"))
             mock_load.assert_called_once_with(
+                database_name=None,
+                schema_name=None,
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
                 version_name=sql_identifier.SqlIdentifier("v1", case_sensitive=True),
                 statement_params=mock.ANY,
@@ -90,6 +94,8 @@ class ModelVersionImplTest(absltest.TestCase):
             with self.assertRaisesRegex(KeyError, "Cannot find metric with name b"):
                 self.assertEqual(1, self.m_mv.get_metric("b"))
                 mock_load.assert_called_once_with(
+                    database_name=None,
+                    schema_name=None,
                     model_name=sql_identifier.SqlIdentifier("MODEL"),
                     version_name=sql_identifier.SqlIdentifier("v1", case_sensitive=True),
                     statement_params=mock.ANY,
@@ -102,12 +108,16 @@ class ModelVersionImplTest(absltest.TestCase):
         ) as mock_load, mock.patch.object(self.m_mv._model_ops._metadata_ops, "save") as mock_save:
             self.m_mv.set_metric("a", 2)
             mock_load.assert_called_once_with(
+                database_name=None,
+                schema_name=None,
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
                 version_name=sql_identifier.SqlIdentifier("v1", case_sensitive=True),
                 statement_params=mock.ANY,
             )
             mock_save.assert_called_once_with(
                 metadata_ops.ModelVersionMetadataSchema(metrics={"a": 2}),
+                database_name=None,
+                schema_name=None,
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
                 version_name=sql_identifier.SqlIdentifier("v1", case_sensitive=True),
                 statement_params=mock.ANY,
@@ -120,12 +130,16 @@ class ModelVersionImplTest(absltest.TestCase):
         ) as mock_load, mock.patch.object(self.m_mv._model_ops._metadata_ops, "save") as mock_save:
             self.m_mv.set_metric("b", 2)
             mock_load.assert_called_once_with(
+                database_name=None,
+                schema_name=None,
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
                 version_name=sql_identifier.SqlIdentifier("v1", case_sensitive=True),
                 statement_params=mock.ANY,
             )
             mock_save.assert_called_once_with(
                 metadata_ops.ModelVersionMetadataSchema(metrics={"a": 1, "b": 2}),
+                database_name=None,
+                schema_name=None,
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
                 version_name=sql_identifier.SqlIdentifier("v1", case_sensitive=True),
                 statement_params=mock.ANY,
@@ -138,12 +152,16 @@ class ModelVersionImplTest(absltest.TestCase):
         ) as mock_load, mock.patch.object(self.m_mv._model_ops._metadata_ops, "save") as mock_save:
             self.m_mv.delete_metric("a")
             mock_load.assert_called_once_with(
+                database_name=None,
+                schema_name=None,
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
                 version_name=sql_identifier.SqlIdentifier("v1", case_sensitive=True),
                 statement_params=mock.ANY,
             )
             mock_save.assert_called_once_with(
                 metadata_ops.ModelVersionMetadataSchema(metrics={}),
+                database_name=None,
+                schema_name=None,
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
                 version_name=sql_identifier.SqlIdentifier("v1", case_sensitive=True),
                 statement_params=mock.ANY,
@@ -157,6 +175,8 @@ class ModelVersionImplTest(absltest.TestCase):
             with self.assertRaisesRegex(KeyError, "Cannot find metric with name b"):
                 self.m_mv.delete_metric("b")
                 mock_load.assert_called_once_with(
+                    database_name=None,
+                    schema_name=None,
                     model_name=sql_identifier.SqlIdentifier("MODEL"),
                     version_name=sql_identifier.SqlIdentifier("v1", case_sensitive=True),
                     statement_params=mock.ANY,
@@ -176,6 +196,8 @@ class ModelVersionImplTest(absltest.TestCase):
         ) as mock_get_functions:
             self.assertListEqual([123], self.m_mv._get_functions())
             mock_get_functions.assert_called_once_with(
+                database_name=None,
+                schema_name=None,
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
                 version_name=sql_identifier.SqlIdentifier("v1", case_sensitive=True),
                 statement_params=mock.ANY,
@@ -215,6 +237,8 @@ class ModelVersionImplTest(absltest.TestCase):
                 method_function_type="FUNCTION",
                 signature=_DUMMY_SIG["predict"],
                 X=m_df,
+                database_name=None,
+                schema_name=None,
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
                 version_name=sql_identifier.SqlIdentifier("v1", case_sensitive=True),
                 strict_input_validation=False,
@@ -229,6 +253,8 @@ class ModelVersionImplTest(absltest.TestCase):
                 method_function_type="FUNCTION",
                 signature=_DUMMY_SIG["predict"],
                 X=m_df,
+                database_name=None,
+                schema_name=None,
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
                 version_name=sql_identifier.SqlIdentifier("v1", case_sensitive=True),
                 strict_input_validation=False,
@@ -258,6 +284,8 @@ class ModelVersionImplTest(absltest.TestCase):
                 method_function_type="FUNCTION",
                 signature=_DUMMY_SIG["predict"],
                 X=m_df,
+                database_name=None,
+                schema_name=None,
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
                 version_name=sql_identifier.SqlIdentifier("v1", case_sensitive=True),
                 strict_input_validation=False,
@@ -287,6 +315,8 @@ class ModelVersionImplTest(absltest.TestCase):
                 method_function_type="FUNCTION",
                 signature=_DUMMY_SIG["predict"],
                 X=m_df,
+                database_name=None,
+                schema_name=None,
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
                 strict_input_validation=True,
                 version_name=sql_identifier.SqlIdentifier("v1", case_sensitive=True),
@@ -323,6 +353,8 @@ class ModelVersionImplTest(absltest.TestCase):
                 method_function_type="TABLE_FUNCTION",
                 signature=_DUMMY_SIG["predict_table"],
                 X=m_df,
+                database_name=None,
+                schema_name=None,
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
                 version_name=sql_identifier.SqlIdentifier("v1", case_sensitive=True),
                 strict_input_validation=False,
@@ -337,6 +369,8 @@ class ModelVersionImplTest(absltest.TestCase):
                 method_function_type="TABLE_FUNCTION",
                 signature=_DUMMY_SIG["predict_table"],
                 X=m_df,
+                database_name=None,
+                schema_name=None,
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
                 version_name=sql_identifier.SqlIdentifier("v1", case_sensitive=True),
                 strict_input_validation=False,
@@ -350,6 +384,8 @@ class ModelVersionImplTest(absltest.TestCase):
         ) as mock_get_comment:
             self.assertEqual("this is a comment", self.m_mv.description)
             mock_get_comment.assert_called_once_with(
+                database_name=None,
+                schema_name=None,
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
                 version_name=sql_identifier.SqlIdentifier("v1", case_sensitive=True),
                 statement_params=mock.ANY,
@@ -360,6 +396,8 @@ class ModelVersionImplTest(absltest.TestCase):
             self.m_mv.description = "this is a comment"
             mock_set_comment.assert_called_once_with(
                 comment="this is a comment",
+                database_name=None,
+                schema_name=None,
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
                 version_name=sql_identifier.SqlIdentifier("v1", case_sensitive=True),
                 statement_params=mock.ANY,
@@ -371,6 +409,8 @@ class ModelVersionImplTest(absltest.TestCase):
         ) as mock_get_comment:
             self.assertEqual("this is a comment", self.m_mv.comment)
             mock_get_comment.assert_called_once_with(
+                database_name=None,
+                schema_name=None,
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
                 version_name=sql_identifier.SqlIdentifier("v1", case_sensitive=True),
                 statement_params=mock.ANY,
@@ -381,6 +421,8 @@ class ModelVersionImplTest(absltest.TestCase):
             self.m_mv.comment = "this is a comment"
             mock_set_comment.assert_called_once_with(
                 comment="this is a comment",
+                database_name=None,
+                schema_name=None,
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
                 version_name=sql_identifier.SqlIdentifier("v1", case_sensitive=True),
                 statement_params=mock.ANY,
@@ -399,6 +441,8 @@ class ModelVersionImplTest(absltest.TestCase):
         ) as mock_download_files, tempfile.TemporaryDirectory() as tmpdir:
             self.m_mv.export(tmpdir)
             mock_download_files.assert_called_once_with(
+                database_name=None,
+                schema_name=None,
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
                 version_name=sql_identifier.SqlIdentifier("v1", case_sensitive=True),
                 target_path=pathlib.Path(tmpdir),
@@ -412,6 +456,8 @@ class ModelVersionImplTest(absltest.TestCase):
         ) as mock_download_files, tempfile.TemporaryDirectory() as tmpdir:
             self.m_mv.export(tmpdir, export_mode=model_version_impl.ExportMode.FULL)
             mock_download_files.assert_called_once_with(
+                database_name=None,
+                schema_name=None,
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
                 version_name=sql_identifier.SqlIdentifier("v1", case_sensitive=True),
                 target_path=pathlib.Path(tmpdir),
@@ -440,6 +486,8 @@ class ModelVersionImplTest(absltest.TestCase):
             mock_download_files.assert_has_calls(
                 [
                     mock.call(
+                        database_name=None,
+                        schema_name=None,
                         model_name=sql_identifier.SqlIdentifier("MODEL"),
                         version_name=sql_identifier.SqlIdentifier("v1", case_sensitive=True),
                         target_path=mock.ANY,
@@ -447,6 +495,8 @@ class ModelVersionImplTest(absltest.TestCase):
                         statement_params=mock.ANY,
                     ),
                     mock.call(
+                        database_name=None,
+                        schema_name=None,
                         model_name=sql_identifier.SqlIdentifier("MODEL"),
                         version_name=sql_identifier.SqlIdentifier("v1", case_sensitive=True),
                         target_path=mock.ANY,
@@ -485,6 +535,8 @@ class ModelVersionImplTest(absltest.TestCase):
             mock_download_files.assert_has_calls(
                 [
                     mock.call(
+                        database_name=None,
+                        schema_name=None,
                         model_name=sql_identifier.SqlIdentifier("MODEL"),
                         version_name=sql_identifier.SqlIdentifier("v1", case_sensitive=True),
                         target_path=mock.ANY,
@@ -514,6 +566,8 @@ class ModelVersionImplTest(absltest.TestCase):
             mock_download_files.assert_has_calls(
                 [
                     mock.call(
+                        database_name=None,
+                        schema_name=None,
                         model_name=sql_identifier.SqlIdentifier("MODEL"),
                         version_name=sql_identifier.SqlIdentifier("v1", case_sensitive=True),
                         target_path=mock.ANY,

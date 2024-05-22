@@ -2,7 +2,7 @@ import inspect
 import uuid
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
-from absl.testing import absltest
+from absl.testing import parameterized
 
 from snowflake.ml.model import type_hints as model_types
 from snowflake.ml.registry import registry
@@ -11,7 +11,7 @@ from snowflake.snowpark import Session
 from tests.integ.snowflake.ml.test_utils import db_manager, test_env_utils
 
 
-class RegistryModelTestBase(absltest.TestCase):
+class RegistryModelTestBase(parameterized.TestCase):
     def setUp(self) -> None:
         """Creates Snowpark and Snowflake environments for testing."""
         login_options = connection_params.SnowflakeLoginOptions()
@@ -75,7 +75,3 @@ class RegistryModelTestBase(absltest.TestCase):
         self.registry.delete_model(model_name=name)
 
         self.assertNotIn(mv.model_name, [m.name for m in self.registry.models()])
-
-
-if __name__ == "__main__":
-    absltest.main()

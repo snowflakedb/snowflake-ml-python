@@ -2,13 +2,13 @@ import inspect
 import logging
 import time
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Tuple, Union, cast
 
 import fsspec
 from fsspec.implementations import http as httpfs
 
 from snowflake import snowpark
-from snowflake.connector import connection, errorcode
+from snowflake.connector import connection, errorcode, errors as snowpark_errors
 from snowflake.ml._internal import telemetry
 from snowflake.ml._internal.exceptions import (
     error_codes,
@@ -18,6 +18,7 @@ from snowflake.ml._internal.exceptions import (
 )
 from snowflake.snowpark import exceptions as snowpark_exceptions
 from snowflake.snowpark._internal import utils as snowpark_utils
+from snowflake.snowpark._internal.analyzer import snowflake_plan
 
 # The default length of how long a presigned url stays active in seconds.
 # Presigned url here is used to fetch file objects from Snowflake when SFStageFileSystem.open() is called.
@@ -167,7 +168,8 @@ class SFStageFileSystem(fsspec.AbstractFileSystem):
         try:
             loc = self.stage_name
             path = path.lstrip("/")
-            objects = self._session.sql(f"LIST '{loc}/{path}'").collect()
+            async_job: snowpark.AsyncJob = self._session.sql(f"LIST '{loc}/{path}'").collect(block=False)
+            objects: List[snowpark.Row] = _resolve_async_job(async_job)
         except snowpark_exceptions.SnowparkClientException as e:
             if e.message.startswith(fileset_errors.ERRNO_DOMAIN_NOT_EXIST):
                 raise snowml_exceptions.SnowflakeMLException(
@@ -289,9 +291,7 @@ class SFStageFileSystem(fsspec.AbstractFileSystem):
                     original_exception=e,
                 )
 
-    def _parse_list_result(
-        self, list_result: List[Tuple[str, int, str, str]], search_path: str
-    ) -> List[Dict[str, Any]]:
+    def _parse_list_result(self, list_result: List[snowpark.Row], search_path: str) -> List[Dict[str, Any]]:
         """Convert the result from LIST query to the expected format of fsspec ls() method.
 
         Note that Snowflake LIST query has different behavior with ls(). LIST query will return all the stage files
@@ -312,7 +312,8 @@ class SFStageFileSystem(fsspec.AbstractFileSystem):
         """
         files: Dict[str, Dict[str, Any]] = {}
         search_path = search_path.strip("/")
-        for name, size, md5, last_modified in list_result:
+        for row in list_result:
+            name, size, md5, last_modified = row["name"], row["size"], row["md5"], row["last_modified"]
             obj_path = self._stage_path_to_relative_path(name)
             if obj_path == search_path:
                 # If there is a exact match, then the matched object will always be a file object.
@@ -408,3 +409,20 @@ def _match_error_code(ex: snowpark_exceptions.SnowparkSQLException, error_code: 
     # Snowpark writes error code to message instead of populating e.error_code
     error_code_str = str(error_code)
     return ex.error_code == error_code_str or error_code_str in ex.message
+
+
+@snowflake_plan.SnowflakePlan.Decorator.wrap_exception  # type: ignore[misc]
+def _resolve_async_job(async_job: snowpark.AsyncJob) -> List[snowpark.Row]:
+    # Make sure Snowpark exceptions are properly caught and converted by wrap_exception wrapper
+    try:
+        query_result = cast(List[snowpark.Row], async_job.result("row"))
+        return query_result
+    except snowpark_errors.DatabaseError as e:
+        # HACK: Snowpark surfaces a generic exception if query doesn't complete immediately
+        # assume it's due to FileNotFound
+        if type(e) is snowpark_errors.DatabaseError and "results are unavailable" in str(e):
+            raise snowml_exceptions.SnowflakeMLException(
+                error_code=error_codes.SNOWML_NOT_FOUND,
+                original_exception=fileset_errors.StageNotFoundError("Query failed."),
+            ) from e
+        raise

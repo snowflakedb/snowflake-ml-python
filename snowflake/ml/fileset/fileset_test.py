@@ -6,6 +6,7 @@ from snowflake import snowpark
 from snowflake.connector import connection
 from snowflake.ml._internal.exceptions import fileset_errors
 from snowflake.ml.fileset import fileset
+from snowflake.ml.test_utils import mock_data_frame
 from snowflake.snowpark import types
 
 MockResultMetaData = collections.namedtuple("MockResultMetaData", ["name", "type_code", "precision", "scale"])
@@ -21,7 +22,8 @@ class FileSetTest(absltest.TestCase):
         self.mock_connection._session_parameters = absltest.mock.Mock()
 
         self.df_collect_patcher = absltest.mock.patch(
-            "snowflake.snowpark.dataframe.DataFrame.collect", side_effect=["random res", [], "random res"]
+            "snowflake.snowpark.dataframe.DataFrame.collect",
+            side_effect=[mock_data_frame.MockAsyncJob(r) for r in ["random res", [], "random res"]],
         )
         self.mock_df = self.df_collect_patcher.start()
 

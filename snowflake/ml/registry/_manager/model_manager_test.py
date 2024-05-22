@@ -6,13 +6,14 @@ from absl.testing import absltest
 
 from snowflake.ml._internal.utils import sql_identifier
 from snowflake.ml.model._client.model import model_impl, model_version_impl
+from snowflake.ml.model._client.ops.model_ops import ModelOperator
 from snowflake.ml.model._model_composer import model_composer
 from snowflake.ml.registry._manager import model_manager
 from snowflake.ml.test_utils import mock_session
 from snowflake.snowpark import Row, Session
 
 
-class RegistryTest(absltest.TestCase):
+class ModelManagerTest(absltest.TestCase):
     def setUp(self) -> None:
         self.m_session = mock_session.MockSession(conn=None, test_case=self)
         self.c_session = cast(Session, self.m_session)
@@ -37,6 +38,8 @@ class RegistryTest(absltest.TestCase):
             m = self.m_r.get_model("MODEL")
             self.assertEqual(m, m_model)
             mock_validate_existence.assert_called_once_with(
+                database_name=None,
+                schema_name=None,
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
                 statement_params=mock.ANY,
             )
@@ -48,6 +51,27 @@ class RegistryTest(absltest.TestCase):
             with self.assertRaisesRegex(ValueError, "Unable to find model MODEL"):
                 self.m_r.get_model("MODEL")
             mock_validate_existence.assert_called_once_with(
+                database_name=None,
+                schema_name=None,
+                model_name=sql_identifier.SqlIdentifier("MODEL"),
+                statement_params=mock.ANY,
+            )
+
+    def test_get_model_3(self) -> None:
+        m_model = model_impl.Model._ref(
+            ModelOperator(
+                self.c_session,
+                database_name=sql_identifier.SqlIdentifier("FOO"),
+                schema_name=sql_identifier.SqlIdentifier("BAR"),
+            ),
+            model_name=sql_identifier.SqlIdentifier("MODEL"),
+        )
+        with mock.patch.object(self.m_r._model_ops, "validate_existence", return_value=True) as mock_validate_existence:
+            m = self.m_r.get_model("FOO.BAR.MODEL")
+            self.assertEqual(m, m_model)
+            mock_validate_existence.assert_called_once_with(
+                database_name=sql_identifier.SqlIdentifier("FOO"),
+                schema_name=sql_identifier.SqlIdentifier("BAR"),
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
                 statement_params=mock.ANY,
             )
@@ -72,6 +96,8 @@ class RegistryTest(absltest.TestCase):
             m_list = self.m_r.models()
             self.assertListEqual(m_list, [m_model_1, m_model_2])
             mock_list_models_or_versions.assert_called_once_with(
+                database_name=None,
+                schema_name=None,
                 statement_params=mock.ANY,
             )
 
@@ -104,6 +130,8 @@ class RegistryTest(absltest.TestCase):
             mv_info = self.m_r.show_models()
             pd.testing.assert_frame_equal(mv_info, pd.DataFrame([row.as_dict() for row in m_list_res]))
             mock_show_models_or_versions.assert_called_once_with(
+                database_name=None,
+                schema_name=None,
                 statement_params=mock.ANY,
             )
 
@@ -130,10 +158,14 @@ class RegistryTest(absltest.TestCase):
                 sample_input_data=m_sample_input_data,
             )
             mock_validate_existence.assert_called_once_with(
+                database_name=None,
+                schema_name=None,
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
                 statement_params=mock.ANY,
             )
             mock_prepare_model_stage_path.assert_called_once_with(
+                database_name=None,
+                schema_name=None,
                 statement_params=mock.ANY,
             )
             mock_save.assert_called_once_with(
@@ -150,6 +182,8 @@ class RegistryTest(absltest.TestCase):
             )
             mock_create_from_stage.assert_called_once_with(
                 composed_model=mock.ANY,
+                database_name=None,
+                schema_name=None,
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
                 version_name=sql_identifier.SqlIdentifier("angry_yeti_1"),
                 statement_params=mock.ANY,
@@ -188,10 +222,14 @@ class RegistryTest(absltest.TestCase):
                 sample_input_data=m_sample_input_data,
             )
             mock_validate_existence.assert_called_once_with(
+                database_name=None,
+                schema_name=None,
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
                 statement_params=mock.ANY,
             )
             mock_prepare_model_stage_path.assert_called_once_with(
+                database_name=None,
+                schema_name=None,
                 statement_params=mock.ANY,
             )
             mock_save.assert_called_once_with(
@@ -208,6 +246,8 @@ class RegistryTest(absltest.TestCase):
             )
             mock_create_from_stage.assert_called_once_with(
                 composed_model=mock.ANY,
+                database_name=None,
+                schema_name=None,
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
                 version_name=sql_identifier.SqlIdentifier("v1"),
                 statement_params=mock.ANY,
@@ -238,6 +278,8 @@ class RegistryTest(absltest.TestCase):
                 options=m_options,
             )
             mock_prepare_model_stage_path.assert_called_once_with(
+                database_name=None,
+                schema_name=None,
                 statement_params=mock.ANY,
             )
             mock_save.assert_called_once_with(
@@ -254,6 +296,8 @@ class RegistryTest(absltest.TestCase):
             )
             mock_create_from_stage.assert_called_once_with(
                 composed_model=mock.ANY,
+                database_name=None,
+                schema_name=None,
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
                 version_name=sql_identifier.SqlIdentifier("V1"),
                 statement_params=mock.ANY,
@@ -287,6 +331,8 @@ class RegistryTest(absltest.TestCase):
                 ext_modules=m_ext_modules,
             )
             mock_prepare_model_stage_path.assert_called_once_with(
+                database_name=None,
+                schema_name=None,
                 statement_params=mock.ANY,
             )
             mock_save.assert_called_once_with(
@@ -303,6 +349,8 @@ class RegistryTest(absltest.TestCase):
             )
             mock_create_from_stage.assert_called_once_with(
                 composed_model=mock.ANY,
+                database_name=None,
+                schema_name=None,
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
                 version_name=sql_identifier.SqlIdentifier("V1"),
                 statement_params=mock.ANY,
@@ -322,7 +370,7 @@ class RegistryTest(absltest.TestCase):
         ) as mock_save, mock.patch.object(
             self.m_r._model_ops, "create_from_stage"
         ) as mock_create_from_stage, mock.patch.object(
-            self.m_r._model_ops, "set_comment"
+            ModelOperator, "set_comment"
         ) as mock_set_comment, mock.patch.object(
             self.m_r._model_ops._metadata_ops, "save"
         ) as mock_metadata_save, mock.patch.object(
@@ -332,6 +380,8 @@ class RegistryTest(absltest.TestCase):
                 model=m_model, model_name="MODEL", version_name="V1", comment="this is comment", metrics={"a": 1}
             )
             mock_prepare_model_stage_path.assert_called_once_with(
+                database_name=None,
+                schema_name=None,
                 statement_params=mock.ANY,
             )
             mock_save.assert_called_once_with(
@@ -348,6 +398,8 @@ class RegistryTest(absltest.TestCase):
             )
             mock_create_from_stage.assert_called_once_with(
                 composed_model=mock.ANY,
+                database_name=None,
+                schema_name=None,
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
                 version_name=sql_identifier.SqlIdentifier("V1"),
                 statement_params=mock.ANY,
@@ -358,12 +410,16 @@ class RegistryTest(absltest.TestCase):
             )
             mock_set_comment.assert_called_once_with(
                 comment="this is comment",
+                database_name=None,
+                schema_name=None,
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
                 version_name=sql_identifier.SqlIdentifier("V1"),
                 statement_params=mock.ANY,
             )
             mock_metadata_save.assert_called_once_with(
                 {"metrics": {"a": 1}},
+                database_name=None,
+                schema_name=None,
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
                 version_name=sql_identifier.SqlIdentifier("V1"),
                 statement_params=mock.ANY,
@@ -377,15 +433,96 @@ class RegistryTest(absltest.TestCase):
             mock_validate_existence.assert_has_calls(
                 [
                     mock.call(
+                        database_name=None,
+                        schema_name=None,
                         model_name=sql_identifier.SqlIdentifier("MODEL"),
                         statement_params=mock.ANY,
                     ),
                     mock.call(
+                        database_name=None,
+                        schema_name=None,
                         model_name=sql_identifier.SqlIdentifier("MODEL"),
                         version_name=sql_identifier.SqlIdentifier("V1"),
                         statement_params=mock.ANY,
                     ),
                 ]
+            )
+
+    def test_log_model_fully_qualified(self) -> None:
+        m_model = mock.MagicMock()
+        m_stage_path = "@TEMP.TEST.MODEL/V1"
+        with mock.patch.object(self.m_r._model_ops, "validate_existence", return_value=False), mock.patch.object(
+            self.m_r._model_ops, "prepare_model_stage_path", return_value=m_stage_path
+        ) as mock_prepare_model_stage_path, mock.patch.object(
+            model_composer.ModelComposer, "save"
+        ) as mock_save, mock.patch.object(
+            self.m_r._model_ops, "create_from_stage"
+        ) as mock_create_from_stage, mock.patch.object(
+            ModelOperator, "set_comment"
+        ) as mock_set_comment, mock.patch.object(
+            self.m_r._model_ops._metadata_ops, "save"
+        ) as mock_metadata_save, mock.patch.object(
+            model_version_impl.ModelVersion, "_get_functions", return_value=[]
+        ):
+            mv = self.m_r.log_model(
+                model=m_model,
+                model_name="FOO.BAR.MODEL",
+                version_name="V1",
+                comment="this is comment",
+                metrics={"a": 1},
+            )
+            mock_prepare_model_stage_path.assert_called_once_with(
+                database_name=sql_identifier.SqlIdentifier("FOO"),
+                schema_name=sql_identifier.SqlIdentifier("BAR"),
+                statement_params=mock.ANY,
+            )
+            mock_save.assert_called_once_with(
+                name="MODEL",
+                model=m_model,
+                signatures=None,
+                sample_input_data=None,
+                conda_dependencies=None,
+                pip_requirements=None,
+                python_version=None,
+                code_paths=None,
+                ext_modules=None,
+                options=None,
+            )
+            mock_create_from_stage.assert_called_once_with(
+                composed_model=mock.ANY,
+                database_name=sql_identifier.SqlIdentifier("FOO"),
+                schema_name=sql_identifier.SqlIdentifier("BAR"),
+                model_name=sql_identifier.SqlIdentifier("MODEL"),
+                version_name=sql_identifier.SqlIdentifier("V1"),
+                statement_params=mock.ANY,
+            )
+            self.assertEqual(
+                mv,
+                model_version_impl.ModelVersion._ref(
+                    ModelOperator(
+                        self.c_session,
+                        database_name=sql_identifier.SqlIdentifier("FOO"),
+                        schema_name=sql_identifier.SqlIdentifier("BAR"),
+                    ),
+                    model_name=sql_identifier.SqlIdentifier("MODEL"),
+                    version_name=sql_identifier.SqlIdentifier("V1"),
+                ),
+            )
+            mock_set_comment.assert_called_once_with(
+                comment="this is comment",
+                database_name=None,
+                schema_name=None,
+                model_name=sql_identifier.SqlIdentifier("MODEL"),
+                version_name=sql_identifier.SqlIdentifier("V1"),
+                statement_params=mock.ANY,
+            )
+            mock_metadata_save.assert_called_once_with(
+                {"metrics": {"a": 1}},
+                database_name=sql_identifier.SqlIdentifier("FOO"),
+                schema_name=sql_identifier.SqlIdentifier("BAR"),
+                model_name=sql_identifier.SqlIdentifier("MODEL"),
+                version_name=sql_identifier.SqlIdentifier("V1"),
+                statement_params=mock.ANY,
             )
 
     def test_delete_model(self) -> None:
@@ -394,6 +531,20 @@ class RegistryTest(absltest.TestCase):
                 model_name="MODEL",
             )
             mock_delete_model_or_version.assert_called_once_with(
+                database_name=None,
+                schema_name=None,
+                model_name=sql_identifier.SqlIdentifier("MODEL"),
+                statement_params=mock.ANY,
+            )
+
+    def test_delete_model_fully_qualified_name(self) -> None:
+        with mock.patch.object(self.m_r._model_ops, "delete_model_or_version") as mock_delete_model_or_version:
+            self.m_r.delete_model(
+                model_name="FOO.BAR.MODEL",
+            )
+            mock_delete_model_or_version.assert_called_once_with(
+                database_name=sql_identifier.SqlIdentifier("FOO"),
+                schema_name=sql_identifier.SqlIdentifier("BAR"),
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
                 statement_params=mock.ANY,
             )

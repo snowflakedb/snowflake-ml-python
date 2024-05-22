@@ -104,7 +104,8 @@ class SnowFileSystem(sfcfs.SFFileSystem):
         if self._IS_BUGGED_VERSION:
             match = _SNOWURL_PATTERN.fullmatch(abs_path)
             assert match is not None
-            abs_path = abs_path.replace(match.group("relpath"), match.group("relpath").lstrip("/"))
+            if match.group("relpath"):
+                abs_path = abs_path.replace(match.group("relpath"), match.group("relpath").lstrip("/"))
         return abs_path
 
     @classmethod
@@ -145,7 +146,7 @@ class SnowFileSystem(sfcfs.SFFileSystem):
             logging.debug(f"Parsed snow URL: {snowurl_match.groups()}")
             # FIXME(dhung): Temporary fix for bug in GS version 8.17
             if cls._IS_BUGGED_VERSION:
-                filepath = filepath.replace(f"{version}/", f"{version}//")
+                filepath = f"versions/{version}//{relative_path}"
             return _SFFileEntityPath(
                 domain=domain, name=name, version=version, relative_path=relative_path, filepath=filepath
             )

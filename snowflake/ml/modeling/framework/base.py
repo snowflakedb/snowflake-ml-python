@@ -16,7 +16,7 @@ from snowflake.ml._internal.exceptions import (
     exceptions,
     modeling_error_messages,
 )
-from snowflake.ml._internal.lineage import data_source, dataset_dataframe
+from snowflake.ml._internal.lineage import data_source, lineage_utils
 from snowflake.ml._internal.utils import identifier, parallelize
 from snowflake.ml.modeling.framework import _utils
 from snowflake.snowpark import functions as F
@@ -430,8 +430,9 @@ class BaseEstimator(Base):
     )
     def fit(self, dataset: Union[snowpark.DataFrame, pd.DataFrame]) -> "BaseEstimator":
         """Runs universal logics for all fit implementations."""
-        if isinstance(dataset, dataset_dataframe.DatasetDataFrame):
-            self._data_sources = dataset._get_sources()
+        self._data_sources = getattr(dataset, lineage_utils.DATA_SOURCES_ATTR, None)
+        if self._data_sources:
+            assert all(isinstance(ds, data_source.DataSource) for ds in self._data_sources)
         return self._fit(dataset)
 
     @abstractmethod

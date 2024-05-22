@@ -80,7 +80,7 @@ class SFStageFileSystemTest(absltest.TestCase):
         )
         return stagefs
 
-    def _mock_collect_res(self, prefix: str) -> mock_data_frame.MockDataFrame:
+    def _mock_collect_res(self, prefix: str, collect_block: bool = True) -> mock_data_frame.MockDataFrame:
         res = []
         for file in self.file_list:
             if file.startswith(prefix):
@@ -92,12 +92,15 @@ class SFStageFileSystemTest(absltest.TestCase):
                         last_modified="00",
                     )
                 )
-        return mock_data_frame.MockDataFrame(collect_result=res)
+        return mock_data_frame.MockDataFrame(
+            collect_result=(res if collect_block else mock_data_frame.MockAsyncJob(res)),
+            collect_block=collect_block,
+        )
 
     def _add_mock_test_case(self, prefix: str) -> None:
         self.session.add_mock_sql(
             query=f"LIST '@{self.db}.{self.schema}.{self.stage}/{prefix}'",
-            result=self._mock_collect_res(prefix),
+            result=self._mock_collect_res(prefix, collect_block=False),
         )
 
     def _mock_presigned_url_fetcher(self, files: str, lifetime: int = 0) -> List[snowpark.Row]:
@@ -150,7 +153,7 @@ class SFStageFileSystemTest(absltest.TestCase):
             ("mydir/helloworld", ["mydir/helloworld"]),
         ]
         for prefix, expected_res in test_cases:
-            with self.subTest():
+            with self.subTest(prefix):
                 self._add_mock_test_case(prefix)
                 fs = self._create_new_stagefs()
                 self.assertListEqual(fs.ls(prefix), expected_res)
@@ -170,7 +173,7 @@ class SFStageFileSystemTest(absltest.TestCase):
         ]
         stagefs = self._create_new_stagefs()
         for file_path, mock_prefixes, expected_res in test_cases:
-            with self.subTest():
+            with self.subTest(f"{file_path}, {mock_prefixes}"):
                 for prefix in mock_prefixes:
                     self._add_mock_test_case(prefix)
                 actual = stagefs.exists(file_path)

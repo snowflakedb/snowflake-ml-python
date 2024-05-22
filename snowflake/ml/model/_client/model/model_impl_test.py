@@ -41,6 +41,8 @@ class ModelImplTest(absltest.TestCase):
                 mv = self.m_model.version("v1")
                 self.assertEqual(mv, m_mv)
                 mock_validate_existence.assert_called_once_with(
+                    database_name=None,
+                    schema_name=None,
                     model_name=sql_identifier.SqlIdentifier("MODEL"),
                     version_name=sql_identifier.SqlIdentifier("V1"),
                     statement_params=mock.ANY,
@@ -53,6 +55,8 @@ class ModelImplTest(absltest.TestCase):
             with self.assertRaisesRegex(ValueError, 'Unable to find version with name V1 in model TEMP."test"'):
                 self.m_model.version("v1")
             mock_validate_existence.assert_called_once_with(
+                database_name=None,
+                schema_name=None,
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
                 version_name=sql_identifier.SqlIdentifier("V1"),
                 statement_params=mock.ANY,
@@ -81,6 +85,8 @@ class ModelImplTest(absltest.TestCase):
                 mv_list = self.m_model.versions()
                 self.assertListEqual(mv_list, [m_mv_1, m_mv_2])
                 mock_list_models_or_versions.assert_called_once_with(
+                    database_name=None,
+                    schema_name=None,
                     model_name=sql_identifier.SqlIdentifier("MODEL"),
                     statement_params=mock.ANY,
                 )
@@ -110,6 +116,8 @@ class ModelImplTest(absltest.TestCase):
             mv_info = self.m_model.show_versions()
             pd.testing.assert_frame_equal(mv_info, pd.DataFrame([row.as_dict() for row in m_list_res]))
             mock_show_models_or_versions.assert_called_once_with(
+                database_name=None,
+                schema_name=None,
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
                 statement_params=mock.ANY,
             )
@@ -120,6 +128,8 @@ class ModelImplTest(absltest.TestCase):
         ) as mock_get_comment:
             self.assertEqual("this is a comment", self.m_model.description)
             mock_get_comment.assert_called_once_with(
+                database_name=None,
+                schema_name=None,
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
                 statement_params=mock.ANY,
             )
@@ -129,6 +139,8 @@ class ModelImplTest(absltest.TestCase):
             self.m_model.description = "this is a comment"
             mock_set_comment.assert_called_once_with(
                 comment="this is a comment",
+                database_name=None,
+                schema_name=None,
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
                 statement_params=mock.ANY,
             )
@@ -139,6 +151,8 @@ class ModelImplTest(absltest.TestCase):
         ) as mock_get_comment:
             self.assertEqual("this is a comment", self.m_model.comment)
             mock_get_comment.assert_called_once_with(
+                database_name=None,
+                schema_name=None,
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
                 statement_params=mock.ANY,
             )
@@ -148,6 +162,8 @@ class ModelImplTest(absltest.TestCase):
             self.m_model.comment = "this is a comment"
             mock_set_comment.assert_called_once_with(
                 comment="this is a comment",
+                database_name=None,
+                schema_name=None,
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
                 statement_params=mock.ANY,
             )
@@ -164,6 +180,8 @@ class ModelImplTest(absltest.TestCase):
         ):
             self.assertEqual("V1", self.m_model.default.version_name)
             mock_get_default_version.assert_called_once_with(
+                database_name=None,
+                schema_name=None,
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
                 statement_params=mock.ANY,
             )
@@ -172,6 +190,8 @@ class ModelImplTest(absltest.TestCase):
         with mock.patch.object(self.m_model._model_ops, "set_default_version") as mock_set_default_version:
             self.m_model.default = "V1"  # type: ignore[assignment]
             mock_set_default_version.assert_called_once_with(
+                database_name=None,
+                schema_name=None,
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
                 version_name=sql_identifier.SqlIdentifier("V1"),
                 statement_params=mock.ANY,
@@ -189,6 +209,8 @@ class ModelImplTest(absltest.TestCase):
             )
             self.m_model.default = mv
             mock_set_default_version.assert_called_once_with(
+                database_name=None,
+                schema_name=None,
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
                 version_name=sql_identifier.SqlIdentifier("V2"),
                 statement_params=mock.ANY,
@@ -198,6 +220,8 @@ class ModelImplTest(absltest.TestCase):
         with mock.patch.object(self.m_model._model_ops, "delete_model_or_version") as mock_delete_model_or_version:
             self.m_model.delete_version(version_name="V2")
             mock_delete_model_or_version.assert_called_once_with(
+                database_name=None,
+                schema_name=None,
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
                 version_name=sql_identifier.SqlIdentifier("V2"),
                 statement_params=mock.ANY,
@@ -209,6 +233,8 @@ class ModelImplTest(absltest.TestCase):
             res = self.m_model.show_tags()
             self.assertDictEqual(res, m_res)
             mock_show_tags.assert_called_once_with(
+                database_name=None,
+                schema_name=None,
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
                 statement_params=mock.ANY,
             )
@@ -218,9 +244,11 @@ class ModelImplTest(absltest.TestCase):
             res = self.m_model.get_tag(tag_name="MYTAG")
             self.assertEqual(res, "tag content")
             mock_get_tag.assert_called_once_with(
+                database_name=None,
+                schema_name=None,
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
-                tag_database_name=sql_identifier.SqlIdentifier("TEMP"),
-                tag_schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
+                tag_database_name=None,
+                tag_schema_name=None,
                 tag_name=sql_identifier.SqlIdentifier("MYTAG"),
                 statement_params=mock.ANY,
             )
@@ -230,8 +258,10 @@ class ModelImplTest(absltest.TestCase):
             res = self.m_model.get_tag(tag_name='"schema".MYTAG')
             self.assertEqual(res, "tag content")
             mock_get_tag.assert_called_once_with(
+                database_name=None,
+                schema_name=None,
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
-                tag_database_name=sql_identifier.SqlIdentifier("TEMP"),
+                tag_database_name=None,
                 tag_schema_name=sql_identifier.SqlIdentifier("schema", case_sensitive=True),
                 tag_name=sql_identifier.SqlIdentifier("MYTAG"),
                 statement_params=mock.ANY,
@@ -242,6 +272,8 @@ class ModelImplTest(absltest.TestCase):
             res = self.m_model.get_tag(tag_name='DB."schema".MYTAG')
             self.assertEqual(res, "tag content")
             mock_get_tag.assert_called_once_with(
+                database_name=None,
+                schema_name=None,
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
                 tag_database_name=sql_identifier.SqlIdentifier("DB"),
                 tag_schema_name=sql_identifier.SqlIdentifier("schema", case_sensitive=True),
@@ -253,9 +285,11 @@ class ModelImplTest(absltest.TestCase):
         with mock.patch.object(self.m_model._model_ops, "set_tag") as mock_set_tag:
             self.m_model.set_tag(tag_name="MYTAG", tag_value="tag content")
             mock_set_tag.assert_called_once_with(
+                database_name=None,
+                schema_name=None,
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
-                tag_database_name=sql_identifier.SqlIdentifier("TEMP"),
-                tag_schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
+                tag_database_name=None,
+                tag_schema_name=None,
                 tag_name=sql_identifier.SqlIdentifier("MYTAG"),
                 tag_value="tag content",
                 statement_params=mock.ANY,
@@ -265,8 +299,10 @@ class ModelImplTest(absltest.TestCase):
         with mock.patch.object(self.m_model._model_ops, "set_tag") as mock_set_tag:
             self.m_model.set_tag(tag_name='"schema".MYTAG', tag_value="tag content")
             mock_set_tag.assert_called_once_with(
+                database_name=None,
+                schema_name=None,
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
-                tag_database_name=sql_identifier.SqlIdentifier("TEMP"),
+                tag_database_name=None,
                 tag_schema_name=sql_identifier.SqlIdentifier("schema", case_sensitive=True),
                 tag_name=sql_identifier.SqlIdentifier("MYTAG"),
                 tag_value="tag content",
@@ -277,6 +313,8 @@ class ModelImplTest(absltest.TestCase):
         with mock.patch.object(self.m_model._model_ops, "set_tag") as mock_set_tag:
             self.m_model.set_tag(tag_name='DB."schema".MYTAG', tag_value="tag content")
             mock_set_tag.assert_called_once_with(
+                database_name=None,
+                schema_name=None,
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
                 tag_database_name=sql_identifier.SqlIdentifier("DB"),
                 tag_schema_name=sql_identifier.SqlIdentifier("schema", case_sensitive=True),
@@ -289,9 +327,11 @@ class ModelImplTest(absltest.TestCase):
         with mock.patch.object(self.m_model._model_ops, "unset_tag") as mock_unset_tag:
             self.m_model.unset_tag(tag_name="MYTAG")
             mock_unset_tag.assert_called_once_with(
+                database_name=None,
+                schema_name=None,
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
-                tag_database_name=sql_identifier.SqlIdentifier("TEMP"),
-                tag_schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
+                tag_database_name=None,
+                tag_schema_name=None,
                 tag_name=sql_identifier.SqlIdentifier("MYTAG"),
                 statement_params=mock.ANY,
             )
@@ -300,8 +340,10 @@ class ModelImplTest(absltest.TestCase):
         with mock.patch.object(self.m_model._model_ops, "unset_tag") as mock_unset_tag:
             self.m_model.unset_tag(tag_name='"schema".MYTAG')
             mock_unset_tag.assert_called_once_with(
+                database_name=None,
+                schema_name=None,
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
-                tag_database_name=sql_identifier.SqlIdentifier("TEMP"),
+                tag_database_name=None,
                 tag_schema_name=sql_identifier.SqlIdentifier("schema", case_sensitive=True),
                 tag_name=sql_identifier.SqlIdentifier("MYTAG"),
                 statement_params=mock.ANY,
@@ -311,6 +353,8 @@ class ModelImplTest(absltest.TestCase):
         with mock.patch.object(self.m_model._model_ops, "unset_tag") as mock_unset_tag:
             self.m_model.unset_tag(tag_name='DB."schema".MYTAG')
             mock_unset_tag.assert_called_once_with(
+                database_name=None,
+                schema_name=None,
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
                 tag_database_name=sql_identifier.SqlIdentifier("DB"),
                 tag_schema_name=sql_identifier.SqlIdentifier("schema", case_sensitive=True),
@@ -322,6 +366,8 @@ class ModelImplTest(absltest.TestCase):
         with mock.patch.object(self.m_model._model_ops, "rename") as mock_rename:
             self.m_model.rename(model_name="MODEL2")
             mock_rename.assert_called_once_with(
+                database_name=None,
+                schema_name=None,
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
                 new_model_db=None,
                 new_model_schema=None,
@@ -333,6 +379,8 @@ class ModelImplTest(absltest.TestCase):
         with mock.patch.object(self.m_model._model_ops, "rename") as mock_rename:
             self.m_model.rename(model_name='TEMP."test".MODEL2')
             mock_rename.assert_called_once_with(
+                database_name=None,
+                schema_name=None,
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
                 new_model_db=sql_identifier.SqlIdentifier("TEMP"),
                 new_model_schema=sql_identifier.SqlIdentifier("test", case_sensitive=True),

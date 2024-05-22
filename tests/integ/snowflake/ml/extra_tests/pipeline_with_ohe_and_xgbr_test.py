@@ -21,6 +21,7 @@ from snowflake.ml.modeling.preprocessing import (
 from snowflake.ml.modeling.xgboost import XGBClassifier
 from snowflake.ml.utils.connection_params import SnowflakeLoginOptions
 from snowflake.snowpark import Session
+from tests.integ.snowflake.ml.test_utils import test_env_utils
 
 categorical_columns = [
     "AGE",
@@ -254,6 +255,10 @@ class PipelineXGBRTest(absltest.TestCase):
                 ("KNNImputer", KNNImputer(input_cols=numerical_columns, output_cols=numerical_columns)),
                 ("regression", XGBClassifier(label_cols=label_column, passthrough_cols="ROW_INDEX")),
             ]
+        )
+
+        pipeline._deps.append(
+            test_env_utils.get_latest_package_version_spec_in_server(self._session, "snowflake-snowpark-python")
         )
 
         p1 = pipeline.fit(raw_data)

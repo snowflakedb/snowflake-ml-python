@@ -55,7 +55,7 @@ class FeatureStoreCaseSensitivityTest(parameterized.TestCase):
     @classmethod
     def tearDownClass(cls) -> None:
         for fs in cls._active_fs:
-            fs.clear()
+            fs._clear(dryrun=False)
             cls._session.sql(f"DROP SCHEMA IF EXISTS {fs._config.full_schema_path}").collect()
         cls._session.sql(f"DROP TABLE IF EXISTS {cls._mock_table}").collect()
         cls._session.close()

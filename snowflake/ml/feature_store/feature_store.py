@@ -8,7 +8,19 @@ import re
 import warnings
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Callable, Dict, List, Optional, Tuple, TypeVar, Union, cast
+from typing import (
+    Any,
+    Callable,
+    Dict,
+    List,
+    Literal,
+    Optional,
+    Tuple,
+    TypeVar,
+    Union,
+    cast,
+    overload,
+)
 
 import packaging.version as pkg_version
 import snowflake.ml.version as snowml_version
@@ -32,7 +44,7 @@ from snowflake.ml.feature_store.entity import _ENTITY_NAME_LENGTH_LIMIT, Entity
 from snowflake.ml.feature_store.feature_view import (
     _FEATURE_OBJ_TYPE,
     _FEATURE_VIEW_NAME_DELIMITER,
-    _TIMESTAMP_COL_PLACEHOLDER,
+    _LEGACY_TIMESTAMP_COL_PLACEHOLDER_VALS,
     FeatureView,
     FeatureViewSlice,
     FeatureViewStatus,
@@ -242,23 +254,16 @@ class FeatureStore:
 
         else:
             try:
-                self._session.sql(f"CREATE SCHEMA IF NOT EXISTS {self._config.full_schema_path}").collect(
-                    statement_params=self._telemetry_stmp
-                )
-                for tag in to_sql_identifiers(
-                    [
-                        _FEATURE_VIEW_METADATA_TAG,
-                    ]
-                ):
+                # Explicitly check if schema exists first since we may not have CREATE SCHEMA privilege
+                if len(self._find_object("SCHEMAS", self._config.schema)) == 0:
+                    self._session.sql(f"CREATE SCHEMA IF NOT EXISTS {self._config.full_schema_path}").collect(
+                        statement_params=self._telemetry_stmp
+                    )
+                for tag in to_sql_identifiers([_FEATURE_VIEW_METADATA_TAG, _FEATURE_STORE_OBJECT_TAG]):
                     self._session.sql(f"CREATE TAG IF NOT EXISTS {self._get_fully_qualified_name(tag)}").collect(
                         statement_params=self._telemetry_stmp
                     )
-
-                self._session.sql(
-                    f"CREATE TAG IF NOT EXISTS {self._get_fully_qualified_name(_FEATURE_STORE_OBJECT_TAG)}"
-                ).collect(statement_params=self._telemetry_stmp)
             except Exception as e:
-                self.clear()
                 raise snowml_exceptions.SnowflakeMLException(
                     error_code=error_codes.INTERNAL_SNOWPARK_ERROR,
                     original_exception=RuntimeError(f"Failed to create feature store {name}: {e}."),
@@ -750,7 +755,7 @@ class FeatureStore:
         except Exception as e:
             raise snowml_exceptions.SnowflakeMLException(
                 error_code=error_codes.INTERNAL_SNOWPARK_ERROR,
-                original_exception=RuntimeError(f"Failed to alter schema or drop tag: {e}."),
+                original_exception=RuntimeError(f"Failed to delete entity: {e}."),
             ) from e
         logger.info(f"Deleted Entity {name}.")
 
@@ -802,7 +807,7 @@ class FeatureStore:
 
         return df
 
-    @dispatch_decorator()
+    @overload
     def generate_dataset(
         self,
         name: str,
@@ -814,7 +819,40 @@ class FeatureStore:
         exclude_columns: Optional[List[str]] = None,
         include_feature_view_timestamp_col: bool = False,
         desc: str = "",
+        output_type: Literal["dataset"] = "dataset",
     ) -> dataset.Dataset:
+        ...
+
+    @overload
+    def generate_dataset(
+        self,
+        name: str,
+        spine_df: DataFrame,
+        features: List[Union[FeatureView, FeatureViewSlice]],
+        output_type: Literal["table"],
+        version: Optional[str] = None,
+        spine_timestamp_col: Optional[str] = None,
+        spine_label_cols: Optional[List[str]] = None,
+        exclude_columns: Optional[List[str]] = None,
+        include_feature_view_timestamp_col: bool = False,
+        desc: str = "",
+    ) -> DataFrame:
+        ...
+
+    @dispatch_decorator()  # type: ignore[misc]
+    def generate_dataset(
+        self,
+        name: str,
+        spine_df: DataFrame,
+        features: List[Union[FeatureView, FeatureViewSlice]],
+        version: Optional[str] = None,
+        spine_timestamp_col: Optional[str] = None,
+        spine_label_cols: Optional[List[str]] = None,
+        exclude_columns: Optional[List[str]] = None,
+        include_feature_view_timestamp_col: bool = False,
+        desc: str = "",
+        output_type: Literal["dataset", "table"] = "dataset",
+    ) -> Union[dataset.Dataset, DataFrame]:
         """
         Generate dataset by given source table and feature views.
 
@@ -834,29 +872,28 @@ class FeatureStore:
             include_feature_view_timestamp_col: Generated dataset will include timestamp column of feature view
                 (if feature view has timestamp column) if set true. Default to false.
             desc: A description about this dataset.
+            output_type: The type of Snowflake storage to use for the generated training data.
 
         Returns:
-            A Dataset object.
+            If output_type is "dataset" (default), returns a Dataset object.
+            If output_type is "table", returns a Snowpark DataFrame representing the table.
 
         Raises:
-            SnowflakeMLException: [ValueError] spine_df contains more than one query.
             SnowflakeMLException: [ValueError] Dataset name/version already exists
             SnowflakeMLException: [ValueError] Snapshot creation failed.
+            SnowflakeMLException: [ValueError] Invalid output_type specified.
             SnowflakeMLException: [RuntimeError] Failed to create clone from table.
             SnowflakeMLException: [RuntimeError] Failed to find resources.
         """
+        if output_type not in {"table", "dataset"}:
+            raise snowml_exceptions.SnowflakeMLException(
+                error_code=error_codes.INVALID_ARGUMENT,
+                original_exception=ValueError(f"Invalid output_type: {output_type}."),
+            )
         if spine_timestamp_col is not None:
             spine_timestamp_col = SqlIdentifier(spine_timestamp_col)
         if spine_label_cols is not None:
             spine_label_cols = to_sql_identifiers(spine_label_cols)  # type: ignore[assignment]
-
-        if len(spine_df.queries["queries"]) != 1:
-            raise snowml_exceptions.SnowflakeMLException(
-                error_code=error_codes.INVALID_ARGUMENT,
-                original_exception=ValueError(
-                    f"spine_df must contain only one query. Got: {spine_df.queries['queries']}"
-                ),
-            )
 
         result_df, join_keys = self._join_features(
             spine_df, features, spine_timestamp_col, include_feature_view_timestamp_col
@@ -875,33 +912,49 @@ class FeatureStore:
             result_df = self._exclude_columns(result_df, exclude_columns)
 
         fs_meta = FeatureStoreMetadata(
-            spine_query=spine_df.queries["queries"][0],
+            spine_query=spine_df.queries["queries"][-1],
             serialized_feature_views=[fv.to_json() for fv in features],
             spine_timestamp_col=spine_timestamp_col,
         )
 
         try:
-            ds: dataset.Dataset = dataset.create_from_dataframe(
-                self._session,
-                name,
-                version,
-                input_dataframe=result_df,
-                exclude_cols=[spine_timestamp_col],
-                label_cols=spine_label_cols,
-                properties=fs_meta,
-                comment=desc,
-            )
-            return ds
+            if output_type == "table":
+                table_name = f"{name}_{version}"
+                result_df.write.mode("errorifexists").save_as_table(table_name)  # type: ignore[call-overload]
+                ds_df = self._session.table(table_name)
+                return ds_df
+            else:
+                assert output_type == "dataset"
+                if not self._is_dataset_enabled():
+                    raise snowml_exceptions.SnowflakeMLException(
+                        error_code=error_codes.SNOWML_CREATE_FAILED,
+                        original_exception=RuntimeError(
+                            "Dataset is not enabled in your account. Ask your account admin to set"
+                            ' FEATURE_DATASET=ENABLED or set output_type="table" to generate the data'
+                            " as a Snowflake Table instead."
+                        ),
+                    )
+                ds: dataset.Dataset = dataset.create_from_dataframe(
+                    self._session,
+                    name,
+                    version,
+                    input_dataframe=result_df,
+                    exclude_cols=[spine_timestamp_col],
+                    label_cols=spine_label_cols,
+                    properties=fs_meta,
+                    comment=desc,
+                )
+                return ds
 
         except dataset_errors.DatasetExistError as e:
             raise snowml_exceptions.SnowflakeMLException(
                 error_code=error_codes.OBJECT_ALREADY_EXISTS,
-                original_exception=ValueError(str(e)),
+                original_exception=RuntimeError(str(e)),
             ) from e
         except SnowparkSQLException as e:
             raise snowml_exceptions.SnowflakeMLException(
                 error_code=error_codes.INTERNAL_SNOWPARK_ERROR,
-                original_exception=RuntimeError(f"An error occurred during Dataset generation: {e}."),
+                original_exception=RuntimeError(f"An error occurred during dataset generation: {e}."),
             ) from e
 
     @dispatch_decorator()
@@ -930,52 +983,47 @@ class FeatureStore:
         return self._load_serialized_feature_objects(source_meta.properties.serialized_feature_views)
 
     @dispatch_decorator()
-    def clear(self) -> None:
+    def _clear(self, dryrun: bool = True) -> None:
         """
-        Clear all feature store internal objects including feature views, entities etc. Note feature store
-        instance (snowflake schema) won't be deleted. Use snowflake to delete feature store instance.
+        Clear all feature views and entities. Note Feature Store schema and metadata will NOT be purged
+        together. Use SQL to delete schema and metadata instead.
 
-        Raises:
-            SnowflakeMLException: [RuntimeError] Failed to clear feature store.
+        Args:
+            dryrun: Print a list of objects will be deleted but not actually perform the deletion when true.
         """
-        try:
-            result = self._session.sql(
-                f"""
-                SELECT *
-                FROM {self._config.database}.INFORMATION_SCHEMA.SCHEMATA
-                WHERE SCHEMA_NAME = '{self._config.schema.resolved()}'
-            """
-            ).collect()
-            if len(result) == 0:
-                return
+        warnings.warn(
+            "It will clear ALL feature views and entities in this Feature Store. Make sure your role"
+            " has sufficient access to all feature views and entities. Insufficient access to some feature"
+            " views or entities will leave Feature Store in an incomplete state.",
+            stacklevel=2,
+            category=UserWarning,
+        )
 
-            fs_obj_tag = self._find_object("TAGS", SqlIdentifier(_FEATURE_STORE_OBJECT_TAG))
-            if len(fs_obj_tag) == 0:
-                return
+        all_fvs_df = self.list_feature_views()
+        all_entities_df = self.list_entities()
+        all_fvs_rows = all_fvs_df.collect()
+        all_entities_rows = all_entities_df.collect()
 
-            object_types = ["DYNAMIC TABLES", "DATASETS", "VIEWS", "TASKS"]
-            for obj_type in object_types:
-                all_object_rows = self._find_object(obj_type, None)
-                for row in all_object_rows:
-                    obj_name = self._get_fully_qualified_name(SqlIdentifier(row["name"], case_sensitive=True))
-                    self._session.sql(f"DROP {obj_type[:-1]} {obj_name}").collect()
-                    logger.info(f"Deleted {obj_type[:-1]}: {obj_name}.")
+        if dryrun:
+            logger.info(
+                "Following feature views and entities will be deleted."
+                + " Set 'dryrun=False' to perform the actual deletion."
+            )
+            logger.info(f"Total {len(all_fvs_rows)} Feature views to be deleted:")
+            all_fvs_df.show(n=len(all_fvs_rows))
+            logger.info(f"\nTotal {len(all_entities_rows)} entities to be deleted:")
+            all_entities_df.show(n=len(all_entities_rows))
+            return
 
-            entity_tags = self._find_object("TAGS", SqlIdentifier(_ENTITY_TAG_PREFIX), prefix_match=True)
-            all_tags = [
-                _FEATURE_STORE_OBJECT_TAG,
-                _FEATURE_VIEW_METADATA_TAG,
-            ] + [SqlIdentifier(row["name"], case_sensitive=True) for row in entity_tags]
-            for tag_name in all_tags:
-                obj_name = self._get_fully_qualified_name(tag_name)
-                self._session.sql(f"DROP TAG IF EXISTS {obj_name}").collect()
-                logger.info(f"Deleted TAG: {obj_name}.")
+        for fv_row in all_fvs_rows:
+            fv = self.get_feature_view(
+                SqlIdentifier(fv_row["NAME"], case_sensitive=True).identifier(), fv_row["VERSION"]
+            )
+            self.delete_feature_view(fv)
 
-        except Exception as e:
-            raise snowml_exceptions.SnowflakeMLException(
-                error_code=error_codes.INTERNAL_SNOWPARK_ERROR,
-                original_exception=RuntimeError(f"Failed to clear feature store {self._config.full_schema_path}: {e}."),
-            ) from e
+        for entity_row in all_entities_rows:
+            self.delete_entity(SqlIdentifier(entity_row["NAME"], case_sensitive=True).identifier())
+
         logger.info(f"Feature store {self._config.full_schema_path} has been cleared.")
 
     def _get_feature_view_if_exists(self, name: str, version: str) -> FeatureView:
@@ -1093,14 +1141,6 @@ class FeatureStore:
         spine_timestamp_col: Optional[SqlIdentifier],
         include_feature_view_timestamp_col: bool,
     ) -> Tuple[DataFrame, List[SqlIdentifier]]:
-        if len(spine_df.queries["queries"]) != 1:
-            raise snowml_exceptions.SnowflakeMLException(
-                error_code=error_codes.INVALID_ARGUMENT,
-                original_exception=ValueError(
-                    f"spine_df must contain only one query. Got: {spine_df.queries['queries']}"
-                ),
-            )
-
         for f in features:
             f = f.feature_view_ref if isinstance(f, FeatureViewSlice) else f
             if f.status == FeatureViewStatus.DRAFT:
@@ -1122,7 +1162,7 @@ class FeatureStore:
             self._asof_join_enabled = self._is_asof_join_enabled()
 
         # TODO: leverage Snowpark dataframe for more concise syntax once it supports AsOfJoin
-        query = spine_df.queries["queries"][0]
+        query = spine_df.queries["queries"][-1]
         layer = 0
         for f in features:
             if isinstance(f, FeatureViewSlice):
@@ -1180,7 +1220,15 @@ class FeatureStore:
                 """
             layer += 1
 
-        return self._session.sql(query), join_keys
+        # TODO: construct result dataframe with datframe APIs once ASOF join is supported natively.
+        # Below code manually construct result dataframe from private members of spine dataframe, which
+        # likely will cause unintentional issues. This setp is needed because spine_df might contains
+        # prerequisite queries and post actions that must be carried over to result dataframe.
+        result_df = self._session.sql(query)
+        result_df._plan.queries = spine_df._plan.queries[:-1] + result_df._plan.queries
+        result_df._plan.post_actions = spine_df._plan.post_actions
+
+        return result_df, join_keys
 
     def _check_database_exists_or_throw(self) -> None:
         resolved_db_name = self._config.database.resolved()
@@ -1517,6 +1565,9 @@ class FeatureStore:
                 original_exception=RuntimeError(f"Failed to parse query text for FeatureView {name}/{version}: {row}."),
             )
 
+        fv_name = FeatureView._get_physical_name(name, version)
+        infer_schema_df = self._session.sql(f"SELECT * FROM {self._get_fully_qualified_name(fv_name)}")
+
         if m.group("obj_type") == "DYNAMIC TABLE":
             query = m.group("query")
             df = self._session.sql(query)
@@ -1524,7 +1575,7 @@ class FeatureStore:
             fv_metadata = _FeatureViewMetadata.from_json(m.group("fv_metadata"))
             entities = [find_and_compose_entity(n) for n in fv_metadata.entities]
             ts_col = fv_metadata.timestamp_col
-            timestamp_col = ts_col if ts_col != _TIMESTAMP_COL_PLACEHOLDER else None
+            timestamp_col = ts_col if ts_col not in _LEGACY_TIMESTAMP_COL_PLACEHOLDER_VALS else None
 
             fv = FeatureView._construct_feature_view(
                 name=name,
@@ -1534,9 +1585,7 @@ class FeatureStore:
                 desc=desc,
                 version=version,
                 status=FeatureViewStatus(row["scheduling_state"]),
-                feature_descs=self._fetch_column_descs(
-                    "DYNAMIC TABLE", SqlIdentifier(row["name"], case_sensitive=True)
-                ),
+                feature_descs=self._fetch_column_descs("DYNAMIC TABLE", fv_name),
                 refresh_freq=row["target_lag"],
                 database=self._config.database.identifier(),
                 schema=self._config.schema.identifier(),
@@ -1544,6 +1593,7 @@ class FeatureStore:
                 refresh_mode=row["refresh_mode"],
                 refresh_mode_reason=row["refresh_mode_reason"],
                 owner=row["owner"],
+                infer_schema_df=infer_schema_df,
             )
             return fv
         else:
@@ -1553,7 +1603,7 @@ class FeatureStore:
             fv_metadata = _FeatureViewMetadata.from_json(m.group("fv_metadata"))
             entities = [find_and_compose_entity(n) for n in fv_metadata.entities]
             ts_col = fv_metadata.timestamp_col
-            timestamp_col = ts_col if ts_col != _TIMESTAMP_COL_PLACEHOLDER else None
+            timestamp_col = ts_col if ts_col not in _LEGACY_TIMESTAMP_COL_PLACEHOLDER_VALS else None
 
             fv = FeatureView._construct_feature_view(
                 name=name,
@@ -1563,7 +1613,7 @@ class FeatureStore:
                 desc=desc,
                 version=version,
                 status=FeatureViewStatus.STATIC,
-                feature_descs=self._fetch_column_descs("VIEW", SqlIdentifier(row["name"], case_sensitive=True)),
+                feature_descs=self._fetch_column_descs("VIEW", fv_name),
                 refresh_freq=None,
                 database=self._config.database.identifier(),
                 schema=self._config.schema.identifier(),
@@ -1571,6 +1621,7 @@ class FeatureStore:
                 refresh_mode=None,
                 refresh_mode_reason=None,
                 owner=row["owner"],
+                infer_schema_df=infer_schema_df,
             )
             return fv
 
@@ -1719,6 +1770,15 @@ class FeatureStore:
             return True
         except Exception:
             return False
+
+    def _is_dataset_enabled(self) -> bool:
+        try:
+            self._session.sql(f"SHOW DATASETS IN SCHEMA {self._config.full_schema_path}").collect()
+            return True
+        except SnowparkSQLException as e:
+            if "'DATASETS' does not exist" in e.message:
+                return False
+            raise
 
     def _check_feature_store_object_versions(self) -> None:
         versions = self._collapse_object_versions()

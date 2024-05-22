@@ -56,7 +56,7 @@ class TestSnowflakeDatasetBase(common_test_base.CommonTestBase):
             cls.session.close()
         super().tearDownClass()
 
-    def validate_dataset(
+    def validate_dataset_connectors(
         self, datapipe_shuffle: bool, drop_last_batch: bool, batch_size: int, ds: dataset.Dataset
     ) -> None:
         raise NotImplementedError
@@ -96,7 +96,7 @@ class TestSnowflakeDatasetBase(common_test_base.CommonTestBase):
                 file, rf"snow://dataset/{self.db}.{self.schema}.{dataset_name}/versions/{dataset_version}/.*[.]parquet"
             )
 
-        self.validate_dataset(datapipe_shuffle, drop_last_batch, batch_size, ds)
+        self.validate_dataset_connectors(datapipe_shuffle, drop_last_batch, batch_size, ds)
 
     def _validate_batches(
         self,

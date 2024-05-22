@@ -11,7 +11,7 @@ from packaging import requirements
 from typing_extensions import deprecated
 
 from snowflake.ml._internal import env as snowml_env, env_utils, file_utils
-from snowflake.ml._internal.lineage import data_source
+from snowflake.ml._internal.lineage import data_source, lineage_utils
 from snowflake.ml.model import model_signature, type_hints as model_types
 from snowflake.ml.model._model_composer.model_manifest import model_manifest
 from snowflake.ml.model._packager import model_packager
@@ -180,7 +180,7 @@ class ModelComposer:
         return mp
 
     def _get_data_sources(self, model: model_types.SupportedModelType) -> Optional[List[data_source.DataSource]]:
-        data_sources = getattr(model, "_data_sources", None)
+        data_sources = getattr(model, lineage_utils.DATA_SOURCES_ATTR, None)
         if isinstance(data_sources, list) and all(isinstance(item, data_source.DataSource) for item in data_sources):
             return data_sources
         return None

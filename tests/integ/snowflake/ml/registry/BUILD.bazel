@@ -78,3 +78,16 @@ py_test(
     shard_count = 2,
     deps = [":model_registry_snowservice_integ_test_base"],
 )
+
+py_test(
+    name = "registry_compat_test",
+    timeout = "long",
+    srcs = ["registry_compat_test.py"],
+    shard_count = 4,
+    deps = [
+        "//snowflake/ml/_internal:env",
+        "//snowflake/ml/registry",
+        "//tests/integ/snowflake/ml/test_utils:common_test_base",
+        "//tests/integ/snowflake/ml/test_utils:db_manager",
+    ],
+)
