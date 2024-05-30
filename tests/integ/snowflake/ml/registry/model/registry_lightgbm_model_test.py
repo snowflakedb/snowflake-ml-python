@@ -2,7 +2,7 @@ import inflection
 import lightgbm
 import numpy as np
 import pandas as pd
-from absl.testing import absltest
+from absl.testing import absltest, parameterized
 from sklearn import datasets, model_selection
 
 from tests.integ.snowflake.ml.registry.model import registry_model_test_base
@@ -10,8 +10,12 @@ from tests.integ.snowflake.ml.test_utils import dataframe_utils
 
 
 class TestRegistryLightGBMModelInteg(registry_model_test_base.RegistryModelTestBase):
+    @parameterized.product(  # type: ignore[misc]
+        registry_test_fn=registry_model_test_base.RegistryModelTestBase.REGISTRY_TEST_FN_LIST,
+    )
     def test_lightgbm_classifier(
         self,
+        registry_test_fn: str,
     ) -> None:
         cal_data = datasets.load_breast_cancer(as_frame=True)
         cal_X = cal_data.data
@@ -22,7 +26,7 @@ class TestRegistryLightGBMModelInteg(registry_model_test_base.RegistryModelTestB
         classifier = lightgbm.LGBMClassifier()
         classifier.fit(cal_X_train, cal_y_train)
 
-        self._test_registry_model(
+        getattr(self, registry_test_fn)(
             model=classifier,
             sample_input_data=cal_X_test,
             prediction_assert_fns={
@@ -39,8 +43,12 @@ class TestRegistryLightGBMModelInteg(registry_model_test_base.RegistryModelTestB
             },
         )
 
+    @parameterized.product(  # type: ignore[misc]
+        registry_test_fn=registry_model_test_base.RegistryModelTestBase.REGISTRY_TEST_FN_LIST,
+    )
     def test_lightgbm_classifier_sp(
         self,
+        registry_test_fn: str,
     ) -> None:
         cal_data = datasets.load_breast_cancer(as_frame=True)
         cal_X = cal_data.data
@@ -66,9 +74,9 @@ class TestRegistryLightGBMModelInteg(registry_model_test_base.RegistryModelTestB
             axis=1,
         )
 
-        cal_data_sp_df_train = self._session.create_dataframe(cal_X_train)
-        cal_data_sp_df_test = self._session.create_dataframe(cal_X_test)
-        self._test_registry_model(
+        cal_data_sp_df_train = self.session.create_dataframe(cal_X_train)
+        cal_data_sp_df_test = self.session.create_dataframe(cal_X_test)
+        getattr(self, registry_test_fn)(
             model=classifier,
             sample_input_data=cal_data_sp_df_train,
             prediction_assert_fns={
@@ -83,8 +91,12 @@ class TestRegistryLightGBMModelInteg(registry_model_test_base.RegistryModelTestB
             },
         )
 
+    @parameterized.product(  # type: ignore[misc]
+        registry_test_fn=registry_model_test_base.RegistryModelTestBase.REGISTRY_TEST_FN_LIST,
+    )
     def test_lightgbm_booster(
         self,
+        registry_test_fn: str,
     ) -> None:
         cal_data = datasets.load_breast_cancer(as_frame=True)
         cal_X = cal_data.data
@@ -95,7 +107,7 @@ class TestRegistryLightGBMModelInteg(registry_model_test_base.RegistryModelTestB
         regressor = lightgbm.train({"objective": "regression"}, lightgbm.Dataset(cal_X_train, label=cal_y_train))
         y_pred = regressor.predict(cal_X_test)
 
-        self._test_registry_model(
+        getattr(self, registry_test_fn)(
             model=regressor,
             sample_input_data=cal_X_test,
             prediction_assert_fns={
@@ -106,8 +118,12 @@ class TestRegistryLightGBMModelInteg(registry_model_test_base.RegistryModelTestB
             },
         )
 
+    @parameterized.product(  # type: ignore[misc]
+        registry_test_fn=registry_model_test_base.RegistryModelTestBase.REGISTRY_TEST_FN_LIST,
+    )
     def test_lightgbm_booster_sp(
         self,
+        registry_test_fn: str,
     ) -> None:
         cal_data = datasets.load_breast_cancer(as_frame=True)
         cal_X = cal_data.data
@@ -124,9 +140,9 @@ class TestRegistryLightGBMModelInteg(registry_model_test_base.RegistryModelTestB
             axis=1,
         )
 
-        cal_data_sp_df_train = self._session.create_dataframe(cal_X_train)
-        cal_data_sp_df_test = self._session.create_dataframe(cal_X_test)
-        self._test_registry_model(
+        cal_data_sp_df_train = self.session.create_dataframe(cal_X_train)
+        cal_data_sp_df_test = self.session.create_dataframe(cal_X_test)
+        getattr(self, registry_test_fn)(
             model=regressor,
             sample_input_data=cal_data_sp_df_train,
             prediction_assert_fns={

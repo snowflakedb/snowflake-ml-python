@@ -4,11 +4,10 @@ import io
 import os
 import posixpath
 import sys
-from typing import Any, Dict, List, Optional, Set, Tuple, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 import cloudpickle as cp
 import numpy as np
-import numpy.typing as npt
 from sklearn import model_selection
 from sklearn.model_selection import GridSearchCV, RandomizedSearchCV
 
@@ -36,6 +35,7 @@ from snowflake.snowpark._internal.utils import (
 from snowflake.snowpark.functions import sproc, udtf
 from snowflake.snowpark.row import Row
 from snowflake.snowpark.types import IntegerType, StringType, StructField, StructType
+from snowflake.snowpark.udtf import UDTFRegistration
 
 cp.register_pickle_by_value(inspect.getmodule(get_temp_file_path))
 cp.register_pickle_by_value(inspect.getmodule(identifier.get_inferred_name))
@@ -698,7 +698,6 @@ class DistributedHPOTrainer(SnowparkModelTrainer):
     ) -> Union[model_selection.GridSearchCV, model_selection.RandomizedSearchCV]:
         from itertools import product
 
-        import cachetools
         from sklearn.base import clone, is_classifier
         from sklearn.calibration import check_cv
 
@@ -719,9 +718,11 @@ class DistributedHPOTrainer(SnowparkModelTrainer):
         # Create a temp file and dump the estimator to that file.
         estimator_file_name = get_temp_file_path()
         params_to_evaluate = list(param_grid)
-        n_candidates = len(params_to_evaluate)
-        _N_JOBS = estimator.n_jobs
-        _PRE_DISPATCH = estimator.pre_dispatch
+        CONSTANTS: Dict[str, Any] = dict()
+        CONSTANTS["dataset_snowpark_cols"] = dataset.columns
+        CONSTANTS["n_candidates"] = len(params_to_evaluate)
+        CONSTANTS["_N_JOBS"] = estimator.n_jobs
+        CONSTANTS["_PRE_DISPATCH"] = estimator.pre_dispatch
 
         with open(estimator_file_name, mode="w+b") as local_estimator_file_obj:
             cp.dump(dict(estimator=estimator, param_grid=params_to_evaluate), local_estimator_file_obj)
@@ -743,6 +744,9 @@ class DistributedHPOTrainer(SnowparkModelTrainer):
             api_calls=[udtf],
             custom_tags=dict([("hpo_memory_efficient", True)]),
         )
+        from snowflake.ml.modeling._internal.snowpark_implementations.distributed_search_udf_file import (
+            execute_template,
+        )
 
         # Put locally serialized estimator on stage.
         session.file.put(
@@ -753,6 +757,7 @@ class DistributedHPOTrainer(SnowparkModelTrainer):
         )
         estimator_location = os.path.basename(estimator_file_name)
         imports.append(f"@{temp_stage_name}/{estimator_location}")
+        CONSTANTS["estimator_location"] = estimator_location
 
         search_sproc_name = random_name_for_temp_object(TempObjectType.PROCEDURE)
         random_udtf_name = random_name_for_temp_object(TempObjectType.FUNCTION)
@@ -783,7 +788,6 @@ class DistributedHPOTrainer(SnowparkModelTrainer):
         ) -> str:
             import os
             import time
-            from typing import Iterator
 
             import cloudpickle as cp
             import pandas as pd
@@ -905,144 +909,59 @@ class DistributedHPOTrainer(SnowparkModelTrainer):
             fit_and_score_kwargs_location = os.path.basename(local_fit_and_score_kwargs_file_name)
             imports.append(f"@{temp_stage_name}/{fit_and_score_kwargs_location}")
 
+            CONSTANTS["input_cols"] = input_cols
+            CONSTANTS["label_cols"] = label_cols
+            CONSTANTS["DATA_LENGTH"] = DATA_LENGTH
+            CONSTANTS["n_splits"] = n_splits
+            CONSTANTS["indices_location"] = indices_location
+            CONSTANTS["base_estimator_location"] = base_estimator_location
+            CONSTANTS["fit_and_score_kwargs_location"] = fit_and_score_kwargs_location
+
+            # (6) store the constants
+            local_constant_file_name = get_temp_file_path(prefix="constant")
+            with open(local_constant_file_name, mode="w+b") as local_indices_file_obj:
+                cp.dump(CONSTANTS, local_indices_file_obj)
+
+            # Put locally serialized indices on stage.
+            session.file.put(
+                local_constant_file_name,
+                temp_stage_name,
+                auto_compress=False,
+                overwrite=True,
+            )
+            constant_location = os.path.basename(local_constant_file_name)
+            imports.append(f"@{temp_stage_name}/{constant_location}")
+
             cross_validator_indices_length = int(len(cross_validator_indices))
             parameter_grid_length = len(param_grid)
 
             assert estimator is not None
 
-            @cachetools.cached(cache={})
-            def _load_data_into_udf() -> Tuple[
-                npt.NDArray[Any],
-                npt.NDArray[Any],
-                List[List[int]],
-                List[Dict[str, Any]],
-                object,
-                Dict[str, Any],
-            ]:
-                import pyarrow.parquet as pq
+            # Instantiate UDTFRegistration with the session object
+            udtf_registration = UDTFRegistration(session)
 
-                data_files = [
-                    filename
-                    for filename in os.listdir(sys._xoptions["snowflake_import_directory"])
-                    if filename.startswith(dataset_file_name)
-                ]
-                partial_df = [
-                    pq.read_table(os.path.join(sys._xoptions["snowflake_import_directory"], file_name)).to_pandas()
-                    for file_name in data_files
-                ]
-                df = pd.concat(partial_df, ignore_index=True)
-                df.columns = [identifier.get_inferred_name(col_) for col_ in df.columns]
+            import tempfile
 
-                # load parameter grid
-                local_estimator_file_path = os.path.join(
-                    sys._xoptions["snowflake_import_directory"], f"{estimator_location}"
+            with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False, encoding="utf-8") as f:
+                udf_code = execute_template
+                f.file.write(udf_code)
+                f.file.flush()
+
+                # Register the UDTF function from the file
+                udtf_registration.register_from_file(
+                    file_path=f.name,
+                    handler_name="SearchCV",
+                    name=random_udtf_name,
+                    output_schema=StructType(
+                        [StructField("FIRST_IDX", IntegerType()), StructField("EACH_CV_RESULTS", StringType())]
+                    ),
+                    input_types=[IntegerType(), IntegerType(), IntegerType()],
+                    replace=True,
+                    imports=imports,  # type: ignore[arg-type]
+                    is_permanent=False,
+                    packages=required_deps,  # type: ignore[arg-type]
+                    statement_params=udtf_statement_params,
                 )
-                with open(local_estimator_file_path, mode="rb") as local_estimator_file_obj:
-                    estimator_objects = cp.load(local_estimator_file_obj)
-                    params_to_evaluate = estimator_objects["param_grid"]
-
-                # load indices
-                local_indices_file_path = os.path.join(
-                    sys._xoptions["snowflake_import_directory"], f"{indices_location}"
-                )
-                with open(local_indices_file_path, mode="rb") as local_indices_file_obj:
-                    indices = cp.load(local_indices_file_obj)
-
-                # load base estimator
-                local_base_estimator_file_path = os.path.join(
-                    sys._xoptions["snowflake_import_directory"], f"{base_estimator_location}"
-                )
-                with open(local_base_estimator_file_path, mode="rb") as local_base_estimator_file_obj:
-                    base_estimator = cp.load(local_base_estimator_file_obj)
-
-                # load fit_and_score_kwargs
-                local_fit_and_score_kwargs_file_path = os.path.join(
-                    sys._xoptions["snowflake_import_directory"], f"{fit_and_score_kwargs_location}"
-                )
-                with open(local_fit_and_score_kwargs_file_path, mode="rb") as local_fit_and_score_kwargs_file_obj:
-                    fit_and_score_kwargs = cp.load(local_fit_and_score_kwargs_file_obj)
-
-                # convert dataframe to numpy would save memory consumption
-                return (
-                    df[input_cols].to_numpy(),
-                    df[label_cols].squeeze().to_numpy(),
-                    indices,
-                    params_to_evaluate,
-                    base_estimator,
-                    fit_and_score_kwargs,
-                )
-
-            # Note Table functions (UDTFs) have a limit of 500 input arguments and 500 output columns.
-            class SearchCV:
-                def __init__(self) -> None:
-                    X, y, indices, params_to_evaluate, base_estimator, fit_and_score_kwargs = _load_data_into_udf()
-                    self.X = X
-                    self.y = y
-                    self.test_indices = indices
-                    self.params_to_evaluate = params_to_evaluate
-                    self.base_estimator = base_estimator
-                    self.fit_and_score_kwargs = fit_and_score_kwargs
-                    self.fit_score_params: List[Any] = []
-                    self.cv_indices_set: Set[int] = set()
-
-                def process(self, idx: int, params_idx: int, cv_idx: int) -> None:
-                    self.fit_score_params.extend([[idx, params_idx, cv_idx]])
-                    self.cv_indices_set.add(cv_idx)
-
-                def end_partition(self) -> Iterator[Tuple[int, str]]:
-                    from sklearn.base import clone
-                    from sklearn.model_selection._validation import _fit_and_score
-                    from sklearn.utils.parallel import Parallel, delayed
-
-                    cached_train_test_indices = {}
-                    # Calculate the full index here to avoid duplicate calculation (which consumes a lot of memory)
-                    full_index = np.arange(DATA_LENGTH)
-                    for i in self.cv_indices_set:
-                        cached_train_test_indices[i] = [
-                            np.setdiff1d(full_index, self.test_indices[i]),
-                            self.test_indices[i],
-                        ]
-
-                    parallel = Parallel(n_jobs=_N_JOBS, pre_dispatch=_PRE_DISPATCH)
-
-                    out = parallel(
-                        delayed(_fit_and_score)(
-                            clone(self.base_estimator),
-                            self.X,
-                            self.y,
-                            train=cached_train_test_indices[split_idx][0],
-                            test=cached_train_test_indices[split_idx][1],
-                            parameters=self.params_to_evaluate[cand_idx],
-                            split_progress=(split_idx, n_splits),
-                            candidate_progress=(cand_idx, n_candidates),
-                            **self.fit_and_score_kwargs,  # load sample weight here
-                        )
-                        for _, cand_idx, split_idx in self.fit_score_params
-                    )
-
-                    binary_cv_results = None
-                    with io.BytesIO() as f:
-                        cp.dump(out, f)
-                        f.seek(0)
-                        binary_cv_results = f.getvalue().hex()
-                    yield (
-                        self.fit_score_params[0][0],
-                        binary_cv_results,
-                    )
-
-            session.udtf.register(
-                SearchCV,
-                output_schema=StructType(
-                    [StructField("FIRST_IDX", IntegerType()), StructField("EACH_CV_RESULTS", StringType())]
-                ),
-                input_types=[IntegerType(), IntegerType(), IntegerType()],
-                name=random_udtf_name,
-                packages=required_deps,  # type: ignore[arg-type]
-                replace=True,
-                is_permanent=False,
-                imports=imports,  # type: ignore[arg-type]
-                statement_params=udtf_statement_params,
-            )
 
             HP_TUNING = F.table_function(random_udtf_name)
 

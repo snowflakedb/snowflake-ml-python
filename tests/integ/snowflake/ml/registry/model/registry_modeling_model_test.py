@@ -3,7 +3,7 @@ import posixpath
 
 import numpy as np
 import yaml
-from absl.testing import absltest
+from absl.testing import absltest, parameterized
 from sklearn import datasets
 
 from snowflake.ml import dataset
@@ -17,8 +17,12 @@ from tests.integ.snowflake.ml.test_utils import test_env_utils
 
 
 class TestRegistryModelingModelInteg(registry_model_test_base.RegistryModelTestBase):
+    @parameterized.product(  # type: ignore[misc]
+        registry_test_fn=registry_model_test_base.RegistryModelTestBase.REGISTRY_TEST_FN_LIST,
+    )
     def test_snowml_model_deploy_snowml_sklearn(
         self,
+        registry_test_fn: str,
     ) -> None:
         iris_X = datasets.load_iris(as_frame=True).frame
         iris_X.columns = [s.replace(" (CM)", "").replace(" ", "") for s in iris_X.columns.str.upper()]
@@ -30,20 +34,24 @@ class TestRegistryModelingModelInteg(registry_model_test_base.RegistryModelTestB
         test_features = iris_X
         regr.fit(test_features)
 
-        self._test_registry_model(
+        getattr(self, registry_test_fn)(
             model=regr,
             prediction_assert_fns={
                 "predict": (
                     test_features,
-                    lambda res: lambda res: np.testing.assert_allclose(
+                    lambda res: np.testing.assert_allclose(
                         res[OUTPUT_COLUMNS].values, regr.predict(test_features)[OUTPUT_COLUMNS].values
                     ),
                 ),
             },
         )
 
+    @parameterized.product(  # type: ignore[misc]
+        registry_test_fn=registry_model_test_base.RegistryModelTestBase.REGISTRY_TEST_FN_LIST,
+    )
     def test_snowml_model_deploy_xgboost(
         self,
+        registry_test_fn: str,
     ) -> None:
         iris_X = datasets.load_iris(as_frame=True).frame
         iris_X.columns = [s.replace(" (CM)", "").replace(" ", "") for s in iris_X.columns.str.upper()]
@@ -55,7 +63,7 @@ class TestRegistryModelingModelInteg(registry_model_test_base.RegistryModelTestB
         test_features = iris_X[:10]
         regr.fit(test_features)
 
-        self._test_registry_model(
+        getattr(self, registry_test_fn)(
             model=regr,
             prediction_assert_fns={
                 "predict": (
@@ -67,8 +75,12 @@ class TestRegistryModelingModelInteg(registry_model_test_base.RegistryModelTestB
             },
         )
 
+    @parameterized.product(  # type: ignore[misc]
+        registry_test_fn=registry_model_test_base.RegistryModelTestBase.REGISTRY_TEST_FN_LIST,
+    )
     def test_snowml_model_deploy_lightgbm(
         self,
+        registry_test_fn: str,
     ) -> None:
         iris_X = datasets.load_iris(as_frame=True).frame
         iris_X.columns = [s.replace(" (CM)", "").replace(" ", "") for s in iris_X.columns.str.upper()]
@@ -80,7 +92,7 @@ class TestRegistryModelingModelInteg(registry_model_test_base.RegistryModelTestB
         test_features = iris_X[:10]
         regr.fit(test_features)
 
-        self._test_registry_model(
+        getattr(self, registry_test_fn)(
             model=regr,
             prediction_assert_fns={
                 "predict": (
@@ -92,7 +104,13 @@ class TestRegistryModelingModelInteg(registry_model_test_base.RegistryModelTestB
             },
         )
 
-    def test_dataset_to_model_lineage(self) -> None:
+    @parameterized.product(  # type: ignore[misc]
+        registry_test_fn=registry_model_test_base.RegistryModelTestBase.REGISTRY_TEST_FN_LIST,
+    )
+    def test_dataset_to_model_lineage(
+        self,
+        registry_test_fn: str,
+    ) -> None:
         iris_X = datasets.load_iris(as_frame=True).frame
         iris_X.columns = [s.replace(" (CM)", "").replace(" ", "") for s in iris_X.columns.str.upper()]
 
@@ -108,33 +126,64 @@ class TestRegistryModelingModelInteg(registry_model_test_base.RegistryModelTestB
             T.StructField("TARGET", T.StringType()),
             T.StructField("PREDICTED_TARGET", T.StringType()),
         ]
-        test_features_df = self._session.create_dataframe(iris_X, schema=schema)
+        test_features_df = self.session.create_dataframe(iris_X, schema=schema)
 
         test_features_dataset = dataset.create_from_dataframe(
-            session=self._session,
+            session=self.session,
             name="trainDataset",
             version="v1",
             input_dataframe=test_features_df,
         )
 
+        # Case 1 : Capture Lineage via fit() API of MANIFEST.yml file
         test_df = test_features_dataset.read.to_snowpark_dataframe()
 
         regr.fit(test_df)
+        self._check_lineage_in_manifest_file(regr, test_features_dataset)
 
-        # Case 1 : test generation of MANIFEST.yml file
+        # Case 2 : test remaining life cycle.
+        getattr(self, registry_test_fn)(
+            model=regr,
+            prediction_assert_fns={
+                "predict": (
+                    iris_X,
+                    lambda res: np.testing.assert_allclose(
+                        res[OUTPUT_COLUMNS].values, regr.predict(iris_X)[OUTPUT_COLUMNS].values
+                    ),
+                ),
+            },
+            additional_dependencies=["fsspec", "aiohttp", "cryptography"],
+        )
 
+        # Case 3 : Capture Lineage via sample_input of log_model of MANIFEST.yml file
+        pandas_df = test_features_dataset.read.to_pandas()
+
+        regr.fit(pandas_df)
+        self._check_lineage_in_manifest_file(
+            regr, test_features_dataset, sample_input_data=test_features_dataset.read.to_snowpark_dataframe()
+        )
+
+        # Case 4 : Dont capture lineage of if its not passed via with fit() API or sample_input
+        pandas_df = test_features_dataset.read.to_pandas()
+
+        regr.fit(pandas_df)
+        self._check_lineage_in_manifest_file(
+            regr, test_features_dataset, sample_input_data=pandas_df, lineage_should_exist=False
+        )
+
+    def _check_lineage_in_manifest_file(self, model, dataset, sample_input_data=None, lineage_should_exist=True):
         model_name = "some_name"
-        tmp_stage_path = posixpath.join(self._session.get_session_stage(), f"{model_name}_{1}")
+        tmp_stage_path = posixpath.join(self.session.get_session_stage(), f"{model_name}_{1}")
         conda_dependencies = [
-            test_env_utils.get_latest_package_version_spec_in_server(self._session, "snowflake-snowpark-python!=1.12.0")
+            test_env_utils.get_latest_package_version_spec_in_server(self.session, "snowflake-snowpark-python!=1.12.0")
         ]
-        mc = model_composer.ModelComposer(self._session, stage_path=tmp_stage_path)
+        mc = model_composer.ModelComposer(self.session, stage_path=tmp_stage_path)
 
         mc.save(
             name=model_name,
-            model=regr,
+            model=model,
             signatures=None,
-            sample_input_data=None,
+            sample_input_data=sample_input_data,
             conda_dependencies=conda_dependencies,
             metadata={"author": "rsureshbabu", "version": "1"},
             options={"relax_version": False},
@@ -142,29 +191,18 @@ class TestRegistryModelingModelInteg(registry_model_test_base.RegistryModelTestB
 
         with open(os.path.join(tmp_stage_path, mc._workspace.name, "MANIFEST.yml"), encoding="utf-8") as f:
             yaml_content = yaml.safe_load(f)
-            assert "lineage_sources" in yaml_content
-            assert isinstance(yaml_content["lineage_sources"], list)
-            assert len(yaml_content["lineage_sources"]) == 1
+            if lineage_should_exist:
+                assert "lineage_sources" in yaml_content
+                assert isinstance(yaml_content["lineage_sources"], list)
+                assert len(yaml_content["lineage_sources"]) == 1
 
-            source = yaml_content["lineage_sources"][0]
-            assert isinstance(source, dict)
-            assert source.get("type") == "DATASET"
-            assert source.get("entity") == f"{test_features_dataset.fully_qualified_name}"
-            assert source.get("version") == f"{test_features_dataset._version.name}"
-
-        # Case 2 : test remaining life cycle.
-        self._test_registry_model(
-            model=regr,
-            prediction_assert_fns={
-                "predict": (
-                    iris_X,
-                    lambda res: lambda res: np.testing.assert_allclose(
-                        res[OUTPUT_COLUMNS].values, regr.predict(iris_X)[OUTPUT_COLUMNS].values
-                    ),
-                ),
-            },
-            additional_dependencies=["fsspec", "aiohttp", "cryptography"],
-        )
+                source = yaml_content["lineage_sources"][0]
+                assert isinstance(source, dict)
+                assert source.get("type") == "DATASET"
+                assert source.get("entity") == f"{dataset.fully_qualified_name}"
+                assert source.get("version") == f"{dataset._version.name}"
+            else:
+                assert "lineage_sources" not in yaml_content
 
 
 if __name__ == "__main__":

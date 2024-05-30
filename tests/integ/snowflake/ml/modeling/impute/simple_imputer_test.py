@@ -3,12 +3,12 @@ import os
 import pickle
 import sys
 import tempfile
-from typing import List
-from unittest import TestCase
+from typing import Any, Dict, List
 
 import cloudpickle
 import joblib
 import numpy as np
+from absl.testing import parameterized
 from absl.testing.absltest import main
 from sklearn.impute import SimpleImputer as SklearnSimpleImputer
 
@@ -29,13 +29,14 @@ from tests.integ.snowflake.ml.modeling.framework.utils import (
 )
 
 
-class SimpleImputerTest(TestCase):
+class SimpleImputerTest(parameterized.TestCase):
     """Test SimpleImputer."""
 
     def setUp(self) -> None:
         """Creates Snowpark and Snowflake environments for testing."""
         self._session = Session.builder.configs(SnowflakeLoginOptions()).create()
         self._to_be_deleted_files: List[str] = []
+        self._retrieve_dataset()
 
     def tearDown(self) -> None:
         self._session.close()
@@ -61,7 +62,15 @@ class SimpleImputerTest(TestCase):
             with self.assertRaisesRegex(TypeError, "Inconsistent input column types."):
                 simple_imputer.fit(df)
 
-    def test_fit(self) -> None:
+    def _retrieve_dataset(self) -> None:
+        df_pandas, df = framework_utils.get_df(self._session, DATA, SCHEMA)
+        self._dataset = {"pandas_dataframe": df_pandas, "snowpark_dataframe": df}
+
+    def _convert_statistics_numpy_array(self, arr: Dict[str, Any]) -> np.typing.NDArray:
+        return np.array(list(arr.values()))
+
+    @parameterized.product(dataset_type=["pandas_dataframe", "snowpark_dataframe"])  # type: ignore[misc]
+    def test_fit(self, dataset_type) -> None:
         """
         Verify fitted categories.
 
@@ -72,19 +81,19 @@ class SimpleImputerTest(TestCase):
         """
         input_cols = NUMERIC_COLS
         output_cols = OUTPUT_COLS
-        df_pandas, df = framework_utils.get_df(self._session, DATA, SCHEMA)
 
         simple_imputer = SimpleImputer(input_cols=input_cols, output_cols=output_cols)
-        simple_imputer.fit(df)
+        simple_imputer.fit(self._dataset[dataset_type])
 
         simple_imputer_sklearn = SklearnSimpleImputer()
-        simple_imputer_sklearn.fit(df_pandas[input_cols])
+        simple_imputer_sklearn.fit(self._dataset["pandas_dataframe"][input_cols])
 
-        statistics_numpy = np.array(list(simple_imputer.statistics_.values()))
+        statistics_numpy = self._convert_statistics_numpy_array(simple_imputer.statistics_)
 
         np.testing.assert_equal(statistics_numpy, simple_imputer_sklearn.statistics_)
 
-    def test_fit_constant(self) -> None:
+    @parameterized.product(dataset_type=["pandas_dataframe", "snowpark_dataframe"])  # type: ignore[misc]
+    def test_fit_constant(self, dataset_type) -> None:
         """
         Verify constant fit statistics.
 
@@ -96,21 +105,21 @@ class SimpleImputerTest(TestCase):
         input_cols = NUMERIC_COLS
         output_cols = OUTPUT_COLS
         fill_value = 2
-        df_pandas, df = framework_utils.get_df(self._session, DATA, SCHEMA)
 
         simple_imputer = SimpleImputer(
             input_cols=input_cols, output_cols=output_cols, strategy="constant", fill_value=fill_value
         )
-        simple_imputer.fit(df)
+        simple_imputer.fit(self._dataset[dataset_type])
 
         simple_imputer_sklearn = SklearnSimpleImputer(strategy="constant", fill_value=fill_value)
-        simple_imputer_sklearn.fit(df_pandas[input_cols])
+        simple_imputer_sklearn.fit(self._dataset["pandas_dataframe"][input_cols])
 
-        statistics_numpy = np.array(list(simple_imputer.statistics_.values()))
+        statistics_numpy = self._convert_statistics_numpy_array(simple_imputer.statistics_)
 
         np.testing.assert_equal(statistics_numpy, simple_imputer_sklearn.statistics_)
 
-    def test_fit_constant_no_fill_numeric(self) -> None:
+    @parameterized.product(dataset_type=["pandas_dataframe", "snowpark_dataframe"])  # type: ignore[misc]
+    def test_fit_constant_no_fill_numeric(self, dataset_type) -> None:
         """
         Verify constant fit statistics with no fill value specified.
 
@@ -121,19 +130,42 @@ class SimpleImputerTest(TestCase):
         """
         input_cols = NUMERIC_COLS
         output_cols = OUTPUT_COLS
-        df_pandas, df = framework_utils.get_df(self._session, DATA, SCHEMA)
 
         simple_imputer = SimpleImputer(input_cols=input_cols, output_cols=output_cols, strategy="constant")
-        simple_imputer.fit(df)
+        simple_imputer.fit(self._dataset[dataset_type])
 
         simple_imputer_sklearn = SklearnSimpleImputer(strategy="constant")
-        simple_imputer_sklearn.fit(df_pandas[input_cols])
+        simple_imputer_sklearn.fit(self._dataset["pandas_dataframe"][input_cols])
 
-        statistics_numpy = np.array(list(simple_imputer.statistics_.values()))
+        statistics_numpy = self._convert_statistics_numpy_array(simple_imputer.statistics_)
 
         np.testing.assert_equal(statistics_numpy, simple_imputer_sklearn.statistics_)
 
-    def test_fit_all_missing(self) -> None:
+    @parameterized.product(dataset_type=["pandas_dataframe", "snowpark_dataframe"])  # type: ignore[misc]
+    def test_fit_constant_no_fill_numeric_pd_dataframe(self, dataset_type) -> None:
+        """
+        Verify constant fit statistics with no fill value specified.
+
+        Raises
+        ------
+        AssertionError
+            If the fit result differs from the one generated by Sklearn.
+        """
+        input_cols = NUMERIC_COLS
+        output_cols = OUTPUT_COLS
+
+        simple_imputer = SimpleImputer(input_cols=input_cols, output_cols=output_cols, strategy="constant")
+        simple_imputer.fit(self._dataset[dataset_type])
+
+        simple_imputer_sklearn = SklearnSimpleImputer(strategy="constant")
+        simple_imputer_sklearn.fit(self._dataset["pandas_dataframe"][input_cols])
+
+        statistics_numpy = self._convert_statistics_numpy_array(simple_imputer.statistics_)
+
+        np.testing.assert_equal(statistics_numpy, simple_imputer_sklearn.statistics_)
+
+    @parameterized.product(dataset_type=["pandas_dataframe", "snowpark_dataframe"])  # type: ignore[misc]
+    def test_fit_all_missing(self, dataset_type) -> None:
         """
         Verify fit statistics when the data is missing.
 
@@ -144,19 +176,19 @@ class SimpleImputerTest(TestCase):
         """
         input_cols = NUMERIC_COLS
         output_cols = OUTPUT_COLS
-        df_pandas, df = framework_utils.get_df(self._session, DATA_ALL_NONE, SCHEMA)
 
         simple_imputer = SimpleImputer(input_cols=input_cols, output_cols=output_cols)
-        simple_imputer.fit(df)
+        simple_imputer.fit(self._dataset[dataset_type])
 
         simple_imputer_sklearn = SklearnSimpleImputer()
-        simple_imputer_sklearn.fit(df_pandas[input_cols])
+        simple_imputer_sklearn.fit(self._dataset["pandas_dataframe"][input_cols])
 
-        statistics_numpy = np.array(list(simple_imputer.statistics_.values()))
+        statistics_numpy = self._convert_statistics_numpy_array(simple_imputer.statistics_)
 
         np.testing.assert_allclose(statistics_numpy, simple_imputer_sklearn.statistics_, equal_nan=True)
 
-    def test_fit_all_missing_constant(self) -> None:
+    @parameterized.product(dataset_type=["pandas_dataframe", "snowpark_dataframe"])  # type: ignore[misc]
+    def test_fit_all_missing_constant(self, dataset_type) -> None:
         """
         Verify constant fill value when data is missing.
 
@@ -168,20 +200,22 @@ class SimpleImputerTest(TestCase):
         input_cols = NUMERIC_COLS
         output_cols = OUTPUT_COLS
         df_pandas, df = framework_utils.get_df(self._session, DATA_ALL_NONE, SCHEMA)
+        _dataset = {"snowpark_dataframe": df, "pandas_dataframe": df_pandas}
 
         fill_value = "foo"
         simple_imputer = SimpleImputer(
             input_cols=input_cols, output_cols=output_cols, strategy="constant", fill_value=fill_value
         )
-        simple_imputer.fit(df)
+        simple_imputer.fit(_dataset[dataset_type])
 
         simple_imputer_sklearn = SklearnSimpleImputer(strategy="constant", fill_value=fill_value)
         simple_imputer_sklearn.fit(df_pandas[input_cols])
-        statistics_numpy = np.array(list(simple_imputer.statistics_.values()))
+        statistics_numpy = self._convert_statistics_numpy_array(simple_imputer.statistics_)
 
         np.testing.assert_equal(statistics_numpy, simple_imputer_sklearn.statistics_)
 
-    def test_fit_all_missing_categorial_keep_empty_features_false(self) -> None:
+    @parameterized.product(dataset_type=["pandas_dataframe", "snowpark_dataframe"])  # type: ignore[misc]
+    def test_fit_all_missing_categorial_keep_empty_features_false(self, dataset_type) -> None:
         """
         Verify fit statistics when the data is missing.
 
@@ -193,20 +227,22 @@ class SimpleImputerTest(TestCase):
         input_cols = CATEGORICAL_COLS
         output_cols = OUTPUT_COLS
         df_pandas, df = framework_utils.get_df(self._session, DATA_ALL_NONE, SCHEMA)
+        _dataset = {"snowpark_dataframe": df, "pandas_dataframe": df_pandas}
 
         # TODO(hayu): [SNOW-752265] Support SimpleImputer keep_empty_features.
         #  Add back `keep_empty_features=False` when supported.
         simple_imputer = SimpleImputer(input_cols=input_cols, output_cols=output_cols)
-        simple_imputer.fit(df)
+        simple_imputer.fit(_dataset[dataset_type])
 
         simple_imputer_sklearn = SklearnSimpleImputer()
         simple_imputer_sklearn.fit(df_pandas[input_cols])
 
-        statistics_numpy = np.array(list(simple_imputer.statistics_.values()))
+        statistics_numpy = self._convert_statistics_numpy_array(simple_imputer.statistics_)
 
         np.testing.assert_allclose(statistics_numpy, simple_imputer_sklearn.statistics_, equal_nan=True)
 
-    def test_fit_all_missing_keep_missing_false(self) -> None:
+    @parameterized.product(dataset_type=["pandas_dataframe", "snowpark_dataframe"])  # type: ignore[misc]
+    def test_fit_all_missing_keep_missing_false(self, dataset_type) -> None:
         """
         Verify fit statistics when the data is missing.
 
@@ -218,16 +254,17 @@ class SimpleImputerTest(TestCase):
         input_cols = NUMERIC_COLS
         output_cols = OUTPUT_COLS
         df_pandas, df = framework_utils.get_df(self._session, DATA_ALL_NONE, SCHEMA)
+        _dataset = {"snowpark_dataframe": df, "pandas_dataframe": df_pandas}
 
         # TODO(hayu): [SNOW-752265] Support SimpleImputer keep_empty_features.
         #  Add back `keep_empty_features=False` when supported.
         simple_imputer = SimpleImputer(input_cols=input_cols, output_cols=output_cols)
-        simple_imputer.fit(df)
+        simple_imputer.fit(_dataset[dataset_type])
 
         simple_imputer_sklearn = SklearnSimpleImputer()
         simple_imputer_sklearn.fit(df_pandas[input_cols])
 
-        statistics_numpy = np.array(list(simple_imputer.statistics_.values()))
+        statistics_numpy = self._convert_statistics_numpy_array(simple_imputer.statistics_)
 
         np.testing.assert_allclose(statistics_numpy, simple_imputer_sklearn.statistics_, equal_nan=True)
 
@@ -251,7 +288,11 @@ class SimpleImputerTest(TestCase):
         with self.assertRaises(AttributeError):
             simple_imputer.statistics_
 
-    def test_transform_snowpark(self) -> None:
+    @parameterized.product(
+        fit_dataset_type=["pandas_dataframe", "snowpark_dataframe"],
+        predict_dataset_type=["pandas_dataframe", "snowpark_dataframe"],
+    )  # type: ignore[misc]
+    def test_transform_snowpark(self, fit_dataset_type, predict_dataset_type) -> None:
         """
         Verify the transformed results for an imputation of mean values in numeric columns.
 
@@ -263,20 +304,33 @@ class SimpleImputerTest(TestCase):
         input_cols = NUMERIC_COLS
         output_cols = OUTPUT_COLS
         df_pandas, df = framework_utils.get_df(self._session, DATA, SCHEMA)
+        _fit_dataset = {"snowpark_dataframe": df, "pandas_dataframe": df_pandas}
 
         simple_imputer = SimpleImputer(input_cols=input_cols, output_cols=output_cols)
-        simple_imputer.fit(df)
+        simple_imputer.fit(_fit_dataset[fit_dataset_type])
 
         df_none_nan_pandas, df_none_nan = framework_utils.get_df(self._session, DATA_NONE_NAN, SCHEMA)
-        transformed_df = simple_imputer.transform(df_none_nan)
+        _predict_dataset = {"snowpark_dataframe": df_none_nan, "pandas_dataframe": df_none_nan_pandas}
+        transformed_df = simple_imputer.transform(_predict_dataset[predict_dataset_type])
 
         sklearn_simple_imputer = SklearnSimpleImputer()
         sklearn_simple_imputer.fit(df_pandas[input_cols])
         sklearn_transformed_dataset = sklearn_simple_imputer.transform(df_none_nan_pandas[input_cols])
 
-        np.testing.assert_allclose(transformed_df[output_cols].to_pandas().to_numpy(), sklearn_transformed_dataset)
+        transformed_dataset = (
+            transformed_df[output_cols].to_pandas().to_numpy()
+            if predict_dataset_type == "snowpark_dataframe"
+            else transformed_df[output_cols]
+        )
+        np.testing.assert_allclose(transformed_dataset, sklearn_transformed_dataset)
 
-    def test_transform_snowpark_output_columns_same_as_input_columns(self) -> None:
+    @parameterized.product(
+        fit_dataset_type=["pandas_dataframe", "snowpark_dataframe"],
+        predict_dataset_type=["pandas_dataframe", "snowpark_dataframe"],
+    )  # type: ignore[misc]
+    def test_transform_snowpark_output_columns_same_as_input_columns(
+        self, fit_dataset_type, predict_dataset_type
+    ) -> None:
         """
         Verify the transformed results for an imputation of mean values in numeric columns.
 
@@ -288,20 +342,34 @@ class SimpleImputerTest(TestCase):
         input_cols = NUMERIC_COLS
         output_cols = input_cols
         df_pandas, df = framework_utils.get_df(self._session, DATA, SCHEMA)
+        _fit_dataset = {"snowpark_dataframe": df, "pandas_dataframe": df_pandas}
 
         simple_imputer = SimpleImputer(input_cols=input_cols, output_cols=output_cols)
-        simple_imputer.fit(df)
+        simple_imputer.fit(_fit_dataset[fit_dataset_type])
 
         df_none_nan_pandas, df_none_nan = framework_utils.get_df(self._session, DATA_NONE_NAN, SCHEMA)
-        transformed_df = simple_imputer.transform(df_none_nan)
+        _predict_dataset = {"snowpark_dataframe": df_none_nan, "pandas_dataframe": df_none_nan_pandas}
+        transformed_df = simple_imputer.transform(_predict_dataset[predict_dataset_type])
 
         sklearn_simple_imputer = SklearnSimpleImputer()
         sklearn_simple_imputer.fit(df_pandas[input_cols])
         sklearn_transformed_dataset = sklearn_simple_imputer.transform(df_none_nan_pandas[input_cols])
 
-        np.testing.assert_allclose(transformed_df[output_cols].to_pandas().to_numpy(), sklearn_transformed_dataset)
+        transformed_dataset = (
+            transformed_df[output_cols].to_pandas().to_numpy()
+            if predict_dataset_type == "snowpark_dataframe"
+            else transformed_df[output_cols]
+        )
 
-    def test_transform_snowpark_output_columns_one_equal_to_input_column(self) -> None:
+        np.testing.assert_allclose(transformed_dataset, sklearn_transformed_dataset)
+
+    @parameterized.product(
+        fit_dataset_type=["pandas_dataframe", "snowpark_dataframe"],
+        predict_dataset_type=["pandas_dataframe", "snowpark_dataframe"],
+    )  # type: ignore[misc]
+    def test_transform_snowpark_output_columns_one_equal_to_input_column(
+        self, fit_dataset_type, predict_dataset_type
+    ) -> None:
         """
         Verify the transformed results for an imputation of mean values in numeric columns.
 
@@ -313,20 +381,32 @@ class SimpleImputerTest(TestCase):
         input_cols = NUMERIC_COLS
         output_cols = [NUMERIC_COLS[0], OUTPUT_COLS[0]]
         df_pandas, df = framework_utils.get_df(self._session, DATA, SCHEMA)
+        _fit_dataset = {"snowpark_dataframe": df, "pandas_dataframe": df_pandas}
 
         simple_imputer = SimpleImputer(input_cols=input_cols, output_cols=output_cols)
-        simple_imputer.fit(df)
+        simple_imputer.fit(_fit_dataset[fit_dataset_type])
 
         df_none_nan_pandas, df_none_nan = framework_utils.get_df(self._session, DATA_NONE_NAN, SCHEMA)
-        transformed_df = simple_imputer.transform(df_none_nan)
+        _predict_dataset = {"snowpark_dataframe": df_none_nan, "pandas_dataframe": df_none_nan_pandas}
+        transformed_df = simple_imputer.transform(_predict_dataset[predict_dataset_type])
 
         sklearn_simple_imputer = SklearnSimpleImputer()
         sklearn_simple_imputer.fit(df_pandas[input_cols])
         sklearn_transformed_dataset = sklearn_simple_imputer.transform(df_none_nan_pandas[input_cols])
 
-        np.testing.assert_allclose(transformed_df[output_cols].to_pandas().to_numpy(), sklearn_transformed_dataset)
+        transformed_dataset = (
+            transformed_df[output_cols].to_pandas().to_numpy()
+            if predict_dataset_type == "snowpark_dataframe"
+            else transformed_df[output_cols]
+        )
 
-    def test_transform_snowpark_missing_values_not_nan(self) -> None:
+        np.testing.assert_allclose(transformed_dataset, sklearn_transformed_dataset)
+
+    @parameterized.product(
+        fit_dataset_type=["pandas_dataframe", "snowpark_dataframe"],
+        predict_dataset_type=["pandas_dataframe", "snowpark_dataframe"],
+    )  # type: ignore[misc]
+    def test_transform_snowpark_missing_values_not_nan(self, fit_dataset_type, predict_dataset_type) -> None:
         """
         Verify imputed data when the missing value specified is not None or nan.
 
@@ -338,22 +418,35 @@ class SimpleImputerTest(TestCase):
         input_cols = NUMERIC_COLS
         output_cols = OUTPUT_COLS
         df_pandas, df = framework_utils.get_df(self._session, DATA, SCHEMA)
+        _fit_dataset = {"snowpark_dataframe": df, "pandas_dataframe": df_pandas}
 
         for strategy in ["mean", "median", "most_frequent", "constant"]:
             simple_imputer = SimpleImputer(
                 strategy=strategy, input_cols=input_cols, output_cols=output_cols, missing_values=-1.0
             )
-            simple_imputer.fit(df)
+            simple_imputer.fit(_fit_dataset[fit_dataset_type])
 
-            transformed_df = simple_imputer.transform(df)
+            transformed_df = simple_imputer.transform(_fit_dataset[predict_dataset_type])
 
             sklearn_simple_imputer = SklearnSimpleImputer(strategy=strategy, missing_values=-1.0)
             sklearn_simple_imputer.fit(df_pandas[input_cols])
             sklearn_transformed_dataset = sklearn_simple_imputer.transform(df_pandas[input_cols])
 
-            np.testing.assert_allclose(transformed_df[output_cols].to_pandas().to_numpy(), sklearn_transformed_dataset)
+            transformed_dataset = (
+                transformed_df[output_cols].to_pandas().to_numpy()
+                if predict_dataset_type == "snowpark_dataframe"
+                else transformed_df[output_cols]
+            )
 
-    def test_transform_snowpark_most_frequent_strategy_categorical(self) -> None:
+            np.testing.assert_allclose(transformed_dataset, sklearn_transformed_dataset)
+
+    @parameterized.product(
+        fit_dataset_type=["pandas_dataframe", "snowpark_dataframe"],
+        predict_dataset_type=["pandas_dataframe", "snowpark_dataframe"],
+    )  # type: ignore[misc]
+    def test_transform_snowpark_most_frequent_strategy_categorical(
+        self, fit_dataset_type, predict_dataset_type
+    ) -> None:
         """
         Verify imputed data for categorical columns.
 
@@ -365,20 +458,28 @@ class SimpleImputerTest(TestCase):
         input_cols = CATEGORICAL_COLS
         output_cols = OUTPUT_COLS
         df_pandas, df = framework_utils.get_df(self._session, DATA, SCHEMA)
+        _fit_dataset = {"snowpark_dataframe": df, "pandas_dataframe": df_pandas}
 
         simple_imputer = SimpleImputer(
             input_cols=input_cols, output_cols=output_cols, missing_values=None, strategy="most_frequent"
         )
-        simple_imputer.fit(df)
+        simple_imputer.fit(_fit_dataset[fit_dataset_type])
 
         df_none_nan_pandas, df_none_nan = framework_utils.get_df(self._session, DATA_NONE_NAN, SCHEMA)
-        transformed_df = simple_imputer.transform(df_none_nan)
+        _predict_dataset = {"snowpark_dataframe": df_none_nan, "pandas_dataframe": df_none_nan_pandas}
+        transformed_df = simple_imputer.transform(_predict_dataset[predict_dataset_type])
 
         sklearn_simple_imputer = SklearnSimpleImputer(missing_values=None, strategy="most_frequent")
         sklearn_simple_imputer.fit(df_pandas[input_cols])
         sklearn_transformed_dataset = sklearn_simple_imputer.transform(df_none_nan_pandas[input_cols])
 
-        np.testing.assert_equal(transformed_df[output_cols].to_pandas().to_numpy(), sklearn_transformed_dataset)
+        transformed_dataset = (
+            transformed_df[output_cols].to_pandas().to_numpy()
+            if predict_dataset_type == "snowpark_dataframe"
+            else transformed_df[output_cols]
+        )
+
+        np.testing.assert_equal(transformed_dataset, sklearn_transformed_dataset)
 
     def test_transform_snowpark_most_frequent_strategy_categorical_mixed_types(self) -> None:
         """
@@ -405,7 +506,11 @@ class SimpleImputerTest(TestCase):
 
         np.testing.assert_equal(transformed_df[output_cols].to_pandas().to_numpy(), sklearn_transformed_dataset)
 
-    def test_transform_snowpark_most_frequent_strategy_numeric(self) -> None:
+    @parameterized.product(
+        fit_dataset_type=["pandas_dataframe", "snowpark_dataframe"],
+        predict_dataset_type=["pandas_dataframe", "snowpark_dataframe"],
+    )  # type: ignore[misc]
+    def test_transform_snowpark_most_frequent_strategy_numeric(self, fit_dataset_type, predict_dataset_type) -> None:
         """
         Verify imputed data for "most frequent" strategy and numerical data.
 
@@ -417,18 +522,26 @@ class SimpleImputerTest(TestCase):
         input_cols = NUMERIC_COLS
         output_cols = OUTPUT_COLS
         df_pandas, df = framework_utils.get_df(self._session, DATA, SCHEMA)
+        _fit_dataset = {"snowpark_dataframe": df, "pandas_dataframe": df_pandas}
 
         simple_imputer = SimpleImputer(input_cols=input_cols, output_cols=output_cols, strategy="most_frequent")
-        simple_imputer.fit(df)
+        simple_imputer.fit(_fit_dataset[fit_dataset_type])
 
         df_none_nan_pandas, df_none_nan = framework_utils.get_df(self._session, DATA_NONE_NAN, SCHEMA)
-        transformed_df = simple_imputer.transform(df_none_nan)
+        _predict_dataset = {"snowpark_dataframe": df_none_nan, "pandas_dataframe": df_none_nan_pandas}
+        transformed_df = simple_imputer.transform(_predict_dataset[predict_dataset_type])
 
         simple_imputer_sklearn = SklearnSimpleImputer(strategy="most_frequent")
         simple_imputer_sklearn.fit(df_pandas[input_cols])
         sklearn_transformed_dataset = simple_imputer_sklearn.transform(df_none_nan_pandas[input_cols])
 
-        np.testing.assert_allclose(transformed_df[output_cols].to_pandas().to_numpy(), sklearn_transformed_dataset)
+        transformed_dataset = (
+            transformed_df[output_cols].to_pandas().to_numpy()
+            if predict_dataset_type == "snowpark_dataframe"
+            else transformed_df[output_cols]
+        )
+
+        np.testing.assert_allclose(transformed_dataset, sklearn_transformed_dataset)
 
     def test_transform_sklearn(self) -> None:
         """

@@ -525,6 +525,30 @@ class ModelManagerTest(absltest.TestCase):
                 statement_params=mock.ANY,
             )
 
+    def test_log_model_from_model_version(self) -> None:
+        m_model_version = mock.MagicMock(spec=model_version_impl.ModelVersion)
+        m_model_version.fully_qualified_model_name = 'TEMP."test".SOURCE_MODEL'
+        m_model_version.version_name = "SOURCE_VERSION"
+        with mock.patch.object(
+            self.m_r._model_ops, "create_from_model_version"
+        ) as mock_create_from_model_version, mock.patch.object(self.m_r, "get_model") as mock_get_model:
+            self.m_r.log_model(model=m_model_version, model_name="MODEL", version_name="V1")
+            mock_create_from_model_version.assert_called_once_with(
+                source_database_name=sql_identifier.SqlIdentifier("TEMP"),
+                source_schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
+                source_model_name=sql_identifier.SqlIdentifier("SOURCE_MODEL"),
+                source_version_name=sql_identifier.SqlIdentifier("SOURCE_VERSION"),
+                database_name=None,
+                schema_name=None,
+                model_name=sql_identifier.SqlIdentifier("MODEL"),
+                version_name=sql_identifier.SqlIdentifier("V1"),
+                statement_params=mock.ANY,
+            )
+            mock_get_model.assert_called_once_with(
+                model_name=sql_identifier.SqlIdentifier("MODEL"),
+                statement_params=mock.ANY,
+            )
+
     def test_delete_model(self) -> None:
         with mock.patch.object(self.m_r._model_ops, "delete_model_or_version") as mock_delete_model_or_version:
             self.m_r.delete_model(

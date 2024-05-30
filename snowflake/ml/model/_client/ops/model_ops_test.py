@@ -565,6 +565,62 @@ class ModelOpsTest(absltest.TestCase):
             mock_create_from_stage.assert_not_called()
             mock_add_version_from_stagel.assert_not_called()
 
+    def test_create_from_model_version_create(self) -> None:
+        with mock.patch.object(
+            self.m_ops._model_version_client, "create_from_model_version"
+        ) as mock_create_from_model_version, mock.patch.object(self.m_ops, "validate_existence", return_value=False):
+            self.m_ops.create_from_model_version(
+                source_database_name=sql_identifier.SqlIdentifier("TEMP"),
+                source_schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
+                source_model_name=sql_identifier.SqlIdentifier("SOURCE_MODEL"),
+                source_version_name=sql_identifier.SqlIdentifier("SOURCE_VERSION"),
+                database_name=None,
+                schema_name=None,
+                model_name=sql_identifier.SqlIdentifier("MODEL"),
+                version_name=sql_identifier.SqlIdentifier("V1"),
+                statement_params=self.m_statement_params,
+            )
+            mock_create_from_model_version.assert_called_once_with(
+                source_database_name=sql_identifier.SqlIdentifier("TEMP"),
+                source_schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
+                source_model_name=sql_identifier.SqlIdentifier("SOURCE_MODEL"),
+                source_version_name=sql_identifier.SqlIdentifier("SOURCE_VERSION"),
+                database_name=None,
+                schema_name=None,
+                model_name=sql_identifier.SqlIdentifier("MODEL"),
+                version_name=sql_identifier.SqlIdentifier("V1"),
+                statement_params=self.m_statement_params,
+            )
+
+    def test_create_from_model_version_add(self) -> None:
+        with mock.patch.object(
+            self.m_ops._model_version_client, "add_version_from_model_version"
+        ) as mock_add_version_from_model_version, mock.patch.object(
+            self.m_ops, "validate_existence", return_value=True
+        ):
+            self.m_ops.create_from_model_version(
+                source_database_name=sql_identifier.SqlIdentifier("TEMP"),
+                source_schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
+                source_model_name=sql_identifier.SqlIdentifier("SOURCE_MODEL"),
+                source_version_name=sql_identifier.SqlIdentifier("SOURCE_VERSION"),
+                database_name=None,
+                schema_name=None,
+                model_name=sql_identifier.SqlIdentifier("MODEL"),
+                version_name=sql_identifier.SqlIdentifier("V1"),
+                statement_params=self.m_statement_params,
+            )
+            mock_add_version_from_model_version.assert_called_once_with(
+                source_database_name=sql_identifier.SqlIdentifier("TEMP"),
+                source_schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
+                source_model_name=sql_identifier.SqlIdentifier("SOURCE_MODEL"),
+                source_version_name=sql_identifier.SqlIdentifier("SOURCE_VERSION"),
+                database_name=None,
+                schema_name=None,
+                model_name=sql_identifier.SqlIdentifier("MODEL"),
+                version_name=sql_identifier.SqlIdentifier("V1"),
+                statement_params=self.m_statement_params,
+            )
+
     def test_invoke_method_1(self) -> None:
         pd_df = pd.DataFrame([["1.0"]], columns=["input"], dtype=np.float32)
         m_sig = _DUMMY_SIG["predict"]

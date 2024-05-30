@@ -8,14 +8,17 @@ from absl.logging import logging
 logger = logging.getLogger(__name__)
 
 
-def get_temp_file_path() -> str:
+def get_temp_file_path(prefix: str = "") -> str:
     """Returns a new random temp file path.
+
+    Args:
+        prefix: A prefix to the temp file path, this can help add stored file information. Defaults to None.
 
     Returns:
         A new temp file path.
     """
     # TODO(snandamuri): Use in-memory filesystem for temp files.
-    local_file = tempfile.NamedTemporaryFile(delete=True)
+    local_file = tempfile.NamedTemporaryFile(prefix=prefix, delete=True)
     local_file_name = local_file.name
     local_file.close()
     return local_file_name

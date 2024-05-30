@@ -110,6 +110,57 @@ class PipelineXGBRTest(absltest.TestCase):
 
         np.testing.assert_allclose(results.flatten(), sk_results.flatten(), rtol=1.0e-1, atol=1.0e-2)
 
+    def test_fit_predict_proba_and_compare_results(self) -> None:
+        pd_data = self._test_data
+        pd_data["ROW_INDEX"] = pd_data.reset_index().index
+        raw_data = self._session.create_dataframe(pd_data)
+
+        pipeline = Pipeline(
+            steps=[
+                (
+                    "OHE",
+                    OneHotEncoder(
+                        input_cols=categorical_columns, output_cols=categorical_columns, drop_input_cols=True
+                    ),
+                ),
+                (
+                    "MMS",
+                    MinMaxScaler(
+                        clip=True,
+                        input_cols=numerical_columns,
+                        output_cols=numerical_columns,
+                    ),
+                ),
+                ("KNNImputer", KNNImputer(input_cols=numerical_columns, output_cols=numerical_columns)),
+                ("regression", XGBClassifier(label_cols=label_column, passthrough_cols="ROW_INDEX")),
+            ]
+        )
+
+        pipeline.fit(raw_data)
+        results = pipeline.predict_proba(raw_data).to_pandas().sort_values(by=["ROW_INDEX"])
+        proba_cols = [c for c in results.columns if c.startswith("PREDICT_PROBA_")]
+        proba_results = results[proba_cols].to_numpy()
+
+        sk_pipeline = SkPipeline(
+            steps=[
+                (
+                    "Preprocessing",
+                    SkColumnTransformer(
+                        [
+                            ("cat_transformer", SkOneHotEncoder(), categorical_columns),
+                            ("num_transforms", SkMinMaxScaler(), numerical_columns),
+                            ("num_imputer", SkKNNImputer(), numerical_columns),
+                        ]
+                    ),
+                ),
+                ("Training", XGB_XGBClassifier()),
+            ]
+        )
+        sk_pipeline.fit(pd_data[numerical_columns + categorical_columns], pd_data[label_column])
+        sk_proba_results = sk_pipeline.predict_proba(pd_data[numerical_columns + categorical_columns])
+
+        np.testing.assert_allclose(proba_results.flatten(), sk_proba_results.flatten(), rtol=1.0e-1, atol=1.0e-2)
+
     def test_fit_and_compare_results_pandas_dataframe(self) -> None:
         raw_data_pandas = self._test_data
 

@@ -57,6 +57,64 @@ class ModelVersionSQLTest(absltest.TestCase):
             statement_params=m_statement_params,
         )
 
+    def test_create_from_model_version(self) -> None:
+        m_statement_params = {"test": "1"}
+        m_df = mock_data_frame.MockDataFrame(
+            collect_result=[Row("Model MODEL successfully created.")], collect_statement_params=m_statement_params
+        )
+        self.m_session.add_mock_sql(
+            (
+                'CREATE MODEL TEMP."test".MODEL WITH VERSION V1'
+                ' FROM MODEL SOURCE_TEMP."source_test".SOURCE_MODEL VERSION SOURCE_VERSION'
+            ),
+            m_df,
+        )
+        c_session = cast(Session, self.m_session)
+        model_version_sql.ModelVersionSQLClient(
+            c_session,
+            database_name=sql_identifier.SqlIdentifier("TEMP"),
+            schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
+        ).create_from_model_version(
+            source_database_name=sql_identifier.SqlIdentifier("SOURCE_TEMP"),
+            source_schema_name=sql_identifier.SqlIdentifier("source_test", case_sensitive=True),
+            source_model_name=sql_identifier.SqlIdentifier("SOURCE_MODEL"),
+            source_version_name=sql_identifier.SqlIdentifier("SOURCE_VERSION"),
+            database_name=None,
+            schema_name=None,
+            model_name=sql_identifier.SqlIdentifier("MODEL"),
+            version_name=sql_identifier.SqlIdentifier("V1"),
+            statement_params=m_statement_params,
+        )
+
+    def test_add_version_from_model_version(self) -> None:
+        m_statement_params = {"test": "1"}
+        m_df = mock_data_frame.MockDataFrame(
+            collect_result=[Row("Model MODEL successfully created.")], collect_statement_params=m_statement_params
+        )
+        self.m_session.add_mock_sql(
+            (
+                'ALTER MODEL TEMP."test".MODEL ADD VERSION V1'
+                ' FROM MODEL SOURCE_TEMP."source_test".SOURCE_MODEL VERSION SOURCE_VERSION'
+            ),
+            m_df,
+        )
+        c_session = cast(Session, self.m_session)
+        model_version_sql.ModelVersionSQLClient(
+            c_session,
+            database_name=sql_identifier.SqlIdentifier("TEMP"),
+            schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
+        ).add_version_from_model_version(
+            source_database_name=sql_identifier.SqlIdentifier("SOURCE_TEMP"),
+            source_schema_name=sql_identifier.SqlIdentifier("source_test", case_sensitive=True),
+            source_model_name=sql_identifier.SqlIdentifier("SOURCE_MODEL"),
+            source_version_name=sql_identifier.SqlIdentifier("SOURCE_VERSION"),
+            database_name=None,
+            schema_name=None,
+            model_name=sql_identifier.SqlIdentifier("MODEL"),
+            version_name=sql_identifier.SqlIdentifier("V1"),
+            statement_params=m_statement_params,
+        )
+
     def test_add_version_from_stage(self) -> None:
         m_statement_params = {"test": "1"}
         m_df = mock_data_frame.MockDataFrame(
@@ -293,7 +351,8 @@ class ModelVersionSQLTest(absltest.TestCase):
         c_session = cast(Session, self.m_session)
         mock_writer = mock.MagicMock()
         m_df.__setattr__("write", mock_writer)
-        m_df.__setattr__("queries", {"queries": ["query_1", "query_2"], "post_actions": []})
+        m_df.add_query("queries", "query_1")
+        m_df.add_query("queries", "query_2")
         with mock.patch.object(mock_writer, "save_as_table") as mock_save_as_table, mock.patch.object(
             snowpark_utils, "random_name_for_temp_object", return_value="SNOWPARK_TEMP_TABLE_ABCDEF0123"
         ) as mock_random_name_for_temp_object:
@@ -334,7 +393,8 @@ class ModelVersionSQLTest(absltest.TestCase):
         c_session = cast(Session, self.m_session)
         mock_writer = mock.MagicMock()
         m_df.__setattr__("write", mock_writer)
-        m_df.__setattr__("queries", {"queries": ["query_1", "query_2"], "post_actions": []})
+        m_df.add_query("queries", "query_1")
+        m_df.add_query("queries", "query_2")
         with mock.patch.object(mock_writer, "save_as_table") as mock_save_as_table, mock.patch.object(
             snowpark_utils, "random_name_for_temp_object", return_value="SNOWPARK_TEMP_TABLE_ABCDEF0123"
         ) as mock_random_name_for_temp_object:
@@ -375,7 +435,8 @@ class ModelVersionSQLTest(absltest.TestCase):
         c_session = cast(Session, self.m_session)
         mock_writer = mock.MagicMock()
         m_df.__setattr__("write", mock_writer)
-        m_df.__setattr__("queries", {"queries": ["query_1"], "post_actions": ["query_2"]})
+        m_df.add_query("queries", "query_1")
+        m_df.add_query("queries", "query_2")
         with mock.patch.object(mock_writer, "save_as_table") as mock_save_as_table, mock.patch.object(
             snowpark_utils, "random_name_for_temp_object", return_value="SNOWPARK_TEMP_TABLE_ABCDEF0123"
         ) as mock_random_name_for_temp_object:
@@ -415,7 +476,7 @@ class ModelVersionSQLTest(absltest.TestCase):
         )
         m_df.add_mock_with_columns(["OUTPUT_1"], [F.col("OUTPUT_1")]).add_mock_drop("TMP_RESULT")
         c_session = cast(Session, self.m_session)
-        m_df.__setattr__("queries", {"queries": ["query_1"], "post_actions": []})
+        m_df.add_query("queries", "query_1")
         model_version_sql.ModelVersionSQLClient(
             c_session,
             database_name=sql_identifier.SqlIdentifier("TEMP"),
@@ -448,7 +509,8 @@ class ModelVersionSQLTest(absltest.TestCase):
         c_session = cast(Session, self.m_session)
         mock_writer = mock.MagicMock()
         m_df.__setattr__("write", mock_writer)
-        m_df.__setattr__("queries", {"queries": ["query_1", "query_2"], "post_actions": []})
+        m_df.add_query("queries", "query_1")
+        m_df.add_query("queries", "query_2")
         with mock.patch.object(mock_writer, "save_as_table") as mock_save_as_table, mock.patch.object(
             snowpark_utils, "random_name_for_temp_object", return_value="SNOWPARK_TEMP_TABLE_ABCDEF0123"
         ) as mock_random_name_for_temp_object:
@@ -492,7 +554,8 @@ class ModelVersionSQLTest(absltest.TestCase):
         c_session = cast(Session, self.m_session)
         mock_writer = mock.MagicMock()
         m_df.__setattr__("write", mock_writer)
-        m_df.__setattr__("queries", {"queries": ["query_1", "query_2"], "post_actions": []})
+        m_df.add_query("queries", "query_1")
+        m_df.add_query("queries", "query_2")
         with mock.patch.object(mock_writer, "save_as_table") as mock_save_as_table, mock.patch.object(
             snowpark_utils, "random_name_for_temp_object", return_value="SNOWPARK_TEMP_TABLE_ABCDEF0123"
         ) as mock_random_name_for_temp_object:

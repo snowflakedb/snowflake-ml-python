@@ -1761,7 +1761,7 @@ class FeatureStore:
             self._session.sql(
                 f"""
                     SELECT * FROM TABLE(
-                        INFORMATION_SCHEMA.TAG_REFERENCES_INTERNAL(
+                        {self._config.database}.INFORMATION_SCHEMA.TAG_REFERENCES_INTERNAL(
                             TAG_NAME => '{_FEATURE_STORE_OBJECT_TAG}'
                         )
                     ) LIMIT 1;

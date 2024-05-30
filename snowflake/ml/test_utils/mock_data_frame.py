@@ -70,6 +70,11 @@ class MockDataFrame(mock_snowml_base.MockSnowMLBase):
         if count_result is not None:
             self.add_count_result(count_result, count_statement_params)
 
+        # Queries are part of the dataframe but are currently not checked. Init only.
+        self._queries: Dict[str, List[str]] = dict()
+        self._queries["queries"] = []
+        self._queries["post_actions"] = []
+
     @property  # type: ignore[misc]
     def __class__(self) -> Type[DataFrame]:  # type: ignore[override]
         return DataFrame
@@ -201,3 +206,23 @@ class MockDataFrame(mock_snowml_base.MockSnowMLBase):
         # Result should be int if block=True and AsyncJob if block=False.
         mdfo = self._check_operation("select", args, kwargs)
         return mdfo.result
+
+    @property
+    def queries(self) -> Dict[str, List[str]]:
+        return self._queries
+
+    def add_query(self, query_type: str, query_string: str) -> MockDataFrame:
+        """Add a query to the dataframe that can be retrieved by callers through the .query property.
+
+        Args:
+            query_type: one of "queries" or "post_actions"
+            query_string: SQL of the query as a string.
+
+        Returns:
+            self
+
+        Original implementation:
+            https://github.com/snowflakedb/snowpark-python/blob/81afcd6512e4c52a695365482f1374a7dacb7eb9/src/snowflake/snowpark/dataframe.py#L4023
+        """
+        self._queries[query_type].append(query_string)
+        return self

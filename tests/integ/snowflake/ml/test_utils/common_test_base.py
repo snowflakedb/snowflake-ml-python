@@ -77,6 +77,7 @@ class CommonTestBase(parameterized.TestCase):
         kclass: Type[_V],
         local: bool = True,
         test_callers_rights: bool = True,
+        test_owners_rights: bool = True,
         additional_packages: Optional[List[str]] = None,
     ) -> Callable[
         [Callable[Concatenate[_V, _T_args], None]],
@@ -165,7 +166,47 @@ class CommonTestBase(parameterized.TestCase):
                             execute_as=execute_as,
                         )
                         def test_in_sproc(sess: session.Session, test_name: str) -> None:
+                            import fcntl
+                            import os
+                            import sys
+                            import threading
                             import unittest
+                            import zipfile
+                            from types import TracebackType
+                            from typing import Optional, Type
+
+                            class FileLock:
+                                def __enter__(self) -> None:
+                                    self._lock = threading.Lock()
+                                    self._lock.acquire()
+                                    self._fd = open("/tmp/lockfile.LOCK", "w+")
+                                    fcntl.lockf(self._fd, fcntl.LOCK_EX)
+
+                                def __exit__(
+                                    self,
+                                    exc_type: Optional[Type[BaseException]],
+                                    exc: Optional[BaseException],
+                                    traceback: Optional[TracebackType],
+                                ) -> None:
+                                    self._fd.close()
+                                    self._lock.release()
+
+                            IMPORT_DIRECTORY_NAME = "snowflake_import_directory"
+                            import_dir = sys._xoptions[IMPORT_DIRECTORY_NAME]
+
+                            for file_name in ["snowflake-ml-python", "snowflake-ml-test"]:
+                                zip_path = os.path.join(import_dir, file_name + ".zip")
+                                for sys_path in sys.path:
+                                    if file_name + ".zip" in sys_path:
+                                        sys.path.remove(sys_path)
+
+                                extracted_dir_path = os.path.join("/tmp", file_name)
+
+                                with FileLock():
+                                    if not os.path.isdir(extracted_dir_path):
+                                        with zipfile.ZipFile(zip_path, "r") as myzip:
+                                            myzip.extractall(extracted_dir_path)
+                                        sys.path.append(extracted_dir_path)
 
                             loader = unittest.TestLoader()
 
@@ -188,12 +229,15 @@ class CommonTestBase(parameterized.TestCase):
 
                 _in_sproc_test(execute_as=_sproc_test_mode)
 
-            additional_cases = ["owner"]
+            additional_cases = []
             if local:
                 additional_cases.append("local")
 
             if test_callers_rights:
                 additional_cases.append("caller")
+
+            if test_owners_rights:
+                additional_cases.append("owner")
 
             modified_test_cases = get_modified_test_cases(test_cases, additional_cases, "_sproc_test_mode", naming_type)
 
