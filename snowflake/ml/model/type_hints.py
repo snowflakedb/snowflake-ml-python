@@ -54,6 +54,7 @@ _SupportedNumpyDtype = Union[
     "np.bool_",
     "np.str_",
     "np.bytes_",
+    "np.datetime64",
 ]
 _SupportedNumpyArray = npt.NDArray[_SupportedNumpyDtype]
 _SupportedBuiltinsList = Sequence[_SupportedBuiltins]

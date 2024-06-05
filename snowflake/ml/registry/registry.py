@@ -71,6 +71,16 @@ class Registry:
     @telemetry.send_api_usage_telemetry(
         project=_TELEMETRY_PROJECT,
         subproject=_MODEL_TELEMETRY_SUBPROJECT,
+        func_params_to_log=[
+            "model_name",
+            "version_name",
+            "comment",
+            "metrics",
+            "conda_dependencies",
+            "pip_requirements",
+            "python_version",
+            "signatures",
+        ],
     )
     def log_model(
         self,
@@ -142,7 +152,6 @@ class Registry:
         Returns:
             ModelVersion: ModelVersion object corresponding to the model just logged.
         """
-
         statement_params = telemetry.get_statement_params(
             project=_TELEMETRY_PROJECT,
             subproject=_MODEL_TELEMETRY_SUBPROJECT,

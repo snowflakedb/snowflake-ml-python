@@ -48,7 +48,7 @@ class ModelWithAdditionalImportTest(registry_model_test_base.RegistryModelTestBa
             self.registry.log_model(lm_2, model_name=name_2, version_name=version, sample_input_data=pd_df)
 
         res = (
-            self._session.sql(f"SELECT {name_1}!predict(1):output as A, {name_2}!predict(1):output as B")
+            self.session.sql(f"SELECT {name_1}!predict(1):output as A, {name_2}!predict(1):output as B")
             .collect()[0]
             .as_dict()
         )

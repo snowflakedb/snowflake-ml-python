@@ -4,7 +4,7 @@ import numpy as np
 import pandas as pd
 import pytest
 import tensorflow as tf
-from absl.testing import absltest
+from absl.testing import absltest, parameterized
 
 from snowflake.ml.model._signatures import (
     numpy_handler,
@@ -47,14 +47,18 @@ def prepare_keras_model(
 
 @pytest.mark.pip_incompatible
 class TestRegistryTensorflowModelInteg(registry_model_test_base.RegistryModelTestBase):
+    @parameterized.product(  # type: ignore[misc]
+        registry_test_fn=registry_model_test_base.RegistryModelTestBase.REGISTRY_TEST_FN_LIST,
+    )
     def test_tf_tensor_as_sample(
         self,
+        registry_test_fn: str,
     ) -> None:
         model, data_x = model_factory.ModelFactory.prepare_tf_model()
         x_df = tensorflow_handler.SeqOfTensorflowTensorHandler.convert_to_df([data_x], ensure_serializable=False)
         y_pred = model(data_x)
 
-        self._test_registry_model(
+        getattr(self, registry_test_fn)(
             model=model,
             sample_input_data=[data_x],
             prediction_assert_fns={
@@ -68,14 +72,18 @@ class TestRegistryTensorflowModelInteg(registry_model_test_base.RegistryModelTes
             },
         )
 
+    @parameterized.product(  # type: ignore[misc]
+        registry_test_fn=registry_model_test_base.RegistryModelTestBase.REGISTRY_TEST_FN_LIST,
+    )
     def test_tf_df_as_sample(
         self,
+        registry_test_fn: str,
     ) -> None:
         model, data_x = model_factory.ModelFactory.prepare_tf_model()
         x_df = tensorflow_handler.SeqOfTensorflowTensorHandler.convert_to_df([data_x], ensure_serializable=False)
         y_pred = model(data_x)
 
-        self._test_registry_model(
+        getattr(self, registry_test_fn)(
             model=model,
             sample_input_data=x_df,
             prediction_assert_fns={
@@ -89,22 +97,26 @@ class TestRegistryTensorflowModelInteg(registry_model_test_base.RegistryModelTes
             },
         )
 
+    @parameterized.product(  # type: ignore[misc]
+        registry_test_fn=registry_model_test_base.RegistryModelTestBase.REGISTRY_TEST_FN_LIST,
+    )
     def test_tf_sp(
         self,
+        registry_test_fn: str,
     ) -> None:
         model, data_x = model_factory.ModelFactory.prepare_tf_model()
         x_df = tensorflow_handler.SeqOfTensorflowTensorHandler.convert_to_df([data_x], ensure_serializable=False)
         x_df.columns = ["col_0"]
         y_pred = model(data_x)
         x_df_sp = snowpark_handler.SnowparkDataFrameHandler.convert_from_df(
-            self._session,
+            self.session,
             x_df,
         )
         y_pred_df = tensorflow_handler.SeqOfTensorflowTensorHandler.convert_to_df([y_pred])
         y_pred_df.columns = ["output_feature_0"]
         y_df_expected = pd.concat([x_df, y_pred_df], axis=1)
 
-        self._test_registry_model(
+        getattr(self, registry_test_fn)(
             model=model,
             sample_input_data=x_df,
             prediction_assert_fns={
@@ -115,13 +127,17 @@ class TestRegistryTensorflowModelInteg(registry_model_test_base.RegistryModelTes
             },
         )
 
+    @parameterized.product(  # type: ignore[misc]
+        registry_test_fn=registry_model_test_base.RegistryModelTestBase.REGISTRY_TEST_FN_LIST,
+    )
     def test_keras_tensor_as_sample(
         self,
+        registry_test_fn: str,
     ) -> None:
         model, data_x, data_y = prepare_keras_model()
         x_df = tensorflow_handler.SeqOfTensorflowTensorHandler.convert_to_df([data_x], ensure_serializable=False)
         y_pred = model.predict(data_x)
-        self._test_registry_model(
+        getattr(self, registry_test_fn)(
             model=model,
             sample_input_data=[data_x],
             prediction_assert_fns={
@@ -136,13 +152,17 @@ class TestRegistryTensorflowModelInteg(registry_model_test_base.RegistryModelTes
             },
         )
 
+    @parameterized.product(  # type: ignore[misc]
+        registry_test_fn=registry_model_test_base.RegistryModelTestBase.REGISTRY_TEST_FN_LIST,
+    )
     def test_keras_df_as_sample(
         self,
+        registry_test_fn: str,
     ) -> None:
         model, data_x, data_y = prepare_keras_model()
         x_df = tensorflow_handler.SeqOfTensorflowTensorHandler.convert_to_df([data_x], ensure_serializable=False)
         y_pred = model.predict(data_x)
-        self._test_registry_model(
+        getattr(self, registry_test_fn)(
             model=model,
             sample_input_data=x_df,
             prediction_assert_fns={
@@ -157,22 +177,26 @@ class TestRegistryTensorflowModelInteg(registry_model_test_base.RegistryModelTes
             },
         )
 
+    @parameterized.product(  # type: ignore[misc]
+        registry_test_fn=registry_model_test_base.RegistryModelTestBase.REGISTRY_TEST_FN_LIST,
+    )
     def test_keras_sp(
         self,
+        registry_test_fn: str,
     ) -> None:
         model, data_x, data_y = prepare_keras_model()
         x_df = tensorflow_handler.SeqOfTensorflowTensorHandler.convert_to_df([data_x], ensure_serializable=False)
         x_df.columns = ["col_0"]
         y_pred = model.predict(data_x)
         x_df_sp = snowpark_handler.SnowparkDataFrameHandler.convert_from_df(
-            self._session,
+            self.session,
             x_df,
         )
         y_pred_df = numpy_handler.SeqOfNumpyArrayHandler.convert_to_df([y_pred])
         y_pred_df.columns = ["output_feature_0"]
         y_df_expected = pd.concat([x_df, y_pred_df], axis=1)
 
-        self._test_registry_model(
+        getattr(self, registry_test_fn)(
             model=model,
             sample_input_data=x_df,
             prediction_assert_fns={

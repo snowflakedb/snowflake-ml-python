@@ -281,9 +281,7 @@ class ModelMetadata:
             "cpu": model_runtime.ModelRuntime("cpu", self.env),
         }
         if self.env.cuda_version:
-            runtimes.update(
-                {"gpu": model_runtime.ModelRuntime("gpu", self.env, is_gpu=True, server_availability_source="conda")}
-            )
+            runtimes.update({"gpu": model_runtime.ModelRuntime("gpu", self.env, is_gpu=True)})
         return runtimes
 
     def save(self, model_dir_path: str) -> None:

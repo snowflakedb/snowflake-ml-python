@@ -442,7 +442,14 @@ class {transform.original_class_name}(BaseTransformer):
     ) -> List[str]:
         # in case the inferred output column names dimension is different 
         # we use one line of snowpark dataframe and put it into sklearn estimator using pandas
-        output_df_pd = getattr(self, method)(dataset.limit(1).to_pandas(), output_cols_prefix)
+        sample_pd_df = dataset.select(self.input_cols).limit(1).to_pandas()
+
+        # Rename the pandas df column names to snowflake identifiers and reorder columns to match the order
+        # seen during the fit.
+        snowpark_column_names = dataset.select(self.input_cols).columns
+        sample_pd_df.columns = snowpark_column_names
+
+        output_df_pd = getattr(self, method)(sample_pd_df, output_cols_prefix)
         output_df_columns = list(output_df_pd.columns)
         output_df_columns_set: Set[str] = set(output_df_columns) - set(dataset.columns)
         if self.sample_weight_col:

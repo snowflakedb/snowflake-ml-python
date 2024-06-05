@@ -252,11 +252,11 @@
     - transformers
 - name_conda: snowflake-connector-python
   name_pypi: snowflake-connector-python[pandas]
-  dev_version: 3.5.0
+  dev_version: 3.10.0
   version_requirements: '>=3.5.0,<4'
 - name: snowflake-snowpark-python
-  dev_version: 1.11.1
-  version_requirements: '>=1.11.1,<2,!=1.12.0'
+  dev_version: 1.15.0
+  version_requirements: '>=1.15.0,<2'
   tags:
     - deployment_core
     - snowml_inference_alternative

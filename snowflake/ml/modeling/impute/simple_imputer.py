@@ -102,10 +102,14 @@ class SimpleImputer(base.BaseTransformer):
             For string or object data types, `fill_value` must be a string. If `None`, `fill_value` will be 0 when
             imputing numerical data and `missing_value` for strings and object data types.
         input_cols: Optional[Union[str, List[str]]]
-            Columns to use as inputs during fit and transform.
+            The name(s) of one or more columns in the input DataFrame containing feature(s) to be imputed. Input
+            columns must be specified before fit with this argument or after initialization with the
+            `set_input_cols` method. This argument is optional for API consistency.
         output_cols: Optional[Union[str, List[str]]]
-            A string or list of strings representing column names that will store the output of transform operation.
-            The length of `output_cols` must equal the length of `input_cols`.
+            The name(s) to assign output columns in the output DataFrame. The number of
+            output columns specified must equal the number of input columns. Output columns must be specified before
+            transform with this argument or after initialization with the `set_output_cols` method. This argument is
+            optional for API consistency.
         passthrough_cols: A string or a list of strings indicating column names to be excluded from any
             operations (such as train, transform, or inference). These specified column(s)
             will remain untouched throughout the process. This option is helpful in scenarios
@@ -158,6 +162,7 @@ class SimpleImputer(base.BaseTransformer):
 
         self.fill_value = fill_value
         self.missing_values = missing_values
+        self.statistics_: Dict[str, Any] = {}
         # TODO(hayu): [SNOW-752265] Support SimpleImputer keep_empty_features.
         #  Add back when `keep_empty_features` is supported.
         # self.keep_empty_features = keep_empty_features
@@ -229,8 +234,27 @@ class SimpleImputer(base.BaseTransformer):
 
         return input_col_datatypes
 
+    def _fit(self, dataset: Union[snowpark.DataFrame, pd.DataFrame]) -> "SimpleImputer":
+        if isinstance(dataset, snowpark.DataFrame):
+            return self._fit_snowpark(dataset)
+        else:
+            return self._fit_sklearn(dataset)
+
+    def _fit_sklearn(self, dataset: pd.DataFrame) -> "SimpleImputer":
+        dataset = self._use_input_cols_only(dataset)
+        sklearn_simple_imputer = self._create_sklearn_object()
+        sklearn_simple_imputer = sklearn_simple_imputer.fit(dataset)
+        self._sklearn_object = sklearn_simple_imputer
+        for input_col, fill_value in zip(self.input_cols, sklearn_simple_imputer.statistics_.tolist()):
+            self.statistics_[input_col] = fill_value
+        self._sklearn_fit_dtype = sklearn_simple_imputer._fit_dtype
+        self.n_features_in_ = len(self.input_cols)
+        self.feature_names_in_ = self.input_cols
+        self._is_fitted = True
+        return self
+
     @telemetry.send_api_usage_telemetry(project=base.PROJECT, subproject=_SUBPROJECT)
-    def fit(self, dataset: snowpark.DataFrame) -> "SimpleImputer":
+    def _fit_snowpark(self, dataset: snowpark.DataFrame) -> "SimpleImputer":
         """
         Compute values to impute for the dataset according to the strategy.
 
@@ -245,7 +269,6 @@ class SimpleImputer(base.BaseTransformer):
         # In order to fit, the input columns should have the same type.
         input_col_datatypes = self._get_dataset_input_col_datatypes(dataset)
 
-        self.statistics_: Dict[str, Any] = {}
         statement_params = telemetry.get_statement_params(base.PROJECT, _SUBPROJECT, self.__class__.__name__)
 
         if self.strategy == "constant":

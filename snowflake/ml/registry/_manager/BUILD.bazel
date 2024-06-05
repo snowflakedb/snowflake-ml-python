@@ -12,7 +12,6 @@ py_library(
     ],
     deps = [
         "//snowflake/ml/_internal/human_readable_id:hrid_generator",
-        "//snowflake/ml/_internal/utils:identifier",
         "//snowflake/ml/_internal/utils:sql_identifier",
         "//snowflake/ml/model",
         "//snowflake/ml/model:model_signature",

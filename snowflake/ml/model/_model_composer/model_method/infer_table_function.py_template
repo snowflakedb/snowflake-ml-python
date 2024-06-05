@@ -74,4 +74,6 @@ dtype_map = {{feature.name: feature.as_dtype() for feature in features}}
 class {function_name}:
     @vectorized(input=pd.DataFrame)
     def end_partition(self, df: pd.DataFrame) -> pd.DataFrame:
-        return runner(df)
+        df.columns = input_cols
+        input_df = df.astype(dtype=dtype_map)
+        return runner(input_df[input_cols])
