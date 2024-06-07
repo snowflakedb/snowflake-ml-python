@@ -2,7 +2,7 @@ import inflection
 import numpy as np
 import pandas as pd
 import xgboost
-from absl.testing import absltest
+from absl.testing import absltest, parameterized
 from sklearn import datasets, model_selection
 
 from tests.integ.snowflake.ml.registry.model import registry_model_test_base
@@ -10,8 +10,12 @@ from tests.integ.snowflake.ml.test_utils import dataframe_utils
 
 
 class TestRegistryXGBoostModelInteg(registry_model_test_base.RegistryModelTestBase):
+    @parameterized.product(  # type: ignore[misc]
+        registry_test_fn=registry_model_test_base.RegistryModelTestBase.REGISTRY_TEST_FN_LIST,
+    )
     def test_xgb(
         self,
+        registry_test_fn: str,
     ) -> None:
         cal_data = datasets.load_breast_cancer(as_frame=True)
         cal_X = cal_data.data
@@ -20,7 +24,7 @@ class TestRegistryXGBoostModelInteg(registry_model_test_base.RegistryModelTestBa
         cal_X_train, cal_X_test, cal_y_train, cal_y_test = model_selection.train_test_split(cal_X, cal_y)
         regressor = xgboost.XGBRegressor(n_estimators=100, reg_lambda=1, gamma=0, max_depth=3)
         regressor.fit(cal_X_train, cal_y_train)
-        self._test_registry_model(
+        getattr(self, registry_test_fn)(
             model=regressor,
             sample_input_data=cal_X_test,
             prediction_assert_fns={
@@ -33,12 +37,16 @@ class TestRegistryXGBoostModelInteg(registry_model_test_base.RegistryModelTestBa
             },
         )
 
+    @parameterized.product(  # type: ignore[misc]
+        registry_test_fn=registry_model_test_base.RegistryModelTestBase.REGISTRY_TEST_FN_LIST,
+    )
     def test_xgb_sp(
         self,
+        registry_test_fn: str,
     ) -> None:
         cal_data = datasets.load_breast_cancer(as_frame=True).frame
         cal_data.columns = [inflection.parameterize(c, "_") for c in cal_data]
-        cal_data_sp_df = self._session.create_dataframe(cal_data)
+        cal_data_sp_df = self.session.create_dataframe(cal_data)
         cal_data_sp_df_train, cal_data_sp_df_test = tuple(cal_data_sp_df.random_split([0.25, 0.75], seed=2568))
         regressor = xgboost.XGBRegressor(n_estimators=100, reg_lambda=1, gamma=0, max_depth=3)
         cal_data_pd_df_train = cal_data_sp_df_train.to_pandas()
@@ -52,7 +60,7 @@ class TestRegistryXGBoostModelInteg(registry_model_test_base.RegistryModelTestBa
             ],
             axis=1,
         )
-        self._test_registry_model(
+        getattr(self, registry_test_fn)(
             model=regressor,
             sample_input_data=cal_data_sp_df_train.drop('"target"'),
             prediction_assert_fns={
@@ -63,8 +71,12 @@ class TestRegistryXGBoostModelInteg(registry_model_test_base.RegistryModelTestBa
             },
         )
 
+    @parameterized.product(  # type: ignore[misc]
+        registry_test_fn=registry_model_test_base.RegistryModelTestBase.REGISTRY_TEST_FN_LIST,
+    )
     def test_xgb_booster(
         self,
+        registry_test_fn: str,
     ) -> None:
         cal_data = datasets.load_breast_cancer(as_frame=True)
         cal_X = cal_data.data
@@ -74,7 +86,7 @@ class TestRegistryXGBoostModelInteg(registry_model_test_base.RegistryModelTestBa
         params = dict(n_estimators=100, reg_lambda=1, gamma=0, max_depth=3, objective="binary:logistic")
         regressor = xgboost.train(params, xgboost.DMatrix(data=cal_X_train, label=cal_y_train))
         y_pred = regressor.predict(xgboost.DMatrix(data=cal_X_test))
-        self._test_registry_model(
+        getattr(self, registry_test_fn)(
             model=regressor,
             sample_input_data=cal_X_test,
             prediction_assert_fns={
@@ -85,12 +97,16 @@ class TestRegistryXGBoostModelInteg(registry_model_test_base.RegistryModelTestBa
             },
         )
 
+    @parameterized.product(  # type: ignore[misc]
+        registry_test_fn=registry_model_test_base.RegistryModelTestBase.REGISTRY_TEST_FN_LIST,
+    )
     def test_xgb_booster_sp(
         self,
+        registry_test_fn: str,
     ) -> None:
         cal_data = datasets.load_breast_cancer(as_frame=True).frame
         cal_data.columns = [inflection.parameterize(c, "_") for c in cal_data]
-        cal_data_sp_df = self._session.create_dataframe(cal_data)
+        cal_data_sp_df = self.session.create_dataframe(cal_data)
         cal_data_sp_df_train, cal_data_sp_df_test = tuple(cal_data_sp_df.random_split([0.25, 0.75], seed=2568))
         cal_data_pd_df_train = cal_data_sp_df_train.to_pandas()
         params = dict(n_estimators=100, reg_lambda=1, gamma=0, max_depth=3, objective="binary:logistic")
@@ -109,7 +125,7 @@ class TestRegistryXGBoostModelInteg(registry_model_test_base.RegistryModelTestBa
             ],
             axis=1,
         )
-        self._test_registry_model(
+        getattr(self, registry_test_fn)(
             model=regressor,
             sample_input_data=cal_data_sp_df_train.drop('"target"'),
             prediction_assert_fns={

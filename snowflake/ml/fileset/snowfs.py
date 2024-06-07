@@ -1,10 +1,9 @@
 import collections
 import logging
 import re
-from typing import Any, Dict, Optional
+from typing import Any, Optional
 
 import fsspec
-import packaging.version as pkg_version
 
 from snowflake import snowpark
 from snowflake.connector import connection
@@ -12,7 +11,7 @@ from snowflake.ml._internal.exceptions import (
     error_codes,
     exceptions as snowml_exceptions,
 )
-from snowflake.ml._internal.utils import identifier, snowflake_env
+from snowflake.ml._internal.utils import identifier
 from snowflake.ml.fileset import embedded_stage_fs, sfcfs
 
 PROTOCOL_NAME = "snow"
@@ -27,10 +26,6 @@ _SNOWURL_PATTERN = re.compile(
     rf"(?P<name>(?:{identifier._SF_IDENTIFIER}\.){{,2}}{identifier._SF_IDENTIFIER})/"
     r"(?P<path>versions/(?:(?P<version>[^/]+)(?:/(?P<relpath>.*))?)?)"
 )
-
-# FIXME(dhung): Temporary fix for bug in GS version 8.17
-_BUG_VERSION_MIN = pkg_version.Version("8.17")  # Inclusive minimum version with bugged behavior
-_BUG_VERSION_MAX = pkg_version.Version("8.18")  # Exclusive maximum version with bugged behavior
 
 
 class SnowFileSystem(sfcfs.SFFileSystem):
@@ -53,21 +48,6 @@ class SnowFileSystem(sfcfs.SFFileSystem):
         **kwargs: Any,
     ) -> None:
         super().__init__(sf_connection=sf_connection, snowpark_session=snowpark_session, **kwargs)
-
-        # FIXME(dhung): Temporary fix for bug in GS version 8.17
-        if SnowFileSystem._IS_BUGGED_VERSION is None:
-            try:
-                sf_version = snowflake_env.get_current_snowflake_version(self._session)
-                SnowFileSystem._IS_BUGGED_VERSION = _BUG_VERSION_MIN <= sf_version < _BUG_VERSION_MAX
-            except Exception:
-                SnowFileSystem._IS_BUGGED_VERSION = False
-
-    def info(self, path: str, **kwargs: Any) -> Dict[str, Any]:
-        # FIXME(dhung): Temporary fix for bug in GS version 8.17
-        res: Dict[str, Any] = super().info(path, **kwargs)
-        if res.get("type") == "directory" and not res["name"].endswith("/"):
-            res["name"] += "/"
-        return res
 
     def _get_stage_fs(
         self, sf_file_path: _SFFileEntityPath  # type: ignore[override]
@@ -100,12 +80,6 @@ class SnowFileSystem(sfcfs.SFFileSystem):
         if stage_name.startswith(protocol):
             stage_name = stage_name[len(protocol) :]
         abs_path = stage_name + "/" + path
-        # FIXME(dhung): Temporary fix for bug in GS version 8.17
-        if self._IS_BUGGED_VERSION:
-            match = _SNOWURL_PATTERN.fullmatch(abs_path)
-            assert match is not None
-            if match.group("relpath"):
-                abs_path = abs_path.replace(match.group("relpath"), match.group("relpath").lstrip("/"))
         return abs_path
 
     @classmethod
@@ -144,9 +118,6 @@ class SnowFileSystem(sfcfs.SFFileSystem):
             version = snowurl_match.group("version")
             relative_path = snowurl_match.group("relpath") or ""
             logging.debug(f"Parsed snow URL: {snowurl_match.groups()}")
-            # FIXME(dhung): Temporary fix for bug in GS version 8.17
-            if cls._IS_BUGGED_VERSION:
-                filepath = f"versions/{version}//{relative_path}"
             return _SFFileEntityPath(
                 domain=domain, name=name, version=version, relative_path=relative_path, filepath=filepath
             )

@@ -285,11 +285,7 @@ class GridSearchCV(BaseTransformer):
         )
         return selected_cols
 
-    @telemetry.send_api_usage_telemetry(
-        project=_PROJECT,
-        subproject=_SUBPROJECT,
-    )
-    def fit(self, dataset: Union[DataFrame, pd.DataFrame]) -> "GridSearchCV":
+    def _fit(self, dataset: Union[DataFrame, pd.DataFrame]) -> "GridSearchCV":
         """Run fit with all sets of parameters
         For more details on this function, see [sklearn.model_selection.GridSearchCV.fit]
         (https://scikit-learn.org/stable/modules/generated/sklearn.model_selection.GridSearchCV.html#sklearn.model_selection.GridSearchCV.fit)

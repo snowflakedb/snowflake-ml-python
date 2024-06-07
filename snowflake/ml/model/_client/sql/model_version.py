@@ -44,6 +44,32 @@ class ModelVersionSQLClient(_base._BaseSQLClient):
             statement_params=statement_params,
         ).has_dimensions(expected_rows=1, expected_cols=1).validate()
 
+    def create_from_model_version(
+        self,
+        *,
+        source_database_name: Optional[sql_identifier.SqlIdentifier],
+        source_schema_name: Optional[sql_identifier.SqlIdentifier],
+        source_model_name: sql_identifier.SqlIdentifier,
+        source_version_name: sql_identifier.SqlIdentifier,
+        database_name: Optional[sql_identifier.SqlIdentifier],
+        schema_name: Optional[sql_identifier.SqlIdentifier],
+        model_name: sql_identifier.SqlIdentifier,
+        version_name: sql_identifier.SqlIdentifier,
+        statement_params: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        fq_source_model_name = self.fully_qualified_object_name(
+            source_database_name, source_schema_name, source_model_name
+        )
+        fq_model_name = self.fully_qualified_object_name(database_name, schema_name, model_name)
+        query_result_checker.SqlResultValidator(
+            self._session,
+            (
+                f"CREATE MODEL {fq_model_name} WITH VERSION {version_name} FROM MODEL {fq_source_model_name}"
+                f" VERSION {source_version_name}"
+            ),
+            statement_params=statement_params,
+        ).has_dimensions(expected_rows=1, expected_cols=1).validate()
+
     # TODO(SNOW-987381): Merge with above when we have `create or alter module m [with] version v1 ...`
     def add_version_from_stage(
         self,
@@ -60,6 +86,32 @@ class ModelVersionSQLClient(_base._BaseSQLClient):
             (
                 f"ALTER MODEL {self.fully_qualified_object_name(database_name, schema_name, model_name)}"
                 f" ADD VERSION {version_name.identifier()} FROM {stage_path}"
+            ),
+            statement_params=statement_params,
+        ).has_dimensions(expected_rows=1, expected_cols=1).validate()
+
+    def add_version_from_model_version(
+        self,
+        *,
+        source_database_name: Optional[sql_identifier.SqlIdentifier],
+        source_schema_name: Optional[sql_identifier.SqlIdentifier],
+        source_model_name: sql_identifier.SqlIdentifier,
+        source_version_name: sql_identifier.SqlIdentifier,
+        database_name: Optional[sql_identifier.SqlIdentifier],
+        schema_name: Optional[sql_identifier.SqlIdentifier],
+        model_name: sql_identifier.SqlIdentifier,
+        version_name: sql_identifier.SqlIdentifier,
+        statement_params: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        fq_source_model_name = self.fully_qualified_object_name(
+            source_database_name, source_schema_name, source_model_name
+        )
+        fq_model_name = self.fully_qualified_object_name(database_name, schema_name, model_name)
+        query_result_checker.SqlResultValidator(
+            self._session,
+            (
+                f"ALTER MODEL {fq_model_name} ADD VERSION {version_name} FROM MODEL {fq_source_model_name}"
+                f" VERSION {source_version_name}"
             ),
             statement_params=statement_params,
         ).has_dimensions(expected_rows=1, expected_cols=1).validate()
@@ -145,7 +197,7 @@ class ModelVersionSQLClient(_base._BaseSQLClient):
         if snowpark_utils.is_in_stored_procedure():  # type: ignore[no-untyped-call]
             options = {"parallel": 10}
             cursor = self._session._conn._cursor
-            cursor._download(stage_location_url, str(target_path), options)  # type: ignore[attr-defined]
+            cursor._download(stage_location_url, str(target_path), options)  # type: ignore[union-attr]
             cursor.fetchall()
         else:
             query_result_checker.SqlResultValidator(
@@ -220,7 +272,7 @@ class ModelVersionSQLClient(_base._BaseSQLClient):
                 actual_schema_name.identifier(),
                 tmp_table_name,
             )
-            input_df.write.save_as_table(  # type: ignore[call-overload]
+            input_df.write.save_as_table(
                 table_name=INTERMEDIATE_TABLE_NAME,
                 mode="errorifexists",
                 table_type="temporary",
@@ -296,7 +348,7 @@ class ModelVersionSQLClient(_base._BaseSQLClient):
                 actual_schema_name.identifier(),
                 tmp_table_name,
             )
-            input_df.write.save_as_table(  # type: ignore[call-overload]
+            input_df.write.save_as_table(
                 table_name=INTERMEDIATE_TABLE_NAME,
                 mode="errorifexists",
                 table_type="temporary",

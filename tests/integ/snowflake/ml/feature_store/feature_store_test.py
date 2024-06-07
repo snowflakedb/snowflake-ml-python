@@ -2079,6 +2079,34 @@ class FeatureStoreTest(parameterized.TestCase):
             sort_cols=["ID1", "TS"],
         )
 
+    @parameterized.parameters(
+        [
+            "SELECT * FROM TABLE(RESULT_SCAN())",
+            "SELECT * FROM TABLE(RESULT_SCAN(LAST_QUERY_ID()))",
+            """SELECT * FROM TABLE(
+                    RESULT_SCAN(
+                    LAST_QUERY_ID()
+                )
+        )""",
+            """SELECT * FROM TABLE       (
+            RESULT_SCAN(
+
+
+                    LAST_QUERY_ID(   )
+                )
+        )""",
+        ]
+    )  # type: ignore[misc]
+    def test_invalid_result_scan_query(self, query: str) -> None:
+        fs = self._create_feature_store(use_optimized_tag_ref=True)
+        self._session.sql(f"create table {fs._config.full_schema_path}.a(a int)").collect()
+        self._session.sql(f"select * from {fs._config.full_schema_path}.a").collect()
+
+        e = Entity(name="e", join_keys=["a"])
+
+        with self.assertRaisesRegex(ValueError, ".*reading from RESULT_SCAN.*"):
+            FeatureView(name="foo", entities=[e], feature_df=self._session.sql(query))
+
 
 if __name__ == "__main__":
     absltest.main()

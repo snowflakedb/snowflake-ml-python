@@ -1,3 +1,4 @@
+import datetime
 import uuid
 
 import pandas as pd
@@ -10,6 +11,7 @@ from snowflake.snowpark import Session
 from tests.integ.snowflake.ml.test_utils import dataframe_utils, db_manager
 
 MODEL_NAME = "TEST_MODEL"
+TIMESTAMP_MODEL_NAME = "TEST_TIMESTAMP_MODEL"
 VERSION_NAME = "V1"
 
 
@@ -67,6 +69,25 @@ class TestInputValidationInteg(parameterized.TestCase):
             },
         )
 
+        self._mv_timestamp = self.registry.log_model(
+            model=lm,
+            model_name=TIMESTAMP_MODEL_NAME,
+            version_name=VERSION_NAME,
+            signatures={
+                "predict": model_signature.ModelSignature(
+                    inputs=[
+                        model_signature.FeatureSpec(name="c1", dtype=model_signature.DataType.INT8),
+                        model_signature.FeatureSpec(name="c2", dtype=model_signature.DataType.INT8),
+                        model_signature.FeatureSpec(name="c3", dtype=model_signature.DataType.INT8),
+                        model_signature.FeatureSpec(name="c4", dtype=model_signature.DataType.TIMESTAMP_NTZ),
+                    ],
+                    outputs=[
+                        model_signature.FeatureSpec(name="output", dtype=model_signature.DataType.INT8),
+                    ],
+                )
+            },
+        )
+
     @classmethod
     def tearDownClass(self) -> None:
         self._db_manager.drop_database(self._test_db)
@@ -113,6 +134,34 @@ class TestInputValidationInteg(parameterized.TestCase):
         y_df_expected = pd.DataFrame([[1, 2, 3, 1], [257, 2, 5, 257]], columns=["c1", "c2", "c3", "output"])
         with self.assertRaisesRegex(ValueError, "Data Validation Error"):
             self._mv.run(sp_df, strict_input_validation=True)
+
+    def test_timestamps(self) -> None:
+        d1 = datetime.datetime(year=2024, month=6, day=21, minute=1, second=1)
+        d2 = datetime.datetime(year=2024, month=7, day=11, minute=1, second=1)
+
+        pd.testing.assert_frame_equal(
+            self._mv_timestamp.run(pd.DataFrame([[1, 2, 3, d1], [4, 2, 5, d2]]), strict_input_validation=True),
+            pd.DataFrame([1, 4], columns=["output"]),
+            check_dtype=False,
+        )
+
+        with self.assertRaisesRegex(ValueError, "Data Validation Error"):
+            self._mv_timestamp.run(pd.DataFrame([[1, 2, 4, d1], [257, 2, 5, d2]]), strict_input_validation=True)
+
+        sp_df = self._session.create_dataframe([[1, 2, 3, d1], [4, 2, 5, d2]], schema=['"c1"', '"c2"', '"c3"', '"c4"'])
+        y_df_expected = pd.DataFrame([[1, 2, 3, d1, 1], [4, 2, 5, d2, 4]], columns=["c1", "c2", "c3", "c4", "output"])
+        dataframe_utils.check_sp_df_res(
+            self._mv_timestamp.run(sp_df, strict_input_validation=True), y_df_expected, check_dtype=False
+        )
+
+        sp_df = self._session.create_dataframe(
+            [[1, 2, 3, d1], [257, 2, 5, d2]], schema=['"c1"', '"c2"', '"c3"', '"c4"']
+        )
+        y_df_expected = pd.DataFrame(
+            [[1, 2, 3, d1, 1], [257, 2, 5, d2, 257]], columns=["c1", "c2", "c3", "c4", "output"]
+        )
+        with self.assertRaisesRegex(ValueError, "Data Validation Error"):
+            self._mv_timestamp.run(sp_df, strict_input_validation=True)
 
 
 if __name__ == "__main__":

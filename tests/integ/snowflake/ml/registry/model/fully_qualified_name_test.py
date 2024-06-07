@@ -11,7 +11,7 @@ class FullyQualifiedNameTest(registry_model_test_base.RegistryModelTestBase):
         self.database_name = self._test_db
         self.schema_name = self._test_schema
         self._registry = self.registry
-        self.registry = registry.Registry(self._session, database_name="foo", schema_name="bar")
+        self.registry = registry.Registry(self.session, database_name="foo", schema_name="bar")
 
     def test_random_version_name(self) -> None:
         iris_X, iris_y = datasets.load_iris(return_X_y=True)

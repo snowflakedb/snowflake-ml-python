@@ -7,35 +7,36 @@ from snowflake.snowpark import functions, types
 
 
 class SentimentTest(absltest.TestCase):
-    prompt = "|prompt|"
+    sentiment = "0.53"
 
     @staticmethod
-    def sentiment_for_test(prompt: str) -> str:
-        return f"result: {prompt}"
+    def sentiment_for_test(sentiment: str) -> float:
+        return float(sentiment)
 
     def setUp(self) -> None:
         self._session = _test_util.create_test_session()
         functions.udf(
             self.sentiment_for_test,
             name="sentiment",
-            return_type=types.StringType(),
-            input_types=[types.StringType()],
+            session=self._session,
+            return_type=types.FloatType(),
+            input_types=[types.FloatType()],
             is_permanent=False,
         )
 
     def tearDown(self) -> None:
-        self._session.sql("drop function sentiment(string)").collect()
+        self._session.sql("drop function sentiment(float)").collect()
         self._session.close()
 
     def test_sentiment_str(self) -> None:
-        res = _sentiment._sentiment_impl("sentiment", self.prompt)
-        self.assertEqual(self.sentiment_for_test(self.prompt), res)
+        res = _sentiment._sentiment_impl("sentiment", self.sentiment, session=self._session)
+        self.assertEqual(self.sentiment_for_test(self.sentiment), res)
 
     def test_sentiment_column(self) -> None:
-        df_in = self._session.create_dataframe([snowpark.Row(prompt=self.prompt)])
+        df_in = self._session.create_dataframe([snowpark.Row(prompt=self.sentiment)])
         df_out = df_in.select(_sentiment._sentiment_impl("sentiment", functions.col("prompt")))
         res = df_out.collect()[0][0]
-        self.assertEqual(self.sentiment_for_test(self.prompt), res)
+        self.assertEqual(self.sentiment_for_test(self.sentiment), res)
 
 
 if __name__ == "__main__":

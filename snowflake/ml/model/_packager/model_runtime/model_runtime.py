@@ -1,11 +1,11 @@
 import copy
 import pathlib
 import warnings
-from typing import List, Literal, Optional
+from typing import List, Optional
 
 from packaging import requirements
 
-from snowflake.ml._internal import env as snowml_env, env_utils, file_utils
+from snowflake.ml._internal import env_utils, file_utils
 from snowflake.ml.model._packager.model_env import model_env
 from snowflake.ml.model._packager.model_meta import model_meta_schema
 from snowflake.ml.model._packager.model_runtime import (
@@ -37,7 +37,6 @@ class ModelRuntime:
         env: model_env.ModelEnv,
         imports: Optional[List[pathlib.PurePosixPath]] = None,
         is_gpu: bool = False,
-        server_availability_source: Literal["snowflake", "conda"] = "snowflake",
         loading_from_file: bool = False,
     ) -> None:
         self.name = name
@@ -48,30 +47,7 @@ class ModelRuntime:
             return
 
         snowml_pkg_spec = f"{env_utils.SNOWPARK_ML_PKG_NAME}=={self.runtime_env.snowpark_ml_version}"
-        if self.runtime_env._snowpark_ml_version.local:
-            self.embed_local_ml_library = True
-        else:
-            if server_availability_source == "snowflake":
-                snowml_server_availability = (
-                    len(
-                        env_utils.get_matched_package_versions_in_information_schema_with_active_session(
-                            reqs=[requirements.Requirement(snowml_pkg_spec)],
-                            python_version=snowml_env.PYTHON_VERSION,
-                        ).get(env_utils.SNOWPARK_ML_PKG_NAME, [])
-                    )
-                    >= 1
-                )
-            else:
-                snowml_server_availability = (
-                    len(
-                        env_utils.get_matched_package_versions_in_snowflake_conda_channel(
-                            req=requirements.Requirement(snowml_pkg_spec),
-                            python_version=snowml_env.PYTHON_VERSION,
-                        )
-                    )
-                    >= 1
-                )
-            self.embed_local_ml_library = not snowml_server_availability
+        self.embed_local_ml_library = self.runtime_env._snowpark_ml_version.local
 
         additional_package = (
             _SNOWML_INFERENCE_ALTERNATIVE_DEPENDENCIES if self.embed_local_ml_library else [snowml_pkg_spec]

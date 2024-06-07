@@ -1,5 +1,22 @@
 # Release History
 
+## 1.5.2
+
+### Bug Fixes
+
+- Registry: Fix an issue that leads to unable to log model in store procedure.
+- Modeling: Quick fix `import snowflake.ml.modeling.parameters.enable_anonymous_sproc` cannot be imported due to package
+  dependency error.
+- Modeling: Fix an issue causing lineage information to be missing for
+  `Pipeline`, `GridSearchCV` , `SimpleImputer`, and `RandomizedSearchCV`
+
+### Behavior Changes
+
+### New Features
+
+- Registry: Add support for TIMESTAMP_NTZ model signature data type, allowing timestamp input and output.
+- Dataset: Add `DatasetVersion.label_cols` and `DatasetVersion.exclude_cols` properties.
+
 ## 1.5.1
 
 ### Bug Fixes

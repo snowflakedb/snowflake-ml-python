@@ -2,7 +2,6 @@ import json
 
 from absl.testing import absltest
 
-from snowflake.ml._internal.exceptions import exceptions as snowml_exceptions
 from snowflake.ml.feature_store import (  # type: ignore[attr-defined]
     Entity,
     FeatureView,
@@ -147,9 +146,7 @@ class FeatureViewTest(absltest.TestCase):
             FeatureViewVersion(version)
 
         for version in invalid_dataset_versions:
-            with self.assertRaisesRegex(
-                snowml_exceptions.SnowflakeMLException, ".* is not a valid feature view version.*"
-            ):
+            with self.assertRaisesRegex(ValueError, ".* is not a valid feature view version.*"):
                 FeatureViewVersion(version)
 
 

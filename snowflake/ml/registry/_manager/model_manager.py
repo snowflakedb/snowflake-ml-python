@@ -1,5 +1,5 @@
 from types import ModuleType
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 
 import pandas as pd
 from absl.logging import logging
@@ -31,6 +31,64 @@ class ModelManager:
         self._hrid_generator = hrid_generator.HRID16()
 
     def log_model(
+        self,
+        *,
+        model: Union[model_types.SupportedModelType, model_version_impl.ModelVersion],
+        model_name: str,
+        version_name: Optional[str] = None,
+        comment: Optional[str] = None,
+        metrics: Optional[Dict[str, Any]] = None,
+        conda_dependencies: Optional[List[str]] = None,
+        pip_requirements: Optional[List[str]] = None,
+        python_version: Optional[str] = None,
+        signatures: Optional[Dict[str, model_signature.ModelSignature]] = None,
+        sample_input_data: Optional[model_types.SupportedDataType] = None,
+        code_paths: Optional[List[str]] = None,
+        ext_modules: Optional[List[ModuleType]] = None,
+        options: Optional[model_types.ModelSaveOption] = None,
+        statement_params: Optional[Dict[str, Any]] = None,
+    ) -> model_version_impl.ModelVersion:
+        if not version_name:
+            version_name = self._hrid_generator.generate()[1]
+
+        if isinstance(model, model_version_impl.ModelVersion):
+            (
+                source_database_name_id,
+                source_schema_name_id,
+                source_model_name_id,
+            ) = sql_identifier.parse_fully_qualified_name(model.fully_qualified_model_name)
+
+            self._model_ops.create_from_model_version(
+                source_database_name=source_database_name_id,
+                source_schema_name=source_schema_name_id,
+                source_model_name=source_model_name_id,
+                source_version_name=sql_identifier.SqlIdentifier(model.version_name),
+                database_name=None,
+                schema_name=None,
+                model_name=sql_identifier.SqlIdentifier(model_name),
+                version_name=sql_identifier.SqlIdentifier(version_name),
+                statement_params=statement_params,
+            )
+            return self.get_model(model_name=model_name, statement_params=statement_params).version(version_name)
+
+        return self._log_model(
+            model=model,
+            model_name=model_name,
+            version_name=version_name,
+            comment=comment,
+            metrics=metrics,
+            conda_dependencies=conda_dependencies,
+            pip_requirements=pip_requirements,
+            python_version=python_version,
+            signatures=signatures,
+            sample_input_data=sample_input_data,
+            code_paths=code_paths,
+            ext_modules=ext_modules,
+            options=options,
+            statement_params=statement_params,
+        )
+
+    def _log_model(
         self,
         model: model_types.SupportedModelType,
         *,

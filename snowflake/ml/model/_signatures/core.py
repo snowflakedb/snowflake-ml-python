@@ -53,6 +53,8 @@ class DataType(Enum):
     STRING = ("string", spt.StringType, np.str_)
     BYTES = ("bytes", spt.BinaryType, np.bytes_)
 
+    TIMESTAMP_NTZ = ("datetime64[ns]", spt.TimestampType, "datetime64[ns]")
+
     def as_snowpark_type(self) -> spt.DataType:
         """Convert to corresponding Snowpark Type.
 
@@ -78,6 +80,13 @@ class DataType(Enum):
             Corresponding DataType.
         """
         np_to_snowml_type_mapping = {i._numpy_type: i for i in DataType}
+
+        # Add datetime types:
+        datetime_res = ["Y", "M", "W", "D", "h", "m", "s", "ms", "us", "ns"]
+
+        for res in datetime_res:
+            np_to_snowml_type_mapping[f"datetime64[{res}]"] = DataType.TIMESTAMP_NTZ
+
         for potential_type in np_to_snowml_type_mapping.keys():
             if np.can_cast(np_type, potential_type, casting="no"):
                 # This is used since the same dtype might represented in different ways.
@@ -247,9 +256,12 @@ class FeatureSpec(BaseFeatureSpec):
             result_type = spt.ArrayType(result_type)
         return result_type
 
-    def as_dtype(self) -> npt.DTypeLike:
+    def as_dtype(self) -> Union[npt.DTypeLike, str]:
         """Convert to corresponding local Type."""
         if not self._shape:
+            # scalar dtype: use keys from `np.sctypeDict` to prevent unit-less dtype 'datetime64'
+            if "datetime64" in self._dtype._value:
+                return self._dtype._value
             return self._dtype._numpy_type
         return np.object_
 

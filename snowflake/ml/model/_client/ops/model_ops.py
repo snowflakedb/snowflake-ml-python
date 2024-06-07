@@ -140,6 +140,49 @@ class ModelOperator:
                 statement_params=statement_params,
             )
 
+    def create_from_model_version(
+        self,
+        *,
+        source_database_name: Optional[sql_identifier.SqlIdentifier],
+        source_schema_name: Optional[sql_identifier.SqlIdentifier],
+        source_model_name: sql_identifier.SqlIdentifier,
+        source_version_name: sql_identifier.SqlIdentifier,
+        database_name: Optional[sql_identifier.SqlIdentifier],
+        schema_name: Optional[sql_identifier.SqlIdentifier],
+        model_name: sql_identifier.SqlIdentifier,
+        version_name: sql_identifier.SqlIdentifier,
+        statement_params: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        if self.validate_existence(
+            database_name=database_name,
+            schema_name=schema_name,
+            model_name=model_name,
+            statement_params=statement_params,
+        ):
+            return self._model_version_client.add_version_from_model_version(
+                source_database_name=source_database_name,
+                source_schema_name=source_schema_name,
+                source_model_name=source_model_name,
+                source_version_name=source_version_name,
+                database_name=database_name,
+                schema_name=schema_name,
+                model_name=model_name,
+                version_name=version_name,
+                statement_params=statement_params,
+            )
+        else:
+            return self._model_version_client.create_from_model_version(
+                source_database_name=source_database_name,
+                source_schema_name=source_schema_name,
+                source_model_name=source_model_name,
+                source_version_name=source_version_name,
+                database_name=database_name,
+                schema_name=schema_name,
+                model_name=model_name,
+                version_name=version_name,
+                statement_params=statement_params,
+            )
+
     def show_models_or_versions(
         self,
         *,

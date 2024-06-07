@@ -9,6 +9,10 @@ from snowflake.snowpark import functions as F
 
 
 class DatasetDataFrameTest(parameterized.TestCase):
+    class TestSourcedObject:
+        def __init__(self, sources: Optional[List[data_source.DataSource]]) -> None:
+            setattr(self, lineage_utils._DATA_SOURCES_ATTR, sources)
+
     def setUp(self) -> None:
         connection_parameters = connection_params.SnowflakeLoginOptions()
         self.session = snowpark.Session.builder.configs(connection_parameters).create()
@@ -25,8 +29,52 @@ class DatasetDataFrameTest(parameterized.TestCase):
             inplace=True,
         )
 
+    @parameterized.parameters(  # type: ignore[misc]
+        (
+            [],
+            None,
+        ),
+        (
+            [TestSourcedObject(None)],
+            None,
+        ),
+        (
+            [TestSourcedObject(None), TestSourcedObject(None)],
+            None,
+        ),
+        (
+            [TestSourcedObject([])],
+            [],
+        ),
+        (
+            [TestSourcedObject([data_source.DataSource("foo", "v1", "foo_url")])],
+            [data_source.DataSource("foo", "v1", "foo_url")],
+        ),
+        (
+            [
+                TestSourcedObject([data_source.DataSource("foo", "v1", "foo_url")]),
+                TestSourcedObject([data_source.DataSource("foo", "v2", "foo_url")]),
+            ],
+            [data_source.DataSource("foo", "v1", "foo_url"), data_source.DataSource("foo", "v2", "foo_url")],
+        ),
+        # FIXME: Enable this test case once dedupe support added
+        # (
+        #     [
+        #         TestSourcedObject([data_source.DataSource("foo", "v1", "foo_url")]),
+        #         TestSourcedObject([data_source.DataSource("foo", "v1", "foo_url")]),
+        #         TestSourcedObject([data_source.DataSource("foo", "v2", "foo_url")]),
+        #     ],
+        #     [data_source.DataSource("foo", "v1", "foo_url"), data_source.DataSource("foo", "v2", "foo_url")],
+        # ),
+    )
+    def test_get_data_sources(
+        self, args: List[TestSourcedObject], expected: Optional[List[data_source.DataSource]]
+    ) -> None:
+        self.assertEqual(expected, lineage_utils.get_data_sources(*args))
+
     @parameterized.product(  # type: ignore[misc]
         data_sources=[
+            None,
             [],
             [data_source.DataSource("foo", "v1", "foo_url")],
             [data_source.DataSource("foo", "v1", "foo_url"), data_source.DataSource("foo", "v1", "foo_url")],
@@ -65,6 +113,7 @@ class DatasetDataFrameTest(parameterized.TestCase):
         ("cache_result",),
         ("random_split", [0.8, 0.2]),
         ("join_table_function", F.flatten(F.col("array"))),
+        ("__copy__"),
     )
     def test_dataframe_func(self, func_name: str, *args: Any, **kwargs: Any) -> None:
         func = getattr(self.df, func_name)
@@ -128,6 +177,7 @@ class DatasetDataFrameTest(parameterized.TestCase):
         ("cache_result",),
         ("random_split", [0.8, 0.2]),
         ("join_table_function", F.flatten(F.col("array"))),
+        ("__copy__"),
     )
     def test_vanilla_dataframe_func(self, func_name: str, *args: Any, **kwargs: Any) -> None:
         df = self.session.sql(
@@ -146,7 +196,7 @@ class DatasetDataFrameTest(parameterized.TestCase):
 
     def validate_dataframe(self, df: Any, data_sources: Optional[List[data_source.DataSource]]) -> None:
         self.assertIsInstance(df, get_args(Union[snowpark.DataFrame, snowpark.RelationalGroupedDataFrame]))
-        self.assertEqual(data_sources, getattr(df, lineage_utils.DATA_SOURCES_ATTR, None))
+        self.assertEqual(data_sources, lineage_utils.get_data_sources(df))
 
 
 if __name__ == "__main__":
