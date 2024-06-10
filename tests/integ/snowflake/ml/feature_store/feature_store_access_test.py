@@ -187,8 +187,10 @@ class FeatureStoreAccessTest(parameterized.TestCase):
         _configure_pre_init_privileges(
             self._session,
             _SessionInfo(self._test_database, schema, self._test_warehouse),
-            producer_role=self._test_roles[Role.PRODUCER],
-            consumer_role=self._test_roles[Role.CONSUMER],
+            roles_to_create={
+                Role.PRODUCER: self._test_roles[Role.PRODUCER],
+                Role.CONSUMER: self._test_roles[Role.CONSUMER],
+            },
         )
 
         def unit_under_test() -> FeatureStore:
@@ -347,17 +349,15 @@ class FeatureStoreAccessTest(parameterized.TestCase):
         required_access=[Role.CONSUMER], test_access=list(Role), output_type=["dataset", "table"]
     )
     def test_access_dataset(self, required_access: Role, test_access: Role, output_type: str) -> None:
-        if output_type == "dataset":
-            # FIXME(dhung) SNOW-1346923
-            self.skipTest("Dataset RBAC won't be ready until 8.19 release")
         spine_df = self._session.sql(f"SELECT id FROM {self._mock_table}")
         fv1 = self._feature_store.get_feature_view("fv1", "v1")
         fv2 = self._feature_store.get_feature_view("fv2", "v1")
         dataset_name = f"FS_TEST_DATASET_{uuid4().hex.upper()}"
         dataset = self._feature_store.generate_dataset(dataset_name, spine_df, [fv1, fv2], output_type=output_type)
 
+        dataframe = dataset.read.to_snowpark_dataframe() if output_type == "dataset" else dataset
         self._test_access(
-            lambda: dataset.to_pandas(),
+            dataframe.collect,
             required_access,
             test_access,
             expected_result=lambda _pd: self.assertNotEmpty(_pd),
@@ -451,6 +451,20 @@ class FeatureStoreAccessTest(parameterized.TestCase):
             test_access,
             access_exception_dict={Role.NONE: snowpark_exceptions.SnowparkSQLException},
         )
+
+    def test_producer_setup(self) -> None:
+        schema = create_random_schema(
+            self._session, "FS_TEST", database=self._test_database, additional_options="WITH MANAGED ACCESS"
+        )
+
+        fs = setup_feature_store(
+            self._session,
+            self._test_database,
+            schema,
+            self._test_warehouse,
+            producer_role=self._test_roles[Role.PRODUCER],
+        )
+        self.assertTrue(fs is not None)
 
 
 if __name__ == "__main__":

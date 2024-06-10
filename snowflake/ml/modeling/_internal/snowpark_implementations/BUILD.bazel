@@ -38,9 +38,15 @@ py_library(
 )
 
 py_library(
+    name = "distributed_search_udf_file",
+    srcs = ["distributed_search_udf_file.py"],
+)
+
+py_library(
     name = "distributed_hpo_trainer",
     srcs = ["distributed_hpo_trainer.py"],
     deps = [
+        ":distributed_search_udf_file",
         ":snowpark_trainer",
         "//snowflake/ml/_internal:env_utils",
         "//snowflake/ml/_internal:telemetry",

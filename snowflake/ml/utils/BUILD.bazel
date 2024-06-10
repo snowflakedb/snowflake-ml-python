@@ -34,5 +34,6 @@ py_package(
     deps = [
         ":connection_params",
         ":sparse",
+        "//snowflake/ml/_internal/utils:snowflake_env",  # Mitigate BuildSnowML failure
     ],
 )

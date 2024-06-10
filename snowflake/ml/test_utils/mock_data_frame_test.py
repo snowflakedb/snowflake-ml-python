@@ -181,6 +181,26 @@ class MockDataFrameTest(TestCase):
         with self.assertRaises(AssertionError):
             self.assertEqual(mock_df.select("NAME").count(), 5)
 
+    def test_queries(self) -> None:
+        """Test that adding and accessing queries in the dataframe works."""
+        mock_df = mock_data_frame.MockDataFrame()
+        test_data = [
+            {"type": "queries", "index": 0, "value": "SELECT query_1 FROM TABLE;"},
+            {"type": "queries", "index": 1, "value": "SELECT query_2 FROM TABLE;"},
+            {"type": "post_actions", "index": 0, "value": "post_action_1"},
+            {"type": "post_actions", "index": 1, "value": "post_action_2"},
+        ]
+        for t in test_data:
+            mock_df.add_query(str(t["type"]), str(t["value"]))
+
+        self.assertEqual(
+            mock_df.queries,
+            {
+                "queries": [test_data[0]["value"], test_data[1]["value"]],
+                "post_actions": [test_data[2]["value"], test_data[3]["value"]],
+            },
+        )
+
 
 if __name__ == "__main__":
     main()

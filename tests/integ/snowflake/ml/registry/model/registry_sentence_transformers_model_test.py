@@ -3,7 +3,7 @@ import random
 import tempfile
 
 import pandas as pd
-from absl.testing import absltest
+from absl.testing import absltest, parameterized
 
 from snowflake.ml.model import model_signature
 from snowflake.ml.model._packager.model_handlers.sentence_transformers import (
@@ -33,8 +33,12 @@ class TestRegistrySentenceTransformerModelInteg(registry_model_test_base.Registr
             os.environ[SENTENCE_TRANSFORMERS_CACHE_DIR] = self._original_cache_dir
         self.cache_dir.cleanup()
 
+    @parameterized.product(  # type: ignore[misc]
+        registry_test_fn=registry_model_test_base.RegistryModelTestBase.REGISTRY_TEST_FN_LIST,
+    )
     def test_sentence_transformers(
         self,
+        registry_test_fn: str,
     ) -> None:
         import sentence_transformers
 
@@ -55,7 +59,7 @@ class TestRegistrySentenceTransformerModelInteg(registry_model_test_base.Registr
         sig = {"encode": model_signature.infer_signature(sentences, embeddings)}
         embeddings = model_signature_utils.rename_pandas_df(embeddings, sig["encode"].outputs)
 
-        self._test_registry_model(
+        getattr(self, registry_test_fn)(
             model=model,
             sample_input_data=sentences,
             prediction_assert_fns={
@@ -66,8 +70,12 @@ class TestRegistrySentenceTransformerModelInteg(registry_model_test_base.Registr
             },
         )
 
+    @parameterized.product(  # type: ignore[misc]
+        registry_test_fn=registry_model_test_base.RegistryModelTestBase.REGISTRY_TEST_FN_LIST,
+    )
     def test_sentence_transformers_sp(
         self,
+        registry_test_fn: str,
     ) -> None:
         import sentence_transformers
 
@@ -83,14 +91,14 @@ class TestRegistrySentenceTransformerModelInteg(registry_model_test_base.Registr
                 ]
             }
         )
-        sentences_sp = snowpark_handler.SnowparkDataFrameHandler.convert_from_df(self._session, sentences)
+        sentences_sp = snowpark_handler.SnowparkDataFrameHandler.convert_from_df(self.session, sentences)
         model = sentence_transformers.SentenceTransformer(random.choice(MODEL_NAMES))
         embeddings = _sentence_transformer_encode(model, sentences)
         sig = {"encode": model_signature.infer_signature(sentences, embeddings)}
         embeddings = model_signature_utils.rename_pandas_df(embeddings, sig["encode"].outputs)
         y_df_expected = pd.concat([sentences_sp.to_pandas(), embeddings], axis=1)
 
-        self._test_registry_model(
+        getattr(self, registry_test_fn)(
             model=model,
             sample_input_data=sentences_sp,
             prediction_assert_fns={

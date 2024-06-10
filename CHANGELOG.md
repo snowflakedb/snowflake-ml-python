@@ -1,5 +1,17 @@
 # Release History
 
+## 1.5.2
+
+### Bug Fixes
+
+- Registry: Fix an issue that leads to unable to log model in store procedure.
+- Modeling: Quick fix `import snowflake.ml.modeling.parameters.enable_anonymous_sproc` cannot be imported due to package
+  dependency error.
+
+### Behavior Changes
+
+### New Features
+
 ## 1.5.1
 
 ### Bug Fixes

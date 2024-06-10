@@ -7,10 +7,6 @@ from dataclasses import asdict, dataclass
 from enum import Enum
 from typing import Any, Dict, List, Optional
 
-from snowflake.ml._internal.exceptions import (
-    error_codes,
-    exceptions as snowml_exceptions,
-)
 from snowflake.ml._internal.utils.identifier import concat_names
 from snowflake.ml._internal.utils.sql_identifier import (
     SqlIdentifier,
@@ -34,6 +30,11 @@ _FEATURE_OBJ_TYPE = "FEATURE_OBJ_TYPE"
 _FEATURE_VIEW_VERSION_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9_.\-]*$")
 _FEATURE_VIEW_VERSION_MAX_LENGTH = 128
 
+_RESULT_SCAN_QUERY_PATTERN = re.compile(
+    r".*FROM\s*TABLE\s*\(\s*RESULT_SCAN\s*\(.*",
+    flags=re.DOTALL | re.IGNORECASE | re.X,
+)
+
 
 @dataclass(frozen=True)
 class _FeatureViewMetadata:
@@ -54,13 +55,10 @@ class _FeatureViewMetadata:
 class FeatureViewVersion(str):
     def __new__(cls, version: str) -> FeatureViewVersion:
         if not _FEATURE_VIEW_VERSION_RE.match(version) or len(version) > _FEATURE_VIEW_VERSION_MAX_LENGTH:
-            raise snowml_exceptions.SnowflakeMLException(
-                error_code=error_codes.INVALID_ARGUMENT,
-                original_exception=ValueError(
-                    f"`{version}` is not a valid feature view version. "
-                    "It must start with letter or digit, and followed by letter, digit, '_', '-' or '.'. "
-                    f"The length limit is {_FEATURE_VIEW_VERSION_MAX_LENGTH}."
-                ),
+            raise ValueError(
+                f"`{version}` is not a valid feature view version. "
+                "It must start with letter or digit, and followed by letter, digit, '_', '-' or '.'. "
+                f"The length limit is {_FEATURE_VIEW_VERSION_MAX_LENGTH}."
             )
         return super().__new__(cls, version)
 
@@ -351,6 +349,9 @@ Got {len(self._feature_df.queries['queries'])}: {self._feature_df.queries['queri
             col_type = self._infer_schema_df.schema[ts_col].datatype
             if not isinstance(col_type, (DateType, TimeType, TimestampType, _NumericType)):
                 raise ValueError(f"Invalid data type for timestamp_col {ts_col}: {col_type}.")
+
+        if re.match(_RESULT_SCAN_QUERY_PATTERN, self._query) is not None:
+            raise ValueError(f"feature_df should not be reading from RESULT_SCAN. Invalid query: {self._query}")
 
     def _get_feature_names(self) -> List[SqlIdentifier]:
         join_keys = [k for e in self._entities for k in e.join_keys]

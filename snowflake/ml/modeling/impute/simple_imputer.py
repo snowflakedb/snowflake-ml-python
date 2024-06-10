@@ -158,6 +158,7 @@ class SimpleImputer(base.BaseTransformer):
 
         self.fill_value = fill_value
         self.missing_values = missing_values
+        self.statistics_: Dict[str, Any] = {}
         # TODO(hayu): [SNOW-752265] Support SimpleImputer keep_empty_features.
         #  Add back when `keep_empty_features` is supported.
         # self.keep_empty_features = keep_empty_features
@@ -229,8 +230,27 @@ class SimpleImputer(base.BaseTransformer):
 
         return input_col_datatypes
 
+    def fit(self, dataset: Union[snowpark.DataFrame, pd.DataFrame]) -> "SimpleImputer":
+        if isinstance(dataset, snowpark.DataFrame):
+            return self._fit_snowpark(dataset)
+        else:
+            return self._fit_sklearn(dataset)
+
+    def _fit_sklearn(self, dataset: pd.DataFrame) -> "SimpleImputer":
+        dataset = self._use_input_cols_only(dataset)
+        sklearn_simple_imputer = self._create_sklearn_object()
+        sklearn_simple_imputer = sklearn_simple_imputer.fit(dataset)
+        self._sklearn_object = sklearn_simple_imputer
+        for input_col, fill_value in zip(self.input_cols, sklearn_simple_imputer.statistics_.tolist()):
+            self.statistics_[input_col] = fill_value
+        self._sklearn_fit_dtype = sklearn_simple_imputer._fit_dtype
+        self.n_features_in_ = len(self.input_cols)
+        self.feature_names_in_ = self.input_cols
+        self._is_fitted = True
+        return self
+
     @telemetry.send_api_usage_telemetry(project=base.PROJECT, subproject=_SUBPROJECT)
-    def fit(self, dataset: snowpark.DataFrame) -> "SimpleImputer":
+    def _fit_snowpark(self, dataset: snowpark.DataFrame) -> "SimpleImputer":
         """
         Compute values to impute for the dataset according to the strategy.
 
@@ -245,7 +265,6 @@ class SimpleImputer(base.BaseTransformer):
         # In order to fit, the input columns should have the same type.
         input_col_datatypes = self._get_dataset_input_col_datatypes(dataset)
 
-        self.statistics_: Dict[str, Any] = {}
         statement_params = telemetry.get_statement_params(base.PROJECT, _SUBPROJECT, self.__class__.__name__)
 
         if self.strategy == "constant":

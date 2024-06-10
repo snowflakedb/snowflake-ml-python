@@ -52,5 +52,6 @@ py_package(
     packages = ["snowflake.ml"],
     deps = [
         ":disable_distributed_hpo",
+        ":enable_anonymous_sproc",
     ],
 )

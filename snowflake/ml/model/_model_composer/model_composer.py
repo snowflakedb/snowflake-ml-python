@@ -136,7 +136,7 @@ class ModelComposer:
             model_meta=self.packager.meta,
             model_file_rel_path=pathlib.PurePosixPath(self.model_file_rel_path),
             options=options,
-            data_sources=self._get_data_sources(model),
+            data_sources=self._get_data_sources(model, sample_input_data),
         )
 
         file_utils.upload_directory_to_stage(
@@ -179,8 +179,12 @@ class ModelComposer:
         mp.load(meta_only=meta_only, options=options)
         return mp
 
-    def _get_data_sources(self, model: model_types.SupportedModelType) -> Optional[List[data_source.DataSource]]:
+    def _get_data_sources(
+        self, model: model_types.SupportedModelType, sample_input_data: Optional[model_types.SupportedDataType] = None
+    ) -> Optional[List[data_source.DataSource]]:
         data_sources = getattr(model, lineage_utils.DATA_SOURCES_ATTR, None)
+        if not data_sources and sample_input_data is not None:
+            data_sources = getattr(sample_input_data, lineage_utils.DATA_SOURCES_ATTR, None)
         if isinstance(data_sources, list) and all(isinstance(item, data_source.DataSource) for item in data_sources):
             return data_sources
         return None
