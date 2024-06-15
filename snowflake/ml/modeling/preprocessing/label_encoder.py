@@ -25,11 +25,12 @@ class LabelEncoder(base.BaseTransformer):
 
     Args:
         input_cols: Optional[Union[str, List[str]]]
-            The name of a column in a DataFrame to be encoded. May be a string or a list containing one string.
+            The name of a column or a list containing one column name to be encoded in the input DataFrame. There must
+            be exactly one input column specified before fit. This argument is optional for API consistency.
 
         output_cols: Optional[Union[str, List[str]]]
-            The name of a column in a DataFrame where the results will be stored. May be a string or a list
-            containing one string.
+            The name of a column or a list containing one column name where the results will be stored. There must be
+            exactly one output column specified before trainsform. This argument is optional for API consistency.
 
         passthrough_cols: Optional[Union[str, List[str]]]
             A string or a list of strings indicating column names to be excluded from any
@@ -54,11 +55,11 @@ class LabelEncoder(base.BaseTransformer):
 
         Args:
             input_cols: Optional[Union[str, List[str]]]
-                The name of a column in a DataFrame to be encoded. May be a string or a list containing one
-                string.
+                The name of a column or a list containing one column name to be encoded in the input DataFrame. There
+                must be exactly one input column specified before fit. This argument is optional for API consistency.
             output_cols: Optional[Union[str, List[str]]]
-                The name of a column in a DataFrame where the results will be stored. May be a string or a list
-                containing one string.
+                The name of a column or a list containing one column name where the results will be stored. There must
+                be exactly one output column specified before transform. This argument is optional for API consistency.
             passthrough_cols: Optional[Union[str, List[str]]]
                 A string or a list of strings indicating column names to be excluded from any
                 operations (such as train, transform, or inference). These specified column(s)

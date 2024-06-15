@@ -298,11 +298,7 @@ class RandomizedSearchCV(BaseTransformer):
         )
         return selected_cols
 
-    @telemetry.send_api_usage_telemetry(
-        project=_PROJECT,
-        subproject=_SUBPROJECT,
-    )
-    def fit(self, dataset: Union[DataFrame, pd.DataFrame]) -> "RandomizedSearchCV":
+    def _fit(self, dataset: Union[DataFrame, pd.DataFrame]) -> "RandomizedSearchCV":
         """Run fit with all sets of parameters
         For more details on this function, see [sklearn.model_selection.RandomizedSearchCV.fit]
         (https://scikit-learn.org/stable/modules/generated/sklearn.model_selection.RandomizedSearchCV.html#sklearn.model_selection.RandomizedSearchCV.fit)

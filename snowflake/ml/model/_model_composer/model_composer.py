@@ -182,9 +182,9 @@ class ModelComposer:
     def _get_data_sources(
         self, model: model_types.SupportedModelType, sample_input_data: Optional[model_types.SupportedDataType] = None
     ) -> Optional[List[data_source.DataSource]]:
-        data_sources = getattr(model, lineage_utils.DATA_SOURCES_ATTR, None)
+        data_sources = lineage_utils.get_data_sources(model)
         if not data_sources and sample_input_data is not None:
-            data_sources = getattr(sample_input_data, lineage_utils.DATA_SOURCES_ATTR, None)
+            data_sources = lineage_utils.get_data_sources(sample_input_data)
         if isinstance(data_sources, list) and all(isinstance(item, data_source.DataSource) for item in data_sources):
             return data_sources
         return None

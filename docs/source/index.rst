@@ -15,6 +15,9 @@ Portions of the Snowpark ML API Reference are derived from
 | **scikit-learn** Copyright © 2007-2023 The scikit-learn developers. All rights reserved.
 | **xgboost** Copyright © 2019 by xgboost contributors.
 | **lightgbm** Copyright © Microsoft Corporation.
+|
+
+----
 
 Table of Contents
 =================
@@ -22,7 +25,10 @@ Table of Contents
 .. toctree::
    :maxdepth: 3
 
-   modeling
+   cortex
+   dataset
+   feature_store
    fileset
    model
+   modeling
    registry

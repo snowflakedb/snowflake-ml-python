@@ -107,6 +107,9 @@ class SnowparkDataFrameHandler(base_handler.BaseDataHandler[snowflake.snowpark.D
         if not features:
             features = pandas_handler.PandasDataFrameHandler.infer_signature(df, role="input")
         # Role will be no effect on the column index. That is to say, the feature name is the actual column name.
+        if keep_order:
+            df = df.reset_index(drop=True)
+            df[infer_template._KEEP_ORDER_COL_NAME] = df.index
         sp_df = session.create_dataframe(df)
         column_names = []
         columns = []
@@ -121,8 +124,5 @@ class SnowparkDataFrameHandler(base_handler.BaseDataHandler[snowflake.snowpark.D
             columns.append(F.col(identifier.get_inferred_name(feature.name)).cast(feature.as_snowpark_type()))
 
         sp_df = sp_df.with_columns(column_names, columns)
-
-        if keep_order:
-            sp_df = sp_df.with_column(infer_template._KEEP_ORDER_COL_NAME, F.monotonically_increasing_id())
 
         return sp_df

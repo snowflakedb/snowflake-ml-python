@@ -48,6 +48,8 @@ py_library(
     srcs = ["estimator_utils.py"],
     deps = [
         "//snowflake/ml/_internal/exceptions",
+        "//snowflake/ml/_internal/utils:query_result_checker",
+        "//snowflake/ml/_internal/utils:temp_file_utils",
         "//snowflake/ml/modeling/framework",
     ],
 )

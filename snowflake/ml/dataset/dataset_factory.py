@@ -16,8 +16,7 @@ def create_from_dataframe(
     **version_kwargs: Any,
 ) -> dataset.Dataset:
     """
-    Create a new versioned Dataset from a DataFrame and returns
-    a DatasetReader for the newly created Dataset version.
+    Create a new versioned Dataset from a DataFrame.
 
     Args:
         session: The Snowpark Session instance to use.
@@ -39,7 +38,7 @@ def create_from_dataframe(
 @telemetry.send_api_usage_telemetry(project=_PROJECT)
 def load_dataset(session: snowpark.Session, name: str, version: str) -> dataset.Dataset:
     """
-    Load a versioned Dataset into a DatasetReader.
+    Load a versioned Dataset.
 
     Args:
         session: The Snowpark Session instance to use.
@@ -47,7 +46,7 @@ def load_dataset(session: snowpark.Session, name: str, version: str) -> dataset.
         version: The dataset version name.
 
     Returns:
-        A DatasetReader object.
+        A Dataset object.
     """
     ds: dataset.Dataset = dataset.Dataset.load(session, name).select_version(version)
     return ds

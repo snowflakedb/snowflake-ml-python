@@ -4,6 +4,7 @@ import io
 import os
 import posixpath
 import sys
+import uuid
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 import cloudpickle as cp
@@ -16,10 +17,7 @@ from snowflake.ml._internal.utils import (
     identifier,
     pkg_version_utils,
     snowpark_dataframe_utils,
-)
-from snowflake.ml._internal.utils.temp_file_utils import (
-    cleanup_temp_files,
-    get_temp_file_path,
+    temp_file_utils,
 )
 from snowflake.ml.modeling._internal.model_specifications import (
     ModelSpecificationsBuilder,
@@ -37,13 +35,14 @@ from snowflake.snowpark.row import Row
 from snowflake.snowpark.types import IntegerType, StringType, StructField, StructType
 from snowflake.snowpark.udtf import UDTFRegistration
 
-cp.register_pickle_by_value(inspect.getmodule(get_temp_file_path))
+cp.register_pickle_by_value(inspect.getmodule(temp_file_utils.get_temp_file_path))
 cp.register_pickle_by_value(inspect.getmodule(identifier.get_inferred_name))
 cp.register_pickle_by_value(inspect.getmodule(snowpark_dataframe_utils.cast_snowpark_dataframe))
 
 _PROJECT = "ModelDevelopment"
 DEFAULT_UDTF_NJOBS = 3
 ENABLE_EFFICIENT_MEMORY_USAGE = False
+_UDTF_STAGE_NAME = f"MEMORY_EFFICIENT_UDTF_{str(uuid.uuid4()).replace('-', '_')}"
 
 
 def construct_cv_results(
@@ -318,7 +317,7 @@ class DistributedHPOTrainer(SnowparkModelTrainer):
         original_refit = estimator.refit
 
         # Create a temp file and dump the estimator to that file.
-        estimator_file_name = get_temp_file_path()
+        estimator_file_name = temp_file_utils.get_temp_file_path()
         params_to_evaluate = []
         for param_to_eval in list(param_grid):
             for k, v in param_to_eval.items():
@@ -357,6 +356,7 @@ class DistributedHPOTrainer(SnowparkModelTrainer):
         )
         estimator_location = put_result[0].target
         imports.append(f"@{temp_stage_name}/{estimator_location}")
+        temp_file_utils.cleanup_temp_files([estimator_file_name])
 
         search_sproc_name = random_name_for_temp_object(TempObjectType.PROCEDURE)
         random_udtf_name = random_name_for_temp_object(TempObjectType.TABLE_FUNCTION)
@@ -413,7 +413,7 @@ class DistributedHPOTrainer(SnowparkModelTrainer):
             X = df[input_cols]
             y = df[label_cols].squeeze() if label_cols else None
 
-            local_estimator_file_name = get_temp_file_path()
+            local_estimator_file_name = temp_file_utils.get_temp_file_path()
             session.file.get(stage_estimator_file_name, local_estimator_file_name)
 
             local_estimator_file_path = os.path.join(
@@ -429,7 +429,7 @@ class DistributedHPOTrainer(SnowparkModelTrainer):
             n_splits = build_cross_validator.get_n_splits(X, y, None)
             # store the cross_validator's test indices only to save space
             cross_validator_indices = [test for _, test in build_cross_validator.split(X, y, None)]
-            local_indices_file_name = get_temp_file_path()
+            local_indices_file_name = temp_file_utils.get_temp_file_path()
             with open(local_indices_file_name, mode="w+b") as local_indices_file_obj:
                 cp.dump(cross_validator_indices, local_indices_file_obj)
 
@@ -444,6 +444,8 @@ class DistributedHPOTrainer(SnowparkModelTrainer):
             imports.append(f"@{temp_stage_name}/{indices_location}")
             cross_validator_indices_length = int(len(cross_validator_indices))
             parameter_grid_length = len(param_grid)
+
+            temp_file_utils.cleanup_temp_files([local_estimator_file_name, local_indices_file_name])
 
             assert estimator is not None
 
@@ -647,7 +649,7 @@ class DistributedHPOTrainer(SnowparkModelTrainer):
                 if hasattr(estimator.best_estimator_, "feature_names_in_"):
                     estimator.feature_names_in_ = estimator.best_estimator_.feature_names_in_
 
-            local_result_file_name = get_temp_file_path()
+            local_result_file_name = temp_file_utils.get_temp_file_path()
 
             with open(local_result_file_name, mode="w+b") as local_result_file_obj:
                 cp.dump(estimator, local_result_file_obj)
@@ -658,6 +660,7 @@ class DistributedHPOTrainer(SnowparkModelTrainer):
                 auto_compress=False,
                 overwrite=True,
             )
+            temp_file_utils.cleanup_temp_files([local_result_file_name])
 
             # Note: you can add something like  + "|" + str(df) to the return string
             # to pass debug information to the caller.
@@ -671,7 +674,7 @@ class DistributedHPOTrainer(SnowparkModelTrainer):
             label_cols,
         )
 
-        local_estimator_path = get_temp_file_path()
+        local_estimator_path = temp_file_utils.get_temp_file_path()
         session.file.get(
             posixpath.join(temp_stage_name, sproc_export_file_name),
             local_estimator_path,
@@ -680,7 +683,7 @@ class DistributedHPOTrainer(SnowparkModelTrainer):
         with open(os.path.join(local_estimator_path, sproc_export_file_name), mode="r+b") as result_file_obj:
             fit_estimator = cp.load(result_file_obj)
 
-        cleanup_temp_files([local_estimator_path])
+        temp_file_utils.cleanup_temp_files([local_estimator_path])
 
         return fit_estimator
 
@@ -716,7 +719,7 @@ class DistributedHPOTrainer(SnowparkModelTrainer):
         imports = [f"@{row.name}" for row in session.sql(f"LIST @{temp_stage_name}/{dataset_file_name}").collect()]
 
         # Create a temp file and dump the estimator to that file.
-        estimator_file_name = get_temp_file_path()
+        estimator_file_name = temp_file_utils.get_temp_file_path()
         params_to_evaluate = list(param_grid)
         CONSTANTS: Dict[str, Any] = dict()
         CONSTANTS["dataset_snowpark_cols"] = dataset.columns
@@ -757,6 +760,7 @@ class DistributedHPOTrainer(SnowparkModelTrainer):
         )
         estimator_location = os.path.basename(estimator_file_name)
         imports.append(f"@{temp_stage_name}/{estimator_location}")
+        temp_file_utils.cleanup_temp_files([estimator_file_name])
         CONSTANTS["estimator_location"] = estimator_location
 
         search_sproc_name = random_name_for_temp_object(TempObjectType.PROCEDURE)
@@ -823,7 +827,7 @@ class DistributedHPOTrainer(SnowparkModelTrainer):
             if sample_weight_col:
                 fit_params["sample_weight"] = df[sample_weight_col].squeeze()
 
-            local_estimator_file_folder_name = get_temp_file_path()
+            local_estimator_file_folder_name = temp_file_utils.get_temp_file_path()
             session.file.get(stage_estimator_file_name, local_estimator_file_folder_name)
 
             local_estimator_file_path = os.path.join(
@@ -869,7 +873,7 @@ class DistributedHPOTrainer(SnowparkModelTrainer):
 
             # (1) store the cross_validator's test indices only to save space
             cross_validator_indices = [test for _, test in build_cross_validator.split(X, y, None)]
-            local_indices_file_name = get_temp_file_path()
+            local_indices_file_name = temp_file_utils.get_temp_file_path()
             with open(local_indices_file_name, mode="w+b") as local_indices_file_obj:
                 cp.dump(cross_validator_indices, local_indices_file_obj)
 
@@ -884,7 +888,7 @@ class DistributedHPOTrainer(SnowparkModelTrainer):
             imports.append(f"@{temp_stage_name}/{indices_location}")
 
             # (2) store the base estimator
-            local_base_estimator_file_name = get_temp_file_path()
+            local_base_estimator_file_name = temp_file_utils.get_temp_file_path()
             with open(local_base_estimator_file_name, mode="w+b") as local_base_estimator_file_obj:
                 cp.dump(base_estimator, local_base_estimator_file_obj)
             session.file.put(
@@ -897,7 +901,7 @@ class DistributedHPOTrainer(SnowparkModelTrainer):
             imports.append(f"@{temp_stage_name}/{base_estimator_location}")
 
             # (3) store the fit_and_score_kwargs
-            local_fit_and_score_kwargs_file_name = get_temp_file_path()
+            local_fit_and_score_kwargs_file_name = temp_file_utils.get_temp_file_path()
             with open(local_fit_and_score_kwargs_file_name, mode="w+b") as local_fit_and_score_kwargs_file_obj:
                 cp.dump(fit_and_score_kwargs, local_fit_and_score_kwargs_file_obj)
             session.file.put(
@@ -918,7 +922,7 @@ class DistributedHPOTrainer(SnowparkModelTrainer):
             CONSTANTS["fit_and_score_kwargs_location"] = fit_and_score_kwargs_location
 
             # (6) store the constants
-            local_constant_file_name = get_temp_file_path(prefix="constant")
+            local_constant_file_name = temp_file_utils.get_temp_file_path(prefix="constant")
             with open(local_constant_file_name, mode="w+b") as local_indices_file_obj:
                 cp.dump(CONSTANTS, local_indices_file_obj)
 
@@ -932,6 +936,17 @@ class DistributedHPOTrainer(SnowparkModelTrainer):
             constant_location = os.path.basename(local_constant_file_name)
             imports.append(f"@{temp_stage_name}/{constant_location}")
 
+            temp_file_utils.cleanup_temp_files(
+                [
+                    local_estimator_file_folder_name,
+                    local_indices_file_name,
+                    local_base_estimator_file_name,
+                    local_base_estimator_file_name,
+                    local_fit_and_score_kwargs_file_name,
+                    local_constant_file_name,
+                ]
+            )
+
             cross_validator_indices_length = int(len(cross_validator_indices))
             parameter_grid_length = len(param_grid)
 
@@ -942,124 +957,144 @@ class DistributedHPOTrainer(SnowparkModelTrainer):
 
             import tempfile
 
+            # delete is set to False to support Windows environment
             with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False, encoding="utf-8") as f:
                 udf_code = execute_template
                 f.file.write(udf_code)
                 f.file.flush()
 
-                # Register the UDTF function from the file
-                udtf_registration.register_from_file(
-                    file_path=f.name,
-                    handler_name="SearchCV",
-                    name=random_udtf_name,
-                    output_schema=StructType(
-                        [StructField("FIRST_IDX", IntegerType()), StructField("EACH_CV_RESULTS", StringType())]
-                    ),
-                    input_types=[IntegerType(), IntegerType(), IntegerType()],
-                    replace=True,
-                    imports=imports,  # type: ignore[arg-type]
-                    is_permanent=False,
-                    packages=required_deps,  # type: ignore[arg-type]
-                    statement_params=udtf_statement_params,
-                )
+                # Use catchall exception handling and a finally block to clean up the _UDTF_STAGE_NAME
+                try:
+                    # Create one stage for data and for estimators.
+                    # Because only permanent functions support _sf_node_singleton for now, therefore,
+                    # UDTF creation would change to is_permanent=True, and manually drop the stage after UDTF is done
+                    _stage_creation_query_udtf = f"CREATE OR REPLACE STAGE {_UDTF_STAGE_NAME};"
+                    session.sql(_stage_creation_query_udtf).collect()
 
-            HP_TUNING = F.table_function(random_udtf_name)
-
-            # param_indices is for the index for each parameter grid;
-            # cv_indices is for the index for each cross_validator's fold;
-            # param_cv_indices is for the index for the product of (len(param_indices) * len(cv_indices))
-            cv_indices, param_indices = zip(
-                *product(range(cross_validator_indices_length), range(parameter_grid_length))
-            )
-
-            indices_info_pandas = pd.DataFrame(
-                {
-                    "IDX": [i // _NUM_CPUs for i in range(parameter_grid_length * cross_validator_indices_length)],
-                    "PARAM_IND": param_indices,
-                    "CV_IND": cv_indices,
-                }
-            )
-
-            indices_info_sp = session.create_dataframe(indices_info_pandas)
-            # execute udtf by querying HP_TUNING table
-            HP_raw_results = indices_info_sp.select(
-                (
-                    HP_TUNING(indices_info_sp["IDX"], indices_info_sp["PARAM_IND"], indices_info_sp["CV_IND"]).over(
-                        partition_by="IDX"
+                    # Register the UDTF function from the file
+                    udtf_registration.register_from_file(
+                        file_path=f.name,
+                        handler_name="SearchCV",
+                        name=random_udtf_name,
+                        output_schema=StructType(
+                            [StructField("FIRST_IDX", IntegerType()), StructField("EACH_CV_RESULTS", StringType())]
+                        ),
+                        input_types=[IntegerType(), IntegerType(), IntegerType()],
+                        replace=True,
+                        imports=imports,  # type: ignore[arg-type]
+                        stage_location=_UDTF_STAGE_NAME,
+                        is_permanent=True,
+                        packages=required_deps,  # type: ignore[arg-type]
+                        statement_params=udtf_statement_params,
                     )
-                ),
-            )
 
-            first_test_score, cv_results_ = construct_cv_results_memory_efficient_version(
-                estimator,
-                n_splits,
-                list(param_grid),
-                HP_raw_results.select("EACH_CV_RESULTS").sort(F.col("FIRST_IDX")).collect(),
-                cross_validator_indices_length,
-                parameter_grid_length,
-            )
+                    HP_TUNING = F.table_function(random_udtf_name)
 
-            estimator.cv_results_ = cv_results_
-            estimator.multimetric_ = isinstance(first_test_score, dict)
+                    # param_indices is for the index for each parameter grid;
+                    # cv_indices is for the index for each cross_validator's fold;
+                    # param_cv_indices is for the index for the product of (len(param_indices) * len(cv_indices))
+                    cv_indices, param_indices = zip(
+                        *product(range(cross_validator_indices_length), range(parameter_grid_length))
+                    )
 
-            # check refit_metric now for a callable scorer that is multimetric
-            if callable(estimator.scoring) and estimator.multimetric_:
-                estimator._check_refit_for_multimetric(first_test_score)
-                refit_metric = estimator.refit
+                    indices_info_pandas = pd.DataFrame(
+                        {
+                            "IDX": [
+                                i // _NUM_CPUs for i in range(parameter_grid_length * cross_validator_indices_length)
+                            ],
+                            "PARAM_IND": param_indices,
+                            "CV_IND": cv_indices,
+                        }
+                    )
 
-            # For multi-metric evaluation, store the best_index_, best_params_ and
-            # best_score_ iff refit is one of the scorer names
-            # In single metric evaluation, refit_metric is "score"
-            if estimator.refit or not estimator.multimetric_:
-                estimator.best_index_ = estimator._select_best_index(estimator.refit, refit_metric, cv_results_)
-                if not callable(estimator.refit):
-                    # With a non-custom callable, we can select the best score
-                    # based on the best index
-                    estimator.best_score_ = cv_results_[f"mean_test_{refit_metric}"][estimator.best_index_]
-                estimator.best_params_ = cv_results_["params"][estimator.best_index_]
+                    indices_info_sp = session.create_dataframe(indices_info_pandas)
+                    # execute udtf by querying HP_TUNING table
+                    HP_raw_results = indices_info_sp.select(
+                        (
+                            HP_TUNING(
+                                indices_info_sp["IDX"], indices_info_sp["PARAM_IND"], indices_info_sp["CV_IND"]
+                            ).over(partition_by="IDX")
+                        ),
+                    )
 
-            if estimator.refit:
-                estimator.best_estimator_ = clone(base_estimator).set_params(
-                    **clone(estimator.best_params_, safe=False)
-                )
+                    first_test_score, cv_results_ = construct_cv_results_memory_efficient_version(
+                        estimator,
+                        n_splits,
+                        list(param_grid),
+                        HP_raw_results.select("EACH_CV_RESULTS").sort(F.col("FIRST_IDX")).collect(),
+                        cross_validator_indices_length,
+                        parameter_grid_length,
+                    )
 
-                # Let the sproc use all cores to refit.
-                estimator.n_jobs = estimator.n_jobs or -1
+                    estimator.cv_results_ = cv_results_
+                    estimator.multimetric_ = isinstance(first_test_score, dict)
 
-                # process the input as args
-                argspec = inspect.getfullargspec(estimator.fit)
-                args = {"X": X}
-                if label_cols:
-                    label_arg_name = "Y" if "Y" in argspec.args else "y"
-                    args[label_arg_name] = y
-                if sample_weight_col is not None and "sample_weight" in argspec.args:
-                    args["sample_weight"] = df[sample_weight_col].squeeze()
-                # estimator.refit = original_refit
-                refit_start_time = time.time()
-                estimator.best_estimator_.fit(**args)
-                refit_end_time = time.time()
-                estimator.refit_time_ = refit_end_time - refit_start_time
+                    # check refit_metric now for a callable scorer that is multimetric
+                    if callable(estimator.scoring) and estimator.multimetric_:
+                        estimator._check_refit_for_multimetric(first_test_score)
+                        refit_metric = estimator.refit
 
-                if hasattr(estimator.best_estimator_, "feature_names_in_"):
-                    estimator.feature_names_in_ = estimator.best_estimator_.feature_names_in_
+                    # For multi-metric evaluation, store the best_index_, best_params_ and
+                    # best_score_ iff refit is one of the scorer names
+                    # In single metric evaluation, refit_metric is "score"
+                    if estimator.refit or not estimator.multimetric_:
+                        estimator.best_index_ = estimator._select_best_index(estimator.refit, refit_metric, cv_results_)
+                        if not callable(estimator.refit):
+                            # With a non-custom callable, we can select the best score
+                            # based on the best index
+                            estimator.best_score_ = cv_results_[f"mean_test_{refit_metric}"][estimator.best_index_]
+                        estimator.best_params_ = cv_results_["params"][estimator.best_index_]
 
-            # Store the only scorer not as a dict for single metric evaluation
-            estimator.scorer_ = scorers
-            estimator.n_splits_ = n_splits
+                    if estimator.refit:
+                        estimator.best_estimator_ = clone(base_estimator).set_params(
+                            **clone(estimator.best_params_, safe=False)
+                        )
 
-            local_result_file_name = get_temp_file_path()
+                        # Let the sproc use all cores to refit.
+                        estimator.n_jobs = estimator.n_jobs or -1
 
-            with open(local_result_file_name, mode="w+b") as local_result_file_obj:
-                cp.dump(estimator, local_result_file_obj)
+                        # process the input as args
+                        argspec = inspect.getfullargspec(estimator.fit)
+                        args = {"X": X}
+                        if label_cols:
+                            label_arg_name = "Y" if "Y" in argspec.args else "y"
+                            args[label_arg_name] = y
+                        if sample_weight_col is not None and "sample_weight" in argspec.args:
+                            args["sample_weight"] = df[sample_weight_col].squeeze()
+                        # estimator.refit = original_refit
+                        refit_start_time = time.time()
+                        estimator.best_estimator_.fit(**args)
+                        refit_end_time = time.time()
+                        estimator.refit_time_ = refit_end_time - refit_start_time
 
-            session.file.put(
-                local_result_file_name,
-                temp_stage_name,
-                auto_compress=False,
-                overwrite=True,
-            )
+                        if hasattr(estimator.best_estimator_, "feature_names_in_"):
+                            estimator.feature_names_in_ = estimator.best_estimator_.feature_names_in_
 
-            return str(os.path.basename(local_result_file_name))
+                    # Store the only scorer not as a dict for single metric evaluation
+                    estimator.scorer_ = scorers
+                    estimator.n_splits_ = n_splits
+
+                    local_result_file_name = temp_file_utils.get_temp_file_path()
+
+                    with open(local_result_file_name, mode="w+b") as local_result_file_obj:
+                        cp.dump(estimator, local_result_file_obj)
+
+                    session.file.put(
+                        local_result_file_name,
+                        temp_stage_name,
+                        auto_compress=False,
+                        overwrite=True,
+                    )
+
+                    # Clean up the stages and files
+                    session.sql(f"DROP STAGE IF EXISTS {_UDTF_STAGE_NAME}")
+
+                    temp_file_utils.cleanup_temp_files([local_result_file_name])
+
+                    return str(os.path.basename(local_result_file_name))
+                finally:
+                    # Clean up the stages
+                    session.sql(f"DROP STAGE IF EXISTS {_UDTF_STAGE_NAME}")
 
         sproc_export_file_name = _distributed_search(
             session,
@@ -1069,7 +1104,7 @@ class DistributedHPOTrainer(SnowparkModelTrainer):
             label_cols,
         )
 
-        local_estimator_path = get_temp_file_path()
+        local_estimator_path = temp_file_utils.get_temp_file_path()
         session.file.get(
             posixpath.join(temp_stage_name, sproc_export_file_name),
             local_estimator_path,
@@ -1078,7 +1113,7 @@ class DistributedHPOTrainer(SnowparkModelTrainer):
         with open(os.path.join(local_estimator_path, sproc_export_file_name), mode="r+b") as result_file_obj:
             fit_estimator = cp.load(result_file_obj)
 
-        cleanup_temp_files(local_estimator_path)
+        temp_file_utils.cleanup_temp_files(local_estimator_path)
 
         return fit_estimator
 

@@ -920,7 +920,7 @@ class FeatureStore:
         try:
             if output_type == "table":
                 table_name = f"{name}_{version}"
-                result_df.write.mode("errorifexists").save_as_table(table_name)  # type: ignore[call-overload]
+                result_df.write.mode("errorifexists").save_as_table(table_name)
                 ds_df = self._session.table(table_name)
                 return ds_df
             else:
@@ -1762,7 +1762,7 @@ class FeatureStore:
                 f"""
                     SELECT * FROM TABLE(
                         {self._config.database}.INFORMATION_SCHEMA.TAG_REFERENCES_INTERNAL(
-                            TAG_NAME => '{_FEATURE_STORE_OBJECT_TAG}'
+                            TAG_NAME => '{self._get_fully_qualified_name(_FEATURE_STORE_OBJECT_TAG)}'
                         )
                     ) LIMIT 1;
                 """

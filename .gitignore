@@ -394,4 +394,4 @@ user.bazelrc
 html_coverage_report/
 
 # VSCode configuration
-.vscode/
+.vscode

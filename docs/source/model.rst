@@ -1,12 +1,9 @@
-===========================
+==================
 snowflake.ml.model
-===========================
+==================
 
 .. automodule:: snowflake.ml.model
     :noindex:
-
-snowflake.ml.model
----------------------------------
 
 .. currentmodule:: snowflake.ml.model
 

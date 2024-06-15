@@ -1,6 +1,22 @@
 # Release History
 
-## 1.5.2
+## 1.5.3
+
+### Bug Fixes
+
+- Modeling: Fix an issue causing lineage information to be missing for
+  `Pipeline`, `GridSearchCV` , `SimpleImputer`, and `RandomizedSearchCV`
+- Registry: Fix an issue that leads to incorrect result when using pandas Dataframe with over 100, 000 rows as the input
+  of `ModelVersion.run` method in Stored Procedure.
+
+### Behavior Changes
+
+### New Features
+
+- Registry: Add support for TIMESTAMP_NTZ model signature data type, allowing timestamp input and output.
+- Dataset: Add `DatasetVersion.label_cols` and `DatasetVersion.exclude_cols` properties.
+
+## 1.5.2 (06-10-2024)
 
 ### Bug Fixes
 
@@ -12,7 +28,7 @@
 
 ### New Features
 
-## 1.5.1
+## 1.5.1 (05-22-2024)
 
 ### Bug Fixes
 
@@ -37,7 +53,7 @@
   permissions to operate on schema. Please call
   `import snowflake.ml.modeling.parameters.enable_anonymous_sproc  # noqa: F401`
 
-## 1.5.0
+## 1.5.0 (05-01-2024)
 
 ### Bug Fixes
 

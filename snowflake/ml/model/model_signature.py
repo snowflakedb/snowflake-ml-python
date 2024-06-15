@@ -168,6 +168,8 @@ def _validate_numpy_array(
             max_v <= np.finfo(feature_type._numpy_type).max  # type: ignore[arg-type]
             and min_v >= np.finfo(feature_type._numpy_type).min  # type: ignore[arg-type]
         )
+    elif feature_type in [core.DataType.TIMESTAMP_NTZ]:
+        return np.issubdtype(arr.dtype, np.datetime64)
     else:
         return np.can_cast(arr.dtype, feature_type._numpy_type, casting="no")
 

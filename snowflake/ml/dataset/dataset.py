@@ -65,6 +65,20 @@ class DatasetVersion:
         comment: Optional[str] = self._get_property("comment")
         return comment
 
+    @property
+    def label_cols(self) -> List[str]:
+        metadata = self._get_metadata()
+        if metadata is None or metadata.label_cols is None:
+            return []
+        return metadata.label_cols
+
+    @property
+    def exclude_cols(self) -> List[str]:
+        metadata = self._get_metadata()
+        if metadata is None or metadata.exclude_cols is None:
+            return []
+        return metadata.exclude_cols
+
     def _get_property(self, property_name: str, default: Any = None) -> Any:
         if self._properties is None:
             sql_result = (
@@ -90,17 +104,6 @@ class DatasetVersion:
             except ValueError as e:
                 warnings.warn(f"Metadata parsing failed with error: {e}", UserWarning, stacklevel=2)
         return self._metadata
-
-    def _get_exclude_cols(self) -> List[str]:
-        metadata = self._get_metadata()
-        if metadata is None:
-            return []
-        cols = []
-        if metadata.exclude_cols:
-            cols.extend(metadata.exclude_cols)
-        if metadata.label_cols:
-            cols.extend(metadata.label_cols)
-        return cols
 
     def url(self) -> str:
         """Returns the URL of the DatasetVersion contents in Snowflake.
@@ -168,7 +171,7 @@ class Dataset:
                         fully_qualified_name=self._fully_qualified_name,
                         version=v.name,
                         url=v.url(),
-                        exclude_cols=v._get_exclude_cols(),
+                        exclude_cols=(v.label_cols + v.exclude_cols),
                     )
                 ],
             )
