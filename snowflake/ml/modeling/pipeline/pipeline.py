@@ -17,6 +17,7 @@ from sklearn.utils import metaestimators
 from snowflake import snowpark
 from snowflake.ml._internal import file_utils, telemetry
 from snowflake.ml._internal.exceptions import error_codes, exceptions
+from snowflake.ml._internal.lineage import lineage_utils
 from snowflake.ml._internal.utils import snowpark_dataframe_utils, temp_file_utils
 from snowflake.ml.model.model_signature import ModelSignature, _infer_signature
 from snowflake.ml.modeling._internal.model_transformer_builder import (
@@ -426,6 +427,10 @@ class Pipeline(base.BaseTransformer):
             if isinstance(dataset, snowpark.DataFrame)
             else dataset
         )
+
+        # Extract lineage information here since we're overriding fit() directly
+        data_sources = lineage_utils.get_data_sources(dataset)
+        lineage_utils.set_data_sources(self, data_sources)
 
         if self._can_be_trained_in_ml_runtime(dataset):
             if not self._is_convertible_to_sklearn:

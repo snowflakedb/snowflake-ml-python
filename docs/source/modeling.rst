@@ -384,11 +384,11 @@ snowflake.ml.modeling.naive_bayes
 .. autosummary::
     :toctree: api/modeling
 
-  BernoulliNB
-  CategoricalNB
-  ComplementNB
-  GaussianNB
-  MultinomialNB
+    BernoulliNB
+    CategoricalNB
+    ComplementNB
+    GaussianNB
+    MultinomialNB
 
 
 snowflake.ml.modeling.neighbors
@@ -401,15 +401,15 @@ snowflake.ml.modeling.neighbors
 .. autosummary::
     :toctree: api/modeling
 
-  KernelDensity
-  KNeighborsClassifier
-  KNeighborsRegressor
-  LocalOutlierFactor
-  NearestCentroid
-  NearestNeighbors
-  NeighborhoodComponentsAnalysis
-  RadiusNeighborsClassifier
-  RadiusNeighborsRegressor
+    KernelDensity
+    KNeighborsClassifier
+    KNeighborsRegressor
+    LocalOutlierFactor
+    NearestCentroid
+    NearestNeighbors
+    NeighborhoodComponentsAnalysis
+    RadiusNeighborsClassifier
+    RadiusNeighborsRegressor
 
 
 snowflake.ml.modeling.neural_network
@@ -422,9 +422,9 @@ snowflake.ml.modeling.neural_network
 .. autosummary::
     :toctree: api/modeling
 
-  BernoulliRBM
-  MLPClassifier
-  MLPRegressor
+    BernoulliRBM
+    MLPClassifier
+    MLPRegressor
 
 snowflake.ml.modeling.pipeline
 -------------------------------------------
@@ -436,7 +436,7 @@ snowflake.ml.modeling.pipeline
 .. autosummary::
     :toctree: api/modeling
 
-  Pipeline
+    Pipeline
 
 snowflake.ml.modeling.preprocessing
 -----------------------------------------------
@@ -469,8 +469,8 @@ snowflake.ml.modeling.semi_supervised
 .. autosummary::
     :toctree: api/modeling
 
-  LabelPropagation
-  LabelSpreading
+    LabelPropagation
+    LabelSpreading
 
 
 snowflake.ml.modeling.svm
@@ -483,12 +483,12 @@ snowflake.ml.modeling.svm
 .. autosummary::
     :toctree: api/modeling
 
-  LinearSVC
-  LinearSVR
-  NuSVC
-  NuSVR
-  SVC
-  SVR
+    LinearSVC
+    LinearSVR
+    NuSVC
+    NuSVR
+    SVC
+    SVR
 
 
 
@@ -502,10 +502,10 @@ snowflake.ml.modeling.tree
 .. autosummary::
     :toctree: api/modeling
 
-  DecisionTreeClassifier
-  DecisionTreeRegressor
-  ExtraTreeClassifier
-  ExtraTreeRegressor
+    DecisionTreeClassifier
+    DecisionTreeRegressor
+    ExtraTreeClassifier
+    ExtraTreeRegressor
 
 
 snowflake.ml.modeling.xgboost
@@ -518,7 +518,7 @@ snowflake.ml.modeling.xgboost
 .. autosummary::
     :toctree: api/modeling
 
-  XGBClassifier
-  XGBRegressor
-  XGBRFClassifier
-  XGBRFRegressor
+    XGBClassifier
+    XGBRegressor
+    XGBRFClassifier
+    XGBRFRegressor

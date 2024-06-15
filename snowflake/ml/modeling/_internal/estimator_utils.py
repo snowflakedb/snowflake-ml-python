@@ -1,15 +1,19 @@
 import inspect
 import numbers
+import os
 from typing import Any, Callable, Dict, List, Set, Tuple
 
+import cloudpickle as cp
 import numpy as np
 from numpy import typing as npt
-from typing_extensions import TypeGuard
 
 from snowflake.ml._internal.exceptions import error_codes, exceptions
+from snowflake.ml._internal.utils import temp_file_utils
+from snowflake.ml._internal.utils.query_result_checker import SqlResultValidator
 from snowflake.ml.modeling.framework._utils import to_native_format
 from snowflake.ml.modeling.framework.base import BaseTransformer
 from snowflake.snowpark import Session
+from snowflake.snowpark._internal import utils as snowpark_utils
 
 
 def validate_sklearn_args(args: Dict[str, Tuple[Any, Any, bool]], klass: type) -> Dict[str, Any]:
@@ -97,6 +101,7 @@ def original_estimator_has_callable(attr: str) -> Callable[[Any], bool]:
     Returns:
         A function which checks for the existence of callable `attr` on the given object.
     """
+    from typing_extensions import TypeGuard
 
     def check(self: BaseTransformer) -> TypeGuard[Callable[..., object]]:
         """Check for the existence of callable `attr` in self.
@@ -218,3 +223,55 @@ def handle_inference_result(
                     )
 
     return transformed_numpy_array, output_cols
+
+
+def create_temp_stage(session: Session) -> str:
+    """Creates temporary stage.
+
+    Args:
+        session: Session
+
+    Returns:
+        Temp stage name.
+    """
+    # Create temp stage to upload pickled model file.
+    transform_stage_name = snowpark_utils.random_name_for_temp_object(snowpark_utils.TempObjectType.STAGE)
+    stage_creation_query = f"CREATE OR REPLACE TEMPORARY STAGE {transform_stage_name};"
+    SqlResultValidator(session=session, query=stage_creation_query).has_dimensions(
+        expected_rows=1, expected_cols=1
+    ).validate()
+    return transform_stage_name
+
+
+def upload_model_to_stage(
+    stage_name: str, estimator: object, session: Session, statement_params: Dict[str, str]
+) -> str:
+    """Util method to pickle and upload the model to a temp Snowflake stage.
+
+
+    Args:
+        stage_name: Stage name to save model.
+        estimator: Estimator object to upload to stage (sklearn model object)
+        session: The snowpark session to use.
+        statement_params: Statement parameters for query telemetry.
+
+    Returns:
+        a tuple containing stage file paths for pickled input model for training and location to store trained
+        models(response from training sproc).
+    """
+    # Create a temp file and dump the transform to that file.
+    local_transform_file_name = temp_file_utils.get_temp_file_path()
+    with open(local_transform_file_name, mode="w+b") as local_transform_file:
+        cp.dump(estimator, local_transform_file)
+
+    # Put locally serialized transform on stage.
+    session.file.put(
+        local_file_name=local_transform_file_name,
+        stage_location=stage_name,
+        auto_compress=False,
+        overwrite=True,
+        statement_params=statement_params,
+    )
+
+    temp_file_utils.cleanup_temp_files([local_transform_file_name])
+    return os.path.basename(local_transform_file_name)

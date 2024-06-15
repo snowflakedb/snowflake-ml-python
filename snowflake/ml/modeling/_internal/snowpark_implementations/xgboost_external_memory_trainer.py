@@ -13,12 +13,12 @@ from snowflake.ml._internal.exceptions import (
     exceptions,
     modeling_error_messages,
 )
-from snowflake.ml._internal.utils import pkg_version_utils
+from snowflake.ml._internal.utils import pkg_version_utils, temp_file_utils
 from snowflake.ml._internal.utils.query_result_checker import ResultValidator
 from snowflake.ml._internal.utils.snowpark_dataframe_utils import (
     cast_snowpark_dataframe,
 )
-from snowflake.ml._internal.utils.temp_file_utils import get_temp_file_path
+from snowflake.ml.modeling._internal import estimator_utils
 from snowflake.ml.modeling._internal.model_specifications import (
     ModelSpecifications,
     ModelSpecificationsBuilder,
@@ -306,8 +306,6 @@ class XGBoostExternalMemoryTrainer(SnowparkModelTrainer):
         )  # type: ignore[misc]
         def fit_wrapper_sproc(
             session: Session,
-            stage_transform_file_name: str,
-            stage_result_file_name: str,
             dataset_stage_name: str,
             batch_size: int,
             input_cols: List[str],
@@ -320,9 +318,13 @@ class XGBoostExternalMemoryTrainer(SnowparkModelTrainer):
 
             import cloudpickle as cp
 
-            local_transform_file_name = get_temp_file_path()
+            local_transform_file_name = temp_file_utils.get_temp_file_path()
 
-            session.file.get(stage_transform_file_name, local_transform_file_name, statement_params=statement_params)
+            session.file.get(
+                stage_location=dataset_stage_name,
+                target_directory=local_transform_file_name,
+                statement_params=statement_params,
+            )
 
             local_transform_file_path = os.path.join(
                 local_transform_file_name, os.listdir(local_transform_file_name)[0]
@@ -345,13 +347,13 @@ class XGBoostExternalMemoryTrainer(SnowparkModelTrainer):
                 sample_weight_col=sample_weight_col,
             )
 
-            local_result_file_name = get_temp_file_path()
+            local_result_file_name = temp_file_utils.get_temp_file_path()
             with open(local_result_file_name, mode="w+b") as local_result_file_obj:
                 cp.dump(estimator, local_result_file_obj)
 
             session.file.put(
-                local_result_file_name,
-                stage_result_file_name,
+                local_file_name=local_result_file_name,
+                stage_location=dataset_stage_name,
                 auto_compress=False,
                 overwrite=True,
                 statement_params=statement_params,
@@ -394,11 +396,6 @@ class XGBoostExternalMemoryTrainer(SnowparkModelTrainer):
             SnowflakeMLException: For known types of user and system errors.
             e: For every unexpected exception from SnowflakeClient.
         """
-        temp_stage_name = self._create_temp_stage()
-        (stage_transform_file_name, stage_result_file_name) = self._upload_model_to_stage(stage_name=temp_stage_name)
-        data_file_paths = self._write_training_data_to_stage(dataset_stage_name=temp_stage_name)
-
-        # Call fit sproc
         statement_params = telemetry.get_function_usage_statement_params(
             project=_PROJECT,
             subproject=self._subproject,
@@ -406,7 +403,16 @@ class XGBoostExternalMemoryTrainer(SnowparkModelTrainer):
             api_calls=[Session.call],
             custom_tags=None,
         )
+        temp_stage_name = estimator_utils.create_temp_stage(self.session)
+        estimator_utils.upload_model_to_stage(
+            stage_name=temp_stage_name,
+            estimator=self.estimator,
+            session=self.session,
+            statement_params=statement_params,
+        )
+        data_file_paths = self._write_training_data_to_stage(dataset_stage_name=temp_stage_name)
 
+        # Call fit sproc
         model_spec = ModelSpecificationsBuilder.build(model=self.estimator)
         fit_wrapper = self._get_xgb_external_memory_fit_wrapper_sproc(
             model_spec=model_spec,
@@ -418,8 +424,6 @@ class XGBoostExternalMemoryTrainer(SnowparkModelTrainer):
         try:
             sproc_export_file_name = fit_wrapper(
                 self.session,
-                stage_transform_file_name,
-                stage_result_file_name,
                 temp_stage_name,
                 self._batch_size,
                 self.input_cols,
@@ -440,7 +444,7 @@ class XGBoostExternalMemoryTrainer(SnowparkModelTrainer):
             sproc_export_file_name = fields[0]
 
         return self._fetch_model_from_stage(
-            dir_path=stage_result_file_name,
+            dir_path=temp_stage_name,
             file_name=sproc_export_file_name,
             statement_params=statement_params,
         )

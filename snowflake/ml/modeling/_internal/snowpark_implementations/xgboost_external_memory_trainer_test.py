@@ -5,10 +5,7 @@ import pandas as pd
 from absl.testing import absltest
 from sklearn.datasets import load_iris
 
-from snowflake.ml._internal.utils.temp_file_utils import (
-    cleanup_temp_files,
-    get_temp_file_path,
-)
+from snowflake.ml._internal.utils import temp_file_utils
 from snowflake.ml.modeling._internal.snowpark_implementations.xgboost_external_memory_trainer import (
     get_data_iterator,
 )
@@ -34,7 +31,7 @@ class XGBoostExternalMemoryTrainerTest(absltest.TestCase):
         num_rows_in_original_dataset = df.shape[0]
         batch_size = 20
 
-        temp_file = get_temp_file_path()
+        temp_file = temp_file_utils.get_temp_file_path()
         df.to_parquet(temp_file)
 
         it = get_data_iterator(
@@ -58,7 +55,7 @@ class XGBoostExternalMemoryTrainerTest(absltest.TestCase):
 
         self.assertEqual(num_rows, num_rows_in_original_dataset)
         self.assertEqual(num_batches, math.ceil(float(num_rows_in_original_dataset) / float(batch_size)))
-        cleanup_temp_files(temp_file)
+        temp_file_utils.cleanup_temp_files(temp_file)
 
     def test_data_iterator_multiple_file(self) -> None:
         df, input_cols, label_col = self.get_dataset()
@@ -66,8 +63,8 @@ class XGBoostExternalMemoryTrainerTest(absltest.TestCase):
         num_rows_in_original_dataset = df.shape[0]
         batch_size = 20
 
-        temp_file1 = get_temp_file_path()
-        temp_file2 = get_temp_file_path()
+        temp_file1 = temp_file_utils.get_temp_file_path()
+        temp_file2 = temp_file_utils.get_temp_file_path()
         df1, df2 = df.iloc[:70], df.iloc[70:]
         df1.to_parquet(temp_file1)
         df2.to_parquet(temp_file2)
@@ -93,7 +90,7 @@ class XGBoostExternalMemoryTrainerTest(absltest.TestCase):
 
         self.assertEqual(num_rows, num_rows_in_original_dataset)
         self.assertEqual(num_batches, math.ceil(float(num_rows_in_original_dataset) / float(batch_size)))
-        cleanup_temp_files([temp_file1, temp_file2])
+        temp_file_utils.cleanup_temp_files([temp_file1, temp_file2])
 
 
 if __name__ == "__main__":
