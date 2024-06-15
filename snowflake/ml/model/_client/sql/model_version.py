@@ -272,7 +272,7 @@ class ModelVersionSQLClient(_base._BaseSQLClient):
                 actual_schema_name.identifier(),
                 tmp_table_name,
             )
-            input_df.write.save_as_table(  # type: ignore[call-overload]
+            input_df.write.save_as_table(
                 table_name=INTERMEDIATE_TABLE_NAME,
                 mode="errorifexists",
                 table_type="temporary",
@@ -348,7 +348,7 @@ class ModelVersionSQLClient(_base._BaseSQLClient):
                 actual_schema_name.identifier(),
                 tmp_table_name,
             )
-            input_df.write.save_as_table(  # type: ignore[call-overload]
+            input_df.write.save_as_table(
                 table_name=INTERMEDIATE_TABLE_NAME,
                 mode="errorifexists",
                 table_type="temporary",

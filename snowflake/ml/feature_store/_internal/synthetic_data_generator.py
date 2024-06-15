@@ -92,7 +92,5 @@ class SyntheticDataGenerator:
             batch.append(row)
 
         df = self._session.create_dataframe(batch, self._table_schema)
-        df.write.mode("append").save_as_table(  # type:ignore[call-overload]
-            [self._database, self._schema, self._source_table], block=True
-        )
+        df.write.mode("append").save_as_table([self._database, self._schema, self._source_table], block=True)
         logger.info(f"Dumped {num_rows} rows to table {self._source_table}.")

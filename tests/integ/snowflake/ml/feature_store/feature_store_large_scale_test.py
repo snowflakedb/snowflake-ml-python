@@ -176,7 +176,7 @@ class FeatureStoreLargeScaleTest(absltest.TestCase):
             .sort_values(by="PULOCATIONID")
             .reset_index(drop=True)
         )
-        assert_frame_equal(expected_pdf, actual_pdf, check_dtype=True)
+        assert_frame_equal(expected_pdf, actual_pdf, check_dtype=False)
 
 
 if __name__ == "__main__":

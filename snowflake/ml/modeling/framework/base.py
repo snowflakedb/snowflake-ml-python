@@ -16,7 +16,7 @@ from snowflake.ml._internal.exceptions import (
     exceptions,
     modeling_error_messages,
 )
-from snowflake.ml._internal.lineage import data_source, lineage_utils
+from snowflake.ml._internal.lineage import lineage_utils
 from snowflake.ml._internal.utils import identifier, parallelize
 from snowflake.ml.modeling.framework import _utils
 from snowflake.snowpark import functions as F
@@ -386,7 +386,6 @@ class BaseEstimator(Base):
         self.file_names = file_names
         self.custom_states = custom_states
         self.sample_weight_col = sample_weight_col
-        self._data_sources: Optional[List[data_source.DataSource]] = None
 
         self.start_time = datetime.now().strftime(_utils.DATETIME_FORMAT)[:-3]
 
@@ -421,18 +420,14 @@ class BaseEstimator(Base):
         """
         return []
 
-    def _get_data_sources(self) -> Optional[List[data_source.DataSource]]:
-        return self._data_sources
-
     @telemetry.send_api_usage_telemetry(
         project=PROJECT,
         subproject=SUBPROJECT,
     )
     def fit(self, dataset: Union[snowpark.DataFrame, pd.DataFrame]) -> "BaseEstimator":
         """Runs universal logics for all fit implementations."""
-        self._data_sources = getattr(dataset, lineage_utils.DATA_SOURCES_ATTR, None)
-        if self._data_sources:
-            assert all(isinstance(ds, data_source.DataSource) for ds in self._data_sources)
+        data_sources = lineage_utils.get_data_sources(dataset)
+        lineage_utils.set_data_sources(self, data_sources)
         return self._fit(dataset)
 
     @abstractmethod

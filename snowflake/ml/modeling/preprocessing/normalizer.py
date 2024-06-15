@@ -28,11 +28,15 @@ class Normalizer(base.BaseTransformer):
             values. It must be one of 'l1', 'l2', or 'max'.
 
         input_cols: Optional[Union[str, List[str]]]
-            Columns to use as inputs during transform.
+            The name(s) of one or more columns in the input DataFrame containing feature(s) to be normalized. Input
+            columns must be specified before transform with this argument or after initialization with the
+            `set_input_cols` method. This argument is optional for API consistency.
 
         output_cols: Optional[Union[str, List[str]]]
-            A string or list of strings representing column names that will store the output of transform operation.
-            The length of `output_cols` must equal the length of `input_cols`.
+            The name(s) to assign output columns in the output DataFrame. The number of
+            columns specified must equal the number of input columns. Output columns must be specified before transform
+            with this argument or after initialization with the `set_output_cols` method. This argument is optional for
+            API consistency.
 
         passthrough_cols: Optional[Union[str, List[str]]]
             A string or a list of strings indicating column names to be excluded from any

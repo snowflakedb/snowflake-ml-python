@@ -1,3 +1,4 @@
+import datetime
 import decimal
 
 import numpy as np
@@ -336,6 +337,21 @@ class SnowParkDataFrameHandlerTest(absltest.TestCase):
             pd_df,
             keep_order=False,
             features=[model_signature.FeatureSpec(name="col_0", dtype=model_signature.DataType.INT64)],
+        )
+        pd.testing.assert_frame_equal(
+            pd_df, snowpark_handler.SnowparkDataFrameHandler.convert_to_df(sp_df), check_dtype=False
+        )
+
+        d = datetime.datetime(year=2024, month=6, day=21, hour=1, minute=1, second=1)
+        pd_df = pd.DataFrame([[1, d], [2, d]], columns=["col_0", "col_1"])
+        sp_df = snowpark_handler.SnowparkDataFrameHandler.convert_from_df(
+            self._session,
+            pd_df,
+            keep_order=False,
+            features=[
+                model_signature.FeatureSpec(name="col_0", dtype=model_signature.DataType.INT64),
+                model_signature.FeatureSpec(name="col_1", dtype=model_signature.DataType.TIMESTAMP_NTZ),
+            ],
         )
         pd.testing.assert_frame_equal(
             pd_df, snowpark_handler.SnowparkDataFrameHandler.convert_to_df(sp_df), check_dtype=False

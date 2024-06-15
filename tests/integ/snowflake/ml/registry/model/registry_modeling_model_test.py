@@ -10,6 +10,7 @@ from snowflake.ml import dataset
 from snowflake.ml.model._model_composer import model_composer
 from snowflake.ml.modeling.lightgbm import LGBMRegressor
 from snowflake.ml.modeling.linear_model import LogisticRegression
+from snowflake.ml.modeling.pipeline import Pipeline
 from snowflake.ml.modeling.xgboost import XGBRegressor
 from snowflake.snowpark import types as T
 from tests.integ.snowflake.ml.registry.model import registry_model_test_base
@@ -106,10 +107,12 @@ class TestRegistryModelingModelInteg(registry_model_test_base.RegistryModelTestB
 
     @parameterized.product(  # type: ignore[misc]
         registry_test_fn=registry_model_test_base.RegistryModelTestBase.REGISTRY_TEST_FN_LIST,
+        use_pipeline=[False, True],
     )
     def test_dataset_to_model_lineage(
         self,
         registry_test_fn: str,
+        use_pipeline: bool = False,
     ) -> None:
         iris_X = datasets.load_iris(as_frame=True).frame
         iris_X.columns = [s.replace(" (CM)", "").replace(" ", "") for s in iris_X.columns.str.upper()]
@@ -118,14 +121,18 @@ class TestRegistryModelingModelInteg(registry_model_test_base.RegistryModelTestB
         LABEL_COLUMNS = "TARGET"
         OUTPUT_COLUMNS = "PREDICTED_TARGET"
         regr = LogisticRegression(input_cols=INPUT_COLUMNS, output_cols=OUTPUT_COLUMNS, label_cols=LABEL_COLUMNS)
-        schema = [
-            T.StructField("SEPALLENGTH", T.DoubleType()),
-            T.StructField("SEPALWIDTH", T.DoubleType()),
-            T.StructField("PETALLENGTH", T.DoubleType()),
-            T.StructField("PETALWIDTH", T.DoubleType()),
-            T.StructField("TARGET", T.StringType()),
-            T.StructField("PREDICTED_TARGET", T.StringType()),
-        ]
+        if use_pipeline:
+            regr = Pipeline([("regr", regr)])
+        schema = T.StructType(
+            [
+                T.StructField("SEPALLENGTH", T.DoubleType()),
+                T.StructField("SEPALWIDTH", T.DoubleType()),
+                T.StructField("PETALLENGTH", T.DoubleType()),
+                T.StructField("PETALWIDTH", T.DoubleType()),
+                T.StructField("TARGET", T.StringType()),
+                T.StructField("PREDICTED_TARGET", T.StringType()),
+            ]
+        )
         test_features_df = self.session.create_dataframe(iris_X, schema=schema)
 
         test_features_dataset = dataset.create_from_dataframe(

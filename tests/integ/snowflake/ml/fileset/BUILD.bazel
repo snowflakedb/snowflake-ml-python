@@ -57,7 +57,7 @@ py_test(
     name = "fileset_tensorflow_integ_test",
     timeout = "long",
     srcs = ["fileset_tensorflow_integ_test.py"],
-    shard_count = 4,
+    shard_count = 8,
     deps = [
         ":fileset_integ_test_base",
         "//snowflake/ml/fileset",

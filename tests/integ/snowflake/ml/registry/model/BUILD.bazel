@@ -141,6 +141,7 @@ py_test(
         ":registry_model_test_base",
         "//snowflake/ml/modeling/lightgbm:lgbm_regressor",
         "//snowflake/ml/modeling/linear_model:logistic_regression",
+        "//snowflake/ml/modeling/pipeline",
         "//snowflake/ml/modeling/xgboost:xgb_regressor",
     ],
 )

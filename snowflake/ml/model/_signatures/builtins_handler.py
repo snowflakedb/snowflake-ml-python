@@ -1,3 +1,4 @@
+import datetime
 from collections import abc
 from typing import Literal, Sequence
 
@@ -24,7 +25,7 @@ class ListOfBuiltinHandler(base_handler.BaseDataHandler[model_types._SupportedBu
             # String is a Sequence but we take them as an whole
             if isinstance(element, abc.Sequence) and not isinstance(element, str):
                 can_handle = ListOfBuiltinHandler.can_handle(element)
-            elif not isinstance(element, (int, float, bool, str)):
+            elif not isinstance(element, (int, float, bool, str, datetime.datetime)):
                 can_handle = False
                 break
         return can_handle
