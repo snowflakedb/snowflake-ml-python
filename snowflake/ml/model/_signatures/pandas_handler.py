@@ -147,6 +147,8 @@ class PandasDataFrameHandler(base_handler.BaseDataHandler[pd.DataFrame]):
                     specs.append(core.FeatureSpec(dtype=core.DataType.STRING, name=ft_name))
                 elif isinstance(data[df_col].iloc[0], bytes):
                     specs.append(core.FeatureSpec(dtype=core.DataType.BYTES, name=ft_name))
+            elif isinstance(data[df_col].iloc[0], np.datetime64):
+                specs.append(core.FeatureSpec(dtype=core.DataType.TIMESTAMP_NTZ, name=ft_name))
             else:
                 specs.append(core.FeatureSpec(dtype=core.DataType.from_numpy_type(df_col_dtype), name=ft_name))
         return specs

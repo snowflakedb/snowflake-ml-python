@@ -1,3 +1,5 @@
+import datetime
+
 import numpy as np
 import pandas as pd
 import tensorflow as tf
@@ -20,6 +22,26 @@ class ModelSignatureMiscTest(absltest.TestCase):
         self.assertListEqual(
             model_signature._infer_signature(arr, role="input"),
             [model_signature.FeatureSpec("input_feature_0", model_signature.DataType.INT64)],
+        )
+
+        d1 = datetime.datetime(year=2024, month=6, day=21, hour=1, minute=1, second=1)
+        d2 = datetime.datetime(year=2024, month=7, day=11, hour=1, minute=1, second=1)
+        df_dates = pd.DataFrame([d1, d2])
+        self.assertListEqual(
+            model_signature._infer_signature(df_dates, role="input"),
+            [model_signature.FeatureSpec("input_feature_0", model_signature.DataType.TIMESTAMP_NTZ)],
+        )
+
+        arr_dates = np.array([d1, d2], dtype=np.datetime64)
+        self.assertListEqual(
+            model_signature._infer_signature(arr_dates, role="input"),
+            [model_signature.FeatureSpec("input_feature_0", model_signature.DataType.TIMESTAMP_NTZ)],
+        )
+
+        lt_dates = [d1, d2]
+        self.assertListEqual(
+            model_signature._infer_signature(lt_dates, role="input"),
+            [model_signature.FeatureSpec("input_feature_0", model_signature.DataType.TIMESTAMP_NTZ)],
         )
 
         lt1 = [1, 2, 3, 4]

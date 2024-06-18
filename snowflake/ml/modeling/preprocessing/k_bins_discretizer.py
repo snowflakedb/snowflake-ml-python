@@ -74,10 +74,15 @@ class KBinsDiscretizer(base.BaseTransformer):
             - 'quantile': All bins in each feature have the same number of points.
 
         input_cols: str or Iterable [column_name], default=None
-            Single or multiple input columns.
+           The name(s) of one or more columns in the input DataFrame containing feature(s) to be discretized.
+           Input columns must be specified before fit with this argument or after initialization with the
+           `set_input_cols` method. This argument is optional for API consistency.
 
         output_cols: str or Iterable [column_name], default=None
-            Single or multiple output columns.
+            The name(s) to assign output columns in the output DataFrame. The number of
+            columns specified must equal the number of input columns. Output columns must be specified before transform
+            with this argument or after initialization with the `set_output_cols` method. This argument is optional for
+            API consistency.
 
         passthrough_cols: A string or a list of strings indicating column names to be excluded from any
             operations (such as train, transform, or inference). These specified column(s)

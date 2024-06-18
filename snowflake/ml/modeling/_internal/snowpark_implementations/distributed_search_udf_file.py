@@ -156,4 +156,6 @@ class SearchCV:
             self.fit_score_params[0][0],
             binary_cv_results,
         )
+
+SearchCV._sf_node_singleton = True
 """

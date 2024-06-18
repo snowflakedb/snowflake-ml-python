@@ -139,7 +139,7 @@ bazel build --config=typecheck <your target>
 Or you could run
 
 ```sh
-./ci/type_check.sh -b <path_to_bazel>
+./ci/type_check/type_check.sh -b <path_to_bazel>
 ```
 
 You only need to specify `-b <path_to_bazel>` if your `bazel` is not in `$PATH` or is an alias.

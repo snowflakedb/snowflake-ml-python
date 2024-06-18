@@ -50,8 +50,8 @@ dependencies:
   - sentence-transformers==2.2.2
   - sentencepiece==0.1.99
   - shap==0.42.1
-  - snowflake-connector-python==3.5.0
-  - snowflake-snowpark-python==1.11.1
+  - snowflake-connector-python==3.10.0
+  - snowflake-snowpark-python==1.15.0
   - sphinx==5.0.2
   - sqlparse==0.4.4
   - tensorflow==2.12.0

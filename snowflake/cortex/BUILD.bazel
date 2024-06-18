@@ -16,11 +16,17 @@ package(default_visibility = [
 py_library(
     name = "util",
     srcs = ["_util.py"],
+    deps = [":sse_client"],
 )
 
 py_library(
     name = "test_util",
     srcs = ["_test_util.py"],
+)
+
+py_library(
+    name = "sse_client",
+    srcs = ["_sse_client.py"],
 )
 
 py_library(
@@ -96,6 +102,16 @@ py_test(
         ":summarize",
         ":test_util",
         "//snowflake/ml/utils:connection_params",
+    ],
+)
+
+py_test(
+    name = "sse_test",
+    srcs = ["sse_test.py"],
+    deps = [
+        ":complete_test",
+        ":sse_client",
+        ":util",
     ],
 )
 

@@ -1,21 +1,11 @@
 import copy
 import functools
-from typing import Any, Callable, List
+from typing import Any, Callable, List, Optional
 
 from snowflake import snowpark
 from snowflake.ml._internal.lineage import data_source
 
-DATA_SOURCES_ATTR = "_data_sources"
-
-
-def _get_datasources(*args: Any) -> List[data_source.DataSource]:
-    """Helper method for extracting data sources attribute from DataFrames in an argument list"""
-    result = []
-    for arg in args:
-        srcs = getattr(arg, DATA_SOURCES_ATTR, None)
-        if isinstance(srcs, list) and all(isinstance(s, data_source.DataSource) for s in srcs):
-            result += srcs
-    return result
+_DATA_SOURCES_ATTR = "_data_sources"
 
 
 def _wrap_func(
@@ -30,6 +20,37 @@ def _wrap_func(
         return df
 
     return wrapped
+
+
+def _wrap_class_func(fn: Callable[..., snowpark.DataFrame]) -> Callable[..., snowpark.DataFrame]:
+    @functools.wraps(fn)
+    def wrapped(*args: Any, **kwargs: Any) -> snowpark.DataFrame:
+        df = fn(*args, **kwargs)
+        data_sources = get_data_sources(*args, *kwargs.values())
+        if data_sources:
+            patch_dataframe(df, data_sources, inplace=True)
+        return df
+
+    return wrapped
+
+
+def get_data_sources(*args: Any) -> Optional[List[data_source.DataSource]]:
+    """Helper method for extracting data sources attribute from DataFrames in an argument list"""
+    result: Optional[List[data_source.DataSource]] = None
+    for arg in args:
+        srcs = getattr(arg, _DATA_SOURCES_ATTR, None)
+        if isinstance(srcs, list) and all(isinstance(s, data_source.DataSource) for s in srcs):
+            if result is None:
+                result = []
+            result += srcs
+    return result
+
+
+def set_data_sources(obj: Any, data_sources: Optional[List[data_source.DataSource]]) -> None:
+    """Helper method for attaching data sources to an object"""
+    if data_sources:
+        assert all(isinstance(ds, data_source.DataSource) for ds in data_sources)
+    setattr(obj, _DATA_SOURCES_ATTR, data_sources)
 
 
 def patch_dataframe(
@@ -62,24 +83,12 @@ def patch_dataframe(
     ]
     if not inplace:
         df = copy.copy(df)
-    setattr(df, DATA_SOURCES_ATTR, data_sources)
+    set_data_sources(df, data_sources)
     for func in funcs:
         fn = getattr(df, func, None)
         if fn is not None:
             setattr(df, func, _wrap_func(fn, data_sources=data_sources))
     return df
-
-
-def _wrap_class_func(fn: Callable[..., snowpark.DataFrame]) -> Callable[..., snowpark.DataFrame]:
-    @functools.wraps(fn)
-    def wrapped(*args: Any, **kwargs: Any) -> snowpark.DataFrame:
-        df = fn(*args, **kwargs)
-        data_sources = _get_datasources(*args) + _get_datasources(*kwargs.values())
-        if data_sources:
-            patch_dataframe(df, data_sources, inplace=True)
-        return df
-
-    return wrapped
 
 
 # Class-level monkey-patches

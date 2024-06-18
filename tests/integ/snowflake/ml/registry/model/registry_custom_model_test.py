@@ -97,6 +97,31 @@ class TestRegistryCustomModelInteg(registry_model_test_base.RegistryModelTestBas
 
         asyncio.get_event_loop().run_until_complete(_test(self))
 
+    @registry_model_test_base.RegistryModelTestBase.sproc_test(test_owners_rights=False)
+    @parameterized.product(  # type: ignore[misc]
+        registry_test_fn=registry_model_test_base.RegistryModelTestBase.REGISTRY_TEST_FN_LIST,
+    )
+    def test_large_input(
+        self,
+        registry_test_fn: str,
+    ) -> None:
+        arr = np.random.randint(100, size=(1_000_000, 3))
+        pd_df = pd.DataFrame(arr, columns=["c1", "c2", "c3"])
+        clf = DemoModel(custom_model.ModelContext())
+        getattr(self, registry_test_fn)(
+            model=clf,
+            sample_input_data=pd_df,
+            prediction_assert_fns={
+                "predict": (
+                    pd_df,
+                    lambda res: pd.testing.assert_frame_equal(
+                        res,
+                        pd.DataFrame(arr[:, 0], columns=["output"]),
+                    ),
+                ),
+            },
+        )
+
     @parameterized.product(  # type: ignore[misc]
         registry_test_fn=registry_model_test_base.RegistryModelTestBase.REGISTRY_TEST_FN_LIST,
     )

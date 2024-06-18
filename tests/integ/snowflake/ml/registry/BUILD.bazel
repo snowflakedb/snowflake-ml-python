@@ -2,6 +2,7 @@ load("//bazel:py_rules.bzl", "py_library", "py_test")
 
 py_test(
     name = "model_registry_basic_integ_test",
+    timeout = "long",
     srcs = ["model_registry_basic_integ_test.py"],
     deps = [
         "//snowflake/ml/registry:model_registry",

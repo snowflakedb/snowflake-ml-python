@@ -67,11 +67,14 @@ class OrdinalEncoder(base.BaseTransformer):
             The value to be used to encode unknown categories.
 
         input_cols: Optional[Union[str, List[str]]], default=None
-            The name(s) of one or more columns in a DataFrame containing a feature to be encoded.
+            The name(s) of one or more columns in the input DataFrame containing feature(s) to be encoded. Input
+            columns must be specified before fit with this argument or after initialization with the
+            `set_input_cols` method. This argument is optional for API consistency.
 
         output_cols: Optional[Union[str, List[str]]], default=None
-            The name(s) of one or more columns in a DataFrame in which results will be stored. The number of
-            columns specified must match the number of input columns.
+            The prefix to be used for encoded output for each input column. The number of
+            output column prefixes specified must equal the number of input columns. Output column prefixes must be
+            specified before transform with this argument or after initialization with the `set_output_cols` method.
 
         passthrough_cols: Optional[Union[str, List[str]]], default=None
             A string or a list of strings indicating column names to be excluded from any
@@ -247,7 +250,7 @@ class OrdinalEncoder(base.BaseTransformer):
         # columns: COLUMN_NAME, CATEGORY, INDEX
         state_df = self._get_category_index_state_df(dataset)
         # save the dataframe on server side so that transform doesn't need to upload
-        state_df.write.save_as_table(  # type: ignore[call-overload]
+        state_df.write.save_as_table(
             self._vocab_table_name,
             mode="overwrite",
             table_type="temporary",
@@ -520,7 +523,7 @@ class OrdinalEncoder(base.BaseTransformer):
                 )
 
             batch_table_name = snowpark_utils.random_name_for_temp_object(snowpark_utils.TempObjectType.TABLE)
-            transformed_dataset.write.save_as_table(  # type: ignore[call-overload]
+            transformed_dataset.write.save_as_table(
                 batch_table_name,
                 mode="overwrite",
                 table_type="temporary",
