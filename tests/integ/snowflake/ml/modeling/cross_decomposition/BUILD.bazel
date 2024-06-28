@@ -1,0 +1,10 @@
+load("//codegen:codegen_rules.bzl", "autogen_snowpandas_tests")
+load("//snowflake/ml/modeling/cross_decomposition:estimators_info.bzl", "snowpandas_estimator_info_list")
+
+package(default_visibility = ["//visibility:public"])
+
+autogen_snowpandas_tests(
+    module = "sklearn.cross_decomposition",
+    module_root_dir = "snowflake/ml/modeling/cross_decomposition",
+    snowpandas_estimator_info_list = snowpandas_estimator_info_list,
+)

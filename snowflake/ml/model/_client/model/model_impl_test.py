@@ -186,6 +186,33 @@ class ModelImplTest(absltest.TestCase):
                 statement_params=mock.ANY,
             )
 
+    def test_system_aliases(self) -> None:
+        m_list_res = [
+            Row(
+                create_on="06/01",
+                name="v1",
+                comment="This is a comment",
+                model_name="MODEL",
+                aliases=["FIRST", "DEFAULT"],
+            ),
+            Row(
+                create_on="06/01",
+                name="v2",
+                comment="This is a comment",
+                model_name="MODEL",
+                aliases=["LAST"],
+            ),
+        ]
+        with mock.patch.object(
+            self.m_model._model_ops._model_client,
+            "show_versions",
+            return_value=m_list_res,
+        ), mock.patch.object(self.m_model._model_ops, "validate_existence", return_value=True), mock.patch.object(
+            model_version_impl.ModelVersion, "_get_functions", return_value=[]
+        ):
+            self.assertEqual(self.m_model.first().version_name, '"v1"')
+            self.assertEqual(self.m_model.last().version_name, '"v2"')
+
     def test_default_setter(self) -> None:
         with mock.patch.object(self.m_model._model_ops, "set_default_version") as mock_set_default_version:
             self.m_model.default = "V1"  # type: ignore[assignment]

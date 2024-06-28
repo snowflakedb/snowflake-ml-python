@@ -45,9 +45,11 @@ class OrdinalEncoder(base.BaseTransformer):
     (https://scikit-learn.org/stable/modules/generated/sklearn.preprocessing.OrdinalEncoder.html).
 
     Args:
-        categories: Union[str, Dict[str, type_utils.LiteralNDArrayType]], default="auto"
+        categories: Union[str, List[type_utils.LiteralNDArrayType], Dict[str, type_utils.LiteralNDArrayType]],
+        default="auto"
             The string 'auto' (the default) causes the categories to be extracted from the input columns.
-            To specify the categories yourself, pass a dictionary mapping the column name to an ndarray containing the
+            To specify the categories yourself, pass either (1) a list of ndarrays containing the categories or
+            (2) a dictionary mapping the column name to an ndarray containing the
             categories.
 
         handle_unknown: str, default="error"
@@ -96,7 +98,7 @@ class OrdinalEncoder(base.BaseTransformer):
     def __init__(
         self,
         *,
-        categories: Union[str, Dict[str, type_utils.LiteralNDArrayType]] = "auto",
+        categories: Union[str, List[type_utils.LiteralNDArrayType], Dict[str, type_utils.LiteralNDArrayType]] = "auto",
         handle_unknown: str = "error",
         unknown_value: Optional[Union[int, float]] = None,
         encoded_missing_value: Union[int, float] = np.nan,
@@ -114,9 +116,13 @@ class OrdinalEncoder(base.BaseTransformer):
         a single column of integers (0 to n_categories - 1) per feature.
 
         Args:
-            categories: 'auto' or dict {column_name: ndarray([category])}, default='auto'
+            categories: 'auto', list of array-like, or dict {column_name: ndarray([category])}, default='auto'
                 Categories (unique values) per feature:
                 - 'auto': Determine categories automatically from the training data.
+                - list: ``categories[i]`` holds the categories expected in the ith
+                  column. The passed categories should not mix strings and numeric
+                  values within a single feature, and should be sorted in case of
+                  numeric values.
                 - dict: ``categories[column_name]`` holds the categories expected in
                   the column provided. The passed categories should not mix strings
                   and numeric values within a single feature, and should be sorted in
@@ -317,8 +323,19 @@ class OrdinalEncoder(base.BaseTransformer):
         assert found_state_df is not None
         if self.categories != "auto":
             state_data = []
-            assert isinstance(self.categories, dict)
-            for input_col, cats in self.categories.items():
+            if isinstance(self.categories, list):
+                categories_map = {col_name: cats for col_name, cats in zip(self.input_cols, self.categories)}
+            elif isinstance(self.categories, dict):
+                categories_map = self.categories
+            else:
+                raise exceptions.SnowflakeMLException(
+                    error_code=error_codes.INVALID_ARGUMENT,
+                    original_exception=ValueError(
+                        f"Invalid type {type(self.categories)} provided for argument `categories`"
+                    ),
+                )
+
+            for input_col, cats in categories_map.items():
                 for idx, cat in enumerate(cats.tolist()):
                     state_data.append([input_col, cat, idx])
             # states of given categories
@@ -368,6 +385,8 @@ class OrdinalEncoder(base.BaseTransformer):
                 for col_name, cats in grouped_categories.items()
             }
             self.categories_ = categories
+        elif isinstance(self.categories, list):
+            self.categories_ = {col_name: cats for col_name, cats in zip(self.input_cols, self.categories)}
         else:
             self.categories_ = self.categories
 
@@ -548,6 +567,15 @@ class OrdinalEncoder(base.BaseTransformer):
             snowml_only_keywords=_SNOWML_ONLY_KEYWORDS,
             sklearn_added_keyword_to_version_dict=_SKLEARN_ADDED_KEYWORD_TO_VERSION_DICT,
         )
+        if "categories" in sklearn_args and isinstance(sklearn_args["categories"], dict):
+            # sklearn requires a list of array-like to satisfy the `categories` arg
+            try:
+                sklearn_args["categories"] = [sklearn_args["categories"][input_col] for input_col in self.input_cols]
+            except KeyError as e:
+                raise exceptions.SnowflakeMLException(
+                    error_code=error_codes.INVALID_ARGUMENT,
+                    original_exception=e,
+                )
         return preprocessing.OrdinalEncoder(**sklearn_args)
 
     def _create_sklearn_object(self) -> preprocessing.OrdinalEncoder:
@@ -570,7 +598,7 @@ class OrdinalEncoder(base.BaseTransformer):
                 error_code=error_codes.INVALID_ATTRIBUTE,
                 original_exception=ValueError(f"Unsupported `categories` value: {self.categories}."),
             )
-        elif isinstance(self.categories, dict):
+        elif isinstance(self.categories, (dict, list)):
             if len(self.categories) != len(self.input_cols):
                 raise exceptions.SnowflakeMLException(
                     error_code=error_codes.INVALID_ATTRIBUTE,
@@ -579,7 +607,7 @@ class OrdinalEncoder(base.BaseTransformer):
                         f"({len(self.input_cols)})."
                     ),
                 )
-            elif set(self.categories.keys()) != set(self.input_cols):
+            elif isinstance(self.categories, dict) and set(self.categories.keys()) != set(self.input_cols):
                 raise exceptions.SnowflakeMLException(
                     error_code=error_codes.INVALID_ATTRIBUTE,
                     original_exception=ValueError(

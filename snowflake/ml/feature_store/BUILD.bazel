@@ -16,6 +16,7 @@ py_library(
     ],
     deps = [
         "//snowflake/ml/_internal:init_utils",
+        "//snowflake/ml/lineage",
     ],
 )
 
@@ -35,6 +36,7 @@ py_library(
         "//snowflake/ml/_internal/utils:query_result_checker",
         "//snowflake/ml/_internal/utils:sql_identifier",
         "//snowflake/ml/dataset",
+        "//snowflake/ml/lineage",
     ],
 )
 

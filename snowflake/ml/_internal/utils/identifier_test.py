@@ -3,31 +3,32 @@ from absl.testing import absltest
 import snowflake.ml._internal.utils.identifier as identifier
 
 SCHEMA_LEVEL_OBJECT_TEST_CASES = [
-    ("foo", None, None, "foo", ""),
-    ("foo/", None, None, "foo", "/"),
-    ('"foo"', None, None, '"foo"', ""),
-    ('"foo"/', None, None, '"foo"', "/"),
-    ("foo/bar", None, None, "foo", "/bar"),
-    ("foo/bar.gz", None, None, "foo", "/bar.gz"),
-    ('"foo"/bar.gz', None, None, '"foo"', "/bar.gz"),
-    ("testschema.foo", None, "testschema", "foo", ""),
-    ('testschema."foo"', None, "testschema", '"foo"', ""),
-    ("testschema.foo/bar", None, "testschema", "foo", "/bar"),
-    ("testschema.foo/bar.gz", None, "testschema", "foo", "/bar.gz"),
-    ('testschema."foo"/bar.gz', None, "testschema", '"foo"', "/bar.gz"),
-    ('"testschema".foo', None, '"testschema"', "foo", ""),
-    ('"testschema"."foo"', None, '"testschema"', '"foo"', ""),
-    ('"testschema".foo/bar', None, '"testschema"', "foo", "/bar"),
-    ('"testschema".foo/bar.gz', None, '"testschema"', "foo", "/bar.gz"),
-    ('"testschema"."foo"/bar.gz', None, '"testschema"', '"foo"', "/bar.gz"),
-    ("testdb.testschema.foo", "testdb", "testschema", "foo", ""),
-    ("_testdb.testschema._foo/", "_testdb", "testschema", "_foo", "/"),
-    ('testdb$."test""s""chema"._f1oo', "testdb$", '"test""s""chema"', "_f1oo", ""),
-    ("test1db.test$schema.foo1/nytrain/", "test1db", "test$schema", "foo1", "/nytrain/"),
-    ("test_db.test_schema.foo.nytrain.1.txt", "test_db", "test_schema", "foo", ".nytrain.1.txt"),
-    ('test_d$b."test.schema".foo$_o/nytrain/', "test_d$b", '"test.schema"', "foo$_o", "/nytrain/"),
+    ("foo", False, None, None, "foo", ""),
+    ("foo/", False, None, None, "foo", "/"),
+    ('"foo"', False, None, None, '"foo"', ""),
+    ('"foo"/', False, None, None, '"foo"', "/"),
+    ("foo/bar", False, None, None, "foo", "/bar"),
+    ("foo/bar.gz", False, None, None, "foo", "/bar.gz"),
+    ('"foo"/bar.gz', False, None, None, '"foo"', "/bar.gz"),
+    ("testschema.foo", False, None, "testschema", "foo", ""),
+    ('testschema."foo"', False, None, "testschema", '"foo"', ""),
+    ("testschema.foo/bar", False, None, "testschema", "foo", "/bar"),
+    ("testschema.foo/bar.gz", False, None, "testschema", "foo", "/bar.gz"),
+    ('testschema."foo"/bar.gz', False, None, "testschema", '"foo"', "/bar.gz"),
+    ('"testschema".foo', False, None, '"testschema"', "foo", ""),
+    ('"testschema"."foo"', False, None, '"testschema"', '"foo"', ""),
+    ('"testschema".foo/bar', False, None, '"testschema"', "foo", "/bar"),
+    ('"testschema".foo/bar.gz', False, None, '"testschema"', "foo", "/bar.gz"),
+    ('"testschema"."foo"/bar.gz', False, None, '"testschema"', '"foo"', "/bar.gz"),
+    ("testdb.testschema.foo", True, "testdb", "testschema", "foo", ""),
+    ("_testdb.testschema._foo/", False, "_testdb", "testschema", "_foo", "/"),
+    ('testdb$."test""s""chema"._f1oo', True, "testdb$", '"test""s""chema"', "_f1oo", ""),
+    ("test1db.test$schema.foo1/nytrain/", False, "test1db", "test$schema", "foo1", "/nytrain/"),
+    ("test_db.test_schema.foo.nytrain.1.txt", False, "test_db", "test_schema", "foo", ".nytrain.1.txt"),
+    ('test_d$b."test.schema".foo$_o/nytrain/', False, "test_d$b", '"test.schema"', "foo$_o", "/nytrain/"),
     (
         '"идентификатор"."test schema"."f.o_o1"',
+        True,
         '"идентификатор"',
         '"test schema"',
         '"f.o_o1"',
@@ -112,13 +113,18 @@ class SnowflakeIdentifierTest(absltest.TestCase):
         for test_case in SCHEMA_LEVEL_OBJECT_TEST_CASES:
             with self.subTest():
                 self.assertTupleEqual(
-                    tuple(test_case[1:]), identifier.parse_schema_level_object_identifier(test_case[0])
+                    tuple(test_case[2:]), identifier.parse_schema_level_object_identifier(test_case[0])
                 )
 
     def test_get_schema_level_object_identifier(self) -> None:
         for test_case in SCHEMA_LEVEL_OBJECT_TEST_CASES:
             with self.subTest():
-                self.assertEqual(test_case[0], identifier.get_schema_level_object_identifier(*test_case[1:]))
+                self.assertEqual(test_case[0], identifier.get_schema_level_object_identifier(*test_case[2:]))
+
+    def test_is_fully_qualified_name(self) -> None:
+        for test_case in SCHEMA_LEVEL_OBJECT_TEST_CASES:
+            with self.subTest():
+                self.assertEqual(test_case[1], identifier.is_fully_qualified_name(test_case[0]))
 
     def test_resolve_identifier(self) -> None:
         self.assertEqual("FOO", identifier.resolve_identifier("FOO"))

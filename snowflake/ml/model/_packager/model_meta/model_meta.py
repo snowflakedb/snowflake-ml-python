@@ -7,11 +7,12 @@ import zipfile
 from contextlib import contextmanager
 from datetime import datetime
 from types import ModuleType
-from typing import Any, Dict, Generator, List, Optional
+from typing import Any, Dict, Generator, List, Optional, TypedDict
 
 import cloudpickle
 import yaml
 from packaging import requirements, version
+from typing_extensions import Required
 
 from snowflake.ml._internal import env as snowml_env, env_utils, file_utils
 from snowflake.ml.model import model_signature, type_hints as model_types
@@ -215,6 +216,12 @@ def load_code_path(model_dir_path: str) -> None:
         sys.path.insert(0, code_path)
 
 
+class ModelMetadataTelemetryDict(TypedDict):
+    model_name: Required[str]
+    framework_type: Required[model_types.SupportedModelHandlerType]
+    number_of_functions: Required[int]
+
+
 class ModelMetadata:
     """Model metadata for Snowflake native model packaged model.
 
@@ -227,6 +234,13 @@ class ModelMetadata:
         metadata: User provided key-value metadata of the model. Defaults to None.
         creation_timestamp: Unix timestamp when the model metadata is created.
     """
+
+    def telemetry_metadata(self) -> ModelMetadataTelemetryDict:
+        return ModelMetadataTelemetryDict(
+            model_name=self.name,
+            framework_type=self.model_type,
+            number_of_functions=len(self.signatures.keys()),
+        )
 
     def __init__(
         self,

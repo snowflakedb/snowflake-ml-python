@@ -192,7 +192,7 @@ class TestRegistryModelingModelInteg(registry_model_test_base.RegistryModelTestB
             signatures=None,
             sample_input_data=sample_input_data,
             conda_dependencies=conda_dependencies,
-            metadata={"author": "rsureshbabu", "version": "1"},
+            metadata={"author": "rsureshbabu", "version": "2"},
             options={"relax_version": False},
         )
 

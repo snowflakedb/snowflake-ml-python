@@ -4,8 +4,9 @@ import threading
 import unittest
 from dataclasses import dataclass
 from io import BytesIO
+from string import Template
 from types import GeneratorType
-from typing import Iterator, Union, cast
+from typing import Dict, Iterator, Optional, Union, cast
 
 import _test_util
 import requests
@@ -13,8 +14,14 @@ from absl.testing import absltest
 
 from snowflake import snowpark
 from snowflake.cortex import _complete
-from snowflake.cortex._util import process_rest_response
+from snowflake.cortex._util import CompleteOptions, process_rest_response
 from snowflake.snowpark import functions, types
+
+_OPTIONS = CompleteOptions(  # random params
+    max_tokens=10,
+    temperature=0.7,
+    topP=1,
+)
 
 
 @dataclass
@@ -53,7 +60,10 @@ class CompleteTest(absltest.TestCase):
     prompt = "|prompt|"
 
     @staticmethod
-    def complete_for_test(model: str, prompt: str) -> str:
+    def complete_for_test(
+        model: str,
+        prompt: str,
+    ) -> str:
         return f"answered: {model}, {prompt}"
 
     def setUp(self) -> None:
@@ -63,6 +73,7 @@ class CompleteTest(absltest.TestCase):
             name="complete",
             return_type=types.StringType(),
             input_types=[types.StringType(), types.StringType()],
+            session=self._session,
             is_permanent=False,
         )
 
@@ -71,7 +82,7 @@ class CompleteTest(absltest.TestCase):
         self._session.close()
 
     def test_complete_str(self) -> None:
-        res = _complete._complete_impl("complete", self.model, self.prompt)
+        res = _complete._complete_impl("complete", self.model, self.prompt, session=self._session)
         self.assertEqual(self.complete_for_test(self.model, self.prompt), res)
 
     def test_complete_column(self) -> None:
@@ -79,6 +90,44 @@ class CompleteTest(absltest.TestCase):
         df_out = df_in.select(_complete._complete_impl("complete", functions.col("model"), functions.col("prompt")))
         res = df_out.collect()[0][0]
         self.assertEqual(self.complete_for_test(self.model, self.prompt), res)
+
+
+class CompleteOptionsTest(absltest.TestCase):
+    model = "|model|"
+    prompt = "|prompt|"
+
+    @staticmethod
+    def format_as_complete(model: str, prompt: str, options: CompleteOptions) -> str:
+        resp = Template("answered: $model, [{'content': '$prompt', 'role': 'user'}] with options: $options").substitute(
+            model=model, prompt=prompt, options=options
+        )
+        return str(resp)
+
+    @staticmethod
+    def complete_for_test(model: str, prompt: str, options: Dict[str, float]) -> str:
+        resp = Template("answered: $model, $prompt with options: $options").substitute(
+            model=model, prompt=prompt, options=options
+        )
+        return str(resp)
+
+    def setUp(self) -> None:
+        self._session = _test_util.create_test_session()
+        functions.udf(
+            self.complete_for_test,
+            name="complete",
+            return_type=types.StringType(),
+            input_types=[types.StringType(), types.ArrayType(), types.MapType()],
+            session=self._session,
+            is_permanent=False,
+        )
+
+    def tearDown(self) -> None:
+        self._session.sql("drop function complete(string,array,object)").collect()
+        self._session.close()
+
+    def test_populated_options(self) -> None:
+        res = _complete._complete_impl("complete", self.model, self.prompt, _OPTIONS, session=self._session)
+        self.assertEqual(self.format_as_complete(self.model, self.prompt, _OPTIONS), res)
 
 
 class MockIpifyHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
@@ -132,7 +181,9 @@ class UnitTests(unittest.TestCase):
         self.server.shutdown()
         self.server_thread.join()
 
-    def send_request(self, stream: bool = False) -> Union[str, Iterator[str]]:
+    def send_request(
+        self, stream: bool = False, options: Optional[CompleteOptions] = None
+    ) -> Union[str, Iterator[str]]:
         faketoken = FakeToken()
         fakeconnectionparameters = FakeConnParams(
             host=f"http://127.0.0.1:{self.server.server_address[1]}/", rest=faketoken
@@ -142,6 +193,7 @@ class UnitTests(unittest.TestCase):
             function="complete",
             model="my_models",
             prompt="test_prompt",
+            options=options,
             session=cast(snowpark.Session, session),
             stream=stream,
         )
@@ -165,9 +217,17 @@ class UnitTests(unittest.TestCase):
 
     def test_streaming(self) -> None:
         result = self.send_request(stream=True)
-
         output = "".join(list(result))
         self.assertEqual("This is a streaming response", output)
+
+    def test_streaming_with_options(self) -> None:
+        result = self.send_request(stream=True, options=_OPTIONS)
+        output = "".join(list(result))
+        self.assertEqual("This is a streaming response", output)
+
+    def test_non_streaming_with_options(self) -> None:
+        result = self.send_request(stream=False, options=_OPTIONS)
+        self.assertEqual("This is a non streaming response", result)
 
     def test_streaming_type(self) -> None:
         result = self.send_request(stream=True)

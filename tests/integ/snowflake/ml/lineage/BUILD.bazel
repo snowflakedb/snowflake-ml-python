@@ -1,0 +1,20 @@
+load("//bazel:py_rules.bzl", "py_test")
+
+package(default_visibility = [
+    "//bazel:snowml_public_common",
+])
+
+py_test(
+    name = "lineage_integ_test",
+    testonly = True,
+    srcs = ["lineage_integ_test.py"],
+    deps = [
+        "//snowflake/ml/feature_store:feature_store_lib",
+        "//snowflake/ml/lineage",
+        "//snowflake/ml/modeling/linear_model:logistic_regression",
+        "//snowflake/ml/registry",
+        "//snowflake/ml/utils:connection_params",
+        "//tests/integ/snowflake/ml/test_utils:common_test_base",
+        "//tests/integ/snowflake/ml/test_utils:db_manager",
+    ],
+)

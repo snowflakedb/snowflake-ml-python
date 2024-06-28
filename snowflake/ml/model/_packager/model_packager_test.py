@@ -146,7 +146,7 @@ class ModelPackagerTest(absltest.TestCase):
                 self,
                 expected_original_error_type=ValueError,
                 expected_regex=(
-                    "Signatures and sample_input_data both cannot be None at the same time for this kind of model."
+                    "Either of `signatures` or `sample_input_data` must be provided for this kind of model."
                 ),
             ):
                 pk.save(

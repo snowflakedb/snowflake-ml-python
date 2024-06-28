@@ -101,16 +101,20 @@ class OneHotEncoder(base.BaseTransformer):
     (https://scikit-learn.org/stable/modules/generated/sklearn.preprocessing.OneHotEncoder.html).
 
     Args:
-        categories: 'auto' or dict {column_name: np.ndarray([category])}, default='auto'
+        categories: 'auto', list of array-like, or dict {column_name: np.ndarray([category])}, default='auto'
             Categories (unique values) per feature:
             - 'auto': Determine categories automatically from the training data.
+            - list: ``categories[i]`` holds the categories expected in the ith
+            column. The passed categories should not mix strings and numeric
+            values within a single feature, and should be sorted in case of
+            numeric values.
             - dict: ``categories[column_name]`` holds the categories expected in
               the column provided. The passed categories should not mix strings
               and numeric values within a single feature, and should be sorted in
               case of numeric values.
             The used categories can be found in the ``categories_`` attribute.
 
-        drop: {‘first’, ‘if_binary’} or an array-like of shape (n_features,), default=None
+        drop: {'first', 'if_binary'} or an array-like of shape (n_features,), default=None
             Specifies a methodology to use to drop one of the categories per
             feature. This is useful in situations where perfectly collinear
             features cause problems, such as when feeding the resulting data
@@ -206,7 +210,7 @@ class OneHotEncoder(base.BaseTransformer):
     def __init__(
         self,
         *,
-        categories: Union[str, Dict[str, type_utils.LiteralNDArrayType]] = "auto",
+        categories: Union[str, List[type_utils.LiteralNDArrayType], Dict[str, type_utils.LiteralNDArrayType]] = "auto",
         drop: Optional[Union[str, npt.ArrayLike]] = None,
         sparse: bool = False,
         handle_unknown: str = "error",
@@ -440,8 +444,19 @@ class OneHotEncoder(base.BaseTransformer):
         assert found_state_df is not None
         if self.categories != "auto":
             state_data = []
-            assert isinstance(self.categories, dict)
-            for input_col, cats in self.categories.items():
+            if isinstance(self.categories, list):
+                categories_map = {col_name: cats for col_name, cats in zip(self.input_cols, self.categories)}
+            elif isinstance(self.categories, dict):
+                categories_map = self.categories
+            else:
+                raise exceptions.SnowflakeMLException(
+                    error_code=error_codes.INVALID_ARGUMENT,
+                    original_exception=ValueError(
+                        f"Invalid type {type(self.categories)} provided for argument `categories`"
+                    ),
+                )
+
+            for input_col, cats in categories_map.items():
                 for cat in cats.tolist():
                     state_data.append([input_col, cat])
             # states of given categories
@@ -565,6 +580,8 @@ class OneHotEncoder(base.BaseTransformer):
                     else:
                         categories[k] = vectorized_func(v)
             self.categories_ = categories
+        elif isinstance(self.categories, list):
+            self.categories_ = {col_name: cats for col_name, cats in zip(self.input_cols, self.categories)}
         else:
             self.categories_ = self.categories
 
@@ -1009,7 +1026,7 @@ class OneHotEncoder(base.BaseTransformer):
                 error_code=error_codes.INVALID_ATTRIBUTE,
                 original_exception=ValueError(f"Unsupported `categories` value: {self.categories}."),
             )
-        elif isinstance(self.categories, dict):
+        elif isinstance(self.categories, (dict, list)):
             if len(self.categories) != len(self.input_cols):
                 raise exceptions.SnowflakeMLException(
                     error_code=error_codes.INVALID_ATTRIBUTE,
@@ -1018,7 +1035,7 @@ class OneHotEncoder(base.BaseTransformer):
                         f"({len(self.input_cols)})."
                     ),
                 )
-            elif set(self.categories.keys()) != set(self.input_cols):
+            elif isinstance(self.categories, dict) and set(self.categories.keys()) != set(self.input_cols):
                 raise exceptions.SnowflakeMLException(
                     error_code=error_codes.INVALID_ATTRIBUTE,
                     original_exception=ValueError(
@@ -1536,6 +1553,16 @@ class OneHotEncoder(base.BaseTransformer):
         """Modified snowflake.ml.framework.base.Base.get_sklearn_args with `sparse` and `sparse_output` handling."""
         default_sklearn_args = _utils.get_default_args(default_sklearn_obj.__class__.__init__)
         given_args = self.get_params()
+
+        if "categories" in given_args and isinstance(given_args["categories"], dict):
+            # sklearn requires a list of array-like to satisfy the `categories` arg
+            try:
+                given_args["categories"] = [given_args["categories"][input_col] for input_col in self.input_cols]
+            except KeyError as e:
+                raise exceptions.SnowflakeMLException(
+                    error_code=error_codes.INVALID_ARGUMENT,
+                    original_exception=e,
+                )
 
         # replace 'sparse' with 'sparse_output' when scikit-learn>=1.2
         sklearn_version = sklearn.__version__

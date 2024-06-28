@@ -157,6 +157,25 @@ class TestModelImplInteg(parameterized.TestCase):
         self.assertEqual(model.name, "MODEL2")
         self.registry.delete_model("MODEL2")
 
+    def test_system_aliases(self) -> None:
+        model, test_features, _ = model_factory.ModelFactory.prepare_sklearn_model()
+        self.registry.log_model(
+            model=model,
+            model_name="MODEL_ALIAS",
+            version_name=VERSION_NAME,
+            sample_input_data=test_features,
+        )
+        self.registry.log_model(
+            model=model,
+            model_name="MODEL_ALIAS",
+            version_name=VERSION_NAME2,
+            sample_input_data=test_features,
+        )
+        model = self.registry.get_model(model_name="MODEL_ALIAS")
+        self.assertEqual(model.first().version_name, VERSION_NAME)
+        self.assertEqual(model.last().version_name, VERSION_NAME2)
+        self.assertEqual(model.default.version_name, VERSION_NAME)
+
 
 if __name__ == "__main__":
     absltest.main()

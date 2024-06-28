@@ -15,6 +15,7 @@ from snowflake.ml._internal.lineage import data_source, lineage_utils
 from snowflake.ml.model import model_signature, type_hints as model_types
 from snowflake.ml.model._model_composer.model_manifest import model_manifest
 from snowflake.ml.model._packager import model_packager
+from snowflake.ml.model._packager.model_meta import model_meta
 from snowflake.snowpark import Session
 from snowflake.snowpark._internal import utils as snowpark_utils
 
@@ -90,7 +91,7 @@ class ModelComposer:
         ext_modules: Optional[List[ModuleType]] = None,
         code_paths: Optional[List[str]] = None,
         options: Optional[model_types.ModelSaveOption] = None,
-    ) -> None:
+    ) -> model_meta.ModelMetadata:
         if not options:
             options = model_types.BaseModelSaveOption()
 
@@ -106,7 +107,7 @@ class ModelComposer:
                 )
                 options["embed_local_ml_library"] = True
 
-        self.packager.save(
+        model_metadata: model_meta.ModelMetadata = self.packager.save(
             name=name,
             model=model,
             signatures=signatures,
@@ -119,7 +120,6 @@ class ModelComposer:
             code_paths=code_paths,
             options=options,
         )
-
         assert self.packager.meta is not None
 
         if not options.get("_legacy_save", False):
@@ -133,7 +133,7 @@ class ModelComposer:
 
         self.manifest.save(
             session=self.session,
-            model_meta=self.packager.meta,
+            model_meta=model_metadata,
             model_file_rel_path=pathlib.PurePosixPath(self.model_file_rel_path),
             options=options,
             data_sources=self._get_data_sources(model, sample_input_data),
@@ -145,6 +145,7 @@ class ModelComposer:
             stage_path=self.stage_path,
             statement_params=self._statement_params,
         )
+        return model_metadata
 
     @deprecated("Only used by PrPr model registry. Use static method version of load instead.")
     def legacy_load(

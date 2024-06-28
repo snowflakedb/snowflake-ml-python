@@ -201,6 +201,12 @@ class ImageRegistryClient:
         )
         # TODO[shchen]: Remove the imagelib, instead rely on the copy image system function later.
         imagelib.copy_image(
-            src_image=src_image, dest_image=dest_image, arch=arch, retryable_http=self.image_registry_http_client
+            src_image=src_image,
+            dest_image=dest_image,
+            arch=arch,
+            src_retryable_http=image_registry_http_client.ImageRegistryHttpClient(
+                repo_url=src_image.registry_name, no_cred=True
+            ),
+            dest_retryable_http=self.image_registry_http_client,
         )
         logger.info("Image copy completed successfully")

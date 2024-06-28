@@ -13,6 +13,7 @@ This library only supports a limited set of features:
 It's recommended to use this library to copy previously tested images using sha256 to avoid surprises
 with respect to compatibility.
 """
+
 import dataclasses
 import hashlib
 import io
@@ -152,7 +153,8 @@ class BlobTransfer:
     src_image: ImageDescriptor
     dest_image: ImageDescriptor
     manifest: Manifest
-    image_registry_http_client: image_registry_http_client.ImageRegistryHttpClient
+    src_image_registry_http_client: image_registry_http_client.ImageRegistryHttpClient
+    dest_image_registry_http_client: image_registry_http_client.ImageRegistryHttpClient
 
     def upload_all_blobs(self) -> None:
         blob_digests = self.manifest.get_blob_digests()
@@ -169,7 +171,7 @@ class BlobTransfer:
         """
         Check if the blob already exists in the destination registry.
         """
-        resp = self.image_registry_http_client.head(self.dest_image.blob_link(blob_digest), headers={})
+        resp = self.dest_image_registry_http_client.head(self.dest_image.blob_link(blob_digest), headers={})
         return resp.status_code != 200
 
     def _fetch_blob(self, blob_digest: str) -> Tuple[io.BytesIO, int]:
@@ -178,7 +180,7 @@ class BlobTransfer:
         """
         src_blob_link = self.src_image.blob_link(blob_digest)
         headers = {_CONTENT_LENGTH_HEADER: "0"}
-        resp = self.image_registry_http_client.get(src_blob_link, headers=headers)
+        resp = self.src_image_registry_http_client.get(src_blob_link, headers=headers)
 
         assert resp.status_code == 200, f"Blob GET failed with code {resp.status_code}"
         assert _CONTENT_LENGTH_HEADER in resp.headers, f"Blob does not contain {_CONTENT_LENGTH_HEADER}"
@@ -189,7 +191,7 @@ class BlobTransfer:
         """
         Obtain the upload URL from the destination registry.
         """
-        response = self.image_registry_http_client.post(self.dest_image.blob_upload_link())
+        response = self.dest_image_registry_http_client.post(self.dest_image.blob_upload_link())
         assert (
             response.status_code == 202
         ), f"Failed to get the upload URL to destination. Status {response.status_code}. {str(response.content)}"
@@ -216,14 +218,14 @@ class BlobTransfer:
             headers[_CONTENT_RANGE_HEADER] = f"{start_byte}-{end_byte}"
             headers[_CONTENT_LENGTH_HEADER] = str(chunk_length)
 
-            resp = self.image_registry_http_client.patch(next_loc, headers=headers, data=chunk)
+            resp = self.dest_image_registry_http_client.patch(next_loc, headers=headers, data=chunk)
             assert resp.status_code == 202, f"Blob PATCH failed with code {resp.status_code}"
 
             next_loc = resp.headers[_LOCATION_HEADER]
             start_byte += chunk_length
 
         # Finalize the upload
-        resp = self.image_registry_http_client.put(f"{next_loc}&digest={blob_digest}")
+        resp = self.dest_image_registry_http_client.put(f"{next_loc}&digest={blob_digest}")
         assert resp.status_code == 201, f"Blob PUT failed with code {resp.status_code}"
 
     def _transfer(self, blob_digest: str) -> None:
@@ -340,21 +342,32 @@ def copy_image(
     src_image: ImageDescriptor,
     dest_image: ImageDescriptor,
     arch: _Arch,
-    retryable_http: image_registry_http_client.ImageRegistryHttpClient,
+    src_retryable_http: image_registry_http_client.ImageRegistryHttpClient,
+    dest_retryable_http: image_registry_http_client.ImageRegistryHttpClient,
 ) -> None:
     logger.debug(f"Pulling image manifest for {src_image}")
 
     # 1. Get the manifest
-    manifest = get_manifest(src_image, arch, retryable_http)
+    manifest = get_manifest(src_image, arch, src_retryable_http)
     logger.debug(f"Manifest pulled for {src_image} with digest {manifest.manifest_digest}")
 
     # 2: Retrieve all blob digests from manifest; fetch blob based on blob digest, then upload blob.
-    blob_transfer = BlobTransfer(src_image, dest_image, manifest, image_registry_http_client=retryable_http)
+    blob_transfer = BlobTransfer(
+        src_image,
+        dest_image,
+        manifest,
+        src_image_registry_http_client=src_retryable_http,
+        dest_image_registry_http_client=dest_retryable_http,
+    )
     blob_transfer.upload_all_blobs()
 
     # 3. Upload the manifest
     logger.debug(f"All blobs copied successfully. Copying manifest for {src_image} to {dest_image}")
-    put_manifest(dest_image, manifest, retryable_http)
+    put_manifest(
+        dest_image,
+        manifest,
+        dest_retryable_http,
+    )
 
     logger.debug(f"Image {src_image} copied to {dest_image}")
 

@@ -233,6 +233,23 @@ class SFEmbeddedStageFileSystemTest(parameterized.TestCase):
             self.assertEqual(fp.read(), self.content)
             self.mock_time.return_value = 1
 
+    @parameterized.parameters(  # type: ignore[misc]
+        ("versions/my_version/file.ext", "versions/my_version"),
+        ("versions/my_version/subdir/file.ext", "versions/my_version/subdir"),
+        ("versions/my_version/", "versions/my_version"),
+        ("versions/my_version", "versions/my_version"),
+        ("versions/my_version//", "versions/my_version"),
+        ("versions/my_version//file.ext", "versions/my_version"),
+        ("versions/my_version//subdir/file.ext", "versions/my_version//subdir"),
+        ("snow://dataset/my_ds/versions/my_version/file.ext", "snow://dataset/my_ds/versions/my_version"),
+        ("snow://dataset/my_ds/versions/my_version/subdir/file.ext", "snow://dataset/my_ds/versions/my_version/subdir"),
+        ("snow://dataset/my_ds/versions/my_version/", "snow://dataset/my_ds/versions/my_version"),
+        ("snow://dataset/my_ds/versions/my_version", "snow://dataset/my_ds/versions/my_version"),
+    )
+    def test_parent(self, input: str, expected: str) -> None:
+        actual = embedded_stage_fs.SFEmbeddedStageFileSystem._parent(input)
+        self.assertEqual(expected, actual)
+
 
 if __name__ == "__main__":
     absltest.main()
