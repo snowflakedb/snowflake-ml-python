@@ -38,7 +38,6 @@ from tests.integ.snowflake.ml.modeling.framework.utils import (
     equal_list_of,
     equal_np_array,
     equal_optional_of,
-    equal_pandas_df_ignore_row_order,
 )
 
 
@@ -144,7 +143,6 @@ class OrdinalEncoderTest(parameterized.TestCase):
         attrs: Dict[str, _EqualityFunc] = {
             "categories_": equal_list_of(equal_np_array),
             "_missing_indices": equal_default,
-            "_state_pandas": equal_pandas_df_ignore_row_order,
         }
 
         mismatched_attributes: Dict[str, Tuple[Any, Any]] = {}
@@ -422,7 +420,6 @@ class OrdinalEncoderTest(parameterized.TestCase):
 
         encoder = OrdinalEncoder(categories=categories).set_input_cols(input_cols).set_output_cols(output_cols)
         encoder.fit(df)
-        actual_categories = encoder._categories_list
 
         transformed_df = encoder.transform(df[input_cols_extended])
         actual_arr = transformed_df.sort(id_col)[output_cols].to_pandas().to_numpy()
@@ -432,15 +429,68 @@ class OrdinalEncoderTest(parameterized.TestCase):
         encoder_sklearn.fit(df_pandas[input_cols])
         sklearn_arr = encoder_sklearn.transform(df_pandas.sort_values(by=[id_col])[input_cols])
 
-        # verify all given categories including excessive ones are in `encoder._state_pandas`
-        category_col = [c for c in encoder._state_pandas.columns if "_CATEGORY" in c][0]
-        actual_state_categories = encoder._state_pandas.groupby("_COLUMN_NAME")[category_col].apply(np.array).to_dict()
-        self.assertEqual(set(categories.keys()), set(actual_state_categories.keys()))
-        for key in categories.keys():
-            self.assertEqual(set(categories[key]), set(actual_state_categories[key]))
+        # verify matching categories values
+        self.assertDictEqual(
+            {col: cat_values.tolist() for col, cat_values in encoder.categories.items()},
+            {col: encoder_sklearn.categories_[i].tolist() for i, col in enumerate(input_cols)},
+        )
+        self.assertDictEqual(
+            {col: cat_values.tolist() for col, cat_values in encoder.categories_.items()},
+            {col: encoder_sklearn.categories_[i].tolist() for i, col in enumerate(input_cols)},
+        )
+        self.assertSequenceEqual(
+            [cats.tolist() for cats in encoder._categories_list],
+            [cats.tolist() for cats in encoder_sklearn.categories_],
+        )
+        np.testing.assert_allclose(actual_arr, sklearn_arr, equal_nan=True)
 
-        for actual_cats, sklearn_cats in zip(actual_categories, encoder_sklearn.categories_):
-            self.assertEqual(sklearn_cats.tolist(), actual_cats.tolist())
+    def test_categories_list(self) -> None:
+        """
+        Test that `categories` as a list of array-like is accepted.
+
+        Raises
+        ------
+        AssertionError
+            If the fitted categories do not match those of the sklearn encoder.
+        """
+        input_cols, output_cols, id_col = CATEGORICAL_COLS, OUTPUT_COLS, ID_COL
+        input_cols_extended = input_cols.copy()
+        input_cols_extended.append(id_col)
+        df_pandas, df = framework_utils.get_df(self._session, DATA, SCHEMA, np.nan)
+
+        categories = []
+        for idx, input_col in enumerate(input_cols):
+            cats = list(set(framework_utils.get_pandas_feature(df_pandas[input_cols], feature_idx=idx)))
+            # test excessive given categories
+            cats.append(f"extra_cat_{input_col}")
+            # sort categories in descending order to test if orders are preserved
+            cats.sort(reverse=True)
+            cats_arr = np.array(cats)
+            categories.append(cats_arr)
+
+        encoder = OrdinalEncoder(categories=categories).set_input_cols(input_cols).set_output_cols(output_cols)
+        encoder.fit(df)
+
+        transformed_df = encoder.transform(df[input_cols_extended])
+        actual_arr = transformed_df.sort(id_col)[output_cols].to_pandas().to_numpy()
+
+        # sklearn
+        encoder_sklearn = SklearnOrdinalEncoder(categories=categories)
+        encoder_sklearn.fit(df_pandas[input_cols])
+        sklearn_arr = encoder_sklearn.transform(df_pandas.sort_values(by=[id_col])[input_cols])
+
+        # verify matching categories values
+        self.assertSequenceEqual(
+            [cats.tolist() for cats in encoder.categories], [cats.tolist() for cats in encoder_sklearn.categories_]
+        )
+        self.assertDictEqual(
+            {col: cat_values.tolist() for col, cat_values in encoder.categories_.items()},
+            {col: encoder_sklearn.categories_[i].tolist() for i, col in enumerate(input_cols)},
+        )
+        self.assertSequenceEqual(
+            [cats.tolist() for cats in encoder._categories_list],
+            [cats.tolist() for cats in encoder_sklearn.categories_],
+        )
         np.testing.assert_allclose(actual_arr, sklearn_arr, equal_nan=True)
 
     def test_categories_unknown(self) -> None:

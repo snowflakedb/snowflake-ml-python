@@ -1,6 +1,19 @@
 # Release History
 
-## 1.5.3
+## 1.5.4
+
+### Bug Fixes
+
+- Model Registry (PrPr): Fix 401 Unauthorized issue when deploying model to SPCS.
+- Modeling: Fix an issue with calling `OneHotEncoder` with `categories` as a dictionary and a pandas DataFrame.
+- Modeling: Fix an issue with calling `OrdinalEncoder` with `categories` as a dictionary and a pandas DataFrame.
+
+### New Features
+
+- Model Development: OrdinalEncoder supports a list of array-likes for `categories` argument.
+- Model Development: OneHotEncoder supports a list of array-likes for `categories` argument.
+
+## 1.5.3 (06-17-2024)
 
 ### Bug Fixes
 
@@ -8,8 +21,6 @@
   `Pipeline`, `GridSearchCV` , `SimpleImputer`, and `RandomizedSearchCV`
 - Registry: Fix an issue that leads to incorrect result when using pandas Dataframe with over 100, 000 rows as the input
   of `ModelVersion.run` method in Stored Procedure.
-
-### Behavior Changes
 
 ### New Features
 

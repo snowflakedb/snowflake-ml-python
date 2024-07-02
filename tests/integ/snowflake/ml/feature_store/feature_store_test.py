@@ -913,7 +913,7 @@ class FeatureStoreTest(parameterized.TestCase):
             uuid4().hex,
             input_dataframe=self._session.create_dataframe([1, 2, 3], schema=["foo"]),
         )
-        with self.assertRaisesRegex(ValueError, "Dataset.*does not contain valid feature view information."):
+        with self.assertRaisesRegex(ValueError, r"does not contain valid feature view information\."):
             fs.load_feature_views_from_dataset(ds)
 
     @parameterized.parameters(True, False)  # type: ignore[misc]

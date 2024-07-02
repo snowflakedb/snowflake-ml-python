@@ -9,6 +9,10 @@ from snowflake.ml.model._client.ops import model_ops
 
 _TELEMETRY_PROJECT = "MLOps"
 _TELEMETRY_SUBPROJECT = "ModelManagement"
+SYSTEM_VERSION_ALIAS_DEFAULT = "DEFAULT"
+SYSTEM_VERSION_ALIAS_FIRST = "FIRST"
+SYSTEM_VERSION_ALIAS_LAST = "LAST"
+SYSTEM_VERSION_ALIASES = (SYSTEM_VERSION_ALIAS_DEFAULT, SYSTEM_VERSION_ALIAS_FIRST, SYSTEM_VERSION_ALIAS_LAST)
 
 
 class Model:
@@ -144,6 +148,22 @@ class Model:
         project=_TELEMETRY_PROJECT,
         subproject=_TELEMETRY_SUBPROJECT,
     )
+    def first(self) -> model_version_impl.ModelVersion:
+        """The first version of the model."""
+        return self.version(SYSTEM_VERSION_ALIAS_FIRST)
+
+    @telemetry.send_api_usage_telemetry(
+        project=_TELEMETRY_PROJECT,
+        subproject=_TELEMETRY_SUBPROJECT,
+    )
+    def last(self) -> model_version_impl.ModelVersion:
+        """The latest version of the model."""
+        return self.version(SYSTEM_VERSION_ALIAS_LAST)
+
+    @telemetry.send_api_usage_telemetry(
+        project=_TELEMETRY_PROJECT,
+        subproject=_TELEMETRY_SUBPROJECT,
+    )
     def version(self, version_name: str) -> model_version_impl.ModelVersion:
         """
         Get a model version object given a version name in the model.
@@ -161,23 +181,36 @@ class Model:
             project=_TELEMETRY_PROJECT,
             subproject=_TELEMETRY_SUBPROJECT,
         )
-        version_id = sql_identifier.SqlIdentifier(version_name)
-        if self._model_ops.validate_existence(
-            database_name=None,
-            schema_name=None,
-            model_name=self._model_name,
-            version_name=version_id,
-            statement_params=statement_params,
-        ):
-            return model_version_impl.ModelVersion._ref(
-                self._model_ops,
+        version_id = None
+        if version_name in SYSTEM_VERSION_ALIASES:
+            version_id = self._model_ops.get_version_by_alias(
+                database_name=None,
+                schema_name=None,
+                model_name=self._model_name,
+                alias_name=sql_identifier.SqlIdentifier(version_name),
+                statement_params=statement_params,
+            )
+            if version_id is None:
+                raise ValueError(
+                    f"Unable to find version with alias {version_name} in model {self.fully_qualified_name}"
+                )
+        else:
+            version_id = sql_identifier.SqlIdentifier(version_name)
+            if not self._model_ops.validate_existence(
+                database_name=None,
+                schema_name=None,
                 model_name=self._model_name,
                 version_name=version_id,
-            )
-        else:
-            raise ValueError(
-                f"Unable to find version with name {version_id.identifier()} in model {self.fully_qualified_name}"
-            )
+                statement_params=statement_params,
+            ):
+                raise ValueError(
+                    f"Unable to find version with name {version_id.identifier()} in model {self.fully_qualified_name}"
+                )
+        return model_version_impl.ModelVersion._ref(
+            self._model_ops,
+            model_name=self._model_name,
+            version_name=version_id,
+        )
 
     @telemetry.send_api_usage_telemetry(
         project=_TELEMETRY_PROJECT,

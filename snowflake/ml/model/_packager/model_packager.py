@@ -47,12 +47,12 @@ class ModelPackager:
         ext_modules: Optional[List[ModuleType]] = None,
         code_paths: Optional[List[str]] = None,
         options: Optional[model_types.ModelSaveOption] = None,
-    ) -> None:
+    ) -> model_meta.ModelMetadata:
         if (signatures is None) and (sample_input_data is None) and not model_handler.is_auto_signature_model(model):
             raise snowml_exceptions.SnowflakeMLException(
                 error_code=error_codes.INVALID_ARGUMENT,
                 original_exception=ValueError(
-                    "Signatures and sample_input_data both cannot be None at the same time for this kind of model."
+                    "Either of `signatures` or `sample_input_data` must be provided for this kind of model."
                 ),
             )
 
@@ -103,6 +103,7 @@ class ModelPackager:
 
         self.model = model
         self.meta = meta
+        return meta
 
     def load(
         self,
@@ -110,7 +111,7 @@ class ModelPackager:
         meta_only: bool = False,
         as_custom_model: bool = False,
         options: Optional[model_types.ModelLoadOption] = None,
-    ) -> None:
+    ) -> model_meta.ModelMetadata:
         """Load the model into memory from directory. Used internal only.
 
         Args:
@@ -120,11 +121,14 @@ class ModelPackager:
 
         Raises:
             SnowflakeMLException: Raised if model is not native format.
+
+        Returns:
+            Metadata of loaded model.
         """
 
         self.meta = model_meta.ModelMetadata.load(self.local_dir_path)
         if meta_only:
-            return
+            return self.meta
 
         model_meta.load_code_path(self.local_dir_path)
 
@@ -146,3 +150,4 @@ class ModelPackager:
             assert isinstance(m, custom_model.CustomModel)
 
         self.model = m
+        return self.meta

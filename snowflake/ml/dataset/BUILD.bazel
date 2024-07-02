@@ -54,5 +54,6 @@ py_library(
         "//snowflake/ml/_internal/exceptions:dataset_errors",
         "//snowflake/ml/_internal/utils:import_utils",
         "//snowflake/ml/_internal/utils:snowpark_dataframe_utils",
+        "//snowflake/ml/lineage",
     ],
 )

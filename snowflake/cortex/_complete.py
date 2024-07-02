@@ -1,8 +1,9 @@
-from typing import Iterator, Optional, Union
+from typing import Dict, Iterator, Optional, Union, cast
 
 from snowflake import snowpark
 from snowflake.cortex._util import (
     CORTEX_FUNCTIONS_TELEMETRY_PROJECT,
+    CompleteOptions,
     call_rest_function,
     call_sql_function,
     process_rest_response,
@@ -17,6 +18,8 @@ from snowflake.ml._internal import telemetry
 def Complete(
     model: Union[str, snowpark.Column],
     prompt: Union[str, snowpark.Column],
+    *,
+    options: Optional[CompleteOptions],
     session: Optional[snowpark.Session] = None,
     use_rest_api_experimental: bool = False,
     stream: bool = False,
@@ -26,6 +29,7 @@ def Complete(
     Args:
         model: A Column of strings representing model types.
         prompt: A Column of prompts to send to the LLM.
+        options: A instance of snowflake.cortex.CompleteOptions
         session: The snowpark session to use. Will be inferred by context if not specified.
         use_rest_api_experimental (bool): Toggles between the use of SQL and REST implementation. This feature is
             experimental and can be removed at any time.
@@ -42,15 +46,24 @@ def Complete(
     if stream is True and use_rest_api_experimental is False:
         raise ValueError("If stream is set to True use_rest_api_experimental must also be set to True")
     if use_rest_api_experimental:
-        response = call_rest_function("complete", model, prompt, session=session, stream=stream)
+        response = call_rest_function("complete", model, prompt, options, session=session, stream=stream)
         return process_rest_response(response)
-    return _complete_impl("snowflake.cortex.complete", model, prompt, session=session)
+    return _complete_impl("snowflake.cortex.complete", model, prompt, options, session=session)
 
 
 def _complete_impl(
     function: str,
     model: Union[str, snowpark.Column],
     prompt: Union[str, snowpark.Column],
+    options: Optional[CompleteOptions] = None,
     session: Optional[snowpark.Session] = None,
 ) -> Union[str, snowpark.Column]:
+    if options:
+        return call_sql_function(
+            function,
+            session,
+            model,
+            prompt,
+            cast(Dict[str, Union[int, float]], options),
+        )
     return call_sql_function(function, session, model, prompt)

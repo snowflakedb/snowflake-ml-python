@@ -354,6 +354,28 @@ class ModelOperator:
             res[self._model_client.MODEL_DEFAULT_VERSION_NAME_COL_NAME], case_sensitive=True
         )
 
+    def get_version_by_alias(
+        self,
+        *,
+        database_name: Optional[sql_identifier.SqlIdentifier],
+        schema_name: Optional[sql_identifier.SqlIdentifier],
+        model_name: sql_identifier.SqlIdentifier,
+        alias_name: sql_identifier.SqlIdentifier,
+        statement_params: Optional[Dict[str, Any]] = None,
+    ) -> Optional[sql_identifier.SqlIdentifier]:
+        res = self._model_client.show_versions(
+            database_name=database_name,
+            schema_name=schema_name,
+            model_name=model_name,
+            statement_params=statement_params,
+        )
+        for r in res:
+            if alias_name in r[self._model_client.MODEL_VERSION_ALIASES_COL_NAME]:
+                return sql_identifier.SqlIdentifier(
+                    r[self._model_client.MODEL_VERSION_NAME_COL_NAME], case_sensitive=True
+                )
+        return None
+
     def get_tag_value(
         self,
         *,

@@ -1594,6 +1594,7 @@ class FeatureStore:
                 refresh_mode_reason=row["refresh_mode_reason"],
                 owner=row["owner"],
                 infer_schema_df=infer_schema_df,
+                session=self._session,
             )
             return fv
         else:
@@ -1622,6 +1623,7 @@ class FeatureStore:
                 refresh_mode_reason=None,
                 owner=row["owner"],
                 infer_schema_df=infer_schema_df,
+                session=self._session,
             )
             return fv
 

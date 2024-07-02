@@ -1,0 +1,45 @@
+load("@rules_python//python:packaging.bzl", "py_package")
+load("//bazel:py_rules.bzl", "py_library")
+
+package_group(
+    name = "snowpark_pandas",
+    packages = [
+        "//snowflake/ml/snowpark_pandas/...",
+        "//tests/integ/snowflake/ml/modeling/...",
+        "//tests/integ/snowflake/ml/snowpark_pandas/...",
+    ],
+)
+
+package(default_visibility = [
+    ":snowpark_pandas",
+    "//bazel:snowml_public_common",
+])
+
+py_library(
+    name = "init",
+    srcs = [
+        "__init__.py",
+    ],
+)
+
+py_library(
+    name = "snowpark_pandas_lib",
+    srcs = [
+        "imports.py",
+        "initializer.py",
+        "patch.py",
+    ],
+    deps = [
+        ":init",
+        "//snowflake/ml/_internal:file_utils",
+        "//snowflake/ml/_internal/utils:identifier",
+    ],
+)
+
+py_package(
+    name = "snowpark_pandas_pkg",
+    packages = ["snowflake.ml.snowpark_pandas"],
+    deps = [
+        ":snowpark_pandas_lib",
+    ],
+)
