@@ -12,12 +12,15 @@ snowflake.ml.cortex
 .. autosummary::
     :toctree: api/model
 
+    CompleteOptions
+
+.. rubric:: Functions
+
+.. autosummary::
+    :toctree: api/model
+
     Complete
     ExtractAnswer
     Sentiment
     Summarize
     Translate
-
-.. .. rubric:: Attributes
-
-.. None

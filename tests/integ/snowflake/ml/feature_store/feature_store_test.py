@@ -84,7 +84,7 @@ class FeatureStoreTest(parameterized.TestCase):
         ).collect()
         return table_full_path
 
-    def _create_feature_store(self, name: Optional[str] = None, use_optimized_tag_ref: bool = False) -> FeatureStore:
+    def _create_feature_store(self, name: Optional[str] = None) -> FeatureStore:
         current_schema = create_random_schema(self._session, "FS_TEST") if name is None else name
         fs = FeatureStore(
             self._session,
@@ -97,7 +97,6 @@ class FeatureStoreTest(parameterized.TestCase):
         # Intentionally point session to a different database to make sure feature store code is resilient to
         # session location.
         self._session.use_database(FS_INTEG_TEST_DUMMY_DB)
-        fs._use_optimized_tag_ref = use_optimized_tag_ref
         return fs
 
     def _check_tag_value(
@@ -215,9 +214,8 @@ class FeatureStoreTest(parameterized.TestCase):
                 creation_mode=CreationMode.FAIL_IF_NOT_EXIST,
             )
 
-    @parameterized.parameters(True, False)  # type: ignore[misc]
-    def test_create_and_delete_entities(self, use_optimized_tag_ref: bool) -> None:
-        fs = self._create_feature_store(use_optimized_tag_ref=use_optimized_tag_ref)
+    def test_create_and_delete_entities(self) -> None:
+        fs = self._create_feature_store()
 
         entities = {
             "User": Entity("USER", ['"uid"']),
@@ -286,9 +284,8 @@ class FeatureStoreTest(parameterized.TestCase):
         with self.assertRaisesRegex(ValueError, "Cannot delete Entity .* due to active FeatureViews.*"):
             fs.delete_entity("User")
 
-    @parameterized.parameters(True, False)  # type: ignore[misc]
-    def test_retrieve_entity(self, use_optimized_tag_ref: bool) -> None:
-        fs = self._create_feature_store(use_optimized_tag_ref=use_optimized_tag_ref)
+    def test_retrieve_entity(self) -> None:
+        fs = self._create_feature_store()
 
         e1 = Entity(name="foo", join_keys=["a", "b"], desc="my foo")
         e2 = Entity(name="bar", join_keys=["c"])
@@ -338,9 +335,8 @@ class FeatureStoreTest(parameterized.TestCase):
         with self.assertRaisesRegex(RuntimeError, "Failed to find object .*"):
             fs.register_entity(e)
 
-    @parameterized.parameters(True, False)  # type: ignore[misc]
-    def test_register_feature_view_with_unregistered_entity(self, use_optimized_tag_ref: bool) -> None:
-        fs = self._create_feature_store(use_optimized_tag_ref=use_optimized_tag_ref)
+    def test_register_feature_view_with_unregistered_entity(self) -> None:
+        fs = self._create_feature_store()
 
         e = Entity("foo", ["id"])
 
@@ -355,8 +351,7 @@ class FeatureStoreTest(parameterized.TestCase):
         with self.assertRaisesRegex(ValueError, "Entity .* has not been registered."):
             fs.register_feature_view(feature_view=fv, version="v1")
 
-    @parameterized.parameters(True, False)  # type: ignore[misc]
-    def test_register_feature_view_as_view(self, use_optimized_tag_ref: bool) -> None:
+    def test_register_feature_view_as_view(self) -> None:
         """
         APIs covered by test:
             1. register_feature_view
@@ -367,7 +362,7 @@ class FeatureStoreTest(parameterized.TestCase):
             6. generate_dataset (covers retrieve_feature_values)
         """
 
-        fs = self._create_feature_store(use_optimized_tag_ref=use_optimized_tag_ref)
+        fs = self._create_feature_store()
 
         e = Entity("foo", ["id"])
         fs.register_entity(e)
@@ -485,9 +480,8 @@ class FeatureStoreTest(parameterized.TestCase):
         with self.assertRaisesRegex(RuntimeError, "(?s)Create dynamic table .* failed.*"):
             fs.register_feature_view(feature_view=fv2, version="v2")
 
-    @parameterized.parameters(True, False)  # type: ignore[misc]
-    def test_create_and_delete_feature_views(self, use_optimized_tag_ref: bool) -> None:
-        fs = self._create_feature_store(use_optimized_tag_ref=use_optimized_tag_ref)
+    def test_create_and_delete_feature_views(self) -> None:
+        fs = self._create_feature_store()
 
         e1 = Entity("foo", ["aid"])
         e2 = Entity("bar", ["uid"])
@@ -605,9 +599,8 @@ class FeatureStoreTest(parameterized.TestCase):
         fv = fs.get_feature_view(name="fv0", version="SECOND")
         self.assertEqual(str(fv.timestamp_col).upper(), "TS")
 
-    @parameterized.parameters(True, False)  # type: ignore[misc]
-    def test_create_duplicated_feature_view(self, use_optimized_tag_ref: bool) -> None:
-        fs = self._create_feature_store(use_optimized_tag_ref=use_optimized_tag_ref)
+    def test_create_duplicated_feature_view(self) -> None:
+        fs = self._create_feature_store()
 
         e = Entity("foo", ["id"])
         fs.register_entity(e)
@@ -687,9 +680,8 @@ class FeatureStoreTest(parameterized.TestCase):
 
         fs._session = original_session
 
-    @parameterized.parameters(True, False)  # type: ignore[misc]
-    def test_read_feature_view(self, use_optimized_tag_ref: bool) -> None:
-        fs = self._create_feature_store(use_optimized_tag_ref=use_optimized_tag_ref)
+    def test_read_feature_view(self) -> None:
+        fs = self._create_feature_store()
 
         e = Entity("foo", ["id"])
         fs.register_entity(e)
@@ -716,9 +708,8 @@ class FeatureStoreTest(parameterized.TestCase):
             sort_cols=["NAME"],
         )
 
-    @parameterized.parameters(True, False)  # type: ignore[misc]
-    def test_register_with_cron_expr(self, use_optimized_tag_ref: bool) -> None:
-        fs = self._create_feature_store(use_optimized_tag_ref=use_optimized_tag_ref)
+    def test_register_with_cron_expr(self) -> None:
+        fs = self._create_feature_store()
 
         e = Entity("foo", ["id"])
         fs.register_entity(e)
@@ -759,9 +750,8 @@ class FeatureStoreTest(parameterized.TestCase):
         res = self._session.sql(f"SHOW TASKS LIKE '{task_name}' IN SCHEMA {fs._config.full_schema_path}").collect()
         self.assertEqual(len(res), 0)
 
-    @parameterized.parameters(True, False)  # type: ignore[misc]
-    def test_retrieve_time_series_feature_values(self, use_optimized_tag_ref: bool) -> None:
-        fs = self._create_feature_store(use_optimized_tag_ref=use_optimized_tag_ref)
+    def test_retrieve_time_series_feature_values(self) -> None:
+        fs = self._create_feature_store()
 
         e = Entity("foo", ["id"])
         fs.register_entity(e)
@@ -913,12 +903,11 @@ class FeatureStoreTest(parameterized.TestCase):
             uuid4().hex,
             input_dataframe=self._session.create_dataframe([1, 2, 3], schema=["foo"]),
         )
-        with self.assertRaisesRegex(ValueError, "Dataset.*does not contain valid feature view information."):
+        with self.assertRaisesRegex(ValueError, r"does not contain valid feature view information\."):
             fs.load_feature_views_from_dataset(ds)
 
-    @parameterized.parameters(True, False)  # type: ignore[misc]
-    def test_list_feature_views(self, use_optimized_tag_ref: bool) -> None:
-        fs = self._create_feature_store(use_optimized_tag_ref=use_optimized_tag_ref)
+    def test_list_feature_views(self) -> None:
+        fs = self._create_feature_store()
 
         e1 = Entity("foo", ["id"])
         fs.register_entity(e1)
@@ -1797,10 +1786,9 @@ class FeatureStoreTest(parameterized.TestCase):
             sort_cols=["CUSTOMER_ID"],
         )
 
-    @parameterized.parameters(True, False)  # type: ignore[misc]
-    def test_cross_feature_store_interop(self, use_optimized_tag_ref: bool) -> None:
+    def test_cross_feature_store_interop(self) -> None:
         # create first feature store and register feature views
-        first_fs = self._create_feature_store(use_optimized_tag_ref=use_optimized_tag_ref)
+        first_fs = self._create_feature_store()
 
         first_entity = Entity("foo", ["id"])
         first_fs.register_entity(first_entity)
@@ -2098,7 +2086,7 @@ class FeatureStoreTest(parameterized.TestCase):
         ]
     )  # type: ignore[misc]
     def test_invalid_result_scan_query(self, query: str) -> None:
-        fs = self._create_feature_store(use_optimized_tag_ref=True)
+        fs = self._create_feature_store()
         self._session.sql(f"create table {fs._config.full_schema_path}.a(a int)").collect()
         self._session.sql(f"select * from {fs._config.full_schema_path}.a").collect()
 

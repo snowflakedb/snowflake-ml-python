@@ -1,20 +1,33 @@
 # Release History
 
-## 1.5.3
+## 1.5.4
+
+### Bug Fixes
+
+- Model Registry (PrPr): Fix 401 Unauthorized issue when deploying model to SPCS.
+
+### New Features
+
+- Registry: Allow overriding `device_map` and `device` when loading huggingface pipeline models.
+- Registry: Add `set_alias` method to `ModelVersion` instance to set an alias to model version.
+
+## 1.5.3 (06-17-2024)
 
 ### Bug Fixes
 
 - Modeling: Fix an issue causing lineage information to be missing for
   `Pipeline`, `GridSearchCV` , `SimpleImputer`, and `RandomizedSearchCV`
+- Modeling: Fix an issue with calling `OneHotEncoder` with `categories` as a dictionary and a pandas DataFrame
 - Registry: Fix an issue that leads to incorrect result when using pandas Dataframe with over 100, 000 rows as the input
   of `ModelVersion.run` method in Stored Procedure.
-
-### Behavior Changes
+- Modeling: Fix an issue with calling `OrdinalEncoder` with `categories` as a dictionary and a pandas DataFrame
 
 ### New Features
 
 - Registry: Add support for TIMESTAMP_NTZ model signature data type, allowing timestamp input and output.
 - Dataset: Add `DatasetVersion.label_cols` and `DatasetVersion.exclude_cols` properties.
+- Model Development: OrdinalEncoder supports a list of array-likes for `categories` argument.
+- Model Development: OneHotEncoder supports a list of array-likes for `categories` argument.
 
 ## 1.5.2 (06-10-2024)
 

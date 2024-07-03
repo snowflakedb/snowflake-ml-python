@@ -268,9 +268,6 @@ class FeatureStore:
                     error_code=error_codes.INTERNAL_SNOWPARK_ERROR,
                     original_exception=RuntimeError(f"Failed to create feature store {name}: {e}."),
                 )
-
-        # TODO: remove this after tag_ref_internal rollout
-        self._use_optimized_tag_ref = self._tag_ref_internal_enabled()
         self._check_feature_store_object_versions()
         logger.info(f"Successfully connected to feature store: {self._config.full_schema_path}.")
 
@@ -559,13 +556,10 @@ class FeatureStore:
 
         if entity_name is not None:
             entity_name = SqlIdentifier(entity_name)
-            if self._use_optimized_tag_ref:
-                return self._optimized_find_feature_views(entity_name, feature_view_name)
-            else:
-                return self._find_feature_views(entity_name, feature_view_name)
+            return self._optimized_find_feature_views(entity_name, feature_view_name)
         else:
             output_values: List[List[Any]] = []
-            for row in self._get_fv_backend_representations(feature_view_name, prefix_match=True):
+            for row, _ in self._get_fv_backend_representations(feature_view_name, prefix_match=True):
                 self._extract_feature_view_info(row, output_values)
             return self._session.create_dataframe(output_values, schema=_LIST_FEATURE_VIEW_SCHEMA)
 
@@ -596,7 +590,7 @@ class FeatureStore:
                 original_exception=ValueError(f"Failed to find FeatureView {name}/{version}: {results}"),
             )
 
-        return self._compose_feature_view(results[0], self.list_entities().collect())
+        return self._compose_feature_view(results[0][0], results[0][1], self.list_entities().collect())
 
     @dispatch_decorator()
     def resume_feature_view(self, feature_view: FeatureView) -> FeatureView:
@@ -1396,9 +1390,15 @@ class FeatureStore:
     # TODO: SHOW DYNAMIC TABLES is very slow while other show objects are fast, investigate with DT in SNOW-902804.
     def _get_fv_backend_representations(
         self, object_name: Optional[SqlIdentifier], prefix_match: bool = False
-    ) -> List[Row]:
-        dynamic_table_results = self._find_object("DYNAMIC TABLES", object_name, prefix_match)
-        view_results = self._find_object("VIEWS", object_name, prefix_match)
+    ) -> List[Tuple[Row, _FeatureStoreObjTypes]]:
+        dynamic_table_results = [
+            (d, _FeatureStoreObjTypes.MANAGED_FEATURE_VIEW)
+            for d in self._find_object("DYNAMIC TABLES", object_name, prefix_match)
+        ]
+        view_results = [
+            (d, _FeatureStoreObjTypes.EXTERNAL_FEATURE_VIEW)
+            for d in self._find_object("VIEWS", object_name, prefix_match)
+        ]
         return dynamic_table_results + view_results
 
     def _update_feature_view_status(self, feature_view: FeatureView, operation: str) -> FeatureView:
@@ -1438,7 +1438,7 @@ class FeatureStore:
         # TODO: this can be optimized further by directly getting all possible FVs and filter by tag
         # it's easier to rewrite the code once we can remove the tag_reference path
         all_fvs = self._get_fv_backend_representations(object_name=None)
-        fv_maps = {SqlIdentifier(r["name"], case_sensitive=True): r for r in all_fvs}
+        fv_maps = {SqlIdentifier(r["name"], case_sensitive=True): r for r, _ in all_fvs}
 
         if len(fv_maps.keys()) == 0:
             return self._session.create_dataframe([], schema=_LIST_FEATURE_VIEW_SCHEMA)
@@ -1470,14 +1470,7 @@ class FeatureStore:
 
     def _extract_feature_view_info(self, row: Row, output_values: List[List[Any]]) -> None:
         name, version = row["name"].split(_FEATURE_VIEW_NAME_DELIMITER)
-        m = re.match(_DT_OR_VIEW_QUERY_PATTERN, row["text"])
-        if m is None:
-            raise snowml_exceptions.SnowflakeMLException(
-                error_code=error_codes.INTERNAL_SNOWML_ERROR,
-                original_exception=RuntimeError(f"Failed to parse query text for FeatureView {name}/{version}: {row}."),
-            )
-
-        fv_metadata = _FeatureViewMetadata.from_json(m.group("fv_metadata"))
+        fv_metadata, _ = self._lookup_feature_view_metadata(row, FeatureView._get_physical_name(name, version))
 
         values: List[Any] = []
         values.append(name)
@@ -1490,61 +1483,48 @@ class FeatureStore:
         values.append(fv_metadata.entities)
         output_values.append(values)
 
-    def _find_feature_views(self, entity_name: SqlIdentifier, feature_view_name: Optional[SqlIdentifier]) -> DataFrame:
-        if not self._validate_entity_exists(entity_name):
-            return self._session.create_dataframe([], schema=_LIST_FEATURE_VIEW_SCHEMA)
-
-        all_fvs = self._get_fv_backend_representations(object_name=None)
-        fv_maps = {SqlIdentifier(r["name"], case_sensitive=True): r for r in all_fvs}
-
-        if len(fv_maps.keys()) == 0:
-            return self._session.create_dataframe([], schema=_LIST_FEATURE_VIEW_SCHEMA)
-
-        # NOTE: querying INFORMATION_SCHEMA for Entity lineage can be expensive depending on how many active
-        # FeatureViews there are. If this ever become an issue, consider exploring improvements.
-        try:
-            queries = [
-                f"""
-                    SELECT
-                        TAG_VALUE,
-                        OBJECT_NAME
-                    FROM TABLE(
-                        {self._config.database}.INFORMATION_SCHEMA.TAG_REFERENCES(
-                            '{self._get_fully_qualified_name(fv_name)}',
-                            'table'
+    def _lookup_feature_view_metadata(self, row: Row, fv_name: str) -> Tuple[_FeatureViewMetadata, str]:
+        if len(row["text"]) == 0:
+            # NOTE: if this is a shared feature view, then text column will be empty due to privacy constraints.
+            # So instead of looking at original query text, we will obtain metadata by querying the tag value.
+            # For query body, we will just use a simple select instead of original DDL query since shared feature views
+            # are read-only.
+            try:
+                res = self._session.sql(
+                    f"""
+                        SELECT
+                            *
+                        FROM TABLE(
+                            {self._config.database}.INFORMATION_SCHEMA.TAG_REFERENCES(
+                                '{self._get_fully_qualified_name(fv_name)}',
+                                'table'
+                            )
                         )
-                    )
-                    WHERE LEVEL = 'TABLE'
-                    AND TAG_NAME = '{_FEATURE_VIEW_METADATA_TAG}'
-                """
-                for fv_name in fv_maps.keys()
-            ]
+                        WHERE
+                        TAG_NAME = '{_FEATURE_VIEW_METADATA_TAG}';
+                    """
+                ).collect(statement_params=self._telemetry_stmp)
 
-            results = self._session.sql("\nUNION\n".join(queries)).collect(statement_params=self._telemetry_stmp)
-        except Exception as e:
-            raise snowml_exceptions.SnowflakeMLException(
-                error_code=error_codes.INTERNAL_SNOWPARK_ERROR,
-                original_exception=RuntimeError(f"Failed to retrieve feature views' information: {e}"),
-            ) from e
+                fv_metadata = _FeatureViewMetadata.from_json(res[0]["TAG_VALUE"])
+                query = f"SELECT * FROM {self._get_fully_qualified_name(fv_name)}"
+                return (fv_metadata, query)
+            except Exception as e:
+                raise snowml_exceptions.SnowflakeMLException(
+                    error_code=error_codes.INTERNAL_SNOWML_ERROR,
+                    original_exception=RuntimeError(f"Failed to extract feature_view metadata for {fv_name}: {e}."),
+                )
+        else:
+            m = re.match(_DT_OR_VIEW_QUERY_PATTERN, row["text"])
+            if m is None:
+                raise snowml_exceptions.SnowflakeMLException(
+                    error_code=error_codes.INTERNAL_SNOWML_ERROR,
+                    original_exception=RuntimeError(f"Failed to parse query text for FeatureView {fv_name}: {row}."),
+                )
+            fv_metadata = _FeatureViewMetadata.from_json(m.group("fv_metadata"))
+            query = m.group("query")
+            return (fv_metadata, query)
 
-        output_values: List[List[Any]] = []
-        for r in results:
-            fv_metadata = _FeatureViewMetadata.from_json(r["TAG_VALUE"])
-            for retrieved_entity in fv_metadata.entities:
-                if entity_name == SqlIdentifier(retrieved_entity, case_sensitive=True):
-                    fv_name, _ = r["OBJECT_NAME"].split(_FEATURE_VIEW_NAME_DELIMITER)
-                    fv_name = SqlIdentifier(fv_name, case_sensitive=True)
-                    obj_name = SqlIdentifier(r["OBJECT_NAME"], case_sensitive=True)
-                    if feature_view_name is not None:
-                        if fv_name == feature_view_name:
-                            self._extract_feature_view_info(fv_maps[obj_name], output_values)
-                        else:
-                            continue
-                    else:
-                        self._extract_feature_view_info(fv_maps[obj_name], output_values)
-        return self._session.create_dataframe(output_values, schema=_LIST_FEATURE_VIEW_SCHEMA)
-
-    def _compose_feature_view(self, row: Row, entity_list: List[Row]) -> FeatureView:
+    def _compose_feature_view(self, row: Row, obj_type: _FeatureStoreObjTypes, entity_list: List[Row]) -> FeatureView:
         def find_and_compose_entity(name: str) -> Entity:
             name = SqlIdentifier(name).resolved()
             for e in entity_list:
@@ -1558,21 +1538,14 @@ class FeatureStore:
 
         name, version = row["name"].split(_FEATURE_VIEW_NAME_DELIMITER)
         name = SqlIdentifier(name, case_sensitive=True)
-        m = re.match(_DT_OR_VIEW_QUERY_PATTERN, row["text"])
-        if m is None:
-            raise snowml_exceptions.SnowflakeMLException(
-                error_code=error_codes.INTERNAL_SNOWML_ERROR,
-                original_exception=RuntimeError(f"Failed to parse query text for FeatureView {name}/{version}: {row}."),
-            )
-
         fv_name = FeatureView._get_physical_name(name, version)
-        infer_schema_df = self._session.sql(f"SELECT * FROM {self._get_fully_qualified_name(fv_name)}")
+        fv_metadata, query = self._lookup_feature_view_metadata(row, fv_name)
 
-        if m.group("obj_type") == "DYNAMIC TABLE":
-            query = m.group("query")
+        infer_schema_df = self._session.sql(f"SELECT * FROM {self._get_fully_qualified_name(fv_name)}")
+        desc = row["comment"]
+
+        if obj_type == _FeatureStoreObjTypes.MANAGED_FEATURE_VIEW:
             df = self._session.sql(query)
-            desc = m.group("comment")
-            fv_metadata = _FeatureViewMetadata.from_json(m.group("fv_metadata"))
             entities = [find_and_compose_entity(n) for n in fv_metadata.entities]
             ts_col = fv_metadata.timestamp_col
             timestamp_col = ts_col if ts_col not in _LEGACY_TIMESTAMP_COL_PLACEHOLDER_VALS else None
@@ -1584,23 +1557,25 @@ class FeatureStore:
                 timestamp_col=timestamp_col,
                 desc=desc,
                 version=version,
-                status=FeatureViewStatus(row["scheduling_state"]),
+                status=FeatureViewStatus(row["scheduling_state"])
+                if len(row["scheduling_state"]) > 0
+                else FeatureViewStatus.MASKED,
                 feature_descs=self._fetch_column_descs("DYNAMIC TABLE", fv_name),
                 refresh_freq=row["target_lag"],
                 database=self._config.database.identifier(),
                 schema=self._config.schema.identifier(),
-                warehouse=SqlIdentifier(row["warehouse"], case_sensitive=True).identifier(),
+                warehouse=SqlIdentifier(row["warehouse"], case_sensitive=True).identifier()
+                if len(row["warehouse"]) > 0
+                else None,
                 refresh_mode=row["refresh_mode"],
                 refresh_mode_reason=row["refresh_mode_reason"],
                 owner=row["owner"],
                 infer_schema_df=infer_schema_df,
+                session=self._session,
             )
             return fv
         else:
-            query = m.group("query")
             df = self._session.sql(query)
-            desc = m.group("comment")
-            fv_metadata = _FeatureViewMetadata.from_json(m.group("fv_metadata"))
             entities = [find_and_compose_entity(n) for n in fv_metadata.entities]
             ts_col = fv_metadata.timestamp_col
             timestamp_col = ts_col if ts_col not in _LEGACY_TIMESTAMP_COL_PLACEHOLDER_VALS else None
@@ -1622,6 +1597,7 @@ class FeatureStore:
                 refresh_mode_reason=None,
                 owner=row["owner"],
                 infer_schema_df=infer_schema_df,
+                session=self._session,
             )
             return fv
 
@@ -1675,40 +1651,18 @@ class FeatureStore:
             )
             # There could be none-FS objects under FS schema, thus filter on objects with FS special tag.
             if object_type not in tag_free_object_types and len(all_rows) > 0:
-                if self._use_optimized_tag_ref:
-                    fs_obj_rows = self._session.sql(
-                        f"""
-                            SELECT
-                                OBJECT_NAME
-                            FROM TABLE(
-                                {self._config.database}.INFORMATION_SCHEMA.TAG_REFERENCES_INTERNAL(
-                                    TAG_NAME => '{self._get_fully_qualified_name(_FEATURE_STORE_OBJECT_TAG)}'
-                                )
+                fs_obj_rows = self._session.sql(
+                    f"""
+                        SELECT
+                            OBJECT_NAME
+                        FROM TABLE(
+                            {self._config.database}.INFORMATION_SCHEMA.TAG_REFERENCES_INTERNAL(
+                                TAG_NAME => '{self._get_fully_qualified_name(_FEATURE_STORE_OBJECT_TAG)}'
                             )
-                            WHERE DOMAIN='{obj_domain}'
-                        """
-                    ).collect(statement_params=self._telemetry_stmp)
-                else:
-                    # TODO: remove this after tag_ref_internal rollout
-                    # Note: <object_name> in TAG_REFERENCES(<object_name>) is case insensitive,
-                    # use double quotes to make it case-sensitive.
-                    queries = [
-                        f"""
-                            SELECT OBJECT_NAME
-                            FROM TABLE(
-                                {self._config.database}.INFORMATION_SCHEMA.TAG_REFERENCES(
-                                    '{self._get_fully_qualified_name(SqlIdentifier(row['name'], case_sensitive=True))}',
-                                    '{obj_domain}'
-                                )
-                            )
-                            WHERE TAG_NAME = '{_FEATURE_STORE_OBJECT_TAG}'
-                            AND TAG_SCHEMA = '{self._config.schema.resolved()}'
-                        """
-                        for row in all_rows
-                    ]
-                    fs_obj_rows = self._session.sql("\nUNION\n".join(queries)).collect(
-                        statement_params=self._telemetry_stmp
-                    )
+                        )
+                        WHERE DOMAIN='{obj_domain}'
+                    """
+                ).collect(statement_params=self._telemetry_stmp)
 
                 fs_tag_objects = [row["OBJECT_NAME"] for row in fs_obj_rows]
         except Exception as e:
@@ -1756,21 +1710,6 @@ class FeatureStore:
                 )
         return cast(DataFrame, df.drop(exclude_columns))
 
-    def _tag_ref_internal_enabled(self) -> bool:
-        try:
-            self._session.sql(
-                f"""
-                    SELECT * FROM TABLE(
-                        {self._config.database}.INFORMATION_SCHEMA.TAG_REFERENCES_INTERNAL(
-                            TAG_NAME => '{self._get_fully_qualified_name(_FEATURE_STORE_OBJECT_TAG)}'
-                        )
-                    ) LIMIT 1;
-                """
-            ).collect()
-            return True
-        except Exception:
-            return False
-
     def _is_dataset_enabled(self) -> bool:
         try:
             self._session.sql(f"SHOW DATASETS IN SCHEMA {self._config.full_schema_path}").collect()
@@ -1791,9 +1730,6 @@ class FeatureStore:
             )
 
     def _collapse_object_versions(self) -> List[pkg_version.Version]:
-        if not self._use_optimized_tag_ref:
-            return []
-
         query = f"""
             SELECT
                 TAG_VALUE

@@ -75,7 +75,7 @@ class _BaseModelHandlerProtocol(Protocol[model_types._ModelType]):
         name: str,
         model_meta: model_meta.ModelMetadata,
         model_blobs_dir_path: str,
-        **kwargs: Unpack[model_types.ModelLoadOption],
+        **kwargs: Unpack[model_types.BaseModelLoadOption],
     ) -> model_types._ModelType:
         """Load the model into memory.
 
@@ -96,7 +96,7 @@ class _BaseModelHandlerProtocol(Protocol[model_types._ModelType]):
         cls,
         raw_model: model_types._ModelType,
         model_meta: model_meta.ModelMetadata,
-        **kwargs: Unpack[model_types.ModelLoadOption],
+        **kwargs: Unpack[model_types.BaseModelLoadOption],
     ) -> custom_model.CustomModel:
         """Create a custom model class wrap for unified interface when being deployed. The predict method will be
         re-targeted based on target_method metadata.

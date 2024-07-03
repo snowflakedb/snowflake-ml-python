@@ -206,16 +206,16 @@ class WrapperGeneratorFactory:
         return class_object[1].__module__ == "sklearn.preprocessing._data"
 
     @staticmethod
-    def _is_manifold_module_obj(class_object: Tuple[str, type]) -> bool:
-        """Check if the given class belongs to the SKLearn manifold module.
+    def _is_cross_decomposition_module_obj(class_object: Tuple[str, type]) -> bool:
+        """Check if the given class belongs to the SKLearn cross_decomposition module.
 
         Args:
             class_object: Meta class object which needs to be checked.
 
         Returns:
-            True if the class belongs to `sklearn.manifold` module, otherwise False.
+            True if the class belongs to `sklearn.cross_decomposition` module, otherwise False.
         """
-        return class_object[1].__module__.startswith("sklearn.manifold")
+        return class_object[1].__module__.startswith("sklearn.cross_decomposition")
 
     @staticmethod
     def _is_multioutput_obj(class_object: Tuple[str, type]) -> bool:
@@ -305,6 +305,18 @@ class WrapperGeneratorFactory:
             True if the module belongs to LightGBM package, otherwise False.
         """
         return module_name.split(".")[0] == "lightgbm"
+
+    @staticmethod
+    def _is_pls(class_object: Tuple[str, type]) -> bool:
+        """Check if given module is PLS.
+
+        Args:
+            class_object: Meta class object which needs to be checked.
+
+        Returns:
+            True if class inherits from PLS, otherwise False.
+        """
+        return WrapperGeneratorFactory._is_class_of_type(class_object[1], "_PLS")
 
     @staticmethod
     def _is_heterogeneous_ensemble_obj(class_object: Tuple[str, type]) -> bool:
@@ -610,6 +622,7 @@ class WrapperGeneratorBase:
         self.estimator_imports = ""
         self.estimator_imports_list: List[str] = []
         self.score_sproc_imports: List[str] = []
+        self.wrapper_provider_class = ""
         self.additional_import_statements = ""
 
         # Test strings
@@ -619,9 +632,8 @@ class WrapperGeneratorBase:
         self.test_class_name = ""
         self.test_estimator_imports = ""
         self.test_estimator_imports_list: List[str] = []
-
-        # Optional function support
-        self.fit_transform_manifold_function_support = False
+        self.test_snowpark_pandas_imports = ""
+        self.test_snowpark_pandas_imports_list: List[str] = []
 
         # Dependencies
         self.predict_udf_deps = ""
@@ -660,7 +672,9 @@ class WrapperGeneratorBase:
 
     def _populate_flags(self) -> None:
         self._from_data_py = WrapperGeneratorFactory._is_data_module_obj(self.class_object)
-        self._is_manifold = WrapperGeneratorFactory._is_manifold_module_obj(self.class_object)
+        self._is_cross_decomposition_module_obj = WrapperGeneratorFactory._is_cross_decomposition_module_obj(
+            self.class_object
+        )
         self._is_regressor = WrapperGeneratorFactory._is_regressor_obj(self.class_object)
         self._is_classifier = WrapperGeneratorFactory._is_classifier_obj(self.class_object)
         self._is_meta_estimator = WrapperGeneratorFactory._is_meta_estimator_obj(self.class_object)
@@ -682,6 +696,7 @@ class WrapperGeneratorBase:
         self._is_grid_search_cv = WrapperGeneratorFactory._is_grid_search_cv(self.class_object)
         self._is_randomized_search_cv = WrapperGeneratorFactory._is_randomized_search_cv(self.class_object)
         self._is_iterative_imputer = WrapperGeneratorFactory._is_iterative_imputer(self.class_object)
+        self._is_pls = WrapperGeneratorFactory._is_pls(self.class_object)
         self._is_xgboost = WrapperGeneratorFactory._is_xgboost(self.module_name)
         self._is_deterministic = WrapperGeneratorFactory._is_deterministic(self.class_object)
         self._is_deterministic_cross_platform = WrapperGeneratorFactory._is_deterministic_cross_platform(
@@ -796,7 +811,10 @@ class WrapperGeneratorBase:
                 self.original_init_signature = inspect.signature(member[1])
             elif member[0] == "fit":
                 original_fit_signature = inspect.signature(member[1])
-                if original_fit_signature.parameters["y"].default is None:
+                if (
+                    hasattr(original_fit_signature.parameters, "y")
+                    and original_fit_signature.parameters["y"].default is None
+                ):
                     # The fit does not require labels, so our label_cols argument is optional.
                     ADDITIONAL_PARAM_DESCRIPTIONS[
                         "label_cols"
@@ -894,6 +912,10 @@ label_cols: Optional[Union[str, List[str]]]
             "/".join(snow_ml_module_name.split(".")),
             inflection.underscore(self.original_class_name) + "_test.py",
         )
+        self.snowpark_pandas_test_file_name = os.path.join(
+            "/".join(snow_ml_module_name.split(".")),
+            inflection.underscore(self.original_class_name) + "_snowpark_pandas_test.py",
+        )
 
     def _populate_integ_test_fields(self) -> None:
         snow_ml_module_name = WrapperGeneratorFactory.get_snow_ml_module_name(self.root_module_name)
@@ -907,10 +929,14 @@ label_cols: Optional[Union[str, List[str]]]
         else:
             self.test_dataset_func = LOAD_IRIS
 
+        snow_ml_class_import = (
+            f"from {snow_ml_module_name} import {self.original_class_name}  # type: ignore[attr-defined]"
+        )
+
         self.test_estimator_imports_list.extend(
             [
                 f"from {self.root_module_name} import {self.original_class_name} as Sk{self.original_class_name}",
-                f"from {snow_ml_module_name} import {self.original_class_name}  # type: ignore[attr-defined]",
+                snow_ml_class_import,
                 f"from sklearn.datasets import {self.test_dataset_func}",
             ]
         )
@@ -945,10 +971,14 @@ label_cols: Optional[Union[str, List[str]]]
         if self._is_randomized_search_cv:
             self.test_estimator_imports_list.append("from scipy.stats import uniform")
 
+        self.test_snowpark_pandas_imports_list = self.test_estimator_imports_list.copy()
+        self.test_snowpark_pandas_imports_list.remove(snow_ml_class_import)
+
     def _construct_string_from_lists(self) -> None:
         self.estimator_imports = "\n".join(self.estimator_imports_list)
         self.test_estimator_imports = "\n".join(self.test_estimator_imports_list)
         self.test_estimator_input_args = ", ".join(self.test_estimator_input_args_list)
+        self.test_snowpark_pandas_imports = "\n".join(self.test_snowpark_pandas_imports_list)
 
     def generate(self) -> "WrapperGeneratorBase":
         self.module_name = ".".join(self.class_object[1].__module__.split(".")[:-1])
@@ -1007,9 +1037,6 @@ class SklearnWrapperGenerator(WrapperGeneratorBase):
             ]
             self.test_estimator_input_args_list.append(f"dictionary={dictionary}")
 
-        if self._is_manifold:
-            self.fit_transform_manifold_function_support = True
-
         if WrapperGeneratorFactory._is_class_of_type(self.class_object[1], "SelectKBest"):
             # Set the k of SelectKBest features transformer to half the number of columns in the dataset.
             self.test_estimator_input_args_list.append("k=int(len(cols)/2)")
@@ -1020,6 +1047,9 @@ class SklearnWrapperGenerator(WrapperGeneratorBase):
                 # num best vector to select to half the number of input cols.
                 self.test_estimator_input_args_list.append("n_components=len(cols)")
                 self.test_estimator_input_args_list.append("n_best=int(len(cols)/2)")
+            elif self._is_cross_decomposition_module_obj:
+                # For cross decomposition, the default n_components need to be set into 1
+                self.test_estimator_input_args_list.append("n_components=1")
 
         if self._is_heterogeneous_ensemble:
             if self._is_regressor:

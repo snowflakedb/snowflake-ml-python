@@ -122,7 +122,7 @@ class CatBoostModelHandler(_base.BaseModelHandler["catboost.CatBoost"]):
         name: str,
         model_meta: model_meta_api.ModelMetadata,
         model_blobs_dir_path: str,
-        **kwargs: Unpack[model_types.ModelLoadOption],
+        **kwargs: Unpack[model_types.CatBoostModelLoadOptions],
     ) -> "catboost.CatBoost":
         import catboost
 
@@ -157,7 +157,7 @@ class CatBoostModelHandler(_base.BaseModelHandler["catboost.CatBoost"]):
         cls,
         raw_model: "catboost.CatBoost",
         model_meta: model_meta_api.ModelMetadata,
-        **kwargs: Unpack[model_types.ModelLoadOption],
+        **kwargs: Unpack[model_types.CatBoostModelLoadOptions],
     ) -> custom_model.CustomModel:
         import catboost
 

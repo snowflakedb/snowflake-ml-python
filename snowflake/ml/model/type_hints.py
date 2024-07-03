@@ -313,13 +313,82 @@ ModelSaveOption = Union[
 ]
 
 
-class ModelLoadOption(TypedDict):
-    """Options for loading the model.
+class BaseModelLoadOption(TypedDict):
+    """Options for loading the model."""
 
-    use_gpu: Enable GPU-specific loading logic.
-    """
+    ...
 
+
+class CatBoostModelLoadOptions(BaseModelLoadOption):
     use_gpu: NotRequired[bool]
+
+
+class CustomModelLoadOption(BaseModelLoadOption):
+    ...
+
+
+class SKLModelLoadOptions(BaseModelLoadOption):
+    ...
+
+
+class XGBModelLoadOptions(BaseModelLoadOption):
+    use_gpu: NotRequired[bool]
+
+
+class LGBMModelLoadOptions(BaseModelLoadOption):
+    ...
+
+
+class SNOWModelLoadOptions(BaseModelLoadOption):
+    ...
+
+
+class PyTorchLoadOptions(BaseModelLoadOption):
+    use_gpu: NotRequired[bool]
+
+
+class TorchScriptLoadOptions(BaseModelLoadOption):
+    use_gpu: NotRequired[bool]
+
+
+class TensorflowLoadOptions(BaseModelLoadOption):
+    ...
+
+
+class MLFlowLoadOptions(BaseModelLoadOption):
+    ...
+
+
+class HuggingFaceLoadOptions(BaseModelLoadOption):
+    use_gpu: NotRequired[bool]
+    device_map: NotRequired[str]
+    device: NotRequired[Union[str, int]]
+
+
+class SentenceTransformersLoadOptions(BaseModelLoadOption):
+    use_gpu: NotRequired[bool]
+
+
+class LLMLoadOptions(BaseModelLoadOption):
+    ...
+
+
+ModelLoadOption = Union[
+    BaseModelLoadOption,
+    CatBoostModelLoadOptions,
+    CustomModelLoadOption,
+    LGBMModelLoadOptions,
+    SKLModelLoadOptions,
+    XGBModelLoadOptions,
+    SNOWModelLoadOptions,
+    PyTorchLoadOptions,
+    TorchScriptLoadOptions,
+    TensorflowLoadOptions,
+    MLFlowLoadOptions,
+    HuggingFaceLoadOptions,
+    SentenceTransformersLoadOptions,
+    LLMLoadOptions,
+]
 
 
 class SnowparkContainerServiceDeployDetails(TypedDict):

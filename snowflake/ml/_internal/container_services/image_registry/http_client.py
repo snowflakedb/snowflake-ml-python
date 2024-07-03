@@ -64,13 +64,20 @@ class ImageRegistryHttpClient:
     operations. For general use of a retryable HTTP client, consider using the "retryable_http" module.
     """
 
-    def __init__(self, *, session: snowpark.Session, repo_url: str) -> None:
+    def __init__(self, *, repo_url: str, session: Optional[snowpark.Session] = None, no_cred: bool = False) -> None:
         self._repo_url = repo_url
-        self._session_token_manager = session_token_manager.SessionTokenManager(session)
         self._retryable_http = retryable_http.get_http_client()
-        self._bearer_token = ""
+        self._no_cred = no_cred
+
+        if not self._no_cred:
+            self._bearer_token = ""
+            assert session is not None
+            self._session_token_manager = session_token_manager.SessionTokenManager(session)
 
     def _with_bearer_token_header(self, headers: Optional[Dict[str, str]] = None) -> Dict[str, str]:
+        if self._no_cred:
+            return {} if not headers else headers.copy()
+
         if not self._bearer_token:
             self._fetch_bearer_token()
         assert self._bearer_token
