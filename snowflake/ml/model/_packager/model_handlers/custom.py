@@ -128,7 +128,7 @@ class CustomModelHandler(_base.BaseModelHandler["custom_model.CustomModel"]):
         name: str,
         model_meta: model_meta_api.ModelMetadata,
         model_blobs_dir_path: str,
-        **kwargs: Unpack[model_types.ModelLoadOption],
+        **kwargs: Unpack[model_types.CustomModelLoadOption],
     ) -> "custom_model.CustomModel":
         model_blob_path = os.path.join(model_blobs_dir_path, name)
 
@@ -175,6 +175,6 @@ class CustomModelHandler(_base.BaseModelHandler["custom_model.CustomModel"]):
         cls,
         raw_model: custom_model.CustomModel,
         model_meta: model_meta_api.ModelMetadata,
-        **kwargs: Unpack[model_types.ModelLoadOption],
+        **kwargs: Unpack[model_types.CustomModelLoadOption],
     ) -> custom_model.CustomModel:
         return raw_model

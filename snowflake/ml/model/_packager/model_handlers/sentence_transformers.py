@@ -126,7 +126,7 @@ class SentenceTransformerHandler(_base.BaseModelHandler["sentence_transformers.S
         name: str,
         model_meta: model_meta_api.ModelMetadata,
         model_blobs_dir_path: str,
-        **kwargs: Unpack[model_types.ModelLoadOption],  # use_gpu
+        **kwargs: Unpack[model_types.SentenceTransformersLoadOptions],  # use_gpu
     ) -> "sentence_transformers.SentenceTransformer":
         import sentence_transformers
 
@@ -154,7 +154,7 @@ class SentenceTransformerHandler(_base.BaseModelHandler["sentence_transformers.S
         cls,
         raw_model: "sentence_transformers.SentenceTransformer",
         model_meta: model_meta_api.ModelMetadata,
-        **kwargs: Unpack[model_types.ModelLoadOption],
+        **kwargs: Unpack[model_types.SentenceTransformersLoadOptions],
     ) -> custom_model.CustomModel:
         import sentence_transformers
 

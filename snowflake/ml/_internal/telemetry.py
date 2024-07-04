@@ -10,6 +10,7 @@ from typing import (
     Dict,
     Iterable,
     List,
+    Mapping,
     Optional,
     Tuple,
     TypeVar,
@@ -90,6 +91,31 @@ def get_statement_params(
         subproject=subproject,
         function_name=get_statement_params_full_func_name(frame.f_back if frame else None, class_name),
     )
+
+
+def add_statement_params_custom_tags(
+    statement_params: Optional[Dict[str, Any]], custom_tags: Mapping[str, Any]
+) -> Dict[str, Any]:
+    """
+    Add custom_tags to existing statement_params.  Overwrite keys in custom_tags dict that already exist.
+    If existing statement_params are not provided, do nothing as the information cannot be effectively tracked.
+
+    Args:
+        statement_params: Existing statement_params dictionary.
+        custom_tags: Dictionary of existing k/v pairs to add as custom_tags
+
+    Returns:
+        new statement_params dictionary with all keys and an updated custom_tags field.
+    """
+    if not statement_params:
+        return {}
+    existing_custom_tags: Dict[str, Any] = statement_params.pop(TelemetryField.KEY_CUSTOM_TAGS.value, {})
+    existing_custom_tags.update(custom_tags)
+    # NOTE: This can be done with | operator after upgrade from py3.8
+    return {
+        **statement_params,
+        TelemetryField.KEY_CUSTOM_TAGS.value: existing_custom_tags,
+    }
 
 
 # TODO: we can merge this with get_statement_params after code clean up

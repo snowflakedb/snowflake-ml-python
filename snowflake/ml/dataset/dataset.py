@@ -19,6 +19,7 @@ from snowflake.ml._internal.utils import (
     snowpark_dataframe_utils,
 )
 from snowflake.ml.dataset import dataset_metadata, dataset_reader
+from snowflake.ml.lineage import lineage_node
 from snowflake.snowpark import exceptions as snowpark_exceptions, functions
 
 _PROJECT = "Dataset"
@@ -125,7 +126,7 @@ class DatasetVersion:
         return f"{self.__class__.__name__}(dataset='{self._parent.fully_qualified_name}', version='{self.name}')"
 
 
-class Dataset:
+class Dataset(lineage_node.LineageNode):
     """Represents a Snowflake Dataset which is organized into versions."""
 
     @telemetry.send_api_usage_telemetry(project=_PROJECT)
@@ -138,18 +139,31 @@ class Dataset:
         selected_version: Optional[str] = None,
     ) -> None:
         """Initialize a lazily evaluated Dataset object"""
-        self._session = session
         self._db = database
         self._schema = schema
         self._name = name
-        self._fully_qualified_name = identifier.get_schema_level_object_identifier(database, schema, name)
+
+        super().__init__(
+            session,
+            identifier.get_schema_level_object_identifier(database, schema, name),
+            domain="dataset",
+            version=selected_version,
+        )
 
         self._version = DatasetVersion(self, selected_version) if selected_version else None
         self._reader: Optional[dataset_reader.DatasetReader] = None
 
+    def __repr__(self) -> str:
+        return (
+            f"{self.__class__.__name__}(\n"
+            f"  name='{self._lineage_node_name}',\n"
+            f"  version='{self._version._version if self._version else None}',\n"
+            f")"
+        )
+
     @property
     def fully_qualified_name(self) -> str:
-        return self._fully_qualified_name
+        return self._lineage_node_name
 
     @property
     def selected_version(self) -> Optional[DatasetVersion]:
@@ -168,7 +182,7 @@ class Dataset:
                 self._session,
                 [
                     data_source.DataSource(
-                        fully_qualified_name=self._fully_qualified_name,
+                        fully_qualified_name=self._lineage_node_name,
                         version=v.name,
                         url=v.url(),
                         exclude_cols=(v.label_cols + v.exclude_cols),
@@ -230,9 +244,8 @@ class Dataset:
         try:
             session.sql(query).collect(statement_params=_TELEMETRY_STATEMENT_PARAMS)
             return Dataset(session, db, schema, ds_name)
-        except snowpark_exceptions.SnowparkClientException as e:
-            # Snowpark wraps the Python Connector error code in the head of the error message.
-            if e.message.startswith(dataset_errors.ERRNO_OBJECT_ALREADY_EXISTS):
+        except snowpark_exceptions.SnowparkSQLException as e:
+            if e.sql_error_code == dataset_errors.ERRNO_OBJECT_ALREADY_EXISTS:
                 raise snowml_exceptions.SnowflakeMLException(
                     error_code=error_codes.OBJECT_ALREADY_EXISTS,
                     original_exception=dataset_errors.DatasetExistError(
@@ -296,7 +309,7 @@ class Dataset:
         Raises:
             SnowflakeMLException: The Dataset no longer exists.
             SnowflakeMLException: The specified Dataset version already exists.
-            snowpark_exceptions.SnowparkClientException: An error occurred during Dataset creation.
+            snowpark_exceptions.SnowparkSQLException: An error occurred during Dataset creation.
 
         Note: During the generation of stage files, data casting will occur. The casting rules are as follows::
             - Data casting:
@@ -367,19 +380,19 @@ class Dataset:
 
             return Dataset(self._session, self._db, self._schema, self._name, version)
 
-        except snowpark_exceptions.SnowparkClientException as e:
-            if e.message.startswith(dataset_errors.ERRNO_DATASET_NOT_EXIST):
+        except snowpark_exceptions.SnowparkSQLException as e:
+            if e.sql_error_code == dataset_errors.ERRNO_DATASET_NOT_EXIST:
                 raise snowml_exceptions.SnowflakeMLException(
                     error_code=error_codes.NOT_FOUND,
                     original_exception=dataset_errors.DatasetNotExistError(
                         dataset_error_messages.DATASET_NOT_EXIST.format(self.fully_qualified_name)
                     ),
                 ) from e
-            elif (
-                e.message.startswith(dataset_errors.ERRNO_DATASET_VERSION_ALREADY_EXISTS)
-                or e.message.startswith(dataset_errors.ERRNO_VERSION_ALREADY_EXISTS)
-                or e.message.startswith(dataset_errors.ERRNO_FILES_ALREADY_EXISTING)
-            ):
+            elif e.sql_error_code in {
+                dataset_errors.ERRNO_DATASET_VERSION_ALREADY_EXISTS,
+                dataset_errors.ERRNO_VERSION_ALREADY_EXISTS,
+                dataset_errors.ERRNO_FILES_ALREADY_EXISTING,
+            }:
                 raise snowml_exceptions.SnowflakeMLException(
                     error_code=error_codes.OBJECT_ALREADY_EXISTS,
                     original_exception=dataset_errors.DatasetExistError(
@@ -435,9 +448,8 @@ class Dataset:
                 .has_column(_DATASET_VERSION_NAME_COL, allow_empty=True)
                 .validate()
             )
-        except snowpark_exceptions.SnowparkClientException as e:
-            # Snowpark wraps the Python Connector error code in the head of the error message.
-            if e.message.startswith(dataset_errors.ERRNO_OBJECT_NOT_EXIST):
+        except snowpark_exceptions.SnowparkSQLException as e:
+            if e.sql_error_code == dataset_errors.ERRNO_OBJECT_NOT_EXIST:
                 raise snowml_exceptions.SnowflakeMLException(
                     error_code=error_codes.NOT_FOUND,
                     original_exception=dataset_errors.DatasetNotExistError(
@@ -459,6 +471,12 @@ class Dataset:
                 ),
             )
 
+    @staticmethod
+    def _load_from_lineage_node(session: snowpark.Session, name: str, version: str) -> "Dataset":
+        return Dataset.load(session, name).select_version(version)
+
+
+lineage_node.DOMAIN_LINEAGE_REGISTRY["dataset"] = Dataset
 
 # Utility methods
 

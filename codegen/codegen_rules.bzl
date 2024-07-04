@@ -13,6 +13,9 @@ ESTIMATOR_TEMPLATE_BAZEL_PATH = "//codegen:sklearn_wrapper_template.py_template"
 ESTIMATOR_TEST_TEMPLATE_BAZEL_PATH = (
     "//codegen:transformer_autogen_test_template.py_template"
 )
+SNOWPARK_PANDAS_TEST_TEMPLATE_BAZEL_PATH = (
+    "//codegen:snowpark_pandas_autogen_test_template.py_template"
+)
 INIT_TEMPLATE_BAZEL_PATH = "//codegen:init_template.py_template"
 SRC_OUTPUT_PATH = ""
 TEST_OUTPUT_PATH = "tests/integ"
@@ -113,7 +116,7 @@ def autogen_tests_for_estimators(module, module_root_dir, estimator_info_list):
      List of generated build rules for every class in the estimator_info_list
         1. `genrule` with label `generate_test_<estimator-class-name-snakecase>` to auto-generate
             integration test for the estimator's wrapper class.
-        2. `py_test` rule with label `test_<estimator-class-name-snakecase>` to build the auto-generated
+        2. `py_test` rule with label `<estimator-class-name-snakecase>_test` to build the auto-generated
             test files from the  `generate_test_<estimator-class-name-snakecase>` rule.
     """
     cmd = get_genrule_cmd(
@@ -144,4 +147,43 @@ def autogen_tests_for_estimators(module, module_root_dir, estimator_info_list):
             legacy_create_init = 0,
             shard_count = 5,
             tags = ["autogen"],
+        )
+
+def autogen_snowpark_pandas_tests(module, module_root_dir, snowpark_pandas_estimator_info_list):
+    """Generates `genrules` and `py_test` rules for every snowpark pandas estimator
+     List of generated build rules for every class in the snowpark_pandas_estimator_info_list
+        1. `genrule` with label `generate_test_snowpark_pandas_<estimator-class-name-snakecase>` to auto-generate
+            integration test for the estimator.
+        2. `py_test` rule with label `estimator-class-name-snakecase>_snowpark_pandas_test` to build the auto-generated
+            test files from the `generate_test_snowpark_pandas_<estimator-class-name-snakecase>` rule.
+    """
+    cmd = get_genrule_cmd(
+        gen_mode = "SNOWPARK_PANDAS_TEST",
+        template_path = SNOWPARK_PANDAS_TEST_TEMPLATE_BAZEL_PATH,
+        module = module,
+        output_path = TEST_OUTPUT_PATH,
+    )
+
+    for e in snowpark_pandas_estimator_info_list:
+        py_genrule(
+            name = "generate_test_snowpark_pandas_{}".format(e.normalized_class_name),
+            outs = ["{}_snowpark_pandas_test.py".format(e.normalized_class_name)],
+            tools = [AUTO_GEN_TOOL_BAZEL_PATH],
+            srcs = [SNOWPARK_PANDAS_TEST_TEMPLATE_BAZEL_PATH],
+            cmd = cmd.format(e.class_name),
+            tags = ["autogen_build"],
+        )
+
+        py_test(
+            name = "{}_snowpark_pandas_test".format(e.normalized_class_name),
+            srcs = [":generate_test_snowpark_pandas_{}".format(e.normalized_class_name)],
+            deps = [
+                "//snowflake/ml/snowpark_pandas:snowpark_pandas_lib",
+                "//snowflake/ml/utils:connection_params",
+            ],
+            compatible_with_snowpark = False,
+            timeout = "long",
+            legacy_create_init = 0,
+            shard_count = 5,
+            tags = ["snowpark_pandas_autogen"],
         )

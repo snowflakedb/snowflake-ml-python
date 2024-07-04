@@ -1,0 +1,18 @@
+load("//bazel:py_rules.bzl", "py_test")
+
+package(default_visibility = [
+    "//bazel:snowml_public_common",
+    "//snowflake/ml/snowpark_pandas",
+])
+
+py_test(
+    name = "snowpark_pandas_test",
+    timeout = "long",
+    srcs = ["snowpark_pandas_test.py"],
+    compatible_with_snowpark = False,
+    shard_count = 5,
+    deps = [
+        "//snowflake/ml/snowpark_pandas:snowpark_pandas_lib",
+        "//snowflake/ml/utils:connection_params",
+    ],
+)

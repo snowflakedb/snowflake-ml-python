@@ -1,0 +1,20 @@
+load("//bazel:py_rules.bzl", "py_library", "py_package")
+
+package(default_visibility = ["//visibility:public"])
+
+py_package(
+    name = "lineage_pkg",
+    packages = ["snowflake.ml"],
+    deps = [
+        ":lineage",
+        "//snowflake/ml/_internal:telemetry",
+    ],
+)
+
+py_library(
+    name = "lineage",
+    srcs = [
+        "__init__.py",
+        "lineage_node.py",
+    ],
+)

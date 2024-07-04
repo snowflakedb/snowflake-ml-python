@@ -137,7 +137,7 @@ class PyTorchHandler(_base.BaseModelHandler["torch.nn.Module"]):
         name: str,
         model_meta: model_meta_api.ModelMetadata,
         model_blobs_dir_path: str,
-        **kwargs: Unpack[model_types.ModelLoadOption],
+        **kwargs: Unpack[model_types.PyTorchLoadOptions],
     ) -> "torch.nn.Module":
         import torch
 
@@ -156,7 +156,7 @@ class PyTorchHandler(_base.BaseModelHandler["torch.nn.Module"]):
         cls,
         raw_model: "torch.nn.Module",
         model_meta: model_meta_api.ModelMetadata,
-        **kwargs: Unpack[model_types.ModelLoadOption],
+        **kwargs: Unpack[model_types.PyTorchLoadOptions],
     ) -> custom_model.CustomModel:
         import torch
 

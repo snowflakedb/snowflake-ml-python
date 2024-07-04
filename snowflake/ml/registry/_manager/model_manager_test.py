@@ -1,19 +1,38 @@
-from typing import cast
+from typing import Any, Dict, cast
 from unittest import mock
 
 import pandas as pd
 from absl.testing import absltest
 
+from snowflake.ml._internal import telemetry
 from snowflake.ml._internal.utils import sql_identifier
 from snowflake.ml.model._client.model import model_impl, model_version_impl
 from snowflake.ml.model._client.ops.model_ops import ModelOperator
 from snowflake.ml.model._model_composer import model_composer
+from snowflake.ml.model._packager.model_meta import model_meta
 from snowflake.ml.registry._manager import model_manager
 from snowflake.ml.test_utils import mock_session
 from snowflake.snowpark import Row, Session
 
 
 class ModelManagerTest(absltest.TestCase):
+    base_statement_params = {
+        "project": "MLOps",
+        "subproject": "UnitTest",
+    }
+    model_md_telemetry = model_meta.ModelMetadataTelemetryDict(
+        model_name="ModelManagerTest", framework_type="snowml", number_of_functions=2
+    )
+
+    def _build_expected_create_model_statement_params(self, model_version_name: str) -> Dict[str, Any]:
+        return {
+            **self.base_statement_params,
+            telemetry.TelemetryField.KEY_CUSTOM_TAGS.value: {
+                **self.model_md_telemetry,
+                "model_version_name": sql_identifier.SqlIdentifier(model_version_name),
+            },
+        }
+
     def setUp(self) -> None:
         self.m_session = mock_session.MockSession(conn=None, test_case=self)
         self.c_session = cast(Session, self.m_session)
@@ -138,13 +157,15 @@ class ModelManagerTest(absltest.TestCase):
     def test_log_model_minimal(self) -> None:
         m_model = mock.MagicMock()
         m_sample_input_data = mock.MagicMock()
+        m_model_metadata = mock.MagicMock()
+        m_model_metadata.telemetry_metadata = mock.MagicMock(return_value=self.model_md_telemetry)
         m_stage_path = "@TEMP.TEST.MODEL/V1"
         with mock.patch.object(
             self.m_r._model_ops, "validate_existence", return_value=False
         ) as mock_validate_existence, mock.patch.object(
             self.m_r._model_ops, "prepare_model_stage_path", return_value=m_stage_path
         ) as mock_prepare_model_stage_path, mock.patch.object(
-            model_composer.ModelComposer, "save"
+            model_composer.ModelComposer, "save", return_value=m_model_metadata
         ) as mock_save, mock.patch.object(
             self.m_r._model_ops, "create_from_stage"
         ) as mock_create_from_stage, mock.patch.object(
@@ -156,6 +177,7 @@ class ModelManagerTest(absltest.TestCase):
                 model=m_model,
                 model_name="MODEL",
                 sample_input_data=m_sample_input_data,
+                statement_params=self.base_statement_params,
             )
             mock_validate_existence.assert_called_once_with(
                 database_name=None,
@@ -186,7 +208,7 @@ class ModelManagerTest(absltest.TestCase):
                 schema_name=None,
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
                 version_name=sql_identifier.SqlIdentifier("angry_yeti_1"),
-                statement_params=mock.ANY,
+                statement_params=self._build_expected_create_model_statement_params("angry_yeti_1"),
             )
             mock_hrid_generate.assert_called_once_with()
             self.assertEqual(
@@ -203,12 +225,14 @@ class ModelManagerTest(absltest.TestCase):
         m_conda_dependency = mock.MagicMock()
         m_sample_input_data = mock.MagicMock()
         m_stage_path = "@TEMP.TEST.MODEL/V1"
+        m_model_metadata = mock.MagicMock()
+        m_model_metadata.telemetry_metadata = mock.MagicMock(return_value=self.model_md_telemetry)
         with mock.patch.object(
             self.m_r._model_ops, "validate_existence", return_value=False
         ) as mock_validate_existence, mock.patch.object(
             self.m_r._model_ops, "prepare_model_stage_path", return_value=m_stage_path
         ) as mock_prepare_model_stage_path, mock.patch.object(
-            model_composer.ModelComposer, "save"
+            model_composer.ModelComposer, "save", return_value=m_model_metadata
         ) as mock_save, mock.patch.object(
             self.m_r._model_ops, "create_from_stage"
         ) as mock_create_from_stage, mock.patch.object(
@@ -220,6 +244,7 @@ class ModelManagerTest(absltest.TestCase):
                 version_name="v1",
                 conda_dependencies=m_conda_dependency,
                 sample_input_data=m_sample_input_data,
+                statement_params=self.base_statement_params,
             )
             mock_validate_existence.assert_called_once_with(
                 database_name=None,
@@ -250,7 +275,7 @@ class ModelManagerTest(absltest.TestCase):
                 schema_name=None,
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
                 version_name=sql_identifier.SqlIdentifier("v1"),
-                statement_params=mock.ANY,
+                statement_params=self._build_expected_create_model_statement_params("v1"),
             )
             self.assertEqual(mv, self.m_mv)
 
@@ -260,10 +285,12 @@ class ModelManagerTest(absltest.TestCase):
         m_signatures = mock.MagicMock()
         m_options = mock.MagicMock()
         m_stage_path = "@TEMP.TEST.MODEL/V1"
+        m_model_metadata = mock.MagicMock()
+        m_model_metadata.telemetry_metadata = mock.MagicMock(return_value=self.model_md_telemetry)
         with mock.patch.object(self.m_r._model_ops, "validate_existence", return_value=False), mock.patch.object(
             self.m_r._model_ops, "prepare_model_stage_path", return_value=m_stage_path
         ) as mock_prepare_model_stage_path, mock.patch.object(
-            model_composer.ModelComposer, "save"
+            model_composer.ModelComposer, "save", return_value=m_model_metadata
         ) as mock_save, mock.patch.object(
             self.m_r._model_ops, "create_from_stage"
         ) as mock_create_from_stage, mock.patch.object(
@@ -276,6 +303,7 @@ class ModelManagerTest(absltest.TestCase):
                 pip_requirements=m_pip_requirements,
                 signatures=m_signatures,
                 options=m_options,
+                statement_params=self.base_statement_params,
             )
             mock_prepare_model_stage_path.assert_called_once_with(
                 database_name=None,
@@ -300,7 +328,7 @@ class ModelManagerTest(absltest.TestCase):
                 schema_name=None,
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
                 version_name=sql_identifier.SqlIdentifier("V1"),
-                statement_params=mock.ANY,
+                statement_params=self._build_expected_create_model_statement_params("V1"),
             )
             self.assertEqual(
                 mv,
@@ -313,10 +341,12 @@ class ModelManagerTest(absltest.TestCase):
         m_code_paths = mock.MagicMock()
         m_ext_modules = mock.MagicMock()
         m_stage_path = "@TEMP.TEST.MODEL/V1"
+        m_model_metadata = mock.MagicMock()
+        m_model_metadata.telemetry_metadata = mock.MagicMock(return_value=self.model_md_telemetry)
         with mock.patch.object(self.m_r._model_ops, "validate_existence", return_value=False), mock.patch.object(
             self.m_r._model_ops, "prepare_model_stage_path", return_value=m_stage_path
         ) as mock_prepare_model_stage_path, mock.patch.object(
-            model_composer.ModelComposer, "save"
+            model_composer.ModelComposer, "save", return_value=m_model_metadata
         ) as mock_save, mock.patch.object(
             self.m_r._model_ops, "create_from_stage"
         ) as mock_create_from_stage, mock.patch.object(
@@ -329,6 +359,7 @@ class ModelManagerTest(absltest.TestCase):
                 python_version=m_python_version,
                 code_paths=m_code_paths,
                 ext_modules=m_ext_modules,
+                statement_params=self.base_statement_params,
             )
             mock_prepare_model_stage_path.assert_called_once_with(
                 database_name=None,
@@ -353,7 +384,7 @@ class ModelManagerTest(absltest.TestCase):
                 schema_name=None,
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
                 version_name=sql_identifier.SqlIdentifier("V1"),
-                statement_params=mock.ANY,
+                statement_params=self._build_expected_create_model_statement_params("V1"),
             )
             self.assertEqual(
                 mv,
@@ -363,10 +394,12 @@ class ModelManagerTest(absltest.TestCase):
     def test_log_model_4(self) -> None:
         m_model = mock.MagicMock()
         m_stage_path = "@TEMP.TEST.MODEL/V1"
+        m_model_metadata = mock.MagicMock()
+        m_model_metadata.telemetry_metadata = mock.MagicMock(return_value=self.model_md_telemetry)
         with mock.patch.object(self.m_r._model_ops, "validate_existence", return_value=False), mock.patch.object(
             self.m_r._model_ops, "prepare_model_stage_path", return_value=m_stage_path
         ) as mock_prepare_model_stage_path, mock.patch.object(
-            model_composer.ModelComposer, "save"
+            model_composer.ModelComposer, "save", return_value=m_model_metadata
         ) as mock_save, mock.patch.object(
             self.m_r._model_ops, "create_from_stage"
         ) as mock_create_from_stage, mock.patch.object(
@@ -377,7 +410,12 @@ class ModelManagerTest(absltest.TestCase):
             model_version_impl.ModelVersion, "_get_functions", return_value=[]
         ):
             mv = self.m_r.log_model(
-                model=m_model, model_name="MODEL", version_name="V1", comment="this is comment", metrics={"a": 1}
+                model=m_model,
+                model_name="MODEL",
+                version_name="V1",
+                comment="this is comment",
+                metrics={"a": 1},
+                statement_params=self.base_statement_params,
             )
             mock_prepare_model_stage_path.assert_called_once_with(
                 database_name=None,
@@ -402,7 +440,7 @@ class ModelManagerTest(absltest.TestCase):
                 schema_name=None,
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
                 version_name=sql_identifier.SqlIdentifier("V1"),
-                statement_params=mock.ANY,
+                statement_params=self._build_expected_create_model_statement_params("V1"),
             )
             self.assertEqual(
                 mv,
@@ -422,14 +460,19 @@ class ModelManagerTest(absltest.TestCase):
                 schema_name=None,
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
                 version_name=sql_identifier.SqlIdentifier("V1"),
-                statement_params=mock.ANY,
+                statement_params=self._build_expected_create_model_statement_params("V1"),
             )
 
     def test_log_model_5(self) -> None:
         m_model = mock.MagicMock()
         with mock.patch.object(self.m_r._model_ops, "validate_existence", return_value=True) as mock_validate_existence:
-            with self.assertRaisesRegex(ValueError, "Model MODEL version V1 already existed."):
-                self.m_r.log_model(model=m_model, model_name="MODEL", version_name="V1")
+            with self.assertRaisesRegex(
+                ValueError,
+                "Model MODEL version V1 already existed. To auto-generate `version_name`, skip that argument.",
+            ):
+                self.m_r.log_model(
+                    model=m_model, model_name="MODEL", version_name="V1", statement_params=self.base_statement_params
+                )
             mock_validate_existence.assert_has_calls(
                 [
                     mock.call(
@@ -451,10 +494,12 @@ class ModelManagerTest(absltest.TestCase):
     def test_log_model_fully_qualified(self) -> None:
         m_model = mock.MagicMock()
         m_stage_path = "@TEMP.TEST.MODEL/V1"
+        m_model_metadata = mock.MagicMock()
+        m_model_metadata.telemetry_metadata = mock.MagicMock(return_value=self.model_md_telemetry)
         with mock.patch.object(self.m_r._model_ops, "validate_existence", return_value=False), mock.patch.object(
             self.m_r._model_ops, "prepare_model_stage_path", return_value=m_stage_path
         ) as mock_prepare_model_stage_path, mock.patch.object(
-            model_composer.ModelComposer, "save"
+            model_composer.ModelComposer, "save", return_value=m_model_metadata
         ) as mock_save, mock.patch.object(
             self.m_r._model_ops, "create_from_stage"
         ) as mock_create_from_stage, mock.patch.object(
@@ -470,6 +515,7 @@ class ModelManagerTest(absltest.TestCase):
                 version_name="V1",
                 comment="this is comment",
                 metrics={"a": 1},
+                statement_params=self.base_statement_params,
             )
             mock_prepare_model_stage_path.assert_called_once_with(
                 database_name=sql_identifier.SqlIdentifier("FOO"),
@@ -494,7 +540,7 @@ class ModelManagerTest(absltest.TestCase):
                 schema_name=sql_identifier.SqlIdentifier("BAR"),
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
                 version_name=sql_identifier.SqlIdentifier("V1"),
-                statement_params=mock.ANY,
+                statement_params=self._build_expected_create_model_statement_params("V1"),
             )
             self.assertEqual(
                 mv,
@@ -522,7 +568,7 @@ class ModelManagerTest(absltest.TestCase):
                 schema_name=sql_identifier.SqlIdentifier("BAR"),
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
                 version_name=sql_identifier.SqlIdentifier("V1"),
-                statement_params=mock.ANY,
+                statement_params=self._build_expected_create_model_statement_params("V1"),
             )
 
     def test_log_model_from_model_version(self) -> None:
@@ -532,7 +578,12 @@ class ModelManagerTest(absltest.TestCase):
         with mock.patch.object(
             self.m_r._model_ops, "create_from_model_version"
         ) as mock_create_from_model_version, mock.patch.object(self.m_r, "get_model") as mock_get_model:
-            self.m_r.log_model(model=m_model_version, model_name="MODEL", version_name="V1")
+            self.m_r.log_model(
+                model=m_model_version,
+                model_name="MODEL",
+                version_name="V1",
+                statement_params=self.base_statement_params,
+            )
             mock_create_from_model_version.assert_called_once_with(
                 source_database_name=sql_identifier.SqlIdentifier("TEMP"),
                 source_schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),

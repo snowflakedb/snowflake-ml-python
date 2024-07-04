@@ -989,6 +989,45 @@ class ModelOpsTest(absltest.TestCase):
                 statement_params=self.m_statement_params,
             )
 
+    def test_system_aliases(self) -> None:
+        m_list_res = [
+            Row(
+                create_on="06/01",
+                name="v1",
+                comment="This is a comment",
+                model_name="MODEL",
+                aliases=["FIRST", "DEFAULT"],
+            ),
+            Row(
+                create_on="06/01",
+                name="v2",
+                comment="This is a comment",
+                model_name="MODEL",
+                aliases=["LAST"],
+            ),
+        ]
+        with mock.patch.object(
+            self.m_ops._model_client, "show_versions", return_value=m_list_res
+        ) as mock_show_versions:
+            res = self.m_ops.get_version_by_alias(
+                database_name=sql_identifier.SqlIdentifier("TEMP"),
+                schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
+                model_name=sql_identifier.SqlIdentifier("MODEL"),
+                alias_name=sql_identifier.SqlIdentifier("FIRST"),
+                statement_params=self.m_statement_params,
+            )
+            self.assertEqual(res, sql_identifier.SqlIdentifier("v1", case_sensitive=True))
+
+            res = self.m_ops.get_version_by_alias(
+                database_name=sql_identifier.SqlIdentifier("TEMP"),
+                schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
+                model_name=sql_identifier.SqlIdentifier("MODEL"),
+                alias_name=sql_identifier.SqlIdentifier("LAST"),
+                statement_params=self.m_statement_params,
+            )
+            self.assertEqual(res, sql_identifier.SqlIdentifier("v2", case_sensitive=True))
+            self.assertEqual(mock_show_versions.call_count, 2)
+
     def test_set_default_version_1(self) -> None:
         m_list_res = [
             Row(
@@ -1478,6 +1517,25 @@ class ModelOpsTest(absltest.TestCase):
                         statement_params=self.m_statement_params,
                     ),
                 ]
+            )
+
+    def test_set_alias(self) -> None:
+        with mock.patch.object(self.m_ops._model_version_client, "set_alias") as mock_set_alias:
+            self.m_ops.set_alias(
+                alias_name=sql_identifier.SqlIdentifier("ally"),
+                database_name=sql_identifier.SqlIdentifier("TEMP"),
+                schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
+                model_name=sql_identifier.SqlIdentifier("MODEL"),
+                version_name=sql_identifier.SqlIdentifier("V1"),
+                statement_params=self.m_statement_params,
+            )
+            mock_set_alias.assert_called_once_with(
+                alias_name="ALLY",
+                database_name=sql_identifier.SqlIdentifier("TEMP"),
+                schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
+                model_name=sql_identifier.SqlIdentifier("MODEL"),
+                version_name=sql_identifier.SqlIdentifier("V1"),
+                statement_params=self.m_statement_params,
             )
 
 

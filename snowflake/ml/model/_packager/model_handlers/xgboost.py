@@ -141,7 +141,7 @@ class XGBModelHandler(_base.BaseModelHandler[Union["xgboost.Booster", "xgboost.X
         name: str,
         model_meta: model_meta_api.ModelMetadata,
         model_blobs_dir_path: str,
-        **kwargs: Unpack[model_types.ModelLoadOption],
+        **kwargs: Unpack[model_types.XGBModelLoadOptions],
     ) -> Union["xgboost.Booster", "xgboost.XGBModel"]:
         import xgboost
 
@@ -175,7 +175,7 @@ class XGBModelHandler(_base.BaseModelHandler[Union["xgboost.Booster", "xgboost.X
         cls,
         raw_model: Union["xgboost.Booster", "xgboost.XGBModel"],
         model_meta: model_meta_api.ModelMetadata,
-        **kwargs: Unpack[model_types.ModelLoadOption],
+        **kwargs: Unpack[model_types.XGBModelLoadOptions],
     ) -> custom_model.CustomModel:
         import xgboost
 

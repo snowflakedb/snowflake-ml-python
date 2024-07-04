@@ -96,3 +96,15 @@ py_test(
         "//snowflake/ml/utils:connection_params",
     ],
 )
+
+py_test(
+    name = "feature_sharing_test",
+    srcs = [
+        "feature_sharing_test.py",
+    ],
+    deps = [
+        ":common_utils",
+        "//snowflake/ml/feature_store:feature_store_lib",
+        "//snowflake/ml/utils:connection_params",
+    ],
+)
