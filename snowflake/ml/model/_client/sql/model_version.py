@@ -134,6 +134,25 @@ class ModelVersionSQLClient(_base._BaseSQLClient):
             statement_params=statement_params,
         ).has_dimensions(expected_rows=1, expected_cols=1).validate()
 
+    def set_alias(
+        self,
+        *,
+        database_name: Optional[sql_identifier.SqlIdentifier],
+        schema_name: Optional[sql_identifier.SqlIdentifier],
+        model_name: sql_identifier.SqlIdentifier,
+        version_name: sql_identifier.SqlIdentifier,
+        alias_name: sql_identifier.SqlIdentifier,
+        statement_params: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        query_result_checker.SqlResultValidator(
+            self._session,
+            (
+                f"ALTER MODEL {self.fully_qualified_object_name(database_name, schema_name, model_name)} "
+                f"VERSION {version_name.identifier()} SET ALIAS = {alias_name.identifier()}"
+            ),
+            statement_params=statement_params,
+        ).has_dimensions(expected_rows=1, expected_cols=1).validate()
+
     def list_file(
         self,
         *,

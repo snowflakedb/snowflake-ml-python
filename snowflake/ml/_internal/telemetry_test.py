@@ -525,6 +525,29 @@ class TelemetryTest(parameterized.TestCase):
         kwargs = utils_telemetry.get_sproc_statement_params_kwargs(test_sproc_no_statement_params, statement_params)
         assert "statement_params" not in kwargs
 
+    def test_add_statement_params_custom_tags(self) -> None:
+        project = "m_project"
+        subproject = "m_subproject"
+        custom_tags = {"test": "TEST"}
+
+        # Test empty statement parameters
+        self.assertEqual(utils_telemetry.add_statement_params_custom_tags({}, custom_tags), {})
+        self.assertEqual(utils_telemetry.add_statement_params_custom_tags(None, custom_tags), {})
+
+        statement_params = utils_telemetry.get_statement_params(project=project, subproject=subproject)
+
+        # Test adding custom tags works
+        self.assertNotIn(utils_telemetry.TelemetryField.KEY_CUSTOM_TAGS.value, statement_params)
+        result = utils_telemetry.add_statement_params_custom_tags(statement_params, custom_tags)
+        self.assertIn(utils_telemetry.TelemetryField.KEY_CUSTOM_TAGS.value, result)
+        self.assertEqual(result.get(utils_telemetry.TelemetryField.KEY_CUSTOM_TAGS.value), custom_tags)
+
+        # Test overwriting tag works
+        statement_params[utils_telemetry.TelemetryField.KEY_CUSTOM_TAGS.value] = {"test": "BAD"}
+        result = utils_telemetry.add_statement_params_custom_tags(statement_params, custom_tags)
+        self.assertIn(utils_telemetry.TelemetryField.KEY_CUSTOM_TAGS.value, result)
+        self.assertEqual(result.get(utils_telemetry.TelemetryField.KEY_CUSTOM_TAGS.value), custom_tags)
+
 
 if __name__ == "__main__":
     absltest.main()

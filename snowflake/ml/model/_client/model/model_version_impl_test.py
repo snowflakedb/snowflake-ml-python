@@ -476,7 +476,7 @@ class ModelVersionImplTest(absltest.TestCase):
         m_pk.meta = mock.MagicMock()
         m_pk.model = m_model
 
-        m_options = model_types.ModelLoadOption(use_gpu=False)
+        m_options = model_types.SKLModelLoadOptions()
         with mock.patch.object(self.m_mv._model_ops, "download_files") as mock_download_files, mock.patch.object(
             model_composer.ModelComposer, "load", side_effect=[m_pk_for_validation, m_pk]
         ) as mock_load, mock.patch.object(
@@ -524,7 +524,7 @@ class ModelVersionImplTest(absltest.TestCase):
         m_pk.meta = mock.MagicMock()
         m_pk.model = m_model
 
-        m_options = model_types.ModelLoadOption(use_gpu=False)
+        m_options = model_types.SKLModelLoadOptions()
         with mock.patch.object(self.m_mv._model_ops, "download_files") as mock_download_files, mock.patch.object(
             model_composer.ModelComposer, "load", side_effect=[m_pk_for_validation, m_pk]
         ) as mock_load, mock.patch.object(
@@ -558,7 +558,7 @@ class ModelVersionImplTest(absltest.TestCase):
         m_pk.meta = mock.MagicMock()
         m_pk.model = m_model
 
-        m_options = model_types.ModelLoadOption(use_gpu=False)
+        m_options = model_types.SKLModelLoadOptions()
         with mock.patch.object(self.m_mv._model_ops, "download_files") as mock_download_files, mock.patch.object(
             model_composer.ModelComposer, "load", side_effect=[m_pk]
         ) as mock_load:
@@ -580,6 +580,18 @@ class ModelVersionImplTest(absltest.TestCase):
                 [
                     mock.call(mock.ANY, meta_only=False, options=m_options),
                 ]
+            )
+
+    def test_set_alias(self) -> None:
+        with mock.patch.object(self.m_mv._model_ops, "set_alias") as mock_set_alias:
+            self.m_mv.set_alias("ally")
+            mock_set_alias.assert_called_once_with(
+                alias_name=sql_identifier.SqlIdentifier("ally"),
+                database_name=None,
+                schema_name=None,
+                model_name=sql_identifier.SqlIdentifier("MODEL"),
+                version_name=sql_identifier.SqlIdentifier("v1", case_sensitive=True),
+                statement_params=mock.ANY,
             )
 
 

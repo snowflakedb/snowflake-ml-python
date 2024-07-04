@@ -378,6 +378,7 @@ class Pipeline(base.BaseTransformer):
                 anonymous=True,
                 imports=imports,  # type: ignore[arg-type]
                 statement_params=sproc_statement_params,
+                execute_as="caller",
             )
 
             sproc_export_file_name: str = pipeline_within_one_sproc(

@@ -2,17 +2,25 @@ from __future__ import annotations
 
 import json
 import re
+import warnings
 from collections import OrderedDict
 from dataclasses import asdict, dataclass
 from enum import Enum
 from typing import Any, Dict, List, Optional
 
+from snowflake.ml._internal.exceptions import (
+    error_codes,
+    exceptions as snowml_exceptions,
+)
+from snowflake.ml._internal.utils import identifier
 from snowflake.ml._internal.utils.identifier import concat_names
 from snowflake.ml._internal.utils.sql_identifier import (
     SqlIdentifier,
     to_sql_identifiers,
 )
+from snowflake.ml.feature_store import feature_store
 from snowflake.ml.feature_store.entity import Entity
+from snowflake.ml.lineage import lineage_node
 from snowflake.snowpark import DataFrame, Session
 from snowflake.snowpark.types import (
     DateType,
@@ -67,6 +75,7 @@ class FeatureViewVersion(str):
 
 
 class FeatureViewStatus(Enum):
+    MASKED = "MASKED"  # for shared feature views where scheduling state is not available
     DRAFT = "DRAFT"
     STATIC = "STATIC"
     RUNNING = "RUNNING"  # This can be deprecated after BCR 2024_02 gets fully deployed
@@ -107,7 +116,7 @@ class FeatureViewSlice:
         return cls(**json_dict)
 
 
-class FeatureView:
+class FeatureView(lineage_node.LineageNode):
     """
     A FeatureView instance encapsulates a logical group of features.
     """
@@ -243,6 +252,16 @@ class FeatureView:
     def desc(self) -> str:
         return self._desc
 
+    @desc.setter
+    def desc(self, new_value: str) -> None:
+        warnings.warn(
+            "You must call register_feature_view() to make it effective. "
+            "Or use update_feature_view(desc=<new_value>).",
+            stacklevel=2,
+            category=UserWarning,
+        )
+        self._desc = new_value
+
     @property
     def query(self) -> str:
         return self._query
@@ -269,10 +288,12 @@ class FeatureView:
 
     @refresh_freq.setter
     def refresh_freq(self, new_value: str) -> None:
-        if self.status == FeatureViewStatus.DRAFT or self.status == FeatureViewStatus.STATIC:
-            raise RuntimeError(
-                f"Feature view {self.name}/{self.version} must be registered and non-static to update refresh_freq."
-            )
+        warnings.warn(
+            "You must call register_feature_view() to make it effective. "
+            "Or use update_feature_view(refresh_freq=<new_value>).",
+            stacklevel=2,
+            category=UserWarning,
+        )
         self._refresh_freq = new_value
 
     @property
@@ -289,10 +310,12 @@ class FeatureView:
 
     @warehouse.setter
     def warehouse(self, new_value: str) -> None:
-        if self.status == FeatureViewStatus.DRAFT or self.status == FeatureViewStatus.STATIC:
-            raise RuntimeError(
-                f"Feature view {self.name}/{self.version} must be registered and non-static to update warehouse."
-            )
+        warnings.warn(
+            "You must call register_feature_view() to make it effective. "
+            "Or use update_feature_view(warehouse=<new_value>).",
+            stacklevel=2,
+            category=UserWarning,
+        )
         self._warehouse = SqlIdentifier(new_value)
 
     @property
@@ -406,6 +429,11 @@ Got {len(self._feature_df.queries['queries'])}: {self._feature_df.queries['queri
             feature_desc_dict[k.identifier()] = v
         fv_dict["_feature_desc"] = feature_desc_dict
 
+        lineage_node_keys = [key for key in fv_dict if key.startswith("_node") or key == "_session"]
+
+        for key in lineage_node_keys:
+            fv_dict.pop(key)
+
         return fv_dict
 
     def to_df(self, session: Session) -> DataFrame:
@@ -449,6 +477,7 @@ Got {len(self._feature_df.queries['queries'])}: {self._feature_df.queries['queri
             refresh_mode_reason=json_dict["_refresh_mode_reason"],
             owner=json_dict["_owner"],
             infer_schema_df=session.sql(json_dict.get("_infer_schema_query", None)),
+            session=session,
         )
 
     @staticmethod
@@ -462,6 +491,21 @@ Got {len(self._feature_df.queries['queries'])}: {self._feature_df.queries['queri
                 ]
             )
         )
+
+    @staticmethod
+    def _load_from_lineage_node(session: Session, name: str, version: str) -> FeatureView:
+        db_name, feature_store_name, feature_view_name, _ = identifier.parse_schema_level_object_identifier(name)
+
+        session_warehouse = session.get_current_warehouse()
+
+        if not session_warehouse:
+            raise snowml_exceptions.SnowflakeMLException(
+                error_code=error_codes.NOT_FOUND,
+                original_exception=ValueError("No active warehouse selected in the current session"),
+            )
+
+        fs = feature_store.FeatureStore(session, db_name, feature_store_name, session_warehouse)
+        return fs.get_feature_view(feature_view_name, version)  # type: ignore[no-any-return]
 
     @staticmethod
     def _construct_feature_view(
@@ -481,6 +525,7 @@ Got {len(self._feature_df.queries['queries'])}: {self._feature_df.queries['queri
         refresh_mode_reason: Optional[str],
         owner: Optional[str],
         infer_schema_df: Optional[DataFrame],
+        session: Session,
     ) -> FeatureView:
         fv = FeatureView(
             name=name,
@@ -500,4 +545,11 @@ Got {len(self._feature_df.queries['queries'])}: {self._feature_df.queries['queri
         fv._refresh_mode_reason = refresh_mode_reason
         fv._owner = owner
         fv.attach_feature_desc(feature_descs)
+
+        lineage_node.LineageNode.__init__(
+            fv, session=session, name=f"{fv.database}.{fv._schema}.{name}", domain="feature_view", version=version
+        )
         return fv
+
+
+lineage_node.DOMAIN_LINEAGE_REGISTRY["feature_view"] = FeatureView

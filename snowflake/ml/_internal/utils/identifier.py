@@ -165,6 +165,20 @@ def parse_schema_level_object_identifier(
     )
 
 
+def is_fully_qualified_name(name: str) -> bool:
+    """
+    Checks if a given name is a fully qualified name, which is in the format '<db>.<schema>.<object_name>'.
+
+    Args:
+        name: The name to be checked.
+
+    Returns:
+        bool: True if the name is fully qualified, False otherwise.
+    """
+    res = parse_schema_level_object_identifier(name)
+    return res[0] is not None and res[1] is not None and res[2] is not None and not res[3]
+
+
 def get_schema_level_object_identifier(
     db: Optional[str],
     schema: Optional[str],

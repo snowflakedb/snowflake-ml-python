@@ -128,7 +128,7 @@ class TorchScriptHandler(_base.BaseModelHandler["torch.jit.ScriptModule"]):  # t
         name: str,
         model_meta: model_meta_api.ModelMetadata,
         model_blobs_dir_path: str,
-        **kwargs: Unpack[model_types.ModelLoadOption],
+        **kwargs: Unpack[model_types.TorchScriptLoadOptions],
     ) -> "torch.jit.ScriptModule":  # type:ignore[name-defined]
         import torch
 
@@ -152,7 +152,7 @@ class TorchScriptHandler(_base.BaseModelHandler["torch.jit.ScriptModule"]):  # t
         cls,
         raw_model: "torch.jit.ScriptModule",  # type:ignore[name-defined]
         model_meta: model_meta_api.ModelMetadata,
-        **kwargs: Unpack[model_types.ModelLoadOption],
+        **kwargs: Unpack[model_types.TorchScriptLoadOptions],
     ) -> custom_model.CustomModel:
         from snowflake.ml.model import custom_model
 
