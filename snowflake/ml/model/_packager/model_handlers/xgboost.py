@@ -112,6 +112,10 @@ class XGBModelHandler(_base.BaseModelHandler[Union["xgboost.Booster", "xgboost.X
                 sample_input_data=sample_input_data,
                 get_prediction_fn=get_prediction,
             )
+            if kwargs.get("enable_explainability", False):
+                model_meta = handlers_utils.add_explain_method_signature(
+                    model_meta=model_meta, explain_method="explain", target_method="predict"
+                )
 
         model_blob_path = os.path.join(model_blobs_dir_path, name)
         os.makedirs(model_blob_path, exist_ok=True)
@@ -133,6 +137,11 @@ class XGBModelHandler(_base.BaseModelHandler[Union["xgboost.Booster", "xgboost.X
             ],
             check_local_version=True,
         )
+        if kwargs.get("enable_explainability", False):
+            model_meta.env.include_if_absent(
+                [model_env.ModelDependency(requirement="shap", pip_name="shap")],
+                check_local_version=True,
+            )
         model_meta.env.cuda_version = kwargs.get("cuda_version", model_env.DEFAULT_CUDA_VERSION)
 
     @classmethod
@@ -141,7 +150,7 @@ class XGBModelHandler(_base.BaseModelHandler[Union["xgboost.Booster", "xgboost.X
         name: str,
         model_meta: model_meta_api.ModelMetadata,
         model_blobs_dir_path: str,
-        **kwargs: Unpack[model_types.ModelLoadOption],
+        **kwargs: Unpack[model_types.XGBModelLoadOptions],
     ) -> Union["xgboost.Booster", "xgboost.XGBModel"]:
         import xgboost
 
@@ -175,7 +184,7 @@ class XGBModelHandler(_base.BaseModelHandler[Union["xgboost.Booster", "xgboost.X
         cls,
         raw_model: Union["xgboost.Booster", "xgboost.XGBModel"],
         model_meta: model_meta_api.ModelMetadata,
-        **kwargs: Unpack[model_types.ModelLoadOption],
+        **kwargs: Unpack[model_types.XGBModelLoadOptions],
     ) -> custom_model.CustomModel:
         import xgboost
 
@@ -206,6 +215,16 @@ class XGBModelHandler(_base.BaseModelHandler[Union["xgboost.Booster", "xgboost.X
 
                     return model_signature_utils.rename_pandas_df(df, signature.outputs)
 
+                @custom_model.inference_api
+                def explain_fn(self: custom_model.CustomModel, X: pd.DataFrame) -> pd.DataFrame:
+                    import shap
+
+                    explainer = shap.TreeExplainer(raw_model)
+                    df = pd.DataFrame(explainer(X).values)
+                    return model_signature_utils.rename_pandas_df(df, signature.outputs)
+
+                if target_method == "explain":
+                    return explain_fn
                 return fn
 
             type_method_dict: Dict[str, Any] = {"_raw_model": raw_model}

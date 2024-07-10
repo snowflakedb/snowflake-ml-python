@@ -7,11 +7,12 @@ import zipfile
 from contextlib import contextmanager
 from datetime import datetime
 from types import ModuleType
-from typing import Any, Dict, Generator, List, Optional
+from typing import Any, Dict, Generator, List, Optional, TypedDict
 
 import cloudpickle
 import yaml
 from packaging import requirements, version
+from typing_extensions import Required
 
 from snowflake.ml._internal import env as snowml_env, env_utils, file_utils
 from snowflake.ml.model import model_signature, type_hints as model_types
@@ -47,6 +48,7 @@ def create_model_metadata(
     name: str,
     model_type: model_types.SupportedModelHandlerType,
     signatures: Optional[Dict[str, model_signature.ModelSignature]] = None,
+    function_properties: Optional[Dict[str, Dict[str, Any]]] = None,
     metadata: Optional[Dict[str, str]] = None,
     code_paths: Optional[List[str]] = None,
     ext_modules: Optional[List[ModuleType]] = None,
@@ -64,6 +66,7 @@ def create_model_metadata(
         model_type: Type of the model.
         signatures: Signatures of the model. If None, it will be inferred after the model meta is created.
             Defaults to None.
+        function_properties: Dict mapping function names to a dict of properties, mapping property key to value.
         metadata: User provided key-value metadata of the model. Defaults to None.
         code_paths: List of paths to additional codes that needs to be packed with. Defaults to None.
         ext_modules: List of names of modules that need to be pickled with the model. Defaults to None.
@@ -127,6 +130,7 @@ def create_model_metadata(
         metadata=metadata,
         model_type=model_type,
         signatures=signatures,
+        function_properties=function_properties,
     )
 
     code_dir_path = os.path.join(model_dir_path, MODEL_CODE_DIR)
@@ -215,6 +219,12 @@ def load_code_path(model_dir_path: str) -> None:
         sys.path.insert(0, code_path)
 
 
+class ModelMetadataTelemetryDict(TypedDict):
+    model_name: Required[str]
+    framework_type: Required[model_types.SupportedModelHandlerType]
+    number_of_functions: Required[int]
+
+
 class ModelMetadata:
     """Model metadata for Snowflake native model packaged model.
 
@@ -224,9 +234,17 @@ class ModelMetadata:
         env: ModelEnv object containing all environment related object
         models: Dict of model blob metadata
         signatures: A dict mapping from target function name to input and output signatures.
+        function_properties: A dict mapping function names to dict mapping function property key to value.
         metadata: User provided key-value metadata of the model. Defaults to None.
         creation_timestamp: Unix timestamp when the model metadata is created.
     """
+
+    def telemetry_metadata(self) -> ModelMetadataTelemetryDict:
+        return ModelMetadataTelemetryDict(
+            model_name=self.name,
+            framework_type=self.model_type,
+            number_of_functions=len(self.signatures.keys()),
+        )
 
     def __init__(
         self,
@@ -236,6 +254,7 @@ class ModelMetadata:
         model_type: model_types.SupportedModelHandlerType,
         runtimes: Optional[Dict[str, model_runtime.ModelRuntime]] = None,
         signatures: Optional[Dict[str, model_signature.ModelSignature]] = None,
+        function_properties: Optional[Dict[str, Dict[str, Any]]] = None,
         metadata: Optional[Dict[str, str]] = None,
         creation_timestamp: Optional[str] = None,
         min_snowpark_ml_version: Optional[str] = None,
@@ -246,6 +265,7 @@ class ModelMetadata:
         self.signatures: Dict[str, model_signature.ModelSignature] = dict()
         if signatures:
             self.signatures = signatures
+        self.function_properties = function_properties or {}
         self.metadata = metadata
         self.model_type = model_type
         self.env = env

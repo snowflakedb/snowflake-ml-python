@@ -286,6 +286,7 @@ class SnowparkTransformHandlers:
             session=session,
             statement_params=statement_params,
             anonymous=True,
+            execute_as="caller",
         )
         def score_wrapper_sproc(
             session: Session,

@@ -7,6 +7,9 @@ py_library(
     srcs = [
         "snowpark_dataframe_utils.py",
     ],
+    deps = [
+        ":sql_identifier",
+    ],
 )
 
 py_library(

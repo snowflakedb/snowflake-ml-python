@@ -36,6 +36,23 @@ def validate_signature(
         predictions_df = get_prediction_fn(target_method, local_sample_input)
         sig = model_signature.infer_signature(local_sample_input, predictions_df)
         model_meta.signatures[target_method] = sig
+
+    return model_meta
+
+
+def add_explain_method_signature(
+    model_meta: model_meta.ModelMetadata, explain_method: str, target_method: str
+) -> model_meta.ModelMetadata:
+    if target_method not in model_meta.signatures:
+        raise ValueError(f"Signature for target method {target_method} is missing")
+    inputs = model_meta.signatures[target_method].inputs
+    model_meta.signatures[explain_method] = model_signature.ModelSignature(
+        inputs=inputs,
+        outputs=[
+            model_signature.FeatureSpec(dtype=model_signature.DataType.DOUBLE, name=f"{spec.name}_explanation")
+            for spec in inputs
+        ],
+    )
     return model_meta
 
 

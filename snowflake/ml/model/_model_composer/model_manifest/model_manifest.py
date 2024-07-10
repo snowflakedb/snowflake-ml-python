@@ -12,7 +12,10 @@ from snowflake.ml.model._model_composer.model_method import (
     function_generator,
     model_method,
 )
-from snowflake.ml.model._packager.model_meta import model_meta as model_meta_api
+from snowflake.ml.model._packager.model_meta import (
+    model_meta as model_meta_api,
+    model_meta_schema,
+)
 from snowflake.snowpark import Session
 
 
@@ -55,6 +58,9 @@ class ModelManifest:
                 target_method=target_method,
                 runtime_name=self._DEFAULT_RUNTIME_NAME,
                 function_generator=self.function_generator,
+                is_partitioned_function=model_meta.function_properties.get(target_method, {}).get(
+                    model_meta_schema.FunctionProperties.PARTITIONED.value, False
+                ),
                 options=model_method.get_model_method_options_from_options(options, target_method),
             )
 

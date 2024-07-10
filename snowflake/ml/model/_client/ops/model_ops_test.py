@@ -44,6 +44,14 @@ class ModelOpsTest(absltest.TestCase):
             schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
         )
 
+    def _add_id_check_mock_operations(
+        self, m_df: mock_data_frame.MockDataFrame, collect_result: List[Row]
+    ) -> mock_data_frame.MockDataFrame:
+        m_df.add_operation(operation="select", args=("_ID",))
+        m_df.add_operation(operation="limit", args=(1,))
+        m_df.add_collect_result(collect_result)
+        return m_df
+
     def test_prepare_model_stage_path(self) -> None:
         with mock.patch.object(self.m_ops._stage_client, "create_tmp_stage",) as mock_create_stage, mock.patch.object(
             snowpark_utils, "random_name_for_temp_object", return_value="SNOWPARK_TEMP_STAGE_ABCDEF0123"
@@ -627,6 +635,7 @@ class ModelOpsTest(absltest.TestCase):
         m_df = mock_data_frame.MockDataFrame()
         m_df.__setattr__("_statement_params", None)
         m_df.__setattr__("columns", ["COL1", "COL2"])
+        self._add_id_check_mock_operations(m_df, [Row(1)])
         m_df.add_mock_sort("_ID", ascending=True).add_mock_drop("COL1", "COL2")
         with mock.patch.object(
             snowpark_handler.SnowparkDataFrameHandler, "convert_from_df", return_value=m_df
@@ -662,12 +671,56 @@ class ModelOpsTest(absltest.TestCase):
             )
             mock_convert_to_df.assert_called_once_with(m_df, features=m_sig.outputs)
 
+    def test_invoke_method_1_no_sort(self) -> None:
+        pd_df = pd.DataFrame([["1.0"]], columns=["input"], dtype=np.float32)
+        m_sig = _DUMMY_SIG["predict"]
+        m_df = mock_data_frame.MockDataFrame()
+        m_df.__setattr__("_statement_params", None)
+        m_df.__setattr__("columns", ["COL1", "COL2"])
+        self._add_id_check_mock_operations(m_df, [Row(None)])
+        m_df.add_mock_drop("COL1", "COL2")
+        with self.assertWarns(Warning):
+            with mock.patch.object(
+                snowpark_handler.SnowparkDataFrameHandler, "convert_from_df", return_value=m_df
+            ) as mock_convert_from_df, mock.patch.object(
+                self.m_ops._model_version_client, "invoke_function_method", return_value=m_df
+            ) as mock_invoke_method, mock.patch.object(
+                snowpark_handler.SnowparkDataFrameHandler, "convert_to_df", return_value=pd_df
+            ) as mock_convert_to_df:
+                self.m_ops.invoke_method(
+                    method_name=sql_identifier.SqlIdentifier("PREDICT"),
+                    method_function_type=model_manifest_schema.ModelMethodFunctionTypes.FUNCTION.value,
+                    signature=m_sig,
+                    X=pd_df,
+                    database_name=sql_identifier.SqlIdentifier("TEMP"),
+                    schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
+                    model_name=sql_identifier.SqlIdentifier("MODEL"),
+                    version_name=sql_identifier.SqlIdentifier("V1"),
+                    statement_params=self.m_statement_params,
+                )
+                mock_convert_from_df.assert_called_once_with(
+                    self.c_session, mock.ANY, keep_order=True, features=m_sig.inputs
+                )
+                mock_invoke_method.assert_called_once_with(
+                    method_name=sql_identifier.SqlIdentifier("PREDICT"),
+                    input_df=m_df,
+                    input_args=['"input"'],
+                    returns=[("output", spt.FloatType(), '"output"')],
+                    database_name=sql_identifier.SqlIdentifier("TEMP"),
+                    schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
+                    model_name=sql_identifier.SqlIdentifier("MODEL"),
+                    version_name=sql_identifier.SqlIdentifier("V1"),
+                    statement_params=self.m_statement_params,
+                )
+                mock_convert_to_df.assert_called_once_with(m_df, features=m_sig.outputs)
+
     def test_invoke_method_1_no_drop(self) -> None:
         pd_df = pd.DataFrame([["1.0"]], columns=["input"], dtype=np.float32)
         m_sig = _DUMMY_SIG["predict"]
         m_df = mock_data_frame.MockDataFrame()
         m_df.__setattr__("_statement_params", None)
         m_df.__setattr__("columns", ["COL1", '"output"'])
+        self._add_id_check_mock_operations(m_df, [Row(1)])
         m_df.add_mock_sort("_ID", ascending=True).add_mock_drop("COL1")
         with mock.patch.object(
             snowpark_handler.SnowparkDataFrameHandler, "convert_from_df", return_value=m_df
@@ -790,6 +843,7 @@ class ModelOpsTest(absltest.TestCase):
         m_df = mock_data_frame.MockDataFrame()
         m_df.__setattr__("_statement_params", None)
         m_df.__setattr__("columns", ["COL1", "COL2"])
+        self._add_id_check_mock_operations(m_df, [Row(1)])
         m_df.add_mock_sort("_ID", ascending=True).add_mock_drop("COL1", "COL2")
         with mock.patch.object(
             snowpark_handler.SnowparkDataFrameHandler, "convert_from_df", return_value=m_df
@@ -832,6 +886,7 @@ class ModelOpsTest(absltest.TestCase):
         m_df = mock_data_frame.MockDataFrame()
         m_df.__setattr__("_statement_params", None)
         m_df.__setattr__("columns", ["COL1", "COL2", "PARTITION_COLUMN"])
+        self._add_id_check_mock_operations(m_df, [Row(1)])
         m_df.add_mock_sort("_ID", ascending=True).add_mock_drop("COL1", "COL2")
         partition_column = sql_identifier.SqlIdentifier("PARTITION_COLUMN")
         with mock.patch.object(
@@ -988,6 +1043,45 @@ class ModelOpsTest(absltest.TestCase):
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
                 statement_params=self.m_statement_params,
             )
+
+    def test_system_aliases(self) -> None:
+        m_list_res = [
+            Row(
+                create_on="06/01",
+                name="v1",
+                comment="This is a comment",
+                model_name="MODEL",
+                aliases=["FIRST", "DEFAULT"],
+            ),
+            Row(
+                create_on="06/01",
+                name="v2",
+                comment="This is a comment",
+                model_name="MODEL",
+                aliases=["LAST"],
+            ),
+        ]
+        with mock.patch.object(
+            self.m_ops._model_client, "show_versions", return_value=m_list_res
+        ) as mock_show_versions:
+            res = self.m_ops.get_version_by_alias(
+                database_name=sql_identifier.SqlIdentifier("TEMP"),
+                schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
+                model_name=sql_identifier.SqlIdentifier("MODEL"),
+                alias_name=sql_identifier.SqlIdentifier("FIRST"),
+                statement_params=self.m_statement_params,
+            )
+            self.assertEqual(res, sql_identifier.SqlIdentifier("v1", case_sensitive=True))
+
+            res = self.m_ops.get_version_by_alias(
+                database_name=sql_identifier.SqlIdentifier("TEMP"),
+                schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
+                model_name=sql_identifier.SqlIdentifier("MODEL"),
+                alias_name=sql_identifier.SqlIdentifier("LAST"),
+                statement_params=self.m_statement_params,
+            )
+            self.assertEqual(res, sql_identifier.SqlIdentifier("v2", case_sensitive=True))
+            self.assertEqual(mock_show_versions.call_count, 2)
 
     def test_set_default_version_1(self) -> None:
         m_list_res = [
@@ -1478,6 +1572,42 @@ class ModelOpsTest(absltest.TestCase):
                         statement_params=self.m_statement_params,
                     ),
                 ]
+            )
+
+    def test_set_alias(self) -> None:
+        with mock.patch.object(self.m_ops._model_version_client, "set_alias") as mock_set_alias:
+            self.m_ops.set_alias(
+                alias_name=sql_identifier.SqlIdentifier("ally"),
+                database_name=sql_identifier.SqlIdentifier("TEMP"),
+                schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
+                model_name=sql_identifier.SqlIdentifier("MODEL"),
+                version_name=sql_identifier.SqlIdentifier("V1"),
+                statement_params=self.m_statement_params,
+            )
+            mock_set_alias.assert_called_once_with(
+                alias_name="ALLY",
+                database_name=sql_identifier.SqlIdentifier("TEMP"),
+                schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
+                model_name=sql_identifier.SqlIdentifier("MODEL"),
+                version_name=sql_identifier.SqlIdentifier("V1"),
+                statement_params=self.m_statement_params,
+            )
+
+    def test_unset_alias(self) -> None:
+        with mock.patch.object(self.m_ops._model_version_client, "unset_alias") as mock_unset_alias:
+            self.m_ops.unset_alias(
+                version_or_alias_name=sql_identifier.SqlIdentifier("ally"),
+                database_name=sql_identifier.SqlIdentifier("TEMP"),
+                schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
+                model_name=sql_identifier.SqlIdentifier("MODEL"),
+                statement_params=self.m_statement_params,
+            )
+            mock_unset_alias.assert_called_once_with(
+                version_or_alias_name="ALLY",
+                database_name=sql_identifier.SqlIdentifier("TEMP"),
+                schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
+                model_name=sql_identifier.SqlIdentifier("MODEL"),
+                statement_params=self.m_statement_params,
             )
 
 

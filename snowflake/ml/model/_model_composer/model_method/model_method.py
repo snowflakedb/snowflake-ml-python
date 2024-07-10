@@ -26,13 +26,14 @@ class ModelMethodOptions(TypedDict):
 def get_model_method_options_from_options(
     options: type_hints.ModelSaveOption, target_method: str
 ) -> ModelMethodOptions:
+    default_function_type = model_manifest_schema.ModelMethodFunctionTypes.FUNCTION.value
+    if options.get("enable_explainability", False) and target_method.startswith("explain"):
+        default_function_type = model_manifest_schema.ModelMethodFunctionTypes.TABLE_FUNCTION.value
     method_option = options.get("method_options", {}).get(target_method, {})
-    global_function_type = options.get("function_type", model_manifest_schema.ModelMethodFunctionTypes.FUNCTION.value)
+    global_function_type = options.get("function_type", default_function_type)
     function_type = method_option.get("function_type", global_function_type)
     if function_type not in [function_type.value for function_type in model_manifest_schema.ModelMethodFunctionTypes]:
-        raise NotImplementedError
-
-    # TODO(TH): enforce minimum snowflake version
+        raise NotImplementedError(f"Function type {function_type} is not supported.")
 
     return ModelMethodOptions(
         case_sensitive=method_option.get("case_sensitive", False),
@@ -47,10 +48,9 @@ class ModelMethod:
     Attributes:
         model_meta: Model Metadata.
         target_method: Original target method name to call with the model.
-        method_name: The actual method name registered in manifest and used in SQL.
-
-        function_generator: Function file generator.
         runtime_name: Name of the Model Runtime to run the method.
+        function_generator: Function file generator.
+        is_partitioned_function:  Whether the model method function is partitioned.
 
         options: Model Method Options.
     """
@@ -63,11 +63,13 @@ class ModelMethod:
         target_method: str,
         runtime_name: str,
         function_generator: function_generator.FunctionGenerator,
+        is_partitioned_function: bool = False,
         options: Optional[ModelMethodOptions] = None,
     ) -> None:
         self.model_meta = model_meta
         self.target_method = target_method
         self.function_generator = function_generator
+        self.is_partitioned_function = is_partitioned_function
         self.runtime_name = runtime_name
         self.options = options or {}
         try:
@@ -111,6 +113,7 @@ class ModelMethod:
             workspace_path / ModelMethod.FUNCTIONS_DIR_REL_PATH / f"{self.target_method}.py",
             self.target_method,
             self.function_type,
+            self.is_partitioned_function,
             options=options,
         )
         input_list = [

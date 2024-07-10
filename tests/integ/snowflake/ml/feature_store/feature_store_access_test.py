@@ -329,6 +329,33 @@ class FeatureStoreAccessTest(parameterized.TestCase):
         finally:
             self._feature_store.delete_feature_view(fv)
 
+    @parameterized.product(required_access=[Role.CONSUMER], test_access=list(Role))  # type: ignore[misc]
+    def test_generate_training_set_ephemeral(self, required_access: Role, test_access: Role) -> None:
+        spine_df = self._session.sql(f"SELECT id FROM {self._mock_table}")
+        fv1 = self._feature_store.get_feature_view("fv1", "v1")
+        fv2 = self._feature_store.get_feature_view("fv2", "v1")
+
+        self._test_access(
+            lambda: self._feature_store.generate_training_set(spine_df, [fv1, fv2]),
+            required_access,
+            test_access,
+            access_exception_dict={Role.NONE: snowpark_exceptions.SnowparkSQLException},
+        )
+
+    @parameterized.product(required_access=[Role.PRODUCER], test_access=list(Role))  # type: ignore[misc]
+    def test_generate_training_set_material(self, required_access: Role, test_access: Role) -> None:
+        spine_df = self._session.sql(f"SELECT id FROM {self._mock_table}")
+        fv1 = self._feature_store.get_feature_view("fv1", "v1")
+        fv2 = self._feature_store.get_feature_view("fv2", "v1")
+        training_set_name = f"FS_TEST_TRAINING_SET_{uuid4().hex.upper()}"
+
+        self._test_access(
+            lambda: self._feature_store.generate_training_set(spine_df, [fv1, fv2], save_as=training_set_name),
+            required_access,
+            test_access,
+            access_exception_dict={Role.NONE: snowpark_exceptions.SnowparkSQLException},
+        )
+
     @parameterized.product(  # type: ignore[misc]
         required_access=[Role.PRODUCER], test_access=list(Role), output_type=["dataset", "table"]
     )

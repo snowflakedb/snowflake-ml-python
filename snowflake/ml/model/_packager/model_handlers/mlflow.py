@@ -160,7 +160,7 @@ class MLFlowHandler(_base.BaseModelHandler["mlflow.pyfunc.PyFuncModel"]):
         name: str,
         model_meta: model_meta_api.ModelMetadata,
         model_blobs_dir_path: str,
-        **kwargs: Unpack[model_types.ModelLoadOption],
+        **kwargs: Unpack[model_types.MLFlowLoadOptions],
     ) -> "mlflow.pyfunc.PyFuncModel":
         import mlflow
 
@@ -194,7 +194,7 @@ class MLFlowHandler(_base.BaseModelHandler["mlflow.pyfunc.PyFuncModel"]):
         cls,
         raw_model: "mlflow.pyfunc.PyFuncModel",
         model_meta: model_meta_api.ModelMetadata,
-        **kwargs: Unpack[model_types.ModelLoadOption],
+        **kwargs: Unpack[model_types.MLFlowLoadOptions],
     ) -> custom_model.CustomModel:
         from snowflake.ml.model import custom_model
 

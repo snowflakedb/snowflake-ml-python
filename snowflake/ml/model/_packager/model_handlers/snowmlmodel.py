@@ -127,7 +127,7 @@ class SnowMLModelHandler(_base.BaseModelHandler["BaseEstimator"]):
         name: str,
         model_meta: model_meta_api.ModelMetadata,
         model_blobs_dir_path: str,
-        **kwargs: Unpack[model_types.ModelLoadOption],
+        **kwargs: Unpack[model_types.SNOWModelLoadOptions],
     ) -> "BaseEstimator":
         model_blob_path = os.path.join(model_blobs_dir_path, name)
         model_blobs_metadata = model_meta.models
@@ -146,7 +146,7 @@ class SnowMLModelHandler(_base.BaseModelHandler["BaseEstimator"]):
         cls,
         raw_model: "BaseEstimator",
         model_meta: model_meta_api.ModelMetadata,
-        **kwargs: Unpack[model_types.ModelLoadOption],
+        **kwargs: Unpack[model_types.SNOWModelLoadOptions],
     ) -> custom_model.CustomModel:
         from snowflake.ml.model import custom_model
 

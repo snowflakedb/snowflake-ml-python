@@ -5,7 +5,6 @@ from snowflake.cortex._util import CORTEX_FUNCTIONS_TELEMETRY_PROJECT, call_sql_
 from snowflake.ml._internal import telemetry
 
 
-@snowpark._internal.utils.experimental(version="1.0.12")
 @telemetry.send_api_usage_telemetry(
     project=CORTEX_FUNCTIONS_TELEMETRY_PROJECT,
 )

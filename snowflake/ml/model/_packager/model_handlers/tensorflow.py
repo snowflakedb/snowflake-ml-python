@@ -138,7 +138,7 @@ class TensorFlowHandler(_base.BaseModelHandler["tensorflow.Module"]):
         name: str,
         model_meta: model_meta_api.ModelMetadata,
         model_blobs_dir_path: str,
-        **kwargs: Unpack[model_types.ModelLoadOption],
+        **kwargs: Unpack[model_types.TensorflowLoadOptions],
     ) -> "tensorflow.Module":
         import tensorflow
 
@@ -156,7 +156,7 @@ class TensorFlowHandler(_base.BaseModelHandler["tensorflow.Module"]):
         cls,
         raw_model: "tensorflow.Module",
         model_meta: model_meta_api.ModelMetadata,
-        **kwargs: Unpack[model_types.ModelLoadOption],
+        **kwargs: Unpack[model_types.TensorflowLoadOptions],
     ) -> custom_model.CustomModel:
         import tensorflow
 

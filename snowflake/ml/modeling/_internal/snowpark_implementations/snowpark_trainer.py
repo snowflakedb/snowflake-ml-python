@@ -207,6 +207,7 @@ class SnowparkModelTrainer:
             session=self.session,
             statement_params=statement_params,
             anonymous=True,
+            execute_as="caller",
         )
 
         return fit_wrapper_sproc
@@ -236,6 +237,7 @@ class SnowparkModelTrainer:
             replace=True,
             session=self.session,
             statement_params=statement_params,
+            execute_as="caller",
         )
 
         self.session._FIT_WRAPPER_SPROCS[fit_sproc_key] = fit_wrapper_sproc  # type: ignore[attr-defined]
@@ -493,6 +495,7 @@ class SnowparkModelTrainer:
             session=self.session,
             statement_params=statement_params,
             anonymous=True,
+            execute_as="caller",
         )
 
         return fit_predict_wrapper_sproc
@@ -524,6 +527,7 @@ class SnowparkModelTrainer:
             replace=True,
             session=self.session,
             statement_params=statement_params,
+            execute_as="caller",
         )
 
         self.session._FIT_WRAPPER_SPROCS[  # type: ignore[attr-defined]
@@ -550,6 +554,7 @@ class SnowparkModelTrainer:
             session=self.session,
             statement_params=statement_params,
             anonymous=True,
+            execute_as="caller",
         )
         return fit_transform_wrapper_sproc
 
@@ -580,6 +585,7 @@ class SnowparkModelTrainer:
             replace=True,
             session=self.session,
             statement_params=statement_params,
+            execute_as="caller",
         )
 
         self.session._FIT_WRAPPER_SPROCS[  # type: ignore[attr-defined]

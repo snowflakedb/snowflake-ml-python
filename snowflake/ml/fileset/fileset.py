@@ -256,9 +256,9 @@ class FileSet:
                     api_calls=[snowpark.DataFrameWriter.copy_into_location],
                 ),
             )
-        except snowpark_exceptions.SnowparkClientException as e:
+        except snowpark_exceptions.SnowparkSQLException as e:
             # Snowpark wraps the Python Connector error code in the head of the error message.
-            if e.message.startswith(fileset_errors.ERRNO_FILE_EXIST_IN_STAGE):
+            if e.sql_error_code == fileset_errors.ERRNO_FILE_EXIST_IN_STAGE:
                 raise fileset_errors.FileSetExistError(fileset_error_messages.FILESET_ALREADY_EXISTS.format(name))
             else:
                 raise fileset_errors.FileSetError(str(e))

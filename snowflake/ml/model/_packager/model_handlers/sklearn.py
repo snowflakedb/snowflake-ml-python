@@ -133,7 +133,7 @@ class SKLModelHandler(_base.BaseModelHandler[Union["sklearn.base.BaseEstimator",
         name: str,
         model_meta: model_meta_api.ModelMetadata,
         model_blobs_dir_path: str,
-        **kwargs: Unpack[model_types.ModelLoadOption],
+        **kwargs: Unpack[model_types.SKLModelLoadOptions],
     ) -> Union["sklearn.base.BaseEstimator", "sklearn.pipeline.Pipeline"]:
         model_blob_path = os.path.join(model_blobs_dir_path, name)
         model_blobs_metadata = model_meta.models
@@ -153,7 +153,7 @@ class SKLModelHandler(_base.BaseModelHandler[Union["sklearn.base.BaseEstimator",
         cls,
         raw_model: Union["sklearn.base.BaseEstimator", "sklearn.pipeline.Pipeline"],
         model_meta: model_meta_api.ModelMetadata,
-        **kwargs: Unpack[model_types.ModelLoadOption],
+        **kwargs: Unpack[model_types.SKLModelLoadOptions],
     ) -> custom_model.CustomModel:
         from snowflake.ml.model import custom_model
 
