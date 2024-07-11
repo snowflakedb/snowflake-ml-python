@@ -3,6 +3,7 @@ import os
 import warnings
 from typing import (
     TYPE_CHECKING,
+    Any,
     Callable,
     Dict,
     List,
@@ -250,9 +251,18 @@ class HuggingFacePipelineHandler(
         model_meta.env.cuda_version = kwargs.get("cuda_version", model_env.DEFAULT_CUDA_VERSION)
 
     @staticmethod
-    def _get_device_config() -> Dict[str, str]:
-        device_config = {}
-        device_config["device_map"] = "auto"
+    def _get_device_config(**kwargs: Unpack[model_types.HuggingFaceLoadOptions]) -> Dict[str, str]:
+        device_config: Dict[str, Any] = {}
+        if (
+            kwargs.get("use_gpu", False)
+            and kwargs.get("device_map", None) is None
+            and kwargs.get("device", None) is None
+        ):
+            device_config["device_map"] = "auto"
+        elif kwargs.get("device_map", None) is not None:
+            device_config["device_map"] = kwargs["device_map"]
+        elif kwargs.get("device", None) is not None:
+            device_config["device"] = kwargs["device"]
 
         return device_config
 
@@ -262,7 +272,7 @@ class HuggingFacePipelineHandler(
         name: str,
         model_meta: model_meta_api.ModelMetadata,
         model_blobs_dir_path: str,
-        **kwargs: Unpack[model_types.ModelLoadOption],
+        **kwargs: Unpack[model_types.HuggingFaceLoadOptions],
     ) -> Union[huggingface_pipeline.HuggingFacePipelineModel, "transformers.Pipeline"]:
         if snowpark_utils.is_in_stored_procedure():  # type: ignore[no-untyped-call]
             # We need to redirect the some folders to a writable location in the sandbox.
@@ -292,10 +302,7 @@ class HuggingFacePipelineHandler(
             ) as f:
                 pipeline_params = cloudpickle.load(f)
 
-            if kwargs.get("use_gpu", False):
-                device_config = cls._get_device_config()
-            else:
-                device_config = {}
+            device_config = cls._get_device_config(**kwargs)
 
             m = transformers.pipeline(
                 model_blob_options["task"],
@@ -310,12 +317,8 @@ class HuggingFacePipelineHandler(
             with open(model_blob_file_or_dir_path, "rb") as f:
                 m = cloudpickle.load(f)
             assert isinstance(m, huggingface_pipeline.HuggingFacePipelineModel)
-            if (
-                getattr(m, "device", None) is None
-                and getattr(m, "device_map", None) is None
-                and kwargs.get("use_gpu", False)
-            ):
-                m.__dict__.update(cls._get_device_config())
+            if getattr(m, "device", None) is None and getattr(m, "device_map", None) is None:
+                m.__dict__.update(cls._get_device_config(**kwargs))
 
             if getattr(m, "torch_dtype", None) is None and kwargs.get("use_gpu", False):
                 m.__dict__.update(torch_dtype="auto")
@@ -326,7 +329,7 @@ class HuggingFacePipelineHandler(
         cls,
         raw_model: Union[huggingface_pipeline.HuggingFacePipelineModel, "transformers.Pipeline"],
         model_meta: model_meta_api.ModelMetadata,
-        **kwargs: Unpack[model_types.ModelLoadOption],
+        **kwargs: Unpack[model_types.HuggingFaceLoadOptions],
     ) -> custom_model.CustomModel:
         import transformers
 

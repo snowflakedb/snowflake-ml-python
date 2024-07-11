@@ -14,6 +14,7 @@ class ModelSQLClient(_base._BaseSQLClient):
     MODEL_VERSION_COMMENT_COL_NAME = "comment"
     MODEL_VERSION_METADATA_COL_NAME = "metadata"
     MODEL_VERSION_MODEL_SPEC_COL_NAME = "model_spec"
+    MODEL_VERSION_ALIASES_COL_NAME = "aliases"
 
     def show_models(
         self,

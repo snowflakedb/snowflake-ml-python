@@ -17,6 +17,7 @@ from snowflake.ml.model._packager.model_handlers_migrator import base_migrator
 from snowflake.ml.model._packager.model_meta import (
     model_blob_meta,
     model_meta as model_meta_api,
+    model_meta_schema,
 )
 
 
@@ -68,6 +69,11 @@ class CustomModelHandler(_base.BaseModelHandler["custom_model.CustomModel"]):
                 predictions_df = target_method(model, sample_input_data)
             return predictions_df
 
+        for func_name in model._get_partitioned_infer_methods():
+            function_properties = model_meta.function_properties.get(func_name, {})
+            function_properties[model_meta_schema.FunctionProperties.PARTITIONED.value] = True
+            model_meta.function_properties[func_name] = function_properties
+
         if not is_sub_model:
             model_meta = handlers_utils.validate_signature(
                 model=model,
@@ -101,14 +107,16 @@ class CustomModelHandler(_base.BaseModelHandler["custom_model.CustomModel"]):
 
         # Make sure that the module where the model is defined get pickled by value as well.
         cloudpickle.register_pickle_by_value(sys.modules[model.__module__])
-        picked_obj = (model.__class__, model.context)
+        pickled_obj = (model.__class__, model.context)
         with open(os.path.join(model_blob_path, cls.MODELE_BLOB_FILE_OR_DIR), "wb") as f:
-            cloudpickle.dump(picked_obj, f)
+            cloudpickle.dump(pickled_obj, f)
+        # model meta will be saved by the context manager
         model_meta.models[name] = model_blob_meta.ModelBlobMeta(
             name=name,
             model_type=cls.HANDLER_TYPE,
             path=cls.MODELE_BLOB_FILE_OR_DIR,
             handler_version=cls.HANDLER_VERSION,
+            function_properties=model_meta.function_properties,
             artifacts={
                 name: pathlib.Path(
                     os.path.join(cls.MODEL_ARTIFACTS_DIR, os.path.basename(os.path.normpath(path=uri)))
@@ -128,7 +136,7 @@ class CustomModelHandler(_base.BaseModelHandler["custom_model.CustomModel"]):
         name: str,
         model_meta: model_meta_api.ModelMetadata,
         model_blobs_dir_path: str,
-        **kwargs: Unpack[model_types.ModelLoadOption],
+        **kwargs: Unpack[model_types.CustomModelLoadOption],
     ) -> "custom_model.CustomModel":
         model_blob_path = os.path.join(model_blobs_dir_path, name)
 
@@ -175,6 +183,6 @@ class CustomModelHandler(_base.BaseModelHandler["custom_model.CustomModel"]):
         cls,
         raw_model: custom_model.CustomModel,
         model_meta: model_meta_api.ModelMetadata,
-        **kwargs: Unpack[model_types.ModelLoadOption],
+        **kwargs: Unpack[model_types.CustomModelLoadOption],
     ) -> custom_model.CustomModel:
         return raw_model

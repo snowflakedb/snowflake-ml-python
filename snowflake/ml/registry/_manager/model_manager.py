@@ -4,12 +4,14 @@ from typing import Any, Dict, List, Optional, Union
 import pandas as pd
 from absl.logging import logging
 
+from snowflake.ml._internal import telemetry
 from snowflake.ml._internal.human_readable_id import hrid_generator
 from snowflake.ml._internal.utils import sql_identifier
 from snowflake.ml.model import model_signature, type_hints as model_types
 from snowflake.ml.model._client.model import model_impl, model_version_impl
 from snowflake.ml.model._client.ops import metadata_ops, model_ops
 from snowflake.ml.model._model_composer import model_composer
+from snowflake.ml.model._packager.model_meta import model_meta
 from snowflake.snowpark import session
 
 logger = logging.getLogger(__name__)
@@ -124,7 +126,10 @@ class ModelManager:
             version_name=version_name_id,
             statement_params=statement_params,
         ):
-            raise ValueError(f"Model {model_name} version {version_name} already existed.")
+            raise ValueError(
+                f"Model {model_name} version {version_name} already existed. "
+                + "To auto-generate `version_name`, skip that argument."
+            )
 
         stage_path = self._model_ops.prepare_model_stage_path(
             database_name=database_name_id,
@@ -134,8 +139,10 @@ class ModelManager:
 
         logger.info("Start packaging and uploading your model. It might take some time based on the size of the model.")
 
-        mc = model_composer.ModelComposer(self._model_ops._session, stage_path=stage_path)
-        mc.save(
+        mc = model_composer.ModelComposer(
+            self._model_ops._session, stage_path=stage_path, statement_params=statement_params
+        )
+        model_metadata: model_meta.ModelMetadata = mc.save(
             name=model_name_id.resolved(),
             model=model,
             signatures=signatures,
@@ -146,6 +153,12 @@ class ModelManager:
             code_paths=code_paths,
             ext_modules=ext_modules,
             options=options,
+        )
+        statement_params = telemetry.add_statement_params_custom_tags(
+            statement_params, model_metadata.telemetry_metadata()
+        )
+        statement_params = telemetry.add_statement_params_custom_tags(
+            statement_params, {"model_version_name": version_name_id}
         )
 
         logger.info("Start creating MODEL object for you in the Snowflake.")

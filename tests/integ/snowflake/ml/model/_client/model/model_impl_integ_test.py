@@ -157,6 +157,67 @@ class TestModelImplInteg(parameterized.TestCase):
         self.assertEqual(model.name, "MODEL2")
         self.registry.delete_model("MODEL2")
 
+    def test_system_aliases(self) -> None:
+        model, test_features, _ = model_factory.ModelFactory.prepare_sklearn_model()
+        self.registry.log_model(
+            model=model,
+            model_name="MODEL_ALIAS",
+            version_name=VERSION_NAME,
+            sample_input_data=test_features,
+        )
+        self.registry.log_model(
+            model=model,
+            model_name="MODEL_ALIAS",
+            version_name=VERSION_NAME2,
+            sample_input_data=test_features,
+        )
+        model = self.registry.get_model(model_name="MODEL_ALIAS")
+        self.assertEqual(model.first().version_name, VERSION_NAME)
+        self.assertEqual(model.last().version_name, VERSION_NAME2)
+        self.assertEqual(model.default.version_name, VERSION_NAME)
+
+    def test_user_defined_model_version_aliases(self) -> None:
+        model, test_features, _ = model_factory.ModelFactory.prepare_sklearn_model()
+        model_name = MODEL_NAME + "_VERSION_ALIAS"
+        model_v_v1 = self.registry.log_model(
+            model=model,
+            model_name=model_name,
+            version_name=VERSION_NAME,
+            sample_input_data=test_features,
+        )
+
+        model_v_v1.set_alias("A1")
+        model = self.registry.get_model(model_name=model_name)
+
+        self.assertEqual(model.version("A1"), model_v_v1)
+        self.assertEqual(model.version("a1"), model_v_v1)
+        self.assertEqual(model.version("v1"), model_v_v1)
+        self.assertEqual(model.version("V1"), model_v_v1)
+
+        # un-setting with an alias and get the version with alias
+        model_v_v1.unset_alias("A1")
+        with self.assertRaisesRegex(ValueError, "Unable to find version or alias with name A1 in model"):
+            model.version("A1")
+
+        # un-setting with version and get the version with alias
+        model_v_v1.set_alias("A1")
+        model_v_v1.unset_alias("V1")
+        with self.assertRaisesRegex(ValueError, "Unable to find version or alias with name A1 in model"):
+            model.version("A1")
+
+    def test_model_version_not_exist(self) -> None:
+        model, test_features, _ = model_factory.ModelFactory.prepare_sklearn_model()
+        model_name = MODEL_NAME + "_VERSION_NOT_EXIST"
+        self.registry.log_model(
+            model=model,
+            model_name=model_name,
+            version_name=VERSION_NAME,
+            sample_input_data=test_features,
+        )
+        model = self.registry.get_model(model_name=model_name)
+        with self.assertRaisesRegex(ValueError, "Unable to find version or alias with name V2 in model"):
+            model.version("V2")
+
 
 if __name__ == "__main__":
     absltest.main()

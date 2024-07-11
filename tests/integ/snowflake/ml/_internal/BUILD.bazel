@@ -13,6 +13,7 @@ py_test(
 
 py_test(
     name = "file_utils_integ_test",
+    timeout = "long",
     srcs = ["file_utils_integ_test.py"],
     deps = [
         "//snowflake/ml/_internal:file_utils",

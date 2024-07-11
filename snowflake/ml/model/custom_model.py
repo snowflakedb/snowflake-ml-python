@@ -1,6 +1,6 @@
 import functools
 import inspect
-from typing import Any, Callable, Coroutine, Dict, Generator, Optional
+from typing import Any, Callable, Coroutine, Dict, Generator, List, Optional
 
 import anyio
 import pandas as pd
@@ -168,7 +168,7 @@ class CustomModel:
     def _get_infer_methods(
         self,
     ) -> Generator[Callable[[model_types.CustomModelType, pd.DataFrame], pd.DataFrame], None, None]:
-        """Returns all methods in CLS with DECORATOR as the outermost decorator."""
+        """Returns all methods in CLS with `inference_api` decorator as the outermost decorator."""
         for cls_method_str in dir(self):
             cls_method = getattr(self, cls_method_str)
             if getattr(cls_method, "_is_inference_api", False):
@@ -176,6 +176,18 @@ class CustomModel:
                     yield cls_method.__func__
                 else:
                     raise TypeError("A non-method inference API function is not supported.")
+
+    def _get_partitioned_infer_methods(self) -> List[str]:
+        """Returns all methods in CLS with `partitioned_inference_api` as the outermost decorator."""
+        rv = []
+        for cls_method_str in dir(self):
+            cls_method = getattr(self, cls_method_str)
+            if getattr(cls_method, "_is_partitioned_inference_api", False):
+                if inspect.ismethod(cls_method):
+                    rv.append(cls_method_str)
+                else:
+                    raise TypeError("A non-method inference API function is not supported.")
+        return rv
 
 
 def _validate_predict_function(func: Callable[[model_types.CustomModelType, pd.DataFrame], pd.DataFrame]) -> None:
@@ -218,4 +230,12 @@ def inference_api(
     func: Callable[[model_types.CustomModelType, pd.DataFrame], pd.DataFrame]
 ) -> Callable[[model_types.CustomModelType, pd.DataFrame], pd.DataFrame]:
     func.__dict__["_is_inference_api"] = True
+    return func
+
+
+def partitioned_inference_api(
+    func: Callable[[model_types.CustomModelType, pd.DataFrame], pd.DataFrame]
+) -> Callable[[model_types.CustomModelType, pd.DataFrame], pd.DataFrame]:
+    func.__dict__["_is_inference_api"] = True
+    func.__dict__["_is_partitioned_inference_api"] = True
     return func

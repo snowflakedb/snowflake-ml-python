@@ -7,6 +7,7 @@ py_library(
     srcs = [
         "error_codes.py",
         "exceptions.py",
+        "sql_error_codes.py",
     ],
 )
 

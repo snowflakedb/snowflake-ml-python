@@ -10,6 +10,9 @@ import torch
 from absl.testing import absltest
 
 from snowflake.ml.model._packager import model_packager
+from snowflake.ml.model._packager.model_handlers.huggingface_pipeline import (
+    HuggingFacePipelineHandler,
+)
 from snowflake.ml.model._signatures import utils
 from snowflake.ml.model.models import huggingface_pipeline
 
@@ -31,6 +34,29 @@ class HuggingFacePipelineHandlerTest(absltest.TestCase):
         else:
             del os.environ["HF_HOME"]
         self.cache_dir.cleanup()
+
+    def test_get_device_config(self) -> None:
+        self.assertDictEqual(HuggingFacePipelineHandler._get_device_config(), {})
+        self.assertDictEqual(HuggingFacePipelineHandler._get_device_config(use_gpu=False), {})
+        self.assertDictEqual(HuggingFacePipelineHandler._get_device_config(use_gpu=True), {"device_map": "auto"})
+        self.assertDictEqual(
+            HuggingFacePipelineHandler._get_device_config(device_map="balanced"), {"device_map": "balanced"}
+        )
+        self.assertDictEqual(
+            HuggingFacePipelineHandler._get_device_config(use_gpu=False, device_map="balanced"),
+            {"device_map": "balanced"},
+        )
+        self.assertDictEqual(
+            HuggingFacePipelineHandler._get_device_config(use_gpu=True, device_map="balanced"),
+            {"device_map": "balanced"},
+        )
+        self.assertDictEqual(HuggingFacePipelineHandler._get_device_config(device="cuda:0"), {"device": "cuda:0"})
+        self.assertDictEqual(
+            HuggingFacePipelineHandler._get_device_config(use_gpu=False, device="cuda:0"), {"device": "cuda:0"}
+        )
+        self.assertDictEqual(
+            HuggingFacePipelineHandler._get_device_config(use_gpu=True, device="cuda:0"), {"device": "cuda:0"}
+        )
 
     def _check_loaded_pipeline_object(self, original: "transformers.Pipeline", loaded: "transformers.Pipeline") -> None:
         self.assertEqual(original.framework, loaded.framework)

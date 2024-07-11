@@ -211,6 +211,11 @@ class MockDataFrame(mock_snowml_base.MockSnowMLBase):
     def queries(self) -> Dict[str, List[str]]:
         return self._queries
 
+    def limit(self, *args: Any, **kwargs: Any) -> Any:
+        """Collect a dataframe. Corresponds to DataFrame.collect."""
+        mdfo = self._check_operation("limit", args, kwargs)
+        return mdfo.result
+
     def add_query(self, query_type: str, query_string: str) -> MockDataFrame:
         """Add a query to the dataframe that can be retrieved by callers through the .query property.
 

@@ -134,6 +134,43 @@ class ModelVersionSQLClient(_base._BaseSQLClient):
             statement_params=statement_params,
         ).has_dimensions(expected_rows=1, expected_cols=1).validate()
 
+    def set_alias(
+        self,
+        *,
+        database_name: Optional[sql_identifier.SqlIdentifier],
+        schema_name: Optional[sql_identifier.SqlIdentifier],
+        model_name: sql_identifier.SqlIdentifier,
+        version_name: sql_identifier.SqlIdentifier,
+        alias_name: sql_identifier.SqlIdentifier,
+        statement_params: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        query_result_checker.SqlResultValidator(
+            self._session,
+            (
+                f"ALTER MODEL {self.fully_qualified_object_name(database_name, schema_name, model_name)} "
+                f"VERSION {version_name.identifier()} SET ALIAS = {alias_name.identifier()}"
+            ),
+            statement_params=statement_params,
+        ).has_dimensions(expected_rows=1, expected_cols=1).validate()
+
+    def unset_alias(
+        self,
+        *,
+        database_name: Optional[sql_identifier.SqlIdentifier],
+        schema_name: Optional[sql_identifier.SqlIdentifier],
+        model_name: sql_identifier.SqlIdentifier,
+        version_or_alias_name: sql_identifier.SqlIdentifier,
+        statement_params: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        query_result_checker.SqlResultValidator(
+            self._session,
+            (
+                f"ALTER MODEL {self.fully_qualified_object_name(database_name, schema_name, model_name)} "
+                f"VERSION {version_or_alias_name.identifier()} UNSET ALIAS"
+            ),
+            statement_params=statement_params,
+        ).has_dimensions(expected_rows=1, expected_cols=1).validate()
+
     def list_file(
         self,
         *,
@@ -383,9 +420,13 @@ class ModelVersionSQLClient(_base._BaseSQLClient):
         # Prepare the output
         output_cols = []
         output_names = []
+        cols_to_drop = []
 
         for output_name, output_type, output_col_name in returns:
-            output_cols.append(F.col(output_name).astype(output_type))
+            output_identifier = sql_identifier.SqlIdentifier(output_name).identifier()
+            if output_identifier != output_col_name:
+                cols_to_drop.append(output_identifier)
+            output_cols.append(F.col(output_identifier).astype(output_type))
             output_names.append(output_col_name)
 
         if partition_column is not None:
@@ -396,9 +437,11 @@ class ModelVersionSQLClient(_base._BaseSQLClient):
             col_names=output_names,
             values=output_cols,
         )
-
         if statement_params:
             output_df._statement_params = statement_params  # type: ignore[assignment]
+
+        if cols_to_drop:
+            output_df = output_df.drop(cols_to_drop)
 
         return output_df
 
