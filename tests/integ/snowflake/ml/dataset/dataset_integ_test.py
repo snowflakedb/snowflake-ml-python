@@ -1,3 +1,4 @@
+import logging
 import os
 import random
 from typing import Any, Dict, Generator
@@ -227,6 +228,34 @@ class TestSnowflakeDataset(dataset_integ_test_base.TestSnowflakeDatasetBase):
         finally:
             self.session.sql(f"drop schema {self.db}.{schema}").collect()
 
+    def test_create_from_dataframe_timestamp(self) -> None:
+        """Test Dataset creation from a time-series DataFrame. Should not print spurious warnings."""
+        num_rows = 100
+        df = self.session.sql(
+            "select dateadd(day, seq4(), current_date()) as timestamp"
+            ", uniform(1, 100, random()) as data_col"
+            f" from table(generator(rowcount => {num_rows}))"
+        )
+        dataset_name = "test_create_from_dataframe_timestamp"
+        dataset_version = "v1"
+        with self.assertLogs(level=logging.WARNING) as logs:
+            # Necessary to make assertLogs work
+            # Starting in Python 3.10 there is a new assertNoLogs method which can be used instead
+            logging.warning("Dummy warning")
+
+            ds = dataset.create_from_dataframe(
+                session=self.session,
+                name=dataset_name,
+                version=dataset_version,
+                input_dataframe=df,
+                exclude_cols=["timestamp"],
+            )
+
+            # No warnings besides our dummy warning should have been generated
+            self.assertEqual(1, len(logs.output))
+
+        self.assertEqual(num_rows, len(ds.read.to_pandas()))
+
     @common_test_base.CommonTestBase.sproc_test(local=True, additional_packages=[])
     def test_dataset_from_dataset(self) -> None:
         # Generate random prefixes due to race condition between sprocs causing dataset collision
@@ -454,17 +483,17 @@ class TestSnowflakeDataset(dataset_integ_test_base.TestSnowflakeDatasetBase):
         for key in ["NUMBER_INT_COL", "NUMBER_FIXED_POINT_COL"]:
             self.assertAlmostEqual(
                 fileset_integ_utils.get_column_min(key),
-                df.select(functions.min(key)).collect()[0][0],
+                float(df.select(functions.min(key)).collect()[0][0]),
                 1,
             )
             self.assertAlmostEqual(
                 fileset_integ_utils.get_column_max(key, self.num_rows),
-                df.select(functions.max(key)).collect()[0][0],
+                float(df.select(functions.max(key)).collect()[0][0]),
                 1,
             )
             self.assertAlmostEqual(
                 fileset_integ_utils.get_column_avg(key, self.num_rows),
-                df.select(functions.avg(key)).collect()[0][0],
+                float(df.select(functions.avg(key)).collect()[0][0]),
                 1,
             )
 

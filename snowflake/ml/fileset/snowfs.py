@@ -14,18 +14,10 @@ from snowflake.ml._internal.exceptions import (
 from snowflake.ml._internal.utils import identifier
 from snowflake.ml.fileset import embedded_stage_fs, sfcfs
 
-PROTOCOL_NAME = "snow"
-
 _SFFileEntityPath = collections.namedtuple(
     "_SFFileEntityPath", ["domain", "name", "filepath", "version", "relative_path"]
 )
-_PROJECT = "FileSet"
-_SNOWURL_PATTERN = re.compile(
-    f"({PROTOCOL_NAME}://)?"
-    r"(?<!@)(?P<domain>\w+)/"
-    rf"(?P<name>(?:{identifier._SF_IDENTIFIER}\.){{,2}}{identifier._SF_IDENTIFIER})/"
-    r"(?P<path>versions/(?:(?P<version>[^/]+)(?:/(?P<relpath>.*))?)?)"
-)
+_SNOWURL_PATTERN = re.compile(embedded_stage_fs._SNOWURL_ENTITY_PATTERN + embedded_stage_fs._SNOWURL_VERSION_PATTERN)
 
 
 class SnowFileSystem(sfcfs.SFFileSystem):
@@ -38,7 +30,7 @@ class SnowFileSystem(sfcfs.SFFileSystem):
     See `sfcfs.SFFileSystem` documentation for example usage patterns.
     """
 
-    protocol = PROTOCOL_NAME
+    protocol = embedded_stage_fs.PROTOCOL_NAME
     _IS_BUGGED_VERSION = None
 
     def __init__(
@@ -75,10 +67,7 @@ class SnowFileSystem(sfcfs.SFFileSystem):
         """Convert the relative path in a stage to an absolute path starts with the location of the stage."""
         # Strip protocol from absolute path, since backend needs snow:// prefix to resolve correctly
         # but fsspec logic strips protocol when doing any searching and globbing
-        stage_name = stage_fs.stage_name
-        protocol = f"{PROTOCOL_NAME}://"
-        if stage_name.startswith(protocol):
-            stage_name = stage_name[len(protocol) :]
+        stage_name: str = self._strip_protocol(stage_fs.stage_name)
         abs_path = stage_name + "/" + path
         return abs_path
 
@@ -128,4 +117,4 @@ class SnowFileSystem(sfcfs.SFFileSystem):
             )
 
 
-fsspec.register_implementation(PROTOCOL_NAME, SnowFileSystem)
+fsspec.register_implementation(SnowFileSystem.protocol, SnowFileSystem)

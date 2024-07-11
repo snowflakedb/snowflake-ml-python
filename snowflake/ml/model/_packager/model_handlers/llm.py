@@ -118,7 +118,7 @@ class LLMHandler(_base.BaseModelHandler[llm.LLM]):
         name: str,
         model_meta: model_meta_api.ModelMetadata,
         model_blobs_dir_path: str,
-        **kwargs: Unpack[model_types.ModelLoadOption],
+        **kwargs: Unpack[model_types.LLMLoadOptions],
     ) -> llm.LLM:
         model_blob_path = os.path.join(model_blobs_dir_path, name)
         if not hasattr(model_meta, "models"):
@@ -143,7 +143,7 @@ class LLMHandler(_base.BaseModelHandler[llm.LLM]):
         cls,
         raw_model: llm.LLM,
         model_meta: model_meta_api.ModelMetadata,
-        **kwargs: Unpack[model_types.ModelLoadOption],
+        **kwargs: Unpack[model_types.LLMLoadOptions],
     ) -> custom_model.CustomModel:
         import gc
         import tempfile

@@ -1,5 +1,5 @@
-load("//codegen:codegen_rules.bzl", "autogen_tests_for_estimators")
-load("//snowflake/ml/modeling/impute:estimators_info.bzl", "estimator_info_list")
+load("//codegen:codegen_rules.bzl", "autogen_snowpark_pandas_tests", "autogen_tests_for_estimators")
+load("//snowflake/ml/modeling/impute:estimators_info.bzl", "estimator_info_list", "snowpark_pandas_estimator_info_list")
 load(":BUILD_NATIVE.bzl", "get_build_rules_for_native_impl")
 
 package(default_visibility = ["//visibility:public"])
@@ -8,6 +8,12 @@ autogen_tests_for_estimators(
     estimator_info_list = estimator_info_list,
     module = "sklearn.impute",
     module_root_dir = "snowflake/ml/modeling/impute",
+)
+
+autogen_snowpark_pandas_tests(
+    module = "sklearn.impute",
+    module_root_dir = "snowflake/ml/modeling/impute",
+    snowpark_pandas_estimator_info_list = snowpark_pandas_estimator_info_list,
 )
 
 get_build_rules_for_native_impl()

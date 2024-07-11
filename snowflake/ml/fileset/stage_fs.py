@@ -170,8 +170,8 @@ class SFStageFileSystem(fsspec.AbstractFileSystem):
             path = path.lstrip("/")
             async_job: snowpark.AsyncJob = self._session.sql(f"LIST '{loc}/{path}'").collect(block=False)
             objects: List[snowpark.Row] = _resolve_async_job(async_job)
-        except snowpark_exceptions.SnowparkClientException as e:
-            if e.message.startswith(fileset_errors.ERRNO_DOMAIN_NOT_EXIST):
+        except snowpark_exceptions.SnowparkSQLException as e:
+            if e.sql_error_code == fileset_errors.ERRNO_DOMAIN_NOT_EXIST:
                 raise snowml_exceptions.SnowflakeMLException(
                     error_code=error_codes.SNOWML_NOT_FOUND,
                     original_exception=fileset_errors.StageNotFoundError(
@@ -387,10 +387,8 @@ class SFStageFileSystem(fsspec.AbstractFileSystem):
                     api_calls=[snowpark.DataFrame.collect],
                 ),
             )
-        except snowpark_exceptions.SnowparkClientException as e:
-            if e.message.startswith(fileset_errors.ERRNO_DOMAIN_NOT_EXIST) or e.message.startswith(
-                fileset_errors.ERRNO_STAGE_NOT_EXIST
-            ):
+        except snowpark_exceptions.SnowparkSQLException as e:
+            if e.sql_error_code in {fileset_errors.ERRNO_DOMAIN_NOT_EXIST, fileset_errors.ERRNO_STAGE_NOT_EXIST}:
                 raise snowml_exceptions.SnowflakeMLException(
                     error_code=error_codes.SNOWML_NOT_FOUND,
                     original_exception=fileset_errors.StageNotFoundError(
@@ -406,9 +404,9 @@ class SFStageFileSystem(fsspec.AbstractFileSystem):
 
 
 def _match_error_code(ex: snowpark_exceptions.SnowparkSQLException, error_code: int) -> bool:
-    # Snowpark writes error code to message instead of populating e.error_code
+    # Snowpark writes error code to message instead of populating e.sql_error_code
     error_code_str = str(error_code)
-    return ex.error_code == error_code_str or error_code_str in ex.message
+    return ex.sql_error_code == error_code_str or error_code_str in ex.message
 
 
 @snowflake_plan.SnowflakePlan.Decorator.wrap_exception  # type: ignore[misc]

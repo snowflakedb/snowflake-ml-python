@@ -36,6 +36,7 @@ def validate_signature(
         predictions_df = get_prediction_fn(target_method, local_sample_input)
         sig = model_signature.infer_signature(local_sample_input, predictions_df)
         model_meta.signatures[target_method] = sig
+
     return model_meta
 
 

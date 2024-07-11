@@ -3,7 +3,14 @@ from typing import Optional, TypedDict
 
 from typing_extensions import NotRequired
 
+from snowflake.ml._internal.exceptions import (
+    error_codes,
+    exceptions as snowml_exceptions,
+)
 from snowflake.ml.model import type_hints
+from snowflake.ml.model._model_composer.model_manifest.model_manifest_schema import (
+    ModelMethodFunctionTypes,
+)
 
 
 class FunctionGenerateOptions(TypedDict):
@@ -35,6 +42,7 @@ class FunctionGenerator:
         function_file_path: pathlib.Path,
         target_method: str,
         function_type: str,
+        is_partitioned_function: bool = False,
         options: Optional[FunctionGenerateOptions] = None,
     ) -> None:
         import importlib_resources
@@ -42,7 +50,15 @@ class FunctionGenerator:
         if options is None:
             options = {}
 
-        template_filename = f"infer_{function_type.lower()}.py_template"
+        if is_partitioned_function:
+            if function_type != ModelMethodFunctionTypes.TABLE_FUNCTION.value:
+                raise snowml_exceptions.SnowflakeMLException(
+                    error_code=error_codes.INVALID_DATA,
+                    original_exception=ValueError("Partitioned inference api functions must have type TABLE_FUNCTION."),
+                )
+            template_filename = "infer_partitioned.py_template"
+        else:
+            template_filename = f"infer_{function_type.lower()}.py_template"
 
         function_template = (
             importlib_resources.files("snowflake.ml.model._model_composer.model_method")

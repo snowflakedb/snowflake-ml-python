@@ -1,6 +1,36 @@
 # Release History
 
-## 1.5.3
+## 1.5.4
+
+### Bug Fixes
+
+- Model Registry (PrPr): Fix 401 Unauthorized issue when deploying model to SPCS.
+- Feature Store: Downgrades exceptions to warnings for few property setters in feature view. Now you can set
+  desc, refresh_freq and warehouse for draft feature views.
+- Modeling: Fix an issue with calling `OrdinalEncoder` with `categories` as a dictionary and a pandas DataFrame
+- Modeling: Fix an issue with calling `OneHotEncoder` with `categories` as a dictionary and a pandas DataFrame
+
+### New Features
+
+- Registry: Allow overriding `device_map` and `device` when loading huggingface pipeline models.
+- Registry: Add `set_alias` method to `ModelVersion` instance to set an alias to model version.
+- Registry: Add `unset_alias` method to `ModelVersion` instance to unset an alias to model version.
+- Registry: Add `partitioned_inference_api` allowing users to create partitioned inference functions in registered
+  models. Enable model inference methods with table functions with vectorized process methods in registered models.
+- Feature Store: add 3 more columns: refresh_freq, refresh_mode and scheduling_state to the result of
+  `list_feature_views()`.
+- Feature Store: `update_feature_view()` supports updating description.
+- Feature Store: add new API `refresh_feature_view()`.
+- Feature Store: add new API `get_refresh_history()`.
+- Feature Store: Add `generate_training_set()` API for generating table-backed feature snapshots.
+- Feature Store: Add `DeprecationWarning` for `generate_dataset(..., output_type="table")`.
+- Feature Store: `update_feature_view()` supports updating description.
+- Feature Store: add new API `refresh_feature_view()`.
+- Feature Store: add new API `get_refresh_history()`.
+- Model Development: OrdinalEncoder supports a list of array-likes for `categories` argument.
+- Model Development: OneHotEncoder supports a list of array-likes for `categories` argument.
+
+## 1.5.3 (06-17-2024)
 
 ### Bug Fixes
 
@@ -8,8 +38,6 @@
   `Pipeline`, `GridSearchCV` , `SimpleImputer`, and `RandomizedSearchCV`
 - Registry: Fix an issue that leads to incorrect result when using pandas Dataframe with over 100, 000 rows as the input
   of `ModelVersion.run` method in Stored Procedure.
-
-### Behavior Changes
 
 ### New Features
 

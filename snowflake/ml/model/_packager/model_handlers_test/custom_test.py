@@ -9,6 +9,7 @@ from absl.testing import absltest
 
 from snowflake.ml.model import custom_model, model_signature
 from snowflake.ml.model._packager import model_packager
+from snowflake.ml.model._packager.model_meta import model_meta_schema
 
 
 class DemoModel(custom_model.CustomModel):
@@ -16,6 +17,12 @@ class DemoModel(custom_model.CustomModel):
         super().__init__(context)
 
     @custom_model.inference_api
+    def predict(self, input: pd.DataFrame) -> pd.DataFrame:
+        return pd.DataFrame({"output": input["c1"]})
+
+
+class PartitionedDemoModel(custom_model.CustomModel):
+    @custom_model.partitioned_inference_api
     def predict(self, input: pd.DataFrame) -> pd.DataFrame:
         return pd.DataFrame({"output": input["c1"]})
 
@@ -258,6 +265,31 @@ class CustomHandlerTest(absltest.TestCase):
 
             np.testing.assert_allclose(res["output"], pd.Series(np.array([21, 24])))
             self.assertEqual(pk.meta.metadata["author"] if pk.meta.metadata else None, "halu")
+
+    def test_custom_model_with_partitioned_inference(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            lm = PartitionedDemoModel()
+
+            arr = np.array([[1, 2, 3], [4, 2, 5]])
+            d = pd.DataFrame(arr, columns=["c1", "c2", "c3"])
+            s = {"predict": model_signature.infer_signature(d, lm.predict(d))}
+            model_metadata = model_packager.ModelPackager(os.path.join(tmpdir, "model1")).save(
+                name="model1",
+                model=lm,
+                signatures=s,
+            )
+
+            pk = model_packager.ModelPackager(os.path.join(tmpdir, "model1"))
+            pk.load()
+            assert pk.model
+            assert pk.meta
+
+            assert model_metadata.function_properties == {
+                "predict": {model_meta_schema.FunctionProperties.PARTITIONED.value: True}
+            }
+            assert isinstance(pk.model, PartitionedDemoModel)
+            res = pk.model.predict(d)
+            np.testing.assert_allclose(res["output"], pd.Series(np.array([1, 4])))
 
 
 if __name__ == "__main__":

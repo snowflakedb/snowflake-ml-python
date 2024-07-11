@@ -139,7 +139,7 @@ class LGBMModelHandler(_base.BaseModelHandler[Union["lightgbm.Booster", "lightgb
         name: str,
         model_meta: model_meta_api.ModelMetadata,
         model_blobs_dir_path: str,
-        **kwargs: Unpack[model_types.ModelLoadOption],
+        **kwargs: Unpack[model_types.LGBMModelLoadOptions],
     ) -> Union["lightgbm.Booster", "lightgbm.LGBMModel"]:
         import lightgbm
 
@@ -169,7 +169,7 @@ class LGBMModelHandler(_base.BaseModelHandler[Union["lightgbm.Booster", "lightgb
         cls,
         raw_model: Union["lightgbm.Booster", "lightgbm.XGBModel"],
         model_meta: model_meta_api.ModelMetadata,
-        **kwargs: Unpack[model_types.ModelLoadOption],
+        **kwargs: Unpack[model_types.LGBMModelLoadOptions],
     ) -> custom_model.CustomModel:
         import lightgbm
 

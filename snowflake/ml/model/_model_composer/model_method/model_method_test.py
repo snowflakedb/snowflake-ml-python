@@ -11,7 +11,11 @@ from snowflake.ml.model._model_composer.model_method import (
     function_generator,
     model_method,
 )
-from snowflake.ml.model._packager.model_meta import model_blob_meta, model_meta
+from snowflake.ml.model._packager.model_meta import (
+    model_blob_meta,
+    model_meta,
+    model_meta_schema,
+)
 
 _DUMMY_SIG = {
     "predict": model_signature.ModelSignature(
@@ -194,6 +198,51 @@ class ModelMethodTest(absltest.TestCase):
                         importlib_resources.files(model_method_pkg)
                         .joinpath("fixtures")
                         .joinpath("function_3.py")
+                        .read_text()
+                    ),
+                    f.read(),
+                )
+            self.assertDictEqual(
+                method_dict,
+                {
+                    "name": "PREDICT",
+                    "runtime": "python_runtime",
+                    "type": "TABLE_FUNCTION",
+                    "handler": "functions.predict.infer",
+                    "inputs": [{"name": "INPUT", "type": "FLOAT"}, {"name": "NAME", "type": "STRING"}],
+                    "outputs": [{"name": "OUTPUT", "type": "FLOAT"}],
+                },
+            )
+
+        with tempfile.TemporaryDirectory() as workspace, tempfile.TemporaryDirectory() as tmpdir:
+            with model_meta.create_model_metadata(
+                model_dir_path=tmpdir,
+                name="model1",
+                model_type="custom",
+                signatures=_DUMMY_SIG,
+                function_properties={"predict": {model_meta_schema.FunctionProperties.PARTITIONED.value: True}},
+            ) as meta:
+                meta.models["model1"] = _DUMMY_BLOB
+
+            mm = model_method.ModelMethod(
+                meta,
+                "predict",
+                "python_runtime",
+                fg,
+                is_partitioned_function=True,
+                options=model_method.ModelMethodOptions(
+                    function_type=model_manifest_schema.ModelMethodFunctionTypes.TABLE_FUNCTION.value
+                ),
+            )
+            method_dict = mm.save(
+                pathlib.Path(workspace),
+            )
+            with open(pathlib.Path(workspace, "functions", "predict.py"), encoding="utf-8") as f:
+                self.assertEqual(
+                    (
+                        importlib_resources.files(model_method_pkg)
+                        .joinpath("fixtures")
+                        .joinpath("function_4.py")
                         .read_text()
                     ),
                     f.read(),

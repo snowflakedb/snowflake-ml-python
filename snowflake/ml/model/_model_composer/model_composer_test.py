@@ -36,7 +36,7 @@ class ModelInterfaceTest(absltest.TestCase):
         with open(os.path.join(m._packager_workspace_path, "model.yaml"), "w", encoding="utf-8") as f:
             f.write("")
         m.packager = mock_pk
-        with mock.patch.object(m.packager, "save") as mock_save:
+        with mock.patch.object(m.packager, "save", return_value=mock_pk.meta) as mock_save:
             with mock.patch.object(m.manifest, "save") as mock_manifest_save:
                 with mock.patch.object(
                     file_utils, "upload_directory_to_stage", return_value=None
@@ -53,14 +53,17 @@ class ModelInterfaceTest(absltest.TestCase):
                 mock_save.assert_called_once()
                 mock_manifest_save.assert_called_once()
                 mock_upload_directory_to_stage.assert_called_once_with(
-                    c_session, local_path=mock.ANY, stage_path=pathlib.PurePosixPath(stage_path), statement_params=None
+                    c_session,
+                    local_path=mock.ANY,
+                    stage_path=pathlib.PurePosixPath(stage_path),
+                    statement_params=None,
                 )
 
         m = model_composer.ModelComposer(session=c_session, stage_path=stage_path)
         m.packager = mock_pk
         with open(os.path.join(m._packager_workspace_path, "model.yaml"), "w", encoding="utf-8") as f:
             f.write("")
-        with mock.patch.object(m.packager, "save") as mock_save:
+        with mock.patch.object(m.packager, "save", return_value=mock_pk.meta) as mock_save:
             with mock.patch.object(m.manifest, "save") as mock_manifest_save:
                 with mock.patch.object(
                     file_utils, "upload_directory_to_stage", return_value=None
@@ -78,11 +81,14 @@ class ModelInterfaceTest(absltest.TestCase):
                 mock_save.assert_called_once()
                 mock_manifest_save.assert_called_once()
                 mock_upload_directory_to_stage.assert_called_once_with(
-                    c_session, local_path=mock.ANY, stage_path=pathlib.PurePosixPath(stage_path), statement_params=None
+                    c_session,
+                    local_path=mock.ANY,
+                    stage_path=pathlib.PurePosixPath(stage_path),
+                    statement_params=None,
                 )
 
     def test_load(self) -> None:
-        m_options = model_types.ModelLoadOption(use_gpu=False)
+        m_options = model_types.PyTorchLoadOptions(use_gpu=False)
         with mock.patch.object(model_packager.ModelPackager, "load") as mock_load:
             model_composer.ModelComposer.load(pathlib.Path("workspace"), meta_only=True, options=m_options)
             mock_load.assert_called_once_with(meta_only=True, options=m_options)

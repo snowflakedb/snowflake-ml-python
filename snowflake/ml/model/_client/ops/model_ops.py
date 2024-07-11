@@ -1,11 +1,12 @@
 import os
 import pathlib
 import tempfile
+import warnings
 from typing import Any, Dict, List, Literal, Optional, Union, cast
 
 import yaml
 
-from snowflake.ml._internal.utils import identifier, sql_identifier
+from snowflake.ml._internal.utils import formatting, identifier, sql_identifier
 from snowflake.ml.model import model_signature, type_hints
 from snowflake.ml.model._client.ops import metadata_ops
 from snowflake.ml.model._client.sql import (
@@ -311,6 +312,42 @@ class ModelOperator:
                 statement_params=statement_params,
             )
 
+    def set_alias(
+        self,
+        *,
+        alias_name: sql_identifier.SqlIdentifier,
+        database_name: Optional[sql_identifier.SqlIdentifier],
+        schema_name: Optional[sql_identifier.SqlIdentifier],
+        model_name: sql_identifier.SqlIdentifier,
+        version_name: sql_identifier.SqlIdentifier,
+        statement_params: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        self._model_version_client.set_alias(
+            alias_name=alias_name,
+            database_name=database_name,
+            schema_name=schema_name,
+            model_name=model_name,
+            version_name=version_name,
+            statement_params=statement_params,
+        )
+
+    def unset_alias(
+        self,
+        *,
+        version_or_alias_name: sql_identifier.SqlIdentifier,
+        database_name: Optional[sql_identifier.SqlIdentifier],
+        schema_name: Optional[sql_identifier.SqlIdentifier],
+        model_name: sql_identifier.SqlIdentifier,
+        statement_params: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        self._model_version_client.unset_alias(
+            database_name=database_name,
+            schema_name=schema_name,
+            model_name=model_name,
+            version_or_alias_name=version_or_alias_name,
+            statement_params=statement_params,
+        )
+
     def set_default_version(
         self,
         *,
@@ -353,6 +390,28 @@ class ModelOperator:
         return sql_identifier.SqlIdentifier(
             res[self._model_client.MODEL_DEFAULT_VERSION_NAME_COL_NAME], case_sensitive=True
         )
+
+    def get_version_by_alias(
+        self,
+        *,
+        database_name: Optional[sql_identifier.SqlIdentifier],
+        schema_name: Optional[sql_identifier.SqlIdentifier],
+        model_name: sql_identifier.SqlIdentifier,
+        alias_name: sql_identifier.SqlIdentifier,
+        statement_params: Optional[Dict[str, Any]] = None,
+    ) -> Optional[sql_identifier.SqlIdentifier]:
+        res = self._model_client.show_versions(
+            database_name=database_name,
+            schema_name=schema_name,
+            model_name=model_name,
+            statement_params=statement_params,
+        )
+        for r in res:
+            if alias_name in r[self._model_client.MODEL_VERSION_ALIASES_COL_NAME]:
+                return sql_identifier.SqlIdentifier(
+                    r[self._model_client.MODEL_VERSION_NAME_COL_NAME], case_sensitive=True
+                )
+        return None
 
     def get_tag_value(
         self,
@@ -625,10 +684,23 @@ class ModelOperator:
             )
 
         if keep_order:
-            df_res = df_res.sort(
-                "_ID",
-                ascending=True,
-            )
+            # if it's a partitioned table function, _ID will be null and we won't be able to sort.
+            if df_res.select("_ID").limit(1).collect()[0][0] is None:
+                warnings.warn(
+                    formatting.unwrap(
+                        """
+                        When invoking partitioned inference methods, ordering of rows in output dataframe will differ
+                        from that of input dataframe.
+                        """
+                    ),
+                    category=UserWarning,
+                    stacklevel=1,
+                )
+            else:
+                df_res = df_res.sort(
+                    "_ID",
+                    ascending=True,
+                )
 
         if not output_with_input_features:
             cols_to_drop = original_cols

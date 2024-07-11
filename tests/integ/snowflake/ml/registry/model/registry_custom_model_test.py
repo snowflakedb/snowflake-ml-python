@@ -431,6 +431,38 @@ class TestRegistryCustomModelInteg(registry_model_test_base.RegistryModelTestBas
                 },
             )
 
+    @parameterized.product(  # type: ignore[misc]
+        registry_test_fn=registry_model_test_base.RegistryModelTestBase.REGISTRY_TEST_FN_LIST,
+    )
+    def test_table_function_column_names(
+        self,
+        registry_test_fn: str,
+    ) -> None:
+        class RowOrderModel(custom_model.CustomModel):
+            @custom_model.inference_api
+            def predict(self, X: pd.DataFrame) -> pd.DataFrame:
+                return pd.DataFrame(
+                    {
+                        "ascending": list(range(len(X))),
+                        "output": X["feature_0"],
+                    }
+                )
+
+        input_df = pd.DataFrame({"feature_0": [1]})
+        model = RowOrderModel(custom_model.ModelContext())
+        expected_output_df = model.predict(input_df)
+        getattr(self, registry_test_fn)(
+            model=RowOrderModel(custom_model.ModelContext()),
+            sample_input_data=input_df,
+            prediction_assert_fns={
+                "predict": (
+                    input_df,
+                    lambda res: pd.testing.assert_index_equal(res.columns, expected_output_df.columns),
+                ),
+            },
+            options={"function_type": "TABLE_FUNCTION"},
+        )
+
 
 if __name__ == "__main__":
     absltest.main()

@@ -8,12 +8,13 @@ import pandas as pd
 
 from snowflake.ml._internal import telemetry
 from snowflake.ml._internal.utils import sql_identifier
+from snowflake.ml.lineage import lineage_node
 from snowflake.ml.model import type_hints as model_types
 from snowflake.ml.model._client.ops import metadata_ops, model_ops
 from snowflake.ml.model._model_composer import model_composer
 from snowflake.ml.model._model_composer.model_manifest import model_manifest_schema
 from snowflake.ml.model._packager.model_handlers import snowmlmodel
-from snowflake.snowpark import dataframe
+from snowflake.snowpark import Session, dataframe
 
 _TELEMETRY_PROJECT = "MLOps"
 _TELEMETRY_SUBPROJECT = "ModelManagement"
@@ -24,7 +25,7 @@ class ExportMode(enum.Enum):
     FULL = "full"
 
 
-class ModelVersion:
+class ModelVersion(lineage_node.LineageNode):
     """Model Version Object representing a specific version of the model that could be run."""
 
     _model_ops: model_ops.ModelOperator
@@ -48,6 +49,15 @@ class ModelVersion:
         self._model_name = model_name
         self._version_name = version_name
         self._functions = self._get_functions()
+        super(cls, cls).__init__(
+            self,
+            session=model_ops._session,
+            name=model_ops._model_client.fully_qualified_object_name(
+                database_name=None, schema_name=None, object_name=model_name
+            ),
+            domain="model",
+            version=version_name,
+        )
         return self
 
     def __eq__(self, __value: object) -> bool:
@@ -57,6 +67,11 @@ class ModelVersion:
             self._model_ops == __value._model_ops
             and self._model_name == __value._model_name
             and self._version_name == __value._version_name
+        )
+
+    def __repr__(self) -> str:
+        return (
+            f"{self.__class__.__name__}(\n" f"  name='{self.model_name}',\n" f"  version='{self._version_name}',\n" f")"
         )
 
     @property
@@ -195,6 +210,52 @@ class ModelVersion:
             schema_name=None,
             model_name=self._model_name,
             version_name=self._version_name,
+            statement_params=statement_params,
+        )
+
+    @telemetry.send_api_usage_telemetry(
+        project=_TELEMETRY_PROJECT,
+        subproject=_TELEMETRY_SUBPROJECT,
+    )
+    def set_alias(self, alias_name: str) -> None:
+        """Set alias to a model version.
+
+        Args:
+            alias_name: Alias to the model version.
+        """
+        statement_params = telemetry.get_statement_params(
+            project=_TELEMETRY_PROJECT,
+            subproject=_TELEMETRY_SUBPROJECT,
+        )
+        alias_name = sql_identifier.SqlIdentifier(alias_name)
+        self._model_ops.set_alias(
+            alias_name=alias_name,
+            database_name=None,
+            schema_name=None,
+            model_name=self._model_name,
+            version_name=self._version_name,
+            statement_params=statement_params,
+        )
+
+    @telemetry.send_api_usage_telemetry(
+        project=_TELEMETRY_PROJECT,
+        subproject=_TELEMETRY_SUBPROJECT,
+    )
+    def unset_alias(self, version_or_alias: str) -> None:
+        """unset alias to a model version.
+
+        Args:
+            version_or_alias: The name of the version or alias to a version.
+        """
+        statement_params = telemetry.get_statement_params(
+            project=_TELEMETRY_PROJECT,
+            subproject=_TELEMETRY_SUBPROJECT,
+        )
+        self._model_ops.unset_alias(
+            version_or_alias_name=sql_identifier.SqlIdentifier(version_or_alias),
+            database_name=None,
+            schema_name=None,
+            model_name=self._model_name,
             statement_params=statement_params,
         )
 
@@ -451,3 +512,22 @@ class ModelVersion:
             f"model_name={self._model_name}, version_name={self._version_name}, metadata={pk.meta}"
         )
         return pk.model
+
+    @staticmethod
+    def _load_from_lineage_node(session: Session, name: str, version: str) -> "ModelVersion":
+        database_name_id, schema_name_id, model_name_id = sql_identifier.parse_fully_qualified_name(name)
+        if not database_name_id or not schema_name_id:
+            raise ValueError("name should be fully qualifed.")
+
+        return ModelVersion._ref(
+            model_ops.ModelOperator(
+                session,
+                database_name=database_name_id,
+                schema_name=schema_name_id,
+            ),
+            model_name=model_name_id,
+            version_name=sql_identifier.SqlIdentifier(version),
+        )
+
+
+lineage_node.DOMAIN_LINEAGE_REGISTRY["model"] = ModelVersion

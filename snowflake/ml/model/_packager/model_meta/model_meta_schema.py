@@ -1,6 +1,6 @@
 # This files contains schema definition of what will be written into model.yml
 # Changing this file should lead to a change of the schema version.
-
+from enum import Enum
 from typing import Any, Dict, List, Optional, TypedDict, Union
 
 from typing_extensions import NotRequired, Required
@@ -9,6 +9,10 @@ from snowflake.ml.model import type_hints
 
 MODEL_METADATA_VERSION = "2023-12-01"
 MODEL_METADATA_MIN_SNOWPARK_ML_VERSION = "1.0.12"
+
+
+class FunctionProperties(Enum):
+    PARTITIONED = "PARTITIONED"
 
 
 class ModelRuntimeDependenciesDict(TypedDict):
@@ -72,6 +76,7 @@ class ModelBlobMetadataDict(TypedDict):
     model_type: Required[type_hints.SupportedModelHandlerType]
     path: Required[str]
     handler_version: Required[str]
+    function_properties: NotRequired[Dict[str, Dict[str, Any]]]
     artifacts: NotRequired[Dict[str, str]]
     options: NotRequired[ModelBlobOptions]
 
