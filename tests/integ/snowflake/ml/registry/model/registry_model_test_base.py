@@ -62,7 +62,6 @@ class RegistryModelTestBase(common_test_base.CommonTestBase):
 
         for target_method, (test_input, check_func) in prediction_assert_fns.items():
             res = mv.run(test_input, function_name=target_method)
-
             check_func(res)
 
         self.registry.show_models()

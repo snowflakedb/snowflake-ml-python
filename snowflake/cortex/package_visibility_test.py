@@ -8,6 +8,7 @@ class PackageVisibilityTest(absltest.TestCase):
 
     def test_complete_visible(self) -> None:
         self.assertTrue(callable(cortex.Complete))
+        self.assertTrue(callable(cortex.CompleteOptions))
 
     def test_extract_answer_visible(self) -> None:
         self.assertTrue(callable(cortex.ExtractAnswer))

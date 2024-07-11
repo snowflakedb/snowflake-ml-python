@@ -11,11 +11,17 @@ from snowflake.ml._internal.exceptions import (
     fileset_errors,
 )
 from snowflake.ml._internal.utils import identifier
+from snowflake.ml.fileset import stage_fs
 from snowflake.snowpark import exceptions as snowpark_exceptions
 
-from . import stage_fs
-
-_SNOWURL_PATH_RE = re.compile(r"versions/(?P<version>[^/]+)(?:/+(?P<filepath>.*))?")
+PROTOCOL_NAME = "snow"
+_SNOWURL_ENTITY_PATTERN = (
+    f"(?:{PROTOCOL_NAME}://)?"
+    r"(?<!@)(?P<domain>\w+)/"
+    rf"(?P<name>(?:{identifier._SF_IDENTIFIER}\.){{,2}}{identifier._SF_IDENTIFIER})/"
+)
+_SNOWURL_VERSION_PATTERN = r"(?P<path>versions/(?:(?P<version>[^/]+)(?:/+(?P<relpath>.*))?)?)"
+_SNOWURL_PATH_RE = re.compile(f"(?:{_SNOWURL_ENTITY_PATTERN})?" + _SNOWURL_VERSION_PATTERN)
 
 
 class SFEmbeddedStageFileSystem(stage_fs.SFStageFileSystem):
@@ -76,8 +82,8 @@ class SFEmbeddedStageFileSystem(stage_fs.SFStageFileSystem):
         versions_dict = defaultdict(list)
         for file in files:
             match = _SNOWURL_PATH_RE.fullmatch(file)
-            assert match is not None and match.group("filepath") is not None
-            versions_dict[match.group("version")].append(match.group("filepath"))
+            assert match is not None and match.group("relpath") is not None
+            versions_dict[match.group("version")].append(match.group("relpath"))
         try:
             async_jobs: List[snowpark.AsyncJob] = []
             for version, version_files in versions_dict.items():
@@ -98,10 +104,8 @@ class SFEmbeddedStageFileSystem(stage_fs.SFStageFileSystem):
                 (r["NAME"], r["URL"]) for job in async_jobs for r in stage_fs._resolve_async_job(job)
             ]
             return presigned_urls
-        except snowpark_exceptions.SnowparkClientException as e:
-            if e.message.startswith(fileset_errors.ERRNO_DOMAIN_NOT_EXIST) or e.message.startswith(
-                fileset_errors.ERRNO_STAGE_NOT_EXIST
-            ):
+        except snowpark_exceptions.SnowparkSQLException as e:
+            if e.sql_error_code in {fileset_errors.ERRNO_DOMAIN_NOT_EXIST, fileset_errors.ERRNO_STAGE_NOT_EXIST}:
                 raise snowml_exceptions.SnowflakeMLException(
                     error_code=error_codes.SNOWML_NOT_FOUND,
                     original_exception=fileset_errors.StageNotFoundError(
@@ -118,7 +122,7 @@ class SFEmbeddedStageFileSystem(stage_fs.SFStageFileSystem):
     def _parent(cls, path: str) -> str:
         """Get parent of specified path up to minimally valid root path.
 
-        For SnowURL, the minimum valid path is snow://<domain>/<entity>/versions/<version>
+        For SnowURL, the minimum valid relative path is versions/<version>
 
         Args:
             path: File or directory path
@@ -128,22 +132,22 @@ class SFEmbeddedStageFileSystem(stage_fs.SFStageFileSystem):
 
         Examples:
         ----
-        >>> fs._parent("snow://dataset/my_ds/versions/my_version/file.ext")
-        "snow://dataset/my_ds/versions/my_version/"
-        >>> fs._parent("snow://dataset/my_ds/versions/my_version/subdir/file.ext")
-        "snow://dataset/my_ds/versions/my_version/subdir/"
-        >>> fs._parent("snow://dataset/my_ds/versions/my_version/")
-        "snow://dataset/my_ds/versions/my_version/"
-        >>> fs._parent("snow://dataset/my_ds/versions/my_version")
-        "snow://dataset/my_ds/versions/my_version"
+        >>> fs._parent("versions/my_version/file.ext")
+        "versions/my_version"
+        >>> fs._parent("versions/my_version/subdir/file.ext")
+        "versions/my_version/subdir"
+        >>> fs._parent("versions/my_version/")
+        "versions/my_version"
+        >>> fs._parent("versions/my_version")
+        "versions/my_version"
         """
         path_match = _SNOWURL_PATH_RE.fullmatch(path)
         if not path_match:
             return super()._parent(path)  # type: ignore[no-any-return]
-        filepath: str = path_match.group("filepath") or ""
-        root: str = path[: path_match.start("filepath")] if filepath else path
+        filepath: str = path_match.group("relpath") or ""
+        root: str = path[: path_match.start("relpath")] if filepath else path
         if "/" in filepath:
             parent = filepath.rsplit("/", 1)[0]
             return root + parent
         else:
-            return root
+            return root.rstrip("/")

@@ -1,21 +1,26 @@
 import logging
 import warnings
+from typing import List, Optional
 
 from snowflake import snowpark
+from snowflake.ml._internal.utils import sql_identifier
 from snowflake.snowpark import functions, types
 
 
-def cast_snowpark_dataframe(df: snowpark.DataFrame) -> snowpark.DataFrame:
+def cast_snowpark_dataframe(df: snowpark.DataFrame, ignore_columns: Optional[List[str]] = None) -> snowpark.DataFrame:
     """Cast columns in the dataframe to types that are compatible with tensor.
 
     It assists FileSet.make() in performing implicit data casting.
 
     Args:
         df: A snowpark dataframe.
+        ignore_columns: Columns to exclude from casting. These columns will be propagated unchanged.
 
     Returns:
         A snowpark dataframe whose data type has been casted.
     """
+
+    ignore_cols_set = {sql_identifier.SqlIdentifier(c).identifier() for c in ignore_columns} if ignore_columns else {}
 
     fields = df.schema.fields
     selected_cols = []
@@ -40,7 +45,9 @@ def cast_snowpark_dataframe(df: snowpark.DataFrame) -> snowpark.DataFrame:
             dest = field.datatype
             selected_cols.append(functions.cast(functions.col(src), dest).alias(src))
         else:
-            if field.datatype in (types.DateType(), types.TimestampType(), types.TimeType()):
+            if field.column_identifier.name in ignore_cols_set:
+                pass
+            elif field.datatype in (types.DateType(), types.TimestampType(), types.TimeType()):
                 logging.warning(
                     "A Column with DATE or TIMESTAMP data type detected. "
                     "It might not be able to get converted to tensors. "
@@ -90,7 +97,9 @@ def cast_snowpark_dataframe_column_types(df: snowpark.DataFrame) -> snowpark.Dat
                     " is being automatically converted to DoubleType in the Snowpark DataFrame. "
                     "This automatic conversion may lead to potential precision loss and rounding errors. "
                     "If you wish to prevent this conversion, you should manually perform "
-                    "the necessary data type conversion."
+                    "the necessary data type conversion.",
+                    UserWarning,
+                    stacklevel=2,
                 )
             else:
                 # IntegerType default as NUMBER(38, 0), but
@@ -102,7 +111,9 @@ def cast_snowpark_dataframe_column_types(df: snowpark.DataFrame) -> snowpark.Dat
                     " is being automatically converted to LongType in the Snowpark DataFrame. "
                     "This automatic conversion may lead to potential precision loss and rounding errors. "
                     "If you wish to prevent this conversion, you should manually perform "
-                    "the necessary data type conversion."
+                    "the necessary data type conversion.",
+                    UserWarning,
+                    stacklevel=2,
                 )
             selected_cols.append(functions.cast(functions.col(src), dest_dtype).alias(src))
         # TODO: add more type handling or error message

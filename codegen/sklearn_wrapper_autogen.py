@@ -18,14 +18,16 @@ InitRuleInfo = namedtuple("InitRuleInfo", ["init_import_statement", "init_export
 class GenMode(Enum):
     SRC = "SRC"
     TEST = "TEST"
+    SNOWPARK_PANDAS_TEST = "SNOWPARK_PANDAS_TEST"
 
 
 class AutogenTool:
     """Tool to auto-generate estimator wrappers and integration test for estimator wrappers.
 
     Args:
-        gen_mode: Possible values {GenMode.SRC, GenMode.TEST}. Tool generates source code for estimator
-            wrappers or integration tests for generated estimator wrappers based on the selected mode.
+        gen_mode: Possible values {GenMode.SRC, GenMode.TEST, GenMode.SNOWPARK_PANDAS_TEST}. Tool generates source code
+            for estimator wrappers or integration tests for generated estimator wrappers or snowpark_pandas based on the
+            selected mode.
         template_path: Path to file containing estimator wrapper or test template code.
         output_path : Path to the root of the destination folder to write auto-generated code.
         class_list: Allow list of estimator classes. If specified, wrappers or tests will be generated for only
@@ -138,7 +140,8 @@ class AutogenTool:
     def _generate_test_files(
         self, module_name: str, generators: Iterable[swg.WrapperGeneratorBase], skip_code_gen: bool = False
     ) -> List[str]:
-        """Autogenerate integ tests for snowflake estimator wrappers for the given SKLearn or XGBoost module.
+        """Autogenerate integ tests for snowflake estimator wrappers or snowpark_pandas for the given SKLearn or XGBoost
+        module.
 
         Args:
             module_name: Module name to process.
@@ -153,7 +156,10 @@ class AutogenTool:
 
         generated_files_list = []
         for generator in generators:
-            test_output_file_name = os.path.join(self.output_path, generator.estimator_test_file_name)
+            if self.gen_mode == GenMode.TEST:
+                test_output_file_name = os.path.join(self.output_path, generator.estimator_test_file_name)
+            else:
+                test_output_file_name = os.path.join(self.output_path, generator.snowpark_pandas_test_file_name)
             generated_files_list.append(test_output_file_name)
             if skip_code_gen:
                 continue

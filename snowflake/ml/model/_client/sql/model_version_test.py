@@ -691,6 +691,76 @@ class ModelVersionSQLTest(absltest.TestCase):
             statement_params=m_statement_params,
         )
 
+    def test_set_alias(self) -> None:
+        m_statement_params = {"test": "1"}
+        m_df = mock_data_frame.MockDataFrame(collect_result=[Row("")], collect_statement_params=m_statement_params)
+        alias = "ally"
+        self.m_session.add_mock_sql(
+            """ALTER MODEL TEMP."test".MODEL VERSION "v1" SET ALIAS=ALLY""", copy.deepcopy(m_df)
+        )
+        c_session = cast(Session, self.m_session)
+        model_version_sql.ModelVersionSQLClient(
+            c_session,
+            database_name=sql_identifier.SqlIdentifier("TEMP"),
+            schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
+        ).set_alias(
+            alias_name=sql_identifier.SqlIdentifier(alias),
+            database_name=None,
+            schema_name=None,
+            model_name=sql_identifier.SqlIdentifier("MODEL"),
+            version_name=sql_identifier.SqlIdentifier("v1", case_sensitive=True),
+            statement_params=m_statement_params,
+        )
+
+        self.m_session.add_mock_sql(
+            """ALTER MODEL TEMP."test".MODEL VERSION "v1" SET ALIAS=ALLY""", copy.deepcopy(m_df)
+        )
+        c_session = cast(Session, self.m_session)
+        model_version_sql.ModelVersionSQLClient(
+            c_session,
+            database_name=sql_identifier.SqlIdentifier("foo"),
+            schema_name=sql_identifier.SqlIdentifier("bar", case_sensitive=True),
+        ).set_alias(
+            alias_name=sql_identifier.SqlIdentifier(alias),
+            database_name=sql_identifier.SqlIdentifier("TEMP"),
+            schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
+            model_name=sql_identifier.SqlIdentifier("MODEL"),
+            version_name=sql_identifier.SqlIdentifier("v1", case_sensitive=True),
+            statement_params=m_statement_params,
+        )
+
+    def test_unset_alias(self) -> None:
+        m_statement_params = {"test": "1"}
+        m_df = mock_data_frame.MockDataFrame(collect_result=[Row("")], collect_statement_params=m_statement_params)
+        self.m_session.add_mock_sql("""ALTER MODEL TEMP."test".MODEL VERSION V1 UNSET ALIAS""", copy.deepcopy(m_df))
+        c_session = cast(Session, self.m_session)
+        model_version_sql.ModelVersionSQLClient(
+            c_session,
+            database_name=sql_identifier.SqlIdentifier("TEMP"),
+            schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
+        ).unset_alias(
+            version_or_alias_name=sql_identifier.SqlIdentifier("v1"),
+            database_name=None,
+            schema_name=None,
+            model_name=sql_identifier.SqlIdentifier("MODEL"),
+            statement_params=m_statement_params,
+        )
+
+        self.m_session.add_mock_sql("""ALTER MODEL TEMP."test".MODEL VERSION ALLY UNSET ALIAS""", copy.deepcopy(m_df))
+        c_session = cast(Session, self.m_session)
+        alias = "ally"
+        model_version_sql.ModelVersionSQLClient(
+            c_session,
+            database_name=sql_identifier.SqlIdentifier("foo"),
+            schema_name=sql_identifier.SqlIdentifier("bar", case_sensitive=True),
+        ).unset_alias(
+            version_or_alias_name=sql_identifier.SqlIdentifier(alias),
+            database_name=sql_identifier.SqlIdentifier("TEMP"),
+            schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
+            model_name=sql_identifier.SqlIdentifier("MODEL"),
+            statement_params=m_statement_params,
+        )
+
 
 if __name__ == "__main__":
     absltest.main()

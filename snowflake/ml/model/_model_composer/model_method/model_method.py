@@ -32,8 +32,6 @@ def get_model_method_options_from_options(
     if function_type not in [function_type.value for function_type in model_manifest_schema.ModelMethodFunctionTypes]:
         raise NotImplementedError
 
-    # TODO(TH): enforce minimum snowflake version
-
     return ModelMethodOptions(
         case_sensitive=method_option.get("case_sensitive", False),
         function_type=function_type,
@@ -47,10 +45,9 @@ class ModelMethod:
     Attributes:
         model_meta: Model Metadata.
         target_method: Original target method name to call with the model.
-        method_name: The actual method name registered in manifest and used in SQL.
-
-        function_generator: Function file generator.
         runtime_name: Name of the Model Runtime to run the method.
+        function_generator: Function file generator.
+        is_partitioned_function:  Whether the model method function is partitioned.
 
         options: Model Method Options.
     """
@@ -63,11 +60,13 @@ class ModelMethod:
         target_method: str,
         runtime_name: str,
         function_generator: function_generator.FunctionGenerator,
+        is_partitioned_function: bool = False,
         options: Optional[ModelMethodOptions] = None,
     ) -> None:
         self.model_meta = model_meta
         self.target_method = target_method
         self.function_generator = function_generator
+        self.is_partitioned_function = is_partitioned_function
         self.runtime_name = runtime_name
         self.options = options or {}
         try:
@@ -111,6 +110,7 @@ class ModelMethod:
             workspace_path / ModelMethod.FUNCTIONS_DIR_REL_PATH / f"{self.target_method}.py",
             self.target_method,
             self.function_type,
+            self.is_partitioned_function,
             options=options,
         )
         input_list = [

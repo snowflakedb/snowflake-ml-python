@@ -23,6 +23,7 @@ class ModelBlobMeta:
         self.model_type = kwargs["model_type"]
         self.path = kwargs["path"]
         self.handler_version = kwargs["handler_version"]
+        self.function_properties = kwargs.get("function_properties", {})
 
         self.artifacts: Dict[str, str] = {}
         artifacts = kwargs.get("artifacts", None)
@@ -39,6 +40,7 @@ class ModelBlobMeta:
             model_type=self.model_type,
             path=self.path,
             handler_version=self.handler_version,
+            function_properties=self.function_properties,
             artifacts=self.artifacts,
             options=self.options,
         )

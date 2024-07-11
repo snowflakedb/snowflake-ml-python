@@ -4,6 +4,7 @@ import tempfile
 import importlib_resources
 from absl.testing import absltest
 
+from snowflake.ml._internal.exceptions import exceptions as snowml_exceptions
 from snowflake.ml.model._model_composer.model_manifest import model_manifest_schema
 from snowflake.ml.model._model_composer.model_method import function_generator
 
@@ -64,6 +65,33 @@ class FunctionGeneratorTest(absltest.TestCase):
                         .read_text()
                     ),
                     f.read(),
+                )
+
+            # Generate partitioned function.
+            fg.generate(
+                pathlib.Path(tmpdir, "partitioned_function_handler.py"),
+                "predict",
+                model_manifest_schema.ModelMethodFunctionTypes.TABLE_FUNCTION.value,
+                is_partitioned_function=True,
+            )
+            with open(pathlib.Path(tmpdir, "partitioned_function_handler.py"), encoding="utf-8") as f:
+                self.assertEqual(
+                    (
+                        importlib_resources.files("snowflake.ml.model._model_composer.model_method")
+                        .joinpath("fixtures")
+                        .joinpath("function_4.py")
+                        .read_text()
+                    ),
+                    f.read(),
+                )
+
+            # Generating partitioned function that is not a table function raises exception.
+            with self.assertRaises(snowml_exceptions.SnowflakeMLException):
+                fg.generate(
+                    pathlib.Path(tmpdir, "partitioned_function_handler.py"),
+                    "predict",
+                    model_manifest_schema.ModelMethodFunctionTypes.FUNCTION.value,
+                    is_partitioned_function=True,
                 )
 
 
