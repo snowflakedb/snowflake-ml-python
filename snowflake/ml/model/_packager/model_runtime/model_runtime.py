@@ -35,7 +35,7 @@ class ModelRuntime:
         self,
         name: str,
         env: model_env.ModelEnv,
-        imports: Optional[List[pathlib.PurePosixPath]] = None,
+        imports: Optional[List[str]] = None,
         is_gpu: bool = False,
         loading_from_file: bool = False,
     ) -> None:
@@ -75,7 +75,7 @@ class ModelRuntime:
             snowpark_ml_lib_path = runtime_base_path / "snowflake-ml-python.zip"
             file_utils.zip_python_package(str(snowpark_ml_lib_path), "snowflake.ml")
             snowpark_ml_lib_rel_path = pathlib.PurePosixPath(snowpark_ml_lib_path.relative_to(packager_path).as_posix())
-            self.imports.append(snowpark_ml_lib_rel_path)
+            self.imports.append(str(snowpark_ml_lib_rel_path))
 
         self.runtime_env.conda_env_rel_path = self.runtime_rel_path / self.runtime_env.conda_env_rel_path
         self.runtime_env.pip_requirements_rel_path = self.runtime_rel_path / self.runtime_env.pip_requirements_rel_path
@@ -108,6 +108,4 @@ class ModelRuntime:
             warnings.simplefilter("ignore")
             env.load_from_conda_file(packager_path / conda_env_rel_path)
             env.load_from_pip_file(packager_path / pip_requirements_rel_path)
-        return ModelRuntime(
-            name=name, env=env, imports=list(map(pathlib.PurePosixPath, loaded_dict["imports"])), loading_from_file=True
-        )
+        return ModelRuntime(name=name, env=env, imports=loaded_dict["imports"], loading_from_file=True)

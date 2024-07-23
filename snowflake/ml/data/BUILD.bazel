@@ -1,0 +1,35 @@
+load("//bazel:py_rules.bzl", "py_library", "py_test")
+
+package(default_visibility = ["//visibility:public"])
+
+py_library(
+    name = "data_source",
+    srcs = ["data_source.py"],
+)
+
+py_library(
+    name = "data_ingestor",
+    srcs = ["data_ingestor.py"],
+    deps = [
+        ":data_source",
+    ],
+)
+
+py_library(
+    name = "data_connector",
+    srcs = ["data_connector.py"],
+    deps = [
+        ":data_ingestor",
+        "//snowflake/ml/_internal:telemetry",
+        "//snowflake/ml/data/_internal:arrow_ingestor",
+    ],
+)
+
+py_test(
+    name = "data_connector_test",
+    srcs = ["data_connector_test.py"],
+    deps = [
+        ":data_connector",
+        "//snowflake/ml/fileset:parquet_test_util",
+    ],
+)

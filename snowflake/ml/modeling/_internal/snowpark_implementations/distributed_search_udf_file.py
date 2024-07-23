@@ -83,7 +83,19 @@ def _load_data_into_udf() -> Tuple[
     with open(local_fit_and_score_kwargs_file_path, mode="rb") as local_fit_and_score_kwargs_file_obj:
         fit_and_score_kwargs = cp.load(local_fit_and_score_kwargs_file_obj)
 
-    # convert dataframe to numpy would save memory consumption
+    # Convert dataframe to numpy would save memory consumption
+    # Except for Pipeline, we need to keep the dataframe for the column names
+    from sklearn.pipeline import Pipeline
+    if isinstance(base_estimator, Pipeline):
+        return (
+            df[CONSTANTS['input_cols']],
+            df[CONSTANTS['label_cols']].squeeze(),
+            indices,
+            params_to_evaluate,
+            base_estimator,
+            fit_and_score_kwargs,
+            CONSTANTS
+        )
     return (
         df[CONSTANTS['input_cols']].to_numpy(),
         df[CONSTANTS['label_cols']].squeeze().to_numpy(),

@@ -1,6 +1,52 @@
 # Release History
 
-## 1.5.4
+## 1.5.5
+
+### Bug Fixes
+
+- Modeling: `SimpleImputer` can impute integer columns with integer values.
+- Registry: Fix an issue when providing a pandas Dataframe whose index is not starting from 0 as the input to
+  the `ModelVersion.run`.
+
+### New Features
+
+- Feature Store: Add overloads to APIs accept both object and name/version. Impacted APIs include read_feature_view(),
+  refresh_feature_view(), get_refresh_history(), resume_feature_view(), suspend_feature_view(), delete_feature_view().
+- Feature Store: Add docstring inline examples for all public APIs.
+- Feature Store: Add new utility class `ExampleHelper` to help with load source data to simplify public notebooks.
+- Registry: Option to `enable_explainability` when registering XGBoost models as a pre-PuPr feature.
+- Feature Store: add new API `update_entity()`.
+- Registry: Option to `enable_explainability` when registering Catboost models as a pre-PuPr feature.
+- Feature Store: Add new argument warehouse to FeatureView constructor to overwrite the default warehouse. Also add
+  a new column 'warehouse' to the output of list_feature_views().
+- Registry: Add support for logging model from a model version.
+- Modeling: Distributed Hyperparameter Optimization now announce GA refresh version. The latest memory efficient version
+  will not have the 10GB training limitation for dataset any more. To turn off, please run
+  `
+  from snowflake.ml.modeling._internal.snowpark_implementations import (
+      distributed_hpo_trainer,
+  )
+  distributed_hpo_trainer.ENABLE_EFFICIENT_MEMORY_USAGE = False
+  `
+- Registry: Option to `enable_explainability` when registering LightGBM models as a pre-PuPr feature.
+
+### Behavior Changes
+
+- Feature Store: change some positional parameters to keyword arguments in following APIs:
+  - Entity(): desc.
+  - FeatureView(): timestamp_col, refresh_freq, desc.
+  - FeatureStore(): default_warehouse, creation_mode.
+  - update_entity(): desc.
+  - register_feature_view(): block, overwrite.
+  - list_feature_views(): entity_name, feature_view_name.
+  - get_refresh_history(): verbose.
+  - retrieve_feature_values(): spine_timestamp_col, exclude_columns, include_feature_view_timestamp_col.
+  - generate_training_set(): save_as, spine_timestamp_col, spine_label_cols, exclude_columns,
+    include_feature_view_timestamp_col.
+  - generate_dataset(): version, spine_timestamp_col, spine_label_cols, exclude_columns,
+    include_feature_view_timestamp_col, desc, output_type.
+
+## 1.5.4 (2024-07-11)
 
 ### Bug Fixes
 

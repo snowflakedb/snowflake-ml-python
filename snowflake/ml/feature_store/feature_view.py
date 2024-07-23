@@ -126,9 +126,11 @@ class FeatureView(lineage_node.LineageNode):
         name: str,
         entities: List[Entity],
         feature_df: DataFrame,
+        *,
         timestamp_col: Optional[str] = None,
         refresh_freq: Optional[str] = None,
         desc: str = "",
+        warehouse: Optional[str] = None,
         **_kwargs: Any,
     ) -> None:
         """
@@ -149,6 +151,9 @@ class FeatureView(lineage_node.LineageNode):
                 NOTE: If refresh_freq is not provided, then FeatureView will be registered as View on Snowflake backend
                     and there won't be extra storage cost.
             desc: description of the FeatureView.
+            warehouse: warehouse to refresh feature view. Not needed for static feature view (refresh_freq is None).
+                For managed feature view, this warehouse will overwrite the default warehouse of Feature Store if it is
+                specified, otherwise the default warehouse will be used.
             _kwargs: reserved kwargs for system generated args. NOTE: DO NOT USE.
         """
 
@@ -167,7 +172,7 @@ class FeatureView(lineage_node.LineageNode):
         self._refresh_freq: Optional[str] = refresh_freq
         self._database: Optional[SqlIdentifier] = None
         self._schema: Optional[SqlIdentifier] = None
-        self._warehouse: Optional[SqlIdentifier] = None
+        self._warehouse: Optional[SqlIdentifier] = SqlIdentifier(warehouse) if warehouse is not None else None
         self._refresh_mode: Optional[str] = None
         self._refresh_mode_reason: Optional[str] = None
         self._owner: Optional[str] = None
@@ -456,7 +461,7 @@ Got {len(self._feature_df.queries['queries'])}: {self._feature_df.queries['queri
 
         entities = []
         for e_json in json_dict["_entities"]:
-            e = Entity(e_json["name"], e_json["join_keys"], e_json["desc"])
+            e = Entity(e_json["name"], e_json["join_keys"], desc=e_json["desc"])
             e.owner = e_json["owner"]
             entities.append(e)
 
@@ -504,7 +509,7 @@ Got {len(self._feature_df.queries['queries'])}: {self._feature_df.queries['queri
                 original_exception=ValueError("No active warehouse selected in the current session"),
             )
 
-        fs = feature_store.FeatureStore(session, db_name, feature_store_name, session_warehouse)
+        fs = feature_store.FeatureStore(session, db_name, feature_store_name, default_warehouse=session_warehouse)
         return fs.get_feature_view(feature_view_name, version)  # type: ignore[no-any-return]
 
     @staticmethod

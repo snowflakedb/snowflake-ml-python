@@ -99,10 +99,6 @@ class Pipeline(base.BaseTransformer):
         must implement `fit` and `transform` methods.
         The final step can be a transform or estimator, that is, it must implement
         `fit` and `transform`/`predict` methods.
-        TODO: SKLearn pipeline expects last step(and only the last step) to be an estimator obj or a dummy
-                estimator(like None or passthrough). Currently this Pipeline class works with a list of all
-                transforms or a list of transforms ending with an estimator. Should we change this implementation
-                to only work with list of steps ending with an estimator or a dummy estimator like SKLearn?
 
         Args:
             steps: List of (name, transform) tuples (implementing `fit`/`transform`) that
@@ -111,6 +107,10 @@ class Pipeline(base.BaseTransformer):
         """
         super().__init__()
         self.steps = steps
+        # TODO(snandamuri): SKLearn pipeline expects last step(and only the last step) to be an estimator obj or a dummy
+        # estimator(like None or passthrough). Currently this Pipeline class works with a list of all
+        # transforms or a list of transforms ending with an estimator. Should we change this implementation
+        # to only work with list of steps ending with an estimator or a dummy estimator like SKLearn?
         self._is_final_step_estimator = Pipeline._is_estimator(steps[-1][1])
         self._is_fitted = False
         self._feature_names_in: List[np.ndarray[Any, np.dtype[Any]]] = []

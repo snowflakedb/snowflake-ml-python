@@ -118,7 +118,7 @@ class LineageNode:
             )
             domain = lineage_object["domain"].lower()
             if domain_filter is None or domain in domain_filter:
-                if domain in DOMAIN_LINEAGE_REGISTRY:
+                if domain in DOMAIN_LINEAGE_REGISTRY and lineage_object["status"] == "ACTIVE":
                     lineage_nodes.append(
                         DOMAIN_LINEAGE_REGISTRY[domain]._load_from_lineage_node(
                             self._session, lineage_object["name"], lineage_object.get("version")

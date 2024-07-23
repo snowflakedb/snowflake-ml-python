@@ -22,7 +22,7 @@ class Entity:
     It can also be used for FeatureView search and lineage tracking.
     """
 
-    def __init__(self, name: str, join_keys: List[str], desc: str = "") -> None:
+    def __init__(self, name: str, join_keys: List[str], *, desc: str = "") -> None:
         """
         Creates an Entity instance.
 
@@ -65,7 +65,7 @@ class Entity:
 
     @staticmethod
     def _construct_entity(name: str, join_keys: List[str], desc: str, owner: str) -> "Entity":
-        e = Entity(name, join_keys, desc)
+        e = Entity(name, join_keys, desc=desc)
         e.owner = owner
         return e
 

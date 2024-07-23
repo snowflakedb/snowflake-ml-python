@@ -1,4 +1,4 @@
-from typing import Dict, Optional, Union, cast
+from typing import Dict, List, Optional, Union, cast
 
 from snowflake import snowpark
 from snowflake.snowpark import context, functions
@@ -23,7 +23,7 @@ class SnowflakeConfigurationException(Exception):
 def call_sql_function(
     function: str,
     session: Optional[snowpark.Session],
-    *args: Union[str, snowpark.Column, Dict[str, Union[int, float]]],
+    *args: Union[str, List[str], snowpark.Column, Dict[str, Union[int, float]]],
 ) -> Union[str, snowpark.Column]:
     handle_as_column = False
 
@@ -40,7 +40,7 @@ def call_sql_function(
 
 
 def _call_sql_function_column(
-    function: str, *args: Union[str, snowpark.Column, Dict[str, Union[int, float]]]
+    function: str, *args: Union[str, List[str], snowpark.Column, Dict[str, Union[int, float]]]
 ) -> snowpark.Column:
     return cast(snowpark.Column, functions.builtin(function)(*args))
 
@@ -48,7 +48,7 @@ def _call_sql_function_column(
 def _call_sql_function_immediate(
     function: str,
     session: Optional[snowpark.Session],
-    *args: Union[str, snowpark.Column, Dict[str, Union[int, float]]],
+    *args: Union[str, List[str], snowpark.Column, Dict[str, Union[int, float]]],
 ) -> str:
     session = session or context.get_active_session()
     if session is None:

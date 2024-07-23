@@ -1,7 +1,9 @@
 import enum
+import inspect
 from typing import Any, Callable, Dict, Iterable, Optional, TypedDict
 
 import cloudpickle
+import numpy as np
 import pandas as pd
 
 from snowflake import snowpark
@@ -92,6 +94,7 @@ class Patch:
                         self._snowflake_model_file = put_res[0].target
 
                     model_file_location = f"{stage}/{self._snowflake_model_file}"
+
                     res = cloudpickle.loads(
                         session.call(
                             PATCH_SPROC_NAME,
@@ -169,6 +172,92 @@ class Patch:
         return patch
 
     @staticmethod
+    def create_native_patch(
+        session: Optional[snowpark.Session],
+        mode: PatchMode,
+        method: Callable[..., Any],
+        native_class: Any,
+        static: bool = False,
+        is_inference: bool = False,
+    ) -> Callable[..., Any]:
+        session = session or context.get_active_session()
+
+        if static:
+            # TODO: implement support for static patch
+            patch = Patch.create_sproc_patch(session, mode, method, static)
+
+        else:
+
+            def patch(self: Any, *args: Any, **kwargs: Any) -> Any:
+                stage = session.get_session_stage()
+                has_snowpandas = _has_snowpark_pandas(*args, **kwargs)
+                if has_snowpandas:
+                    if args and _is_dataset(args[0]):
+                        X = args[0]
+                    else:
+                        X = kwargs.get("X", kwargs.get("X_test", None))
+
+                    if len(args) > 1 and _is_dataset(args[1]):
+                        y = args[1]
+                    else:
+                        y = kwargs.get("y", None)
+                    snowpandas_df = SnowparkPandas.general.concat([X, y], axis=1) if y is not None else X
+                    snowpark_df = snowpandas_df.to_snowpark(index_label=INDEX)
+                    input_cols = [identifier.get_inferred_name(col) for col in X.columns]
+                    output_cols = input_cols
+                    label_cols = []
+                    if y is not None:
+                        if isinstance(y, SnowparkPandas.DataFrame):
+                            label_cols = [identifier.get_inferred_name(col) for col in y.columns]
+                        elif isinstance(y, SnowparkPandas.Series):
+                            label_cols = [identifier.get_inferred_name(y.name)]
+
+                    native_kwargs = {"input_cols": input_cols, "output_cols": output_cols, "drop_input_cols": True}
+                    if "label_cols" in inspect.signature(native_class.__init__).parameters:
+                        native_kwargs["label_cols"] = label_cols
+                    native_kwargs.update(kwargs)
+                    for key in ["X", "X_test", "y"]:
+                        native_kwargs.pop(key, None)
+
+                    if is_inference:
+                        # Fitting: pandas; inference: snowpandas.
+                        if (not hasattr(self, "_snowflake_model")) or (self._snowflake_model is None):
+                            udf_patch = Patch.create_udf_patch(session, method)
+                            return udf_patch(self, X)
+                        model = self._snowflake_model
+                    else:
+                        model = native_class(**native_kwargs)
+                        _copy_attributes(self, model)
+                    res = getattr(model, method.__name__)(snowpark_df)
+                else:
+                    res = method(self, *args, **kwargs)
+
+                if mode == PatchMode.UPDATE:
+                    self._snowflake_model = None
+                    for m in ["to_sklearn", "to_xgboost", "to_lightgbm"]:
+                        if hasattr(res, m):
+                            self.__dict__.update(getattr(res, m)().__dict__)
+                            self._snowflake_model = res
+                            break
+                    else:
+                        self.__dict__.update(res.__dict__)
+                    put_res = file_utils.stage_object(session, self, stage)
+                    self._snowflake_model_file = put_res[0].target
+                    return self
+                elif mode == PatchMode.RETURN:
+                    # TODO: convert numpy to snowpandas
+                    if has_snowpandas and isinstance(res, pd.DataFrame):
+                        res = SnowparkPandas.DataFrame(res)
+                    elif isinstance(res, snowpark.DataFrame):
+                        res = res.sort(INDEX).drop(INDEX).to_snowpark_pandas()
+                    return res
+                else:
+                    raise ValueError(f"Invalid mode: {mode}")
+
+        patch._patched = True  # type: ignore[attr-defined]
+        return patch
+
+    @staticmethod
     def is_patchable(*, module: Any = None, klass: Any = None, method_name: str) -> bool:
         if module is None and klass is None:
             raise ValueError("Both module and klass are None.")
@@ -197,3 +286,19 @@ def _has_snowpark_pandas(*args: Any, **kwargs: Any) -> bool:
     if any(check(arg) for arg in args + tuple(kwargs.values())):
         return True
     return False
+
+
+def _is_dataset(x: Any) -> bool:
+    return isinstance(x, SnowparkPandas.DataFrame) or isinstance(x, pd.DataFrame) or isinstance(x, np.ndarray)
+
+
+def _copy_attributes(from_obj: object, to_obj: object, include_privates: bool = False) -> None:
+    for attr_name in dir(from_obj):
+        try:
+            if (not include_privates) and attr_name.startswith("_"):
+                continue
+            if not attr_name.startswith("__") and not callable(getattr(from_obj, attr_name)):
+                setattr(to_obj, attr_name, getattr(from_obj, attr_name))
+        # undefined property (e.g., OrdinalEncoder.infrequent_categories_)
+        except AttributeError:
+            continue

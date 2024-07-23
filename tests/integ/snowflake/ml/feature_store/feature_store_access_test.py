@@ -198,7 +198,7 @@ class FeatureStoreAccessTest(parameterized.TestCase):
                 self._session,
                 self._test_database,
                 schema,
-                self._test_warehouse,
+                default_warehouse=self._test_warehouse,
                 **init_args,
             )
 

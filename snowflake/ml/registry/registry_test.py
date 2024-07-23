@@ -153,30 +153,30 @@ class RegistryTest(absltest.TestCase):
                 statement_params=mock.ANY,
             )
 
-    # def test_log_model_from_model_version(self) -> None:
-    #     m_model_version = mock.MagicMock()
-    #     with mock.patch.object(self.m_r._model_manager, "log_model") as mock_log_model:
-    #         self.m_r.log_model(
-    #             model=m_model_version,
-    #             model_name="MODEL",
-    #             version_name="v1",
-    #         )
-    #         mock_log_model.assert_called_once_with(
-    #             model=m_model_version,
-    #             model_name="MODEL",
-    #             version_name="v1",
-    #             comment=None,
-    #             metrics=None,
-    #             conda_dependencies=None,
-    #             pip_requirements=None,
-    #             python_version=None,
-    #             signatures=None,
-    #             sample_input_data=None,
-    #             code_paths=None,
-    #             ext_modules=None,
-    #             options=None,
-    #             statement_params=mock.ANY,
-    #         )
+    def test_log_model_from_model_version(self) -> None:
+        m_model_version = mock.MagicMock()
+        with mock.patch.object(self.m_r._model_manager, "log_model") as mock_log_model:
+            self.m_r.log_model(
+                model=m_model_version,
+                model_name="MODEL",
+                version_name="v1",
+            )
+            mock_log_model.assert_called_once_with(
+                model=m_model_version,
+                model_name="MODEL",
+                version_name="v1",
+                comment=None,
+                metrics=None,
+                conda_dependencies=None,
+                pip_requirements=None,
+                python_version=None,
+                signatures=None,
+                sample_input_data=None,
+                code_paths=None,
+                ext_modules=None,
+                options=None,
+                statement_params=mock.ANY,
+            )
 
     def test_delete_model(self) -> None:
         with mock.patch.object(self.m_r._model_manager, "delete_model") as mock_delete_model:

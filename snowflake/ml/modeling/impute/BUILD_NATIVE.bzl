@@ -19,6 +19,7 @@ def get_build_rules_for_native_impl():
         deps = [
             ":init",
             "//snowflake/ml/_internal:telemetry",
+            "//snowflake/ml/_internal/utils:formatting",
             "//snowflake/ml/_internal/exceptions:exceptions",
             "//snowflake/ml/modeling/framework",
         ],

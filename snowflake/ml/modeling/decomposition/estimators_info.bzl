@@ -10,3 +10,7 @@ estimator_info_list = [
     struct(class_name = "SparsePCA", normalized_class_name = "sparse_pca"),
     struct(class_name = "TruncatedSVD", normalized_class_name = "truncated_svd"),
 ]
+
+snowpark_pandas_estimator_info_list = estimator_info_list + [
+    struct(class_name = "SparseCoder", normalized_class_name = "sparse_coder"),
+]

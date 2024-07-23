@@ -1,0 +1,4 @@
+---
+source_data: citibike_trips
+label_columns: tripduration,trip_id
+add_id_column: trip_id

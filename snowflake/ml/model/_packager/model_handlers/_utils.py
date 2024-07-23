@@ -1,4 +1,9 @@
-from typing import Callable, Iterable, Optional, Sequence, cast
+import json
+from typing import Any, Callable, Iterable, Optional, Sequence, cast
+
+import numpy as np
+import numpy.typing as npt
+import pandas as pd
 
 from snowflake.ml.model import model_signature, type_hints as model_types
 from snowflake.ml.model._packager.model_meta import model_meta
@@ -40,6 +45,24 @@ def validate_signature(
     return model_meta
 
 
+def add_explain_method_signature(
+    model_meta: model_meta.ModelMetadata,
+    explain_method: str,
+    target_method: str,
+    output_return_type: model_signature.DataType = model_signature.DataType.DOUBLE,
+) -> model_meta.ModelMetadata:
+    if target_method not in model_meta.signatures:
+        raise ValueError(f"Signature for target method {target_method} is missing")
+    inputs = model_meta.signatures[target_method].inputs
+    model_meta.signatures[explain_method] = model_signature.ModelSignature(
+        inputs=inputs,
+        outputs=[
+            model_signature.FeatureSpec(dtype=output_return_type, name=f"{spec.name}_explanation") for spec in inputs
+        ],
+    )
+    return model_meta
+
+
 def get_target_methods(
     model: model_types.SupportedModelType,
     target_methods: Optional[Sequence[str]],
@@ -56,3 +79,37 @@ def validate_target_methods(model: model_types.SupportedModelType, target_method
     for method_name in target_methods:
         if not _is_callable(model, method_name):
             raise ValueError(f"Target method {method_name} is not callable or does not exist in the model.")
+
+
+def get_num_classes_if_exists(model: model_types.SupportedModelType) -> int:
+    num_classes = getattr(model, "classes_", [])
+    return len(num_classes)
+
+
+def convert_explanations_to_2D_df(
+    model: model_types.SupportedModelType, explanations: npt.NDArray[Any]
+) -> pd.DataFrame:
+    if explanations.ndim != 3:
+        return pd.DataFrame(explanations)
+
+    if hasattr(model, "classes_"):
+        classes_list = [cl for cl in model.classes_]  # type:ignore[union-attr]
+        len_classes = len(classes_list)
+        if explanations.shape[2] != len_classes:
+            raise ValueError(f"Model has {len_classes} classes but explanations have {explanations.shape[2]}")
+    else:
+        classes_list = [i for i in range(explanations.shape[2])]
+    exp_2d = []
+    # TODO (SNOW-1549044): Optimize this
+    for row in explanations:
+        col_list = []
+        for column in row:
+            class_explanations = {}
+            for cl, cl_exp in zip(classes_list, column):
+                if isinstance(cl, (int, np.integer)):
+                    cl = int(cl)
+                class_explanations[cl] = cl_exp
+            col_list.append(json.dumps(class_explanations))
+        exp_2d.append(col_list)
+
+    return pd.DataFrame(exp_2d)

@@ -11,7 +11,6 @@ from snowflake.ml._internal.exceptions import (
     error_codes,
     exceptions as snowml_exceptions,
 )
-from snowflake.ml._internal.lineage import data_source
 from snowflake.ml._internal.utils import (
     formatting,
     identifier,
@@ -177,18 +176,7 @@ class Dataset(lineage_node.LineageNode):
                 original_exception=RuntimeError("No Dataset version selected."),
             )
         if self._reader is None:
-            v = self.selected_version
-            self._reader = dataset_reader.DatasetReader(
-                self._session,
-                [
-                    data_source.DataSource(
-                        fully_qualified_name=self._lineage_node_name,
-                        version=v.name,
-                        url=v.url(),
-                        exclude_cols=(v.label_cols + v.exclude_cols),
-                    )
-                ],
-            )
+            self._reader = dataset_reader.DatasetReader.from_dataset(self, snowpark_session=self._session)
         return self._reader
 
     @staticmethod

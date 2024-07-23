@@ -1,4 +1,5 @@
-from typing import Any, Dict, Literal, Optional, Tuple, Union
+import json
+from typing import Any, Dict, List, Literal, Optional, Tuple, Union
 
 import numpy as np
 import numpy.typing as npt
@@ -20,6 +21,7 @@ def check_sp_df_res(
     check_exact: bool = False,
     atol: Optional[float] = None,
     rtol: Optional[float] = None,
+    deserialize_json: Optional[bool] = False,
 ) -> None:
     res_pd_df = snowpark_handler.SnowparkDataFrameHandler.convert_to_df(res_sp_df)
 
@@ -51,8 +53,28 @@ def check_sp_df_res(
         if rtol is not None:
             kwargs["rtol"] = rtol
 
+    res_pd_df = res_pd_df.sort_values(by=res_pd_df.columns.tolist()).reset_index(drop=True)
+    expected_pd_df = expected_pd_df.sort_values(by=expected_pd_df.columns.tolist()).reset_index(drop=True)
+
+    if deserialize_json:
+        for df in [res_pd_df, expected_pd_df]:
+            for col in df.columns:
+                if isinstance(df[col][0], str):
+                    df[col] = df[col].apply(json.loads)
+
     pd.testing.assert_frame_equal(
-        res_pd_df.sort_values(by=res_pd_df.columns.tolist()).reset_index(drop=True),
-        expected_pd_df.sort_values(by=expected_pd_df.columns.tolist()).reset_index(drop=True),
+        res_pd_df,
+        expected_pd_df,
         **kwargs,
     )
+
+
+def convert2D_json_to_3D(array: npt.NDArray[Any]) -> List[List[List[Any]]]:
+    final_array = []
+    for i in range(array.shape[0]):
+        tmp = []
+        for j in range(array.shape[1]):
+            json_to_dict = json.loads(array[i][j])
+            tmp.append([float(json_to_dict["0"]), float(json_to_dict["1"])])
+        final_array.append(tmp)
+    return final_array

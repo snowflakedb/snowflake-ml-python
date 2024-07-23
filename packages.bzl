@@ -13,6 +13,8 @@ PACKAGES = [
     "//snowflake/ml/utils:utils_pkg",
     "//snowflake/ml/fileset:fileset_pkg",
     "//snowflake/ml/registry:model_registry_pkg",
+    # snowpark_pandas package
+    "//snowflake/ml/snowpark_pandas:snowpark_pandas_pkg",
     # Auotgen packages
     "//snowflake/ml/modeling/linear_model:sklearn_linear_model_pkg",
     "//snowflake/ml/modeling/ensemble:sklearn_ensemble_pkg",

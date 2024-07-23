@@ -1,0 +1,29 @@
+---
+s3_url: s3://sfquickstarts/misc/demos/fraud_transactions.csv
+destination_table_name: fraud_transactions
+load_files_pattern: .*
+format:
+  type: csv
+  compression: auto
+  field_delimiter: ','
+  record_delimiter: \n
+  skip_header: 1
+  field_optionally_enclosed_by: none
+  trim_space: 'false'
+  error_on_column_count_mismatch: 'false'
+  escape: none
+  escape_unenclosed_field: none
+  date_format: auto
+  timestamp_format: auto
+  null_if: ('')
+  comment: file format for winequality data
+columns:
+  TRANSACTION_ID: integer
+  TX_DATETIME: datetime
+  CUSTOMER_ID: integer
+  TERMINAL_ID: integer
+  TX_AMOUNT: float
+  TX_TIME_SECONDS: integer
+  TX_TIME_DAYS: integer
+  TX_FRAUD: integer
+  TX_FRAUD_SCENARIO: integer

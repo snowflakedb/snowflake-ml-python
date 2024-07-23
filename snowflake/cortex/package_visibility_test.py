@@ -6,6 +6,9 @@ from snowflake import cortex
 class PackageVisibilityTest(absltest.TestCase):
     """Ensure that the functions in this package are visible externally."""
 
+    def test_classify_text_visible(self) -> None:
+        self.assertTrue(callable(cortex.ClassifyText))
+
     def test_complete_visible(self) -> None:
         self.assertTrue(callable(cortex.Complete))
         self.assertTrue(callable(cortex.CompleteOptions))

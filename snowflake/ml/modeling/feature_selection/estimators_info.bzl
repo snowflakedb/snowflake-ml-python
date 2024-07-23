@@ -8,3 +8,5 @@ estimator_info_list = [
     struct(class_name = "SequentialFeatureSelector", normalized_class_name = "sequential_feature_selector"),
     struct(class_name = "VarianceThreshold", normalized_class_name = "variance_threshold"),
 ]
+
+snowpark_pandas_estimator_info_list = estimator_info_list

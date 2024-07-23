@@ -273,7 +273,13 @@ def setup_feature_store(
     assert current_role is not None  # to make mypy happy
     try:
         session.use_role(producer_role)
-        fs = FeatureStore(session, database, schema, warehouse, creation_mode=CreationMode.CREATE_IF_NOT_EXIST)
+        fs = FeatureStore(
+            session,
+            database,
+            schema,
+            default_warehouse=warehouse,
+            creation_mode=CreationMode.CREATE_IF_NOT_EXIST,
+        )
     finally:
         session.use_role(current_role)
 

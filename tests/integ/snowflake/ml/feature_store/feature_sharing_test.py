@@ -42,7 +42,7 @@ class FeatureSharingTest(absltest.TestCase):
             self._session,
             FS_INTEG_TEST_DB,
             current_schema,
-            self._test_warehouse_name,
+            default_warehouse=self._test_warehouse_name,
             creation_mode=CreationMode.CREATE_IF_NOT_EXIST,
         )
         self._active_feature_store.append(fs)
