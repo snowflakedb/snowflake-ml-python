@@ -277,6 +277,7 @@ def send_api_usage_telemetry(
         ]
     ] = None,
     sfqids_extractor: Optional[Callable[..., List[str]]] = None,
+    subproject_extractor: Optional[Callable[[Any], str]] = None,
     custom_tags: Optional[Dict[str, Union[bool, int, str, float]]] = None,
 ) -> Callable[[Callable[_Args, _ReturnValue]], Callable[_Args, _ReturnValue]]:
     """
@@ -290,6 +291,7 @@ def send_api_usage_telemetry(
         conn_attr_name: Name of the SnowflakeConnection attribute in `self`.
         api_calls_extractor: Extract API calls from `self`.
         sfqids_extractor: Extract sfqids from `self`.
+        subproject_extractor: Extract subproject at runtime from `self`.
         custom_tags: Custom tags.
 
     Returns:
@@ -297,9 +299,13 @@ def send_api_usage_telemetry(
 
     Raises:
         TypeError: If `conn_attr_name` is provided but the conn attribute is not of type SnowflakeConnection.
+        ValueError: If both `subproject` and `subproject_extractor` are provided
 
     # noqa: DAR402
     """
+
+    if subproject is not None and subproject_extractor is not None:
+        raise ValueError("Specifying both subproject and subproject_extractor is not allowed")
 
     def decorator(func: Callable[_Args, _ReturnValue]) -> Callable[_Args, _ReturnValue]:
         @functools.wraps(func)
@@ -322,9 +328,13 @@ def send_api_usage_telemetry(
             if sfqids_extractor:
                 sfqids = sfqids_extractor(args[0])
 
+            subproject_name = subproject
+            if subproject_extractor is not None:
+                subproject_name = subproject_extractor(args[0])
+
             statement_params = get_function_usage_statement_params(
                 project=project,
-                subproject=subproject,
+                subproject=subproject_name,
                 function_category=TelemetryField.FUNC_CAT_USAGE.value,
                 function_name=_get_full_func_name(func),
                 function_parameters=params,
@@ -381,7 +391,7 @@ def send_api_usage_telemetry(
                         raise e.original_exception from e
 
             # TODO(hayu): [SNOW-750287] Optimize telemetry client to a singleton.
-            telemetry = _SourceTelemetryClient(conn=conn, project=project, subproject=subproject)
+            telemetry = _SourceTelemetryClient(conn=conn, project=project, subproject=subproject_name)
             telemetry_args = dict(
                 func_name=_get_full_func_name(func),
                 function_category=TelemetryField.FUNC_CAT_USAGE.value,

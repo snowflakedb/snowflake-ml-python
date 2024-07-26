@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import copy
+import warnings
 from typing import Any, Dict, Iterable, Optional, Type, Union
 
 import numpy as np
@@ -10,6 +11,7 @@ from sklearn import impute
 from snowflake import snowpark
 from snowflake.ml._internal import telemetry
 from snowflake.ml._internal.exceptions import error_codes, exceptions
+from snowflake.ml._internal.utils import formatting
 from snowflake.ml.modeling.framework import _utils, base
 from snowflake.snowpark import functions as F, types as T
 from snowflake.snowpark._internal import utils as snowpark_utils
@@ -170,6 +172,14 @@ class SimpleImputer(base.BaseTransformer):
         self.set_input_cols(input_cols)
         self.set_output_cols(output_cols)
         self.set_passthrough_cols(passthrough_cols)
+
+    def _is_integer_type(self, column_type: T.DataType) -> bool:
+        return (
+            isinstance(column_type, T.ByteType)
+            or isinstance(column_type, T.ShortType)
+            or isinstance(column_type, T.IntegerType)
+            or isinstance(column_type, T.LongType)
+        )
 
     def _reset(self) -> None:
         """
@@ -389,6 +399,22 @@ class SimpleImputer(base.BaseTransformer):
                 # Use `fillna` for replacing nans. Check if the column has a string data type, or coerce a float.
                 if not isinstance(input_col_datatypes[input_col], T.StringType):
                     statistic = float(statistic)
+
+                if self._is_integer_type(input_col_datatypes[input_col]):
+                    if statistic.is_integer():
+                        statistic = int(statistic)
+                    else:
+                        warnings.warn(
+                            formatting.unwrap(
+                                f"""
+                                Integer column may not be imputed with a non-integer value {statistic}.
+                                In order to impute a non-integer value, convert the column to FloatType before imputing.
+                                """
+                            ),
+                            category=UserWarning,
+                            stacklevel=1,
+                        )
+
                 transformed_dataset = transformed_dataset.na.fill({output_col: statistic})
             else:
                 transformed_dataset = transformed_dataset.na.replace(

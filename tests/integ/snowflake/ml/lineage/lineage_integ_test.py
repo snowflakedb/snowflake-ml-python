@@ -61,7 +61,7 @@ class TestSnowflakeLineage(common_test_base.CommonTestBase):
             self._session,
             self._current_db,
             self._test_schema,
-            self._session.get_current_warehouse(),
+            default_warehouse=self._session.get_current_warehouse(),
             creation_mode=CreationMode.CREATE_IF_NOT_EXIST,
         )
 
@@ -144,7 +144,7 @@ class TestSnowflakeLineage(common_test_base.CommonTestBase):
         assert isinstance(model_upstream[0], dataset.Dataset)
 
         # Case 4: lineage from Lineage nodes
-        ds_upstream = model_upstream[0].lineage(direction="upstream")
+        ds_upstream = model_upstream[0].lineage(direction="upstream", domain_filter=["feature_view"])
         self._check_lineage(
             ds_upstream,
             f"{self._current_db}.{self._test_schema}.{feature_view_name}",

@@ -30,6 +30,25 @@ py_library(
 )
 
 py_library(
+    name = "classify_text",
+    srcs = ["_classify_text.py"],
+    deps = [
+        ":util",
+        "//snowflake/ml/_internal:telemetry",
+    ],
+)
+
+py_test(
+    name = "classify_text_test",
+    srcs = ["classify_text_test.py"],
+    deps = [
+        ":classify_text",
+        ":test_util",
+        "//snowflake/ml/utils:connection_params",
+    ],
+)
+
+py_library(
     name = "complete",
     srcs = ["_complete.py"],
     deps = [
@@ -140,6 +159,7 @@ py_library(
         "__init__.py",
     ],
     deps = [
+        ":classify_text",
         ":complete",
         ":extract_answer",
         ":sentiment",

@@ -206,6 +206,18 @@ class WrapperGeneratorFactory:
         return class_object[1].__module__ == "sklearn.preprocessing._data"
 
     @staticmethod
+    def _is_preprocessing_module_obj(class_object: Tuple[str, type]) -> bool:
+        """Check if the given class belongs to the SKLearn preprocessing module.
+
+        Args:
+            class_object: Meta class object which needs to be checked.
+
+        Returns:
+            True if the class belongs to `sklearn.preprocessing` module, otherwise False.
+        """
+        return class_object[1].__module__.startswith("sklearn.preprocessing")
+
+    @staticmethod
     def _is_cross_decomposition_module_obj(class_object: Tuple[str, type]) -> bool:
         """Check if the given class belongs to the SKLearn cross_decomposition module.
 
@@ -675,6 +687,7 @@ class WrapperGeneratorBase:
         self._is_cross_decomposition_module_obj = WrapperGeneratorFactory._is_cross_decomposition_module_obj(
             self.class_object
         )
+        self._is_preprocessing_module_obj = WrapperGeneratorFactory._is_preprocessing_module_obj(self.class_object)
         self._is_regressor = WrapperGeneratorFactory._is_regressor_obj(self.class_object)
         self._is_classifier = WrapperGeneratorFactory._is_classifier_obj(self.class_object)
         self._is_meta_estimator = WrapperGeneratorFactory._is_meta_estimator_obj(self.class_object)
@@ -1013,6 +1026,14 @@ class SklearnWrapperGenerator(WrapperGeneratorBase):
 
         if "random_state" in self.original_init_signature.parameters.keys():
             self.test_estimator_input_args_list.append("random_state=0")
+
+        # Our preprocessing classes don't support sparse features
+        if "sparse" in self.original_init_signature.parameters.keys() and self._is_preprocessing_module_obj:
+            self.test_estimator_input_args_list.append("sparse=False")
+
+        # For the case of KBinsDiscretizer, we need to set encode to ordinal
+        # if "encode" in self.original_init_signature.parameters.keys() and self._is_preprocessing_module_obj:
+        #     self.test_estimator_input_args_list.append("encode='ordinal'")
 
         if (
             "max_iter" in self.original_init_signature.parameters.keys()

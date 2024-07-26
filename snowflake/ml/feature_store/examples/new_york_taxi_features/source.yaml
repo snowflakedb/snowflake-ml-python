@@ -1,0 +1,5 @@
+---
+source_data: nyc_yellow_trips
+label_columns: FARE_AMOUNT
+timestamp_column: TPEP_PICKUP_DATETIME
+epoch_to_timestamp_cols: TPEP_PICKUP_DATETIME,TPEP_DROPOFF_DATETIME

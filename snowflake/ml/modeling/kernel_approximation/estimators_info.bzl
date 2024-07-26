@@ -5,3 +5,5 @@ estimator_info_list = [
     struct(class_name = "RBFSampler", normalized_class_name = "rbf_sampler"),
     struct(class_name = "SkewedChi2Sampler", normalized_class_name = "skewed_chi2_sampler"),
 ]
+
+snowpark_pandas_estimator_info_list = estimator_info_list

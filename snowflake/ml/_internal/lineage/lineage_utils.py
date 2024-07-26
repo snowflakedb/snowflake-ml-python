@@ -1,9 +1,9 @@
 import copy
 import functools
-from typing import Any, Callable, List, Optional
+from typing import Any, Callable, List, Optional, get_args
 
 from snowflake import snowpark
-from snowflake.ml._internal.lineage import data_source
+from snowflake.ml.data import data_source
 
 _DATA_SOURCES_ATTR = "_data_sources"
 
@@ -39,7 +39,7 @@ def get_data_sources(*args: Any) -> Optional[List[data_source.DataSource]]:
     result: Optional[List[data_source.DataSource]] = None
     for arg in args:
         srcs = getattr(arg, _DATA_SOURCES_ATTR, None)
-        if isinstance(srcs, list) and all(isinstance(s, data_source.DataSource) for s in srcs):
+        if isinstance(srcs, list) and all(isinstance(s, get_args(data_source.DataSource)) for s in srcs):
             if result is None:
                 result = []
             result += srcs
@@ -49,7 +49,7 @@ def get_data_sources(*args: Any) -> Optional[List[data_source.DataSource]]:
 def set_data_sources(obj: Any, data_sources: Optional[List[data_source.DataSource]]) -> None:
     """Helper method for attaching data sources to an object"""
     if data_sources:
-        assert all(isinstance(ds, data_source.DataSource) for ds in data_sources)
+        assert all(isinstance(ds, get_args(data_source.DataSource)) for ds in data_sources)
     setattr(obj, _DATA_SOURCES_ATTR, data_sources)
 
 

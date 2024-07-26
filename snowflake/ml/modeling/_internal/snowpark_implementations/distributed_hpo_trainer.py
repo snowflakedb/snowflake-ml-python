@@ -41,7 +41,7 @@ cp.register_pickle_by_value(inspect.getmodule(snowpark_dataframe_utils.cast_snow
 
 _PROJECT = "ModelDevelopment"
 DEFAULT_UDTF_NJOBS = 3
-ENABLE_EFFICIENT_MEMORY_USAGE = False
+ENABLE_EFFICIENT_MEMORY_USAGE = True
 _UDTF_STAGE_NAME = f"MEMORY_EFFICIENT_UDTF_{str(uuid.uuid4()).replace('-', '_')}"
 
 

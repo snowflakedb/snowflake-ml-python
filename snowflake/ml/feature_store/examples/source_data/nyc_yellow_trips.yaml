@@ -1,0 +1,4 @@
+---
+s3_url: s3://sfquickstarts/misc/demos/nyc_yellow_trips/
+destination_table_name: nyc_yellow_trips
+load_files_pattern: .*_2016-01[.]parquet

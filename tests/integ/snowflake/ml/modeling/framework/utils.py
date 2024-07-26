@@ -72,6 +72,17 @@ DATA_CLIP = [
     ["7", "b", "g1ehQlL80t", -10.0, -12.564],
 ]
 
+DATA_INTEGERS = [
+    ["1", "c", "g1ehQlL80t", -1, 0],
+    ["2", "a", "zOyDvcyZ2s", None, 124],
+    ["3", "b", "zOyDvcyZ2s", 2, 2253463],
+    ["4", "A", "TuDOcLxToB", 3, None],
+    ["5", "d", "g1ehQlL80t", None, -1],
+    ["6", "b", "g1ehQlL80t", 4, None],
+    ["7", "b", "g1ehQlL80t", -10, -12],
+]
+
+
 SCHEMA = ["ID", "STR1", "STR2", "FLOAT1", "FLOAT2"]
 
 SCHEMA_BOOLEAN = ["ID", "STR1", "STR2", "BOOL1", "BOOL2"]

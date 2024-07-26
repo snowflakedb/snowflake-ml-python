@@ -3,12 +3,13 @@ from typing import Any, List, Optional, Union, get_args
 from absl.testing import absltest, parameterized
 
 from snowflake import snowpark
-from snowflake.ml._internal.lineage import data_source, lineage_utils
+from snowflake.ml._internal.lineage import lineage_utils
+from snowflake.ml.data import data_source
 from snowflake.ml.utils import connection_params
 from snowflake.snowpark import functions as F
 
 
-class DatasetDataFrameTest(parameterized.TestCase):
+class LineageUtilsTest(parameterized.TestCase):
     class TestSourcedObject:
         def __init__(self, sources: Optional[List[data_source.DataSource]]) -> None:
             setattr(self, lineage_utils._DATA_SOURCES_ATTR, sources)
@@ -17,7 +18,7 @@ class DatasetDataFrameTest(parameterized.TestCase):
         connection_parameters = connection_params.SnowflakeLoginOptions()
         self.session = snowpark.Session.builder.configs(connection_parameters).create()
 
-        self.datasource = data_source.DataSource("db.schema.my_ds", "v1", "snow://dataset/my_ds/versions/v1")
+        self.datasource = data_source.DatasetInfo("db.schema.my_ds", "v1", "snow://dataset/my_ds/versions/v1")
         self.df = lineage_utils.patch_dataframe(
             self.session.sql(
                 "SELECT SEQ4() AS ID"
@@ -47,24 +48,24 @@ class DatasetDataFrameTest(parameterized.TestCase):
             [],
         ),
         (
-            [TestSourcedObject([data_source.DataSource("foo", "v1", "foo_url")])],
-            [data_source.DataSource("foo", "v1", "foo_url")],
+            [TestSourcedObject([data_source.DatasetInfo("foo", "v1", "foo_url")])],
+            [data_source.DatasetInfo("foo", "v1", "foo_url")],
         ),
         (
             [
-                TestSourcedObject([data_source.DataSource("foo", "v1", "foo_url")]),
-                TestSourcedObject([data_source.DataSource("foo", "v2", "foo_url")]),
+                TestSourcedObject([data_source.DatasetInfo("foo", "v1", "foo_url")]),
+                TestSourcedObject([data_source.DatasetInfo("foo", "v2", "foo_url")]),
             ],
-            [data_source.DataSource("foo", "v1", "foo_url"), data_source.DataSource("foo", "v2", "foo_url")],
+            [data_source.DatasetInfo("foo", "v1", "foo_url"), data_source.DatasetInfo("foo", "v2", "foo_url")],
         ),
         # FIXME: Enable this test case once dedupe support added
         # (
         #     [
-        #         TestSourcedObject([data_source.DataSource("foo", "v1", "foo_url")]),
-        #         TestSourcedObject([data_source.DataSource("foo", "v1", "foo_url")]),
-        #         TestSourcedObject([data_source.DataSource("foo", "v2", "foo_url")]),
+        #         TestSourcedObject([data_source.DatasetInfo("foo", "v1", "foo_url")]),
+        #         TestSourcedObject([data_source.DatasetInfo("foo", "v1", "foo_url")]),
+        #         TestSourcedObject([data_source.DatasetInfo("foo", "v2", "foo_url")]),
         #     ],
-        #     [data_source.DataSource("foo", "v1", "foo_url"), data_source.DataSource("foo", "v2", "foo_url")],
+        #     [data_source.DatasetInfo("foo", "v1", "foo_url"), data_source.DatasetInfo("foo", "v2", "foo_url")],
         # ),
     )
     def test_get_data_sources(
@@ -76,8 +77,8 @@ class DatasetDataFrameTest(parameterized.TestCase):
         data_sources=[
             None,
             [],
-            [data_source.DataSource("foo", "v1", "foo_url")],
-            [data_source.DataSource("foo", "v1", "foo_url"), data_source.DataSource("foo", "v1", "foo_url")],
+            [data_source.DatasetInfo("foo", "v1", "foo_url")],
+            [data_source.DatasetInfo("foo", "v1", "foo_url"), data_source.DatasetInfo("foo", "v1", "foo_url")],
         ],
         inplace=[True, False],
     )

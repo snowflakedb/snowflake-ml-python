@@ -22,7 +22,7 @@ class Entity:
     It can also be used for FeatureView search and lineage tracking.
     """
 
-    def __init__(self, name: str, join_keys: List[str], desc: str = "") -> None:
+    def __init__(self, name: str, join_keys: List[str], *, desc: str = "") -> None:
         """
         Creates an Entity instance.
 
@@ -30,6 +30,23 @@ class Entity:
             name: name of the Entity.
             join_keys: join keys associated with a FeatureView, used for feature retrieval.
             desc: description of the Entity.
+
+        Example::
+
+            >>> fs = FeatureStore(...)
+            >>> e_1 = Entity(
+            ...     name="my_entity",
+            ...     join_keys=['col_1'],
+            ...     desc='My first entity.'
+            ... )
+            >>> fs.register_entity(e_1)
+            >>> fs.list_entities().show()
+            -----------------------------------------------------------
+            |"NAME"     |"JOIN_KEYS"  |"DESC"            |"OWNER"     |
+            -----------------------------------------------------------
+            |MY_ENTITY  |["COL_1"]    |My first entity.  |REGTEST_RL  |
+            -----------------------------------------------------------
+
         """
         self._validate(name, join_keys)
 
@@ -65,7 +82,7 @@ class Entity:
 
     @staticmethod
     def _construct_entity(name: str, join_keys: List[str], desc: str, owner: str) -> "Entity":
-        e = Entity(name, join_keys, desc)
+        e = Entity(name, join_keys, desc=desc)
         e.owner = owner
         return e
 

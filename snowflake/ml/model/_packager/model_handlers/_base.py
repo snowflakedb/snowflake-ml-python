@@ -1,4 +1,5 @@
 from abc import abstractmethod
+from enum import Enum
 from typing import Dict, Generic, Optional, Protocol, Type, final
 
 from typing_extensions import TypeGuard, Unpack
@@ -6,6 +7,15 @@ from typing_extensions import TypeGuard, Unpack
 from snowflake.ml.model import custom_model, type_hints as model_types
 from snowflake.ml.model._packager.model_handlers_migrator import base_migrator
 from snowflake.ml.model._packager.model_meta import model_meta
+
+
+class ModelObjective(Enum):
+    # This is not getting stored anywhere as metadata yet so it should be fine to slowly extend it for better coverage
+    UNKNOWN = "unknown"
+    BINARY_CLASSIFICATION = "binary_classification"
+    MULTI_CLASSIFICATION = "multi_classification"
+    REGRESSION = "regression"
+    RANKING = "ranking"
 
 
 class _BaseModelHandlerProtocol(Protocol[model_types._ModelType]):
@@ -16,7 +26,7 @@ class _BaseModelHandlerProtocol(Protocol[model_types._ModelType]):
 
     @classmethod
     @abstractmethod
-    def can_handle(cls, model: model_types.SupportedDataType) -> TypeGuard[model_types._ModelType]:
+    def can_handle(cls, model: model_types.SupportedModelType) -> TypeGuard[model_types._ModelType]:
         """Whether this handler could support the type of the `model`.
 
         Args:

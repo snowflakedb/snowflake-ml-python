@@ -45,5 +45,6 @@ py_package(
     packages = ["snowflake.ml"],
     deps = [
         ":feature_store_lib",
+        "//snowflake/ml/feature_store/examples:feature_store_examples",
     ],
 )

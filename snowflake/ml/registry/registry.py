@@ -1,5 +1,6 @@
+import warnings
 from types import ModuleType
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union, overload
 
 import pandas as pd
 
@@ -68,20 +69,7 @@ class Registry:
         """Get the location (database.schema) of the registry."""
         return ".".join([self._database_name.identifier(), self._schema_name.identifier()])
 
-    @telemetry.send_api_usage_telemetry(
-        project=_TELEMETRY_PROJECT,
-        subproject=_MODEL_TELEMETRY_SUBPROJECT,
-        func_params_to_log=[
-            "model_name",
-            "version_name",
-            "comment",
-            "metrics",
-            "conda_dependencies",
-            "pip_requirements",
-            "python_version",
-            "signatures",
-        ],
-    )
+    @overload
     def log_model(
         self,
         model: model_types.SupportedModelType,
@@ -127,6 +115,105 @@ class Registry:
                 Only supported when logging the following types of model:
                 Scikit-learn, Snowpark ML, PyTorch, TorchScript and Custom Model. Defaults to None.
             options (Dict[str, Any], optional): Additional model saving options.
+                Model Saving Options include:
+                - embed_local_ml_library: Embed local Snowpark ML into the code directory or folder.
+                    Override to True if the local Snowpark ML version is not available in the Snowflake Anaconda
+                    Channel. Otherwise, defaults to False
+                - relax_version: Whether or not relax the version constraints of the dependencies.
+                    It detects any ==x.y.z in specifiers and replaced with >=x.y, <(x+1). Defaults to True.
+                - function_type: Set the method function type globally. To set method function types individually see
+                  function_type in model_options.
+                - method_options: Per-method saving options including:
+                    - case_sensitive: Indicates whether the method and its signature should be case sensitive.
+                        This means when you refer the method in the SQL, you need to double quote it.
+                        This will be helpful if you need case to tell apart your methods or features, or you have
+                        non-alphabetic characters in your method or feature name. Defaults to False.
+                    - max_batch_size: Maximum batch size that the method could accept in the Snowflake Warehouse.
+                        Defaults to None, determined automatically by Snowflake.
+                    - function_type: One of supported model method function types (FUNCTION or TABLE_FUNCTION).
+        """
+        ...
+
+    @overload
+    def log_model(
+        self,
+        model: ModelVersion,
+        *,
+        model_name: str,
+        version_name: Optional[str] = None,
+    ) -> ModelVersion:
+        """
+        Log a model with a ModelVersion object.
+
+        Args:
+            model: Source ModelVersion object used to create the new ModelVersion object.
+            model_name: Name to identify the model.
+            version_name: Version identifier for the model. Combination of model_name and version_name must be unique.
+                If not specified, a random name will be generated.
+        """
+        ...
+
+    @telemetry.send_api_usage_telemetry(
+        project=_TELEMETRY_PROJECT,
+        subproject=_MODEL_TELEMETRY_SUBPROJECT,
+        func_params_to_log=[
+            "model_name",
+            "version_name",
+            "comment",
+            "metrics",
+            "conda_dependencies",
+            "pip_requirements",
+            "python_version",
+            "signatures",
+        ],
+    )
+    def log_model(
+        self,
+        model: Union[model_types.SupportedModelType, ModelVersion],
+        *,
+        model_name: str,
+        version_name: Optional[str] = None,
+        comment: Optional[str] = None,
+        metrics: Optional[Dict[str, Any]] = None,
+        conda_dependencies: Optional[List[str]] = None,
+        pip_requirements: Optional[List[str]] = None,
+        python_version: Optional[str] = None,
+        signatures: Optional[Dict[str, model_signature.ModelSignature]] = None,
+        sample_input_data: Optional[model_types.SupportedDataType] = None,
+        code_paths: Optional[List[str]] = None,
+        ext_modules: Optional[List[ModuleType]] = None,
+        options: Optional[model_types.ModelSaveOption] = None,
+    ) -> ModelVersion:
+        """
+        Log a model with various parameters and metadata, or a ModelVersion object.
+
+        Args:
+            model: Supported model or ModelVersion object.
+                - Supported model: Model object of supported types such as Scikit-learn, XGBoost, LightGBM, Snowpark ML,
+                PyTorch, TorchScript, Tensorflow, Tensorflow Keras, MLFlow, HuggingFace Pipeline, Sentence Transformers,
+                Peft-finetuned LLM, or Custom Model.
+                - ModelVersion: Source ModelVersion object used to create the new ModelVersion object.
+            model_name: Name to identify the model.
+            version_name: Version identifier for the model. Combination of model_name and version_name must be unique.
+                If not specified, a random name will be generated.
+            comment: Comment associated with the model version. Defaults to None.
+            metrics: A JSON serializable dictionary containing metrics linked to the model version. Defaults to None.
+            signatures: Model data signatures for inputs and outputs for various target methods. If it is None,
+                sample_input_data would be used to infer the signatures for those models that cannot automatically
+                infer the signature. If not None, sample_input_data should not be specified. Defaults to None.
+            sample_input_data: Sample input data to infer model signatures from. Defaults to None.
+            conda_dependencies: List of Conda package specifications. Use "[channel::]package [operator version]" syntax
+                to specify a dependency. It is a recommended way to specify your dependencies using conda. When channel
+                is not specified, Snowflake Anaconda Channel will be used. Defaults to None.
+            pip_requirements: List of Pip package specifications. Defaults to None.
+                Currently it is not supported since Model can only executed in Snowflake Warehouse where all
+                dependencies are required to be retrieved from Snowflake Anaconda Channel.
+            python_version: Python version in which the model is run. Defaults to None.
+            code_paths: List of directories containing code to import. Defaults to None.
+            ext_modules: List of external modules to pickle with the model object.
+                Only supported when logging the following types of model:
+                Scikit-learn, Snowpark ML, PyTorch, TorchScript and Custom Model. Defaults to None.
+            options (Dict[str, Any], optional): Additional model saving options.
 
                 Model Saving Options include:
 
@@ -146,9 +233,6 @@ class Registry:
                         Defaults to None, determined automatically by Snowflake.
                     - function_type: One of supported model method function types (FUNCTION or TABLE_FUNCTION).
 
-        Raises:
-            NotImplementedError: `pip_requirements` is not supported.
-
         Returns:
             ModelVersion: ModelVersion object corresponding to the model just logged.
         """
@@ -157,10 +241,13 @@ class Registry:
             subproject=_MODEL_TELEMETRY_SUBPROJECT,
         )
         if pip_requirements:
-            raise NotImplementedError(
-                "Currently `pip_requirements` is not supported since Model can only executed "
+            warnings.warn(
+                "Models logged specifying `pip_requirements` can not be executed "
                 "in Snowflake Warehouse where all dependencies are required to be retrieved "
-                "from Snowflake Anaconda Channel."
+                "from Snowflake Anaconda Channel. Specify model save option `include_pip_dependencies`"
+                "to log model with pip dependencies.",
+                category=UserWarning,
+                stacklevel=1,
             )
         return self._model_manager.log_model(
             model=model,
@@ -169,7 +256,7 @@ class Registry:
             comment=comment,
             metrics=metrics,
             conda_dependencies=conda_dependencies,
-            pip_requirements=None,
+            pip_requirements=pip_requirements,
             python_version=python_version,
             signatures=signatures,
             sample_input_data=sample_input_data,

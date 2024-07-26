@@ -40,8 +40,9 @@ jobs:
           summary: ${{ github.event.issue.title }}
           description: |
             ${{ github.event.issue.body }} \\ \\ _Created from GitHub Action_ for ${{ github.event.issue.html_url }}
-          # Assign triage-ml-platform-dl and set "Data Platform: ML Engineering" component.
-          fields: '{"customfield_11401":{"id":"14538"}, "assignee":{"id":"639020ab3c26ca7fa0d6eb3f"},"components":[{"id":"16520"}]}'
+          # Assign triage-ml-platform-dl and set "ML Platform" component (19112).
+          # See https://snowflakecomputing.atlassian.net/rest/api/2/project/SNOW/components for component information.
+          fields: '{"customfield_11401":{"id":"14538"}, "assignee":{"id":"639020ab3c26ca7fa0d6eb3f"},"components":[{"id":"19112"}]}'
 
       - name: Update GitHub Issue
         uses: ./jira/gajira-issue-update

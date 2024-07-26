@@ -210,7 +210,7 @@ class TestSnowflakeDataset(dataset_integ_test_base.TestSnowflakeDatasetBase):
     # Don't run in sprocs due to quirky schema handling in sproc (can't use USE SCHEMA but CREATE SCHEMA changes schema)
     def test_create_from_dataframe_fqn(self) -> None:
         """Test Dataset creation with fully qualified name"""
-        schema = dataset_integ_test_base.create_random_schema(self.session, self.DS_INTEG_TEST_SCHEMA)
+        schema = self.dbm.create_random_schema(self.DS_INTEG_TEST_SCHEMA)
         self.session.use_schema(self.schema)  # Keep session on main test schema
         try:
             dataset_name = f"{self.db}.{schema}.dataset_integ_create_from_dataframe_fqn"

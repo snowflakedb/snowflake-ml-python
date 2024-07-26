@@ -1,0 +1,32 @@
+---
+s3_url: s3://sfquickstarts/misc/demos/winequality-red.csv
+destination_table_name: winedata
+load_files_pattern: .*
+format:
+  type: csv
+  compression: auto
+  field_delimiter: ;
+  record_delimiter: \n
+  skip_header: 1
+  field_optionally_enclosed_by: none
+  trim_space: 'false'
+  error_on_column_count_mismatch: 'false'
+  escape: none
+  escape_unenclosed_field: none
+  date_format: auto
+  timestamp_format: auto
+  null_if: ('')
+  comment: file format for winequality data
+columns:
+  fixed_acidity: float
+  volatile_acidity: float
+  citric_acid: float
+  residual_sugar: float
+  chlorides: float
+  free_sulfur_dioxide: integer
+  total_sulfur_dioxide: integer
+  density: float
+  pH: float
+  sulphates: float
+  alcohol: float
+  quality: integer

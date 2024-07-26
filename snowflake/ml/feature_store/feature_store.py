@@ -135,6 +135,7 @@ _LIST_FEATURE_VIEW_SCHEMA = StructType(
         StructField("refresh_freq", StringType()),
         StructField("refresh_mode", StringType()),
         StructField("scheduling_state", StringType()),
+        StructField("warehouse", StringType()),
     ]
 )
 
@@ -205,6 +206,7 @@ class FeatureStore:
         database: str,
         name: str,
         default_warehouse: str,
+        *,
         creation_mode: CreationMode = CreationMode.FAIL_IF_NOT_EXIST,
     ) -> None:
         """
@@ -224,6 +226,32 @@ class FeatureStore:
             SnowflakeMLException: [ValueError] Required resources not exist when mode is FAIL_IF_NOT_EXIST.
             SnowflakeMLException: [RuntimeError] Failed to find resources.
             SnowflakeMLException: [RuntimeError] Failed to create feature store.
+
+        Example::
+
+            >>> from snowflake.ml.feature_store import (
+            ...     FeatureStore,
+            ...     CreationMode,
+            ... )
+            <BLANKLINE>
+            >>> # Create a new Feature Store:
+            >>> fs = FeatureStore(
+            ...     session=session,
+            ...     database="MYDB",
+            ...     name="MYSCHEMA",
+            ...     default_warehouse="MYWH",
+            ...     creation_mode=CreationMode.CREATE_IF_NOT_EXIST
+            ... )
+            <BLANKLINE>
+            >>> # Connect to an existing Feature Store:
+            >>> fs = FeatureStore(
+            ...     session=session,
+            ...     database="MYDB",
+            ...     name="MYSCHEMA",
+            ...     default_warehouse="MYWH",
+            ...     creation_mode=CreationMode.FAIL_IF_NOT_EXIST
+            ... )
+
         """
 
         database = SqlIdentifier(database)
@@ -284,6 +312,16 @@ class FeatureStore:
 
         Raises:
             SnowflakeMLException: If warehouse does not exists.
+
+        Example::
+
+            >>> fs = FeatureStore(...)
+            >>> fs.update_default_warehouse("MYWH_2")
+            >>> draft_fv = FeatureView("my_fv", ...)
+            >>> registered_fv = fs.register_feature_view(draft_fv, '2.0')
+            >>> print(registered_fv.warehouse)
+            MYWH_2
+
         """
         warehouse = SqlIdentifier(warehouse_name)
         warehouse_result = self._find_object("WAREHOUSES", warehouse)
@@ -301,15 +339,27 @@ class FeatureStore:
         Register Entity in the FeatureStore.
 
         Args:
-            entity: Entity object to register.
+            entity: Entity object to be registered.
 
         Returns:
             A registered entity object.
 
         Raises:
             SnowflakeMLException: [RuntimeError] Failed to find resources.
-        """
 
+        Example::
+
+            >>> fs = FeatureStore(...)
+            >>> e = Entity('BAR', ['A'], desc='entity bar')
+            >>> fs.register_entity(e)
+            >>> fs.list_entities().show()
+            --------------------------------------------------
+            |"NAME"  |"JOIN_KEYS"  |"DESC"      |"OWNER"     |
+            --------------------------------------------------
+            |BAR     |["A"]        |entity bar  |REGTEST_RL  |
+            --------------------------------------------------
+
+        """
         tag_name = self._get_entity_name(entity.name)
         found_rows = self._find_object("TAGS", tag_name)
         if len(found_rows) > 0:
@@ -341,12 +391,74 @@ class FeatureStore:
 
         return self.get_entity(entity.name)
 
+    def update_entity(self, name: str, *, desc: Optional[str] = None) -> Optional[Entity]:
+        """Update a registered entity with provided information.
+
+        Args:
+            name: Name of entity to update.
+            desc: Optional new description to apply. Default to None.
+
+        Raises:
+            SnowflakeMLException: Error happen when updating.
+
+        Returns:
+            A new entity with updated information or None if the entity doesn't exist.
+
+        Example::
+
+            >>> fs = FeatureStore(...)
+            <BLANKLINE>
+            >>> e = Entity(name='foo', join_keys=['COL_1'], desc='old desc')
+            >>> fs.list_entities().show()
+            ------------------------------------------------
+            |"NAME"  |"JOIN_KEYS"  |"DESC"    |"OWNER"     |
+            ------------------------------------------------
+            |FOO     |["COL_1"]    |old desc  |REGTEST_RL  |
+            ------------------------------------------------
+            <BLANKLINE>
+            >>> fs.update_entity('foo', desc='NEW DESC')
+            >>> fs.list_entities().show()
+            ------------------------------------------------
+            |"NAME"  |"JOIN_KEYS"  |"DESC"    |"OWNER"     |
+            ------------------------------------------------
+            |FOO     |["COL_1"]    |NEW DESC  |REGTEST_RL  |
+            ------------------------------------------------
+
+        """
+        name = SqlIdentifier(name)
+        found_rows = self.list_entities().filter(F.col("NAME") == name.resolved()).collect()
+
+        if len(found_rows) == 0:
+            warnings.warn(
+                f"Entity {name} does not exist.",
+                stacklevel=2,
+                category=UserWarning,
+            )
+            return None
+
+        new_desc = desc if desc is not None else found_rows[0]["DESC"]
+
+        try:
+            full_name = f"{self._config.full_schema_path}.{self._get_entity_name(name)}"
+            self._session.sql(f"ALTER TAG {full_name} SET COMMENT = '{new_desc}'").collect(
+                statement_params=self._telemetry_stmp
+            )
+        except Exception as e:
+            raise snowml_exceptions.SnowflakeMLException(
+                error_code=error_codes.INTERNAL_SNOWPARK_ERROR,
+                original_exception=RuntimeError(f"Failed to update entity `{name}`: {e}."),
+            ) from e
+
+        logger.info(f"Successfully updated Entity {name}.")
+        return self.get_entity(name)
+
     # TODO: add support to update column desc once SNOW-894249 is fixed
     @dispatch_decorator()
     def register_feature_view(
         self,
         feature_view: FeatureView,
         version: str,
+        *,
         block: bool = True,
         overwrite: bool = False,
     ) -> FeatureView:
@@ -355,12 +467,6 @@ class FeatureStore:
         Incremental maintenance for updates on the source data will be automated if refresh_freq is set.
         NOTE: Each new materialization will trigger a full FeatureView history refresh for the data included in the
               FeatureView.
-
-        Examples:
-            ...
-            draft_fv = FeatureView(name="my_fv", entities=[entities], feature_df)
-            registered_fv = fs.register_feature_view(feature_view=draft_fv, version="v1")
-            ...
 
         Args:
             feature_view: FeatureView instance to materialize.
@@ -380,6 +486,35 @@ class FeatureStore:
             SnowflakeMLException: [ValueError] Warehouse or default warehouse is not specified.
             SnowflakeMLException: [RuntimeError] Failed to create dynamic table, task, or view.
             SnowflakeMLException: [RuntimeError] Failed to find resources.
+
+        Example::
+
+            >>> fs = FeatureStore(...)
+            >>> # draft_fv is a local object that hasn't materiaized to Snowflake backend yet.
+            >>> feature_df = session.sql("select f_1, f_2 from source_table")
+            >>> draft_fv = FeatureView("my_fv", [entities], feature_df)
+            >>> print(draft_fv.status)
+            FeatureViewStatus.DRAFT
+            <BLANKLINE>
+            >>> fs.list_feature_views().select("NAME", "VERSION", "SCHEDULING_STATE").show()
+            -------------------------------------------
+            |"NAME"  |"VERSION"  |"SCHEDULING_STATE"  |
+            -------------------------------------------
+            |        |           |                    |
+            -------------------------------------------
+            <BLANKLINE>
+            >>> # registered_fv is a local object that maps to a Snowflake backend object.
+            >>> registered_fv = fs.register_feature_view(draft_fv, "v1")
+            >>> print(registered_fv.status)
+            FeatureViewStatus.ACTIVE
+            <BLANKLINE>
+            >>> fs.list_feature_views().select("NAME", "VERSION", "SCHEDULING_STATE").show()
+            -------------------------------------------
+            |"NAME"  |"VERSION"  |"SCHEDULING_STATE"  |
+            -------------------------------------------
+            |MY_FV   |v1         |ACTIVE              |
+            -------------------------------------------
+
         """
         version = FeatureViewVersion(version)
 
@@ -444,7 +579,7 @@ class FeatureStore:
                 column_descs,
                 tagging_clause_str,
                 schedule_task,
-                self._default_warehouse,
+                feature_view.warehouse if feature_view.warehouse is not None else self._default_warehouse,
                 block,
                 overwrite,
             )
@@ -473,6 +608,7 @@ class FeatureStore:
         self,
         name: str,
         version: str,
+        *,
         refresh_freq: Optional[str] = None,
         warehouse: Optional[str] = None,
         desc: Optional[str] = None,
@@ -492,27 +628,33 @@ class FeatureStore:
 
         Example::
 
-            >>> fs = FeatureStore(
-            ...     ...,
-            ...     default_warehouse='ORIGINAL_WH',
-            ... )
+            >>> fs = FeatureStore(...)
             >>> fv = FeatureView(
             ...     name='foo',
             ...     entities=[e1, e2],
             ...     feature_df=session.sql('...'),
-            ...     timestamp_col='timestamp',
-            ...     refresh_freq='1d',
-            ...     desc='this is old description'
+            ...     desc='this is old description',
             ... )
             >>> fv = fs.register_feature_view(feature_view=fv, version='v1')
+            >>> fs.list_feature_views().select("name", "version", "desc").show()
+            ------------------------------------------------
+            |"NAME"  |"VERSION"  |"DESC"                   |
+            ------------------------------------------------
+            |FOO     |v1         |this is old description  |
+            ------------------------------------------------
+            <BLANKLINE>
             >>> # update_feature_view will apply new arguments to the registered feature view.
             >>> new_fv = fs.update_feature_view(
             ...     name='foo',
             ...     version='v1',
-            ...     refresh_freq='2d',
-            ...     warehouse='MY_NEW_WH',
             ...     desc='that is new descption',
             ... )
+            >>> fs.list_feature_views().select("name", "version", "desc").show()
+            ------------------------------------------------
+            |"NAME"  |"VERSION"  |"DESC"                   |
+            ------------------------------------------------
+            |FOO     |v1         |THAT IS NEW DESCRIPTION  |
+            ------------------------------------------------
 
         Raises:
             SnowflakeMLException: [RuntimeError] If FeatureView is not managed and refresh_freq is defined.
@@ -555,20 +697,56 @@ class FeatureStore:
             ) from e
         return self.get_feature_view(name=name, version=version)
 
-    @dispatch_decorator()
+    @overload
+    def read_feature_view(self, feature_view: str, version: str) -> DataFrame:
+        ...
+
+    @overload
     def read_feature_view(self, feature_view: FeatureView) -> DataFrame:
+        ...
+
+    @dispatch_decorator()  # type: ignore[misc]
+    def read_feature_view(self, feature_view: Union[FeatureView, str], version: Optional[str] = None) -> DataFrame:
         """
-        Read FeatureView data.
+        Read values from a FeatureView.
 
         Args:
-            feature_view: FeatureView to retrieve data from.
+            feature_view: A FeatureView object to read from, or the name of feature view.
+                If name is provided then version also must be provided.
+            version: Optional version of feature view. Must set when argument feature_view is a str.
 
         Returns:
             Snowpark DataFrame(lazy mode) containing the FeatureView data.
 
         Raises:
+            SnowflakeMLException: [ValueError] version argument is missing when argument feature_view is a str.
             SnowflakeMLException: [ValueError] FeatureView is not registered.
+
+        Example::
+
+            >>> fs = FeatureStore(...)
+            >>> # Read from feature view name and version.
+            >>> fs.read_feature_view('foo', 'v1').show()
+            ------------------------------------------
+            |"NAME"  |"ID"  |"TITLE"  |"AGE"  |"TS"  |
+            ------------------------------------------
+            |jonh    |1     |boss     |20     |100   |
+            |porter  |2     |manager  |30     |200   |
+            ------------------------------------------
+            <BLANKLINE>
+            >>> # Read from feature view object.
+            >>> fv = fs.get_feature_view('foo', 'v1')
+            >>> fs.read_feature_view(fv).show()
+            ------------------------------------------
+            |"NAME"  |"ID"  |"TITLE"  |"AGE"  |"TS"  |
+            ------------------------------------------
+            |jonh    |1     |boss     |20     |100   |
+            |porter  |2     |manager  |30     |200   |
+            ------------------------------------------
+
         """
+        feature_view = self._validate_feature_view_name_and_version_input(feature_view, version)
+
         if feature_view.status == FeatureViewStatus.DRAFT or feature_view.version is None:
             raise snowml_exceptions.SnowflakeMLException(
                 error_code=error_codes.NOT_FOUND,
@@ -580,6 +758,7 @@ class FeatureStore:
     @dispatch_decorator()
     def list_feature_views(
         self,
+        *,
         entity_name: Optional[str] = None,
         feature_view_name: Optional[str] = None,
     ) -> DataFrame:
@@ -594,6 +773,24 @@ class FeatureStore:
 
         Returns:
             FeatureViews information as a Snowpark DataFrame.
+
+        Example::
+
+            >>> fs = FeatureStore(...)
+            >>> draft_fv = FeatureView(
+            ...     name='foo',
+            ...     entities=[e1, e2],
+            ...     feature_df=session.sql('...'),
+            ...     desc='this is description',
+            ... )
+            >>> fs.register_feature_view(feature_view=draft_fv, version='v1')
+            >>> fs.list_feature_views().select("name", "version", "desc").show()
+            --------------------------------------------
+            |"NAME"  |"VERSION"  |"DESC"               |
+            --------------------------------------------
+            |FOO     |v1         |this is description  |
+            --------------------------------------------
+
         """
         if feature_view_name is not None:
             feature_view_name = SqlIdentifier(feature_view_name)
@@ -622,6 +819,28 @@ class FeatureStore:
         Raises:
             SnowflakeMLException: [ValueError] FeatureView with name and version is not found,
                 or incurred exception when reconstructing the FeatureView object.
+
+        Example::
+
+            >>> fs = FeatureStore(...)
+            >>> # draft_fv is a local object that hasn't materiaized to Snowflake backend yet.
+            >>> draft_fv = FeatureView(
+            ...     name='foo',
+            ...     entities=[e1],
+            ...     feature_df=session.sql('...'),
+            ...     desc='this is description',
+            ... )
+            >>> fs.register_feature_view(feature_view=draft_fv, version='v1')
+            <BLANKLINE>
+            >>> # fv is a local object that maps to a Snowflake backend object.
+            >>> fv = fs.get_feature_view('foo', 'v1')
+            >>> print(f"name: {fv.name}")
+            >>> print(f"version:{fv.version}")
+            >>> print(f"desc:{fv.desc}")
+            name: FOO
+            version:v1
+            desc:this is description
+
         """
         name = SqlIdentifier(name)
         version = FeatureViewVersion(version)
@@ -636,25 +855,49 @@ class FeatureStore:
 
         return self._compose_feature_view(results[0][0], results[0][1], self.list_entities().collect())
 
-    @dispatch_decorator()
+    @overload
     def refresh_feature_view(self, feature_view: FeatureView) -> None:
+        ...
+
+    @overload
+    def refresh_feature_view(self, feature_view: str, version: str) -> None:
+        ...
+
+    @dispatch_decorator()  # type: ignore[misc]
+    def refresh_feature_view(self, feature_view: Union[FeatureView, str], version: Optional[str] = None) -> None:
         """Manually refresh a feature view.
 
         Args:
-            feature_view: A registered feature view.
+            feature_view: A registered feature view object, or the name of feature view.
+            version: Optional version of feature view. Must set when argument feature_view is a str.
 
         Example::
 
-        >>> fs = FeatureStore(...)
-        >>> fv = fs.get_feature_view(name='MY_FV', version='v1')
-        >>> fs.refresh_feature_view(fv)
-        >>> fs.get_refresh_history(fv).show()
-        ---------------------------------------------------------------------------------------------------------------
-        |"NAME"    |"STATE"    |"REFRESH_START_TIME"             |"REFRESH_END_TIME"               |"REFRESH_ACTION"  |
-        ---------------------------------------------------------------------------------------------------------------
-        |MY_FV$v1  |SUCCEEDED  |2024-07-02 13:45:01.11300-07:00  |2024-07-02 13:45:01.82700-07:00  |INCREMENTAL       |
-        ---------------------------------------------------------------------------------------------------------------
+            >>> fs = FeatureStore(...)
+            >>> fv = fs.get_feature_view(name='MY_FV', version='v1')
+            <BLANKLINE>
+            >>> # refresh with name and version
+            >>> fs.refresh_feature_view('MY_FV', 'v1')
+            >>> fs.get_refresh_history('MY_FV', 'v1').show()
+            -----------------------------------------------------------------------------------------------------
+            |"NAME"    |"STATE"    |"REFRESH_START_TIME"        |"REFRESH_END_TIME"          |"REFRESH_ACTION"  |
+            -----------------------------------------------------------------------------------------------------
+            |MY_FV$v1  |SUCCEEDED  |2024-07-10 14:53:58.504000  |2024-07-10 14:53:59.088000  |INCREMENTAL       |
+            -----------------------------------------------------------------------------------------------------
+            <BLANKLINE>
+            >>> # refresh with feature view object
+            >>> fs.refresh_feature_view(fv)
+            >>> fs.get_refresh_history(fv).show()
+            -----------------------------------------------------------------------------------------------------
+            |"NAME"    |"STATE"    |"REFRESH_START_TIME"        |"REFRESH_END_TIME"          |"REFRESH_ACTION"  |
+            -----------------------------------------------------------------------------------------------------
+            |MY_FV$v1  |SUCCEEDED  |2024-07-10 14:54:06.680000  |2024-07-10 14:54:07.226000  |INCREMENTAL       |
+            |MY_FV$v1  |SUCCEEDED  |2024-07-10 14:53:58.504000  |2024-07-10 14:53:59.088000  |INCREMENTAL       |
+            -----------------------------------------------------------------------------------------------------
+
         """
+        feature_view = self._validate_feature_view_name_and_version_input(feature_view, version)
+
         if feature_view.status == FeatureViewStatus.STATIC:
             warnings.warn(
                 "Static feature view can't be refreshed. You must set refresh_freq when register_feature_view().",
@@ -664,11 +907,24 @@ class FeatureStore:
             return
         self._update_feature_view_status(feature_view, "REFRESH")
 
-    def get_refresh_history(self, feature_view: FeatureView, verbose: bool = False) -> DataFrame:
+    @overload
+    def get_refresh_history(
+        self, feature_view: FeatureView, version: Optional[str] = None, *, verbose: bool = False
+    ) -> DataFrame:
+        ...
+
+    @overload
+    def get_refresh_history(self, feature_view: str, version: str, *, verbose: bool = False) -> DataFrame:
+        ...
+
+    def get_refresh_history(
+        self, feature_view: Union[FeatureView, str], version: Optional[str] = None, *, verbose: bool = False
+    ) -> DataFrame:
         """Get refresh hisotry statistics about a feature view.
 
         Args:
-            feature_view: A registered feature view.
+            feature_view: A registered feature view object, or the name of feature view.
+            version: Optional version of feature view. Must set when argument feature_view is a str.
             verbose: Return more detailed history when set true.
 
         Returns:
@@ -676,16 +932,30 @@ class FeatureStore:
 
         Example::
 
-        >>> fs = FeatureStore(...)
-        >>> fv = fs.get_feature_view(name='MY_FV', version='v1')
-        >>> fs.refresh_feature_view(fv)
-        >>> fs.get_refresh_history(fv).show()
-        ---------------------------------------------------------------------------------------------------------------
-        |"NAME"    |"STATE"    |"REFRESH_START_TIME"             |"REFRESH_END_TIME"               |"REFRESH_ACTION"  |
-        ---------------------------------------------------------------------------------------------------------------
-        |MY_FV$v1  |SUCCEEDED  |2024-07-02 13:45:01.11300-07:00  |2024-07-02 13:45:01.82700-07:00  |INCREMENTAL       |
-        ---------------------------------------------------------------------------------------------------------------
+            >>> fs = FeatureStore(...)
+            >>> fv = fs.get_feature_view(name='MY_FV', version='v1')
+            >>> # refresh with name and version
+            >>> fs.refresh_feature_view('MY_FV', 'v1')
+            >>> fs.get_refresh_history('MY_FV', 'v1').show()
+            -----------------------------------------------------------------------------------------------------
+            |"NAME"    |"STATE"    |"REFRESH_START_TIME"        |"REFRESH_END_TIME"          |"REFRESH_ACTION"  |
+            -----------------------------------------------------------------------------------------------------
+            |MY_FV$v1  |SUCCEEDED  |2024-07-10 14:53:58.504000  |2024-07-10 14:53:59.088000  |INCREMENTAL       |
+            -----------------------------------------------------------------------------------------------------
+            <BLANKLINE>
+            >>> # refresh with feature view object
+            >>> fs.refresh_feature_view(fv)
+            >>> fs.get_refresh_history(fv).show()
+            -----------------------------------------------------------------------------------------------------
+            |"NAME"    |"STATE"    |"REFRESH_START_TIME"        |"REFRESH_END_TIME"          |"REFRESH_ACTION"  |
+            -----------------------------------------------------------------------------------------------------
+            |MY_FV$v1  |SUCCEEDED  |2024-07-10 14:54:06.680000  |2024-07-10 14:54:07.226000  |INCREMENTAL       |
+            |MY_FV$v1  |SUCCEEDED  |2024-07-10 14:53:58.504000  |2024-07-10 14:53:59.088000  |INCREMENTAL       |
+            -----------------------------------------------------------------------------------------------------
+
         """
+        feature_view = self._validate_feature_view_name_and_version_input(feature_view, version)
+
         if feature_view.status == FeatureViewStatus.STATIC:
             warnings.warn(
                 "Static feature view never refreshes.",
@@ -719,43 +989,151 @@ class FeatureStore:
             """
         )
 
-    @dispatch_decorator()
+    @overload
     def resume_feature_view(self, feature_view: FeatureView) -> FeatureView:
+        ...
+
+    @overload
+    def resume_feature_view(self, feature_view: str, version: str) -> FeatureView:
+        ...
+
+    @dispatch_decorator()  # type: ignore[misc]
+    def resume_feature_view(self, feature_view: Union[FeatureView, str], version: Optional[str] = None) -> FeatureView:
         """
         Resume a previously suspended FeatureView.
 
         Args:
-            feature_view: FeatureView to resume.
+            feature_view: FeatureView object or name to resume.
+            version: Optional version of feature view. Must set when argument feature_view is a str.
 
         Returns:
             A new feature view with updated status.
+
+        Example::
+
+            >>> fs = FeatureStore(...)
+            >>> # you must already have feature views registered
+            >>> fv = fs.get_feature_view(name='MY_FV', version='v1')
+            >>> fs.suspend_feature_view('MY_FV', 'v1')
+            >>> fs.list_feature_views().select("NAME", "VERSION", "SCHEDULING_STATE").show()
+            -------------------------------------------
+            |"NAME"  |"VERSION"  |"SCHEDULING_STATE"  |
+            -------------------------------------------
+            |MY_FV   |v1         |SUSPENDED           |
+            -------------------------------------------
+            <BLANKLINE>
+            >>> fs.resume_feature_view('MY_FV', 'v1')
+            >>> fs.list_feature_views().select("NAME", "VERSION", "SCHEDULING_STATE").show()
+            -------------------------------------------
+            |"NAME"  |"VERSION"  |"SCHEDULING_STATE"  |
+            -------------------------------------------
+            |MY_FV   |v1         |ACTIVE              |
+            -------------------------------------------
+
         """
+        feature_view = self._validate_feature_view_name_and_version_input(feature_view, version)
         return self._update_feature_view_status(feature_view, "RESUME")
 
-    @dispatch_decorator()
+    @overload
     def suspend_feature_view(self, feature_view: FeatureView) -> FeatureView:
+        ...
+
+    @overload
+    def suspend_feature_view(self, feature_view: str, version: str) -> FeatureView:
+        ...
+
+    @dispatch_decorator()  # type: ignore[misc]
+    def suspend_feature_view(self, feature_view: Union[FeatureView, str], version: Optional[str] = None) -> FeatureView:
         """
         Suspend an active FeatureView.
 
         Args:
-            feature_view: FeatureView to suspend.
+            feature_view: FeatureView object or name to suspend.
+            version: Optional version of feature view. Must set when argument feature_view is a str.
 
         Returns:
             A new feature view with updated status.
+
+        Example::
+
+            >>> fs = FeatureStore(...)
+            >>> # assume you already have feature views registered
+            >>> fv = fs.get_feature_view(name='MY_FV', version='v1')
+            >>> fs.suspend_feature_view('MY_FV', 'v1')
+            >>> fs.list_feature_views().select("NAME", "VERSION", "SCHEDULING_STATE").show()
+            -------------------------------------------
+            |"NAME"  |"VERSION"  |"SCHEDULING_STATE"  |
+            -------------------------------------------
+            |MY_FV   |v1         |SUSPENDED           |
+            -------------------------------------------
+            <BLANKLINE>
+            >>> fs.resume_feature_view('MY_FV', 'v1')
+            >>> fs.list_feature_views().select("NAME", "VERSION", "SCHEDULING_STATE").show()
+            -------------------------------------------
+            |"NAME"  |"VERSION"  |"SCHEDULING_STATE"  |
+            -------------------------------------------
+            |MY_FV   |v1         |ACTIVE              |
+            -------------------------------------------
+
         """
+        feature_view = self._validate_feature_view_name_and_version_input(feature_view, version)
         return self._update_feature_view_status(feature_view, "SUSPEND")
 
-    @dispatch_decorator()
+    @overload
     def delete_feature_view(self, feature_view: FeatureView) -> None:
+        ...
+
+    @overload
+    def delete_feature_view(self, feature_view: str, version: str) -> None:
+        ...
+
+    @dispatch_decorator()  # type: ignore[misc]
+    def delete_feature_view(self, feature_view: Union[FeatureView, str], version: Optional[str] = None) -> None:
         """
         Delete a FeatureView.
 
         Args:
-            feature_view: FeatureView to delete.
+            feature_view: FeatureView object or name to delete.
+            version: Optional version of feature view. Must set when argument feature_view is a str.
 
         Raises:
             SnowflakeMLException: [ValueError] FeatureView is not registered.
+
+        Example::
+
+            >>> fs = FeatureStore(...)
+            >>> fv = FeatureView('FV0', ...)
+            >>> fv1 = fs.register_feature_view(fv, 'FIRST')
+            >>> fv2 = fs.register_feature_view(fv, 'SECOND')
+            >>> fs.list_feature_views().select('NAME', 'VERSION').show()
+            ----------------------
+            |"NAME"  |"VERSION"  |
+            ----------------------
+            |FV0     |SECOND     |
+            |FV0     |FIRST      |
+            ----------------------
+            <BLANKLINE>
+            >>> # delete with name and version
+            >>> fs.delete_feature_view('FV0', 'FIRST')
+            >>> fs.list_feature_views().select('NAME', 'VERSION').show()
+            ----------------------
+            |"NAME"  |"VERSION"  |
+            ----------------------
+            |FV0     |SECOND     |
+            ----------------------
+            <BLANKLINE>
+            >>> # delete with feature view object
+            >>> fs.delete_feature_view(fv2)
+            >>> fs.list_feature_views().select('NAME', 'VERSION').show()
+            ----------------------
+            |"NAME"  |"VERSION"  |
+            ----------------------
+            |        |           |
+            ----------------------
+
         """
+        feature_view = self._validate_feature_view_name_and_version_input(feature_view, version)
+
         # TODO: we should leverage lineage graph to check downstream deps, and block the deletion
         # if there're other FVs depending on this
         if feature_view.status == FeatureViewStatus.DRAFT or feature_view.version is None:
@@ -787,6 +1165,19 @@ class FeatureStore:
 
         Returns:
             Snowpark DataFrame containing the results.
+
+        Example::
+
+            >>> fs = FeatureStore(...)
+            >>> e_1 = Entity("my_entity", ['col_1'], desc='My first entity.')
+            >>> fs.register_entity(e_1)
+            >>> fs.list_entities().show()
+            -----------------------------------------------------------
+            |"NAME"     |"JOIN_KEYS"  |"DESC"            |"OWNER"     |
+            -----------------------------------------------------------
+            |MY_ENTITY  |["COL_1"]    |My first entity.  |REGTEST_RL  |
+            -----------------------------------------------------------
+
         """
         prefix_len = len(_ENTITY_TAG_PREFIX) + 1
         return cast(
@@ -816,6 +1207,19 @@ class FeatureStore:
             SnowflakeMLException: [ValueError] Entity is not found.
             SnowflakeMLException: [RuntimeError] Failed to retrieve tag reference information.
             SnowflakeMLException: [RuntimeError] Failed to find resources.
+
+        Example::
+
+            >>> fs = FeatureStore(...)
+            >>> # e_1 is a local object that hasn't registered to Snowflake backend yet.
+            >>> e_1 = Entity("my_entity", ['col_1'], desc='My first entity.')
+            >>> fs.register_entity(e_1)
+            <BLANKLINE>
+            >>> # e_2 is a local object that points a backend object in Snowflake.
+            >>> e_2 = fs.get_entity("my_entity")
+            >>> print(e_2)
+            Entity(name=MY_ENTITY, join_keys=['COL_1'], owner=REGTEST_RL, desc=My first entity.)
+
         """
         name = SqlIdentifier(name)
         try:
@@ -846,12 +1250,33 @@ class FeatureStore:
         Delete a previously registered Entity.
 
         Args:
-            name: Entity name.
+            name: Name of entity to be deleted.
 
         Raises:
             SnowflakeMLException: [ValueError] Entity with given name not exists.
             SnowflakeMLException: [RuntimeError] Failed to alter schema or drop tag.
             SnowflakeMLException: [RuntimeError] Failed to find resources.
+
+        Example::
+
+            >>> fs = FeatureStore(...)
+            >>> e_1 = Entity("my_entity", ['col_1'], desc='My first entity.')
+            >>> fs.register_entity(e_1)
+            >>> fs.list_entities().show()
+            -----------------------------------------------------------
+            |"NAME"     |"JOIN_KEYS"  |"DESC"            |"OWNER"     |
+            -----------------------------------------------------------
+            |MY_ENTITY  |["COL_1"]    |My first entity.  |REGTEST_RL  |
+            -----------------------------------------------------------
+            <BLANKLINE>
+            >>> fs.delete_entity("my_entity")
+            >>> fs.list_entities().show()
+            -------------------------------------------
+            |"NAME"  |"JOIN_KEYS"  |"DESC"  |"OWNER"  |
+            -------------------------------------------
+            |        |             |        |         |
+            -------------------------------------------
+
         """
         name = SqlIdentifier(name)
 
@@ -885,6 +1310,7 @@ class FeatureStore:
         self,
         spine_df: DataFrame,
         features: Union[List[Union[FeatureView, FeatureViewSlice]], List[str]],
+        *,
         spine_timestamp_col: Optional[str] = None,
         exclude_columns: Optional[List[str]] = None,
         include_feature_view_timestamp_col: bool = False,
@@ -907,6 +1333,23 @@ class FeatureStore:
 
         Raises:
             ValueError: if features is empty.
+
+        Example::
+
+            >>> fs = FeatureStore(...)
+            >>> # Assume you already have feature view registered.
+            >>> fv = fs.get_feature_view('my_fv', 'v1')
+            >>> # Spine dataframe has same join keys as the entity of fv.
+            >>> spine_df = session.create_dataframe(["1", "2"], schema=["id"])
+            >>> fs.retrieve_feature_values(spine_df, [fv]).show()
+            --------------------
+            |"END_STATION_ID"  |
+            --------------------
+            |505               |
+            |347               |
+            |466               |
+            --------------------
+
         """
         if spine_timestamp_col is not None:
             spine_timestamp_col = SqlIdentifier(spine_timestamp_col)
@@ -933,6 +1376,7 @@ class FeatureStore:
         self,
         spine_df: DataFrame,
         features: List[Union[FeatureView, FeatureViewSlice]],
+        *,
         save_as: Optional[str] = None,
         spine_timestamp_col: Optional[str] = None,
         spine_label_cols: Optional[List[str]] = None,
@@ -966,8 +1410,10 @@ class FeatureStore:
         Example::
 
             >>> fs = FeatureStore(session, ...)
+            >>> # Assume you already have feature view registered.
             >>> fv = fs.get_feature_view("MY_FV", "1")
-            >>> spine_df = session.create_dataframe(["id_1", "id_2"], schema=["id"])
+            >>> # Spine dataframe has same join keys as the entity of fv.
+            >>> spine_df = session.create_dataframe(["1", "2"], schema=["id"])
             >>> training_set = fs.generate_training_set(
             ...     spine_df,
             ...     [fv],
@@ -975,6 +1421,7 @@ class FeatureStore:
             ... )
             >>> print(type(training_set))
             <class 'snowflake.snowpark.table.Table'>
+            <BLANKLINE>
             >>> print(training_set.queries)
             {'queries': ['SELECT  *  FROM (my_training_set)'], 'post_actions': []}
 
@@ -1014,6 +1461,7 @@ class FeatureStore:
         name: str,
         spine_df: DataFrame,
         features: List[Union[FeatureView, FeatureViewSlice]],
+        *,
         version: Optional[str] = None,
         spine_timestamp_col: Optional[str] = None,
         spine_label_cols: Optional[List[str]] = None,
@@ -1030,6 +1478,7 @@ class FeatureStore:
         name: str,
         spine_df: DataFrame,
         features: List[Union[FeatureView, FeatureViewSlice]],
+        *,
         output_type: Literal["table"],
         version: Optional[str] = None,
         spine_timestamp_col: Optional[str] = None,
@@ -1046,6 +1495,7 @@ class FeatureStore:
         name: str,
         spine_df: DataFrame,
         features: List[Union[FeatureView, FeatureViewSlice]],
+        *,
         version: Optional[str] = None,
         spine_timestamp_col: Optional[str] = None,
         spine_label_cols: Optional[List[str]] = None,
@@ -1082,6 +1532,33 @@ class FeatureStore:
             SnowflakeMLException: [ValueError] Invalid output_type specified.
             SnowflakeMLException: [RuntimeError] Dataset name/version already exists.
             SnowflakeMLException: [RuntimeError] Failed to find resources.
+
+        Example::
+
+            >>> fs = FeatureStore(session, ...)
+            >>> # Assume you already have feature view registered.
+            >>> fv = fs.get_feature_view("MY_FV", "1")
+            >>> # Spine dataframe has same join keys as the entity of fv.
+            >>> spine_df = session.create_dataframe(["1", "2"], schema=["id"])
+            >>> my_dataset = fs.generate_dataset(
+            ...     "my_dataset"
+            ...     spine_df,
+            ...     [fv],
+            ... )
+            >>> # Current timestamp will be used as default version name.
+            >>> # You can explicitly overwrite by setting a version.
+            >>> my_dataset.list_versions()
+            ['2024_07_12_11_26_22']
+            <BLANKLINE>
+            >>> my_dataset.read.to_snowpark_dataframe().show(n=3)
+            -------------------------------------------------------
+            |"QUALITY"  |"FIXED_ACIDITY"     |"VOLATILE_ACIDITY"  |
+            -------------------------------------------------------
+            |3          |11.600000381469727  |0.5799999833106995  |
+            |3          |8.300000190734863   |1.0199999809265137  |
+            |3          |7.400000095367432   |1.184999942779541   |
+            -------------------------------------------------------
+
         """
         if output_type not in {"table", "dataset"}:
             raise snowml_exceptions.SnowflakeMLException(
@@ -1166,6 +1643,32 @@ class FeatureStore:
 
         Raises:
             ValueError: if dataset object is not generated from feature store.
+
+        Example::
+
+            >>> fs = FeatureStore(session, ...)
+            >>> # Assume you already have feature view registered.
+            >>> fv = fs.get_feature_view("MY_FV", "1.0")
+            >>> # Spine dataframe has same join keys as the entity of fv.
+            >>> spine_df = session.create_dataframe(["1", "2"], schema=["id"])
+            >>> my_dataset = fs.generate_dataset(
+            ...     "my_dataset"
+            ...     spine_df,
+            ...     [fv],
+            ... )
+            >>> fvs = fs.load_feature_views_from_dataset(my_dataset)
+            >>> print(len(fvs))
+            1
+            <BLANKLINE>
+            >>> print(type(fvs[0]))
+            <class 'snowflake.ml.feature_store.feature_view.FeatureView'>
+            <BLANKLINE>
+            >>> print(fvs[0].name)
+            MY_FV
+            <BLANKLINE>
+            >>> print(fvs[0].version)
+            1.0
+
         """
         assert ds.selected_version is not None
         source_meta = ds.selected_version._get_metadata()
@@ -1203,11 +1706,11 @@ class FeatureStore:
         if dryrun:
             logger.info(
                 "Following feature views and entities will be deleted."
-                + " Set 'dryrun=False' to perform the actual deletion."
+                + " Set 'dryrun=False' to perform the actual deletion.",
             )
             logger.info(f"Total {len(all_fvs_rows)} Feature views to be deleted:")
             all_fvs_df.show(n=len(all_fvs_rows))
-            logger.info(f"\nTotal {len(all_entities_rows)} entities to be deleted:")
+            logger.info(f"\nTotal {len(all_entities_rows)} Entities to be deleted:")
             all_entities_df.show(n=len(all_entities_rows))
             return
 
@@ -1686,6 +2189,7 @@ class FeatureStore:
         values.append(row["target_lag"] if "target_lag" in row else None)
         values.append(row["refresh_mode"] if "refresh_mode" in row else None)
         values.append(row["scheduling_state"] if "scheduling_state" in row else None)
+        values.append(row["warehouse"] if "warehouse" in row else None)
         output_values.append(values)
 
     def _lookup_feature_view_metadata(self, row: Row, fv_name: str) -> Tuple[_FeatureViewMetadata, str]:
@@ -1942,6 +2446,7 @@ class FeatureStore:
             SnowflakeMLException: [RuntimeError] Failed to lookup tags.
 
         Example::
+
             self._lookup_tags("TABLE", "MY_FV", [lambda d: d["tagName"] == "TARGET_TAG_NAME"])
 
         """
@@ -1979,6 +2484,7 @@ class FeatureStore:
             SnowflakeMLException: [RuntimeError] Failed to lookup tagged objects.
 
         Example::
+
             self._lookup_tagged_objects("TARGET_TAG_NAME", [lambda d: d["entityName"] == "MY_FV"])
 
         """
@@ -2024,3 +2530,23 @@ class FeatureStore:
                 ),
             )
         return sorted_versions
+
+    def _validate_feature_view_name_and_version_input(
+        self, feature_view: Union[FeatureView, str], version: Optional[str] = None
+    ) -> FeatureView:
+        if isinstance(feature_view, str):
+            if version is None:
+                raise snowml_exceptions.SnowflakeMLException(
+                    error_code=error_codes.INVALID_ARGUMENT,
+                    original_exception=ValueError("Version must be provided when argument feature_view is a str."),
+                )
+            feature_view = self.get_feature_view(feature_view, version)
+        elif not isinstance(feature_view, FeatureView):
+            raise snowml_exceptions.SnowflakeMLException(
+                error_code=error_codes.INVALID_ARGUMENT,
+                original_exception=ValueError(
+                    "Invalid type of argument feature_view. It must be either str or FeatureView type."
+                ),
+            )
+
+        return feature_view

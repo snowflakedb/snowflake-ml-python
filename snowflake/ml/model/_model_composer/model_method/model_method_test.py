@@ -34,7 +34,7 @@ _DUMMY_BLOB = model_blob_meta.ModelBlobMeta(
 
 class ModelMethodTest(absltest.TestCase):
     def test_model_method(self) -> None:
-        fg = function_generator.FunctionGenerator(pathlib.PurePosixPath("@a.b.c/abc/model.zip"))
+        fg = function_generator.FunctionGenerator(pathlib.PurePosixPath("@a.b.c/abc/model"))
 
         with tempfile.TemporaryDirectory() as workspace, tempfile.TemporaryDirectory() as tmpdir:
             with model_meta.create_model_metadata(
@@ -266,7 +266,9 @@ class ModelMethodOptionsTest(absltest.TestCase):
             "function_type": model_manifest_schema.ModelMethodFunctionTypes.TABLE_FUNCTION.value,
         }
         method_options = model_method.get_model_method_options_from_options(options=options, target_method="test")
-        assert method_options["function_type"] == model_manifest_schema.ModelMethodFunctionTypes.TABLE_FUNCTION.value
+        self.assertEqual(
+            method_options["function_type"], model_manifest_schema.ModelMethodFunctionTypes.TABLE_FUNCTION.value
+        )
 
         # method option overrides global.
         options = {
@@ -276,7 +278,15 @@ class ModelMethodOptionsTest(absltest.TestCase):
             },
         }
         method_options = model_method.get_model_method_options_from_options(options=options, target_method="test")
-        assert method_options["function_type"] == model_manifest_schema.ModelMethodFunctionTypes.FUNCTION.value
+        self.assertEqual(method_options["function_type"], model_manifest_schema.ModelMethodFunctionTypes.FUNCTION.value)
+
+        # explain methods should default to table function.
+        method_options = model_method.get_model_method_options_from_options(
+            options={"enable_explainability": True}, target_method="explain_test"
+        )
+        self.assertEqual(
+            method_options["function_type"], model_manifest_schema.ModelMethodFunctionTypes.TABLE_FUNCTION.value
+        )
 
 
 if __name__ == "__main__":

@@ -14,7 +14,7 @@ import inflection
 from absl import app
 
 from codegen import sklearn_wrapper_autogen as swa
-from snowflake.ml.snowpark_pandas import imports
+from snowflake.ml._internal.snowpark_pandassnowpark_pandas import imports
 
 
 @dataclass(frozen=True)
@@ -188,7 +188,7 @@ def get_snowpark_pandas_test_build_file_content(module: imports.ModuleInfo, modu
     return (
         'load("//codegen:codegen_rules.bzl", "autogen_snowpark_pandas_tests")\n'
         f'load("//{module_root_dir}:estimators_info.bzl", "snowpark_pandas_estimator_info_list")\n'
-        'package(default_visibility = ["//snowflake/ml/snowpark_pandas"])\n'
+        'package(default_visibility = ["//snowflake/ml/_internal/snowpark_pandas"])\n'
         "\nautogen_snowpark_pandas_tests(\n"
         f'    module = "{module.module_name}",\n'
         f'    module_root_dir = "{module_root_dir}",\n'

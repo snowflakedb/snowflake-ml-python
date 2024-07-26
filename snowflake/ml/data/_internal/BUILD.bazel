@@ -1,0 +1,29 @@
+load("//bazel:py_rules.bzl", "py_library", "py_test")
+
+package(default_visibility = ["//visibility:public"])
+
+py_library(
+    name = "ingestor_utils",
+    srcs = ["ingestor_utils.py"],
+    deps = [
+        "//snowflake/ml/fileset:snowfs",
+    ],
+)
+
+py_library(
+    name = "arrow_ingestor",
+    srcs = ["arrow_ingestor.py"],
+    deps = [
+        ":ingestor_utils",
+        "//snowflake/ml/data:data_ingestor",
+    ],
+)
+
+py_test(
+    name = "arrow_ingestor_test",
+    srcs = ["arrow_ingestor_test.py"],
+    deps = [
+        ":arrow_ingestor",
+        "//snowflake/ml/fileset:parquet_test_util",
+    ],
+)

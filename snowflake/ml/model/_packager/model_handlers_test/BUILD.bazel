@@ -1,6 +1,25 @@
-load("//bazel:py_rules.bzl", "py_test")
+load("//bazel:py_rules.bzl", "py_library", "py_test")
 
 package(default_visibility = ["//visibility:public"])
+
+py_library(
+    name = "test_utils",
+    testonly = True,
+    srcs = ["test_utils.py"],
+)
+
+py_test(
+    name = "_utils_test",
+    srcs = ["_utils_test.py"],
+    deps = [
+        "//snowflake/ml/model:model_signature",
+        "//snowflake/ml/model:type_hints",
+        "//snowflake/ml/model/_model_composer/model_method",
+        "//snowflake/ml/model/_packager/model_handlers:_utils",
+        "//snowflake/ml/model/_packager/model_meta",
+        "//snowflake/ml/model/_signatures:snowpark_handler",
+    ],
+)
 
 py_test(
     name = "catboost_test",
@@ -9,6 +28,7 @@ py_test(
         "//snowflake/ml/model:model_signature",
         "//snowflake/ml/model:type_hints",
         "//snowflake/ml/model/_packager:model_packager",
+        "//snowflake/ml/model/_packager/model_handlers_test:test_utils",
     ],
 )
 
@@ -99,6 +119,7 @@ py_test(
     deps = [
         "//snowflake/ml/model:model_signature",
         "//snowflake/ml/model/_packager:model_packager",
+        "//snowflake/ml/model/_packager/model_handlers_test:test_utils",
     ],
 )
 

@@ -1,6 +1,7 @@
 import json
 import logging
-from typing import Iterator, List, Optional, TypedDict, Union, cast
+import time
+from typing import Any, Callable, Iterator, List, Optional, TypedDict, Union, cast
 from urllib.parse import urlunparse
 
 import requests
@@ -52,6 +53,38 @@ class ResponseParseException(Exception):
     pass
 
 
+_MAX_RETRY_SECONDS = 30
+
+
+def retry(func: Callable[..., requests.Response]) -> Callable[..., requests.Response]:
+    def inner(*args: Any, **kwargs: Any) -> requests.Response:
+        deadline = cast(Optional[float], kwargs["deadline"])
+        kwargs = {key: value for key, value in kwargs.items() if key != "deadline"}
+        expRetrySeconds = 0.5
+        while True:
+            if deadline is not None and time.time() > deadline:
+                raise TimeoutError()
+            response = func(*args, **kwargs)
+            if response.status_code >= 200 and response.status_code < 300:
+                return response
+            retry_status_codes = [429, 503, 504]
+            if response.status_code not in retry_status_codes:
+                response.raise_for_status()
+            logger.debug(f"request failed with status code {response.status_code}, retrying")
+
+            # Formula: delay(i) = max(RetryAfterHeader, min(2^i, _MAX_RETRY_SECONDS)).
+            expRetrySeconds = min(2 * expRetrySeconds, _MAX_RETRY_SECONDS)
+            retrySeconds = expRetrySeconds
+            retryAfterHeader = response.headers.get("retry-after")
+            if retryAfterHeader is not None:
+                retrySeconds = max(retrySeconds, int(retryAfterHeader))
+            logger.debug(f"sleeping for {retrySeconds}s before retrying")
+            time.sleep(retrySeconds)
+
+    return inner
+
+
+@retry
 def _call_complete_rest(
     model: str,
     prompt: Union[str, List[ConversationMessage]],
@@ -78,7 +111,7 @@ def _call_complete_rest(
     scheme = "https"
     if hasattr(session.connection, "scheme"):
         scheme = session.connection.scheme
-    url = urlunparse((scheme, session.connection.host, "api/v2/cortex/inference/complete", "", "", ""))
+    url = urlunparse((scheme, session.connection.host, "api/v2/cortex/inference:complete", "", "", ""))
 
     headers = {
         "Content-Type": "application/json",
@@ -105,19 +138,21 @@ def _call_complete_rest(
             data["top_p"] = options["top_p"]
 
     logger.debug(f"making POST request to {url} (model={model}, stream={stream})")
-    response = requests.post(
+    return requests.post(
         url,
         json=data,
         headers=headers,
         stream=stream,
     )
-    response.raise_for_status()
-    return response
 
 
-def _process_rest_response(response: requests.Response, stream: bool = False) -> Union[str, Iterator[str]]:
+def _process_rest_response(
+    response: requests.Response,
+    stream: bool = False,
+    deadline: Optional[float] = None,
+) -> Union[str, Iterator[str]]:
     if stream:
-        return _return_stream_response(response)
+        return _return_stream_response(response, deadline)
 
     try:
         content = response.json()["choices"][0]["message"]["content"]
@@ -128,9 +163,11 @@ def _process_rest_response(response: requests.Response, stream: bool = False) ->
         raise ResponseParseException("Failed to parse message from response.") from e
 
 
-def _return_stream_response(response: requests.Response) -> Iterator[str]:
+def _return_stream_response(response: requests.Response, deadline: Optional[float]) -> Iterator[str]:
     client = SSEClient(response)
     for event in client.events():
+        if deadline is not None and time.time() > deadline:
+            raise TimeoutError()
         try:
             yield json.loads(event.data)["choices"][0]["delta"]["content"]
         except (json.JSONDecodeError, KeyError, IndexError):
@@ -209,13 +246,20 @@ def _complete_impl(
     use_rest_api_experimental: bool = False,
     stream: bool = False,
     function: str = "snowflake.cortex.complete",
+    timeout: Optional[float] = None,
+    deadline: Optional[float] = None,
 ) -> Union[str, Iterator[str], snowpark.Column]:
+    if timeout is not None and deadline is not None:
+        raise ValueError('only one of "timeout" and "deadline" must be set')
+    if timeout is not None:
+        deadline = time.time() + timeout
     if use_rest_api_experimental:
         if not isinstance(model, str):
             raise ValueError("in REST mode, 'model' must be a string")
         if not isinstance(prompt, str) and not isinstance(prompt, List):
             raise ValueError("in REST mode, 'prompt' must be a string or a list of ConversationMessage")
-        response = _call_complete_rest(model, prompt, options, session=session, stream=stream)
+        response = _call_complete_rest(model, prompt, options, session=session, stream=stream, deadline=deadline)
+        assert response.status_code >= 200 and response.status_code < 300
         return _process_rest_response(response, stream=stream)
     if stream is True:
         raise ValueError("streaming can only be enabled in REST mode, set use_rest_api_experimental=True")
@@ -233,6 +277,8 @@ def Complete(
     session: Optional[snowpark.Session] = None,
     use_rest_api_experimental: bool = False,
     stream: bool = False,
+    timeout: Optional[float] = None,
+    deadline: Optional[float] = None,
 ) -> Union[str, Iterator[str], snowpark.Column]:
     """Complete calls into the LLM inference service to perform completion.
 
@@ -246,6 +292,8 @@ def Complete(
         stream (bool): Enables streaming. When enabled, a generator function is returned that provides the streaming
             output as it is received. Each update is a string containing the new text content since the previous update.
             The use of streaming requires the experimental use_rest_api_experimental flag to be enabled.
+        timeout (float): Timeout in seconds to retry failed REST requests.
+        deadline (float): Time in seconds since the epoch (as returned by time.time()) to retry failed REST requests.
 
     Raises:
         ValueError: If `stream` is set to True and `use_rest_api_experimental` is set to False.
@@ -254,6 +302,15 @@ def Complete(
         A column of string responses.
     """
     try:
-        return _complete_impl(model, prompt, options, session, use_rest_api_experimental, stream)
+        return _complete_impl(
+            model,
+            prompt,
+            options=options,
+            session=session,
+            use_rest_api_experimental=use_rest_api_experimental,
+            stream=stream,
+            timeout=timeout,
+            deadline=deadline,
+        )
     except ValueError as err:
         raise err

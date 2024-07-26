@@ -1,5 +1,6 @@
 import datetime
 from typing import List, Optional
+from uuid import uuid4
 
 from snowflake import snowpark
 from snowflake.ml._internal.utils import identifier
@@ -76,6 +77,14 @@ class DBManager:
         self._session.sql(f"CREATE{or_replace_sql} SCHEMA{if_not_exists_sql} {full_qual_schema_name}").collect()
         return full_qual_schema_name
 
+    def create_random_schema(
+        self,
+        prefix: str = _COMMON_PREFIX,
+        db_name: Optional[str] = None,
+    ) -> str:
+        schema_name = f"{prefix}_{uuid4().hex.upper()}"
+        return self.create_schema(schema_name, db_name=db_name)
+
     def use_schema(
         self,
         schema_name: str,
@@ -112,8 +121,10 @@ class DBManager:
         if_exists_sql = " IF EXISTS" if if_exists else ""
         self._session.sql(f"DROP SCHEMA{if_exists_sql} {full_qual_schema_name}").collect()
 
-    def cleanup_schemas(self, db_name: Optional[str] = None, expire_days: int = 3) -> None:
-        schemas_df = self.show_schemas(f"{_COMMON_PREFIX}%", db_name)
+    def cleanup_schemas(
+        self, prefix: str = _COMMON_PREFIX, db_name: Optional[str] = None, expire_days: int = 3
+    ) -> None:
+        schemas_df = self.show_schemas(f"{prefix}%", db_name)
         stale_schemas = schemas_df.filter(
             f"\"created_on\" < dateadd('day', {-expire_days}, current_timestamp())"
         ).collect()

@@ -43,6 +43,45 @@ class LGBMModelHandler(_base.BaseModelHandler[Union["lightgbm.Booster", "lightgb
 
     MODELE_BLOB_FILE_OR_DIR = "model.pkl"
     DEFAULT_TARGET_METHODS = ["predict", "predict_proba"]
+    _BINARY_CLASSIFICATION_OBJECTIVES = ["binary"]
+    _MULTI_CLASSIFICATION_OBJECTIVES = ["multiclass", "multiclassova"]
+    _RANKING_OBJECTIVES = ["lambdarank", "rank_xendcg"]
+    _REGRESSION_OBJECTIVES = [
+        "regression",
+        "regression_l1",
+        "huber",
+        "fair",
+        "poisson",
+        "quantile",
+        "tweedie",
+        "mape",
+        "gamma",
+    ]
+
+    @classmethod
+    def get_model_objective(cls, model: Union["lightgbm.Booster", "lightgbm.LGBMModel"]) -> _base.ModelObjective:
+        import lightgbm
+
+        # does not account for cross-entropy and custom
+        if isinstance(model, lightgbm.LGBMClassifier):
+            num_classes = handlers_utils.get_num_classes_if_exists(model)
+            if num_classes == 2:
+                return _base.ModelObjective.BINARY_CLASSIFICATION
+            return _base.ModelObjective.MULTI_CLASSIFICATION
+        if isinstance(model, lightgbm.LGBMRanker):
+            return _base.ModelObjective.RANKING
+        if isinstance(model, lightgbm.LGBMRegressor):
+            return _base.ModelObjective.REGRESSION
+        model_objective = model.params["objective"]
+        if model_objective in cls._BINARY_CLASSIFICATION_OBJECTIVES:
+            return _base.ModelObjective.BINARY_CLASSIFICATION
+        if model_objective in cls._MULTI_CLASSIFICATION_OBJECTIVES:
+            return _base.ModelObjective.MULTI_CLASSIFICATION
+        if model_objective in cls._RANKING_OBJECTIVES:
+            return _base.ModelObjective.RANKING
+        if model_objective in cls._REGRESSION_OBJECTIVES:
+            return _base.ModelObjective.REGRESSION
+        return _base.ModelObjective.UNKNOWN
 
     @classmethod
     def can_handle(
@@ -105,6 +144,19 @@ class LGBMModelHandler(_base.BaseModelHandler[Union["lightgbm.Booster", "lightgb
                 sample_input_data=sample_input_data,
                 get_prediction_fn=get_prediction,
             )
+            if kwargs.get("enable_explainability", False):
+                output_type = model_signature.DataType.DOUBLE
+                if cls.get_model_objective(model) in [
+                    _base.ModelObjective.BINARY_CLASSIFICATION,
+                    _base.ModelObjective.MULTI_CLASSIFICATION,
+                ]:
+                    output_type = model_signature.DataType.STRING
+                model_meta = handlers_utils.add_explain_method_signature(
+                    model_meta=model_meta,
+                    explain_method="explain",
+                    target_method="predict",
+                    output_return_type=output_type,
+                )
 
         model_blob_path = os.path.join(model_blobs_dir_path, name)
         os.makedirs(model_blob_path, exist_ok=True)
@@ -130,6 +182,11 @@ class LGBMModelHandler(_base.BaseModelHandler[Union["lightgbm.Booster", "lightgb
             ],
             check_local_version=True,
         )
+        if kwargs.get("enable_explainability", False):
+            model_meta.env.include_if_absent(
+                [model_env.ModelDependency(requirement="shap", pip_name="shap")],
+                check_local_version=True,
+            )
 
         return None
 
@@ -197,6 +254,17 @@ class LGBMModelHandler(_base.BaseModelHandler[Union["lightgbm.Booster", "lightgb
                         df = pd.DataFrame(res)
 
                     return model_signature_utils.rename_pandas_df(df, signature.outputs)
+
+                @custom_model.inference_api
+                def explain_fn(self: custom_model.CustomModel, X: pd.DataFrame) -> pd.DataFrame:
+                    import shap
+
+                    explainer = shap.TreeExplainer(raw_model)
+                    df = handlers_utils.convert_explanations_to_2D_df(raw_model, explainer(X).values)
+                    return model_signature_utils.rename_pandas_df(df, signature.outputs)
+
+                if target_method == "explain":
+                    return explain_fn
 
                 return fn
 

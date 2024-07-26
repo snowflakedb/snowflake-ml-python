@@ -1,4 +1,7 @@
 import importlib
+import os
+import shutil
+import tempfile
 from functools import partial
 from typing import Literal
 
@@ -82,14 +85,19 @@ class ModelWithAdditionalImportTest(registry_model_test_base.RegistryModelTestBa
                 ext_modules=[my_module],
             )
         else:
-            code_path = importlib_resources.files("tests")._paths[0]
-            mv = self.registry.log_model(
-                my_model,
-                model_name=name,
-                version_name=version,
-                signatures={"predict": sig},
-                code_paths=[code_path],
-            )
+            src_path = importlib_resources.files("tests.integ.snowflake.ml.registry.model.my_module")
+            with tempfile.TemporaryDirectory() as tmpdir:
+                dst_path = os.path.join(tmpdir, "tests", "integ", "snowflake", "ml", "registry", "model", "my_module")
+                shutil.copytree(src_path, dst_path)
+
+                code_path = os.path.join(tmpdir, "tests")
+                mv = self.registry.log_model(
+                    my_model,
+                    model_name=name,
+                    version_name=version,
+                    signatures={"predict": sig},
+                    code_paths=[code_path],
+                )
 
         mv.run(X, function_name="predict")
 

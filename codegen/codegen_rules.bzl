@@ -178,7 +178,7 @@ def autogen_snowpark_pandas_tests(module, module_root_dir, snowpark_pandas_estim
             name = "{}_snowpark_pandas_test".format(e.normalized_class_name),
             srcs = [":generate_test_snowpark_pandas_{}".format(e.normalized_class_name)],
             deps = [
-                "//snowflake/ml/snowpark_pandas:snowpark_pandas_lib",
+                "//snowflake/ml/_internal/snowpark_pandas:snowpark_pandas_lib",
                 "//snowflake/ml/utils:connection_params",
             ],
             compatible_with_snowpark = False,

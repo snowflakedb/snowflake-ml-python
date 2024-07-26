@@ -1,0 +1,5 @@
+---
+source_data: winequality_red
+add_id_column: wine_id
+label_columns: quality
+excluded_columns: wine_id

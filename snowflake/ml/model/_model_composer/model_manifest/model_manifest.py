@@ -1,11 +1,12 @@
 import collections
 import copy
 import pathlib
+import warnings
 from typing import List, Optional, cast
 
 import yaml
 
-from snowflake.ml._internal.lineage import data_source
+from snowflake.ml.data import data_source
 from snowflake.ml.model import type_hints
 from snowflake.ml.model._model_composer.model_manifest import model_manifest_schema
 from snowflake.ml.model._model_composer.model_method import (
@@ -16,7 +17,6 @@ from snowflake.ml.model._packager.model_meta import (
     model_meta as model_meta_api,
     model_meta_schema,
 )
-from snowflake.snowpark import Session
 
 
 class ModelManifest:
@@ -36,9 +36,8 @@ class ModelManifest:
 
     def save(
         self,
-        session: Session,
         model_meta: model_meta_api.ModelMetadata,
-        model_file_rel_path: pathlib.PurePosixPath,
+        model_rel_path: pathlib.PurePosixPath,
         options: Optional[type_hints.ModelSaveOption] = None,
         data_sources: Optional[List[data_source.DataSource]] = None,
     ) -> None:
@@ -47,10 +46,10 @@ class ModelManifest:
 
         runtime_to_use = copy.deepcopy(model_meta.runtimes["cpu"])
         runtime_to_use.name = self._DEFAULT_RUNTIME_NAME
-        runtime_to_use.imports.append(model_file_rel_path)
+        runtime_to_use.imports.append(str(model_rel_path) + "/")
         runtime_dict = runtime_to_use.save(self.workspace_path)
 
-        self.function_generator = function_generator.FunctionGenerator(model_file_rel_path=model_file_rel_path)
+        self.function_generator = function_generator.FunctionGenerator(model_dir_rel_path=model_rel_path)
         self.methods: List[model_method.ModelMethod] = []
         for target_method in model_meta.signatures.keys():
             method = model_method.ModelMethod(
@@ -75,6 +74,16 @@ class ModelManifest:
                 "In this case, set case_sensitive as True for those methods to distinguish them."
             )
 
+        dependencies = model_manifest_schema.ModelRuntimeDependenciesDict(conda=runtime_dict["dependencies"]["conda"])
+        if options.get("include_pip_dependencies"):
+            warnings.warn(
+                "`include_pip_dependencies` specified as True: pip dependencies will be included and may not"
+                "be warehouse-compabible. The model may need to be run in SPCS.",
+                category=UserWarning,
+                stacklevel=1,
+            )
+            dependencies["pip"] = runtime_dict["dependencies"]["pip"]
+
         manifest_dict = model_manifest_schema.ModelManifestDict(
             manifest_version=model_manifest_schema.MODEL_MANIFEST_VERSION,
             runtimes={
@@ -82,9 +91,7 @@ class ModelManifest:
                     language="PYTHON",
                     version=runtime_to_use.runtime_env.python_version,
                     imports=runtime_dict["imports"],
-                    dependencies=model_manifest_schema.ModelRuntimeDependenciesDict(
-                        conda=runtime_dict["dependencies"]["conda"]
-                    ),
+                    dependencies=dependencies,
                 )
             },
             methods=[
@@ -127,12 +134,13 @@ class ModelManifest:
         result = []
         if data_sources:
             for source in data_sources:
-                result.append(
-                    model_manifest_schema.LineageSourceDict(
-                        # Currently, we only support lineage from Dataset.
-                        type=model_manifest_schema.LineageSourceTypes.DATASET.value,
-                        entity=source.fully_qualified_name,
-                        version=source.version,
+                if isinstance(source, data_source.DatasetInfo):
+                    result.append(
+                        model_manifest_schema.LineageSourceDict(
+                            # Currently, we only support lineage from Dataset.
+                            type=model_manifest_schema.LineageSourceTypes.DATASET.value,
+                            entity=source.fully_qualified_name,
+                            version=source.version,
+                        )
                     )
-                )
         return result

@@ -126,9 +126,11 @@ class FeatureView(lineage_node.LineageNode):
         name: str,
         entities: List[Entity],
         feature_df: DataFrame,
+        *,
         timestamp_col: Optional[str] = None,
         refresh_freq: Optional[str] = None,
         desc: str = "",
+        warehouse: Optional[str] = None,
         **_kwargs: Any,
     ) -> None:
         """
@@ -149,7 +151,33 @@ class FeatureView(lineage_node.LineageNode):
                 NOTE: If refresh_freq is not provided, then FeatureView will be registered as View on Snowflake backend
                     and there won't be extra storage cost.
             desc: description of the FeatureView.
+            warehouse: warehouse to refresh feature view. Not needed for static feature view (refresh_freq is None).
+                For managed feature view, this warehouse will overwrite the default warehouse of Feature Store if it is
+                specified, otherwise the default warehouse will be used.
             _kwargs: reserved kwargs for system generated args. NOTE: DO NOT USE.
+
+        Example::
+
+            >>> fs = FeatureStore(...)
+            >>> # draft_fv is a local object that hasn't materiaized to Snowflake backend yet.
+            >>> feature_df = session.sql("select f_1, f_2 from source_table")
+            >>> draft_fv = FeatureView(
+            ...     name="my_fv",
+            ...     entities=[e1, e2],
+            ...     feature_df=feature_df,
+            ...     timestamp_col='TS', # optional
+            ...     refresh_freq='1d',  # optional
+            ...     desc='A line about this feature view',  # optional
+            ...     warehouse='WH'      # optional, the warehouse used to refresh (managed) feature view
+            ... )
+            >>> print(draft_fv.status)
+            FeatureViewStatus.DRAFT
+            <BLANKLINE>
+            >>> # registered_fv is a local object that maps to a Snowflake backend object.
+            >>> registered_fv = fs.register_feature_view(draft_fv, "v1")
+            >>> print(registered_fv.status)
+            FeatureViewStatus.ACTIVE
+
         """
 
         self._name: SqlIdentifier = SqlIdentifier(name)
@@ -167,7 +195,7 @@ class FeatureView(lineage_node.LineageNode):
         self._refresh_freq: Optional[str] = refresh_freq
         self._database: Optional[SqlIdentifier] = None
         self._schema: Optional[SqlIdentifier] = None
-        self._warehouse: Optional[SqlIdentifier] = None
+        self._warehouse: Optional[SqlIdentifier] = SqlIdentifier(warehouse) if warehouse is not None else None
         self._refresh_mode: Optional[str] = None
         self._refresh_mode_reason: Optional[str] = None
         self._owner: Optional[str] = None
@@ -185,6 +213,33 @@ class FeatureView(lineage_node.LineageNode):
 
         Raises:
             ValueError: if selected feature names is not found in the FeatureView.
+
+        Example::
+
+            >>> fs = FeatureStore(...)
+            >>> e = fs.get_entity('TRIP_ID')
+            >>> # feature_df contains 3 features and 1 entity
+            >>> feature_df = session.table(source_table).select(
+            ...     'TRIPDURATION',
+            ...     'START_STATION_LATITUDE',
+            ...     'END_STATION_LONGITUDE',
+            ...     'TRIP_ID'
+            ... )
+            >>> darft_fv = FeatureView(name='F_TRIP', entities=[e], feature_df=feature_df)
+            >>> fv = fs.register_feature_view(darft_fv, version='1.0')
+            >>> # shows all 3 features
+            >>> fv.feature_names
+            ['TRIPDURATION', 'START_STATION_LATITUDE', 'END_STATION_LONGITUDE']
+            <BLANKLINE>
+            >>> # slice a subset of features
+            >>> fv_slice = fv.slice(['TRIPDURATION', 'START_STATION_LATITUDE'])
+            >>> fv_slice.names
+            ['TRIPDURATION', 'START_STATION_LATITUDE']
+            <BLANKLINE>
+            >>> # query the full set of features in original feature view
+            >>> fv_slice.feature_view_ref.feature_names
+            ['TRIPDURATION', 'START_STATION_LATITUDE', 'END_STATION_LONGITUDE']
+
         """
 
         res = []
@@ -196,14 +251,30 @@ class FeatureView(lineage_node.LineageNode):
         return FeatureViewSlice(self, res)
 
     def fully_qualified_name(self) -> str:
-        """Returns the fully qualified name (<database_name>.<schema_name>.<feature_view_name>) for the
-            FeatureView in Snowflake.
+        """
+        Returns the fully qualified name (<database_name>.<schema_name>.<feature_view_name>) for the
+        FeatureView in Snowflake.
 
         Returns:
             fully qualified name string.
 
         Raises:
             RuntimeError: if the FeatureView is not registered.
+
+        Example::
+
+            >>> fs = FeatureStore(...)
+            >>> e = fs.get_entity('TRIP_ID')
+            >>> feature_df = session.table(source_table).select(
+            ...     'TRIPDURATION',
+            ...     'START_STATION_LATITUDE',
+            ...     'TRIP_ID'
+            ... )
+            >>> darft_fv = FeatureView(name='F_TRIP', entities=[e], feature_df=feature_df)
+            >>> registered_fv = fs.register_feature_view(darft_fv, version='1.0')
+            >>> registered_fv.fully_qualified_name()
+            'MY_DB.MY_SCHEMA."F_TRIP$1.0"'
+
         """
         if self.status == FeatureViewStatus.DRAFT or self.version is None:
             raise RuntimeError(f"FeatureView {self.name} has not been registered.")
@@ -221,6 +292,22 @@ class FeatureView(lineage_node.LineageNode):
 
         Raises:
             ValueError: if feature name is not found in the FeatureView.
+
+        Example::
+
+            >>> fs = FeatureStore(...)
+            >>> e = fs.get_entity('TRIP_ID')
+            >>> feature_df = session.table(source_table).select('TRIPDURATION', 'START_STATION_LATITUDE', 'TRIP_ID')
+            >>> draft_fv = FeatureView(name='F_TRIP', entities=[e], feature_df=feature_df)
+            >>> draft_fv = draft_fv.attach_feature_desc({
+            ...     "TRIPDURATION": "Duration of a trip.",
+            ...     "START_STATION_LATITUDE": "Latitude of the start station."
+            ... })
+            >>> registered_fv = fs.register_feature_view(draft_fv, version='1.0')
+            >>> registered_fv.feature_descs
+            OrderedDict([('TRIPDURATION', 'Duration of a trip.'),
+                ('START_STATION_LATITUDE', 'Latitude of the start station.')])
+
         """
         for f, d in descs.items():
             f = SqlIdentifier(f)
@@ -254,6 +341,31 @@ class FeatureView(lineage_node.LineageNode):
 
     @desc.setter
     def desc(self, new_value: str) -> None:
+        """Set the description of feature view.
+
+        Args:
+            new_value: new value of description.
+
+        Example::
+
+            >>> fs = FeatureStore(...)
+            >>> e = fs.get_entity('TRIP_ID')
+            >>> darft_fv = FeatureView(
+            ...     name='F_TRIP',
+            ...     entities=[e],
+            ...     feature_df=feature_df,
+            ...     desc='old desc'
+            ... )
+            >>> fv_1 = fs.register_feature_view(darft_fv, version='1.0')
+            >>> print(fv_1.desc)
+            old desc
+            <BLANKLINE>
+            >>> darft_fv.desc = 'NEW DESC'
+            >>> fv_2 = fs.register_feature_view(darft_fv, version='2.0')
+            >>> print(fv_2.desc)
+            NEW DESC
+
+        """
         warnings.warn(
             "You must call register_feature_view() to make it effective. "
             "Or use update_feature_view(desc=<new_value>).",
@@ -288,6 +400,31 @@ class FeatureView(lineage_node.LineageNode):
 
     @refresh_freq.setter
     def refresh_freq(self, new_value: str) -> None:
+        """Set refresh frequency of feature view.
+
+        Args:
+            new_value: The new value of refresh frequency.
+
+        Example::
+
+            >>> fs = FeatureStore(...)
+            >>> e = fs.get_entity('TRIP_ID')
+            >>> darft_fv = FeatureView(
+            ...     name='F_TRIP',
+            ...     entities=[e],
+            ...     feature_df=feature_df,
+            ...     refresh_freq='1d'
+            ... )
+            >>> fv_1 = fs.register_feature_view(darft_fv, version='1.0')
+            >>> print(fv_1.refresh_freq)
+            1 day
+            <BLANKLINE>
+            >>> darft_fv.refresh_freq = '12h'
+            >>> fv_2 = fs.register_feature_view(darft_fv, version='2.0')
+            >>> print(fv_2.refresh_freq)
+            12 hours
+
+        """
         warnings.warn(
             "You must call register_feature_view() to make it effective. "
             "Or use update_feature_view(refresh_freq=<new_value>).",
@@ -310,6 +447,32 @@ class FeatureView(lineage_node.LineageNode):
 
     @warehouse.setter
     def warehouse(self, new_value: str) -> None:
+        """Set warehouse of feature view.
+
+        Args:
+            new_value: The new value of warehouse.
+
+        Example::
+
+            >>> fs = FeatureStore(...)
+            >>> e = fs.get_entity('TRIP_ID')
+            >>> darft_fv = FeatureView(
+            ...     name='F_TRIP',
+            ...     entities=[e],
+            ...     feature_df=feature_df,
+            ...     refresh_freq='1d',
+            ...     warehouse='WH1',
+            ... )
+            >>> fv_1 = fs.register_feature_view(darft_fv, version='1.0')
+            >>> print(fv_1.warehouse)
+            WH1
+            <BLANKLINE>
+            >>> darft_fv.warehouse = 'WH2'
+            >>> fv_2 = fs.register_feature_view(darft_fv, version='2.0')
+            >>> print(fv_2.warehouse)
+            WH2
+
+        """
         warnings.warn(
             "You must call register_feature_view() to make it effective. "
             "Or use update_feature_view(warehouse=<new_value>).",
@@ -456,7 +619,7 @@ Got {len(self._feature_df.queries['queries'])}: {self._feature_df.queries['queri
 
         entities = []
         for e_json in json_dict["_entities"]:
-            e = Entity(e_json["name"], e_json["join_keys"], e_json["desc"])
+            e = Entity(e_json["name"], e_json["join_keys"], desc=e_json["desc"])
             e.owner = e_json["owner"]
             entities.append(e)
 
@@ -504,7 +667,7 @@ Got {len(self._feature_df.queries['queries'])}: {self._feature_df.queries['queri
                 original_exception=ValueError("No active warehouse selected in the current session"),
             )
 
-        fs = feature_store.FeatureStore(session, db_name, feature_store_name, session_warehouse)
+        fs = feature_store.FeatureStore(session, db_name, feature_store_name, default_warehouse=session_warehouse)
         return fs.get_feature_view(feature_view_name, version)  # type: ignore[no-any-return]
 
     @staticmethod
