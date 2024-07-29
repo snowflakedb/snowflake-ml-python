@@ -17,7 +17,7 @@ build:
   noarch: python
 package:
   name: snowflake-ml-python
-  version: 1.5.4
+  version: 1.6.0
 requirements:
   build:
     - python

@@ -232,7 +232,7 @@ def _validate_pandas_df(data: pd.DataFrame, features: Sequence[core.BaseFeatureS
                     ),
                 )
         else:
-            if isinstance(data_col[0], list):
+            if isinstance(data_col.iloc[0], list):
                 if not ft_shape:
                     raise snowml_exceptions.SnowflakeMLException(
                         error_code=error_codes.INVALID_DATA,
@@ -266,7 +266,7 @@ def _validate_pandas_df(data: pd.DataFrame, features: Sequence[core.BaseFeatureS
                             ),
                         )
 
-            elif isinstance(data_col[0], np.ndarray):
+            elif isinstance(data_col.iloc[0], np.ndarray):
                 if not ft_shape:
                     raise snowml_exceptions.SnowflakeMLException(
                         error_code=error_codes.INVALID_DATA,
@@ -297,7 +297,7 @@ def _validate_pandas_df(data: pd.DataFrame, features: Sequence[core.BaseFeatureS
                             ),
                         )
 
-            elif isinstance(data_col[0], str):
+            elif isinstance(data_col.iloc[0], str):
                 if ft_shape is not None:
                     raise snowml_exceptions.SnowflakeMLException(
                         error_code=error_codes.INVALID_DATA,
@@ -316,7 +316,7 @@ def _validate_pandas_df(data: pd.DataFrame, features: Sequence[core.BaseFeatureS
                         ),
                     )
 
-            elif isinstance(data_col[0], bytes):
+            elif isinstance(data_col.iloc[0], bytes):
                 if ft_shape is not None:
                     raise snowml_exceptions.SnowflakeMLException(
                         error_code=error_codes.INVALID_DATA,

@@ -9,10 +9,16 @@ from numpy import typing as npt
 from snowflake.ml._internal.exceptions import fileset_errors
 from snowflake.ml.fileset import fileset
 from tests.integ.snowflake.ml.fileset import fileset_integ_utils
-from tests.integ.snowflake.ml.test_utils import common_test_base, test_env_utils
+from tests.integ.snowflake.ml.test_utils import (
+    common_test_base,
+    db_manager,
+    test_env_utils,
+)
 
 np.random.seed(0)
 random.seed(0)
+
+FILESET_INTEG_SCHEMA = "FILESET_INTEG_TEST"
 
 
 class TestSnowflakeFileSetBase(common_test_base.CommonTestBase):
@@ -24,9 +30,11 @@ class TestSnowflakeFileSetBase(common_test_base.CommonTestBase):
     def setUpClass(cls) -> None:
         super().setUpClass()
         cls.snowpark_session = test_env_utils.get_available_session()
+        cls.dbm = db_manager.DBManager(cls.snowpark_session)
+        cls.dbm.cleanup_schemas(FILESET_INTEG_SCHEMA)  # Clean up any old schemas
         cls.sf_connection = cls.snowpark_session._conn._conn
         cls.db = cls.snowpark_session.get_current_database()
-        cls.schema = cls.snowpark_session.get_current_schema()
+        cls.schema = cls.dbm.create_random_schema(FILESET_INTEG_SCHEMA)
         cls.num_rows = 1500000
         cls.query = fileset_integ_utils.get_fileset_query(cls.num_rows)
         cls.stage = f"{cls.db}.{cls.schema}.{cls.table_name}_{uuid.uuid4().hex}"
@@ -35,7 +43,7 @@ class TestSnowflakeFileSetBase(common_test_base.CommonTestBase):
     @classmethod
     def tearDownClass(cls) -> None:
         super().tearDownClass()
-        cls.snowpark_session.sql(f"drop stage if exists {cls.stage}").collect()
+        cls.dbm.drop_stage(cls.stage, if_exists=True)
 
     def _test_fileset_make_and_call(
         self,

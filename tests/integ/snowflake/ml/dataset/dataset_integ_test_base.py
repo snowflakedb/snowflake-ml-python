@@ -1,16 +1,18 @@
 import random
-from typing import Any, Callable, Dict, Generator, Optional
-from uuid import uuid4
+from typing import Any, Callable, Dict, Generator
 
 import numpy as np
 from absl.testing import absltest
 from numpy import typing as npt
 
 from snowflake.ml import dataset
-from snowflake.snowpark import Session
 from snowflake.snowpark._internal import utils as snowpark_utils
 from tests.integ.snowflake.ml.fileset import fileset_integ_utils
-from tests.integ.snowflake.ml.test_utils import common_test_base, test_env_utils
+from tests.integ.snowflake.ml.test_utils import (
+    common_test_base,
+    db_manager,
+    test_env_utils,
+)
 
 np.random.seed(0)
 random.seed(0)
@@ -34,15 +36,18 @@ class TestSnowflakeDatasetBase(common_test_base.CommonTestBase):
     def setUpClass(cls) -> None:
         super().setUpClass()
         cls.session = test_env_utils.get_available_session()
+        cls.dbm = db_manager.DBManager(cls.session)
         cls.num_rows = 10000
         cls.query = fileset_integ_utils.get_fileset_query(cls.num_rows)
         cls.test_table = "test_table"
         if not snowpark_utils.is_in_stored_procedure():  # type: ignore[no-untyped-call]
-            cls.session.sql(f"CREATE DATABASE IF NOT EXISTS {cls.DS_INTEG_TEST_DB}").collect()
-            cls.session.use_database(cls.DS_INTEG_TEST_DB)
+            cls.dbm.create_database(cls.DS_INTEG_TEST_DB, if_not_exists=True)
+            cls.dbm.cleanup_schemas(cls.DS_INTEG_TEST_SCHEMA, cls.DS_INTEG_TEST_DB)
+            cls.dbm.use_database(cls.DS_INTEG_TEST_DB)
 
             cls.db = cls.session.get_current_database()
-            cls.schema = create_random_schema(cls.session, cls.DS_INTEG_TEST_SCHEMA, database=cls.db)
+            cls.schema = cls.dbm.create_random_schema(cls.DS_INTEG_TEST_SCHEMA)
+            cls.schema = f'"{cls.schema}"'  # Need quotes around schema name for regex matches later
         else:
             cls.db = cls.session.get_current_database()
             cls.schema = cls.session.get_current_schema()
@@ -51,8 +56,7 @@ class TestSnowflakeDatasetBase(common_test_base.CommonTestBase):
     @classmethod
     def tearDownClass(cls) -> None:
         if not snowpark_utils.is_in_stored_procedure():  # type: ignore[no-untyped-call]
-            cls.session.sql(f"DROP SCHEMA IF EXISTS {cls.schema}").collect()
-            cleanup_schemas(cls.session, f"{cls.DS_INTEG_TEST_SCHEMA}%", cls.db)
+            cls.dbm.drop_schema(cls.schema, if_exists=True)
             cls.session.close()
         super().tearDownClass()
 
@@ -154,23 +158,6 @@ class TestSnowflakeDatasetBase(common_test_base.CommonTestBase):
                 self.assertAlmostEqual(
                     fileset_integ_utils.get_column_avg(key, expected_num_rows), actual_avg_counter[key], 1
                 )
-
-
-def create_random_schema(
-    session: Session, prefix: str, database: Optional[str] = None, additional_options: str = ""
-) -> str:
-    database = database or session.get_current_database()
-    schema = f'"{prefix}_{uuid4().hex.upper()}"'
-    session.sql(f"CREATE SCHEMA IF NOT EXISTS {database}.{schema} {additional_options}").collect()
-    return schema
-
-
-def cleanup_schemas(session: Session, schema: str, database: Optional[str] = None, expire_days: int = 1) -> None:
-    database = database or session.get_current_database()
-    schemas_df = session.sql(f"SHOW SCHEMAS LIKE '{schema}' IN DATABASE {database}")
-    stale_schemas = schemas_df.filter(f"\"created_on\" < dateadd('day', {-expire_days}, current_timestamp())").collect()
-    for stale_schema in stale_schemas:
-        session.sql(f"DROP SCHEMA IF EXISTS {database}.{stale_schema.name}").collect()
 
 
 if __name__ == "__main__":

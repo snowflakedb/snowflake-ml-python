@@ -55,7 +55,7 @@ class FeatureStoreCompatibilityTest(absltest.TestCase):
             self._session,
             FS_COMPATIBIILTY_TEST_DB,
             FS_COMPATIBIILTY_TEST_SCHEMA,
-            self._session.get_current_warehouse(),
+            default_warehouse=self._session.get_current_warehouse(),
             creation_mode=CreationMode.CREATE_IF_NOT_EXIST,
         )
         self._maybe_create_feature_store_objects(fs)
@@ -82,7 +82,7 @@ class FeatureStoreCompatibilityTest(absltest.TestCase):
                     self._session,
                     FS_COMPATIBIILTY_TEST_DB,
                     FS_COMPATIBIILTY_TEST_SCHEMA,
-                    self._session.get_current_warehouse(),
+                    default_warehouse=self._session.get_current_warehouse(),
                     creation_mode=CreationMode.CREATE_IF_NOT_EXIST,
                 )
 
@@ -96,7 +96,7 @@ class FeatureStoreCompatibilityTest(absltest.TestCase):
                     self._session,
                     FS_COMPATIBIILTY_TEST_DB,
                     FS_COMPATIBIILTY_TEST_SCHEMA,
-                    self._session.get_current_warehouse(),
+                    default_warehouse=self._session.get_current_warehouse(),
                     creation_mode=CreationMode.CREATE_IF_NOT_EXIST,
                 )
 
@@ -136,9 +136,9 @@ class FeatureStoreCompatibilityTest(absltest.TestCase):
         )
 
     def _maybe_create_feature_store_objects(self, fs: FeatureStore) -> None:
-        e1 = Entity(self._get_versioned_object_name("foo", VERSION), ["id"], f"VERSION={VERSION}")
+        e1 = Entity(self._get_versioned_object_name("foo", VERSION), ["id"], desc=f"VERSION={VERSION}")
         fs.register_entity(e1)
-        e2 = Entity(self._get_versioned_object_name("Bar", VERSION), ["id", "name"], f"VERSION={VERSION}")
+        e2 = Entity(self._get_versioned_object_name("Bar", VERSION), ["id", "name"], desc=f"VERSION={VERSION}")
         fs.register_entity(e2)
 
         sql1 = f"select id, title from {TEST_DATA}"

@@ -234,21 +234,29 @@ class SFStageFileSystem(fsspec.AbstractFileSystem):
 
         Raises:
             SnowflakeMLException: An error occurred when the given path points to a file that cannot be found.
+            snowpark_exceptions.SnowparkClientException: File access failed with a Snowpark exception
         """
         path = path.lstrip("/")
         if self._USE_FALLBACK_FILE_ACCESS:
             return self._open_with_snowpark(path)
         cached_presigned_url = self._url_cache.get(path, None)
-        if not cached_presigned_url:
-            res = self._fetch_presigned_urls([path])
-            url = res[0][1]
-            expire_at = time.time() + _PRESIGNED_URL_LIFETIME_SEC
-            cached_presigned_url = _PresignedUrl(url, expire_at)
-            self._url_cache[path] = cached_presigned_url
-            logging.debug(f"Retrieved presigned url for {path}.")
-        elif cached_presigned_url.is_expiring():
-            self.optimize_read()
-            cached_presigned_url = self._url_cache[path]
+        try:
+            if not cached_presigned_url:
+                res = self._fetch_presigned_urls([path])
+                url = res[0][1]
+                expire_at = time.time() + _PRESIGNED_URL_LIFETIME_SEC
+                cached_presigned_url = _PresignedUrl(url, expire_at)
+                self._url_cache[path] = cached_presigned_url
+                logging.debug(f"Retrieved presigned url for {path}.")
+            elif cached_presigned_url.is_expiring():
+                self.optimize_read()
+                cached_presigned_url = self._url_cache[path]
+        except snowpark_exceptions.SnowparkClientException as e:
+            if self._USE_FALLBACK_FILE_ACCESS == False:  # noqa: E712 # Fallback disabled
+                raise
+            # This may be an intermittent failure, so don't set _USE_FALLBACK_FILE_ACCESS = True
+            logging.warning(f"Pre-signed URL generation failed with {e.message}, trying fallback file access")
+            return self._open_with_snowpark(path)
         url = cached_presigned_url.url
         try:
             return self._fs._open(url, mode=mode, **kwargs)

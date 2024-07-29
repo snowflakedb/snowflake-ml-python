@@ -33,9 +33,9 @@ class FunctionGenerator:
 
     def __init__(
         self,
-        model_file_rel_path: pathlib.PurePosixPath,
+        model_dir_rel_path: pathlib.PurePosixPath,
     ) -> None:
-        self.model_file_rel_path = model_file_rel_path
+        self.model_dir_rel_path = model_dir_rel_path
 
     def generate(
         self,
@@ -67,7 +67,7 @@ class FunctionGenerator:
         )
 
         udf_code = function_template.format(
-            model_file_name=self.model_file_rel_path.name,
+            model_dir_name=self.model_dir_rel_path.name,
             target_method=target_method,
             max_batch_size=options.get("max_batch_size", None),
             function_name=FunctionGenerator.FUNCTION_NAME,

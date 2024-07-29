@@ -120,6 +120,7 @@ class TestRegistryCustomModelInteg(registry_model_test_base.RegistryModelTestBas
                     ),
                 ),
             },
+            options={"embed_local_ml_library": True},
         )
 
     @parameterized.product(  # type: ignore[misc]

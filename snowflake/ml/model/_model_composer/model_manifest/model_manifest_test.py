@@ -1,7 +1,6 @@
 import os
 import pathlib
 import tempfile
-from unittest import mock
 
 import importlib_resources
 import yaml
@@ -39,9 +38,6 @@ _DUMMY_BLOB = model_blob_meta.ModelBlobMeta(
 
 
 class ModelManifestTest(absltest.TestCase):
-    def setUp(self) -> None:
-        self.m_session = mock.MagicMock()
-
     def test_model_manifest_1(self) -> None:
         with tempfile.TemporaryDirectory() as workspace, tempfile.TemporaryDirectory() as tmpdir:
             mm = model_manifest.ModelManifest(pathlib.Path(workspace))
@@ -55,7 +51,7 @@ class ModelManifestTest(absltest.TestCase):
             ) as meta:
                 meta.models["model1"] = _DUMMY_BLOB
 
-            mm.save(self.m_session, meta, pathlib.PurePosixPath("model.zip"))
+            mm.save(meta, pathlib.PurePosixPath("model"))
             with open(os.path.join(workspace, "MANIFEST.yml"), encoding="utf-8") as f:
                 self.assertEqual(
                     (
@@ -91,9 +87,8 @@ class ModelManifestTest(absltest.TestCase):
                 meta.models["model1"] = _DUMMY_BLOB
 
             mm.save(
-                self.m_session,
                 meta,
-                pathlib.PurePosixPath("model.zip"),
+                pathlib.PurePosixPath("model"),
                 options=type_hints.BaseModelSaveOption(
                     method_options={"__call__": type_hints.ModelMethodSaveOptions(max_batch_size=10)}
                 ),
@@ -133,9 +128,8 @@ class ModelManifestTest(absltest.TestCase):
                 meta.models["model1"] = _DUMMY_BLOB
 
             mm.save(
-                self.m_session,
                 meta,
-                pathlib.PurePosixPath("model.zip"),
+                pathlib.PurePosixPath("model"),
                 options=type_hints.BaseModelSaveOption(
                     method_options={
                         "predict": type_hints.ModelMethodSaveOptions(case_sensitive=True),
@@ -188,9 +182,8 @@ class ModelManifestTest(absltest.TestCase):
 
             with self.assertRaisesRegex(ValueError, "Found duplicate method named resolved as PREDICT in the model."):
                 mm.save(
-                    self.m_session,
                     meta,
-                    pathlib.PurePosixPath("model.zip"),
+                    pathlib.PurePosixPath("model"),
                 )
 
     def test_model_manifest_table_function(self) -> None:
@@ -207,9 +200,8 @@ class ModelManifestTest(absltest.TestCase):
                 meta.models["model1"] = _DUMMY_BLOB
 
             mm.save(
-                self.m_session,
                 meta,
-                pathlib.PurePosixPath("model.zip"),
+                pathlib.PurePosixPath("model"),
                 options=type_hints.BaseModelSaveOption(
                     method_options={"predict": type_hints.ModelMethodSaveOptions(function_type="TABLE_FUNCTION")}
                 ),
@@ -250,9 +242,8 @@ class ModelManifestTest(absltest.TestCase):
                 meta.models["model1"] = _DUMMY_BLOB
 
             mm.save(
-                self.m_session,
                 meta,
-                pathlib.PurePosixPath("model.zip"),
+                pathlib.PurePosixPath("model"),
                 options=type_hints.BaseModelSaveOption(
                     method_options={"predict": type_hints.ModelMethodSaveOptions(function_type="TABLE_FUNCTION")}
                 ),
@@ -278,6 +269,41 @@ class ModelManifestTest(absltest.TestCase):
                     f.read(),
                 )
 
+    def test_model_manifest_pip(self) -> None:
+        with tempfile.TemporaryDirectory() as workspace, tempfile.TemporaryDirectory() as tmpdir:
+            mm = model_manifest.ModelManifest(pathlib.Path(workspace))
+            with model_meta.create_model_metadata(
+                model_dir_path=tmpdir,
+                name="model1",
+                model_type="custom",
+                signatures={"predict": _DUMMY_SIG["predict"]},
+                python_version="3.8",
+                embed_local_ml_library=True,
+            ) as meta:
+                meta.models["model1"] = _DUMMY_BLOB
+
+            mm.save(meta, pathlib.PurePosixPath("model"), options={"include_pip_dependencies": True})
+            with open(os.path.join(workspace, "MANIFEST.yml"), encoding="utf-8") as f:
+                self.assertEqual(
+                    (
+                        importlib_resources.files("snowflake.ml.model._model_composer.model_manifest")
+                        .joinpath("fixtures")
+                        .joinpath("MANIFEST_5.yml")
+                        .read_text()
+                    ),
+                    f.read(),
+                )
+            with open(pathlib.Path(workspace, "functions", "predict.py"), encoding="utf-8") as f:
+                self.assertEqual(
+                    (
+                        importlib_resources.files("snowflake.ml.model._model_composer.model_method")
+                        .joinpath("fixtures")
+                        .joinpath("function_1.py")
+                        .read_text()
+                    ),
+                    f.read(),
+                )
+
     def test_load(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             with open(os.path.join(tmpdir, "MANIFEST.yml"), "w", encoding="utf-8") as f:
@@ -294,7 +320,7 @@ class ModelManifestTest(absltest.TestCase):
                 "python_runtime": {
                     "language": "PYTHON",
                     "version": "3.8",
-                    "imports": ["model.zip", "runtimes/python_runtime/snowflake-ml-python.zip"],
+                    "imports": ["model", "runtimes/python_runtime/snowflake-ml-python.zip"],
                     "dependencies": {"conda": "runtimes/python_runtime/env/conda.yml"},
                 }
             },

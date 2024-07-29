@@ -13,3 +13,5 @@ estimator_info_list = [
     struct(class_name = "SpectralClustering", normalized_class_name = "spectral_clustering"),
     struct(class_name = "SpectralCoclustering", normalized_class_name = "spectral_coclustering"),
 ]
+
+snowpark_pandas_estimator_info_list = estimator_info_list

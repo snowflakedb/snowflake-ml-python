@@ -35,7 +35,7 @@ runtimes:
     dependencies:
       conda: runtimes/python_runtime/env/conda.yml
     imports:
-    - model.zip
+    - model/
     - runtimes/python_runtime/snowflake-ml-python.zip
     language: PYTHON
     version: '3.8'

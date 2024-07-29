@@ -12,7 +12,7 @@ from tests.integ.snowflake.ml.test_utils import (
 
 
 class RegistryModelTestBase(common_test_base.CommonTestBase):
-    REGISTRY_TEST_FN_LIST = ["_test_registry_model"]
+    REGISTRY_TEST_FN_LIST = ["_test_registry_model", "_test_registry_model_from_model_version"]
 
     def setUp(self) -> None:
         """Creates Snowpark and Snowflake environments for testing."""

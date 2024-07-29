@@ -18,9 +18,9 @@ py_library(
     deps = [
         "//snowflake/ml/_internal:telemetry",
         "//snowflake/ml/_internal/lineage:lineage_utils",
+        "//snowflake/ml/_internal/utils:import_utils",
+        "//snowflake/ml/data:data_connector",
         "//snowflake/ml/fileset:snowfs",
-        "//snowflake/ml/fileset:tf_dataset",
-        "//snowflake/ml/fileset:torch_datapipe",
     ],
 )
 
@@ -52,7 +52,8 @@ py_library(
         "//snowflake/ml/_internal/exceptions",
         "//snowflake/ml/_internal/exceptions:dataset_error_messages",
         "//snowflake/ml/_internal/exceptions:dataset_errors",
-        "//snowflake/ml/_internal/utils:import_utils",
+        "//snowflake/ml/_internal/utils:formatting",
+        "//snowflake/ml/_internal/utils:query_result_checker",
         "//snowflake/ml/_internal/utils:snowpark_dataframe_utils",
         "//snowflake/ml/lineage",
     ],

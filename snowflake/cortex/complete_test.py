@@ -1,6 +1,8 @@
 import http.server
 import json
+import logging
 import threading
+import time
 import unittest
 from dataclasses import dataclass
 from io import BytesIO
@@ -25,9 +27,18 @@ _OPTIONS = CompleteOptions(  # random params
 
 # Use of this model name triggers a 400 error and missing model response.
 _MISSING_MODEL_NAME = "missing_model"
+_RETRY_FOREVER_MODEL_NAME = "429_forever"
+_RETRY_UNTIL_TIME_MODEL_NAME = "429_until_time_"  # follow by time.time() value
 _MISSING_MODEL_RESPONSE = '{"message": "unknown model", "error_code": "X-123", "request_id": "123-456"}'
 
+
+def retry_until_model_name(deadline: float) -> str:
+    return _RETRY_UNTIL_TIME_MODEL_NAME + str(int(deadline))
+
+
 _UNEXPECTED_RESPONSE_FORMAT_MODEL_NAME = "unexpected_format_response_model"
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -175,7 +186,7 @@ class MockIpifyHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
             self.send_response(401)
             self.end_headers()
             return
-        assert self.path == "/api/v2/cortex/inference/complete"
+        assert self.path == "/api/v2/cortex/inference:complete"
         content_length = int(cast(int, self.headers.get("Content-Length")))
 
         post_data = self.rfile.read(content_length).decode("utf-8")
@@ -183,12 +194,31 @@ class MockIpifyHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
         model = params["model"]
         stream = params["stream"]
 
+        logger.info(f"model: {model} stream: {stream}")
+
         if model == _MISSING_MODEL_NAME:
             self.send_response(400)
             self.send_header("Content-Type", "application/json")
             self.end_headers()
             self.wfile.write(_MISSING_MODEL_RESPONSE.encode("utf-8"))
             return
+
+        if model == _RETRY_FOREVER_MODEL_NAME:
+            self.send_response(429)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            return
+
+        if model.startswith(_RETRY_UNTIL_TIME_MODEL_NAME):
+            deadline = float(model.replace(_RETRY_UNTIL_TIME_MODEL_NAME, ""))
+            if time.time() < deadline:
+                logger.info("haven't hit deadline, sending 429")
+                self.send_response(429)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Retry-after", "1")
+                self.end_headers()
+                return
+            logger.info("sending successful response")
 
         if stream:
             self.send_response(200)
@@ -252,7 +282,7 @@ class CompleteRESTBackendTest(unittest.TestCase):
 
         # Send the POST request
         response = requests.post(
-            f"http://127.0.0.1:{self.server.server_address[1]}/api/v2/cortex/inference/complete",
+            f"http://127.0.0.1:{self.server.server_address[1]}/api/v2/cortex/inference:complete",
             headers=headers,
             json=data,
         )
@@ -352,6 +382,67 @@ class CompleteRESTBackendTest(unittest.TestCase):
         except HTTPError as e:
             self.assertEqual(400, e.response.status_code)
             self.assertEqual(_MISSING_MODEL_RESPONSE, e.response.text)
+
+    def test_non_streaming_timeout(self) -> None:
+        self.assertRaises(
+            TimeoutError,
+            lambda: _complete._complete_impl(
+                model=_RETRY_FOREVER_MODEL_NAME,
+                prompt="test_prompt",
+                session=self.session,
+                stream=False,
+                use_rest_api_experimental=True,
+                timeout=1,
+            ),
+        )
+
+    def test_streaming_timeout(self) -> None:
+        self.assertRaises(
+            TimeoutError,
+            lambda: _complete._complete_impl(
+                model=_RETRY_FOREVER_MODEL_NAME,
+                prompt="test_prompt",
+                session=self.session,
+                stream=True,
+                use_rest_api_experimental=True,
+                timeout=1,
+            ),
+        )
+
+    def test_deadline(self) -> None:
+        self.assertRaises(
+            TimeoutError,
+            lambda: _complete._complete_impl(
+                model=_RETRY_FOREVER_MODEL_NAME,
+                prompt="test_prompt",
+                session=self.session,
+                stream=True,
+                use_rest_api_experimental=True,
+                deadline=time.time() + 1,
+            ),
+        )
+
+    def test_non_streaming_retry_until_success(self) -> None:
+        result = _complete._complete_impl(
+            model=retry_until_model_name(time.time() + 1),
+            prompt="test_prompt",
+            session=self.session,
+            use_rest_api_experimental=True,
+            stream=False,
+        )
+        self.assertEqual("This is a non streaming response", result)
+
+    def test_streaming_retry_until_success(self) -> None:
+        result = _complete._complete_impl(
+            model=retry_until_model_name(time.time() + 1),
+            prompt="test_prompt",
+            session=self.session,
+            use_rest_api_experimental=True,
+            stream=True,
+        )
+        self.assertIsInstance(result, GeneratorType)
+        output = "".join(list(cast(Iterable[str], result)))
+        self.assertEqual("This is a streaming response", output)
 
     def test_column_in_rest_mode(self) -> None:
         self.assertRaises(

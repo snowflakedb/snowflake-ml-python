@@ -11,7 +11,8 @@ from packaging import requirements
 from typing_extensions import deprecated
 
 from snowflake.ml._internal import env as snowml_env, env_utils, file_utils
-from snowflake.ml._internal.lineage import data_source, lineage_utils
+from snowflake.ml._internal.lineage import lineage_utils
+from snowflake.ml.data import data_source
 from snowflake.ml.model import model_signature, type_hints as model_types
 from snowflake.ml.model._model_composer.model_manifest import model_manifest
 from snowflake.ml.model._packager import model_packager
@@ -128,16 +129,14 @@ class ModelComposer:
             file_utils.copytree(
                 str(self._packager_workspace_path), str(self.workspace_path / ModelComposer.MODEL_DIR_REL_PATH)
             )
-
-        file_utils.make_archive(self.model_local_path, str(self._packager_workspace_path))
-
-        self.manifest.save(
-            session=self.session,
-            model_meta=model_metadata,
-            model_file_rel_path=pathlib.PurePosixPath(self.model_file_rel_path),
-            options=options,
-            data_sources=self._get_data_sources(model, sample_input_data),
-        )
+            self.manifest.save(
+                model_meta=self.packager.meta,
+                model_rel_path=pathlib.PurePosixPath(ModelComposer.MODEL_DIR_REL_PATH),
+                options=options,
+                data_sources=self._get_data_sources(model, sample_input_data),
+            )
+        else:
+            file_utils.make_archive(self.model_local_path, str(self._packager_workspace_path))
 
         file_utils.upload_directory_to_stage(
             self.session,
@@ -186,6 +185,4 @@ class ModelComposer:
         data_sources = lineage_utils.get_data_sources(model)
         if not data_sources and sample_input_data is not None:
             data_sources = lineage_utils.get_data_sources(sample_input_data)
-        if isinstance(data_sources, list) and all(isinstance(item, data_source.DataSource) for item in data_sources):
-            return data_sources
-        return None
+        return data_sources

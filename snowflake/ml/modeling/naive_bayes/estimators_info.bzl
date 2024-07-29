@@ -5,3 +5,5 @@ estimator_info_list = [
     struct(class_name = "GaussianNB", normalized_class_name = "gaussian_nb"),
     struct(class_name = "MultinomialNB", normalized_class_name = "multinomial_nb"),
 ]
+
+snowpark_pandas_estimator_info_list = estimator_info_list

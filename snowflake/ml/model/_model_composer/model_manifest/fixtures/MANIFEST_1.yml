@@ -20,6 +20,6 @@ runtimes:
     dependencies:
       conda: runtimes/python_runtime/env/conda.yml
     imports:
-    - model.zip
+    - model/
     language: PYTHON
     version: '3.8'

@@ -1,5 +1,5 @@
-load("//codegen:codegen_rules.bzl", "autogen_tests_for_estimators")
-load("//snowflake/ml/modeling/tree:estimators_info.bzl", "estimator_info_list")
+load("//codegen:codegen_rules.bzl", "autogen_snowpark_pandas_tests", "autogen_tests_for_estimators")
+load("//snowflake/ml/modeling/tree:estimators_info.bzl", "estimator_info_list", "snowpark_pandas_estimator_info_list")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -7,4 +7,10 @@ autogen_tests_for_estimators(
     estimator_info_list = estimator_info_list,
     module = "sklearn.tree",
     module_root_dir = "snowflake/ml/modeling/tree",
+)
+
+autogen_snowpark_pandas_tests(
+    module = "sklearn.tree",
+    module_root_dir = "snowflake/ml/modeling/tree",
+    snowpark_pandas_estimator_info_list = snowpark_pandas_estimator_info_list,
 )

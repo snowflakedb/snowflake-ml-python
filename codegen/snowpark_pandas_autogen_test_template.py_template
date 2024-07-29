@@ -16,10 +16,10 @@ import pytest
 from typing import Any, Dict, List, Optional, Tuple, Union
 from absl.testing.absltest import TestCase, main
 {transform.test_snowpark_pandas_imports}
-# from snowflake.ml.beta import snowpark_pandas
+# from snowflake.ml import snowpark_pandas
 from snowflake.ml.utils.connection_params import SnowflakeLoginOptions
 from snowflake.snowpark import Session
-# from snowflake.snowpark.modin import pandas as SnowparkPandas
+# from snowflake.snowpark.modin import pandas as snowpark_pandas
 
 _INFERENCE = "INFERENCE"
 _EXPECTED = "EXPECTED"
@@ -35,7 +35,7 @@ class DatasetType(enum.Enum):
 class {transform.test_class_name}(TestCase):
     def setUp(self) -> None:
         """Creates Snowpark and Snowflake environments for testing."""
-        self._session = Session.builder.configs(SnowflakeLoginOptions("sfc")).create()
+        self._session = Session.builder.configs(SnowflakeLoginOptions()).create()
 
     def tearDown(self) -> None:
         self._session.close()
@@ -114,12 +114,12 @@ class {transform.test_class_name}(TestCase):
     #         inference_methods.remove("transform")  # underlying estimators have no method 'transform'
     #     if Sk{transform.original_class_name}.__name__ == "LocalOutlierFactor" and not reg.novelty:
     #         inference_methods.remove("predict")
-
+        
     #     for m in inference_methods:
     #         if callable(getattr(reg, m, None)):
     #             res = getattr(reg, m)(dataset)
-                # TODO(hayu): Remove the output manipulation as the results should be exactly the same as sklearn.
-    #             if isinstance(res, SnowparkPandas.DataFrame) or isinstance(res, pd.DataFrame):
+    #             # TODO(hayu): Remove the output manipulation as the results should be exactly the same as sklearn.
+    #             if isinstance(res, snowpark_pandas.DataFrame) or isinstance(res, pd.DataFrame):
     #                 arr = res.to_numpy()
     #             elif isinstance(res, list):
     #                 arr = np.array(res)
@@ -128,14 +128,14 @@ class {transform.test_class_name}(TestCase):
     #             if arr.ndim == 2 and arr.shape[1] == 1:
     #                 arr = arr.flatten()
     #             if len(arr.shape) == 3:
-                    # VotingClassifier will return results of shape (n_classifiers, n_samples, n_classes)
-                    # when voting = "soft" and flatten_transform = False. We can't handle unflatten transforms,
-                    # so we ignore flatten_transform flag and flatten the results. We need flatten sklearn results
-                    # also to compare with snowflake results.
+    #                 # VotingClassifier will return results of shape (n_classifiers, n_samples, n_classes)
+    #                 # when voting = "soft" and flatten_transform = False. We can't handle unflatten transforms,
+    #                 # so we ignore flatten_transform flag and flatten the results. We need flatten sklearn results
+    #                 # also to compare with snowflake results.
     #                 arr = np.hstack(arr)  # type: ignore[arg-type]
     #             elif len(arr.shape) == 1:
-                    # Sometimes sklearn returns results as 1D array of shape (n_samples,), but snowflake always returns
-                    # response as 2D array of shape (n_samples, 1). Flatten the snowflake response to compare results.
+    #                 # Sometimes sklearn returns results as 1D array of shape (n_samples,), but snowflake always returns
+    #                 # response as 2D array of shape (n_samples, 1). Flatten the snowflake response to compare results.
     #                 arr = arr.flatten()
     #             output[_INFERENCE].append(arr)
 
@@ -152,7 +152,7 @@ class {transform.test_class_name}(TestCase):
     #     for m in expected_methods:
     #         if callable(getattr(reg, m, None)):
     #             res = getattr(reg, m)(dataset)
-    #             if isinstance(res, SnowparkPandas.DataFrame) or isinstance(res, pd.DataFrame):
+    #             if isinstance(res, snowpark_pandas.DataFrame) or isinstance(res, pd.DataFrame):
     #                 arr = res.to_numpy()
     #             elif isinstance(res, list):
     #                 arr = np.array(res)
@@ -161,8 +161,8 @@ class {transform.test_class_name}(TestCase):
     #             if arr.ndim == 2 and arr.shape[1] == 1:
     #                 arr = arr.flatten()
     #             if isinstance(arr, list):
-                    # In case of multioutput estimators predict_proba, decision_function, etc., returns a list of
-                    # ndarrays as output. We need to concatenate them to compare with snowflake output.
+    #                 # In case of multioutput estimators predict_proba, decision_function, etc., returns a list of
+    #                 # ndarrays as output. We need to concatenate them to compare with snowflake output.
     #                 arr = np.concatenate(arr, axis=1)
     #             elif len(arr.shape) == 1:
     #                 # Sometimes sklearn returns results as 1D array of shape (n_samples,), but snowflake always returns
@@ -189,14 +189,18 @@ class {transform.test_class_name}(TestCase):
 
     #     reg = Sk{transform.original_class_name}({transform.test_estimator_input_args})
 
+    #     # Special handle for label encoder: sklearn label encoder fit method only accept fit(y),
+    #     # but our SnowML API would treat it as fit(X)
+    #     _is_label_encoder = reg.__class__.__name__ == "LabelEncoder"
+
     #     input_df_pandas, input_cols, label_col = self._get_test_dataset(
     #             sklearn_obj=reg,
     #             add_sample_weight_col=use_weighted_dataset
     #     )
-    #     input_df_snowpark_pandas = SnowparkPandas.DataFrame(input_df_pandas)
+    #     input_df_snowpandas = snow_pd.DataFrame(input_df_pandas)
 
     #     pd_X, pd_y = input_df_pandas[input_cols], input_df_pandas[label_col].squeeze()
-    #     snow_X, snow_y = input_df_snowpark_pandas[input_cols], input_df_snowpark_pandas[label_col].squeeze()
+    #     snow_X, snow_y = input_df_snowpandas[input_cols], input_df_snowpandas[label_col].squeeze()
     #     pd_args = {{
     #         'X': pd_X,
     #         'y': pd_y,
@@ -205,21 +209,23 @@ class {transform.test_class_name}(TestCase):
     #         'X': snow_X,
     #         'y': snow_y,
     #     }}
-    #     if use_weighted_dataset:
+        
+    #     # SnowML preprocessing class currently doesn't support sample weight
+    #     if use_weighted_dataset and not {transform._is_preprocessing_module_obj}:
     #         pd_args['sample_weight'] = input_df_pandas["SAMPLE_WEIGHT"].squeeze()
-    #         snow_args['sample_weight'] = input_df_snowpark_pandas["SAMPLE_WEIGHT"].squeeze()
+    #         snow_args['sample_weight'] = input_df_snowpandas["SAMPLE_WEIGHT"].squeeze()
 
     #     pd_score_args = snow_score_args = None
     #     if callable(getattr(reg, "score", None)):
     #         pd_score_args = copy.deepcopy(pd_args)
     #         snow_score_args = copy.deepcopy(snow_args)
     #         score_argspec = inspect.getfullargspec(reg.score)
-            # Some classes that has sample_weight argument in fit() but not in score().
+    #         # Some classes that has sample_weight argument in fit() but not in score().
     #         if use_weighted_dataset and 'sample_weight' not in score_argspec.args:
     #             del pd_score_args['sample_weight']
     #             del snow_score_args['sample_weight']
 
-            # Some classes have different arg name in score: X -> X_test
+    #         # Some classes have different arg name in score: X -> X_test
     #         if "X_test" in score_argspec.args:
     #             pd_score_args['X_test'] = pd_score_args.pop('X')
     #             snow_score_args['X_test'] = snow_score_args.pop('X')
@@ -229,24 +235,34 @@ class {transform.test_class_name}(TestCase):
     #             pd_args['Y'] = pd_args.pop('y')
     #             snow_args['Y'] = snow_args.pop('y')
 
-        # pandas
-    #     pd_output = self._compute_output(reg, pd_args, input_df_pandas[input_cols], pd_score_args)
+    #     # pandas
+    #     if _is_label_encoder:
+    #         pd_output = self._compute_output(reg, {{'y': input_df_pandas[label_col]}}, input_df_pandas[label_col], None)
+    #     else:
+    #         pd_output = self._compute_output(reg, pd_args, input_df_pandas[input_cols], pd_score_args)
 
-        # snowpark_pandas
+    #     # snowpandas
     #     snowpark_pandas.init()
 
+    #     # Integrate with native distributed preprocessing methods
     #     snow_reg = Sk{transform.original_class_name}({transform.test_estimator_input_args})
     #     args = snow_args if training == DatasetType.SNOWPARK_PANDAS else pd_args
     #     dataset, score_args = (
-    #         (input_df_snowpark_pandas[input_cols], snow_score_args) if inference == DatasetType.SNOWPARK_PANDAS
+    #         (input_df_snowpandas[input_cols], snow_score_args) if inference == DatasetType.SNOWPARK_PANDAS
     #         else (input_df_pandas[input_cols], pd_score_args)
     #     )
-    #     snow_output = self._compute_output(snow_reg, args, dataset, score_args)
+    #     if _is_label_encoder:
+    #         if training == DatasetType.SNOWPARK_PANDAS:
+    #             snow_output = self._compute_output(reg, {{'X': input_df_snowpandas[label_col]}}, input_df_snowpandas[label_col], None)
+    #         else:
+    #             snow_output = self._compute_output(reg, {{'y': input_df_pandas[label_col]}}, input_df_pandas[label_col], None)
+    #     else:
+    #         snow_output = self._compute_output(snow_reg, args, dataset, score_args)
 
     #     for pd_arr, snow_arr in zip(pd_output[_INFERENCE], snow_output[_INFERENCE]):
     #         snow_arr = snow_arr.astype(pd_arr.dtype)  # type: ignore[union-attr]
-            # TODO(snandamuri): HistGradientBoostingRegressor is returning different results in different envs.
-            # Needs further debugging.
+    #         # TODO(snandamuri): HistGradientBoostingRegressor is returning different results in different envs.
+    #         # Needs further debugging.
     #         if {transform._is_hist_gradient_boosting_regressor}:
     #             num_diffs = (~np.isclose(snow_arr, pd_arr)).sum()
     #             num_example = pd_arr.shape[0]
@@ -282,13 +298,13 @@ class {transform.test_class_name}(TestCase):
     #         use_weighted_dataset=False
     #     )
 
-    def _is_weighted_dataset_supported(self, klass: type) -> bool:
-        is_weighted_dataset_supported = False
-        for m in inspect.getmembers(klass):
-            if inspect.isfunction(m[1]) and m[0] == "fit":
-                argspec = inspect.getfullargspec(m[1])
-                is_weighted_dataset_supported = True if "sample_weight" in argspec.args else False
-        return is_weighted_dataset_supported
+    # def _is_weighted_dataset_supported(self, klass: type) -> bool:
+    #     is_weighted_dataset_supported = False
+    #     for m in inspect.getmembers(klass):
+    #         if inspect.isfunction(m[1]) and m[0] == "fit":
+    #             argspec = inspect.getfullargspec(m[1])
+    #             is_weighted_dataset_supported = True if "sample_weight" in argspec.args else False
+    #     return is_weighted_dataset_supported
 
     # def test_weighted_datasets_snow_snow(self) -> None:
     #     if self._is_weighted_dataset_supported(Sk{transform.original_class_name}):

@@ -90,7 +90,7 @@ class FeatureStoreTest(parameterized.TestCase):
             self._session,
             FS_INTEG_TEST_DB,
             current_schema,
-            self._test_warehouse_name,
+            default_warehouse=self._test_warehouse_name,
             creation_mode=CreationMode.CREATE_IF_NOT_EXIST,
         )
         self._active_feature_store.append(fs)
@@ -197,7 +197,7 @@ class FeatureStoreTest(parameterized.TestCase):
                     self._session,
                     db_name,
                     current_schema,
-                    self._test_warehouse_name,
+                    default_warehouse=self._test_warehouse_name,
                     creation_mode=mode,
                 )
             dbs = self._session.sql(f"SHOW DATABASES LIKE '{db_name}'").collect()
@@ -210,7 +210,7 @@ class FeatureStoreTest(parameterized.TestCase):
                 self._session,
                 FS_INTEG_TEST_DB,
                 current_schema,
-                self._test_warehouse_name,
+                default_warehouse=self._test_warehouse_name,
                 creation_mode=CreationMode.FAIL_IF_NOT_EXIST,
             )
 
@@ -314,6 +314,33 @@ class FeatureStoreTest(parameterized.TestCase):
             sort_cols=["NAME"],
         )
 
+    def test_update_entity(self) -> None:
+        fs = self._create_feature_store()
+
+        e1 = Entity(name="foo", join_keys=["col_1"], desc="old desc")
+        fs.register_entity(e1)
+        r1 = fs.list_entities().collect()
+        self.assertEqual(r1[0]["DESC"], "old desc")
+
+        # update with none desc
+        fs.update_entity(name="foo", desc=None)
+        r2 = fs.list_entities().collect()
+        self.assertEqual(r2[0]["DESC"], "old desc")
+
+        # update with a new desc
+        fs.update_entity(name="foo", desc="NEW DESC")
+        r3 = fs.list_entities().collect()
+        self.assertEqual(r3[0]["DESC"], "NEW DESC")
+
+        # update with empty desc
+        fs.update_entity(name="foo", desc="")
+        r4 = fs.list_entities().collect()
+        self.assertEqual(r4[0]["DESC"], "")
+
+        # update entity does not exist
+        with self.assertWarnsRegex(UserWarning, "Entity .* does not exist."):
+            fs.update_entity(name="bar", desc="NEW DESC")
+
     def test_get_entity_system_error(self) -> None:
         fs = self._create_feature_store()
         fs._session = create_mock_session(
@@ -334,6 +361,50 @@ class FeatureStoreTest(parameterized.TestCase):
 
         with self.assertRaisesRegex(RuntimeError, "Failed to find object .*"):
             fs.register_entity(e)
+
+    def test_register_feature_view_with_warehouse(self) -> None:
+        fs = self._create_feature_store()
+
+        e = Entity("foo", ["id"])
+        fs.register_entity(e)
+
+        sql1 = f"SELECT id, name, title, ts FROM {self._mock_table}"
+        d1 = FeatureView(
+            name="fv1",
+            entities=[e],
+            feature_df=self._session.sql(sql1),
+            timestamp_col="ts",
+            refresh_freq="1d",
+        )
+        r11 = fs.register_feature_view(feature_view=d1, version="1.0")
+        self.assertEqual(r11.warehouse, "REGTEST_ML_4XL_MULTI")
+        self.assertEqual(
+            fs.list_feature_views().select("warehouse").filter(col("version") == "1.0").collect()[0]["WAREHOUSE"],
+            "REGTEST_ML_4XL_MULTI",
+        )
+
+        d1.warehouse = "REGTEST_ML_SMALL"  # type: ignore[assignment]
+        r12 = fs.register_feature_view(feature_view=d1, version="2.0")
+        self.assertEqual(r12.warehouse, "REGTEST_ML_SMALL")
+        self.assertEqual(
+            fs.list_feature_views().select("warehouse").filter(col("version") == "2.0").collect()[0]["WAREHOUSE"],
+            "REGTEST_ML_SMALL",
+        )
+
+        d2 = FeatureView(
+            name="fv2",
+            entities=[e],
+            feature_df=self._session.sql(sql1),
+            timestamp_col="ts",
+            refresh_freq="1d",
+            warehouse="REGTEST_ML_SMALL",
+        )
+        r2 = fs.register_feature_view(feature_view=d2, version="1.0")
+        self.assertEqual(r2.warehouse, "REGTEST_ML_SMALL")
+        self.assertEqual(
+            fs.list_feature_views().select("warehouse").filter(col("name") == "FV2").collect()[0]["WAREHOUSE"],
+            "REGTEST_ML_SMALL",
+        )
 
     def test_register_feature_view_with_unregistered_entity(self) -> None:
         fs = self._create_feature_store()
@@ -421,6 +492,7 @@ class FeatureStoreTest(parameterized.TestCase):
                 "REFRESH_FREQ": [None, None],
                 "REFRESH_MODE": [None, None],
                 "SCHEDULING_STATE": [None, None],
+                "WAREHOUSE": [None, None],
             },
             sort_cols=["NAME"],
             exclude_cols=["CREATED_ON", "OWNER"],
@@ -565,7 +637,7 @@ class FeatureStoreTest(parameterized.TestCase):
                 "SCHEDULING_STATE": ["SUSPENDED", "ACTIVE", "ACTIVE"],
             },
             sort_cols=["NAME"],
-            exclude_cols=["CREATED_ON", "OWNER"],
+            exclude_cols=["CREATED_ON", "OWNER", "WAREHOUSE"],
         )
 
         # delete feature view
@@ -589,7 +661,7 @@ class FeatureStoreTest(parameterized.TestCase):
                 "SCHEDULING_STATE": ["ACTIVE", "ACTIVE"],
             },
             sort_cols=["NAME"],
-            exclude_cols=["CREATED_ON", "OWNER"],
+            exclude_cols=["CREATED_ON", "OWNER", "WAREHOUSE"],
         )
 
         # test get feature view obj
@@ -607,6 +679,10 @@ class FeatureStoreTest(parameterized.TestCase):
 
         fv = fs.get_feature_view(name="fv0", version="SECOND")
         self.assertEqual(str(fv.timestamp_col).upper(), "TS")
+
+        self.assertEqual(fs.list_feature_views().count(), 2)
+        fs.delete_feature_view("fv0", "SECOND")
+        self.assertEqual(fs.list_feature_views().count(), 1)
 
     def test_create_duplicated_feature_view(self) -> None:
         fs = self._create_feature_store()
@@ -652,9 +728,20 @@ class FeatureStoreTest(parameterized.TestCase):
         my_fv = fs.suspend_feature_view(my_fv)
         self.assertEqual(my_fv.status, FeatureViewStatus.SUSPENDED)
         my_fv = fs.resume_feature_view(my_fv)
-        self.assertTrue(
-            my_fv.status == FeatureViewStatus.ACTIVE or my_fv.status == FeatureViewStatus.RUNNING
-        )  # my_fv.status == FeatureViewStatus.RUNNING can be removed after BCR 2024_02 gets fully deployed
+        self.assertTrue(my_fv.status == FeatureViewStatus.ACTIVE)
+
+        # test suspend/resume with name and version
+        my_fv = fs.suspend_feature_view("my_fv", "v1")
+        self.assertEqual(my_fv.status, FeatureViewStatus.SUSPENDED)
+        all_fvs = fs.list_feature_views().filter((col("NAME") == "MY_FV") & (col("VERSION") == "v1")).collect()
+        self.assertEqual(len(all_fvs), 1)
+        self.assertEqual(all_fvs[0]["SCHEDULING_STATE"], "SUSPENDED")
+
+        my_fv = fs.resume_feature_view("my_fv", "v1")
+        self.assertEqual(my_fv.status, FeatureViewStatus.ACTIVE)
+        all_fvs = fs.list_feature_views().filter((col("NAME") == "MY_FV") & (col("VERSION") == "v1")).collect()
+        self.assertEqual(len(all_fvs), 1)
+        self.assertEqual(all_fvs[0]["SCHEDULING_STATE"], "ACTIVE")
 
     def test_resume_and_suspend_feature_view_system_error(self) -> None:
         fs = self._create_feature_store()
@@ -741,6 +828,38 @@ class FeatureStoreTest(parameterized.TestCase):
         self.assertEqual(res_3[0]["STATE"], "SUCCEEDED")
         self.assertEqual(res_3[0]["REFRESH_TRIGGER"], "MANUAL")
 
+        # teset refresh_feature_view and get_refresh_history with name and version
+        fs.refresh_feature_view("my_fv", "v1")
+        df_4 = fs.get_refresh_history("my_fv", "v1", verbose=True)
+
+        self.assertSameElements(
+            df_4.columns,
+            [
+                "NAME",
+                "SCHEMA_NAME",
+                "DATABASE_NAME",
+                "STATE",
+                "STATE_CODE",
+                "STATE_MESSAGE",
+                "QUERY_ID",
+                "DATA_TIMESTAMP",
+                "REFRESH_START_TIME",
+                "REFRESH_END_TIME",
+                "COMPLETION_TARGET",
+                "QUALIFIED_NAME",
+                "LAST_COMPLETED_DEPENDENCY",
+                "STATISTICS",
+                "REFRESH_ACTION",
+                "REFRESH_TRIGGER",
+                "TARGET_LAG_SEC",
+                "GRAPH_HISTORY_VALID_FROM",
+            ],
+        )
+        res_4 = df_4.order_by("REFRESH_START_TIME", ascending=False).collect()
+        self.assertEqual(len(res_4), 3)
+        self.assertEqual(res_4[0]["STATE"], "SUCCEEDED")
+        self.assertEqual(res_4[0]["REFRESH_TRIGGER"], "MANUAL")
+
     def test_refresh_static_feature_view(self) -> None:
         fs = self._create_feature_store()
 
@@ -777,6 +896,10 @@ class FeatureStoreTest(parameterized.TestCase):
             feature_df=self._session.sql(sql),
             refresh_freq="DOWNSTREAM",
         )
+
+        with self.assertRaisesRegex(ValueError, "FeatureView .* has not been registered."):
+            fs.read_feature_view(my_fv)
+
         my_fv = fs.register_feature_view(feature_view=my_fv, version="v1")
 
         df = fs.read_feature_view(my_fv)
@@ -791,6 +914,25 @@ class FeatureStoreTest(parameterized.TestCase):
             },
             sort_cols=["NAME"],
         )
+
+        df = fs.read_feature_view("my_fv", "v1")
+        compare_dataframe(
+            actual_df=df.to_pandas(),
+            target_data={
+                "NAME": ["jonh", "porter"],
+                "ID": [1, 2],
+                "TITLE": ["boss", "manager"],
+                "AGE": [20, 30],
+                "TS": [100, 200],
+            },
+            sort_cols=["NAME"],
+        )
+
+        with self.assertRaisesRegex(ValueError, "Version must be provided when argument feature_view is a str."):
+            fs.read_feature_view("my_fv")  # type: ignore[call-overload]
+
+        with self.assertRaisesRegex(ValueError, "Failed to find FeatureView .*"):
+            fs.read_feature_view("my_fv", "v2")
 
     def test_register_with_cron_expr(self) -> None:
         fs = self._create_feature_store()
@@ -1012,6 +1154,7 @@ class FeatureStoreTest(parameterized.TestCase):
                 "REFRESH_FREQ": [],
                 "REFRESH_MODE": [],
                 "SCHEDULING_STATE": [],
+                "WAREHOUSE": [],
             },
             sort_cols=["NAME"],
         )
@@ -1061,7 +1204,7 @@ class FeatureStoreTest(parameterized.TestCase):
                 "SCHEDULING_STATE": ["ACTIVE", "ACTIVE", "ACTIVE"],
             },
             sort_cols=["NAME"],
-            exclude_cols=["CREATED_ON", "OWNER"],
+            exclude_cols=["CREATED_ON", "OWNER", "WAREHOUSE"],
         )
 
         compare_dataframe(
@@ -1078,7 +1221,7 @@ class FeatureStoreTest(parameterized.TestCase):
                 "SCHEDULING_STATE": ["ACTIVE", "ACTIVE"],
             },
             sort_cols=["NAME"],
-            exclude_cols=["CREATED_ON", "OWNER"],
+            exclude_cols=["CREATED_ON", "OWNER", "WAREHOUSE"],
         )
 
         compare_dataframe(
@@ -1095,7 +1238,7 @@ class FeatureStoreTest(parameterized.TestCase):
                 "SCHEDULING_STATE": ["ACTIVE"],
             },
             sort_cols=["NAME"],
-            exclude_cols=["CREATED_ON", "OWNER"],
+            exclude_cols=["CREATED_ON", "OWNER", "WAREHOUSE"],
         )
 
         compare_dataframe(
@@ -1112,7 +1255,7 @@ class FeatureStoreTest(parameterized.TestCase):
                 "SCHEDULING_STATE": ["ACTIVE"],
             },
             sort_cols=["NAME"],
-            exclude_cols=["CREATED_ON", "OWNER"],
+            exclude_cols=["CREATED_ON", "OWNER", "WAREHOUSE"],
         )
 
         compare_dataframe(
@@ -1129,7 +1272,7 @@ class FeatureStoreTest(parameterized.TestCase):
                 "SCHEDULING_STATE": ["ACTIVE"],
             },
             sort_cols=["NAME"],
-            exclude_cols=["CREATED_ON", "OWNER"],
+            exclude_cols=["CREATED_ON", "OWNER", "WAREHOUSE"],
         )
 
         compare_dataframe(
@@ -1146,6 +1289,7 @@ class FeatureStoreTest(parameterized.TestCase):
                 "REFRESH_FREQ": [],
                 "REFRESH_MODE": [],
                 "SCHEDULING_STATE": [],
+                "WAREHOUSE": [],
             },
             sort_cols=["NAME"],
         )
@@ -1670,7 +1814,7 @@ class FeatureStoreTest(parameterized.TestCase):
                 session,
                 FS_INTEG_TEST_DB,
                 create_random_schema(session, "FS_DATASET_TEST"),
-                self._test_warehouse_name,
+                default_warehouse=self._test_warehouse_name,
                 creation_mode=CreationMode.CREATE_IF_NOT_EXIST,
             )
 
@@ -2359,6 +2503,27 @@ class FeatureStoreTest(parameterized.TestCase):
 
         with self.assertRaisesRegex(ValueError, ".*reading from RESULT_SCAN.*"):
             FeatureView(name="foo", entities=[e], feature_df=self._session.sql(query))
+
+    def test_invalid_argument_type(self) -> None:
+        fs = self._create_feature_store()
+
+        e = Entity("foo", ["id"])
+        fs.register_entity(e)
+
+        sql1 = f"SELECT id, name, title FROM {self._mock_table}"
+        fv1 = FeatureView(
+            name="fv1",
+            entities=[e],
+            feature_df=self._session.sql(sql1),
+            refresh_freq="DOWNSTREAM",
+        )
+
+        fs.register_feature_view(feature_view=fv1, version="v1")
+
+        with self.assertRaisesRegex(
+            ValueError, "Invalid type of argument feature_view. It must be either str or FeatureView type"
+        ):
+            fs.read_feature_view(123, "v1")  # type: ignore[call-overload]
 
 
 if __name__ == "__main__":

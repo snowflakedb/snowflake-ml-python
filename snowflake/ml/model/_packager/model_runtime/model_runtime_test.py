@@ -49,13 +49,36 @@ class ModelRuntimeTest(absltest.TestCase):
             m_env = model_env.ModelEnv()
             m_env.snowpark_ml_version = "1.0.0"
 
-            mr = model_runtime.ModelRuntime("cpu", m_env, [pathlib.PurePosixPath("model.zip")])
+            mr = model_runtime.ModelRuntime("cpu", m_env, ["model.zip"])
             returned_dict = mr.save(pathlib.Path(workspace))
 
             self.assertDictEqual(
                 returned_dict,
                 {
                     "imports": ["model.zip"],
+                    "dependencies": {
+                        "conda": "runtimes/cpu/env/conda.yml",
+                        "pip": "runtimes/cpu/env/requirements.txt",
+                    },
+                },
+            )
+            with open(os.path.join(workspace, "runtimes/cpu/env/conda.yml"), encoding="utf-8") as f:
+                dependencies = yaml.safe_load(f)
+
+            self.assertContainsSubset(["snowflake-ml-python==1.0.0"], dependencies["dependencies"])
+
+    def test_model_runtime_with_dir_import(self) -> None:
+        with tempfile.TemporaryDirectory() as workspace:
+            m_env = model_env.ModelEnv()
+            m_env.snowpark_ml_version = "1.0.0"
+
+            mr = model_runtime.ModelRuntime("cpu", m_env, ["model/"])
+            returned_dict = mr.save(pathlib.Path(workspace))
+
+            self.assertDictEqual(
+                returned_dict,
+                {
+                    "imports": ["model/"],
                     "dependencies": {
                         "conda": "runtimes/cpu/env/conda.yml",
                         "pip": "runtimes/cpu/env/requirements.txt",
@@ -231,7 +254,18 @@ class ModelRuntimeTest(absltest.TestCase):
             m_env = model_env.ModelEnv()
             m_env.snowpark_ml_version = "1.0.0"
 
-            mr = model_runtime.ModelRuntime("cpu", m_env, [pathlib.PurePosixPath("model.zip")])
+            mr = model_runtime.ModelRuntime("cpu", m_env, ["model.zip"])
+            returned_dict = mr.save(pathlib.Path(workspace))
+
+            loaded_mr = model_runtime.ModelRuntime.load(pathlib.Path(workspace), "cpu", m_env, returned_dict)
+
+            self.assertDictEqual(loaded_mr.save(pathlib.Path(workspace)), returned_dict)
+
+    def test_model_runtime_load_from_file_dir_import(self) -> None:
+        with tempfile.TemporaryDirectory() as workspace:
+            m_env = model_env.ModelEnv()
+
+            mr = model_runtime.ModelRuntime("cpu", m_env, ["model/"])
             returned_dict = mr.save(pathlib.Path(workspace))
 
             loaded_mr = model_runtime.ModelRuntime.load(pathlib.Path(workspace), "cpu", m_env, returned_dict)

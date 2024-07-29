@@ -19,6 +19,7 @@ class RegistryInSprocTest(registry_model_test_base.RegistryModelTestBase):
             model_name=MODEL_NAME,
             version_name=VERSION_NAME,
             sample_input_data=test_features,
+            options={"embed_local_ml_library": True},
         )
 
         self.mv_2 = self.registry.log_model(
@@ -26,6 +27,7 @@ class RegistryInSprocTest(registry_model_test_base.RegistryModelTestBase):
             model_name=MODEL_NAME,
             version_name=ADDED_VERSION_NAME,
             sample_input_data=test_features,
+            options={"embed_local_ml_library": True},
         )
 
         self.model = self.registry.get_model(MODEL_NAME)

@@ -18,7 +18,8 @@ class ModelMethodFunctionTypes(enum.Enum):
 
 
 class ModelRuntimeDependenciesDict(TypedDict):
-    conda: Required[str]
+    conda: NotRequired[str]
+    pip: NotRequired[str]
 
 
 class ModelRuntimeDict(TypedDict):

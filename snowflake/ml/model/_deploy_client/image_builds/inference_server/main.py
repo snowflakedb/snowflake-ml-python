@@ -85,9 +85,8 @@ def _run_setup() -> None:
 
         TARGET_METHOD = os.getenv("TARGET_METHOD")
 
-        _concurrent_requests_max_env = os.getenv("_CONCURRENT_REQUESTS_MAX", None)
-
-        _CONCURRENT_REQUESTS_MAX = int(_concurrent_requests_max_env) if _concurrent_requests_max_env else None
+        _concurrent_requests_max_env = os.getenv("_CONCURRENT_REQUESTS_MAX", "1")
+        _CONCURRENT_REQUESTS_MAX = int(_concurrent_requests_max_env)
 
         with tempfile.TemporaryDirectory() as tmp_dir:
             if zipfile.is_zipfile(model_zip_stage_path):

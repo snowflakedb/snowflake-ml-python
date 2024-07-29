@@ -11,7 +11,7 @@ from snowflake.ml.model._model_composer.model_method import function_generator
 
 class FunctionGeneratorTest(absltest.TestCase):
     def test_function_generator(self) -> None:
-        fg = function_generator.FunctionGenerator(pathlib.PurePosixPath("@a.b.c/abc/model.zip"))
+        fg = function_generator.FunctionGenerator(pathlib.PurePosixPath("@a.b.c/abc/model"))
         with tempfile.TemporaryDirectory() as tmpdir:
             # Generate standard function.
             fg.generate(
