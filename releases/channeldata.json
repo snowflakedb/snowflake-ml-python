@@ -28,8 +28,8 @@
       "summary": "Snowflake ML Library",
       "tags": null,
       "text_prefix": true,
-      "timestamp": 1712604697,
-      "version": "1.4.0"
+      "timestamp": 1723160880,
+      "version": "1.6.0"
     }
   },
   "subdirs": [

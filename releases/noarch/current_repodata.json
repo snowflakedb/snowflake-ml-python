@@ -1,1 +1,64 @@
-{"info":{"subdir":"noarch"},"packages":{"snowflake-ml-python-1.6.0-pypy_0.tar.bz2":{"build":"pypy_0","build_number":0,"constrains":["shap==0.42.1","sentencepiece>=0.1.95,<1","lightgbm>=3.3.5,<5","sentence-transformers>=2.2.2,<3","tensorflow>=2.10,<3","tokenizers>=0.10,<1","mlflow>=2.1.0,<2.4","torchdata>=0.4,<1","catboost>=1.2.0, <2","transformers>=4.32.1,<5","pytorch>=2.0.1,<2.3.0"],"depends":["absl-py >=0.15,<2","aiohttp !=4.0.0a0,!=4.0.0a1","anyio >=3.5.0,<4","cachetools >=3.1.1,<6","cloudpickle >=2.0.0","fsspec >=2022.11,<2024","importlib_resources >=6.1.1,<7","numpy >=1.23,<2","packaging >=20.9,<24","pandas >=1.0.0,<3","pyarrow","python","python >=3.8,<3.12","pytimeparse >=1.1.8,<2","pyyaml >=6.0,<7","requests","retrying >=1.3.3,<2","s3fs >=2022.11,<2024","scikit-learn >=1.2.1,<1.4","scipy >=1.9,<2","snowflake-connector-python >=3.5.0,<4","snowflake-snowpark-python >=1.17.0,<2","sqlparse >=0.4,<1","typing-extensions >=4.1.0,<5","xgboost >=1.7.3,<2"],"license":"Apache-2.0","license_family":"Apache","md5":"3b85ed6404620866a1b918816f8145a7","name":"snowflake-ml-python","noarch":"python","sha256":"571353f61e800ec24a95498ad544b732ffe88e54f1a6c2784f36ff494d1cf975","size":644670,"subdir":"noarch","timestamp":1722284251469,"version":"1.6.0"}},"packages.conda":{},"removed":[],"repodata_version":1}
+{
+  "info": {
+    "subdir": "noarch"
+  },
+  "packages": {
+    "snowflake-ml-python-1.6.0-pypy_0.tar.bz2": {
+      "build": "pypy_0",
+      "build_number": 0,
+      "constrains": [
+        "mlflow>=2.1.0,<2.4",
+        "catboost>=1.2.0, <2",
+        "pytorch>=2.0.1,<2.3.0",
+        "sentence-transformers>=2.2.2,<3",
+        "tensorflow>=2.10,<3",
+        "transformers>=4.32.1,<5",
+        "torchdata>=0.4,<1",
+        "tokenizers>=0.10,<1",
+        "shap==0.42.1",
+        "sentencepiece>=0.1.95,<1",
+        "lightgbm>=3.3.5,<5"
+      ],
+      "depends": [
+        "absl-py >=0.15,<2",
+        "aiohttp !=4.0.0a0,!=4.0.0a1",
+        "anyio >=3.5.0,<4",
+        "cachetools >=3.1.1,<6",
+        "cloudpickle >=2.0.0",
+        "fsspec >=2022.11,<2024",
+        "importlib_resources >=6.1.1,<7",
+        "numpy >=1.23,<2",
+        "packaging >=20.9,<24",
+        "pandas >=1.0.0,<3",
+        "pyarrow",
+        "python",
+        "python >=3.8,<3.12",
+        "pytimeparse >=1.1.8,<2",
+        "pyyaml >=6.0,<7",
+        "requests",
+        "retrying >=1.3.3,<2",
+        "s3fs >=2022.11,<2024",
+        "scikit-learn >=1.2.1,<1.4",
+        "scipy >=1.9,<2",
+        "snowflake-connector-python >=3.5.0,<4",
+        "snowflake-snowpark-python >=1.17.0,<2",
+        "sqlparse >=0.4,<1",
+        "typing-extensions >=4.1.0,<5",
+        "xgboost >=1.7.3,<2"
+      ],
+      "license": "Apache-2.0",
+      "license_family": "Apache",
+      "md5": "d9ab7c82e84c32ab7e5958c283a63a9e",
+      "name": "snowflake-ml-python",
+      "noarch": "python",
+      "sha256": "9296bf4848e6e77728f67ff7b0c9f11f760cc6b84415b4399db57ade4b8673a8",
+      "size": 646987,
+      "subdir": "noarch",
+      "timestamp": 1723160880029,
+      "version": "1.6.0"
+    }
+  },
+  "packages.conda": {},
+  "removed": [],
+  "repodata_version": 1
+}
