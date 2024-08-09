@@ -75,6 +75,7 @@ def convert2D_json_to_3D(array: npt.NDArray[Any]) -> List[List[List[Any]]]:
         tmp = []
         for j in range(array.shape[1]):
             json_to_dict = json.loads(array[i][j])
-            tmp.append([float(json_to_dict["0"]), float(json_to_dict["1"])])
+            num_keys = len(json_to_dict.keys())
+            tmp.append([float(json_to_dict[str(k)]) for k in range(num_keys)])
         final_array.append(tmp)
     return final_array

@@ -31,6 +31,14 @@ class SnowMLModelHandlerTest(absltest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmpdir:
             s = {"predict": model_signature.infer_signature(df[INPUT_COLUMNS], regr.predict(df)[[OUTPUT_COLUMNS]])}
+            with self.assertRaises(NotImplementedError):
+                model_packager.ModelPackager(os.path.join(tmpdir, "model1")).save(
+                    name="model1",
+                    model=regr,
+                    metadata={"author": "halu", "version": "1"},
+                    options={"enable_explainability": True},
+                )
+
             with self.assertWarnsRegex(UserWarning, "Model signature will automatically be inferred during fitting"):
                 model_packager.ModelPackager(os.path.join(tmpdir, "model1")).save(
                     name="model1",

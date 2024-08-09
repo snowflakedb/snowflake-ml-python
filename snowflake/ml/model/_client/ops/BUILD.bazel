@@ -17,6 +17,7 @@ py_library(
         "//snowflake/ml/model:type_hints",
         "//snowflake/ml/model/_client/sql:model",
         "//snowflake/ml/model/_client/sql:model_version",
+        "//snowflake/ml/model/_client/sql:service",
         "//snowflake/ml/model/_client/sql:stage",
         "//snowflake/ml/model/_client/sql:tag",
         "//snowflake/ml/model/_model_composer:model_composer",
@@ -61,5 +62,16 @@ py_test(
         ":metadata_ops",
         "//snowflake/ml/_internal/utils:sql_identifier",
         "//snowflake/ml/test_utils:mock_session",
+    ],
+)
+
+py_library(
+    name = "service_ops",
+    srcs = ["service_ops.py"],
+    deps = [
+        "//snowflake/ml/_internal/utils:sql_identifier",
+        "//snowflake/ml/model/_client/service:model_deployment_spec",
+        "//snowflake/ml/model/_client/sql:service",
+        "//snowflake/ml/model/_client/sql:stage",
     ],
 )

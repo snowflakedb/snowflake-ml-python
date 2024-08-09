@@ -98,11 +98,37 @@ class TestPipeline(TestCase):
         ss = StandardScaler().set_input_cols(output_col1).set_output_cols(output_col2)
         pipeline = snowml_pipeline.Pipeline([("mms", mms), ("ss", ss)])
         pipeline.fit(df)
+        pipeline.to_sklearn()
         transformed_df = pipeline.transform(df)
 
         df1 = mms.fit(df).transform(df)
         df2 = ss.fit(df1).transform(df1)
         assert transformed_df.queries["queries"][-1] == df2.queries["queries"][-1]
+
+    def test_set_params_snowml_pipeline(self) -> None:
+        input_col, output_col1, input_col_2, output_col2 = NUMERIC_COLS[0], "OUTPUT1", NUMERIC_COLS[1], "OUTPUT2"
+        _, df = framework_utils.get_df(self._session, DATA, SCHEMA, np.nan)
+        pipeline = snowml_pipeline.Pipeline(
+            steps=[
+                (
+                    "MMS",
+                    MinMaxScaler(input_cols=[input_col], output_cols=[output_col1]),
+                ),
+                (
+                    "MMS2",
+                    MinMaxScaler(input_cols=[input_col_2], output_cols=[output_col2]),
+                ),
+            ]
+        )
+        pipeline.fit(df)
+        assert pipeline._is_convertible_to_sklearn_object() is False
+        self.assertFalse(pipeline.steps[1][1].clip)
+        self.assertFalse(pipeline.steps[0][1].clip)
+        self.assertEqual(pipeline.steps[0][1].feature_range, (0, 1))
+        pipeline.set_params(**{"MMS__clip": True, "MMS__feature_range": (1, 2), "MMS2__clip": True})
+        self.assertTrue(pipeline.steps[1][1].clip)
+        self.assertTrue(pipeline.steps[0][1].clip)
+        self.assertEqual(pipeline.steps[0][1].feature_range, (1, 2))
 
     def test_serde(self) -> None:
         """

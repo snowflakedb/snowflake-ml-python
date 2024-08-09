@@ -1,4 +1,7 @@
 ---
 source_data: citibike_trips
+training_spine_table: citibike_trips
 label_columns: tripduration
 add_id_column: trip_id
+desc: Features using citibike trip data trying to predict the duration of a trip.
+model_category: regression

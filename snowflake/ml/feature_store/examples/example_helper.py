@@ -10,7 +10,7 @@ import yaml
 from snowflake.ml._internal.utils import identifier, sql_identifier
 from snowflake.ml.feature_store import Entity, FeatureView  # type: ignore[attr-defined]
 from snowflake.snowpark import DataFrame, Session, functions as F
-from snowflake.snowpark.types import TimestampType
+from snowflake.snowpark.types import TimestampTimeZone, TimestampType
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -28,6 +28,9 @@ class ExampleHelper:
         self._session = session
         self._database_name = database_name
         self._dataset_schema = dataset_schema
+        self._clear()
+
+    def _clear(self) -> None:
         self._selected_example = None
         self._source_tables: List[str] = []
         self._source_dfs: List[DataFrame] = []
@@ -36,15 +39,18 @@ class ExampleHelper:
         self._timestamp_column: Optional[sql_identifier.SqlIdentifier] = None
         self._epoch_to_timestamp_cols: List[str] = []
         self._add_id_column: Optional[sql_identifier.SqlIdentifier] = None
+        self._training_spine_table: str = ""
 
-    def list_examples(self) -> List[str]:
-        """Return a list of examples."""
+    def list_examples(self) -> Optional[DataFrame]:
+        """Return a dataframe object about descriptions of all examples."""
         root_dir = Path(__file__).parent
-        result = []
+        rows = []
         for f_name in os.listdir(root_dir):
             if os.path.isdir(os.path.join(root_dir, f_name)) and f_name[0].isalpha() and f_name != "source_data":
-                result.append(f_name)
-        return result
+                source_file_path = root_dir.joinpath(f"{f_name}/source.yaml")
+                source_dict = self._read_yaml(str(source_file_path))
+                rows.append((f_name, source_dict["model_category"], source_dict["desc"], source_dict["label_columns"]))
+        return self._session.create_dataframe(rows, schema=["NAME", "MODEL_CATEGORY", "DESC", "LABEL_COLS"])
 
     def load_draft_feature_views(self) -> List[FeatureView]:
         """Return all feature views in an example.
@@ -101,7 +107,7 @@ class ExampleHelper:
             """
         ).collect()
 
-    def _load_csv(self, schema_dict: Dict[str, str], destination_table: str, temp_stage_name: str) -> None:
+    def _load_csv(self, schema_dict: Dict[str, str], temp_stage_name: str) -> List[str]:
         # create temp file format
         file_format_name = f"{self._database_name}.{self._dataset_schema}.feature_store_temp_format"
         format_str = ""
@@ -116,6 +122,8 @@ class ExampleHelper:
             cols_type_str = (
                 f"{self._add_id_column.resolved()} number autoincrement start 1 increment 1, " + cols_type_str
             )
+
+        destination_table = f"{self._database_name}.{self._dataset_schema}.{schema_dict['destination_table_name']}"
         self._session.sql(
             f"""
             create or replace table {destination_table} ({cols_type_str})
@@ -132,25 +140,50 @@ class ExampleHelper:
             """
         ).collect()
 
-    def _load_parquet(self, schema_dict: Dict[str, str], destination_table: str, temp_stage_name: str) -> None:
+        return [destination_table]
+
+    def _load_parquet(self, schema_dict: Dict[str, str], temp_stage_name: str) -> List[str]:
         regex_pattern = schema_dict["load_files_pattern"]
         all_files = self._session.sql(f"list @{temp_stage_name}").collect()
         filtered_files = [item["name"] for item in all_files if re.match(regex_pattern, item["name"])]
-        assert len(filtered_files) == 1, "Current code only works for one file"
-        file_name = filtered_files[0].rsplit("/", 1)[-1]
+        file_count = len(filtered_files)
+        result = []
 
-        df = self._session.read.parquet(f"@{temp_stage_name}/{file_name}")
-        for old_col_name in df.columns:
-            df = df.with_column_renamed(old_col_name, identifier.get_unescaped_names(old_col_name))
+        for file in filtered_files:
+            file_name = file.rsplit("/", 1)[-1]
 
-        for ts_col in self._epoch_to_timestamp_cols:
-            if "timestamp" != dict(df.dtypes)[ts_col]:
-                df = df.with_column(f"{ts_col}_NEW", F.cast(df[ts_col] / 1000000, TimestampType()))
-                df = df.drop(ts_col).rename(f"{ts_col}_NEW", ts_col)
+            df = self._session.read.parquet(f"@{temp_stage_name}/{file_name}")
+            for old_col_name in df.columns:
+                df = df.with_column_renamed(old_col_name, identifier.get_unescaped_names(old_col_name))
 
-        df.write.mode("overwrite").save_as_table(destination_table)
+            # convert timestamp column to ntz
+            for name, type in dict(df.dtypes).items():
+                if type == "timestamp":
+                    df = df.with_column(name, F.to_timestamp_ntz(name))
 
-    def _load_source_data(self, schema_yaml_file: str) -> str:
+            # convert epoch column to ntz timestamp
+            for ts_col in self._epoch_to_timestamp_cols:
+                if "timestamp" != dict(df.dtypes)[ts_col]:
+                    df = df.with_column(ts_col, F.cast(df[ts_col] / 1000000, TimestampType(TimestampTimeZone.NTZ)))
+
+            if self._add_id_column:
+                df = df.withColumn(self._add_id_column, F.monotonically_increasing_id())
+
+            if file_count == 1:
+                dest_table_name = (
+                    f"{self._database_name}.{self._dataset_schema}.{schema_dict['destination_table_name']}"
+                )
+            else:
+                regex_pattern = schema_dict["destination_table_name"]
+                dest_table_name = re.match(regex_pattern, file_name).group("table_name")  # type: ignore[union-attr]
+                dest_table_name = f"{self._database_name}.{self._dataset_schema}.{dest_table_name}"
+
+            df.write.mode("overwrite").save_as_table(dest_table_name)
+            result.append(dest_table_name)
+
+        return result
+
+    def _load_source_data(self, schema_yaml_file: str) -> List[str]:
         """Parse a yaml schema file and load data into Snowflake.
 
         Args:
@@ -162,7 +195,6 @@ class ExampleHelper:
         # load schema file
         schema_dict = self._read_yaml(schema_yaml_file)
         temp_stage_name = f"{self._database_name}.{self._dataset_schema}.feature_store_temp_stage"
-        destination_table = f"{self._database_name}.{self._dataset_schema}.{schema_dict['destination_table_name']}"
 
         # create a temp stage from S3 URL
         self._session.sql(f"create or replace stage {temp_stage_name} url = '{schema_dict['s3_url']}'").collect()
@@ -170,11 +202,9 @@ class ExampleHelper:
         # load csv or parquet
         # TODO: this could be more flexible and robust.
         if "parquet" in schema_dict["load_files_pattern"]:
-            self._load_parquet(schema_dict, destination_table, temp_stage_name)
+            return self._load_parquet(schema_dict, temp_stage_name)
         else:
-            self._load_csv(schema_dict, destination_table, temp_stage_name)
-
-        return destination_table
+            return self._load_csv(schema_dict, temp_stage_name)
 
     def load_example(self, example_name: str) -> List[str]:
         """Select the active example and load its datasets to Snowflake.
@@ -186,6 +216,7 @@ class ExampleHelper:
         Returns:
             Returns a list of table names with populated datasets.
         """
+        self._clear()
         self._selected_example = example_name  # type: ignore[assignment]
 
         # load source yaml file
@@ -195,7 +226,7 @@ class ExampleHelper:
         self._source_tables = []
         self._source_dfs = []
 
-        source_ymal_data = source_dict["source_data"]
+        source_yaml_data = source_dict["source_data"]
         if "excluded_columns" in source_dict:
             self._excluded_columns = sql_identifier.to_sql_identifiers(source_dict["excluded_columns"].split(","))
         if "label_columns" in source_dict:
@@ -206,8 +237,11 @@ class ExampleHelper:
             self._epoch_to_timestamp_cols = source_dict["epoch_to_timestamp_cols"].split(",")
         if "add_id_column" in source_dict:
             self._add_id_column = sql_identifier.SqlIdentifier(source_dict["add_id_column"])
+        self._training_spine_table = (
+            f"{self._database_name}.{self._dataset_schema}.{source_dict['training_spine_table']}"
+        )
 
-        return self.load_source_data(source_ymal_data)
+        return self.load_source_data(source_yaml_data)
 
     def load_source_data(self, source_data_name: str) -> List[str]:
         """Load source data into Snowflake.
@@ -220,11 +254,12 @@ class ExampleHelper:
         """
         root_dir = Path(__file__).parent
         schema_file = root_dir.joinpath(f"source_data/{source_data_name}.yaml")
-        destination_table = self._load_source_data(str(schema_file))
-        source_df = self._session.table(destination_table)
-        self._source_tables.append(destination_table)
-        self._source_dfs.append(source_df)
-        logger.info(f"source data {source_data_name} has been successfully loaded into table {destination_table}.")
+        destination_tables = self._load_source_data(str(schema_file))
+        for dest_table in destination_tables:
+            source_df = self._session.table(dest_table)
+            self._source_tables.append(dest_table)
+            self._source_dfs.append(source_df)
+            logger.info(f"{dest_table} has been created successfully.")
         return self._source_tables
 
     def get_current_schema(self) -> str:
@@ -238,3 +273,6 @@ class ExampleHelper:
 
     def get_training_data_timestamp_col(self) -> Optional[str]:
         return self._timestamp_column.resolved() if self._timestamp_column is not None else None
+
+    def get_training_spine_table(self) -> str:
+        return self._training_spine_table

@@ -45,6 +45,31 @@ class DataConnectorTest(absltest.TestCase):
                 if col != "col3":
                     self.assertIsInstance(tensor, torch.Tensor)
 
+    def test_to_torch_dataset(self) -> None:
+        expected_res = [
+            {"col1": np.array([0, 1]), "col2": np.array([10, 11]), "col3": ["a", "ab"]},
+            {"col1": np.array([2, 3]), "col2": np.array([12, 13]), "col3": ["abc", "m"]},
+            {"col1": np.array([4, 5]), "col2": np.array([14, np.NaN]), "col3": ["mn", "mnm"]},
+        ]
+        ds = self._sut.to_torch_dataset(shuffle=False)
+        count = 0
+        for batch in torch_data.DataLoader(ds, batch_size=2, shuffle=False, drop_last=True):
+            np.testing.assert_array_equal(batch["col1"], expected_res[count]["col1"])  # type: ignore[arg-type]
+            np.testing.assert_array_equal(batch["col2"], expected_res[count]["col2"])  # type: ignore[arg-type]
+            np.testing.assert_array_equal(batch["col3"], expected_res[count]["col3"])  # type: ignore[arg-type]
+            count += 1
+        self.assertEqual(count, len(expected_res))
+
+    def test_to_torch_dataset_multiprocessing(self) -> None:
+        ds = self._sut.to_torch_dataset(shuffle=False)
+
+        # FIXME: This test runs pretty slowly, probably due to multiprocessing overhead
+        # Make sure dataset works with num_workers > 0 (and doesn't duplicate data)
+        self.assertEqual(
+            len(list(torch_data.DataLoader(ds, batch_size=2, shuffle=False, drop_last=True, num_workers=2))),
+            3,
+        )
+
     def test_to_tf_dataset(self) -> None:
         expected_res = [
             {"col1": np.array([0, 1]), "col2": np.array([10, 11]), "col3": np.array([b"a", b"ab"], dtype="object")},

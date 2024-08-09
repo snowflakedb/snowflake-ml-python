@@ -90,7 +90,6 @@ def _call_complete_rest(
     prompt: Union[str, List[ConversationMessage]],
     options: Optional[CompleteOptions] = None,
     session: Optional[snowpark.Session] = None,
-    stream: bool = False,
 ) -> requests.Response:
     session = session or context.get_active_session()
     if session is None:
@@ -121,7 +120,7 @@ def _call_complete_rest(
 
     data = {
         "model": model,
-        "stream": stream,
+        "stream": True,
     }
     if isinstance(prompt, List):
         data["messages"] = prompt
@@ -137,30 +136,13 @@ def _call_complete_rest(
         if "top_p" in options:
             data["top_p"] = options["top_p"]
 
-    logger.debug(f"making POST request to {url} (model={model}, stream={stream})")
+    logger.debug(f"making POST request to {url} (model={model})")
     return requests.post(
         url,
         json=data,
         headers=headers,
-        stream=stream,
+        stream=True,
     )
-
-
-def _process_rest_response(
-    response: requests.Response,
-    stream: bool = False,
-    deadline: Optional[float] = None,
-) -> Union[str, Iterator[str]]:
-    if stream:
-        return _return_stream_response(response, deadline)
-
-    try:
-        content = response.json()["choices"][0]["message"]["content"]
-        assert isinstance(content, str)
-        return content
-    except (KeyError, IndexError, AssertionError) as e:
-        # Unlike the streaming case, errors are not ignored because a message must be returned.
-        raise ResponseParseException("Failed to parse message from response.") from e
 
 
 def _return_stream_response(response: requests.Response, deadline: Optional[float]) -> Iterator[str]:
@@ -243,7 +225,6 @@ def _complete_impl(
     prompt: Union[str, List[ConversationMessage], snowpark.Column],
     options: Optional[CompleteOptions] = None,
     session: Optional[snowpark.Session] = None,
-    use_rest_api_experimental: bool = False,
     stream: bool = False,
     function: str = "snowflake.cortex.complete",
     timeout: Optional[float] = None,
@@ -253,16 +234,14 @@ def _complete_impl(
         raise ValueError('only one of "timeout" and "deadline" must be set')
     if timeout is not None:
         deadline = time.time() + timeout
-    if use_rest_api_experimental:
+    if stream:
         if not isinstance(model, str):
             raise ValueError("in REST mode, 'model' must be a string")
         if not isinstance(prompt, str) and not isinstance(prompt, List):
             raise ValueError("in REST mode, 'prompt' must be a string or a list of ConversationMessage")
-        response = _call_complete_rest(model, prompt, options, session=session, stream=stream, deadline=deadline)
+        response = _call_complete_rest(model, prompt, options, session=session, deadline=deadline)
         assert response.status_code >= 200 and response.status_code < 300
-        return _process_rest_response(response, stream=stream)
-    if stream is True:
-        raise ValueError("streaming can only be enabled in REST mode, set use_rest_api_experimental=True")
+        return _return_stream_response(response, deadline)
     return _complete_sql_impl(function, model, prompt, options, session)
 
 
@@ -275,7 +254,6 @@ def Complete(
     *,
     options: Optional[CompleteOptions] = None,
     session: Optional[snowpark.Session] = None,
-    use_rest_api_experimental: bool = False,
     stream: bool = False,
     timeout: Optional[float] = None,
     deadline: Optional[float] = None,
@@ -287,16 +265,13 @@ def Complete(
         prompt: A Column of prompts to send to the LLM.
         options: A instance of snowflake.cortex.CompleteOptions
         session: The snowpark session to use. Will be inferred by context if not specified.
-        use_rest_api_experimental (bool): Toggles between the use of SQL and REST implementation. This feature is
-            experimental and can be removed at any time.
         stream (bool): Enables streaming. When enabled, a generator function is returned that provides the streaming
             output as it is received. Each update is a string containing the new text content since the previous update.
-            The use of streaming requires the experimental use_rest_api_experimental flag to be enabled.
         timeout (float): Timeout in seconds to retry failed REST requests.
         deadline (float): Time in seconds since the epoch (as returned by time.time()) to retry failed REST requests.
 
     Raises:
-        ValueError: If `stream` is set to True and `use_rest_api_experimental` is set to False.
+        ValueError: incorrect argument.
 
     Returns:
         A column of string responses.
@@ -307,7 +282,6 @@ def Complete(
             prompt,
             options=options,
             session=session,
-            use_rest_api_experimental=use_rest_api_experimental,
             stream=stream,
             timeout=timeout,
             deadline=deadline,

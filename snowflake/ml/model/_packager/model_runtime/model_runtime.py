@@ -67,7 +67,9 @@ class ModelRuntime:
     def runtime_rel_path(self) -> pathlib.PurePosixPath:
         return pathlib.PurePosixPath(ModelRuntime.RUNTIME_DIR_REL_PATH) / self.name
 
-    def save(self, packager_path: pathlib.Path) -> model_meta_schema.ModelRuntimeDict:
+    def save(
+        self, packager_path: pathlib.Path, default_channel_override: str = env_utils.SNOWFLAKE_CONDA_CHANNEL_URL
+    ) -> model_meta_schema.ModelRuntimeDict:
         runtime_base_path = packager_path / self.runtime_rel_path
         runtime_base_path.mkdir(parents=True, exist_ok=True)
 
@@ -80,7 +82,7 @@ class ModelRuntime:
         self.runtime_env.conda_env_rel_path = self.runtime_rel_path / self.runtime_env.conda_env_rel_path
         self.runtime_env.pip_requirements_rel_path = self.runtime_rel_path / self.runtime_env.pip_requirements_rel_path
 
-        env_dict = self.runtime_env.save_as_dict(packager_path)
+        env_dict = self.runtime_env.save_as_dict(packager_path, default_channel_override=default_channel_override)
 
         return model_meta_schema.ModelRuntimeDict(
             imports=list(map(str, self.imports)),

@@ -5,7 +5,7 @@ import pandas as pd
 from snowflake.ml._internal import telemetry
 from snowflake.ml._internal.utils import sql_identifier
 from snowflake.ml.model._client.model import model_version_impl
-from snowflake.ml.model._client.ops import model_ops
+from snowflake.ml.model._client.ops import model_ops, service_ops
 
 _TELEMETRY_PROJECT = "MLOps"
 _TELEMETRY_SUBPROJECT = "ModelManagement"
@@ -19,6 +19,7 @@ class Model:
     """Model Object containing multiple versions. Mapping to SQL's MODEL object."""
 
     _model_ops: model_ops.ModelOperator
+    _service_ops: service_ops.ServiceOperator
     _model_name: sql_identifier.SqlIdentifier
 
     def __init__(self) -> None:
@@ -29,17 +30,23 @@ class Model:
         cls,
         model_ops: model_ops.ModelOperator,
         *,
+        service_ops: service_ops.ServiceOperator,
         model_name: sql_identifier.SqlIdentifier,
     ) -> "Model":
         self: "Model" = object.__new__(cls)
         self._model_ops = model_ops
+        self._service_ops = service_ops
         self._model_name = model_name
         return self
 
     def __eq__(self, __value: object) -> bool:
         if not isinstance(__value, Model):
             return False
-        return self._model_ops == __value._model_ops and self._model_name == __value._model_name
+        return (
+            self._model_ops == __value._model_ops
+            and self._service_ops == __value._service_ops
+            and self._model_name == __value._model_name
+        )
 
     @property
     def name(self) -> str:
@@ -208,6 +215,7 @@ class Model:
 
         return model_version_impl.ModelVersion._ref(
             self._model_ops,
+            service_ops=self._service_ops,
             model_name=self._model_name,
             version_name=version_id,
         )
@@ -235,6 +243,7 @@ class Model:
         return [
             model_version_impl.ModelVersion._ref(
                 self._model_ops,
+                service_ops=self._service_ops,
                 model_name=self._model_name,
                 version_name=version_name,
             )

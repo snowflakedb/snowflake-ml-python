@@ -1,7 +1,7 @@
 ---
 s3_url: s3://snowflake-workshop-lab/citibike-trips-csv/
 destination_table_name: citibike_trips
-load_files_pattern: trips_2013_6_4_0.csv.gz
+load_files_pattern: .*trips_2013_6_.*[.]csv[.]gz
 format:
   type: csv
   compression: auto

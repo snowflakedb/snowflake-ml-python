@@ -1,0 +1,20 @@
+load("//bazel:py_rules.bzl", "py_library")
+
+package(default_visibility = [
+    "//bazel:snowml_public_common",
+    "//snowflake/ml/model/_client/ops:__pkg__",
+])
+
+py_library(
+    name = "model_deployment_spec_schema",
+    srcs = ["model_deployment_spec_schema.py"],
+    deps = [],
+)
+
+py_library(
+    name = "model_deployment_spec",
+    srcs = ["model_deployment_spec.py"],
+    deps = [
+        ":model_deployment_spec_schema",
+    ],
+)

@@ -51,6 +51,9 @@ class CustomModelHandler(_base.BaseModelHandler["custom_model.CustomModel"]):
         **kwargs: Unpack[model_types.CustomModelSaveOption],
     ) -> None:
         assert isinstance(model, custom_model.CustomModel)
+        enable_explainability = kwargs.get("enable_explainability", False)
+        if enable_explainability:
+            raise NotImplementedError("Explainability is not supported for custom model.")
 
         def get_prediction(
             target_method_name: str, sample_input_data: model_types.SupportedLocalDataType
@@ -108,13 +111,13 @@ class CustomModelHandler(_base.BaseModelHandler["custom_model.CustomModel"]):
         # Make sure that the module where the model is defined get pickled by value as well.
         cloudpickle.register_pickle_by_value(sys.modules[model.__module__])
         pickled_obj = (model.__class__, model.context)
-        with open(os.path.join(model_blob_path, cls.MODELE_BLOB_FILE_OR_DIR), "wb") as f:
+        with open(os.path.join(model_blob_path, cls.MODEL_BLOB_FILE_OR_DIR), "wb") as f:
             cloudpickle.dump(pickled_obj, f)
         # model meta will be saved by the context manager
         model_meta.models[name] = model_blob_meta.ModelBlobMeta(
             name=name,
             model_type=cls.HANDLER_TYPE,
-            path=cls.MODELE_BLOB_FILE_OR_DIR,
+            path=cls.MODEL_BLOB_FILE_OR_DIR,
             handler_version=cls.HANDLER_VERSION,
             function_properties=model_meta.function_properties,
             artifacts={
@@ -183,6 +186,7 @@ class CustomModelHandler(_base.BaseModelHandler["custom_model.CustomModel"]):
         cls,
         raw_model: custom_model.CustomModel,
         model_meta: model_meta_api.ModelMetadata,
+        background_data: Optional[pd.DataFrame] = None,
         **kwargs: Unpack[model_types.CustomModelLoadOption],
     ) -> custom_model.CustomModel:
         return raw_model

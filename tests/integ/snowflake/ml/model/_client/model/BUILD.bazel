@@ -41,3 +41,15 @@ py_test(
         "//tests/integ/snowflake/ml/test_utils:db_manager",
     ],
 )
+
+py_test(
+    name = "model_deployment_test",
+    timeout = "long",
+    srcs = ["model_deployment_test.py"],
+    shard_count = 2,
+    deps = [
+        "//snowflake/ml/registry",
+        "//snowflake/ml/utils:connection_params",
+        "//tests/integ/snowflake/ml/test_utils:db_manager",
+    ],
+)

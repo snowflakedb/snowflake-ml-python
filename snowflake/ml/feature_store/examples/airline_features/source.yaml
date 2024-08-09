@@ -1,0 +1,7 @@
+---
+source_data: airline
+label_columns: DEPARTING_DELAY
+timestamp_column: SCHEDULED_DEPARTURE_UTC
+desc: Features using synthetic airline data to predict the departing delay.
+model_category: classification
+training_spine_table: US_FLIGHT_SCHEDULES

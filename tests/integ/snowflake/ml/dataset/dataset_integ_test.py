@@ -462,8 +462,25 @@ class TestSnowflakeDataset(dataset_integ_test_base.TestSnowflakeDatasetBase):
         )
         self._validate_torch_datapipe(pt_dp, batch_size, drop_last_batch)
 
+        pt_ds = ds.read.to_torch_dataset(shuffle=datapipe_shuffle)
+        self._validate_torch_dataset(pt_ds, batch_size, drop_last_batch)
+
         df = ds.read.to_snowpark_dataframe()
         self._validate_snowpark_dataframe(df)
+
+    def _validate_torch_dataset(
+        self, ds: "data.IterableDataset[Dict[str, Any]]", batch_size: int, drop_last_batch: bool
+    ) -> None:
+        def numpy_batch_generator() -> Generator[Dict[str, npt.NDArray[Any]], None, None]:
+            for batch in data.DataLoader(ds, batch_size=batch_size, drop_last=drop_last_batch, num_workers=0):
+                numpy_batch = {}
+                for k, v in batch.items():
+                    self.assertIsInstance(v, torch.Tensor)
+                    self.assertEqual(1, v.dim())
+                    numpy_batch[k] = v.numpy()
+                yield numpy_batch
+
+        self._validate_batches(batch_size, drop_last_batch, numpy_batch_generator)
 
     def _validate_torch_datapipe(
         self, datapipe: "data.IterDataPipe[Dict[str, npt.NDArray[Any]]]", batch_size: int, drop_last_batch: bool

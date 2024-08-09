@@ -45,6 +45,20 @@ _ReturnValue = TypeVar("_ReturnValue")
 
 
 @enum.unique
+class TelemetryProject(enum.Enum):
+    MLOPS = "MLOps"
+    MODELING = "ModelDevelopment"
+    # TODO: Update with remaining projects.
+
+
+@enum.unique
+class TelemetrySubProject(enum.Enum):
+    MONITORING = "Monitoring"
+    REGISTRY = "ModelManagement"
+    # TODO: Update with remaining subprojects.
+
+
+@enum.unique
 class TelemetryField(enum.Enum):
     # constants
     NAME = "name"

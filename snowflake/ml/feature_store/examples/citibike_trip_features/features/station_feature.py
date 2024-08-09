@@ -14,18 +14,24 @@ def create_draft_feature_view(session: Session, source_dfs: List[DataFrame], sou
         f"""
         select
             end_station_id,
-            count(end_station_id) as f_count_1d,
-            avg(end_station_latitude) as f_avg_latitude_1d,
-            avg(end_station_longitude) as f_avg_longtitude_1d
+            count(end_station_id) as f_count,
+            avg(end_station_latitude) as f_avg_latitude,
+            avg(end_station_longitude) as f_avg_longtitude
         from {source_tables[0]}
         group by end_station_id
         """
     )
 
     return FeatureView(
-        name="f_station_1d",  # name of feature view
+        name="f_station",  # name of feature view
         entities=[end_station_id],  # entities
         feature_df=query,  # definition query
         refresh_freq="1d",  # refresh frequency. '1d' means it refreshes everyday
         desc="Station features refreshed every day.",
+    ).attach_feature_desc(
+        {
+            "f_count": "How many times this station appears in 1 day.",
+            "f_avg_latitude": "Averaged latitude of a station.",
+            "f_avg_longtitude": "Averaged longtitude of a station.",
+        }
     )

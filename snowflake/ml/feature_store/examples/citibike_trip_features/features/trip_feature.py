@@ -21,4 +21,10 @@ def create_draft_feature_view(session: Session, source_dfs: List[DataFrame], sou
         feature_df=feature_df,  # definition query
         refresh_freq=None,  # refresh frequency. None indicates it never refresh
         desc="Static trip features",
+    ).attach_feature_desc(
+        {
+            "f_birth_year": "The birth year of a trip passenger.",
+            "f_gender": "The gender of a trip passenger.",
+            "f_bikeid": "The bike id of a trip passenger.",
+        }
     )

@@ -28,7 +28,7 @@ class LLMHandler(_base.BaseModelHandler[llm.LLM]):
     _MIN_SNOWPARK_ML_VERSION = "1.0.12"
     _HANDLER_MIGRATOR_PLANS: Dict[str, Type[base_migrator.BaseModelHandlerMigrator]] = {}
 
-    MODELE_BLOB_FILE_OR_DIR = "model"
+    MODEL_BLOB_FILE_OR_DIR = "model"
     LLM_META = "llm_meta"
     IS_AUTO_SIGNATURE = True
 
@@ -59,9 +59,12 @@ class LLMHandler(_base.BaseModelHandler[llm.LLM]):
         **kwargs: Unpack[model_types.LLMSaveOptions],
     ) -> None:
         assert not is_sub_model, "LLM can not be sub-model."
+        enable_explainability = kwargs.get("enable_explainability", False)
+        if enable_explainability:
+            raise NotImplementedError("Explainability is not supported for llm model.")
         model_blob_path = os.path.join(model_blobs_dir_path, name)
         os.makedirs(model_blob_path, exist_ok=True)
-        model_blob_dir_path = os.path.join(model_blob_path, cls.MODELE_BLOB_FILE_OR_DIR)
+        model_blob_dir_path = os.path.join(model_blob_path, cls.MODEL_BLOB_FILE_OR_DIR)
 
         sig = model_signature.ModelSignature(
             inputs=[
@@ -86,7 +89,7 @@ class LLMHandler(_base.BaseModelHandler[llm.LLM]):
             name=name,
             model_type=cls.HANDLER_TYPE,
             handler_version=cls.HANDLER_VERSION,
-            path=cls.MODELE_BLOB_FILE_OR_DIR,
+            path=cls.MODEL_BLOB_FILE_OR_DIR,
             options=model_meta_schema.LLMModelBlobOptions(
                 {
                     "batch_size": model.max_batch_size,
@@ -143,6 +146,7 @@ class LLMHandler(_base.BaseModelHandler[llm.LLM]):
         cls,
         raw_model: llm.LLM,
         model_meta: model_meta_api.ModelMetadata,
+        background_data: Optional[pd.DataFrame] = None,
         **kwargs: Unpack[model_types.LLMLoadOptions],
     ) -> custom_model.CustomModel:
         import gc

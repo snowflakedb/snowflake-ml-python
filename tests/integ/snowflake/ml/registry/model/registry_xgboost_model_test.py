@@ -14,7 +14,7 @@ class TestRegistryXGBoostModelInteg(registry_model_test_base.RegistryModelTestBa
     @parameterized.product(  # type: ignore[misc]
         registry_test_fn=registry_model_test_base.RegistryModelTestBase.REGISTRY_TEST_FN_LIST,
     )
-    def test_xgb(
+    def test_xgb_no_explain(
         self,
         registry_test_fn: str,
     ) -> None:
@@ -36,12 +36,39 @@ class TestRegistryXGBoostModelInteg(registry_model_test_base.RegistryModelTestBa
                     ),
                 ),
             },
+            options={"enable_explainability": False},
         )
 
     @parameterized.product(  # type: ignore[misc]
         registry_test_fn=registry_model_test_base.RegistryModelTestBase.REGISTRY_TEST_FN_LIST,
     )
-    def test_xgb_explain(
+    def test_xgb_explain_by_default(
+        self,
+        registry_test_fn: str,
+    ) -> None:
+        cal_data = datasets.load_breast_cancer(as_frame=True)
+        cal_X = cal_data.data
+        cal_y = cal_data.target
+        cal_X.columns = [inflection.parameterize(c, "_") for c in cal_X.columns]
+        cal_X_train, cal_X_test, cal_y_train, cal_y_test = model_selection.train_test_split(cal_X, cal_y)
+        regressor = xgboost.XGBRegressor(n_estimators=100, reg_lambda=1, gamma=0, max_depth=3)
+        regressor.fit(cal_X_train, cal_y_train)
+        expected_explanations = shap.Explainer(regressor)(cal_X_test).values
+        getattr(self, registry_test_fn)(
+            model=regressor,
+            sample_input_data=cal_X_test,
+            prediction_assert_fns={
+                "explain": (
+                    cal_X_test,
+                    lambda res: np.testing.assert_allclose(res.values, expected_explanations, rtol=1e-4),
+                ),
+            },
+        )
+
+    @parameterized.product(  # type: ignore[misc]
+        registry_test_fn=registry_model_test_base.RegistryModelTestBase.REGISTRY_TEST_FN_LIST,
+    )
+    def test_xgb_explain_explicitly_enabled(
         self,
         registry_test_fn: str,
     ) -> None:
@@ -68,7 +95,7 @@ class TestRegistryXGBoostModelInteg(registry_model_test_base.RegistryModelTestBa
     @parameterized.product(  # type: ignore[misc]
         registry_test_fn=registry_model_test_base.RegistryModelTestBase.REGISTRY_TEST_FN_LIST,
     )
-    def test_xgb_sp(
+    def test_xgb_sp_no_explain(
         self,
         registry_test_fn: str,
     ) -> None:
@@ -97,6 +124,7 @@ class TestRegistryXGBoostModelInteg(registry_model_test_base.RegistryModelTestBa
                     lambda res: dataframe_utils.check_sp_df_res(res, y_df_expected, check_dtype=False),
                 ),
             },
+            options={"enable_explainability": False},
         )
 
     @parameterized.product(  # type: ignore[misc]
@@ -136,13 +164,12 @@ class TestRegistryXGBoostModelInteg(registry_model_test_base.RegistryModelTestBa
                     ),
                 ),
             },
-            options={"enable_explainability": True},
         )
 
     @parameterized.product(  # type: ignore[misc]
         registry_test_fn=registry_model_test_base.RegistryModelTestBase.REGISTRY_TEST_FN_LIST,
     )
-    def test_xgb_booster(
+    def test_xgb_booster_no_explain(
         self,
         registry_test_fn: str,
     ) -> None:
@@ -163,6 +190,7 @@ class TestRegistryXGBoostModelInteg(registry_model_test_base.RegistryModelTestBa
                     lambda res: np.testing.assert_allclose(res.values, np.expand_dims(y_pred, axis=1), rtol=1e-6),
                 ),
             },
+            options={"enable_explainability": False},
         )
 
     @parameterized.product(  # type: ignore[misc]
@@ -189,13 +217,12 @@ class TestRegistryXGBoostModelInteg(registry_model_test_base.RegistryModelTestBa
                     lambda res: np.testing.assert_allclose(res.values, expected_explanations, rtol=1e-4),
                 ),
             },
-            options={"enable_explainability": True},
         )
 
     @parameterized.product(  # type: ignore[misc]
         registry_test_fn=registry_model_test_base.RegistryModelTestBase.REGISTRY_TEST_FN_LIST,
     )
-    def test_xgb_booster_sp(
+    def test_xgb_booster_sp_no_explain(
         self,
         registry_test_fn: str,
     ) -> None:
@@ -229,6 +256,7 @@ class TestRegistryXGBoostModelInteg(registry_model_test_base.RegistryModelTestBa
                     lambda res: dataframe_utils.check_sp_df_res(res, y_df_expected, check_dtype=False),
                 ),
             },
+            options={"enable_explainability": False},
         )
 
     @parameterized.product(  # type: ignore[misc]
@@ -271,7 +299,6 @@ class TestRegistryXGBoostModelInteg(registry_model_test_base.RegistryModelTestBa
                     ),
                 ),
             },
-            options={"enable_explainability": True},
         )
 
 

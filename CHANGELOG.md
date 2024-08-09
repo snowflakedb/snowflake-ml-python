@@ -1,6 +1,31 @@
 # Release History
 
-## 1.6.0
+## 1.6.1 (TBD)
+
+### Bug Fixes
+
+- Feature Store: Support large metadata blob when generating dataset
+- Feature Store: Added a hidden knob in FeatureView as kargs for setting customized
+  refresh_mode
+- Registry: Fix an error message in Model Version `run` when `function_name` is not mentioned and model has multiple
+  target methods.
+- Cortex inference: snowflake.cortex.Complete now only uses the REST API for streaming and the use_rest_api_experimental
+  is no longer needed.
+- Feature Store: Add a new API: FeatureView.list_columns() which list all column information.
+- Data: Fix `DataFrame` ingestion with `ArrowIngestor`.
+
+### New Features
+
+- Enable `set_params` to set the parameters of the underlying sklearn estimator, if the snowflake-ml model has been fit.
+- Data: Add top-level exports for `DataConnector` and `DataSource` to `snowflake.ml.data`.
+- Data: Add `snowflake.ml.data.ingestor_utils` module with utility functions helpful for `DataIngestor` implementations.
+- Data: Add new `to_torch_dataset()` connector to `DataConnector` to replace deprecated DataPipe.
+- Registry: Option to `enable_explainability` set to True by default for XGBoost, LightGBM and CatBoost as PuPr feature.
+- Registry: Option to `enable_explainability` when registering SHAP supported sklearn models.
+
+### Behavior Changes
+
+## 1.6.0 (2024-07-29)
 
 ### Bug Fixes
 
@@ -29,6 +54,14 @@
   distributed_hpo_trainer.ENABLE_EFFICIENT_MEMORY_USAGE = False
   `
 - Registry: Option to `enable_explainability` when registering LightGBM models as a pre-PuPr feature.
+- Data: Add new `snowflake.ml.data` preview module which contains data reading utilities like `DataConnector`
+  - `DataConnector` provides efficient connectors from Snowpark `DataFrame`
+  and Snowpark ML `Dataset` to external frameworks like PyTorch, TensorFlow, and Pandas. Create `DataConnector`
+  instances using the classmethod constructors `DataConnector.from_dataset()` and `DataConnector.from_dataframe()`.
+- Data: Add new `DataConnector.from_sources()` classmethod constructor for constructing from `DataSource` objects.
+- Data: Add new `ingestor_class` arg to `DataConnector` classmethod constructors for easier `DataIngestor` injection.
+- Dataset: `DatasetReader` now subclasses new `DataConnector` class.
+  - Add optional `limit` arg to `DatasetReader.to_pandas()`
 
 ### Behavior Changes
 

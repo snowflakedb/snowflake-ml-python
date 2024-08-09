@@ -6,6 +6,7 @@ from typing import List, Optional, cast
 
 import yaml
 
+from snowflake.ml._internal import env_utils
 from snowflake.ml.data import data_source
 from snowflake.ml.model import type_hints
 from snowflake.ml.model._model_composer.model_manifest import model_manifest_schema
@@ -47,7 +48,9 @@ class ModelManifest:
         runtime_to_use = copy.deepcopy(model_meta.runtimes["cpu"])
         runtime_to_use.name = self._DEFAULT_RUNTIME_NAME
         runtime_to_use.imports.append(str(model_rel_path) + "/")
-        runtime_dict = runtime_to_use.save(self.workspace_path)
+        runtime_dict = runtime_to_use.save(
+            self.workspace_path, default_channel_override=env_utils.SNOWFLAKE_CONDA_CHANNEL_URL
+        )
 
         self.function_generator = function_generator.FunctionGenerator(model_dir_rel_path=model_rel_path)
         self.methods: List[model_method.ModelMethod] = []
@@ -137,10 +140,15 @@ class ModelManifest:
                 if isinstance(source, data_source.DatasetInfo):
                     result.append(
                         model_manifest_schema.LineageSourceDict(
-                            # Currently, we only support lineage from Dataset.
                             type=model_manifest_schema.LineageSourceTypes.DATASET.value,
                             entity=source.fully_qualified_name,
                             version=source.version,
+                        )
+                    )
+                elif isinstance(source, data_source.DataFrameInfo):
+                    result.append(
+                        model_manifest_schema.LineageSourceDict(
+                            type=model_manifest_schema.LineageSourceTypes.QUERY.value, entity=source.sql
                         )
                     )
         return result

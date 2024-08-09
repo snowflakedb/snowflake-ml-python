@@ -371,6 +371,7 @@ class ModelVersionSQLClient(_base._BaseSQLClient):
         returns: List[Tuple[str, spt.DataType, sql_identifier.SqlIdentifier]],
         partition_column: Optional[sql_identifier.SqlIdentifier],
         statement_params: Optional[Dict[str, Any]] = None,
+        is_partitioned: bool = True,
     ) -> dataframe.DataFrame:
         with_statements = []
         if len(input_df.queries["queries"]) == 1 and len(input_df.queries["post_actions"]) == 0:
@@ -409,11 +410,19 @@ class ModelVersionSQLClient(_base._BaseSQLClient):
 
         sql = textwrap.dedent(
             f"""WITH {','.join(with_statements)}
-                 SELECT *,
-                 FROM {INTERMEDIATE_TABLE_NAME},
-                     TABLE({module_version_alias}!{method_name.identifier()}({args_sql})
-                     OVER (PARTITION BY {partition_by}))"""
+                SELECT *,
+                FROM {INTERMEDIATE_TABLE_NAME},
+                    TABLE({module_version_alias}!{method_name.identifier()}({args_sql}))"""
         )
+
+        if is_partitioned or partition_column is not None:
+            sql = textwrap.dedent(
+                f"""WITH {','.join(with_statements)}
+                    SELECT *,
+                    FROM {INTERMEDIATE_TABLE_NAME},
+                        TABLE({module_version_alias}!{method_name.identifier()}({args_sql})
+                        OVER (PARTITION BY {partition_by}))"""
+            )
 
         output_df = self._session.sql(sql)
 

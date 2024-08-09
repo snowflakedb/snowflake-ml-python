@@ -19,7 +19,6 @@ from snowflake.ml.feature_store import (  # type: ignore[attr-defined]
     Entity,
     FeatureStore,
     FeatureView,
-    FeatureViewSlice,
 )
 from snowflake.ml.feature_store._internal.synthetic_data_generator import (
     SyntheticDataGenerator,
@@ -150,9 +149,10 @@ class FeatureStoreLargeScaleTest(absltest.TestCase):
             dsv0.url(), f"snow://dataset/{FS_INTEG_TEST_DB}.{current_schema}.{dataset_name}/versions/{dataset_version}/"
         )
         self.assertIsNotNone(dsv0_meta.properties)
-        self.assertEqual(len(dsv0_meta.properties.serialized_feature_views), 1)
-        deserialized_fv_slice = FeatureViewSlice.from_json(
-            dsv0_meta.properties.serialized_feature_views[0], self._session
+        self.assertEqual(len(dsv0_meta.properties.compact_feature_views), 1)
+        deserialized_fv_slice = FeatureView._load_from_compact_repr(
+            self._session,
+            dsv0_meta.properties.compact_feature_views[0],
         )
         # verify dataset rows count equal to spine df rows count
         df1_row_count = len(spine_df_1.collect())

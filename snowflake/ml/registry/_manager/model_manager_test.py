@@ -7,6 +7,7 @@ from absl.testing import absltest
 from snowflake.ml._internal import telemetry
 from snowflake.ml._internal.utils import sql_identifier
 from snowflake.ml.model._client.model import model_impl, model_version_impl
+from snowflake.ml.model._client.ops import service_ops
 from snowflake.ml.model._client.ops.model_ops import ModelOperator
 from snowflake.ml.model._model_composer import model_composer
 from snowflake.ml.model._packager.model_meta import model_meta
@@ -44,6 +45,7 @@ class ModelManagerTest(absltest.TestCase):
         with mock.patch.object(model_version_impl.ModelVersion, "_get_functions", return_value=[]):
             self.m_mv = model_version_impl.ModelVersion._ref(
                 self.m_r._model_ops,
+                service_ops=self.m_r._service_ops,
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
                 version_name=sql_identifier.SqlIdentifier("V1"),
             )
@@ -51,6 +53,7 @@ class ModelManagerTest(absltest.TestCase):
     def test_get_model_1(self) -> None:
         m_model = model_impl.Model._ref(
             self.m_r._model_ops,
+            service_ops=self.m_r._service_ops,
             model_name=sql_identifier.SqlIdentifier("MODEL"),
         )
         with mock.patch.object(self.m_r._model_ops, "validate_existence", return_value=True) as mock_validate_existence:
@@ -83,6 +86,11 @@ class ModelManagerTest(absltest.TestCase):
                 database_name=sql_identifier.SqlIdentifier("FOO"),
                 schema_name=sql_identifier.SqlIdentifier("BAR"),
             ),
+            service_ops=service_ops.ServiceOperator(
+                self.c_session,
+                database_name=sql_identifier.SqlIdentifier("FOO"),
+                schema_name=sql_identifier.SqlIdentifier("BAR"),
+            ),
             model_name=sql_identifier.SqlIdentifier("MODEL"),
         )
         with mock.patch.object(self.m_r._model_ops, "validate_existence", return_value=True) as mock_validate_existence:
@@ -98,10 +106,12 @@ class ModelManagerTest(absltest.TestCase):
     def test_models(self) -> None:
         m_model_1 = model_impl.Model._ref(
             self.m_r._model_ops,
+            service_ops=self.m_r._service_ops,
             model_name=sql_identifier.SqlIdentifier("MODEL"),
         )
         m_model_2 = model_impl.Model._ref(
             self.m_r._model_ops,
+            service_ops=self.m_r._service_ops,
             model_name=sql_identifier.SqlIdentifier("Model", case_sensitive=True),
         )
         with mock.patch.object(
@@ -215,6 +225,7 @@ class ModelManagerTest(absltest.TestCase):
                 mv,
                 model_version_impl.ModelVersion._ref(
                     self.m_r._model_ops,
+                    service_ops=self.m_r._service_ops,
                     model_name=sql_identifier.SqlIdentifier("MODEL"),
                     version_name=sql_identifier.SqlIdentifier("angry_yeti_1"),
                 ),
@@ -546,6 +557,11 @@ class ModelManagerTest(absltest.TestCase):
                 mv,
                 model_version_impl.ModelVersion._ref(
                     ModelOperator(
+                        self.c_session,
+                        database_name=sql_identifier.SqlIdentifier("FOO"),
+                        schema_name=sql_identifier.SqlIdentifier("BAR"),
+                    ),
+                    service_ops=service_ops.ServiceOperator(
                         self.c_session,
                         database_name=sql_identifier.SqlIdentifier("FOO"),
                         schema_name=sql_identifier.SqlIdentifier("BAR"),

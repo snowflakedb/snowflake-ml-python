@@ -233,12 +233,12 @@ class BaseModelSaveOption(TypedDict):
     function_type: NotRequired[Literal["FUNCTION", "TABLE_FUNCTION"]]
     method_options: NotRequired[Dict[str, ModelMethodSaveOptions]]
     include_pip_dependencies: NotRequired[bool]
+    enable_explainability: NotRequired[bool]
 
 
 class CatBoostModelSaveOptions(BaseModelSaveOption):
     target_methods: NotRequired[Sequence[str]]
     cuda_version: NotRequired[str]
-    enable_explainability: NotRequired[bool]
 
 
 class CustomModelSaveOption(BaseModelSaveOption):
@@ -252,12 +252,10 @@ class SKLModelSaveOptions(BaseModelSaveOption):
 class XGBModelSaveOptions(BaseModelSaveOption):
     target_methods: NotRequired[Sequence[str]]
     cuda_version: NotRequired[str]
-    enable_explainability: NotRequired[bool]
 
 
 class LGBMModelSaveOptions(BaseModelSaveOption):
     target_methods: NotRequired[Sequence[str]]
-    enable_explainability: NotRequired[bool]
 
 
 class SNOWModelSaveOptions(BaseModelSaveOption):

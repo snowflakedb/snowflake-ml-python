@@ -9,7 +9,7 @@ from snowflake.ml._internal.human_readable_id import hrid_generator
 from snowflake.ml._internal.utils import sql_identifier
 from snowflake.ml.model import model_signature, type_hints as model_types
 from snowflake.ml.model._client.model import model_impl, model_version_impl
-from snowflake.ml.model._client.ops import metadata_ops, model_ops
+from snowflake.ml.model._client.ops import metadata_ops, model_ops, service_ops
 from snowflake.ml.model._model_composer import model_composer
 from snowflake.ml.model._packager.model_meta import model_meta
 from snowflake.snowpark import session
@@ -28,6 +28,9 @@ class ModelManager:
         self._database_name = database_name
         self._schema_name = schema_name
         self._model_ops = model_ops.ModelOperator(
+            session, database_name=self._database_name, schema_name=self._schema_name
+        )
+        self._service_ops = service_ops.ServiceOperator(
             session, database_name=self._database_name, schema_name=self._schema_name
         )
         self._hrid_generator = hrid_generator.HRID16()
@@ -173,8 +176,13 @@ class ModelManager:
         )
 
         mv = model_version_impl.ModelVersion._ref(
-            model_ops.ModelOperator(
+            model_ops=model_ops.ModelOperator(
                 self._model_ops._session,
+                database_name=database_name_id or self._database_name,
+                schema_name=schema_name_id or self._schema_name,
+            ),
+            service_ops=service_ops.ServiceOperator(
+                self._service_ops._session,
                 database_name=database_name_id or self._database_name,
                 schema_name=schema_name_id or self._schema_name,
             ),
@@ -216,6 +224,11 @@ class ModelManager:
                     database_name=database_name_id or self._database_name,
                     schema_name=schema_name_id or self._schema_name,
                 ),
+                service_ops=service_ops.ServiceOperator(
+                    self._service_ops._session,
+                    database_name=database_name_id or self._database_name,
+                    schema_name=schema_name_id or self._schema_name,
+                ),
                 model_name=model_name_id,
             )
         else:
@@ -234,6 +247,7 @@ class ModelManager:
         return [
             model_impl.Model._ref(
                 self._model_ops,
+                service_ops=self._service_ops,
                 model_name=model_name,
             )
             for model_name in model_names

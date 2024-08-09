@@ -10,7 +10,6 @@ from types import GeneratorType
 from typing import Dict, Iterable, Iterator, List, cast
 
 import _test_util
-import requests
 from absl.testing import absltest
 from requests.exceptions import HTTPError
 
@@ -110,14 +109,6 @@ class CompleteSQLBackendTest(absltest.TestCase):
         )
         res = df_out.collect()[0][0]
         self.assertEqual(self.complete_for_test(self.model, self.prompt), res)
-
-    def test_stream_in_sql_mode(self) -> None:
-        self.assertRaises(
-            ValueError,
-            lambda: _complete._complete_impl(
-                self.model, self.prompt, session=self._session, function="complete", stream=True
-            ),
-        )
 
 
 class CompleteOptionsSQLBackendTest(absltest.TestCase):
@@ -270,28 +261,8 @@ class CompleteRESTBackendTest(unittest.TestCase):
         self.server.shutdown()
         self.server_thread.join()
 
-    def test_non_streaming(self) -> None:
-        result = _complete._complete_impl(
-            model="my_models", prompt="test_prompt", session=self.session, stream=False, use_rest_api_experimental=True
-        )
-        self.assertEqual("This is a non streaming response", result)
-
-    def test_wrong_token(self) -> None:
-        headers = {"Authorization": "Wrong Token=123"}
-        data = {"stream": "hh"}
-
-        # Send the POST request
-        response = requests.post(
-            f"http://127.0.0.1:{self.server.server_address[1]}/api/v2/cortex/inference:complete",
-            headers=headers,
-            json=data,
-        )
-        self.assertEqual(response.status_code, 401)
-
     def test_streaming(self) -> None:
-        result = _complete._complete_impl(
-            model="my_models", prompt="test_prompt", session=self.session, stream=True, use_rest_api_experimental=True
-        )
+        result = _complete._complete_impl(model="my_models", prompt="test_prompt", session=self.session, stream=True)
         self.assertIsInstance(result, GeneratorType)
         output = "".join(list(cast(Iterable[str], result)))
         self.assertEqual("This is a streaming response", output)
@@ -303,45 +274,22 @@ class CompleteRESTBackendTest(unittest.TestCase):
             options=_OPTIONS,
             session=self.session,
             stream=True,
-            use_rest_api_experimental=True,
         )
         self.assertIsInstance(result, GeneratorType)
         output = "".join(list(cast(Iterable[str], result)))
         self.assertEqual("This is a streaming response", output)
 
-    def test_non_streaming_with_options(self) -> None:
-        result = _complete._complete_impl(
-            model="my_models",
-            prompt="test_prompt",
-            options=_OPTIONS,
-            session=self.session,
-            stream=False,
-            use_rest_api_experimental=True,
-        )
-        self.assertEqual("This is a non streaming response", result)
-
-    def test_non_streaming_with_empty_options(self) -> None:
+    def test_streaming_with_empty_options(self) -> None:
         result = _complete._complete_impl(
             model="my_models",
             prompt="test_prompt",
             options=_complete.CompleteOptions(),
             session=self.session,
-            stream=False,
-            use_rest_api_experimental=True,
+            stream=True,
         )
-        self.assertEqual("This is a non streaming response", result)
-
-    def test_non_streaming_unexpected_response_format(self) -> None:
-        self.assertRaises(
-            _complete.ResponseParseException,
-            lambda: _complete._complete_impl(
-                model=_UNEXPECTED_RESPONSE_FORMAT_MODEL_NAME,
-                prompt="test_prompt",
-                session=self.session,
-                stream=False,
-                use_rest_api_experimental=True,
-            ),
-        )
+        self.assertIsInstance(result, GeneratorType)
+        output = "".join(list(cast(Iterable[str], result)))
+        self.assertEqual("This is a streaming response", output)
 
     def test_streaming_unexpected_response_format(self) -> None:
         response = _complete._complete_impl(
@@ -349,26 +297,12 @@ class CompleteRESTBackendTest(unittest.TestCase):
             prompt="test_prompt",
             session=self.session,
             stream=True,
-            use_rest_api_experimental=True,
         )
         assert isinstance(response, Iterator)
         message = ""
         for part in response:
             message += part
         self.assertEqual("msg", message)
-
-    def test_non_streaming_error(self) -> None:
-        try:
-            _complete._complete_impl(
-                model=_MISSING_MODEL_NAME,
-                prompt="test_prompt",
-                session=self.session,
-                stream=False,
-                use_rest_api_experimental=True,
-            )
-        except HTTPError as e:
-            self.assertEqual(400, e.response.status_code)
-            self.assertEqual(_MISSING_MODEL_RESPONSE, e.response.text)
 
     def test_streaming_error(self) -> None:
         try:
@@ -377,24 +311,10 @@ class CompleteRESTBackendTest(unittest.TestCase):
                 prompt="test_prompt",
                 session=self.session,
                 stream=True,
-                use_rest_api_experimental=True,
             )
         except HTTPError as e:
             self.assertEqual(400, e.response.status_code)
             self.assertEqual(_MISSING_MODEL_RESPONSE, e.response.text)
-
-    def test_non_streaming_timeout(self) -> None:
-        self.assertRaises(
-            TimeoutError,
-            lambda: _complete._complete_impl(
-                model=_RETRY_FOREVER_MODEL_NAME,
-                prompt="test_prompt",
-                session=self.session,
-                stream=False,
-                use_rest_api_experimental=True,
-                timeout=1,
-            ),
-        )
 
     def test_streaming_timeout(self) -> None:
         self.assertRaises(
@@ -404,7 +324,6 @@ class CompleteRESTBackendTest(unittest.TestCase):
                 prompt="test_prompt",
                 session=self.session,
                 stream=True,
-                use_rest_api_experimental=True,
                 timeout=1,
             ),
         )
@@ -417,40 +336,20 @@ class CompleteRESTBackendTest(unittest.TestCase):
                 prompt="test_prompt",
                 session=self.session,
                 stream=True,
-                use_rest_api_experimental=True,
                 deadline=time.time() + 1,
             ),
         )
-
-    def test_non_streaming_retry_until_success(self) -> None:
-        result = _complete._complete_impl(
-            model=retry_until_model_name(time.time() + 1),
-            prompt="test_prompt",
-            session=self.session,
-            use_rest_api_experimental=True,
-            stream=False,
-        )
-        self.assertEqual("This is a non streaming response", result)
 
     def test_streaming_retry_until_success(self) -> None:
         result = _complete._complete_impl(
             model=retry_until_model_name(time.time() + 1),
             prompt="test_prompt",
             session=self.session,
-            use_rest_api_experimental=True,
             stream=True,
         )
         self.assertIsInstance(result, GeneratorType)
         output = "".join(list(cast(Iterable[str], result)))
         self.assertEqual("This is a streaming response", output)
-
-    def test_column_in_rest_mode(self) -> None:
-        self.assertRaises(
-            ValueError,
-            lambda: _complete._complete_impl(
-                model="my_models", prompt=functions.col("prompt"), session=self.session, use_rest_api_experimental=True
-            ),
-        )
 
 
 if __name__ == "__main__":

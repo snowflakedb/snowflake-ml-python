@@ -862,6 +862,7 @@ class ModelOpsTest(absltest.TestCase):
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
                 version_name=sql_identifier.SqlIdentifier("V1"),
                 statement_params=self.m_statement_params,
+                is_partitioned=True,
             )
             mock_convert_from_df.assert_called_once_with(
                 self.c_session, mock.ANY, keep_order=True, features=m_sig.inputs
@@ -877,6 +878,7 @@ class ModelOpsTest(absltest.TestCase):
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
                 version_name=sql_identifier.SqlIdentifier("V1"),
                 statement_params=self.m_statement_params,
+                is_partitioned=True,
             )
             mock_convert_to_df.assert_called_once_with(m_df, features=m_sig.outputs)
 
@@ -907,6 +909,7 @@ class ModelOpsTest(absltest.TestCase):
                 version_name=sql_identifier.SqlIdentifier("V1"),
                 partition_column=partition_column,
                 statement_params=self.m_statement_params,
+                is_partitioned=True,
             )
             mock_convert_from_df.assert_called_once_with(
                 self.c_session, mock.ANY, keep_order=True, features=m_sig.inputs
@@ -922,8 +925,46 @@ class ModelOpsTest(absltest.TestCase):
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
                 version_name=sql_identifier.SqlIdentifier("V1"),
                 statement_params=self.m_statement_params,
+                is_partitioned=True,
             )
             mock_convert_to_df.assert_called_once_with(m_df, features=m_sig.outputs)
+
+    def test_invoke_method_service(self) -> None:
+        m_sig = _DUMMY_SIG["predict"]
+        m_df = mock_data_frame.MockDataFrame()
+        m_df.__setattr__("columns", ["COL1", "COL2"])
+        with mock.patch.object(
+            snowpark_handler.SnowparkDataFrameHandler, "convert_from_df"
+        ) as mock_convert_from_df, mock.patch.object(
+            model_signature, "_validate_snowpark_data", return_value=model_signature.SnowparkIdentifierRule.NORMALIZED
+        ) as mock_validate_snowpark_data, mock.patch.object(
+            self.m_ops._service_client, "invoke_function_method", return_value=m_df
+        ) as mock_invoke_method, mock.patch.object(
+            snowpark_handler.SnowparkDataFrameHandler, "convert_to_df"
+        ) as mock_convert_to_df:
+            self.m_ops.invoke_method(
+                method_name=sql_identifier.SqlIdentifier("PREDICT"),
+                signature=m_sig,
+                X=cast(DataFrame, m_df),
+                database_name=sql_identifier.SqlIdentifier("TEMP"),
+                schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
+                service_name=sql_identifier.SqlIdentifier("SERVICE"),
+                statement_params=self.m_statement_params,
+            )
+            mock_convert_from_df.assert_not_called()
+            mock_validate_snowpark_data.assert_called_once_with(m_df, m_sig.inputs, strict=False)
+
+            mock_invoke_method.assert_called_once_with(
+                method_name=sql_identifier.SqlIdentifier("PREDICT"),
+                input_df=m_df,
+                input_args=["INPUT"],
+                returns=[("output", spt.FloatType(), "OUTPUT")],
+                database_name=sql_identifier.SqlIdentifier("TEMP"),
+                schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
+                service_name=sql_identifier.SqlIdentifier("SERVICE"),
+                statement_params=self.m_statement_params,
+            )
+            mock_convert_to_df.assert_not_called()
 
     def test_get_comment_1(self) -> None:
         m_list_res = [

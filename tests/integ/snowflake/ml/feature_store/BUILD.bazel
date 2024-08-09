@@ -108,3 +108,16 @@ py_test(
         "//snowflake/ml/utils:connection_params",
     ],
 )
+
+py_test(
+    name = "feature_store_example_helper_test",
+    srcs = [
+        "feature_store_example_helper_test.py",
+    ],
+    deps = [
+        ":common_utils",
+        "//snowflake/ml/feature_store:feature_store_lib",
+        "//snowflake/ml/feature_store/examples:feature_store_examples",
+        "//snowflake/ml/utils:connection_params",
+    ],
+)
