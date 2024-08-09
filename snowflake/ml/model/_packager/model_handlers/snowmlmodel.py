@@ -73,6 +73,10 @@ class SnowMLModelHandler(_base.BaseModelHandler["BaseEstimator"]):
         is_sub_model: Optional[bool] = False,
         **kwargs: Unpack[model_types.SNOWModelSaveOptions],
     ) -> None:
+        enable_explainability = kwargs.get("enable_explainability", False)
+        if enable_explainability:
+            raise NotImplementedError("Explainability is not supported for Snowpark ML model.")
+
         from snowflake.ml.modeling.framework.base import BaseEstimator
 
         assert isinstance(model, BaseEstimator)
@@ -103,13 +107,13 @@ class SnowMLModelHandler(_base.BaseModelHandler["BaseEstimator"]):
 
         model_blob_path = os.path.join(model_blobs_dir_path, name)
         os.makedirs(model_blob_path, exist_ok=True)
-        with open(os.path.join(model_blob_path, cls.MODELE_BLOB_FILE_OR_DIR), "wb") as f:
+        with open(os.path.join(model_blob_path, cls.MODEL_BLOB_FILE_OR_DIR), "wb") as f:
             cloudpickle.dump(model, f)
         base_meta = model_blob_meta.ModelBlobMeta(
             name=name,
             model_type=cls.HANDLER_TYPE,
             handler_version=cls.HANDLER_VERSION,
-            path=cls.MODELE_BLOB_FILE_OR_DIR,
+            path=cls.MODEL_BLOB_FILE_OR_DIR,
         )
         model_meta.models[name] = base_meta
         model_meta.min_snowpark_ml_version = cls._MIN_SNOWPARK_ML_VERSION
@@ -146,6 +150,7 @@ class SnowMLModelHandler(_base.BaseModelHandler["BaseEstimator"]):
         cls,
         raw_model: "BaseEstimator",
         model_meta: model_meta_api.ModelMetadata,
+        background_data: Optional[pd.DataFrame] = None,
         **kwargs: Unpack[model_types.SNOWModelLoadOptions],
     ) -> custom_model.CustomModel:
         from snowflake.ml.model import custom_model

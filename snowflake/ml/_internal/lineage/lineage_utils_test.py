@@ -69,7 +69,7 @@ class LineageUtilsTest(parameterized.TestCase):
         # ),
     )
     def test_get_data_sources(
-        self, args: List[TestSourcedObject], expected: Optional[List[data_source.DataSource]]
+        self, args: List[TestSourcedObject], expected: Optional[List[data_source.DatasetInfo]]
     ) -> None:
         self.assertEqual(expected, lineage_utils.get_data_sources(*args))
 

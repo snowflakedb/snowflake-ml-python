@@ -71,6 +71,10 @@ ModelBlobOptions = Union[
 ]
 
 
+class ExplainabilityMetadataDict(TypedDict):
+    algorithm: Required[str]
+
+
 class ModelBlobMetadataDict(TypedDict):
     name: Required[str]
     model_type: Required[type_hints.SupportedModelHandlerType]
@@ -92,3 +96,18 @@ class ModelMetadataDict(TypedDict):
     signatures: Required[Dict[str, Dict[str, Any]]]
     version: Required[str]
     min_snowpark_ml_version: Required[str]
+    model_objective: Required[str]
+    explainability: NotRequired[Optional[ExplainabilityMetadataDict]]
+    function_properties: NotRequired[Dict[str, Dict[str, Any]]]
+
+
+class ModelObjective(Enum):
+    UNKNOWN = "unknown"
+    BINARY_CLASSIFICATION = "binary_classification"
+    MULTI_CLASSIFICATION = "multi_classification"
+    REGRESSION = "regression"
+    RANKING = "ranking"
+
+
+class ModelExplainAlgorithm(Enum):
+    SHAP = "shap"

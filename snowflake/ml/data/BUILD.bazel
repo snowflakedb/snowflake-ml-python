@@ -16,10 +16,25 @@ py_library(
 )
 
 py_library(
+    name = "ingestor_utils",
+    srcs = ["ingestor_utils.py"],
+    deps = [
+        ":data_source",
+        "//snowflake/ml/fileset:snowfs",
+    ],
+)
+
+py_library(
+    name = "torch_dataset",
+    srcs = ["torch_dataset.py"],
+)
+
+py_library(
     name = "data_connector",
     srcs = ["data_connector.py"],
     deps = [
         ":data_ingestor",
+        ":torch_dataset",
         "//snowflake/ml/_internal:telemetry",
         "//snowflake/ml/data/_internal:arrow_ingestor",
     ],
@@ -31,5 +46,14 @@ py_test(
     deps = [
         ":data_connector",
         "//snowflake/ml/fileset:parquet_test_util",
+    ],
+)
+
+py_library(
+    name = "data",
+    srcs = ["__init__.py"],
+    deps = [
+        ":data_connector",
+        ":data_source",
     ],
 )

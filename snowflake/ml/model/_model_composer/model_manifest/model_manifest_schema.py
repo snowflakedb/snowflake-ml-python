@@ -57,12 +57,14 @@ class ModelFunctionInfo(TypedDict):
         target_method: actual target method name to be called.
         target_method_function_type: target method function type (FUNCTION or TABLE_FUNCTION).
         signature: The signature of the model method.
+        is_partitioned: Whether the function is partitioned.
     """
 
     name: Required[str]
     target_method: Required[str]
     target_method_function_type: Required[str]
     signature: Required[model_signature.ModelSignature]
+    is_partitioned: Required[bool]
 
 
 class ModelFunctionInfoDict(TypedDict):
@@ -78,6 +80,7 @@ class SnowparkMLDataDict(TypedDict):
 
 class LineageSourceTypes(enum.Enum):
     DATASET = "DATASET"
+    QUERY = "QUERY"
 
 
 class LineageSourceDict(TypedDict):

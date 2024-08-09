@@ -1,5 +1,9 @@
 ---
 source_data: nyc_yellow_trips
-label_columns: FARE_AMOUNT
+training_spine_table: nyc_yellow_trips
+label_columns: TOTAL_AMOUNT
+add_id_column: TRIP_ID
 timestamp_column: TPEP_PICKUP_DATETIME
 epoch_to_timestamp_cols: TPEP_PICKUP_DATETIME,TPEP_DROPOFF_DATETIME
+desc: Features using taxi trip data trying to predict the total fare of a trip.
+model_category: regression

@@ -26,28 +26,9 @@ def get_valid_pkg_versions_supported_in_snowflake_conda_channel(
     pkg_versions: List[str], session: Session, subproject: Optional[str] = None
 ) -> List[str]:
     if snowpark_utils.is_in_stored_procedure():  # type: ignore[no-untyped-call]
-        return _get_valid_pkg_versions_supported_in_snowflake_conda_channel_sync(pkg_versions, session, subproject)
+        return pkg_versions
     else:
         return _get_valid_pkg_versions_supported_in_snowflake_conda_channel_async(pkg_versions, session, subproject)
-
-
-def _get_valid_pkg_versions_supported_in_snowflake_conda_channel_sync(
-    pkg_versions: List[str], session: Session, subproject: Optional[str] = None
-) -> List[str]:
-    for pkg_version in pkg_versions:
-        if pkg_version not in cache:
-            pkg_version_list = _query_pkg_version_supported_in_snowflake_conda_channel(
-                pkg_version=pkg_version, session=session, block=True, subproject=subproject
-            )
-            assert isinstance(pkg_version_list, list)  # keep mypy happy
-            try:
-                cache[pkg_version] = pkg_version_list[0]["VERSION"]
-            except IndexError:
-                cache[pkg_version] = None
-
-    pkg_version_conda_list = _get_conda_packages_and_emit_warnings(pkg_versions)
-
-    return pkg_version_conda_list
 
 
 def _get_valid_pkg_versions_supported_in_snowflake_conda_channel_async(
@@ -60,7 +41,11 @@ def _get_valid_pkg_versions_supported_in_snowflake_conda_channel_async(
             async_job = _query_pkg_version_supported_in_snowflake_conda_channel(
                 pkg_version=pkg_version, session=session, block=False, subproject=subproject
             )
-            assert isinstance(async_job, AsyncJob)
+            if isinstance(async_job, list):
+                raise RuntimeError(
+                    "Async job was expected, executed query was returned. Please contact Snowflake support."
+                )
+
             pkg_version_async_job_list.append((pkg_version, async_job))
 
     # Populate the cache.
@@ -143,7 +128,8 @@ def _get_conda_packages_and_emit_warnings(pkg_versions: List[str]) -> List[str]:
         warnings.warn(
             f"Package {', '.join([pkg[0] for pkg in pkg_version_warning_list])} is not supported "
             f"in snowflake conda channel for python runtime "
-            f"{', '.join([pkg[1] for pkg in pkg_version_warning_list])}."
+            f"{', '.join([pkg[1] for pkg in pkg_version_warning_list])}.",
+            stacklevel=1,
         )
 
     return pkg_version_conda_list

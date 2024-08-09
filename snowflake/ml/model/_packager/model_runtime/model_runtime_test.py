@@ -44,6 +44,30 @@ class ModelRuntimeTest(absltest.TestCase):
 
             self.assertContainsSubset(["snowflake-ml-python==1.0.0"], dependencies["dependencies"])
 
+    def test_model_runtime_with_channel_override(self) -> None:
+        with tempfile.TemporaryDirectory() as workspace:
+            m_env = model_env.ModelEnv()
+            m_env.snowpark_ml_version = "1.0.0"
+
+            mr = model_runtime.ModelRuntime("cpu", m_env, [])
+            returned_dict = mr.save(pathlib.Path(workspace), default_channel_override="conda-forge")
+
+            self.assertDictEqual(
+                returned_dict,
+                {
+                    "imports": [],
+                    "dependencies": {
+                        "conda": "runtimes/cpu/env/conda.yml",
+                        "pip": "runtimes/cpu/env/requirements.txt",
+                    },
+                },
+            )
+            with open(os.path.join(workspace, "runtimes/cpu/env/conda.yml"), encoding="utf-8") as f:
+                dependencies = yaml.safe_load(f)
+
+            self.assertContainsSubset(["snowflake-ml-python==1.0.0"], dependencies["dependencies"])
+            self.assertEqual(["conda-forge", "nodefaults"], dependencies["channels"])
+
     def test_model_runtime_with_import(self) -> None:
         with tempfile.TemporaryDirectory() as workspace:
             m_env = model_env.ModelEnv()

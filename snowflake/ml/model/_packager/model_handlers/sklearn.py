@@ -6,6 +6,7 @@ import numpy as np
 import pandas as pd
 from typing_extensions import TypeGuard, Unpack
 
+import snowflake.snowpark.dataframe as sp_df
 from snowflake.ml._internal import type_utils
 from snowflake.ml.model import custom_model, model_signature, type_hints as model_types
 from snowflake.ml.model._packager.model_env import model_env
@@ -14,8 +15,13 @@ from snowflake.ml.model._packager.model_handlers_migrator import base_migrator
 from snowflake.ml.model._packager.model_meta import (
     model_blob_meta,
     model_meta as model_meta_api,
+    model_meta_schema,
 )
-from snowflake.ml.model._signatures import numpy_handler, utils as model_signature_utils
+from snowflake.ml.model._signatures import (
+    numpy_handler,
+    snowpark_handler,
+    utils as model_signature_utils,
+)
 
 if TYPE_CHECKING:
     import sklearn.base
@@ -35,6 +41,27 @@ class SKLModelHandler(_base.BaseModelHandler[Union["sklearn.base.BaseEstimator",
     _HANDLER_MIGRATOR_PLANS: Dict[str, Type[base_migrator.BaseModelHandlerMigrator]] = {}
 
     DEFAULT_TARGET_METHODS = ["predict", "transform", "predict_proba", "predict_log_proba", "decision_function"]
+
+    @classmethod
+    def get_model_objective(
+        cls, model: Union["sklearn.base.BaseEstimator", "sklearn.pipeline.Pipeline"]
+    ) -> model_meta_schema.ModelObjective:
+        import sklearn.pipeline
+        from sklearn.base import is_classifier, is_regressor
+
+        if isinstance(model, sklearn.pipeline.Pipeline):
+            return model_meta_schema.ModelObjective.UNKNOWN
+        if is_regressor(model):
+            return model_meta_schema.ModelObjective.REGRESSION
+        if is_classifier(model):
+            classes_list = getattr(model, "classes_", [])
+            num_classes = getattr(model, "n_classes_", None) or len(classes_list)
+            if isinstance(num_classes, int):
+                if num_classes > 2:
+                    return model_meta_schema.ModelObjective.MULTI_CLASSIFICATION
+                return model_meta_schema.ModelObjective.BINARY_CLASSIFICATION
+            return model_meta_schema.ModelObjective.UNKNOWN
+        return model_meta_schema.ModelObjective.UNKNOWN
 
     @classmethod
     def can_handle(
@@ -79,10 +106,32 @@ class SKLModelHandler(_base.BaseModelHandler[Union["sklearn.base.BaseEstimator",
         is_sub_model: Optional[bool] = False,
         **kwargs: Unpack[model_types.SKLModelSaveOptions],
     ) -> None:
+        enable_explainability = kwargs.get("enable_explainability", False)
+
         import sklearn.base
         import sklearn.pipeline
 
         assert isinstance(model, sklearn.base.BaseEstimator) or isinstance(model, sklearn.pipeline.Pipeline)
+
+        enable_explainability = kwargs.get("enable_explainability", False)
+        if enable_explainability:
+            # TODO: Currently limited to pandas df, need to extend to other types.
+            if sample_input_data is None or not (
+                isinstance(sample_input_data, pd.DataFrame) or isinstance(sample_input_data, sp_df.DataFrame)
+            ):
+                raise ValueError(
+                    "Sample input data is required to enable explainability. Currently we only support this for "
+                    + "`pandas.DataFrame` and `snowflake.snowpark.dataframe.DataFrame`."
+                )
+            sample_input_data_pandas = (
+                sample_input_data
+                if isinstance(sample_input_data, pd.DataFrame)
+                else snowpark_handler.SnowparkDataFrameHandler.convert_to_df(sample_input_data)
+            )
+            data_blob_path = os.path.join(model_blobs_dir_path, cls.EXPLAIN_ARTIFACTS_DIR)
+            os.makedirs(data_blob_path, exist_ok=True)
+            with open(os.path.join(data_blob_path, name + cls.BG_DATA_FILE_SUFFIX), "wb") as f:
+                sample_input_data_pandas.to_parquet(f)
 
         if not is_sub_model:
             target_methods = handlers_utils.get_target_methods(
@@ -110,18 +159,35 @@ class SKLModelHandler(_base.BaseModelHandler[Union["sklearn.base.BaseEstimator",
                 get_prediction_fn=get_prediction,
             )
 
+            if enable_explainability:
+                output_type = model_signature.DataType.DOUBLE
+                if cls.get_model_objective(model) == model_meta_schema.ModelObjective.MULTI_CLASSIFICATION:
+                    output_type = model_signature.DataType.STRING
+                model_meta = handlers_utils.add_explain_method_signature(
+                    model_meta=model_meta,
+                    explain_method="explain",
+                    target_method="predict",
+                    output_return_type=output_type,
+                )
+
         model_blob_path = os.path.join(model_blobs_dir_path, name)
         os.makedirs(model_blob_path, exist_ok=True)
-        with open(os.path.join(model_blob_path, cls.MODELE_BLOB_FILE_OR_DIR), "wb") as f:
+        with open(os.path.join(model_blob_path, cls.MODEL_BLOB_FILE_OR_DIR), "wb") as f:
             cloudpickle.dump(model, f)
         base_meta = model_blob_meta.ModelBlobMeta(
             name=name,
             model_type=cls.HANDLER_TYPE,
             handler_version=cls.HANDLER_VERSION,
-            path=cls.MODELE_BLOB_FILE_OR_DIR,
+            path=cls.MODEL_BLOB_FILE_OR_DIR,
         )
         model_meta.models[name] = base_meta
         model_meta.min_snowpark_ml_version = cls._MIN_SNOWPARK_ML_VERSION
+
+        if enable_explainability:
+            model_meta.env.include_if_absent(
+                [model_env.ModelDependency(requirement="shap", pip_name="shap")],
+                check_local_version=True,
+            )
 
         model_meta.env.include_if_absent(
             [model_env.ModelDependency(requirement="scikit-learn", pip_name="scikit-learn")], check_local_version=True
@@ -153,6 +219,7 @@ class SKLModelHandler(_base.BaseModelHandler[Union["sklearn.base.BaseEstimator",
         cls,
         raw_model: Union["sklearn.base.BaseEstimator", "sklearn.pipeline.Pipeline"],
         model_meta: model_meta_api.ModelMetadata,
+        background_data: Optional[pd.DataFrame] = None,
         **kwargs: Unpack[model_types.SKLModelLoadOptions],
     ) -> custom_model.CustomModel:
         from snowflake.ml.model import custom_model
@@ -165,6 +232,7 @@ class SKLModelHandler(_base.BaseModelHandler[Union["sklearn.base.BaseEstimator",
                 raw_model: Union["sklearn.base.BaseEstimator", "sklearn.pipeline.Pipeline"],
                 signature: model_signature.ModelSignature,
                 target_method: str,
+                background_data: Optional[pd.DataFrame],
             ) -> Callable[[custom_model.CustomModel, pd.DataFrame], pd.DataFrame]:
                 @custom_model.inference_api
                 def fn(self: custom_model.CustomModel, X: pd.DataFrame) -> pd.DataFrame:
@@ -179,11 +247,26 @@ class SKLModelHandler(_base.BaseModelHandler[Union["sklearn.base.BaseEstimator",
 
                     return model_signature_utils.rename_pandas_df(df, signature.outputs)
 
+                @custom_model.inference_api
+                def explain_fn(self: custom_model.CustomModel, X: pd.DataFrame) -> pd.DataFrame:
+                    import shap
+
+                    # TODO: if not resolved by explainer, we need to pass the callable function
+                    try:
+                        explainer = shap.Explainer(raw_model, background_data)
+                        df = handlers_utils.convert_explanations_to_2D_df(raw_model, explainer(X).values)
+                    except TypeError as e:
+                        raise ValueError(f"Explanation for this model type not supported yet: {str(e)}")
+                    return model_signature_utils.rename_pandas_df(df, signature.outputs)
+
+                if target_method == "explain":
+                    return explain_fn
+
                 return fn
 
             type_method_dict = {}
             for target_method_name, sig in model_meta.signatures.items():
-                type_method_dict[target_method_name] = fn_factory(raw_model, sig, target_method_name)
+                type_method_dict[target_method_name] = fn_factory(raw_model, sig, target_method_name, background_data)
 
             _SKLModel = type(
                 "_SKLModel",

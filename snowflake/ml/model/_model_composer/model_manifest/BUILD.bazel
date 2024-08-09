@@ -19,6 +19,7 @@ py_library(
     srcs = ["model_manifest.py"],
     deps = [
         ":model_manifest_schema",
+        "//snowflake/ml/_internal:env_utils",
         "//snowflake/ml/model/_model_composer/model_method",
         "//snowflake/ml/model/_model_composer/model_method:function_generator",
         "//snowflake/ml/model/_packager/model_meta",
@@ -42,6 +43,7 @@ py_test(
     ],
     deps = [
         ":model_manifest",
+        "//snowflake/ml/_internal:env_utils",
         "//snowflake/ml/model:model_signature",
         "//snowflake/ml/model:type_hints",
         "//snowflake/ml/model/_packager/model_meta",

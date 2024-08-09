@@ -5,8 +5,10 @@ from uuid import uuid4
 from snowflake import snowpark
 from snowflake.ml._internal.utils import identifier
 from snowflake.ml.model._deploy_client.utils import constants
+from snowflake.ml.utils import sql_client
 
 _COMMON_PREFIX = "snowml_test_"
+_default_creation_mode = sql_client.CreationMode()
 
 
 class DBManager:
@@ -23,14 +25,14 @@ class DBManager:
     def create_database(
         self,
         db_name: str,
-        if_not_exists: bool = False,
-        or_replace: bool = False,
+        creation_mode: sql_client.CreationMode = _default_creation_mode,
     ) -> str:
         actual_db_name = identifier.get_inferred_name(db_name)
-        or_replace_sql = " OR REPLACE" if or_replace else ""
-        if_not_exists_sql = " IF NOT EXISTS" if if_not_exists else ""
+        ddl_phrases = creation_mode.get_ddl_phrases()
         self._session.sql(
-            f"CREATE{or_replace_sql} DATABASE{if_not_exists_sql} {actual_db_name} DATA_RETENTION_TIME_IN_DAYS = 0"
+            f"CREATE{ddl_phrases[sql_client.CreationOption.OR_REPLACE]} DATABASE"
+            f"{ddl_phrases[sql_client.CreationOption.CREATE_IF_NOT_EXIST]} "
+            f"{actual_db_name} DATA_RETENTION_TIME_IN_DAYS = 0"
         ).collect()
         return actual_db_name
 
@@ -63,18 +65,19 @@ class DBManager:
         self,
         schema_name: str,
         db_name: Optional[str] = None,
-        if_not_exists: bool = False,
-        or_replace: bool = False,
+        creation_mode: sql_client.CreationMode = _default_creation_mode,
     ) -> str:
         actual_schema_name = identifier.get_inferred_name(schema_name)
         if db_name:
-            actual_db_name = self.create_database(db_name, if_not_exists=True)
+            actual_db_name = self.create_database(db_name, creation_mode=sql_client.CreationMode(if_not_exists=True))
             full_qual_schema_name = f"{actual_db_name}.{actual_schema_name}"
         else:
             full_qual_schema_name = actual_schema_name
-        or_replace_sql = " OR REPLACE" if or_replace else ""
-        if_not_exists_sql = " IF NOT EXISTS" if if_not_exists else ""
-        self._session.sql(f"CREATE{or_replace_sql} SCHEMA{if_not_exists_sql} {full_qual_schema_name}").collect()
+        ddl_phrases = creation_mode.get_ddl_phrases()
+        self._session.sql(
+            f"CREATE{ddl_phrases[sql_client.CreationOption.OR_REPLACE]} SCHEMA"
+            f"{ddl_phrases[sql_client.CreationOption.CREATE_IF_NOT_EXIST]} {full_qual_schema_name}"
+        ).collect()
         return full_qual_schema_name
 
     def create_random_schema(
@@ -136,21 +139,22 @@ class DBManager:
         stage_name: str,
         schema_name: Optional[str] = None,
         db_name: Optional[str] = None,
-        if_not_exists: bool = False,
-        or_replace: bool = False,
+        creation_mode: sql_client.CreationMode = _default_creation_mode,
         sse_encrypted: bool = False,
     ) -> str:
         actual_stage_name = identifier.get_inferred_name(stage_name)
         if schema_name:
-            full_qual_schema_name = self.create_schema(schema_name, db_name, if_not_exists=True)
+            full_qual_schema_name = self.create_schema(
+                schema_name, db_name, creation_mode=sql_client.CreationMode(if_not_exists=True)
+            )
             full_qual_stage_name = f"{full_qual_schema_name}.{actual_stage_name}"
         else:
             full_qual_stage_name = actual_stage_name
-        or_replace_sql = " OR REPLACE" if or_replace else ""
-        if_not_exists_sql = " IF NOT EXISTS" if if_not_exists else ""
+        ddl_phrases = creation_mode.get_ddl_phrases()
         encryption_sql = " ENCRYPTION = (TYPE= 'SNOWFLAKE_SSE')" if sse_encrypted else ""
         self._session.sql(
-            f"CREATE{or_replace_sql} STAGE{if_not_exists_sql} {full_qual_stage_name}{encryption_sql}"
+            f"CREATE{ddl_phrases[sql_client.CreationOption.OR_REPLACE]} STAGE"
+            f"{ddl_phrases[sql_client.CreationOption.CREATE_IF_NOT_EXIST]} {full_qual_stage_name}{encryption_sql}"
         ).collect()
         return full_qual_stage_name
 
@@ -278,6 +282,154 @@ class DBManager:
         db = conn._database
         schema = conn._schema
         return f"{org}-{account}.{subdomain}.{constants.PROD_IMAGE_REGISTRY_DOMAIN}/{db}/{schema}/{repo}".lower()
+
+    def create_compute_pool(
+        self,
+        compute_pool_name: str,
+        creation_mode: sql_client.CreationMode = _default_creation_mode,
+        instance_family: str = "CPU_X64_XS",
+        min_nodes: int = 1,
+        max_nodes: int = 1,
+    ) -> str:
+        full_qual_compute_pool_name = identifier.get_inferred_name(compute_pool_name)
+        ddl_phrases = creation_mode.get_ddl_phrases()
+        instance_family_sql = f" INSTANCE_FAMILY = '{instance_family}'"
+        min_nodes_sql = f" MIN_NODES = {min_nodes}"
+        max_nodes_sql = f" MAX_NODES = {max_nodes}"
+        self._session.sql(
+            f"CREATE{ddl_phrases[sql_client.CreationOption.OR_REPLACE]} COMPUTE POOL"
+            f"{ddl_phrases[sql_client.CreationOption.CREATE_IF_NOT_EXIST]} {full_qual_compute_pool_name}"
+            f"{instance_family_sql}{min_nodes_sql}{max_nodes_sql}"
+        ).collect()
+        return full_qual_compute_pool_name
+
+    def drop_compute_pool(
+        self,
+        compute_pool_name: str,
+        if_exists: bool = False,
+    ) -> None:
+        full_qual_compute_pool_name = identifier.get_inferred_name(compute_pool_name)
+        if_exists_sql = " IF EXISTS" if if_exists else ""
+        self._session.sql(f"DROP COMPUTE POOL{if_exists_sql} {full_qual_compute_pool_name}").collect()
+
+    def create_image_repo(
+        self,
+        image_repo_name: str,
+        schema_name: Optional[str] = None,
+        db_name: Optional[str] = None,
+        creation_mode: sql_client.CreationMode = _default_creation_mode,
+    ) -> str:
+        actual_image_repo_name = identifier.get_inferred_name(image_repo_name)
+        if schema_name:
+            full_qual_schema_name = self.create_schema(
+                schema_name, db_name, creation_mode=sql_client.CreationMode(if_not_exists=True)
+            )
+            full_qual_image_repo_name = f"{full_qual_schema_name}.{actual_image_repo_name}"
+        else:
+            full_qual_image_repo_name = actual_image_repo_name
+        ddl_phrases = creation_mode.get_ddl_phrases()
+        self._session.sql(
+            f"CREATE{ddl_phrases[sql_client.CreationOption.OR_REPLACE]} IMAGE REPOSITORY"
+            f"{ddl_phrases[sql_client.CreationOption.CREATE_IF_NOT_EXIST]} {full_qual_image_repo_name}"
+        ).collect()
+        return full_qual_image_repo_name
+
+    def drop_image_repo(
+        self,
+        image_repo_name: str,
+        schema_name: Optional[str] = None,
+        db_name: Optional[str] = None,
+        if_exists: bool = False,
+    ) -> None:
+        actual_image_repo_name = identifier.get_inferred_name(image_repo_name)
+        if schema_name:
+            actual_schema_name = identifier.get_inferred_name(schema_name)
+            if db_name:
+                actual_db_name = identifier.get_inferred_name(db_name)
+                full_qual_schema_name = f"{actual_db_name}.{actual_schema_name}"
+            else:
+                full_qual_schema_name = actual_schema_name
+            full_qual_image_repo_name = f"{full_qual_schema_name}.{actual_image_repo_name}"
+        else:
+            full_qual_image_repo_name = actual_image_repo_name
+        if_exists_sql = " IF EXISTS" if if_exists else ""
+        self._session.sql(f"DROP IMAGE REPOSITORY{if_exists_sql} {full_qual_image_repo_name}").collect()
+
+    def create_network_rule(
+        self,
+        network_rule_name: str,
+        schema_name: Optional[str] = None,
+        db_name: Optional[str] = None,
+        creation_mode: sql_client.CreationMode = _default_creation_mode,
+        mode: str = "EGRESS",
+        type: str = "HOST_PORT",
+        value_list: Optional[List[str]] = None,
+    ) -> str:
+        actual_network_rule_name = identifier.get_inferred_name(network_rule_name)
+        if schema_name:
+            full_qual_schema_name = self.create_schema(
+                schema_name, db_name, creation_mode=sql_client.CreationMode(if_not_exists=True)
+            )
+            full_qual_network_rule_name = f"{full_qual_schema_name}.{actual_network_rule_name}"
+        else:
+            full_qual_network_rule_name = actual_network_rule_name
+        ddl_phrases = creation_mode.get_ddl_phrases()
+        mode_sql = f" MODE = '{mode}'"
+        type_sql = f" TYPE = '{type}'"
+        value_list = [] if value_list is None else value_list
+        value_list_val = ", ".join([f"'{v}'" for v in value_list])
+        value_list_sql = f" VALUE_LIST = ({value_list_val})"
+        self._session.sql(
+            f"CREATE{ddl_phrases[sql_client.CreationOption.OR_REPLACE]} NETWORK RULE"
+            f"{ddl_phrases[sql_client.CreationOption.CREATE_IF_NOT_EXIST]} {full_qual_network_rule_name}"
+            f"{mode_sql}{type_sql}{value_list_sql}"
+        ).collect()
+        return full_qual_network_rule_name
+
+    def drop_network_rule(
+        self,
+        network_rule_name: str,
+        schema_name: Optional[str] = None,
+        db_name: Optional[str] = None,
+        if_exists: bool = False,
+    ) -> None:
+        actual_network_rule_name = identifier.get_inferred_name(network_rule_name)
+        if schema_name:
+            actual_schema_name = identifier.get_inferred_name(schema_name)
+            if db_name:
+                actual_db_name = identifier.get_inferred_name(db_name)
+                full_qual_schema_name = f"{actual_db_name}.{actual_schema_name}"
+            else:
+                full_qual_schema_name = actual_schema_name
+            full_qual_network_rule_name = f"{full_qual_schema_name}.{actual_network_rule_name}"
+        else:
+            full_qual_network_rule_name = actual_network_rule_name
+        if_exists_sql = " IF EXISTS" if if_exists else ""
+        self._session.sql(f"DROP NETWORK RULE{if_exists_sql} {full_qual_network_rule_name}").collect()
+
+    def create_external_access_integration(
+        self,
+        external_access_integration_name: str,
+        creation_mode: sql_client.CreationMode = _default_creation_mode,
+        allowed_network_rules: Optional[List[str]] = None,
+        enabled: bool = True,
+    ) -> str:
+        full_qual_eai_name = identifier.get_inferred_name(external_access_integration_name)
+        ddl_phrases = creation_mode.get_ddl_phrases()
+        allowed_network_rules = [] if allowed_network_rules is None else allowed_network_rules
+        allowed_network_rules_sql = f" ALLOWED_NETWORK_RULES = ({', '.join(allowed_network_rules)})"
+        enabled_sql = f" ENABLED = {enabled}"
+        self._session.sql(
+            f"CREATE{ddl_phrases[sql_client.CreationOption.OR_REPLACE]} EXTERNAL ACCESS INTEGRATION"
+            f"{ddl_phrases[sql_client.CreationOption.CREATE_IF_NOT_EXIST]} {full_qual_eai_name}"
+            f"{allowed_network_rules_sql}{enabled_sql}"
+        ).collect()
+        return full_qual_eai_name
+
+    def drop_external_access_integration(self, external_access_integration_name: str, if_exists: bool = False) -> None:
+        full_qual_eai_name = identifier.get_inferred_name(external_access_integration_name)
+        if_exists_sql = " IF EXISTS" if if_exists else ""
+        self._session.sql(f"DROP EXTERNAL ACCESS INTEGRATION{if_exists_sql} {full_qual_eai_name}").collect()
 
 
 class TestObjectNameGenerator:

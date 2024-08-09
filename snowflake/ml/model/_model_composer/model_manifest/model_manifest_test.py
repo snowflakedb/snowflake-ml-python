@@ -6,6 +6,7 @@ import importlib_resources
 import yaml
 from absl.testing import absltest
 
+from snowflake.ml._internal import env_utils
 from snowflake.ml.model import model_signature, type_hints
 from snowflake.ml.model._model_composer.model_manifest import model_manifest
 from snowflake.ml.model._packager.model_meta import (
@@ -146,6 +147,10 @@ class ModelManifestTest(absltest.TestCase):
                         .read_text()
                     ),
                     f.read(),
+                )
+            with open(pathlib.Path(workspace, "runtimes", "python_runtime", "env", "conda.yml"), encoding="utf-8") as f:
+                self.assertListEqual(
+                    yaml.safe_load(f)["channels"], [env_utils.SNOWFLAKE_CONDA_CHANNEL_URL, "nodefaults"]
                 )
             with open(pathlib.Path(workspace, "functions", "predict.py"), encoding="utf-8") as f:
                 self.assertEqual(

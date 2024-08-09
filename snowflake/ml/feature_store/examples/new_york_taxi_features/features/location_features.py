@@ -2,7 +2,7 @@ from typing import List
 
 from snowflake.ml.feature_store import FeatureView
 from snowflake.ml.feature_store.examples.new_york_taxi_features.entities import (
-    trip_dropoff,
+    location_id,
 )
 from snowflake.snowpark import DataFrame, Session
 
@@ -15,25 +15,30 @@ def create_draft_feature_view(session: Session, source_dfs: List[DataFrame], sou
         select
             TPEP_DROPOFF_DATETIME as TS,
             DOLOCATIONID,
-            count(FARE_AMOUNT) over (
+            avg(FARE_AMOUNT) over (
                 partition by DOLOCATIONID
                 order by TPEP_DROPOFF_DATETIME
                 range between interval '1 hours' preceding and current row
-            ) TRIP_COUNT_1H,
-            count(FARE_AMOUNT) over (
+            ) AVG_FARE_1H,
+            avg(FARE_AMOUNT) over (
                 partition by DOLOCATIONID
                 order by TPEP_DROPOFF_DATETIME
-                range between interval '5 hours' preceding and current row
-            ) TRIP_COUNT_5H
+                range between interval '10 hours' preceding and current row
+            ) AVG_FARE_10h
         from {source_tables[0]}
     """
     )
 
     return FeatureView(
-        name="f_trip_dropoff",  # name of feature view
-        entities=[trip_dropoff],  # entities
+        name="f_location",  # name of feature view
+        entities=[location_id],  # entities
         feature_df=feature_df,  # definition query
         refresh_freq="12h",  # the frequency this feature view re-compute
         timestamp_col="TS",  # timestamp column. Used when generate training data
-        desc="Managed feature view trip dropoff refreshed every 12 hours.",
+        desc="Features aggregated by location id and refreshed every 12 hours.",
+    ).attach_feature_desc(
+        {
+            "AVG_FARE_1H": "Averaged fare in past 1 hour window aggregated by location.",
+            "AVG_FARE_10H": "Averaged fare in past 10 hours aggregated by location.",
+        }
     )

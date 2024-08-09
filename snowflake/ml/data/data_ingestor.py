@@ -1,7 +1,18 @@
-from typing import TYPE_CHECKING, Any, Dict, Iterator, List, Optional, Protocol, TypeVar
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Dict,
+    Iterator,
+    List,
+    Optional,
+    Protocol,
+    Type,
+    TypeVar,
+)
 
 from numpy import typing as npt
 
+from snowflake import snowpark
 from snowflake.ml.data import data_source
 
 if TYPE_CHECKING:
@@ -12,6 +23,12 @@ DataIngestorType = TypeVar("DataIngestorType", bound="DataIngestor")
 
 
 class DataIngestor(Protocol):
+    @classmethod
+    def from_sources(
+        cls: Type[DataIngestorType], session: snowpark.Session, sources: List[data_source.DataSource]
+    ) -> DataIngestorType:
+        raise NotImplementedError
+
     @property
     def data_sources(self) -> List[data_source.DataSource]:
         raise NotImplementedError

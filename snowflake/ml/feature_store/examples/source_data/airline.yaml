@@ -1,0 +1,4 @@
+---
+s3_url: s3://sfquickstarts/misc/demos/airline/
+load_files_pattern: .*[.]parquet
+destination_table_name: (?P<table_name>.*)_0_0_0[.]snappy[.]parquet

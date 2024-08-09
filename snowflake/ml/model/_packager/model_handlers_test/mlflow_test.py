@@ -209,6 +209,7 @@ class MLFlowHandlerTest(absltest.TestCase):
             local_path = mlflow.artifacts.download_artifacts(f"runs:/{run_id}/model", dst_path=tmpdir)
             mlflow_pyfunc_model = mlflow.pyfunc.load_model(local_path)
             mlflow_pyfunc_model.metadata.run_id = uuid.uuid4().hex.lower()
+
             with self.assertRaisesRegex(ValueError, "Cannot load MLFlow model artifacts."):
                 model_packager.ModelPackager(os.path.join(tmpdir, "model1")).save(
                     name="model1",
@@ -226,6 +227,18 @@ class MLFlowHandlerTest(absltest.TestCase):
             assert pk.meta
 
             self.assertEmpty(pk.meta.env.pip_requirements)
+
+            with self.assertRaises(NotImplementedError):
+                model_packager.ModelPackager(os.path.join(tmpdir, "model1")).save(
+                    name="model1",
+                    model=mlflow_pyfunc_model,
+                    options={
+                        "model_uri": local_path,
+                        "ignore_mlflow_dependencies": True,
+                        "relax_version": False,
+                        "enable_explainability": True,
+                    },
+                )
 
             with self.assertRaisesRegex(ValueError, "Cannot load MLFlow model dependencies."):
                 model_packager.ModelPackager(os.path.join(tmpdir, "model1")).save(

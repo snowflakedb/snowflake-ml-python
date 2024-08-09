@@ -1,21 +1,13 @@
+import os
 from abc import abstractmethod
-from enum import Enum
 from typing import Dict, Generic, Optional, Protocol, Type, final
 
+import pandas as pd
 from typing_extensions import TypeGuard, Unpack
 
 from snowflake.ml.model import custom_model, type_hints as model_types
 from snowflake.ml.model._packager.model_handlers_migrator import base_migrator
 from snowflake.ml.model._packager.model_meta import model_meta
-
-
-class ModelObjective(Enum):
-    # This is not getting stored anywhere as metadata yet so it should be fine to slowly extend it for better coverage
-    UNKNOWN = "unknown"
-    BINARY_CLASSIFICATION = "binary_classification"
-    MULTI_CLASSIFICATION = "multi_classification"
-    REGRESSION = "regression"
-    RANKING = "ranking"
 
 
 class _BaseModelHandlerProtocol(Protocol[model_types._ModelType]):
@@ -106,6 +98,7 @@ class _BaseModelHandlerProtocol(Protocol[model_types._ModelType]):
         cls,
         raw_model: model_types._ModelType,
         model_meta: model_meta.ModelMetadata,
+        background_data: Optional[pd.DataFrame] = None,
         **kwargs: Unpack[model_types.BaseModelLoadOption],
     ) -> custom_model.CustomModel:
         """Create a custom model class wrap for unified interface when being deployed. The predict method will be
@@ -114,6 +107,7 @@ class _BaseModelHandlerProtocol(Protocol[model_types._ModelType]):
         Args:
             raw_model: original model object,
             model_meta: The model metadata.
+            background_data: The background data used for the model explanations.
             kwargs: Options when converting the model.
 
         Raises:
@@ -131,7 +125,8 @@ class BaseModelHandler(Generic[model_types._ModelType], _BaseModelHandlerProtoco
     _MIN_SNOWPARK_ML_VERSION: The minimal version of Snowpark ML library to use the current handler.
     _HANDLER_MIGRATOR_PLANS: Dict holding handler migrator plans.
 
-    MODELE_BLOB_FILE_OR_DIR: Relative path of the model blob file in the model subdir. Default to "model.pkl".
+    MODEL_BLOB_FILE_OR_DIR: Relative path of the model blob file in the model subdir. Default to "model.pkl".
+    BG_DATA_FILE_SUFFIX: Suffix of the background data file. Default to "_background_data.pqt".
     MODEL_ARTIFACTS_DIR: Relative path of the model artifacts dir in the model subdir. Default to "artifacts"
     DEFAULT_TARGET_METHODS: Default target methods to be logged if not specified in this kind of model. Default to
         ["predict"]
@@ -139,8 +134,10 @@ class BaseModelHandler(Generic[model_types._ModelType], _BaseModelHandlerProtoco
         inputting sample data or model signature. Default to False.
     """
 
-    MODELE_BLOB_FILE_OR_DIR = "model.pkl"
+    MODEL_BLOB_FILE_OR_DIR = "model.pkl"
+    BG_DATA_FILE_SUFFIX = "_background_data.pqt"
     MODEL_ARTIFACTS_DIR = "artifacts"
+    EXPLAIN_ARTIFACTS_DIR = "explain_artifacts"
     DEFAULT_TARGET_METHODS = ["predict"]
     IS_AUTO_SIGNATURE = False
 
@@ -169,3 +166,23 @@ class BaseModelHandler(Generic[model_types._ModelType], _BaseModelHandlerProtoco
                 model_meta=model_meta,
                 model_blobs_dir_path=model_blobs_dir_path,
             )
+
+    @classmethod
+    @final
+    def load_background_data(cls, name: str, model_blobs_dir_path: str) -> Optional[pd.DataFrame]:
+        """Load the model into memory.
+
+        Args:
+            name: Name of the model.
+            model_blobs_dir_path: Directory path to the whole model.
+
+        Returns:
+            Optional[pd.DataFrame], background data as pandas DataFrame, if exists.
+        """
+        data_blob_path = os.path.join(model_blobs_dir_path, cls.EXPLAIN_ARTIFACTS_DIR, name + cls.BG_DATA_FILE_SUFFIX)
+        if not os.path.exists(model_blobs_dir_path) or not os.path.isfile(data_blob_path):
+            return None
+        with open(data_blob_path, "rb") as f:
+            background_data = pd.read_parquet(f)
+
+        return background_data

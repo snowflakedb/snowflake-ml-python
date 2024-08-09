@@ -14,7 +14,7 @@ from snowflake.ml.model._packager import model_packager
 
 
 class XgboostHandlerTest(absltest.TestCase):
-    def test_xgb_booster(self) -> None:
+    def test_xgb_booster_explainability_disabled(self) -> None:
         cal_data = datasets.load_breast_cancer()
         cal_X = pd.DataFrame(cal_data.data, columns=cal_data.feature_names)
         cal_y = pd.Series(cal_data.target)
@@ -30,6 +30,7 @@ class XgboostHandlerTest(absltest.TestCase):
                     model=regressor,
                     signatures={**s, "another_predict": s["predict"]},
                     metadata={"author": "halu", "version": "1"},
+                    options=model_types.XGBModelSaveOptions(enable_explainability=False),
                 )
 
             model_packager.ModelPackager(os.path.join(tmpdir, "model1")).save(
@@ -61,6 +62,7 @@ class XgboostHandlerTest(absltest.TestCase):
                 model=regressor,
                 sample_input_data=cal_X_test,
                 metadata={"author": "halu", "version": "1"},
+                options=model_types.XGBModelSaveOptions(enable_explainability=False),
             )
 
             pk = model_packager.ModelPackager(os.path.join(tmpdir, "model1_no_sig"))
@@ -79,7 +81,7 @@ class XgboostHandlerTest(absltest.TestCase):
             assert callable(predict_method)
             np.testing.assert_allclose(predict_method(cal_X_test), np.expand_dims(y_pred, axis=1))
 
-    def test_xgb(self) -> None:
+    def test_xgb_explainability_disabled(self) -> None:
         cal_data = datasets.load_breast_cancer()
         cal_X = pd.DataFrame(cal_data.data, columns=cal_data.feature_names)
         cal_y = pd.Series(cal_data.target)
@@ -96,6 +98,7 @@ class XgboostHandlerTest(absltest.TestCase):
                     model=classifier,
                     signatures={**s, "another_predict": s["predict"]},
                     metadata={"author": "halu", "version": "1"},
+                    options=model_types.XGBModelSaveOptions(enable_explainability=False),
                 )
 
             model_packager.ModelPackager(os.path.join(tmpdir, "model1")).save(
@@ -127,6 +130,7 @@ class XgboostHandlerTest(absltest.TestCase):
                 model=classifier,
                 sample_input_data=cal_X_test,
                 metadata={"author": "halu", "version": "1"},
+                options=model_types.XGBModelSaveOptions(enable_explainability=False),
             )
 
             pk = model_packager.ModelPackager(os.path.join(tmpdir, "model1_no_sig"))
@@ -167,7 +171,6 @@ class XgboostHandlerTest(absltest.TestCase):
                 model=classifier,
                 signatures={"predict": model_signature.infer_signature(cal_X_test, y_pred)},
                 metadata={"author": "halu", "version": "1"},
-                options=model_types.XGBModelSaveOptions(enable_explainability=True),
             )
 
             with warnings.catch_warnings():
@@ -187,7 +190,6 @@ class XgboostHandlerTest(absltest.TestCase):
                 model=classifier,
                 sample_input_data=cal_X_test,
                 metadata={"author": "halu", "version": "1"},
-                options=model_types.XGBModelSaveOptions(enable_explainability=True),
             )
 
             pk = model_packager.ModelPackager(os.path.join(tmpdir, "model1_no_sig"))

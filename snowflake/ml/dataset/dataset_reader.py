@@ -1,10 +1,9 @@
-from typing import List, Optional
+from typing import Any, List, Optional, Type
 
 from snowflake import snowpark
 from snowflake.ml._internal import telemetry
 from snowflake.ml._internal.lineage import lineage_utils
-from snowflake.ml.data import data_connector, data_ingestor, data_source
-from snowflake.ml.data._internal import ingestor_utils
+from snowflake.ml.data import data_connector, data_ingestor, data_source, ingestor_utils
 from snowflake.ml.fileset import snowfs
 
 _PROJECT = "Dataset"
@@ -26,6 +25,13 @@ class DatasetReader(data_connector.DataConnector):
         self._session: snowpark.Session = snowpark_session
         self._fs: snowfs.SnowFileSystem = ingestor_utils.get_dataset_filesystem(self._session)
         self._files: Optional[List[str]] = None
+
+    @classmethod
+    def from_dataframe(
+        cls, df: snowpark.DataFrame, ingestor_class: Optional[Type[data_ingestor.DataIngestor]] = None, **kwargs: Any
+    ) -> "DatasetReader":
+        # Block superclass constructor from Snowpark DataFrames
+        raise RuntimeError("Creating DatasetReader from DataFrames not supported")
 
     def _list_files(self) -> List[str]:
         """Private helper function that lists all files in this DatasetVersion and caches the results."""

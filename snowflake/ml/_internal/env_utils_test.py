@@ -833,6 +833,16 @@ class EnvFileTest(absltest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmpdir:
             cd = collections.defaultdict(list)
+            cd[env_utils.DEFAULT_CHANNEL_NAME] = [requirements.Requirement("numpy>=1.22.4")]
+            env_file_path = pathlib.Path(tmpdir, "conda.yml")
+            env_utils.save_conda_env_file(
+                env_file_path, cd, python_version="3.8", default_channel_override="conda-forge"
+            )
+            loaded_cd, _, _ = env_utils.load_conda_env_file(env_file_path)
+            self.assertEqual(cd, loaded_cd)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cd = collections.defaultdict(list)
             cd.update(
                 {
                     env_utils.DEFAULT_CHANNEL_NAME: [requirements.Requirement("numpy>=1.22.4")],
@@ -862,6 +872,37 @@ class EnvFileTest(absltest.TestCase):
                 {
                     "name": "snow-env",
                     "channels": ["https://repo.anaconda.com/pkgs/snowflake", "conda-forge", "apple", "nodefaults"],
+                    "dependencies": [
+                        "python==3.8.*",
+                        "numpy>=1.22.4",
+                        "conda-forge::pytorch!=2.0",
+                    ],
+                },
+            )
+            loaded_cd, pip_reqs, _ = env_utils.load_conda_env_file(env_file_path)
+            self.assertEqual(cd, loaded_cd)
+            self.assertIsNone(pip_reqs)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cd = collections.defaultdict(list)
+            cd.update(
+                {
+                    env_utils.DEFAULT_CHANNEL_NAME: [requirements.Requirement("numpy>=1.22.4")],
+                    "apple": [],
+                    "conda-forge": [requirements.Requirement("pytorch!=2.0")],
+                }
+            )
+            env_file_path = pathlib.Path(tmpdir, "conda.yml")
+            env_utils.save_conda_env_file(
+                env_file_path, cd, python_version="3.8", default_channel_override="conda-forge"
+            )
+            with open(env_file_path, encoding="utf-8") as f:
+                written_yaml = yaml.safe_load(f)
+            self.assertDictEqual(
+                written_yaml,
+                {
+                    "name": "snow-env",
+                    "channels": ["conda-forge", "apple", "nodefaults"],
                     "dependencies": [
                         "python==3.8.*",
                         "numpy>=1.22.4",
@@ -933,6 +974,34 @@ class EnvFileTest(absltest.TestCase):
                     data={
                         "name": "snow-env",
                         "channels": ["https://repo.anaconda.com/pkgs/snowflake", "apple", "nodefaults"],
+                        "dependencies": [
+                            "python=3.8",
+                            "::numpy>=1.22.4",
+                            "conda-forge::pytorch!=2.0",
+                            {"pip": ["python-package"]},
+                        ],
+                    },
+                )
+            loaded_cd, pip_reqs, python_ver = env_utils.load_conda_env_file(env_file_path)
+            self.assertEqual(
+                {
+                    env_utils.DEFAULT_CHANNEL_NAME: [requirements.Requirement("numpy>=1.22.4")],
+                    "conda-forge": [requirements.Requirement("pytorch!=2.0")],
+                    "apple": [],
+                },
+                loaded_cd,
+            )
+            self.assertListEqual(pip_reqs, [requirements.Requirement("python-package")])
+            self.assertEqual(python_ver, "3.8")
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            env_file_path = pathlib.Path(tmpdir, "conda.yml")
+            with open(env_file_path, "w", encoding="utf-8") as f:
+                yaml.safe_dump(
+                    stream=f,
+                    data={
+                        "name": "snow-env",
+                        "channels": ["conda-forge", "apple", "nodefaults"],
                         "dependencies": [
                             "python=3.8",
                             "::numpy>=1.22.4",

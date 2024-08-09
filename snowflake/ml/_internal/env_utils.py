@@ -27,7 +27,6 @@ class CONDA_OS(Enum):
     NO_ARCH = "noarch"
 
 
-_SNOWFLAKE_CONDA_CHANNEL_URL = "https://repo.anaconda.com/pkgs/snowflake"
 _NODEFAULTS = "nodefaults"
 _SNOWFLAKE_INFO_SCHEMA_PACKAGE_CACHE: Dict[str, List[version.Version]] = {}
 _SNOWFLAKE_CONDA_PACKAGE_CACHE: Dict[str, List[version.Version]] = {}
@@ -36,6 +35,7 @@ _SUPPORTED_PACKAGE_SPEC_OPS = ["==", ">=", "<=", ">", "<"]
 DEFAULT_CHANNEL_NAME = ""
 SNOWML_SPROC_ENV = "IN_SNOWML_SPROC"
 SNOWPARK_ML_PKG_NAME = "snowflake-ml-python"
+SNOWFLAKE_CONDA_CHANNEL_URL = "https://repo.anaconda.com/pkgs/snowflake"
 
 
 def _validate_pip_requirement_string(req_str: str) -> requirements.Requirement:
@@ -370,7 +370,7 @@ def get_matched_package_versions_in_snowflake_conda_channel(
 
     assert not snowpark_utils.is_in_stored_procedure()  # type: ignore[no-untyped-call]
 
-    url = f"{_SNOWFLAKE_CONDA_CHANNEL_URL}/{conda_os.value}/repodata.json"
+    url = f"{SNOWFLAKE_CONDA_CHANNEL_URL}/{conda_os.value}/repodata.json"
 
     if req.name not in _SNOWFLAKE_CONDA_PACKAGE_CACHE:
         try:
@@ -477,6 +477,7 @@ def save_conda_env_file(
     path: pathlib.Path,
     conda_chan_deps: DefaultDict[str, List[requirements.Requirement]],
     python_version: str,
+    default_channel_override: str = SNOWFLAKE_CONDA_CHANNEL_URL,
 ) -> None:
     """Generate conda.yml file given a dict of dependencies after validation.
     The channels part of conda.yml file will contains Snowflake Anaconda Channel, nodefaults and all channel names
@@ -489,6 +490,7 @@ def save_conda_env_file(
         path: Path to the conda.yml file.
         conda_chan_deps: Dict of conda dependencies after validated.
         python_version: A string 'major.minor' showing python version relate to model.
+        default_channel_override: The default channel to be put in the first place of the channels section.
     """
     assert path.suffix in [".yml", ".yaml"], "Conda environment file should have extension of yml or yaml."
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -499,7 +501,11 @@ def save_conda_env_file(
     channels = list(dict(sorted(conda_chan_deps.items(), key=lambda item: len(item[1]), reverse=True)).keys())
     if DEFAULT_CHANNEL_NAME in channels:
         channels.remove(DEFAULT_CHANNEL_NAME)
-    env["channels"] = [_SNOWFLAKE_CONDA_CHANNEL_URL] + channels + [_NODEFAULTS]
+
+    if default_channel_override in channels:
+        channels.remove(default_channel_override)
+
+    env["channels"] = [default_channel_override] + channels + [_NODEFAULTS]
     env["dependencies"] = [f"python=={python_version}.*"]
     for chan, reqs in conda_chan_deps.items():
         env["dependencies"].extend(
@@ -567,8 +573,8 @@ def load_conda_env_file(
     python_version = None
 
     channels = env.get("channels", [])
-    if _SNOWFLAKE_CONDA_CHANNEL_URL in channels:
-        channels.remove(_SNOWFLAKE_CONDA_CHANNEL_URL)
+    if len(channels) >= 1:
+        channels = channels[1:]  # Skip the first channel which is the default channel
     if _NODEFAULTS in channels:
         channels.remove(_NODEFAULTS)
 

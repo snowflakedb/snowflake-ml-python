@@ -6,7 +6,7 @@ from absl.testing import absltest
 
 from snowflake.ml._internal.utils import sql_identifier
 from snowflake.ml.model._client.model import model_impl, model_version_impl
-from snowflake.ml.model._client.ops import model_ops
+from snowflake.ml.model._client.ops import model_ops, service_ops
 from snowflake.ml.test_utils import mock_session
 from snowflake.snowpark import Row, Session
 
@@ -17,6 +17,11 @@ class ModelImplTest(absltest.TestCase):
         self.c_session = cast(Session, self.m_session)
         self.m_model = model_impl.Model._ref(
             model_ops.ModelOperator(
+                self.c_session,
+                database_name=sql_identifier.SqlIdentifier("TEMP"),
+                schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
+            ),
+            service_ops=service_ops.ServiceOperator(
                 self.c_session,
                 database_name=sql_identifier.SqlIdentifier("TEMP"),
                 schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
@@ -32,6 +37,7 @@ class ModelImplTest(absltest.TestCase):
         with mock.patch.object(model_version_impl.ModelVersion, "_get_functions", return_value=[]):
             m_mv = model_version_impl.ModelVersion._ref(
                 self.m_model._model_ops,
+                service_ops=self.m_model._service_ops,
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
                 version_name=sql_identifier.SqlIdentifier("V1"),
             )
@@ -61,6 +67,7 @@ class ModelImplTest(absltest.TestCase):
         with mock.patch.object(model_version_impl.ModelVersion, "_get_functions", return_value=[]):
             m_mv = model_version_impl.ModelVersion._ref(
                 self.m_model._model_ops,
+                service_ops=self.m_model._service_ops,
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
                 version_name=sql_identifier.SqlIdentifier("V1"),
             )
@@ -100,11 +107,13 @@ class ModelImplTest(absltest.TestCase):
         with mock.patch.object(model_version_impl.ModelVersion, "_get_functions", return_value=[]):
             m_mv_1 = model_version_impl.ModelVersion._ref(
                 self.m_model._model_ops,
+                service_ops=self.m_model._service_ops,
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
                 version_name=sql_identifier.SqlIdentifier("V1"),
             )
             m_mv_2 = model_version_impl.ModelVersion._ref(
                 self.m_model._model_ops,
+                service_ops=self.m_model._service_ops,
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
                 version_name=sql_identifier.SqlIdentifier("v1", case_sensitive=True),
             )
@@ -267,6 +276,7 @@ class ModelImplTest(absltest.TestCase):
         ):
             mv = model_version_impl.ModelVersion._ref(
                 self.m_model._model_ops,
+                service_ops=self.m_model._service_ops,
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
                 version_name=sql_identifier.SqlIdentifier("V2"),
             )

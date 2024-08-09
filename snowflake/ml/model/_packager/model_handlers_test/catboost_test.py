@@ -15,7 +15,7 @@ from snowflake.ml.model._packager.model_handlers_test import test_utils
 
 
 class CatBoostHandlerTest(absltest.TestCase):
-    def test_catboost_classifier(self) -> None:
+    def test_catboost_classifier_explain_disabled(self) -> None:
         cal_data = datasets.load_breast_cancer()
         cal_X = pd.DataFrame(cal_data.data, columns=cal_data.feature_names)
         cal_y = pd.Series(cal_data.target)
@@ -34,6 +34,7 @@ class CatBoostHandlerTest(absltest.TestCase):
                     model=classifier,
                     signatures={**s, "another_predict": s["predict"]},
                     metadata={"author": "halu", "version": "1"},
+                    options=model_types.CatBoostModelSaveOptions(enable_explainability=False),
                 )
 
             model_packager.ModelPackager(os.path.join(tmpdir, "model1")).save(
@@ -41,6 +42,7 @@ class CatBoostHandlerTest(absltest.TestCase):
                 model=classifier,
                 signatures=s,
                 metadata={"author": "halu", "version": "1"},
+                options=model_types.CatBoostModelSaveOptions(enable_explainability=False),
             )
 
             with warnings.catch_warnings():
@@ -65,6 +67,7 @@ class CatBoostHandlerTest(absltest.TestCase):
                 model=classifier,
                 sample_input_data=cal_X_test,
                 metadata={"author": "halu", "version": "1"},
+                options=model_types.CatBoostModelSaveOptions(enable_explainability=False),
             )
 
             pk = model_packager.ModelPackager(os.path.join(tmpdir, "model1_no_sig"))
@@ -103,18 +106,17 @@ class CatBoostHandlerTest(absltest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             s = {"predict": model_signature.infer_signature(cal_X_test, y_pred)}
 
-            model_packager.ModelPackager(os.path.join(tmpdir, "model1")).save(
-                name="model1",
+            model_packager.ModelPackager(os.path.join(tmpdir, "model1_default_explain")).save(
+                name="model1_default_explain",
                 model=classifier,
                 signatures=s,
                 metadata={"author": "halu", "version": "1"},
-                options=model_types.CatBoostModelSaveOptions(enable_explainability=True),
             )
 
             with warnings.catch_warnings():
                 warnings.simplefilter("error")
 
-                pk = model_packager.ModelPackager(os.path.join(tmpdir, "model1"))
+                pk = model_packager.ModelPackager(os.path.join(tmpdir, "model1_default_explain"))
                 pk.load(as_custom_model=True)
                 predict_method = getattr(pk.model, "predict", None)
                 explain_method = getattr(pk.model, "explain", None)
@@ -128,7 +130,6 @@ class CatBoostHandlerTest(absltest.TestCase):
                 model=classifier,
                 sample_input_data=cal_X_test,
                 metadata={"author": "halu", "version": "1"},
-                options=model_types.CatBoostModelSaveOptions(enable_explainability=True),
             )
 
             pk = model_packager.ModelPackager(os.path.join(tmpdir, "model1_no_sig"))
@@ -139,6 +140,19 @@ class CatBoostHandlerTest(absltest.TestCase):
             predict_method = getattr(pk.model, "predict_proba", None)
             assert callable(predict_method)
             np.testing.assert_allclose(predict_method(cal_X_test), y_pred_proba)
+            explain_method = getattr(pk.model, "explain", None)
+            assert callable(explain_method)
+            np.testing.assert_allclose(explain_method(cal_X_test), explanations)
+
+            model_packager.ModelPackager(os.path.join(tmpdir, "model1_no_sig_explain_enabled")).save(
+                name="model1_no_sig_explain_enabled",
+                model=classifier,
+                sample_input_data=cal_X_test,
+                metadata={"author": "halu", "version": "1"},
+                options=model_types.CatBoostModelSaveOptions(enable_explainability=True),
+            )
+            pk = model_packager.ModelPackager(os.path.join(tmpdir, "model1_no_sig_explain_enabled"))
+            pk.load(as_custom_model=True)
             explain_method = getattr(pk.model, "explain", None)
             assert callable(explain_method)
             np.testing.assert_allclose(explain_method(cal_X_test), explanations)
@@ -163,7 +177,6 @@ class CatBoostHandlerTest(absltest.TestCase):
                 model=classifier,
                 signatures=s,
                 metadata={"author": "halu", "version": "1"},
-                options=model_types.CatBoostModelSaveOptions(enable_explainability=True),
             )
 
             with warnings.catch_warnings():
@@ -185,7 +198,6 @@ class CatBoostHandlerTest(absltest.TestCase):
                 model=classifier,
                 sample_input_data=cal_X_test,
                 metadata={"author": "halu", "version": "1"},
-                options=model_types.CatBoostModelSaveOptions(enable_explainability=True),
             )
 
             pk = model_packager.ModelPackager(os.path.join(tmpdir, "model1_no_sig"))

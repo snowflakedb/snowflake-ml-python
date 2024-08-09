@@ -13,6 +13,7 @@ _TARGET_FILE_SIZE = 32 * 2**20  # The max file size for data loading.
 def get_dataframe_result_batches(
     session: snowpark.Session, df_info: data_source.DataFrameInfo
 ) -> List[result_batch.ResultBatch]:
+    """Retrieve the ResultBatches for a given query"""
     cursor = session._conn._cursor
 
     if df_info.query_id:
@@ -39,6 +40,7 @@ def get_dataframe_result_batches(
 def get_dataset_filesystem(
     session: snowpark.Session, ds_info: Optional[data_source.DatasetInfo] = None
 ) -> fsspec.AbstractFileSystem:
+    """Get the fsspec filesystem for a given Dataset"""
     # We can't directly load the Dataset to avoid a circular dependency
     # Dataset -> DatasetReader -> DataConnector -> DataIngestor -> (?) ingestor_utils -> Dataset
     # TODO: Automatically pick appropriate fsspec implementation based on protocol in URL
@@ -52,7 +54,9 @@ def get_dataset_filesystem(
 def get_dataset_files(
     session: snowpark.Session, ds_info: data_source.DatasetInfo, filesystem: Optional[fsspec.AbstractFileSystem] = None
 ) -> List[str]:
+    """Get the list of files in a given Dataset"""
     if filesystem is None:
         filesystem = get_dataset_filesystem(session, ds_info)
     assert bool(ds_info.url)  # Not null or empty
-    return sorted(filesystem.ls(ds_info.url))
+    files = sorted(filesystem.ls(ds_info.url))
+    return [filesystem.unstrip_protocol(f) for f in files]

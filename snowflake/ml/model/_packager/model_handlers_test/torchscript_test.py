@@ -63,6 +63,14 @@ class TorchScriptHandlerTest(absltest.TestCase):
                     signatures={**s, "another_forward": s["forward"]},
                     metadata={"author": "halu", "version": "1"},
                 )
+            with self.assertRaises(NotImplementedError):
+                model_packager.ModelPackager(os.path.join(tmpdir, "model1")).save(
+                    name="model1",
+                    model=model_script,
+                    signatures=s,
+                    metadata={"author": "halu", "version": "1"},
+                    options={"enable_explainability": True},
+                )
 
             model_packager.ModelPackager(os.path.join(tmpdir, "model1")).save(
                 name="model1",

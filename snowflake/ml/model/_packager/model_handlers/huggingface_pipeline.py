@@ -89,7 +89,7 @@ class HuggingFacePipelineHandler(
     _MIN_SNOWPARK_ML_VERSION = "1.0.12"
     _HANDLER_MIGRATOR_PLANS: Dict[str, Type[base_migrator.BaseModelHandlerMigrator]] = {}
 
-    MODELE_BLOB_FILE_OR_DIR = "model"
+    MODEL_BLOB_FILE_OR_DIR = "model"
     ADDITIONAL_CONFIG_FILE = "pipeline_config.pt"
     DEFAULT_TARGET_METHODS = ["__call__"]
     IS_AUTO_SIGNATURE = True
@@ -133,6 +133,9 @@ class HuggingFacePipelineHandler(
         is_sub_model: Optional[bool] = False,
         **kwargs: Unpack[model_types.HuggingFaceSaveOptions],
     ) -> None:
+        enable_explainability = kwargs.get("enable_explainability", False)
+        if enable_explainability:
+            raise NotImplementedError("Explainability is not supported for huggingface model.")
         if type_utils.LazyType("transformers.Pipeline").isinstance(model):
             task = model.task  # type:ignore[attr-defined]
             framework = model.framework  # type:ignore[attr-defined]
@@ -193,7 +196,7 @@ class HuggingFacePipelineHandler(
 
         if type_utils.LazyType("transformers.Pipeline").isinstance(model):
             model.save_pretrained(  # type:ignore[attr-defined]
-                os.path.join(model_blob_path, cls.MODELE_BLOB_FILE_OR_DIR)
+                os.path.join(model_blob_path, cls.MODEL_BLOB_FILE_OR_DIR)
             )
             pipeline_params = {
                 "_batch_size": model._batch_size,  # type:ignore[attr-defined]
@@ -205,7 +208,7 @@ class HuggingFacePipelineHandler(
             with open(
                 os.path.join(
                     model_blob_path,
-                    cls.MODELE_BLOB_FILE_OR_DIR,
+                    cls.MODEL_BLOB_FILE_OR_DIR,
                     cls.ADDITIONAL_CONFIG_FILE,
                 ),
                 "wb",
@@ -213,7 +216,7 @@ class HuggingFacePipelineHandler(
                 cloudpickle.dump(pipeline_params, f)
         else:
             with open(
-                os.path.join(model_blob_path, cls.MODELE_BLOB_FILE_OR_DIR),
+                os.path.join(model_blob_path, cls.MODEL_BLOB_FILE_OR_DIR),
                 "wb",
             ) as f:
                 cloudpickle.dump(model, f)
@@ -222,7 +225,7 @@ class HuggingFacePipelineHandler(
             name=name,
             model_type=cls.HANDLER_TYPE,
             handler_version=cls.HANDLER_VERSION,
-            path=cls.MODELE_BLOB_FILE_OR_DIR,
+            path=cls.MODEL_BLOB_FILE_OR_DIR,
             options=model_meta_schema.HuggingFacePipelineModelBlobOptions(
                 {
                     "task": task,
@@ -329,6 +332,7 @@ class HuggingFacePipelineHandler(
         cls,
         raw_model: Union[huggingface_pipeline.HuggingFacePipelineModel, "transformers.Pipeline"],
         model_meta: model_meta_api.ModelMetadata,
+        background_data: Optional[pd.DataFrame] = None,
         **kwargs: Unpack[model_types.HuggingFaceLoadOptions],
     ) -> custom_model.CustomModel:
         import transformers
