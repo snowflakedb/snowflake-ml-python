@@ -31,7 +31,7 @@ class SentenceTransformerHandler(_base.BaseModelHandler["sentence_transformers.S
     _MIN_SNOWPARK_ML_VERSION = "1.3.1"
     _HANDLER_MIGRATOR_PLANS: Dict[str, Type[base_migrator.BaseModelHandlerMigrator]] = {}
 
-    MODELE_BLOB_FILE_OR_DIR = "model"
+    MODEL_BLOB_FILE_OR_DIR = "model"
     DEFAULT_TARGET_METHODS = ["encode"]
 
     @classmethod
@@ -64,6 +64,10 @@ class SentenceTransformerHandler(_base.BaseModelHandler["sentence_transformers.S
         is_sub_model: Optional[bool] = False,
         **kwargs: Unpack[model_types.SentenceTransformersSaveOptions],  # registry.log_model(options={...})
     ) -> None:
+        enable_explainability = kwargs.get("enable_explainability", False)
+        if enable_explainability:
+            raise NotImplementedError("Explainability is not supported for Sentence Transformer model.")
+
         # Validate target methods and signature (if possible)
         if not is_sub_model:
             target_methods = handlers_utils.get_target_methods(
@@ -101,14 +105,14 @@ class SentenceTransformerHandler(_base.BaseModelHandler["sentence_transformers.S
         # save model
         model_blob_path = os.path.join(model_blobs_dir_path, name)
         os.makedirs(model_blob_path, exist_ok=True)
-        model.save(os.path.join(model_blob_path, cls.MODELE_BLOB_FILE_OR_DIR))
+        model.save(os.path.join(model_blob_path, cls.MODEL_BLOB_FILE_OR_DIR))
 
         # save model metadata
         base_meta = model_blob_meta.ModelBlobMeta(
             name=name,
             model_type=cls.HANDLER_TYPE,
             handler_version=cls.HANDLER_VERSION,
-            path=cls.MODELE_BLOB_FILE_OR_DIR,
+            path=cls.MODEL_BLOB_FILE_OR_DIR,
         )
         model_meta.models[name] = base_meta
         model_meta.min_snowpark_ml_version = cls._MIN_SNOWPARK_ML_VERSION
@@ -154,6 +158,7 @@ class SentenceTransformerHandler(_base.BaseModelHandler["sentence_transformers.S
         cls,
         raw_model: "sentence_transformers.SentenceTransformer",
         model_meta: model_meta_api.ModelMetadata,
+        background_data: Optional[pd.DataFrame] = None,
         **kwargs: Unpack[model_types.SentenceTransformersLoadOptions],
     ) -> custom_model.CustomModel:
         import sentence_transformers

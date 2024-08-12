@@ -6,7 +6,7 @@ import warnings
 from collections import OrderedDict
 from dataclasses import asdict, dataclass
 from enum import Enum
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 
 from snowflake.ml._internal.exceptions import (
     error_codes,
@@ -56,6 +56,29 @@ class _FeatureViewMetadata:
 
     @classmethod
     def from_json(cls, json_str: str) -> _FeatureViewMetadata:
+        state_dict = json.loads(json_str)
+        return cls(**state_dict)
+
+
+@dataclass(frozen=True)
+class _CompactRepresentation:
+    """
+    A compact representation for FeatureView and FeatureViewSlice, which contains fully qualified name
+    and optionally a list of feature indices (None means all features will be included).
+    This is to make the metadata much smaller when generating dataset.
+    """
+
+    db: str
+    sch: str
+    name: str
+    version: str
+    feature_indices: Optional[List[int]] = None
+
+    def to_json(self) -> str:
+        return json.dumps(asdict(self))
+
+    @classmethod
+    def from_json(cls, json_str: str) -> _CompactRepresentation:
         state_dict = json.loads(json_str)
         return cls(**state_dict)
 
@@ -114,6 +137,19 @@ class FeatureViewSlice:
         del json_dict[_FEATURE_OBJ_TYPE]
         json_dict["feature_view_ref"] = FeatureView.from_json(json_dict["feature_view_ref"], session)
         return cls(**json_dict)
+
+    def _get_compact_repr(self) -> _CompactRepresentation:
+        return _CompactRepresentation(
+            db=self.feature_view_ref.database.identifier(),  # type: ignore[union-attr]
+            sch=self.feature_view_ref.schema.identifier(),  # type: ignore[union-attr]
+            name=self.feature_view_ref.name.identifier(),
+            version=self.feature_view_ref.version,  # type: ignore[arg-type]
+            feature_indices=self._feature_names_to_indices(),
+        )
+
+    def _feature_names_to_indices(self) -> List[int]:
+        name_to_indices_map = {name: idx for idx, name in enumerate(self.feature_view_ref.feature_names)}
+        return [name_to_indices_map[n] for n in self.names]
 
 
 class FeatureView(lineage_node.LineageNode):
@@ -196,7 +232,7 @@ class FeatureView(lineage_node.LineageNode):
         self._database: Optional[SqlIdentifier] = None
         self._schema: Optional[SqlIdentifier] = None
         self._warehouse: Optional[SqlIdentifier] = SqlIdentifier(warehouse) if warehouse is not None else None
-        self._refresh_mode: Optional[str] = None
+        self._refresh_mode: Optional[str] = _kwargs.get("refresh_mode", "AUTO")
         self._refresh_mode_reason: Optional[str] = None
         self._owner: Optional[str] = None
         self._validate()
@@ -393,6 +429,54 @@ class FeatureView(lineage_node.LineageNode):
     @property
     def feature_descs(self) -> Dict[SqlIdentifier, str]:
         return self._feature_desc
+
+    def list_columns(self) -> DataFrame:
+        """List all columns and their information.
+
+        Returns:
+            A Snowpark DataFrame contains feature information.
+
+        Example::
+
+            >>> fs = FeatureStore(...)
+            >>> e = Entity("foo", ["id"], desc='my entity')
+            >>> fs.register_entity(e)
+            <BLANKLINE>
+            >>> draft_fv = FeatureView(
+            ...     name="fv",
+            ...     entities=[e],
+            ...     feature_df=self._session.table(<source_table>).select(["NAME", "ID", "TITLE", "AGE", "TS"]),
+            ...     timestamp_col="ts",
+            >>> ).attach_feature_desc({"AGE": "my age", "TITLE": '"my title"'})
+            >>> fv = fs.register_feature_view(draft_fv, '1.0')
+            <BLANKLINE>
+            >>> fv.list_columns().show()
+            --------------------------------------------------
+            |"NAME"  |"CATEGORY"  |"DTYPE"      |"DESC"      |
+            --------------------------------------------------
+            |NAME    |FEATURE     |string(64)   |            |
+            |ID      |ENTITY      |bigint       |my entity   |
+            |TITLE   |FEATURE     |string(128)  |"my title"  |
+            |AGE     |FEATURE     |bigint       |my age      |
+            |TS      |TIMESTAMP   |bigint       |NULL        |
+            --------------------------------------------------
+
+        """
+        session = self._feature_df.session
+        rows = []
+        for name, type in self._feature_df.dtypes:
+            if SqlIdentifier(name) in self.feature_descs:
+                desc = self.feature_descs[SqlIdentifier(name)]
+                rows.append((name, "FEATURE", type, desc))
+            elif SqlIdentifier(name) == self._timestamp_col:
+                rows.append((name, "TIMESTAMP", type, None))  # type: ignore[arg-type]
+            else:
+                for e in self._entities:
+                    if SqlIdentifier(name) in e.join_keys:
+                        rows.append((name, "ENTITY", type, e.desc))
+                        break
+
+        return session.create_dataframe(rows, schema=["name", "category", "dtype", "desc"])
 
     @property
     def refresh_freq(self) -> Optional[str]:
@@ -599,12 +683,50 @@ Got {len(self._feature_df.queries['queries'])}: {self._feature_df.queries['queri
 
         return fv_dict
 
-    def to_df(self, session: Session) -> DataFrame:
+    def to_df(self, session: Optional[Session] = None) -> DataFrame:
+        """Convert feature view to a Snowpark DataFrame object.
+
+        Args:
+            session: [deprecated] This argument has no effect. No need to pass a session object.
+
+        Returns:
+            A Snowpark Dataframe object contains the information about feature view.
+
+        Example::
+
+            >>> fs = FeatureStore(...)
+            >>> e = Entity("foo", ["id"], desc='my entity')
+            >>> fs.register_entity(e)
+            <BLANKLINE>
+            >>> draft_fv = FeatureView(
+            ...     name="fv",
+            ...     entities=[e],
+            ...     feature_df=self._session.table(<source_table>).select(["NAME", "ID", "TITLE", "AGE", "TS"]),
+            ...     timestamp_col="ts",
+            >>> ).attach_feature_desc({"AGE": "my age", "TITLE": '"my title"'})
+            >>> fv = fs.register_feature_view(draft_fv, '1.0')
+            <BLANKLINE>
+            fv.to_df().show()
+            ----------------------------------------------------------------...
+            |"NAME"  |"ENTITIES"                |"TIMESTAMP_COL"  |"DESC"  |
+            ----------------------------------------------------------------...
+            |FV      |[                         |TS               |foobar  |
+            |        |  {                       |                 |        |
+            |        |    "desc": "my entity",  |                 |        |
+            |        |    "join_keys": [        |                 |        |
+            |        |      "ID"                |                 |        |
+            |        |    ],                    |                 |        |
+            |        |    "name": "FOO",        |                 |        |
+            |        |    "owner": null         |                 |        |
+            |        |  }                       |                 |        |
+            |        |]                         |                 |        |
+            ----------------------------------------------------------------...
+        """
         values = list(self._to_dict().values())
         schema = [x.lstrip("_") for x in list(self._to_dict().keys())]
         values.append(str(FeatureView._get_physical_name(self._name, self._version)))  # type: ignore[arg-type]
         schema.append("physical_name")
-        return session.create_dataframe([values], schema=schema)
+        return self._feature_df.session.create_dataframe([values], schema=schema)
 
     def to_json(self) -> str:
         state_dict = self._to_dict()
@@ -643,6 +765,14 @@ Got {len(self._feature_df.queries['queries'])}: {self._feature_df.queries['queri
             session=session,
         )
 
+    def _get_compact_repr(self) -> _CompactRepresentation:
+        return _CompactRepresentation(
+            db=self.database.identifier(),  # type: ignore[union-attr]
+            sch=self.schema.identifier(),  # type: ignore[union-attr]
+            name=self.name.identifier(),
+            version=self.version,  # type: ignore[arg-type]
+        )
+
     @staticmethod
     def _get_physical_name(fv_name: SqlIdentifier, fv_version: FeatureViewVersion) -> SqlIdentifier:
         return SqlIdentifier(
@@ -654,6 +784,20 @@ Got {len(self._feature_df.queries['queries'])}: {self._feature_df.queries['queri
                 ]
             )
         )
+
+    @staticmethod
+    def _load_from_compact_repr(session: Session, serialized_repr: str) -> Union[FeatureView, FeatureViewSlice]:
+        compact_repr = _CompactRepresentation.from_json(serialized_repr)
+
+        fs = feature_store.FeatureStore(
+            session, compact_repr.db, compact_repr.sch, default_warehouse=session.get_current_warehouse()
+        )
+        fv = fs.get_feature_view(compact_repr.name, compact_repr.version)
+
+        if compact_repr.feature_indices is not None:
+            feature_names = [fv.feature_names[i] for i in compact_repr.feature_indices]
+            return fv.slice(feature_names)  # type: ignore[no-any-return]
+        return fv  # type: ignore[no-any-return]
 
     @staticmethod
     def _load_from_lineage_node(session: Session, name: str, version: str) -> FeatureView:

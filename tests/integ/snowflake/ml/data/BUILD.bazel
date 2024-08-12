@@ -1,0 +1,18 @@
+load("//bazel:py_rules.bzl", "py_test")
+
+package(default_visibility = [
+    "//bazel:snowml_public_common",
+])
+
+py_test(
+    name = "data_connector_integ_test",
+    srcs = ["data_connector_integ_test.py"],
+    shard_count = 8,
+    deps = [
+        "//snowflake/ml/data",
+        "//snowflake/ml/dataset",
+        "//tests/integ/snowflake/ml/fileset:fileset_integ_utils",
+        "//tests/integ/snowflake/ml/test_utils:common_test_base",
+        "//tests/integ/snowflake/ml/test_utils:db_manager",
+    ],
+)

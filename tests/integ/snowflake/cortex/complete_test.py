@@ -92,24 +92,12 @@ class CompleteRestTest(absltest.TestCase):
     def tearDown(self) -> None:
         self._session.close()
 
-    def test_non_streaming(self) -> None:
-        result = Complete(
-            model=_MODEL_NAME,
-            prompt=_PROMPT,
-            session=self._session,
-            stream=False,
-            use_rest_api_experimental=True,
-        )
-        self.assertIsInstance(result, str)
-        self.assertTrue(result)
-
     def test_streaming(self) -> None:
         result = Complete(
             model=_MODEL_NAME,
             prompt=_PROMPT,
             session=self._session,
             stream=True,
-            use_rest_api_experimental=True,
         )
         self.assertIsInstance(result, GeneratorType)
         for out in result:
@@ -122,23 +110,11 @@ class CompleteRestTest(absltest.TestCase):
             prompt=_CONVERSATION_HISTORY_PROMPT,
             session=self._session,
             stream=True,
-            use_rest_api_experimental=True,
         )
         self.assertIsInstance(result, GeneratorType)
         for out in result:
             self.assertIsInstance(out, str)
             self.assertTrue(out)  # nonempty
-
-    def test_non_streaming_conversation_history(self) -> None:
-        result = Complete(
-            model=_MODEL_NAME,
-            prompt=_CONVERSATION_HISTORY_PROMPT,
-            session=self._session,
-            stream=False,
-            use_rest_api_experimental=True,
-        )
-        self.assertIsInstance(result, str)
-        self.assertTrue(result)
 
     def test_streaming_with_options(self) -> None:
         result = Complete(
@@ -147,36 +123,11 @@ class CompleteRestTest(absltest.TestCase):
             options=_OPTIONS,
             session=self._session,
             stream=True,
-            use_rest_api_experimental=True,
         )
         self.assertIsInstance(result, GeneratorType)
         for out in result:
             self.assertIsInstance(out, str)
             self.assertTrue(out)  # nonempty
-
-    def test_non_streaming_with_options(self) -> None:
-        result = Complete(
-            model=_MODEL_NAME,
-            prompt=_PROMPT,
-            options=_OPTIONS,
-            session=self._session,
-            stream=False,
-            use_rest_api_experimental=True,
-        )
-        self.assertIsInstance(result, str)
-        self.assertTrue(result)
-
-    def test_non_streaming_with_empty_options(self) -> None:
-        result = Complete(
-            model=_MODEL_NAME,
-            prompt=_PROMPT,
-            options=CompleteOptions(),
-            session=self._session,
-            stream=False,
-            use_rest_api_experimental=True,
-        )
-        self.assertIsInstance(result, str)
-        self.assertTrue(result)
 
 
 if __name__ == "__main__":

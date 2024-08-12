@@ -62,7 +62,7 @@ def compare_feature_views(actual_fvs: List[FeatureView], target_fvs: List[Featur
         assert actual_fv == target_fv, f"{actual_fv.name} doesn't match {target_fv.name}"
 
 
-def create_mock_session(trouble_query: str, exception: Exception) -> Any:
+def create_mock_session(trouble_query: str, exception: Exception, config: Optional[Dict[str, str]] = None) -> Any:
     def side_effect(session: Session) -> Callable[[Any], Any]:
         original_sql = session.sql
 
@@ -73,7 +73,8 @@ def create_mock_session(trouble_query: str, exception: Exception) -> Any:
 
         return dispatch
 
-    session = Session.builder.configs(SnowflakeLoginOptions()).create()
+    config = config or SnowflakeLoginOptions()
+    session = Session.builder.configs(config).create()
     session.sql = Mock(side_effect=side_effect(session))
     return session
 

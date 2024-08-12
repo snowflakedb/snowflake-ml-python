@@ -102,6 +102,15 @@ class CustomHandlerTest(absltest.TestCase):
             arr = np.array([[1, 2, 3], [4, 2, 5]])
             d = pd.DataFrame(arr, columns=["c1", "c2", "c3"])
             s = {"predict": model_signature.infer_signature(d, lm.predict(d))}
+            with self.assertRaises(NotImplementedError):
+                model_packager.ModelPackager(os.path.join(tmpdir, "model1")).save(
+                    name="model1",
+                    model=lm,
+                    signatures=s,
+                    metadata={"author": "halu", "version": "1"},
+                    options={"enable_explainability": True},
+                )
+
             model_packager.ModelPackager(os.path.join(tmpdir, "model1")).save(
                 name="model1",
                 model=lm,

@@ -256,6 +256,7 @@ def _py_wheel_impl(ctx):
             ctx.file.pyproject_toml.path,
             execution_root_relative_path,
             "--wheel",
+            "--sdist",
             "--outdir",
             wheel_output_dir.path,
         ],

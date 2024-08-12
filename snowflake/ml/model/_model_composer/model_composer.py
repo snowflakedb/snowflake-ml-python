@@ -10,6 +10,7 @@ from absl import logging
 from packaging import requirements
 from typing_extensions import deprecated
 
+from snowflake import snowpark
 from snowflake.ml._internal import env as snowml_env, env_utils, file_utils
 from snowflake.ml._internal.lineage import lineage_utils
 from snowflake.ml.data import data_source
@@ -185,4 +186,6 @@ class ModelComposer:
         data_sources = lineage_utils.get_data_sources(model)
         if not data_sources and sample_input_data is not None:
             data_sources = lineage_utils.get_data_sources(sample_input_data)
+            if not data_sources and isinstance(sample_input_data, snowpark.DataFrame):
+                data_sources = [data_source.DataFrameInfo(sample_input_data.queries["queries"][-1])]
         return data_sources

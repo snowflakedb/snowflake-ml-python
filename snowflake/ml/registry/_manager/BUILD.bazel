@@ -20,6 +20,7 @@ py_library(
         "//snowflake/ml/model/_client/model:model_version_impl",
         "//snowflake/ml/model/_client/ops:metadata_ops",
         "//snowflake/ml/model/_client/ops:model_ops",
+        "//snowflake/ml/model/_client/ops:service_ops",
         "//snowflake/ml/model/_model_composer:model_composer",
     ],
 )

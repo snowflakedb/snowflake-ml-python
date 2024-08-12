@@ -63,7 +63,7 @@ class MLFlowHandler(_base.BaseModelHandler["mlflow.pyfunc.PyFuncModel"]):
     _MIN_SNOWPARK_ML_VERSION = "1.0.12"
     _HANDLER_MIGRATOR_PLANS: Dict[str, Type[base_migrator.BaseModelHandlerMigrator]] = {}
 
-    MODELE_BLOB_FILE_OR_DIR = "model"
+    MODEL_BLOB_FILE_OR_DIR = "model"
     _DEFAULT_TARGET_METHOD = "predict"
     DEFAULT_TARGET_METHODS = [_DEFAULT_TARGET_METHOD]
     IS_AUTO_SIGNATURE = True
@@ -97,6 +97,10 @@ class MLFlowHandler(_base.BaseModelHandler["mlflow.pyfunc.PyFuncModel"]):
         is_sub_model: Optional[bool] = False,
         **kwargs: Unpack[model_types.MLFlowSaveOptions],
     ) -> None:
+        enable_explainability = kwargs.get("enable_explainability", False)
+        if enable_explainability:
+            raise NotImplementedError("Explainability is not supported for MLFlow model.")
+
         import mlflow
 
         assert isinstance(model, mlflow.pyfunc.PyFuncModel)
@@ -142,13 +146,13 @@ class MLFlowHandler(_base.BaseModelHandler["mlflow.pyfunc.PyFuncModel"]):
             except (mlflow.MlflowException, OSError):
                 raise ValueError("Cannot load MLFlow model artifacts.")
 
-            file_utils.copy_file_or_tree(local_path, os.path.join(model_blob_path, cls.MODELE_BLOB_FILE_OR_DIR))
+            file_utils.copy_file_or_tree(local_path, os.path.join(model_blob_path, cls.MODEL_BLOB_FILE_OR_DIR))
 
         base_meta = model_blob_meta.ModelBlobMeta(
             name=name,
             model_type=cls.HANDLER_TYPE,
             handler_version=cls.HANDLER_VERSION,
-            path=cls.MODELE_BLOB_FILE_OR_DIR,
+            path=cls.MODEL_BLOB_FILE_OR_DIR,
             options=model_meta_schema.MLFlowModelBlobOptions({"artifact_path": model_info.artifact_path}),
         )
         model_meta.models[name] = base_meta
@@ -194,6 +198,7 @@ class MLFlowHandler(_base.BaseModelHandler["mlflow.pyfunc.PyFuncModel"]):
         cls,
         raw_model: "mlflow.pyfunc.PyFuncModel",
         model_meta: model_meta_api.ModelMetadata,
+        background_data: Optional[pd.DataFrame] = None,
         **kwargs: Unpack[model_types.MLFlowLoadOptions],
     ) -> custom_model.CustomModel:
         from snowflake.ml.model import custom_model

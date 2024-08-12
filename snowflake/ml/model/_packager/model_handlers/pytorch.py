@@ -37,7 +37,7 @@ class PyTorchHandler(_base.BaseModelHandler["torch.nn.Module"]):
     _MIN_SNOWPARK_ML_VERSION = "1.0.12"
     _HANDLER_MIGRATOR_PLANS: Dict[str, Type[base_migrator.BaseModelHandlerMigrator]] = {}
 
-    MODELE_BLOB_FILE_OR_DIR = "model.pt"
+    MODEL_BLOB_FILE_OR_DIR = "model.pt"
     DEFAULT_TARGET_METHODS = ["forward"]
 
     @classmethod
@@ -73,6 +73,10 @@ class PyTorchHandler(_base.BaseModelHandler["torch.nn.Module"]):
         is_sub_model: Optional[bool] = False,
         **kwargs: Unpack[model_types.PyTorchSaveOptions],
     ) -> None:
+        enable_explainability = kwargs.get("enable_explainability", False)
+        if enable_explainability:
+            raise NotImplementedError("Explainability is not supported for PyTorch model.")
+
         import torch
 
         assert isinstance(model, torch.nn.Module)
@@ -115,13 +119,13 @@ class PyTorchHandler(_base.BaseModelHandler["torch.nn.Module"]):
         cloudpickle.register_pickle_by_value(sys.modules[model.__module__])
         model_blob_path = os.path.join(model_blobs_dir_path, name)
         os.makedirs(model_blob_path, exist_ok=True)
-        with open(os.path.join(model_blob_path, cls.MODELE_BLOB_FILE_OR_DIR), "wb") as f:
+        with open(os.path.join(model_blob_path, cls.MODEL_BLOB_FILE_OR_DIR), "wb") as f:
             torch.save(model, f, pickle_module=cloudpickle)
         base_meta = model_blob_meta.ModelBlobMeta(
             name=name,
             model_type=cls.HANDLER_TYPE,
             handler_version=cls.HANDLER_VERSION,
-            path=cls.MODELE_BLOB_FILE_OR_DIR,
+            path=cls.MODEL_BLOB_FILE_OR_DIR,
         )
         model_meta.models[name] = base_meta
         model_meta.min_snowpark_ml_version = cls._MIN_SNOWPARK_ML_VERSION
@@ -156,6 +160,7 @@ class PyTorchHandler(_base.BaseModelHandler["torch.nn.Module"]):
         cls,
         raw_model: "torch.nn.Module",
         model_meta: model_meta_api.ModelMetadata,
+        background_data: Optional[pd.DataFrame] = None,
         **kwargs: Unpack[model_types.PyTorchLoadOptions],
     ) -> custom_model.CustomModel:
         import torch

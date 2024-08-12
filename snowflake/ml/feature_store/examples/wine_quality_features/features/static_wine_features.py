@@ -1,9 +1,7 @@
 from typing import List
 
 from snowflake.ml.feature_store import FeatureView
-from snowflake.ml.feature_store.examples.wine_quality_features.entities import (
-    wine_entity,
-)
+from snowflake.ml.feature_store.examples.wine_quality_features.entities import wine_id
 from snowflake.snowpark import DataFrame, Session
 
 
@@ -14,8 +12,13 @@ def create_draft_feature_view(session: Session, source_dfs: List[DataFrame], sou
 
     return FeatureView(
         name="EXTRA_WINE_FEATURES",  # name of feature view
-        entities=[wine_entity],  # entities
+        entities=[wine_id],  # entities
         feature_df=feature_df,  # feature dataframe
         refresh_freq=None,  # refresh frequency. None means it never refresh
-        desc="Static feature view about wine quality which never refresh.",
+        desc="Static features about wine quality which never refresh.",
+    ).attach_feature_desc(
+        {
+            "SULPHATES": "Sulphates.",
+            "ALCOHOL": "Alcohol.",
+        }
     )

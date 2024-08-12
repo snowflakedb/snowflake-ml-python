@@ -38,6 +38,31 @@ class TestBaseFunctions(TestCase):
     def tearDown(self) -> None:
         self._session.close()
 
+    def test_set_params(self) -> None:
+        class TestTransformer(BaseTransformer):
+            def __init__(self) -> None:
+                super().__init__()
+                self._sklearn_object: Optional[Any] = None
+
+            def _fit(self, dataset: DataFrame) -> "TestTransformer":
+                return self
+
+        with self.subTest("Test with estimator."):
+            estimator = TestTransformer()
+            estimator._sklearn_object = XGBRegressor()
+            estimator.set_input_cols(["COL_1", "COL_2"])
+            estimator.set_label_cols("COL_3")
+
+            estimator.set_params(**dict(max_depth=4, n_estimators=27))
+            self.assertEqual(estimator.to_sklearn().max_depth, 4)
+            self.assertEqual(estimator.to_sklearn().n_estimators, 27)
+
+        with self.subTest("Test failure"):
+            with self.assertRaises(SnowflakeMLException):
+                estimator = TestTransformer()
+                estimator._sklearn_object = XGBRegressor()
+                estimator.set_params(**dict(made_up=4, n_estimators=27))
+
     def test_infer_input_output_cols(self) -> None:
         test_df = pd.DataFrame({"COL_1": [1, 2, 3], "COL_2": [4, 5, 6], "COL_3": [10, 11, 12]})
 

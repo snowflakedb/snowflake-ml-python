@@ -15,7 +15,7 @@ from snowflake.ml.model._packager.model_handlers_test import test_utils
 
 
 class LightGBMHandlerTest(absltest.TestCase):
-    def test_lightgbm_booster(self) -> None:
+    def test_lightgbm_booster_explainability_disabled(self) -> None:
         cal_data = datasets.load_breast_cancer()
         cal_X = pd.DataFrame(cal_data.data, columns=cal_data.feature_names)
         cal_y = pd.Series(cal_data.target)
@@ -32,6 +32,7 @@ class LightGBMHandlerTest(absltest.TestCase):
                     model=regressor,
                     signatures={**s, "another_predict": s["predict"]},
                     metadata={"author": "halu", "version": "1"},
+                    options=model_types.LGBMModelSaveOptions(enable_explainability=False),
                 )
 
             model_packager.ModelPackager(os.path.join(tmpdir, "model1")).save(
@@ -39,6 +40,7 @@ class LightGBMHandlerTest(absltest.TestCase):
                 model=regressor,
                 signatures=s,
                 metadata={"author": "halu", "version": "1"},
+                options=model_types.LGBMModelSaveOptions(enable_explainability=False),
             )
 
             with warnings.catch_warnings():
@@ -63,6 +65,7 @@ class LightGBMHandlerTest(absltest.TestCase):
                 model=regressor,
                 sample_input_data=cal_X_test,
                 metadata={"author": "halu", "version": "1"},
+                options=model_types.LGBMModelSaveOptions(enable_explainability=False),
             )
 
             pk = model_packager.ModelPackager(os.path.join(tmpdir, "model1_no_sig"))
@@ -100,7 +103,6 @@ class LightGBMHandlerTest(absltest.TestCase):
                 model=regressor,
                 signatures=s,
                 metadata={"author": "halu", "version": "1"},
-                options=model_types.LGBMModelSaveOptions(enable_explainability=True),
             )
 
             with warnings.catch_warnings():
@@ -130,7 +132,6 @@ class LightGBMHandlerTest(absltest.TestCase):
                 model=regressor,
                 sample_input_data=cal_X_test,
                 metadata={"author": "halu", "version": "1"},
-                options=model_types.LGBMModelSaveOptions(enable_explainability=True),
             )
 
             pk = model_packager.ModelPackager(os.path.join(tmpdir, "model1_no_sig"))
@@ -148,7 +149,7 @@ class LightGBMHandlerTest(absltest.TestCase):
                 test_utils.convert2D_json_to_3D(explain_method(cal_X_test).to_numpy()), explanations
             )
 
-    def test_lightgbm_classifier(self) -> None:
+    def test_lightgbm_classifier_explainability_disabled(self) -> None:
         cal_data = datasets.load_breast_cancer()
         cal_X = pd.DataFrame(cal_data.data, columns=cal_data.feature_names)
         cal_y = pd.Series(cal_data.target)
@@ -167,6 +168,7 @@ class LightGBMHandlerTest(absltest.TestCase):
                     model=classifier,
                     signatures={**s, "another_predict": s["predict"]},
                     metadata={"author": "halu", "version": "1"},
+                    options=model_types.LGBMModelSaveOptions(enable_explainability=False),
                 )
 
             model_packager.ModelPackager(os.path.join(tmpdir, "model1")).save(
@@ -174,6 +176,7 @@ class LightGBMHandlerTest(absltest.TestCase):
                 model=classifier,
                 signatures=s,
                 metadata={"author": "halu", "version": "1"},
+                options=model_types.LGBMModelSaveOptions(enable_explainability=False),
             )
 
             with warnings.catch_warnings():
@@ -198,6 +201,7 @@ class LightGBMHandlerTest(absltest.TestCase):
                 model=classifier,
                 sample_input_data=cal_X_test,
                 metadata={"author": "halu", "version": "1"},
+                options=model_types.LGBMModelSaveOptions(enable_explainability=False),
             )
 
             pk = model_packager.ModelPackager(os.path.join(tmpdir, "model1_no_sig"))
@@ -241,7 +245,6 @@ class LightGBMHandlerTest(absltest.TestCase):
                 model=classifier,
                 signatures=s,
                 metadata={"author": "halu", "version": "1"},
-                options=model_types.LGBMModelSaveOptions(enable_explainability=True),
             )
 
             with warnings.catch_warnings():
@@ -271,7 +274,6 @@ class LightGBMHandlerTest(absltest.TestCase):
                 model=classifier,
                 sample_input_data=cal_X_test,
                 metadata={"author": "halu", "version": "1"},
-                options=model_types.LGBMModelSaveOptions(enable_explainability=True),
             )
 
             pk = model_packager.ModelPackager(os.path.join(tmpdir, "model1_no_sig"))

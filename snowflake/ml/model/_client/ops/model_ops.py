@@ -2,7 +2,7 @@ import os
 import pathlib
 import tempfile
 import warnings
-from typing import Any, Dict, List, Literal, Optional, Union, cast
+from typing import Any, Dict, List, Literal, Optional, Union, cast, overload
 
 import yaml
 
@@ -12,6 +12,7 @@ from snowflake.ml.model._client.ops import metadata_ops
 from snowflake.ml.model._client.sql import (
     model as model_sql,
     model_version as model_version_sql,
+    service as service_sql,
     stage as stage_sql,
     tag as tag_sql,
 )
@@ -21,7 +22,7 @@ from snowflake.ml.model._model_composer.model_manifest import (
     model_manifest_schema,
 )
 from snowflake.ml.model._packager.model_env import model_env
-from snowflake.ml.model._packager.model_meta import model_meta
+from snowflake.ml.model._packager.model_meta import model_meta, model_meta_schema
 from snowflake.ml.model._packager.model_runtime import model_runtime
 from snowflake.ml.model._signatures import snowpark_handler
 from snowflake.snowpark import dataframe, row, session
@@ -56,6 +57,11 @@ class ModelOperator:
             schema_name=schema_name,
         )
         self._tag_client = tag_sql.ModuleTagSQLClient(
+            session,
+            database_name=database_name,
+            schema_name=schema_name,
+        )
+        self._service_client = service_sql.ServiceSQLClient(
             session,
             database_name=database_name,
             schema_name=schema_name,
@@ -597,16 +603,38 @@ class ModelOperator:
             function_names, list(signatures.keys())
         )
 
-        return [
-            model_manifest_schema.ModelFunctionInfo(
-                name=function_name.identifier(),
-                target_method=function_name_mapping[function_name],
-                target_method_function_type=function_type,
-                signature=model_signature.ModelSignature.from_dict(signatures[function_name_mapping[function_name]]),
-            )
-            for function_name, function_type in function_names_and_types
-        ]
+        model_func_info = []
 
+        for function_name, function_type in function_names_and_types:
+
+            target_method = function_name_mapping[function_name]
+
+            is_partitioned = False
+            if function_type == model_manifest_schema.ModelMethodFunctionTypes.TABLE_FUNCTION.value:
+                # better to set default True here because worse case it will be slow but not error out
+                is_partitioned = (
+                    (
+                        model_spec["function_properties"]
+                        .get(target_method, {})
+                        .get(model_meta_schema.FunctionProperties.PARTITIONED.value, True)
+                    )
+                    if "function_properties" in model_spec
+                    else True
+                )
+
+            model_func_info.append(
+                model_manifest_schema.ModelFunctionInfo(
+                    name=function_name.identifier(),
+                    target_method=target_method,
+                    target_method_function_type=function_type,
+                    signature=model_signature.ModelSignature.from_dict(signatures[target_method]),
+                    is_partitioned=is_partitioned,
+                )
+            )
+
+        return model_func_info
+
+    @overload
     def invoke_method(
         self,
         *,
@@ -621,6 +649,41 @@ class ModelOperator:
         strict_input_validation: bool = False,
         partition_column: Optional[sql_identifier.SqlIdentifier] = None,
         statement_params: Optional[Dict[str, str]] = None,
+        is_partitioned: Optional[bool] = None,
+    ) -> Union[type_hints.SupportedDataType, dataframe.DataFrame]:
+        ...
+
+    @overload
+    def invoke_method(
+        self,
+        *,
+        method_name: sql_identifier.SqlIdentifier,
+        signature: model_signature.ModelSignature,
+        X: Union[type_hints.SupportedDataType, dataframe.DataFrame],
+        database_name: Optional[sql_identifier.SqlIdentifier],
+        schema_name: Optional[sql_identifier.SqlIdentifier],
+        service_name: sql_identifier.SqlIdentifier,
+        strict_input_validation: bool = False,
+        statement_params: Optional[Dict[str, str]] = None,
+    ) -> Union[type_hints.SupportedDataType, dataframe.DataFrame]:
+        ...
+
+    def invoke_method(
+        self,
+        *,
+        method_name: sql_identifier.SqlIdentifier,
+        method_function_type: Optional[str] = None,
+        signature: model_signature.ModelSignature,
+        X: Union[type_hints.SupportedDataType, dataframe.DataFrame],
+        database_name: Optional[sql_identifier.SqlIdentifier],
+        schema_name: Optional[sql_identifier.SqlIdentifier],
+        model_name: Optional[sql_identifier.SqlIdentifier] = None,
+        version_name: Optional[sql_identifier.SqlIdentifier] = None,
+        service_name: Optional[sql_identifier.SqlIdentifier] = None,
+        strict_input_validation: bool = False,
+        partition_column: Optional[sql_identifier.SqlIdentifier] = None,
+        statement_params: Optional[Dict[str, str]] = None,
+        is_partitioned: Optional[bool] = None,
     ) -> Union[type_hints.SupportedDataType, dataframe.DataFrame]:
         identifier_rule = model_signature.SnowparkIdentifierRule.INFERRED
 
@@ -657,31 +720,46 @@ class ModelOperator:
             if output_name in original_cols:
                 original_cols.remove(output_name)
 
-        if method_function_type == model_manifest_schema.ModelMethodFunctionTypes.FUNCTION.value:
-            df_res = self._model_version_client.invoke_function_method(
+        if service_name:
+            df_res = self._service_client.invoke_function_method(
                 method_name=method_name,
                 input_df=s_df,
                 input_args=input_args,
                 returns=returns,
                 database_name=database_name,
                 schema_name=schema_name,
-                model_name=model_name,
-                version_name=version_name,
+                service_name=service_name,
                 statement_params=statement_params,
             )
-        elif method_function_type == model_manifest_schema.ModelMethodFunctionTypes.TABLE_FUNCTION.value:
-            df_res = self._model_version_client.invoke_table_function_method(
-                method_name=method_name,
-                input_df=s_df,
-                input_args=input_args,
-                partition_column=partition_column,
-                returns=returns,
-                database_name=database_name,
-                schema_name=schema_name,
-                model_name=model_name,
-                version_name=version_name,
-                statement_params=statement_params,
-            )
+        else:
+            assert model_name is not None
+            assert version_name is not None
+            if method_function_type == model_manifest_schema.ModelMethodFunctionTypes.FUNCTION.value:
+                df_res = self._model_version_client.invoke_function_method(
+                    method_name=method_name,
+                    input_df=s_df,
+                    input_args=input_args,
+                    returns=returns,
+                    database_name=database_name,
+                    schema_name=schema_name,
+                    model_name=model_name,
+                    version_name=version_name,
+                    statement_params=statement_params,
+                )
+            elif method_function_type == model_manifest_schema.ModelMethodFunctionTypes.TABLE_FUNCTION.value:
+                df_res = self._model_version_client.invoke_table_function_method(
+                    method_name=method_name,
+                    input_df=s_df,
+                    input_args=input_args,
+                    partition_column=partition_column,
+                    returns=returns,
+                    database_name=database_name,
+                    schema_name=schema_name,
+                    model_name=model_name,
+                    version_name=version_name,
+                    statement_params=statement_params,
+                    is_partitioned=is_partitioned or False,
+                )
 
         if keep_order:
             # if it's a partitioned table function, _ID will be null and we won't be able to sort.

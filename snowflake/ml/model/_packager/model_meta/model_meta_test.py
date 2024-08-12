@@ -9,7 +9,11 @@ from packaging import requirements, version
 from snowflake.ml._internal import env as snowml_env, env_utils
 from snowflake.ml.model import model_signature
 from snowflake.ml.model._packager.model_env import model_env
-from snowflake.ml.model._packager.model_meta import model_blob_meta, model_meta
+from snowflake.ml.model._packager.model_meta import (
+    model_blob_meta,
+    model_meta,
+    model_meta_schema,
+)
 
 _DUMMY_SIG = {
     "predict": model_signature.ModelSignature(
@@ -641,6 +645,9 @@ class ModelMetaEnvTest(absltest.TestCase):
             ) as meta:
                 meta.models["model1"] = _DUMMY_BLOB
 
+            self.assertEqual(meta.model_objective, model_meta_schema.ModelObjective.UNKNOWN)
+            self.assertEqual(meta.explain_algorithm, None)
+
             saved_meta = meta
 
             loaded_meta = model_meta.ModelMetadata.load(tmpdir)
@@ -668,6 +675,38 @@ class ModelMetaEnvTest(absltest.TestCase):
 
             with self.assertRaisesRegex(ValueError, "Unable to get the version of the metadata file."):
                 model_meta.ModelMetadata.load(tmpdir)
+
+    def test_model_meta_model_specified_objective(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with model_meta.create_model_metadata(
+                model_dir_path=tmpdir,
+                name="model1",
+                model_type="custom",
+                signatures=_DUMMY_SIG,
+                metadata={"foo": "bar"},
+            ) as meta:
+                meta.models["model1"] = _DUMMY_BLOB
+                meta.model_objective = model_meta_schema.ModelObjective.REGRESSION
+
+            loaded_meta = model_meta.ModelMetadata.load(tmpdir)
+            self.assertEqual(loaded_meta.model_objective, model_meta_schema.ModelObjective.REGRESSION)
+
+    def test_model_meta_explain_algorithm(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with model_meta.create_model_metadata(
+                model_dir_path=tmpdir,
+                name="model1",
+                model_type="custom",
+                signatures=_DUMMY_SIG,
+                metadata={"foo": "bar"},
+            ) as meta:
+                meta.models["model1"] = _DUMMY_BLOB
+                meta.model_objective = model_meta_schema.ModelObjective.REGRESSION
+                meta.explain_algorithm = model_meta_schema.ModelExplainAlgorithm.SHAP
+
+            loaded_meta = model_meta.ModelMetadata.load(tmpdir)
+            self.assertEqual(loaded_meta.model_objective, model_meta_schema.ModelObjective.REGRESSION)
+            self.assertEqual(loaded_meta.explain_algorithm, model_meta_schema.ModelExplainAlgorithm.SHAP)
 
     def test_model_meta_new_fields(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -737,6 +776,8 @@ class ModelMetaEnvTest(absltest.TestCase):
                 self.assertContainsSubset(["pytorch"], meta.env.conda_dependencies)
 
             self.assertContainsSubset(["pytorch"], meta.runtimes["cpu"].runtime_env.conda_dependencies)
+            with open(os.path.join(tmpdir, "runtimes", "cpu", "env", "conda.yml"), encoding="utf-8") as f:
+                self.assertListEqual(yaml.safe_load(f)["channels"], ["conda-forge", "nodefaults"])
 
             loaded_meta = model_meta.ModelMetadata.load(tmpdir)
             self.assertContainsSubset(["pytorch"], loaded_meta.runtimes["cpu"].runtime_env.conda_dependencies)
@@ -753,10 +794,14 @@ class ModelMetaEnvTest(absltest.TestCase):
                 self.assertContainsSubset(["pytorch"], meta.env.conda_dependencies)
 
             self.assertContainsSubset(["pytorch"], meta.runtimes["cpu"].runtime_env.conda_dependencies)
+            with open(os.path.join(tmpdir, "runtimes", "cpu", "env", "conda.yml"), encoding="utf-8") as f:
+                self.assertListEqual(yaml.safe_load(f)["channels"], ["conda-forge", "nodefaults"])
             self.assertContainsSubset(
                 ["nvidia::cuda==11.7.*", "pytorch::pytorch", "pytorch::pytorch-cuda==11.7.*"],
                 meta.runtimes["gpu"].runtime_env.conda_dependencies,
             )
+            with open(os.path.join(tmpdir, "runtimes", "gpu", "env", "conda.yml"), encoding="utf-8") as f:
+                self.assertListEqual(yaml.safe_load(f)["channels"], ["conda-forge", "pytorch", "nvidia", "nodefaults"])
 
             loaded_meta = model_meta.ModelMetadata.load(tmpdir)
             self.assertContainsSubset(["pytorch"], loaded_meta.runtimes["cpu"].runtime_env.conda_dependencies)

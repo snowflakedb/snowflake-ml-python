@@ -3,6 +3,7 @@ load("//bazel:py_rules.bzl", "py_library", "py_test")
 package(default_visibility = [
     "//bazel:snowml_public_common",
     "//snowflake/ml/model/_client/ops:__pkg__",
+    "//snowflake/ml/model/_client/service:__pkg__",
 ])
 
 py_library(
@@ -98,5 +99,15 @@ py_test(
         "//snowflake/ml/_internal/utils:sql_identifier",
         "//snowflake/ml/test_utils:mock_data_frame",
         "//snowflake/ml/test_utils:mock_session",
+    ],
+)
+
+py_library(
+    name = "service",
+    srcs = ["service.py"],
+    deps = [
+        ":_base",
+        "//snowflake/ml/_internal/utils:query_result_checker",
+        "//snowflake/ml/_internal/utils:sql_identifier",
     ],
 )

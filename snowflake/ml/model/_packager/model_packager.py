@@ -146,7 +146,8 @@ class ModelPackager:
         m = handler.load_model(self.meta.name, self.meta, model_blobs_path, **options)
 
         if as_custom_model:
-            m = handler.convert_as_custom_model(m, self.meta, **options)
+            background_data = handler.load_background_data(self.meta.name, model_blobs_path)
+            m = handler.convert_as_custom_model(m, self.meta, background_data, **options)
             assert isinstance(m, custom_model.CustomModel)
 
         self.model = m

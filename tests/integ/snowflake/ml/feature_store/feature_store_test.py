@@ -1,4 +1,6 @@
 import datetime
+import random
+import string
 from typing import List, Optional, Tuple, Union, cast
 from uuid import uuid4
 
@@ -167,6 +169,7 @@ class FeatureStoreTest(parameterized.TestCase):
         temp_session = create_mock_session(
             "CREATE TAG IF NOT EXISTS",
             snowpark_exceptions.SnowparkSQLException("IntentionalSQLError"),
+            config=self._session_config,
         )
 
         schema_name = f"foo_{uuid4().hex.upper()}"
@@ -346,6 +349,7 @@ class FeatureStoreTest(parameterized.TestCase):
         fs._session = create_mock_session(
             "SHOW TAGS LIKE",
             snowpark_exceptions.SnowparkClientException("Intentional Integ Test Error"),
+            config=self._session_config,
         )
 
         with self.assertRaisesRegex(RuntimeError, "Failed to list entities: .*"):
@@ -356,6 +360,7 @@ class FeatureStoreTest(parameterized.TestCase):
         fs._session = create_mock_session(
             "SHOW TAGS LIKE",
             snowpark_exceptions.SnowparkClientException("Intentional Integ Test Error"),
+            config=self._session_config,
         )
         e = Entity("foo", ["id"])
 
@@ -538,6 +543,7 @@ class FeatureStoreTest(parameterized.TestCase):
         fs._session = create_mock_session(
             "CREATE VIEW",
             snowpark_exceptions.SnowparkClientException("Intentional Integ Test Error"),
+            config=self._session_config,
         )
         with self.assertRaisesRegex(RuntimeError, "(?s)Create view .* failed.*"):
             fs.register_feature_view(feature_view=fv, version="v1")
@@ -545,6 +551,7 @@ class FeatureStoreTest(parameterized.TestCase):
         fs._session = create_mock_session(
             "CREATE DYNAMIC TABLE",
             snowpark_exceptions.SnowparkClientException("Intentional Integ Test Error"),
+            config=self._session_config,
         )
         fv2 = FeatureView(
             name="fv2",
@@ -760,6 +767,7 @@ class FeatureStoreTest(parameterized.TestCase):
         fs._session = create_mock_session(
             "ALTER DYNAMIC TABLE",
             snowpark_exceptions.SnowparkClientException("Intentional Integ Test Error"),
+            config=self._session_config,
         )
         with self.assertRaisesRegex(RuntimeError, "Failed to update feature view"):
             my_fv = fs.suspend_feature_view(my_fv)
@@ -770,6 +778,7 @@ class FeatureStoreTest(parameterized.TestCase):
         fs._session = create_mock_session(
             "ALTER DYNAMIC TABLE",
             snowpark_exceptions.SnowparkClientException("Intentional Integ Test Error"),
+            config=self._session_config,
         )
         with self.assertRaisesRegex(RuntimeError, "Failed to update feature view.*"):
             my_fv = fs.resume_feature_view(my_fv)
@@ -1312,6 +1321,7 @@ class FeatureStoreTest(parameterized.TestCase):
         fs._session = create_mock_session(
             "SHOW DYNAMIC TABLES LIKE",
             snowpark_exceptions.SnowparkClientException("Intentional Integ Test Error"),
+            config=self._session_config,
         )
         with self.assertRaisesRegex(RuntimeError, "Failed to find object"):
             fs.list_feature_views()
@@ -1319,6 +1329,7 @@ class FeatureStoreTest(parameterized.TestCase):
         fs._session = create_mock_session(
             "SELECT ENTITY_DETAIL",
             snowpark_exceptions.SnowparkClientException("Intentional Integ Test Error"),
+            config=self._session_config,
         )
 
         with self.assertRaisesRegex(RuntimeError, "Failed to lookup tagged objects for"):
@@ -2524,6 +2535,114 @@ class FeatureStoreTest(parameterized.TestCase):
             ValueError, "Invalid type of argument feature_view. It must be either str or FeatureView type"
         ):
             fs.read_feature_view(123, "v1")  # type: ignore[call-overload]
+
+    def test_large_feature_metadata(self) -> None:
+        fs = self._create_feature_store()
+
+        e = Entity("foo", ["id"])
+        fs.register_entity(e)
+
+        def gen_random_sql() -> str:
+            def rand_name() -> str:
+                return "".join(random.choices(string.ascii_letters, k=10))
+
+            sql = "SELECT id, "
+            for _ in range(500):
+                expr = f"name as {rand_name()}, age as {rand_name()}, title as {rand_name()}, dept as {rand_name()},"
+                sql += f" {expr} "
+            sql += f"FROM {self._mock_table}"
+            return sql
+
+        fv1 = FeatureView(
+            name="fv1",
+            entities=[e],
+            feature_df=self._session.sql(gen_random_sql()),
+        )
+        fv1 = fs.register_feature_view(feature_view=fv1, version="v1")
+
+        fv2 = FeatureView(
+            name="fv2",
+            entities=[e],
+            feature_df=self._session.sql(gen_random_sql()),
+        )
+        fv2 = fs.register_feature_view(feature_view=fv2, version="v1")
+
+        fv3 = FeatureView(
+            name="fv3",
+            entities=[e],
+            feature_df=self._session.sql(gen_random_sql()),
+        )
+        fv3 = fs.register_feature_view(feature_view=fv3, version="v1")
+        # select features with even pos in reversed order
+        fv3_slice = fv3.slice(fv3.feature_names[::-2])  # type: ignore[arg-type]
+
+        spine_df = self._session.create_dataframe([(1, 101)], schema=["id", "ts"])
+        ds = fs.generate_dataset("my_ds", spine_df, [fv1, fv2, fv3_slice])
+        self.assertEqual(1, len(ds.read.to_pandas()))
+
+        fvs = fs.load_feature_views_from_dataset(ds)
+        self.assertEqual([fv1, fv2, fv3_slice], fvs)
+
+    def test_specified_refresh_mode(self) -> None:
+        fs = self._create_feature_store()
+
+        e = Entity("foo", ["id"])
+        fs.register_entity(e)
+
+        def register(fs: FeatureStore, name: str, refresh_mode: Optional[str] = None) -> FeatureView:
+            sql = f"SELECT id, name, title FROM {self._mock_table}"
+            if refresh_mode:
+                fv = FeatureView(
+                    name=name,
+                    entities=[e],
+                    feature_df=self._session.sql(sql),
+                    refresh_freq="1min",
+                    refresh_mode=refresh_mode,
+                )
+            else:
+                fv = FeatureView(
+                    name=name,
+                    entities=[e],
+                    feature_df=self._session.sql(sql),
+                    refresh_freq="1min",
+                )
+            return fs.register_feature_view(feature_view=fv, version="v1")
+
+        self.assertEqual("INCREMENTAL", register(fs, "fv1").refresh_mode)
+        self.assertEqual("FULL", register(fs, "fv2", "FULL").refresh_mode)
+        self.assertEqual("INCREMENTAL", register(fs, "fv3", "INCREMENTAL").refresh_mode)
+
+    def test_feature_view_list_columns(self) -> None:
+        fs = self._create_feature_store()
+
+        e = Entity("foo", ["id"], desc="my entity")
+        fs.register_entity(e)
+
+        fv = FeatureView(
+            name="fv",
+            entities=[e],
+            feature_df=self._session.table(self._mock_table).select(["NAME", "ID", "TITLE", "AGE", "TS"]),
+            timestamp_col="ts",
+            desc="foobar",
+        ).attach_feature_desc({"AGE": "my age", "TITLE": '"my title"'})
+
+        fv = fs.register_feature_view(fv, "1.0")
+        result = fv.list_columns()
+
+        compare_dataframe(
+            actual_df=result.to_pandas(),
+            target_data={
+                "NAME": ["AGE", "ID", "NAME", "TITLE", "TS"],
+                "CATEGORY": ["FEATURE", "ENTITY", "FEATURE", "FEATURE", "TIMESTAMP"],
+                "DTYPE": ["bigint", "bigint", "string(64)", "string(128)", "bigint"],
+                "DESC": ["my age", "my entity", "", '"my title"', None],
+            },
+            sort_cols=["NAME"],
+        )
+
+
+if __name__ == "__main__":
+    absltest.main()
 
 
 if __name__ == "__main__":

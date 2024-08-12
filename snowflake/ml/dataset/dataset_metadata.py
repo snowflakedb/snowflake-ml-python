@@ -15,11 +15,13 @@ class FeatureStoreMetadata:
     Properties:
         spine_query: The input query on source table which will be joined with features.
         serialized_feature_views: A list of serialized feature objects in the feature store.
+        compact_feature_views: A compact representation of a FeatureView or FeatureViewSlice.
         spine_timestamp_col: Timestamp column which was used for point-in-time correct feature lookup.
     """
 
     spine_query: str
-    serialized_feature_views: List[str]
+    serialized_feature_views: Optional[List[str]] = None
+    compact_feature_views: Optional[List[str]] = None
     spine_timestamp_col: Optional[str] = None
 
     def to_json(self) -> str:

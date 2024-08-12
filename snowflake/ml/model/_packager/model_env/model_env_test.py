@@ -954,6 +954,50 @@ class ModelEnvTest(absltest.TestCase):
             loaded_env.load_from_dict(tmpdir_path, saved_dict)
             self.assertTrue(check_env_equality(env, loaded_env), "Loaded env object is different.")
 
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmpdir_path = pathlib.Path(tmpdir)
+            env = model_env.ModelEnv()
+            saved_dict = env.save_as_dict(tmpdir_path, default_channel_override="conda-forge")
+
+            loaded_env = model_env.ModelEnv()
+            loaded_env.load_from_dict(tmpdir_path, saved_dict)
+            self.assertTrue(check_env_equality(env, loaded_env), "Loaded env object is different.")
+
+            env = model_env.ModelEnv()
+            env.conda_dependencies = ["another==1.3", "channel::some_package<1.2,>=1.0.1"]
+            env.pip_requirements = ["pip-package<1.2,>=1.0.1"]
+            env.python_version = "3.10.2"
+            env.cuda_version = "11.7.1"
+            env.snowpark_ml_version = "1.1.0"
+
+            saved_dict = env.save_as_dict(tmpdir_path, default_channel_override="conda-forge")
+
+            self.assertDictEqual(
+                saved_dict,
+                {
+                    "conda": "env/conda.yml",
+                    "pip": "env/requirements.txt",
+                    "python_version": "3.10",
+                    "cuda_version": "11.7",
+                    "snowpark_ml_version": "1.1.0",
+                },
+            )
+
+            with open(tmpdir_path / "env" / "conda.yml", encoding="utf-8") as f:
+                conda_yml = yaml.safe_load(f)
+                self.assertDictEqual(
+                    conda_yml,
+                    {
+                        "channels": ["conda-forge", "channel", "nodefaults"],
+                        "dependencies": ["python==3.10.*", "another==1.3", "channel::some-package<1.2,>=1.0.1"],
+                        "name": "snow-env",
+                    },
+                )
+
+            loaded_env = model_env.ModelEnv()
+            loaded_env.load_from_dict(tmpdir_path, saved_dict)
+            self.assertTrue(check_env_equality(env, loaded_env), "Loaded env object is different.")
+
     def test_validate_with_local_env(self) -> None:
         with mock.patch.object(
             env_utils, "validate_py_runtime_version"

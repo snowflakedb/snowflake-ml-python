@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 import inspect
 from abc import abstractmethod
-from collections import defaultdict
 from datetime import datetime
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Union, overload
 
@@ -18,6 +17,7 @@ from snowflake.ml._internal.exceptions import (
 )
 from snowflake.ml._internal.lineage import lineage_utils
 from snowflake.ml._internal.utils import identifier, parallelize
+from snowflake.ml.data import data_source
 from snowflake.ml.modeling.framework import _utils
 from snowflake.snowpark import functions as F
 
@@ -246,7 +246,7 @@ class Base:
 
     def get_params(self, deep: bool = True) -> Dict[str, Any]:
         """
-        Get parameters for this transformer.
+        Get the snowflake-ml parameters for this transformer.
 
         Args:
             deep: If True, will return the parameters for this transformer and
@@ -265,13 +265,13 @@ class Base:
                 out[key] = value
         return out
 
-    def set_params(self, **params: Dict[str, Any]) -> None:
+    def set_params(self, **params: Any) -> None:
         """
         Set the parameters of this transformer.
 
-        The method works on simple transformers as well as on nested objects.
-        The latter have parameters of the form ``<component>__<parameter>``
-        so that it's possible to update each component of a nested object.
+        The method works on simple transformers as well as on sklearn compatible pipelines with nested
+        objects, once the transformer has been fit. Nested objects have parameters of the form
+        ``<component>__<parameter>`` so that it's possible to update each component of a nested object.
 
         Args:
             **params: Transformer parameter names mapped to their values.
@@ -283,12 +283,28 @@ class Base:
             # simple optimization to gain speed (inspect is slow)
             return
         valid_params = self.get_params(deep=True)
+        valid_skl_params = {}
+        if hasattr(self, "_sklearn_object") and self._sklearn_object is not None:
+            valid_skl_params = self._sklearn_object.get_params()
 
-        nested_params: Dict[str, Any] = defaultdict(dict)  # grouped by prefix
         for key, value in params.items():
-            key, delim, sub_key = key.partition("__")
-            if key not in valid_params:
-                local_valid_params = self._get_param_names()
+            if valid_params.get("steps"):
+                # Recurse through pipeline steps
+                key, _, sub_key = key.partition("__")
+                for name, nested_object in valid_params["steps"]:
+                    if name == key:
+                        nested_object.set_params(**{sub_key: value})
+
+            elif key in valid_params:
+                setattr(self, key, value)
+                valid_params[key] = value
+            elif key in valid_skl_params:
+                # This dictionary would be empty if the following assert were not true, as specified above.
+                assert hasattr(self, "_sklearn_object") and self._sklearn_object is not None
+                setattr(self._sklearn_object, key, value)
+                valid_skl_params[key] = value
+            else:
+                local_valid_params = self._get_param_names() + list(valid_skl_params.keys())
                 raise exceptions.SnowflakeMLException(
                     error_code=error_codes.INVALID_ARGUMENT,
                     original_exception=ValueError(
@@ -297,15 +313,6 @@ class Base:
                         )
                     ),
                 )
-
-            if delim:
-                nested_params[key][sub_key] = value
-            else:
-                setattr(self, key, value)
-                valid_params[key] = value
-
-        for key, sub_params in nested_params.items():
-            valid_params[key].set_params(**sub_params)
 
     def get_sklearn_args(
         self,
@@ -427,6 +434,8 @@ class BaseEstimator(Base):
     def fit(self, dataset: Union[snowpark.DataFrame, pd.DataFrame]) -> "BaseEstimator":
         """Runs universal logics for all fit implementations."""
         data_sources = lineage_utils.get_data_sources(dataset)
+        if not data_sources and isinstance(dataset, snowpark.DataFrame):
+            data_sources = [data_source.DataFrameInfo(dataset.queries["queries"][-1])]
         lineage_utils.set_data_sources(self, data_sources)
         return self._fit(dataset)
 

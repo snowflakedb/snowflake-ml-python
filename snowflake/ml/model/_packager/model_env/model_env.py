@@ -363,9 +363,14 @@ class ModelEnv:
         self.cuda_version = env_dict.get("cuda_version", None)
         self.snowpark_ml_version = env_dict["snowpark_ml_version"]
 
-    def save_as_dict(self, base_dir: pathlib.Path) -> model_meta_schema.ModelEnvDict:
+    def save_as_dict(
+        self, base_dir: pathlib.Path, default_channel_override: str = env_utils.SNOWFLAKE_CONDA_CHANNEL_URL
+    ) -> model_meta_schema.ModelEnvDict:
         env_utils.save_conda_env_file(
-            pathlib.Path(base_dir / self.conda_env_rel_path), self._conda_dependencies, self.python_version
+            pathlib.Path(base_dir / self.conda_env_rel_path),
+            self._conda_dependencies,
+            self.python_version,
+            default_channel_override=default_channel_override,
         )
         env_utils.save_requirements_file(
             pathlib.Path(base_dir / self.pip_requirements_rel_path), self._pip_requirements

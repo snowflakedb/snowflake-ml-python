@@ -28,6 +28,20 @@ py_test(
     ],
 )
 
+py_library(
+    name = "sql_client",
+    srcs = ["sql_client.py"],
+    deps = [],
+)
+
+py_test(
+    name = "sql_client_test",
+    srcs = ["sql_client_test.py"],
+    deps = [
+        ":sql_client",
+    ],
+)
+
 py_package(
     name = "utils_pkg",
     packages = ["snowflake.ml"],

@@ -6,6 +6,7 @@ from absl.testing import absltest
 from numpy import typing as npt
 
 from snowflake.ml import dataset
+from snowflake.ml.utils import sql_client
 from snowflake.snowpark._internal import utils as snowpark_utils
 from tests.integ.snowflake.ml.fileset import fileset_integ_utils
 from tests.integ.snowflake.ml.test_utils import (
@@ -41,7 +42,7 @@ class TestSnowflakeDatasetBase(common_test_base.CommonTestBase):
         cls.query = fileset_integ_utils.get_fileset_query(cls.num_rows)
         cls.test_table = "test_table"
         if not snowpark_utils.is_in_stored_procedure():  # type: ignore[no-untyped-call]
-            cls.dbm.create_database(cls.DS_INTEG_TEST_DB, if_not_exists=True)
+            cls.dbm.create_database(cls.DS_INTEG_TEST_DB, creation_mode=sql_client.CreationMode(if_not_exists=True))
             cls.dbm.cleanup_schemas(cls.DS_INTEG_TEST_SCHEMA, cls.DS_INTEG_TEST_DB)
             cls.dbm.use_database(cls.DS_INTEG_TEST_DB)
 

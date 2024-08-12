@@ -12,6 +12,7 @@ _RUNTIME_VERSION = f"{sys.version_info.major}.{sys.version_info.minor}"
 
 
 class PackageVersionUtilsTest(absltest.TestCase):
+    @mock.patch.dict(pkg_version_utils.cache, {})
     def test_happy_case_async(self) -> None:
         pkg_name = "xgboost"
         major_version, minor_version, micro_version = 1, 7, 3
@@ -53,41 +54,17 @@ class PackageVersionUtilsTest(absltest.TestCase):
     @mock.patch("snowflake.ml._internal.utils.pkg_version_utils.snowpark_utils.is_in_stored_procedure")
     def test_happy_case(self, mock_is_in_stored_procedure: mock.Mock) -> None:
         mock_is_in_stored_procedure.return_value = True
-        pkg_name = "xgboost"
-        major_version, minor_version, micro_version = 1, 7, 3
-        query = f"""
-        SELECT PACKAGE_NAME, VERSION, LANGUAGE
-            FROM (
-                SELECT *,
-                SUBSTRING(VERSION, LEN(VERSION) - CHARINDEX('.', REVERSE(VERSION)) + 2, LEN(VERSION)) as micro_version
-                FROM information_schema.packages
-                WHERE package_name = '{pkg_name}'
-                AND version LIKE '{major_version}.{minor_version}.%'
-                ORDER BY abs({micro_version}-micro_version), -micro_version
-            )
-        """
 
         m_session = mock_session.MockSession(conn=None, test_case=self)
-        m_session.add_mock_sql(
-            query=query,
-            result=mock_data_frame.MockDataFrame(
-                collect_result=[Row(PACKAGE_NAME="xgboost", VERSION="1.7.3", LANGUAGE="python")],
-                columns=["PACKAGE_NAME", "VERSION", "LANGUAGE"],
-                collect_block=True,
-            ),
-        )
         c_session = cast(session.Session, m_session)
 
         # Test
-        pkg_version_utils.get_valid_pkg_versions_supported_in_snowflake_conda_channel(
+        valid_pkg_versions = pkg_version_utils.get_valid_pkg_versions_supported_in_snowflake_conda_channel(
             pkg_versions=["xgboost==1.7.3"], session=c_session
         )
+        self.assertEqual(valid_pkg_versions, ["xgboost==1.7.3"])
 
-        # Test subsequent calls are served through cache.
-        pkg_version_utils.get_valid_pkg_versions_supported_in_snowflake_conda_channel(
-            pkg_versions=["xgboost==1.7.3"], session=c_session
-        )
-
+    @mock.patch.dict(pkg_version_utils.cache, {})
     def test_happy_case_with_runtime_version_column_async(self) -> None:
         pkg_name = "xgboost"
         major_version, minor_version, micro_version = 1, 7, 3
@@ -108,45 +85,23 @@ class PackageVersionUtilsTest(absltest.TestCase):
             columns=["PACKAGE_NAME", "VERSION", "LANGUAGE", "RUNTIME_VERSION"], collect_block=False
         )
         mock_df = mock_df.add_mock_filter(
-            expr=f"RUNTIME_VERSION = {_RUNTIME_VERSION}", result=mock_data_frame.MockDataFrame(count_result=1)
+            expr=f"RUNTIME_VERSION = {_RUNTIME_VERSION}",
+            result=mock_data_frame.MockDataFrame(
+                collect_result=mock_data_frame.MockAsyncJob(
+                    result=[
+                        Row(
+                            PACKAGE_NAME="xgboost",
+                            VERSION="1.7.3",
+                            LANGUAGE="python",
+                            RUNTIME_VERSION=_RUNTIME_VERSION,
+                        )
+                    ]
+                ),
+                columns=["PACKAGE_NAME", "VERSION", "LANGUAGE", "RUNTIME_VERSION"],
+                collect_block=False,
+            ),
         )
-        m_session.add_mock_sql(query=query, result=mock_df)
-        c_session = cast(session.Session, m_session)
 
-        # Test
-        pkg_version_utils.get_valid_pkg_versions_supported_in_snowflake_conda_channel(
-            pkg_versions=["xgboost==1.7.3"], session=c_session
-        )
-
-        # Test subsequent calls are served through cache.
-        pkg_version_utils.get_valid_pkg_versions_supported_in_snowflake_conda_channel(
-            pkg_versions=["xgboost==1.7.3"], session=c_session
-        )
-
-    @mock.patch("snowflake.ml._internal.utils.pkg_version_utils.snowpark_utils.is_in_stored_procedure")
-    def test_happy_case_with_runtime_version_column(self, mock_is_in_stored_procedure: mock.Mock) -> None:
-        mock_is_in_stored_procedure.return_value = True
-        pkg_name = "xgboost"
-        major_version, minor_version, micro_version = 1, 7, 3
-        query = f"""
-        SELECT PACKAGE_NAME, VERSION, LANGUAGE
-            FROM (
-                SELECT *,
-                SUBSTRING(VERSION, LEN(VERSION) - CHARINDEX('.', REVERSE(VERSION)) + 2, LEN(VERSION)) as micro_version
-                FROM information_schema.packages
-                WHERE package_name = '{pkg_name}'
-                AND version LIKE '{major_version}.{minor_version}.%'
-                ORDER BY abs({micro_version}-micro_version), -micro_version
-            )
-        """
-
-        m_session = mock_session.MockSession(conn=None, test_case=self)
-        mock_df = mock_data_frame.MockDataFrame(
-            columns=["PACKAGE_NAME", "VERSION", "LANGUAGE", "RUNTIME_VERSION"], collect_block=True
-        )
-        mock_df = mock_df.add_mock_filter(
-            expr=f"RUNTIME_VERSION = {_RUNTIME_VERSION}", result=mock_data_frame.MockDataFrame(count_result=1)
-        )
         m_session.add_mock_sql(query=query, result=mock_df)
         c_session = cast(session.Session, m_session)
 
@@ -198,44 +153,6 @@ class PackageVersionUtilsTest(absltest.TestCase):
                 pkg_versions=["xgboost==1.0.0"], session=c_session
             )
 
-    @mock.patch("snowflake.ml._internal.utils.pkg_version_utils.snowpark_utils.is_in_stored_procedure")
-    def test_unsupported_version(self, mock_is_in_stored_procedure: mock.Mock) -> None:
-        mock_is_in_stored_procedure.return_value = True
-        pkg_name = "xgboost"
-        major_version, minor_version, micro_version = 1, 0, 0
-        query = f"""
-        SELECT PACKAGE_NAME, VERSION, LANGUAGE
-            FROM (
-                SELECT *,
-                SUBSTRING(VERSION, LEN(VERSION) - CHARINDEX('.', REVERSE(VERSION)) + 2, LEN(VERSION)) as micro_version
-                FROM information_schema.packages
-                WHERE package_name = '{pkg_name}'
-                AND version LIKE '{major_version}.{minor_version}.%'
-                ORDER BY abs({micro_version}-micro_version), -micro_version
-            )
-        """
-
-        m_session = mock_session.MockSession(conn=None, test_case=self)
-        m_session.add_mock_sql(
-            query=query,
-            result=mock_data_frame.MockDataFrame(
-                collect_result=[], columns=["PACKAGE_NAME", "VERSION", "LANGUAGE"], collect_block=True
-            ),
-        )
-        c_session = cast(session.Session, m_session)
-
-        # Test
-        with self.assertRaises(RuntimeError):
-            pkg_version_utils.get_valid_pkg_versions_supported_in_snowflake_conda_channel(
-                pkg_versions=["xgboost==1.0.0"], session=c_session
-            )
-
-        # Test subsequent calls are served through cache.
-        with self.assertRaises(RuntimeError):
-            pkg_version_utils.get_valid_pkg_versions_supported_in_snowflake_conda_channel(
-                pkg_versions=["xgboost==1.0.0"], session=c_session
-            )
-
     def test_unsupported_version_with_runtime_version_column_async(self) -> None:
         query = """SELECT PACKAGE_NAME, VERSION, LANGUAGE
             FROM (
@@ -250,41 +167,6 @@ class PackageVersionUtilsTest(absltest.TestCase):
         m_session = mock_session.MockSession(conn=None, test_case=self)
         mock_df = mock_data_frame.MockDataFrame(
             columns=["PACKAGE_NAME", "VERSION", "LANGUAGE", "RUNTIME_VERSION"], collect_block=False
-        )
-        mock_df.add_mock_filter(
-            expr=f"RUNTIME_VERSION = {_RUNTIME_VERSION}", result=mock_data_frame.MockDataFrame(count_result=0)
-        )
-        m_session.add_mock_sql(query=query, result=mock_df)
-        c_session = cast(session.Session, m_session)
-
-        # Test
-        with self.assertRaises(RuntimeError):
-            pkg_version_utils.get_valid_pkg_versions_supported_in_snowflake_conda_channel(
-                pkg_versions=["xgboost==1.0.0"], session=c_session
-            )
-
-        # Test subsequent calls are served through cache.
-        with self.assertRaises(RuntimeError):
-            pkg_version_utils.get_valid_pkg_versions_supported_in_snowflake_conda_channel(
-                pkg_versions=["xgboost==1.0.0"], session=c_session
-            )
-
-    @mock.patch("snowflake.ml._internal.utils.pkg_version_utils.snowpark_utils.is_in_stored_procedure")
-    def test_unsupported_version_with_runtime_version_column(self, mock_is_in_stored_procedure: mock.Mock) -> None:
-        mock_is_in_stored_procedure.return_value = True
-        query = """SELECT PACKAGE_NAME, VERSION, LANGUAGE
-            FROM (
-                SELECT *,
-                SUBSTRING(VERSION, LEN(VERSION) - CHARINDEX('.', REVERSE(VERSION)) + 2, LEN(VERSION)) as micro_version
-                FROM information_schema.packages
-                WHERE package_name = 'xgboost'
-                AND version LIKE '1.0.%'
-                ORDER BY abs(0-micro_version), -micro_version
-            )"""
-
-        m_session = mock_session.MockSession(conn=None, test_case=self)
-        mock_df = mock_data_frame.MockDataFrame(
-            columns=["PACKAGE_NAME", "VERSION", "LANGUAGE", "RUNTIME_VERSION"], collect_block=True
         )
         mock_df.add_mock_filter(
             expr=f"RUNTIME_VERSION = {_RUNTIME_VERSION}", result=mock_data_frame.MockDataFrame(count_result=0)

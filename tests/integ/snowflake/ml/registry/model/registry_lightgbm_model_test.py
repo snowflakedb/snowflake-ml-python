@@ -15,7 +15,7 @@ class TestRegistryLightGBMModelInteg(registry_model_test_base.RegistryModelTestB
     @parameterized.product(  # type: ignore[misc]
         registry_test_fn=registry_model_test_base.RegistryModelTestBase.REGISTRY_TEST_FN_LIST,
     )
-    def test_lightgbm_classifier(
+    def test_lightgbm_classifier_no_explain(
         self,
         registry_test_fn: str,
     ) -> None:
@@ -43,6 +43,7 @@ class TestRegistryLightGBMModelInteg(registry_model_test_base.RegistryModelTestB
                     lambda res: np.testing.assert_allclose(res.values, classifier.predict_proba(cal_X_test)),
                 ),
             },
+            options={"enable_explainability": False},
         )
 
     @parameterized.product(  # type: ignore[misc]
@@ -83,13 +84,12 @@ class TestRegistryLightGBMModelInteg(registry_model_test_base.RegistryModelTestB
                     ),
                 ),
             },
-            options={"enable_explainability": True},
         )
 
     @parameterized.product(  # type: ignore[misc]
         registry_test_fn=registry_model_test_base.RegistryModelTestBase.REGISTRY_TEST_FN_LIST,
     )
-    def test_lightgbm_classifier_sp(
+    def test_lightgbm_classifier_sp_no_explain(
         self,
         registry_test_fn: str,
     ) -> None:
@@ -132,6 +132,7 @@ class TestRegistryLightGBMModelInteg(registry_model_test_base.RegistryModelTestB
                     lambda res: dataframe_utils.check_sp_df_res(res, y_df_expected_proba, check_dtype=False),
                 ),
             },
+            options={"enable_explainability": False},
         )
 
     @parameterized.product(  # type: ignore[misc]
@@ -196,13 +197,12 @@ class TestRegistryLightGBMModelInteg(registry_model_test_base.RegistryModelTestB
                     ),
                 ),
             },
-            options={"enable_explainability": True},
         )
 
     @parameterized.product(  # type: ignore[misc]
         registry_test_fn=registry_model_test_base.RegistryModelTestBase.REGISTRY_TEST_FN_LIST,
     )
-    def test_lightgbm_booster(
+    def test_lightgbm_booster_no_explain(
         self,
         registry_test_fn: str,
     ) -> None:
@@ -224,6 +224,7 @@ class TestRegistryLightGBMModelInteg(registry_model_test_base.RegistryModelTestB
                     lambda res: np.testing.assert_allclose(res.values, np.expand_dims(y_pred, axis=1), rtol=1e-6),
                 ),
             },
+            options={"enable_explainability": False},
         )
 
     @parameterized.product(  # type: ignore[misc]
@@ -256,13 +257,12 @@ class TestRegistryLightGBMModelInteg(registry_model_test_base.RegistryModelTestB
                     lambda res: np.testing.assert_allclose(res.values, expected_explanations, rtol=1e-5),
                 ),
             },
-            options={"enable_explainability": True},
         )
 
     @parameterized.product(  # type: ignore[misc]
         registry_test_fn=registry_model_test_base.RegistryModelTestBase.REGISTRY_TEST_FN_LIST,
     )
-    def test_lightgbm_booster_sp(
+    def test_lightgbm_booster_sp_no_explain(
         self,
         registry_test_fn: str,
     ) -> None:
@@ -292,6 +292,7 @@ class TestRegistryLightGBMModelInteg(registry_model_test_base.RegistryModelTestB
                     lambda res: dataframe_utils.check_sp_df_res(res, y_df_expected, check_dtype=False),
                 ),
             },
+            options={"enable_explainability": False},
         )
 
     @parameterized.product(  # type: ignore[misc]
@@ -342,7 +343,6 @@ class TestRegistryLightGBMModelInteg(registry_model_test_base.RegistryModelTestB
                     lambda res: dataframe_utils.check_sp_df_res(res, explanation_df_expected, check_dtype=False),
                 ),
             },
-            options={"enable_explainability": True},
         )
 
 

@@ -27,6 +27,7 @@ py_library(
     deps = [
         "//snowflake/ml/_internal/utils:identifier",
         "//snowflake/ml/model/_deploy_client/utils:constants",
+        "//snowflake/ml/utils:sql_client",
     ],
 )
 

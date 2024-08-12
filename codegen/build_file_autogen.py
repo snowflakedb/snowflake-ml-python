@@ -14,7 +14,7 @@ import inflection
 from absl import app
 
 from codegen import sklearn_wrapper_autogen as swa
-from snowflake.ml._internal.snowpark_pandassnowpark_pandas import imports
+from snowflake.ml._internal.snowpark_pandas import imports
 
 
 @dataclass(frozen=True)

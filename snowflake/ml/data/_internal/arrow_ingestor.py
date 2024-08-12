@@ -2,17 +2,17 @@ import collections
 import logging
 import os
 import time
-from typing import Any, Deque, Dict, Iterator, List, Optional
+from typing import Any, Deque, Dict, Iterator, List, Optional, Union
 
 import numpy as np
 import numpy.typing as npt
 import pandas as pd
 import pyarrow as pa
-import pyarrow.dataset as ds
+import pyarrow.dataset as pds
 
 from snowflake import snowpark
-from snowflake.ml.data import data_ingestor, data_source
-from snowflake.ml.data._internal import ingestor_utils
+from snowflake.connector import result_batch
+from snowflake.ml.data import data_ingestor, data_source, ingestor_utils
 
 _EMPTY_RECORD_BATCH = pa.RecordBatch.from_arrays([], [])
 
@@ -67,6 +67,10 @@ class ArrowIngestor(data_ingestor.DataIngestor):
 
         self._schema: Optional[pa.Schema] = None
 
+    @classmethod
+    def from_sources(cls, session: snowpark.Session, sources: List[data_source.DataSource]) -> "ArrowIngestor":
+        return cls(session, sources)
+
     @property
     def data_sources(self) -> List[data_source.DataSource]:
         return self._data_sources
@@ -115,9 +119,9 @@ class ArrowIngestor(data_ingestor.DataIngestor):
         table = ds.to_table() if limit is None else ds.head(num_rows=limit)
         return table.to_pandas()
 
-    def _get_dataset(self, shuffle: bool) -> ds.Dataset:
+    def _get_dataset(self, shuffle: bool) -> pds.Dataset:
         format = self._format
-        sources = []
+        sources: List[Any] = []
         source_format = None
         for source in self._data_sources:
             if isinstance(source, str):
@@ -137,8 +141,16 @@ class ArrowIngestor(data_ingestor.DataIngestor):
                 #        in-memory (first batch) and file URLs (subsequent batches) and creating a
                 #        union dataset.
                 result_batches = ingestor_utils.get_dataframe_result_batches(self._session, source)
-                sources.extend(b.to_arrow() for b in result_batches)
-                source_format = "arrow"
+                sources.extend(
+                    b.to_arrow(self._session.connection)
+                    if isinstance(b, result_batch.ArrowResultBatch)
+                    else b.to_arrow()
+                    for b in result_batches
+                )
+                # HACK: Mitigate typing inconsistencies in Snowpark results
+                if len(sources) > 0:
+                    sources = [_cast_if_needed(s, sources[-1].schema) for s in sources]
+                source_format = None  # Arrow Dataset expects "None" for in-memory datasets
             else:
                 raise RuntimeError(f"Unsupported data source type: {type(source)}")
 
@@ -150,7 +162,7 @@ class ArrowIngestor(data_ingestor.DataIngestor):
         # Re-shuffle input files on each iteration start
         if shuffle:
             np.random.shuffle(sources)
-        pa_dataset: ds.Dataset = ds.dataset(sources, format=format, **self._kwargs)
+        pa_dataset: pds.Dataset = pds.dataset(sources, format=format, **self._kwargs)
         return pa_dataset
 
     def _get_batches_from_buffer(self, batch_size: int) -> Dict[str, npt.NDArray[Any]]:
@@ -201,7 +213,7 @@ def _record_batch_to_arrays(rb: pa.RecordBatch) -> Dict[str, npt.NDArray[Any]]:
 
 
 def _retryable_batches(
-    dataset: ds.Dataset, batch_size: int, max_retries: int = 3, delay: int = 0
+    dataset: pds.Dataset, batch_size: int, max_retries: int = 3, delay: int = 0
 ) -> Iterator[pa.RecordBatch]:
     """Make the Dataset to_batches retryable."""
     retries = 0
@@ -226,3 +238,47 @@ def _retryable_batches(
                 time.sleep(delay)
             else:
                 raise e
+
+
+def _cast_if_needed(
+    batch: Union[pa.Table, pa.RecordBatch], schema: Optional[pa.Schema] = None
+) -> Union[pa.Table, pa.RecordBatch]:
+    """
+    Cast the batch to be compatible with downstream frameworks. Returns original batch if cast is not necessary.
+    Besides casting types to match `schema` (if provided), this function also applies the following casting:
+        - Decimal (fixed-point) types: Convert to float or integer types based on scale and byte length
+
+    Args:
+        batch: The PyArrow batch to cast if needed
+        schema: Optional schema the batch should be casted to match. Note that compatibility type casting takes
+            precedence over the provided schema, e.g. if the schema has decimal types the result will be further
+            cast into integer/float types.
+
+    Returns:
+        The type-casted PyArrow batch, or the original batch if casting was not necessary
+    """
+    schema = schema or batch.schema
+    assert len(batch.schema) == len(schema)
+    fields = []
+    cast_needed = False
+    for field, target in zip(batch.schema, schema):
+        # Need to convert decimal types to supported types. This behavior supersedes target schema data types
+        if pa.types.is_decimal(target.type):
+            byte_length = int(target.metadata.get(b"byteLength", 8))
+            if int(target.metadata.get(b"scale", 0)) > 0:
+                target = target.with_type(pa.float32() if byte_length == 4 else pa.float64())
+            else:
+                if byte_length == 2:
+                    target = target.with_type(pa.int16())
+                elif byte_length == 4:
+                    target = target.with_type(pa.int32())
+                else:  # Cap out at 64-bit
+                    target = target.with_type(pa.int64())
+        if not field.equals(target):
+            cast_needed = True
+            field = target
+        fields.append(field)
+
+    if cast_needed:
+        return batch.cast(pa.schema(fields))
+    return batch

@@ -135,6 +135,8 @@ class TestRegistryModelingModelInteg(registry_model_test_base.RegistryModelTestB
         )
         test_features_df = self.session.create_dataframe(iris_X, schema=schema)
 
+        test_features_df.write.mode("overwrite").save_as_table("testTable")
+
         test_features_dataset = dataset.create_from_dataframe(
             session=self.session,
             name="trainDataset",
@@ -178,7 +180,20 @@ class TestRegistryModelingModelInteg(registry_model_test_base.RegistryModelTestB
             regr, test_features_dataset, sample_input_data=pandas_df, lineage_should_exist=False
         )
 
-    def _check_lineage_in_manifest_file(self, model, dataset, sample_input_data=None, lineage_should_exist=True):
+        # Case 5 : Capture Lineage via fit() API of MANIFEST.yml file
+        table_backed_dataframe = self.session.table("testTable")
+        regr.fit(table_backed_dataframe)
+        self._check_lineage_in_manifest_file(regr, "testTable", is_dataset=False)
+
+        # Case 6 : Capture Lineage via sample_input of log_model of MANIFEST.yml file
+        regr.fit(table_backed_dataframe.to_pandas())
+        self._check_lineage_in_manifest_file(
+            regr, "testTable", is_dataset=False, sample_input_data=table_backed_dataframe
+        )
+
+    def _check_lineage_in_manifest_file(
+        self, model, data_source, is_dataset=True, sample_input_data=None, lineage_should_exist=True
+    ):
         model_name = "some_name"
         tmp_stage_path = posixpath.join(self.session.get_session_stage(), f"{model_name}_{1}")
         conda_dependencies = [
@@ -205,9 +220,13 @@ class TestRegistryModelingModelInteg(registry_model_test_base.RegistryModelTestB
 
                 source = yaml_content["lineage_sources"][0]
                 assert isinstance(source, dict)
-                assert source.get("type") == "DATASET"
-                assert source.get("entity") == f"{dataset.fully_qualified_name}"
-                assert source.get("version") == f"{dataset._version.name}"
+                if is_dataset:
+                    assert source.get("type") == "DATASET"
+                    assert source.get("entity") == f"{data_source.fully_qualified_name}"
+                    assert source.get("version") == f"{data_source._version.name}"
+                else:
+                    assert source.get("type") == "QUERY"
+                    assert data_source in source.get("entity")
             else:
                 assert "lineage_sources" not in yaml_content
 

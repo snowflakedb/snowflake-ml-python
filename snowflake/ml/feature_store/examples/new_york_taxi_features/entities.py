@@ -2,11 +2,11 @@ from typing import List
 
 from snowflake.ml.feature_store import Entity
 
-trip_pickup = Entity(name="TRIP_PICKUP", join_keys=["PULOCATIONID"], desc="Trip pickup entity.")
+trip_id = Entity(name="TRIP_ID", join_keys=["TRIP_ID"], desc="Trip id.")
 
-trip_dropoff = Entity(name="TRIP_DROPOFF", join_keys=["DOLOCATIONID"], desc="Trip dropoff entity.")
+location_id = Entity(name="DOLOCATIONID", join_keys=["DOLOCATIONID"], desc="Drop off location id.")
 
 
 # This will be invoked by example_helper.py. Do not change function name.
 def get_all_entities() -> List[Entity]:
-    return [trip_pickup, trip_dropoff]
+    return [trip_id, location_id]

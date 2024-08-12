@@ -2,7 +2,7 @@ import enum
 import pathlib
 import tempfile
 import warnings
-from typing import Any, Callable, Dict, List, Optional, Union
+from typing import Any, Callable, Dict, List, Optional, Union, overload
 
 import pandas as pd
 
@@ -10,7 +10,7 @@ from snowflake.ml._internal import telemetry
 from snowflake.ml._internal.utils import sql_identifier
 from snowflake.ml.lineage import lineage_node
 from snowflake.ml.model import type_hints as model_types
-from snowflake.ml.model._client.ops import metadata_ops, model_ops
+from snowflake.ml.model._client.ops import metadata_ops, model_ops, service_ops
 from snowflake.ml.model._model_composer import model_composer
 from snowflake.ml.model._model_composer.model_manifest import model_manifest_schema
 from snowflake.ml.model._packager.model_handlers import snowmlmodel
@@ -29,6 +29,7 @@ class ModelVersion(lineage_node.LineageNode):
     """Model Version Object representing a specific version of the model that could be run."""
 
     _model_ops: model_ops.ModelOperator
+    _service_ops: service_ops.ServiceOperator
     _model_name: sql_identifier.SqlIdentifier
     _version_name: sql_identifier.SqlIdentifier
     _functions: List[model_manifest_schema.ModelFunctionInfo]
@@ -41,11 +42,13 @@ class ModelVersion(lineage_node.LineageNode):
         cls,
         model_ops: model_ops.ModelOperator,
         *,
+        service_ops: service_ops.ServiceOperator,
         model_name: sql_identifier.SqlIdentifier,
         version_name: sql_identifier.SqlIdentifier,
     ) -> "ModelVersion":
         self: "ModelVersion" = object.__new__(cls)
         self._model_ops = model_ops
+        self._service_ops = service_ops
         self._model_name = model_name
         self._version_name = version_name
         self._functions = self._get_functions()
@@ -65,6 +68,7 @@ class ModelVersion(lineage_node.LineageNode):
             return False
         return (
             self._model_ops == __value._model_ops
+            and self._service_ops == __value._service_ops
             and self._model_name == __value._model_name
             and self._version_name == __value._version_name
         )
@@ -318,10 +322,7 @@ class ModelVersion(lineage_node.LineageNode):
         """
         return self._functions
 
-    @telemetry.send_api_usage_telemetry(
-        project=_TELEMETRY_PROJECT,
-        subproject=_TELEMETRY_SUBPROJECT,
-    )
+    @overload
     def run(
         self,
         X: Union[pd.DataFrame, dataframe.DataFrame],
@@ -336,6 +337,53 @@ class ModelVersion(lineage_node.LineageNode):
             X: The input data, which could be a pandas DataFrame or Snowpark DataFrame.
             function_name: The function name to run. It is the name used to call a function in SQL.
                 Defaults to None. It can only be None if there is only 1 method.
+            partition_column: The partition column name to partition by.
+            strict_input_validation: Enable stricter validation for the input data. This will result value range based
+                type validation to make sure your input data won't overflow when providing to the model.
+        """
+        ...
+
+    @overload
+    def run(
+        self,
+        X: Union[pd.DataFrame, dataframe.DataFrame],
+        *,
+        service_name: str,
+        function_name: Optional[str] = None,
+        strict_input_validation: bool = False,
+    ) -> Union[pd.DataFrame, dataframe.DataFrame]:
+        """Invoke a method in a model version object via a service.
+
+        Args:
+            X: The input data, which could be a pandas DataFrame or Snowpark DataFrame.
+            service_name: The service name.
+            function_name: The function name to run. It is the name used to call a function in SQL.
+            strict_input_validation: Enable stricter validation for the input data. This will result value range based
+                type validation to make sure your input data won't overflow when providing to the model.
+        """
+        ...
+
+    @telemetry.send_api_usage_telemetry(
+        project=_TELEMETRY_PROJECT,
+        subproject=_TELEMETRY_SUBPROJECT,
+        func_params_to_log=["function_name", "service_name"],
+    )
+    def run(
+        self,
+        X: Union[pd.DataFrame, "dataframe.DataFrame"],
+        *,
+        service_name: Optional[str] = None,
+        function_name: Optional[str] = None,
+        partition_column: Optional[str] = None,
+        strict_input_validation: bool = False,
+    ) -> Union[pd.DataFrame, "dataframe.DataFrame"]:
+        """Invoke a method in a model version object via the warehouse or a service.
+
+        Args:
+            X: The input data, which could be a pandas DataFrame or Snowpark DataFrame.
+            service_name: The service name. If None, the function is invoked via the warehouse. Otherwise, the function
+                is invoked via the given service.
+            function_name: The function name to run. It is the name used to call a function in SQL.
             partition_column: The partition column name to partition by.
             strict_input_validation: Enable stricter validation for the input data. This will result value range based
                 type validation to make sure your input data won't overflow when providing to the model.
@@ -375,23 +423,37 @@ class ModelVersion(lineage_node.LineageNode):
         elif len(functions) != 1:
             raise ValueError(
                 f"There are more than 1 target methods available in the model {self.fully_qualified_model_name}"
-                f" version {self.version_name}. Please specify a `method_name` when calling the `run` method."
+                f" version {self.version_name}. Please specify a `function_name` when calling the `run` method."
             )
         else:
             target_function_info = functions[0]
-        return self._model_ops.invoke_method(
-            method_name=sql_identifier.SqlIdentifier(target_function_info["name"]),
-            method_function_type=target_function_info["target_method_function_type"],
-            signature=target_function_info["signature"],
-            X=X,
-            database_name=None,
-            schema_name=None,
-            model_name=self._model_name,
-            version_name=self._version_name,
-            strict_input_validation=strict_input_validation,
-            partition_column=partition_column,
-            statement_params=statement_params,
-        )
+
+        if service_name:
+            return self._model_ops.invoke_method(
+                method_name=sql_identifier.SqlIdentifier(target_function_info["name"]),
+                signature=target_function_info["signature"],
+                X=X,
+                database_name=None,
+                schema_name=None,
+                service_name=sql_identifier.SqlIdentifier(service_name),
+                strict_input_validation=strict_input_validation,
+                statement_params=statement_params,
+            )
+        else:
+            return self._model_ops.invoke_method(
+                method_name=sql_identifier.SqlIdentifier(target_function_info["name"]),
+                method_function_type=target_function_info["target_method_function_type"],
+                signature=target_function_info["signature"],
+                X=X,
+                database_name=None,
+                schema_name=None,
+                model_name=self._model_name,
+                version_name=self._version_name,
+                strict_input_validation=strict_input_validation,
+                partition_column=partition_column,
+                statement_params=statement_params,
+                is_partitioned=target_function_info["is_partitioned"],
+            )
 
     @telemetry.send_api_usage_telemetry(
         project=_TELEMETRY_PROJECT, subproject=_TELEMETRY_SUBPROJECT, func_params_to_log=["export_mode"]
@@ -525,8 +587,97 @@ class ModelVersion(lineage_node.LineageNode):
                 database_name=database_name_id,
                 schema_name=schema_name_id,
             ),
+            service_ops=service_ops.ServiceOperator(
+                session,
+                database_name=database_name_id,
+                schema_name=schema_name_id,
+            ),
             model_name=model_name_id,
             version_name=sql_identifier.SqlIdentifier(version),
+        )
+
+    @telemetry.send_api_usage_telemetry(
+        project=_TELEMETRY_PROJECT,
+        subproject=_TELEMETRY_SUBPROJECT,
+        func_params_to_log=[
+            "service_name",
+            "image_build_compute_pool",
+            "service_compute_pool",
+            "image_repo_database",
+            "image_repo_schema",
+            "image_repo",
+            "image_name",
+            "gpu_requests",
+        ],
+    )
+    def create_service(
+        self,
+        *,
+        service_name: str,
+        image_build_compute_pool: Optional[str] = None,
+        service_compute_pool: str,
+        image_repo: str,
+        image_name: Optional[str] = None,
+        ingress_enabled: bool = False,
+        min_instances: int = 1,
+        max_instances: int = 1,
+        gpu_requests: Optional[str] = None,
+        force_rebuild: bool = False,
+        build_external_access_integration: str,
+    ) -> str:
+        """Create an inference service with the given spec.
+
+        Args:
+            service_name: The name of the service, can be fully qualified. If not fully qualified, the database or
+                schema of the model will be used.
+            image_build_compute_pool: The name of the compute pool used to build the model inference image. Use
+                the service compute pool if None.
+            service_compute_pool: The name of the compute pool used to run the inference service.
+            image_repo: The name of the image repository, can be fully qualified. If not fully qualified, the database
+                or schema of the model will be used.
+            image_name: The name of the model inference image. Use a generated name if None.
+            ingress_enabled: Whether to enable ingress.
+            min_instances: The minimum number of inference service instances to run.
+            max_instances: The maximum number of inference service instances to run.
+            gpu_requests: The gpu limit for GPU based inference. Can be integer, fractional or string values. Use CPU
+                if None.
+            force_rebuild: Whether to force a model inference image rebuild.
+            build_external_access_integration: The external access integration for image build.
+
+        Returns:
+            The service name.
+        """
+        statement_params = telemetry.get_statement_params(
+            project=_TELEMETRY_PROJECT,
+            subproject=_TELEMETRY_SUBPROJECT,
+        )
+        service_db_id, service_schema_id, service_id = sql_identifier.parse_fully_qualified_name(service_name)
+        image_repo_db_id, image_repo_schema_id, image_repo_id = sql_identifier.parse_fully_qualified_name(image_repo)
+        return self._service_ops.create_service(
+            database_name=None,
+            schema_name=None,
+            model_name=self._model_name,
+            version_name=self._version_name,
+            service_database_name=service_db_id,
+            service_schema_name=service_schema_id,
+            service_name=service_id,
+            image_build_compute_pool_name=(
+                sql_identifier.SqlIdentifier(image_build_compute_pool)
+                if image_build_compute_pool
+                else sql_identifier.SqlIdentifier(service_compute_pool)
+            ),
+            service_compute_pool_name=sql_identifier.SqlIdentifier(service_compute_pool),
+            image_repo_database_name=image_repo_db_id,
+            image_repo_schema_name=image_repo_schema_id,
+            image_repo_name=image_repo_id,
+            image_name=sql_identifier.SqlIdentifier(image_name) if image_name else None,
+            ingress_enabled=ingress_enabled,
+            min_instances=min_instances,
+            max_instances=max_instances,
+            gpu_requests=gpu_requests,
+            force_rebuild=force_rebuild,
+            build_external_access_integration=sql_identifier.SqlIdentifier(build_external_access_integration),
+            statement_params=statement_params,
         )
 
 

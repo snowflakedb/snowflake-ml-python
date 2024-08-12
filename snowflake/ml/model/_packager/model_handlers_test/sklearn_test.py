@@ -4,6 +4,7 @@ import warnings
 
 import numpy as np
 import pandas as pd
+import shap
 from absl.testing import absltest
 from sklearn import datasets, ensemble, linear_model, multioutput
 
@@ -94,6 +95,70 @@ class SKLearnHandlerTest(absltest.TestCase):
             assert callable(predict_method)
             np.testing.assert_allclose(model.predict(iris_X_df[-10:]), predict_method(iris_X_df[-10:]).to_numpy())
 
+    def test_skl_unsupported_explain(self) -> None:
+        iris_X, iris_y = datasets.load_iris(return_X_y=True)
+        target2 = np.random.randint(0, 6, size=iris_y.shape)
+        dual_target = np.vstack([iris_y, target2]).T
+        model = multioutput.MultiOutputClassifier(ensemble.RandomForestClassifier(random_state=42))
+        iris_X_df = pd.DataFrame(iris_X, columns=["c1", "c2", "c3", "c4"])
+        model.fit(iris_X_df[:-10], dual_target[:-10])
+        with tempfile.TemporaryDirectory() as tmpdir:
+            s = {"predict_proba": model_signature.infer_signature(iris_X_df, model.predict_proba(iris_X_df))}
+            with self.assertRaisesRegex(
+                ValueError,
+                "Sample input data is required to enable explainability. Currently we only support this for "
+                + "`pandas.DataFrame` and `snowflake.snowpark.dataframe.DataFrame`.",
+            ):
+                model_packager.ModelPackager(os.path.join(tmpdir, "model1")).save(
+                    name="model1",
+                    model=model,
+                    signatures=s,
+                    metadata={"author": "halu", "version": "1"},
+                    conda_dependencies=["scikit-learn"],
+                    options=model_types.SKLModelSaveOptions(enable_explainability=True),
+                )
+
+            model_packager.ModelPackager(os.path.join(tmpdir, "model1_no_sig")).save(
+                name="model1_no_sig",
+                model=model,
+                sample_input_data=iris_X_df,
+                metadata={"author": "halu", "version": "1"},
+                options=model_types.SKLModelSaveOptions(enable_explainability=True),
+            )
+
+            pk = model_packager.ModelPackager(os.path.join(tmpdir, "model1_no_sig"))
+            pk.load()
+            assert pk.model
+            assert pk.meta
+            assert isinstance(pk.model, multioutput.MultiOutputClassifier)
+            np.testing.assert_allclose(
+                np.hstack(model.predict_proba(iris_X_df[-10:])), np.hstack(pk.model.predict_proba(iris_X_df[-10:]))
+            )
+            np.testing.assert_allclose(model.predict(iris_X_df[-10:]), pk.model.predict(iris_X_df[-10:]))
+            self.assertEqual(s["predict_proba"], pk.meta.signatures["predict_proba"])
+
+            pk = model_packager.ModelPackager(os.path.join(tmpdir, "model1_no_sig"))
+            pk.load(as_custom_model=True)
+            assert pk.model
+            assert pk.meta
+
+            predict_method = getattr(pk.model, "predict_proba", None)
+            assert callable(predict_method)
+            udf_res = predict_method(iris_X_df[-10:])
+            np.testing.assert_allclose(
+                np.hstack(model.predict_proba(iris_X_df[-10:])),
+                np.hstack([np.array(udf_res[col].to_list()) for col in udf_res]),
+            )
+
+            predict_method = getattr(pk.model, "predict", None)
+            assert callable(predict_method)
+            np.testing.assert_allclose(model.predict(iris_X_df[-10:]), predict_method(iris_X_df[-10:]).to_numpy())
+
+            explain_method = getattr(pk.model, "explain", None)
+            assert callable(explain_method)
+            with self.assertRaises(ValueError):
+                explain_method(iris_X_df[-10:])
+
     def test_skl(self) -> None:
         iris_X, iris_y = datasets.load_iris(return_X_y=True)
         regr = linear_model.LinearRegression()
@@ -156,6 +221,49 @@ class SKLearnHandlerTest(absltest.TestCase):
             predict_method = getattr(pk.model, "predict", None)
             assert callable(predict_method)
             np.testing.assert_allclose(np.array([[-0.08254936]]), predict_method(iris_X_df[:1]))
+
+    def test_skl_explain(self) -> None:
+        iris_X, iris_y = datasets.load_iris(return_X_y=True)
+        regr = linear_model.LinearRegression()
+        iris_X_df = pd.DataFrame(iris_X, columns=["c1", "c2", "c3", "c4"])
+        regr.fit(iris_X_df, iris_y)
+        explanations = shap.Explainer(regr, iris_X_df)(iris_X_df).values
+        with tempfile.TemporaryDirectory() as tmpdir:
+            s = {"predict": model_signature.infer_signature(iris_X_df, regr.predict(iris_X_df))}
+            with self.assertRaisesRegex(
+                ValueError,
+                "Sample input data is required to enable explainability. Currently we only support this for "
+                + "`pandas.DataFrame` and `snowflake.snowpark.dataframe.DataFrame`.",
+            ):
+                model_packager.ModelPackager(os.path.join(tmpdir, "model1")).save(
+                    name="model1",
+                    model=regr,
+                    signatures=s,
+                    metadata={"author": "halu", "version": "1"},
+                    options=model_types.SKLModelSaveOptions(enable_explainability=True),
+                )
+
+            model_packager.ModelPackager(os.path.join(tmpdir, "model1")).save(
+                name="model1_no_sig",
+                model=regr,
+                sample_input_data=iris_X_df,
+                metadata={"author": "halu", "version": "1"},
+                options=model_types.SKLModelSaveOptions(enable_explainability=True),
+            )
+
+            with warnings.catch_warnings():
+                warnings.simplefilter("error")
+
+                pk = model_packager.ModelPackager(os.path.join(tmpdir, "model1"))
+                pk.load(as_custom_model=True)
+                assert pk.model
+                assert pk.meta
+                predict_method = getattr(pk.model, "predict", None)
+                explain_method = getattr(pk.model, "explain", None)
+                assert callable(predict_method)
+                assert callable(explain_method)
+                np.testing.assert_allclose(np.array([[-0.08254936]]), predict_method(iris_X_df[:1]))
+                np.testing.assert_allclose(explain_method(iris_X_df), explanations)
 
 
 if __name__ == "__main__":

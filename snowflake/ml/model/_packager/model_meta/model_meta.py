@@ -237,6 +237,7 @@ class ModelMetadata:
         function_properties: A dict mapping function names to dict mapping function property key to value.
         metadata: User provided key-value metadata of the model. Defaults to None.
         creation_timestamp: Unix timestamp when the model metadata is created.
+        model_objective: Model objective like regression, classification etc.
     """
 
     def telemetry_metadata(self) -> ModelMetadataTelemetryDict:
@@ -260,6 +261,8 @@ class ModelMetadata:
         min_snowpark_ml_version: Optional[str] = None,
         models: Optional[Dict[str, model_blob_meta.ModelBlobMeta]] = None,
         original_metadata_version: Optional[str] = model_meta_schema.MODEL_METADATA_VERSION,
+        model_objective: Optional[model_meta_schema.ModelObjective] = model_meta_schema.ModelObjective.UNKNOWN,
+        explain_algorithm: Optional[model_meta_schema.ModelExplainAlgorithm] = None,
     ) -> None:
         self.name = name
         self.signatures: Dict[str, model_signature.ModelSignature] = dict()
@@ -283,6 +286,11 @@ class ModelMetadata:
         self._runtimes = runtimes
 
         self.original_metadata_version = original_metadata_version
+
+        self.model_objective: model_meta_schema.ModelObjective = (
+            model_objective or model_meta_schema.ModelObjective.UNKNOWN
+        )
+        self.explain_algorithm: Optional[model_meta_schema.ModelExplainAlgorithm] = explain_algorithm
 
     @property
     def min_snowpark_ml_version(self) -> str:
@@ -321,9 +329,11 @@ class ModelMetadata:
         model_dict = model_meta_schema.ModelMetadataDict(
             {
                 "creation_timestamp": self.creation_timestamp,
-                "env": self.env.save_as_dict(pathlib.Path(model_dir_path)),
+                "env": self.env.save_as_dict(
+                    pathlib.Path(model_dir_path), default_channel_override=env_utils.SNOWFLAKE_CONDA_CHANNEL_URL
+                ),
                 "runtimes": {
-                    runtime_name: runtime.save(pathlib.Path(model_dir_path))
+                    runtime_name: runtime.save(pathlib.Path(model_dir_path), default_channel_override="conda-forge")
                     for runtime_name, runtime in self.runtimes.items()
                 },
                 "metadata": self.metadata,
@@ -333,6 +343,13 @@ class ModelMetadata:
                 "signatures": {func_name: sig.to_dict() for func_name, sig in self.signatures.items()},
                 "version": model_meta_schema.MODEL_METADATA_VERSION,
                 "min_snowpark_ml_version": self.min_snowpark_ml_version,
+                "model_objective": self.model_objective.value,
+                "explainability": (
+                    model_meta_schema.ExplainabilityMetadataDict(algorithm=self.explain_algorithm.value)
+                    if self.explain_algorithm
+                    else None
+                ),
+                "function_properties": self.function_properties,
             }
         )
 
@@ -370,6 +387,9 @@ class ModelMetadata:
             signatures=loaded_meta["signatures"],
             version=original_loaded_meta_version,
             min_snowpark_ml_version=loaded_meta_min_snowpark_ml_version,
+            model_objective=loaded_meta.get("model_objective", model_meta_schema.ModelObjective.UNKNOWN.value),
+            explainability=loaded_meta.get("explainability", None),
+            function_properties=loaded_meta.get("function_properties", {}),
         )
 
     @classmethod
@@ -406,6 +426,11 @@ class ModelMetadata:
         else:
             runtimes = None
 
+        explanation_algorithm_dict = model_dict.get("explainability", None)
+        explanation_algorithm = None
+        if explanation_algorithm_dict:
+            explanation_algorithm = model_meta_schema.ModelExplainAlgorithm(explanation_algorithm_dict["algorithm"])
+
         return cls(
             name=model_dict["name"],
             model_type=model_dict["model_type"],
@@ -417,4 +442,9 @@ class ModelMetadata:
             min_snowpark_ml_version=model_dict["min_snowpark_ml_version"],
             models=models,
             original_metadata_version=model_dict["version"],
+            model_objective=model_meta_schema.ModelObjective(
+                model_dict.get("model_objective", model_meta_schema.ModelObjective.UNKNOWN.value)
+            ),
+            explain_algorithm=explanation_algorithm,
+            function_properties=model_dict.get("function_properties", {}),
         )

@@ -9,7 +9,7 @@ from absl.testing import absltest
 from snowflake.ml._internal.utils import sql_identifier
 from snowflake.ml.model import model_signature, type_hints as model_types
 from snowflake.ml.model._client.model import model_version_impl
-from snowflake.ml.model._client.ops import metadata_ops, model_ops
+from snowflake.ml.model._client.ops import metadata_ops, model_ops, service_ops
 from snowflake.ml.model._model_composer import model_composer
 from snowflake.ml.model._model_composer.model_manifest import model_manifest_schema
 from snowflake.ml.test_utils import mock_data_frame, mock_session
@@ -28,6 +28,16 @@ _DUMMY_SIG = {
         ],
         outputs=[model_signature.FeatureSpec(name="output", dtype=model_signature.DataType.FLOAT)],
     ),
+    "explain_table": model_signature.ModelSignature(
+        inputs=[
+            model_signature.FeatureSpec(dtype=model_signature.DataType.FLOAT, name="input1"),
+            model_signature.FeatureSpec(dtype=model_signature.DataType.FLOAT, name="input2"),
+        ],
+        outputs=[
+            model_signature.FeatureSpec(name="output1", dtype=model_signature.DataType.FLOAT),
+            model_signature.FeatureSpec(name="output2", dtype=model_signature.DataType.FLOAT),
+        ],
+    ),
 }
 
 
@@ -42,6 +52,11 @@ class ModelVersionImplTest(absltest.TestCase):
                     database_name=sql_identifier.SqlIdentifier("TEMP"),
                     schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
                 ),
+                service_ops=service_ops.ServiceOperator(
+                    self.c_session,
+                    database_name=sql_identifier.SqlIdentifier("TEMP"),
+                    schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
+                ),
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
                 version_name=sql_identifier.SqlIdentifier("v1", case_sensitive=True),
             )
@@ -50,6 +65,11 @@ class ModelVersionImplTest(absltest.TestCase):
         with mock.patch.object(model_version_impl.ModelVersion, "_get_functions", return_value=[]) as mock_list_methods:
             model_version_impl.ModelVersion._ref(
                 model_ops.ModelOperator(
+                    self.c_session,
+                    database_name=sql_identifier.SqlIdentifier("TEMP"),
+                    schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
+                ),
+                service_ops=service_ops.ServiceOperator(
                     self.c_session,
                     database_name=sql_identifier.SqlIdentifier("TEMP"),
                     schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
@@ -212,6 +232,7 @@ class ModelVersionImplTest(absltest.TestCase):
                     "target_method": "predict",
                     "target_method_function_type": "FUNCTION",
                     "signature": _DUMMY_SIG["predict"],
+                    "is_partitioned": False,
                 }
             ),
             model_manifest_schema.ModelFunctionInfo(
@@ -220,6 +241,7 @@ class ModelVersionImplTest(absltest.TestCase):
                     "target_method": "__call__",
                     "target_method_function_type": "FUNCTION",
                     "signature": _DUMMY_SIG["predict"],
+                    "is_partitioned": False,
                 }
             ),
         ]
@@ -244,6 +266,7 @@ class ModelVersionImplTest(absltest.TestCase):
                 strict_input_validation=False,
                 partition_column=None,
                 statement_params=mock.ANY,
+                is_partitioned=False,
             )
 
         with mock.patch.object(self.m_mv._model_ops, "invoke_method", return_value=m_df) as mock_invoke_method:
@@ -260,6 +283,7 @@ class ModelVersionImplTest(absltest.TestCase):
                 strict_input_validation=False,
                 partition_column=None,
                 statement_params=mock.ANY,
+                is_partitioned=False,
             )
 
     def test_run_without_method_name(self) -> None:
@@ -271,6 +295,7 @@ class ModelVersionImplTest(absltest.TestCase):
                     "target_method": "predict",
                     "target_method_function_type": "FUNCTION",
                     "signature": _DUMMY_SIG["predict"],
+                    "is_partitioned": False,
                 }
             ),
         ]
@@ -291,6 +316,7 @@ class ModelVersionImplTest(absltest.TestCase):
                 strict_input_validation=False,
                 partition_column=None,
                 statement_params=mock.ANY,
+                is_partitioned=False,
             )
 
     def test_run_strict(self) -> None:
@@ -302,6 +328,7 @@ class ModelVersionImplTest(absltest.TestCase):
                     "target_method": "predict",
                     "target_method_function_type": "FUNCTION",
                     "signature": _DUMMY_SIG["predict"],
+                    "is_partitioned": False,
                 }
             ),
         ]
@@ -322,6 +349,7 @@ class ModelVersionImplTest(absltest.TestCase):
                 version_name=sql_identifier.SqlIdentifier("v1", case_sensitive=True),
                 partition_column=None,
                 statement_params=mock.ANY,
+                is_partitioned=False,
             )
 
     def test_run_table_function_method(self) -> None:
@@ -333,6 +361,7 @@ class ModelVersionImplTest(absltest.TestCase):
                     "target_method": "predict_table",
                     "target_method_function_type": "TABLE_FUNCTION",
                     "signature": _DUMMY_SIG["predict_table"],
+                    "is_partitioned": True,
                 }
             ),
             model_manifest_schema.ModelFunctionInfo(
@@ -341,6 +370,7 @@ class ModelVersionImplTest(absltest.TestCase):
                     "target_method": "__call__",
                     "target_method_function_type": "TABLE_FUNCTION",
                     "signature": _DUMMY_SIG["predict_table"],
+                    "is_partitioned": True,
                 }
             ),
         ]
@@ -360,6 +390,7 @@ class ModelVersionImplTest(absltest.TestCase):
                 strict_input_validation=False,
                 partition_column=None,
                 statement_params=mock.ANY,
+                is_partitioned=True,
             )
 
         with mock.patch.object(self.m_mv._model_ops, "invoke_method", return_value=m_df) as mock_invoke_method:
@@ -375,6 +406,77 @@ class ModelVersionImplTest(absltest.TestCase):
                 version_name=sql_identifier.SqlIdentifier("v1", case_sensitive=True),
                 strict_input_validation=False,
                 partition_column="PARTITION_COLUMN",
+                statement_params=mock.ANY,
+                is_partitioned=True,
+            )
+
+    def test_run_table_function_method_no_partition(self) -> None:
+        m_df = mock_data_frame.MockDataFrame()
+        m_methods = [
+            model_manifest_schema.ModelFunctionInfo(
+                {
+                    "name": '"predict_table"',
+                    "target_method": "predict_table",
+                    "target_method_function_type": "TABLE_FUNCTION",
+                    "signature": _DUMMY_SIG["predict_table"],
+                    "is_partitioned": True,
+                }
+            ),
+            model_manifest_schema.ModelFunctionInfo(
+                {
+                    "name": '"explain_table"',
+                    "target_method": "explain_table",
+                    "target_method_function_type": "TABLE_FUNCTION",
+                    "signature": _DUMMY_SIG["explain_table"],
+                    "is_partitioned": False,
+                }
+            ),
+        ]
+        self.m_mv._functions = m_methods
+
+        with mock.patch.object(self.m_mv._model_ops, "invoke_method", return_value=m_df) as mock_invoke_method:
+            self.m_mv.run(m_df, function_name='"explain_table"')
+            mock_invoke_method.assert_called_once_with(
+                method_name='"explain_table"',
+                method_function_type="TABLE_FUNCTION",
+                signature=_DUMMY_SIG["explain_table"],
+                X=m_df,
+                database_name=None,
+                schema_name=None,
+                model_name=sql_identifier.SqlIdentifier("MODEL"),
+                version_name=sql_identifier.SqlIdentifier("v1", case_sensitive=True),
+                strict_input_validation=False,
+                partition_column=None,
+                statement_params=mock.ANY,
+                is_partitioned=False,
+            )
+
+    def test_run_service(self) -> None:
+        m_df = mock_data_frame.MockDataFrame()
+        m_methods = [
+            model_manifest_schema.ModelFunctionInfo(
+                {
+                    "name": '"predict"',
+                    "target_method": "predict",
+                    "target_method_function_type": "FUNCTION",
+                    "signature": _DUMMY_SIG["predict"],
+                    "is_partitioned": False,
+                }
+            ),
+        ]
+
+        self.m_mv._functions = m_methods
+
+        with mock.patch.object(self.m_mv._model_ops, "invoke_method", return_value=m_df) as mock_invoke_method:
+            self.m_mv.run(m_df, service_name="SERVICE", function_name='"predict"')
+            mock_invoke_method.assert_called_once_with(
+                method_name='"predict"',
+                signature=_DUMMY_SIG["predict"],
+                X=m_df,
+                database_name=None,
+                schema_name=None,
+                service_name=sql_identifier.SqlIdentifier("SERVICE"),
+                strict_input_validation=False,
                 statement_params=mock.ANY,
             )
 
@@ -602,6 +704,43 @@ class ModelVersionImplTest(absltest.TestCase):
                 database_name=None,
                 schema_name=None,
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
+                statement_params=mock.ANY,
+            )
+
+    def test_create_service(self) -> None:
+        with mock.patch.object(self.m_mv._service_ops, "create_service") as mock_create_service:
+            self.m_mv.create_service(
+                service_name="SERVICE",
+                image_build_compute_pool="IMAGE_BUILD_COMPUTE_POOL",
+                service_compute_pool="SERVICE_COMPUTE_POOL",
+                image_repo="IMAGE_REPO",
+                image_name="IMAGE_NAME",
+                min_instances=2,
+                max_instances=3,
+                gpu_requests="GPU",
+                force_rebuild=True,
+                build_external_access_integration="EAI",
+            )
+            mock_create_service.assert_called_once_with(
+                database_name=None,
+                schema_name=None,
+                model_name=sql_identifier.SqlIdentifier(self.m_mv.model_name),
+                version_name=sql_identifier.SqlIdentifier(self.m_mv.version_name),
+                service_database_name=None,
+                service_schema_name=None,
+                service_name=sql_identifier.SqlIdentifier("SERVICE"),
+                image_build_compute_pool_name=sql_identifier.SqlIdentifier("IMAGE_BUILD_COMPUTE_POOL"),
+                service_compute_pool_name=sql_identifier.SqlIdentifier("SERVICE_COMPUTE_POOL"),
+                image_repo_database_name=None,
+                image_repo_schema_name=None,
+                image_repo_name=sql_identifier.SqlIdentifier("IMAGE_REPO"),
+                image_name=sql_identifier.SqlIdentifier("IMAGE_NAME"),
+                ingress_enabled=False,
+                min_instances=2,
+                max_instances=3,
+                gpu_requests=sql_identifier.SqlIdentifier("GPU"),
+                force_rebuild=True,
+                build_external_access_integration=sql_identifier.SqlIdentifier("EAI"),
                 statement_params=mock.ANY,
             )
 

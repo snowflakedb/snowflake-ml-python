@@ -36,7 +36,7 @@ class TensorFlowHandler(_base.BaseModelHandler["tensorflow.Module"]):
     _MIN_SNOWPARK_ML_VERSION = "1.0.12"
     _HANDLER_MIGRATOR_PLANS: Dict[str, Type[base_migrator.BaseModelHandlerMigrator]] = {}
 
-    MODELE_BLOB_FILE_OR_DIR = "model"
+    MODEL_BLOB_FILE_OR_DIR = "model"
     DEFAULT_TARGET_METHODS = ["__call__"]
 
     @classmethod
@@ -68,6 +68,10 @@ class TensorFlowHandler(_base.BaseModelHandler["tensorflow.Module"]):
         is_sub_model: Optional[bool] = False,
         **kwargs: Unpack[model_types.TensorflowSaveOptions],
     ) -> None:
+        enable_explainability = kwargs.get("enable_explainability", False)
+        if enable_explainability:
+            raise NotImplementedError("Explainability is not supported for Tensorflow model.")
+
         import tensorflow
 
         assert isinstance(model, tensorflow.Module)
@@ -114,15 +118,15 @@ class TensorFlowHandler(_base.BaseModelHandler["tensorflow.Module"]):
         model_blob_path = os.path.join(model_blobs_dir_path, name)
         os.makedirs(model_blob_path, exist_ok=True)
         if isinstance(model, tensorflow.keras.Model):
-            tensorflow.keras.models.save_model(model, os.path.join(model_blob_path, cls.MODELE_BLOB_FILE_OR_DIR))
+            tensorflow.keras.models.save_model(model, os.path.join(model_blob_path, cls.MODEL_BLOB_FILE_OR_DIR))
         else:
-            tensorflow.saved_model.save(model, os.path.join(model_blob_path, cls.MODELE_BLOB_FILE_OR_DIR))
+            tensorflow.saved_model.save(model, os.path.join(model_blob_path, cls.MODEL_BLOB_FILE_OR_DIR))
 
         base_meta = model_blob_meta.ModelBlobMeta(
             name=name,
             model_type=cls.HANDLER_TYPE,
             handler_version=cls.HANDLER_VERSION,
-            path=cls.MODELE_BLOB_FILE_OR_DIR,
+            path=cls.MODEL_BLOB_FILE_OR_DIR,
         )
         model_meta.models[name] = base_meta
         model_meta.min_snowpark_ml_version = cls._MIN_SNOWPARK_ML_VERSION
@@ -156,6 +160,7 @@ class TensorFlowHandler(_base.BaseModelHandler["tensorflow.Module"]):
         cls,
         raw_model: "tensorflow.Module",
         model_meta: model_meta_api.ModelMetadata,
+        background_data: Optional[pd.DataFrame] = None,
         **kwargs: Unpack[model_types.TensorflowLoadOptions],
     ) -> custom_model.CustomModel:
         import tensorflow
