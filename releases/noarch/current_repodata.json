@@ -3,21 +3,21 @@
     "subdir": "noarch"
   },
   "packages": {
-    "snowflake-ml-python-1.6.0-pypy_0.tar.bz2": {
+    "snowflake-ml-python-1.6.1-pypy_0.tar.bz2": {
       "build": "pypy_0",
       "build_number": 0,
       "constrains": [
-        "mlflow>=2.1.0,<2.4",
-        "catboost>=1.2.0, <2",
-        "pytorch>=2.0.1,<2.3.0",
         "sentence-transformers>=2.2.2,<3",
-        "tensorflow>=2.10,<3",
-        "transformers>=4.32.1,<5",
         "torchdata>=0.4,<1",
+        "pytorch>=2.0.1,<2.3.0",
         "tokenizers>=0.10,<1",
         "shap==0.42.1",
+        "mlflow>=2.1.0,<2.4",
+        "lightgbm>=3.3.5,<5",
         "sentencepiece>=0.1.95,<1",
-        "lightgbm>=3.3.5,<5"
+        "catboost>=1.2.0, <2",
+        "transformers>=4.32.1,<5",
+        "tensorflow>=2.10,<3"
       ],
       "depends": [
         "absl-py >=0.15,<2",
@@ -48,14 +48,14 @@
       ],
       "license": "Apache-2.0",
       "license_family": "Apache",
-      "md5": "d9ab7c82e84c32ab7e5958c283a63a9e",
+      "md5": "f99b7d778271506dd9fa0d07e1269e13",
       "name": "snowflake-ml-python",
       "noarch": "python",
-      "sha256": "9296bf4848e6e77728f67ff7b0c9f11f760cc6b84415b4399db57ade4b8673a8",
-      "size": 646987,
+      "sha256": "9f6759e48f5900cf72ff046000d7eebb676debdd6e7a1a6c6c5568a34cb8b509",
+      "size": 657957,
       "subdir": "noarch",
-      "timestamp": 1723160880029,
-      "version": "1.6.0"
+      "timestamp": 1723513386930,
+      "version": "1.6.1"
     }
   },
   "packages.conda": {},
