@@ -200,6 +200,7 @@ py_library(
         ":classify_text",
         ":complete",
         ":embed_text_768",
+        ":embed_text_1024",
         ":extract_answer",
         ":sentiment",
         ":summarize",
