@@ -8,11 +8,6 @@ from snowflake.cortex._util import (
 )
 from snowflake.ml._internal import telemetry
 
-SUPPORTED_MODELS: List[str] = [
-    "snowflake-arctic-embed-m",
-    "e5-base-v2",
-]
-
 
 @telemetry.send_api_usage_telemetry(
     project=CORTEX_FUNCTIONS_TELEMETRY_PROJECT,
@@ -33,11 +28,6 @@ def EmbedText768(
     Returns:
         A column of vectors containing embeddings.
     """
-
-    if model not in SUPPORTED_MODELS:
-        raise SnowflakeConfigurationException(
-            f"model must be one of {SUPPORTED_MODELS}"
-        )
 
     return _embed_text_768_impl(
         "snowflake.cortex.embed_text_768", model, text, session=session
