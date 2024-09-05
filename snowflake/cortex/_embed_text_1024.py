@@ -1,18 +1,11 @@
-from typing import Optional, Union, List
+from typing import Optional, Union
 
 from snowflake import snowpark
 from snowflake.cortex._util import (
     CORTEX_FUNCTIONS_TELEMETRY_PROJECT,
-    SnowflakeConfigurationException,
     call_sql_function,
 )
 from snowflake.ml._internal import telemetry
-
-
-SUPPORTED_MODELS: List[str] = [
-    "nv-embed-qa-4",
-    "multilingual-e5-large",
-]
 
 
 @telemetry.send_api_usage_telemetry(
@@ -34,11 +27,6 @@ def EmbedText1024(
     Returns:
         A column of vectors containing embeddings.
     """
-
-    if model not in SUPPORTED_MODELS:
-        raise SnowflakeConfigurationException(
-            f"model must be one of {SUPPORTED_MODELS}"
-        )
 
     return _embed_text_1024_impl(
         "snowflake.cortex.embed_text_1024", model, text, session=session
