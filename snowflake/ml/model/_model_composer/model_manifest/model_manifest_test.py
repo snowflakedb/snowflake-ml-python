@@ -282,12 +282,13 @@ class ModelManifestTest(absltest.TestCase):
                 name="model1",
                 model_type="custom",
                 signatures={"predict": _DUMMY_SIG["predict"]},
+                pip_requirements=["xgboost"],
                 python_version="3.8",
                 embed_local_ml_library=True,
             ) as meta:
                 meta.models["model1"] = _DUMMY_BLOB
 
-            mm.save(meta, pathlib.PurePosixPath("model"), options={"include_pip_dependencies": True})
+            mm.save(meta, pathlib.PurePosixPath("model"))
             with open(os.path.join(workspace, "MANIFEST.yml"), encoding="utf-8") as f:
                 self.assertEqual(
                     (

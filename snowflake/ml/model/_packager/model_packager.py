@@ -47,6 +47,7 @@ class ModelPackager:
         ext_modules: Optional[List[ModuleType]] = None,
         code_paths: Optional[List[str]] = None,
         options: Optional[model_types.ModelSaveOption] = None,
+        model_objective: model_types.ModelObjective = model_types.ModelObjective.UNKNOWN,
     ) -> model_meta.ModelMetadata:
         if (signatures is None) and (sample_input_data is None) and not model_handler.is_auto_signature_model(model):
             raise snowml_exceptions.SnowflakeMLException(
@@ -84,6 +85,7 @@ class ModelPackager:
             conda_dependencies=conda_dependencies,
             pip_requirements=pip_requirements,
             python_version=python_version,
+            model_objective=model_objective,
             **options,
         ) as meta:
             model_blobs_path = os.path.join(self.local_dir_path, ModelPackager.MODEL_BLOBS_DIR)

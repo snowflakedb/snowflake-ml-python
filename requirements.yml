@@ -77,9 +77,6 @@
     - build_essential
     - deployment_core
     - snowml_inference_alternative
-- name: accelerate
-  dev_version: 0.22.0
-  from_channel: conda-forge
 # For fsspec[http] in conda
 - name_conda: aiohttp
   dev_version_conda: 3.8.3
@@ -161,8 +158,7 @@
 - name: moto
   dev_version: 4.0.11
 - name: mypy
-  dev_version: 1.5.1
-  from_channel: conda-forge
+  dev_version: 1.10.0
 - name: networkx
   dev_version: 2.8.4
 - name: numpy
@@ -266,13 +262,12 @@
     - build_essential
 - name: starlette
   dev_version: 0.27.0
-  from_channel: conda-forge
 - name: sqlparse
   dev_version: 0.4.4
   version_requirements: '>=0.4,<1'
 - name: tensorflow
   dev_version_conda: 2.12.0
-  dev_version_pypi: 2.13.0
+  dev_version_pypi: 2.12.0
   version_requirements: '>=2.10,<3'
   requirements_extra_tags:
     - tensorflow
@@ -300,26 +295,22 @@
 - name: types-protobuf
   dev_version: 4.23.0.1
 - name: types-PyYAML
-  dev_version: 6.0.12
-  from_channel: conda-forge
+  dev_version: 6.0.12.12
 - name: types-toml
   dev_version: 0.10.8.6
   tags:
     - build_essential
 - name: typing-extensions
-  dev_version: 4.5.0
+  dev_version: 4.6.3
   version_requirements: '>=4.1.0,<5'
   tags:
     - deployment_core
     - snowml_inference_alternative
 - name: xgboost
   dev_version: 1.7.3
-  version_requirements: '>=1.7.3,<2'
+  version_requirements: '>=1.7.3,<2.1'
   tags:
     - build_essential
-- name: types-cachetools
-  dev_version: 4.2.2
-  from_channel: conda-forge
 - name: werkzeug
   dev_version: 2.2.2
 - name: cachetools
@@ -332,6 +323,10 @@
 # Below are pip only external packages
 - name_pypi: --extra-index-url https://pypi.org/simple
   dev_version_pypi: ''
+- name_pypi: accelerate
+  dev_version_pypi: 0.22.0
+- name_pypi: types-cachetools
+  dev_version_pypi: 4.2.2
 - name_pypi: peft
   dev_version_pypi: 0.5.0
   version_requirements_pypi: '>=0.5.0,<1'

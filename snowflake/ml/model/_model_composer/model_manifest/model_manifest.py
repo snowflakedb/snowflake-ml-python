@@ -1,7 +1,6 @@
 import collections
 import copy
 import pathlib
-import warnings
 from typing import List, Optional, cast
 
 import yaml
@@ -78,13 +77,9 @@ class ModelManifest:
             )
 
         dependencies = model_manifest_schema.ModelRuntimeDependenciesDict(conda=runtime_dict["dependencies"]["conda"])
-        if options.get("include_pip_dependencies"):
-            warnings.warn(
-                "`include_pip_dependencies` specified as True: pip dependencies will be included and may not"
-                "be warehouse-compabible. The model may need to be run in SPCS.",
-                category=UserWarning,
-                stacklevel=1,
-            )
+
+        # We only want to include pip dependencies file if there are any pip requirements.
+        if len(model_meta.env.pip_requirements) > 0:
             dependencies["pip"] = runtime_dict["dependencies"]["pip"]
 
         manifest_dict = model_manifest_schema.ModelManifestDict(

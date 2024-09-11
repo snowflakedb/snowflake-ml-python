@@ -3,6 +3,7 @@ from __future__ import annotations  # for return self methods
 from typing import Any, Type
 from unittest import TestCase
 
+from snowflake import snowpark
 from snowflake.ml._internal.utils.string_matcher import StringMatcherSql
 from snowflake.ml.test_utils import mock_data_frame, mock_snowml_base
 from snowflake.snowpark import Session
@@ -92,5 +93,20 @@ class MockSession(mock_snowml_base.MockSnowMLBase):
             kwargs={"query": query},
             check_args=False,
             check_kwargs=True,
+        )
+        return mo.result
+
+    def add_mock_query_history(self, result: snowpark.QueryHistory) -> mock_snowml_base.MockSnowMLBase:
+        """Add an expected query history to the session."""
+        return self.add_operation(operation="query_history", args=(), kwargs={}, result=result)
+
+    def query_history(self) -> Any:
+        """Execute a mock query_history call."""
+        mo = self._check_operation(
+            operation="query_history",
+            args=(),
+            kwargs={},
+            check_args=False,
+            check_kwargs=False,
         )
         return mo.result

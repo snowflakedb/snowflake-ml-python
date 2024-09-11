@@ -223,6 +223,21 @@ class ModelVersionImplTest(absltest.TestCase):
                 statement_params=mock.ANY,
             )
 
+    def test_get_model_objective(self) -> None:
+        with mock.patch.object(
+            self.m_mv._model_ops,
+            attribute="get_model_objective",
+            return_value=model_types.ModelObjective.REGRESSION,
+        ) as mock_get_model_objective:
+            self.assertEqual(model_types.ModelObjective.REGRESSION, self.m_mv.get_model_objective())
+            mock_get_model_objective.assert_called_once_with(
+                database_name=None,
+                schema_name=None,
+                model_name=sql_identifier.SqlIdentifier("MODEL"),
+                version_name=sql_identifier.SqlIdentifier("v1", case_sensitive=True),
+                statement_params=mock.ANY,
+            )
+
     def test_run(self) -> None:
         m_df = mock_data_frame.MockDataFrame()
         m_methods = [
@@ -714,10 +729,9 @@ class ModelVersionImplTest(absltest.TestCase):
                 image_build_compute_pool="IMAGE_BUILD_COMPUTE_POOL",
                 service_compute_pool="SERVICE_COMPUTE_POOL",
                 image_repo="IMAGE_REPO",
-                image_name="IMAGE_NAME",
-                min_instances=2,
                 max_instances=3,
                 gpu_requests="GPU",
+                num_workers=1,
                 force_rebuild=True,
                 build_external_access_integration="EAI",
             )
@@ -734,11 +748,44 @@ class ModelVersionImplTest(absltest.TestCase):
                 image_repo_database_name=None,
                 image_repo_schema_name=None,
                 image_repo_name=sql_identifier.SqlIdentifier("IMAGE_REPO"),
-                image_name=sql_identifier.SqlIdentifier("IMAGE_NAME"),
                 ingress_enabled=False,
-                min_instances=2,
                 max_instances=3,
-                gpu_requests=sql_identifier.SqlIdentifier("GPU"),
+                gpu_requests="GPU",
+                num_workers=1,
+                force_rebuild=True,
+                build_external_access_integration=sql_identifier.SqlIdentifier("EAI"),
+                statement_params=mock.ANY,
+            )
+
+    def test_create_service_same_pool(self) -> None:
+        with mock.patch.object(self.m_mv._service_ops, "create_service") as mock_create_service:
+            self.m_mv.create_service(
+                service_name="SERVICE",
+                service_compute_pool="SERVICE_COMPUTE_POOL",
+                image_repo="IMAGE_REPO",
+                max_instances=3,
+                gpu_requests="GPU",
+                num_workers=1,
+                force_rebuild=True,
+                build_external_access_integration="EAI",
+            )
+            mock_create_service.assert_called_once_with(
+                database_name=None,
+                schema_name=None,
+                model_name=sql_identifier.SqlIdentifier(self.m_mv.model_name),
+                version_name=sql_identifier.SqlIdentifier(self.m_mv.version_name),
+                service_database_name=None,
+                service_schema_name=None,
+                service_name=sql_identifier.SqlIdentifier("SERVICE"),
+                image_build_compute_pool_name=sql_identifier.SqlIdentifier("SERVICE_COMPUTE_POOL"),
+                service_compute_pool_name=sql_identifier.SqlIdentifier("SERVICE_COMPUTE_POOL"),
+                image_repo_database_name=None,
+                image_repo_schema_name=None,
+                image_repo_name=sql_identifier.SqlIdentifier("IMAGE_REPO"),
+                ingress_enabled=False,
+                max_instances=3,
+                gpu_requests="GPU",
+                num_workers=1,
                 force_rebuild=True,
                 build_external_access_integration=sql_identifier.SqlIdentifier("EAI"),
                 statement_params=mock.ANY,

@@ -34,20 +34,20 @@ class CatBoostModelHandler(_base.BaseModelHandler["catboost.CatBoost"]):
     DEFAULT_TARGET_METHODS = ["predict", "predict_proba"]
 
     @classmethod
-    def get_model_objective(cls, model: "catboost.CatBoost") -> model_meta_schema.ModelObjective:
+    def get_model_objective_and_output_type(cls, model: "catboost.CatBoost") -> model_types.ModelObjective:
         import catboost
 
         if isinstance(model, catboost.CatBoostClassifier):
             num_classes = handlers_utils.get_num_classes_if_exists(model)
             if num_classes == 2:
-                return model_meta_schema.ModelObjective.BINARY_CLASSIFICATION
-            return model_meta_schema.ModelObjective.MULTI_CLASSIFICATION
+                return model_types.ModelObjective.BINARY_CLASSIFICATION
+            return model_types.ModelObjective.MULTI_CLASSIFICATION
         if isinstance(model, catboost.CatBoostRanker):
-            return model_meta_schema.ModelObjective.RANKING
+            return model_types.ModelObjective.RANKING
         if isinstance(model, catboost.CatBoostRegressor):
-            return model_meta_schema.ModelObjective.REGRESSION
+            return model_types.ModelObjective.REGRESSION
         # TODO: Find out model type from the generic Catboost Model
-        return model_meta_schema.ModelObjective.UNKNOWN
+        return model_types.ModelObjective.UNKNOWN
 
     @classmethod
     def can_handle(cls, model: model_types.SupportedModelType) -> TypeGuard["catboost.CatBoost"]:
@@ -77,6 +77,8 @@ class CatBoostModelHandler(_base.BaseModelHandler["catboost.CatBoost"]):
         is_sub_model: Optional[bool] = False,
         **kwargs: Unpack[model_types.CatBoostModelSaveOptions],
     ) -> None:
+        enable_explainability = kwargs.get("enable_explainability", True)
+
         import catboost
 
         assert isinstance(model, catboost.CatBoost)
@@ -105,11 +107,14 @@ class CatBoostModelHandler(_base.BaseModelHandler["catboost.CatBoost"]):
                 sample_input_data=sample_input_data,
                 get_prediction_fn=get_prediction,
             )
-            model_objective = cls.get_model_objective(model)
-            model_meta.model_objective = model_objective
-            if kwargs.get("enable_explainability", True):
+            inferred_model_objective = cls.get_model_objective_and_output_type(model)
+            model_meta.model_objective = handlers_utils.validate_model_objective(
+                model_meta.model_objective, inferred_model_objective
+            )
+            model_objective = model_meta.model_objective
+            if enable_explainability:
                 output_type = model_signature.DataType.DOUBLE
-                if model_objective == model_meta_schema.ModelObjective.MULTI_CLASSIFICATION:
+                if model_objective == model_types.ModelObjective.MULTI_CLASSIFICATION:
                     output_type = model_signature.DataType.STRING
                 model_meta = handlers_utils.add_explain_method_signature(
                     model_meta=model_meta,
@@ -143,11 +148,8 @@ class CatBoostModelHandler(_base.BaseModelHandler["catboost.CatBoost"]):
             ],
             check_local_version=True,
         )
-        if kwargs.get("enable_explainability", True):
-            model_meta.env.include_if_absent(
-                [model_env.ModelDependency(requirement="shap", pip_name="shap")],
-                check_local_version=True,
-            )
+        if enable_explainability:
+            model_meta.env.include_if_absent([model_env.ModelDependency(requirement="shap", pip_name="shap")])
             model_meta.explain_algorithm = model_meta_schema.ModelExplainAlgorithm.SHAP
         model_meta.env.cuda_version = kwargs.get("cuda_version", model_env.DEFAULT_CUDA_VERSION)
 

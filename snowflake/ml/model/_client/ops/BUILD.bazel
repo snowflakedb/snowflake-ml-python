@@ -75,3 +75,17 @@ py_library(
         "//snowflake/ml/model/_client/sql:stage",
     ],
 )
+
+py_test(
+    name = "service_ops_test",
+    srcs = ["service_ops_test.py"],
+    deps = [
+        ":service_ops",
+        "//snowflake/ml/_internal:file_utils",
+        "//snowflake/ml/_internal/utils:sql_identifier",
+        "//snowflake/ml/model/_client/service:model_deployment_spec",
+        "//snowflake/ml/model/_client/sql:service",
+        "//snowflake/ml/model/_client/sql:stage",
+        "//snowflake/ml/test_utils:mock_session",
+    ],
+)

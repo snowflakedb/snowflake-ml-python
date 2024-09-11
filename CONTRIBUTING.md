@@ -304,7 +304,7 @@ Example:
 
 ## Unit Testing
 
-Write `pytest` or Python `unittest` style unit tests.
+Write Python `unittest` style unit tests. Pytest is allowed, but not recommended.
 
 ### `unittest`
 
@@ -320,6 +320,10 @@ from absl.testing import absltest
 # instead of
 # from unittest import TestCase, main
 from absl.testing.absltest import TestCase, main
+
+# Call main.
+if __name__ == '__main__':
+  absltest.main()
 ```
 
 `absltest` provides better `bazel` integration which produces a more detailed XML

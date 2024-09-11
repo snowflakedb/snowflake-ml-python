@@ -11,7 +11,6 @@ class ModelDict(TypedDict):
 class ImageBuildDict(TypedDict):
     compute_pool: Required[str]
     image_repo: Required[str]
-    image_name: NotRequired[str]
     force_rebuild: Required[bool]
     external_access_integrations: Required[List[str]]
 
@@ -20,9 +19,9 @@ class ServiceDict(TypedDict):
     name: Required[str]
     compute_pool: Required[str]
     ingress_enabled: Required[bool]
-    min_instances: Required[int]
     max_instances: Required[int]
     gpu: NotRequired[str]
+    num_workers: NotRequired[int]
 
 
 class ModelDeploymentSpecDict(TypedDict):

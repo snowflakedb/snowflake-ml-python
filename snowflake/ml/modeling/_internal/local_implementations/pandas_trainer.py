@@ -43,14 +43,14 @@ class PandasModelTrainer:
             Trained model
         """
         assert hasattr(self.estimator, "fit")  # Keep mypy happy
-        argspec = inspect.getfullargspec(self.estimator.fit)
+        params = inspect.signature(self.estimator.fit).parameters
         args = {"X": self.dataset[self.input_cols]}
 
         if self.label_cols:
-            label_arg_name = "Y" if "Y" in argspec.args else "y"
+            label_arg_name = "Y" if "Y" in params else "y"
             args[label_arg_name] = self.dataset[self.label_cols].squeeze()
 
-        if self.sample_weight_col is not None and "sample_weight" in argspec.args:
+        if self.sample_weight_col is not None and "sample_weight" in params:
             args["sample_weight"] = self.dataset[self.sample_weight_col].squeeze()
 
         return self.estimator.fit(**args)
@@ -59,6 +59,7 @@ class PandasModelTrainer:
         self,
         expected_output_cols_list: List[str],
         drop_input_cols: Optional[bool] = False,
+        example_output_pd_df: Optional[pd.DataFrame] = None,
     ) -> Tuple[pd.DataFrame, object]:
         """Trains the model using specified features and target columns from the dataset.
         This API is different from fit itself because it would also provide the predict
@@ -69,6 +70,8 @@ class PandasModelTrainer:
                 name as a list. Defaults to None.
             drop_input_cols (Optional[bool]): Boolean to determine whether to
                 drop the input columns from the output dataset.
+            example_output_pd_df (Optional[pd.DataFrame]): Example output dataframe
+                This is not used in PandasModelTrainer. It is used in SnowparkModelTrainer.
 
         Returns:
             Tuple[pd.DataFrame, object]: [predicted dataset, estimator]
@@ -108,13 +111,13 @@ class PandasModelTrainer:
         assert hasattr(self.estimator, "fit")  # make type checker happy
         assert hasattr(self.estimator, "fit_transform")  # make type checker happy
 
-        argspec = inspect.getfullargspec(self.estimator.fit)
+        params = inspect.signature(self.estimator.fit).parameters
         args = {"X": self.dataset[self.input_cols]}
         if self.label_cols:
-            label_arg_name = "Y" if "Y" in argspec.args else "y"
+            label_arg_name = "Y" if "Y" in params else "y"
             args[label_arg_name] = self.dataset[self.label_cols].squeeze()
 
-        if self.sample_weight_col is not None and "sample_weight" in argspec.args:
+        if self.sample_weight_col is not None and "sample_weight" in params:
             args["sample_weight"] = self.dataset[self.sample_weight_col].squeeze()
 
         inference_res = self.estimator.fit_transform(**args)

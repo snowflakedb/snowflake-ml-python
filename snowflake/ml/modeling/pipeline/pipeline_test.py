@@ -1,5 +1,6 @@
 import os
 
+import numpy as np
 import pandas as pd
 from absl.testing import absltest
 from sklearn.compose import ColumnTransformer
@@ -10,8 +11,12 @@ from sklearn.preprocessing import MinMaxScaler as sklearn_MMS
 from snowflake.ml.modeling.lightgbm import LGBMClassifier
 from snowflake.ml.modeling.linear_model import LinearRegression
 from snowflake.ml.modeling.pipeline.pipeline import IN_ML_RUNTIME_ENV_VAR, Pipeline
-from snowflake.ml.modeling.preprocessing import MinMaxScaler
-from snowflake.ml.modeling.xgboost import XGBRegressor
+from snowflake.ml.modeling.preprocessing import (
+    MinMaxScaler,
+    OneHotEncoder,
+    StandardScaler,
+)
+from snowflake.ml.modeling.xgboost import XGBClassifier, XGBRegressor
 from snowflake.snowpark import DataFrame
 
 
@@ -50,6 +55,23 @@ class PipelineTest(absltest.TestCase):
                 ("model", LinearRegression(label_cols=["col3"])),
             ]
         )
+
+        # Sample data for the new test
+        self.categorical_columns = ["AGE", "CAMPAIGN", "DEFAULT"]
+        self.numerical_columns = ["CONS_CONF_IDX"]
+        self.label_column = ["LABEL"]
+
+        # Create a small sample dataset
+        self._test_data = pd.DataFrame(
+            {
+                "AGE": ["30", "40", "50"],
+                "CAMPAIGN": ["1", "2", "1"],
+                "CONS_CONF_IDX": [-42.7, -50.8, -36.1],
+                "DEFAULT": ["no", "yes", "no"],
+                "LABEL": [0, 1, 0],
+            }
+        )
+        self._test_data["ROW_INDEX"] = self._test_data.index
 
         return super().setUp()
 
@@ -232,6 +254,92 @@ class PipelineTest(absltest.TestCase):
     def test_to_sklearn(self) -> None:
         """Tests behavior for converting the pipeline to an sklearn pipeline"""
         assert isinstance(self.simple_pipeline.to_sklearn(), sklearn_Pipeline)
+
+    def test_fit_and_compare_results_pandas_dataframe(self) -> None:
+        with absltest.mock.patch.dict(os.environ, {IN_ML_RUNTIME_ENV_VAR: ""}, clear=True):
+            raw_data_pandas = self._test_data
+
+            pipeline = Pipeline(
+                steps=[
+                    (
+                        "OHE",
+                        OneHotEncoder(
+                            input_cols=self.categorical_columns,
+                            output_cols=self.categorical_columns,
+                            drop_input_cols=True,
+                        ),
+                    ),
+                    (
+                        "MMS",
+                        MinMaxScaler(
+                            clip=True,
+                            input_cols=self.numerical_columns,
+                            output_cols=self.numerical_columns,
+                        ),
+                    ),
+                    ("regression", XGBClassifier(label_cols=self.label_column)),
+                ]
+            )
+
+            pipeline.fit(raw_data_pandas)
+            pipeline.predict(raw_data_pandas)
+
+    def test_pipeline_export(self):
+        raw_data_pandas = self._test_data
+
+        # Simulate the creation of the pipeline
+        pipeline = Pipeline(
+            steps=[
+                (
+                    "OHE",
+                    OneHotEncoder(
+                        input_cols=self.categorical_columns, output_cols=self.categorical_columns, drop_input_cols=True
+                    ),
+                ),
+                ("MMS", MinMaxScaler(clip=True, input_cols=self.numerical_columns, output_cols=self.numerical_columns)),
+                ("SS", StandardScaler(input_cols=self.numerical_columns, output_cols=self.numerical_columns)),
+                ("regression", XGBClassifier(label_cols=self.label_column, passthrough_cols="ROW_INDEX")),
+            ]
+        )
+
+        pipeline.fit(raw_data_pandas)
+        snow_results = pipeline.predict(raw_data_pandas).sort_values(by=["ROW_INDEX"])["OUTPUT_LABEL"].to_numpy()
+
+        # Create a similar scikit-learn pipeline for comparison
+        sk_pipeline = pipeline.to_sklearn()
+        sk_results = sk_pipeline.predict(raw_data_pandas.drop(columns=["LABEL"]))
+
+        # Assert the results are close
+        np.testing.assert_allclose(snow_results, sk_results, rtol=1.0e-1, atol=1.0e-2)
+
+    def test_pipeline_with_limited_number_of_columns_in_estimator_export(self) -> None:
+        raw_data_pandas = self._test_data
+        snow_raw_data_pandas = raw_data_pandas.drop("DEFAULT", axis=1)
+
+        pipeline = Pipeline(
+            steps=[
+                (
+                    "MMS",
+                    MinMaxScaler(
+                        clip=True,
+                        input_cols=self.numerical_columns,
+                        output_cols=self.numerical_columns,
+                    ),
+                ),
+                (
+                    "SS",
+                    StandardScaler(input_cols=(self.numerical_columns[0:2]), output_cols=(self.numerical_columns[0:2])),
+                ),
+                ("regression", XGBClassifier(input_cols=self.numerical_columns, label_cols=self.label_column)),
+            ]
+        )
+
+        pipeline.fit(snow_raw_data_pandas)
+        snow_results = pipeline.predict(snow_raw_data_pandas).sort_values(by=["ROW_INDEX"])["OUTPUT_LABEL"].to_numpy()
+
+        sk_pipeline = pipeline.to_sklearn()
+        sk_results = sk_pipeline.predict(raw_data_pandas.drop(columns=["LABEL"]))
+        np.testing.assert_allclose(snow_results, sk_results, rtol=1.0e-1, atol=1.0e-2)
 
     def tearDown(self) -> None:
         os.environ.pop(IN_ML_RUNTIME_ENV_VAR, None)

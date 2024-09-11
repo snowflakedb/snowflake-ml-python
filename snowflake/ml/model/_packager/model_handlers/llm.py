@@ -205,7 +205,9 @@ class LLMHandler(_base.BaseModelHandler[llm.LLM]):
                     "token": raw_model.token,
                 }
                 model_dir_path = raw_model.model_id_or_path
-                peft_config = peft.PeftConfig.from_pretrained(model_dir_path)  # type: ignore[attr-defined]
+                peft_config = peft.PeftConfig.from_pretrained(  # type: ignore[no-untyped-call, attr-defined]
+                    model_dir_path
+                )
                 base_model_path = peft_config.base_model_name_or_path
                 tokenizer = transformers.AutoTokenizer.from_pretrained(
                     base_model_path,
@@ -221,7 +223,7 @@ class LLMHandler(_base.BaseModelHandler[llm.LLM]):
                     model_dir_path,
                     device_map="auto",
                     torch_dtype="auto",
-                    **hub_kwargs,
+                    **hub_kwargs,  # type: ignore[arg-type]
                 )
                 hf_model.eval()
                 hf_model = hf_model.merge_and_unload()

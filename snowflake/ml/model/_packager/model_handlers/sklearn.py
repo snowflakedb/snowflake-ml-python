@@ -45,23 +45,23 @@ class SKLModelHandler(_base.BaseModelHandler[Union["sklearn.base.BaseEstimator",
     @classmethod
     def get_model_objective(
         cls, model: Union["sklearn.base.BaseEstimator", "sklearn.pipeline.Pipeline"]
-    ) -> model_meta_schema.ModelObjective:
+    ) -> model_types.ModelObjective:
         import sklearn.pipeline
         from sklearn.base import is_classifier, is_regressor
 
         if isinstance(model, sklearn.pipeline.Pipeline):
-            return model_meta_schema.ModelObjective.UNKNOWN
+            return model_types.ModelObjective.UNKNOWN
         if is_regressor(model):
-            return model_meta_schema.ModelObjective.REGRESSION
+            return model_types.ModelObjective.REGRESSION
         if is_classifier(model):
             classes_list = getattr(model, "classes_", [])
             num_classes = getattr(model, "n_classes_", None) or len(classes_list)
             if isinstance(num_classes, int):
                 if num_classes > 2:
-                    return model_meta_schema.ModelObjective.MULTI_CLASSIFICATION
-                return model_meta_schema.ModelObjective.BINARY_CLASSIFICATION
-            return model_meta_schema.ModelObjective.UNKNOWN
-        return model_meta_schema.ModelObjective.UNKNOWN
+                    return model_types.ModelObjective.MULTI_CLASSIFICATION
+                return model_types.ModelObjective.BINARY_CLASSIFICATION
+            return model_types.ModelObjective.UNKNOWN
+        return model_types.ModelObjective.UNKNOWN
 
     @classmethod
     def can_handle(
@@ -95,6 +95,18 @@ class SKLModelHandler(_base.BaseModelHandler[Union["sklearn.base.BaseEstimator",
 
         return cast(Union["sklearn.base.BaseEstimator", "sklearn.pipeline.Pipeline"], model)
 
+    @staticmethod
+    def get_explainability_supported_background(
+        sample_input_data: Optional[model_types.SupportedDataType] = None,
+    ) -> Optional[pd.DataFrame]:
+        if isinstance(sample_input_data, pd.DataFrame) or isinstance(sample_input_data, sp_df.DataFrame):
+            return (
+                sample_input_data
+                if isinstance(sample_input_data, pd.DataFrame)
+                else snowpark_handler.SnowparkDataFrameHandler.convert_to_df(sample_input_data)
+            )
+        return None
+
     @classmethod
     def save_model(
         cls,
@@ -106,32 +118,30 @@ class SKLModelHandler(_base.BaseModelHandler[Union["sklearn.base.BaseEstimator",
         is_sub_model: Optional[bool] = False,
         **kwargs: Unpack[model_types.SKLModelSaveOptions],
     ) -> None:
-        enable_explainability = kwargs.get("enable_explainability", False)
+        # setting None by default to distinguish if users did not set it
+        enable_explainability = kwargs.get("enable_explainability", None)
 
         import sklearn.base
         import sklearn.pipeline
 
         assert isinstance(model, sklearn.base.BaseEstimator) or isinstance(model, sklearn.pipeline.Pipeline)
 
-        enable_explainability = kwargs.get("enable_explainability", False)
+        background_data = cls.get_explainability_supported_background(sample_input_data)
+
+        # if users did not ask then we enable if we have background data
+        if enable_explainability is None and background_data is not None:
+            enable_explainability = True
         if enable_explainability:
-            # TODO: Currently limited to pandas df, need to extend to other types.
-            if sample_input_data is None or not (
-                isinstance(sample_input_data, pd.DataFrame) or isinstance(sample_input_data, sp_df.DataFrame)
-            ):
+            # if users set it explicitly but no background data then error out
+            if background_data is None:
                 raise ValueError(
                     "Sample input data is required to enable explainability. Currently we only support this for "
                     + "`pandas.DataFrame` and `snowflake.snowpark.dataframe.DataFrame`."
                 )
-            sample_input_data_pandas = (
-                sample_input_data
-                if isinstance(sample_input_data, pd.DataFrame)
-                else snowpark_handler.SnowparkDataFrameHandler.convert_to_df(sample_input_data)
-            )
             data_blob_path = os.path.join(model_blobs_dir_path, cls.EXPLAIN_ARTIFACTS_DIR)
             os.makedirs(data_blob_path, exist_ok=True)
             with open(os.path.join(data_blob_path, name + cls.BG_DATA_FILE_SUFFIX), "wb") as f:
-                sample_input_data_pandas.to_parquet(f)
+                background_data.to_parquet(f)
 
         if not is_sub_model:
             target_methods = handlers_utils.get_target_methods(
@@ -159,9 +169,13 @@ class SKLModelHandler(_base.BaseModelHandler[Union["sklearn.base.BaseEstimator",
                 get_prediction_fn=get_prediction,
             )
 
+            model_objective = cls.get_model_objective(model)
+            model_meta.model_objective = model_objective
+
             if enable_explainability:
                 output_type = model_signature.DataType.DOUBLE
-                if cls.get_model_objective(model) == model_meta_schema.ModelObjective.MULTI_CLASSIFICATION:
+
+                if model_objective == model_types.ModelObjective.MULTI_CLASSIFICATION:
                     output_type = model_signature.DataType.STRING
                 model_meta = handlers_utils.add_explain_method_signature(
                     model_meta=model_meta,
@@ -184,10 +198,8 @@ class SKLModelHandler(_base.BaseModelHandler[Union["sklearn.base.BaseEstimator",
         model_meta.min_snowpark_ml_version = cls._MIN_SNOWPARK_ML_VERSION
 
         if enable_explainability:
-            model_meta.env.include_if_absent(
-                [model_env.ModelDependency(requirement="shap", pip_name="shap")],
-                check_local_version=True,
-            )
+            model_meta.env.include_if_absent([model_env.ModelDependency(requirement="shap", pip_name="shap")])
+            model_meta.explain_algorithm = model_meta_schema.ModelExplainAlgorithm.SHAP
 
         model_meta.env.include_if_absent(
             [model_env.ModelDependency(requirement="scikit-learn", pip_name="scikit-learn")], check_local_version=True

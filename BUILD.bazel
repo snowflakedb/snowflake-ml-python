@@ -3,6 +3,8 @@ load("//:packages.bzl", "PACKAGES")
 load("//bazel:py_rules.bzl", "py_wheel")
 load("//bazel/requirements:rules.bzl", "generate_pyproject_file")
 
+package(default_visibility = ["//visibility:public"])
+
 exports_files([
     "CHANGELOG.md",
     "README.md",

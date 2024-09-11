@@ -1,7 +1,8 @@
 from typing import Any, Dict, List, Optional, Tuple
 
 from snowflake import snowpark
-from snowflake.ml._internal.utils import formatting, query_result_checker
+from snowflake.ml._internal.utils import formatting, identifier, query_result_checker
+from snowflake.snowpark import types
 
 """Table_manager is a set of utils that helps create tables.
 
@@ -103,4 +104,21 @@ def get_table_schema(session: snowpark.Session, table_name: str, qualified_schem
     schema_dict: Dict[str, str] = {}
     for row in result:
         schema_dict[row["name"]] = row["type"]
+    return schema_dict
+
+
+def get_table_schema_types(
+    session: snowpark.Session,
+    database: str,
+    schema: str,
+    table_name: str,
+) -> Dict[str, types.DataType]:
+    fully_qualified_table_name = identifier.get_schema_level_object_identifier(
+        db=database, schema=schema, object_name=table_name
+    )
+    struct_fields: List[types.StructField] = session.table(fully_qualified_table_name).schema.fields
+
+    schema_dict: Dict[str, types.DataType] = {}
+    for field in struct_fields:
+        schema_dict[field.name] = field.datatype
     return schema_dict

@@ -92,6 +92,7 @@ class ModelComposer:
         python_version: Optional[str] = None,
         ext_modules: Optional[List[ModuleType]] = None,
         code_paths: Optional[List[str]] = None,
+        model_objective: model_types.ModelObjective = model_types.ModelObjective.UNKNOWN,
         options: Optional[model_types.ModelSaveOption] = None,
     ) -> model_meta.ModelMetadata:
         if not options:
@@ -120,6 +121,7 @@ class ModelComposer:
             python_version=python_version,
             ext_modules=ext_modules,
             code_paths=code_paths,
+            model_objective=model_objective,
             options=options,
         )
         assert self.packager.meta is not None

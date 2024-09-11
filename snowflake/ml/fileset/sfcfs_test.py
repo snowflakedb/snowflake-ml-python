@@ -244,7 +244,7 @@ class SFFileSystemTest(parameterized.TestCase):
         assert sffs_deserialized._conn is not None
         assert sffs_deserialized._kwargs == kwargs_dict
 
-    def test_create_default_session_exceptions(self) -> None:
+    def test_get_default_session_exceptions(self) -> None:
         """Tests that correct exceptions are raised when the function fails to create a session.
         Mocks the two session creation functions called by _create_default_connection individually.
         """
@@ -254,13 +254,13 @@ class SFFileSystemTest(parameterized.TestCase):
                 "snowflake.ml.fileset.sfcfs.connection_params.SnowflakeLoginOptions",
                 side_effect=Exception("Error message"),
             ):
-                sffs._create_default_session()
+                sffs._get_default_session()
 
         with self.assertRaises(ValueError):
             with absltest.mock.patch(
                 "snowflake.snowpark.Session.SessionBuilder.create", side_effect=Exception("Error message")
             ):
-                sffs._create_default_session()
+                sffs._get_default_session()
 
     def test_set_state_bad_state_dict(self) -> None:
         """When deserializing, the state dictionary requires a kwargs key that corresponds to a dictionary."""

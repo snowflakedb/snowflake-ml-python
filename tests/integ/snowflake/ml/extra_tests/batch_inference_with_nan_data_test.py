@@ -46,12 +46,13 @@ class BatchInferenceWithNanDataTest(TestCase):
             input_df_pandas[input_cols],
             input_df_pandas[label_cols],
         )
-        training_predictions = (
-            classifier.predict_proba(input_df_sp)
-            .to_pandas()
-            .sort_values(by="INDEX")[['"PREDICT_PROBA_0.0"', '"PREDICT_PROBA_1.0"']]
-            .to_numpy()
-        )
+        training_predictions = classifier.predict_proba(input_df_sp).to_pandas().sort_values(by="INDEX")
+        PREDICT_PROBA_COLS = []
+        for c in training_predictions.columns:
+            if "PREDICT_PROBA_" in c:
+                PREDICT_PROBA_COLS.append(c)
+
+        training_predictions = training_predictions[PREDICT_PROBA_COLS].to_numpy()
         native_predictions = native_classifier.predict_proba(input_df_pandas[input_cols])
         np.testing.assert_allclose(
             training_predictions.flatten(), native_predictions.flatten(), rtol=1.0e-1, atol=1.0e-2

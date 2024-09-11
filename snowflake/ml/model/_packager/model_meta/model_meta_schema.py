@@ -101,13 +101,5 @@ class ModelMetadataDict(TypedDict):
     function_properties: NotRequired[Dict[str, Dict[str, Any]]]
 
 
-class ModelObjective(Enum):
-    UNKNOWN = "unknown"
-    BINARY_CLASSIFICATION = "binary_classification"
-    MULTI_CLASSIFICATION = "multi_classification"
-    REGRESSION = "regression"
-    RANKING = "ranking"
-
-
 class ModelExplainAlgorithm(Enum):
     SHAP = "shap"

@@ -310,6 +310,23 @@ class ModelVersion(lineage_node.LineageNode):
         project=_TELEMETRY_PROJECT,
         subproject=_TELEMETRY_SUBPROJECT,
     )
+    def get_model_objective(self) -> model_types.ModelObjective:
+        statement_params = telemetry.get_statement_params(
+            project=_TELEMETRY_PROJECT,
+            subproject=_TELEMETRY_SUBPROJECT,
+        )
+        return self._model_ops.get_model_objective(
+            database_name=None,
+            schema_name=None,
+            model_name=self._model_name,
+            version_name=self._version_name,
+            statement_params=statement_params,
+        )
+
+    @telemetry.send_api_usage_telemetry(
+        project=_TELEMETRY_PROJECT,
+        subproject=_TELEMETRY_SUBPROJECT,
+    )
     def show_functions(self) -> List[model_manifest_schema.ModelFunctionInfo]:
         """Show all functions information in a model version that is callable.
 
@@ -606,8 +623,8 @@ class ModelVersion(lineage_node.LineageNode):
             "image_repo_database",
             "image_repo_schema",
             "image_repo",
-            "image_name",
             "gpu_requests",
+            "num_workers",
         ],
     )
     def create_service(
@@ -617,11 +634,10 @@ class ModelVersion(lineage_node.LineageNode):
         image_build_compute_pool: Optional[str] = None,
         service_compute_pool: str,
         image_repo: str,
-        image_name: Optional[str] = None,
         ingress_enabled: bool = False,
-        min_instances: int = 1,
         max_instances: int = 1,
         gpu_requests: Optional[str] = None,
+        num_workers: Optional[int] = None,
         force_rebuild: bool = False,
         build_external_access_integration: str,
     ) -> str:
@@ -635,12 +651,12 @@ class ModelVersion(lineage_node.LineageNode):
             service_compute_pool: The name of the compute pool used to run the inference service.
             image_repo: The name of the image repository, can be fully qualified. If not fully qualified, the database
                 or schema of the model will be used.
-            image_name: The name of the model inference image. Use a generated name if None.
             ingress_enabled: Whether to enable ingress.
-            min_instances: The minimum number of inference service instances to run.
             max_instances: The maximum number of inference service instances to run.
             gpu_requests: The gpu limit for GPU based inference. Can be integer, fractional or string values. Use CPU
                 if None.
+            num_workers: The number of workers (replicas of models) to run the inference service.
+                Auto determined if None.
             force_rebuild: Whether to force a model inference image rebuild.
             build_external_access_integration: The external access integration for image build.
 
@@ -670,11 +686,10 @@ class ModelVersion(lineage_node.LineageNode):
             image_repo_database_name=image_repo_db_id,
             image_repo_schema_name=image_repo_schema_id,
             image_repo_name=image_repo_id,
-            image_name=sql_identifier.SqlIdentifier(image_name) if image_name else None,
             ingress_enabled=ingress_enabled,
-            min_instances=min_instances,
             max_instances=max_instances,
             gpu_requests=gpu_requests,
+            num_workers=num_workers,
             force_rebuild=force_rebuild,
             build_external_access_integration=sql_identifier.SqlIdentifier(build_external_access_integration),
             statement_params=statement_params,

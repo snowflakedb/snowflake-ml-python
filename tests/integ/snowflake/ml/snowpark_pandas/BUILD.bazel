@@ -8,7 +8,6 @@ py_test(
     name = "snowpark_pandas_test",
     timeout = "long",
     srcs = ["snowpark_pandas_test.py"],
-    compatible_with_snowpark = False,
     shard_count = 5,
     deps = [
         "//snowflake/ml/_internal:env",

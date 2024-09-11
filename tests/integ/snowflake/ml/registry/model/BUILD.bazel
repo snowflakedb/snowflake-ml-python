@@ -171,7 +171,7 @@ py_test(
     name = "registry_huggingface_pipeline_model_test",
     timeout = "long",
     srcs = ["registry_huggingface_pipeline_model_test.py"],
-    shard_count = 6,
+    shard_count = 8,
     deps = [
         ":registry_model_test_base",
         "//snowflake/ml/_internal:env_utils",

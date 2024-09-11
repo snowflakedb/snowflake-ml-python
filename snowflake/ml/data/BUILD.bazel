@@ -1,4 +1,4 @@
-load("//bazel:py_rules.bzl", "py_library", "py_test")
+load("//bazel:py_rules.bzl", "py_library", "py_package", "py_test")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -25,8 +25,8 @@ py_library(
 )
 
 py_library(
-    name = "torch_dataset",
-    srcs = ["torch_dataset.py"],
+    name = "torch_utils",
+    srcs = ["torch_utils.py"],
 )
 
 py_library(
@@ -34,9 +34,10 @@ py_library(
     srcs = ["data_connector.py"],
     deps = [
         ":data_ingestor",
-        ":torch_dataset",
+        ":torch_utils",
         "//snowflake/ml/_internal:telemetry",
         "//snowflake/ml/data/_internal:arrow_ingestor",
+        "//snowflake/ml/modeling/_internal:constants",
     ],
 )
 
@@ -55,5 +56,14 @@ py_library(
     deps = [
         ":data_connector",
         ":data_source",
+    ],
+)
+
+py_package(
+    name = "data_pkg",
+    packages = ["snowflake.ml"],
+    deps = [
+        ":data",
+        "//snowflake/ml/dataset",
     ],
 )

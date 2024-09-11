@@ -78,7 +78,7 @@ class Patch:
 
         else:
 
-            def patch(self: Any, *args: Any, **kwargs: Any) -> Any:
+            def patch(self: Any, *args: Any, **kwargs: Any) -> Any:  # type: ignore[misc]
                 stage = session.get_session_stage()
                 has_snowpark_pandas = _has_snowpark_pandas(*args, **kwargs)
                 if has_snowpark_pandas:

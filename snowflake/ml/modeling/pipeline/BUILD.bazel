@@ -46,6 +46,9 @@ py_test(
         "//snowflake/ml/modeling/lightgbm:lgbm_classifier",
         "//snowflake/ml/modeling/linear_model:linear_regression",
         "//snowflake/ml/modeling/preprocessing:min_max_scaler",
+        "//snowflake/ml/modeling/preprocessing:one_hot_encoder",
+        "//snowflake/ml/modeling/preprocessing:standard_scaler",
+        "//snowflake/ml/modeling/xgboost:xgb_classifier",
         "//snowflake/ml/modeling/xgboost:xgb_regressor",
     ],
 )

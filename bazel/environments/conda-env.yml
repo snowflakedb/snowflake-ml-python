@@ -14,11 +14,6 @@ dependencies:
   - cachetools==4.2.2
   - catboost==1.2.0
   - cloudpickle==2.2.1
-  - conda-forge::accelerate==0.22.0
-  - conda-forge::mypy==1.5.1
-  - conda-forge::starlette==0.27.0
-  - conda-forge::types-PyYAML==6.0.12
-  - conda-forge::types-cachetools==4.2.2
   - conda-libmamba-solver==23.7.0
   - coverage==6.3.2
   - cryptography==39.0.1
@@ -33,6 +28,7 @@ dependencies:
   - lightgbm==3.3.5
   - mlflow==2.3.1
   - moto==4.0.11
+  - mypy==1.10.0
   - networkx==2.8.4
   - numpy==1.23.5
   - packaging==23.0
@@ -59,18 +55,22 @@ dependencies:
   - snowflake-snowpark-python==1.17.0
   - sphinx==5.0.2
   - sqlparse==0.4.4
+  - starlette==0.27.0
   - tensorflow==2.12.0
   - tokenizers==0.13.2
   - toml==0.10.2
   - torchdata==0.6.1
   - transformers==4.32.1
+  - types-PyYAML==6.0.12.12
   - types-protobuf==4.23.0.1
   - types-requests==2.30.0.0
   - types-toml==0.10.8.6
-  - typing-extensions==4.5.0
+  - typing-extensions==4.6.3
   - werkzeug==2.2.2
   - xgboost==1.7.3
   - pip
   - pip:
       - --extra-index-url https://pypi.org/simple
+      - accelerate==0.22.0
+      - types-cachetools==4.2.2
       - peft==0.5.0

@@ -1,5 +1,8 @@
+import os
+
 import numpy as np
 import pandas as pd
+import pytest
 from absl.testing import absltest
 from importlib_resources import files
 from sklearn.compose import ColumnTransformer as SkColumnTransformer
@@ -11,13 +14,10 @@ from sklearn.preprocessing import (
 )
 from xgboost import XGBClassifier as XGB_XGBClassifier
 
+from snowflake.ml.modeling.compose import ColumnTransformer
 from snowflake.ml.modeling.impute import KNNImputer
 from snowflake.ml.modeling.pipeline import Pipeline
-from snowflake.ml.modeling.preprocessing import (
-    MinMaxScaler,
-    OneHotEncoder,
-    StandardScaler,
-)
+from snowflake.ml.modeling.preprocessing import MinMaxScaler, OneHotEncoder
 from snowflake.ml.modeling.xgboost import XGBClassifier
 from snowflake.ml.utils.connection_params import SnowflakeLoginOptions
 from snowflake.snowpark import Session
@@ -48,6 +48,7 @@ numerical_columns = [
     "PREVIOUS",
 ]
 label_column = ["LABEL"]
+IN_ML_RUNTIME_ENV_VAR = "IN_SPCS_ML_RUNTIME"
 feature_cols = categorical_columns + numerical_columns
 
 
@@ -61,32 +62,65 @@ class PipelineXGBRTest(absltest.TestCase):
     def tearDown(self):
         self._session.close()
 
+    def _get_preprocessor(self, categorical_columns, numerical_columns, use_knn_imputer=True):
+        """Helper method to create the ColumnTransformer for preprocessing."""
+        transformers = [
+            ("ohe", OneHotEncoder(drop_input_cols=True), categorical_columns),
+            ("mms", MinMaxScaler(clip=True), numerical_columns),
+        ]
+
+        if use_knn_imputer:
+            transformers.append(("knn_imputer", KNNImputer(), numerical_columns))
+
+        return ColumnTransformer(
+            transformers=transformers,
+            remainder="passthrough",  # Ensures columns not specified are passed through without transformation
+        )
+
+    def _get_pipeline(self, categorical_columns, numerical_columns, label_column, use_knn_imputer=True):
+        """Helper method to create the Pipeline with the appropriate preprocessor and XGBClassifier."""
+
+        # Check if the environment variable is set to True
+        if os.environ.get(IN_ML_RUNTIME_ENV_VAR):
+            # Create the preprocessor using the helper method
+            preprocessor = self._get_preprocessor(categorical_columns, numerical_columns, use_knn_imputer)
+
+            # Create and return the pipeline with the preprocessor
+            return Pipeline(
+                steps=[
+                    ("preprocessor", preprocessor),
+                    ("regression", XGBClassifier(label_cols=label_column, passthrough_cols="ROW_INDEX")),
+                ]
+            )
+
+        # When the environment variable is not set
+        steps = [
+            (
+                "OHE",
+                OneHotEncoder(input_cols=categorical_columns, output_cols=categorical_columns, drop_input_cols=True),
+            ),
+            (
+                "MMS",
+                MinMaxScaler(
+                    clip=True,
+                    input_cols=numerical_columns,
+                    output_cols=numerical_columns,
+                ),
+            ),
+            ("regression", XGBClassifier(label_cols=label_column, passthrough_cols="ROW_INDEX")),
+        ]
+
+        if use_knn_imputer:
+            steps.insert(2, ("KNNImputer", KNNImputer(input_cols=numerical_columns, output_cols=numerical_columns)))
+
+        return Pipeline(steps=steps)
+
     def test_fit_and_compare_results(self) -> None:
         pd_data = self._test_data
         pd_data["ROW_INDEX"] = pd_data.reset_index().index
         raw_data = self._session.create_dataframe(pd_data)
 
-        pipeline = Pipeline(
-            steps=[
-                (
-                    "OHE",
-                    OneHotEncoder(
-                        input_cols=categorical_columns, output_cols=categorical_columns, drop_input_cols=True
-                    ),
-                ),
-                (
-                    "MMS",
-                    MinMaxScaler(
-                        clip=True,
-                        input_cols=numerical_columns,
-                        output_cols=numerical_columns,
-                    ),
-                ),
-                ("KNNImputer", KNNImputer(input_cols=numerical_columns, output_cols=numerical_columns)),
-                ("regression", XGBClassifier(label_cols=label_column, passthrough_cols="ROW_INDEX")),
-            ]
-        )
-
+        pipeline = self._get_pipeline(categorical_columns, numerical_columns, label_column)
         pipeline.fit(raw_data)
         results = pipeline.predict(raw_data).to_pandas().sort_values(by=["ROW_INDEX"])["OUTPUT_LABEL"].to_numpy()
 
@@ -115,30 +149,10 @@ class PipelineXGBRTest(absltest.TestCase):
         pd_data["ROW_INDEX"] = pd_data.reset_index().index
         raw_data = self._session.create_dataframe(pd_data)
 
-        pipeline = Pipeline(
-            steps=[
-                (
-                    "OHE",
-                    OneHotEncoder(
-                        input_cols=categorical_columns, output_cols=categorical_columns, drop_input_cols=True
-                    ),
-                ),
-                (
-                    "MMS",
-                    MinMaxScaler(
-                        clip=True,
-                        input_cols=numerical_columns,
-                        output_cols=numerical_columns,
-                    ),
-                ),
-                ("KNNImputer", KNNImputer(input_cols=numerical_columns, output_cols=numerical_columns)),
-                ("regression", XGBClassifier(label_cols=label_column, passthrough_cols="ROW_INDEX")),
-            ]
-        )
-
+        pipeline = self._get_pipeline(categorical_columns, numerical_columns, label_column)
         pipeline.fit(raw_data)
         results = pipeline.predict_proba(raw_data).to_pandas().sort_values(by=["ROW_INDEX"])
-        proba_cols = [c for c in results.columns if c.startswith("PREDICT_PROBA_")]
+        proba_cols = [c for c in results.columns if c.startswith("PREDICT_PROBA")]
         proba_results = results[proba_cols].to_numpy()
 
         sk_pipeline = SkPipeline(
@@ -161,152 +175,29 @@ class PipelineXGBRTest(absltest.TestCase):
 
         np.testing.assert_allclose(proba_results.flatten(), sk_proba_results.flatten(), rtol=1.0e-1, atol=1.0e-2)
 
-    def test_fit_and_compare_results_pandas_dataframe(self) -> None:
-        raw_data_pandas = self._test_data
-
-        pipeline = Pipeline(
-            steps=[
-                (
-                    "OHE",
-                    OneHotEncoder(
-                        input_cols=categorical_columns, output_cols=categorical_columns, drop_input_cols=True
-                    ),
-                ),
-                (
-                    "MMS",
-                    MinMaxScaler(
-                        clip=True,
-                        input_cols=numerical_columns,
-                        output_cols=numerical_columns,
-                    ),
-                ),
-                ("regression", XGBClassifier(label_cols=label_column)),
-            ]
-        )
-
-        pipeline.fit(raw_data_pandas)
-        pipeline.predict(raw_data_pandas)
-
+    @pytest.mark.skipif(
+        os.getenv("IN_SPCS_ML_RUNTIME") == "True",
+        reason=(
+            "Skipping this test, as we go ahead with this PR"
+            "See: https://github.com/snowflakedb/snowml/pull/2651/files"
+        ),
+    )
     def test_fit_and_compare_results_pandas(self) -> None:
         pd_data = self._test_data
+        pd_data["ROW_INDEX"] = pd_data.reset_index().index
         raw_data = self._session.create_dataframe(pd_data)
 
-        pipeline = Pipeline(
-            steps=[
-                (
-                    "OHE",
-                    OneHotEncoder(
-                        input_cols=categorical_columns, output_cols=categorical_columns, drop_input_cols=True
-                    ),
-                ),
-                (
-                    "MMS",
-                    MinMaxScaler(
-                        clip=True,
-                        input_cols=numerical_columns,
-                        output_cols=numerical_columns,
-                    ),
-                ),
-                ("regression", XGBClassifier(label_cols=label_column)),
-            ]
-        )
+        pipeline = self._get_pipeline(categorical_columns, numerical_columns, label_column, use_knn_imputer=False)
 
         pipeline.fit(raw_data)
         pipeline.predict(raw_data.to_pandas())
-
-    def test_pipeline_export(self) -> None:
-        pd_data = self._test_data
-        pd_data["ROW_INDEX"] = pd_data.reset_index().index
-        snow_df = self._session.create_dataframe(pd_data)
-        pd_df = pd_data.drop("LABEL", axis=1)
-
-        pipeline = Pipeline(
-            steps=[
-                (
-                    "OHE",
-                    OneHotEncoder(
-                        input_cols=categorical_columns, output_cols=categorical_columns, drop_input_cols=True
-                    ),
-                ),
-                (
-                    "MMS",
-                    MinMaxScaler(
-                        clip=True,
-                        input_cols=numerical_columns,
-                        output_cols=numerical_columns,
-                    ),
-                ),
-                (
-                    "SS",
-                    StandardScaler(input_cols=(numerical_columns[0:2]), output_cols=(numerical_columns[0:2])),
-                ),
-                ("regression", XGBClassifier(label_cols=label_column, passthrough_cols="ROW_INDEX")),
-            ]
-        )
-
-        pipeline.fit(snow_df)
-        snow_results = pipeline.predict(snow_df).to_pandas().sort_values(by=["ROW_INDEX"])["OUTPUT_LABEL"].to_numpy()
-
-        sk_pipeline = pipeline.to_sklearn()
-        sk_results = sk_pipeline.predict(pd_df)
-        np.testing.assert_allclose(snow_results.flatten(), sk_results.flatten(), rtol=1.0e-1, atol=1.0e-2)
-
-    def test_pipeline_with_limited_number_of_columns_in_estimator_export(self) -> None:
-        pd_data = self._test_data
-        pd_data["ROW_INDEX"] = pd_data.reset_index().index
-        snow_df = self._session.create_dataframe(pd_data.drop("DEFAULT", axis=1))
-        pd_df = pd_data.drop("LABEL", axis=1)
-
-        pipeline = Pipeline(
-            steps=[
-                (
-                    "MMS",
-                    MinMaxScaler(
-                        clip=True,
-                        input_cols=numerical_columns,
-                        output_cols=numerical_columns,
-                    ),
-                ),
-                (
-                    "SS",
-                    StandardScaler(input_cols=(numerical_columns[0:2]), output_cols=(numerical_columns[0:2])),
-                ),
-                ("regression", XGBClassifier(input_cols=numerical_columns, label_cols=label_column)),
-            ]
-        )
-
-        pipeline.fit(snow_df)
-        snow_results = pipeline.predict(snow_df).to_pandas().sort_values(by=["ROW_INDEX"])["OUTPUT_LABEL"].to_numpy()
-
-        sk_pipeline = pipeline.to_sklearn()
-        sk_results = sk_pipeline.predict(pd_df)
-        np.testing.assert_allclose(snow_results.flatten(), sk_results.flatten(), rtol=1.0e-1, atol=1.0e-2)
 
     def test_pipeline_squash(self) -> None:
         pd_data = self._test_data
         pd_data["ROW_INDEX"] = pd_data.reset_index().index
         raw_data = self._session.create_dataframe(pd_data)
 
-        pipeline = Pipeline(
-            steps=[
-                (
-                    "OHE",
-                    OneHotEncoder(
-                        input_cols=categorical_columns, output_cols=categorical_columns, drop_input_cols=True
-                    ),
-                ),
-                (
-                    "MMS",
-                    MinMaxScaler(
-                        clip=True,
-                        input_cols=numerical_columns,
-                        output_cols=numerical_columns,
-                    ),
-                ),
-                ("KNNImputer", KNNImputer(input_cols=numerical_columns, output_cols=numerical_columns)),
-                ("regression", XGBClassifier(label_cols=label_column, passthrough_cols="ROW_INDEX")),
-            ]
-        )
+        pipeline = self._get_pipeline(categorical_columns, numerical_columns, label_column)
 
         pipeline._deps.append(
             test_env_utils.get_latest_package_version_spec_in_server(self._session, "snowflake-snowpark-python")

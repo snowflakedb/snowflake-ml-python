@@ -119,12 +119,14 @@ def cleanup_temporary_objects(session: Session) -> None:
         result = session.sql(f"SHOW SCHEMAS IN DATABASE {db}").collect()
         permanent_schemas = to_sql_identifiers(["INFORMATION_SCHEMA", "PUBLIC", FS_INTEG_TEST_DATASET_SCHEMA])
         for row in result:
-            if SqlIdentifier(row["name"]) not in permanent_schemas and is_object_expired(row):
-                session.sql(f"DROP SCHEMA IF EXISTS {db}.{row['name']}").collect()
+            schema = SqlIdentifier(row["name"], case_sensitive=True)
+            if schema.resolved() not in permanent_schemas and is_object_expired(row):
+                session.sql(f"DROP SCHEMA IF EXISTS {db}.{schema.identifier()}").collect()
 
     full_schema_path = f"{FS_INTEG_TEST_DB}.{FS_INTEG_TEST_DATASET_SCHEMA}"
     result = session.sql(f"SHOW TABLES IN {full_schema_path}").collect()
     permanent_tables = to_sql_identifiers([FS_INTEG_TEST_YELLOW_TRIP_DATA, FS_INTEG_TEST_WINE_QUALITY_DATA])
     for row in result:
-        if SqlIdentifier(row["name"]) not in permanent_tables and is_object_expired(row):
-            session.sql(f"DROP TABLE IF EXISTS {full_schema_path}.{row['name']}").collect()
+        table = SqlIdentifier(row["name"], case_sensitive=True)
+        if table.resolved() not in permanent_tables and is_object_expired(row):
+            session.sql(f"DROP TABLE IF EXISTS {full_schema_path}.{table.identifier()}").collect()

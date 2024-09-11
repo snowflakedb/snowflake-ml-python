@@ -77,15 +77,17 @@ class ModelInterfaceTest(absltest.TestCase):
                             name="model1",
                             model=linear_model.LinearRegression(),
                             sample_input_data=d,
+                            model_objective=model_types.ModelObjective.REGRESSION,
                         )
+
+                    mock_upload_directory_to_stage.assert_called_once_with(
+                        c_session,
+                        local_path=mock.ANY,
+                        stage_path=pathlib.PurePosixPath(stage_path),
+                        statement_params=None,
+                    )
                 mock_save.assert_called_once()
                 mock_manifest_save.assert_called_once()
-                mock_upload_directory_to_stage.assert_called_once_with(
-                    c_session,
-                    local_path=mock.ANY,
-                    stage_path=pathlib.PurePosixPath(stage_path),
-                    statement_params=None,
-                )
 
     def test_load(self) -> None:
         m_options = model_types.PyTorchLoadOptions(use_gpu=False)

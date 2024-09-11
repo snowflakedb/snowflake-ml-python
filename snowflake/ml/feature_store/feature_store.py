@@ -604,7 +604,7 @@ class FeatureStore:
         logger.info(f"Registered FeatureView {feature_view.name}/{version} successfully.")
         return self.get_feature_view(feature_view.name, str(version))
 
-    @dispatch_decorator()
+    @overload
     def update_feature_view(
         self,
         name: str,
@@ -614,12 +614,36 @@ class FeatureStore:
         warehouse: Optional[str] = None,
         desc: Optional[str] = None,
     ) -> FeatureView:
+        ...
+
+    @overload
+    def update_feature_view(
+        self,
+        name: FeatureView,
+        version: Optional[str] = None,
+        *,
+        refresh_freq: Optional[str] = None,
+        warehouse: Optional[str] = None,
+        desc: Optional[str] = None,
+    ) -> FeatureView:
+        ...
+
+    @dispatch_decorator()  # type: ignore[misc]
+    def update_feature_view(
+        self,
+        name: Union[FeatureView, str],
+        version: Optional[str] = None,
+        *,
+        refresh_freq: Optional[str] = None,
+        warehouse: Optional[str] = None,
+        desc: Optional[str] = None,
+    ) -> FeatureView:
         """Update a registered feature view.
             Check feature_view.py for which fields are allowed to be updated after registration.
 
         Args:
-            name: name of the FeatureView to be updated.
-            version: version of the FeatureView to be updated.
+            name: FeatureView object or name to suspend.
+            version: Optional version of feature view. Must set when argument feature_view is a str.
             refresh_freq: updated refresh frequency.
             warehouse: updated warehouse.
             desc: description of feature view.
@@ -661,7 +685,7 @@ class FeatureStore:
             SnowflakeMLException: [RuntimeError] If FeatureView is not managed and refresh_freq is defined.
             SnowflakeMLException: [RuntimeError] Failed to update feature view.
         """
-        feature_view = self.get_feature_view(name=name, version=version)
+        feature_view = self._validate_feature_view_name_and_version_input(name, version)
         new_desc = desc if desc is not None else feature_view.desc
 
         if feature_view.status == FeatureViewStatus.STATIC:
@@ -696,7 +720,7 @@ class FeatureStore:
                     f"Update feature view {feature_view.name}/{feature_view.version} failed: {e}"
                 ),
             ) from e
-        return self.get_feature_view(name=name, version=version)
+        return self.get_feature_view(name=feature_view.name, version=str(feature_view.version))
 
     @overload
     def read_feature_view(self, feature_view: str, version: str) -> DataFrame:
@@ -2121,7 +2145,7 @@ class FeatureStore:
         if "." not in name:
             return f"{self._config.full_schema_path}.{name}"
 
-        db_name, schema_name, object_name, _ = identifier.parse_schema_level_object_identifier(name)
+        db_name, schema_name, object_name = identifier.parse_schema_level_object_identifier(name)
         return "{}.{}.{}".format(
             db_name or self._config.database,
             schema_name or self._config.schema,
@@ -2186,11 +2210,7 @@ class FeatureStore:
         if len(fv_maps.keys()) == 0:
             return self._session.create_dataframe([], schema=_LIST_FEATURE_VIEW_SCHEMA)
 
-        filters = (
-            [lambda d: d["entityName"].startswith(feature_view_name.resolved())]  # type: ignore[union-attr]
-            if feature_view_name
-            else None
-        )
+        filters = [lambda d: d["entityName"].startswith(feature_view_name.resolved())] if feature_view_name else None
         res = self._lookup_tagged_objects(self._get_entity_name(entity_name), filters)
 
         output_values: List[List[Any]] = []
@@ -2281,16 +2301,20 @@ class FeatureStore:
                 timestamp_col=timestamp_col,
                 desc=desc,
                 version=version,
-                status=FeatureViewStatus(row["scheduling_state"])
-                if len(row["scheduling_state"]) > 0
-                else FeatureViewStatus.MASKED,
+                status=(
+                    FeatureViewStatus(row["scheduling_state"])
+                    if len(row["scheduling_state"]) > 0
+                    else FeatureViewStatus.MASKED
+                ),
                 feature_descs=self._fetch_column_descs("DYNAMIC TABLE", fv_name),
                 refresh_freq=row["target_lag"],
                 database=self._config.database.identifier(),
                 schema=self._config.schema.identifier(),
-                warehouse=SqlIdentifier(row["warehouse"], case_sensitive=True).identifier()
-                if len(row["warehouse"]) > 0
-                else None,
+                warehouse=(
+                    SqlIdentifier(row["warehouse"], case_sensitive=True).identifier()
+                    if len(row["warehouse"]) > 0
+                    else None
+                ),
                 refresh_mode=row["refresh_mode"],
                 refresh_mode_reason=row["refresh_mode_reason"],
                 owner=row["owner"],

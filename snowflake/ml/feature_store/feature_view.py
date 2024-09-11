@@ -706,7 +706,7 @@ Got {len(self._feature_df.queries['queries'])}: {self._feature_df.queries['queri
             >>> ).attach_feature_desc({"AGE": "my age", "TITLE": '"my title"'})
             >>> fv = fs.register_feature_view(draft_fv, '1.0')
             <BLANKLINE>
-            fv.to_df().show()
+            >>> fv.to_df().show()
             ----------------------------------------------------------------...
             |"NAME"  |"ENTITIES"                |"TIMESTAMP_COL"  |"DESC"  |
             ----------------------------------------------------------------...
@@ -801,7 +801,7 @@ Got {len(self._feature_df.queries['queries'])}: {self._feature_df.queries['queri
 
     @staticmethod
     def _load_from_lineage_node(session: Session, name: str, version: str) -> FeatureView:
-        db_name, feature_store_name, feature_view_name, _ = identifier.parse_schema_level_object_identifier(name)
+        db_name, feature_store_name, feature_view_name = identifier.parse_schema_level_object_identifier(name)
 
         session_warehouse = session.get_current_warehouse()
 

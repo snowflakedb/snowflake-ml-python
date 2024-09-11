@@ -17,6 +17,25 @@ py_library(
     srcs = ["import_utils.py"],
 )
 
+py_library(
+    name = "db_utils",
+    srcs = ["db_utils.py"],
+    deps = [
+        ":query_result_checker",
+        ":sql_identifier",
+    ],
+)
+
+py_test(
+    name = "db_utils_test",
+    srcs = ["db_utils_test.py"],
+    deps = [
+        ":db_utils",
+        "//snowflake/ml/test_utils:mock_data_frame",
+        "//snowflake/ml/test_utils:mock_session",
+    ],
+)
+
 py_test(
     name = "import_utils_test",
     srcs = ["import_utils_test.py"],
@@ -161,6 +180,7 @@ py_library(
     srcs = [
         "table_manager.py",
         "//snowflake/ml/_internal/utils:formatting",
+        "//snowflake/ml/_internal/utils:identifier",
         "//snowflake/ml/_internal/utils:query_result_checker",
     ],
 )

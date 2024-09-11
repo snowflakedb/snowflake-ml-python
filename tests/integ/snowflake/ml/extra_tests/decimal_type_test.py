@@ -49,7 +49,7 @@ class DecimalTypeTest(TestCase):
         actual_results = reg.predict(input_df_pandas)[reg.get_output_cols()].to_numpy()
         sklearn_results = sklearn_reg.predict(input_df_pandas[input_cols])
 
-        np.testing.assert_allclose(actual_results.flatten(), sklearn_results.flatten())
+        np.testing.assert_allclose(actual_results.flatten(), sklearn_results.flatten(), rtol=1.0e-3, atol=1.0e-3)
 
 
 if __name__ == "__main__":

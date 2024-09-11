@@ -2,7 +2,7 @@ import enum
 from typing import Any, Dict, Optional, TypedDict, cast
 
 from packaging import version
-from typing_extensions import Required
+from typing_extensions import NotRequired, Required
 
 from snowflake.ml._internal.utils import query_result_checker
 from snowflake.snowpark import session
@@ -52,7 +52,7 @@ class SnowflakeCloudType(enum.Enum):
 
 
 class SnowflakeRegion(TypedDict):
-    region_group: Required[str]
+    region_group: NotRequired[str]
     snowflake_region: Required[str]
     cloud: Required[SnowflakeCloudType]
     region: Required[str]
@@ -64,23 +64,33 @@ def get_regions(
 ) -> Dict[str, SnowflakeRegion]:
     res = (
         query_result_checker.SqlResultValidator(sess, "SHOW REGIONS", statement_params=statement_params)
-        .has_column("region_group")
         .has_column("snowflake_region")
         .has_column("cloud")
         .has_column("region")
         .has_column("display_name")
         .validate()
     )
-    return {
-        f"{r.region_group}.{r.snowflake_region}": SnowflakeRegion(
-            region_group=r.region_group,
-            snowflake_region=r.snowflake_region,
-            cloud=SnowflakeCloudType.from_value(r.cloud),
-            region=r.region,
-            display_name=r.display_name,
-        )
-        for r in res
-    }
+    res_dict = {}
+    for r in res:
+        if hasattr(r, "region_group") and r.region_group:
+            key = f"{r.region_group}.{r.snowflake_region}"
+            res_dict[key] = SnowflakeRegion(
+                region_group=r.region_group,
+                snowflake_region=r.snowflake_region,
+                cloud=SnowflakeCloudType.from_value(r.cloud),
+                region=r.region,
+                display_name=r.display_name,
+            )
+        else:
+            key = r.snowflake_region
+            res_dict[key] = SnowflakeRegion(
+                snowflake_region=r.snowflake_region,
+                cloud=SnowflakeCloudType.from_value(r.cloud),
+                region=r.region,
+                display_name=r.display_name,
+            )
+
+    return res_dict
 
 
 def get_current_region_id(sess: session.Session, *, statement_params: Optional[Dict[str, Any]] = None) -> str:

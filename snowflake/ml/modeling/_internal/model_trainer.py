@@ -20,6 +20,7 @@ class ModelTrainer(Protocol):
         self,
         expected_output_cols_list: List[str],
         drop_input_cols: Optional[bool] = False,
+        example_output_pd_df: Optional[pd.DataFrame] = None,
     ) -> Tuple[Union[DataFrame, pd.DataFrame], object]:
         raise NotImplementedError
 

@@ -154,44 +154,6 @@ py_test(
 )
 
 py_library(
-    name = "embed_text_768",
-    srcs = ["_embed_text_768.py"],
-    deps = [
-        ":util",
-        "//snowflake/ml/_internal:telemetry",
-    ],
-)
-
-py_test(
-    name = "embed_text_768_test",
-    srcs = ["embed_text_768_test.py"],
-    deps = [
-        ":embed_text_768",
-        ":test_util",
-        "//snowflake/ml/utils:connection_params",
-    ],
-)
-
-py_library(
-    name = "embed_text_1024",
-    srcs = ["_embed_text_1024.py"],
-    deps = [
-        ":util",
-        "//snowflake/ml/_internal:telemetry",
-    ],
-)
-
-py_test(
-    name = "embed_text_1024_test",
-    srcs = ["embed_text_1024_test.py"],
-    deps = [
-        ":embed_text_1024",
-        ":test_util",
-        "//snowflake/ml/utils:connection_params",
-    ],
-)
-
-py_library(
     name = "init",
     srcs = [
         "__init__.py",
@@ -199,8 +161,6 @@ py_library(
     deps = [
         ":classify_text",
         ":complete",
-        ":embed_text_768",
-        ":embed_text_1024",
         ":extract_answer",
         ":sentiment",
         ":summarize",

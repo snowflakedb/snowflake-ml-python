@@ -554,15 +554,14 @@ class ModelOperator:
             res[function_name] = target_method
         return res
 
-    def get_functions(
+    def _fetch_model_spec(
         self,
-        *,
         database_name: Optional[sql_identifier.SqlIdentifier],
         schema_name: Optional[sql_identifier.SqlIdentifier],
         model_name: sql_identifier.SqlIdentifier,
         version_name: sql_identifier.SqlIdentifier,
         statement_params: Optional[Dict[str, Any]] = None,
-    ) -> List[model_manifest_schema.ModelFunctionInfo]:
+    ) -> model_meta_schema.ModelMetadataDict:
         raw_model_spec_res = self._model_client.show_versions(
             database_name=database_name,
             schema_name=schema_name,
@@ -573,6 +572,43 @@ class ModelOperator:
         )[0][self._model_client.MODEL_VERSION_MODEL_SPEC_COL_NAME]
         model_spec_dict = yaml.safe_load(raw_model_spec_res)
         model_spec = model_meta.ModelMetadata._validate_model_metadata(model_spec_dict)
+        return model_spec
+
+    def get_model_objective(
+        self,
+        *,
+        database_name: Optional[sql_identifier.SqlIdentifier],
+        schema_name: Optional[sql_identifier.SqlIdentifier],
+        model_name: sql_identifier.SqlIdentifier,
+        version_name: sql_identifier.SqlIdentifier,
+        statement_params: Optional[Dict[str, Any]] = None,
+    ) -> type_hints.ModelObjective:
+        model_spec = self._fetch_model_spec(
+            database_name=database_name,
+            schema_name=schema_name,
+            model_name=model_name,
+            version_name=version_name,
+            statement_params=statement_params,
+        )
+        model_objective_val = model_spec.get("model_objective", type_hints.ModelObjective.UNKNOWN.value)
+        return type_hints.ModelObjective(model_objective_val)
+
+    def get_functions(
+        self,
+        *,
+        database_name: Optional[sql_identifier.SqlIdentifier],
+        schema_name: Optional[sql_identifier.SqlIdentifier],
+        model_name: sql_identifier.SqlIdentifier,
+        version_name: sql_identifier.SqlIdentifier,
+        statement_params: Optional[Dict[str, Any]] = None,
+    ) -> List[model_manifest_schema.ModelFunctionInfo]:
+        model_spec = self._fetch_model_spec(
+            database_name=database_name,
+            schema_name=schema_name,
+            model_name=model_name,
+            version_name=version_name,
+            statement_params=statement_params,
+        )
         show_functions_res = self._model_version_client.show_functions(
             database_name=database_name,
             schema_name=schema_name,

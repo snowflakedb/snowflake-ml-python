@@ -59,6 +59,12 @@ class SqlIdentifierTest(absltest.TestCase):
             ),
         )
 
+        with self.assertRaises(ValueError):
+            sql_identifier.parse_fully_qualified_name('db."schema".abc.def')
+
+        with self.assertRaises(ValueError):
+            sql_identifier.parse_fully_qualified_name("abc-def")
+
 
 if __name__ == "__main__":
     absltest.main()

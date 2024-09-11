@@ -1,4 +1,5 @@
 # mypy: disable-error-code="import"
+from enum import Enum
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -232,7 +233,6 @@ class BaseModelSaveOption(TypedDict):
     _legacy_save: NotRequired[bool]
     function_type: NotRequired[Literal["FUNCTION", "TABLE_FUNCTION"]]
     method_options: NotRequired[Dict[str, ModelMethodSaveOptions]]
-    include_pip_dependencies: NotRequired[bool]
     enable_explainability: NotRequired[bool]
 
 
@@ -431,3 +431,11 @@ class Deployment(TypedDict):
     signature: core.ModelSignature
     options: Required[DeployOptions]
     details: NotRequired[DeployDetails]
+
+
+class ModelObjective(Enum):
+    UNKNOWN = "unknown"
+    BINARY_CLASSIFICATION = "binary_classification"
+    MULTI_CLASSIFICATION = "multi_classification"
+    REGRESSION = "regression"
+    RANKING = "ranking"

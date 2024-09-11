@@ -30,6 +30,12 @@ class SnowflakeEnvTest(absltest.TestCase):
         query = "SHOW REGIONS"
         sql_result = [
             Row(
+                snowflake_region="AWS_US_WEST_1",
+                cloud="aws",
+                region="us-west-1",
+                display_name="US West (Oregon)",
+            ),
+            Row(
                 region_group="PUBLIC",
                 snowflake_region="AWS_US_WEST_2",
                 cloud="aws",
@@ -55,6 +61,12 @@ class SnowflakeEnvTest(absltest.TestCase):
         actual_result = snowflake_env.get_regions(cast(Session, session))
         self.assertDictEqual(
             {
+                "AWS_US_WEST_1": snowflake_env.SnowflakeRegion(
+                    snowflake_region="AWS_US_WEST_1",
+                    cloud=snowflake_env.SnowflakeCloudType.AWS,
+                    region="us-west-1",
+                    display_name="US West (Oregon)",
+                ),
                 "PUBLIC.AWS_US_WEST_2": snowflake_env.SnowflakeRegion(
                     region_group="PUBLIC",
                     snowflake_region="AWS_US_WEST_2",

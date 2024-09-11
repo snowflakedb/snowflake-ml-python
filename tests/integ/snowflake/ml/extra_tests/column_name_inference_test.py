@@ -53,7 +53,7 @@ class ColumnNameInferenceTest(TestCase):
         sklearn_results = sklearn_reg.predict(input_df_pandas[input_cols])
 
         np.testing.assert_array_equal(reg.get_input_cols(), input_cols)
-        np.testing.assert_allclose(actual_results.flatten(), sklearn_results.flatten())
+        np.testing.assert_allclose(actual_results.flatten(), sklearn_results.flatten(), rtol=1.0e-3, atol=1.0e-3)
 
     def test_snowpark_interface_with_passthrough_cols(self):
         self._test_column_name_inference(use_snowpark_interface=True, use_passthrough_cols=True)

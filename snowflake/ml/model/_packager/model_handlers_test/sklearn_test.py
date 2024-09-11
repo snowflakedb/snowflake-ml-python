@@ -13,7 +13,7 @@ from snowflake.ml.model._packager import model_packager
 
 
 class SKLearnHandlerTest(absltest.TestCase):
-    def test_skl_multiple_output_proba(self) -> None:
+    def test_skl_multiple_output_proba_no_explain(self) -> None:
         iris_X, iris_y = datasets.load_iris(return_X_y=True)
         target2 = np.random.randint(0, 6, size=iris_y.shape)
         dual_target = np.vstack([iris_y, target2]).T
@@ -57,7 +57,11 @@ class SKLearnHandlerTest(absltest.TestCase):
                     model=model,
                     sample_input_data=iris_X_df,
                     metadata={"author": "halu", "version": "1"},
-                    options=model_types.SKLModelSaveOptions({"target_methods": ["random"]}),
+                    options=model_types.SKLModelSaveOptions(
+                        {
+                            "target_methods": ["random"],
+                        }
+                    ),
                 )
 
             model_packager.ModelPackager(os.path.join(tmpdir, "model1_no_sig")).save(
@@ -65,6 +69,11 @@ class SKLearnHandlerTest(absltest.TestCase):
                 model=model,
                 sample_input_data=iris_X_df,
                 metadata={"author": "halu", "version": "1"},
+                options=model_types.SKLModelSaveOptions(
+                    {
+                        "enable_explainability": False,
+                    }
+                ),
             )
 
             pk = model_packager.ModelPackager(os.path.join(tmpdir, "model1_no_sig"))
@@ -123,7 +132,6 @@ class SKLearnHandlerTest(absltest.TestCase):
                 model=model,
                 sample_input_data=iris_X_df,
                 metadata={"author": "halu", "version": "1"},
-                options=model_types.SKLModelSaveOptions(enable_explainability=True),
             )
 
             pk = model_packager.ModelPackager(os.path.join(tmpdir, "model1_no_sig"))
@@ -159,7 +167,7 @@ class SKLearnHandlerTest(absltest.TestCase):
             with self.assertRaises(ValueError):
                 explain_method(iris_X_df[-10:])
 
-    def test_skl(self) -> None:
+    def test_skl_no_explain(self) -> None:
         iris_X, iris_y = datasets.load_iris(return_X_y=True)
         regr = linear_model.LinearRegression()
         iris_X_df = pd.DataFrame(iris_X, columns=["c1", "c2", "c3", "c4"])
@@ -172,6 +180,7 @@ class SKLearnHandlerTest(absltest.TestCase):
                     model=regr,
                     signatures={**s, "another_predict": s["predict"]},
                     metadata={"author": "halu", "version": "1"},
+                    options=model_types.SKLModelSaveOptions(enable_explainability=False),
                 )
 
             model_packager.ModelPackager(os.path.join(tmpdir, "model1")).save(
@@ -179,6 +188,7 @@ class SKLearnHandlerTest(absltest.TestCase):
                 model=regr,
                 signatures=s,
                 metadata={"author": "halu", "version": "1"},
+                options=model_types.SKLModelSaveOptions(enable_explainability=False),
             )
 
             with warnings.catch_warnings():
@@ -204,6 +214,7 @@ class SKLearnHandlerTest(absltest.TestCase):
                 model=regr,
                 sample_input_data=iris_X_df,
                 metadata={"author": "halu", "version": "1"},
+                options=model_types.SKLModelSaveOptions(enable_explainability=False),
             )
 
             pk = model_packager.ModelPackager(os.path.join(tmpdir, "model1_no_sig"))
@@ -248,7 +259,6 @@ class SKLearnHandlerTest(absltest.TestCase):
                 model=regr,
                 sample_input_data=iris_X_df,
                 metadata={"author": "halu", "version": "1"},
-                options=model_types.SKLModelSaveOptions(enable_explainability=True),
             )
 
             with warnings.catch_warnings():
@@ -264,6 +274,33 @@ class SKLearnHandlerTest(absltest.TestCase):
                 assert callable(explain_method)
                 np.testing.assert_allclose(np.array([[-0.08254936]]), predict_method(iris_X_df[:1]))
                 np.testing.assert_allclose(explain_method(iris_X_df), explanations)
+
+    def test_skl_no_default_explain_without_background_data(self) -> None:
+        iris_X, iris_y = datasets.load_iris(return_X_y=True)
+        regr = linear_model.LinearRegression()
+        iris_X_df = pd.DataFrame(iris_X, columns=["c1", "c2", "c3", "c4"])
+        regr.fit(iris_X_df, iris_y)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            s = {"predict": model_signature.infer_signature(iris_X_df, regr.predict(iris_X_df))}
+
+            model_packager.ModelPackager(os.path.join(tmpdir, "model1")).save(
+                name="model1",
+                model=regr,
+                signatures=s,
+                metadata={"author": "halu", "version": "1"},
+            )
+
+            with warnings.catch_warnings():
+                warnings.simplefilter("error")
+
+                pk = model_packager.ModelPackager(os.path.join(tmpdir, "model1"))
+                pk.load(as_custom_model=True)
+                assert pk.model
+                assert pk.meta
+                predict_method = getattr(pk.model, "predict", None)
+                explain_method = getattr(pk.model, "explain", None)
+                assert callable(predict_method)
+                self.assertEqual(explain_method, None)
 
 
 if __name__ == "__main__":

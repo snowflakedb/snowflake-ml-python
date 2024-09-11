@@ -25,6 +25,14 @@ py_library(
 )
 
 py_library(
+    name = "model_objective_utils",
+    srcs = ["model_objective_utils.py"],
+    deps = [
+        ":_utils",
+    ],
+)
+
+py_library(
     name = "catboost",
     srcs = ["catboost.py"],
     deps = [
@@ -89,6 +97,7 @@ py_library(
         "//snowflake/ml/model:model_signature",
         "//snowflake/ml/model:type_hints",
         "//snowflake/ml/model/_packager/model_env",
+        "//snowflake/ml/model/_packager/model_handlers:model_objective_utils",
         "//snowflake/ml/model/_packager/model_handlers_migrator:base_migrator",
         "//snowflake/ml/model/_packager/model_meta",
         "//snowflake/ml/model/_packager/model_meta:model_blob_meta",
@@ -108,6 +117,7 @@ py_library(
         "//snowflake/ml/model:custom_model",
         "//snowflake/ml/model:type_hints",
         "//snowflake/ml/model/_packager/model_env",
+        "//snowflake/ml/model/_packager/model_handlers:model_objective_utils",
         "//snowflake/ml/model/_packager/model_handlers_migrator:base_migrator",
         "//snowflake/ml/model/_packager/model_meta",
         "//snowflake/ml/model/_packager/model_meta:model_blob_meta",
@@ -127,6 +137,7 @@ py_library(
         "//snowflake/ml/model:custom_model",
         "//snowflake/ml/model:type_hints",
         "//snowflake/ml/model/_packager/model_env",
+        "//snowflake/ml/model/_packager/model_handlers:model_objective_utils",
         "//snowflake/ml/model/_packager/model_handlers_migrator:base_migrator",
         "//snowflake/ml/model/_packager/model_meta",
         "//snowflake/ml/model/_packager/model_meta:model_blob_meta",

@@ -5,6 +5,7 @@ import snowflake.ml._internal.utils.identifier as identifier
 SCHEMA_LEVEL_OBJECT_TEST_CASES = [
     ("foo", False, None, None, "foo", ""),
     ("foo/", False, None, None, "foo", "/"),
+    ("foo-bar", False, None, None, "foo", "-bar"),
     ('"foo"', False, None, None, '"foo"', ""),
     ('"foo"/', False, None, None, '"foo"', "/"),
     ("foo/bar", False, None, None, "foo", "/bar"),
@@ -107,14 +108,27 @@ class SnowflakeIdentifierTest(absltest.TestCase):
         self.assertEqual('"demo__task1"', identifier.concat_names(['"demo__"', "task1"]))
         self.assertEqual('"demo__task1"', identifier.concat_names(["demo__", '"task1"']))
 
-    def test_parse_schema_level_object_identifier(self) -> None:
+    def test_parse_snowflake_stage_path(self) -> None:
         """Test if the schema level identifiers could be successfully parsed"""
 
         for test_case in SCHEMA_LEVEL_OBJECT_TEST_CASES:
             with self.subTest():
                 self.assertTupleEqual(
-                    tuple(test_case[2:]), identifier.parse_schema_level_object_identifier(test_case[0])
+                    tuple(test_case[2:]),
+                    identifier.parse_snowflake_stage_path(test_case[0]),
                 )
+
+    def test_parse_schema_level_object_identifier(self) -> None:
+        for test_case in SCHEMA_LEVEL_OBJECT_TEST_CASES:
+            with self.subTest():
+                if test_case[5] != "":
+                    with self.assertRaises(ValueError):
+                        identifier.parse_schema_level_object_identifier(test_case[0])
+                else:
+                    self.assertTupleEqual(
+                        tuple(test_case[2:5]),
+                        identifier.parse_schema_level_object_identifier(test_case[0]),
+                    )
 
     def test_get_schema_level_object_identifier(self) -> None:
         for test_case in SCHEMA_LEVEL_OBJECT_TEST_CASES:
