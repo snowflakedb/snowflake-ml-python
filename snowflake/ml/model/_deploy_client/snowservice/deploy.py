@@ -280,7 +280,7 @@ def _get_or_create_image_repo(session: Session, *, service_func_name: str, image
         conn = session._conn._conn
         # We try to use the same db and schema as the service function locates, as we could retrieve those information
         # if that is a fully qualified one. If not we use the current session one.
-        (_db, _schema, _, _) = identifier.parse_schema_level_object_identifier(service_func_name)
+        (_db, _schema, _) = identifier.parse_schema_level_object_identifier(service_func_name)
         db = _db if _db is not None else conn._database
         schema = _schema if _schema is not None else conn._schema
         assert isinstance(db, str) and isinstance(schema, str)
@@ -343,7 +343,7 @@ class SnowServiceDeployment:
         self.model_zip_stage_path = model_zip_stage_path
         self.options = options
         self.target_method = target_method
-        (db, schema, _, _) = identifier.parse_schema_level_object_identifier(service_func_name)
+        (db, schema, _) = identifier.parse_schema_level_object_identifier(service_func_name)
 
         self._service_name = identifier.get_schema_level_object_identifier(db, schema, f"service_{model_id}")
         self._job_name = identifier.get_schema_level_object_identifier(db, schema, f"build_{model_id}")
@@ -503,7 +503,7 @@ class SnowServiceDeployment:
                 norm_stage_path = posixpath.normpath(identifier.remove_prefix(self.model_zip_stage_path, "@"))
                 # Ensure model stage path has root prefix as stage mount will it mount it to root.
                 absolute_model_stage_path = os.path.join("/", norm_stage_path)
-                (db, schema, stage, path) = identifier.parse_schema_level_object_identifier(norm_stage_path)
+                (db, schema, stage, path) = identifier.parse_snowflake_stage_path(norm_stage_path)
                 substitutes = {
                     "image": image,
                     "predict_endpoint_name": constants.PREDICT,

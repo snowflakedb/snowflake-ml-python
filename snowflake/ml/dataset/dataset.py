@@ -472,9 +472,7 @@ lineage_node.DOMAIN_LINEAGE_REGISTRY["dataset"] = Dataset
 
 def _get_schema_level_identifier(session: snowpark.Session, dataset_name: str) -> Tuple[str, str, str]:
     """Resolve a dataset name into a validated schema-level location identifier"""
-    db, schema, object_name, others = identifier.parse_schema_level_object_identifier(dataset_name)
-    if others:
-        raise ValueError(f"Invalid identifier: unexpected '{others}'")
+    db, schema, object_name = identifier.parse_schema_level_object_identifier(dataset_name)
     db = db or session.get_current_database()
     schema = schema or session.get_current_schema()
     return str(db), str(schema), str(object_name)

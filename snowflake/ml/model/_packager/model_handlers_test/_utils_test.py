@@ -5,7 +5,7 @@ import numpy as np
 import pandas as pd
 from absl.testing import absltest
 
-from snowflake.ml.model import model_signature
+from snowflake.ml.model import model_signature, type_hints
 from snowflake.ml.model._packager.model_env import model_env
 from snowflake.ml.model._packager.model_handlers import _utils as handlers_utils
 from snowflake.ml.model._packager.model_meta import model_meta
@@ -105,6 +105,39 @@ class UtilTest(absltest.TestCase):
             orient="index",
         )
         pd.testing.assert_frame_equal(explanations_df, expected_df)
+
+    def test_validate_model_objective(self) -> None:
+
+        model_objective_list = list(type_hints.ModelObjective)
+        for model_objective in model_objective_list:
+            for inferred_model_objective in model_objective_list:
+                expected_model_objective = (
+                    inferred_model_objective
+                    if inferred_model_objective != type_hints.ModelObjective.UNKNOWN
+                    else model_objective
+                )
+                self.assertEqual(
+                    expected_model_objective,
+                    handlers_utils.validate_model_objective(model_objective, inferred_model_objective),
+                )
+                if inferred_model_objective != type_hints.ModelObjective.UNKNOWN:
+                    if model_objective == type_hints.ModelObjective.UNKNOWN:
+                        with self.assertLogs(level="INFO") as cm:
+                            handlers_utils.validate_model_objective(model_objective, inferred_model_objective)
+                            assert len(cm.output) == 1, "expecting only 1 log"
+                            log = cm.output[0]
+                            self.assertEqual(
+                                f"INFO:absl:Inferred ModelObjective: {inferred_model_objective.name} is used as model "
+                                f"objective for this model version",
+                                log,
+                            )
+                    elif inferred_model_objective != model_objective:
+                        with self.assertWarnsRegex(
+                            UserWarning,
+                            f"Inferred ModelObjective: {inferred_model_objective.name} is used as model objective for "
+                            f"this model version and passed argument ModelObjective: {model_objective.name} is ignored",
+                        ):
+                            handlers_utils.validate_model_objective(model_objective, inferred_model_objective)
 
 
 if __name__ == "__main__":

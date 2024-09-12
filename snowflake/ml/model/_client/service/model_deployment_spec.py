@@ -34,11 +34,10 @@ class ModelDeploymentSpec:
         image_repo_database_name: Optional[sql_identifier.SqlIdentifier],
         image_repo_schema_name: Optional[sql_identifier.SqlIdentifier],
         image_repo_name: sql_identifier.SqlIdentifier,
-        image_name: Optional[sql_identifier.SqlIdentifier],
         ingress_enabled: bool,
-        min_instances: int,
         max_instances: int,
         gpu: Optional[str],
+        num_workers: Optional[int],
         force_rebuild: bool,
         external_access_integration: sql_identifier.SqlIdentifier,
     ) -> None:
@@ -61,8 +60,6 @@ class ModelDeploymentSpec:
             force_rebuild=force_rebuild,
             external_access_integrations=[external_access_integration.identifier()],
         )
-        if image_name:
-            image_build_dict["image_name"] = image_name.identifier()
 
         # service spec
         saved_service_database = service_database_name or database_name
@@ -74,11 +71,13 @@ class ModelDeploymentSpec:
             name=fq_service_name,
             compute_pool=service_compute_pool_name.identifier(),
             ingress_enabled=ingress_enabled,
-            min_instances=min_instances,
             max_instances=max_instances,
         )
         if gpu:
             service_dict["gpu"] = gpu
+
+        if num_workers:
+            service_dict["num_workers"] = num_workers
 
         # model deployment spec
         model_deployment_spec_dict = model_deployment_spec_schema.ModelDeploymentSpecDict(

@@ -166,10 +166,10 @@ class PandasTransformHandlers:
             SnowflakeMLException: The input column list does not have one of `X` and `X_test`.
         """
         assert hasattr(self.estimator, "score")  # make type checker happy
-        argspec = inspect.getfullargspec(self.estimator.score)
-        if "X" in argspec.args:
+        params = inspect.signature(self.estimator.score).parameters
+        if "X" in params:
             score_args = {"X": self.dataset[input_cols]}
-        elif "X_test" in argspec.args:
+        elif "X_test" in params:
             score_args = {"X_test": self.dataset[input_cols]}
         else:
             raise exceptions.SnowflakeMLException(
@@ -178,10 +178,10 @@ class PandasTransformHandlers:
             )
 
         if len(label_cols) > 0:
-            label_arg_name = "Y" if "Y" in argspec.args else "y"
+            label_arg_name = "Y" if "Y" in params else "y"
             score_args[label_arg_name] = self.dataset[label_cols].squeeze()
 
-        if sample_weight_col is not None and "sample_weight" in argspec.args:
+        if sample_weight_col is not None and "sample_weight" in params:
             score_args["sample_weight"] = self.dataset[sample_weight_col].squeeze()
 
         score = self.estimator.score(**score_args)

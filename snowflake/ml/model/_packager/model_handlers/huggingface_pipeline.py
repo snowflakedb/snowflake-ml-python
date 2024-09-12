@@ -369,7 +369,9 @@ class HuggingFacePipelineHandler(
                     else:
                         # For others, we could offer the whole dataframe as a list.
                         # Some of them may need some conversion
-                        if isinstance(raw_model, transformers.ConversationalPipeline):
+                        if hasattr(transformers, "ConversationalPipeline") and isinstance(
+                            raw_model, transformers.ConversationalPipeline
+                        ):
                             input_data = [
                                 transformers.Conversation(
                                     text=conv_data["user_inputs"][0],
@@ -391,27 +393,33 @@ class HuggingFacePipelineHandler(
                     # Making it not aligned with the auto-inferred signature.
                     # If the output is a dict, we could blindly create a list containing that.
                     # Otherwise, creating pandas DataFrame won't succeed.
-                    if isinstance(temp_res, (dict, transformers.Conversation)) or (
-                        # For some pipeline that is expected to generate a list of dict per input
-                        # When it omit outer list, it becomes list of dict instead of list of list of dict.
-                        # We need to distinguish them from those pipelines that designed to output a dict per input
-                        # So we need to check the pipeline type.
-                        isinstance(
-                            raw_model,
-                            (
-                                transformers.FillMaskPipeline,
-                                transformers.QuestionAnsweringPipeline,
-                            ),
+                    if (
+                        (hasattr(transformers, "Conversation") and isinstance(temp_res, transformers.Conversation))
+                        or isinstance(temp_res, dict)
+                        or (
+                            # For some pipeline that is expected to generate a list of dict per input
+                            # When it omit outer list, it becomes list of dict instead of list of list of dict.
+                            # We need to distinguish them from those pipelines that designed to output a dict per input
+                            # So we need to check the pipeline type.
+                            isinstance(
+                                raw_model,
+                                (
+                                    transformers.FillMaskPipeline,
+                                    transformers.QuestionAnsweringPipeline,
+                                ),
+                            )
+                            and X.shape[0] == 1
+                            and isinstance(temp_res[0], dict)
                         )
-                        and X.shape[0] == 1
-                        and isinstance(temp_res[0], dict)
                     ):
                         temp_res = [temp_res]
 
                     if len(temp_res) == 0:
                         return pd.DataFrame()
 
-                    if isinstance(raw_model, transformers.ConversationalPipeline):
+                    if hasattr(transformers, "ConversationalPipeline") and isinstance(
+                        raw_model, transformers.ConversationalPipeline
+                    ):
                         temp_res = [[conv.generated_responses] for conv in temp_res]
 
                     # To concat those who outputs a list with one input.

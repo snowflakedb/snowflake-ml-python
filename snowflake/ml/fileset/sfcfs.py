@@ -15,6 +15,7 @@ from snowflake.ml._internal.exceptions import (
 from snowflake.ml._internal.utils import identifier
 from snowflake.ml.fileset import stage_fs
 from snowflake.ml.utils import connection_params
+from snowflake.snowpark import context, exceptions as snowpark_exceptions
 
 PROTOCOL_NAME = "sfc"
 
@@ -84,7 +85,7 @@ class SFFileSystem(fsspec.AbstractFileSystem):
         """
         if kwargs.get(_RECREATE_FROM_SERIALIZED):
             try:
-                snowpark_session = self._create_default_session()
+                snowpark_session = self._get_default_session()
             except Exception as e:
                 raise snowml_exceptions.SnowflakeMLException(
                     error_code=error_codes.SNOWML_DESERIALIZATION_FAILED,
@@ -103,7 +104,7 @@ class SFFileSystem(fsspec.AbstractFileSystem):
 
         super().__init__(**kwargs)
 
-    def _create_default_session(self) -> snowpark.Session:
+    def _get_default_session(self) -> snowpark.Session:
         """Create a Snowpark Session from default login options.
 
         Returns:
@@ -114,6 +115,11 @@ class SFFileSystem(fsspec.AbstractFileSystem):
             ValueError: Snowflake Connection could not be created.
 
         """
+        try:
+            return context.get_active_session()
+        except snowpark_exceptions.SnowparkSessionException:
+            pass
+
         try:
             snowflake_config = connection_params.SnowflakeLoginOptions()
         except Exception as e:
@@ -328,7 +334,7 @@ class SFFileSystem(fsspec.AbstractFileSystem):
                 ),
             )
         try:
-            res = identifier.parse_schema_level_object_identifier(path[1:])
+            res = identifier.parse_snowflake_stage_path(path[1:])
             if res[1] is None or res[0] is None or (res[3] and not res[3].startswith("/")):
                 raise ValueError("Invalid path. Missing database or schema identifier.")
             logging.debug(f"Parsed path: {res}")

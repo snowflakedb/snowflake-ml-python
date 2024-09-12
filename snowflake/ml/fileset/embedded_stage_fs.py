@@ -35,7 +35,7 @@ class SFEmbeddedStageFileSystem(stage_fs.SFStageFileSystem):
         **kwargs: Any,
     ) -> None:
 
-        (db, schema, object_name, _) = identifier.parse_schema_level_object_identifier(name)
+        (db, schema, object_name) = identifier.parse_schema_level_object_identifier(name)
         self._name = name  # TODO: Require or resolve FQN
         self._domain = domain
 

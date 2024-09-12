@@ -538,7 +538,7 @@ def _validate_target_stage_loc(snowpark_session: snowpark.Session, target_stage_
             original_exception=fileset_errors.FileSetLocationError('FileSet location should start with "@".'),
         )
     try:
-        db, schema, stage, _ = identifier.parse_schema_level_object_identifier(target_stage_loc[1:])
+        db, schema, stage, _ = identifier.parse_snowflake_stage_path(target_stage_loc[1:])
         if db is None or schema is None:
             raise ValueError("The stage path should be in the form '@<database>.<schema>.<stage>/*'")
         df_stages = snowpark_session.sql(f"Show stages like '{stage}' in SCHEMA {db}.{schema}")

@@ -495,7 +495,7 @@ class DistributedHPOTrainer(SnowparkModelTrainer):
                     label_arg_name = "Y" if "Y" in argspec.args else "y"
                     args[label_arg_name] = df[label_cols].squeeze()
 
-                if sample_weight_col is not None and "sample_weight" in argspec.args:
+                if sample_weight_col is not None:
                     args["sample_weight"] = df[sample_weight_col].squeeze()
                 return args, estimator, indices, len(df), params_to_evaluate
 
@@ -1061,7 +1061,7 @@ class DistributedHPOTrainer(SnowparkModelTrainer):
                         if label_cols:
                             label_arg_name = "Y" if "Y" in argspec.args else "y"
                             args[label_arg_name] = y
-                        if sample_weight_col is not None and "sample_weight" in argspec.args:
+                        if sample_weight_col is not None:
                             args["sample_weight"] = df[sample_weight_col].squeeze()
                         # estimator.refit = original_refit
                         refit_start_time = time.time()

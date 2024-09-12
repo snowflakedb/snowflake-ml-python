@@ -53,7 +53,7 @@ def get_uri_scheme(uri: str) -> str:
 def get_uri_from_snowflake_stage_path(stage_path: str) -> str:
     """Generates a URI from Snowflake stage path."""
     assert stage_path.startswith("@")
-    (db, schema, stage, path) = identifier.parse_schema_level_object_identifier(
+    (db, schema, stage, path) = identifier.parse_snowflake_stage_path(
         posixpath.normpath(identifier.remove_prefix(stage_path, "@"))
     )
     return urlunparse(
@@ -70,7 +70,7 @@ def get_uri_from_snowflake_stage_path(stage_path: str) -> str:
 
 def get_stage_and_path(stage_path: str) -> Tuple[str, str]:
     assert stage_path.startswith("@"), f"stage path should start with @, actual: {stage_path}"
-    (db, schema, stage, path) = identifier.parse_schema_level_object_identifier(
+    (db, schema, stage, path) = identifier.parse_snowflake_stage_path(
         posixpath.normpath(identifier.remove_prefix(stage_path, "@"))
     )
     full_qualified_stage = "@" + identifier.get_schema_level_object_identifier(db, schema, stage)

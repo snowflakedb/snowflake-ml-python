@@ -19,7 +19,11 @@ from typing_extensions import TypeGuard, Unpack
 from snowflake.ml._internal import type_utils
 from snowflake.ml.model import custom_model, model_signature, type_hints as model_types
 from snowflake.ml.model._packager.model_env import model_env
-from snowflake.ml.model._packager.model_handlers import _base, _utils as handlers_utils
+from snowflake.ml.model._packager.model_handlers import (
+    _base,
+    _utils as handlers_utils,
+    model_objective_utils,
+)
 from snowflake.ml.model._packager.model_handlers_migrator import base_migrator
 from snowflake.ml.model._packager.model_meta import (
     model_blob_meta,
@@ -43,47 +47,6 @@ class LGBMModelHandler(_base.BaseModelHandler[Union["lightgbm.Booster", "lightgb
 
     MODEL_BLOB_FILE_OR_DIR = "model.pkl"
     DEFAULT_TARGET_METHODS = ["predict", "predict_proba"]
-    _BINARY_CLASSIFICATION_OBJECTIVES = ["binary"]
-    _MULTI_CLASSIFICATION_OBJECTIVES = ["multiclass", "multiclassova"]
-    _RANKING_OBJECTIVES = ["lambdarank", "rank_xendcg"]
-    _REGRESSION_OBJECTIVES = [
-        "regression",
-        "regression_l1",
-        "huber",
-        "fair",
-        "poisson",
-        "quantile",
-        "tweedie",
-        "mape",
-        "gamma",
-    ]
-
-    @classmethod
-    def get_model_objective(
-        cls, model: Union["lightgbm.Booster", "lightgbm.LGBMModel"]
-    ) -> model_meta_schema.ModelObjective:
-        import lightgbm
-
-        # does not account for cross-entropy and custom
-        if isinstance(model, lightgbm.LGBMClassifier):
-            num_classes = handlers_utils.get_num_classes_if_exists(model)
-            if num_classes == 2:
-                return model_meta_schema.ModelObjective.BINARY_CLASSIFICATION
-            return model_meta_schema.ModelObjective.MULTI_CLASSIFICATION
-        if isinstance(model, lightgbm.LGBMRanker):
-            return model_meta_schema.ModelObjective.RANKING
-        if isinstance(model, lightgbm.LGBMRegressor):
-            return model_meta_schema.ModelObjective.REGRESSION
-        model_objective = model.params["objective"]
-        if model_objective in cls._BINARY_CLASSIFICATION_OBJECTIVES:
-            return model_meta_schema.ModelObjective.BINARY_CLASSIFICATION
-        if model_objective in cls._MULTI_CLASSIFICATION_OBJECTIVES:
-            return model_meta_schema.ModelObjective.MULTI_CLASSIFICATION
-        if model_objective in cls._RANKING_OBJECTIVES:
-            return model_meta_schema.ModelObjective.RANKING
-        if model_objective in cls._REGRESSION_OBJECTIVES:
-            return model_meta_schema.ModelObjective.REGRESSION
-        return model_meta_schema.ModelObjective.UNKNOWN
 
     @classmethod
     def can_handle(
@@ -118,6 +81,8 @@ class LGBMModelHandler(_base.BaseModelHandler[Union["lightgbm.Booster", "lightgb
         is_sub_model: Optional[bool] = False,
         **kwargs: Unpack[model_types.LGBMModelSaveOptions],
     ) -> None:
+        enable_explainability = kwargs.get("enable_explainability", True)
+
         import lightgbm
 
         assert isinstance(model, lightgbm.Booster) or isinstance(model, lightgbm.LGBMModel)
@@ -146,20 +111,16 @@ class LGBMModelHandler(_base.BaseModelHandler[Union["lightgbm.Booster", "lightgb
                 sample_input_data=sample_input_data,
                 get_prediction_fn=get_prediction,
             )
-            model_objective = cls.get_model_objective(model)
-            model_meta.model_objective = model_objective
-            if kwargs.get("enable_explainability", True):
-                output_type = model_signature.DataType.DOUBLE
-                if model_objective in [
-                    model_meta_schema.ModelObjective.BINARY_CLASSIFICATION,
-                    model_meta_schema.ModelObjective.MULTI_CLASSIFICATION,
-                ]:
-                    output_type = model_signature.DataType.STRING
+            model_objective_and_output = model_objective_utils.get_model_objective_and_output_type(model)
+            model_meta.model_objective = handlers_utils.validate_model_objective(
+                model_meta.model_objective, model_objective_and_output.objective
+            )
+            if enable_explainability:
                 model_meta = handlers_utils.add_explain_method_signature(
                     model_meta=model_meta,
                     explain_method="explain",
                     target_method="predict",
-                    output_return_type=output_type,
+                    output_return_type=model_objective_and_output.output_type,
                 )
                 model_meta.function_properties = {
                     "explain": {model_meta_schema.FunctionProperties.PARTITIONED.value: False}
@@ -189,11 +150,8 @@ class LGBMModelHandler(_base.BaseModelHandler[Union["lightgbm.Booster", "lightgb
             ],
             check_local_version=True,
         )
-        if kwargs.get("enable_explainability", True):
-            model_meta.env.include_if_absent(
-                [model_env.ModelDependency(requirement="shap", pip_name="shap")],
-                check_local_version=True,
-            )
+        if enable_explainability:
+            model_meta.env.include_if_absent([model_env.ModelDependency(requirement="shap", pip_name="shap")])
             model_meta.explain_algorithm = model_meta_schema.ModelExplainAlgorithm.SHAP
 
         return None

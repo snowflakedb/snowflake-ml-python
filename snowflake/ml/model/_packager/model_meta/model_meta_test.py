@@ -7,7 +7,7 @@ from absl.testing import absltest
 from packaging import requirements, version
 
 from snowflake.ml._internal import env as snowml_env, env_utils
-from snowflake.ml.model import model_signature
+from snowflake.ml.model import model_signature, type_hints
 from snowflake.ml.model._packager.model_env import model_env
 from snowflake.ml.model._packager.model_meta import (
     model_blob_meta,
@@ -645,7 +645,7 @@ class ModelMetaEnvTest(absltest.TestCase):
             ) as meta:
                 meta.models["model1"] = _DUMMY_BLOB
 
-            self.assertEqual(meta.model_objective, model_meta_schema.ModelObjective.UNKNOWN)
+            self.assertEqual(meta.model_objective, type_hints.ModelObjective.UNKNOWN)
             self.assertEqual(meta.explain_algorithm, None)
 
             saved_meta = meta
@@ -686,10 +686,10 @@ class ModelMetaEnvTest(absltest.TestCase):
                 metadata={"foo": "bar"},
             ) as meta:
                 meta.models["model1"] = _DUMMY_BLOB
-                meta.model_objective = model_meta_schema.ModelObjective.REGRESSION
+                meta.model_objective = type_hints.ModelObjective.REGRESSION
 
             loaded_meta = model_meta.ModelMetadata.load(tmpdir)
-            self.assertEqual(loaded_meta.model_objective, model_meta_schema.ModelObjective.REGRESSION)
+            self.assertEqual(loaded_meta.model_objective, type_hints.ModelObjective.REGRESSION)
 
     def test_model_meta_explain_algorithm(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -701,11 +701,11 @@ class ModelMetaEnvTest(absltest.TestCase):
                 metadata={"foo": "bar"},
             ) as meta:
                 meta.models["model1"] = _DUMMY_BLOB
-                meta.model_objective = model_meta_schema.ModelObjective.REGRESSION
+                meta.model_objective = type_hints.ModelObjective.REGRESSION
                 meta.explain_algorithm = model_meta_schema.ModelExplainAlgorithm.SHAP
 
             loaded_meta = model_meta.ModelMetadata.load(tmpdir)
-            self.assertEqual(loaded_meta.model_objective, model_meta_schema.ModelObjective.REGRESSION)
+            self.assertEqual(loaded_meta.model_objective, type_hints.ModelObjective.REGRESSION)
             self.assertEqual(loaded_meta.explain_algorithm, model_meta_schema.ModelExplainAlgorithm.SHAP)
 
     def test_model_meta_new_fields(self) -> None:

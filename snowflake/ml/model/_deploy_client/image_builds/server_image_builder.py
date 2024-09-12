@@ -182,7 +182,7 @@ class ServerImageBuilder(base_image_builder.ImageBuilder):
         with file_utils.open_file(spec_file_path, "w+") as spec_file:
             assert self.artifact_stage_location.startswith("@")
             normed_artifact_stage_path = posixpath.normpath(identifier.remove_prefix(self.artifact_stage_location, "@"))
-            (db, schema, stage, path) = identifier.parse_schema_level_object_identifier(normed_artifact_stage_path)
+            (db, schema, stage, path) = identifier.parse_snowflake_stage_path(normed_artifact_stage_path)
             content = Template(spec_template).safe_substitute(
                 {
                     "base_image": base_image,

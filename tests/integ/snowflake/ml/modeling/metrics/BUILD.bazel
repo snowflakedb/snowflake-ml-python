@@ -146,6 +146,7 @@ py_test(
     srcs = ["mean_absolute_error_test.py"],
     shard_count = SHARD_COUNT,
     deps = [
+        ":generator",
         "//snowflake/ml/modeling/metrics:regression",
         "//snowflake/ml/utils:connection_params",
         "//tests/integ/snowflake/ml/modeling/framework:utils",
@@ -158,6 +159,7 @@ py_test(
     srcs = ["mean_absolute_percentage_error_test.py"],
     shard_count = SHARD_COUNT,
     deps = [
+        ":generator",
         "//snowflake/ml/modeling/metrics:regression",
         "//snowflake/ml/utils:connection_params",
         "//tests/integ/snowflake/ml/modeling/framework:utils",
@@ -170,6 +172,7 @@ py_test(
     srcs = ["mean_squared_error_test.py"],
     shard_count = SHARD_COUNT,
     deps = [
+        ":generator",
         "//snowflake/ml/modeling/metrics:regression",
         "//snowflake/ml/utils:connection_params",
         "//tests/integ/snowflake/ml/modeling/framework:utils",
@@ -194,6 +197,7 @@ py_test(
     srcs = ["precision_recall_curve_test.py"],
     shard_count = SHARD_COUNT,
     deps = [
+        ":generator",
         "//snowflake/ml/modeling/metrics:ranking",
         "//snowflake/ml/utils:connection_params",
         "//tests/integ/snowflake/ml/modeling/framework:utils",

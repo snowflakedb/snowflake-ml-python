@@ -576,7 +576,7 @@ fully integrated into the new registry.
         raw_stage_path = uri.get_snowflake_stage_path_from_uri(model_uri)
         if not raw_stage_path:
             return None
-        (db, schema, stage, _) = identifier.parse_schema_level_object_identifier(raw_stage_path)
+        (db, schema, stage, _) = identifier.parse_snowflake_stage_path(raw_stage_path)
         return identifier.get_schema_level_object_identifier(db, schema, stage)
 
     def _list_selected_models(

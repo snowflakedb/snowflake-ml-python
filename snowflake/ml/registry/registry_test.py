@@ -129,6 +129,7 @@ class RegistryTest(absltest.TestCase):
                 comment=m_comment,
                 metrics=m_metrics,
                 conda_dependencies=m_conda_dependency,
+                pip_requirements=None,
                 python_version=m_python_version,
                 signatures=m_signatures,
                 sample_input_data=m_sample_input_data,

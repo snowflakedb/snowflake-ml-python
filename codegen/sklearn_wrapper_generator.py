@@ -1153,15 +1153,18 @@ class XGBoostWrapperGenerator(WrapperGeneratorBase):
         super().generate()
 
         # Populate XGBoost specific values
-        self.estimator_imports_list.append("import xgboost")
+        self.estimator_imports_list.extend(["import sklearn", "import xgboost"])
         self.test_estimator_input_args_list.extend(
             ["random_state=0", "subsample=1.0", "colsample_bynode=1.0", "n_jobs=1"]
         )
-        self.score_sproc_imports = ["xgboost"]
+        self.score_sproc_imports = ["xgboost", "sklearn"]
         # TODO(snandamuri): Replace cloudpickle with joblib after latest version of joblib is added to snowflake conda.
         self.supported_export_method = "to_xgboost"
         self.unsupported_export_methods = ["to_sklearn", "to_lightgbm"]
-        self.deps = "f'numpy=={np.__version__}', f'xgboost=={xgboost.__version__}', f'cloudpickle=={cp.__version__}'"
+        self.deps = (
+            "f'numpy=={np.__version__}', f'scikit-learn=={sklearn.__version__}', "
+            + "f'xgboost=={xgboost.__version__}', f'cloudpickle=={cp.__version__}'"
+        )
         self._construct_string_from_lists()
         return self
 

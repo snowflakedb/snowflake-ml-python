@@ -111,3 +111,14 @@ py_library(
         "//snowflake/ml/_internal/utils:sql_identifier",
     ],
 )
+
+py_test(
+    name = "service_test",
+    srcs = ["service_test.py"],
+    deps = [
+        ":service",
+        "//snowflake/ml/_internal/utils:sql_identifier",
+        "//snowflake/ml/test_utils:mock_data_frame",
+        "//snowflake/ml/test_utils:mock_session",
+    ],
+)

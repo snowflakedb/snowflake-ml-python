@@ -6,6 +6,7 @@ from absl.testing import absltest
 
 from snowflake.ml._internal import telemetry
 from snowflake.ml._internal.utils import sql_identifier
+from snowflake.ml.model import type_hints
 from snowflake.ml.model._client.model import model_impl, model_version_impl
 from snowflake.ml.model._client.ops import service_ops
 from snowflake.ml.model._client.ops.model_ops import ModelOperator
@@ -211,6 +212,7 @@ class ModelManagerTest(absltest.TestCase):
                 code_paths=None,
                 ext_modules=None,
                 options=None,
+                model_objective=type_hints.ModelObjective.UNKNOWN,
             )
             mock_create_from_stage.assert_called_once_with(
                 composed_model=mock.ANY,
@@ -279,6 +281,7 @@ class ModelManagerTest(absltest.TestCase):
                 code_paths=None,
                 ext_modules=None,
                 options=None,
+                model_objective=type_hints.ModelObjective.UNKNOWN,
             )
             mock_create_from_stage.assert_called_once_with(
                 composed_model=mock.ANY,
@@ -332,6 +335,7 @@ class ModelManagerTest(absltest.TestCase):
                 code_paths=None,
                 ext_modules=None,
                 options=m_options,
+                model_objective=type_hints.ModelObjective.UNKNOWN,
             )
             mock_create_from_stage.assert_called_once_with(
                 composed_model=mock.ANY,
@@ -388,6 +392,7 @@ class ModelManagerTest(absltest.TestCase):
                 code_paths=m_code_paths,
                 ext_modules=m_ext_modules,
                 options=None,
+                model_objective=type_hints.ModelObjective.UNKNOWN,
             )
             mock_create_from_stage.assert_called_once_with(
                 composed_model=mock.ANY,
@@ -444,6 +449,7 @@ class ModelManagerTest(absltest.TestCase):
                 code_paths=None,
                 ext_modules=None,
                 options=None,
+                model_objective=type_hints.ModelObjective.UNKNOWN,
             )
             mock_create_from_stage.assert_called_once_with(
                 composed_model=mock.ANY,
@@ -544,6 +550,7 @@ class ModelManagerTest(absltest.TestCase):
                 code_paths=None,
                 ext_modules=None,
                 options=None,
+                model_objective=type_hints.ModelObjective.UNKNOWN,
             )
             mock_create_from_stage.assert_called_once_with(
                 composed_model=mock.ANY,

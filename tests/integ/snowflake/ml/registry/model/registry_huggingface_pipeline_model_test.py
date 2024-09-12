@@ -5,7 +5,7 @@ import tempfile
 import numpy as np
 import pandas as pd
 from absl.testing import absltest, parameterized
-from packaging import requirements
+from packaging import requirements, version
 
 from snowflake.ml._internal import env_utils
 from tests.integ.snowflake.ml.registry.model import registry_model_test_base
@@ -34,6 +34,9 @@ class TestRegistryHuggingFacePipelineModelInteg(registry_model_test_base.Registr
         # We have to import here due to cache location issue.
         # Only by doing so can we make the cache dir setting effective.
         import transformers
+
+        if version.parse(transformers.__version__) >= version.parse("4.42.0"):
+            self.skipTest("This test is not compatible with transformers>=4.42.0")
 
         model = transformers.pipeline(task="conversational", model="ToddGoldfarb/Cadet-Tiny")
 
@@ -65,6 +68,7 @@ class TestRegistryHuggingFacePipelineModelInteg(registry_model_test_base.Registr
                     check_res,
                 ),
             },
+            options={"relax_version": False},
         )
 
     @parameterized.product(  # type: ignore[misc]

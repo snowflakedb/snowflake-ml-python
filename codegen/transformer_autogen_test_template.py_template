@@ -256,14 +256,14 @@ class {transform.test_class_name}(TestCase):
                     )
 
         if callable(getattr(sklearn_reg, "score", None)) and callable(getattr(reg, "score", None)):
-            score_argspec = inspect.getfullargspec(sklearn_reg.score)
+            score_params = inspect.signature(sklearn_reg.score).parameters
             # Some classes that has sample_weight argument in fit() but not in score().
-            if use_weighted_dataset is True and 'sample_weight' not in score_argspec.args:
+            if use_weighted_dataset is True and 'sample_weight' not in score_params:
                 del args['sample_weight']
                 input_df_pandas = input_df_pandas.drop(['sample_weight', 'SAMPLE_WEIGHT'], axis=1, errors='ignore')
 
             # Some classes have different arg name in score: X -> X_test
-            if "X_test" in score_argspec.args:
+            if "X_test" in score_params:
                 args['X_test'] = args.pop('X')
 
             if inference_with_udf:
@@ -300,8 +300,8 @@ class {transform.test_class_name}(TestCase):
         is_weighted_dataset_supported = False
         for m in inspect.getmembers(klass):
             if inspect.isfunction(m[1]) and m[0] == "fit":
-                argspec = inspect.getfullargspec(m[1])
-                is_weighted_dataset_supported = True if "sample_weight" in argspec.args else False
+                params = inspect.signature(m[1]).parameters
+                is_weighted_dataset_supported = True if "sample_weight" in params else False
         return is_weighted_dataset_supported
 
     def test_fit_with_sproc_infer_with_udf_weighted_datasets(self) -> None:

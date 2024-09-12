@@ -1,3 +1,4 @@
+import os
 from typing import TYPE_CHECKING, Any, Dict, Generator, List, Optional, Type, TypeVar
 
 import numpy.typing as npt
@@ -7,6 +8,10 @@ from snowflake import snowpark
 from snowflake.ml._internal import telemetry
 from snowflake.ml.data import data_ingestor, data_source
 from snowflake.ml.data._internal.arrow_ingestor import ArrowIngestor
+from snowflake.ml.modeling._internal.constants import (
+    IN_ML_RUNTIME_ENV_VAR,
+    USE_OPTIMIZED_DATA_INGESTOR,
+)
 
 if TYPE_CHECKING:
     import pandas as pd
@@ -142,32 +147,41 @@ class DataConnector:
         Returns:
             A Pytorch iterable datapipe that yield data.
         """
-        from torch.utils.data.datapipes import iter as torch_iter
+        from snowflake.ml.data import torch_utils
 
-        return torch_iter.IterableWrapper(  # type: ignore[no-untyped-call]
-            self._ingestor.to_batches(batch_size, shuffle, drop_last_batch)
+        return torch_utils.TorchDataPipeWrapper(
+            self._ingestor, batch_size=batch_size, shuffle=shuffle, drop_last=drop_last_batch
         )
 
     @telemetry.send_api_usage_telemetry(
         project=_PROJECT,
         subproject_extractor=lambda self: type(self).__name__,
-        func_params_to_log=["shuffle"],
+        func_params_to_log=["batch_size", "shuffle", "drop_last_batch"],
     )
-    def to_torch_dataset(self, *, shuffle: bool = False) -> "torch_data.IterableDataset":  # type: ignore[type-arg]
+    def to_torch_dataset(
+        self, *, batch_size: int = 1, shuffle: bool = False, drop_last_batch: bool = True
+    ) -> "torch_data.IterableDataset":  # type: ignore[type-arg]
         """Transform the Snowflake data into a PyTorch Iterable Dataset to be used with a DataLoader.
 
         Return a PyTorch Dataset which iterates on rows of data.
 
         Args:
+            batch_size: It specifies the size of each data batch which will be yielded in the result dataset.
+                Batching is pushed down to data ingestion level which may be more performant than DataLoader
+                batching.
             shuffle: It specifies whether the data will be shuffled. If True, files will be shuffled, and
                 rows in each file will also be shuffled.
+            drop_last_batch: Whether the last batch of data should be dropped. If set to be true,
+                then the last batch will get dropped if its size is smaller than the given batch_size.
 
         Returns:
             A PyTorch Iterable Dataset that yields data.
         """
-        from snowflake.ml.data import torch_dataset
+        from snowflake.ml.data import torch_utils
 
-        return torch_dataset.TorchDataset(self._ingestor, shuffle)
+        return torch_utils.TorchDatasetWrapper(
+            self._ingestor, batch_size=batch_size, shuffle=shuffle, drop_last=drop_last_batch
+        )
 
     @telemetry.send_api_usage_telemetry(
         project=_PROJECT,
@@ -184,3 +198,15 @@ class DataConnector:
             A Pandas DataFrame.
         """
         return self._ingestor.to_pandas(limit)
+
+
+# Switch to use Runtime's Data Ingester if running in ML runtime
+# Fail silently if the data ingester is not found
+if os.getenv(IN_ML_RUNTIME_ENV_VAR) and os.getenv(USE_OPTIMIZED_DATA_INGESTOR):
+    try:
+        from runtime_external_entities import get_ingester_class
+
+        DataConnector.DEFAULT_INGESTOR_CLASS = get_ingester_class()
+    except ImportError:
+        """Runtime Default Ingester not found, ignore"""
+        pass

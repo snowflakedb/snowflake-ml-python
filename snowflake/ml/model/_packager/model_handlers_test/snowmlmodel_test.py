@@ -4,6 +4,7 @@ import warnings
 
 import numpy as np
 import pandas as pd
+import shap
 from absl.testing import absltest
 from sklearn import datasets
 
@@ -12,10 +13,11 @@ from snowflake.ml.model._packager import model_packager
 from snowflake.ml.modeling.linear_model import (  # type:ignore[attr-defined]
     LinearRegression,
 )
+from snowflake.ml.modeling.xgboost import XGBRegressor
 
 
 class SnowMLModelHandlerTest(absltest.TestCase):
-    def test_snowml_all_input(self) -> None:
+    def test_snowml_all_input_no_explain(self) -> None:
         iris = datasets.load_iris()
 
         df = pd.DataFrame(data=np.c_[iris["data"], iris["target"]], columns=iris["feature_names"] + ["target"])
@@ -31,7 +33,7 @@ class SnowMLModelHandlerTest(absltest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmpdir:
             s = {"predict": model_signature.infer_signature(df[INPUT_COLUMNS], regr.predict(df)[[OUTPUT_COLUMNS]])}
-            with self.assertRaises(NotImplementedError):
+            with self.assertRaisesRegex(ValueError, "Explain only support for xgboost or lightgbm Snowpark ML models."):
                 model_packager.ModelPackager(os.path.join(tmpdir, "model1")).save(
                     name="model1",
                     model=regr,
@@ -45,6 +47,7 @@ class SnowMLModelHandlerTest(absltest.TestCase):
                     model=regr,
                     signatures=s,
                     metadata={"author": "halu", "version": "1"},
+                    options={"enable_explainability": False},
                 )
             with self.assertWarnsRegex(UserWarning, "Model signature will automatically be inferred during fitting"):
                 model_packager.ModelPackager(os.path.join(tmpdir, "model1_no_sig")).save(
@@ -52,6 +55,7 @@ class SnowMLModelHandlerTest(absltest.TestCase):
                     model=regr,
                     sample_input_data=df[INPUT_COLUMNS],
                     metadata={"author": "halu", "version": "1"},
+                    options={"enable_explainability": False},
                 )
 
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -59,6 +63,7 @@ class SnowMLModelHandlerTest(absltest.TestCase):
                 name="model1",
                 model=regr,
                 metadata={"author": "halu", "version": "1"},
+                options={"enable_explainability": False},
             )
             with warnings.catch_warnings():
                 warnings.simplefilter("error")
@@ -97,6 +102,7 @@ class SnowMLModelHandlerTest(absltest.TestCase):
                 name="model1",
                 model=regr,
                 metadata={"author": "halu", "version": "1"},
+                options={"enable_explainability": False},
             )
 
             with warnings.catch_warnings():
@@ -138,6 +144,7 @@ class SnowMLModelHandlerTest(absltest.TestCase):
                 name="model1",
                 model=regr,
                 metadata={"author": "halu", "version": "1"},
+                options={"enable_explainability": False},
             )
 
             with warnings.catch_warnings():
@@ -157,6 +164,42 @@ class SnowMLModelHandlerTest(absltest.TestCase):
                 predict_method = getattr(pk.model, "predict", None)
                 assert callable(predict_method)
                 np.testing.assert_allclose(predictions, predict_method(df[:1])[[OUTPUT_COLUMNS]])
+
+    def test_snowml_xgboost_explain_default(self) -> None:
+        iris = datasets.load_iris()
+
+        df = pd.DataFrame(data=np.c_[iris["data"], iris["target"]], columns=iris["feature_names"] + ["target"])
+        df.columns = [s.replace(" (CM)", "").replace(" ", "") for s in df.columns.str.upper()]
+
+        INPUT_COLUMNS = ["SEPALLENGTH", "SEPALWIDTH", "PETALLENGTH", "PETALWIDTH"]
+        LABEL_COLUMNS = "TARGET"
+        OUTPUT_COLUMNS = "PREDICTED_TARGET"
+        regr = XGBRegressor(input_cols=INPUT_COLUMNS, output_cols=OUTPUT_COLUMNS, label_cols=LABEL_COLUMNS)
+        regr.fit(df)
+
+        predictions = regr.predict(df[:1])[[OUTPUT_COLUMNS]]
+
+        explanations = shap.TreeExplainer(regr.to_xgboost())(df[INPUT_COLUMNS]).values
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            model_packager.ModelPackager(os.path.join(tmpdir, "model1")).save(
+                name="model1",
+                model=regr,
+                metadata={"author": "halu", "version": "1"},
+            )
+            with warnings.catch_warnings():
+                warnings.simplefilter("error")
+
+                pk = model_packager.ModelPackager(os.path.join(tmpdir, "model1"))
+                pk.load(as_custom_model=True)
+                assert pk.model
+                assert pk.meta
+                predict_method = getattr(pk.model, "predict", None)
+                explain_method = getattr(pk.model, "explain", None)
+                assert callable(predict_method)
+                assert callable(explain_method)
+                np.testing.assert_allclose(predictions, predict_method(df[:1])[[OUTPUT_COLUMNS]])
+                np.testing.assert_allclose(explanations, explain_method(df[INPUT_COLUMNS]).values)
 
 
 if __name__ == "__main__":

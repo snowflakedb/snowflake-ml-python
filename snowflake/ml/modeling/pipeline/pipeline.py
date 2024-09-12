@@ -418,9 +418,6 @@ class Pipeline(base.BaseTransformer):
 
         Returns:
             Fitted pipeline.
-
-        Raises:
-            ValueError: A pipeline incompatible with sklearn is used on MLRS
         """
 
         self._validate_steps()
@@ -437,8 +434,6 @@ class Pipeline(base.BaseTransformer):
         lineage_utils.set_data_sources(self, data_sources)
 
         if self._can_be_trained_in_ml_runtime(dataset):
-            if not self._is_convertible_to_sklearn:
-                raise ValueError("This pipeline cannot be converted to an sklearn pipeline.")
             self._fit_ml_runtime(dataset)
 
         elif squash and isinstance(dataset, snowpark.DataFrame):
@@ -611,14 +606,8 @@ class Pipeline(base.BaseTransformer):
 
         Returns:
             Output dataset.
-
-        Raises:
-            ValueError: An sklearn object has not been fit and stored before calling this function.
         """
-        if os.environ.get(IN_ML_RUNTIME_ENV_VAR):
-            if self._sklearn_object is None:
-                raise ValueError("Model must be fit before inference.")
-
+        if os.environ.get(IN_ML_RUNTIME_ENV_VAR) and self._sklearn_object is not None:
             expected_output_cols = self._infer_output_cols()
             handler = ModelTransformerBuilder.build(
                 dataset=dataset,

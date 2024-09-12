@@ -53,11 +53,13 @@ class SKLearnModelSpecifications(ModelSpecifications):
 
 class XGBoostModelSpecifications(ModelSpecifications):
     def __init__(self) -> None:
+        import sklearn
         import xgboost
 
         imports: List[str] = ["xgboost"]
         pkgDependencies: List[str] = [
             f"numpy=={np.__version__}",
+            f"scikit-learn=={sklearn.__version__}",
             f"xgboost=={xgboost.__version__}",
             f"cloudpickle=={cp.__version__}",
         ]

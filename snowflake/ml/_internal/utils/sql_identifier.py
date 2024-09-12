@@ -84,7 +84,7 @@ def to_sql_identifiers(list_of_str: List[str], *, case_sensitive: bool = False) 
 def parse_fully_qualified_name(
     name: str,
 ) -> Tuple[Optional[SqlIdentifier], Optional[SqlIdentifier], SqlIdentifier]:
-    db, schema, object, _ = identifier.parse_schema_level_object_identifier(name)
+    db, schema, object = identifier.parse_schema_level_object_identifier(name)
 
     assert name is not None, f"Unable parse the input name `{name}` as fully qualified."
     return (

@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import contextvars
 import enum
 import functools
 import inspect
@@ -12,6 +13,7 @@ from typing import (
     List,
     Mapping,
     Optional,
+    Set,
     Tuple,
     TypeVar,
     Union,
@@ -28,7 +30,7 @@ from snowflake.ml._internal.exceptions import (
     exceptions as snowml_exceptions,
 )
 from snowflake.snowpark import dataframe, exceptions as snowpark_exceptions, session
-from snowflake.snowpark._internal import utils
+from snowflake.snowpark._internal import server_connection, utils
 
 _log_counter = 0
 _FLUSH_SIZE = 10
@@ -83,6 +85,122 @@ class TelemetryField(enum.Enum):
     KEY_CUSTOM_TAGS = "custom_tags"
     # function categories
     FUNC_CAT_USAGE = "usage"
+
+
+class _TelemetrySourceType(enum.Enum):
+    # Automatically inferred telemetry/statement parameters
+    AUTO_TELEMETRY = "SNOWML_AUTO_TELEMETRY"
+    # Mixture of manual and automatic telemetry/statement parameters
+    AUGMENT_TELEMETRY = "SNOWML_AUGMENT_TELEMETRY"
+
+
+_statement_params_context_var: contextvars.ContextVar[Dict[str, str]] = contextvars.ContextVar("statement_params")
+
+
+class _StatementParamsPatchManager:
+    def __init__(self) -> None:
+        self._patch_cache: Set[server_connection.ServerConnection] = set()
+        self._context_var: contextvars.ContextVar[Dict[str, str]] = _statement_params_context_var
+
+    def apply_patches(self) -> None:
+        try:
+            # Apply patching to all active sessions in case of multiple
+            for sess in session._get_active_sessions():
+                # Check patch cache here to avoid unnecessary context switches
+                if self._get_target(sess) not in self._patch_cache:
+                    self._patch_session(sess)
+        except snowpark_exceptions.SnowparkSessionException:
+            pass
+
+    def set_statement_params(self, statement_params: Dict[str, str]) -> None:
+        # Only set value if not already set in context
+        if not self._context_var.get({}):
+            self._context_var.set(statement_params)
+
+    def _get_target(self, session: session.Session) -> server_connection.ServerConnection:
+        return cast(server_connection.ServerConnection, session._conn)
+
+    def _patch_session(self, session: session.Session, throw_on_patch_fail: bool = False) -> None:
+        # Extract target
+        try:
+            target = self._get_target(session)
+        except AttributeError:
+            if throw_on_patch_fail:
+                raise
+            # TODO: Log a warning, this probably means there was a breaking change in Snowpark/SnowflakeConnection
+            return
+
+        # Check if session has already been patched
+        if target in self._patch_cache:
+            return
+        self._patch_cache.add(target)
+
+        functions = [
+            ("execute_and_notify_query_listener", "_statement_params"),
+            ("execute_async_and_notify_query_listener", "_statement_params"),
+        ]
+
+        for func, param_name in functions:
+            try:
+                self._patch_with_statement_params(target, func, param_name=param_name)
+            except AttributeError:
+                if throw_on_patch_fail:  # primarily used for testing
+                    raise
+                # TODO: Log a warning, this probably means there was a breaking change in Snowpark/SnowflakeConnection
+                pass
+
+    def _patch_with_statement_params(
+        self, target: object, function_name: str, param_name: str = "statement_params"
+    ) -> None:
+        func = getattr(target, function_name)
+        assert callable(func)
+
+        @functools.wraps(func)
+        def wrapper(*args: Any, **kwargs: Any) -> Any:
+            # Retrieve context level statement parameters
+            context_params = self._context_var.get(dict())
+            if not context_params:
+                # Exit early if not in SnowML (decorator) context
+                return func(*args, **kwargs)
+
+            # Extract any explicitly provided statement parameters
+            orig_kwargs = dict(kwargs)
+            in_params = kwargs.pop(param_name, None) or {}
+
+            # Inject a special flag to statement parameters so we can filter out these patched logs if necessary
+            # Calls that include SnowML telemetry are tagged with "SNOWML_AUGMENT_TELEMETRY"
+            # and calls without SnowML telemetry are tagged with "SNOWML_AUTO_TELEMETRY"
+            if TelemetryField.KEY_PROJECT.value in in_params:
+                context_params["snowml_telemetry_type"] = _TelemetrySourceType.AUGMENT_TELEMETRY.value
+            else:
+                context_params["snowml_telemetry_type"] = _TelemetrySourceType.AUTO_TELEMETRY.value
+
+            # Apply any explicitly provided statement parameters and result into function call
+            context_params.update(in_params)
+            kwargs[param_name] = context_params
+
+            try:
+                return func(*args, **kwargs)
+            except TypeError as e:
+                if str(e).endswith(f"unexpected keyword argument '{param_name}'"):
+                    # TODO: Log warning that this patch is invalid
+                    # Unwrap function for future invocations
+                    setattr(target, function_name, func)
+                    return func(*args, **orig_kwargs)
+                else:
+                    raise
+
+        setattr(target, function_name, wrapper)
+
+    def __getstate__(self) -> Dict[str, Any]:
+        return {}
+
+    def __setstate__(self, state: Dict[str, Any]) -> None:
+        # unpickling does not call __init__ by default, do it manually here
+        self.__init__()  # type: ignore[misc]
+
+
+_patch_manager = _StatementParamsPatchManager()
 
 
 def get_statement_params(
@@ -375,7 +493,18 @@ def send_api_usage_telemetry(
                         obj._statement_params = statement_params  # type: ignore[assignment]
                 return obj
 
+            # Set up framework-level credit usage instrumentation
+            ctx = contextvars.copy_context()
+            _patch_manager.apply_patches()
+
+            # This function should be executed with ctx.run()
+            def execute_func_with_statement_params() -> _ReturnValue:
+                _patch_manager.set_statement_params(statement_params)
+                result = func(*args, **kwargs)
+                return update_stmt_params_if_snowpark_df(result, statement_params)
+
             # prioritize `conn_attr_name` over the active session
+            telemetry_enabled = True
             if conn_attr_name:
                 # raise AttributeError if conn attribute does not exist in `self`
                 conn = operator.attrgetter(conn_attr_name)(args[0])
@@ -387,22 +516,17 @@ def send_api_usage_telemetry(
             else:
                 try:
                     active_session = next(iter(session._get_active_sessions()))
-                # server no default session
+                    conn = active_session._conn._conn
+                    telemetry_enabled = active_session.telemetry_enabled
                 except snowpark_exceptions.SnowparkSessionException:
-                    try:
-                        return update_stmt_params_if_snowpark_df(func(*args, **kwargs), statement_params)
-                    except Exception as e:
-                        if isinstance(e, snowml_exceptions.SnowflakeMLException):
-                            raise e.original_exception.with_traceback(e.__traceback__) from None
-                        # suppress SnowparkSessionException from telemetry in the stack trace
-                        raise e from None
+                    conn = None
 
-                conn = active_session._conn._conn
-                if (not active_session.telemetry_enabled) or (conn is None):
-                    try:
-                        return update_stmt_params_if_snowpark_df(func(*args, **kwargs), statement_params)
-                    except snowml_exceptions.SnowflakeMLException as e:
-                        raise e.original_exception from e
+            if conn is None or not telemetry_enabled:
+                # Telemetry not enabled, just execute without our additional telemetry logic
+                try:
+                    return ctx.run(execute_func_with_statement_params)
+                except snowml_exceptions.SnowflakeMLException as e:
+                    raise e.original_exception from e
 
             # TODO(hayu): [SNOW-750287] Optimize telemetry client to a singleton.
             telemetry = _SourceTelemetryClient(conn=conn, project=project, subproject=subproject_name)
@@ -415,11 +539,11 @@ def send_api_usage_telemetry(
                 custom_tags=custom_tags,
             )
             try:
-                res = func(*args, **kwargs)
+                return ctx.run(execute_func_with_statement_params)
             except Exception as e:
                 if not isinstance(e, snowml_exceptions.SnowflakeMLException):
                     # already handled via a nested decorated function
-                    if hasattr(e, "_snowflake_ml_handled") and e._snowflake_ml_handled:
+                    if getattr(e, "_snowflake_ml_handled", False):
                         raise e
                     if isinstance(e, snowpark_exceptions.SnowparkClientException):
                         me = snowml_exceptions.SnowflakeMLException(
@@ -438,8 +562,6 @@ def send_api_usage_telemetry(
                     raise me.original_exception from None
                 else:
                     raise me.original_exception from e
-            else:
-                return update_stmt_params_if_snowpark_df(res, statement_params)
             finally:
                 telemetry.send_function_usage_telemetry(**telemetry_args)
                 global _log_counter

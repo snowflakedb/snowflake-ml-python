@@ -16,12 +16,6 @@ class PackageVisibilityTest(absltest.TestCase):
     def test_extract_answer_visible(self) -> None:
         self.assertTrue(callable(cortex.ExtractAnswer))
 
-    def test_embed_text_768_visible(self) -> None:
-        self.assertTrue(callable(cortex.EmbedText768))
-
-    def test_embed_text_1024_visible(self) -> None:
-        self.assertTrue(callable(cortex.EmbedText1024))
-
     def test_sentiment_visible(self) -> None:
         self.assertTrue(callable(cortex.Sentiment))
 

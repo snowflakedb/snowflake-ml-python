@@ -55,6 +55,7 @@ def create_model_metadata(
     conda_dependencies: Optional[List[str]] = None,
     pip_requirements: Optional[List[str]] = None,
     python_version: Optional[str] = None,
+    model_objective: model_types.ModelObjective = model_types.ModelObjective.UNKNOWN,
     **kwargs: Any,
 ) -> Generator["ModelMetadata", None, None]:
     """Create a generator for model metadata object. Use generator to ensure correct register and unregister for
@@ -74,6 +75,9 @@ def create_model_metadata(
         pip_requirements: List of pip Python packages requirements for running the model. Defaults to None.
         python_version: A string of python version where model is run. Used for user override. If specified as None,
             current version would be captured. Defaults to None.
+        model_objective: The objective of the Model Version. It is an enum class ModelObjective with values REGRESSION,
+            BINARY_CLASSIFICATION, MULTI_CLASSIFICATION, RANKING, or UNKNOWN. By default it is set to
+            ModelObjective.UNKNOWN and may be overridden by inferring from the Model Object.
         **kwargs: Dict of attributes and values of the metadata. Used when loading from file.
 
     Raises:
@@ -131,6 +135,7 @@ def create_model_metadata(
         model_type=model_type,
         signatures=signatures,
         function_properties=function_properties,
+        model_objective=model_objective,
     )
 
     code_dir_path = os.path.join(model_dir_path, MODEL_CODE_DIR)
@@ -261,7 +266,7 @@ class ModelMetadata:
         min_snowpark_ml_version: Optional[str] = None,
         models: Optional[Dict[str, model_blob_meta.ModelBlobMeta]] = None,
         original_metadata_version: Optional[str] = model_meta_schema.MODEL_METADATA_VERSION,
-        model_objective: Optional[model_meta_schema.ModelObjective] = model_meta_schema.ModelObjective.UNKNOWN,
+        model_objective: model_types.ModelObjective = model_types.ModelObjective.UNKNOWN,
         explain_algorithm: Optional[model_meta_schema.ModelExplainAlgorithm] = None,
     ) -> None:
         self.name = name
@@ -287,9 +292,7 @@ class ModelMetadata:
 
         self.original_metadata_version = original_metadata_version
 
-        self.model_objective: model_meta_schema.ModelObjective = (
-            model_objective or model_meta_schema.ModelObjective.UNKNOWN
-        )
+        self.model_objective: model_types.ModelObjective = model_objective
         self.explain_algorithm: Optional[model_meta_schema.ModelExplainAlgorithm] = explain_algorithm
 
     @property
@@ -387,7 +390,7 @@ class ModelMetadata:
             signatures=loaded_meta["signatures"],
             version=original_loaded_meta_version,
             min_snowpark_ml_version=loaded_meta_min_snowpark_ml_version,
-            model_objective=loaded_meta.get("model_objective", model_meta_schema.ModelObjective.UNKNOWN.value),
+            model_objective=loaded_meta.get("model_objective", model_types.ModelObjective.UNKNOWN.value),
             explainability=loaded_meta.get("explainability", None),
             function_properties=loaded_meta.get("function_properties", {}),
         )
@@ -442,8 +445,8 @@ class ModelMetadata:
             min_snowpark_ml_version=model_dict["min_snowpark_ml_version"],
             models=models,
             original_metadata_version=model_dict["version"],
-            model_objective=model_meta_schema.ModelObjective(
-                model_dict.get("model_objective", model_meta_schema.ModelObjective.UNKNOWN.value)
+            model_objective=model_types.ModelObjective(
+                model_dict.get("model_objective", model_types.ModelObjective.UNKNOWN.value)
             ),
             explain_algorithm=explanation_algorithm,
             function_properties=model_dict.get("function_properties", {}),

@@ -70,7 +70,9 @@ class LLM:
 
             import peft
 
-            peft_config = peft.PeftConfig.from_pretrained(model_id_or_path, **hub_kwargs)  # type: ignore[attr-defined]
+            peft_config = peft.PeftConfig.from_pretrained(  # type: ignore[no-untyped-call, attr-defined]
+                model_id_or_path, **hub_kwargs
+            )
             if peft_config.peft_type != peft.PeftType.LORA:  # type: ignore[attr-defined]
                 raise ValueError("Only LORA is supported.")
             if peft_config.task_type != peft.TaskType.CAUSAL_LM:  # type: ignore[attr-defined]

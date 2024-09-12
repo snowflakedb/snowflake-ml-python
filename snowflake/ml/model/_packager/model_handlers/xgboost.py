@@ -1,6 +1,6 @@
 # mypy: disable-error-code="import"
-import json
 import os
+import warnings
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -13,14 +13,20 @@ from typing import (
     final,
 )
 
+import importlib_metadata
 import numpy as np
 import pandas as pd
+from packaging import version
 from typing_extensions import TypeGuard, Unpack
 
 from snowflake.ml._internal import type_utils
 from snowflake.ml.model import custom_model, model_signature, type_hints as model_types
 from snowflake.ml.model._packager.model_env import model_env
-from snowflake.ml.model._packager.model_handlers import _base, _utils as handlers_utils
+from snowflake.ml.model._packager.model_handlers import (
+    _base,
+    _utils as handlers_utils,
+    model_objective_utils,
+)
 from snowflake.ml.model._packager.model_handlers_migrator import base_migrator
 from snowflake.ml.model._packager.model_meta import (
     model_blob_meta,
@@ -47,41 +53,6 @@ class XGBModelHandler(_base.BaseModelHandler[Union["xgboost.Booster", "xgboost.X
 
     MODEL_BLOB_FILE_OR_DIR = "model.ubj"
     DEFAULT_TARGET_METHODS = ["predict", "predict_proba"]
-    _BINARY_CLASSIFICATION_OBJECTIVE_PREFIX = ["binary:"]
-    _MULTI_CLASSIFICATION_OBJECTIVE_PREFIX = ["multi:"]
-    _RANKING_OBJECTIVE_PREFIX = ["rank:"]
-    _REGRESSION_OBJECTIVE_PREFIX = ["reg:"]
-
-    @classmethod
-    def get_model_objective(
-        cls, model: Union["xgboost.Booster", "xgboost.XGBModel"]
-    ) -> model_meta_schema.ModelObjective:
-        import xgboost
-
-        if isinstance(model, xgboost.XGBClassifier) or isinstance(model, xgboost.XGBRFClassifier):
-            num_classes = handlers_utils.get_num_classes_if_exists(model)
-            if num_classes == 2:
-                return model_meta_schema.ModelObjective.BINARY_CLASSIFICATION
-            return model_meta_schema.ModelObjective.MULTI_CLASSIFICATION
-        if isinstance(model, xgboost.XGBRegressor) or isinstance(model, xgboost.XGBRFRegressor):
-            return model_meta_schema.ModelObjective.REGRESSION
-        if isinstance(model, xgboost.XGBRanker):
-            return model_meta_schema.ModelObjective.RANKING
-        model_params = json.loads(model.save_config())
-        model_objective = model_params["learner"]["objective"]
-        for classification_objective in cls._BINARY_CLASSIFICATION_OBJECTIVE_PREFIX:
-            if classification_objective in model_objective:
-                return model_meta_schema.ModelObjective.BINARY_CLASSIFICATION
-        for classification_objective in cls._MULTI_CLASSIFICATION_OBJECTIVE_PREFIX:
-            if classification_objective in model_objective:
-                return model_meta_schema.ModelObjective.MULTI_CLASSIFICATION
-        for ranking_objective in cls._RANKING_OBJECTIVE_PREFIX:
-            if ranking_objective in model_objective:
-                return model_meta_schema.ModelObjective.RANKING
-        for regression_objective in cls._REGRESSION_OBJECTIVE_PREFIX:
-            if regression_objective in model_objective:
-                return model_meta_schema.ModelObjective.REGRESSION
-        return model_meta_schema.ModelObjective.UNKNOWN
 
     @classmethod
     def can_handle(
@@ -116,9 +87,28 @@ class XGBModelHandler(_base.BaseModelHandler[Union["xgboost.Booster", "xgboost.X
         is_sub_model: Optional[bool] = False,
         **kwargs: Unpack[model_types.XGBModelSaveOptions],
     ) -> None:
+        enable_explainability = kwargs.get("enable_explainability", True)
+
         import xgboost
 
         assert isinstance(model, xgboost.Booster) or isinstance(model, xgboost.XGBModel)
+
+        local_xgb_version = None
+
+        try:
+            local_dist = importlib_metadata.distribution("xgboost")  # type: ignore[no-untyped-call]
+            local_xgb_version = version.parse(local_dist.version)
+        except importlib_metadata.PackageNotFoundError:
+            pass
+
+        if local_xgb_version and local_xgb_version >= version.parse("2.1.0") and enable_explainability:
+            warnings.warn(
+                f"This version of xgboost {local_xgb_version} does not work with shap 0.42.1."
+                + "If you want model explanations, lower the xgboost version to <2.1.0.",
+                category=UserWarning,
+                stacklevel=1,
+            )
+            enable_explainability = False
 
         if not is_sub_model:
             target_methods = handlers_utils.get_target_methods(
@@ -148,17 +138,16 @@ class XGBModelHandler(_base.BaseModelHandler[Union["xgboost.Booster", "xgboost.X
                 sample_input_data=sample_input_data,
                 get_prediction_fn=get_prediction,
             )
-            model_objective = cls.get_model_objective(model)
-            model_meta.model_objective = model_objective
-            if kwargs.get("enable_explainability", True):
-                output_type = model_signature.DataType.DOUBLE
-                if model_objective == model_meta_schema.ModelObjective.MULTI_CLASSIFICATION:
-                    output_type = model_signature.DataType.STRING
+            model_objective_and_output = model_objective_utils.get_model_objective_and_output_type(model)
+            model_meta.model_objective = handlers_utils.validate_model_objective(
+                model_meta.model_objective, model_objective_and_output.objective
+            )
+            if enable_explainability:
                 model_meta = handlers_utils.add_explain_method_signature(
                     model_meta=model_meta,
                     explain_method="explain",
                     target_method="predict",
-                    output_return_type=output_type,
+                    output_return_type=model_objective_and_output.output_type,
                 )
                 model_meta.function_properties = {
                     "explain": {model_meta_schema.FunctionProperties.PARTITIONED.value: False}
@@ -180,15 +169,26 @@ class XGBModelHandler(_base.BaseModelHandler[Union["xgboost.Booster", "xgboost.X
         model_meta.env.include_if_absent(
             [
                 model_env.ModelDependency(requirement="scikit-learn", pip_name="scikit-learn"),
-                model_env.ModelDependency(requirement="xgboost", pip_name="xgboost"),
             ],
             check_local_version=True,
         )
-        if kwargs.get("enable_explainability", True):
+        if local_xgb_version and local_xgb_version >= version.parse("2.0.0") and enable_explainability:
             model_meta.env.include_if_absent(
-                [model_env.ModelDependency(requirement="shap", pip_name="shap")],
+                [
+                    model_env.ModelDependency(requirement="xgboost==2.0.*", pip_name="xgboost"),
+                ],
+                check_local_version=False,
+            )
+        else:
+            model_meta.env.include_if_absent(
+                [
+                    model_env.ModelDependency(requirement="xgboost", pip_name="xgboost"),
+                ],
                 check_local_version=True,
             )
+
+        if enable_explainability:
+            model_meta.env.include_if_absent([model_env.ModelDependency(requirement="shap", pip_name="shap")])
             model_meta.explain_algorithm = model_meta_schema.ModelExplainAlgorithm.SHAP
         model_meta.env.cuda_version = kwargs.get("cuda_version", model_env.DEFAULT_CUDA_VERSION)
 
@@ -269,7 +269,7 @@ class XGBModelHandler(_base.BaseModelHandler[Union["xgboost.Booster", "xgboost.X
                     import shap
 
                     explainer = shap.TreeExplainer(raw_model)
-                    df = pd.DataFrame(explainer(X).values)
+                    df = handlers_utils.convert_explanations_to_2D_df(raw_model, explainer(X).values)
                     return model_signature_utils.rename_pandas_df(df, signature.outputs)
 
                 if target_method == "explain":

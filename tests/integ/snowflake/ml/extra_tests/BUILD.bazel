@@ -85,12 +85,12 @@ py_test(
     data = ["//tests/integ/snowflake/ml/test_data:UCI_BANK_MARKETING_20COLUMNS.csv"],
     shard_count = 4,
     deps = [
+        "//snowflake/ml/modeling/compose:column_transformer",
         "//snowflake/ml/modeling/framework",
         "//snowflake/ml/modeling/impute:knn_imputer",
         "//snowflake/ml/modeling/pipeline",
         "//snowflake/ml/modeling/preprocessing:min_max_scaler",
         "//snowflake/ml/modeling/preprocessing:one_hot_encoder",
-        "//snowflake/ml/modeling/preprocessing:standard_scaler",
         "//snowflake/ml/modeling/xgboost:xgb_classifier",
         "//snowflake/ml/utils:connection_params",
         "//tests/integ/snowflake/ml/test_utils:test_env_utils",
@@ -159,6 +159,7 @@ py_test(
 py_test(
     name = "xgboost_external_memory_training_test",
     srcs = ["xgboost_external_memory_training_test.py"],
+    data = ["//tests/integ/snowflake/ml/test_data:UCI_BANK_MARKETING_20COLUMNS.csv"],
     deps = [
         "//snowflake/ml/modeling/metrics:classification",
         "//snowflake/ml/modeling/xgboost:xgb_classifier",
@@ -174,5 +175,18 @@ py_test(
         "//snowflake/ml/modeling/metrics:classification",
         "//snowflake/ml/modeling/xgboost:xgb_classifier",
         "//snowflake/ml/utils:connection_params",
+    ],
+)
+
+py_test(
+    name = "sample_weight_col_test",
+    srcs = ["sample_weight_col_test.py"],
+    data = ["//tests/integ/snowflake/ml/test_data:UCI_BANK_MARKETING_20COLUMNS.csv"],
+    deps = [
+        "//snowflake/ml/modeling/framework",
+        "//snowflake/ml/modeling/model_selection:grid_search_cv",
+        "//snowflake/ml/modeling/xgboost:xgb_classifier",
+        "//snowflake/ml/utils:connection_params",
+        "//tests/integ/snowflake/ml/test_utils:test_env_utils",
     ],
 )

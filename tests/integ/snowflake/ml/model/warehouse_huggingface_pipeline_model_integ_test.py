@@ -7,7 +7,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 import numpy as np
 import pandas as pd
 from absl.testing import absltest, parameterized
-from packaging import requirements
+from packaging import requirements, version
 
 from snowflake.ml._internal import env_utils
 from snowflake.ml.model import type_hints as model_types
@@ -91,6 +91,9 @@ class TestWarehouseHuggingFacehModelInteg(parameterized.TestCase):
         # We have to import here due to cache location issue.
         # Only by doing so can we make the cache dir setting effective.
         import transformers
+
+        if version.parse(transformers.__version__) >= version.parse("4.42.0"):
+            self.skipTest("This test is not compatible with transformers>=4.42.0")
 
         model = transformers.pipeline(task="conversational", model="ToddGoldfarb/Cadet-Tiny")
 

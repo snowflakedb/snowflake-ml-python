@@ -1987,7 +1987,7 @@ class FeatureStoreTest(parameterized.TestCase):
         ):
             fs.update_feature_view("fv1", "v1", warehouse=self._session.get_current_warehouse())
 
-        updated_fv = fs.update_feature_view("fv1", "v1", desc="")
+        updated_fv = fs.update_feature_view(fv, desc="")
         self.assertEqual(updated_fv.desc, "")
 
     def test_update_managed_feature_view(self) -> None:

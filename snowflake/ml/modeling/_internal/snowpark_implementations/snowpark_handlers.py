@@ -318,19 +318,19 @@ class SnowparkTransformHandlers:
             with open(local_score_file_name_path, mode="r+b") as local_score_file_obj:
                 estimator = cp.load(local_score_file_obj)
 
-            argspec = inspect.getfullargspec(estimator.score)
-            if "X" in argspec.args:
+            params = inspect.signature(estimator.score).parameters
+            if "X" in params:
                 args = {"X": df[input_cols]}
-            elif "X_test" in argspec.args:
+            elif "X_test" in params:
                 args = {"X_test": df[input_cols]}
             else:
                 raise RuntimeError("Neither 'X' or 'X_test' exist in argument")
 
             if label_cols:
-                label_arg_name = "Y" if "Y" in argspec.args else "y"
+                label_arg_name = "Y" if "Y" in params else "y"
                 args[label_arg_name] = df[label_cols].squeeze()
 
-            if sample_weight_col is not None and "sample_weight" in argspec.args:
+            if sample_weight_col is not None and "sample_weight" in params:
                 args["sample_weight"] = df[sample_weight_col].squeeze()
 
             result: float = estimator.score(**args)

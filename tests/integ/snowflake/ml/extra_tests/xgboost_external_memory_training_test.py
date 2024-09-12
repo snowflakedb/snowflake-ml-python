@@ -1,11 +1,13 @@
 import numpy as np
+import pandas as pd
 from absl.testing.absltest import TestCase, main
+from importlib_resources import files
 from sklearn.metrics import accuracy_score as sk_accuracy_score
 from xgboost import XGBClassifier as NativeXGBClassifier
 
 from snowflake.ml.modeling.xgboost import XGBClassifier
 from snowflake.ml.utils.connection_params import SnowflakeLoginOptions
-from snowflake.snowpark import Session, functions as F
+from snowflake.snowpark import Session
 
 categorical_columns = [
     "AGE",
@@ -39,28 +41,29 @@ class XGBoostExternalMemoryTrainingTest(TestCase):
     def setUp(self):
         """Creates Snowpark and Snowflake environments for testing."""
         self._session = Session.builder.configs(SnowflakeLoginOptions()).create()
+        data_file = files("tests.integ.snowflake.ml.test_data").joinpath("UCI_BANK_MARKETING_20COLUMNS.csv")
+        self._test_data = pd.read_csv(data_file, index_col=0)
 
     def tearDown(self):
         self._session.close()
 
     def test_fit_and_compare_results(self) -> None:
-        input_df = (
-            self._session.sql(
-                """SELECT *, IFF(Y = 'yes', 1.0, 0.0) as LABEL
-                FROM ML_DATASETS.PUBLIC.UCI_BANK_MARKETING_20COLUMNS"""
-            )
-            .drop("Y")
-            .withColumn("ROW_INDEX", F.monotonically_increasing_id())
-        )
-        pd_df = input_df.to_pandas().sort_values(by=["ROW_INDEX"])[numerical_columns + ["ROW_INDEX", "LABEL"]]
-        sp_df = self._session.create_dataframe(pd_df)
+        pd_data = self._test_data
+        pd_data["ROW_INDEX"] = pd_data.reset_index().index
 
+        # Create the Snowpark DataFrame from pandas DataFrame
+        sp_df = self._session.create_dataframe(pd_data)
+
+        # Prepare the data for oss
+        pd_df = pd_data[numerical_columns + ["ROW_INDEX", "LABEL"]].sort_values(by=["ROW_INDEX"])
+
+        # Train oss model
         sk_reg = NativeXGBClassifier(random_state=0)
         sk_reg.fit(pd_df[numerical_columns], pd_df["LABEL"])
         sk_result = sk_reg.predict(pd_df[numerical_columns])
-
         sk_accuracy = sk_accuracy_score(pd_df["LABEL"], sk_result)
 
+        # Train Snowflake model
         reg = XGBClassifier(
             random_state=0,
             input_cols=numerical_columns,

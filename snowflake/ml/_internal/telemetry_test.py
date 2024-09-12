@@ -1,13 +1,16 @@
 import inspect
+import pickle
+import threading
 import time
 import traceback
-from typing import Any, Dict, Optional
+from typing import Any, Callable, Dict, Optional
 from unittest import mock
 
+import cloudpickle
 from absl.testing import absltest, parameterized
 
 from snowflake import connector
-from snowflake.connector import telemetry as connector_telemetry
+from snowflake.connector import cursor, telemetry as connector_telemetry
 from snowflake.ml._internal import env, telemetry as utils_telemetry
 from snowflake.ml._internal.exceptions import error_codes, exceptions
 from snowflake.snowpark import dataframe, session
@@ -32,6 +35,8 @@ class TelemetryTest(parameterized.TestCase):
         self.mock_session._conn = self.mock_server_conn
         self.mock_server_conn._conn = self.mock_snowflake_conn
         self.mock_snowflake_conn._telemetry = self.mock_telemetry
+        self.mock_snowflake_conn._session_parameters = {}
+        self.mock_snowflake_conn.is_closed.return_value = False
         self.telemetry_type = f"{_SOURCE.lower()}_{utils_telemetry.TelemetryField.TYPE_FUNCTION_USAGE.value}"
 
     @mock.patch("snowflake.snowpark.session._get_active_sessions")
@@ -547,6 +552,185 @@ class TelemetryTest(parameterized.TestCase):
         result = utils_telemetry.add_statement_params_custom_tags(statement_params, custom_tags)
         self.assertIn(utils_telemetry.TelemetryField.KEY_CUSTOM_TAGS.value, result)
         self.assertEqual(result.get(utils_telemetry.TelemetryField.KEY_CUSTOM_TAGS.value), custom_tags)
+
+    def test_apply_statement_params_patch(self) -> None:
+        patch_manager = utils_telemetry._StatementParamsPatchManager()
+
+        mock_cursor = absltest.mock.MagicMock(spec=cursor.SnowflakeCursor)
+        with mock.patch.object(self.mock_snowflake_conn, "cursor", return_value=mock_cursor):
+            server_conn = server_connection.ServerConnection({}, self.mock_snowflake_conn)
+            sess = session.Session(server_conn)
+            try:
+                patch_manager._patch_session(sess, throw_on_patch_fail=True)
+            except Exception as e:
+                self.fail(f"Patching failed with unexpected exception: {e}")
+
+    def test_pickle_instrumented_function(self) -> None:
+        @utils_telemetry.send_api_usage_telemetry(
+            project=_PROJECT,
+            subproject="PICKLE",
+        )
+        def _picklable_test_function(session: session.Session) -> None:
+            """Used for test_pickle_instrumented_function"""
+            session.sql("SELECT 1").collect()
+
+        with self.assertRaises(pickle.PicklingError):
+            _ = cloudpickle.dumps(self.mock_session)
+
+        self._do_internal_statement_params_test(_picklable_test_function)
+        try:
+            function_pickled = cloudpickle.dumps(_picklable_test_function)
+        except Exception as e:
+            self.fail(f"Pickling failed with unexpected exception: {e}")
+
+        function_unpickled = cloudpickle.loads(function_pickled)
+        self._do_internal_statement_params_test(function_unpickled)
+
+    def test_statement_params_internal_query(self) -> None:
+        # Create and decorate a test function that calls some SQL query
+        @utils_telemetry.send_api_usage_telemetry(
+            project=_PROJECT,
+            subproject=_SUBPROJECT,
+        )
+        def dummy_function(session: session.Session) -> None:
+            session.sql("SELECT 1").collect()  # Intentionally omit statement_params arg
+
+        self._do_internal_statement_params_test(dummy_function)
+
+    def test_statement_params_nested_internal_query(self) -> None:
+        @utils_telemetry.send_api_usage_telemetry(
+            project="INNER_PROJECT",
+            subproject=_SUBPROJECT,
+        )
+        def inner_function(session: session.Session) -> None:
+            session.sql("SELECT 1").collect()  # Intentionally omit statement_params arg
+
+        @utils_telemetry.send_api_usage_telemetry(
+            project="OUTER_PROJECT",
+            subproject=_SUBPROJECT,
+        )
+        def outer_function(session: session.Session) -> None:
+            inner_function(session)
+
+        self._do_internal_statement_params_test(outer_function, expected_params={"project": "OUTER_PROJECT"})
+
+    def test_statement_params_internal_params_precedence(self) -> None:
+        @utils_telemetry.send_api_usage_telemetry(
+            project=_PROJECT,
+            subproject=_SUBPROJECT,
+        )
+        def project_override(session: session.Session) -> None:
+            session.sql("SELECT 1").collect(statement_params={"project": "MY_OVERRIDE"})
+
+        self._do_internal_statement_params_test(
+            project_override,
+            expected_params={"project": "MY_OVERRIDE", "snowml_telemetry_type": "SNOWML_AUGMENT_TELEMETRY"},
+        )
+
+        @utils_telemetry.send_api_usage_telemetry(
+            project=_PROJECT,
+            subproject=_SUBPROJECT,
+        )
+        def telemetry_type_override(session: session.Session) -> None:
+            session.sql("SELECT 1").collect(statement_params={"snowml_telemetry_type": "user override"})
+
+        self._do_internal_statement_params_test(
+            telemetry_type_override,
+            expected_params={"snowml_telemetry_type": "user override"},
+        )
+
+    def test_statement_params_multithreading(self) -> None:
+        query1 = "select 1"
+        query2 = "select 2"
+
+        @utils_telemetry.send_api_usage_telemetry(project="PROJECT_1")
+        def test_function1(session: session.Session) -> None:
+            time.sleep(0.1)
+            session.sql(query1).collect()
+
+        @utils_telemetry.send_api_usage_telemetry(project="PROJECT_2")
+        def test_function2(session: session.Session) -> None:
+            session.sql(query2).collect()
+
+        # Set up a real Session with mocking starting at SnowflakeConnection
+        # Do this manually instead of using _do_internal_statement_params_test
+        # to make sure we're sharing a single cursor so that we don't erroneously pass
+        # the test just because each thread is using their own cursor.
+        mock_cursor = absltest.mock.MagicMock(spec=cursor.SnowflakeCursor)
+        with mock.patch.object(self.mock_snowflake_conn, "cursor", return_value=mock_cursor):
+            server_conn = server_connection.ServerConnection({}, self.mock_snowflake_conn)
+            sess = session.Session(server_conn)
+            with mock.patch.object(session, "_get_active_sessions", return_value={sess}):
+                thread1 = threading.Thread(target=test_function1, args=(sess,))
+                thread2 = threading.Thread(target=test_function2, args=(sess,))
+
+                thread1.start()
+                thread2.start()
+
+                thread1.join()
+                thread2.join()
+
+        self.assertEqual(2, len(mock_cursor.execute.call_args_list))
+        statement_params_by_query = {
+            call[0][0]: call.kwargs.get("_statement_params", {}) for call in mock_cursor.execute.call_args_list
+        }
+
+        default_params = {"source": "SnowML", "snowml_telemetry_type": "SNOWML_AUTO_TELEMETRY"}
+        self.assertDictContainsSubset({**default_params, "project": "PROJECT_1"}, statement_params_by_query[query1])
+        self.assertDictContainsSubset({**default_params, "project": "PROJECT_2"}, statement_params_by_query[query2])
+
+    def test_statement_params_external_function(self) -> None:
+        # Create and decorate a test function that calls some SQL query
+        @utils_telemetry.send_api_usage_telemetry(
+            project=_PROJECT,
+            subproject=_SUBPROJECT,
+        )
+        def dummy_function(session: session.Session) -> None:
+            session.sql("SELECT 1").collect()
+
+        def external_function(session: session.Session) -> None:
+            session.sql("SELECT 2").collect()
+
+        # Set up a real Session with mocking starting at SnowflakeConnection
+        # Do this manually instead of using _do_internal_statement_params_test
+        # to make sure we're sharing a single cursor so that we don't erroneously pass
+        # the test just because we're using a fresh session
+        mock_cursor = absltest.mock.MagicMock(spec=cursor.SnowflakeCursor)
+        with mock.patch.object(self.mock_snowflake_conn, "cursor", return_value=mock_cursor):
+            server_conn = server_connection.ServerConnection({}, self.mock_snowflake_conn)
+            sess = session.Session(server_conn)
+            with mock.patch.object(session, "_get_active_sessions", return_value={sess}):
+                dummy_function(sess)
+                external_function(sess)
+
+        call_statement_params = [
+            call.kwargs.get("_statement_params", {}) for call in mock_cursor.execute.call_args_list
+        ]
+        self.assertEqual(2, len(call_statement_params))
+        self.assertIn("source", call_statement_params[0].keys())
+        self.assertIn("snowml_telemetry_type", call_statement_params[0].keys())
+        self.assertNotIn("source", call_statement_params[1].keys())
+        self.assertNotIn("snowml_telemetry_type", call_statement_params[1].keys())
+
+    def _do_internal_statement_params_test(
+        self, func: Callable[[session.Session], None], expected_params: Optional[Dict[str, str]] = None
+    ) -> None:
+        # Set up a real Session with mocking starting at SnowflakeConnection
+        mock_cursor = absltest.mock.MagicMock(spec=cursor.SnowflakeCursor)
+        with mock.patch.object(self.mock_snowflake_conn, "cursor", return_value=mock_cursor):
+            server_conn = server_connection.ServerConnection({}, self.mock_snowflake_conn)
+            sess = session.Session(server_conn)
+            with mock.patch.object(session, "_get_active_sessions", return_value={sess}):
+                func(sess)
+
+        # Validate that the mock cursor received statement params
+        mock_cursor.execute.assert_called_once()
+        statement_params = mock_cursor.execute.call_args.kwargs.get("_statement_params", None)
+        self.assertIsNotNone(statement_params, "statement params not found in execute call")
+
+        expected_dict = {"source": "SnowML", "snowml_telemetry_type": "SNOWML_AUTO_TELEMETRY"}
+        expected_dict.update(expected_params or {})
+        self.assertDictContainsSubset(expected_dict, statement_params)
 
 
 if __name__ == "__main__":

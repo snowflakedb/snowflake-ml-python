@@ -1,6 +1,26 @@
 # Release History
 
-## 1.6.1 (TBD)
+## 1.6.2 (TBD)
+
+### Bug Fixes
+
+- Modeling: Support XGBoost version that is larger than 2.
+
+- Data: Fix multiple epoch iteration over `DataConnector.to_torch_datapipe()` DataPipes.
+- Generic: Fix a bug that when an invalid name is provided to argument where fully qualified name is expected, it will
+  be parsed wrongly. Now it raises an exception correctly.
+- Model Explainability: Handle explanations for multiclass XGBoost classification models
+- Model Explainability: Workarounds and better error handling for XGB>2.1.0 not working with SHAP==0.42.1
+
+### New Features
+
+- Data: Add top-level exports for `DataConnector` and `DataSource` to `snowflake.ml.data`.
+- Data: Add native batching support via `batch_size` and `drop_last_batch` arguments to `DataConnector.to_torch_dataset()`
+- Feature Store: update_feature_view() supports taking feature view object as argument.
+
+### Behavior Changes
+
+## 1.6.1 (2024-08-12)
 
 ### Bug Fixes
 
@@ -17,7 +37,6 @@
 ### New Features
 
 - Enable `set_params` to set the parameters of the underlying sklearn estimator, if the snowflake-ml model has been fit.
-- Data: Add top-level exports for `DataConnector` and `DataSource` to `snowflake.ml.data`.
 - Data: Add `snowflake.ml.data.ingestor_utils` module with utility functions helpful for `DataIngestor` implementations.
 - Data: Add new `to_torch_dataset()` connector to `DataConnector` to replace deprecated DataPipe.
 - Registry: Option to `enable_explainability` set to True by default for XGBoost, LightGBM and CatBoost as PuPr feature.

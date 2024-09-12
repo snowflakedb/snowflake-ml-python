@@ -35,6 +35,7 @@ cp.register_pickle_by_value(inspect.getmodule(handle_inference_result))
 
 _PROJECT = "ModelDevelopment"
 _ENABLE_ANONYMOUS_SPROC = False
+_ENABLE_TRACER = True
 
 
 class SnowparkModelTrainer:
@@ -119,6 +120,8 @@ class SnowparkModelTrainer:
             A callable that can be registered as a stored procedure.
         """
         imports = model_spec.imports  # In order for the sproc to not resolve this reference in snowflake.ml
+        method_name = "fit"
+        tracer_name = f"snowpark.ml.modeling.{self._class_name.lower()}.{method_name}"
 
         def fit_wrapper_function(
             session: Session,
@@ -138,110 +141,98 @@ class SnowparkModelTrainer:
             for import_name in imports:
                 importlib.import_module(import_name)
 
-            # Execute snowpark queries and obtain the results as pandas dataframe
-            # NB: this implies that the result data must fit into memory.
-            for query in sql_queries[:-1]:
-                _ = session.sql(query).collect(statement_params=statement_params)
-            sp_df = session.sql(sql_queries[-1])
-            df: pd.DataFrame = sp_df.to_pandas(statement_params=statement_params)
-            df.columns = sp_df.columns
+            def fit_and_return_estimator() -> str:
+                """This is a helper function within the sproc to download the data, fit the model, and upload the model.
 
-            local_transform_file_name = temp_file_utils.get_temp_file_path()
+                Returns:
+                    The name of the file in session's temp stage (temp_stage_name) that contains the serialized model.
+                """
+                # Execute snowpark queries and obtain the results as pandas dataframe
+                # NB: this implies that the result data must fit into memory.
+                for query in sql_queries[:-1]:
+                    _ = session.sql(query).collect(statement_params=statement_params)
+                sp_df = session.sql(sql_queries[-1])
+                df: pd.DataFrame = sp_df.to_pandas(statement_params=statement_params)
+                df.columns = sp_df.columns
 
-            session.file.get(
-                stage_location=temp_stage_name,
-                target_directory=local_transform_file_name,
-                statement_params=statement_params,
-            )
+                local_transform_file_name = temp_file_utils.get_temp_file_path()
 
-            local_transform_file_path = os.path.join(
-                local_transform_file_name, os.listdir(local_transform_file_name)[0]
-            )
-            with open(local_transform_file_path, mode="r+b") as local_transform_file_obj:
-                estimator = cp.load(local_transform_file_obj)
+                session.file.get(
+                    stage_location=temp_stage_name,
+                    target_directory=local_transform_file_name,
+                    statement_params=statement_params,
+                )
 
-            argspec = inspect.getfullargspec(estimator.fit)
-            args = {"X": df[input_cols]}
-            if label_cols:
-                label_arg_name = "Y" if "Y" in argspec.args else "y"
-                args[label_arg_name] = df[label_cols].squeeze()
+                local_transform_file_path = os.path.join(
+                    local_transform_file_name, os.listdir(local_transform_file_name)[0]
+                )
+                with open(local_transform_file_path, mode="r+b") as local_transform_file_obj:
+                    estimator = cp.load(local_transform_file_obj)
 
-            if sample_weight_col is not None and "sample_weight" in argspec.args:
-                args["sample_weight"] = df[sample_weight_col].squeeze()
+                params = inspect.signature(estimator.fit).parameters
+                args = {"X": df[input_cols]}
+                if label_cols:
+                    label_arg_name = "Y" if "Y" in params else "y"
+                    args[label_arg_name] = df[label_cols].squeeze()
 
-            estimator.fit(**args)
+                if sample_weight_col is not None and "sample_weight" in params:
+                    args["sample_weight"] = df[sample_weight_col].squeeze()
 
-            local_result_file_name = temp_file_utils.get_temp_file_path()
+                estimator.fit(**args)
 
-            with open(local_result_file_name, mode="w+b") as local_result_file_obj:
-                cp.dump(estimator, local_result_file_obj)
+                local_result_file_name = temp_file_utils.get_temp_file_path()
 
-            session.file.put(
-                local_file_name=local_result_file_name,
-                stage_location=temp_stage_name,
-                auto_compress=False,
-                overwrite=True,
-                statement_params=statement_params,
-            )
+                with open(local_result_file_name, mode="w+b") as local_result_file_obj:
+                    cp.dump(estimator, local_result_file_obj)
 
-            # Note: you can add something like  + "|" + str(df) to the return string
-            # to pass debug information to the caller.
-            return str(os.path.basename(local_result_file_name))
+                session.file.put(
+                    local_file_name=local_result_file_name,
+                    stage_location=temp_stage_name,
+                    auto_compress=False,
+                    overwrite=True,
+                    statement_params=statement_params,
+                )
+                return local_result_file_name
+
+            if _ENABLE_TRACER:
+
+                # Use opentelemetry to trace the dist and span of the fit operation.
+                # This would allow user to see the trace in the Snowflake UI.
+                from opentelemetry import trace
+
+                tracer = trace.get_tracer(tracer_name)
+                with tracer.start_as_current_span("fit"):
+                    local_result_file_name = fit_and_return_estimator()
+                    # Note: you can add something like  + "|" + str(df) to the return string
+                    # to pass debug information to the caller.
+                    return str(os.path.basename(local_result_file_name))
+            else:
+                local_result_file_name = fit_and_return_estimator()
+                return str(os.path.basename(local_result_file_name))
 
         return fit_wrapper_function
 
-    def _get_fit_wrapper_sproc_anonymous(self, statement_params: Dict[str, str]) -> StoredProcedure:
+    def _get_fit_wrapper_sproc(self, statement_params: Dict[str, str], anonymous: bool) -> StoredProcedure:
         model_spec = ModelSpecificationsBuilder.build(model=self.estimator)
-        fit_sproc_name = snowpark_utils.random_name_for_temp_object(snowpark_utils.TempObjectType.PROCEDURE)
-
-        relaxed_dependencies = pkg_version_utils.get_valid_pkg_versions_supported_in_snowflake_conda_channel(
-            pkg_versions=model_spec.pkgDependencies, session=self.session
-        )
-
-        fit_wrapper_sproc = self.session.sproc.register(
-            func=self._build_fit_wrapper_sproc(model_spec=model_spec),
-            is_permanent=False,
-            name=fit_sproc_name,
-            packages=["snowflake-snowpark-python"] + relaxed_dependencies,  # type: ignore[arg-type]
-            replace=True,
-            session=self.session,
-            statement_params=statement_params,
-            anonymous=True,
-            execute_as="caller",
-        )
-
-        return fit_wrapper_sproc
-
-    def _get_fit_wrapper_sproc(self, statement_params: Dict[str, str]) -> StoredProcedure:
-        # If the sproc already exists, don't register.
-        if not hasattr(self.session, "_FIT_WRAPPER_SPROCS"):
-            self.session._FIT_WRAPPER_SPROCS: Dict[str, StoredProcedure] = {}  # type: ignore[attr-defined, misc]
-
-        model_spec = ModelSpecificationsBuilder.build(model=self.estimator)
-        fit_sproc_key = model_spec.__class__.__name__
-        if fit_sproc_key in self.session._FIT_WRAPPER_SPROCS:  # type: ignore[attr-defined]
-            fit_sproc: StoredProcedure = self.session._FIT_WRAPPER_SPROCS[fit_sproc_key]  # type: ignore[attr-defined]
-            return fit_sproc
 
         fit_sproc_name = snowpark_utils.random_name_for_temp_object(snowpark_utils.TempObjectType.PROCEDURE)
 
         relaxed_dependencies = pkg_version_utils.get_valid_pkg_versions_supported_in_snowflake_conda_channel(
             pkg_versions=model_spec.pkgDependencies, session=self.session
         )
+        packages = ["snowflake-snowpark-python", "snowflake-telemetry-python"] + relaxed_dependencies
 
         fit_wrapper_sproc = self.session.sproc.register(
             func=self._build_fit_wrapper_sproc(model_spec=model_spec),
             is_permanent=False,
             name=fit_sproc_name,
-            packages=["snowflake-snowpark-python"] + relaxed_dependencies,  # type: ignore[arg-type]
+            packages=packages,  # type: ignore[arg-type]
             replace=True,
             session=self.session,
             statement_params=statement_params,
             execute_as="caller",
+            anonymous=anonymous,
         )
-
-        self.session._FIT_WRAPPER_SPROCS[fit_sproc_key] = fit_wrapper_sproc  # type: ignore[attr-defined]
-
         return fit_wrapper_sproc
 
     def _build_fit_predict_wrapper_sproc(
@@ -333,7 +324,9 @@ class SnowparkModelTrainer:
 
             # write into a temp table in sproc and load the table from outside
             session.write_pandas(
-                fit_predict_result_pd, fit_predict_result_name, auto_create_table=True, table_type="temp"
+                fit_predict_result_pd,
+                fit_predict_result_name,
+                overwrite=True,
             )
 
             # Note: you can add something like  + "|" + str(df) to the return string
@@ -414,13 +407,13 @@ class SnowparkModelTrainer:
             with open(local_transform_file_path, mode="r+b") as local_transform_file_obj:
                 estimator = cp.load(local_transform_file_obj)
 
-            argspec = inspect.getfullargspec(estimator.fit)
+            params = inspect.signature(estimator.fit).parameters
             args = {"X": df[input_cols]}
             if label_cols:
-                label_arg_name = "Y" if "Y" in argspec.args else "y"
+                label_arg_name = "Y" if "Y" in params else "y"
                 args[label_arg_name] = df[label_cols].squeeze()
 
-            if sample_weight_col is not None and "sample_weight" in argspec.args:
+            if sample_weight_col is not None and "sample_weight" in params:
                 args["sample_weight"] = df[sample_weight_col].squeeze()
 
             fit_transform_result = estimator.fit_transform(**args)
@@ -477,7 +470,7 @@ class SnowparkModelTrainer:
 
         return fit_transform_wrapper_function
 
-    def _get_fit_predict_wrapper_sproc_anonymous(self, statement_params: Dict[str, str]) -> StoredProcedure:
+    def _get_fit_predict_wrapper_sproc(self, statement_params: Dict[str, str], anonymous: bool) -> StoredProcedure:
         model_spec = ModelSpecificationsBuilder.build(model=self.estimator)
 
         fit_predict_sproc_name = snowpark_utils.random_name_for_temp_object(snowpark_utils.TempObjectType.PROCEDURE)
@@ -494,49 +487,13 @@ class SnowparkModelTrainer:
             replace=True,
             session=self.session,
             statement_params=statement_params,
-            anonymous=True,
+            anonymous=anonymous,
             execute_as="caller",
         )
 
         return fit_predict_wrapper_sproc
 
-    def _get_fit_predict_wrapper_sproc(self, statement_params: Dict[str, str]) -> StoredProcedure:
-        # If the sproc already exists, don't register.
-        if not hasattr(self.session, "_FIT_WRAPPER_SPROCS"):
-            self.session._FIT_WRAPPER_SPROCS: Dict[str, StoredProcedure] = {}  # type: ignore[attr-defined, misc]
-
-        model_spec = ModelSpecificationsBuilder.build(model=self.estimator)
-        fit_predict_sproc_key = model_spec.__class__.__name__ + "_fit_predict"
-        if fit_predict_sproc_key in self.session._FIT_WRAPPER_SPROCS:  # type: ignore[attr-defined]
-            fit_sproc: StoredProcedure = self.session._FIT_WRAPPER_SPROCS[  # type: ignore[attr-defined]
-                fit_predict_sproc_key
-            ]
-            return fit_sproc
-
-        fit_predict_sproc_name = snowpark_utils.random_name_for_temp_object(snowpark_utils.TempObjectType.PROCEDURE)
-
-        relaxed_dependencies = pkg_version_utils.get_valid_pkg_versions_supported_in_snowflake_conda_channel(
-            pkg_versions=model_spec.pkgDependencies, session=self.session
-        )
-
-        fit_predict_wrapper_sproc = self.session.sproc.register(
-            func=self._build_fit_predict_wrapper_sproc(model_spec=model_spec),
-            is_permanent=False,
-            name=fit_predict_sproc_name,
-            packages=["snowflake-snowpark-python"] + relaxed_dependencies,  # type: ignore[arg-type]
-            replace=True,
-            session=self.session,
-            statement_params=statement_params,
-            execute_as="caller",
-        )
-
-        self.session._FIT_WRAPPER_SPROCS[  # type: ignore[attr-defined]
-            fit_predict_sproc_key
-        ] = fit_predict_wrapper_sproc
-
-        return fit_predict_wrapper_sproc
-
-    def _get_fit_transform_wrapper_sproc_anonymous(self, statement_params: Dict[str, str]) -> StoredProcedure:
+    def _get_fit_transform_wrapper_sproc(self, statement_params: Dict[str, str], anonymous: bool) -> StoredProcedure:
         model_spec = ModelSpecificationsBuilder.build(model=self.estimator)
 
         fit_transform_sproc_name = snowpark_utils.random_name_for_temp_object(snowpark_utils.TempObjectType.PROCEDURE)
@@ -553,44 +510,9 @@ class SnowparkModelTrainer:
             replace=True,
             session=self.session,
             statement_params=statement_params,
-            anonymous=True,
             execute_as="caller",
+            anonymous=anonymous,
         )
-        return fit_transform_wrapper_sproc
-
-    def _get_fit_transform_wrapper_sproc(self, statement_params: Dict[str, str]) -> StoredProcedure:
-        # If the sproc already exists, don't register.
-        if not hasattr(self.session, "_FIT_WRAPPER_SPROCS"):
-            self.session._FIT_WRAPPER_SPROCS: Dict[str, StoredProcedure] = {}  # type: ignore[attr-defined, misc]
-
-        model_spec = ModelSpecificationsBuilder.build(model=self.estimator)
-        fit_transform_sproc_key = model_spec.__class__.__name__ + "_fit_transform"
-        if fit_transform_sproc_key in self.session._FIT_WRAPPER_SPROCS:  # type: ignore[attr-defined]
-            fit_sproc: StoredProcedure = self.session._FIT_WRAPPER_SPROCS[  # type: ignore[attr-defined]
-                fit_transform_sproc_key
-            ]
-            return fit_sproc
-
-        fit_transform_sproc_name = snowpark_utils.random_name_for_temp_object(snowpark_utils.TempObjectType.PROCEDURE)
-
-        relaxed_dependencies = pkg_version_utils.get_valid_pkg_versions_supported_in_snowflake_conda_channel(
-            pkg_versions=model_spec.pkgDependencies, session=self.session
-        )
-
-        fit_transform_wrapper_sproc = self.session.sproc.register(
-            func=self._build_fit_transform_wrapper_sproc(model_spec=model_spec),
-            is_permanent=False,
-            name=fit_transform_sproc_name,
-            packages=["snowflake-snowpark-python"] + relaxed_dependencies,  # type: ignore[arg-type]
-            replace=True,
-            session=self.session,
-            statement_params=statement_params,
-            execute_as="caller",
-        )
-
-        self.session._FIT_WRAPPER_SPROCS[  # type: ignore[attr-defined]
-            fit_transform_sproc_key
-        ] = fit_transform_wrapper_sproc
 
         return fit_transform_wrapper_sproc
 
@@ -629,9 +551,9 @@ class SnowparkModelTrainer:
         # Call fit sproc
 
         if _ENABLE_ANONYMOUS_SPROC:
-            fit_wrapper_sproc = self._get_fit_wrapper_sproc_anonymous(statement_params=statement_params)
+            fit_wrapper_sproc = self._get_fit_wrapper_sproc(statement_params=statement_params, anonymous=True)
         else:
-            fit_wrapper_sproc = self._get_fit_wrapper_sproc(statement_params=statement_params)
+            fit_wrapper_sproc = self._get_fit_wrapper_sproc(statement_params=statement_params, anonymous=False)
 
         try:
             sproc_export_file_name: str = fit_wrapper_sproc(
@@ -665,6 +587,7 @@ class SnowparkModelTrainer:
         self,
         expected_output_cols_list: List[str],
         drop_input_cols: Optional[bool] = False,
+        example_output_pd_df: Optional[pd.DataFrame] = None,
     ) -> Tuple[Union[DataFrame, pd.DataFrame], object]:
         """Trains the model by pushing down the compute into Snowflake using stored procedures.
         This API is different from fit itself because it would also provide the predict
@@ -675,6 +598,11 @@ class SnowparkModelTrainer:
                 name as a list. Defaults to None.
             drop_input_cols (Optional[bool]): Boolean to determine drop
                 the input columns from the output dataset or not
+            example_output_pd_df (Optional[pd.DataFrame]): Example output dataframe
+                This is to create a temp table in the client side with df_one_row. This can maintain the same column
+                name and data type as the output dataframe. Within the sproc, we don't need to create another temp table
+                again - instead, we overwrite into this table without changing the schema.
+                This is not used in PandasModelTrainer.
 
         Returns:
             Tuple[Union[DataFrame, pd.DataFrame], object]: [predicted dataset, estimator]
@@ -702,11 +630,34 @@ class SnowparkModelTrainer:
 
         # Call fit sproc
         if _ENABLE_ANONYMOUS_SPROC:
-            fit_predict_wrapper_sproc = self._get_fit_predict_wrapper_sproc_anonymous(statement_params=statement_params)
+            fit_predict_wrapper_sproc = self._get_fit_predict_wrapper_sproc(
+                statement_params=statement_params, anonymous=True
+            )
         else:
-            fit_predict_wrapper_sproc = self._get_fit_predict_wrapper_sproc(statement_params=statement_params)
+            fit_predict_wrapper_sproc = self._get_fit_predict_wrapper_sproc(
+                statement_params=statement_params, anonymous=False
+            )
 
         fit_predict_result_name = snowpark_utils.random_name_for_temp_object(snowpark_utils.TempObjectType.TABLE)
+
+        # Create a temp table in advance to store the output
+        # This would allow us to use the same table outside the stored procedure
+        if not drop_input_cols:
+            assert example_output_pd_df is not None
+            remove_dataset_col_name_exist_in_output_col = list(set(dataset.columns) - set(example_output_pd_df.columns))
+            pd_df_one_row = (
+                dataset.select(remove_dataset_col_name_exist_in_output_col)
+                .limit(1)
+                .to_pandas(statement_params=statement_params)
+            )
+            example_output_pd_df = pd.concat([pd_df_one_row, example_output_pd_df], axis=1)
+
+        self.session.write_pandas(
+            example_output_pd_df,
+            fit_predict_result_name,
+            auto_create_table=True,
+            table_type="temp",
+        )
 
         sproc_export_file_name: str = fit_predict_wrapper_sproc(
             self.session,
@@ -769,11 +720,13 @@ class SnowparkModelTrainer:
 
         # Call fit sproc
         if _ENABLE_ANONYMOUS_SPROC:
-            fit_transform_wrapper_sproc = self._get_fit_transform_wrapper_sproc_anonymous(
-                statement_params=statement_params
+            fit_transform_wrapper_sproc = self._get_fit_transform_wrapper_sproc(
+                statement_params=statement_params, anonymous=True
             )
         else:
-            fit_transform_wrapper_sproc = self._get_fit_transform_wrapper_sproc(statement_params=statement_params)
+            fit_transform_wrapper_sproc = self._get_fit_transform_wrapper_sproc(
+                statement_params=statement_params, anonymous=False
+            )
 
         fit_transform_result_name = snowpark_utils.random_name_for_temp_object(snowpark_utils.TempObjectType.TABLE)
 

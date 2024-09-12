@@ -10,7 +10,7 @@ from packaging import version
 from sklearn import datasets, linear_model
 
 from snowflake.ml._internal import file_utils
-from snowflake.ml.model import custom_model, model_signature
+from snowflake.ml.model import custom_model, model_signature, type_hints
 from snowflake.ml.model._packager import model_packager
 from snowflake.ml.modeling.linear_model import (  # type:ignore[attr-defined]
     LinearRegression,
@@ -173,12 +173,14 @@ class ModelPackagerTest(absltest.TestCase):
                 name="model1",
                 model=regr,
                 metadata={"author": "halu", "version": "1"},
+                model_objective=type_hints.ModelObjective.REGRESSION,
             )
 
             pk = model_packager.ModelPackager(os.path.join(tmpdir, "model1"))
             pk.load()
             assert pk.model
             assert pk.meta
+            self.assertEqual(type_hints.ModelObjective.REGRESSION, pk.meta.model_objective)
             assert isinstance(pk.model, LinearRegression)
             np.testing.assert_allclose(predictions, desired=pk.model.predict(df[:1])[[OUTPUT_COLUMNS]])
 

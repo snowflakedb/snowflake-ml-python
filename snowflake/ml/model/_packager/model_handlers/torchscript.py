@@ -111,7 +111,7 @@ class TorchScriptHandler(_base.BaseModelHandler["torch.jit.ScriptModule"]):  # t
         model_blob_path = os.path.join(model_blobs_dir_path, name)
         os.makedirs(model_blob_path, exist_ok=True)
         with open(os.path.join(model_blob_path, cls.MODEL_BLOB_FILE_OR_DIR), "wb") as f:
-            torch.jit.save(model, f)  # type:ignore[attr-defined]
+            torch.jit.save(model, f)  # type:ignore[no-untyped-call, attr-defined]
         base_meta = model_blob_meta.ModelBlobMeta(
             name=name,
             model_type=cls.HANDLER_TYPE,
@@ -141,7 +141,7 @@ class TorchScriptHandler(_base.BaseModelHandler["torch.jit.ScriptModule"]):  # t
         model_blob_metadata = model_blobs_metadata[name]
         model_blob_filename = model_blob_metadata.path
         with open(os.path.join(model_blob_path, model_blob_filename), "rb") as f:
-            m = torch.jit.load(  # type:ignore[attr-defined]
+            m = torch.jit.load(  # type:ignore[no-untyped-call, attr-defined]
                 f, map_location="cuda" if kwargs.get("use_gpu", False) else "cpu"
             )
         assert isinstance(m, torch.jit.ScriptModule)  # type:ignore[attr-defined]

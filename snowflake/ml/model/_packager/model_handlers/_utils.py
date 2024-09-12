@@ -1,14 +1,27 @@
 import json
+import warnings
 from typing import Any, Callable, Iterable, Optional, Sequence, cast
 
 import numpy as np
 import numpy.typing as npt
 import pandas as pd
+from absl import logging
 
 from snowflake.ml.model import model_signature, type_hints as model_types
 from snowflake.ml.model._packager.model_meta import model_meta
 from snowflake.ml.model._signatures import snowpark_handler
 from snowflake.snowpark import DataFrame as SnowparkDataFrame
+
+
+class NumpyEncoder(json.JSONEncoder):
+    def default(self, obj: Any) -> Any:
+        if isinstance(obj, np.integer):
+            return int(obj)
+        if isinstance(obj, np.floating):
+            return float(obj)
+        if isinstance(obj, np.ndarray):
+            return obj.tolist()
+        return super().default(obj)
 
 
 def _is_callable(model: model_types.SupportedModelType, method_name: str) -> bool:
@@ -93,23 +106,42 @@ def convert_explanations_to_2D_df(
         return pd.DataFrame(explanations)
 
     if hasattr(model, "classes_"):
-        classes_list = [cl for cl in model.classes_]  # type:ignore[union-attr]
+        classes_list = [str(cl) for cl in model.classes_]  # type:ignore[union-attr]
         len_classes = len(classes_list)
         if explanations.shape[2] != len_classes:
             raise ValueError(f"Model has {len_classes} classes but explanations have {explanations.shape[2]}")
     else:
-        classes_list = [i for i in range(explanations.shape[2])]
-    exp_2d = []
-    # TODO (SNOW-1549044): Optimize this
-    for row in explanations:
-        col_list = []
-        for column in row:
-            class_explanations = {}
-            for cl, cl_exp in zip(classes_list, column):
-                if isinstance(cl, (int, np.integer)):
-                    cl = int(cl)
-                class_explanations[cl] = cl_exp
-            col_list.append(json.dumps(class_explanations))
-        exp_2d.append(col_list)
+        classes_list = [str(i) for i in range(explanations.shape[2])]
+
+    def row_to_dict(row: npt.NDArray[Any]) -> npt.NDArray[Any]:
+        """Converts a single row to a dictionary."""
+        # convert to object or numpy creates strings of fixed length
+        return np.asarray(json.dumps(dict(zip(classes_list, row)), cls=NumpyEncoder), dtype=object)
+
+    exp_2d = np.apply_along_axis(row_to_dict, -1, explanations)
 
     return pd.DataFrame(exp_2d)
+
+
+def validate_model_objective(
+    passed_model_objective: model_types.ModelObjective, inferred_model_objective: model_types.ModelObjective
+) -> model_types.ModelObjective:
+    if (
+        passed_model_objective != model_types.ModelObjective.UNKNOWN
+        and inferred_model_objective != model_types.ModelObjective.UNKNOWN
+    ):
+        if passed_model_objective != inferred_model_objective:
+            warnings.warn(
+                f"Inferred ModelObjective: {inferred_model_objective.name} is used as model objective for this model "
+                f"version and passed argument ModelObjective: {passed_model_objective.name} is ignored",
+                category=UserWarning,
+                stacklevel=1,
+            )
+        return inferred_model_objective
+    elif inferred_model_objective != model_types.ModelObjective.UNKNOWN:
+        logging.info(
+            f"Inferred ModelObjective: {inferred_model_objective.name} is used as model objective for this model "
+            f"version"
+        )
+        return inferred_model_objective
+    return passed_model_objective

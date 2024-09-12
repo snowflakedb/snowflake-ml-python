@@ -244,8 +244,7 @@ class Registry:
             warnings.warn(
                 "Models logged specifying `pip_requirements` can not be executed "
                 "in Snowflake Warehouse where all dependencies are required to be retrieved "
-                "from Snowflake Anaconda Channel. Specify model save option `include_pip_dependencies`"
-                "to log model with pip dependencies.",
+                "from Snowflake Anaconda Channel.",
                 category=UserWarning,
                 stacklevel=1,
             )

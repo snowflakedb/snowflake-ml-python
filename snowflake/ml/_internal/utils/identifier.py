@@ -10,9 +10,11 @@ SF_QUOTED_IDENTIFIER = '"(?:[^"]|"")*"'
 _SF_IDENTIFIER = f"({_SF_UNQUOTED_CASE_INSENSITIVE_IDENTIFIER}|{SF_QUOTED_IDENTIFIER})"
 SF_IDENTIFIER_RE = re.compile(_SF_IDENTIFIER)
 _SF_SCHEMA_LEVEL_OBJECT = (
-    rf"(?:(?:(?P<db>{_SF_IDENTIFIER})\.)?(?P<schema>{_SF_IDENTIFIER})\.)?(?P<object>{_SF_IDENTIFIER})(?P<others>.*)"
+    rf"(?:(?:(?P<db>{_SF_IDENTIFIER})\.)?(?P<schema>{_SF_IDENTIFIER})\.)?(?P<object>{_SF_IDENTIFIER})"
 )
+_SF_STAGE_PATH = rf"{_SF_SCHEMA_LEVEL_OBJECT}(?P<path>.*)"
 _SF_SCHEMA_LEVEL_OBJECT_RE = re.compile(_SF_SCHEMA_LEVEL_OBJECT)
+_SF_STAGE_PATH_RE = re.compile(_SF_STAGE_PATH)
 
 UNQUOTED_CASE_INSENSITIVE_RE = re.compile(f"^({_SF_UNQUOTED_CASE_INSENSITIVE_IDENTIFIER})$")
 UNQUOTED_CASE_SENSITIVE_RE = re.compile(f"^({_SF_UNQUOTED_CASE_SENSITIVE_IDENTIFIER})$")
@@ -139,29 +141,61 @@ def rename_to_valid_snowflake_identifier(name: str) -> str:
 
 
 def parse_schema_level_object_identifier(
-    path: str,
-) -> Tuple[Union[str, Any], Union[str, Any], Union[str, Any], Union[str, Any]]:
+    object_name: str,
+) -> Tuple[Union[str, Any], Union[str, Any], Union[str, Any]]:
     """Parse a string which starts with schema level object.
 
     Args:
-        path: A string starts with a schema level object path, which is in the format '<db>.<schema>.<object_name>'.
-            Here, '<db>', '<schema>' and '<object_name>' are all snowflake identifiers.
+        object_name: A string starts with a schema level object path, which is in the format
+            '<db>.<schema>.<object_name>'. Here, '<db>', '<schema>' and '<object_name>' are all snowflake identifiers.
 
     Returns:
-        A tuple of 4 strings in the form of (db, schema, object_name, others). 'db', 'schema', 'object_name' are parsed
-            from the schema level object and 'others' are all the content post to the object.
+        A tuple of 3 strings in the form of (db, schema, object_name).
 
     Raises:
         ValueError: If the id is invalid.
     """
-    res = _SF_SCHEMA_LEVEL_OBJECT_RE.fullmatch(path)
+    res = _SF_SCHEMA_LEVEL_OBJECT_RE.fullmatch(object_name)
     if not res:
-        raise ValueError(f"Invalid identifier. It should start with database.schema.object. Getting {path}")
+        raise ValueError(
+            "Invalid identifier because it does not follow the pattern. "
+            f"It should start with [[database.]schema.]object. Getting {object_name}"
+        )
     return (
         res.group("db"),
         res.group("schema"),
         res.group("object"),
-        res.group("others"),
+    )
+
+
+def parse_snowflake_stage_path(
+    path: str,
+) -> Tuple[Union[str, Any], Union[str, Any], Union[str, Any], Union[str, Any]]:
+    """Parse a string which represents a snowflake stage path.
+
+    Args:
+        path: A string starts with a schema level object path, which is in the format
+            '<db>.<schema>.<object_name><path>'. Here, '<db>', '<schema>' and '<object_name>' are all snowflake
+            identifiers.
+
+    Returns:
+        A tuple of 4 strings in the form of (db, schema, object_name, path). 'db', 'schema', 'object_name' are parsed
+            from the schema level object and 'path' are all the content post to the object.
+
+    Raises:
+        ValueError: If the id is invalid.
+    """
+    res = _SF_STAGE_PATH_RE.fullmatch(path)
+    if not res:
+        raise ValueError(
+            "Invalid identifier because it does not follow the pattern. "
+            f"It should start with [[database.]schema.]object. Getting {path}"
+        )
+    return (
+        res.group("db"),
+        res.group("schema"),
+        res.group("object"),
+        res.group("path"),
     )
 
 
@@ -175,8 +209,11 @@ def is_fully_qualified_name(name: str) -> bool:
     Returns:
         bool: True if the name is fully qualified, False otherwise.
     """
-    res = parse_schema_level_object_identifier(name)
-    return res[0] is not None and res[1] is not None and res[2] is not None and not res[3]
+    try:
+        res = parse_schema_level_object_identifier(name)
+        return all(res)
+    except ValueError:
+        return False
 
 
 def get_schema_level_object_identifier(

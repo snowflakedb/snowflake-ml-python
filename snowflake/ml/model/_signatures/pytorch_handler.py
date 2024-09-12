@@ -30,7 +30,7 @@ class SeqOfPyTorchTensorHandler(base_handler.BaseDataHandler[Sequence["torch.Ten
 
     @staticmethod
     def count(data: Sequence["torch.Tensor"]) -> int:
-        return min(data_col.shape[0] for data_col in data)
+        return min(data_col.shape[0] for data_col in data)  # type: ignore[no-any-return]
 
     @staticmethod
     def truncate(data: Sequence["torch.Tensor"]) -> Sequence["torch.Tensor"]:

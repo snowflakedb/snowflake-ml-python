@@ -8,6 +8,7 @@ import numpy as np
 import pandas as pd
 import torch
 from absl.testing import absltest
+from packaging import version
 
 from snowflake.ml.model._packager import model_packager
 from snowflake.ml.model._packager.model_handlers.huggingface_pipeline import (
@@ -219,6 +220,9 @@ class HuggingFacePipelineHandlerTest(absltest.TestCase):
 
     def test_conversational_pipeline(self) -> None:
         import transformers
+
+        if version.parse(transformers.__version__) >= version.parse("4.42.0"):
+            self.skipTest("This test is not compatible with transformers>=4.42.0")
 
         x = transformers.Conversation(
             text="Do you know how to say Snowflake in French?",
