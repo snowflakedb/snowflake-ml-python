@@ -1,0 +1,14 @@
+CREATE OR REPLACE FUNCTION ${MODEL_MONITOR_NAME}_PREDICTION_COUNT()
+    RETURNS TABLE(event_timestamp TIMESTAMP_NTZ, count FLOAT)
+    AS
+    $$$$
+SELECT
+    time_slice(timestamp, 1, 'hour') as "event_timestamp",
+    sum(get($OUTPUT_COLUMN_NAME,'count')) as count
+from
+    $MONITORING_TABLE
+group by
+    1
+order by
+    1 desc
+    $$$$;

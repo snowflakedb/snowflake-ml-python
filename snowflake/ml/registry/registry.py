@@ -4,6 +4,7 @@ from typing import Any, Dict, List, Optional, Union, overload
 
 import pandas as pd
 
+from snowflake import snowpark
 from snowflake.ml._internal import telemetry
 from snowflake.ml._internal.utils import sql_identifier
 from snowflake.ml.model import (
@@ -12,6 +13,13 @@ from snowflake.ml.model import (
     model_signature,
     type_hints as model_types,
 )
+from snowflake.ml.model._client.model import model_version_impl
+from snowflake.ml.monitoring._client import (
+    model_monitor,
+    model_monitor_manager,
+    model_monitor_version,
+)
+from snowflake.ml.monitoring.entities import model_monitor_config
 from snowflake.ml.registry._manager import model_manager
 from snowflake.snowpark import session
 
@@ -26,6 +34,7 @@ class Registry:
         *,
         database_name: Optional[str] = None,
         schema_name: Optional[str] = None,
+        options: Optional[Dict[str, Any]] = None,
     ) -> None:
         """Opens a registry within a pre-created Snowflake schema.
 
@@ -35,6 +44,9 @@ class Registry:
                 will be used. Defaults to None.
             schema_name: The name of the schema. If None, the current schema of the session
                 will be used. If there is no active schema, the PUBLIC schema will be used. Defaults to None.
+            options: Optional set of configurations to modify registry.
+                Registry Options include:
+                - enable_monitoring: Feature flag to indicate whether registry can be used for monitoring.
 
         Raises:
             ValueError: When there is no specified or active database in the session.
@@ -63,6 +75,21 @@ class Registry:
         self._model_manager = model_manager.ModelManager(
             session, database_name=self._database_name, schema_name=self._schema_name
         )
+
+        self.enable_monitoring = options.get("enable_monitoring", False) if options else False
+        if self.enable_monitoring:
+            monitor_statement_params = telemetry.get_statement_params(
+                project=telemetry.TelemetryProject.MLOPS.value,
+                subproject=telemetry.TelemetrySubProject.MONITORING.value,
+            )
+
+            self._model_monitor_manager = model_monitor_manager.ModelMonitorManager(
+                session=session,
+                database_name=self._database_name,
+                schema_name=self._schema_name,
+                create_if_not_exists=True,  # TODO: Support static setup method to configure schema for monitoring.
+                statement_params=monitor_statement_params,
+            )
 
     @property
     def location(self) -> str:
@@ -93,7 +120,7 @@ class Registry:
         Args:
             model: Model object of supported types such as Scikit-learn, XGBoost, LightGBM, Snowpark ML,
                 PyTorch, TorchScript, Tensorflow, Tensorflow Keras, MLFlow, HuggingFace Pipeline,
-                Sentence Transformers, Peft-finetuned LLM, or Custom Model.
+                Sentence Transformers, or Custom Model.
             model_name: Name to identify the model.
             version_name: Version identifier for the model. Combination of model_name and version_name must be unique.
                 If not specified, a random name will be generated.
@@ -119,8 +146,8 @@ class Registry:
                 - embed_local_ml_library: Embed local Snowpark ML into the code directory or folder.
                     Override to True if the local Snowpark ML version is not available in the Snowflake Anaconda
                     Channel. Otherwise, defaults to False
-                - relax_version: Whether or not relax the version constraints of the dependencies.
-                    It detects any ==x.y.z in specifiers and replaced with >=x.y, <(x+1). Defaults to True.
+                - relax_version: Whether or not relax the version constraints of the dependencies when running in the
+                    Warehouse. It detects any ==x.y.z in specifiers and replaced with >=x.y, <(x+1). Defaults to True.
                 - function_type: Set the method function type globally. To set method function types individually see
                   function_type in model_options.
                 - method_options: Per-method saving options including:
@@ -182,6 +209,7 @@ class Registry:
         sample_input_data: Optional[model_types.SupportedDataType] = None,
         code_paths: Optional[List[str]] = None,
         ext_modules: Optional[List[ModuleType]] = None,
+        task: model_types.Task = model_types.Task.UNKNOWN,
         options: Optional[model_types.ModelSaveOption] = None,
     ) -> ModelVersion:
         """
@@ -191,7 +219,7 @@ class Registry:
             model: Supported model or ModelVersion object.
                 - Supported model: Model object of supported types such as Scikit-learn, XGBoost, LightGBM, Snowpark ML,
                 PyTorch, TorchScript, Tensorflow, Tensorflow Keras, MLFlow, HuggingFace Pipeline, Sentence Transformers,
-                Peft-finetuned LLM, or Custom Model.
+                or Custom Model.
                 - ModelVersion: Source ModelVersion object used to create the new ModelVersion object.
             model_name: Name to identify the model.
             version_name: Version identifier for the model. Combination of model_name and version_name must be unique.
@@ -213,6 +241,9 @@ class Registry:
             ext_modules: List of external modules to pickle with the model object.
                 Only supported when logging the following types of model:
                 Scikit-learn, Snowpark ML, PyTorch, TorchScript and Custom Model. Defaults to None.
+            task: The task of the Model Version. It is an enum class Task with values TABULAR_REGRESSION,
+                TABULAR_BINARY_CLASSIFICATION, TABULAR_MULTI_CLASSIFICATION, TABULAR_RANKING, or UNKNOWN. By default,
+                it is set to Task.UNKNOWN and may be overridden by inferring from the Model Object.
             options (Dict[str, Any], optional): Additional model saving options.
 
                 Model Saving Options include:
@@ -220,8 +251,8 @@ class Registry:
                 - embed_local_ml_library: Embed local Snowpark ML into the code directory or folder.
                     Override to True if the local Snowpark ML version is not available in the Snowflake Anaconda
                     Channel. Otherwise, defaults to False
-                - relax_version: Whether or not relax the version constraints of the dependencies.
-                    It detects any ==x.y.z in specifiers and replaced with >=x.y, <(x+1). Defaults to True.
+                - relax_version: Whether or not relax the version constraints of the dependencies when running in the
+                    Warehouse. It detects any ==x.y.z in specifiers and replaced with >=x.y, <(x+1). Defaults to True.
                 - function_type: Set the method function type globally. To set method function types individually see
                   function_type in model_options.
                 - method_options: Per-method saving options including:
@@ -261,6 +292,7 @@ class Registry:
             sample_input_data=sample_input_data,
             code_paths=code_paths,
             ext_modules=ext_modules,
+            task=task,
             options=options,
             statement_params=statement_params,
         )
@@ -333,3 +365,130 @@ class Registry:
         )
 
         self._model_manager.delete_model(model_name=model_name, statement_params=statement_params)
+
+    @telemetry.send_api_usage_telemetry(
+        project=telemetry.TelemetryProject.MLOPS.value,
+        subproject=telemetry.TelemetrySubProject.MONITORING.value,
+    )
+    @snowpark._internal.utils.private_preview(version=model_monitor_version.SNOWFLAKE_ML_MONITORING_MIN_VERSION)
+    def add_monitor(
+        self,
+        name: str,
+        table_config: model_monitor_config.ModelMonitorTableConfig,
+        model_monitor_config: model_monitor_config.ModelMonitorConfig,
+        *,
+        add_dashboard_udtfs: bool = False,
+    ) -> model_monitor.ModelMonitor:
+        """Add a Model Monitor to the Registry
+
+        Args:
+            name: Name of Model Monitor to create
+            table_config: Configuration options of table for ModelMonitor.
+            model_monitor_config: Configuration options of ModelMonitor.
+            add_dashboard_udtfs: Add UDTFs useful for creating a dashboard.
+
+        Returns:
+            The newly added ModelMonitor object.
+
+        Raises:
+            ValueError: If monitoring feature flag is not enabled.
+        """
+        if not self.enable_monitoring:
+            raise ValueError(
+                "Must enable monitoring in Registry to use this method. Please set the `enable_monitoring=True` option"
+            )
+
+        # TODO: Change to fully qualified source table reference to allow table to live in different DB.
+        return self._model_monitor_manager.add_monitor(
+            name, table_config, model_monitor_config, add_dashboard_udtfs=add_dashboard_udtfs
+        )
+
+    @overload
+    def get_monitor(self, model_version: model_version_impl.ModelVersion) -> model_monitor.ModelMonitor:
+        """Get a Model Monitor on a ModelVersion from the Registry
+
+        Args:
+            model_version: ModelVersion for which to retrieve the ModelMonitor.
+        """
+        ...
+
+    @overload
+    def get_monitor(self, name: str) -> model_monitor.ModelMonitor:
+        """Get a Model Monitor from the Registry
+
+        Args:
+            name: Name of Model Monitor to retrieve.
+        """
+        ...
+
+    @telemetry.send_api_usage_telemetry(
+        project=telemetry.TelemetryProject.MLOPS.value,
+        subproject=telemetry.TelemetrySubProject.MONITORING.value,
+    )
+    @snowpark._internal.utils.private_preview(version=model_monitor_version.SNOWFLAKE_ML_MONITORING_MIN_VERSION)
+    def get_monitor(
+        self, *, name: Optional[str] = None, model_version: Optional[model_version_impl.ModelVersion] = None
+    ) -> model_monitor.ModelMonitor:
+        """Get a Model Monitor from the Registry
+
+        Args:
+            name: Name of Model Monitor to retrieve.
+            model_version: ModelVersion for which to retrieve the ModelMonitor.
+
+        Returns:
+            The fetched ModelMonitor.
+
+        Raises:
+            ValueError: If monitoring feature flag is not enabled.
+            ValueError: If neither name nor model_version specified.
+        """
+        if not self.enable_monitoring:
+            raise ValueError(
+                "Must enable monitoring in Registry to use this method. Please set the `enable_monitoring=True` option"
+            )
+        if name is not None:
+            return self._model_monitor_manager.get_monitor(name=name)
+        elif model_version is not None:
+            return self._model_monitor_manager.get_monitor_by_model_version(model_version=model_version)
+        else:
+            raise ValueError("Must provide either `name` or `model_version` to get ModelMonitor")
+
+    @telemetry.send_api_usage_telemetry(
+        project=telemetry.TelemetryProject.MLOPS.value,
+        subproject=telemetry.TelemetrySubProject.MONITORING.value,
+    )
+    @snowpark._internal.utils.private_preview(version=model_monitor_version.SNOWFLAKE_ML_MONITORING_MIN_VERSION)
+    def show_model_monitors(self) -> List[snowpark.Row]:
+        """Show all model monitors in the registry.
+
+        Returns:
+            List of snowpark.Row containing metadata for each model monitor.
+
+        Raises:
+            ValueError: If monitoring feature flag is not enabled.
+        """
+        if not self.enable_monitoring:
+            raise ValueError(
+                "Must enable monitoring in Registry to use this method. Please set the `enable_monitoring=True` option"
+            )
+        return self._model_monitor_manager.show_model_monitors()
+
+    @telemetry.send_api_usage_telemetry(
+        project=telemetry.TelemetryProject.MLOPS.value,
+        subproject=telemetry.TelemetrySubProject.MONITORING.value,
+    )
+    @snowpark._internal.utils.private_preview(version=model_monitor_version.SNOWFLAKE_ML_MONITORING_MIN_VERSION)
+    def delete_monitor(self, name: str) -> None:
+        """Delete a Model Monitor from the Registry
+
+        Args:
+            name: Name of the Model Monitor to delete.
+
+        Raises:
+            ValueError: If monitoring feature flag is not enabled.
+        """
+        if not self.enable_monitoring:
+            raise ValueError(
+                "Must enable monitoring in Registry to use this method. Please set the `enable_monitoring=True` option"
+            )
+        self._model_monitor_manager.delete_monitor(name)

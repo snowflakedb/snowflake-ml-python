@@ -102,7 +102,6 @@ def precision_recall_curve(
         ],
         statement_params=statement_params,
         anonymous=True,
-        execute_as="caller",
     )
     def precision_recall_curve_anon_sproc(session: snowpark.Session) -> bytes:
         for query in queries[:-1]:
@@ -250,7 +249,6 @@ def roc_auc_score(
         ],
         statement_params=statement_params,
         anonymous=True,
-        execute_as="caller",
     )
     def roc_auc_score_anon_sproc(session: snowpark.Session) -> bytes:
         for query in queries[:-1]:
@@ -354,7 +352,6 @@ def roc_curve(
         ],
         statement_params=statement_params,
         anonymous=True,
-        execute_as="caller",
     )
     def roc_curve_anon_sproc(session: snowpark.Session) -> bytes:
         for query in queries[:-1]:

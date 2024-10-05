@@ -50,7 +50,7 @@ class ModelManager:
         sample_input_data: Optional[model_types.SupportedDataType] = None,
         code_paths: Optional[List[str]] = None,
         ext_modules: Optional[List[ModuleType]] = None,
-        model_objective: model_types.ModelObjective = model_types.ModelObjective.UNKNOWN,
+        task: model_types.Task = model_types.Task.UNKNOWN,
         options: Optional[model_types.ModelSaveOption] = None,
         statement_params: Optional[Dict[str, Any]] = None,
     ) -> model_version_impl.ModelVersion:
@@ -90,7 +90,7 @@ class ModelManager:
             sample_input_data=sample_input_data,
             code_paths=code_paths,
             ext_modules=ext_modules,
-            model_objective=model_objective,
+            task=task,
             options=options,
             statement_params=statement_params,
         )
@@ -110,7 +110,7 @@ class ModelManager:
         sample_input_data: Optional[model_types.SupportedDataType] = None,
         code_paths: Optional[List[str]] = None,
         ext_modules: Optional[List[ModuleType]] = None,
-        model_objective: model_types.ModelObjective = model_types.ModelObjective.UNKNOWN,
+        task: model_types.Task = model_types.Task.UNKNOWN,
         options: Optional[model_types.ModelSaveOption] = None,
         statement_params: Optional[Dict[str, Any]] = None,
     ) -> model_version_impl.ModelVersion:
@@ -159,7 +159,7 @@ class ModelManager:
             code_paths=code_paths,
             ext_modules=ext_modules,
             options=options,
-            model_objective=model_objective,
+            task=task,
         )
         statement_params = telemetry.add_statement_params_custom_tags(
             statement_params, model_metadata.telemetry_metadata()

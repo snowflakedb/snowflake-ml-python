@@ -1,10 +1,12 @@
 from enum import Enum
 from typing import TYPE_CHECKING, List, Optional, Tuple, cast
 
+import inflection
 import numpy as np
 import numpy.typing as npt
 import pandas as pd
-from sklearn import datasets, svm
+import xgboost
+from sklearn import datasets, model_selection, svm
 
 from snowflake.ml.model import custom_model
 from snowflake.ml.modeling.linear_model import (  # type: ignore[attr-defined]
@@ -52,6 +54,17 @@ class ModelFactory:
         test_labels = one_vs_all(digits.target[-100:], target_digit)
 
         return clf, test_features, test_labels
+
+    @staticmethod
+    def prepare_xgboost_model() -> Tuple[xgboost.XGBRegressor, pd.DataFrame, pd.DataFrame]:
+        cal_data = datasets.load_breast_cancer(as_frame=True)
+        cal_X = cal_data.data
+        cal_y = cal_data.target
+        cal_X.columns = [inflection.parameterize(c, "_") for c in cal_X.columns]
+        cal_X_train, cal_X_test, cal_y_train, cal_y_test = model_selection.train_test_split(cal_X, cal_y)
+        regressor = xgboost.XGBRegressor(n_estimators=100, reg_lambda=1, gamma=0, max_depth=3)
+        regressor.fit(cal_X_train, cal_y_train)
+        return regressor, cal_X_test, cal_y_test
 
     @staticmethod
     def prepare_snowml_model_xgb() -> Tuple[XGBClassifier, pd.DataFrame, pd.DataFrame]:

@@ -1,3 +1,4 @@
+import json
 import os
 import pathlib
 import tempfile
@@ -6,6 +7,7 @@ from typing import Any, Dict, List, Literal, Optional, Union, cast, overload
 
 import yaml
 
+from snowflake.ml._internal.exceptions import error_codes, exceptions
 from snowflake.ml._internal.utils import formatting, identifier, sql_identifier
 from snowflake.ml.model import model_signature, type_hints
 from snowflake.ml.model._client.ops import metadata_ops
@@ -512,6 +514,71 @@ class ModelOperator:
             statement_params=statement_params,
         )
 
+    def list_inference_services(
+        self,
+        *,
+        database_name: Optional[sql_identifier.SqlIdentifier],
+        schema_name: Optional[sql_identifier.SqlIdentifier],
+        model_name: sql_identifier.SqlIdentifier,
+        version_name: sql_identifier.SqlIdentifier,
+        statement_params: Optional[Dict[str, Any]] = None,
+    ) -> List[str]:
+        res = self._model_client.show_versions(
+            database_name=database_name,
+            schema_name=schema_name,
+            model_name=model_name,
+            version_name=version_name,
+            statement_params=statement_params,
+        )
+        col_name = self._model_client.MODEL_VERSION_INFERENCE_SERVICES_COL_NAME
+        if col_name not in res[0]:
+            # User need to opt into BCR 2024_08
+            raise exceptions.SnowflakeMLException(
+                error_code=error_codes.OPT_IN_REQUIRED,
+                original_exception=RuntimeError(
+                    "Please opt in to BCR Bundle 2024_08 ("
+                    "https://docs.snowflake.com/en/release-notes/bcr-bundles/2024_08_bundle)."
+                ),
+            )
+        json_array = json.loads(res[0][col_name])
+        # TODO(sdas): Figure out a better way to filter out MODEL_BUILD_ services server side.
+        return [str(service) for service in json_array if "MODEL_BUILD_" not in service]
+
+    def delete_service(
+        self,
+        *,
+        database_name: Optional[sql_identifier.SqlIdentifier],
+        schema_name: Optional[sql_identifier.SqlIdentifier],
+        model_name: sql_identifier.SqlIdentifier,
+        version_name: sql_identifier.SqlIdentifier,
+        service_name: str,
+        statement_params: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        services = self.list_inference_services(
+            database_name=database_name,
+            schema_name=schema_name,
+            model_name=model_name,
+            version_name=version_name,
+            statement_params=statement_params,
+        )
+        db, schema, service_name = sql_identifier.parse_fully_qualified_name(service_name)
+        fully_qualified_service_name = sql_identifier.get_fully_qualified_name(
+            db, schema, service_name, self._session.get_current_database(), self._session.get_current_schema()
+        )
+
+        for service in services:
+            if service == fully_qualified_service_name:
+                self._service_client.drop_service(
+                    database_name=db,
+                    schema_name=schema,
+                    service_name=service_name,
+                    statement_params=statement_params,
+                )
+                return
+        raise ValueError(
+            f"Service '{service_name}' does not exist or unauthorized or not associated with this model version."
+        )
+
     def get_model_version_manifest(
         self,
         *,
@@ -538,7 +605,8 @@ class ModelOperator:
     def _match_model_spec_with_sql_functions(
         sql_functions_names: List[sql_identifier.SqlIdentifier], target_methods: List[str]
     ) -> Dict[sql_identifier.SqlIdentifier, str]:
-        res = {}
+        res: Dict[sql_identifier.SqlIdentifier, str] = {}
+
         for target_method in target_methods:
             # Here we need to find the SQL function corresponding to the Python function.
             # If the python function name is `abc`, then SQL function name can be `ABC` or `"abc"`.
@@ -574,7 +642,7 @@ class ModelOperator:
         model_spec = model_meta.ModelMetadata._validate_model_metadata(model_spec_dict)
         return model_spec
 
-    def get_model_objective(
+    def get_model_task(
         self,
         *,
         database_name: Optional[sql_identifier.SqlIdentifier],
@@ -582,7 +650,7 @@ class ModelOperator:
         model_name: sql_identifier.SqlIdentifier,
         version_name: sql_identifier.SqlIdentifier,
         statement_params: Optional[Dict[str, Any]] = None,
-    ) -> type_hints.ModelObjective:
+    ) -> type_hints.Task:
         model_spec = self._fetch_model_spec(
             database_name=database_name,
             schema_name=schema_name,
@@ -590,8 +658,8 @@ class ModelOperator:
             version_name=version_name,
             statement_params=statement_params,
         )
-        model_objective_val = model_spec.get("model_objective", type_hints.ModelObjective.UNKNOWN.value)
-        return type_hints.ModelObjective(model_objective_val)
+        task_val = model_spec.get("task", type_hints.Task.UNKNOWN.value)
+        return type_hints.Task(task_val)
 
     def get_functions(
         self,
@@ -632,6 +700,20 @@ class ModelOperator:
                     function_type = model_manifest_schema.ModelMethodFunctionTypes.TABLE_FUNCTION.value
 
             function_names_and_types.append((function_name, function_type))
+
+        if not function_names_and_types:
+            # If function_names_and_types is not populated, there are currently
+            # no warehouse functions for the model version. In order to do inference
+            # we must populate the functions so the mapping can be constructed.
+            model_manifest = self.get_model_version_manifest(
+                database_name=database_name,
+                schema_name=schema_name,
+                model_name=model_name,
+                version_name=version_name,
+                statement_params=statement_params,
+            )
+            for method in model_manifest["methods"]:
+                function_names_and_types.append((sql_identifier.SqlIdentifier(method["name"]), method["type"]))
 
         signatures = model_spec["signatures"]
         function_names = [name for name, _ in function_names_and_types]
@@ -799,7 +881,7 @@ class ModelOperator:
 
         if keep_order:
             # if it's a partitioned table function, _ID will be null and we won't be able to sort.
-            if df_res.select("_ID").limit(1).collect()[0][0] is None:
+            if df_res.select(snowpark_handler._KEEP_ORDER_COL_NAME).limit(1).collect()[0][0] is None:
                 warnings.warn(
                     formatting.unwrap(
                         """
@@ -812,7 +894,7 @@ class ModelOperator:
                 )
             else:
                 df_res = df_res.sort(
-                    "_ID",
+                    snowpark_handler._KEEP_ORDER_COL_NAME,
                     ascending=True,
                 )
 

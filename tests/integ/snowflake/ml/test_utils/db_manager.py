@@ -4,7 +4,6 @@ from uuid import uuid4
 
 from snowflake import snowpark
 from snowflake.ml._internal.utils import identifier
-from snowflake.ml.model._deploy_client.utils import constants
 from snowflake.ml.utils import sql_client
 
 _COMMON_PREFIX = "snowml_test_"
@@ -158,12 +157,11 @@ class DBManager:
         ).collect()
         return full_qual_stage_name
 
-    def show_stages(
-        self,
-        stage_name: str,
+    @staticmethod
+    def get_show_location_url(
         schema_name: Optional[str] = None,
         db_name: Optional[str] = None,
-    ) -> snowpark.DataFrame:
+    ) -> str:
         if schema_name:
             actual_schema_name = identifier.get_inferred_name(schema_name)
             if db_name:
@@ -174,6 +172,15 @@ class DBManager:
             location_sql = f" IN SCHEMA {full_qual_schema_name}"
         else:
             location_sql = ""
+        return location_sql
+
+    def show_stages(
+        self,
+        stage_name: str,
+        schema_name: Optional[str] = None,
+        db_name: Optional[str] = None,
+    ) -> snowpark.DataFrame:
+        location_sql = DBManager.get_show_location_url(schema_name, db_name)
         sql = f"SHOW STAGES LIKE '{stage_name}'{location_sql}"
         return self._session.sql(sql)
 
@@ -216,16 +223,7 @@ class DBManager:
         schema_name: Optional[str] = None,
         db_name: Optional[str] = None,
     ) -> snowpark.DataFrame:
-        if schema_name:
-            actual_schema_name = identifier.get_inferred_name(schema_name)
-            if db_name:
-                actual_db_name = identifier.get_inferred_name(db_name)
-                full_qual_schema_name = f"{actual_db_name}.{actual_schema_name}"
-            else:
-                full_qual_schema_name = actual_schema_name
-            location_sql = f" IN SCHEMA {full_qual_schema_name}"
-        else:
-            location_sql = ""
+        location_sql = DBManager.get_show_location_url(schema_name, db_name)
         sql = f"SHOW USER FUNCTIONS LIKE '{function_name}'{location_sql}"
         return self._session.sql(sql)
 
@@ -270,18 +268,6 @@ class DBManager:
             func_arguments = str(stale_func.arguments)
             func_def = func_arguments.partition("RETURN")[0].strip()
             self.drop_function(function_def=func_def, schema_name=schema_name, db_name=db_name, if_exists=True)
-
-    def get_snowservice_image_repo(
-        self,
-        repo: str,
-        subdomain: str = constants.DEV_IMAGE_REGISTRY_SUBDOMAIN,
-    ) -> str:
-        conn = self._session._conn._conn
-        org = conn.host.split(".")[1]
-        account = conn.account
-        db = conn._database
-        schema = conn._schema
-        return f"{org}-{account}.{subdomain}.{constants.PROD_IMAGE_REGISTRY_DOMAIN}/{db}/{schema}/{repo}".lower()
 
     def create_compute_pool(
         self,

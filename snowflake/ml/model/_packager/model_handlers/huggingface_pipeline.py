@@ -242,10 +242,10 @@ class HuggingFacePipelineHandler(
             task, spcs_only=(not type_utils.LazyType("transformers.Pipeline").isinstance(model))
         )
         if framework is None or framework == "pt":
-            # Since we set default cuda version to be 11.7, to make sure it works with GPU, we need to have a default
-            # Pytorch version that works with CUDA 11.7 as well. This is required for huggingface pipelines only as
+            # Since we set default cuda version to be 11.8, to make sure it works with GPU, we need to have a default
+            # Pytorch version that works with CUDA 11.8 as well. This is required for huggingface pipelines only as
             # users are not required to install pytorch locally if they are using the wrapper.
-            pkgs_requirements.append(model_env.ModelDependency(requirement="pytorch==2.0.1", pip_name="torch"))
+            pkgs_requirements.append(model_env.ModelDependency(requirement="pytorch", pip_name="torch"))
         elif framework == "tf":
             pkgs_requirements.append(model_env.ModelDependency(requirement="tensorflow", pip_name="tensorflow"))
         model_meta.env.include_if_absent(

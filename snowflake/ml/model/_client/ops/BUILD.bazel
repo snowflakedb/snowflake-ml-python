@@ -11,6 +11,7 @@ py_library(
     srcs = ["model_ops.py"],
     deps = [
         ":metadata_ops",
+        "//snowflake/ml/_internal/exceptions",
         "//snowflake/ml/_internal/utils:identifier",
         "//snowflake/ml/_internal/utils:sql_identifier",
         "//snowflake/ml/model:model_signature",
@@ -35,6 +36,7 @@ py_test(
     srcs = ["model_ops_test.py"],
     deps = [
         ":model_ops",
+        "//snowflake/ml/_internal/exceptions",
         "//snowflake/ml/_internal/utils:sql_identifier",
         "//snowflake/ml/model:model_signature",
         "//snowflake/ml/model/_packager/model_meta",
@@ -69,6 +71,8 @@ py_library(
     name = "service_ops",
     srcs = ["service_ops.py"],
     deps = [
+        "//snowflake/ml/_internal/utils:service_logger",
+        "//snowflake/ml/_internal/utils:snowflake_env",
         "//snowflake/ml/_internal/utils:sql_identifier",
         "//snowflake/ml/model/_client/service:model_deployment_spec",
         "//snowflake/ml/model/_client/sql:service",

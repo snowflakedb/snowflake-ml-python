@@ -2,23 +2,67 @@ import json
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Union
 
+from snowflake.ml._internal import type_utils
 from snowflake.ml.model import model_signature, type_hints
 from snowflake.ml.model._packager.model_handlers import _utils as handlers_utils
 
 if TYPE_CHECKING:
+    import catboost
     import lightgbm
+    import sklearn
+    import sklearn.pipeline
     import xgboost
 
 
 @dataclass
-class ModelObjectiveAndOutputType:
-    objective: type_hints.ModelObjective
+class ModelTaskAndOutputType:
+    task: type_hints.Task
     output_type: model_signature.DataType
 
 
-def get_model_objective_lightgbm(model: Union["lightgbm.Booster", "lightgbm.LGBMModel"]) -> type_hints.ModelObjective:
+def get_task_skl(model: Union["sklearn.base.BaseEstimator", "sklearn.pipeline.Pipeline"]) -> type_hints.Task:
+    from sklearn.base import is_classifier, is_regressor
 
-    import lightgbm
+    if type_utils.LazyType("sklearn.pipeline.Pipeline").isinstance(model):
+        return type_hints.Task.UNKNOWN
+    if is_regressor(model):
+        return type_hints.Task.TABULAR_REGRESSION
+    if is_classifier(model):
+        classes_list = getattr(model, "classes_", [])
+        num_classes = getattr(model, "n_classes_", None) or len(classes_list)
+        if isinstance(num_classes, int):
+            if num_classes > 2:
+                return type_hints.Task.TABULAR_MULTI_CLASSIFICATION
+            return type_hints.Task.TABULAR_BINARY_CLASSIFICATION
+        return type_hints.Task.UNKNOWN
+    return type_hints.Task.UNKNOWN
+
+
+def get_model_task_catboost(model: "catboost.CatBoost") -> type_hints.Task:
+    loss_function = None
+    if type_utils.LazyType("catboost.CatBoost").isinstance(model):
+        loss_function = model.get_all_params()["loss_function"]  # type: ignore[attr-defined]
+
+    if (type_utils.LazyType("catboost.CatBoostClassifier").isinstance(model)) or model._is_classification_objective(
+        loss_function
+    ):
+        num_classes = handlers_utils.get_num_classes_if_exists(model)
+        if num_classes == 0:
+            return type_hints.Task.UNKNOWN
+        if num_classes <= 2:
+            return type_hints.Task.TABULAR_BINARY_CLASSIFICATION
+        return type_hints.Task.TABULAR_MULTI_CLASSIFICATION
+    if (type_utils.LazyType("catboost.CatBoostRanker").isinstance(model)) or model._is_ranking_objective(loss_function):
+        return type_hints.Task.TABULAR_RANKING
+    if (type_utils.LazyType("catboost.CatBoostRegressor").isinstance(model)) or model._is_regression_objective(
+        loss_function
+    ):
+        return type_hints.Task.TABULAR_REGRESSION
+
+    return type_hints.Task.UNKNOWN
+
+
+def get_model_task_lightgbm(model: Union["lightgbm.Booster", "lightgbm.LGBMModel"]) -> type_hints.Task:
 
     _BINARY_CLASSIFICATION_OBJECTIVES = ["binary"]
     _MULTI_CLASSIFICATION_OBJECTIVES = ["multiclass", "multiclassova"]
@@ -36,81 +80,90 @@ def get_model_objective_lightgbm(model: Union["lightgbm.Booster", "lightgbm.LGBM
     ]
 
     # does not account for cross-entropy and custom
-    if isinstance(model, lightgbm.LGBMClassifier):
-        num_classes = handlers_utils.get_num_classes_if_exists(model)
-        if num_classes == 2:
-            return type_hints.ModelObjective.BINARY_CLASSIFICATION
-        return type_hints.ModelObjective.MULTI_CLASSIFICATION
-    if isinstance(model, lightgbm.LGBMRanker):
-        return type_hints.ModelObjective.RANKING
-    if isinstance(model, lightgbm.LGBMRegressor):
-        return type_hints.ModelObjective.REGRESSION
-    model_objective = model.params["objective"]
-    if model_objective in _BINARY_CLASSIFICATION_OBJECTIVES:
-        return type_hints.ModelObjective.BINARY_CLASSIFICATION
-    if model_objective in _MULTI_CLASSIFICATION_OBJECTIVES:
-        return type_hints.ModelObjective.MULTI_CLASSIFICATION
-    if model_objective in _RANKING_OBJECTIVES:
-        return type_hints.ModelObjective.RANKING
-    if model_objective in _REGRESSION_OBJECTIVES:
-        return type_hints.ModelObjective.REGRESSION
-    return type_hints.ModelObjective.UNKNOWN
+    model_task = ""
+    if type_utils.LazyType("lightgbm.Booster").isinstance(model):
+        model_task = model.params["objective"]  # type: ignore[attr-defined]
+    elif hasattr(model, "objective_"):
+        model_task = model.objective_
+    if model_task in _BINARY_CLASSIFICATION_OBJECTIVES:
+        return type_hints.Task.TABULAR_BINARY_CLASSIFICATION
+    if model_task in _MULTI_CLASSIFICATION_OBJECTIVES:
+        return type_hints.Task.TABULAR_MULTI_CLASSIFICATION
+    if model_task in _RANKING_OBJECTIVES:
+        return type_hints.Task.TABULAR_RANKING
+    if model_task in _REGRESSION_OBJECTIVES:
+        return type_hints.Task.TABULAR_REGRESSION
+    return type_hints.Task.UNKNOWN
 
 
-def get_model_objective_xgb(model: Union["xgboost.Booster", "xgboost.XGBModel"]) -> type_hints.ModelObjective:
-
-    import xgboost
+def get_model_task_xgb(model: Union["xgboost.Booster", "xgboost.XGBModel"]) -> type_hints.Task:
 
     _BINARY_CLASSIFICATION_OBJECTIVE_PREFIX = ["binary:"]
     _MULTI_CLASSIFICATION_OBJECTIVE_PREFIX = ["multi:"]
     _RANKING_OBJECTIVE_PREFIX = ["rank:"]
     _REGRESSION_OBJECTIVE_PREFIX = ["reg:"]
 
-    model_objective = ""
-    if isinstance(model, xgboost.Booster):
-        model_params = json.loads(model.save_config())
-        model_objective = model_params.get("learner", {}).get("objective", "")
+    model_task = ""
+    if type_utils.LazyType("xgboost.Booster").isinstance(model):
+        model_params = json.loads(model.save_config())  # type: ignore[attr-defined]
+        model_task = model_params.get("learner", {}).get("objective", "")
     else:
         if hasattr(model, "get_params"):
-            model_objective = model.get_params().get("objective", "")
+            model_task = model.get_params().get("objective", "")
 
-    if isinstance(model_objective, dict):
-        model_objective = model_objective.get("name", "")
+    if isinstance(model_task, dict):
+        model_task = model_task.get("name", "")
     for classification_objective in _BINARY_CLASSIFICATION_OBJECTIVE_PREFIX:
-        if classification_objective in model_objective:
-            return type_hints.ModelObjective.BINARY_CLASSIFICATION
+        if classification_objective in model_task:
+            return type_hints.Task.TABULAR_BINARY_CLASSIFICATION
     for classification_objective in _MULTI_CLASSIFICATION_OBJECTIVE_PREFIX:
-        if classification_objective in model_objective:
-            return type_hints.ModelObjective.MULTI_CLASSIFICATION
+        if classification_objective in model_task:
+            return type_hints.Task.TABULAR_MULTI_CLASSIFICATION
     for ranking_objective in _RANKING_OBJECTIVE_PREFIX:
-        if ranking_objective in model_objective:
-            return type_hints.ModelObjective.RANKING
+        if ranking_objective in model_task:
+            return type_hints.Task.TABULAR_RANKING
     for regression_objective in _REGRESSION_OBJECTIVE_PREFIX:
-        if regression_objective in model_objective:
-            return type_hints.ModelObjective.REGRESSION
-    return type_hints.ModelObjective.UNKNOWN
+        if regression_objective in model_task:
+            return type_hints.Task.TABULAR_REGRESSION
+    return type_hints.Task.UNKNOWN
 
 
-def get_model_objective_and_output_type(model: Any) -> ModelObjectiveAndOutputType:
-    import xgboost
-
-    if isinstance(model, xgboost.Booster) or isinstance(model, xgboost.XGBModel):
-        model_objective = get_model_objective_xgb(model)
+def get_model_task_and_output_type(model: Any) -> ModelTaskAndOutputType:
+    if type_utils.LazyType("xgboost.Booster").isinstance(model) or type_utils.LazyType("xgboost.XGBModel").isinstance(
+        model
+    ):
+        task = get_model_task_xgb(model)
         output_type = model_signature.DataType.DOUBLE
-        if model_objective == type_hints.ModelObjective.MULTI_CLASSIFICATION:
+        if task == type_hints.Task.TABULAR_MULTI_CLASSIFICATION:
             output_type = model_signature.DataType.STRING
-        return ModelObjectiveAndOutputType(objective=model_objective, output_type=output_type)
+        return ModelTaskAndOutputType(task=task, output_type=output_type)
 
-    import lightgbm
-
-    if isinstance(model, lightgbm.Booster) or isinstance(model, lightgbm.LGBMModel):
-        model_objective = get_model_objective_lightgbm(model)
+    if type_utils.LazyType("lightgbm.Booster").isinstance(model) or type_utils.LazyType(
+        "lightgbm.LGBMModel"
+    ).isinstance(model):
+        task = get_model_task_lightgbm(model)
         output_type = model_signature.DataType.DOUBLE
-        if model_objective in [
-            type_hints.ModelObjective.BINARY_CLASSIFICATION,
-            type_hints.ModelObjective.MULTI_CLASSIFICATION,
+        if task in [
+            type_hints.Task.TABULAR_BINARY_CLASSIFICATION,
+            type_hints.Task.TABULAR_MULTI_CLASSIFICATION,
         ]:
             output_type = model_signature.DataType.STRING
-        return ModelObjectiveAndOutputType(objective=model_objective, output_type=output_type)
+        return ModelTaskAndOutputType(task=task, output_type=output_type)
+
+    if type_utils.LazyType("catboost.CatBoost").isinstance(model):
+        task = get_model_task_catboost(model)
+        output_type = model_signature.DataType.DOUBLE
+        if task == type_hints.Task.TABULAR_MULTI_CLASSIFICATION:
+            output_type = model_signature.DataType.STRING
+        return ModelTaskAndOutputType(task=task, output_type=output_type)
+
+    if type_utils.LazyType("sklearn.base.BaseEstimator").isinstance(model) or type_utils.LazyType(
+        "sklearn.pipeline.Pipeline"
+    ).isinstance(model):
+        task = get_task_skl(model)
+        output_type = model_signature.DataType.DOUBLE
+        if task == type_hints.Task.TABULAR_MULTI_CLASSIFICATION:
+            output_type = model_signature.DataType.STRING
+        return ModelTaskAndOutputType(task=task, output_type=output_type)
 
     raise ValueError(f"Model type {type(model)} is not supported")

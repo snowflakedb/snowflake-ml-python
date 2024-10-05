@@ -1,0 +1,82 @@
+load("//bazel:py_rules.bzl", "py_library", "py_test")
+
+package(default_visibility = [
+    "//bazel:snowml_public_common",
+    "//snowflake/ml/monitoring",
+])
+
+filegroup(
+    name = "queries",
+    srcs = glob([
+        "queries/*.sql",
+        "queries/*.ssql",
+    ]),
+)
+
+# TODO(jfishbein): Move this to //snowflake/ml/model/_client/ops/ or somewhere similar
+py_library(
+    name = "monitor_sql",
+    srcs = [
+        "monitor_sql_client.py",
+    ],
+    data = [":queries"],
+    deps = [
+        "//snowflake/ml/_internal/utils:db_utils",
+        "//snowflake/ml/_internal/utils:query_result_checker",
+        "//snowflake/ml/_internal/utils:sql_identifier",
+        "//snowflake/ml/_internal/utils:table_manager",
+        "//snowflake/ml/dataset",
+        "//snowflake/ml/model/_client/model:model_version_impl",
+        "//snowflake/ml/monitoring/entities:entities_lib",
+    ],
+)
+
+# TODO(jfishbein): Move this to //snowflake/ml/monitoring/_manager/ or somewhere similar
+py_library(
+    name = "model_monitor_lib",
+    srcs = [
+        "model_monitor.py",
+        "model_monitor_manager.py",
+        "model_monitor_version.py",
+    ],
+    deps = [
+        ":monitor_sql",
+        "//snowflake/ml/_internal:telemetry",
+        "//snowflake/ml/_internal/utils:db_utils",
+        "//snowflake/ml/_internal/utils:sql_identifier",
+        "//snowflake/ml/monitoring/entities:entities_lib",
+    ],
+)
+
+py_test(
+    name = "monitor_sql_client_test",
+    srcs = [
+        "monitor_sql_client_test.py",
+    ],
+    deps = [
+        ":model_monitor_lib",
+        "//snowflake/ml/test_utils:mock_session",
+    ],
+)
+
+py_test(
+    name = "model_monitor_manager_test",
+    srcs = [
+        "model_monitor_manager_test.py",
+    ],
+    deps = [
+        ":model_monitor_lib",
+        "//snowflake/ml/test_utils:mock_session",
+    ],
+)
+
+py_test(
+    name = "model_monitor_test",
+    srcs = [
+        "model_monitor_test.py",
+    ],
+    deps = [
+        ":model_monitor_lib",
+        "//snowflake/ml/test_utils:mock_session",
+    ],
+)

@@ -1,6 +1,7 @@
 import os
 import tempfile
 import warnings
+from unittest import mock
 
 import numpy as np
 import pandas as pd
@@ -115,8 +116,7 @@ class SKLearnHandlerTest(absltest.TestCase):
             s = {"predict_proba": model_signature.infer_signature(iris_X_df, model.predict_proba(iris_X_df))}
             with self.assertRaisesRegex(
                 ValueError,
-                "Sample input data is required to enable explainability. Currently we only support this for "
-                + "`pandas.DataFrame` and `snowflake.snowpark.dataframe.DataFrame`.",
+                "Sample input data is required to enable explainability.",
             ):
                 model_packager.ModelPackager(os.path.join(tmpdir, "model1")).save(
                     name="model1",
@@ -238,13 +238,13 @@ class SKLearnHandlerTest(absltest.TestCase):
         regr = linear_model.LinearRegression()
         iris_X_df = pd.DataFrame(iris_X, columns=["c1", "c2", "c3", "c4"])
         regr.fit(iris_X_df, iris_y)
+
         explanations = shap.Explainer(regr, iris_X_df)(iris_X_df).values
         with tempfile.TemporaryDirectory() as tmpdir:
             s = {"predict": model_signature.infer_signature(iris_X_df, regr.predict(iris_X_df))}
             with self.assertRaisesRegex(
                 ValueError,
-                "Sample input data is required to enable explainability. Currently we only support this for "
-                + "`pandas.DataFrame` and `snowflake.snowpark.dataframe.DataFrame`.",
+                "Sample input data is required to enable explainability.",
             ):
                 model_packager.ModelPackager(os.path.join(tmpdir, "model1")).save(
                     name="model1",
@@ -254,10 +254,52 @@ class SKLearnHandlerTest(absltest.TestCase):
                     options=model_types.SKLModelSaveOptions(enable_explainability=True),
                 )
 
+            # test calling saving background_data when sample_input_data is present
+            with mock.patch(
+                "snowflake.ml.model._packager.model_handlers._utils.save_background_data"
+            ) as save_background_data:
+                model_packager.ModelPackager(os.path.join(tmpdir, "model1")).save(
+                    name="model1_no_sig",
+                    model=regr,
+                    sample_input_data=iris_X_df,
+                    metadata={"author": "halu", "version": "1"},
+                )
+                save_background_data.assert_called_once()
+
             model_packager.ModelPackager(os.path.join(tmpdir, "model1")).save(
                 name="model1_no_sig",
                 model=regr,
                 sample_input_data=iris_X_df,
+                metadata={"author": "halu", "version": "1"},
+            )
+
+            with warnings.catch_warnings():
+                warnings.simplefilter("error")
+
+                pk = model_packager.ModelPackager(os.path.join(tmpdir, "model1"))
+                pk.load(as_custom_model=True)
+                assert pk.model
+                assert pk.meta
+                predict_method = getattr(pk.model, "predict", None)
+                explain_method = getattr(pk.model, "explain", None)
+                assert callable(predict_method)
+                assert callable(explain_method)
+                np.testing.assert_allclose(np.array([[-0.08254936]]), predict_method(iris_X_df[:1]))
+                np.testing.assert_allclose(explain_method(iris_X_df), explanations)
+
+    def test_skl_explain_with_np(self) -> None:
+        iris_X, iris_y = datasets.load_iris(return_X_y=True)
+        regr = linear_model.LinearRegression()
+        iris_X_df = pd.DataFrame(iris_X, columns=["c1", "c2", "c3", "c4"])
+        regr.fit(iris_X_df, iris_y)
+
+        explanations = shap.Explainer(regr, iris_X_df)(iris_X_df).values
+        with tempfile.TemporaryDirectory() as tmpdir:
+
+            model_packager.ModelPackager(os.path.join(tmpdir, "model1")).save(
+                name="model1_no_sig",
+                model=regr,
+                sample_input_data=iris_X_df.values,
                 metadata={"author": "halu", "version": "1"},
             )
 

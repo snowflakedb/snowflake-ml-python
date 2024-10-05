@@ -1,19 +1,17 @@
 from typing import List, Optional
 
 import fsspec
+import pyarrow as pa
 
 from snowflake import snowpark
-from snowflake.connector import result_batch
+from snowflake.connector import cursor as sf_cursor, result_batch
 from snowflake.ml.data import data_source
 from snowflake.ml.fileset import snowfs
 
 _TARGET_FILE_SIZE = 32 * 2**20  # The max file size for data loading.
 
 
-def get_dataframe_result_batches(
-    session: snowpark.Session, df_info: data_source.DataFrameInfo
-) -> List[result_batch.ResultBatch]:
-    """Retrieve the ResultBatches for a given query"""
+def _get_dataframe_cursor(session: snowpark.Session, df_info: data_source.DataFrameInfo) -> sf_cursor.SnowflakeCursor:
     cursor = session._conn._cursor
 
     if df_info.query_id:
@@ -29,12 +27,24 @@ def get_dataframe_result_batches(
     if cursor._prefetch_hook is None:
         raise RuntimeError("Loading data from result query failed unexpectedly. Please contact Snowflake support.")
     cursor._prefetch_hook()
+
+    return cursor
+
+
+def get_dataframe_result_batches(
+    session: snowpark.Session, df_info: data_source.DataFrameInfo
+) -> List[result_batch.ResultBatch]:
+    """Retrieve the ResultBatches for a given query"""
+    cursor = _get_dataframe_cursor(session, df_info)
     batches = cursor.get_result_batches()
-    if batches is None:
-        raise ValueError(
-            "Failed to retrieve training data. Query status:" f" {session._conn._conn.get_query_status(query_id)}"
-        )
-    return batches
+    return batches or []
+
+
+def get_dataframe_arrow_table(session: snowpark.Session, df_info: data_source.DataFrameInfo) -> pa.Table:
+    """Retrieve the full in-memory result for a given query"""
+    cursor = _get_dataframe_cursor(session, df_info)
+    table = cursor.fetch_arrow_all()  # type: ignore[call-overload]
+    return table
 
 
 def get_dataset_filesystem(

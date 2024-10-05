@@ -22,6 +22,7 @@ class ServiceDict(TypedDict):
     max_instances: Required[int]
     gpu: NotRequired[str]
     num_workers: NotRequired[int]
+    max_batch_rows: NotRequired[int]
 
 
 class ModelDeploymentSpecDict(TypedDict):

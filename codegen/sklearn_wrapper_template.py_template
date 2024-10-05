@@ -389,6 +389,7 @@ class {transform.original_class_name}(BaseTransformer):
         """
         self._infer_input_output_cols(dataset)
         super()._check_dataset_type(dataset)
+
         model_trainer = ModelTrainerBuilder.build_fit_transform(
             estimator=self._sklearn_object,
             dataset=dataset,

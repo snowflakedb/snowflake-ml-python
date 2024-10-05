@@ -144,6 +144,13 @@ class PipelineXGBRTest(absltest.TestCase):
 
         np.testing.assert_allclose(results.flatten(), sk_results.flatten(), rtol=1.0e-1, atol=1.0e-2)
 
+    @pytest.mark.skipif(
+        os.getenv("IN_SPCS_ML_RUNTIME") == "True",
+        reason=(
+            "Skipping this test on Container Runtimes. "
+            "See: https://snowflakecomputing.atlassian.net/browse/SNOW-1648870"
+        ),
+    )
     def test_fit_predict_proba_and_compare_results(self) -> None:
         pd_data = self._test_data
         pd_data["ROW_INDEX"] = pd_data.reset_index().index

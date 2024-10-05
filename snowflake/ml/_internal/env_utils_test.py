@@ -24,10 +24,10 @@ class EnvUtilsTest(absltest.TestCase):
         self.assertEqual(r.name, "python-package")
 
         r = env_utils._validate_pip_requirement_string("python.package==1.0.1")
-        self.assertEqual(r.name, "python-package")
+        self.assertEqual(r.name, "python.package")
 
         r = env_utils._validate_pip_requirement_string("Python-package==1.0.1")
-        self.assertEqual(r.name, "python-package")
+        self.assertEqual(r.name, "Python-package")
         r = env_utils._validate_pip_requirement_string("python-package>=1.0.1,<2,~=1.1,!=1.0.3")
         self.assertEqual(r.specifier, specifiers.SpecifierSet(">=1.0.1, <2, ~=1.1, !=1.0.3"))
         r = env_utils._validate_pip_requirement_string("requests [security,tests] >= 2.8.1, == 2.8.*")
@@ -42,8 +42,6 @@ class EnvUtilsTest(absltest.TestCase):
             env_utils._validate_pip_requirement_string("python-package=1.0.1")
         with self.assertRaises(ValueError):
             env_utils._validate_pip_requirement_string("_python-package==1.0.1")
-        with self.assertRaises(ValueError):
-            env_utils._validate_pip_requirement_string('requests; python_version < "2.7"')
 
     def test_validate_conda_dependency_string(self) -> None:
         c, r = env_utils._validate_conda_dependency_string("python-package==1.0.1")
@@ -182,9 +180,9 @@ class EnvUtilsTest(absltest.TestCase):
             ]
             env_utils.validate_pip_requirement_string_list(rl)
 
-        with self.assertRaises(env_utils.DuplicateDependencyError):
-            rl = ["python-package", "python_package"]
-            env_utils.validate_pip_requirement_string_list(rl)
+        rl = ["python-package", "python_package"]
+        trl = [requirements.Requirement("python-package"), requirements.Requirement("python_package")]
+        self.assertListEqual(env_utils.validate_pip_requirement_string_list(rl), trl)
 
         rl = ["python-package", "another-python-package"]
         trl = [requirements.Requirement("python-package"), requirements.Requirement("another-python-package")]
@@ -263,6 +261,15 @@ class EnvUtilsTest(absltest.TestCase):
         with self.assertWarns(UserWarning):
             env_utils.get_local_installed_version_of_pip_package(
                 requirements.Requirement(f"pip!={importlib_metadata.version('pip')}")
+            )
+
+        mock_distribution = mock.MagicMock()
+        mock_distribution.version = "1.0.0.post100"
+        with mock.patch.object(importlib_metadata, "distribution", return_value=mock_distribution):
+            r = requirements.Requirement("pip")
+            self.assertEqual(
+                requirements.Requirement("pip==1.0.0"),
+                env_utils.get_local_installed_version_of_pip_package(r),
             )
 
     def test_get_package_spec_with_supported_ops_only(self) -> None:

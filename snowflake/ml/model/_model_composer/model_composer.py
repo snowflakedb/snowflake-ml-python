@@ -1,14 +1,11 @@
-import glob
 import pathlib
 import tempfile
 import uuid
-import zipfile
 from types import ModuleType
 from typing import Any, Dict, List, Optional
 
 from absl import logging
 from packaging import requirements
-from typing_extensions import deprecated
 
 from snowflake import snowpark
 from snowflake.ml._internal import env as snowml_env, env_utils, file_utils
@@ -92,7 +89,7 @@ class ModelComposer:
         python_version: Optional[str] = None,
         ext_modules: Optional[List[ModuleType]] = None,
         code_paths: Optional[List[str]] = None,
-        model_objective: model_types.ModelObjective = model_types.ModelObjective.UNKNOWN,
+        task: model_types.Task = model_types.Task.UNKNOWN,
         options: Optional[model_types.ModelSaveOption] = None,
     ) -> model_meta.ModelMetadata:
         if not options:
@@ -121,25 +118,20 @@ class ModelComposer:
             python_version=python_version,
             ext_modules=ext_modules,
             code_paths=code_paths,
-            model_objective=model_objective,
+            task=task,
             options=options,
         )
         assert self.packager.meta is not None
 
-        if not options.get("_legacy_save", False):
-            # Keep both loose files and zipped file.
-            # TODO(SNOW-726678): Remove once import a directory is possible.
-            file_utils.copytree(
-                str(self._packager_workspace_path), str(self.workspace_path / ModelComposer.MODEL_DIR_REL_PATH)
-            )
-            self.manifest.save(
-                model_meta=self.packager.meta,
-                model_rel_path=pathlib.PurePosixPath(ModelComposer.MODEL_DIR_REL_PATH),
-                options=options,
-                data_sources=self._get_data_sources(model, sample_input_data),
-            )
-        else:
-            file_utils.make_archive(self.model_local_path, str(self._packager_workspace_path))
+        file_utils.copytree(
+            str(self._packager_workspace_path), str(self.workspace_path / ModelComposer.MODEL_DIR_REL_PATH)
+        )
+        self.manifest.save(
+            model_meta=self.packager.meta,
+            model_rel_path=pathlib.PurePosixPath(ModelComposer.MODEL_DIR_REL_PATH),
+            options=options,
+            data_sources=self._get_data_sources(model, sample_input_data),
+        )
 
         file_utils.upload_directory_to_stage(
             self.session,
@@ -148,28 +140,6 @@ class ModelComposer:
             statement_params=self._statement_params,
         )
         return model_metadata
-
-    @deprecated("Only used by PrPr model registry. Use static method version of load instead.")
-    def legacy_load(
-        self,
-        *,
-        meta_only: bool = False,
-        options: Optional[model_types.ModelLoadOption] = None,
-    ) -> None:
-        file_utils.download_directory_from_stage(
-            self.session,
-            stage_path=self.stage_path,
-            local_path=self.workspace_path,
-            statement_params=self._statement_params,
-        )
-
-        # TODO (Server-side Model Rollout): Remove this section.
-        model_zip_path = pathlib.Path(glob.glob(str(self.workspace_path / "*.zip"))[0])
-        self.model_file_rel_path = str(model_zip_path.relative_to(self.workspace_path))
-
-        with zipfile.ZipFile(self.model_local_path, mode="r", compression=zipfile.ZIP_DEFLATED) as zf:
-            zf.extractall(path=self._packager_workspace_path)
-        self.packager.load(meta_only=meta_only, options=options)
 
     @staticmethod
     def load(

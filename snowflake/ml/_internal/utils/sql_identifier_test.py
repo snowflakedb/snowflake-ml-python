@@ -65,6 +65,42 @@ class SqlIdentifierTest(absltest.TestCase):
         with self.assertRaises(ValueError):
             sql_identifier.parse_fully_qualified_name("abc-def")
 
+    def test_get_fully_qualified_name(self) -> None:
+        self.assertEqual(
+            "MYDB.MYSCHEMA.ABC",
+            sql_identifier.get_fully_qualified_name(
+                None, None, sql_identifier.SqlIdentifier("abc"), "mydb", "myschema"
+            ),
+        )
+        self.assertEqual(
+            "MYDB.MYSCHEMA.ABC",
+            sql_identifier.get_fully_qualified_name(
+                "mydb", "myschema", sql_identifier.SqlIdentifier("abc"), None, None
+            ),
+        )
+        self.assertEqual(
+            "ABC",
+            sql_identifier.get_fully_qualified_name(None, None, sql_identifier.SqlIdentifier("abc"), None, None),
+        )
+        self.assertEqual(
+            'MYDB.MYSCHEMA."abc"',
+            sql_identifier.get_fully_qualified_name(
+                "mydb", "myschema", sql_identifier.SqlIdentifier('"abc"'), None, None
+            ),
+        )
+        self.assertEqual(
+            '"mydb"."myschema".ABC',
+            sql_identifier.get_fully_qualified_name(
+                '"mydb"', '"myschema"', sql_identifier.SqlIdentifier("abc"), None, None
+            ),
+        )
+        self.assertEqual(
+            '"mydb"."myschema".ABC',
+            sql_identifier.get_fully_qualified_name(
+                None, None, sql_identifier.SqlIdentifier("abc"), '"mydb"', '"myschema"'
+            ),
+        )
+
 
 if __name__ == "__main__":
     absltest.main()

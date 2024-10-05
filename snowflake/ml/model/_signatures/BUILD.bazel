@@ -168,7 +168,6 @@ py_library(
         "//snowflake/ml/_internal/exceptions",
         "//snowflake/ml/_internal/utils:identifier",
         "//snowflake/ml/model:type_hints",
-        "//snowflake/ml/model/_deploy_client/warehouse:infer_template",
     ],
 )
 

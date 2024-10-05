@@ -118,16 +118,21 @@ class LineageNode:
             )
             domain = lineage_object["domain"].lower()
             if domain_filter is None or domain in domain_filter:
+                obj_name = ".".join(
+                    identifier.rename_to_valid_snowflake_identifier(s)
+                    for s in identifier.parse_schema_level_object_identifier(lineage_object["name"])
+                    if s is not None
+                )
                 if domain in DOMAIN_LINEAGE_REGISTRY and lineage_object["status"] == "ACTIVE":
                     lineage_nodes.append(
                         DOMAIN_LINEAGE_REGISTRY[domain]._load_from_lineage_node(
-                            self._session, lineage_object["name"], lineage_object.get("version")
+                            self._session, obj_name, lineage_object.get("version")
                         )
                     )
                 else:
                     lineage_nodes.append(
                         LineageNode(
-                            name=lineage_object["name"],
+                            name=obj_name,
                             version=lineage_object.get("version"),
                             domain=domain,
                             status=lineage_object["status"],

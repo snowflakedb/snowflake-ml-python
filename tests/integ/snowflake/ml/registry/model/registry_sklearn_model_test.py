@@ -6,6 +6,7 @@ import shap
 from absl.testing import absltest, parameterized
 from sklearn import datasets, ensemble, linear_model, multioutput
 
+from snowflake.ml.model import model_signature
 from snowflake.ml.model._packager.model_handlers import _utils as handlers_utils
 from snowflake.snowpark import exceptions as snowpark_exceptions
 from tests.integ.snowflake.ml.registry.model import registry_model_test_base
@@ -52,18 +53,6 @@ class TestRegistrySKLearnModelInteg(registry_model_test_base.RegistryModelTestBa
         classifier = linear_model.LogisticRegression()
         classifier.fit(iris_X_df, iris_y)
         expected_explanations = shap.Explainer(classifier, iris_X_df)(iris_X_df).values
-
-        with self.assertRaisesRegex(
-            ValueError,
-            "Sample input data is required to enable explainability. Currently we only support this for "
-            + "`pandas.DataFrame` and `snowflake.snowpark.dataframe.DataFrame`.",
-        ):
-            getattr(self, registry_test_fn)(
-                model=classifier,
-                sample_input_data=iris_X,
-                prediction_assert_fns={},
-                options={"enable_explainability": True},
-            )
 
         getattr(self, registry_test_fn)(
             model=classifier,
@@ -219,6 +208,68 @@ class TestRegistrySKLearnModelInteg(registry_model_test_base.RegistryModelTestBa
         self.registry.delete_model(model_name=name)
 
         self.assertNotIn(mv.model_name, [m.name for m in self.registry.models()])
+
+    @parameterized.product(  # type: ignore[misc]
+        registry_test_fn=registry_model_test_base.RegistryModelTestBase.REGISTRY_TEST_FN_LIST,
+    )
+    def test_skl_model_with_signature_and_sample_data(
+        self,
+        registry_test_fn: str,
+    ) -> None:
+        iris_X, iris_y = datasets.load_iris(return_X_y=True)
+        # sample input needs to be pandas dataframe for now
+        iris_X_df = pd.DataFrame(iris_X, columns=["c1", "c2", "c3", "c4"])
+        classifier = linear_model.LogisticRegression()
+        classifier.fit(iris_X_df, iris_y)
+        expected_explanations = shap.Explainer(classifier, iris_X_df)(iris_X_df).values
+
+        y_pred = pd.DataFrame(classifier.predict(iris_X_df), columns=["output_feature_0"])
+        sig = {
+            "predict": model_signature.infer_signature(iris_X_df, y_pred),
+        }
+
+        getattr(self, registry_test_fn)(
+            model=classifier,
+            sample_input_data=iris_X_df,
+            prediction_assert_fns={
+                "predict": (
+                    iris_X_df,
+                    lambda res: np.testing.assert_allclose(res["output_feature_0"].values, classifier.predict(iris_X)),
+                ),
+                "explain": (
+                    iris_X_df,
+                    lambda res: np.testing.assert_allclose(
+                        dataframe_utils.convert2D_json_to_3D(res.values), expected_explanations
+                    ),
+                ),
+            },
+            options={"enable_explainability": True},
+            signatures=sig,
+        )
+
+        with self.assertRaisesRegex(
+            ValueError, "Signatures and sample_input_data both cannot be specified at the same time."
+        ):
+            getattr(self, registry_test_fn)(
+                model=classifier,
+                sample_input_data=iris_X_df,
+                prediction_assert_fns={
+                    "predict": (
+                        iris_X_df,
+                        lambda res: np.testing.assert_allclose(
+                            res["output_feature_0"].values, classifier.predict(iris_X)
+                        ),
+                    ),
+                    "explain": (
+                        iris_X_df,
+                        lambda res: np.testing.assert_allclose(
+                            dataframe_utils.convert2D_json_to_3D(res.values), expected_explanations
+                        ),
+                    ),
+                },
+                signatures=sig,
+                additional_version_suffix="v2",
+            )
 
 
 if __name__ == "__main__":

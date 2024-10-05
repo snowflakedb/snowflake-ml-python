@@ -36,6 +36,7 @@ class ModelRuntime:
         name: str,
         env: model_env.ModelEnv,
         imports: Optional[List[str]] = None,
+        is_warehouse: bool = False,
         is_gpu: bool = False,
         loading_from_file: bool = False,
     ) -> None:
@@ -59,6 +60,16 @@ class ModelRuntime:
                 for dep in additional_package
             ],
         )
+
+        if not is_warehouse and self.embed_local_ml_library:
+            self.runtime_env.include_if_absent(
+                [
+                    model_env.ModelDependency(
+                        requirement="pyarrow",
+                        pip_name="pyarrow",
+                    )
+                ],
+            )
 
         if is_gpu:
             self.runtime_env.generate_env_for_cuda()

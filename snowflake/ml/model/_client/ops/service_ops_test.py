@@ -1,4 +1,3 @@
-import hashlib
 import pathlib
 import uuid
 from typing import cast
@@ -11,14 +10,19 @@ from snowflake.ml._internal import file_utils
 from snowflake.ml._internal.utils import sql_identifier
 from snowflake.ml.model._client.ops import service_ops
 from snowflake.ml.model._client.sql import service as service_sql
-from snowflake.ml.test_utils import mock_session
-from snowflake.snowpark import Session
+from snowflake.ml.test_utils import mock_data_frame, mock_session
+from snowflake.snowpark import Session, row
 from snowflake.snowpark._internal import utils as snowpark_utils
 
 
 class ModelOpsTest(absltest.TestCase):
     def setUp(self) -> None:
         self.m_session = mock_session.MockSession(conn=None, test_case=self)
+        # TODO(hayu): Remove mock sql after Snowflake 8.37.0 release
+        query = "SELECT CURRENT_VERSION() AS CURRENT_VERSION"
+        sql_result = [row.Row(CURRENT_VERSION="8.37.0 1234567890ab")]
+        self.m_session.add_mock_sql(query=query, result=mock_data_frame.MockDataFrame(sql_result))
+
         self.m_statement_params = {"test": "1"}
         self.c_session = cast(Session, self.m_session)
         self.m_ops = service_ops.ServiceOperator(
@@ -48,7 +52,7 @@ class ModelOpsTest(absltest.TestCase):
                 version_name=sql_identifier.SqlIdentifier("VERSION"),
                 service_database_name=sql_identifier.SqlIdentifier("SERVICE_DB"),
                 service_schema_name=sql_identifier.SqlIdentifier("SERVICE_SCHEMA"),
-                service_name=sql_identifier.SqlIdentifier("SERVICE"),
+                service_name=sql_identifier.SqlIdentifier("MYSERVICE"),
                 image_build_compute_pool_name=sql_identifier.SqlIdentifier("IMAGE_BUILD_COMPUTE_POOL"),
                 service_compute_pool_name=sql_identifier.SqlIdentifier("SERVICE_COMPUTE_POOL"),
                 image_repo_database_name=sql_identifier.SqlIdentifier("IMAGE_REPO_DB"),
@@ -58,6 +62,7 @@ class ModelOpsTest(absltest.TestCase):
                 max_instances=1,
                 gpu_requests="1",
                 num_workers=1,
+                max_batch_rows=1024,
                 force_rebuild=True,
                 build_external_access_integration=sql_identifier.SqlIdentifier("EXTERNAL_ACCESS_INTEGRATION"),
                 statement_params=self.m_statement_params,
@@ -75,7 +80,7 @@ class ModelOpsTest(absltest.TestCase):
                 version_name=sql_identifier.SqlIdentifier("VERSION"),
                 service_database_name=sql_identifier.SqlIdentifier("SERVICE_DB"),
                 service_schema_name=sql_identifier.SqlIdentifier("SERVICE_SCHEMA"),
-                service_name=sql_identifier.SqlIdentifier("SERVICE"),
+                service_name=sql_identifier.SqlIdentifier("MYSERVICE"),
                 image_build_compute_pool_name=sql_identifier.SqlIdentifier("IMAGE_BUILD_COMPUTE_POOL"),
                 service_compute_pool_name=sql_identifier.SqlIdentifier("SERVICE_COMPUTE_POOL"),
                 image_repo_database_name=sql_identifier.SqlIdentifier("IMAGE_REPO_DB"),
@@ -85,6 +90,7 @@ class ModelOpsTest(absltest.TestCase):
                 max_instances=1,
                 gpu="1",
                 num_workers=1,
+                max_batch_rows=1024,
                 force_rebuild=True,
                 external_access_integration=sql_identifier.SqlIdentifier("EXTERNAL_ACCESS_INTEGRATION"),
             )
@@ -106,18 +112,28 @@ class ModelOpsTest(absltest.TestCase):
                 statement_params=self.m_statement_params,
             )
             mock_get_service_status.assert_called_once_with(
-                service_name="SERVICE",
+                database_name="SERVICE_DB",
+                schema_name="SERVICE_SCHEMA",
+                service_name="MYSERVICE",
                 include_message=False,
                 statement_params=self.m_statement_params,
             )
 
     def test_get_model_build_service_name(self) -> None:
-        query_id = str(uuid.uuid4())
-        most_significant_bits = uuid.UUID(query_id).int >> 64
-        md5_hash = hashlib.md5(str(most_significant_bits).encode()).hexdigest()
-        identifier = md5_hash[:6]
-        service_name = ("model_build_" + identifier).upper()
-        self.assertEqual(self.m_ops._get_model_build_service_name(query_id), service_name)
+        query_id = "01b6fc10-0002-c121-0000-6ed10736311e"
+        """
+        Java code to generate the expected value:
+        import java.math.BigInteger;
+        import org.apache.commons.codec.digest.DigestUtils;
+        String uuid = "01b6fc10-0002-c121-0000-6ed10736311e";
+        String uuidString = uuid.replace("-", "");
+        BigInteger bigInt = new BigInteger(uuidString, 16);
+        String identifier = DigestUtils.md5Hex(bigInt.toString()).substring(0, 8);
+        System.out.println(identifier);
+        """
+        identifier = "81edd120"
+        expected = ("model_build_" + identifier).upper()
+        self.assertEqual(self.m_ops._get_model_build_service_name(query_id), expected)
 
 
 if __name__ == "__main__":

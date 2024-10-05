@@ -7,20 +7,8 @@ py_library(
     srcs = ["huggingface_pipeline.py"],
 )
 
-py_library(
-    name = "llm_model",
-    srcs = ["llm.py"],
-)
-
 py_test(
     name = "huggingface_pipeline_test",
     srcs = ["huggingface_pipeline_test.py"],
     deps = [":huggingface_pipeline"],
-)
-
-py_test(
-    name = "llm_test",
-    srcs = ["llm_test.py"],
-    compatible_with_snowpark = False,
-    deps = [":llm_model"],
 )

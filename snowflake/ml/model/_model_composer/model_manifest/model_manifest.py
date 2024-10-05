@@ -1,6 +1,7 @@
 import collections
-import copy
+import logging
 import pathlib
+import warnings
 from typing import List, Optional, cast
 
 import yaml
@@ -17,6 +18,9 @@ from snowflake.ml.model._packager.model_meta import (
     model_meta as model_meta_api,
     model_meta_schema,
 )
+from snowflake.ml.model._packager.model_runtime import model_runtime
+
+logger = logging.getLogger(__name__)
 
 
 class ModelManifest:
@@ -44,9 +48,30 @@ class ModelManifest:
         if options is None:
             options = {}
 
-        runtime_to_use = copy.deepcopy(model_meta.runtimes["cpu"])
-        runtime_to_use.name = self._DEFAULT_RUNTIME_NAME
-        runtime_to_use.imports.append(str(model_rel_path) + "/")
+        if "relax_version" not in options:
+            warnings.warn(
+                (
+                    "`relax_version` is not set and therefore defaulted to True. Dependency version constraints relaxed"
+                    " from ==x.y.z to >=x.y, <(x+1). To use specific dependency versions for compatibility, "
+                    "reproducibility, etc., set `options={'relax_version': False}` when logging the model."
+                ),
+                category=UserWarning,
+                stacklevel=2,
+            )
+        relax_version = options.get("relax_version", True)
+
+        runtime_to_use = model_runtime.ModelRuntime(
+            name=self._DEFAULT_RUNTIME_NAME,
+            env=model_meta.env,
+            imports=[str(model_rel_path) + "/"],
+            is_gpu=False,
+            is_warehouse=True,
+        )
+        if relax_version:
+            runtime_to_use.runtime_env.relax_version()
+            logger.info("Relaxing version constraints for dependencies in the model.")
+            logger.info(f"Conda dependencies: {runtime_to_use.runtime_env.conda_dependencies}")
+            logger.info(f"Pip requirements: {runtime_to_use.runtime_env.pip_requirements}")
         runtime_dict = runtime_to_use.save(
             self.workspace_path, default_channel_override=env_utils.SNOWFLAKE_CONDA_CHANNEL_URL
         )

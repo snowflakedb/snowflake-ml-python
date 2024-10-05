@@ -50,10 +50,6 @@ class LightGBMModelBlobOptions(BaseModelBlobOptions):
     lightgbm_estimator_type: Required[str]
 
 
-class LLMModelBlobOptions(BaseModelBlobOptions):
-    batch_size: Required[int]
-
-
 class MLFlowModelBlobOptions(BaseModelBlobOptions):
     artifact_path: Required[str]
 
@@ -65,7 +61,6 @@ class XgboostModelBlobOptions(BaseModelBlobOptions):
 ModelBlobOptions = Union[
     BaseModelBlobOptions,
     HuggingFacePipelineModelBlobOptions,
-    LLMModelBlobOptions,
     MLFlowModelBlobOptions,
     XgboostModelBlobOptions,
 ]
@@ -96,7 +91,7 @@ class ModelMetadataDict(TypedDict):
     signatures: Required[Dict[str, Dict[str, Any]]]
     version: Required[str]
     min_snowpark_ml_version: Required[str]
-    model_objective: Required[str]
+    task: Required[str]
     explainability: NotRequired[Optional[ExplainabilityMetadataDict]]
     function_properties: NotRequired[Dict[str, Dict[str, Any]]]
 

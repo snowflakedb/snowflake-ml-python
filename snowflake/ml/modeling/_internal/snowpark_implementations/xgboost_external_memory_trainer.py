@@ -303,7 +303,6 @@ class XGBoostExternalMemoryTrainer(SnowparkModelTrainer):
             statement_params=statement_params,
             anonymous=True,
             imports=list(import_file_paths),
-            execute_as="caller",
         )  # type: ignore[misc]
         def fit_wrapper_sproc(
             session: Session,

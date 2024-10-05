@@ -29,6 +29,7 @@ class ModelDeploymentSpecTest(absltest.TestCase):
                 max_instances=1,
                 gpu=None,
                 num_workers=None,
+                max_batch_rows=None,
                 force_rebuild=False,
                 external_access_integration=sql_identifier.SqlIdentifier("external_access_integration"),
             )
@@ -77,6 +78,7 @@ class ModelDeploymentSpecTest(absltest.TestCase):
                 max_instances=1,
                 gpu=None,
                 num_workers=None,
+                max_batch_rows=None,
                 force_rebuild=False,
                 external_access_integration=sql_identifier.SqlIdentifier(
                     "external_access_integration", case_sensitive=True
@@ -125,6 +127,7 @@ class ModelDeploymentSpecTest(absltest.TestCase):
                 max_instances=10,
                 gpu="1",
                 num_workers=10,
+                max_batch_rows=1024,
                 force_rebuild=True,
                 external_access_integration=sql_identifier.SqlIdentifier("external_access_integration"),
             )
@@ -149,6 +152,7 @@ class ModelDeploymentSpecTest(absltest.TestCase):
                             "max_instances": 10,
                             "gpu": "1",
                             "num_workers": 10,
+                            "max_batch_rows": 1024,
                         },
                     },
                 )

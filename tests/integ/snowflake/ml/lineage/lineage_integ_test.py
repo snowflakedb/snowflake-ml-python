@@ -3,6 +3,7 @@ import uuid
 from absl.testing import absltest
 from sklearn import datasets
 
+from snowflake.ml import dataset
 from snowflake.ml.feature_store.entity import Entity
 from snowflake.ml.feature_store.feature_store import CreationMode, FeatureStore
 from snowflake.ml.feature_store.feature_view import FeatureView
@@ -10,7 +11,6 @@ from snowflake.ml.lineage.lineage_node import LineageNode
 from snowflake.ml.model import ModelVersion
 from snowflake.ml.modeling.linear_model import LogisticRegression
 from snowflake.ml.registry import Registry
-from snowflake.ml.utils import connection_params
 from snowflake.snowpark import Session
 from tests.integ.snowflake.ml.test_utils import common_test_base, db_manager
 
@@ -19,9 +19,8 @@ class TestSnowflakeLineage(common_test_base.CommonTestBase):
     def setUp(self) -> None:
         """Creates Snowpark and Snowflake environments for testing."""
         super().setUp()
-        self._session = Session.builder.configs(connection_params.SnowflakeLoginOptions()).create()
-        self._db_manager = db_manager.DBManager(self._session)
-        self._current_db = self._session.get_current_database().replace('"', "")
+        self._db_manager = db_manager.DBManager(self.session)
+        self._current_db = self.session.get_current_database().replace('"', "")
         self._test_schema = db_manager.TestObjectNameGenerator.get_snowml_test_object_name(
             uuid.uuid4().hex.upper()[:5], "schema"
         ).upper()
@@ -55,13 +54,13 @@ class TestSnowflakeLineage(common_test_base.CommonTestBase):
         model_version = "V" + uuid.uuid4().hex.upper()[:5]
 
         self._create_iris_table(self.session, f"{self._test_schema}.{table_name}")
-        df = self._session.table(table_name)
+        df = self.session.table(table_name)
 
         fs = FeatureStore(
-            self._session,
+            self.session,
             self._current_db,
             self._test_schema,
-            default_warehouse=self._session.get_current_warehouse(),
+            default_warehouse=self.session.get_current_warehouse(),
             creation_mode=CreationMode.CREATE_IF_NOT_EXIST,
         )
 
@@ -111,8 +110,6 @@ class TestSnowflakeLineage(common_test_base.CommonTestBase):
             fv_downstream, f"{self._current_db}.{self._test_schema}.{dataset_name}", dataset_version, "dataset"
         )
         assert isinstance(fv_downstream[0], LineageNode)
-
-        from snowflake.ml import dataset
 
         fv_downstream = fv.lineage(domain_filter=["dataset"])
         self._check_lineage(

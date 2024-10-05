@@ -10,6 +10,7 @@ import cloudpickle
 import inflection
 import joblib
 import numpy as np
+import pytest
 from absl.testing.absltest import TestCase, main
 from sklearn.compose import ColumnTransformer as SkColumnTransformer
 from sklearn.datasets import load_diabetes, load_iris
@@ -62,6 +63,13 @@ class TestPipeline(TestCase):
             if os.path.exists(filepath):
                 os.remove(filepath)
 
+    @pytest.mark.skipif(
+        os.getenv("IN_SPCS_ML_RUNTIME") == "True",
+        reason=(
+            "Skipping this test on Container Runtimes. "
+            "See: https://snowflakecomputing.atlassian.net/browse/SNOW-1648870"
+        ),
+    )
     def test_single_step(self) -> None:
         """
         Test Pipeline with a single step.
@@ -247,6 +255,13 @@ class TestPipeline(TestCase):
 
         np.testing.assert_allclose(actual_results, sk_predict_results, rtol=1.0e-1, atol=1.0e-2)
 
+    @pytest.mark.skipif(
+        os.getenv("IN_SPCS_ML_RUNTIME") == "True",
+        reason=(
+            "Skipping this test on Container Runtimes. "
+            "See: https://snowflakecomputing.atlassian.net/browse/SNOW-1648870"
+        ),
+    )
     def test_pipeline_with_classifier_estimators(self) -> None:
         input_df_pandas = load_iris(as_frame=True).frame
         # Normalize column names
@@ -481,6 +496,13 @@ class TestPipeline(TestCase):
         }
         self.assertEqual(model_signatures["predict"].to_dict(), expected_model_signatures["predict"].to_dict())
 
+    @pytest.mark.skipif(
+        os.getenv("IN_SPCS_ML_RUNTIME") == "True",
+        reason=(
+            "Skipping this test on Container Runtimes. "
+            "See: https://snowflakecomputing.atlassian.net/browse/SNOW-1648870"
+        ),
+    )
     def test_pipeline_with_label_encoder_output_col(self) -> None:
         input_df_pandas = load_diabetes(as_frame=True).frame
         # Normalize column names
@@ -499,6 +521,13 @@ class TestPipeline(TestCase):
 
         assert "TARGET_OUT" in snow_df_output.columns
 
+    @pytest.mark.skipif(
+        os.getenv("IN_SPCS_ML_RUNTIME") == "True",
+        reason=(
+            "Skipping this test on Container Runtimes. "
+            "See: https://snowflakecomputing.atlassian.net/browse/SNOW-1648870"
+        ),
+    )
     def test_pipeline_score_samples(self) -> None:
         input_df_pandas = load_iris(as_frame=True).frame
         # Normalize column names

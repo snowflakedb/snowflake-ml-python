@@ -377,7 +377,6 @@ class DistributedHPOTrainer(SnowparkModelTrainer):
             anonymous=True,
             imports=imports,  # type: ignore[arg-type]
             statement_params=sproc_statement_params,
-            execute_as="caller",
         )
         def _distributed_search(
             session: Session,
@@ -783,7 +782,6 @@ class DistributedHPOTrainer(SnowparkModelTrainer):
             anonymous=True,
             imports=imports,  # type: ignore[arg-type]
             statement_params=sproc_statement_params,
-            execute_as="caller",
         )
         def _distributed_search(
             session: Session,

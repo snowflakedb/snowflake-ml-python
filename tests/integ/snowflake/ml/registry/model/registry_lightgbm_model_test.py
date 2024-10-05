@@ -6,6 +6,7 @@ import shap
 from absl.testing import absltest, parameterized
 from sklearn import datasets, model_selection
 
+from snowflake.ml.model import model_signature
 from snowflake.ml.model._packager.model_handlers import _utils as handlers_utils
 from tests.integ.snowflake.ml.registry.model import registry_model_test_base
 from tests.integ.snowflake.ml.test_utils import dataframe_utils
@@ -344,6 +345,73 @@ class TestRegistryLightGBMModelInteg(registry_model_test_base.RegistryModelTestB
                 ),
             },
         )
+
+    @parameterized.product(  # type: ignore[misc]
+        registry_test_fn=registry_model_test_base.RegistryModelTestBase.REGISTRY_TEST_FN_LIST,
+    )
+    def test_lightgbm_with_signature_and_sample_data(
+        self,
+        registry_test_fn: str,
+    ) -> None:
+        cal_data = datasets.load_breast_cancer(as_frame=True)
+        cal_X = cal_data.data
+        cal_y = cal_data.target
+        cal_X.columns = [inflection.parameterize(c, "_") for c in cal_X.columns]
+        cal_X_train, cal_X_test, cal_y_train, cal_y_test = model_selection.train_test_split(cal_X, cal_y)
+
+        classifier = lightgbm.LGBMClassifier()
+        classifier.fit(cal_X_train, cal_y_train)
+        y_pred = pd.DataFrame(classifier.predict(cal_X_test), columns=["output_feature_0"])
+        sig = {
+            "predict": model_signature.infer_signature(cal_X_test, y_pred),
+        }
+
+        expected_explanations = shap.Explainer(classifier)(cal_X_test).values
+
+        getattr(self, registry_test_fn)(
+            model=classifier,
+            sample_input_data=cal_X_test,
+            prediction_assert_fns={
+                "predict": (
+                    cal_X_test,
+                    lambda res: np.testing.assert_allclose(
+                        res.values, np.expand_dims(classifier.predict(cal_X_test), axis=1)
+                    ),
+                ),
+                "explain": (
+                    cal_X_test,
+                    lambda res: np.testing.assert_allclose(
+                        dataframe_utils.convert2D_json_to_3D(res.values), expected_explanations, rtol=1e-5
+                    ),
+                ),
+            },
+            options={"enable_explainability": True},
+            signatures=sig,
+        )
+
+        with self.assertRaisesRegex(
+            ValueError, "Signatures and sample_input_data both cannot be specified at the same time."
+        ):
+            getattr(self, registry_test_fn)(
+                model=classifier,
+                sample_input_data=cal_X_test,
+                prediction_assert_fns={
+                    "predict": (
+                        cal_X_test,
+                        lambda res: np.testing.assert_allclose(
+                            res.values, np.expand_dims(classifier.predict(cal_X_test), axis=1)
+                        ),
+                    ),
+                    "explain": (
+                        cal_X_test,
+                        lambda res: np.testing.assert_allclose(
+                            dataframe_utils.convert2D_json_to_3D(res.values), expected_explanations, rtol=1e-5
+                        ),
+                    ),
+                },
+                signatures=sig,
+                additional_version_suffix="v2",
+            )
 
 
 if __name__ == "__main__":

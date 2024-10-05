@@ -24,7 +24,7 @@ def call_sql_function(
     function: str,
     session: Optional[snowpark.Session],
     *args: Union[str, List[str], snowpark.Column, Dict[str, Union[int, float]]],
-) -> Union[str, snowpark.Column]:
+) -> Union[str, List[float], snowpark.Column]:
     handle_as_column = False
 
     for arg in args:
@@ -32,9 +32,9 @@ def call_sql_function(
             handle_as_column = True
 
     if handle_as_column:
-        return cast(Union[str, snowpark.Column], _call_sql_function_column(function, *args))
+        return cast(Union[str, List[float], snowpark.Column], _call_sql_function_column(function, *args))
     return cast(
-        Union[str, snowpark.Column],
+        Union[str, List[float], snowpark.Column],
         _call_sql_function_immediate(function, session, *args),
     )
 
@@ -49,7 +49,7 @@ def _call_sql_function_immediate(
     function: str,
     session: Optional[snowpark.Session],
     *args: Union[str, List[str], snowpark.Column, Dict[str, Union[int, float]]],
-) -> str:
+) -> Union[str, List[float]]:
     session = session or context.get_active_session()
     if session is None:
         raise SnowflakeAuthenticationException(

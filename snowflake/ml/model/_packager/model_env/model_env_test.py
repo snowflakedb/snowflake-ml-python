@@ -29,25 +29,25 @@ class ModelEnvTest(absltest.TestCase):
         self.assertListEqual(env.conda_dependencies, ["package"])
 
         env.conda_dependencies = ["some_package"]
-        self.assertListEqual(env.conda_dependencies, ["some-package"])
+        self.assertListEqual(env.conda_dependencies, ["some_package"])
 
         env.conda_dependencies = ["some_package==1.0.1"]
-        self.assertListEqual(env.conda_dependencies, ["some-package==1.0.1"])
+        self.assertListEqual(env.conda_dependencies, ["some_package==1.0.1"])
 
         env.conda_dependencies = ["some_package<1.2,>=1.0.1"]
-        self.assertListEqual(env.conda_dependencies, ["some-package<1.2,>=1.0.1"])
+        self.assertListEqual(env.conda_dependencies, ["some_package<1.2,>=1.0.1"])
 
         env.conda_dependencies = ["channel::some_package<1.2,>=1.0.1"]
-        self.assertListEqual(env.conda_dependencies, ["channel::some-package<1.2,>=1.0.1"])
+        self.assertListEqual(env.conda_dependencies, ["channel::some_package<1.2,>=1.0.1"])
 
         with self.assertRaisesRegex(ValueError, "Invalid package requirement _some_package<1.2,>=1.0.1 found."):
             env.conda_dependencies = ["channel::_some_package<1.2,>=1.0.1"]
 
         env.conda_dependencies = ["::some_package<1.2,>=1.0.1"]
-        self.assertListEqual(env.conda_dependencies, ["some-package<1.2,>=1.0.1"])
+        self.assertListEqual(env.conda_dependencies, ["some_package<1.2,>=1.0.1"])
 
         env.conda_dependencies = ["another==1.3", "channel::some_package<1.2,>=1.0.1"]
-        self.assertListEqual(env.conda_dependencies, ["another==1.3", "channel::some-package<1.2,>=1.0.1"])
+        self.assertListEqual(env.conda_dependencies, ["another==1.3", "channel::some_package<1.2,>=1.0.1"])
 
     def test_pip_requirements(self) -> None:
         env = model_env.ModelEnv()
@@ -55,13 +55,13 @@ class ModelEnvTest(absltest.TestCase):
         self.assertListEqual(env.pip_requirements, ["package"])
 
         env.pip_requirements = ["some_package"]
-        self.assertListEqual(env.pip_requirements, ["some-package"])
+        self.assertListEqual(env.pip_requirements, ["some_package"])
 
         env.pip_requirements = ["some_package==1.0.1"]
-        self.assertListEqual(env.pip_requirements, ["some-package==1.0.1"])
+        self.assertListEqual(env.pip_requirements, ["some_package==1.0.1"])
 
         env.pip_requirements = ["some_package<1.2,>=1.0.1"]
-        self.assertListEqual(env.pip_requirements, ["some-package<1.2,>=1.0.1"])
+        self.assertListEqual(env.pip_requirements, ["some_package<1.2,>=1.0.1"])
 
         with self.assertRaisesRegex(ValueError, "Invalid package requirement channel::some_package<1.2,>=1.0.1 found."):
             env.pip_requirements = ["channel::some_package<1.2,>=1.0.1"]
@@ -487,7 +487,7 @@ class ModelEnvTest(absltest.TestCase):
         self.assertListEqual(
             env.conda_dependencies,
             [
-                "another_channel::another-package==1.0.0",
+                "another_channel::another_package==1.0.0",
                 "nvidia::cuda==11.7.*",
                 "somepackage==1.0.0",
             ],
@@ -506,7 +506,7 @@ class ModelEnvTest(absltest.TestCase):
         self.assertListEqual(
             env.conda_dependencies,
             [
-                "another_channel::another-package==1.0.0",
+                "another_channel::another_package==1.0.0",
                 "nvidia::cuda>=11.7",
                 "somepackage==1.0.0",
             ],
@@ -535,7 +535,7 @@ class ModelEnvTest(absltest.TestCase):
 
         self.assertListEqual(
             env.conda_dependencies,
-            ["nvidia::cuda==11.7.*", "pytorch::pytorch-cuda==11.7.*", "pytorch::pytorch==1.0.0"],
+            ["nvidia::cuda==11.7.*", "pytorch==1.0.0"],
         )
 
         env = model_env.ModelEnv()
@@ -546,7 +546,7 @@ class ModelEnvTest(absltest.TestCase):
 
         self.assertListEqual(
             env.conda_dependencies,
-            ["nvidia::cuda==11.7.*", "pytorch::pytorch-cuda==11.7.*", "pytorch::pytorch>=1.0.0"],
+            ["nvidia::cuda==11.7.*", "pytorch>=1.0.0"],
         )
 
         env = model_env.ModelEnv()
@@ -557,20 +557,8 @@ class ModelEnvTest(absltest.TestCase):
 
         self.assertListEqual(
             env.conda_dependencies,
-            ["nvidia::cuda==11.7.*", "pytorch::pytorch-cuda>=11.7", "pytorch::pytorch>=1.0.0"],
+            ["nvidia::cuda==11.7.*", "pytorch::pytorch-cuda>=11.7", "pytorch>=1.0.0"],
         )
-
-        env = model_env.ModelEnv()
-        env.conda_dependencies = ["pytorch>=1.0.0", "pytorch::pytorch-cuda==11.8.*"]
-        env.cuda_version = "11.7"
-
-        with self.assertRaisesRegex(
-            ValueError,
-            "The Pytorch-CUDA requirement you specified in your conda dependencies or pip requirements is"
-            " conflicting with CUDA version required. Please do not specify Pytorch-CUDA dependency using conda"
-            " dependencies or pip requirements.",
-        ):
-            env.generate_env_for_cuda()
 
         env = model_env.ModelEnv()
         env.conda_dependencies = ["pytorch::pytorch>=1.1.0", "pytorch::pytorch-cuda==11.7.*"]
@@ -591,9 +579,8 @@ class ModelEnvTest(absltest.TestCase):
 
         self.assertListEqual(
             env.conda_dependencies,
-            ["nvidia::cuda==11.7.*", "pytorch::pytorch-cuda==11.7.*", "pytorch::pytorch==1.0.0"],
+            ["conda-forge::pytorch==1.0.0", "nvidia::cuda==11.7.*"],
         )
-        self.assertIn("conda-forge", env._conda_dependencies)
 
         env = model_env.ModelEnv()
         env.pip_requirements = ["torch==1.0.0"]
@@ -603,9 +590,9 @@ class ModelEnvTest(absltest.TestCase):
 
         self.assertListEqual(
             env.conda_dependencies,
-            ["nvidia::cuda==11.7.*", "pytorch::pytorch-cuda==11.7.*", "pytorch::pytorch==1.0.0"],
+            ["nvidia::cuda==11.7.*"],
         )
-        self.assertListEqual(env.pip_requirements, [])
+        self.assertListEqual(env.pip_requirements, ["torch==1.0.0"])
 
         env = model_env.ModelEnv()
         env.conda_dependencies = ["tensorflow==1.0.0"]
@@ -615,7 +602,7 @@ class ModelEnvTest(absltest.TestCase):
 
         self.assertListEqual(
             env.conda_dependencies,
-            ["conda-forge::tensorflow-gpu==1.0.0", "nvidia::cuda==11.7.*"],
+            ["nvidia::cuda==11.7.*", "tensorflow-gpu==1.0.0"],
         )
 
         env = model_env.ModelEnv()
@@ -626,7 +613,7 @@ class ModelEnvTest(absltest.TestCase):
 
         self.assertListEqual(
             env.conda_dependencies,
-            ["conda-forge::tensorflow-gpu>=1.0.0", "nvidia::cuda==11.7.*"],
+            ["nvidia::cuda==11.7.*", "tensorflow-gpu>=1.0.0"],
         )
 
         env = model_env.ModelEnv()
@@ -649,7 +636,7 @@ class ModelEnvTest(absltest.TestCase):
 
         self.assertListEqual(
             env.conda_dependencies,
-            ["conda-forge::tensorflow-gpu==1.0.0", "nvidia::cuda==11.7.*"],
+            ["nvidia::cuda==11.7.*", "tensorflow-gpu==1.0.0"],
         )
         self.assertListEqual(env.pip_requirements, [])
 
@@ -661,7 +648,7 @@ class ModelEnvTest(absltest.TestCase):
 
         self.assertListEqual(
             env.conda_dependencies,
-            ["conda-forge::py-xgboost-gpu==1.0.0", "nvidia::cuda==11.7.*"],
+            ["nvidia::cuda==11.7.*", "py-xgboost-gpu==1.0.0"],
         )
 
         env = model_env.ModelEnv()
@@ -672,7 +659,7 @@ class ModelEnvTest(absltest.TestCase):
 
         self.assertListEqual(
             env.conda_dependencies,
-            ["conda-forge::py-xgboost-gpu>=1.0.0", "nvidia::cuda==11.7.*"],
+            ["nvidia::cuda==11.7.*", "py-xgboost-gpu>=1.0.0"],
         )
 
         env = model_env.ModelEnv()
@@ -695,7 +682,7 @@ class ModelEnvTest(absltest.TestCase):
 
         self.assertListEqual(
             env.conda_dependencies,
-            ["conda-forge::py-xgboost-gpu>=1.0.0", "nvidia::cuda==11.7.*"],
+            ["nvidia::cuda==11.7.*", "py-xgboost-gpu>=1.0.0"],
         )
 
         env = model_env.ModelEnv()
@@ -706,7 +693,7 @@ class ModelEnvTest(absltest.TestCase):
 
         self.assertListEqual(
             env.conda_dependencies,
-            ["conda-forge::py-xgboost-gpu>=1.0.0", "nvidia::cuda==11.7.*"],
+            ["nvidia::cuda==11.7.*", "py-xgboost-gpu>=1.0.0"],
         )
         self.assertListEqual(env.pip_requirements, [])
 
@@ -719,10 +706,9 @@ class ModelEnvTest(absltest.TestCase):
         self.assertListEqual(
             env.conda_dependencies,
             [
-                "conda-forge::accelerate>=0.22.0",
+                "accelerate>=0.22.0",
                 "nvidia::cuda==11.7.*",
-                "pytorch::pytorch-cuda==11.7.*",
-                "pytorch::pytorch==1.0.0",
+                "pytorch==1.0.0",
                 "scipy>=1.9",
                 "transformers==1.0.0",
             ],
@@ -989,7 +975,7 @@ class ModelEnvTest(absltest.TestCase):
                     conda_yml,
                     {
                         "channels": ["conda-forge", "channel", "nodefaults"],
-                        "dependencies": ["python==3.10.*", "another==1.3", "channel::some-package<1.2,>=1.0.1"],
+                        "dependencies": ["python==3.10.*", "another==1.3", "channel::some_package<1.2,>=1.0.1"],
                         "name": "snow-env",
                     },
                 )
@@ -1016,7 +1002,7 @@ class ModelEnvTest(absltest.TestCase):
             mock_validate_local_installed_version_of_pip_package.assert_has_calls(
                 [
                     mock.call(requirements.Requirement("torch==1.3")),
-                    mock.call(requirements.Requirement("some-package<1.2,>=1.0.1")),
+                    mock.call(requirements.Requirement("some_package<1.2,>=1.0.1")),
                     mock.call(requirements.Requirement("pip-package<1.2,>=1.0.1")),
                 ]
             )
@@ -1040,7 +1026,7 @@ class ModelEnvTest(absltest.TestCase):
             mock_validate_local_installed_version_of_pip_package.assert_has_calls(
                 [
                     mock.call(requirements.Requirement("torch==1.3")),
-                    mock.call(requirements.Requirement("some-package<1.2,>=1.0.1")),
+                    mock.call(requirements.Requirement("some_package<1.2,>=1.0.1")),
                     mock.call(requirements.Requirement("pip-package<1.2,>=1.0.1")),
                 ]
             )
@@ -1062,7 +1048,7 @@ class ModelEnvTest(absltest.TestCase):
             mock_validate_local_installed_version_of_pip_package.assert_has_calls(
                 [
                     mock.call(requirements.Requirement("torch==1.3")),
-                    mock.call(requirements.Requirement("some-package<1.2,>=1.0.1")),
+                    mock.call(requirements.Requirement("some_package<1.2,>=1.0.1")),
                     mock.call(requirements.Requirement("pip-package<1.2,>=1.0.1")),
                 ]
             )
@@ -1086,7 +1072,7 @@ class ModelEnvTest(absltest.TestCase):
             mock_validate_local_installed_version_of_pip_package.assert_has_calls(
                 [
                     mock.call(requirements.Requirement("torch==1.3")),
-                    mock.call(requirements.Requirement("some-package<1.2,>=1.0.1")),
+                    mock.call(requirements.Requirement("some_package<1.2,>=1.0.1")),
                     mock.call(requirements.Requirement("pip-package<1.2,>=1.0.1")),
                 ]
             )

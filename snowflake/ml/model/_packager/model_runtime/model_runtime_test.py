@@ -138,7 +138,35 @@ class ModelRuntimeTest(absltest.TestCase):
             with open(os.path.join(workspace, "runtimes/cpu/env/conda.yml"), encoding="utf-8") as f:
                 dependencies = yaml.safe_load(f)
 
+            self.assertContainsSubset(_BASIC_DEPENDENCIES_TARGET_RELAXED + ["pyarrow"], dependencies["dependencies"])
+
+    def test_model_runtime_local_snowml_warehouse(self) -> None:
+        with tempfile.TemporaryDirectory() as workspace:
+            m_env = model_env.ModelEnv()
+            m_env.snowpark_ml_version = "1.0.0+abcdef"
+
+            mr = model_runtime.ModelRuntime(
+                "cpu",
+                m_env,
+                is_warehouse=True,
+            )
+            returned_dict = mr.save(pathlib.Path(workspace))
+
+            self.assertDictEqual(
+                returned_dict,
+                {
+                    "imports": ["runtimes/cpu/snowflake-ml-python.zip"],
+                    "dependencies": {
+                        "conda": "runtimes/cpu/env/conda.yml",
+                        "pip": "runtimes/cpu/env/requirements.txt",
+                    },
+                },
+            )
+            with open(os.path.join(workspace, "runtimes/cpu/env/conda.yml"), encoding="utf-8") as f:
+                dependencies = yaml.safe_load(f)
+
             self.assertContainsSubset(_BASIC_DEPENDENCIES_TARGET_RELAXED, dependencies["dependencies"])
+            self.assertNotIn("pyarrow", dependencies["dependencies"])
 
     def test_model_runtime_dup_basic_dep(self) -> None:
         with tempfile.TemporaryDirectory() as workspace:
@@ -269,7 +297,7 @@ class ModelRuntimeTest(absltest.TestCase):
                 dependencies = yaml.safe_load(f)
 
             self.assertContainsSubset(
-                ["nvidia::cuda==11.7.*", "pytorch::pytorch", "pytorch::pytorch-cuda==11.7.*"],
+                ["python==3.8.*", "pytorch", "snowflake-ml-python==1.0.0", "nvidia::cuda==11.7.*"],
                 dependencies["dependencies"],
             )
 

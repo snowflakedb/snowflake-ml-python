@@ -223,14 +223,14 @@ class ModelVersionImplTest(absltest.TestCase):
                 statement_params=mock.ANY,
             )
 
-    def test_get_model_objective(self) -> None:
+    def test_get_model_task(self) -> None:
         with mock.patch.object(
             self.m_mv._model_ops,
-            attribute="get_model_objective",
-            return_value=model_types.ModelObjective.REGRESSION,
-        ) as mock_get_model_objective:
-            self.assertEqual(model_types.ModelObjective.REGRESSION, self.m_mv.get_model_objective())
-            mock_get_model_objective.assert_called_once_with(
+            attribute="get_model_task",
+            return_value=model_types.Task.TABULAR_REGRESSION,
+        ) as mock_get_model_task:
+            self.assertEqual(model_types.Task.TABULAR_REGRESSION, self.m_mv.get_model_task())
+            mock_get_model_task.assert_called_once_with(
                 database_name=None,
                 schema_name=None,
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
@@ -732,6 +732,7 @@ class ModelVersionImplTest(absltest.TestCase):
                 max_instances=3,
                 gpu_requests="GPU",
                 num_workers=1,
+                max_batch_rows=1024,
                 force_rebuild=True,
                 build_external_access_integration="EAI",
             )
@@ -752,6 +753,7 @@ class ModelVersionImplTest(absltest.TestCase):
                 max_instances=3,
                 gpu_requests="GPU",
                 num_workers=1,
+                max_batch_rows=1024,
                 force_rebuild=True,
                 build_external_access_integration=sql_identifier.SqlIdentifier("EAI"),
                 statement_params=mock.ANY,
@@ -766,6 +768,7 @@ class ModelVersionImplTest(absltest.TestCase):
                 max_instances=3,
                 gpu_requests="GPU",
                 num_workers=1,
+                max_batch_rows=1024,
                 force_rebuild=True,
                 build_external_access_integration="EAI",
             )
@@ -786,8 +789,39 @@ class ModelVersionImplTest(absltest.TestCase):
                 max_instances=3,
                 gpu_requests="GPU",
                 num_workers=1,
+                max_batch_rows=1024,
                 force_rebuild=True,
                 build_external_access_integration=sql_identifier.SqlIdentifier("EAI"),
+                statement_params=mock.ANY,
+            )
+
+    def test_list_services(self) -> None:
+        with mock.patch.object(
+            self.m_mv._model_ops, attribute="list_inference_services", return_value=["a.b.c", "d.e.f"]
+        ) as mock_get_functions:
+            self.assertListEqual(["a.b.c", "d.e.f"], self.m_mv.list_services())
+            mock_get_functions.assert_called_once_with(
+                database_name=None,
+                schema_name=None,
+                model_name=sql_identifier.SqlIdentifier("MODEL"),
+                version_name=sql_identifier.SqlIdentifier("v1", case_sensitive=True),
+                statement_params=mock.ANY,
+            )
+
+    def test_delete_service_empty(self) -> None:
+        with self.assertRaisesRegex(ValueError, "service_name cannot be empty."):
+            self.m_mv.delete_service("")
+
+    def test_delete_service(self) -> None:
+        with mock.patch.object(self.m_mv._model_ops, attribute="delete_service") as mock_delete_service:
+            self.m_mv.delete_service("c")
+
+            mock_delete_service.assert_called_with(
+                database_name=None,
+                schema_name=None,
+                model_name=sql_identifier.SqlIdentifier("MODEL"),
+                version_name=sql_identifier.SqlIdentifier("v1", case_sensitive=True),
+                service_name="c",
                 statement_params=mock.ANY,
             )
 

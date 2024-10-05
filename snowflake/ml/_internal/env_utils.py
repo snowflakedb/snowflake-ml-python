@@ -9,7 +9,7 @@ from importlib import metadata as importlib_metadata
 from typing import Any, DefaultDict, Dict, List, Optional, Tuple
 
 import yaml
-from packaging import requirements, specifiers, utils as packaging_utils, version
+from packaging import requirements, specifiers, version
 
 import snowflake.connector
 from snowflake.ml._internal import env as snowml_env
@@ -54,15 +54,12 @@ def _validate_pip_requirement_string(req_str: str) -> requirements.Requirement:
     """
     try:
         r = requirements.Requirement(req_str)
-        r.name = packaging_utils.canonicalize_name(r.name)
 
         if r.name == "python":
             raise ValueError("Don't specify python as a dependency, use python version argument instead.")
     except requirements.InvalidRequirement:
         raise ValueError(f"Invalid package requirement {req_str} found.")
 
-    if r.marker:
-        raise ValueError("Markers is not supported in conda dependency.")
     return r
 
 
@@ -84,6 +81,8 @@ def _validate_conda_dependency_string(dep_str: str) -> Tuple[str, requirements.R
     channel_str, _, requirement_str = dep_str.rpartition("::")
     r = _validate_pip_requirement_string(requirement_str)
     if channel_str != "pip":
+        if r.marker:
+            raise ValueError("Markers is not supported in conda dependency.")
         if r.extras:
             raise ValueError("Extras is not supported in conda dependency.")
         if r.url:
@@ -221,7 +220,7 @@ def get_local_installed_version_of_pip_package(pip_req: requirements.Requirement
         else:
             return pip_req
     new_pip_req = copy.deepcopy(pip_req)
-    new_pip_req.specifier = specifiers.SpecifierSet(specifiers=f"=={local_dist_version}")
+    new_pip_req.specifier = specifiers.SpecifierSet(specifiers=f"=={version.parse(local_dist_version).base_version}")
     if not pip_req.specifier.contains(local_dist_version):
         warnings.warn(
             f"Package requirement {str(pip_req)} specified, while version {local_dist_version} is installed. "
@@ -513,6 +512,7 @@ def save_conda_env_file(
         )
 
     with open(path, "w", encoding="utf-8") as f:
+        yaml.SafeDumper.ignore_aliases = lambda *args: True  # type: ignore[method-assign]
         yaml.safe_dump(env, stream=f, default_flow_style=False)
 
 

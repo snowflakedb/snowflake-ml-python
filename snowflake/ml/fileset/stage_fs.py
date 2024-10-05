@@ -431,4 +431,5 @@ def _resolve_async_job(async_job: snowpark.AsyncJob) -> List[snowpark.Row]:
                 error_code=error_codes.SNOWML_NOT_FOUND,
                 original_exception=fileset_errors.StageNotFoundError("Query failed."),
             ) from e
-        raise
+        assert e.msg is not None
+        raise snowpark_exceptions.SnowparkSQLException(e.msg, conn_error=e) from e

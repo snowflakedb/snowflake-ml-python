@@ -11,7 +11,7 @@ ADDED_VERSION_NAME = "V2"
 
 
 class RegistryInSprocTest(registry_model_test_base.RegistryModelTestBase):
-    @common_test_base.CommonTestBase.sproc_test(test_owners_rights=False)
+    @common_test_base.CommonTestBase.sproc_test(test_owners_rights=False, additional_packages=["inflection"])
     def test_workflow(self) -> None:
         model, test_features, _ = model_factory.ModelFactory.prepare_sklearn_model()
         self.mv_1 = self.registry.log_model(

@@ -1,4 +1,5 @@
 import os
+import warnings
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -47,6 +48,7 @@ class LGBMModelHandler(_base.BaseModelHandler[Union["lightgbm.Booster", "lightgb
 
     MODEL_BLOB_FILE_OR_DIR = "model.pkl"
     DEFAULT_TARGET_METHODS = ["predict", "predict_proba"]
+    EXPLAIN_TARGET_METHODS = ["predict", "predict_proba"]
 
     @classmethod
     def can_handle(
@@ -111,20 +113,33 @@ class LGBMModelHandler(_base.BaseModelHandler[Union["lightgbm.Booster", "lightgb
                 sample_input_data=sample_input_data,
                 get_prediction_fn=get_prediction,
             )
-            model_objective_and_output = model_objective_utils.get_model_objective_and_output_type(model)
-            model_meta.model_objective = handlers_utils.validate_model_objective(
-                model_meta.model_objective, model_objective_and_output.objective
-            )
+            model_task_and_output = model_objective_utils.get_model_task_and_output_type(model)
+            model_meta.task = handlers_utils.validate_model_task(model_meta.task, model_task_and_output.task)
             if enable_explainability:
+                explain_target_method = handlers_utils.get_explain_target_method(model_meta, cls.EXPLAIN_TARGET_METHODS)
                 model_meta = handlers_utils.add_explain_method_signature(
                     model_meta=model_meta,
                     explain_method="explain",
-                    target_method="predict",
-                    output_return_type=model_objective_and_output.output_type,
+                    target_method=explain_target_method,
+                    output_return_type=model_task_and_output.output_type,
                 )
                 model_meta.function_properties = {
                     "explain": {model_meta_schema.FunctionProperties.PARTITIONED.value: False}
                 }
+
+                background_data = handlers_utils.get_explainability_supported_background(
+                    sample_input_data, model_meta, explain_target_method
+                )
+                if background_data is not None:
+                    handlers_utils.save_background_data(
+                        model_blobs_dir_path, cls.EXPLAIN_ARTIFACTS_DIR, cls.BG_DATA_FILE_SUFFIX, name, background_data
+                    )
+                else:
+                    warnings.warn(
+                        "sample_input_data should be provided for better explainability results",
+                        category=UserWarning,
+                        stacklevel=1,
+                    )
 
         model_blob_path = os.path.join(model_blobs_dir_path, name)
         os.makedirs(model_blob_path, exist_ok=True)

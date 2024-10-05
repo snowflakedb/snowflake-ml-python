@@ -11,7 +11,6 @@ import pyarrow as pa
 import pyarrow.dataset as pds
 
 from snowflake import snowpark
-from snowflake.connector import result_batch
 from snowflake.ml.data import data_ingestor, data_source, ingestor_utils
 
 _EMPTY_RECORD_BATCH = pa.RecordBatch.from_arrays([], [])
@@ -140,16 +139,7 @@ class ArrowIngestor(data_ingestor.DataIngestor):
                 #        We may be able to optimize this by splitting the result batches into
                 #        in-memory (first batch) and file URLs (subsequent batches) and creating a
                 #        union dataset.
-                result_batches = ingestor_utils.get_dataframe_result_batches(self._session, source)
-                sources.extend(
-                    b.to_arrow(self._session.connection)
-                    if isinstance(b, result_batch.ArrowResultBatch)
-                    else b.to_arrow()
-                    for b in result_batches
-                )
-                # HACK: Mitigate typing inconsistencies in Snowpark results
-                if len(sources) > 0:
-                    sources = [_cast_if_needed(s, sources[-1].schema) for s in sources]
+                sources.append(_cast_if_needed(ingestor_utils.get_dataframe_arrow_table(self._session, source)))
                 source_format = None  # Arrow Dataset expects "None" for in-memory datasets
             else:
                 raise RuntimeError(f"Unsupported data source type: {type(source)}")

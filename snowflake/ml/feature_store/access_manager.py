@@ -30,6 +30,7 @@ class _Privilege:
     object_name: str
     privileges: List[str]
     scope: Optional[str] = None
+    optional: bool = False
 
 
 @dataclass(frozen=True)
@@ -72,8 +73,7 @@ _PRE_INIT_PRIVILEGES: Dict[_FeatureStoreRole, List[_Privilege]] = {
         _Privilege("VIEW", _ALL_OBJECTS, ["SELECT", "REFERENCES"], "SCHEMA {database}.{schema}"),
         _Privilege("TABLE", _ALL_OBJECTS, ["SELECT", "REFERENCES"], "SCHEMA {database}.{schema}"),
         _Privilege("DATASET", _ALL_OBJECTS, ["USAGE"], "SCHEMA {database}.{schema}"),
-        # User should decide whether they want to grant warehouse usage to CONSUMER
-        # _Privilege("WAREHOUSE", "{warehouse}", ["USAGE"]),
+        _Privilege("WAREHOUSE", "{warehouse}", ["USAGE"], optional=True),
     ],
     _FeatureStoreRole.NONE: [],
 }
@@ -109,7 +109,7 @@ def _grant_privileges(
                 query += f" TO ROLE {role_name}"
                 session.sql(query).collect()
         except exceptions.SnowparkSQLException as e:
-            if any(
+            if p.optional or any(
                 s in e.message
                 for s in (
                     "Ask your account admin",

@@ -5,6 +5,7 @@ import tempfile
 import importlib_resources
 import yaml
 from absl.testing import absltest
+from packaging import requirements
 
 from snowflake.ml._internal import env_utils
 from snowflake.ml.model import model_signature, type_hints
@@ -14,6 +15,7 @@ from snowflake.ml.model._packager.model_meta import (
     model_meta,
     model_meta_schema,
 )
+from snowflake.ml.model._packager.model_runtime import model_runtime
 
 _DUMMY_SIG = {
     "predict": model_signature.ModelSignature(
@@ -37,6 +39,57 @@ _DUMMY_BLOB = model_blob_meta.ModelBlobMeta(
     name="model1", model_type="custom", path="mock_path", handler_version="version_0"
 )
 
+_PACKAGING_REQUIREMENTS_TARGET_WITHOUT_SNOWML = (
+    list(
+        sorted(
+            map(
+                lambda x: str(env_utils.get_local_installed_version_of_pip_package(requirements.Requirement(x))),
+                model_meta._PACKAGING_REQUIREMENTS,
+            )
+        )
+    )
+    + model_runtime._SNOWML_INFERENCE_ALTERNATIVE_DEPENDENCIES
+)
+
+_PACKAGING_REQUIREMENTS_TARGET_WITHOUT_SNOWML_RELAXED = (
+    list(
+        sorted(
+            map(
+                lambda x: str(
+                    env_utils.relax_requirement_version(
+                        env_utils.get_local_installed_version_of_pip_package(requirements.Requirement(x))
+                    )
+                ),
+                model_meta._PACKAGING_REQUIREMENTS,
+            )
+        )
+    )
+    + model_runtime._SNOWML_INFERENCE_ALTERNATIVE_DEPENDENCIES
+)
+
+_PACKAGING_REQUIREMENTS_TARGET_WITH_SNOWML = list(
+    sorted(
+        map(
+            lambda x: str(env_utils.get_local_installed_version_of_pip_package(requirements.Requirement(x))),
+            model_meta._PACKAGING_REQUIREMENTS + [env_utils.SNOWPARK_ML_PKG_NAME],
+        )
+    )
+)
+
+
+_PACKAGING_REQUIREMENTS_TARGET_WITH_SNOWML_RELAXED = list(
+    sorted(
+        map(
+            lambda x: str(
+                env_utils.relax_requirement_version(
+                    env_utils.get_local_installed_version_of_pip_package(requirements.Requirement(x))
+                )
+            ),
+            model_meta._PACKAGING_REQUIREMENTS + [env_utils.SNOWPARK_ML_PKG_NAME],
+        )
+    )
+)
+
 
 class ModelManifestTest(absltest.TestCase):
     def test_model_manifest_1(self) -> None:
@@ -52,7 +105,17 @@ class ModelManifestTest(absltest.TestCase):
             ) as meta:
                 meta.models["model1"] = _DUMMY_BLOB
 
-            mm.save(meta, pathlib.PurePosixPath("model"))
+            with self.assertWarnsRegex(UserWarning, "`relax_version` is not set and therefore defaulted to True."):
+                mm.save(meta, pathlib.PurePosixPath("model"))
+            with open(pathlib.Path(workspace, "runtimes", "python_runtime", "env", "conda.yml"), encoding="utf-8") as f:
+                self.assertDictEqual(
+                    yaml.safe_load(f),
+                    {
+                        "channels": [env_utils.SNOWFLAKE_CONDA_CHANNEL_URL, "nodefaults"],
+                        "dependencies": ["python==3.8.*"] + _PACKAGING_REQUIREMENTS_TARGET_WITH_SNOWML_RELAXED,
+                        "name": "snow-env",
+                    },
+                )
             with open(os.path.join(workspace, "MANIFEST.yml"), encoding="utf-8") as f:
                 self.assertEqual(
                     (
@@ -74,6 +137,36 @@ class ModelManifestTest(absltest.TestCase):
                     f.read(),
                 )
 
+    def test_model_manifest_1_relax_version(self) -> None:
+        with tempfile.TemporaryDirectory() as workspace, tempfile.TemporaryDirectory() as tmpdir:
+            mm = model_manifest.ModelManifest(pathlib.Path(workspace))
+            with model_meta.create_model_metadata(
+                model_dir_path=tmpdir,
+                name="model1",
+                model_type="custom",
+                signatures=_DUMMY_SIG,
+                python_version="3.8",
+                embed_local_ml_library=False,
+            ) as meta:
+                meta.models["model1"] = _DUMMY_BLOB
+
+            mm.save(
+                meta,
+                pathlib.PurePosixPath("model"),
+                options=type_hints.BaseModelSaveOption(
+                    relax_version=False,
+                ),
+            )
+            with open(pathlib.Path(workspace, "runtimes", "python_runtime", "env", "conda.yml"), encoding="utf-8") as f:
+                self.assertDictEqual(
+                    yaml.safe_load(f),
+                    {
+                        "channels": [env_utils.SNOWFLAKE_CONDA_CHANNEL_URL, "nodefaults"],
+                        "dependencies": ["python==3.8.*"] + _PACKAGING_REQUIREMENTS_TARGET_WITH_SNOWML,
+                        "name": "snow-env",
+                    },
+                )
+
     def test_model_manifest_2(self) -> None:
         with tempfile.TemporaryDirectory() as workspace, tempfile.TemporaryDirectory() as tmpdir:
             mm = model_manifest.ModelManifest(pathlib.Path(workspace))
@@ -91,9 +184,19 @@ class ModelManifestTest(absltest.TestCase):
                 meta,
                 pathlib.PurePosixPath("model"),
                 options=type_hints.BaseModelSaveOption(
-                    method_options={"__call__": type_hints.ModelMethodSaveOptions(max_batch_size=10)}
+                    method_options={"__call__": type_hints.ModelMethodSaveOptions(max_batch_size=10)},
+                    relax_version=False,
                 ),
             )
+            with open(pathlib.Path(workspace, "runtimes", "python_runtime", "env", "conda.yml"), encoding="utf-8") as f:
+                self.assertDictEqual(
+                    yaml.safe_load(f),
+                    {
+                        "channels": [env_utils.SNOWFLAKE_CONDA_CHANNEL_URL, "nodefaults"],
+                        "dependencies": ["python==3.8.*"] + _PACKAGING_REQUIREMENTS_TARGET_WITHOUT_SNOWML,
+                        "name": "snow-env",
+                    },
+                )
             with open(os.path.join(workspace, "MANIFEST.yml"), encoding="utf-8") as f:
                 self.assertEqual(
                     (
@@ -113,6 +216,37 @@ class ModelManifestTest(absltest.TestCase):
                         .read_text()
                     ),
                     f.read(),
+                )
+
+    def test_model_manifest_2_relax_version(self) -> None:
+        with tempfile.TemporaryDirectory() as workspace, tempfile.TemporaryDirectory() as tmpdir:
+            mm = model_manifest.ModelManifest(pathlib.Path(workspace))
+            with model_meta.create_model_metadata(
+                model_dir_path=tmpdir,
+                name="model1",
+                model_type="custom",
+                signatures={"__call__": _DUMMY_SIG["predict"]},
+                python_version="3.8",
+                embed_local_ml_library=True,
+            ) as meta:
+                meta.models["model1"] = _DUMMY_BLOB
+
+            mm.save(
+                meta,
+                pathlib.PurePosixPath("model"),
+                options=type_hints.BaseModelSaveOption(
+                    method_options={"__call__": type_hints.ModelMethodSaveOptions(max_batch_size=10)},
+                    relax_version=True,
+                ),
+            )
+            with open(pathlib.Path(workspace, "runtimes", "python_runtime", "env", "conda.yml"), encoding="utf-8") as f:
+                self.assertDictEqual(
+                    yaml.safe_load(f),
+                    {
+                        "channels": [env_utils.SNOWFLAKE_CONDA_CHANNEL_URL, "nodefaults"],
+                        "dependencies": ["python==3.8.*"] + _PACKAGING_REQUIREMENTS_TARGET_WITHOUT_SNOWML_RELAXED,
+                        "name": "snow-env",
+                    },
                 )
 
     def test_model_manifest_mix(self) -> None:
@@ -149,8 +283,13 @@ class ModelManifestTest(absltest.TestCase):
                     f.read(),
                 )
             with open(pathlib.Path(workspace, "runtimes", "python_runtime", "env", "conda.yml"), encoding="utf-8") as f:
-                self.assertListEqual(
-                    yaml.safe_load(f)["channels"], [env_utils.SNOWFLAKE_CONDA_CHANNEL_URL, "nodefaults"]
+                self.assertDictEqual(
+                    yaml.safe_load(f),
+                    {
+                        "channels": [env_utils.SNOWFLAKE_CONDA_CHANNEL_URL, "nodefaults"],
+                        "dependencies": ["python==3.8.*"] + _PACKAGING_REQUIREMENTS_TARGET_WITHOUT_SNOWML_RELAXED,
+                        "name": "snow-env",
+                    },
                 )
             with open(pathlib.Path(workspace, "functions", "predict.py"), encoding="utf-8") as f:
                 self.assertEqual(

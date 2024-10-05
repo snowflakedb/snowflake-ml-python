@@ -87,7 +87,6 @@ def d2_absolute_error_score(
         ],
         statement_params=statement_params,
         anonymous=True,
-        execute_as="caller",
     )
     def d2_absolute_error_score_anon_sproc(session: snowpark.Session) -> bytes:
         for query in queries[:-1]:
@@ -185,7 +184,6 @@ def d2_pinball_score(
         ],
         statement_params=statement_params,
         anonymous=True,
-        execute_as="caller",
     )
     def d2_pinball_score_anon_sproc(session: snowpark.Session) -> bytes:
         for query in queries[:-1]:
@@ -301,7 +299,6 @@ def explained_variance_score(
         ],
         statement_params=statement_params,
         anonymous=True,
-        execute_as="caller",
     )
     def explained_variance_score_anon_sproc(session: snowpark.Session) -> bytes:
         for query in queries[:-1]:

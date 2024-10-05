@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Usage
-# build_and_run_tests.sh <workspace> [-b <bazel path>] [--env pip|conda] [--mode merge_gate|continuous_run] [--with-snowpark] [--report <report_path>]
+# build_and_run_tests.sh <workspace> [-b <bazel path>] [--env pip|conda] [--mode merge_gate|continuous_run] [--with-snowpark] [--with-spcs-image] [--report <report_path>]
 #
 # Args
 # workspace: path to the workspace, SnowML code should be in snowml directory.
@@ -14,6 +14,7 @@
 #   continuous_run (default): run all tests. (For nightly run. Alias: release)
 #   quarantined: run all quarantined tests.
 # with-snowpark: Build and test with snowpark in snowpark-python directory in the workspace.
+# with-spcs-image: Build and test with spcs-image in spcs-image directory in the workspace.
 # snowflake-env: The environment of the snowflake, use to determine the test quarantine list
 # report: Path to xml test report
 #
@@ -29,7 +30,7 @@ PROG=$0
 
 help() {
     local exit_code=$1
-    echo "Usage: ${PROG} <workspace> [-b <bazel path>] [--env pip|conda] [--mode merge_gate|continuous_run|quarantined] [--with-snowpark] [--snowflake-env <sf_env>] [--report <report_path>]"
+    echo "Usage: ${PROG} <workspace> [-b <bazel path>] [--env pip|conda] [--mode merge_gate|continuous_run|quarantined] [--with-snowpark] [--with-spcs-image] [--snowflake-env <sf_env>] [--report <report_path>]"
     exit "${exit_code}"
 }
 
@@ -37,6 +38,7 @@ WORKSPACE=$1 && shift || help 1
 BAZEL="bazel"
 ENV="pip"
 WITH_SNOWPARK=false
+WITH_SPCS_IMAGE=false
 MODE="continuous_run"
 PYTHON_VERSION=3.8
 PYTHON_ENABLE_SCRIPT="bin/activate"
@@ -85,6 +87,9 @@ while (($#)); do
     --python-version)
         shift
         PYTHON_VERSION=$1
+        ;;
+    --with-spcs-image)
+        WITH_SPCS_IMAGE=true
         ;;
     -h | --help)
         help 0
@@ -260,8 +265,15 @@ else
     # Build SnowML
     pushd ${SNOWML_DIR}
     # Build conda package
-    conda build --prefix-length 50 --python=${PYTHON_VERSION} --croot "${WORKSPACE}/conda-bld" ci/conda_recipe
+    conda build -c conda-forge --override-channels --prefix-length 50 --python=${PYTHON_VERSION} --croot "${WORKSPACE}/conda-bld" ci/conda_recipe
     conda build purge
+    popd
+fi
+
+if [[ "${WITH_SPCS_IMAGE}" = true ]]; then
+    pushd ${SNOWML_DIR}
+    # Build SPCS Image
+    source model_container_services_deployment/ci/build_and_push_images.sh
     popd
 fi
 
@@ -281,6 +293,11 @@ if [[ -n "${JUNIT_REPORT_PATH}" ]]; then
 fi
 
 if [ "${ENV}" = "pip" ]; then
+    if [ "${WITH_SPCS_IMAGE}" = true ]; then
+        COMMON_PYTEST_FLAG+=(-m "spcs_deployment_image and not pip_incompatible")
+    else
+        COMMON_PYTEST_FLAG+=(-m "not pip_incompatible")
+    fi
     # Copy wheel package
     cp "${WORKSPACE}/snowflake_ml_python-${VERSION}-py3-none-any.whl" "${TEMP_TEST_DIR}"
 
@@ -302,10 +319,15 @@ if [ "${ENV}" = "pip" ]; then
 
     # Run the tests
     set +e
-    TEST_SRCDIR="${TEMP_TEST_DIR}" python -m pytest "${COMMON_PYTEST_FLAG[@]}" -m "not pip_incompatible" tests/integ/
+    TEST_SRCDIR="${TEMP_TEST_DIR}" python -m pytest "${COMMON_PYTEST_FLAG[@]}" tests/integ/
     TEST_RETCODE=$?
     set -e
 else
+    if [ "${WITH_SPCS_IMAGE}" = true ]; then
+        COMMON_PYTEST_FLAG+=(-m "spcs_deployment_image and not conda_incompatible")
+    else
+        COMMON_PYTEST_FLAG+=(-m "not conda_incompatible")
+    fi
     # Create local conda channel
     conda index "${WORKSPACE}/conda-bld"
 
@@ -319,7 +341,7 @@ else
 
     # Run integration tests
     set +e
-    TEST_SRCDIR="${TEMP_TEST_DIR}" conda run -p testenv --no-capture-output python -m pytest "${COMMON_PYTEST_FLAG[@]}" -m "not conda_incompatible" tests/integ/
+    TEST_SRCDIR="${TEMP_TEST_DIR}" conda run -p testenv --no-capture-output python -m pytest "${COMMON_PYTEST_FLAG[@]}" tests/integ/
     TEST_RETCODE=$?
     set -e
 

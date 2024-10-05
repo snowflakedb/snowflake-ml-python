@@ -3,55 +3,6 @@ load("//bazel:py_rules.bzl", "py_library", "py_package", "py_test")
 package(default_visibility = ["//visibility:public"])
 
 py_library(
-    name = "model_registry",
-    srcs = [
-        "model_registry.py",
-    ],
-    deps = [
-        ":schema",
-        "//snowflake/ml/_internal:telemetry",
-        "//snowflake/ml/_internal/utils:formatting",
-        "//snowflake/ml/_internal/utils:identifier",
-        "//snowflake/ml/_internal/utils:query_result_checker",
-        "//snowflake/ml/_internal/utils:spcs_attribution_utils",
-        "//snowflake/ml/_internal/utils:table_manager",
-        "//snowflake/ml/_internal/utils:uri",
-        "//snowflake/ml/dataset",
-        "//snowflake/ml/model:_api",
-        "//snowflake/ml/model:deploy_platforms",
-        "//snowflake/ml/model:model_signature",
-        "//snowflake/ml/model:type_hints",
-        "//snowflake/ml/modeling/framework",
-    ],
-)
-
-py_test(
-    name = "model_registry_test",
-    srcs = ["model_registry_test.py"],
-    deps = [
-        ":model_registry",
-        ":schema",
-        "//snowflake/ml/test_utils:mock_data_frame",
-        "//snowflake/ml/test_utils:mock_session",
-    ],
-)
-
-py_library(
-    name = "schema",
-    srcs = [
-        "_initial_schema.py",
-        "_schema.py",
-        "_schema_upgrade_plans.py",
-        "_schema_version_manager.py",
-    ],
-    visibility = ["//bazel:snowml_public_common"],
-    deps = [
-        "//snowflake/ml/_internal/utils:query_result_checker",
-        "//snowflake/ml/_internal/utils:table_manager",
-    ],
-)
-
-py_library(
     name = "registry_impl",
     srcs = [
         "registry.py",
@@ -63,6 +14,7 @@ py_library(
         "//snowflake/ml/model",
         "//snowflake/ml/model:model_signature",
         "//snowflake/ml/model:type_hints",
+        "//snowflake/ml/monitoring:model_monitor_impl",
         "//snowflake/ml/registry/_manager:model_manager",
     ],
 )
@@ -73,9 +25,7 @@ py_library(
         "__init__.py",
     ],
     deps = [
-        ":model_registry",
         ":registry_impl",
-        ":schema",
     ],
 )
 
@@ -96,7 +46,6 @@ py_test(
     name = "package_visibility_test",
     srcs = ["package_visibility_test.py"],
     deps = [
-        ":model_registry",
         ":registry",
     ],
 )
@@ -105,7 +54,6 @@ py_package(
     name = "model_registry_pkg",
     packages = ["snowflake.ml"],
     deps = [
-        ":model_registry",
         ":registry",
     ],
 )

@@ -2,6 +2,7 @@ from typing import Optional
 
 from snowflake.ml._internal.utils import identifier, sql_identifier
 from snowflake.snowpark import session
+from snowflake.snowpark._internal import utils as snowpark_utils
 
 
 class _BaseSQLClient:
@@ -32,3 +33,7 @@ class _BaseSQLClient:
         return identifier.get_schema_level_object_identifier(
             actual_database_name.identifier(), actual_schema_name.identifier(), object_name.identifier()
         )
+
+    @staticmethod
+    def get_tmp_name_with_prefix(prefix: str) -> str:
+        return f"{prefix}_{snowpark_utils.generate_random_alphanumeric().upper()}"

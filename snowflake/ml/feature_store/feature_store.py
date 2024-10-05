@@ -122,6 +122,14 @@ _DT_OR_VIEW_QUERY_PATTERN = re.compile(
     flags=re.DOTALL | re.IGNORECASE | re.X,
 )
 
+_DT_INITIALIZE_PATTERN = re.compile(
+    r"""CREATE\ DYNAMIC\ TABLE\ .*
+        initialize\ =\ '(?P<initialize>.*)'\ .*?
+        AS\ .*
+    """,
+    flags=re.DOTALL | re.IGNORECASE | re.X,
+)
+
 _LIST_FEATURE_VIEW_SCHEMA = StructType(
     [
         StructField("name", StringType()),
@@ -565,11 +573,15 @@ class FeatureStore:
         tagging_clause_str = ",\n".join(tagging_clause)
 
         def create_col_desc(col: StructField) -> str:
-            desc = feature_view.feature_descs.get(SqlIdentifier(col.name), None)
+            desc = feature_view.feature_descs.get(SqlIdentifier(col.name), None)  # type: ignore[union-attr]
             desc = "" if desc is None else f"COMMENT '{desc}'"
             return f"{col.name} {desc}"
 
-        column_descs = ", ".join([f"{create_col_desc(col)}" for col in feature_view.output_schema.fields])
+        column_descs = (
+            ", ".join([f"{create_col_desc(col)}" for col in feature_view.output_schema.fields])
+            if feature_view.feature_descs is not None
+            else ""
+        )
 
         if refresh_freq is not None:
             schedule_task = refresh_freq != "DOWNSTREAM" and timeparse(refresh_freq) is None
@@ -1819,6 +1831,7 @@ class FeatureStore:
                 )
                 WAREHOUSE = {warehouse}
                 REFRESH_MODE = {feature_view.refresh_mode}
+                INITIALIZE = {feature_view.initialize}
                 AS {feature_view.query}
             """
             self._session.sql(query).collect(block=block, statement_params=self._telemetry_stmp)
@@ -2293,6 +2306,8 @@ class FeatureStore:
             entities = [find_and_compose_entity(n) for n in fv_metadata.entities]
             ts_col = fv_metadata.timestamp_col
             timestamp_col = ts_col if ts_col not in _LEGACY_TIMESTAMP_COL_PLACEHOLDER_VALS else None
+            re_initialize = re.match(_DT_INITIALIZE_PATTERN, row["text"])
+            initialize = re_initialize.group("initialize") if re_initialize is not None else "ON_CREATE"
 
             fv = FeatureView._construct_feature_view(
                 name=name,
@@ -2317,6 +2332,7 @@ class FeatureStore:
                 ),
                 refresh_mode=row["refresh_mode"],
                 refresh_mode_reason=row["refresh_mode_reason"],
+                initialize=initialize,
                 owner=row["owner"],
                 infer_schema_df=infer_schema_df,
                 session=self._session,
@@ -2343,6 +2359,7 @@ class FeatureStore:
                 warehouse=None,
                 refresh_mode=None,
                 refresh_mode_reason=None,
+                initialize="ON_CREATE",
                 owner=row["owner"],
                 infer_schema_df=infer_schema_df,
                 session=self._session,

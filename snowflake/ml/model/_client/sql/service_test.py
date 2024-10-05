@@ -102,21 +102,24 @@ class ServiceSQLTest(absltest.TestCase):
     def test_invoke_function_method(self) -> None:
         m_statement_params = {"test": "1"}
         m_df = mock_data_frame.MockDataFrame()
+        m_df0 = mock_data_frame.MockDataFrame(collect_result=[Row(CURRENT_VERSION="1")])
+        self.m_session.add_mock_sql("SELECT CURRENT_VERSION() AS CURRENT_VERSION", m_df0)
+
         self.m_session.add_mock_sql(
             """SELECT *,
-                TEMP."test".SERVICE_PREDICT(COL1, COL2) AS TMP_RESULT
+                TEMP."test".SERVICE_PREDICT(COL1, COL2) AS TMP_RESULT_ABCDEF0123
             FROM TEMP."test".SNOWPARK_TEMP_TABLE_ABCDEF0123""",
             m_df,
         )
-        m_df.add_mock_with_columns(["OUTPUT_1"], [F.col("OUTPUT_1")]).add_mock_drop("TMP_RESULT")
+        m_df.add_mock_with_columns(["OUTPUT_1"], [F.col("OUTPUT_1")]).add_mock_drop("TMP_RESULT_ABCDEF0123")
         c_session = cast(Session, self.m_session)
         mock_writer = mock.MagicMock()
         m_df.__setattr__("write", mock_writer)
         m_df.add_query("queries", "query_1")
         m_df.add_query("queries", "query_2")
         with mock.patch.object(mock_writer, "save_as_table") as mock_save_as_table, mock.patch.object(
-            snowpark_utils, "random_name_for_temp_object", return_value="SNOWPARK_TEMP_TABLE_ABCDEF0123"
-        ) as mock_random_name_for_temp_object:
+            snowpark_utils, "generate_random_alphanumeric", return_value="ABCDEF0123"
+        ):
             service_sql.ServiceSQLClient(
                 c_session,
                 database_name=sql_identifier.SqlIdentifier("TEMP"),
@@ -131,7 +134,6 @@ class ServiceSQLTest(absltest.TestCase):
                 returns=[("output_1", spt.IntegerType(), sql_identifier.SqlIdentifier("OUTPUT_1"))],
                 statement_params=m_statement_params,
             )
-            mock_random_name_for_temp_object.assert_called_once_with(snowpark_utils.TempObjectType.TABLE)
             mock_save_as_table.assert_called_once_with(
                 table_name='TEMP."test".SNOWPARK_TEMP_TABLE_ABCDEF0123',
                 mode="errorifexists",
@@ -141,14 +143,17 @@ class ServiceSQLTest(absltest.TestCase):
 
     def test_invoke_function_method_1(self) -> None:
         m_statement_params = {"test": "1"}
+        m_df0 = mock_data_frame.MockDataFrame(collect_result=[Row(CURRENT_VERSION="1")])
+        self.m_session.add_mock_sql("SELECT CURRENT_VERSION() AS CURRENT_VERSION", m_df0)
+
         m_df = mock_data_frame.MockDataFrame()
         self.m_session.add_mock_sql(
             """SELECT *,
-                FOO."bar"."service_PREDICT"(COL1, COL2) AS TMP_RESULT
+                FOO."bar"."service_PREDICT"(COL1, COL2) AS TMP_RESULT_ABCDEF0123
             FROM FOO."bar".SNOWPARK_TEMP_TABLE_ABCDEF0123""",
             m_df,
         )
-        m_df.add_mock_with_columns(["OUTPUT_1"], [F.col("OUTPUT_1")]).add_mock_drop("TMP_RESULT")
+        m_df.add_mock_with_columns(["OUTPUT_1"], [F.col("OUTPUT_1")]).add_mock_drop("TMP_RESULT_ABCDEF0123")
         c_session = cast(Session, self.m_session)
         mock_writer = mock.MagicMock()
         m_df.__setattr__("write", mock_writer)
@@ -156,7 +161,9 @@ class ServiceSQLTest(absltest.TestCase):
         m_df.add_query("queries", "query_2")
         with mock.patch.object(mock_writer, "save_as_table") as mock_save_as_table, mock.patch.object(
             snowpark_utils, "random_name_for_temp_object", return_value="SNOWPARK_TEMP_TABLE_ABCDEF0123"
-        ) as mock_random_name_for_temp_object:
+        ) as mock_random_name_for_temp_object, mock.patch.object(
+            snowpark_utils, "generate_random_alphanumeric", return_value="ABCDEF0123"
+        ):
             service_sql.ServiceSQLClient(
                 c_session,
                 database_name=sql_identifier.SqlIdentifier("TEMP"),
@@ -181,31 +188,34 @@ class ServiceSQLTest(absltest.TestCase):
 
     def test_invoke_function_method_2(self) -> None:
         m_statement_params = {"test": "1"}
+        m_df0 = mock_data_frame.MockDataFrame(collect_result=[Row(CURRENT_VERSION="1")])
+        self.m_session.add_mock_sql("SELECT CURRENT_VERSION() AS CURRENT_VERSION", m_df0)
         m_df = mock_data_frame.MockDataFrame()
         self.m_session.add_mock_sql(
-            """WITH SNOWPARK_ML_MODEL_INFERENCE_INPUT AS (query_1)
+            """WITH SNOWPARK_ML_MODEL_INFERENCE_INPUT_ABCDEF0123 AS (query_1)
             SELECT *,
-                TEMP."test".SERVICE_PREDICT(COL1, COL2) AS TMP_RESULT
-            FROM SNOWPARK_ML_MODEL_INFERENCE_INPUT""",
+                TEMP."test".SERVICE_PREDICT(COL1, COL2) AS TMP_RESULT_ABCDEF0123
+            FROM SNOWPARK_ML_MODEL_INFERENCE_INPUT_ABCDEF0123""",
             m_df,
         )
-        m_df.add_mock_with_columns(["OUTPUT_1"], [F.col("OUTPUT_1")]).add_mock_drop("TMP_RESULT")
+        m_df.add_mock_with_columns(["OUTPUT_1"], [F.col("OUTPUT_1")]).add_mock_drop("TMP_RESULT_ABCDEF0123")
         c_session = cast(Session, self.m_session)
         m_df.add_query("queries", "query_1")
-        service_sql.ServiceSQLClient(
-            c_session,
-            database_name=sql_identifier.SqlIdentifier("TEMP"),
-            schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
-        ).invoke_function_method(
-            database_name=None,
-            schema_name=None,
-            service_name=sql_identifier.SqlIdentifier("SERVICE"),
-            method_name=sql_identifier.SqlIdentifier("PREDICT"),
-            input_df=cast(DataFrame, m_df),
-            input_args=[sql_identifier.SqlIdentifier("COL1"), sql_identifier.SqlIdentifier("COL2")],
-            returns=[("output_1", spt.IntegerType(), sql_identifier.SqlIdentifier("OUTPUT_1"))],
-            statement_params=m_statement_params,
-        )
+        with mock.patch.object(snowpark_utils, "generate_random_alphanumeric", return_value="ABCDEF0123"):
+            service_sql.ServiceSQLClient(
+                c_session,
+                database_name=sql_identifier.SqlIdentifier("TEMP"),
+                schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
+            ).invoke_function_method(
+                database_name=None,
+                schema_name=None,
+                service_name=sql_identifier.SqlIdentifier("SERVICE"),
+                method_name=sql_identifier.SqlIdentifier("PREDICT"),
+                input_df=cast(DataFrame, m_df),
+                input_args=[sql_identifier.SqlIdentifier("COL1"), sql_identifier.SqlIdentifier("COL2")],
+                returns=[("output_1", spt.IntegerType(), sql_identifier.SqlIdentifier("OUTPUT_1"))],
+                statement_params=m_statement_params,
+            )
 
     def test_get_service_logs(self) -> None:
         m_statement_params = {"test": "1"}
@@ -214,7 +224,7 @@ class ServiceSQLTest(absltest.TestCase):
         m_df = mock_data_frame.MockDataFrame(collect_result=[row(m_res)], collect_statement_params=m_statement_params)
 
         self.m_session.add_mock_sql(
-            """CALL SYSTEM$GET_SERVICE_LOGS('SERVICE', '0', 'model-container')""",
+            """CALL SYSTEM$GET_SERVICE_LOGS('TEMP."test".MYSERVICE', '0', 'model-container')""",
             copy.deepcopy(m_df),
         )
         c_session = cast(Session, self.m_session)
@@ -224,7 +234,9 @@ class ServiceSQLTest(absltest.TestCase):
             database_name=sql_identifier.SqlIdentifier("TEMP"),
             schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
         ).get_service_logs(
-            service_name="SERVICE",
+            database_name=None,
+            schema_name=None,
+            service_name=sql_identifier.SqlIdentifier("MYSERVICE"),
             instance_id="0",
             container_name="model-container",
             statement_params=m_statement_params,
@@ -238,7 +250,7 @@ class ServiceSQLTest(absltest.TestCase):
         m_res = (m_service_status, m_message)
         status_res = (
             f'[{{"status":"{m_service_status.value}","message":"{m_message}",'
-            '"containerName":"model-inference","instanceId":"0","serviceName":"SERVICE",'
+            '"containerName":"model-inference","instanceId":"0","serviceName":"MYSERVICE",'
             '"image":"image_url","restartCount":0,"startTime":""}]'
         )
         row = Row("SYSTEM$GET_SERVICE_STATUS")
@@ -247,7 +259,7 @@ class ServiceSQLTest(absltest.TestCase):
         )
 
         self.m_session.add_mock_sql(
-            """CALL SYSTEM$GET_SERVICE_STATUS('SERVICE')""",
+            """CALL SYSTEM$GET_SERVICE_STATUS('TEMP."test".MYSERVICE')""",
             copy.deepcopy(m_df),
         )
         c_session = cast(Session, self.m_session)
@@ -256,7 +268,9 @@ class ServiceSQLTest(absltest.TestCase):
             database_name=sql_identifier.SqlIdentifier("TEMP"),
             schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
         ).get_service_status(
-            service_name="SERVICE",
+            database_name=None,
+            schema_name=None,
+            service_name=sql_identifier.SqlIdentifier("MYSERVICE"),
             include_message=True,
             statement_params=m_statement_params,
         )
@@ -269,7 +283,7 @@ class ServiceSQLTest(absltest.TestCase):
         m_res = (m_service_status, None)
         status_res = (
             f'[{{"status":"{m_service_status.value}","message":"{m_message}",'
-            '"containerName":"model-inference","instanceId":"0","serviceName":"SERVICE",'
+            '"containerName":"model-inference","instanceId":"0","serviceName":"MYSERVICE",'
             '"image":"image_url","restartCount":0,"startTime":""}]'
         )
         row = Row("SYSTEM$GET_SERVICE_STATUS")
@@ -278,7 +292,7 @@ class ServiceSQLTest(absltest.TestCase):
         )
 
         self.m_session.add_mock_sql(
-            """CALL SYSTEM$GET_SERVICE_STATUS('SERVICE')""",
+            """CALL SYSTEM$GET_SERVICE_STATUS('TEMP."test".MYSERVICE')""",
             copy.deepcopy(m_df),
         )
         c_session = cast(Session, self.m_session)
@@ -287,7 +301,9 @@ class ServiceSQLTest(absltest.TestCase):
             database_name=sql_identifier.SqlIdentifier("TEMP"),
             schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
         ).get_service_status(
-            service_name="SERVICE",
+            database_name=None,
+            schema_name=None,
+            service_name=sql_identifier.SqlIdentifier("MYSERVICE"),
             include_message=False,
             statement_params=m_statement_params,
         )
@@ -299,7 +315,7 @@ class ServiceSQLTest(absltest.TestCase):
         m_res = (service_sql.ServiceStatus.UNKNOWN, None)
         status_res = (
             f'[{{"status":"","message":"{m_message}","containerName":"model-inference","instanceId":"0",'
-            '"serviceName":"SERVICE","image":"image_url","restartCount":0,"startTime":""}]'
+            '"serviceName":"MYSERVICE","image":"image_url","restartCount":0,"startTime":""}]'
         )
         row = Row("SYSTEM$GET_SERVICE_STATUS")
         m_df = mock_data_frame.MockDataFrame(
@@ -307,7 +323,7 @@ class ServiceSQLTest(absltest.TestCase):
         )
 
         self.m_session.add_mock_sql(
-            """CALL SYSTEM$GET_SERVICE_STATUS('SERVICE')""",
+            """CALL SYSTEM$GET_SERVICE_STATUS('TEMP."test".MYSERVICE')""",
             copy.deepcopy(m_df),
         )
         c_session = cast(Session, self.m_session)
@@ -316,11 +332,35 @@ class ServiceSQLTest(absltest.TestCase):
             database_name=sql_identifier.SqlIdentifier("TEMP"),
             schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
         ).get_service_status(
-            service_name="SERVICE",
+            database_name=None,
+            schema_name=None,
+            service_name=sql_identifier.SqlIdentifier("MYSERVICE"),
             include_message=False,
             statement_params=m_statement_params,
         )
         self.assertEqual(res, m_res)
+
+    def test_drop_service(self) -> None:
+        m_statement_params = {"test": "1"}
+        m_df = mock_data_frame.MockDataFrame(
+            collect_result=[Row("Service MYSERVICE successfully dropped.")], collect_statement_params=m_statement_params
+        )
+        self.m_session.add_mock_sql(
+            """DROP SERVICE TEMP."test".MYSERVICE""",
+            copy.deepcopy(m_df),
+        )
+        c_session = cast(Session, self.m_session)
+
+        service_sql.ServiceSQLClient(
+            c_session,
+            database_name=sql_identifier.SqlIdentifier("TEMP"),
+            schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
+        ).drop_service(
+            database_name=None,
+            schema_name=None,
+            service_name=sql_identifier.SqlIdentifier("MYSERVICE"),
+            statement_params=m_statement_params,
+        )
 
 
 if __name__ == "__main__":

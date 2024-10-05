@@ -1,6 +1,5 @@
 ---
-exclude: ^(.*egg.info.*|.*/parameters.py$|.*\.py_template|.*/experimental/.*|.*/fixtures/.*|docs/source/_themes/.*)
-minimum_pre_commit_version: 3.4.0
+exclude: ^(.*egg.info.*|.*/parameters.py$|.*\.py_template|.*/experimental/.*|.*/fixtures/.*|docs/source/_themes/.*|.*\.patch)
 repos:
   - repo: https://github.com/asottile/pyupgrade
     rev: v2.31.1
@@ -65,7 +64,7 @@ repos:
       - id: markdownlint-fix
         language_version: 16.20.2
   - repo: https://github.com/keith/pre-commit-buildifier
-    rev: 6.0.0
+    rev: 7.3.1
     hooks:
       - id: buildifier
         args:
@@ -84,7 +83,7 @@ repos:
         exclude_types:
           - image
   - repo: https://github.com/lyz-code/yamlfix
-    rev: 1.13.0
+    rev: 1.16.1
     hooks:
       - id: yamlfix
         args:

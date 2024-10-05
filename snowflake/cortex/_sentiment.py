@@ -1,4 +1,4 @@
-from typing import Optional, Union
+from typing import Optional, Union, cast
 
 from snowflake import snowpark
 from snowflake.cortex._util import CORTEX_FUNCTIONS_TELEMETRY_PROJECT, call_sql_function
@@ -30,4 +30,4 @@ def _sentiment_impl(
     output = call_sql_function(function, session, text)
     if isinstance(output, snowpark.Column):
         return output
-    return float(output)
+    return float(cast(str, output))

@@ -18,6 +18,7 @@ py_test(
         "//snowflake/ml/model/_packager/model_handlers:_utils",
         "//snowflake/ml/model/_packager/model_meta",
         "//snowflake/ml/model/_signatures:snowpark_handler",
+        "//snowflake/ml/test_utils:exception_utils",
     ],
 )
 

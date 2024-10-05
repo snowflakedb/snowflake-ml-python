@@ -78,11 +78,11 @@ class TestModelVersionImplInteg(parameterized.TestCase):
     def test_export(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             self._mv.export(tmpdir)
-            self.assertLen(list(glob.iglob(os.path.join(tmpdir, "**", "*"), recursive=True)), 14)
+            self.assertLen(list(glob.iglob(os.path.join(tmpdir, "**", "*"), recursive=True)), 16)
 
         with tempfile.TemporaryDirectory() as tmpdir:
             self._mv.export(tmpdir, export_mode=ExportMode.FULL)
-            self.assertLen(list(glob.iglob(os.path.join(tmpdir, "**", "*"), recursive=True)), 26)
+            self.assertLen(list(glob.iglob(os.path.join(tmpdir, "**", "*"), recursive=True)), 29)
 
     def test_load(self) -> None:
         loaded_model = self._mv.load()

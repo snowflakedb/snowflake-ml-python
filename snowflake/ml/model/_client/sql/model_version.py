@@ -298,7 +298,9 @@ class ModelVersionSQLClient(_base._BaseSQLClient):
     ) -> dataframe.DataFrame:
         with_statements = []
         if len(input_df.queries["queries"]) == 1 and len(input_df.queries["post_actions"]) == 0:
-            INTERMEDIATE_TABLE_NAME = "SNOWPARK_ML_MODEL_INFERENCE_INPUT"
+            INTERMEDIATE_TABLE_NAME = ModelVersionSQLClient.get_tmp_name_with_prefix(
+                "SNOWPARK_ML_MODEL_INFERENCE_INPUT"
+            )
             with_statements.append(f"{INTERMEDIATE_TABLE_NAME} AS ({input_df.queries['queries'][0]})")
         else:
             actual_database_name = database_name or self._database_name
@@ -316,9 +318,9 @@ class ModelVersionSQLClient(_base._BaseSQLClient):
                 statement_params=statement_params,
             )
 
-        INTERMEDIATE_OBJ_NAME = "TMP_RESULT"
+        INTERMEDIATE_OBJ_NAME = ModelVersionSQLClient.get_tmp_name_with_prefix("TMP_RESULT")
 
-        module_version_alias = "MODEL_VERSION_ALIAS"
+        module_version_alias = ModelVersionSQLClient.get_tmp_name_with_prefix("MODEL_VERSION_ALIAS")
         with_statements.append(
             f"{module_version_alias} AS "
             f"MODEL {self.fully_qualified_object_name(database_name, schema_name, model_name)}"
@@ -375,7 +377,9 @@ class ModelVersionSQLClient(_base._BaseSQLClient):
     ) -> dataframe.DataFrame:
         with_statements = []
         if len(input_df.queries["queries"]) == 1 and len(input_df.queries["post_actions"]) == 0:
-            INTERMEDIATE_TABLE_NAME = "SNOWPARK_ML_MODEL_INFERENCE_INPUT"
+            INTERMEDIATE_TABLE_NAME = (
+                f"SNOWPARK_ML_MODEL_INFERENCE_INPUT_{snowpark_utils.generate_random_alphanumeric().upper()}"
+            )
             with_statements.append(f"{INTERMEDIATE_TABLE_NAME} AS ({input_df.queries['queries'][0]})")
         else:
             actual_database_name = database_name or self._database_name
@@ -393,7 +397,7 @@ class ModelVersionSQLClient(_base._BaseSQLClient):
                 statement_params=statement_params,
             )
 
-        module_version_alias = "MODEL_VERSION_ALIAS"
+        module_version_alias = f"MODEL_VERSION_ALIAS_{snowpark_utils.generate_random_alphanumeric().upper()}"
         with_statements.append(
             f"{module_version_alias} AS "
             f"MODEL {self.fully_qualified_object_name(database_name, schema_name, model_name)}"
