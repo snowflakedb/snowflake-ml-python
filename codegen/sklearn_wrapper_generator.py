@@ -1058,12 +1058,41 @@ class SklearnWrapperGenerator(WrapperGeneratorBase):
             ]
             self.test_estimator_input_args_list.append(f"dictionary={dictionary}")
 
+        if WrapperGeneratorFactory._is_class_of_type(self.class_object[1], "Isomap"):
+            # Using higher n_neighbors for Isomap to balance accuracy and performance.
+            self.test_estimator_input_args_list.append("n_neighbors=30")
+
+        if WrapperGeneratorFactory._is_class_of_type(
+            self.class_object[1], "KNeighborsClassifier"
+        ) or WrapperGeneratorFactory._is_class_of_type(self.class_object[1], "RadiusNeighborsClassifier"):
+            # Use distance-based weighting to reduce ties and improve prediction accuracy.
+            self.test_estimator_input_args_list.append("weights='distance'")
+
+        if WrapperGeneratorFactory._is_class_of_type(self.class_object[1], "Nystroem"):
+            # Setting specific parameters for Nystroem to ensure a meaningful transformation.
+            # - `gamma`: Controls the shape of the RBF kernel. By setting gamma to a lower value
+            #   like 0.1, you can help generate larger transformation values in the output, making the
+            #   transformation less sensitive to small variations in the input data. This value also
+            #   balances between underfitting and overfitting for most datasets.
+            # - `n_components`: Specifies a larger number of components for the approximation,
+            #   which enhances the accuracy of the kernel approximation. This is especially useful
+            #   in higher-dimensional data or when a more precise transformation is needed.
+            self.test_estimator_input_args_list.append("gamma=0.1")
+            self.test_estimator_input_args_list.append("n_components=200")
+
         if WrapperGeneratorFactory._is_class_of_type(self.class_object[1], "SelectKBest"):
             # Set the k of SelectKBest features transformer to half the number of columns in the dataset.
             self.test_estimator_input_args_list.append("k=int(len(cols)/2)")
 
         if "n_components" in self.original_init_signature.parameters.keys():
-            if WrapperGeneratorFactory._is_class_of_type(self.class_object[1], "SpectralBiclustering"):
+            if self.original_class_name == "KernelPCA":
+                # Explicitly set 'n_components' to the number of input columns (len(cols))
+                # to ensure consistency between implementations. This is necessary because
+                # the default behavior might differ, with 'n_components' otherwise defaulting
+                # to the minimum of the number of features or samples, potentially leading to
+                # discrepancies between the implementations.
+                self.test_estimator_input_args_list.append("n_components=int(len(cols)/2)")
+            elif WrapperGeneratorFactory._is_class_of_type(self.class_object[1], "SpectralBiclustering"):
                 # For spectral bi clustering, set number of singular vectors to consider to number of input cols and
                 # num best vector to select to half the number of input cols.
                 self.test_estimator_input_args_list.append("n_components=len(cols)")

@@ -47,8 +47,9 @@ class ModelPackager:
         ext_modules: Optional[List[ModuleType]] = None,
         code_paths: Optional[List[str]] = None,
         options: Optional[model_types.ModelSaveOption] = None,
-        model_objective: model_types.ModelObjective = model_types.ModelObjective.UNKNOWN,
+        task: model_types.Task = model_types.Task.UNKNOWN,
     ) -> model_meta.ModelMetadata:
+
         if (signatures is None) and (sample_input_data is None) and not model_handler.is_auto_signature_model(model):
             raise snowml_exceptions.SnowflakeMLException(
                 error_code=error_codes.INVALID_ARGUMENT,
@@ -57,16 +58,19 @@ class ModelPackager:
                 ),
             )
 
-        if (signatures is not None) and (sample_input_data is not None):
-            raise snowml_exceptions.SnowflakeMLException(
-                error_code=error_codes.INVALID_ARGUMENT,
-                original_exception=ValueError(
-                    "Signatures and sample_input_data both cannot be specified at the same time."
-                ),
-            )
-
         if not options:
             options = model_types.BaseModelSaveOption()
+
+        # here handling the case of enable_explainability is False/None
+        enable_explainability = options.get("enable_explainability", None)
+        if enable_explainability is False or enable_explainability is None:
+            if (signatures is not None) and (sample_input_data is not None):
+                raise snowml_exceptions.SnowflakeMLException(
+                    error_code=error_codes.INVALID_ARGUMENT,
+                    original_exception=ValueError(
+                        "Signatures and sample_input_data both cannot be specified at the same time."
+                    ),
+                )
 
         handler = model_handler.find_handler(model)
         if handler is None:
@@ -85,7 +89,7 @@ class ModelPackager:
             conda_dependencies=conda_dependencies,
             pip_requirements=pip_requirements,
             python_version=python_version,
-            model_objective=model_objective,
+            task=task,
             **options,
         ) as meta:
             model_blobs_path = os.path.join(self.local_dir_path, ModelPackager.MODEL_BLOBS_DIR)

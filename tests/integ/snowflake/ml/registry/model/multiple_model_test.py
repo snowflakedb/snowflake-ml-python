@@ -21,7 +21,7 @@ class DemoModelWithArtifacts(custom_model.CustomModel):
         return pd.DataFrame({"output": input["c1"] + self.bias})
 
 
-class ModelWithAdditionalImportTest(registry_model_test_base.RegistryModelTestBase):
+class MultipleModelTest(registry_model_test_base.RegistryModelTestBase):
     def test_multiple_model(self) -> None:
         version = "v1"
         arr = np.array([[1], [4]])
@@ -35,7 +35,7 @@ class ModelWithAdditionalImportTest(registry_model_test_base.RegistryModelTestBa
             )
             name_1 = f"model_{self._run_id}_1"
 
-            self.registry.log_model(lm_1, model_name=name_1, version_name=version, sample_input_data=pd_df)
+            mv1 = self.registry.log_model(lm_1, model_name=name_1, version_name=version, sample_input_data=pd_df)
 
         with tempfile.TemporaryDirectory() as tmpdir:
             with open(os.path.join(tmpdir, "bias"), "w", encoding="utf-8") as f:
@@ -45,7 +45,7 @@ class ModelWithAdditionalImportTest(registry_model_test_base.RegistryModelTestBa
             )
             name_2 = f"model_{self._run_id}_2"
 
-            self.registry.log_model(lm_2, model_name=name_2, version_name=version, sample_input_data=pd_df)
+            mv2 = self.registry.log_model(lm_2, model_name=name_2, version_name=version, sample_input_data=pd_df)
 
         res = (
             self.session.sql(f"SELECT {name_1}!predict(1):output as A, {name_2}!predict(1):output as B")
@@ -54,6 +54,13 @@ class ModelWithAdditionalImportTest(registry_model_test_base.RegistryModelTestBa
         )
 
         self.assertDictEqual(res, {"A": "11", "B": "21"})
+
+        res = (
+            mv1.run(mv2.run(self.session.create_dataframe(pd_df)).select('"output"').rename({'"output"': '"c1"'}))
+            .select('"output"')
+            .to_pandas()
+        )
+        pd.testing.assert_frame_equal(res, pd.DataFrame({"output": [31, 34]}))
 
 
 if __name__ == "__main__":

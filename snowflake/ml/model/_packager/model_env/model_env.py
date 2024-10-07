@@ -21,7 +21,7 @@ _DEFAULT_PIP_REQUIREMENTS_FILENAME = "requirements.txt"
 # The default CUDA version is chosen based on the driver availability in SPCS.
 # If changing this version, we need also change the version of default PyTorch in HuggingFace pipeline handler to
 # make sure they are compatible.
-DEFAULT_CUDA_VERSION = "11.7"
+DEFAULT_CUDA_VERSION = "11.8"
 
 
 class ModelEnv:
@@ -199,50 +199,16 @@ class ModelEnv:
         )
         if xgboost_spec:
             self.include_if_absent(
-                [
-                    ModelDependency(
-                        requirement=f"conda-forge::py-xgboost-gpu{xgboost_spec.specifier}", pip_name="xgboost"
-                    )
-                ],
+                [ModelDependency(requirement=f"py-xgboost-gpu{xgboost_spec.specifier}", pip_name="xgboost")],
                 check_local_version=False,
             )
-
-        pytorch_spec = env_utils.find_dep_spec(
-            self._conda_dependencies,
-            self._pip_requirements,
-            conda_pkg_name="pytorch",
-            pip_pkg_name="torch",
-            remove_spec=True,
-        )
-        pytorch_cuda_spec = env_utils.find_dep_spec(
-            self._conda_dependencies,
-            self._pip_requirements,
-            conda_pkg_name="pytorch-cuda",
-            remove_spec=False,
-        )
-        if pytorch_cuda_spec and not pytorch_cuda_spec.specifier.contains(self.cuda_version):
-            raise ValueError(
-                "The Pytorch-CUDA requirement you specified in your conda dependencies or pip requirements is"
-                " conflicting with CUDA version required. Please do not specify Pytorch-CUDA dependency using conda"
-                " dependencies or pip requirements."
-            )
-        if pytorch_spec:
-            self.include_if_absent(
-                [ModelDependency(requirement=f"pytorch::pytorch{pytorch_spec.specifier}", pip_name="torch")],
-                check_local_version=False,
-            )
-            if not pytorch_cuda_spec:
-                self.include_if_absent(
-                    [ModelDependency(requirement=f"pytorch::pytorch-cuda=={self.cuda_version}.*", pip_name="torch")],
-                    check_local_version=False,
-                )
 
         tf_spec = env_utils.find_dep_spec(
             self._conda_dependencies, self._pip_requirements, conda_pkg_name="tensorflow", remove_spec=True
         )
         if tf_spec:
             self.include_if_absent(
-                [ModelDependency(requirement=f"conda-forge::tensorflow-gpu{tf_spec.specifier}", pip_name="tensorflow")],
+                [ModelDependency(requirement=f"tensorflow-gpu{tf_spec.specifier}", pip_name="tensorflow")],
                 check_local_version=False,
             )
 
@@ -252,7 +218,7 @@ class ModelEnv:
         if transformers_spec:
             self.include_if_absent(
                 [
-                    ModelDependency(requirement="conda-forge::accelerate>=0.22.0", pip_name="accelerate"),
+                    ModelDependency(requirement="accelerate>=0.22.0", pip_name="accelerate"),
                     ModelDependency(requirement="scipy>=1.9", pip_name="scipy"),
                 ],
                 check_local_version=False,

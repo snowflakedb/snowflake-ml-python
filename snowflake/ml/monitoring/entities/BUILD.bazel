@@ -1,0 +1,37 @@
+load("//bazel:py_rules.bzl", "py_library", "py_test")
+
+package(default_visibility = ["//visibility:public"])
+
+py_library(
+    name = "entities_lib",
+    srcs = [
+        "model_monitor_config.py",
+        "model_monitor_interval.py",
+        "output_score_type.py",
+    ],
+    deps = [
+        "//snowflake/ml/_internal/utils:sql_identifier",
+        "//snowflake/ml/model:type_hints",
+    ],
+)
+
+py_test(
+    name = "output_score_type_test",
+    srcs = [
+        "output_score_type_test.py",
+    ],
+    deps = [
+        ":entities_lib",
+    ],
+)
+
+py_test(
+    name = "model_monitor_interval_test",
+    srcs = [
+        "model_monitor_interval_test.py",
+    ],
+    deps = [
+        ":entities_lib",
+        "//snowflake/ml/test_utils:mock_session",
+    ],
+)

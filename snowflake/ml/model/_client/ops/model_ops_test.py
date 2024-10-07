@@ -7,6 +7,7 @@ import pandas as pd
 import yaml
 from absl.testing import absltest
 
+from snowflake.ml._internal.exceptions import exceptions
 from snowflake.ml._internal.utils import sql_identifier
 from snowflake.ml.model import model_signature, type_hints
 from snowflake.ml.model._client.ops import model_ops
@@ -457,6 +458,173 @@ class ModelOpsTest(absltest.TestCase):
                 tag_schema_name=sql_identifier.SqlIdentifier("schema", case_sensitive=True),
                 tag_name=sql_identifier.SqlIdentifier("MYTAG"),
                 statement_params=self.m_statement_params,
+            )
+
+    def test_list_inference_services(self) -> None:
+        m_list_res = [Row(inference_services='["a.b.c", "d.e.f"]')]
+        with mock.patch.object(
+            self.m_ops._model_client, "show_versions", return_value=m_list_res
+        ) as mock_show_versions:
+            res = self.m_ops.list_inference_services(
+                database_name=sql_identifier.SqlIdentifier("TEMP"),
+                schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
+                model_name=sql_identifier.SqlIdentifier("MODEL"),
+                version_name=sql_identifier.SqlIdentifier("v1", case_sensitive=True),
+                statement_params=self.m_statement_params,
+            )
+            self.assertListEqual(res, ["a.b.c", "d.e.f"])
+            mock_show_versions.assert_called_once_with(
+                database_name=sql_identifier.SqlIdentifier("TEMP"),
+                schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
+                model_name=sql_identifier.SqlIdentifier("MODEL"),
+                version_name=sql_identifier.SqlIdentifier("v1", case_sensitive=True),
+                statement_params=self.m_statement_params,
+            )
+
+    def test_list_inference_services_pre_bcr(self) -> None:
+        m_list_res = [Row(comment="mycomment")]
+        with mock.patch.object(
+            self.m_ops._model_client, "show_versions", return_value=m_list_res
+        ) as mock_show_versions:
+            with self.assertRaises(exceptions.SnowflakeMLException) as context:
+                self.m_ops.list_inference_services(
+                    database_name=sql_identifier.SqlIdentifier("TEMP"),
+                    schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
+                    model_name=sql_identifier.SqlIdentifier("MODEL"),
+                    version_name=sql_identifier.SqlIdentifier("v1", case_sensitive=True),
+                    statement_params=self.m_statement_params,
+                )
+            self.assertEqual(
+                str(context.exception),
+                "RuntimeError('(2104) Please opt in to BCR Bundle 2024_08 "
+                "(https://docs.snowflake.com/en/release-notes/bcr-bundles/2024_08_bundle).')",
+            )
+            mock_show_versions.assert_called_once_with(
+                database_name=sql_identifier.SqlIdentifier("TEMP"),
+                schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
+                model_name=sql_identifier.SqlIdentifier("MODEL"),
+                version_name=sql_identifier.SqlIdentifier("v1", case_sensitive=True),
+                statement_params=self.m_statement_params,
+            )
+
+    def test_list_inference_services_skip_build(self) -> None:
+        m_list_res = [Row(inference_services='["A.B.MODEL_BUILD_34d35ew", "A.B.SERVICE"]')]
+        with mock.patch.object(
+            self.m_ops._model_client, "show_versions", return_value=m_list_res
+        ) as mock_show_versions:
+            res = self.m_ops.list_inference_services(
+                database_name=sql_identifier.SqlIdentifier("TEMP"),
+                schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
+                model_name=sql_identifier.SqlIdentifier("MODEL"),
+                version_name=sql_identifier.SqlIdentifier("v1", case_sensitive=True),
+                statement_params=self.m_statement_params,
+            )
+            self.assertListEqual(res, ["A.B.SERVICE"])
+            mock_show_versions.assert_called_once_with(
+                database_name=sql_identifier.SqlIdentifier("TEMP"),
+                schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
+                model_name=sql_identifier.SqlIdentifier("MODEL"),
+                version_name=sql_identifier.SqlIdentifier("v1", case_sensitive=True),
+                statement_params=self.m_statement_params,
+            )
+
+    def test_delete_service_non_existent(self) -> None:
+        m_list_res = [Row(inference_services='["A.B.C", "D.E.F"]')]
+        with mock.patch.object(
+            self.m_ops._model_client, "show_versions", return_value=m_list_res
+        ) as mock_show_versions, mock.patch.object(
+            self.m_session, attribute="get_current_database", return_value="a"
+        ) as mock_get_database, mock.patch.object(
+            self.m_session, attribute="get_current_schema", return_value="b"
+        ) as mock_get_schema:
+            with self.assertRaisesRegex(
+                ValueError, "Service 'A' does not exist or unauthorized or not associated with this model version."
+            ):
+                self.m_ops.delete_service(
+                    database_name=sql_identifier.SqlIdentifier("TEMP"),
+                    schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
+                    model_name=sql_identifier.SqlIdentifier("MODEL"),
+                    version_name=sql_identifier.SqlIdentifier("v1", case_sensitive=True),
+                    service_name="a",
+                )
+            with self.assertRaisesRegex(
+                ValueError, "Service 'B' does not exist or unauthorized or not associated with this model version."
+            ):
+                self.m_ops.delete_service(
+                    database_name=sql_identifier.SqlIdentifier("TEMP"),
+                    schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
+                    model_name=sql_identifier.SqlIdentifier("MODEL"),
+                    version_name=sql_identifier.SqlIdentifier("v1", case_sensitive=True),
+                    service_name="a.b",
+                )
+            with self.assertRaisesRegex(
+                ValueError, "Service 'D' does not exist or unauthorized or not associated with this model version."
+            ):
+                self.m_ops.delete_service(
+                    database_name=sql_identifier.SqlIdentifier("TEMP"),
+                    schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
+                    model_name=sql_identifier.SqlIdentifier("MODEL"),
+                    version_name=sql_identifier.SqlIdentifier("v1", case_sensitive=True),
+                    service_name="b.c.d",
+                )
+
+            mock_show_versions.assert_called_with(
+                database_name=sql_identifier.SqlIdentifier("TEMP"),
+                schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
+                model_name=sql_identifier.SqlIdentifier("MODEL"),
+                version_name=sql_identifier.SqlIdentifier("v1", case_sensitive=True),
+                statement_params=mock.ANY,
+            )
+            mock_get_database.assert_called()
+            mock_get_schema.assert_called()
+
+    def test_delete_service_exists(self) -> None:
+        m_list_res = [Row(inference_services='["A.B.C", "D.E.F"]')]
+        with mock.patch.object(
+            self.m_ops._model_client, "show_versions", return_value=m_list_res
+        ) as mock_show_versions, mock.patch.object(
+            self.m_ops._service_client, "drop_service"
+        ) as mock_drop_service, mock.patch.object(
+            self.m_session, attribute="get_current_database", return_value="a"
+        ) as mock_get_database, mock.patch.object(
+            self.m_session, attribute="get_current_schema", return_value="b"
+        ) as mock_get_schema:
+            self.m_ops.delete_service(
+                database_name=sql_identifier.SqlIdentifier("TEMP"),
+                schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
+                model_name=sql_identifier.SqlIdentifier("MODEL"),
+                version_name=sql_identifier.SqlIdentifier("v1", case_sensitive=True),
+                service_name="c",
+            )
+            self.m_ops.delete_service(
+                database_name=sql_identifier.SqlIdentifier("TEMP"),
+                schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
+                model_name=sql_identifier.SqlIdentifier("MODEL"),
+                version_name=sql_identifier.SqlIdentifier("v1", case_sensitive=True),
+                service_name="b.c",
+            )
+            self.m_ops.delete_service(
+                database_name=sql_identifier.SqlIdentifier("TEMP"),
+                schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
+                model_name=sql_identifier.SqlIdentifier("MODEL"),
+                version_name=sql_identifier.SqlIdentifier("v1", case_sensitive=True),
+                service_name="a.b.c",
+            )
+
+            mock_show_versions.assert_called_with(
+                database_name=sql_identifier.SqlIdentifier("TEMP"),
+                schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
+                model_name=sql_identifier.SqlIdentifier("MODEL"),
+                version_name=sql_identifier.SqlIdentifier("v1", case_sensitive=True),
+                statement_params=mock.ANY,
+            )
+            mock_get_database.assert_called()
+            mock_get_schema.assert_called()
+            mock_drop_service.assert_called_with(
+                database_name="A",
+                schema_name="B",
+                service_name="C",
+                statement_params=mock.ANY,
             )
 
     def test_create_from_stage_1(self) -> None:
@@ -1280,6 +1448,12 @@ class ModelOpsTest(absltest.TestCase):
                 [sql_identifier.SqlIdentifier("ABC")], ["predict"]
             )
 
+        with self.assertRaises(AssertionError):
+            self.assertDictEqual(
+                {},
+                model_ops.ModelOperator._match_model_spec_with_sql_functions([], ["predict"]),
+            )
+
         self.assertDictEqual(
             {sql_identifier.SqlIdentifier("PREDICT"): "predict"},
             model_ops.ModelOperator._match_model_spec_with_sql_functions(
@@ -1349,13 +1523,13 @@ class ModelOpsTest(absltest.TestCase):
             )
             mock_validate_model_metadata.assert_called_once_with(m_spec)
 
-    def test_get_model_objective(self) -> None:
+    def test_get_model_task(self) -> None:
         m_spec = {
             "signatures": {
                 "predict": _DUMMY_SIG["predict"].to_dict(),
                 "predict_table": _DUMMY_SIG["predict_table"].to_dict(),
             },
-            "model_objective": "binary_classification",
+            "task": "TABULAR_BINARY_CLASSIFICATION",
         }
         m_show_versions_result = [Row(model_spec=yaml.safe_dump(m_spec))]
         with mock.patch.object(
@@ -1367,7 +1541,7 @@ class ModelOpsTest(absltest.TestCase):
             "_validate_model_metadata",
             return_value=cast(model_meta_schema.ModelMetadataDict, m_spec),
         ) as mock_validate_model_metadata:
-            res = self.m_ops.get_model_objective(
+            res = self.m_ops.get_model_task(
                 database_name=sql_identifier.SqlIdentifier("TEMP"),
                 schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
@@ -1383,9 +1557,9 @@ class ModelOpsTest(absltest.TestCase):
                 statement_params={**self.m_statement_params, "SHOW_MODEL_DETAILS_IN_SHOW_VERSIONS_IN_MODEL": True},
             )
             mock_validate_model_metadata.assert_called_once_with(m_spec)
-            self.assertEqual(res, type_hints.ModelObjective.BINARY_CLASSIFICATION)
+            self.assertEqual(res, type_hints.Task.TABULAR_BINARY_CLASSIFICATION)
 
-    def test_get_model_objective_empty(self) -> None:
+    def test_get_model_task_empty(self) -> None:
         m_spec = {
             "signatures": {
                 "predict": _DUMMY_SIG["predict"].to_dict(),
@@ -1402,7 +1576,7 @@ class ModelOpsTest(absltest.TestCase):
             "_validate_model_metadata",
             return_value=cast(model_meta_schema.ModelMetadataDict, m_spec),
         ) as mock_validate_model_metadata:
-            res = self.m_ops.get_model_objective(
+            res = self.m_ops.get_model_task(
                 database_name=sql_identifier.SqlIdentifier("TEMP"),
                 schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
@@ -1418,7 +1592,7 @@ class ModelOpsTest(absltest.TestCase):
                 statement_params={**self.m_statement_params, "SHOW_MODEL_DETAILS_IN_SHOW_VERSIONS_IN_MODEL": True},
             )
             mock_validate_model_metadata.assert_called_once_with(m_spec)
-            self.assertEqual(res, type_hints.ModelObjective.UNKNOWN)
+            self.assertEqual(res, type_hints.Task.UNKNOWN)
 
     def test_download_files_minimal(self) -> None:
         m_list_files_res = [

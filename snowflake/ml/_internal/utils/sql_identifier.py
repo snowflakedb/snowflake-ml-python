@@ -1,4 +1,4 @@
-from typing import List, Optional, Tuple
+from typing import List, Optional, Tuple, Union
 
 from snowflake.ml._internal.utils import identifier
 
@@ -91,4 +91,28 @@ def parse_fully_qualified_name(
         SqlIdentifier(db) if db else None,
         SqlIdentifier(schema) if schema else None,
         SqlIdentifier(object),
+    )
+
+
+def get_fully_qualified_name(
+    db: Union[SqlIdentifier, str, None],
+    schema: Union[SqlIdentifier, str, None],
+    object: Union[SqlIdentifier, str],
+    session_db: Optional[str] = None,
+    session_schema: Optional[str] = None,
+) -> str:
+    db_name: Optional[SqlIdentifier] = None
+    schema_name: Optional[SqlIdentifier] = None
+    if not db and session_db:
+        db_name = SqlIdentifier(session_db)
+    elif isinstance(db, str):
+        db_name = SqlIdentifier(db)
+    if not schema and session_schema:
+        schema_name = SqlIdentifier(session_schema)
+    elif isinstance(schema, str):
+        schema_name = SqlIdentifier(schema)
+    return identifier.get_schema_level_object_identifier(
+        db=db_name.identifier() if db_name else None,
+        schema=schema_name.identifier() if schema_name else None,
+        object_name=object.identifier() if isinstance(object, SqlIdentifier) else SqlIdentifier(object).identifier(),
     )

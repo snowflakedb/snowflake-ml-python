@@ -168,11 +168,6 @@ class MLFlowHandler(_base.BaseModelHandler["mlflow.pyfunc.PyFuncModel"]):
     ) -> "mlflow.pyfunc.PyFuncModel":
         import mlflow
 
-        if snowpark_utils.is_in_stored_procedure():  # type: ignore[no-untyped-call]
-            # We need to redirect the mlruns folder to a writable location in the sandbox.
-            tmpdir = tempfile.TemporaryDirectory(dir="/tmp")
-            mlflow.set_tracking_uri(f"file://{tmpdir}")
-
         model_blob_path = os.path.join(model_blobs_dir_path, name)
         model_blobs_metadata = model_meta.models
         model_blob_metadata = model_blobs_metadata[name]
@@ -182,6 +177,9 @@ class MLFlowHandler(_base.BaseModelHandler["mlflow.pyfunc.PyFuncModel"]):
 
         model_artifact_path = model_blob_options["artifact_path"]
         model_blob_filename = model_blob_metadata.path
+
+        if snowpark_utils.is_in_stored_procedure():  # type: ignore[no-untyped-call]
+            return mlflow.pyfunc.load_model(os.path.join(model_blob_path, model_blob_filename, model_artifact_path))
 
         # This is to make sure the loaded model can be saved again.
         with mlflow.start_run() as run:

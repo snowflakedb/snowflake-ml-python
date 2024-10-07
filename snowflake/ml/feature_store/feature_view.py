@@ -22,6 +22,7 @@ from snowflake.ml.feature_store import feature_store
 from snowflake.ml.feature_store.entity import Entity
 from snowflake.ml.lineage import lineage_node
 from snowflake.snowpark import DataFrame, Session
+from snowflake.snowpark.exceptions import SnowparkSQLException
 from snowflake.snowpark.types import (
     DateType,
     StructType,
@@ -167,6 +168,7 @@ class FeatureView(lineage_node.LineageNode):
         refresh_freq: Optional[str] = None,
         desc: str = "",
         warehouse: Optional[str] = None,
+        initialize: str = "ON_CREATE",
         **_kwargs: Any,
     ) -> None:
         """
@@ -190,6 +192,10 @@ class FeatureView(lineage_node.LineageNode):
             warehouse: warehouse to refresh feature view. Not needed for static feature view (refresh_freq is None).
                 For managed feature view, this warehouse will overwrite the default warehouse of Feature Store if it is
                 specified, otherwise the default warehouse will be used.
+            initialize: Specifies the behavior of the initial refresh of feature view. This property cannot be altered
+                after you register the feature view. It supports ON_CREATE (default) or ON_SCHEDULE. ON_CREATE refreshes
+                the feature view synchronously at creation. ON_SCHEDULE refreshes the feature view at the next scheduled
+                refresh. It is only effective when refresh_freq is not None.
             _kwargs: reserved kwargs for system generated args. NOTE: DO NOT USE.
 
         Example::
@@ -227,10 +233,14 @@ class FeatureView(lineage_node.LineageNode):
         self._query: str = self._get_query()
         self._version: Optional[FeatureViewVersion] = None
         self._status: FeatureViewStatus = FeatureViewStatus.DRAFT
-        self._feature_desc: OrderedDict[SqlIdentifier, str] = OrderedDict((f, "") for f in self._get_feature_names())
+        feature_names = self._get_feature_names()
+        self._feature_desc: Optional[OrderedDict[SqlIdentifier, str]] = (
+            OrderedDict((f, "") for f in feature_names) if feature_names is not None else None
+        )
         self._refresh_freq: Optional[str] = refresh_freq
         self._database: Optional[SqlIdentifier] = None
         self._schema: Optional[SqlIdentifier] = None
+        self._initialize: str = initialize
         self._warehouse: Optional[SqlIdentifier] = SqlIdentifier(warehouse) if warehouse is not None else None
         self._refresh_mode: Optional[str] = _kwargs.get("refresh_mode", "AUTO")
         self._refresh_mode_reason: Optional[str] = None
@@ -345,6 +355,15 @@ class FeatureView(lineage_node.LineageNode):
                 ('START_STATION_LATITUDE', 'Latitude of the start station.')])
 
         """
+        if self._feature_desc is None:
+            warnings.warn(
+                "Failed to read feature view schema. Probably feature view is not refreshed yet. "
+                "Schema will be available after initial refresh.",
+                stacklevel=2,
+                category=UserWarning,
+            )
+            return self
+
         for f, d in descs.items():
             f = SqlIdentifier(f)
             if f not in self._feature_desc:
@@ -424,10 +443,10 @@ class FeatureView(lineage_node.LineageNode):
 
     @property
     def feature_names(self) -> List[SqlIdentifier]:
-        return list(self._feature_desc.keys())
+        return list(self._feature_desc.keys()) if self._feature_desc is not None else []
 
     @property
-    def feature_descs(self) -> Dict[SqlIdentifier, str]:
+    def feature_descs(self) -> Optional[Dict[SqlIdentifier, str]]:
         return self._feature_desc
 
     def list_columns(self) -> DataFrame:
@@ -463,7 +482,17 @@ class FeatureView(lineage_node.LineageNode):
 
         """
         session = self._feature_df.session
-        rows = []
+        rows = []  # type: ignore[var-annotated]
+
+        if self.feature_descs is None:
+            warnings.warn(
+                "Failed to read feature view schema. Probably feature view is not refreshed yet. "
+                "Schema will be available after initial refresh.",
+                stacklevel=2,
+                category=UserWarning,
+            )
+            return session.create_dataframe(rows, schema=["name", "category", "dtype", "desc"])
+
         for name, type in self._feature_df.dtypes:
             if SqlIdentifier(name) in self.feature_descs:
                 desc = self.feature_descs[SqlIdentifier(name)]
@@ -566,6 +595,10 @@ class FeatureView(lineage_node.LineageNode):
         self._warehouse = SqlIdentifier(new_value)
 
     @property
+    def initialize(self) -> str:
+        return self._initialize
+
+    @property
     def output_schema(self) -> StructType:
         return self._infer_schema_df.schema
 
@@ -601,33 +634,49 @@ Got {len(self._feature_df.queries['queries'])}: {self._feature_df.queries['queri
                 f"FeatureView name `{self._name}` contains invalid character `{_FEATURE_VIEW_NAME_DELIMITER}`."
             )
 
-        unescaped_df_cols = to_sql_identifiers(self._infer_schema_df.columns)
-        for e in self._entities:
-            for k in e.join_keys:
-                if k not in unescaped_df_cols:
-                    raise ValueError(
-                        f"join_key {k} in Entity {e.name} is not found in input dataframe: {unescaped_df_cols}"
-                    )
+        df_cols = self._get_column_names()
+        if df_cols is not None:
+            for e in self._entities:
+                for k in e.join_keys:
+                    if k not in df_cols:
+                        raise ValueError(f"join_key {k} in Entity {e.name} is not found in input dataframe: {df_cols}")
 
-        if self._timestamp_col is not None:
-            ts_col = self._timestamp_col
-            if ts_col == SqlIdentifier(_TIMESTAMP_COL_PLACEHOLDER):
-                raise ValueError(f"Invalid timestamp_col name, cannot be {_TIMESTAMP_COL_PLACEHOLDER}.")
-            if ts_col not in to_sql_identifiers(self._infer_schema_df.columns):
-                raise ValueError(f"timestamp_col {ts_col} is not found in input dataframe.")
+            if self._timestamp_col is not None:
+                ts_col = self._timestamp_col
+                if ts_col == SqlIdentifier(_TIMESTAMP_COL_PLACEHOLDER):
+                    raise ValueError(f"Invalid timestamp_col name, cannot be {_TIMESTAMP_COL_PLACEHOLDER}.")
+                if ts_col not in df_cols:
+                    raise ValueError(f"timestamp_col {ts_col} is not found in input dataframe.")
 
-            col_type = self._infer_schema_df.schema[ts_col].datatype
-            if not isinstance(col_type, (DateType, TimeType, TimestampType, _NumericType)):
-                raise ValueError(f"Invalid data type for timestamp_col {ts_col}: {col_type}.")
+                col_type = self._infer_schema_df.schema[ts_col].datatype
+                if not isinstance(col_type, (DateType, TimeType, TimestampType, _NumericType)):
+                    raise ValueError(f"Invalid data type for timestamp_col {ts_col}: {col_type}.")
 
         if re.match(_RESULT_SCAN_QUERY_PATTERN, self._query) is not None:
             raise ValueError(f"feature_df should not be reading from RESULT_SCAN. Invalid query: {self._query}")
 
-    def _get_feature_names(self) -> List[SqlIdentifier]:
+        if self._initialize not in ["ON_CREATE", "ON_SCHEDULE"]:
+            raise ValueError("'initialize' only supports ON_CREATE or ON_SCHEDULE.")
+
+    def _get_column_names(self) -> Optional[List[SqlIdentifier]]:
+        try:
+            return to_sql_identifiers(self._infer_schema_df.columns)
+        except SnowparkSQLException as e:
+            warnings.warn(
+                "Failed to read feature view schema. Probably feature view is not refreshed yet. "
+                f"Schema will be available after initial refresh. Original exception: {e}",
+                stacklevel=2,
+                category=UserWarning,
+            )
+            return None
+
+    def _get_feature_names(self) -> Optional[List[SqlIdentifier]]:
         join_keys = [k for e in self._entities for k in e.join_keys]
         ts_col = [self._timestamp_col] if self._timestamp_col is not None else []
-        feature_names = to_sql_identifiers(self._infer_schema_df.columns, case_sensitive=False)
-        return [c for c in feature_names if c not in join_keys + ts_col]
+        feature_names = self._get_column_names()
+        if feature_names is not None:
+            return [c for c in feature_names if c not in join_keys + ts_col]
+        return None
 
     def __repr__(self) -> str:
         states = (f"{k}={v}" for k, v in vars(self).items())
@@ -670,11 +719,13 @@ Got {len(self._feature_df.queries['queries'])}: {self._feature_df.queries['queri
         fv_dict["_schema"] = str(self._schema) if self._schema is not None else None
         fv_dict["_warehouse"] = str(self._warehouse) if self._warehouse is not None else None
         fv_dict["_timestamp_col"] = str(self._timestamp_col) if self._timestamp_col is not None else None
+        fv_dict["_initialize"] = str(self._initialize)
 
         feature_desc_dict = {}
-        for k, v in self._feature_desc.items():
-            feature_desc_dict[k.identifier()] = v
-        fv_dict["_feature_desc"] = feature_desc_dict
+        if self._feature_desc is not None:
+            for k, v in self._feature_desc.items():
+                feature_desc_dict[k.identifier()] = v
+            fv_dict["_feature_desc"] = feature_desc_dict
 
         lineage_node_keys = [key for key in fv_dict if key.startswith("_node") or key == "_session"]
 
@@ -760,6 +811,7 @@ Got {len(self._feature_df.queries['queries'])}: {self._feature_df.queries['queri
             warehouse=json_dict["_warehouse"],
             refresh_mode=json_dict["_refresh_mode"],
             refresh_mode_reason=json_dict["_refresh_mode_reason"],
+            initialize=json_dict["_initialize"],
             owner=json_dict["_owner"],
             infer_schema_df=session.sql(json_dict.get("_infer_schema_query", None)),
             session=session,
@@ -830,6 +882,7 @@ Got {len(self._feature_df.queries['queries'])}: {self._feature_df.queries['queri
         warehouse: Optional[str],
         refresh_mode: Optional[str],
         refresh_mode_reason: Optional[str],
+        initialize: str,
         owner: Optional[str],
         infer_schema_df: Optional[DataFrame],
         session: Session,
@@ -850,6 +903,7 @@ Got {len(self._feature_df.queries['queries'])}: {self._feature_df.queries['queri
         fv._warehouse = SqlIdentifier(warehouse) if warehouse is not None else None
         fv._refresh_mode = refresh_mode
         fv._refresh_mode_reason = refresh_mode_reason
+        fv._initialize = initialize
         fv._owner = owner
         fv.attach_feature_desc(feature_descs)
 

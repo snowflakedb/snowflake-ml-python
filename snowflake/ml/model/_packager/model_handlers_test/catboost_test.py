@@ -1,6 +1,7 @@
 import os
 import tempfile
 import warnings
+from unittest import mock
 
 import catboost
 import numpy as np
@@ -11,7 +12,6 @@ from sklearn import datasets, model_selection
 
 from snowflake.ml.model import model_signature, type_hints as model_types
 from snowflake.ml.model._packager import model_packager
-from snowflake.ml.model._packager.model_handlers import catboost as catboost_handler
 from snowflake.ml.model._packager.model_handlers_test import test_utils
 
 
@@ -107,12 +107,16 @@ class CatBoostHandlerTest(absltest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             s = {"predict": model_signature.infer_signature(cal_X_test, y_pred)}
 
-            model_packager.ModelPackager(os.path.join(tmpdir, "model1_default_explain")).save(
-                name="model1_default_explain",
-                model=classifier,
-                signatures=s,
-                metadata={"author": "halu", "version": "1"},
-            )
+            # check for warnings if sample_input_data is not provided while saving the model
+            with self.assertWarnsRegex(
+                UserWarning, "sample_input_data should be provided for better explainability results"
+            ):
+                model_packager.ModelPackager(os.path.join(tmpdir, "model1_default_explain")).save(
+                    name="model1_default_explain",
+                    model=classifier,
+                    signatures=s,
+                    metadata={"author": "halu", "version": "1"},
+                )
 
             with warnings.catch_warnings():
                 warnings.simplefilter("error")
@@ -145,13 +149,18 @@ class CatBoostHandlerTest(absltest.TestCase):
             assert callable(explain_method)
             np.testing.assert_allclose(explain_method(cal_X_test), explanations)
 
-            model_packager.ModelPackager(os.path.join(tmpdir, "model1_no_sig_explain_enabled")).save(
-                name="model1_no_sig_explain_enabled",
-                model=classifier,
-                sample_input_data=cal_X_test,
-                metadata={"author": "halu", "version": "1"},
-                options=model_types.CatBoostModelSaveOptions(enable_explainability=True),
-            )
+            # test calling saving background_data when sample_input_data is present
+            with mock.patch(
+                "snowflake.ml.model._packager.model_handlers._utils.save_background_data"
+            ) as save_background_data:
+                model_packager.ModelPackager(os.path.join(tmpdir, "model1_no_sig_explain_enabled")).save(
+                    name="model1_no_sig_explain_enabled",
+                    model=classifier,
+                    sample_input_data=cal_X_test,
+                    metadata={"author": "halu", "version": "1"},
+                    options=model_types.CatBoostModelSaveOptions(enable_explainability=True),
+                )
+                save_background_data.assert_called_once()
             pk = model_packager.ModelPackager(os.path.join(tmpdir, "model1_no_sig_explain_enabled"))
             pk.load(as_custom_model=True)
             explain_method = getattr(pk.model, "explain", None)
@@ -214,40 +223,6 @@ class CatBoostHandlerTest(absltest.TestCase):
             np.testing.assert_allclose(
                 test_utils.convert2D_json_to_3D(explain_method(cal_X_test).to_numpy()), explanations
             )
-
-    def test_model_objective_catboost_binary_classifier(self) -> None:
-        cal_data = datasets.load_breast_cancer()
-        cal_X = pd.DataFrame(cal_data.data, columns=cal_data.feature_names)
-        cal_y = pd.Series(cal_data.target)
-        catboost_binary_classifier = catboost.CatBoostClassifier()
-        catboost_binary_classifier.fit(cal_X, cal_y)
-        self.assertEqual(
-            model_types.ModelObjective.BINARY_CLASSIFICATION,
-            catboost_handler.CatBoostModelHandler.get_model_objective_and_output_type(catboost_binary_classifier),
-        )
-
-    def test_model_objective_catboost_multi_classifier(self) -> None:
-        cal_data = datasets.load_iris()
-        cal_X = pd.DataFrame(cal_data.data, columns=cal_data.feature_names)
-        cal_y = pd.Series(cal_data.target)
-        catboost_multi_classifier = catboost.CatBoostClassifier()
-        catboost_multi_classifier.fit(cal_X, cal_y)
-        self.assertEqual(
-            model_types.ModelObjective.MULTI_CLASSIFICATION,
-            catboost_handler.CatBoostModelHandler.get_model_objective_and_output_type(catboost_multi_classifier),
-        )
-
-    def test_model_objective_catboost_ranking(self) -> None:
-        self.assertEqual(
-            model_types.ModelObjective.RANKING,
-            catboost_handler.CatBoostModelHandler.get_model_objective_and_output_type(catboost.CatBoostRanker()),
-        )
-
-    def test_model_objective_catboost_regressor(self) -> None:
-        self.assertEqual(
-            model_types.ModelObjective.REGRESSION,
-            catboost_handler.CatBoostModelHandler.get_model_objective_and_output_type(catboost.CatBoostRegressor()),
-        )
 
 
 if __name__ == "__main__":

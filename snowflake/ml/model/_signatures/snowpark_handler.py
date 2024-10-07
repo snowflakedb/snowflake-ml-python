@@ -14,8 +14,9 @@ from snowflake.ml._internal.exceptions import (
 )
 from snowflake.ml._internal.utils import identifier
 from snowflake.ml.model import type_hints as model_types
-from snowflake.ml.model._deploy_client.warehouse import infer_template
 from snowflake.ml.model._signatures import base_handler, core, pandas_handler
+
+_KEEP_ORDER_COL_NAME = "_ID"
 
 
 class SnowparkDataFrameHandler(base_handler.BaseDataHandler[snowflake.snowpark.DataFrame]):
@@ -109,7 +110,7 @@ class SnowparkDataFrameHandler(base_handler.BaseDataHandler[snowflake.snowpark.D
         # Role will be no effect on the column index. That is to say, the feature name is the actual column name.
         if keep_order:
             df = df.reset_index(drop=True)
-            df[infer_template._KEEP_ORDER_COL_NAME] = df.index
+            df[_KEEP_ORDER_COL_NAME] = df.index
         sp_df = session.create_dataframe(df)
         column_names = []
         columns = []

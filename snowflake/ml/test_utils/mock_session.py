@@ -1,6 +1,6 @@
 from __future__ import annotations  # for return self methods
 
-from typing import Any, Type
+from typing import Any, Optional, Type
 from unittest import TestCase
 
 from snowflake import snowpark
@@ -110,3 +110,9 @@ class MockSession(mock_snowml_base.MockSnowMLBase):
             check_kwargs=False,
         )
         return mo.result
+
+    def get_current_database(self) -> Optional[str]:
+        return None
+
+    def get_current_schema(self) -> Optional[str]:
+        return None

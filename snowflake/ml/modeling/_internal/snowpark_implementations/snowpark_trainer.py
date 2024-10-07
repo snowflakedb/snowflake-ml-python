@@ -230,7 +230,6 @@ class SnowparkModelTrainer:
             replace=True,
             session=self.session,
             statement_params=statement_params,
-            execute_as="caller",
             anonymous=anonymous,
         )
         return fit_wrapper_sproc
@@ -461,9 +460,7 @@ class SnowparkModelTrainer:
             session.write_pandas(
                 transformed_pandas_df,
                 fit_transform_result_name,
-                auto_create_table=True,
-                table_type="temp",
-                quote_identifiers=False,
+                overwrite=True,
             )
 
             return str(os.path.basename(local_result_file_name))
@@ -488,7 +485,6 @@ class SnowparkModelTrainer:
             session=self.session,
             statement_params=statement_params,
             anonymous=anonymous,
-            execute_as="caller",
         )
 
         return fit_predict_wrapper_sproc
@@ -510,7 +506,6 @@ class SnowparkModelTrainer:
             replace=True,
             session=self.session,
             statement_params=statement_params,
-            execute_as="caller",
             anonymous=anonymous,
         )
 
@@ -729,6 +724,22 @@ class SnowparkModelTrainer:
             )
 
         fit_transform_result_name = snowpark_utils.random_name_for_temp_object(snowpark_utils.TempObjectType.TABLE)
+
+        # Create a temp table in advance to store the output
+        # This would allow us to use the same table outside the stored procedure
+        df_one_line = dataset.limit(1).to_pandas(statement_params=statement_params)
+        df_one_line[
+            expected_output_cols_list[0]
+        ] = "[0]"  # Add one column as the output_col; this is a dummy value to represent the OBJECT type
+        if drop_input_cols:
+            self.session.write_pandas(
+                df_one_line[expected_output_cols_list[0]],
+                fit_transform_result_name,
+                auto_create_table=True,
+                table_type="temp",
+            )
+        else:
+            self.session.write_pandas(df_one_line, fit_transform_result_name, auto_create_table=True, table_type="temp")
 
         sproc_export_file_name: str = fit_transform_wrapper_sproc(
             self.session,

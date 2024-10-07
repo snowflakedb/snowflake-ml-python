@@ -1,4 +1,5 @@
 import os
+import warnings
 from typing import TYPE_CHECKING, Any, Callable, Dict, Optional, Type, cast, final
 
 import numpy as np
@@ -8,7 +9,11 @@ from typing_extensions import TypeGuard, Unpack
 from snowflake.ml._internal import type_utils
 from snowflake.ml.model import custom_model, model_signature, type_hints as model_types
 from snowflake.ml.model._packager.model_env import model_env
-from snowflake.ml.model._packager.model_handlers import _base, _utils as handlers_utils
+from snowflake.ml.model._packager.model_handlers import (
+    _base,
+    _utils as handlers_utils,
+    model_objective_utils,
+)
 from snowflake.ml.model._packager.model_handlers_migrator import base_migrator
 from snowflake.ml.model._packager.model_meta import (
     model_blob_meta,
@@ -32,22 +37,7 @@ class CatBoostModelHandler(_base.BaseModelHandler["catboost.CatBoost"]):
 
     MODEL_BLOB_FILE_OR_DIR = "model.bin"
     DEFAULT_TARGET_METHODS = ["predict", "predict_proba"]
-
-    @classmethod
-    def get_model_objective_and_output_type(cls, model: "catboost.CatBoost") -> model_types.ModelObjective:
-        import catboost
-
-        if isinstance(model, catboost.CatBoostClassifier):
-            num_classes = handlers_utils.get_num_classes_if_exists(model)
-            if num_classes == 2:
-                return model_types.ModelObjective.BINARY_CLASSIFICATION
-            return model_types.ModelObjective.MULTI_CLASSIFICATION
-        if isinstance(model, catboost.CatBoostRanker):
-            return model_types.ModelObjective.RANKING
-        if isinstance(model, catboost.CatBoostRegressor):
-            return model_types.ModelObjective.REGRESSION
-        # TODO: Find out model type from the generic Catboost Model
-        return model_types.ModelObjective.UNKNOWN
+    EXPLAIN_TARGET_METHODS = ["predict", "predict_proba"]
 
     @classmethod
     def can_handle(cls, model: model_types.SupportedModelType) -> TypeGuard["catboost.CatBoost"]:
@@ -107,24 +97,33 @@ class CatBoostModelHandler(_base.BaseModelHandler["catboost.CatBoost"]):
                 sample_input_data=sample_input_data,
                 get_prediction_fn=get_prediction,
             )
-            inferred_model_objective = cls.get_model_objective_and_output_type(model)
-            model_meta.model_objective = handlers_utils.validate_model_objective(
-                model_meta.model_objective, inferred_model_objective
-            )
-            model_objective = model_meta.model_objective
+            model_task_and_output = model_objective_utils.get_model_task_and_output_type(model)
+            model_meta.task = model_task_and_output.task
             if enable_explainability:
-                output_type = model_signature.DataType.DOUBLE
-                if model_objective == model_types.ModelObjective.MULTI_CLASSIFICATION:
-                    output_type = model_signature.DataType.STRING
+                explain_target_method = handlers_utils.get_explain_target_method(model_meta, cls.EXPLAIN_TARGET_METHODS)
                 model_meta = handlers_utils.add_explain_method_signature(
                     model_meta=model_meta,
                     explain_method="explain",
-                    target_method="predict",
-                    output_return_type=output_type,
+                    target_method=explain_target_method,
+                    output_return_type=model_task_and_output.output_type,
                 )
                 model_meta.function_properties = {
                     "explain": {model_meta_schema.FunctionProperties.PARTITIONED.value: False}
                 }
+
+                background_data = handlers_utils.get_explainability_supported_background(
+                    sample_input_data, model_meta, explain_target_method
+                )
+                if background_data is not None:
+                    handlers_utils.save_background_data(
+                        model_blobs_dir_path, cls.EXPLAIN_ARTIFACTS_DIR, cls.BG_DATA_FILE_SUFFIX, name, background_data
+                    )
+                else:
+                    warnings.warn(
+                        "sample_input_data should be provided for better explainability results",
+                        category=UserWarning,
+                        stacklevel=1,
+                    )
 
         model_blob_path = os.path.join(model_blobs_dir_path, name)
         os.makedirs(model_blob_path, exist_ok=True)

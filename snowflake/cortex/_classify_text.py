@@ -1,4 +1,4 @@
-from typing import List, Optional, Union
+from typing import List, Optional, Union, cast
 
 from snowflake import snowpark
 from snowflake.cortex._util import CORTEX_FUNCTIONS_TELEMETRY_PROJECT, call_sql_function
@@ -33,4 +33,4 @@ def _classify_text_impl(
     categories: Union[List[str], snowpark.Column],
     session: Optional[snowpark.Session] = None,
 ) -> Union[str, snowpark.Column]:
-    return call_sql_function(function, session, str_input, categories)
+    return cast(Union[str, snowpark.Column], call_sql_function(function, session, str_input, categories))

@@ -310,12 +310,12 @@ class ModelVersion(lineage_node.LineageNode):
         project=_TELEMETRY_PROJECT,
         subproject=_TELEMETRY_SUBPROJECT,
     )
-    def get_model_objective(self) -> model_types.ModelObjective:
+    def get_model_task(self) -> model_types.Task:
         statement_params = telemetry.get_statement_params(
             project=_TELEMETRY_PROJECT,
             subproject=_TELEMETRY_SUBPROJECT,
         )
-        return self._model_ops.get_model_objective(
+        return self._model_ops.get_model_task(
             database_name=None,
             schema_name=None,
             model_name=self._model_name,
@@ -423,6 +423,7 @@ class ModelVersion(lineage_node.LineageNode):
             partition_column = sql_identifier.SqlIdentifier(partition_column)
 
         functions: List[model_manifest_schema.ModelFunctionInfo] = self._functions
+
         if function_name:
             req_method_name = sql_identifier.SqlIdentifier(function_name).identifier()
             find_method: Callable[[model_manifest_schema.ModelFunctionInfo], bool] = (
@@ -625,6 +626,7 @@ class ModelVersion(lineage_node.LineageNode):
             "image_repo",
             "gpu_requests",
             "num_workers",
+            "max_batch_rows",
         ],
     )
     def create_service(
@@ -638,6 +640,7 @@ class ModelVersion(lineage_node.LineageNode):
         max_instances: int = 1,
         gpu_requests: Optional[str] = None,
         num_workers: Optional[int] = None,
+        max_batch_rows: Optional[int] = None,
         force_rebuild: bool = False,
         build_external_access_integration: str,
     ) -> str:
@@ -646,22 +649,27 @@ class ModelVersion(lineage_node.LineageNode):
         Args:
             service_name: The name of the service, can be fully qualified. If not fully qualified, the database or
                 schema of the model will be used.
-            image_build_compute_pool: The name of the compute pool used to build the model inference image. Use
+            image_build_compute_pool: The name of the compute pool used to build the model inference image. It uses
                 the service compute pool if None.
             service_compute_pool: The name of the compute pool used to run the inference service.
             image_repo: The name of the image repository, can be fully qualified. If not fully qualified, the database
                 or schema of the model will be used.
-            ingress_enabled: Whether to enable ingress.
-            max_instances: The maximum number of inference service instances to run.
+            ingress_enabled: If true, creates an service endpoint associated with the service. User must have
+                BIND SERVICE ENDPOINT privilege on the account.
+            max_instances: The maximum number of inference service instances to run. The same value it set to
+                MIN_INSTANCES property of the service.
             gpu_requests: The gpu limit for GPU based inference. Can be integer, fractional or string values. Use CPU
                 if None.
-            num_workers: The number of workers (replicas of models) to run the inference service.
-                Auto determined if None.
+            num_workers: The number of workers to run the inference service for handling requests in parallel within an
+                instance of the service. By default, it is set to 2*vCPU+1 of the node for CPU based inference and 1 for
+                GPU based inference. For GPU based inference, please see best practices before playing with this value.
+            max_batch_rows: The maximum number of rows to batch for inference. Auto determined if None. Minimum 32.
             force_rebuild: Whether to force a model inference image rebuild.
-            build_external_access_integration: The external access integration for image build.
+            build_external_access_integration: The external access integration for image build. This is usually
+                permitting access to conda & PyPI repositories.
 
         Returns:
-            The service name.
+            Result information about service creation from server.
         """
         statement_params = telemetry.get_statement_params(
             project=_TELEMETRY_PROJECT,
@@ -690,8 +698,69 @@ class ModelVersion(lineage_node.LineageNode):
             max_instances=max_instances,
             gpu_requests=gpu_requests,
             num_workers=num_workers,
+            max_batch_rows=max_batch_rows,
             force_rebuild=force_rebuild,
             build_external_access_integration=sql_identifier.SqlIdentifier(build_external_access_integration),
+            statement_params=statement_params,
+        )
+
+    @telemetry.send_api_usage_telemetry(
+        project=_TELEMETRY_PROJECT,
+        subproject=_TELEMETRY_SUBPROJECT,
+    )
+    def list_services(
+        self,
+    ) -> List[str]:
+        """List all the service names using this model version.
+
+        Returns:
+            List of service_names: The name of the service, can be fully qualified. If not fully qualified, the database
+                or schema of the model will be used.
+        """
+        statement_params = telemetry.get_statement_params(
+            project=_TELEMETRY_PROJECT,
+            subproject=_TELEMETRY_SUBPROJECT,
+        )
+
+        return self._model_ops.list_inference_services(
+            database_name=None,
+            schema_name=None,
+            model_name=self._model_name,
+            version_name=self._version_name,
+            statement_params=statement_params,
+        )
+
+    @telemetry.send_api_usage_telemetry(
+        project=_TELEMETRY_PROJECT,
+        subproject=_TELEMETRY_SUBPROJECT,
+    )
+    def delete_service(
+        self,
+        service_name: str,
+    ) -> None:
+        """Drops the given service.
+
+        Args:
+            service_name: The name of the service, can be fully qualified. If not fully qualified, the database or
+                schema of the model will be used.
+
+        Raises:
+            ValueError: If the service does not exist or operation is not permitted by user or service does not belong
+                to this model.
+        """
+        if not service_name:
+            raise ValueError("service_name cannot be empty.")
+
+        statement_params = telemetry.get_statement_params(
+            project=_TELEMETRY_PROJECT,
+            subproject=_TELEMETRY_SUBPROJECT,
+        )
+        self._model_ops.delete_service(
+            database_name=None,
+            schema_name=None,
+            model_name=self._model_name,
+            version_name=self._version_name,
+            service_name=service_name,
             statement_params=statement_params,
         )
 

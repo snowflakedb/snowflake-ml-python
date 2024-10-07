@@ -58,6 +58,8 @@ NOT_FOUND = "2101"
 METHOD_NOT_ALLOWED = "2102"
 # Not implemented.
 NOT_IMPLEMENTED = "2103"
+# User needs to opt in to use a feature.
+OPT_IN_REQUIRED = "2104"
 
 # Calling an API with unsupported keywords/values.
 INVALID_ARGUMENT = "2110"

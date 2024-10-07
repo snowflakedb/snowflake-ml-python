@@ -6,15 +6,9 @@ py_library(
     name = "type_hints",
     srcs = ["type_hints.py"],
     deps = [
-        ":deploy_platforms",
         "//snowflake/ml/model/_signatures:core",
         "//snowflake/ml/modeling/framework",
     ],
-)
-
-py_library(
-    name = "deploy_platforms",
-    srcs = ["deploy_platforms.py"],
 )
 
 py_library(
@@ -27,7 +21,6 @@ py_library(
         "//snowflake/ml/_internal/utils:formatting",
         "//snowflake/ml/_internal/utils:identifier",
         "//snowflake/ml/_internal/utils:sql_identifier",
-        "//snowflake/ml/model/_deploy_client/warehouse:infer_template",
         "//snowflake/ml/model/_signatures:base_handler",
         "//snowflake/ml/model/_signatures:builtins_handler",
         "//snowflake/ml/model/_signatures:core",
@@ -49,29 +42,12 @@ py_library(
 )
 
 py_library(
-    name = "_api",
-    srcs = ["_api.py"],
-    deps = [
-        ":deploy_platforms",
-        ":model_signature",
-        ":type_hints",
-        "//snowflake/ml/_internal/exceptions",
-        "//snowflake/ml/model/_deploy_client/snowservice:deploy",
-        "//snowflake/ml/model/_deploy_client/warehouse:deploy",
-        "//snowflake/ml/model/_deploy_client/warehouse:infer_template",
-        "//snowflake/ml/model/_model_composer:model_composer",
-        "//snowflake/ml/model/_signatures:snowpark_handler",
-    ],
-)
-
-py_library(
     name = "model",
     srcs = ["__init__.py"],
     deps = [
         "//snowflake/ml/model/_client/model:model_impl",
         "//snowflake/ml/model/_client/model:model_version_impl",
         "//snowflake/ml/model/models:huggingface_pipeline",
-        "//snowflake/ml/model/models:llm_model",
     ],
 )
 
@@ -79,9 +55,7 @@ py_test(
     name = "package_visibility_test",
     srcs = ["package_visibility_test.py"],
     deps = [
-        ":_api",
         ":custom_model",
-        ":deploy_platforms",
         ":model",
         ":model_signature",
         ":type_hints",

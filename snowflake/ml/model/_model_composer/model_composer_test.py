@@ -77,7 +77,7 @@ class ModelInterfaceTest(absltest.TestCase):
                             name="model1",
                             model=linear_model.LinearRegression(),
                             sample_input_data=d,
-                            model_objective=model_types.ModelObjective.REGRESSION,
+                            task=model_types.Task.TABULAR_REGRESSION,
                         )
 
                     mock_upload_directory_to_stage.assert_called_once_with(

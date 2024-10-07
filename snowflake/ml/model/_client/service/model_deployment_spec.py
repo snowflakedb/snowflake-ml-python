@@ -38,6 +38,7 @@ class ModelDeploymentSpec:
         max_instances: int,
         gpu: Optional[str],
         num_workers: Optional[int],
+        max_batch_rows: Optional[int],
         force_rebuild: bool,
         external_access_integration: sql_identifier.SqlIdentifier,
     ) -> None:
@@ -78,6 +79,9 @@ class ModelDeploymentSpec:
 
         if num_workers:
             service_dict["num_workers"] = num_workers
+
+        if max_batch_rows:
+            service_dict["max_batch_rows"] = max_batch_rows
 
         # model deployment spec
         model_deployment_spec_dict = model_deployment_spec_schema.ModelDeploymentSpecDict(

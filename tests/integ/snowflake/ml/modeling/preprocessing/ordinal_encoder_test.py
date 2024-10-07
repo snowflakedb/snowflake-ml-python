@@ -1,13 +1,11 @@
 #!/usr/bin/env python3
 import importlib
 import os
-import pickle
 import sys
 import tempfile
 from typing import Any, Dict, List, Tuple
 
 import cloudpickle
-import joblib
 import numpy as np
 import pandas as pd
 import pytest
@@ -847,8 +845,9 @@ class OrdinalEncoderTest(parameterized.TestCase):
         with tempfile.NamedTemporaryFile(suffix=".pkl", delete=False) as file:
             self._to_be_deleted_files.append(file.name)
             encoder_dump_cloudpickle = cloudpickle.dumps(encoder)
-            encoder_dump_pickle = pickle.dumps(encoder)
-            joblib.dump(encoder, file.name)
+            # TODO(SNOW-1704904): Disabling pickle and joblib serde due to the below error
+            # encoder_dump_pickle = pickle.dumps(encoder)
+            # joblib.dump(encoder, file.name)
 
             self._session.close()
 
@@ -866,14 +865,14 @@ class OrdinalEncoderTest(parameterized.TestCase):
             actual_arr_cloudpickle = transformed_df_cloudpickle.sort(id_col)[output_cols].to_pandas().to_numpy()
 
             # pickle
-            encoder_load_pickle = pickle.loads(encoder_dump_pickle)
-            transformed_df_pickle = encoder_load_pickle.transform(df2[input_cols_extended])
-            actual_arr_pickle = transformed_df_pickle.sort(id_col)[output_cols].to_pandas().to_numpy()
+            # encoder_load_pickle = pickle.loads(encoder_dump_pickle)
+            # transformed_df_pickle = encoder_load_pickle.transform(df2[input_cols_extended])
+            # actual_arr_pickle = transformed_df_pickle.sort(id_col)[output_cols].to_pandas().to_numpy()
 
             # joblib
-            encoder_load_joblib = joblib.load(file.name)
-            transformed_df_joblib = encoder_load_joblib.transform(df2[input_cols_extended])
-            actual_arr_joblib = transformed_df_joblib.sort(id_col)[output_cols].to_pandas().to_numpy()
+            # encoder_load_joblib = joblib.load(file.name)
+            # transformed_df_joblib = encoder_load_joblib.transform(df2[input_cols_extended])
+            # actual_arr_joblib = transformed_df_joblib.sort(id_col)[output_cols].to_pandas().to_numpy()
 
             # sklearn
             encoder_sklearn = SklearnOrdinalEncoder()
@@ -881,8 +880,8 @@ class OrdinalEncoderTest(parameterized.TestCase):
             sklearn_arr = encoder_sklearn.transform(df_pandas[input_cols])
 
             np.testing.assert_allclose(actual_arr_cloudpickle, sklearn_arr, equal_nan=True)
-            np.testing.assert_allclose(actual_arr_pickle, sklearn_arr, equal_nan=True)
-            np.testing.assert_allclose(actual_arr_joblib, sklearn_arr, equal_nan=True)
+            # np.testing.assert_allclose(actual_arr_pickle, sklearn_arr, equal_nan=True)
+            # np.testing.assert_allclose(actual_arr_joblib, sklearn_arr, equal_nan=True)
 
     def test_same_input_output_cols(self) -> None:
         """

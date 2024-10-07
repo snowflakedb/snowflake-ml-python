@@ -341,21 +341,21 @@ class ModelVersionSQLTest(absltest.TestCase):
         m_statement_params = {"test": "1"}
         m_df = mock_data_frame.MockDataFrame()
         self.m_session.add_mock_sql(
-            """WITH MODEL_VERSION_ALIAS AS MODEL TEMP."test".MODEL VERSION V1
+            """WITH MODEL_VERSION_ALIAS_ABCDEF0123 AS MODEL TEMP."test".MODEL VERSION V1
             SELECT *,
-                MODEL_VERSION_ALIAS!PREDICT(COL1, COL2) AS TMP_RESULT
+                MODEL_VERSION_ALIAS_ABCDEF0123!PREDICT(COL1, COL2) AS TMP_RESULT_ABCDEF0123
             FROM TEMP."test".SNOWPARK_TEMP_TABLE_ABCDEF0123""",
             m_df,
         )
-        m_df.add_mock_with_columns(["OUTPUT_1"], [F.col("OUTPUT_1")]).add_mock_drop("TMP_RESULT")
+        m_df.add_mock_with_columns(["OUTPUT_1"], [F.col("OUTPUT_1")]).add_mock_drop("TMP_RESULT_ABCDEF0123")
         c_session = cast(Session, self.m_session)
         mock_writer = mock.MagicMock()
         m_df.__setattr__("write", mock_writer)
         m_df.add_query("queries", "query_1")
         m_df.add_query("queries", "query_2")
         with mock.patch.object(mock_writer, "save_as_table") as mock_save_as_table, mock.patch.object(
-            snowpark_utils, "random_name_for_temp_object", return_value="SNOWPARK_TEMP_TABLE_ABCDEF0123"
-        ) as mock_random_name_for_temp_object:
+            snowpark_utils, "generate_random_alphanumeric", return_value="ABCDEF0123"
+        ):
             model_version_sql.ModelVersionSQLClient(
                 c_session,
                 database_name=sql_identifier.SqlIdentifier("TEMP"),
@@ -371,7 +371,6 @@ class ModelVersionSQLTest(absltest.TestCase):
                 returns=[("output_1", spt.IntegerType(), sql_identifier.SqlIdentifier("OUTPUT_1"))],
                 statement_params=m_statement_params,
             )
-            mock_random_name_for_temp_object.assert_called_once_with(snowpark_utils.TempObjectType.TABLE)
             mock_save_as_table.assert_called_once_with(
                 table_name='TEMP."test".SNOWPARK_TEMP_TABLE_ABCDEF0123',
                 mode="errorifexists",
@@ -383,21 +382,21 @@ class ModelVersionSQLTest(absltest.TestCase):
         m_statement_params = {"test": "1"}
         m_df = mock_data_frame.MockDataFrame()
         self.m_session.add_mock_sql(
-            """WITH MODEL_VERSION_ALIAS AS MODEL TEMP."test".MODEL VERSION V1
+            """WITH MODEL_VERSION_ALIAS_ABCDEF0123 AS MODEL TEMP."test".MODEL VERSION V1
             SELECT *,
-                MODEL_VERSION_ALIAS!PREDICT(COL1, COL2) AS TMP_RESULT
+                MODEL_VERSION_ALIAS_ABCDEF0123!PREDICT(COL1, COL2) AS TMP_RESULT_ABCDEF0123
             FROM TEMP."test".SNOWPARK_TEMP_TABLE_ABCDEF0123""",
             m_df,
         )
-        m_df.add_mock_with_columns(["OUTPUT_1"], [F.col("OUTPUT_1")]).add_mock_drop("TMP_RESULT")
+        m_df.add_mock_with_columns(["OUTPUT_1"], [F.col("OUTPUT_1")]).add_mock_drop("TMP_RESULT_ABCDEF0123")
         c_session = cast(Session, self.m_session)
         mock_writer = mock.MagicMock()
         m_df.__setattr__("write", mock_writer)
         m_df.add_query("queries", "query_1")
         m_df.add_query("queries", "query_2")
         with mock.patch.object(mock_writer, "save_as_table") as mock_save_as_table, mock.patch.object(
-            snowpark_utils, "random_name_for_temp_object", return_value="SNOWPARK_TEMP_TABLE_ABCDEF0123"
-        ) as mock_random_name_for_temp_object:
+            snowpark_utils, "generate_random_alphanumeric", return_value="ABCDEF0123"
+        ):
             model_version_sql.ModelVersionSQLClient(
                 c_session,
                 database_name=sql_identifier.SqlIdentifier("foo"),
@@ -413,7 +412,6 @@ class ModelVersionSQLTest(absltest.TestCase):
                 returns=[("output_1", spt.IntegerType(), sql_identifier.SqlIdentifier("OUTPUT_1"))],
                 statement_params=m_statement_params,
             )
-            mock_random_name_for_temp_object.assert_called_once_with(snowpark_utils.TempObjectType.TABLE)
             mock_save_as_table.assert_called_once_with(
                 table_name='TEMP."test".SNOWPARK_TEMP_TABLE_ABCDEF0123',
                 mode="errorifexists",
@@ -425,21 +423,21 @@ class ModelVersionSQLTest(absltest.TestCase):
         m_statement_params = {"test": "1"}
         m_df = mock_data_frame.MockDataFrame()
         self.m_session.add_mock_sql(
-            """WITH MODEL_VERSION_ALIAS AS MODEL TEMP."test".MODEL VERSION V1
+            """WITH MODEL_VERSION_ALIAS_ABCDEF0123 AS MODEL TEMP."test".MODEL VERSION V1
             SELECT *,
-                MODEL_VERSION_ALIAS!PREDICT(COL1, COL2) AS TMP_RESULT
+                MODEL_VERSION_ALIAS_ABCDEF0123!PREDICT(COL1, COL2) AS TMP_RESULT_ABCDEF0123
             FROM TEMP."test".SNOWPARK_TEMP_TABLE_ABCDEF0123""",
             m_df,
         )
-        m_df.add_mock_with_columns(["OUTPUT_1"], [F.col("OUTPUT_1")]).add_mock_drop("TMP_RESULT")
+        m_df.add_mock_with_columns(["OUTPUT_1"], [F.col("OUTPUT_1")]).add_mock_drop("TMP_RESULT_ABCDEF0123")
         c_session = cast(Session, self.m_session)
         mock_writer = mock.MagicMock()
         m_df.__setattr__("write", mock_writer)
         m_df.add_query("queries", "query_1")
         m_df.add_query("queries", "query_2")
         with mock.patch.object(mock_writer, "save_as_table") as mock_save_as_table, mock.patch.object(
-            snowpark_utils, "random_name_for_temp_object", return_value="SNOWPARK_TEMP_TABLE_ABCDEF0123"
-        ) as mock_random_name_for_temp_object:
+            snowpark_utils, "generate_random_alphanumeric", return_value="ABCDEF0123"
+        ):
             model_version_sql.ModelVersionSQLClient(
                 c_session,
                 database_name=sql_identifier.SqlIdentifier("TEMP"),
@@ -455,7 +453,6 @@ class ModelVersionSQLTest(absltest.TestCase):
                 returns=[("output_1", spt.IntegerType(), sql_identifier.SqlIdentifier("OUTPUT_1"))],
                 statement_params=m_statement_params,
             )
-            mock_random_name_for_temp_object.assert_called_once_with(snowpark_utils.TempObjectType.TABLE)
             mock_save_as_table.assert_called_once_with(
                 table_name='TEMP."test".SNOWPARK_TEMP_TABLE_ABCDEF0123',
                 mode="errorifexists",
@@ -467,40 +464,41 @@ class ModelVersionSQLTest(absltest.TestCase):
         m_statement_params = {"test": "1"}
         m_df = mock_data_frame.MockDataFrame()
         self.m_session.add_mock_sql(
-            """WITH SNOWPARK_ML_MODEL_INFERENCE_INPUT AS (query_1),
-            MODEL_VERSION_ALIAS AS MODEL TEMP."test".MODEL VERSION V1
+            """WITH SNOWPARK_ML_MODEL_INFERENCE_INPUT_ABCDEF0123 AS (query_1),
+            MODEL_VERSION_ALIAS_ABCDEF0123 AS MODEL TEMP."test".MODEL VERSION V1
             SELECT *,
-                MODEL_VERSION_ALIAS!PREDICT(COL1, COL2) AS TMP_RESULT
-            FROM SNOWPARK_ML_MODEL_INFERENCE_INPUT""",
+                MODEL_VERSION_ALIAS_ABCDEF0123!PREDICT(COL1, COL2) AS TMP_RESULT_ABCDEF0123
+            FROM SNOWPARK_ML_MODEL_INFERENCE_INPUT_ABCDEF0123""",
             m_df,
         )
-        m_df.add_mock_with_columns(["OUTPUT_1"], [F.col("OUTPUT_1")]).add_mock_drop("TMP_RESULT")
+        m_df.add_mock_with_columns(["OUTPUT_1"], [F.col("OUTPUT_1")]).add_mock_drop("TMP_RESULT_ABCDEF0123")
         c_session = cast(Session, self.m_session)
         m_df.add_query("queries", "query_1")
-        model_version_sql.ModelVersionSQLClient(
-            c_session,
-            database_name=sql_identifier.SqlIdentifier("TEMP"),
-            schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
-        ).invoke_function_method(
-            database_name=None,
-            schema_name=None,
-            model_name=sql_identifier.SqlIdentifier("MODEL"),
-            version_name=sql_identifier.SqlIdentifier("V1"),
-            method_name=sql_identifier.SqlIdentifier("PREDICT"),
-            input_df=cast(DataFrame, m_df),
-            input_args=[sql_identifier.SqlIdentifier("COL1"), sql_identifier.SqlIdentifier("COL2")],
-            returns=[("output_1", spt.IntegerType(), sql_identifier.SqlIdentifier("OUTPUT_1"))],
-            statement_params=m_statement_params,
-        )
+        with mock.patch.object(snowpark_utils, "generate_random_alphanumeric", return_value="ABCDEF0123"):
+            model_version_sql.ModelVersionSQLClient(
+                c_session,
+                database_name=sql_identifier.SqlIdentifier("TEMP"),
+                schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
+            ).invoke_function_method(
+                database_name=None,
+                schema_name=None,
+                model_name=sql_identifier.SqlIdentifier("MODEL"),
+                version_name=sql_identifier.SqlIdentifier("V1"),
+                method_name=sql_identifier.SqlIdentifier("PREDICT"),
+                input_df=cast(DataFrame, m_df),
+                input_args=[sql_identifier.SqlIdentifier("COL1"), sql_identifier.SqlIdentifier("COL2")],
+                returns=[("output_1", spt.IntegerType(), sql_identifier.SqlIdentifier("OUTPUT_1"))],
+                statement_params=m_statement_params,
+            )
 
     def test_invoke_table_function_method_no_partition_col(self) -> None:
         m_statement_params = {"test": "1"}
         m_df = mock_data_frame.MockDataFrame()
         self.m_session.add_mock_sql(
-            """WITH MODEL_VERSION_ALIAS AS MODEL TEMP."test".MODEL VERSION V1
+            """WITH MODEL_VERSION_ALIAS_ABCDEF0123 AS MODEL TEMP."test".MODEL VERSION V1
             SELECT *,
             FROM TEMP."test".SNOWPARK_TEMP_TABLE_ABCDEF0123,
-                 TABLE(MODEL_VERSION_ALIAS!EXPLAIN(COL1, COL2))
+                 TABLE(MODEL_VERSION_ALIAS_ABCDEF0123!EXPLAIN(COL1, COL2))
             """,
             m_df,
         )
@@ -511,8 +509,8 @@ class ModelVersionSQLTest(absltest.TestCase):
         m_df.add_query("queries", "query_1")
         m_df.add_query("queries", "query_2")
         with mock.patch.object(mock_writer, "save_as_table") as mock_save_as_table, mock.patch.object(
-            snowpark_utils, "random_name_for_temp_object", return_value="SNOWPARK_TEMP_TABLE_ABCDEF0123"
-        ) as mock_random_name_for_temp_object:
+            snowpark_utils, "generate_random_alphanumeric", return_value="ABCDEF0123"
+        ):
             model_version_sql.ModelVersionSQLClient(
                 c_session,
                 database_name=sql_identifier.SqlIdentifier("TEMP"),
@@ -530,7 +528,6 @@ class ModelVersionSQLTest(absltest.TestCase):
                 statement_params=m_statement_params,
                 is_partitioned=False,
             )
-            mock_random_name_for_temp_object.assert_called_once_with(snowpark_utils.TempObjectType.TABLE)
             mock_save_as_table.assert_called_once_with(
                 table_name='TEMP."test".SNOWPARK_TEMP_TABLE_ABCDEF0123',
                 mode="errorifexists",
@@ -543,10 +540,10 @@ class ModelVersionSQLTest(absltest.TestCase):
         m_df = mock_data_frame.MockDataFrame()
         partition_column = "partition_col"
         self.m_session.add_mock_sql(
-            f"""WITH MODEL_VERSION_ALIAS AS MODEL TEMP."test".MODEL VERSION V1
+            f"""WITH MODEL_VERSION_ALIAS_ABCDEF0123 AS MODEL TEMP."test".MODEL VERSION V1
             SELECT *,
             FROM TEMP."test".SNOWPARK_TEMP_TABLE_ABCDEF0123,
-                 TABLE(MODEL_VERSION_ALIAS!PREDICT_TABLE(COL1, COL2) OVER (PARTITION BY {partition_column}))
+                 TABLE(MODEL_VERSION_ALIAS_ABCDEF0123!PREDICT_TABLE(COL1, COL2) OVER (PARTITION BY {partition_column}))
             """,
             m_df,
         )
@@ -557,8 +554,8 @@ class ModelVersionSQLTest(absltest.TestCase):
         m_df.add_query("queries", "query_1")
         m_df.add_query("queries", "query_2")
         with mock.patch.object(mock_writer, "save_as_table") as mock_save_as_table, mock.patch.object(
-            snowpark_utils, "random_name_for_temp_object", return_value="SNOWPARK_TEMP_TABLE_ABCDEF0123"
-        ) as mock_random_name_for_temp_object:
+            snowpark_utils, "generate_random_alphanumeric", return_value="ABCDEF0123"
+        ):
             model_version_sql.ModelVersionSQLClient(
                 c_session,
                 database_name=sql_identifier.SqlIdentifier("TEMP"),
@@ -575,7 +572,6 @@ class ModelVersionSQLTest(absltest.TestCase):
                 partition_column=sql_identifier.SqlIdentifier(partition_column),
                 statement_params=m_statement_params,
             )
-            mock_random_name_for_temp_object.assert_called_once_with(snowpark_utils.TempObjectType.TABLE)
             mock_save_as_table.assert_called_once_with(
                 table_name='TEMP."test".SNOWPARK_TEMP_TABLE_ABCDEF0123',
                 mode="errorifexists",
@@ -588,10 +584,10 @@ class ModelVersionSQLTest(absltest.TestCase):
         m_df = mock_data_frame.MockDataFrame()
         partition_column = "partition_col"
         self.m_session.add_mock_sql(
-            f"""WITH MODEL_VERSION_ALIAS AS MODEL TEMP."test".MODEL VERSION V1
+            f"""WITH MODEL_VERSION_ALIAS_ABCDEF0123 AS MODEL TEMP."test".MODEL VERSION V1
             SELECT *,
             FROM TEMP."test".SNOWPARK_TEMP_TABLE_ABCDEF0123,
-                 TABLE(MODEL_VERSION_ALIAS!PREDICT_TABLE(COL1, COL2) OVER (PARTITION BY {partition_column}))
+                 TABLE(MODEL_VERSION_ALIAS_ABCDEF0123!PREDICT_TABLE(COL1, COL2) OVER (PARTITION BY {partition_column}))
             """,
             m_df,
         )
@@ -602,8 +598,8 @@ class ModelVersionSQLTest(absltest.TestCase):
         m_df.add_query("queries", "query_1")
         m_df.add_query("queries", "query_2")
         with mock.patch.object(mock_writer, "save_as_table") as mock_save_as_table, mock.patch.object(
-            snowpark_utils, "random_name_for_temp_object", return_value="SNOWPARK_TEMP_TABLE_ABCDEF0123"
-        ) as mock_random_name_for_temp_object:
+            snowpark_utils, "generate_random_alphanumeric", return_value="ABCDEF0123"
+        ):
             model_version_sql.ModelVersionSQLClient(
                 c_session,
                 database_name=sql_identifier.SqlIdentifier("foo"),
@@ -620,7 +616,6 @@ class ModelVersionSQLTest(absltest.TestCase):
                 partition_column=sql_identifier.SqlIdentifier(partition_column),
                 statement_params=m_statement_params,
             )
-            mock_random_name_for_temp_object.assert_called_once_with(snowpark_utils.TempObjectType.TABLE)
             mock_save_as_table.assert_called_once_with(
                 table_name='TEMP."test".SNOWPARK_TEMP_TABLE_ABCDEF0123',
                 mode="errorifexists",

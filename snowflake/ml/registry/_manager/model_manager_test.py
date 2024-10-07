@@ -212,7 +212,7 @@ class ModelManagerTest(absltest.TestCase):
                 code_paths=None,
                 ext_modules=None,
                 options=None,
-                model_objective=type_hints.ModelObjective.UNKNOWN,
+                task=type_hints.Task.UNKNOWN,
             )
             mock_create_from_stage.assert_called_once_with(
                 composed_model=mock.ANY,
@@ -281,7 +281,7 @@ class ModelManagerTest(absltest.TestCase):
                 code_paths=None,
                 ext_modules=None,
                 options=None,
-                model_objective=type_hints.ModelObjective.UNKNOWN,
+                task=type_hints.Task.UNKNOWN,
             )
             mock_create_from_stage.assert_called_once_with(
                 composed_model=mock.ANY,
@@ -335,7 +335,7 @@ class ModelManagerTest(absltest.TestCase):
                 code_paths=None,
                 ext_modules=None,
                 options=m_options,
-                model_objective=type_hints.ModelObjective.UNKNOWN,
+                task=type_hints.Task.UNKNOWN,
             )
             mock_create_from_stage.assert_called_once_with(
                 composed_model=mock.ANY,
@@ -392,7 +392,7 @@ class ModelManagerTest(absltest.TestCase):
                 code_paths=m_code_paths,
                 ext_modules=m_ext_modules,
                 options=None,
-                model_objective=type_hints.ModelObjective.UNKNOWN,
+                task=type_hints.Task.UNKNOWN,
             )
             mock_create_from_stage.assert_called_once_with(
                 composed_model=mock.ANY,
@@ -449,7 +449,7 @@ class ModelManagerTest(absltest.TestCase):
                 code_paths=None,
                 ext_modules=None,
                 options=None,
-                model_objective=type_hints.ModelObjective.UNKNOWN,
+                task=type_hints.Task.UNKNOWN,
             )
             mock_create_from_stage.assert_called_once_with(
                 composed_model=mock.ANY,
@@ -550,7 +550,7 @@ class ModelManagerTest(absltest.TestCase):
                 code_paths=None,
                 ext_modules=None,
                 options=None,
-                model_objective=type_hints.ModelObjective.UNKNOWN,
+                task=type_hints.Task.UNKNOWN,
             )
             mock_create_from_stage.assert_called_once_with(
                 composed_model=mock.ANY,

@@ -1,6 +1,25 @@
 # Release History
 
-## 1.6.2 (TBD)
+## 1.6.3
+
+- Model Registry (PrPr) has been removed.
+
+### Bug Fixes
+
+- Registry: Fix a bug that when package whose name does not follow PEP-508 is provided when logging the model,
+  an unexpected normalization is happening.
+- Registry: Fix `not a valid remote uri` error when logging mlflow models.
+- Registry: Fix a bug that `ModelVersion.run` is called in a nested way.
+- Registry: Fix an issue that leads to `log_model` failure when local package version contains parts other than
+  base version.
+
+### New Features
+
+- Data: Improve `DataConnector.to_pandas()` performance when loading from Snowpark DataFrames.
+- Model Registry: Allow users to set a model task while using `log_model`.
+- Feature Store: FeatureView supports ON_CREATE or ON_SCHEDULE initialize mode.
+
+## 1.6.2 (2024-09-04)
 
 ### Bug Fixes
 
@@ -17,8 +36,6 @@
 - Data: Add top-level exports for `DataConnector` and `DataSource` to `snowflake.ml.data`.
 - Data: Add native batching support via `batch_size` and `drop_last_batch` arguments to `DataConnector.to_torch_dataset()`
 - Feature Store: update_feature_view() supports taking feature view object as argument.
-
-### Behavior Changes
 
 ## 1.6.1 (2024-08-12)
 
@@ -41,8 +58,6 @@
 - Data: Add new `to_torch_dataset()` connector to `DataConnector` to replace deprecated DataPipe.
 - Registry: Option to `enable_explainability` set to True by default for XGBoost, LightGBM and CatBoost as PuPr feature.
 - Registry: Option to `enable_explainability` when registering SHAP supported sklearn models.
-
-### Behavior Changes
 
 ## 1.6.0 (2024-07-29)
 

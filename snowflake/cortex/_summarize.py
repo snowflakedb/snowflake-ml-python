@@ -1,4 +1,4 @@
-from typing import Optional, Union
+from typing import Optional, Union, cast
 
 from snowflake import snowpark
 from snowflake.cortex._util import CORTEX_FUNCTIONS_TELEMETRY_PROJECT, call_sql_function
@@ -30,4 +30,4 @@ def _summarize_impl(
     text: Union[str, snowpark.Column],
     session: Optional[snowpark.Session] = None,
 ) -> Union[str, snowpark.Column]:
-    return call_sql_function(function, session, text)
+    return cast(Union[str, snowpark.Column], call_sql_function(function, session, text))

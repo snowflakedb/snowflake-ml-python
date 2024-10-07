@@ -2,7 +2,6 @@ import os
 import pathlib
 import sys
 import tempfile
-import warnings
 import zipfile
 from contextlib import contextmanager
 from datetime import datetime
@@ -18,7 +17,6 @@ from snowflake.ml._internal import env as snowml_env, env_utils, file_utils
 from snowflake.ml.model import model_signature, type_hints as model_types
 from snowflake.ml.model._packager.model_env import model_env
 from snowflake.ml.model._packager.model_meta import (
-    _core_requirements,
     _packaging_requirements,
     model_blob_meta,
     model_meta_schema,
@@ -29,14 +27,10 @@ from snowflake.ml.model._packager.model_runtime import model_runtime
 MODEL_METADATA_FILE = "model.yaml"
 MODEL_CODE_DIR = "code"
 
-_PACKAGING_CORE_DEPENDENCIES = [
-    str(env_utils.get_package_spec_with_supported_ops_only(requirements.Requirement(r)))
-    for r in _core_requirements.REQUIREMENTS
-]  # Legacy Model only
 _PACKAGING_REQUIREMENTS = [
     str(env_utils.get_package_spec_with_supported_ops_only(requirements.Requirement(r)))
     for r in _packaging_requirements.REQUIREMENTS
-]  # New Model only
+]
 _SNOWFLAKE_PKG_NAME = "snowflake"
 _SNOWFLAKE_ML_PKG_NAME = f"{_SNOWFLAKE_PKG_NAME}.ml"
 
@@ -55,7 +49,7 @@ def create_model_metadata(
     conda_dependencies: Optional[List[str]] = None,
     pip_requirements: Optional[List[str]] = None,
     python_version: Optional[str] = None,
-    model_objective: model_types.ModelObjective = model_types.ModelObjective.UNKNOWN,
+    task: model_types.Task = model_types.Task.UNKNOWN,
     **kwargs: Any,
 ) -> Generator["ModelMetadata", None, None]:
     """Create a generator for model metadata object. Use generator to ensure correct register and unregister for
@@ -75,9 +69,9 @@ def create_model_metadata(
         pip_requirements: List of pip Python packages requirements for running the model. Defaults to None.
         python_version: A string of python version where model is run. Used for user override. If specified as None,
             current version would be captured. Defaults to None.
-        model_objective: The objective of the Model Version. It is an enum class ModelObjective with values REGRESSION,
-            BINARY_CLASSIFICATION, MULTI_CLASSIFICATION, RANKING, or UNKNOWN. By default it is set to
-            ModelObjective.UNKNOWN and may be overridden by inferring from the Model Object.
+        task: The task of the Model Version. It is an enum class Task with values TABULAR_REGRESSION,
+            TABULAR_BINARY_CLASSIFICATION, TABULAR_MULTI_CLASSIFICATION, TABULAR_RANKING, or UNKNOWN. By default,
+            it is set to Task.UNKNOWN and may be overridden by inferring from the Model Object.
         **kwargs: Dict of attributes and values of the metadata. Used when loading from file.
 
     Raises:
@@ -88,18 +82,6 @@ def create_model_metadata(
     """
     model_dir_path = os.path.normpath(model_dir_path)
     embed_local_ml_library = kwargs.pop("embed_local_ml_library", False)
-    legacy_save = kwargs.pop("_legacy_save", False)
-    if "relax_version" not in kwargs:
-        warnings.warn(
-            (
-                "`relax_version` is not set and therefore defaulted to True. Dependency version constraints relaxed "
-                "from ==x.y.z to >=x.y, <(x+1). To use specific dependency versions for compatibility, "
-                "reproducibility, etc., set `options={'relax_version': False}` when logging the model."
-            ),
-            category=UserWarning,
-            stacklevel=2,
-        )
-    relax_version = kwargs.pop("relax_version", True)
 
     if embed_local_ml_library:
         # Use the last one which is loaded first, that is mean, it is loaded from site-packages.
@@ -122,7 +104,6 @@ def create_model_metadata(
         pip_requirements=pip_requirements,
         python_version=python_version,
         embed_local_ml_library=embed_local_ml_library,
-        legacy_save=legacy_save,
     )
 
     if embed_local_ml_library:
@@ -135,17 +116,12 @@ def create_model_metadata(
         model_type=model_type,
         signatures=signatures,
         function_properties=function_properties,
-        model_objective=model_objective,
+        task=task,
     )
 
     code_dir_path = os.path.join(model_dir_path, MODEL_CODE_DIR)
-    if (embed_local_ml_library and legacy_save) or code_paths:
+    if code_paths:
         os.makedirs(code_dir_path, exist_ok=True)
-
-    if embed_local_ml_library and legacy_save:
-        snowml_path_in_code = os.path.join(code_dir_path, _SNOWFLAKE_PKG_NAME)
-        os.makedirs(snowml_path_in_code, exist_ok=True)
-        file_utils.copy_file_or_tree(path_to_copy, snowml_path_in_code)
 
     if code_paths:
         for code_path in code_paths:
@@ -165,8 +141,6 @@ def create_model_metadata(
                     cloudpickle.register_pickle_by_value(mod)
                     imported_modules.append(mod)
         yield model_meta
-        if relax_version:
-            model_meta.env.relax_version()
         model_meta.save(model_dir_path)
     finally:
         for mod in imported_modules:
@@ -179,7 +153,6 @@ def _create_env_for_model_metadata(
     pip_requirements: Optional[List[str]] = None,
     python_version: Optional[str] = None,
     embed_local_ml_library: bool = False,
-    legacy_save: bool = False,
 ) -> model_env.ModelEnv:
     env = model_env.ModelEnv()
 
@@ -189,7 +162,7 @@ def _create_env_for_model_metadata(
     env.python_version = python_version  # type: ignore[assignment]
     env.snowpark_ml_version = snowml_env.VERSION
 
-    requirements_to_add = _PACKAGING_CORE_DEPENDENCIES if legacy_save else _PACKAGING_REQUIREMENTS
+    requirements_to_add = _PACKAGING_REQUIREMENTS
 
     if embed_local_ml_library:
         env.include_if_absent(
@@ -242,7 +215,7 @@ class ModelMetadata:
         function_properties: A dict mapping function names to dict mapping function property key to value.
         metadata: User provided key-value metadata of the model. Defaults to None.
         creation_timestamp: Unix timestamp when the model metadata is created.
-        model_objective: Model objective like regression, classification etc.
+        task: Model task like TABULAR_REGRESSION, tabular_classification, timeseries_forecasting etc.
     """
 
     def telemetry_metadata(self) -> ModelMetadataTelemetryDict:
@@ -266,7 +239,7 @@ class ModelMetadata:
         min_snowpark_ml_version: Optional[str] = None,
         models: Optional[Dict[str, model_blob_meta.ModelBlobMeta]] = None,
         original_metadata_version: Optional[str] = model_meta_schema.MODEL_METADATA_VERSION,
-        model_objective: model_types.ModelObjective = model_types.ModelObjective.UNKNOWN,
+        task: model_types.Task = model_types.Task.UNKNOWN,
         explain_algorithm: Optional[model_meta_schema.ModelExplainAlgorithm] = None,
     ) -> None:
         self.name = name
@@ -292,7 +265,7 @@ class ModelMetadata:
 
         self.original_metadata_version = original_metadata_version
 
-        self.model_objective: model_types.ModelObjective = model_objective
+        self.task: model_types.Task = task
         self.explain_algorithm: Optional[model_meta_schema.ModelExplainAlgorithm] = explain_algorithm
 
     @property
@@ -309,10 +282,10 @@ class ModelMetadata:
         if self._runtimes and "cpu" in self._runtimes:
             return self._runtimes
         runtimes = {
-            "cpu": model_runtime.ModelRuntime("cpu", self.env),
+            "cpu": model_runtime.ModelRuntime("cpu", self.env, is_warehouse=False),
         }
         if self.env.cuda_version:
-            runtimes.update({"gpu": model_runtime.ModelRuntime("gpu", self.env, is_gpu=True)})
+            runtimes.update({"gpu": model_runtime.ModelRuntime("gpu", self.env, is_warehouse=False, is_gpu=True)})
         return runtimes
 
     def save(self, model_dir_path: str) -> None:
@@ -346,7 +319,7 @@ class ModelMetadata:
                 "signatures": {func_name: sig.to_dict() for func_name, sig in self.signatures.items()},
                 "version": model_meta_schema.MODEL_METADATA_VERSION,
                 "min_snowpark_ml_version": self.min_snowpark_ml_version,
-                "model_objective": self.model_objective.value,
+                "task": self.task.value,
                 "explainability": (
                     model_meta_schema.ExplainabilityMetadataDict(algorithm=self.explain_algorithm.value)
                     if self.explain_algorithm
@@ -390,7 +363,7 @@ class ModelMetadata:
             signatures=loaded_meta["signatures"],
             version=original_loaded_meta_version,
             min_snowpark_ml_version=loaded_meta_min_snowpark_ml_version,
-            model_objective=loaded_meta.get("model_objective", model_types.ModelObjective.UNKNOWN.value),
+            task=loaded_meta.get("task", model_types.Task.UNKNOWN.value),
             explainability=loaded_meta.get("explainability", None),
             function_properties=loaded_meta.get("function_properties", {}),
         )
@@ -445,9 +418,7 @@ class ModelMetadata:
             min_snowpark_ml_version=model_dict["min_snowpark_ml_version"],
             models=models,
             original_metadata_version=model_dict["version"],
-            model_objective=model_types.ModelObjective(
-                model_dict.get("model_objective", model_types.ModelObjective.UNKNOWN.value)
-            ),
+            task=model_types.Task(model_dict.get("task", model_types.Task.UNKNOWN.value)),
             explain_algorithm=explanation_algorithm,
             function_properties=model_dict.get("function_properties", {}),
         )

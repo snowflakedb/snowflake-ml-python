@@ -1,6 +1,7 @@
 import os
 import tempfile
 import warnings
+from unittest import mock
 
 import numpy as np
 import pandas as pd
@@ -167,12 +168,16 @@ class XgboostHandlerTest(absltest.TestCase):
         explanations = shap.TreeExplainer(classifier)(cal_X_test).values
         with tempfile.TemporaryDirectory() as tmpdir:
 
-            model_packager.ModelPackager(os.path.join(tmpdir, "model1")).save(
-                name="model1",
-                model=classifier,
-                signatures={"predict": model_signature.infer_signature(cal_X_test, y_pred)},
-                metadata={"author": "halu", "version": "1"},
-            )
+            # check for warnings if sample_input_data is not provided while saving the model
+            with self.assertWarnsRegex(
+                UserWarning, "sample_input_data should be provided for better explainability results"
+            ):
+                model_packager.ModelPackager(os.path.join(tmpdir, "model1")).save(
+                    name="model1",
+                    model=classifier,
+                    signatures={"predict": model_signature.infer_signature(cal_X_test, y_pred)},
+                    metadata={"author": "halu", "version": "1"},
+                )
 
             with warnings.catch_warnings():
                 warnings.simplefilter("error")
@@ -186,12 +191,16 @@ class XgboostHandlerTest(absltest.TestCase):
                 np.testing.assert_allclose(predict_method(cal_X_test), np.expand_dims(y_pred, axis=1))
                 np.testing.assert_allclose(explain_method(cal_X_test), explanations)
 
-            model_packager.ModelPackager(os.path.join(tmpdir, "model1_no_sig")).save(
-                name="model1_no_sig",
-                model=classifier,
-                sample_input_data=cal_X_test,
-                metadata={"author": "halu", "version": "1"},
-            )
+            with mock.patch(
+                "snowflake.ml.model._packager.model_handlers._utils.save_background_data"
+            ) as save_background_data:
+                model_packager.ModelPackager(os.path.join(tmpdir, "model1_no_sig")).save(
+                    name="model1_no_sig",
+                    model=classifier,
+                    sample_input_data=cal_X_test,
+                    metadata={"author": "halu", "version": "1"},
+                )
+                save_background_data.assert_called_once()
 
             pk = model_packager.ModelPackager(os.path.join(tmpdir, "model1_no_sig"))
             pk.load(as_custom_model=True)

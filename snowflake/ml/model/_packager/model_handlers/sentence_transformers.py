@@ -2,7 +2,6 @@ import logging
 import os
 from typing import TYPE_CHECKING, Callable, Dict, Optional, Type, cast, final
 
-import cloudpickle
 import pandas as pd
 from typing_extensions import TypeGuard, Unpack
 
@@ -120,9 +119,21 @@ class SentenceTransformerHandler(_base.BaseModelHandler["sentence_transformers.S
         model_meta.env.include_if_absent(
             [
                 model_env.ModelDependency(requirement="sentence-transformers", pip_name="sentence-transformers"),
+                model_env.ModelDependency(requirement="transformers", pip_name="transformers"),
+                model_env.ModelDependency(requirement="pytorch", pip_name="torch"),
             ],
             check_local_version=True,
         )
+        model_meta.env.cuda_version = kwargs.get("cuda_version", model_env.DEFAULT_CUDA_VERSION)
+
+    @staticmethod
+    def _get_device_config(**kwargs: Unpack[model_types.SentenceTransformersLoadOptions]) -> Optional[str]:
+        if kwargs.get("device", None) is not None:
+            return kwargs["device"]
+        elif kwargs.get("use_gpu", False):
+            return "cuda"
+
+        return None
 
     @classmethod
     def load_model(
@@ -144,13 +155,9 @@ class SentenceTransformerHandler(_base.BaseModelHandler["sentence_transformers.S
         model_blob_filename = model_blob_metadata.path
         model_blob_file_or_dir_path = os.path.join(model_blob_path, model_blob_filename)
 
-        if os.path.isdir(model_blob_file_or_dir_path):  # if the saved model is a directory
-            model = sentence_transformers.SentenceTransformer(model_blob_file_or_dir_path)
-        else:
-            assert os.path.isfile(model_blob_file_or_dir_path)  # if the saved model is a file
-            with open(model_blob_file_or_dir_path, "rb") as f:
-                model = cloudpickle.load(f)
-            assert isinstance(model, sentence_transformers.SentenceTransformer)
+        model = sentence_transformers.SentenceTransformer(
+            model_blob_file_or_dir_path, device=cls._get_device_config(**kwargs)
+        )
         return model
 
     @classmethod

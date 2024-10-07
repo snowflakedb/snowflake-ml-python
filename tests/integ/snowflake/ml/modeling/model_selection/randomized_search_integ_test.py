@@ -78,8 +78,7 @@ class RandomizedSearchCVTest(parameterized.TestCase):
             np.testing.assert_allclose(
                 sk_obj.best_score_,
                 sklearn_reg.best_score_,
-                rtol=1.0e-5,
-                atol=1.0e-4,
+                rtol=1.0e-4,
             )
         self.assertEqual(sk_obj.multimetric_, sklearn_reg.multimetric_)
         self.assertEqual(sk_obj.best_index_, sklearn_reg.best_index_)

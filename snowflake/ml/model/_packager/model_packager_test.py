@@ -110,7 +110,9 @@ class ModelLoadHygieneTest(absltest.TestCase):
                     model=lm,
                     sample_input_data=d,
                     metadata={"author": "halu", "version": "1"},
-                    options={"embed_local_ml_library": True, "_legacy_save": True},
+                    options={
+                        "embed_local_ml_library": True,
+                    },
                 )
                 self.assertTrue(
                     os.path.exists(
@@ -130,6 +132,7 @@ class ModelPackagerTest(absltest.TestCase):
             d = pd.DataFrame(arr, columns=["c1", "c2", "c3"])
             pk = model_packager.ModelPackager(os.path.join(workspace, "model1"))
 
+            # exception thrown when enable_explainability is not set
             with exception_utils.assert_snowml_exceptions(
                 self,
                 expected_original_error_type=ValueError,
@@ -140,6 +143,20 @@ class ModelPackagerTest(absltest.TestCase):
                     model=linear_model.LinearRegression(),
                     sample_input_data=d,
                     signatures={"predict": model_signature.ModelSignature(inputs=[], outputs=[])},
+                )
+
+            # exception thrown when enable_explainability is set to False
+            with exception_utils.assert_snowml_exceptions(
+                self,
+                expected_original_error_type=ValueError,
+                expected_regex="Signatures and sample_input_data both cannot be specified at the same time.",
+            ):
+                pk.save(
+                    name="model1",
+                    model=linear_model.LinearRegression(),
+                    sample_input_data=d,
+                    signatures={"predict": model_signature.ModelSignature(inputs=[], outputs=[])},
+                    options={"enable_explainability": False},
                 )
 
             with exception_utils.assert_snowml_exceptions(
@@ -173,14 +190,14 @@ class ModelPackagerTest(absltest.TestCase):
                 name="model1",
                 model=regr,
                 metadata={"author": "halu", "version": "1"},
-                model_objective=type_hints.ModelObjective.REGRESSION,
+                task=type_hints.Task.TABULAR_REGRESSION,
             )
 
             pk = model_packager.ModelPackager(os.path.join(tmpdir, "model1"))
             pk.load()
             assert pk.model
             assert pk.meta
-            self.assertEqual(type_hints.ModelObjective.REGRESSION, pk.meta.model_objective)
+            self.assertEqual(type_hints.Task.TABULAR_REGRESSION, pk.meta.task)
             assert isinstance(pk.model, LinearRegression)
             np.testing.assert_allclose(predictions, desired=pk.model.predict(df[:1])[[OUTPUT_COLUMNS]])
 

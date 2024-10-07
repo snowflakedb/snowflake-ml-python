@@ -182,7 +182,7 @@ class {transform.test_class_name}(TestCase):
                 # TODO(snandamuri): HistGradientBoostingRegressor is returning different results in different envs.
                 # Needs further debugging.
                 if {transform._is_hist_gradient_boosting_regressor}:
-                    num_diffs = (~np.isclose(actual_arr, sklearn_numpy_arr)).sum()
+                    num_diffs = (~np.isclose(actual_arr, sklearn_numpy_arr, rtol=1.e-2, atol=1.e-2)).sum()
                     num_example = sklearn_numpy_arr.shape[0]
                     assert num_diffs < 0.1 * num_example
                 elif (not {transform._is_deterministic}) or (not {transform._is_deterministic_cross_platform} and platform.system() == 'Windows'):

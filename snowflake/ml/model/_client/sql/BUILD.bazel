@@ -108,6 +108,7 @@ py_library(
     deps = [
         ":_base",
         "//snowflake/ml/_internal/utils:query_result_checker",
+        "//snowflake/ml/_internal/utils:snowflake_env",
         "//snowflake/ml/_internal/utils:sql_identifier",
     ],
 )

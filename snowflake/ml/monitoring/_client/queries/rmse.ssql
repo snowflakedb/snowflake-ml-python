@@ -1,0 +1,28 @@
+CREATE OR REPLACE FUNCTION ${MODEL_MONITOR_NAME}_RMSE()
+    RETURNS TABLE(event_timestamp TIMESTAMP_NTZ, value FLOAT)
+    AS
+$$$$
+WITH metric_of_interest as (
+    select
+    time_slice(timestamp, 1, 'hour') as event_timestamp,
+    AGGREGATE_METRICS:"sum_difference_squares_label_pred" as aggregate_field,
+    AGGREGATE_METRICS:"count" as "count"
+    from
+        $MONITORING_PRED_LABEL_JOINED_TABLE
+), metric_combine as (
+    select
+        event_timestamp,
+        CAST(SUM(NVL(aggregate_field, 0)) as DOUBLE) as metric_sum,
+        SUM("count") as metric_count
+    from
+        metric_of_interest
+    where
+        cast(aggregate_field as varchar) not in ('inf','-inf','NaN')
+    group by
+        1
+) select
+    event_timestamp,
+    SQRT(DIV0(metric_sum,metric_count)) as VALUE
+from metric_combine
+order by 1 desc
+$$$$;

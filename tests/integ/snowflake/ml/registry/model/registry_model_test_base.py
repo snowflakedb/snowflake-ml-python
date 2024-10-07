@@ -2,7 +2,7 @@ import inspect
 import uuid
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
-from snowflake.ml.model import type_hints as model_types
+from snowflake.ml.model import model_signature, type_hints as model_types
 from snowflake.ml.registry import registry
 from tests.integ.snowflake.ml.test_utils import (
     common_test_base,
@@ -41,6 +41,8 @@ class RegistryModelTestBase(common_test_base.CommonTestBase):
         sample_input_data: Optional[model_types.SupportedDataType] = None,
         additional_dependencies: Optional[List[str]] = None,
         options: Optional[model_types.ModelSaveOption] = None,
+        signatures: Optional[Dict[str, model_signature.ModelSignature]] = None,
+        additional_version_suffix: Optional[str] = None,
     ) -> None:
         conda_dependencies = [
             test_env_utils.get_latest_package_version_spec_in_server(self.session, "snowflake-snowpark-python!=1.12.0")
@@ -48,9 +50,13 @@ class RegistryModelTestBase(common_test_base.CommonTestBase):
         if additional_dependencies:
             conda_dependencies.extend(additional_dependencies)
 
+        version_suffix = self._run_id
+        if additional_version_suffix:
+            version_suffix = version_suffix + "_" + additional_version_suffix
+
         # Get the name of the caller as the model name
         name = f"model_{inspect.stack()[1].function}"
-        version = f"ver_{self._run_id}"
+        version = f"ver_{version_suffix}"
         mv = self.registry.log_model(
             model=model,
             model_name=name,
@@ -58,6 +64,7 @@ class RegistryModelTestBase(common_test_base.CommonTestBase):
             sample_input_data=sample_input_data,
             conda_dependencies=conda_dependencies,
             options=options,
+            signatures=signatures,
         )
 
         for target_method, (test_input, check_func) in prediction_assert_fns.items():
@@ -77,6 +84,8 @@ class RegistryModelTestBase(common_test_base.CommonTestBase):
         sample_input_data: Optional[model_types.SupportedDataType] = None,
         additional_dependencies: Optional[List[str]] = None,
         options: Optional[model_types.ModelSaveOption] = None,
+        signatures: Optional[Dict[str, model_signature.ModelSignature]] = None,
+        additional_version_suffix: Optional[str] = None,
     ) -> None:
         conda_dependencies = [
             test_env_utils.get_latest_package_version_spec_in_server(self.session, "snowflake-snowpark-python!=1.12.0")
@@ -84,11 +93,15 @@ class RegistryModelTestBase(common_test_base.CommonTestBase):
         if additional_dependencies:
             conda_dependencies.extend(additional_dependencies)
 
+        version_suffix = self._run_id
+        if additional_version_suffix:
+            version_suffix = version_suffix + "_" + additional_version_suffix
+
         # Get the name of the caller as the model name
         source_name = f"source_model_{inspect.stack()[1].function}"
         name = f"model_{inspect.stack()[1].function}"
-        source_version = f"source_ver_{self._run_id}"
-        version = f"ver_{self._run_id}"
+        source_version = f"source_ver_{version_suffix}"
+        version = f"ver_{version_suffix}"
         source_mv = self.registry.log_model(
             model=model,
             model_name=source_name,
@@ -96,6 +109,7 @@ class RegistryModelTestBase(common_test_base.CommonTestBase):
             sample_input_data=sample_input_data,
             conda_dependencies=conda_dependencies,
             options=options,
+            signatures=signatures,
         )
 
         # Create a new model when the model doesn't exist
@@ -112,7 +126,7 @@ class RegistryModelTestBase(common_test_base.CommonTestBase):
         self.registry.show_models()
 
         # Add a version when the model exists
-        version2 = f"ver_{self._run_id}_2"
+        version2 = f"ver_{version_suffix}_2"
         mv2 = self.registry.log_model(
             model=source_mv,
             model_name=name,

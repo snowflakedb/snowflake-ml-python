@@ -8,6 +8,7 @@ from absl.testing import absltest, parameterized
 from sklearn import datasets
 
 from snowflake.ml import dataset
+from snowflake.ml._internal.utils import identifier
 from snowflake.ml.model._model_composer import model_composer
 from snowflake.ml.modeling.lightgbm import LGBMRegressor
 from snowflake.ml.modeling.linear_model import LogisticRegression
@@ -15,14 +16,14 @@ from snowflake.ml.modeling.pipeline import Pipeline
 from snowflake.ml.modeling.xgboost import XGBRegressor
 from snowflake.snowpark import types as T
 from tests.integ.snowflake.ml.registry.model import registry_model_test_base
-from tests.integ.snowflake.ml.test_utils import test_env_utils
+from tests.integ.snowflake.ml.test_utils import dataframe_utils, test_env_utils
 
 
 class TestRegistryModelingModelInteg(registry_model_test_base.RegistryModelTestBase):
     @parameterized.product(  # type: ignore[misc]
         registry_test_fn=registry_model_test_base.RegistryModelTestBase.REGISTRY_TEST_FN_LIST,
     )
-    def test_snowml_model_deploy_snowml_sklearn(
+    def test_snowml_model_deploy_snowml_sklearn_explain_disabled(
         self,
         registry_test_fn: str,
     ) -> None:
@@ -46,12 +47,97 @@ class TestRegistryModelingModelInteg(registry_model_test_base.RegistryModelTestB
                     ),
                 ),
             },
+            options={"enable_explainability": False},
         )
 
     @parameterized.product(  # type: ignore[misc]
         registry_test_fn=registry_model_test_base.RegistryModelTestBase.REGISTRY_TEST_FN_LIST,
     )
-    def test_snowml_model_deploy_xgboost(
+    def test_snowml_model_deploy_snowml_sklearn_explain_default(
+        self,
+        registry_test_fn: str,
+    ) -> None:
+        iris_X = datasets.load_iris(as_frame=True).frame
+        iris_X.columns = [s.replace(" (CM)", "").replace(" ", "") for s in iris_X.columns.str.upper()]
+
+        INPUT_COLUMNS = ["SEPALLENGTH", "SEPALWIDTH", "PETALLENGTH", "PETALWIDTH"]
+        LABEL_COLUMNS = "TARGET"
+        OUTPUT_COLUMNS = "PREDICTED_TARGET"
+        EXPLAIN_OUTPUT_COLUMNS = [identifier.concat_names([feature, "_explanation"]) for feature in INPUT_COLUMNS]
+        regr = LogisticRegression(input_cols=INPUT_COLUMNS, output_cols=OUTPUT_COLUMNS, label_cols=LABEL_COLUMNS)
+        test_features = iris_X
+        regr.fit(test_features)
+
+        test_data = test_features[INPUT_COLUMNS]
+        expected_explanations = shap.Explainer(regr.to_sklearn(), masker=test_data)(test_data).values
+
+        getattr(self, registry_test_fn)(
+            model=regr,
+            prediction_assert_fns={
+                "predict": (
+                    test_features,
+                    lambda res: np.testing.assert_allclose(
+                        res[OUTPUT_COLUMNS].values, regr.predict(test_features)[OUTPUT_COLUMNS].values
+                    ),
+                ),
+                "explain": (
+                    test_features,
+                    lambda res: np.testing.assert_allclose(
+                        dataframe_utils.convert2D_json_to_3D(res[EXPLAIN_OUTPUT_COLUMNS].values),
+                        expected_explanations,
+                        rtol=1e-4,
+                    ),
+                ),
+            },
+            sample_input_data=test_data,
+        )
+
+    @parameterized.product(  # type: ignore[misc]
+        registry_test_fn=registry_model_test_base.RegistryModelTestBase.REGISTRY_TEST_FN_LIST,
+    )
+    def test_snowml_model_deploy_snowml_sklearn_explain_enabled(
+        self,
+        registry_test_fn: str,
+    ) -> None:
+        iris_X = datasets.load_iris(as_frame=True).frame
+        iris_X.columns = [s.replace(" (CM)", "").replace(" ", "") for s in iris_X.columns.str.upper()]
+
+        INPUT_COLUMNS = ["SEPALLENGTH", "SEPALWIDTH", "PETALLENGTH", "PETALWIDTH"]
+        LABEL_COLUMNS = "TARGET"
+        OUTPUT_COLUMNS = "PREDICTED_TARGET"
+        EXPLAIN_OUTPUT_COLUMNS = [identifier.concat_names([feature, "_explanation"]) for feature in INPUT_COLUMNS]
+        regr = LogisticRegression(input_cols=INPUT_COLUMNS, output_cols=OUTPUT_COLUMNS, label_cols=LABEL_COLUMNS)
+        test_features = iris_X
+        regr.fit(test_features)
+
+        test_data = test_features[INPUT_COLUMNS]
+        expected_explanations = shap.Explainer(regr.to_sklearn(), masker=test_data)(test_data).values
+        getattr(self, registry_test_fn)(
+            model=regr,
+            prediction_assert_fns={
+                "predict": (
+                    test_features,
+                    lambda res: np.testing.assert_allclose(
+                        res[OUTPUT_COLUMNS].values, regr.predict(test_features)[OUTPUT_COLUMNS].values
+                    ),
+                ),
+                "explain": (
+                    test_features,
+                    lambda res: np.testing.assert_allclose(
+                        dataframe_utils.convert2D_json_to_3D(res[EXPLAIN_OUTPUT_COLUMNS].values),
+                        expected_explanations,
+                        rtol=1e-4,
+                    ),
+                ),
+            },
+            sample_input_data=test_data,
+            options={"enable_explainability": True},
+        )
+
+    @parameterized.product(  # type: ignore[misc]
+        registry_test_fn=registry_model_test_base.RegistryModelTestBase.REGISTRY_TEST_FN_LIST,
+    )
+    def test_snowml_model_deploy_xgboost_explain_disabled(
         self,
         registry_test_fn: str,
     ) -> None:
@@ -91,7 +177,7 @@ class TestRegistryModelingModelInteg(registry_model_test_base.RegistryModelTestB
         INPUT_COLUMNS = ["SEPALLENGTH", "SEPALWIDTH", "PETALLENGTH", "PETALWIDTH"]
         LABEL_COLUMNS = "TARGET"
         PRED_OUTPUT_COLUMNS = "PREDICTED_TARGET"
-        EXPLAIN_OUTPUT_COLUMNS = [feature + "_explanation" for feature in INPUT_COLUMNS]
+        EXPLAIN_OUTPUT_COLUMNS = [identifier.concat_names([feature, "_explanation"]) for feature in INPUT_COLUMNS]
 
         regr = XGBRegressor(input_cols=INPUT_COLUMNS, output_cols=PRED_OUTPUT_COLUMNS, label_cols=LABEL_COLUMNS)
         test_features = iris_X
@@ -130,7 +216,7 @@ class TestRegistryModelingModelInteg(registry_model_test_base.RegistryModelTestB
         INPUT_COLUMNS = ["SEPALLENGTH", "SEPALWIDTH", "PETALLENGTH", "PETALWIDTH"]
         LABEL_COLUMNS = "TARGET"
         PRED_OUTPUT_COLUMNS = "PREDICTED_TARGET"
-        EXPLAIN_OUTPUT_COLUMNS = [feature + "_explanation" for feature in INPUT_COLUMNS]
+        EXPLAIN_OUTPUT_COLUMNS = [identifier.concat_names([feature, "_explanation"]) for feature in INPUT_COLUMNS]
 
         regr = XGBRegressor(input_cols=INPUT_COLUMNS, output_cols=PRED_OUTPUT_COLUMNS, label_cols=LABEL_COLUMNS)
         test_features = iris_X
@@ -160,47 +246,7 @@ class TestRegistryModelingModelInteg(registry_model_test_base.RegistryModelTestB
     @parameterized.product(  # type: ignore[misc]
         registry_test_fn=registry_model_test_base.RegistryModelTestBase.REGISTRY_TEST_FN_LIST,
     )
-    def test_snowml_model_deploy_xgboost_explain(
-        self,
-        registry_test_fn: str,
-    ) -> None:
-        iris_X = datasets.load_iris(as_frame=True).frame
-        iris_X.columns = [s.replace(" (CM)", "").replace(" ", "") for s in iris_X.columns.str.upper()]
-
-        INPUT_COLUMNS = ["SEPALLENGTH", "SEPALWIDTH", "PETALLENGTH", "PETALWIDTH"]
-        LABEL_COLUMNS = "TARGET"
-        PRED_OUTPUT_COLUMNS = "PREDICTED_TARGET"
-        EXPLAIN_OUTPUT_COLUMNS = [feature + "_explanation" for feature in INPUT_COLUMNS]
-
-        regr = XGBRegressor(input_cols=INPUT_COLUMNS, output_cols=PRED_OUTPUT_COLUMNS, label_cols=LABEL_COLUMNS)
-        test_features = iris_X
-        regr.fit(test_features)
-
-        expected_explanations = shap.Explainer(regr.to_xgboost())(test_features[INPUT_COLUMNS]).values
-
-        getattr(self, registry_test_fn)(
-            model=regr,
-            prediction_assert_fns={
-                "predict": (
-                    test_features,
-                    lambda res: np.testing.assert_allclose(
-                        res[PRED_OUTPUT_COLUMNS].values, regr.predict(test_features)[PRED_OUTPUT_COLUMNS].values
-                    ),
-                ),
-                "explain": (
-                    test_features,
-                    lambda res: np.testing.assert_allclose(
-                        res[EXPLAIN_OUTPUT_COLUMNS].values, expected_explanations, rtol=1e-4
-                    ),
-                ),
-            },
-            options={"enable_explainability": True},
-        )
-
-    @parameterized.product(  # type: ignore[misc]
-        registry_test_fn=registry_model_test_base.RegistryModelTestBase.REGISTRY_TEST_FN_LIST,
-    )
-    def test_snowml_model_deploy_lightgbm(
+    def test_snowml_model_deploy_lightgbm_explain_disabled(
         self,
         registry_test_fn: str,
     ) -> None:
@@ -240,7 +286,7 @@ class TestRegistryModelingModelInteg(registry_model_test_base.RegistryModelTestB
         INPUT_COLUMNS = ["SEPALLENGTH", "SEPALWIDTH", "PETALLENGTH", "PETALWIDTH"]
         LABEL_COLUMNS = "TARGET"
         PRED_OUTPUT_COLUMNS = "PREDICTED_TARGET"
-        EXPLAIN_OUTPUT_COLUMNS = [feature + "_explanation" for feature in INPUT_COLUMNS]
+        EXPLAIN_OUTPUT_COLUMNS = [identifier.concat_names([feature, "_explanation"]) for feature in INPUT_COLUMNS]
         regr = LGBMRegressor(input_cols=INPUT_COLUMNS, output_cols=PRED_OUTPUT_COLUMNS, label_cols=LABEL_COLUMNS)
         test_features = iris_X
         regr.fit(test_features)
@@ -280,54 +326,12 @@ class TestRegistryModelingModelInteg(registry_model_test_base.RegistryModelTestB
         INPUT_COLUMNS = ["SEPALLENGTH", "SEPALWIDTH", "PETALLENGTH", "PETALWIDTH"]
         LABEL_COLUMNS = "TARGET"
         PRED_OUTPUT_COLUMNS = "PREDICTED_TARGET"
-        EXPLAIN_OUTPUT_COLUMNS = [feature + "_explanation" for feature in INPUT_COLUMNS]
+        EXPLAIN_OUTPUT_COLUMNS = [identifier.concat_names([feature, "_explanation"]) for feature in INPUT_COLUMNS]
         regr = LGBMRegressor(input_cols=INPUT_COLUMNS, output_cols=PRED_OUTPUT_COLUMNS, label_cols=LABEL_COLUMNS)
         test_features = iris_X
         regr.fit(test_features)
 
         expected_explanations = shap.Explainer(regr.to_lightgbm())(test_features[INPUT_COLUMNS]).values
-
-        getattr(self, registry_test_fn)(
-            model=regr,
-            prediction_assert_fns={
-                "predict": (
-                    test_features,
-                    lambda res: np.testing.assert_allclose(
-                        res[PRED_OUTPUT_COLUMNS].values, regr.predict(test_features)[PRED_OUTPUT_COLUMNS].values
-                    ),
-                ),
-                "explain": (
-                    test_features,
-                    lambda res: np.testing.assert_allclose(
-                        res[EXPLAIN_OUTPUT_COLUMNS].values,
-                        expected_explanations,
-                        rtol=1e-5,
-                    ),
-                ),
-            },
-            options={"enable_explainability": True},
-        )
-
-    @parameterized.product(  # type: ignore[misc]
-        registry_test_fn=registry_model_test_base.RegistryModelTestBase.REGISTRY_TEST_FN_LIST,
-    )
-    def test_snowml_model_deploy_lightgbm_explain(
-        self,
-        registry_test_fn: str,
-    ) -> None:
-        iris_X = datasets.load_iris(as_frame=True).frame
-        iris_X.columns = [s.replace(" (CM)", "").replace(" ", "") for s in iris_X.columns.str.upper()]
-
-        INPUT_COLUMNS = ["SEPALLENGTH", "SEPALWIDTH", "PETALLENGTH", "PETALWIDTH"]
-        LABEL_COLUMNS = "TARGET"
-        PRED_OUTPUT_COLUMNS = "PREDICTED_TARGET"
-        EXPLAIN_OUTPUT_COLUMNS = [feature + "_explanation" for feature in INPUT_COLUMNS]
-        regr = LGBMRegressor(input_cols=INPUT_COLUMNS, output_cols=PRED_OUTPUT_COLUMNS, label_cols=LABEL_COLUMNS)
-        test_features = iris_X
-        regr.fit(test_features)
-
-        expected_explanations = shap.Explainer(regr.to_lightgbm())(test_features[INPUT_COLUMNS]).values
-        print(expected_explanations)
 
         getattr(self, registry_test_fn)(
             model=regr,

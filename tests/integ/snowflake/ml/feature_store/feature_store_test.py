@@ -2612,6 +2612,38 @@ class FeatureStoreTest(parameterized.TestCase):
         self.assertEqual("FULL", register(fs, "fv2", "FULL").refresh_mode)
         self.assertEqual("INCREMENTAL", register(fs, "fv3", "INCREMENTAL").refresh_mode)
 
+    def test_specified_initialize(self) -> None:
+        fs = self._create_feature_store()
+        sql = f"SELECT id, name, title FROM {self._mock_table}"
+
+        e = Entity("foo", ["id"])
+        fs.register_entity(e)
+
+        def register(
+            fs: FeatureStore, name: str, refresh_freq: Optional[str] = None, initialize: str = ""
+        ) -> FeatureView:
+            fv = FeatureView(
+                name=name,
+                entities=[e],
+                feature_df=self._session.sql(sql),
+                refresh_freq=refresh_freq,
+                initialize=initialize,
+            )
+            return fs.register_feature_view(feature_view=fv, version="v1")
+
+        self.assertEqual("ON_CREATE", register(fs, "fv1", None, "ON_CREATE").initialize)
+        self.assertEqual("ON_CREATE", register(fs, "fv2", "1d", "ON_CREATE").initialize)
+        self.assertEqual("ON_SCHEDULE", register(fs, "fv3", "5d", "ON_SCHEDULE").initialize)
+
+        with self.assertRaisesRegex(ValueError, "'initialize' only supports ON_CREATE or ON_SCHEDULE"):
+            FeatureView(
+                name="fv4",
+                entities=[e],
+                feature_df=self._session.sql(sql),
+                refresh_freq="1d",
+                initialize="RANDOM_INIT_VALUE",
+            )
+
     def test_feature_view_list_columns(self) -> None:
         fs = self._create_feature_store()
 

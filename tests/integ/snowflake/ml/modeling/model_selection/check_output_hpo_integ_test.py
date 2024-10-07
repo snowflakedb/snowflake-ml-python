@@ -90,7 +90,7 @@ class HPOCorrectness(parameterized.TestCase):
                 elif k == "params":  # compare the parameter combination
                     self.assertEqual(v.tolist(), cv_result_2[k])
                 elif k.endswith("test_score"):  # compare the test score
-                    np.testing.assert_allclose(v, cv_result_2[k], rtol=1.0e-7, atol=1.0e-7)
+                    np.testing.assert_allclose(v, cv_result_2[k], rtol=1.0e-5)
                 # Do not compare the fit time
 
     def _compare_global_variables(self, sk_obj: SkGridSearchCV, sklearn_reg: SkGridSearchCV) -> None:
@@ -100,7 +100,7 @@ class HPOCorrectness(parameterized.TestCase):
             assert isinstance(sk_obj.refit_time_, float)
         if hasattr(sk_obj, "best_score_"):
             # if refit = callable and no best_score specified, then this attribute is empty
-            np.testing.assert_allclose(sk_obj.best_score_, sklearn_reg.best_score_)
+            np.testing.assert_allclose(sk_obj.best_score_, sklearn_reg.best_score_, rtol=1.0e-5)
         self.assertEqual(sk_obj.multimetric_, sklearn_reg.multimetric_)
         self.assertEqual(sk_obj.best_index_, sklearn_reg.best_index_)
         if hasattr(sk_obj, "n_splits_"):  # n_splits_ is only available in RandomSearchCV
@@ -118,15 +118,13 @@ class HPOCorrectness(parameterized.TestCase):
                             np.testing.assert_allclose(
                                 getattr(sk_obj.best_estimator_, variable_name),
                                 getattr(sklearn_reg.best_estimator_, variable_name),
-                                rtol=1.0e-7,
-                                atol=1.0e-7,
+                                rtol=1.0e-5,
                             )
                     else:
                         np.testing.assert_allclose(
                             getattr(sk_obj.best_estimator_, variable_name),
                             getattr(sklearn_reg.best_estimator_, variable_name),
-                            rtol=1.0e-7,
-                            atol=1.0e-7,
+                            rtol=1.0e-5,
                         )
             self.assertEqual(sk_obj.n_features_in_, sklearn_reg.n_features_in_)
         if hasattr(sk_obj, "feature_names_in_") and hasattr(

@@ -1,4 +1,5 @@
 import os
+import warnings
 from typing import TYPE_CHECKING, Callable, Dict, Optional, Type, Union, cast, final
 
 import cloudpickle
@@ -6,22 +7,21 @@ import numpy as np
 import pandas as pd
 from typing_extensions import TypeGuard, Unpack
 
-import snowflake.snowpark.dataframe as sp_df
 from snowflake.ml._internal import type_utils
 from snowflake.ml.model import custom_model, model_signature, type_hints as model_types
 from snowflake.ml.model._packager.model_env import model_env
-from snowflake.ml.model._packager.model_handlers import _base, _utils as handlers_utils
+from snowflake.ml.model._packager.model_handlers import (
+    _base,
+    _utils as handlers_utils,
+    model_objective_utils,
+)
 from snowflake.ml.model._packager.model_handlers_migrator import base_migrator
 from snowflake.ml.model._packager.model_meta import (
     model_blob_meta,
     model_meta as model_meta_api,
     model_meta_schema,
 )
-from snowflake.ml.model._signatures import (
-    numpy_handler,
-    snowpark_handler,
-    utils as model_signature_utils,
-)
+from snowflake.ml.model._signatures import numpy_handler, utils as model_signature_utils
 
 if TYPE_CHECKING:
     import sklearn.base
@@ -40,28 +40,14 @@ class SKLModelHandler(_base.BaseModelHandler[Union["sklearn.base.BaseEstimator",
     _MIN_SNOWPARK_ML_VERSION = "1.0.12"
     _HANDLER_MIGRATOR_PLANS: Dict[str, Type[base_migrator.BaseModelHandlerMigrator]] = {}
 
-    DEFAULT_TARGET_METHODS = ["predict", "transform", "predict_proba", "predict_log_proba", "decision_function"]
-
-    @classmethod
-    def get_model_objective(
-        cls, model: Union["sklearn.base.BaseEstimator", "sklearn.pipeline.Pipeline"]
-    ) -> model_types.ModelObjective:
-        import sklearn.pipeline
-        from sklearn.base import is_classifier, is_regressor
-
-        if isinstance(model, sklearn.pipeline.Pipeline):
-            return model_types.ModelObjective.UNKNOWN
-        if is_regressor(model):
-            return model_types.ModelObjective.REGRESSION
-        if is_classifier(model):
-            classes_list = getattr(model, "classes_", [])
-            num_classes = getattr(model, "n_classes_", None) or len(classes_list)
-            if isinstance(num_classes, int):
-                if num_classes > 2:
-                    return model_types.ModelObjective.MULTI_CLASSIFICATION
-                return model_types.ModelObjective.BINARY_CLASSIFICATION
-            return model_types.ModelObjective.UNKNOWN
-        return model_types.ModelObjective.UNKNOWN
+    DEFAULT_TARGET_METHODS = [
+        "predict",
+        "transform",
+        "predict_proba",
+        "predict_log_proba",
+        "decision_function",
+    ]
+    EXPLAIN_TARGET_METHODS = ["predict", "predict_proba", "predict_log_proba"]
 
     @classmethod
     def can_handle(
@@ -95,18 +81,6 @@ class SKLModelHandler(_base.BaseModelHandler[Union["sklearn.base.BaseEstimator",
 
         return cast(Union["sklearn.base.BaseEstimator", "sklearn.pipeline.Pipeline"], model)
 
-    @staticmethod
-    def get_explainability_supported_background(
-        sample_input_data: Optional[model_types.SupportedDataType] = None,
-    ) -> Optional[pd.DataFrame]:
-        if isinstance(sample_input_data, pd.DataFrame) or isinstance(sample_input_data, sp_df.DataFrame):
-            return (
-                sample_input_data
-                if isinstance(sample_input_data, pd.DataFrame)
-                else snowpark_handler.SnowparkDataFrameHandler.convert_to_df(sample_input_data)
-            )
-        return None
-
     @classmethod
     def save_model(
         cls,
@@ -125,23 +99,10 @@ class SKLModelHandler(_base.BaseModelHandler[Union["sklearn.base.BaseEstimator",
         import sklearn.pipeline
 
         assert isinstance(model, sklearn.base.BaseEstimator) or isinstance(model, sklearn.pipeline.Pipeline)
-
-        background_data = cls.get_explainability_supported_background(sample_input_data)
-
-        # if users did not ask then we enable if we have background data
-        if enable_explainability is None and background_data is not None:
-            enable_explainability = True
         if enable_explainability:
-            # if users set it explicitly but no background data then error out
-            if background_data is None:
-                raise ValueError(
-                    "Sample input data is required to enable explainability. Currently we only support this for "
-                    + "`pandas.DataFrame` and `snowflake.snowpark.dataframe.DataFrame`."
-                )
-            data_blob_path = os.path.join(model_blobs_dir_path, cls.EXPLAIN_ARTIFACTS_DIR)
-            os.makedirs(data_blob_path, exist_ok=True)
-            with open(os.path.join(data_blob_path, name + cls.BG_DATA_FILE_SUFFIX), "wb") as f:
-                background_data.to_parquet(f)
+            # if users set it explicitly but no sample_input_data then error out
+            if sample_input_data is None:
+                raise ValueError("Sample input data is required to enable explainability.")
 
         if not is_sub_model:
             target_methods = handlers_utils.get_target_methods(
@@ -151,7 +112,8 @@ class SKLModelHandler(_base.BaseModelHandler[Union["sklearn.base.BaseEstimator",
             )
 
             def get_prediction(
-                target_method_name: str, sample_input_data: model_types.SupportedLocalDataType
+                target_method_name: str,
+                sample_input_data: model_types.SupportedLocalDataType,
             ) -> model_types.SupportedLocalDataType:
                 if not isinstance(sample_input_data, (pd.DataFrame, np.ndarray)):
                     sample_input_data = model_signature._convert_local_data_to_df(sample_input_data)
@@ -169,19 +131,40 @@ class SKLModelHandler(_base.BaseModelHandler[Union["sklearn.base.BaseEstimator",
                 get_prediction_fn=get_prediction,
             )
 
-            model_objective = cls.get_model_objective(model)
-            model_meta.model_objective = model_objective
+            explain_target_method = handlers_utils.get_explain_target_method(model_meta, cls.EXPLAIN_TARGET_METHODS)
 
+            background_data = handlers_utils.get_explainability_supported_background(
+                sample_input_data, model_meta, explain_target_method
+            )
+
+            model_task_and_output_type = model_objective_utils.get_model_task_and_output_type(model)
+            model_meta.task = model_task_and_output_type.task
+
+            # if users did not ask then we enable if we have background data
+            if enable_explainability is None:
+                if background_data is None:
+                    warnings.warn(
+                        "sample_input_data should be provided to enable explainability by default",
+                        category=UserWarning,
+                        stacklevel=1,
+                    )
+                    enable_explainability = False
+                else:
+                    enable_explainability = True
             if enable_explainability:
-                output_type = model_signature.DataType.DOUBLE
+                handlers_utils.save_background_data(
+                    model_blobs_dir_path,
+                    cls.EXPLAIN_ARTIFACTS_DIR,
+                    cls.BG_DATA_FILE_SUFFIX,
+                    name,
+                    background_data,
+                )
 
-                if model_objective == model_types.ModelObjective.MULTI_CLASSIFICATION:
-                    output_type = model_signature.DataType.STRING
                 model_meta = handlers_utils.add_explain_method_signature(
                     model_meta=model_meta,
                     explain_method="explain",
-                    target_method="predict",
-                    output_return_type=output_type,
+                    target_method=explain_target_method,
+                    output_return_type=model_task_and_output_type.output_type,
                 )
 
         model_blob_path = os.path.join(model_blobs_dir_path, name)
@@ -202,7 +185,8 @@ class SKLModelHandler(_base.BaseModelHandler[Union["sklearn.base.BaseEstimator",
             model_meta.explain_algorithm = model_meta_schema.ModelExplainAlgorithm.SHAP
 
         model_meta.env.include_if_absent(
-            [model_env.ModelDependency(requirement="scikit-learn", pip_name="scikit-learn")], check_local_version=True
+            [model_env.ModelDependency(requirement="scikit-learn", pip_name="scikit-learn")],
+            check_local_version=True,
         )
 
     @classmethod

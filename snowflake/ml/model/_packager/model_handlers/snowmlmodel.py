@@ -43,6 +43,8 @@ class SnowMLModelHandler(_base.BaseModelHandler["BaseEstimator"]):
     _HANDLER_MIGRATOR_PLANS: Dict[str, Type[base_migrator.BaseModelHandlerMigrator]] = {}
 
     DEFAULT_TARGET_METHODS = ["predict", "transform", "predict_proba", "predict_log_proba", "decision_function"]
+    EXPLAIN_TARGET_METHODS = ["predict", "predict_proba", "predict_log_proba"]
+
     IS_AUTO_SIGNATURE = True
 
     @classmethod
@@ -71,13 +73,14 @@ class SnowMLModelHandler(_base.BaseModelHandler["BaseEstimator"]):
 
     @classmethod
     def _get_local_version_package(cls, pkg_name: str) -> Optional[version.Version]:
-        import importlib_metadata
+        from importlib import metadata as importlib_metadata
+
         from packaging import version
 
         local_version = None
 
         try:
-            local_dist = importlib_metadata.distribution(pkg_name)  # type: ignore[no-untyped-call]
+            local_dist = importlib_metadata.distribution(pkg_name)
             local_version = version.parse(local_dist.version)
         except importlib_metadata.PackageNotFoundError:
             pass
@@ -104,7 +107,13 @@ class SnowMLModelHandler(_base.BaseModelHandler["BaseEstimator"]):
     def _get_supported_object_for_explainability(
         cls, estimator: "BaseEstimator", enable_explainability: Optional[bool]
     ) -> Any:
-        methods = ["to_xgboost", "to_lightgbm"]
+        from snowflake.ml.modeling import pipeline as snowml_pipeline
+
+        # handle pipeline objects separately
+        if isinstance(estimator, snowml_pipeline.Pipeline):  # type: ignore[attr-defined]
+            return None
+
+        methods = ["to_xgboost", "to_lightgbm", "to_sklearn"]
         for method_name in methods:
             if hasattr(estimator, method_name):
                 try:
@@ -136,9 +145,9 @@ class SnowMLModelHandler(_base.BaseModelHandler["BaseEstimator"]):
         # Pipeline is inherited from BaseEstimator, so no need to add one more check
 
         if not is_sub_model:
-            if sample_input_data is not None or model_meta.signatures:
+            if model_meta.signatures:
                 warnings.warn(
-                    "Inferring model signature from sample input or providing model signature for Snowpark ML "
+                    "Providing model signature for Snowpark ML "
                     + "Modeling model is not required. Model signature will automatically be inferred during fitting. ",
                     UserWarning,
                     stacklevel=2,
@@ -162,21 +171,30 @@ class SnowMLModelHandler(_base.BaseModelHandler["BaseEstimator"]):
             python_base_obj = cls._get_supported_object_for_explainability(model, enable_explainability)
             if python_base_obj is None:
                 if enable_explainability:  # if user set enable_explainability to True, throw error else silently skip
-                    raise ValueError("Explain only support for xgboost or lightgbm Snowpark ML models.")
+                    raise ValueError(
+                        "Explain only supported for xgboost, lightgbm and sklearn (not pipeline) Snowpark ML models."
+                    )
                 # set None to False so we don't include shap in the environment
                 enable_explainability = False
             else:
-                model_objective_and_output_type = model_objective_utils.get_model_objective_and_output_type(
-                    python_base_obj
-                )
-                model_meta.model_objective = model_objective_and_output_type.objective
+                model_task_and_output_type = model_objective_utils.get_model_task_and_output_type(python_base_obj)
+                model_meta.task = model_task_and_output_type.task
+                explain_target_method = handlers_utils.get_explain_target_method(model_meta, cls.EXPLAIN_TARGET_METHODS)
                 model_meta = handlers_utils.add_explain_method_signature(
                     model_meta=model_meta,
                     explain_method="explain",
-                    target_method="predict",
-                    output_return_type=model_objective_and_output_type.output_type,
+                    target_method=explain_target_method,
+                    output_return_type=model_task_and_output_type.output_type,
                 )
                 enable_explainability = True
+
+                background_data = handlers_utils.get_explainability_supported_background(
+                    sample_input_data, model_meta, explain_target_method
+                )
+                if background_data is not None:
+                    handlers_utils.save_background_data(
+                        model_blobs_dir_path, cls.EXPLAIN_ARTIFACTS_DIR, cls.BG_DATA_FILE_SUFFIX, name, background_data
+                    )
 
         model_blob_path = os.path.join(model_blobs_dir_path, name)
         os.makedirs(model_blob_path, exist_ok=True)
@@ -258,6 +276,7 @@ class SnowMLModelHandler(_base.BaseModelHandler["BaseEstimator"]):
                 raw_model: "BaseEstimator",
                 signature: model_signature.ModelSignature,
                 target_method: str,
+                background_data: Optional[pd.DataFrame] = None,
             ) -> Callable[[custom_model.CustomModel, pd.DataFrame], pd.DataFrame]:
                 @custom_model.inference_api
                 def fn(self: custom_model.CustomModel, X: pd.DataFrame) -> pd.DataFrame:
@@ -276,16 +295,16 @@ class SnowMLModelHandler(_base.BaseModelHandler["BaseEstimator"]):
                 def explain_fn(self: custom_model.CustomModel, X: pd.DataFrame) -> pd.DataFrame:
                     import shap
 
-                    methods = ["to_xgboost", "to_lightgbm"]
+                    methods = ["to_xgboost", "to_lightgbm", "to_sklearn"]
                     for method_name in methods:
                         try:
                             base_model = getattr(raw_model, method_name)()
-                            explainer = shap.TreeExplainer(base_model)
-                            df = pd.DataFrame(explainer(X).values)
+                            explainer = shap.Explainer(base_model, masker=background_data)
+                            df = handlers_utils.convert_explanations_to_2D_df(raw_model, explainer(X).values)
                             return model_signature_utils.rename_pandas_df(df, signature.outputs)
                         except exceptions.SnowflakeMLException:
                             pass  # Do nothing and continue to the next method
-                    raise ValueError("The model must be an xgboost or lightgbm estimator.")
+                    raise ValueError("The model must be an xgboost, lightgbm or sklearn (not pipeline) estimator.")
 
                 if target_method == "explain":
                     return explain_fn
@@ -294,7 +313,7 @@ class SnowMLModelHandler(_base.BaseModelHandler["BaseEstimator"]):
 
             type_method_dict = {}
             for target_method_name, sig in model_meta.signatures.items():
-                type_method_dict[target_method_name] = fn_factory(raw_model, sig, target_method_name)
+                type_method_dict[target_method_name] = fn_factory(raw_model, sig, target_method_name, background_data)
 
             _SnowMLModel = type(
                 "_SnowMLModel",

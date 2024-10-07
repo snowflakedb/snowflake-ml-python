@@ -23,6 +23,7 @@ py_library(
         "//snowflake/ml/model/_model_composer/model_method",
         "//snowflake/ml/model/_model_composer/model_method:function_generator",
         "//snowflake/ml/model/_packager/model_meta",
+        "//snowflake/ml/model/_packager/model_runtime",
     ],
 )
 
@@ -48,5 +49,6 @@ py_test(
         "//snowflake/ml/model:type_hints",
         "//snowflake/ml/model/_packager/model_meta",
         "//snowflake/ml/model/_packager/model_meta:model_blob_meta",
+        "//snowflake/ml/model/_packager/model_runtime",
     ],
 )

@@ -3,10 +3,13 @@ import json
 import textwrap
 from typing import Any, Dict, List, Optional, Tuple
 
+from packaging import version
+
 from snowflake import snowpark
 from snowflake.ml._internal.utils import (
     identifier,
     query_result_checker,
+    snowflake_env,
     sql_identifier,
 )
 from snowflake.ml.model._client.sql import _base
@@ -92,15 +95,8 @@ class ServiceSQLClient(_base._BaseSQLClient):
         actual_database_name = database_name or self._database_name
         actual_schema_name = schema_name or self._schema_name
 
-        function_name = identifier.concat_names([service_name.identifier(), "_", method_name.identifier()])
-        fully_qualified_function_name = identifier.get_schema_level_object_identifier(
-            actual_database_name.identifier(),
-            actual_schema_name.identifier(),
-            function_name,
-        )
-
         if len(input_df.queries["queries"]) == 1 and len(input_df.queries["post_actions"]) == 0:
-            INTERMEDIATE_TABLE_NAME = "SNOWPARK_ML_MODEL_INFERENCE_INPUT"
+            INTERMEDIATE_TABLE_NAME = ServiceSQLClient.get_tmp_name_with_prefix("SNOWPARK_ML_MODEL_INFERENCE_INPUT")
             with_statements.append(f"{INTERMEDIATE_TABLE_NAME} AS ({input_df.queries['queries'][0]})")
         else:
             tmp_table_name = snowpark_utils.random_name_for_temp_object(snowpark_utils.TempObjectType.TABLE)
@@ -116,13 +112,29 @@ class ServiceSQLClient(_base._BaseSQLClient):
                 statement_params=statement_params,
             )
 
-        INTERMEDIATE_OBJ_NAME = "TMP_RESULT"
+        INTERMEDIATE_OBJ_NAME = ServiceSQLClient.get_tmp_name_with_prefix("TMP_RESULT")
 
         with_sql = f"WITH {','.join(with_statements)}" if with_statements else ""
         args_sql_list = []
         for input_arg_value in input_args:
             args_sql_list.append(input_arg_value)
         args_sql = ", ".join(args_sql_list)
+
+        if snowflake_env.get_current_snowflake_version(
+            self._session, statement_params=statement_params
+        ) >= version.parse("8.39.0"):
+            fully_qualified_service_name = self.fully_qualified_object_name(
+                actual_database_name, actual_schema_name, service_name
+            )
+            fully_qualified_function_name = f"{fully_qualified_service_name}!{method_name.identifier()}"
+
+        else:
+            function_name = identifier.concat_names([service_name.identifier(), "_", method_name.identifier()])
+            fully_qualified_function_name = identifier.get_schema_level_object_identifier(
+                actual_database_name.identifier(),
+                actual_schema_name.identifier(),
+                function_name,
+            )
 
         sql = textwrap.dedent(
             f"""{with_sql}
@@ -154,7 +166,9 @@ class ServiceSQLClient(_base._BaseSQLClient):
     def get_service_logs(
         self,
         *,
-        service_name: str,
+        database_name: Optional[sql_identifier.SqlIdentifier],
+        schema_name: Optional[sql_identifier.SqlIdentifier],
+        service_name: sql_identifier.SqlIdentifier,
         instance_id: str = "0",
         container_name: str,
         statement_params: Optional[Dict[str, Any]] = None,
@@ -163,7 +177,11 @@ class ServiceSQLClient(_base._BaseSQLClient):
         rows = (
             query_result_checker.SqlResultValidator(
                 self._session,
-                f"CALL {system_func}('{service_name}', '{instance_id}', '{container_name}')",
+                (
+                    f"CALL {system_func}("
+                    f"'{self.fully_qualified_object_name(database_name, schema_name, service_name)}', '{instance_id}', "
+                    f"'{container_name}')"
+                ),
                 statement_params=statement_params,
             )
             .has_dimensions(expected_rows=1, expected_cols=1)
@@ -174,7 +192,9 @@ class ServiceSQLClient(_base._BaseSQLClient):
     def get_service_status(
         self,
         *,
-        service_name: str,
+        database_name: Optional[sql_identifier.SqlIdentifier],
+        schema_name: Optional[sql_identifier.SqlIdentifier],
+        service_name: sql_identifier.SqlIdentifier,
         include_message: bool = False,
         statement_params: Optional[Dict[str, Any]] = None,
     ) -> Tuple[ServiceStatus, Optional[str]]:
@@ -182,7 +202,7 @@ class ServiceSQLClient(_base._BaseSQLClient):
         rows = (
             query_result_checker.SqlResultValidator(
                 self._session,
-                f"CALL {system_func}('{service_name}')",
+                f"CALL {system_func}('{self.fully_qualified_object_name(database_name, schema_name, service_name)}')",
                 statement_params=statement_params,
             )
             .has_dimensions(expected_rows=1, expected_cols=1)
@@ -194,3 +214,17 @@ class ServiceSQLClient(_base._BaseSQLClient):
             message = metadata["message"] if include_message else None
             return service_status, message
         return ServiceStatus.UNKNOWN, None
+
+    def drop_service(
+        self,
+        *,
+        database_name: Optional[sql_identifier.SqlIdentifier],
+        schema_name: Optional[sql_identifier.SqlIdentifier],
+        service_name: sql_identifier.SqlIdentifier,
+        statement_params: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        query_result_checker.SqlResultValidator(
+            self._session,
+            f"DROP SERVICE {self.fully_qualified_object_name(database_name, schema_name, service_name)}",
+            statement_params=statement_params,
+        ).has_dimensions(expected_rows=1, expected_cols=1).validate()
