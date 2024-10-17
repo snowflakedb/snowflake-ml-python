@@ -52,8 +52,8 @@ class DBManager:
         if_exists_sql = " IF EXISTS" if if_exists else ""
         self._session.sql(f"DROP DATABASE{if_exists_sql} {actual_db_name}").collect()
 
-    def cleanup_databases(self, expire_hours: int = 72) -> None:
-        databases_df = self.show_databases(f"{_COMMON_PREFIX}%")
+    def cleanup_databases(self, prefix: str = _COMMON_PREFIX, expire_hours: int = 72) -> None:
+        databases_df = self.show_databases(f"{prefix}%")
         stale_databases = databases_df.filter(
             f"\"created_on\" < dateadd('hour', {-expire_hours}, current_timestamp())"
         ).collect()
@@ -208,9 +208,13 @@ class DBManager:
         self._session.sql(f"DROP STAGE{if_exists_sql} {full_qual_stage_name}").collect()
 
     def cleanup_stages(
-        self, schema_name: Optional[str] = None, db_name: Optional[str] = None, expire_days: int = 3
+        self,
+        prefix: str = _COMMON_PREFIX,
+        schema_name: Optional[str] = None,
+        db_name: Optional[str] = None,
+        expire_days: int = 3,
     ) -> None:
-        stages_df = self.show_stages(f"{_COMMON_PREFIX}%", schema_name, db_name)
+        stages_df = self.show_stages(f"{prefix}%", schema_name, db_name)
         stale_stages = stages_df.filter(
             f"\"created_on\" < dateadd('day', {-expire_days}, current_timestamp())"
         ).collect()
@@ -258,9 +262,13 @@ class DBManager:
         self._session.sql(f"DROP FUNCTION{if_exists_sql} {full_qual_function_def}").collect()
 
     def cleanup_user_functions(
-        self, schema_name: Optional[str] = None, db_name: Optional[str] = None, expire_days: int = 3
+        self,
+        prefix: str = _COMMON_PREFIX,
+        schema_name: Optional[str] = None,
+        db_name: Optional[str] = None,
+        expire_days: int = 3,
     ) -> None:
-        user_functions_df = self.show_user_functions(f"{_COMMON_PREFIX}%", schema_name, db_name)
+        user_functions_df = self.show_user_functions(f"{prefix}%", schema_name, db_name)
         stale_funcs = user_functions_df.filter(
             f"\"created_on\" < dateadd('day', {-expire_days}, current_timestamp())"
         ).collect()
@@ -289,6 +297,10 @@ class DBManager:
         ).collect()
         return full_qual_compute_pool_name
 
+    def show_compute_pools(self, compute_pool_name: str) -> snowpark.DataFrame:
+        sql = f"SHOW COMPUTE POOLS LIKE '{compute_pool_name}'"
+        return self._session.sql(sql)
+
     def drop_compute_pool(
         self,
         compute_pool_name: str,
@@ -297,6 +309,50 @@ class DBManager:
         full_qual_compute_pool_name = identifier.get_inferred_name(compute_pool_name)
         if_exists_sql = " IF EXISTS" if if_exists else ""
         self._session.sql(f"DROP COMPUTE POOL{if_exists_sql} {full_qual_compute_pool_name}").collect()
+
+    def cleanup_compute_pools(self, prefix: str = _COMMON_PREFIX, expire_hours: int = 72) -> None:
+        compute_pools_df = self.show_compute_pools(f"{prefix}%")
+        stale_compute_pools = compute_pools_df.filter(
+            f"\"created_on\" < dateadd('hour', {-expire_hours}, current_timestamp())"
+        ).collect()
+        for stale_cp in stale_compute_pools:
+            self.drop_compute_pool(stale_cp.name, if_exists=True)
+
+    def create_warehouse(
+        self,
+        wh_name: str,
+        creation_mode: sql_client.CreationMode = _default_creation_mode,
+        size: str = "XSMALL",
+    ) -> str:
+        actual_wh_name = identifier.get_inferred_name(wh_name)
+        ddl_phrases = creation_mode.get_ddl_phrases()
+        self._session.sql(
+            f"CREATE{ddl_phrases[sql_client.CreationOption.OR_REPLACE]} WAREHOUSE"
+            f"{ddl_phrases[sql_client.CreationOption.CREATE_IF_NOT_EXIST]} "
+            f"{actual_wh_name} SIZE={size}"
+        ).collect()
+        return actual_wh_name
+
+    def use_warehouse(self, wh_name: str) -> None:
+        actual_wh_name = identifier.get_inferred_name(wh_name)
+        self._session.use_warehouse(actual_wh_name)
+
+    def show_warehouses(self, wh_name: str) -> snowpark.DataFrame:
+        sql = f"SHOW WAREHOUSES LIKE '{wh_name}'"
+        return self._session.sql(sql)
+
+    def drop_warehouse(self, wh_name: str, if_exists: bool = False) -> None:
+        actual_wh_name = identifier.get_inferred_name(wh_name)
+        if_exists_sql = " IF EXISTS" if if_exists else ""
+        self._session.sql(f"DROP WAREHOUSE{if_exists_sql} {actual_wh_name}").collect()
+
+    def cleanup_warehouses(self, prefix: str = _COMMON_PREFIX, expire_hours: int = 72) -> None:
+        warehouses_df = self.show_warehouses(f"{prefix}%")
+        stale_warehouses = warehouses_df.filter(
+            f"\"created_on\" < dateadd('hour', {-expire_hours}, current_timestamp())"
+        ).collect()
+        for stale_wh in stale_warehouses:
+            self.drop_warehouse(stale_wh.name, if_exists=True)
 
     def create_image_repo(
         self,
@@ -340,82 +396,6 @@ class DBManager:
             full_qual_image_repo_name = actual_image_repo_name
         if_exists_sql = " IF EXISTS" if if_exists else ""
         self._session.sql(f"DROP IMAGE REPOSITORY{if_exists_sql} {full_qual_image_repo_name}").collect()
-
-    def create_network_rule(
-        self,
-        network_rule_name: str,
-        schema_name: Optional[str] = None,
-        db_name: Optional[str] = None,
-        creation_mode: sql_client.CreationMode = _default_creation_mode,
-        mode: str = "EGRESS",
-        type: str = "HOST_PORT",
-        value_list: Optional[List[str]] = None,
-    ) -> str:
-        actual_network_rule_name = identifier.get_inferred_name(network_rule_name)
-        if schema_name:
-            full_qual_schema_name = self.create_schema(
-                schema_name, db_name, creation_mode=sql_client.CreationMode(if_not_exists=True)
-            )
-            full_qual_network_rule_name = f"{full_qual_schema_name}.{actual_network_rule_name}"
-        else:
-            full_qual_network_rule_name = actual_network_rule_name
-        ddl_phrases = creation_mode.get_ddl_phrases()
-        mode_sql = f" MODE = '{mode}'"
-        type_sql = f" TYPE = '{type}'"
-        value_list = [] if value_list is None else value_list
-        value_list_val = ", ".join([f"'{v}'" for v in value_list])
-        value_list_sql = f" VALUE_LIST = ({value_list_val})"
-        self._session.sql(
-            f"CREATE{ddl_phrases[sql_client.CreationOption.OR_REPLACE]} NETWORK RULE"
-            f"{ddl_phrases[sql_client.CreationOption.CREATE_IF_NOT_EXIST]} {full_qual_network_rule_name}"
-            f"{mode_sql}{type_sql}{value_list_sql}"
-        ).collect()
-        return full_qual_network_rule_name
-
-    def drop_network_rule(
-        self,
-        network_rule_name: str,
-        schema_name: Optional[str] = None,
-        db_name: Optional[str] = None,
-        if_exists: bool = False,
-    ) -> None:
-        actual_network_rule_name = identifier.get_inferred_name(network_rule_name)
-        if schema_name:
-            actual_schema_name = identifier.get_inferred_name(schema_name)
-            if db_name:
-                actual_db_name = identifier.get_inferred_name(db_name)
-                full_qual_schema_name = f"{actual_db_name}.{actual_schema_name}"
-            else:
-                full_qual_schema_name = actual_schema_name
-            full_qual_network_rule_name = f"{full_qual_schema_name}.{actual_network_rule_name}"
-        else:
-            full_qual_network_rule_name = actual_network_rule_name
-        if_exists_sql = " IF EXISTS" if if_exists else ""
-        self._session.sql(f"DROP NETWORK RULE{if_exists_sql} {full_qual_network_rule_name}").collect()
-
-    def create_external_access_integration(
-        self,
-        external_access_integration_name: str,
-        creation_mode: sql_client.CreationMode = _default_creation_mode,
-        allowed_network_rules: Optional[List[str]] = None,
-        enabled: bool = True,
-    ) -> str:
-        full_qual_eai_name = identifier.get_inferred_name(external_access_integration_name)
-        ddl_phrases = creation_mode.get_ddl_phrases()
-        allowed_network_rules = [] if allowed_network_rules is None else allowed_network_rules
-        allowed_network_rules_sql = f" ALLOWED_NETWORK_RULES = ({', '.join(allowed_network_rules)})"
-        enabled_sql = f" ENABLED = {enabled}"
-        self._session.sql(
-            f"CREATE{ddl_phrases[sql_client.CreationOption.OR_REPLACE]} EXTERNAL ACCESS INTEGRATION"
-            f"{ddl_phrases[sql_client.CreationOption.CREATE_IF_NOT_EXIST]} {full_qual_eai_name}"
-            f"{allowed_network_rules_sql}{enabled_sql}"
-        ).collect()
-        return full_qual_eai_name
-
-    def drop_external_access_integration(self, external_access_integration_name: str, if_exists: bool = False) -> None:
-        full_qual_eai_name = identifier.get_inferred_name(external_access_integration_name)
-        if_exists_sql = " IF EXISTS" if if_exists else ""
-        self._session.sql(f"DROP EXTERNAL ACCESS INTEGRATION{if_exists_sql} {full_qual_eai_name}").collect()
 
 
 class TestObjectNameGenerator:

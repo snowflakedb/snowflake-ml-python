@@ -7,6 +7,7 @@ from absl.testing import absltest, parameterized
 from sklearn import datasets, model_selection
 
 from snowflake.ml.model import model_signature
+from snowflake.ml.model._model_composer.model_manifest import model_manifest_schema
 from tests.integ.snowflake.ml.registry.model import registry_model_test_base
 from tests.integ.snowflake.ml.test_utils import dataframe_utils
 
@@ -35,6 +36,7 @@ class TestRegistryXGBoostModelInteg(registry_model_test_base.RegistryModelTestBa
             },
             # pin version of shap for tests
             additional_dependencies=[f"shap=={shap.__version__}"],
+            function_type_assert={"explain": model_manifest_schema.ModelMethodFunctionTypes.TABLE_FUNCTION},
         )
 
     @parameterized.product(  # type: ignore[misc]
@@ -89,6 +91,7 @@ class TestRegistryXGBoostModelInteg(registry_model_test_base.RegistryModelTestBa
                     lambda res: np.testing.assert_allclose(res.values, expected_explanations, rtol=1e-4),
                 ),
             },
+            function_type_assert={"explain": model_manifest_schema.ModelMethodFunctionTypes.TABLE_FUNCTION},
         )
 
     @parameterized.product(  # type: ignore[misc]
@@ -116,6 +119,7 @@ class TestRegistryXGBoostModelInteg(registry_model_test_base.RegistryModelTestBa
                 ),
             },
             options={"enable_explainability": True},
+            function_type_assert={"explain": model_manifest_schema.ModelMethodFunctionTypes.TABLE_FUNCTION},
         )
 
     @parameterized.product(  # type: ignore[misc]
@@ -190,6 +194,7 @@ class TestRegistryXGBoostModelInteg(registry_model_test_base.RegistryModelTestBa
                     ),
                 ),
             },
+            function_type_assert={"explain": model_manifest_schema.ModelMethodFunctionTypes.TABLE_FUNCTION},
         )
 
     @parameterized.product(  # type: ignore[misc]
@@ -243,6 +248,7 @@ class TestRegistryXGBoostModelInteg(registry_model_test_base.RegistryModelTestBa
                     lambda res: np.testing.assert_allclose(res.values, expected_explanations, rtol=1e-4),
                 ),
             },
+            function_type_assert={"explain": model_manifest_schema.ModelMethodFunctionTypes.TABLE_FUNCTION},
         )
 
     @parameterized.product(  # type: ignore[misc]
@@ -325,6 +331,7 @@ class TestRegistryXGBoostModelInteg(registry_model_test_base.RegistryModelTestBa
                     ),
                 ),
             },
+            function_type_assert={"explain": model_manifest_schema.ModelMethodFunctionTypes.TABLE_FUNCTION},
         )
 
     @parameterized.product(  # type: ignore[misc]

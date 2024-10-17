@@ -10,6 +10,7 @@ from sklearn import datasets
 from snowflake.ml import dataset
 from snowflake.ml._internal.utils import identifier
 from snowflake.ml.model._model_composer import model_composer
+from snowflake.ml.model._model_composer.model_manifest import model_manifest_schema
 from snowflake.ml.modeling.lightgbm import LGBMRegressor
 from snowflake.ml.modeling.linear_model import LogisticRegression
 from snowflake.ml.modeling.pipeline import Pipeline
@@ -241,6 +242,10 @@ class TestRegistryModelingModelInteg(registry_model_test_base.RegistryModelTestB
                 ),
             },
             options={"enable_explainability": True},
+            function_type_assert={
+                "explain": model_manifest_schema.ModelMethodFunctionTypes.TABLE_FUNCTION,
+                "predict": model_manifest_schema.ModelMethodFunctionTypes.FUNCTION,
+            },
         )
 
     @parameterized.product(  # type: ignore[misc]
@@ -311,6 +316,10 @@ class TestRegistryModelingModelInteg(registry_model_test_base.RegistryModelTestB
                     ),
                 ),
             },
+            function_type_assert={
+                "explain": model_manifest_schema.ModelMethodFunctionTypes.TABLE_FUNCTION,
+                "predict": model_manifest_schema.ModelMethodFunctionTypes.FUNCTION,
+            },
         )
 
     @parameterized.product(  # type: ignore[misc]
@@ -352,6 +361,10 @@ class TestRegistryModelingModelInteg(registry_model_test_base.RegistryModelTestB
                 ),
             },
             options={"enable_explainability": True},
+            function_type_assert={
+                "explain": model_manifest_schema.ModelMethodFunctionTypes.TABLE_FUNCTION,
+                "predict": model_manifest_schema.ModelMethodFunctionTypes.FUNCTION,
+            },
         )
 
     @parameterized.product(  # type: ignore[misc]

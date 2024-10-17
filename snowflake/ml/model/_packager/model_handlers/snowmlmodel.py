@@ -12,17 +12,14 @@ from snowflake.ml._internal import type_utils
 from snowflake.ml._internal.exceptions import exceptions
 from snowflake.ml.model import custom_model, model_signature, type_hints as model_types
 from snowflake.ml.model._packager.model_env import model_env
-from snowflake.ml.model._packager.model_handlers import (
-    _base,
-    _utils as handlers_utils,
-    model_objective_utils,
-)
+from snowflake.ml.model._packager.model_handlers import _base, _utils as handlers_utils
 from snowflake.ml.model._packager.model_handlers_migrator import base_migrator
 from snowflake.ml.model._packager.model_meta import (
     model_blob_meta,
     model_meta as model_meta_api,
     model_meta_schema,
 )
+from snowflake.ml.model._packager.model_task import model_task_utils
 from snowflake.ml.model._signatures import numpy_handler, utils as model_signature_utils
 
 if TYPE_CHECKING:
@@ -177,7 +174,7 @@ class SnowMLModelHandler(_base.BaseModelHandler["BaseEstimator"]):
                 # set None to False so we don't include shap in the environment
                 enable_explainability = False
             else:
-                model_task_and_output_type = model_objective_utils.get_model_task_and_output_type(python_base_obj)
+                model_task_and_output_type = model_task_utils.get_model_task_and_output_type(python_base_obj)
                 model_meta.task = model_task_and_output_type.task
                 explain_target_method = handlers_utils.get_explain_target_method(model_meta, cls.EXPLAIN_TARGET_METHODS)
                 model_meta = handlers_utils.add_explain_method_signature(

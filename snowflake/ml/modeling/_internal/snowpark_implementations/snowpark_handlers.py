@@ -18,7 +18,10 @@ from snowflake.ml._internal.utils import (
 )
 from snowflake.ml._internal.utils.query_result_checker import SqlResultValidator
 from snowflake.ml.modeling._internal import estimator_utils
-from snowflake.ml.modeling._internal.estimator_utils import handle_inference_result
+from snowflake.ml.modeling._internal.estimator_utils import (
+    handle_inference_result,
+    should_include_sample_weight,
+)
 from snowflake.snowpark import DataFrame, Session, functions as F, types as T
 from snowflake.snowpark._internal.utils import (
     TempObjectType,
@@ -28,6 +31,8 @@ from snowflake.snowpark._internal.utils import (
 cp.register_pickle_by_value(inspect.getmodule(temp_file_utils.get_temp_file_path))
 cp.register_pickle_by_value(inspect.getmodule(identifier.get_inferred_name))
 cp.register_pickle_by_value(inspect.getmodule(handle_inference_result))
+cp.register_pickle_by_value(inspect.getmodule(should_include_sample_weight))
+
 
 _PROJECT = "ModelDevelopment"
 
@@ -330,7 +335,8 @@ class SnowparkTransformHandlers:
                 label_arg_name = "Y" if "Y" in params else "y"
                 args[label_arg_name] = df[label_cols].squeeze()
 
-            if sample_weight_col is not None and "sample_weight" in params:
+            # Sample weight is not included in search estimators parameters, check the underlying estimator.
+            if sample_weight_col is not None and should_include_sample_weight(estimator, "score"):
                 args["sample_weight"] = df[sample_weight_col].squeeze()
 
             result: float = estimator.score(**args)

@@ -7,6 +7,7 @@ from absl.testing import absltest, parameterized
 from sklearn import datasets, model_selection
 
 from snowflake.ml.model import model_signature
+from snowflake.ml.model._model_composer.model_manifest import model_manifest_schema
 from snowflake.ml.model._packager.model_handlers import _utils as handlers_utils
 from tests.integ.snowflake.ml.registry.model import registry_model_test_base
 from tests.integ.snowflake.ml.test_utils import dataframe_utils
@@ -63,6 +64,7 @@ class TestRegistryLightGBMModelInteg(registry_model_test_base.RegistryModelTestB
         classifier = lightgbm.LGBMClassifier()
         classifier.fit(cal_X_train, cal_y_train)
         expected_explanations = shap.Explainer(classifier)(cal_X_test).values
+        expected_explanations = np.apply_along_axis(lambda arr: arr[1], -1, expected_explanations)
 
         getattr(self, registry_test_fn)(
             model=classifier,
@@ -80,10 +82,13 @@ class TestRegistryLightGBMModelInteg(registry_model_test_base.RegistryModelTestB
                 ),
                 "explain": (
                     cal_X_test,
-                    lambda res: np.testing.assert_allclose(
-                        dataframe_utils.convert2D_json_to_3D(res.values), expected_explanations, rtol=1e-5
-                    ),
+                    lambda res: np.testing.assert_allclose(res.values, expected_explanations, rtol=1e-5),
                 ),
+            },
+            function_type_assert={
+                "explain": model_manifest_schema.ModelMethodFunctionTypes.TABLE_FUNCTION,
+                "predict": model_manifest_schema.ModelMethodFunctionTypes.FUNCTION,
+                "predict_proba": model_manifest_schema.ModelMethodFunctionTypes.FUNCTION,
             },
         )
 
@@ -198,6 +203,11 @@ class TestRegistryLightGBMModelInteg(registry_model_test_base.RegistryModelTestB
                     ),
                 ),
             },
+            function_type_assert={
+                "explain": model_manifest_schema.ModelMethodFunctionTypes.TABLE_FUNCTION,
+                "predict": model_manifest_schema.ModelMethodFunctionTypes.FUNCTION,
+                "predict_proba": model_manifest_schema.ModelMethodFunctionTypes.FUNCTION,
+            },
         )
 
     @parameterized.product(  # type: ignore[misc]
@@ -257,6 +267,10 @@ class TestRegistryLightGBMModelInteg(registry_model_test_base.RegistryModelTestB
                     cal_X_test,
                     lambda res: np.testing.assert_allclose(res.values, expected_explanations, rtol=1e-5),
                 ),
+            },
+            function_type_assert={
+                "explain": model_manifest_schema.ModelMethodFunctionTypes.TABLE_FUNCTION,
+                "predict": model_manifest_schema.ModelMethodFunctionTypes.FUNCTION,
             },
         )
 
@@ -344,6 +358,10 @@ class TestRegistryLightGBMModelInteg(registry_model_test_base.RegistryModelTestB
                     lambda res: dataframe_utils.check_sp_df_res(res, explanation_df_expected, check_dtype=False),
                 ),
             },
+            function_type_assert={
+                "explain": model_manifest_schema.ModelMethodFunctionTypes.TABLE_FUNCTION,
+                "predict": model_manifest_schema.ModelMethodFunctionTypes.FUNCTION,
+            },
         )
 
     @parameterized.product(  # type: ignore[misc]
@@ -367,6 +385,7 @@ class TestRegistryLightGBMModelInteg(registry_model_test_base.RegistryModelTestB
         }
 
         expected_explanations = shap.Explainer(classifier)(cal_X_test).values
+        expected_explanations = np.apply_along_axis(lambda arr: arr[1], -1, expected_explanations)
 
         getattr(self, registry_test_fn)(
             model=classifier,
@@ -380,13 +399,15 @@ class TestRegistryLightGBMModelInteg(registry_model_test_base.RegistryModelTestB
                 ),
                 "explain": (
                     cal_X_test,
-                    lambda res: np.testing.assert_allclose(
-                        dataframe_utils.convert2D_json_to_3D(res.values), expected_explanations, rtol=1e-5
-                    ),
+                    lambda res: np.testing.assert_allclose(res.values, expected_explanations, rtol=1e-5),
                 ),
             },
             options={"enable_explainability": True},
             signatures=sig,
+            function_type_assert={
+                "explain": model_manifest_schema.ModelMethodFunctionTypes.TABLE_FUNCTION,
+                "predict": model_manifest_schema.ModelMethodFunctionTypes.FUNCTION,
+            },
         )
 
         with self.assertRaisesRegex(
@@ -404,9 +425,7 @@ class TestRegistryLightGBMModelInteg(registry_model_test_base.RegistryModelTestB
                     ),
                     "explain": (
                         cal_X_test,
-                        lambda res: np.testing.assert_allclose(
-                            dataframe_utils.convert2D_json_to_3D(res.values), expected_explanations, rtol=1e-5
-                        ),
+                        lambda res: np.testing.assert_allclose(res.values, expected_explanations, rtol=1e-5),
                     ),
                 },
                 signatures=sig,

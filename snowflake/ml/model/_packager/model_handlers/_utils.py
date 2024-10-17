@@ -191,7 +191,11 @@ def convert_explanations_to_2D_df(
         # convert to object or numpy creates strings of fixed length
         return np.asarray(json.dumps(dict(zip(classes_list, row)), cls=NumpyEncoder), dtype=object)
 
-    exp_2d = np.apply_along_axis(row_to_dict, -1, explanations)
+    # convert to dict only for multiclass
+    if len(classes_list) > 2:
+        exp_2d = np.apply_along_axis(row_to_dict, -1, explanations)
+    else:  # assumes index 1 is positive class always
+        exp_2d = np.apply_along_axis(lambda arr: arr[1], -1, explanations)
 
     return pd.DataFrame(exp_2d)
 

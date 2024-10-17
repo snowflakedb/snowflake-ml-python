@@ -10,17 +10,14 @@ from typing_extensions import TypeGuard, Unpack
 from snowflake.ml._internal import type_utils
 from snowflake.ml.model import custom_model, model_signature, type_hints as model_types
 from snowflake.ml.model._packager.model_env import model_env
-from snowflake.ml.model._packager.model_handlers import (
-    _base,
-    _utils as handlers_utils,
-    model_objective_utils,
-)
+from snowflake.ml.model._packager.model_handlers import _base, _utils as handlers_utils
 from snowflake.ml.model._packager.model_handlers_migrator import base_migrator
 from snowflake.ml.model._packager.model_meta import (
     model_blob_meta,
     model_meta as model_meta_api,
     model_meta_schema,
 )
+from snowflake.ml.model._packager.model_task import model_task_utils
 from snowflake.ml.model._signatures import numpy_handler, utils as model_signature_utils
 
 if TYPE_CHECKING:
@@ -137,7 +134,7 @@ class SKLModelHandler(_base.BaseModelHandler[Union["sklearn.base.BaseEstimator",
                 sample_input_data, model_meta, explain_target_method
             )
 
-            model_task_and_output_type = model_objective_utils.get_model_task_and_output_type(model)
+            model_task_and_output_type = model_task_utils.get_model_task_and_output_type(model)
             model_meta.task = model_task_and_output_type.task
 
             # if users did not ask then we enable if we have background data

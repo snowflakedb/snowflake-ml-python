@@ -43,14 +43,7 @@ class TorchDatasetWrapper(torch.utils.data.IterableDataset[Dict[str, Any]]):
         ):
             # Skip indices during multi-process data loading to prevent data duplication
             if counter == filter_idx:
-                # Basic preprocessing on batch values: squeeze away extra dimensions
-                # and convert object arrays (e.g. strings) to lists
-                if self._squeeze_outputs:
-                    yield {
-                        k: (v.squeeze().tolist() if v.dtype == np.object_ else v.squeeze()) for k, v in batch.items()
-                    }
-                else:
-                    yield batch  # type: ignore[misc]
+                yield {k: _preprocess_array(v, squeeze=self._squeeze_outputs) for k, v in batch.items()}
 
             if counter < max_idx:
                 counter += 1
@@ -66,3 +59,11 @@ class TorchDataPipeWrapper(TorchDatasetWrapper, torch.utils.data.IterDataPipe[Di
     ) -> None:
         """Not intended for direct usage. Use DataConnector.to_torch_datapipe() instead"""
         super().__init__(ingestor, batch_size=batch_size, shuffle=shuffle, drop_last=drop_last, squeeze_outputs=False)
+
+
+def _preprocess_array(arr: npt.NDArray[Any], squeeze: bool = False) -> Union[npt.NDArray[Any], List[np.object_]]:
+    # Basic preprocessing on batch values: squeeze away extra dimensions
+    # and convert object arrays (e.g. strings) to lists
+    if squeeze:
+        arr = arr.squeeze()
+    return arr.tolist() if arr.dtype == np.object_ else arr

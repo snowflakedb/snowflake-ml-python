@@ -7,6 +7,7 @@ from absl.testing import absltest, parameterized
 from sklearn import datasets, ensemble, linear_model, multioutput
 
 from snowflake.ml.model import model_signature
+from snowflake.ml.model._model_composer.model_manifest import model_manifest_schema
 from snowflake.ml.model._packager.model_handlers import _utils as handlers_utils
 from snowflake.snowpark import exceptions as snowpark_exceptions
 from tests.integ.snowflake.ml.registry.model import registry_model_test_base
@@ -37,6 +38,11 @@ class TestRegistrySKLearnModelInteg(registry_model_test_base.RegistryModelTestBa
                     iris_X[:10],
                     lambda res: np.testing.assert_allclose(res.values, classifier.predict_proba(iris_X[:10])),
                 ),
+            },
+            function_type_assert={
+                "explain": model_manifest_schema.ModelMethodFunctionTypes.TABLE_FUNCTION,
+                "predict": model_manifest_schema.ModelMethodFunctionTypes.FUNCTION,
+                "predict_proba": model_manifest_schema.ModelMethodFunctionTypes.FUNCTION,
             },
         )
 
@@ -74,6 +80,11 @@ class TestRegistrySKLearnModelInteg(registry_model_test_base.RegistryModelTestBa
                 ),
             },
             options={"enable_explainability": True},
+            function_type_assert={
+                "explain": model_manifest_schema.ModelMethodFunctionTypes.TABLE_FUNCTION,
+                "predict": model_manifest_schema.ModelMethodFunctionTypes.FUNCTION,
+                "predict_proba": model_manifest_schema.ModelMethodFunctionTypes.FUNCTION,
+            },
         )
 
     @parameterized.product(  # type: ignore[misc]
@@ -106,6 +117,11 @@ class TestRegistrySKLearnModelInteg(registry_model_test_base.RegistryModelTestBa
                 ),
             },
             options={"enable_explainability": True},
+            function_type_assert={
+                "explain": model_manifest_schema.ModelMethodFunctionTypes.TABLE_FUNCTION,
+                "predict": model_manifest_schema.ModelMethodFunctionTypes.FUNCTION,
+                "predict_proba": model_manifest_schema.ModelMethodFunctionTypes.FUNCTION,
+            },
         )
 
     @parameterized.product(  # type: ignore[misc]

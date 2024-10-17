@@ -6,7 +6,7 @@ from absl.testing import absltest
 from snowflake.ml._internal.utils import sql_identifier
 from snowflake.ml.model import model_signature, type_hints
 from snowflake.ml.model._model_composer.model_manifest import model_manifest_schema
-from snowflake.ml.monitoring._client import monitor_sql_client
+from snowflake.ml.monitoring._client import model_monitor_sql_client
 from snowflake.ml.monitoring.entities import output_score_type
 from snowflake.ml.monitoring.entities.model_monitor_interval import (
     ModelMonitorAggregationWindow,
@@ -36,17 +36,17 @@ class ModelMonitorSqlClientTest(absltest.TestCase):
         self.test_wh_name = sql_identifier.SqlIdentifier("ML_OBS_WAREHOUSE")
 
         session = cast(Session, self.m_session)
-        self.monitor_sql_client = monitor_sql_client._ModelMonitorSQLClient(
+        self.monitor_sql_client = model_monitor_sql_client.ModelMonitorSQLClient(
             session, database_name=self.test_db_name, schema_name=self.test_schema_name
         )
 
         self.mon_table_name = (
-            f"{monitor_sql_client._SNOWML_MONITORING_TABLE_NAME_PREFIX}_"
+            f"{model_monitor_sql_client._SNOWML_MONITORING_TABLE_NAME_PREFIX}_"
             + self.test_model_name
             + f"_{self.test_model_version_name}"
         )
         self.acc_table_name = (
-            f"{monitor_sql_client._SNOWML_MONITORING_ACCURACY_TABLE_NAME_PREFIX}_"
+            f"{model_monitor_sql_client._SNOWML_MONITORING_ACCURACY_TABLE_NAME_PREFIX}_"
             + self.test_model_name
             + f"_{self.test_model_version_name}"
         )
@@ -954,7 +954,7 @@ class ModelMonitorSqlClientTest(absltest.TestCase):
             sql_identifier.SqlIdentifier("STR_COL"),
         ]
 
-        numeric, categoric = monitor_sql_client._infer_numeric_categoric_feature_column_names(
+        numeric, categoric = model_monitor_sql_client._infer_numeric_categoric_feature_column_names(
             source_table_schema=test_schema,
             timestamp_column=timestamp_col,
             id_columns=[id_col],
@@ -1165,11 +1165,14 @@ class ModelMonitorSqlClientTest(absltest.TestCase):
         model_db = sql_identifier.SqlIdentifier("MODEL_DB")
         model_schema = sql_identifier.SqlIdentifier("MODEL_SCHEMA")
         self.m_session.add_mock_sql(
-            f"""SELECT {monitor_sql_client.MONITOR_NAME_COL_NAME}, {monitor_sql_client.FQ_MODEL_NAME_COL_NAME},
-            {monitor_sql_client.VERSION_NAME_COL_NAME}, {monitor_sql_client.FUNCTION_NAME_COL_NAME}
-            FROM {self.test_db_name}.{self.test_schema_name}.{monitor_sql_client.SNOWML_MONITORING_METADATA_TABLE_NAME}
-            WHERE {monitor_sql_client.FQ_MODEL_NAME_COL_NAME} = '{model_db}.{model_schema}.{self.test_model_name}'
-            AND {monitor_sql_client.VERSION_NAME_COL_NAME} = '{self.test_model_version_name}'""",
+            f"""SELECT {model_monitor_sql_client.MONITOR_NAME_COL_NAME},
+            {model_monitor_sql_client.FQ_MODEL_NAME_COL_NAME},
+            {model_monitor_sql_client.VERSION_NAME_COL_NAME},
+            {model_monitor_sql_client.FUNCTION_NAME_COL_NAME}
+            FROM
+            {self.test_db_name}.{self.test_schema_name}.{model_monitor_sql_client.SNOWML_MONITORING_METADATA_TABLE_NAME}
+            WHERE {model_monitor_sql_client.FQ_MODEL_NAME_COL_NAME} = '{model_db}.{model_schema}.{self.test_model_name}'
+            AND {model_monitor_sql_client.VERSION_NAME_COL_NAME} = '{self.test_model_version_name}'""",
             result=mock_data_frame.MockDataFrame(
                 [
                     Row(
@@ -1203,11 +1206,14 @@ class ModelMonitorSqlClientTest(absltest.TestCase):
         model_db = sql_identifier.SqlIdentifier("MODEL_DB")
         model_schema = sql_identifier.SqlIdentifier("MODEL_SCHEMA")
         self.m_session.add_mock_sql(
-            f"""SELECT {monitor_sql_client.MONITOR_NAME_COL_NAME}, {monitor_sql_client.FQ_MODEL_NAME_COL_NAME},
-            {monitor_sql_client.VERSION_NAME_COL_NAME}, {monitor_sql_client.FUNCTION_NAME_COL_NAME}
-            FROM {self.test_db_name}.{self.test_schema_name}.{monitor_sql_client.SNOWML_MONITORING_METADATA_TABLE_NAME}
-            WHERE {monitor_sql_client.FQ_MODEL_NAME_COL_NAME} = '{model_db}.{model_schema}.{self.test_model_name}'
-            AND {monitor_sql_client.VERSION_NAME_COL_NAME} = '{self.test_model_version_name}'""",
+            f"""SELECT {model_monitor_sql_client.MONITOR_NAME_COL_NAME},
+            {model_monitor_sql_client.FQ_MODEL_NAME_COL_NAME},
+            {model_monitor_sql_client.VERSION_NAME_COL_NAME},
+            {model_monitor_sql_client.FUNCTION_NAME_COL_NAME}
+            FROM
+            {self.test_db_name}.{self.test_schema_name}.{model_monitor_sql_client.SNOWML_MONITORING_METADATA_TABLE_NAME}
+            WHERE {model_monitor_sql_client.FQ_MODEL_NAME_COL_NAME} = '{model_db}.{model_schema}.{self.test_model_name}'
+            AND {model_monitor_sql_client.VERSION_NAME_COL_NAME} = '{self.test_model_version_name}'""",
             result=mock_data_frame.MockDataFrame(
                 [
                     Row(
@@ -1332,8 +1338,8 @@ order by
         monitor = "TEST_MONITOR"
         self.m_session.add_mock_sql(
             query=f"DELETE FROM {self.test_db_name}.{self.test_schema_name}."
-            f"{monitor_sql_client.SNOWML_MONITORING_METADATA_TABLE_NAME} WHERE "
-            f"{monitor_sql_client.MONITOR_NAME_COL_NAME} = '{monitor}'",
+            f"{model_monitor_sql_client.SNOWML_MONITORING_METADATA_TABLE_NAME} WHERE "
+            f"{model_monitor_sql_client.MONITOR_NAME_COL_NAME} = '{monitor}'",
             result=mock_data_frame.MockDataFrame([]),
         )
         self.monitor_sql_client.delete_monitor_metadata(monitor)
@@ -1341,7 +1347,7 @@ order by
     def test_delete_baseline_table(self) -> None:
         model = "TEST_MODEL"
         version = "TEST_VERSION"
-        table = monitor_sql_client._create_baseline_table_name(model, version)
+        table = model_monitor_sql_client._create_baseline_table_name(model, version)
         self.m_session.add_mock_sql(
             query=f"DROP TABLE IF EXISTS {self.test_db_name}.{self.test_schema_name}.{table}",
             result=mock_data_frame.MockDataFrame([]),

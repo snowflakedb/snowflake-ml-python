@@ -161,7 +161,7 @@ py_test(
     name = "registry_mlflow_model_test",
     timeout = "long",
     srcs = ["registry_mlflow_model_test.py"],
-    shard_count = 2,
+    shard_count = 4,
     deps = [
         ":registry_model_test_base",
         "//snowflake/ml/_internal:env",

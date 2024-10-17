@@ -1,6 +1,12 @@
 # Release History
 
-## 1.6.3
+## 1.6.4
+
+### Bug Fixes
+
+- Registry: Fix an issue that leads to incident when using `ModelVersion.run` with service.
+
+## 1.6.3 (2024-10-07)
 
 - Model Registry (PrPr) has been removed.
 
@@ -12,6 +18,9 @@
 - Registry: Fix a bug that `ModelVersion.run` is called in a nested way.
 - Registry: Fix an issue that leads to `log_model` failure when local package version contains parts other than
   base version.
+- Fix issue where `sample_weights` were not being applied to search estimators.
+- Model explainability: Fix bug which creates explain as a function instead of table function when enabling by default.
+- Model explainability: Update lightgbm binary classification to return non-json values, from customer feedback.
 
 ### New Features
 

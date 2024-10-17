@@ -12,7 +12,6 @@ from sklearn import datasets, model_selection
 
 from snowflake.ml.model import model_signature, type_hints as model_types
 from snowflake.ml.model._packager import model_packager
-from snowflake.ml.model._packager.model_handlers_test import test_utils
 
 
 class LightGBMHandlerTest(absltest.TestCase):
@@ -95,6 +94,7 @@ class LightGBMHandlerTest(absltest.TestCase):
         y_pred = regressor.predict(cal_X_test)
         explanations = shap.TreeExplainer(regressor)(cal_X_test)
         explanations = explanations.values
+        explanations_2d = np.apply_along_axis(lambda arr: arr[1], -1, explanations)
 
         with tempfile.TemporaryDirectory() as tmpdir:
             s = {"predict": model_signature.infer_signature(cal_X_test, y_pred)}
@@ -128,9 +128,7 @@ class LightGBMHandlerTest(absltest.TestCase):
                 assert callable(predict_method)
                 assert callable(explain_method)
                 np.testing.assert_allclose(predict_method(cal_X_test), np.expand_dims(y_pred, axis=1))
-                np.testing.assert_allclose(
-                    test_utils.convert2D_json_to_3D(explain_method(cal_X_test).to_numpy()), explanations
-                )
+                np.testing.assert_allclose(explain_method(cal_X_test), explanations_2d)
 
             # test calling saving background_data when sample_input_data is present
             with mock.patch(
@@ -155,9 +153,7 @@ class LightGBMHandlerTest(absltest.TestCase):
 
             explain_method = getattr(pk.model, "explain", None)
             assert callable(explain_method)
-            np.testing.assert_allclose(
-                test_utils.convert2D_json_to_3D(explain_method(cal_X_test).to_numpy()), explanations
-            )
+            np.testing.assert_allclose(explain_method(cal_X_test), explanations_2d)
 
     def test_lightgbm_classifier_explainability_disabled(self) -> None:
         cal_data = datasets.load_breast_cancer()
@@ -239,7 +235,7 @@ class LightGBMHandlerTest(absltest.TestCase):
         cal_data = datasets.load_breast_cancer()
         cal_X = pd.DataFrame(cal_data.data, columns=cal_data.feature_names)
         cal_y = pd.Series(cal_data.target)
-        cal_X_train, cal_X_test, cal_y_train, cal_y_test = model_selection.train_test_split(cal_X, cal_y)
+        cal_X_train, cal_X_test, cal_y_train, _ = model_selection.train_test_split(cal_X, cal_y)
 
         classifier = lightgbm.LGBMClassifier()
         classifier.fit(cal_X_train, cal_y_train)
@@ -247,6 +243,7 @@ class LightGBMHandlerTest(absltest.TestCase):
         y_pred_proba = classifier.predict_proba(cal_X_test)
         explanations = shap.TreeExplainer(classifier)(cal_X_test)
         explanations = explanations.values
+        explanations_2d = np.apply_along_axis(lambda arr: arr[1], -1, explanations)
 
         with tempfile.TemporaryDirectory() as tmpdir:
             s = {"predict": model_signature.infer_signature(cal_X_test, y_pred)}
@@ -275,9 +272,7 @@ class LightGBMHandlerTest(absltest.TestCase):
                 assert callable(predict_method)
                 assert callable(explain_method)
                 np.testing.assert_allclose(predict_method(cal_X_test), np.expand_dims(y_pred, axis=1))
-                np.testing.assert_allclose(
-                    test_utils.convert2D_json_to_3D(explain_method(cal_X_test).to_numpy()), explanations
-                )
+                np.testing.assert_allclose(explain_method(cal_X_test), explanations_2d)
 
             model_packager.ModelPackager(os.path.join(tmpdir, "model1_no_sig")).save(
                 name="model1_no_sig",
@@ -300,9 +295,7 @@ class LightGBMHandlerTest(absltest.TestCase):
 
             explain_method = getattr(pk.model, "explain", None)
             assert callable(explain_method)
-            np.testing.assert_allclose(
-                test_utils.convert2D_json_to_3D(explain_method(cal_X_test).to_numpy()), explanations
-            )
+            np.testing.assert_allclose(explain_method(cal_X_test), explanations_2d)
 
 
 if __name__ == "__main__":

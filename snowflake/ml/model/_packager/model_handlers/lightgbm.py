@@ -20,17 +20,14 @@ from typing_extensions import TypeGuard, Unpack
 from snowflake.ml._internal import type_utils
 from snowflake.ml.model import custom_model, model_signature, type_hints as model_types
 from snowflake.ml.model._packager.model_env import model_env
-from snowflake.ml.model._packager.model_handlers import (
-    _base,
-    _utils as handlers_utils,
-    model_objective_utils,
-)
+from snowflake.ml.model._packager.model_handlers import _base, _utils as handlers_utils
 from snowflake.ml.model._packager.model_handlers_migrator import base_migrator
 from snowflake.ml.model._packager.model_meta import (
     model_blob_meta,
     model_meta as model_meta_api,
     model_meta_schema,
 )
+from snowflake.ml.model._packager.model_task import model_task_utils
 from snowflake.ml.model._signatures import numpy_handler, utils as model_signature_utils
 
 if TYPE_CHECKING:
@@ -113,7 +110,7 @@ class LGBMModelHandler(_base.BaseModelHandler[Union["lightgbm.Booster", "lightgb
                 sample_input_data=sample_input_data,
                 get_prediction_fn=get_prediction,
             )
-            model_task_and_output = model_objective_utils.get_model_task_and_output_type(model)
+            model_task_and_output = model_task_utils.get_model_task_and_output_type(model)
             model_meta.task = handlers_utils.validate_model_task(model_meta.task, model_task_and_output.task)
             if enable_explainability:
                 explain_target_method = handlers_utils.get_explain_target_method(model_meta, cls.EXPLAIN_TARGET_METHODS)

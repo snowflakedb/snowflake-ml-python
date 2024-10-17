@@ -19,6 +19,7 @@ from snowflake.ml._internal.utils import (
     snowpark_dataframe_utils,
     temp_file_utils,
 )
+from snowflake.ml.modeling._internal.estimator_utils import should_include_sample_weight
 from snowflake.ml.modeling._internal.model_specifications import (
     ModelSpecificationsBuilder,
 )
@@ -38,6 +39,7 @@ from snowflake.snowpark.udtf import UDTFRegistration
 cp.register_pickle_by_value(inspect.getmodule(temp_file_utils.get_temp_file_path))
 cp.register_pickle_by_value(inspect.getmodule(identifier.get_inferred_name))
 cp.register_pickle_by_value(inspect.getmodule(snowpark_dataframe_utils.cast_snowpark_dataframe))
+cp.register_pickle_by_value(inspect.getmodule(should_include_sample_weight))
 
 _PROJECT = "ModelDevelopment"
 DEFAULT_UDTF_NJOBS = 3
@@ -638,7 +640,7 @@ class DistributedHPOTrainer(SnowparkModelTrainer):
                 if label_cols:
                     label_arg_name = "Y" if "Y" in argspec.args else "y"
                     args[label_arg_name] = y
-                if sample_weight_col is not None and "sample_weight" in argspec.args:
+                if sample_weight_col is not None and should_include_sample_weight(estimator, "fit"):
                     args["sample_weight"] = df[sample_weight_col].squeeze()
                 estimator.refit = original_refit
                 refit_start_time = time.time()

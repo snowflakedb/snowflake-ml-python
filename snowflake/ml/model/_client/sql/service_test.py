@@ -102,8 +102,6 @@ class ServiceSQLTest(absltest.TestCase):
     def test_invoke_function_method(self) -> None:
         m_statement_params = {"test": "1"}
         m_df = mock_data_frame.MockDataFrame()
-        m_df0 = mock_data_frame.MockDataFrame(collect_result=[Row(CURRENT_VERSION="1")])
-        self.m_session.add_mock_sql("SELECT CURRENT_VERSION() AS CURRENT_VERSION", m_df0)
 
         self.m_session.add_mock_sql(
             """SELECT *,
@@ -143,9 +141,6 @@ class ServiceSQLTest(absltest.TestCase):
 
     def test_invoke_function_method_1(self) -> None:
         m_statement_params = {"test": "1"}
-        m_df0 = mock_data_frame.MockDataFrame(collect_result=[Row(CURRENT_VERSION="1")])
-        self.m_session.add_mock_sql("SELECT CURRENT_VERSION() AS CURRENT_VERSION", m_df0)
-
         m_df = mock_data_frame.MockDataFrame()
         self.m_session.add_mock_sql(
             """SELECT *,
@@ -188,8 +183,6 @@ class ServiceSQLTest(absltest.TestCase):
 
     def test_invoke_function_method_2(self) -> None:
         m_statement_params = {"test": "1"}
-        m_df0 = mock_data_frame.MockDataFrame(collect_result=[Row(CURRENT_VERSION="1")])
-        self.m_session.add_mock_sql("SELECT CURRENT_VERSION() AS CURRENT_VERSION", m_df0)
         m_df = mock_data_frame.MockDataFrame()
         self.m_session.add_mock_sql(
             """WITH SNOWPARK_ML_MODEL_INFERENCE_INPUT_ABCDEF0123 AS (query_1)

@@ -20,7 +20,10 @@ from snowflake.ml._internal.utils import (
     temp_file_utils,
 )
 from snowflake.ml.modeling._internal import estimator_utils
-from snowflake.ml.modeling._internal.estimator_utils import handle_inference_result
+from snowflake.ml.modeling._internal.estimator_utils import (
+    handle_inference_result,
+    should_include_sample_weight,
+)
 from snowflake.ml.modeling._internal.model_specifications import (
     ModelSpecifications,
     ModelSpecificationsBuilder,
@@ -32,6 +35,7 @@ from snowflake.snowpark.stored_procedure import StoredProcedure
 cp.register_pickle_by_value(inspect.getmodule(temp_file_utils.get_temp_file_path))
 cp.register_pickle_by_value(inspect.getmodule(identifier.get_inferred_name))
 cp.register_pickle_by_value(inspect.getmodule(handle_inference_result))
+cp.register_pickle_by_value(inspect.getmodule(should_include_sample_weight))
 
 _PROJECT = "ModelDevelopment"
 _ENABLE_ANONYMOUS_SPROC = False
@@ -170,12 +174,14 @@ class SnowparkModelTrainer:
                     estimator = cp.load(local_transform_file_obj)
 
                 params = inspect.signature(estimator.fit).parameters
+
                 args = {"X": df[input_cols]}
                 if label_cols:
                     label_arg_name = "Y" if "Y" in params else "y"
                     args[label_arg_name] = df[label_cols].squeeze()
 
-                if sample_weight_col is not None and "sample_weight" in params:
+                # Sample weight is not included in search estimators parameters, check the underlying estimator.
+                if sample_weight_col is not None and should_include_sample_weight(estimator, "fit"):
                     args["sample_weight"] = df[sample_weight_col].squeeze()
 
                 estimator.fit(**args)
@@ -412,7 +418,7 @@ class SnowparkModelTrainer:
                 label_arg_name = "Y" if "Y" in params else "y"
                 args[label_arg_name] = df[label_cols].squeeze()
 
-            if sample_weight_col is not None and "sample_weight" in params:
+            if sample_weight_col is not None and should_include_sample_weight(estimator, "fit"):
                 args["sample_weight"] = df[sample_weight_col].squeeze()
 
             fit_transform_result = estimator.fit_transform(**args)

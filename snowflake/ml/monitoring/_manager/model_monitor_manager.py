@@ -6,7 +6,8 @@ from snowflake.ml._internal.utils import db_utils, sql_identifier
 from snowflake.ml.model import type_hints
 from snowflake.ml.model._client.model import model_version_impl
 from snowflake.ml.model._model_composer.model_manifest import model_manifest_schema
-from snowflake.ml.monitoring._client import model_monitor, monitor_sql_client
+from snowflake.ml.monitoring import model_monitor
+from snowflake.ml.monitoring._client import model_monitor_sql_client
 from snowflake.ml.monitoring.entities import (
     model_monitor_config,
     model_monitor_interval,
@@ -16,8 +17,8 @@ from snowflake.snowpark import session
 
 def _validate_name_constraints(model_version: model_version_impl.ModelVersion) -> None:
     system_table_prefixes = [
-        monitor_sql_client._SNOWML_MONITORING_TABLE_NAME_PREFIX,
-        monitor_sql_client._SNOWML_MONITORING_ACCURACY_TABLE_NAME_PREFIX,
+        model_monitor_sql_client._SNOWML_MONITORING_TABLE_NAME_PREFIX,
+        model_monitor_sql_client._SNOWML_MONITORING_ACCURACY_TABLE_NAME_PREFIX,
     ]
 
     max_allowed_model_name_and_version_length = (
@@ -48,7 +49,7 @@ class ModelMonitorManager:
         )
         database_name_id = sql_identifier.SqlIdentifier(database_name)
         schema_name_id = sql_identifier.SqlIdentifier(schema_name)
-        monitor_sql_client._ModelMonitorSQLClient.initialize_monitoring_schema(
+        model_monitor_sql_client.ModelMonitorSQLClient.initialize_monitoring_schema(
             session, database_name_id, schema_name_id, statement_params=statement_params
         )
 
@@ -87,13 +88,13 @@ class ModelMonitorManager:
         self._database_name = database_name
         self._schema_name = schema_name
         self.statement_params = statement_params
-        self._model_monitor_client = monitor_sql_client._ModelMonitorSQLClient(
+        self._model_monitor_client = model_monitor_sql_client.ModelMonitorSQLClient(
             session,
             database_name=self._database_name,
             schema_name=self._schema_name,
         )
         if create_if_not_exists:
-            monitor_sql_client._ModelMonitorSQLClient.initialize_monitoring_schema(
+            model_monitor_sql_client.ModelMonitorSQLClient.initialize_monitoring_schema(
                 session, self._database_name, self._schema_name, self.statement_params
             )
         elif not self._model_monitor_client._validate_is_initialized():
@@ -281,7 +282,7 @@ See https://docs.snowflake.com/en/sql-reference/sql/create-dynamic-table#require
             if model_db is None or model_schema is None:
                 raise ValueError("Failed to parse model name")
 
-            model_monitor_params: monitor_sql_client._ModelMonitorParams = (
+            model_monitor_params: model_monitor_sql_client._ModelMonitorParams = (
                 self._model_monitor_client.get_model_monitor_by_model_version(
                     model_db=model_db,
                     model_schema=model_schema,
@@ -324,7 +325,7 @@ See https://docs.snowflake.com/en/sql-reference/sql/create-dynamic-table#require
             statement_params=self.statement_params,
         ):
             raise ValueError(f"Unable to find model monitor '{name}'")
-        model_monitor_params: monitor_sql_client._ModelMonitorParams = (
+        model_monitor_params: model_monitor_sql_client._ModelMonitorParams = (
             self._model_monitor_client.get_model_monitor_by_name(name_id, statement_params=self.statement_params)
         )
 

@@ -14,11 +14,8 @@ from snowflake.ml.model import (
     type_hints as model_types,
 )
 from snowflake.ml.model._client.model import model_version_impl
-from snowflake.ml.monitoring._client import (
-    model_monitor,
-    model_monitor_manager,
-    model_monitor_version,
-)
+from snowflake.ml.monitoring import model_monitor, model_monitor_version
+from snowflake.ml.monitoring._manager import model_monitor_manager
 from snowflake.ml.monitoring.entities import model_monitor_config
 from snowflake.ml.registry._manager import model_manager
 from snowflake.snowpark import session
