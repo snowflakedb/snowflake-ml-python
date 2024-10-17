@@ -1,6 +1,12 @@
 # Release History
 
-## 1.6.3
+## 1.6.4
+
+### Bug Fixes
+
+- Registry: Fix an issue that leads to incident when using `ModelVersion.run` with service.
+
+## 1.6.3 (2024-10-07)
 
 - Model Registry (PrPr) has been removed.
 

@@ -3,13 +3,10 @@ import json
 import textwrap
 from typing import Any, Dict, List, Optional, Tuple
 
-from packaging import version
-
 from snowflake import snowpark
 from snowflake.ml._internal.utils import (
     identifier,
     query_result_checker,
-    snowflake_env,
     sql_identifier,
 )
 from snowflake.ml.model._client.sql import _base
@@ -120,21 +117,12 @@ class ServiceSQLClient(_base._BaseSQLClient):
             args_sql_list.append(input_arg_value)
         args_sql = ", ".join(args_sql_list)
 
-        if snowflake_env.get_current_snowflake_version(
-            self._session, statement_params=statement_params
-        ) >= version.parse("8.39.0"):
-            fully_qualified_service_name = self.fully_qualified_object_name(
-                actual_database_name, actual_schema_name, service_name
-            )
-            fully_qualified_function_name = f"{fully_qualified_service_name}!{method_name.identifier()}"
-
-        else:
-            function_name = identifier.concat_names([service_name.identifier(), "_", method_name.identifier()])
-            fully_qualified_function_name = identifier.get_schema_level_object_identifier(
-                actual_database_name.identifier(),
-                actual_schema_name.identifier(),
-                function_name,
-            )
+        function_name = identifier.concat_names([service_name.identifier(), "_", method_name.identifier()])
+        fully_qualified_function_name = identifier.get_schema_level_object_identifier(
+            actual_database_name.identifier(),
+            actual_schema_name.identifier(),
+            function_name,
+        )
 
         sql = textwrap.dedent(
             f"""{with_sql}

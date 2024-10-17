@@ -17,11 +17,11 @@ build:
   noarch: python
 package:
   name: snowflake-ml-python
-  version: 1.6.3
+  version: 1.6.4
 requirements:
   build:
     - python
-    - bazel==6.3.0
+    - bazel==6.3.2
   run:
     - absl-py>=0.15,<2
     - aiohttp!=4.0.0a0, !=4.0.0a1
