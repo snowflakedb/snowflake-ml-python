@@ -27,7 +27,7 @@ def get_model_method_options_from_options(
     options: type_hints.ModelSaveOption, target_method: str
 ) -> ModelMethodOptions:
     default_function_type = model_manifest_schema.ModelMethodFunctionTypes.FUNCTION.value
-    if options.get("enable_explainability", False) and target_method.startswith("explain"):
+    if target_method == "explain":
         default_function_type = model_manifest_schema.ModelMethodFunctionTypes.TABLE_FUNCTION.value
     method_option = options.get("method_options", {}).get(target_method, {})
     global_function_type = options.get("function_type", default_function_type)

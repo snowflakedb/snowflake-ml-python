@@ -3,5 +3,6 @@
 //tests/integ/snowflake/ml/modeling/ensemble:isolation_forest_test
 //tests/integ/snowflake/ml/modeling/linear_model:sgd_one_class_svm_test
 //tests/integ/snowflake/ml/modeling/preprocessing:k_bins_discretizer_test
+//tests/integ/snowflake/ml/modeling/linear_model:logistic_regression_test
 //tests/integ/snowflake/ml/registry/model:registry_mlflow_model_test
 //tests/integ/snowflake/ml/registry/services/...

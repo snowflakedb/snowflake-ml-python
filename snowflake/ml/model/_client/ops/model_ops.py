@@ -32,6 +32,9 @@ from snowflake.snowpark._internal import utils as snowpark_utils
 
 
 class ModelOperator:
+    INFERENCE_SERVICE_NAME_COL_NAME = "service_name"
+    INFERENCE_SERVICE_ENDPOINT_COL_NAME = "endpoints"
+
     def __init__(
         self,
         session: session.Session,
@@ -522,7 +525,7 @@ class ModelOperator:
         model_name: sql_identifier.SqlIdentifier,
         version_name: sql_identifier.SqlIdentifier,
         statement_params: Optional[Dict[str, Any]] = None,
-    ) -> List[str]:
+    ) -> Dict[str, List[str]]:
         res = self._model_client.show_versions(
             database_name=database_name,
             schema_name=schema_name,
@@ -530,8 +533,8 @@ class ModelOperator:
             version_name=version_name,
             statement_params=statement_params,
         )
-        col_name = self._model_client.MODEL_VERSION_INFERENCE_SERVICES_COL_NAME
-        if col_name not in res[0]:
+        service_col_name = self._model_client.MODEL_VERSION_INFERENCE_SERVICES_COL_NAME
+        if service_col_name not in res[0]:
             # User need to opt into BCR 2024_08
             raise exceptions.SnowflakeMLException(
                 error_code=error_codes.OPT_IN_REQUIRED,
@@ -540,9 +543,24 @@ class ModelOperator:
                     "https://docs.snowflake.com/en/release-notes/bcr-bundles/2024_08_bundle)."
                 ),
             )
-        json_array = json.loads(res[0][col_name])
+
+        json_array = json.loads(res[0][service_col_name])
         # TODO(sdas): Figure out a better way to filter out MODEL_BUILD_ services server side.
-        return [str(service) for service in json_array if "MODEL_BUILD_" not in service]
+        services = [str(service) for service in json_array if "MODEL_BUILD_" not in service]
+        endpoint_col_name = self._model_client.MODEL_INFERENCE_SERVICE_ENDPOINT_COL_NAME
+
+        services_col, endpoints_col = [], []
+        for service in services:
+            res = self._model_client.show_endpoints(service_name=service)
+            endpoints = [endpoint[endpoint_col_name] for endpoint in res]
+            for endpoint in endpoints:
+                services_col.append(service)
+                endpoints_col.append(endpoint)
+
+        return {
+            self.INFERENCE_SERVICE_NAME_COL_NAME: services_col,
+            self.INFERENCE_SERVICE_ENDPOINT_COL_NAME: endpoints_col,
+        }
 
     def delete_service(
         self,
@@ -566,7 +584,8 @@ class ModelOperator:
             db, schema, service_name, self._session.get_current_database(), self._session.get_current_schema()
         )
 
-        for service in services:
+        service_col_name = self.INFERENCE_SERVICE_NAME_COL_NAME
+        for service in services[service_col_name]:
             if service == fully_qualified_service_name:
                 self._service_client.drop_service(
                     database_name=db,

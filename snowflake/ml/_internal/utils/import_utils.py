@@ -19,6 +19,33 @@ class MissingOptionalDependency:
         raise ImportError(f"Unable to import {self._dep_name}.")
 
 
+def import_with_fallbacks(*targets: str) -> Any:
+    """Import a module which may be located in different locations.
+
+    This method will iterate through the provided targets, returning the first available import target.
+    If none of the requested import targets are available, ImportError will be raised.
+
+    Args:
+        targets: Strings representing the target which needs to be imported. It should be a list of symbol name
+            joined by dot. Some valid examples:
+                - <some_package>
+                - <some_module>
+                - <some_package>.<some_module>
+                - <some_module>.<some_symbol>
+
+    Returns:
+        The imported target.
+
+    Raises:
+        ImportError: None of the requested targets are available
+    """
+    for target in targets:
+        result, success = import_or_get_dummy(target)
+        if success:
+            return result
+    raise ImportError(f"None of the requested targets could be imported. Requested: {', '.join(targets)}")
+
+
 def import_or_get_dummy(target: str) -> Tuple[Any, bool]:
     """Try to import the the given target or return a dummy object.
 
@@ -42,6 +69,10 @@ def import_or_get_dummy(target: str) -> Tuple[Any, bool]:
         return (res, True)
     except ImportError:
         pass
+
+    # Don't try symbol resolution if target doesn't contain '.'
+    if "." not in target:
+        return (MissingOptionalDependency(target), False)
 
     # Try to import the target as a symbol
     try:

@@ -18,9 +18,9 @@ from snowflake.snowpark._internal import utils as snowpark_utils
 class ModelOpsTest(absltest.TestCase):
     def setUp(self) -> None:
         self.m_session = mock_session.MockSession(conn=None, test_case=self)
-        # TODO(hayu): Remove mock sql after Snowflake 8.37.0 release
+        # TODO(hayu): Remove mock sql after Snowflake 8.40.0 release
         query = "SELECT CURRENT_VERSION() AS CURRENT_VERSION"
-        sql_result = [row.Row(CURRENT_VERSION="8.37.0 1234567890ab")]
+        sql_result = [row.Row(CURRENT_VERSION="8.40.0 1234567890ab")]
         self.m_session.add_mock_sql(query=query, result=mock_data_frame.MockDataFrame(sql_result))
 
         self.m_statement_params = {"test": "1"}
@@ -60,11 +60,13 @@ class ModelOpsTest(absltest.TestCase):
                 image_repo_name=sql_identifier.SqlIdentifier("IMAGE_REPO"),
                 ingress_enabled=True,
                 max_instances=1,
+                cpu_requests="1",
+                memory_requests="6GiB",
                 gpu_requests="1",
                 num_workers=1,
                 max_batch_rows=1024,
                 force_rebuild=True,
-                build_external_access_integration=sql_identifier.SqlIdentifier("EXTERNAL_ACCESS_INTEGRATION"),
+                build_external_access_integrations=[sql_identifier.SqlIdentifier("EXTERNAL_ACCESS_INTEGRATION")],
                 statement_params=self.m_statement_params,
             )
             mock_create_stage.assert_called_once_with(
@@ -88,11 +90,13 @@ class ModelOpsTest(absltest.TestCase):
                 image_repo_name=sql_identifier.SqlIdentifier("IMAGE_REPO"),
                 ingress_enabled=True,
                 max_instances=1,
+                cpu="1",
+                memory="6GiB",
                 gpu="1",
                 num_workers=1,
                 max_batch_rows=1024,
                 force_rebuild=True,
-                external_access_integration=sql_identifier.SqlIdentifier("EXTERNAL_ACCESS_INTEGRATION"),
+                external_access_integrations=[sql_identifier.SqlIdentifier("EXTERNAL_ACCESS_INTEGRATION")],
             )
             mock_upload_directory_to_stage.assert_called_once_with(
                 self.c_session,

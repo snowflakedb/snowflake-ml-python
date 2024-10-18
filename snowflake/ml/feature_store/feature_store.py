@@ -1886,8 +1886,7 @@ class FeatureStore:
         if found_dts[0]["refresh_mode"] != "INCREMENTAL":
             warnings.warn(
                 "Your pipeline won't be incrementally refreshed due to: "
-                + f"\"{found_dts[0]['refresh_mode_reason']}\". "
-                + "It will likely incurr higher cost.",
+                + f"\"{found_dts[0]['refresh_mode_reason']}\".",
                 stacklevel=2,
                 category=UserWarning,
             )

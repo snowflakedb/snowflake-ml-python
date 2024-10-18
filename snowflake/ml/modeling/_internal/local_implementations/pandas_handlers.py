@@ -4,7 +4,10 @@ from typing import Any, List, Optional
 import pandas as pd
 
 from snowflake.ml._internal.exceptions import error_codes, exceptions
-from snowflake.ml.modeling._internal.estimator_utils import handle_inference_result
+from snowflake.ml.modeling._internal.estimator_utils import (
+    handle_inference_result,
+    should_include_sample_weight,
+)
 
 
 class PandasTransformHandlers:
@@ -166,6 +169,7 @@ class PandasTransformHandlers:
             SnowflakeMLException: The input column list does not have one of `X` and `X_test`.
         """
         assert hasattr(self.estimator, "score")  # make type checker happy
+
         params = inspect.signature(self.estimator.score).parameters
         if "X" in params:
             score_args = {"X": self.dataset[input_cols]}
@@ -181,7 +185,8 @@ class PandasTransformHandlers:
             label_arg_name = "Y" if "Y" in params else "y"
             score_args[label_arg_name] = self.dataset[label_cols].squeeze()
 
-        if sample_weight_col is not None and "sample_weight" in params:
+        # Sample weight is not included in search estimators parameters, check the underlying estimator.
+        if sample_weight_col is not None and should_include_sample_weight(self.estimator, "score"):
             score_args["sample_weight"] = self.dataset[sample_weight_col].squeeze()
 
         score = self.estimator.score(**score_args)

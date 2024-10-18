@@ -159,7 +159,7 @@ class DataConnector:
         func_params_to_log=["batch_size", "shuffle", "drop_last_batch"],
     )
     def to_torch_dataset(
-        self, *, batch_size: int = 1, shuffle: bool = False, drop_last_batch: bool = True
+        self, *, batch_size: Optional[int] = None, shuffle: bool = False, drop_last_batch: bool = True
     ) -> "torch_data.IterableDataset":  # type: ignore[type-arg]
         """Transform the Snowflake data into a PyTorch Iterable Dataset to be used with a DataLoader.
 

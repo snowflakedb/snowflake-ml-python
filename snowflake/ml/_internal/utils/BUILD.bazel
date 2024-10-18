@@ -12,6 +12,15 @@ py_library(
     ],
 )
 
+py_test(
+    name = "snowpark_dataframe_utils_test",
+    srcs = ["snowpark_dataframe_utils_test.py"],
+    deps = [
+        ":snowpark_dataframe_utils",
+        "//snowflake/ml/test_utils:mock_data_frame",
+    ],
+)
+
 py_library(
     name = "import_utils",
     srcs = ["import_utils.py"],

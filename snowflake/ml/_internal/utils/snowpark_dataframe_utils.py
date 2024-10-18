@@ -121,3 +121,16 @@ def cast_snowpark_dataframe_column_types(df: snowpark.DataFrame) -> snowpark.Dat
             selected_cols.append(functions.col(src))
     df = df.select(selected_cols)
     return df
+
+
+def is_single_query_snowpark_dataframe(df: snowpark.DataFrame) -> bool:
+    """Check if dataframe only has a single query.
+
+    Args:
+        df: A snowpark dataframe.
+
+    Returns:
+        true if there is only on query in the dataframe and no post_actions,
+        false otherwise.
+    """
+    return len(df.queries["queries"]) == 1 and len(df.queries["post_actions"]) == 0

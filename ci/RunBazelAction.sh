@@ -27,13 +27,14 @@ bazel="bazel"
 mode="continuous_run"
 target=""
 SF_ENV="prod3"
+WITH_SPCS_IMAGE=false
 PROG=$0
 
 action=$1 && shift
 
 help() {
     local exit_code=$1
-    echo "Usage: ${PROG} <test|coverage> [-b <bazel_path>] [-m merge_gate|continuous_run|quarantined|local_unittest|local_all] [-e <snowflake_env>]"
+    echo "Usage: ${PROG} <test|coverage> [-b <bazel_path>] [-m merge_gate|continuous_run|quarantined|local_unittest|local_all] [-e <snowflake_env>] [--with-spcs-image]"
     exit "${exit_code}"
 }
 
@@ -41,11 +42,12 @@ if [[ "${action}" != "test" && "${action}" != "coverage" ]]; then
     help 1
 fi
 
-while getopts "b:m:t:c:e:h" opt; do
-    case "${opt}" in
-    m)
-        if [[ "${OPTARG}" = "merge_gate" || "${OPTARG}" = "continuous_run" || "${OPTARG}" = "quarantined" || "${OPTARG}" = "release" || "${OPTARG}" = "local_unittest" || "${OPTARG}" = "local_all" ]]; then
-            mode="${OPTARG}"
+while (($#)); do
+    case $1 in
+    -m | --mode)
+        shift
+        if [[ $1 = "merge_gate" || $1 = "continuous_run" || $1 = "quarantined" || $1 = "release" || $1 = "local_unittest" || $1 = "local_all" ]]; then
+            mode=$1
             if [[ $mode = "release" ]]; then
                 mode="continuous_run"
             fi
@@ -53,32 +55,37 @@ while getopts "b:m:t:c:e:h" opt; do
             help 1
         fi
         ;;
-    b)
-        bazel="${OPTARG}"
+    -b | --bazel_path)
+        shift
+        bazel=$1
         ;;
-    t)
+    -t | --target)
+        shift
         if [[ "${mode}" = "local_unittest" || "${mode}" = "local_all" ]]; then
-            target="${OPTARG}"
+            target=$1
         else
             help 1
         fi
         ;;
-    c)
-        coverage_report_file="${OPTARG}"
+    -c | --coverage_report)
+        shift
+        coverage_report_file=$1
         ;;
-    e)
-        SF_ENV="${OPTARG}"
+    -e | --snowflake_env)
+        shift
+        SF_ENV=$1
         ;;
-    h)
+    --with-spcs-image)
+        WITH_SPCS_IMAGE=true
+        ;;
+    -h | --help)
         help 0
         ;;
-    :)
-        help 1
-        ;;
-    ?)
+    *)
         help 1
         ;;
     esac
+    shift
 done
 
 if [[ ("${mode}" = "local_unittest" || "${mode}" = "local_all") ]]; then
@@ -87,6 +94,13 @@ if [[ ("${mode}" = "local_unittest" || "${mode}" = "local_all") ]]; then
     fi
 else
     "${bazel}" clean
+fi
+
+action_env=()
+
+if [[ "${WITH_SPCS_IMAGE}" = true ]]; then
+    source model_container_services_deployment/ci/build_and_push_images.sh
+    action_env=("--action_env=BUILDER_IMAGE_PATH=${BUILDER_IMAGE_PATH}" "--action_env=BASE_CPU_IMAGE_PATH=${BASE_CPU_IMAGE_PATH}" "--action_env=BASE_GPU_IMAGE_PATH=${BASE_GPU_IMAGE_PATH}")
 fi
 
 working_dir=$(mktemp -d "/tmp/tmp_XXXXX")
@@ -150,6 +164,7 @@ if [[ "${action}" = "test" ]]; then
         "${cache_test_results}" \
         --test_output=errors \
         --flaky_test_attempts=2 \
+        ${action_env[@]+"${action_env[@]}"} \
         "${tag_filter}" \
         --target_pattern_file "${sf_only_test_targets_file}"
     sf_only_bazel_exit_code=$?
@@ -160,6 +175,7 @@ if [[ "${action}" = "test" ]]; then
         "${cache_test_results}" \
         --test_output=errors \
         --flaky_test_attempts=2 \
+        ${action_env[@]+"${action_env[@]}"} \
         "${tag_filter}" \
         --target_pattern_file "${extended_test_targets_file}"
     extended_bazel_exit_code=$?
@@ -167,6 +183,7 @@ elif [[ "${action}" = "coverage" ]]; then
     "${bazel}" coverage \
         "${cache_test_results}" \
         --combined_report=lcov \
+        ${action_env[@]+"${action_env[@]}"} \
         "${tag_filter}" \
         --experimental_collect_code_coverage_for_generated_files \
         --target_pattern_file "${sf_only_test_targets_file}"
@@ -180,6 +197,7 @@ elif [[ "${action}" = "coverage" ]]; then
         --config=extended \
         "${cache_test_results}" \
         --combined_report=lcov \
+        ${action_env[@]+"${action_env[@]}"} \
         "${tag_filter}" \
         --experimental_collect_code_coverage_for_generated_files \
         --target_pattern_file "${extended_test_targets_file}"

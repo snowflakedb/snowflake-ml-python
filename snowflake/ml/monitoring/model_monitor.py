@@ -5,14 +5,14 @@ import pandas as pd
 from snowflake import snowpark
 from snowflake.ml._internal import telemetry
 from snowflake.ml._internal.utils import sql_identifier
-from snowflake.ml.monitoring._client import monitor_sql_client
+from snowflake.ml.monitoring._client import model_monitor_sql_client
 
 
 class ModelMonitor:
     """Class to manage instrumentation of Model Monitoring and Observability"""
 
     name: sql_identifier.SqlIdentifier
-    _model_monitor_client: monitor_sql_client._ModelMonitorSQLClient
+    _model_monitor_client: model_monitor_sql_client.ModelMonitorSQLClient
     _fully_qualified_model_name: str
     _version_name: sql_identifier.SqlIdentifier
     _function_name: sql_identifier.SqlIdentifier
@@ -25,7 +25,7 @@ class ModelMonitor:
     @classmethod
     def _ref(
         cls,
-        model_monitor_client: monitor_sql_client._ModelMonitorSQLClient,
+        model_monitor_client: model_monitor_sql_client.ModelMonitorSQLClient,
         name: sql_identifier.SqlIdentifier,
         *,
         fully_qualified_model_name: str,
