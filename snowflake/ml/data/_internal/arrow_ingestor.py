@@ -198,7 +198,15 @@ def _record_batch_to_arrays(rb: pa.RecordBatch) -> Dict[str, npt.NDArray[Any]]:
     for column, column_schema in zip(rb, rb.schema):
         # zero_copy_only=False because of nans. Ideally nans should have been imputed in feature engineering.
         array = column.to_numpy(zero_copy_only=False)
+        # If this column is a list, use the underlying type from the list values. Since this is just one column,
+        # there should only be one type within the list.
+        # TODO: Refactor to reduce data copies.
+        if isinstance(column_schema.type, pa.ListType):
+            # Update dtype of outer array:
+            array = np.array(array.tolist(), dtype=column_schema.type.value_type.to_pandas_dtype())
+
         batch_dict[column_schema.name] = array
+
     return batch_dict
 
 

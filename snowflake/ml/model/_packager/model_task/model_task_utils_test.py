@@ -10,7 +10,7 @@ from absl.testing import absltest
 from sklearn import datasets
 
 from snowflake.ml.model import model_signature, type_hints
-from snowflake.ml.model._packager.model_handlers import model_objective_utils
+from snowflake.ml.model._packager.model_task import model_task_utils
 
 binary_dataset = datasets.load_breast_cancer()
 binary_data_X = pd.DataFrame(binary_dataset.data, columns=binary_dataset.feature_names)
@@ -35,14 +35,14 @@ ranking_y = ranking_y[sorted_idx]
 ranking_qid = ranking_qid[sorted_idx]
 
 
-class ModelObjectiveUtilsTest(absltest.TestCase):
+class ModelTaskUtilsTest(absltest.TestCase):
     def _validate_model_task_and_output(
         self,
         model: Any,
         expected_task: type_hints.Task,
         expected_output: model_signature.DataType,
     ) -> None:
-        model_task_and_output = model_objective_utils.get_model_task_and_output_type(model)
+        model_task_and_output = model_task_utils.get_model_task_and_output_type(model)
         self.assertEqual(expected_task, model_task_and_output.task)
         self.assertEqual(expected_output, model_task_and_output.output_type)
 
@@ -106,7 +106,7 @@ class ModelObjectiveUtilsTest(absltest.TestCase):
         classifier = lightgbm.LGBMClassifier()
         classifier.fit(binary_data_X, binary_data_y)
         self._validate_model_task_and_output(
-            classifier, type_hints.Task.TABULAR_BINARY_CLASSIFICATION, model_signature.DataType.STRING
+            classifier, type_hints.Task.TABULAR_BINARY_CLASSIFICATION, model_signature.DataType.DOUBLE
         )
 
     def test_model_task_and_output_lightgbm_for_single_class(self) -> None:
@@ -114,13 +114,13 @@ class ModelObjectiveUtilsTest(absltest.TestCase):
         classifier = lightgbm.LGBMClassifier()
         classifier.fit(binary_data_X, single_class_y)
         self._validate_model_task_and_output(
-            classifier, type_hints.Task.TABULAR_BINARY_CLASSIFICATION, model_signature.DataType.STRING
+            classifier, type_hints.Task.TABULAR_BINARY_CLASSIFICATION, model_signature.DataType.DOUBLE
         )
         # with binary objective
         classifier = lightgbm.LGBMClassifier(objective="binary")
         classifier.fit(binary_data_X, single_class_y)
         self._validate_model_task_and_output(
-            classifier, type_hints.Task.TABULAR_BINARY_CLASSIFICATION, model_signature.DataType.STRING
+            classifier, type_hints.Task.TABULAR_BINARY_CLASSIFICATION, model_signature.DataType.DOUBLE
         )
         # with multiclass objective
         classifier = lightgbm.LGBMClassifier(objective="multiclass", num_classes=3)
@@ -132,7 +132,7 @@ class ModelObjectiveUtilsTest(absltest.TestCase):
     def test_model_task_and_output_lightgbm_booster(self) -> None:
         booster = lightgbm.train({"objective": "binary"}, lightgbm.Dataset(binary_data_X, label=binary_data_y))
         self._validate_model_task_and_output(
-            booster, type_hints.Task.TABULAR_BINARY_CLASSIFICATION, model_signature.DataType.STRING
+            booster, type_hints.Task.TABULAR_BINARY_CLASSIFICATION, model_signature.DataType.DOUBLE
         )
 
     def test_model_task_and_output_lightgbm_regressor(self) -> None:
@@ -188,7 +188,7 @@ class ModelObjectiveUtilsTest(absltest.TestCase):
             return x + 1
 
         with self.assertRaises(ValueError) as e:
-            model_objective_utils.get_model_task_and_output_type(unknown_model)
+            model_task_utils.get_model_task_and_output_type(unknown_model)
         self.assertEqual(str(e.exception), "Model type <class 'function'> is not supported")
 
 

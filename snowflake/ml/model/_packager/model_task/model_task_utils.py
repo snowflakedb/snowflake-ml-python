@@ -128,42 +128,30 @@ def get_model_task_xgb(model: Union["xgboost.Booster", "xgboost.XGBModel"]) -> t
     return type_hints.Task.UNKNOWN
 
 
-def get_model_task_and_output_type(model: Any) -> ModelTaskAndOutputType:
+def _get_model_task(model: Any) -> type_hints.Task:
     if type_utils.LazyType("xgboost.Booster").isinstance(model) or type_utils.LazyType("xgboost.XGBModel").isinstance(
         model
     ):
-        task = get_model_task_xgb(model)
-        output_type = model_signature.DataType.DOUBLE
-        if task == type_hints.Task.TABULAR_MULTI_CLASSIFICATION:
-            output_type = model_signature.DataType.STRING
-        return ModelTaskAndOutputType(task=task, output_type=output_type)
+        return get_model_task_xgb(model)
 
     if type_utils.LazyType("lightgbm.Booster").isinstance(model) or type_utils.LazyType(
         "lightgbm.LGBMModel"
     ).isinstance(model):
-        task = get_model_task_lightgbm(model)
-        output_type = model_signature.DataType.DOUBLE
-        if task in [
-            type_hints.Task.TABULAR_BINARY_CLASSIFICATION,
-            type_hints.Task.TABULAR_MULTI_CLASSIFICATION,
-        ]:
-            output_type = model_signature.DataType.STRING
-        return ModelTaskAndOutputType(task=task, output_type=output_type)
+        return get_model_task_lightgbm(model)
 
     if type_utils.LazyType("catboost.CatBoost").isinstance(model):
-        task = get_model_task_catboost(model)
-        output_type = model_signature.DataType.DOUBLE
-        if task == type_hints.Task.TABULAR_MULTI_CLASSIFICATION:
-            output_type = model_signature.DataType.STRING
-        return ModelTaskAndOutputType(task=task, output_type=output_type)
+        return get_model_task_catboost(model)
 
     if type_utils.LazyType("sklearn.base.BaseEstimator").isinstance(model) or type_utils.LazyType(
         "sklearn.pipeline.Pipeline"
     ).isinstance(model):
-        task = get_task_skl(model)
-        output_type = model_signature.DataType.DOUBLE
-        if task == type_hints.Task.TABULAR_MULTI_CLASSIFICATION:
-            output_type = model_signature.DataType.STRING
-        return ModelTaskAndOutputType(task=task, output_type=output_type)
-
+        return get_task_skl(model)
     raise ValueError(f"Model type {type(model)} is not supported")
+
+
+def get_model_task_and_output_type(model: Any) -> ModelTaskAndOutputType:
+    task = _get_model_task(model)
+    output_type = model_signature.DataType.DOUBLE
+    if task == type_hints.Task.TABULAR_MULTI_CLASSIFICATION:
+        output_type = model_signature.DataType.STRING
+    return ModelTaskAndOutputType(task=task, output_type=output_type)

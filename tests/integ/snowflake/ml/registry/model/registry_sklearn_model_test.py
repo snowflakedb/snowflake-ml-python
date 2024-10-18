@@ -4,9 +4,18 @@ import numpy as np
 import pandas as pd
 import shap
 from absl.testing import absltest, parameterized
-from sklearn import datasets, ensemble, linear_model, multioutput
+from sklearn import (
+    compose,
+    datasets,
+    ensemble,
+    linear_model,
+    multioutput,
+    pipeline as SK_pipeline,
+    preprocessing,
+)
 
 from snowflake.ml.model import model_signature
+from snowflake.ml.model._model_composer.model_manifest import model_manifest_schema
 from snowflake.ml.model._packager.model_handlers import _utils as handlers_utils
 from snowflake.snowpark import exceptions as snowpark_exceptions
 from tests.integ.snowflake.ml.registry.model import registry_model_test_base
@@ -37,6 +46,11 @@ class TestRegistrySKLearnModelInteg(registry_model_test_base.RegistryModelTestBa
                     iris_X[:10],
                     lambda res: np.testing.assert_allclose(res.values, classifier.predict_proba(iris_X[:10])),
                 ),
+            },
+            function_type_assert={
+                "explain": model_manifest_schema.ModelMethodFunctionTypes.TABLE_FUNCTION,
+                "predict": model_manifest_schema.ModelMethodFunctionTypes.FUNCTION,
+                "predict_proba": model_manifest_schema.ModelMethodFunctionTypes.FUNCTION,
             },
         )
 
@@ -74,6 +88,11 @@ class TestRegistrySKLearnModelInteg(registry_model_test_base.RegistryModelTestBa
                 ),
             },
             options={"enable_explainability": True},
+            function_type_assert={
+                "explain": model_manifest_schema.ModelMethodFunctionTypes.TABLE_FUNCTION,
+                "predict": model_manifest_schema.ModelMethodFunctionTypes.FUNCTION,
+                "predict_proba": model_manifest_schema.ModelMethodFunctionTypes.FUNCTION,
+            },
         )
 
     @parameterized.product(  # type: ignore[misc]
@@ -106,6 +125,11 @@ class TestRegistrySKLearnModelInteg(registry_model_test_base.RegistryModelTestBa
                 ),
             },
             options={"enable_explainability": True},
+            function_type_assert={
+                "explain": model_manifest_schema.ModelMethodFunctionTypes.TABLE_FUNCTION,
+                "predict": model_manifest_schema.ModelMethodFunctionTypes.FUNCTION,
+                "predict_proba": model_manifest_schema.ModelMethodFunctionTypes.FUNCTION,
+            },
         )
 
     @parameterized.product(  # type: ignore[misc]
@@ -247,29 +271,56 @@ class TestRegistrySKLearnModelInteg(registry_model_test_base.RegistryModelTestBa
             signatures=sig,
         )
 
-        with self.assertRaisesRegex(
-            ValueError, "Signatures and sample_input_data both cannot be specified at the same time."
-        ):
-            getattr(self, registry_test_fn)(
-                model=classifier,
-                sample_input_data=iris_X_df,
-                prediction_assert_fns={
-                    "predict": (
-                        iris_X_df,
-                        lambda res: np.testing.assert_allclose(
-                            res["output_feature_0"].values, classifier.predict(iris_X)
-                        ),
+    @parameterized.product(  # type: ignore[misc]
+        registry_test_fn=registry_model_test_base.RegistryModelTestBase.REGISTRY_TEST_FN_LIST,
+    )
+    def test_skl_model_with_categorical_dtype_columns(
+        self,
+        registry_test_fn: str,
+    ) -> None:
+        data = {
+            "color": ["red", "blue", "green", "red"],
+            "size": [1, 2, 2, 4],
+            "price": [10, 15, 20, 25],
+            "target": [0, 1, 1, 0],
+        }
+        input_features = ["color", "size", "price"]
+
+        df = pd.DataFrame(data)
+        df["color"] = df["color"].astype("category")
+        df["size"] = df["size"].astype("category")
+
+        # Define categorical columns
+        categorical_columns = ["color", "size"]
+
+        # Create a column transformer
+        preprocessor = compose.ColumnTransformer(
+            transformers=[("cat", preprocessing.OneHotEncoder(), categorical_columns)],
+            remainder="passthrough",
+        )
+
+        pipeline = SK_pipeline.Pipeline(
+            [
+                ("preprocessor", preprocessor),
+                ("classifier", linear_model.LogisticRegression()),
+            ]
+        )
+        pipeline.fit(df.drop("target", axis=1), df["target"])
+
+        getattr(self, registry_test_fn)(
+            model=pipeline,
+            sample_input_data=df[input_features],
+            prediction_assert_fns={
+                "predict": (
+                    df[input_features],
+                    lambda res: np.testing.assert_allclose(
+                        res["output_feature_0"].values, pipeline.predict(df[input_features])
                     ),
-                    "explain": (
-                        iris_X_df,
-                        lambda res: np.testing.assert_allclose(
-                            dataframe_utils.convert2D_json_to_3D(res.values), expected_explanations
-                        ),
-                    ),
-                },
-                signatures=sig,
-                additional_version_suffix="v2",
-            )
+                ),
+            },
+            # TODO(SNOW-1677301): Add support for explainability for categorical columns
+            options={"enable_explainability": False},
+        )
 
 
 if __name__ == "__main__":

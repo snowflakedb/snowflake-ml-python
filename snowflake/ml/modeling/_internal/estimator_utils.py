@@ -275,3 +275,16 @@ def upload_model_to_stage(
 
     temp_file_utils.cleanup_temp_files([local_transform_file_name])
     return os.path.basename(local_transform_file_name)
+
+
+def should_include_sample_weight(estimator: object, method_name: str) -> bool:
+    # If this is a Grid Search or Randomized Search estimator, check the underlying estimator.
+    underlying_estimator = (
+        estimator.estimator if ("_search" in estimator.__module__ and hasattr(estimator, "estimator")) else estimator
+    )
+    method = getattr(underlying_estimator, method_name)
+    underlying_estimator_params = inspect.signature(method).parameters
+    if "sample_weight" in underlying_estimator_params:
+        return True
+
+    return False

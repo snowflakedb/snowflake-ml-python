@@ -5,24 +5,20 @@ from typing import TYPE_CHECKING, Any, Callable, Dict, Optional, Type, cast, fin
 import cloudpickle
 import numpy as np
 import pandas as pd
-from packaging import version
 from typing_extensions import TypeGuard, Unpack
 
 from snowflake.ml._internal import type_utils
 from snowflake.ml._internal.exceptions import exceptions
 from snowflake.ml.model import custom_model, model_signature, type_hints as model_types
 from snowflake.ml.model._packager.model_env import model_env
-from snowflake.ml.model._packager.model_handlers import (
-    _base,
-    _utils as handlers_utils,
-    model_objective_utils,
-)
+from snowflake.ml.model._packager.model_handlers import _base, _utils as handlers_utils
 from snowflake.ml.model._packager.model_handlers_migrator import base_migrator
 from snowflake.ml.model._packager.model_meta import (
     model_blob_meta,
     model_meta as model_meta_api,
     model_meta_schema,
 )
+from snowflake.ml.model._packager.model_task import model_task_utils
 from snowflake.ml.model._signatures import numpy_handler, utils as model_signature_utils
 
 if TYPE_CHECKING:
@@ -72,41 +68,7 @@ class SnowMLModelHandler(_base.BaseModelHandler["BaseEstimator"]):
         return cast("BaseEstimator", model)
 
     @classmethod
-    def _get_local_version_package(cls, pkg_name: str) -> Optional[version.Version]:
-        from importlib import metadata as importlib_metadata
-
-        from packaging import version
-
-        local_version = None
-
-        try:
-            local_dist = importlib_metadata.distribution(pkg_name)
-            local_version = version.parse(local_dist.version)
-        except importlib_metadata.PackageNotFoundError:
-            pass
-
-        return local_version
-
-    @classmethod
-    def _can_support_xgb(cls, enable_explainability: Optional[bool]) -> bool:
-
-        local_xgb_version = cls._get_local_version_package("xgboost")
-
-        if local_xgb_version and local_xgb_version >= version.parse("2.1.0"):
-            if enable_explainability:
-                warnings.warn(
-                    f"This version of xgboost {local_xgb_version} does not work with shap 0.42.1."
-                    + "If you want model explanations, lower the xgboost version to <2.1.0.",
-                    category=UserWarning,
-                    stacklevel=1,
-                )
-            return False
-        return True
-
-    @classmethod
-    def _get_supported_object_for_explainability(
-        cls, estimator: "BaseEstimator", enable_explainability: Optional[bool]
-    ) -> Any:
+    def _get_supported_object_for_explainability(cls, estimator: "BaseEstimator") -> Any:
         from snowflake.ml.modeling import pipeline as snowml_pipeline
 
         # handle pipeline objects separately
@@ -118,8 +80,6 @@ class SnowMLModelHandler(_base.BaseModelHandler["BaseEstimator"]):
             if hasattr(estimator, method_name):
                 try:
                     result = getattr(estimator, method_name)()
-                    if method_name == "to_xgboost" and not cls._can_support_xgb(enable_explainability):
-                        return None
                     return result
                 except exceptions.SnowflakeMLException:
                     pass  # Do nothing and continue to the next method
@@ -168,7 +128,7 @@ class SnowMLModelHandler(_base.BaseModelHandler["BaseEstimator"]):
                 model_meta.signatures = temp_model_signature_dict
 
         if enable_explainability or enable_explainability is None:
-            python_base_obj = cls._get_supported_object_for_explainability(model, enable_explainability)
+            python_base_obj = cls._get_supported_object_for_explainability(model)
             if python_base_obj is None:
                 if enable_explainability:  # if user set enable_explainability to True, throw error else silently skip
                     raise ValueError(
@@ -177,7 +137,7 @@ class SnowMLModelHandler(_base.BaseModelHandler["BaseEstimator"]):
                 # set None to False so we don't include shap in the environment
                 enable_explainability = False
             else:
-                model_task_and_output_type = model_objective_utils.get_model_task_and_output_type(python_base_obj)
+                model_task_and_output_type = model_task_utils.get_model_task_and_output_type(python_base_obj)
                 model_meta.task = model_task_and_output_type.task
                 explain_target_method = handlers_utils.get_explain_target_method(model_meta, cls.EXPLAIN_TARGET_METHODS)
                 model_meta = handlers_utils.add_explain_method_signature(
@@ -213,28 +173,10 @@ class SnowMLModelHandler(_base.BaseModelHandler["BaseEstimator"]):
         model_dependencies = model._get_dependencies()
         for dep in model_dependencies:
             pkg_name = dep.split("==")[0]
-            if pkg_name != "xgboost":
-                _include_if_absent_pkgs.append(model_env.ModelDependency(requirement=pkg_name, pip_name=pkg_name))
-                continue
-
-            local_xgb_version = cls._get_local_version_package("xgboost")
-            if local_xgb_version and local_xgb_version >= version.parse("2.0.0") and enable_explainability:
-                model_meta.env.include_if_absent(
-                    [
-                        model_env.ModelDependency(requirement="xgboost==2.0.*", pip_name="xgboost"),
-                    ],
-                    check_local_version=False,
-                )
-            else:
-                model_meta.env.include_if_absent(
-                    [
-                        model_env.ModelDependency(requirement="xgboost", pip_name="xgboost"),
-                    ],
-                    check_local_version=True,
-                )
+            _include_if_absent_pkgs.append(model_env.ModelDependency(requirement=pkg_name, pip_name=pkg_name))
 
         if enable_explainability:
-            model_meta.env.include_if_absent([model_env.ModelDependency(requirement="shap", pip_name="shap")])
+            model_meta.env.include_if_absent([model_env.ModelDependency(requirement="shap>=0.46.0", pip_name="shap")])
             model_meta.explain_algorithm = model_meta_schema.ModelExplainAlgorithm.SHAP
         model_meta.env.include_if_absent(_include_if_absent_pkgs, check_local_version=True)
 

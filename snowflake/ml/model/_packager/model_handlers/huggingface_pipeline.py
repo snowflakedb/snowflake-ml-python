@@ -256,12 +256,20 @@ class HuggingFacePipelineHandler(
     @staticmethod
     def _get_device_config(**kwargs: Unpack[model_types.HuggingFaceLoadOptions]) -> Dict[str, str]:
         device_config: Dict[str, Any] = {}
+        cuda_visible_devices = os.environ.get("CUDA_VISIBLE_DEVICES", None)
+        gpu_nums = 0
+        if cuda_visible_devices is not None:
+            gpu_nums = len(cuda_visible_devices.split(","))
         if (
             kwargs.get("use_gpu", False)
             and kwargs.get("device_map", None) is None
             and kwargs.get("device", None) is None
         ):
-            device_config["device_map"] = "auto"
+            if gpu_nums == 0 or gpu_nums > 1:
+                # Use accelerator if there are multiple GPUs or no GPU
+                device_config["device_map"] = "auto"
+            else:
+                device_config["device"] = "cuda"
         elif kwargs.get("device_map", None) is not None:
             device_config["device_map"] = kwargs["device_map"]
         elif kwargs.get("device", None) is not None:
@@ -310,6 +318,7 @@ class HuggingFacePipelineHandler(
             m = transformers.pipeline(
                 model_blob_options["task"],
                 model=model_blob_file_or_dir_path,
+                trust_remote_code=True,
                 **device_config,
             )
 

@@ -3,6 +3,7 @@ import json
 import os
 import tempfile
 from typing import TYPE_CHECKING, Callable, Dict, Optional
+from unittest import mock
 
 import numpy as np
 import pandas as pd
@@ -39,7 +40,12 @@ class HuggingFacePipelineHandlerTest(absltest.TestCase):
     def test_get_device_config(self) -> None:
         self.assertDictEqual(HuggingFacePipelineHandler._get_device_config(), {})
         self.assertDictEqual(HuggingFacePipelineHandler._get_device_config(use_gpu=False), {})
-        self.assertDictEqual(HuggingFacePipelineHandler._get_device_config(use_gpu=True), {"device_map": "auto"})
+        with mock.patch.dict(os.environ, {}):
+            self.assertDictEqual(HuggingFacePipelineHandler._get_device_config(use_gpu=True), {"device_map": "auto"})
+        with mock.patch.dict(os.environ, {"CUDA_VISIBLE_DEVICES": "0"}):
+            self.assertDictEqual(HuggingFacePipelineHandler._get_device_config(use_gpu=True), {"device": "cuda"})
+        with mock.patch.dict(os.environ, {"CUDA_VISIBLE_DEVICES": "0,1"}):
+            self.assertDictEqual(HuggingFacePipelineHandler._get_device_config(use_gpu=True), {"device_map": "auto"})
         self.assertDictEqual(
             HuggingFacePipelineHandler._get_device_config(device_map="balanced"), {"device_map": "balanced"}
         )

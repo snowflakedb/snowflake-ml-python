@@ -61,17 +61,6 @@ class ModelPackager:
         if not options:
             options = model_types.BaseModelSaveOption()
 
-        # here handling the case of enable_explainability is False/None
-        enable_explainability = options.get("enable_explainability", None)
-        if enable_explainability is False or enable_explainability is None:
-            if (signatures is not None) and (sample_input_data is not None):
-                raise snowml_exceptions.SnowflakeMLException(
-                    error_code=error_codes.INVALID_ARGUMENT,
-                    original_exception=ValueError(
-                        "Signatures and sample_input_data both cannot be specified at the same time."
-                    ),
-                )
-
         handler = model_handler.find_handler(model)
         if handler is None:
             raise snowml_exceptions.SnowflakeMLException(

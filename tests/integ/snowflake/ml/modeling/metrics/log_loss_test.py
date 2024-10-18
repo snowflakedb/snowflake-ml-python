@@ -1,4 +1,4 @@
-from typing import Optional, Union
+from typing import Optional
 
 import numpy as np
 import numpy.typing as npt
@@ -47,41 +47,36 @@ class LogLossTest(parameterized.TestCase):
 
     @parameterized.product(  # type: ignore[misc]
         data_index=list(range(len(_REGULAR_BINARY_DATA_LIST))),
-        eps=["auto", 0.01, 0.1, 0.5, 0.9, 0.99],
     )
-    def test_eps_binary(self, data_index: int, eps: Union[float, str]) -> None:
+    def test_binary(self, data_index: int) -> None:
         pandas_df, input_df = utils.get_df(self._session, _REGULAR_BINARY_DATA_LIST[data_index], _SF_SCHEMA)
 
         actual_loss = snowml_metrics.log_loss(
             df=input_df,
             y_true_col_names=_BINARY_Y_TRUE_COL,
             y_pred_col_names=_BINARY_Y_PRED_COL,
-            eps=eps,
         )
         sklearn_loss = sklearn_metrics.log_loss(
             pandas_df[_BINARY_Y_TRUE_COL],
             pandas_df[_BINARY_Y_PRED_COL],
-            eps=eps,
         )
         np.testing.assert_allclose(actual_loss, sklearn_loss)
 
     @parameterized.product(  # type: ignore[misc]
         data_index=list(range(len(_REGULAR_MULTICLASS_DATA_LIST))),
-        eps=["auto", 0.01, 0.1, 0.5, 0.9, 0.99],
     )
-    def test_eps_multiclass(self, data_index: int, eps: Union[float, str]) -> None:
+    def test_multiclass(self, data_index: int) -> None:
         pandas_df, input_df = utils.get_df(self._session, _REGULAR_MULTICLASS_DATA_LIST[data_index], _SF_SCHEMA)
 
         actual_loss = snowml_metrics.log_loss(
             df=input_df,
             y_true_col_names=_MULTICLASS_Y_TRUE_COL,
             y_pred_col_names=_MULTICLASS_Y_PRED_COLS,
-            eps=eps,
+            eps="auto",
         )
         sklearn_loss = sklearn_metrics.log_loss(
             pandas_df[_MULTICLASS_Y_TRUE_COL],
             pandas_df[_MULTICLASS_Y_PRED_COLS],
-            eps=eps,
         )
         np.testing.assert_allclose(actual_loss, sklearn_loss)
 

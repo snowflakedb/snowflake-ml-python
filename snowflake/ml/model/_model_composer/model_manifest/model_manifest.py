@@ -44,6 +44,7 @@ class ModelManifest:
         model_rel_path: pathlib.PurePosixPath,
         options: Optional[type_hints.ModelSaveOption] = None,
         data_sources: Optional[List[data_source.DataSource]] = None,
+        target_platforms: Optional[List[type_hints.TargetPlatform]] = None,
     ) -> None:
         if options is None:
             options = {}
@@ -131,6 +132,9 @@ class ModelManifest:
         lineage_sources = self._extract_lineage_info(data_sources)
         if lineage_sources:
             manifest_dict["lineage_sources"] = lineage_sources
+
+        if target_platforms:
+            manifest_dict["target_platforms"] = [platform.value for platform in target_platforms]
 
         with (self.workspace_path / ModelManifest.MANIFEST_FILE_REL_PATH).open("w", encoding="utf-8") as f:
             # Anchors are not supported in the server, avoid that.

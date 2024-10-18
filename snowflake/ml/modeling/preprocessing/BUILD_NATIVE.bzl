@@ -100,6 +100,7 @@ def get_build_rules_for_native_impl():
             "//snowflake/ml/_internal:type_utils",
             "//snowflake/ml/_internal/exceptions:exceptions",
             "//snowflake/ml/_internal/utils:identifier",
+            "//snowflake/ml/_internal/utils:import_utils",
             "//snowflake/ml/model:model_signature",
             "//snowflake/ml/modeling/framework",
         ],
@@ -116,6 +117,7 @@ def get_build_rules_for_native_impl():
             "//snowflake/ml/_internal:type_utils",
             "//snowflake/ml/_internal/exceptions:exceptions",
             "//snowflake/ml/_internal/utils:identifier",
+            "//snowflake/ml/_internal/utils:import_utils",
             "//snowflake/ml/modeling/framework",
         ],
     )

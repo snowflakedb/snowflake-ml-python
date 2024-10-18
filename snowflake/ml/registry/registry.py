@@ -14,11 +14,8 @@ from snowflake.ml.model import (
     type_hints as model_types,
 )
 from snowflake.ml.model._client.model import model_version_impl
-from snowflake.ml.monitoring._client import (
-    model_monitor,
-    model_monitor_manager,
-    model_monitor_version,
-)
+from snowflake.ml.monitoring import model_monitor, model_monitor_version
+from snowflake.ml.monitoring._manager import model_monitor_manager
 from snowflake.ml.monitoring.entities import model_monitor_config
 from snowflake.ml.registry._manager import model_manager
 from snowflake.snowpark import session
@@ -107,6 +104,7 @@ class Registry:
         metrics: Optional[Dict[str, Any]] = None,
         conda_dependencies: Optional[List[str]] = None,
         pip_requirements: Optional[List[str]] = None,
+        target_platforms: Optional[List[model_types.SupportedTargetPlatformType]] = None,
         python_version: Optional[str] = None,
         signatures: Optional[Dict[str, model_signature.ModelSignature]] = None,
         sample_input_data: Optional[model_types.SupportedDataType] = None,
@@ -128,14 +126,17 @@ class Registry:
             metrics: A JSON serializable dictionary containing metrics linked to the model version. Defaults to None.
             signatures: Model data signatures for inputs and outputs for various target methods. If it is None,
                 sample_input_data would be used to infer the signatures for those models that cannot automatically
-                infer the signature. If not None, sample_input_data should not be specified. Defaults to None.
-            sample_input_data: Sample input data to infer model signatures from. Defaults to None.
+                infer the signature. Defaults to None.
+            sample_input_data: Sample input data to infer model signatures from.
+                It would also be used as background data in explanation and to capture data lineage. Defaults to None.
             conda_dependencies: List of Conda package specifications. Use "[channel::]package [operator version]" syntax
                 to specify a dependency. It is a recommended way to specify your dependencies using conda. When channel
                 is not specified, Snowflake Anaconda Channel will be used. Defaults to None.
             pip_requirements: List of Pip package specifications. Defaults to None.
                 Currently it is not supported since Model can only executed in Snowflake Warehouse where all
                 dependencies are required to be retrieved from Snowflake Anaconda Channel.
+            target_platforms: List of target platforms to run the model. The only acceptable inputs are a combination of
+                {"WAREHOUSE", "SNOWPARK_CONTAINER_SERVICES"}. Defaults to None.
             python_version: Python version in which the model is run. Defaults to None.
             code_paths: List of directories containing code to import. Defaults to None.
             ext_modules: List of external modules to pickle with the model object.
@@ -190,6 +191,7 @@ class Registry:
             "metrics",
             "conda_dependencies",
             "pip_requirements",
+            "target_platforms",
             "python_version",
             "signatures",
         ],
@@ -204,6 +206,7 @@ class Registry:
         metrics: Optional[Dict[str, Any]] = None,
         conda_dependencies: Optional[List[str]] = None,
         pip_requirements: Optional[List[str]] = None,
+        target_platforms: Optional[List[model_types.SupportedTargetPlatformType]] = None,
         python_version: Optional[str] = None,
         signatures: Optional[Dict[str, model_signature.ModelSignature]] = None,
         sample_input_data: Optional[model_types.SupportedDataType] = None,
@@ -229,13 +232,16 @@ class Registry:
             signatures: Model data signatures for inputs and outputs for various target methods. If it is None,
                 sample_input_data would be used to infer the signatures for those models that cannot automatically
                 infer the signature. If not None, sample_input_data should not be specified. Defaults to None.
-            sample_input_data: Sample input data to infer model signatures from. Defaults to None.
+            sample_input_data: Sample input data to infer model signatures from.
+                It would also be used as background data in explanation and to capture data lineage. Defaults to None.
             conda_dependencies: List of Conda package specifications. Use "[channel::]package [operator version]" syntax
                 to specify a dependency. It is a recommended way to specify your dependencies using conda. When channel
                 is not specified, Snowflake Anaconda Channel will be used. Defaults to None.
             pip_requirements: List of Pip package specifications. Defaults to None.
                 Currently it is not supported since Model can only executed in Snowflake Warehouse where all
                 dependencies are required to be retrieved from Snowflake Anaconda Channel.
+            target_platforms: List of target platforms to run the model. The only acceptable inputs are a combination of
+                {"WAREHOUSE", "SNOWPARK_CONTAINER_SERVICES"}. Defaults to None.
             python_version: Python version in which the model is run. Defaults to None.
             code_paths: List of directories containing code to import. Defaults to None.
             ext_modules: List of external modules to pickle with the model object.
@@ -287,6 +293,7 @@ class Registry:
             metrics=metrics,
             conda_dependencies=conda_dependencies,
             pip_requirements=pip_requirements,
+            target_platforms=target_platforms,
             python_version=python_version,
             signatures=signatures,
             sample_input_data=sample_input_data,

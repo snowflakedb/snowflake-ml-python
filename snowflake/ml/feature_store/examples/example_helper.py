@@ -66,7 +66,9 @@ class ExampleHelper:
                 continue
             mod_path = f"{__package__}.{self._selected_example}.features.{f_name.rstrip('.py')}"
             mod = importlib.import_module(mod_path)
-            fv = mod.create_draft_feature_view(self._session, self._source_dfs, self._source_tables)
+            fv = mod.create_draft_feature_view(
+                self._session, self._source_dfs, self._source_tables, self._database_name, self._dataset_schema
+            )
             fvs.append(fv)
 
         return fvs
@@ -140,7 +142,7 @@ class ExampleHelper:
             """
         ).collect()
 
-        return [destination_table]
+        return [schema_dict["destination_table_name"]]
 
     def _load_parquet(self, schema_dict: Dict[str, str], temp_stage_name: str) -> List[str]:
         regex_pattern = schema_dict["load_files_pattern"]
@@ -173,13 +175,14 @@ class ExampleHelper:
                 dest_table_name = (
                     f"{self._database_name}.{self._dataset_schema}.{schema_dict['destination_table_name']}"
                 )
+                result.append(schema_dict["destination_table_name"])
             else:
                 regex_pattern = schema_dict["destination_table_name"]
                 dest_table_name = re.match(regex_pattern, file_name).group("table_name")  # type: ignore[union-attr]
+                result.append(dest_table_name)
                 dest_table_name = f"{self._database_name}.{self._dataset_schema}.{dest_table_name}"
 
             df.write.mode("overwrite").save_as_table(dest_table_name)
-            result.append(dest_table_name)
 
         return result
 

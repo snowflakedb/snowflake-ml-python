@@ -282,7 +282,7 @@ class ModelMethodOptionsTest(absltest.TestCase):
 
         # explain methods should default to table function.
         method_options = model_method.get_model_method_options_from_options(
-            options={"enable_explainability": True}, target_method="explain_test"
+            options={"enable_explainability": True}, target_method="explain"
         )
         self.assertEqual(
             method_options["function_type"], model_manifest_schema.ModelMethodFunctionTypes.TABLE_FUNCTION.value

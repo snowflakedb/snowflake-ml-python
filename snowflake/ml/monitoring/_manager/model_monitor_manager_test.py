@@ -8,7 +8,8 @@ from absl.testing import absltest
 from snowflake.ml._internal.utils import sql_identifier
 from snowflake.ml.model import model_signature, type_hints
 from snowflake.ml.model._model_composer.model_manifest import model_manifest_schema
-from snowflake.ml.monitoring._client import model_monitor_manager, monitor_sql_client
+from snowflake.ml.monitoring._client import model_monitor_sql_client
+from snowflake.ml.monitoring._manager import model_monitor_manager
 from snowflake.ml.monitoring.entities import (
     model_monitor_config,
     model_monitor_interval,
@@ -125,7 +126,7 @@ class ModelMonitorManagerHelpersTest(absltest.TestCase):
     def test_get_monitor_by_model_version(self) -> None:
         self.mock_model_monitor_sql_client.validate_existence.return_value = True
         self.mock_model_monitor_sql_client.get_model_monitor_by_model_version.return_value = (
-            monitor_sql_client._ModelMonitorParams(
+            model_monitor_sql_client._ModelMonitorParams(
                 monitor_name="TEST_MONITOR_NAME",
                 fully_qualified_model_name=self.test_fq_model_name,
                 version_name=self.test_model_version,
@@ -159,7 +160,7 @@ class ModelMonitorManagerHelpersTest(absltest.TestCase):
         mock_validate_existence.assert_called_once_with(self.test_fq_model_name, self.test_model_version, None)
 
     def _init_mm_with_patch(self) -> None:
-        patcher = patch("snowflake.ml.monitoring._client.monitor_sql_client._ModelMonitorSQLClient", autospec=True)
+        patcher = patch("snowflake.ml.monitoring._client.model_monitor_sql_client.ModelMonitorSQLClient", autospec=True)
         self.addCleanup(patcher.stop)
         self.mock_model_monitor_sql_client_class = patcher.start()
         self.mock_model_monitor_sql_client = self.mock_model_monitor_sql_client_class.return_value
@@ -351,7 +352,7 @@ class ModelMonitorManagerTest(absltest.TestCase):
         monitor = "TEST"
         model = "TEST"
         version = "V1"
-        monitor_params = monitor_sql_client._ModelMonitorParams(
+        monitor_params = model_monitor_sql_client._ModelMonitorParams(
             monitor_name=monitor,
             fully_qualified_model_name=f"TEST_DB.TEST_SCHEMA.{model}",
             version_name=version,

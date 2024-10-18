@@ -7,7 +7,7 @@ from absl.testing import absltest
 from snowflake.ml.model import model_signature, type_hints
 from snowflake.ml.model._client.model import model_version_impl
 from snowflake.ml.model._model_composer.model_manifest import model_manifest_schema
-from snowflake.ml.monitoring._client import model_monitor
+from snowflake.ml.monitoring import model_monitor
 from snowflake.ml.monitoring.entities import model_monitor_config
 from snowflake.ml.registry import registry
 from snowflake.ml.test_utils import mock_data_frame, mock_session
@@ -136,6 +136,7 @@ class RegistryTest(absltest.TestCase):
                 metrics=m_metrics,
                 conda_dependencies=m_conda_dependency,
                 pip_requirements=None,
+                target_platforms=None,
                 python_version=m_python_version,
                 signatures=m_signatures,
                 sample_input_data=m_sample_input_data,
@@ -151,6 +152,7 @@ class RegistryTest(absltest.TestCase):
                 metrics=m_metrics,
                 conda_dependencies=m_conda_dependency,
                 pip_requirements=None,
+                target_platforms=None,
                 python_version=m_python_version,
                 signatures=m_signatures,
                 sample_input_data=m_sample_input_data,
@@ -177,6 +179,7 @@ class RegistryTest(absltest.TestCase):
                 metrics=None,
                 conda_dependencies=None,
                 pip_requirements=None,
+                target_platforms=None,
                 python_version=None,
                 signatures=None,
                 sample_input_data=None,
@@ -355,7 +358,7 @@ class MonitorRegistryTest(absltest.TestCase):
             mock_get_monitor.assert_called_once_with(model_version=self.m_model_version)
         self.m_session.finalize()
 
-    @patch("snowflake.ml.monitoring._client.model_monitor_manager.ModelMonitorManager", autospec=True)
+    @patch("snowflake.ml.monitoring._manager.model_monitor_manager.ModelMonitorManager", autospec=True)
     def test_show_model_monitors(self, m_model_monitor_manager_class: mock.MagicMock) -> None:
         # Dont need to call self._add_expected_monitoring_init_calls since ModelMonitorManager.__init__ is
         # auto mocked.

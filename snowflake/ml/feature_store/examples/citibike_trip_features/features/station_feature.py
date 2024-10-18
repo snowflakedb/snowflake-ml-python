@@ -8,7 +8,9 @@ from snowflake.snowpark import DataFrame, Session
 
 
 # This function will be invoked by example_helper.py. Do not change the name.
-def create_draft_feature_view(session: Session, source_dfs: List[DataFrame], source_tables: List[str]) -> FeatureView:
+def create_draft_feature_view(
+    session: Session, source_dfs: List[DataFrame], source_tables: List[str], database: str, schema: str
+) -> FeatureView:
     """Create a feature view about trip station."""
     query = session.sql(
         f"""
@@ -17,7 +19,7 @@ def create_draft_feature_view(session: Session, source_dfs: List[DataFrame], sou
             count(end_station_id) as f_count,
             avg(end_station_latitude) as f_avg_latitude,
             avg(end_station_longitude) as f_avg_longtitude
-        from {source_tables[0]}
+        from {database}.{schema}.{source_tables[0]}
         group by end_station_id
         """
     )

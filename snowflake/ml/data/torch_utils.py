@@ -1,4 +1,4 @@
-from typing import Any, Dict, Iterator, List, Union
+from typing import Any, Dict, Iterator, List, Optional, Union
 
 import numpy as np
 import numpy.typing as npt
@@ -14,17 +14,21 @@ class TorchDatasetWrapper(torch.utils.data.IterableDataset[Dict[str, Any]]):
         self,
         ingestor: data_ingestor.DataIngestor,
         *,
-        batch_size: int,
+        batch_size: Optional[int],
         shuffle: bool = False,
         drop_last: bool = False,
-        squeeze_outputs: bool = True
     ) -> None:
         """Not intended for direct usage. Use DataConnector.to_torch_dataset() instead"""
+        squeeze = False
+        if batch_size is None:
+            batch_size = 1
+            squeeze = True
+
         self._ingestor = ingestor
         self._batch_size = batch_size
         self._shuffle = shuffle
         self._drop_last = drop_last
-        self._squeeze_outputs = squeeze_outputs
+        self._squeeze_outputs = squeeze
 
     def __iter__(self) -> Iterator[Dict[str, Union[npt.NDArray[Any], List[Any]]]]:
         max_idx = 0
@@ -43,15 +47,7 @@ class TorchDatasetWrapper(torch.utils.data.IterableDataset[Dict[str, Any]]):
         ):
             # Skip indices during multi-process data loading to prevent data duplication
             if counter == filter_idx:
-                # Basic preprocessing on batch values: squeeze away extra dimensions
-                # and convert object arrays (e.g. strings) to lists
-                if self._squeeze_outputs:
-                    yield {
-                        k: (v.squeeze().tolist() if v.dtype == np.object_ else v.squeeze()) for k, v in batch.items()
-                    }
-                else:
-                    yield batch  # type: ignore[misc]
-
+                yield {k: _preprocess_array(v, squeeze=self._squeeze_outputs) for k, v in batch.items()}
             if counter < max_idx:
                 counter += 1
             else:
@@ -65,4 +61,27 @@ class TorchDataPipeWrapper(TorchDatasetWrapper, torch.utils.data.IterDataPipe[Di
         self, ingestor: data_ingestor.DataIngestor, *, batch_size: int, shuffle: bool = False, drop_last: bool = False
     ) -> None:
         """Not intended for direct usage. Use DataConnector.to_torch_datapipe() instead"""
-        super().__init__(ingestor, batch_size=batch_size, shuffle=shuffle, drop_last=drop_last, squeeze_outputs=False)
+        super().__init__(ingestor, batch_size=batch_size, shuffle=shuffle, drop_last=drop_last)
+
+
+def _preprocess_array(arr: npt.NDArray[Any], squeeze: bool = False) -> Union[npt.NDArray[Any], List[np.object_]]:
+    """Preprocesses batch column values."""
+    single_dimensional = arr.ndim < 2 and not arr.dtype == np.object_
+
+    # Squeeze away all extra dimensions. This is only used when batch_size = None.
+    if squeeze:
+        arr = arr.squeeze(axis=0)
+
+    # For single dimensional data,
+    if single_dimensional:
+        axis = 0 if arr.ndim == 0 else 1
+        arr = np.expand_dims(arr, axis=axis)
+
+    # Handle object arrays.
+    if arr.dtype == np.object_:
+        array_list = arr.tolist()
+        # If this is an array of arrays, convert the dtype to match the underlying array.
+        # Otherwise, if this is a numpy array of strings, convert the array to a list.
+        arr = np.array(array_list, dtype=arr.flat[0].dtype) if isinstance(arr.flat[0], np.ndarray) else array_list
+
+    return arr

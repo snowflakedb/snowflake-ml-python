@@ -41,6 +41,26 @@ class ConditionalImportTest(absltest.TestCase):
         with self.assertRaises(ImportError):
             self.assertTrue(hasattr(Row, "as_dict"))
 
+    def test_positive_import_with_fallbacks(self) -> None:
+        module = import_utils.import_with_fallbacks("snowflake.snowpark")
+        self.assertIsNotNone(module)
+
+        module = import_utils.import_with_fallbacks("snowflake.snowpark.Row")
+        self.assertIsNotNone(module)
+
+        module = import_utils.import_with_fallbacks("not.a.real.module", "snowflake.snowpark")
+        self.assertIsNotNone(module)
+
+    def test_negative_import_with_fallbacks(self) -> None:
+        with self.assertRaises(ImportError):
+            _ = import_utils.import_with_fallbacks("snowflake.snowpark.NotARealModule")
+
+        with self.assertRaises(ImportError):
+            _ = import_utils.import_with_fallbacks("NotARealModule")
+
+        with self.assertRaises(ImportError):
+            _ = import_utils.import_with_fallbacks("notamodule", "snowflake.snowpark.NotARealModule")
+
 
 if __name__ == "__main__":
     absltest.main()

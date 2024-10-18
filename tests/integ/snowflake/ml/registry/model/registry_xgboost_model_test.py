@@ -7,6 +7,7 @@ from absl.testing import absltest, parameterized
 from sklearn import datasets, model_selection
 
 from snowflake.ml.model import model_signature
+from snowflake.ml.model._model_composer.model_manifest import model_manifest_schema
 from tests.integ.snowflake.ml.registry.model import registry_model_test_base
 from tests.integ.snowflake.ml.test_utils import dataframe_utils
 
@@ -23,7 +24,7 @@ class TestRegistryXGBoostModelInteg(registry_model_test_base.RegistryModelTestBa
         cal_X_train, cal_X_test, cal_y_train, cal_y_test = model_selection.train_test_split(cal_X, cal_y)
         regressor = xgboost.XGBRegressor(n_estimators=100, reg_lambda=1, gamma=0, max_depth=3)
         regressor.fit(cal_X_train, cal_y_train)
-        expected_explanations = shap.Explainer(regressor)(cal_X_test).values
+        expected_explanations = shap.TreeExplainer(regressor)(cal_X_test).values
         getattr(self, registry_test_fn)(
             model=regressor,
             sample_input_data=cal_X_test,
@@ -35,6 +36,7 @@ class TestRegistryXGBoostModelInteg(registry_model_test_base.RegistryModelTestBa
             },
             # pin version of shap for tests
             additional_dependencies=[f"shap=={shap.__version__}"],
+            function_type_assert={"explain": model_manifest_schema.ModelMethodFunctionTypes.TABLE_FUNCTION},
         )
 
     @parameterized.product(  # type: ignore[misc]
@@ -79,7 +81,7 @@ class TestRegistryXGBoostModelInteg(registry_model_test_base.RegistryModelTestBa
         cal_X_train, cal_X_test, cal_y_train, cal_y_test = model_selection.train_test_split(cal_X, cal_y)
         regressor = xgboost.XGBRegressor(n_estimators=100, reg_lambda=1, gamma=0, max_depth=3)
         regressor.fit(cal_X_train, cal_y_train)
-        expected_explanations = shap.Explainer(regressor)(cal_X_test).values
+        expected_explanations = shap.TreeExplainer(regressor)(cal_X_test).values
         getattr(self, registry_test_fn)(
             model=regressor,
             sample_input_data=cal_X_test,
@@ -89,6 +91,7 @@ class TestRegistryXGBoostModelInteg(registry_model_test_base.RegistryModelTestBa
                     lambda res: np.testing.assert_allclose(res.values, expected_explanations, rtol=1e-4),
                 ),
             },
+            function_type_assert={"explain": model_manifest_schema.ModelMethodFunctionTypes.TABLE_FUNCTION},
         )
 
     @parameterized.product(  # type: ignore[misc]
@@ -105,7 +108,7 @@ class TestRegistryXGBoostModelInteg(registry_model_test_base.RegistryModelTestBa
         cal_X_train, cal_X_test, cal_y_train, cal_y_test = model_selection.train_test_split(cal_X, cal_y)
         regressor = xgboost.XGBRegressor(n_estimators=100, reg_lambda=1, gamma=0, max_depth=3)
         regressor.fit(cal_X_train, cal_y_train)
-        expected_explanations = shap.Explainer(regressor)(cal_X_test).values
+        expected_explanations = shap.TreeExplainer(regressor)(cal_X_test).values
         getattr(self, registry_test_fn)(
             model=regressor,
             sample_input_data=cal_X_test,
@@ -116,6 +119,7 @@ class TestRegistryXGBoostModelInteg(registry_model_test_base.RegistryModelTestBa
                 ),
             },
             options={"enable_explainability": True},
+            function_type_assert={"explain": model_manifest_schema.ModelMethodFunctionTypes.TABLE_FUNCTION},
         )
 
     @parameterized.product(  # type: ignore[misc]
@@ -173,7 +177,7 @@ class TestRegistryXGBoostModelInteg(registry_model_test_base.RegistryModelTestBa
             [
                 cal_data_sp_df_test_X.to_pandas(),
                 pd.DataFrame(
-                    shap.Explainer(regressor)(cal_data_sp_df_test_X.to_pandas()).values,
+                    shap.TreeExplainer(regressor)(cal_data_sp_df_test_X.to_pandas()).values,
                     columns=[f"{c}_explanation" for c in cal_data_sp_df_test_X.to_pandas().columns],
                 ),
             ],
@@ -190,6 +194,7 @@ class TestRegistryXGBoostModelInteg(registry_model_test_base.RegistryModelTestBa
                     ),
                 ),
             },
+            function_type_assert={"explain": model_manifest_schema.ModelMethodFunctionTypes.TABLE_FUNCTION},
         )
 
     @parameterized.product(  # type: ignore[misc]
@@ -233,7 +238,7 @@ class TestRegistryXGBoostModelInteg(registry_model_test_base.RegistryModelTestBa
         cal_X_train, cal_X_test, cal_y_train, cal_y_test = model_selection.train_test_split(cal_X, cal_y)
         params = dict(n_estimators=100, reg_lambda=1, gamma=0, max_depth=3, objective="binary:logistic")
         regressor = xgboost.train(params, xgboost.DMatrix(data=cal_X_train, label=cal_y_train))
-        expected_explanations = shap.Explainer(regressor)(cal_X_test).values
+        expected_explanations = shap.TreeExplainer(regressor)(cal_X_test).values
         getattr(self, registry_test_fn)(
             model=regressor,
             sample_input_data=cal_X_test,
@@ -243,6 +248,7 @@ class TestRegistryXGBoostModelInteg(registry_model_test_base.RegistryModelTestBa
                     lambda res: np.testing.assert_allclose(res.values, expected_explanations, rtol=1e-4),
                 ),
             },
+            function_type_assert={"explain": model_manifest_schema.ModelMethodFunctionTypes.TABLE_FUNCTION},
         )
 
     @parameterized.product(  # type: ignore[misc]
@@ -307,7 +313,7 @@ class TestRegistryXGBoostModelInteg(registry_model_test_base.RegistryModelTestBa
             [
                 cal_data_sp_df_test_X.to_pandas(),
                 pd.DataFrame(
-                    shap.Explainer(regressor)(cal_data_sp_df_test_X.to_pandas()).values,
+                    shap.TreeExplainer(regressor)(cal_data_sp_df_test_X.to_pandas()).values,
                     columns=[f"{c}_explanation" for c in cal_data_sp_df_test_X.to_pandas().columns],
                 ),
             ],
@@ -325,6 +331,7 @@ class TestRegistryXGBoostModelInteg(registry_model_test_base.RegistryModelTestBa
                     ),
                 ),
             },
+            function_type_assert={"explain": model_manifest_schema.ModelMethodFunctionTypes.TABLE_FUNCTION},
         )
 
     @parameterized.product(  # type: ignore[misc]
@@ -345,7 +352,7 @@ class TestRegistryXGBoostModelInteg(registry_model_test_base.RegistryModelTestBa
             regressor.predict(xgboost.DMatrix(data=cal_X_test)),
             columns=["output_feature_0"],
         )
-        expected_explanations = shap.Explainer(regressor)(cal_X_test).values
+        expected_explanations = shap.TreeExplainer(regressor)(cal_X_test).values
         sig = {"predict": model_signature.infer_signature(cal_X_test, y_pred)}
         getattr(self, registry_test_fn)(
             model=regressor,
@@ -359,22 +366,6 @@ class TestRegistryXGBoostModelInteg(registry_model_test_base.RegistryModelTestBa
             options={"enable_explainability": True},
             signatures=sig,
         )
-
-        with self.assertRaisesRegex(
-            ValueError, "Signatures and sample_input_data both cannot be specified at the same time."
-        ):
-            getattr(self, registry_test_fn)(
-                model=regressor,
-                sample_input_data=cal_X_test,
-                prediction_assert_fns={
-                    "explain": (
-                        cal_X_test,
-                        lambda res: np.testing.assert_allclose(res.values, expected_explanations, rtol=1e-4),
-                    ),
-                },
-                signatures=sig,
-                additional_version_suffix="v2",
-            )
 
 
 if __name__ == "__main__":

@@ -6,10 +6,12 @@ from snowflake.snowpark import DataFrame, Session
 
 
 # This function will be invoked by example_helper.py. Do not change the name.
-def create_draft_feature_view(session: Session, source_dfs: List[DataFrame], source_tables: List[str]) -> FeatureView:
+def create_draft_feature_view(
+    session: Session, source_dfs: List[DataFrame], source_tables: List[str], database: str, schema: str
+) -> FeatureView:
     """Create a feature view about airport weather."""
     query = session.sql(
-        """
+        f"""
         select
             DATETIME_UTC AS TS,
             AIRPORT_ZIP_CODE,
@@ -21,9 +23,9 @@ def create_draft_feature_view(session: Session, source_dfs: List[DataFrame], sou
             sum(RAIN_MM_H) over (
                 partition by AIRPORT_ZIP_CODE
                 order by DATETIME_UTC
-                range between interval '1 day' preceding and current row
+                range between interval '60 minutes' preceding and current row
             ) RAIN_SUM_60M
-        from AIRPORT_WEATHER_STATION
+        from {database}.{schema}.AIRPORT_WEATHER_STATION
         """
     )
 
@@ -37,6 +39,6 @@ def create_draft_feature_view(session: Session, source_dfs: List[DataFrame], sou
     ).attach_feature_desc(
         {
             "RAIN_SUM_30M": "The sum of rain fall over past 30 minutes for one zipcode.",
-            "RAIN_SUM_60M": "The sum of rain fall over past 1 day for one zipcode.",
+            "RAIN_SUM_60M": "The sum of rain fall over past 1 hour for one zipcode.",
         }
     )

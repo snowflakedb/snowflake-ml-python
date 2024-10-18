@@ -1,7 +1,10 @@
 load("@rules_python//python:defs.bzl", "py_library")
 load("//bazel:py_rules.bzl", "py_test")
 
-package(default_visibility = ["//tests/integ/snowflake/ml:__subpackages__"])
+package(default_visibility = [
+    "//tests/integ/snowflake/ml:__subpackages__",
+    "//tests/perf:__subpackages__",
+])
 
 py_library(
     name = "registry_model_deployment_test_base",
@@ -55,6 +58,26 @@ py_test(
     name = "registry_sklearn_model_deployment_test",
     timeout = "long",
     srcs = ["registry_sklearn_model_deployment_test.py"],
+    shard_count = 2,
+    deps = [
+        ":registry_model_deployment_test_base",
+    ],
+)
+
+py_test(
+    name = "registry_custom_model_deployment_test",
+    timeout = "long",
+    srcs = ["registry_custom_model_deployment_test.py"],
+    shard_count = 2,
+    deps = [
+        ":registry_model_deployment_test_base",
+    ],
+)
+
+py_test(
+    name = "registry_model_deployment_test",
+    timeout = "long",
+    srcs = ["registry_model_deployment_test.py"],
     shard_count = 2,
     deps = [
         ":registry_model_deployment_test_base",

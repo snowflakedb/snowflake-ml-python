@@ -92,7 +92,7 @@ class GridSearchPipelineTest(TestCase):
                     "preprocessing",
                     SkColumnTransformer(
                         transformers=[
-                            ("OHE", SkOneHotEncoder(handle_unknown="ignore", sparse=False), categorical_columns),
+                            ("OHE", SkOneHotEncoder(handle_unknown="ignore", sparse_output=False), categorical_columns),
                             ("MMS", SkMinMaxScaler(clip=True), numerical_columns),
                         ]
                     ),

@@ -100,11 +100,13 @@ class ServiceOperator:
         image_repo_name: sql_identifier.SqlIdentifier,
         ingress_enabled: bool,
         max_instances: int,
+        cpu_requests: Optional[str],
+        memory_requests: Optional[str],
         gpu_requests: Optional[str],
         num_workers: Optional[int],
         max_batch_rows: Optional[int],
         force_rebuild: bool,
-        build_external_access_integration: sql_identifier.SqlIdentifier,
+        build_external_access_integrations: Optional[List[sql_identifier.SqlIdentifier]],
         statement_params: Optional[Dict[str, Any]] = None,
     ) -> str:
         # create a temp stage
@@ -118,6 +120,14 @@ class ServiceOperator:
             statement_params=statement_params,
         )
         stage_path = self._stage_client.fully_qualified_object_name(database_name, schema_name, stage_name)
+
+        # TODO(hayu): Remove the version check after Snowflake 8.40.0 release
+        if (
+            snowflake_env.get_current_snowflake_version(self._session, statement_params=statement_params)
+            < version.parse("8.40.0")
+            and build_external_access_integrations is None
+        ):
+            raise ValueError("External access integrations are required in Snowflake < 8.40.0.")
 
         self._model_deployment_spec.save(
             database_name=database_name or self._database_name,
@@ -134,11 +144,13 @@ class ServiceOperator:
             image_repo_name=image_repo_name,
             ingress_enabled=ingress_enabled,
             max_instances=max_instances,
+            cpu=cpu_requests,
+            memory=memory_requests,
             gpu=gpu_requests,
             num_workers=num_workers,
             max_batch_rows=max_batch_rows,
             force_rebuild=force_rebuild,
-            external_access_integration=build_external_access_integration,
+            external_access_integrations=build_external_access_integrations,
         )
         file_utils.upload_directory_to_stage(
             self._session,
@@ -163,32 +175,25 @@ class ServiceOperator:
             statement_params=statement_params,
         )
 
-        # TODO(hayu): Remove the version check after Snowflake 8.37.0 release
-        if snowflake_env.get_current_snowflake_version(
-            self._session, statement_params=statement_params
-        ) >= version.parse("8.37.0"):
-            # stream service logs in a thread
-            model_build_service_name = sql_identifier.SqlIdentifier(self._get_model_build_service_name(query_id))
-            model_build_service = ServiceLogInfo(
-                database_name=service_database_name,
-                schema_name=service_schema_name,
-                service_name=model_build_service_name,
-                container_name="model-build",
-            )
-            model_inference_service = ServiceLogInfo(
-                database_name=service_database_name,
-                schema_name=service_schema_name,
-                service_name=service_name,
-                container_name="model-inference",
-            )
-            services = [model_build_service, model_inference_service]
-            log_thread = self._start_service_log_streaming(
-                async_job, services, model_inference_service_exists, force_rebuild, statement_params
-            )
-            log_thread.join()
-        else:
-            while not async_job.is_done():
-                time.sleep(5)
+        # stream service logs in a thread
+        model_build_service_name = sql_identifier.SqlIdentifier(self._get_model_build_service_name(query_id))
+        model_build_service = ServiceLogInfo(
+            database_name=service_database_name,
+            schema_name=service_schema_name,
+            service_name=model_build_service_name,
+            container_name="model-build",
+        )
+        model_inference_service = ServiceLogInfo(
+            database_name=service_database_name,
+            schema_name=service_schema_name,
+            service_name=service_name,
+            container_name="model-inference",
+        )
+        services = [model_build_service, model_inference_service]
+        log_thread = self._start_service_log_streaming(
+            async_job, services, model_inference_service_exists, force_rebuild, statement_params
+        )
+        log_thread.join()
 
         res = cast(str, cast(List[row.Row], async_job.result())[0][0])
         module_logger.info(f"Inference service {service_name} deployment complete: {res}")

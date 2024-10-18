@@ -10,7 +10,7 @@ from packaging import version
 from sklearn import datasets, linear_model
 
 from snowflake.ml._internal import file_utils
-from snowflake.ml.model import custom_model, model_signature, type_hints
+from snowflake.ml.model import custom_model, type_hints
 from snowflake.ml.model._packager import model_packager
 from snowflake.ml.modeling.linear_model import (  # type:ignore[attr-defined]
     LinearRegression,
@@ -128,36 +128,7 @@ class ModelLoadHygieneTest(absltest.TestCase):
 class ModelPackagerTest(absltest.TestCase):
     def test_save_validation_1(self) -> None:
         with tempfile.TemporaryDirectory() as workspace:
-            arr = np.array([[1, 2, 3], [4, 2, 5]])
-            d = pd.DataFrame(arr, columns=["c1", "c2", "c3"])
             pk = model_packager.ModelPackager(os.path.join(workspace, "model1"))
-
-            # exception thrown when enable_explainability is not set
-            with exception_utils.assert_snowml_exceptions(
-                self,
-                expected_original_error_type=ValueError,
-                expected_regex="Signatures and sample_input_data both cannot be specified at the same time.",
-            ):
-                pk.save(
-                    name="model1",
-                    model=linear_model.LinearRegression(),
-                    sample_input_data=d,
-                    signatures={"predict": model_signature.ModelSignature(inputs=[], outputs=[])},
-                )
-
-            # exception thrown when enable_explainability is set to False
-            with exception_utils.assert_snowml_exceptions(
-                self,
-                expected_original_error_type=ValueError,
-                expected_regex="Signatures and sample_input_data both cannot be specified at the same time.",
-            ):
-                pk.save(
-                    name="model1",
-                    model=linear_model.LinearRegression(),
-                    sample_input_data=d,
-                    signatures={"predict": model_signature.ModelSignature(inputs=[], outputs=[])},
-                    options={"enable_explainability": False},
-                )
 
             with exception_utils.assert_snowml_exceptions(
                 self,

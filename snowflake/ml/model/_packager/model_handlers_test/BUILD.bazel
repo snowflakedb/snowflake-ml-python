@@ -23,16 +23,6 @@ py_test(
 )
 
 py_test(
-    name = "model_objective_utils_test",
-    srcs = ["model_objective_utils_test.py"],
-    deps = [
-        "//snowflake/ml/model:model_signature",
-        "//snowflake/ml/model/_packager/model_handlers:_utils",
-        "//snowflake/ml/model/_packager/model_handlers:model_objective_utils",
-    ],
-)
-
-py_test(
     name = "catboost_test",
     srcs = ["catboost_test.py"],
     deps = [

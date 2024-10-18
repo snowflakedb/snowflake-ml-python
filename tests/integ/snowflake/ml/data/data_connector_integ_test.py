@@ -126,7 +126,7 @@ class TestDataConnector(common_test_base.CommonTestBase):
                 numpy_batch = {}
                 for k, v in batch.items():
                     self.assertIsInstance(v, torch.Tensor)
-                    self.assertEqual(1, v.dim())
+                    self.assertEqual(2, v.dim())
                     numpy_batch[k] = v.numpy()
                 yield numpy_batch
 
@@ -153,7 +153,7 @@ class TestDataConnector(common_test_base.CommonTestBase):
                 numpy_batch = {}
                 for k, v in batch.items():
                     self.assertIsInstance(v, torch.Tensor)
-                    self.assertEqual(1, v.dim())
+                    self.assertEqual(2, v.dim())
                     numpy_batch[k] = v.numpy()
                 yield numpy_batch
 

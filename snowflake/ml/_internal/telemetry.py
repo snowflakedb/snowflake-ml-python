@@ -544,7 +544,7 @@ def send_api_usage_telemetry(
                 if not isinstance(e, snowml_exceptions.SnowflakeMLException):
                     # already handled via a nested decorated function
                     if getattr(e, "_snowflake_ml_handled", False):
-                        raise e
+                        raise
                     if isinstance(e, snowpark_exceptions.SnowparkClientException):
                         me = snowml_exceptions.SnowflakeMLException(
                             error_code=error_codes.INTERNAL_SNOWPARK_ERROR, original_exception=e
@@ -558,7 +558,9 @@ def send_api_usage_telemetry(
                 telemetry_args["error"] = repr(me)
                 telemetry_args["error_code"] = me.error_code
                 me.original_exception._snowflake_ml_handled = True  # type: ignore[attr-defined]
-                if me.suppress_source_trace:
+                if e is not me:
+                    raise  # Directly raise non-wrapped exceptions to preserve original stacktrace
+                elif me.suppress_source_trace:
                     raise me.original_exception from None
                 else:
                     raise me.original_exception from e

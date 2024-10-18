@@ -9,7 +9,9 @@ from sklearn import datasets
 
 from snowflake.ml import dataset
 from snowflake.ml._internal.utils import identifier
+from snowflake.ml.model import model_signature
 from snowflake.ml.model._model_composer import model_composer
+from snowflake.ml.model._model_composer.model_manifest import model_manifest_schema
 from snowflake.ml.modeling.lightgbm import LGBMRegressor
 from snowflake.ml.modeling.linear_model import LogisticRegression
 from snowflake.ml.modeling.pipeline import Pipeline
@@ -241,6 +243,10 @@ class TestRegistryModelingModelInteg(registry_model_test_base.RegistryModelTestB
                 ),
             },
             options={"enable_explainability": True},
+            function_type_assert={
+                "explain": model_manifest_schema.ModelMethodFunctionTypes.TABLE_FUNCTION,
+                "predict": model_manifest_schema.ModelMethodFunctionTypes.FUNCTION,
+            },
         )
 
     @parameterized.product(  # type: ignore[misc]
@@ -311,6 +317,10 @@ class TestRegistryModelingModelInteg(registry_model_test_base.RegistryModelTestB
                     ),
                 ),
             },
+            function_type_assert={
+                "explain": model_manifest_schema.ModelMethodFunctionTypes.TABLE_FUNCTION,
+                "predict": model_manifest_schema.ModelMethodFunctionTypes.FUNCTION,
+            },
         )
 
     @parameterized.product(  # type: ignore[misc]
@@ -352,6 +362,10 @@ class TestRegistryModelingModelInteg(registry_model_test_base.RegistryModelTestB
                 ),
             },
             options={"enable_explainability": True},
+            function_type_assert={
+                "explain": model_manifest_schema.ModelMethodFunctionTypes.TABLE_FUNCTION,
+                "predict": model_manifest_schema.ModelMethodFunctionTypes.FUNCTION,
+            },
         )
 
     @parameterized.product(  # type: ignore[misc]
@@ -440,8 +454,16 @@ class TestRegistryModelingModelInteg(registry_model_test_base.RegistryModelTestB
             regr, "testTable", is_dataset=False, sample_input_data=table_backed_dataframe
         )
 
+        # Case 7 : Capture Lineage via sample_input of log_model when signature argument is passed.
+        signature = model_signature.infer_signature(
+            test_features_df.select(*INPUT_COLUMNS), test_features_df.select(LABEL_COLUMNS)
+        )
+        self._check_lineage_in_manifest_file(
+            regr, "testTable", is_dataset=False, sample_input_data=table_backed_dataframe, signature=signature
+        )
+
     def _check_lineage_in_manifest_file(
-        self, model, data_source, is_dataset=True, sample_input_data=None, lineage_should_exist=True
+        self, model, data_source, is_dataset=True, sample_input_data=None, lineage_should_exist=True, signature=None
     ):
         model_name = "some_name"
         tmp_stage_path = posixpath.join(self.session.get_session_stage(), f"{model_name}_{1}")

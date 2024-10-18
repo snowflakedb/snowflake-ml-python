@@ -72,6 +72,7 @@ class TestRegistrySentenceTransformerDeploymentModelInteg(
             },
             options={"cuda_version": "11.8"} if gpu_requests else {},
             gpu_requests=gpu_requests,
+            additional_dependencies=["pytorch==2.1.0"],
             pip_requirements=pip_requirements,
         )
 
