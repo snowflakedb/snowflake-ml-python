@@ -58,8 +58,10 @@ class FakeSession:
 
 
 class FakeResponse:  # needed for testing, imitates some of requests.Response behaviors
-    def __init__(self, content: bytes) -> None:
+    def __init__(self, content: bytes, headers: Dict[str, str], data: bytes) -> None:
         self.content = BytesIO(content)
+        self.headers = headers
+        self.data = data
 
     def iter_content(self, chunk_size: int = 1) -> Iterator[bytes]:
         while True:

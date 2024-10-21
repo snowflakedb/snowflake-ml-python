@@ -1,6 +1,9 @@
 load("//bazel:py_rules.bzl", "py_genrule", "py_library", "py_test")
 
-package(default_visibility = ["//tests/integ/snowflake/ml:__subpackages__"])
+package(default_visibility = [
+    "//tests/integ/snowflake/ml:__subpackages__",
+    "//tests/perf:__subpackages__",
+])
 
 GEN_SNOWML_REQ_CMD = "$(location //bazel/requirements:parse_and_generate_requirements) $(location //:requirements.yml) --schema $(location //bazel/requirements:requirements.schema.json) --mode version_requirements --format python --snowflake_channel_only > $@"
 
@@ -22,7 +25,6 @@ py_library(
 
 py_library(
     name = "db_manager",
-    testonly = True,
     srcs = ["db_manager.py"],
     deps = [
         "//snowflake/ml/_internal/utils:identifier",

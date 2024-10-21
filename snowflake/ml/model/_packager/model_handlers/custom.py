@@ -99,6 +99,8 @@ class CustomModelHandler(_base.BaseModelHandler["custom_model.CustomModel"]):
             for sub_name, model_ref in model.context.model_refs.items():
                 handler = model_handler.find_handler(model_ref.model)
                 assert handler is not None
+                if handler is None:
+                    raise TypeError("Your input type to custom model is not currently supported")
                 sub_model = handler.cast_model(model_ref.model)
                 handler.save_model(
                     name=sub_name,

@@ -1,6 +1,6 @@
 import functools
 import inspect
-from typing import Any, Callable, Coroutine, Dict, Generator, List, Optional
+from typing import Any, Callable, Coroutine, Dict, Generator, List, Optional, Union
 
 import anyio
 import pandas as pd
@@ -104,19 +104,53 @@ class ModelContext:
     def __init__(
         self,
         *,
-        artifacts: Optional[Dict[str, str]] = None,
-        models: Optional[Dict[str, model_types.SupportedModelType]] = None,
+        artifacts: Optional[Union[Dict[str, str], str, model_types.SupportedModelType]] = None,
+        models: Optional[Union[Dict[str, model_types.SupportedModelType], str, model_types.SupportedModelType]] = None,
+        **kwargs: Optional[Union[str, model_types.SupportedModelType]],
     ) -> None:
         """Initialize the model context.
 
         Args:
             artifacts: A dictionary mapping the name of the artifact to its currently available path. Defaults to None.
             models: A dictionary mapping the name of the sub-model to the corresponding model object. Defaults to None.
+            **kwargs: Additional keyword arguments to be used as artifacts or models.
+
+        Raises:
+            ValueError: Raised when the keyword argument is used as artifacts or models.
+            ValueError: Raised when the artifact name is duplicated.
+            ValueError: Raised when the model name is duplicated.
         """
-        self.artifacts: Dict[str, str] = artifacts if artifacts else dict()
-        self.model_refs: Dict[str, ModelRef] = (
-            {name: ModelRef(name, model) for name, model in models.items()} if models else dict()
-        )
+
+        self.artifacts: Dict[str, str] = dict()
+        self.model_refs: Dict[str, ModelRef] = dict()
+
+        # In case that artifacts is a dictionary, assume the original usage,
+        # which is to pass in a dictionary of artifacts.
+        # In other scenarios, (str or supported model types) we will try to parse the arguments as artifacts or models.
+        if isinstance(artifacts, dict):
+            self.artifacts = artifacts
+        elif isinstance(artifacts, str):
+            self.artifacts["artifacts"] = artifacts
+        elif artifacts is not None:
+            self.model_refs["artifacts"] = ModelRef("artifacts", artifacts)
+
+        if isinstance(models, dict):
+            self.model_refs = {name: ModelRef(name, model) for name, model in models.items()} if models else dict()
+        elif isinstance(models, str):
+            self.artifacts["models"] = models
+        elif models is not None:
+            self.model_refs["models"] = ModelRef("models", models)
+
+        # Handle any new arguments passed via kwargs
+        for key, value in kwargs.items():
+            if isinstance(value, str):
+                if key in self.artifacts:
+                    raise ValueError(f"Duplicate artifact name: {key}")
+                self.artifacts[key] = value
+            else:
+                if key in self.model_refs:
+                    raise ValueError(f"Duplicate model name: {key}")
+                self.model_refs[key] = ModelRef(key, value)
 
     def path(self, key: str) -> str:
         """Get the actual path to a specific artifact. This could be used when defining a Custom Model to retrieve
@@ -140,6 +174,12 @@ class ModelContext:
             The ModelRef object representing the sub-model.
         """
         return self.model_refs[name]
+
+    def __getitem__(self, key: str) -> Union[str, ModelRef]:
+        combined: Dict[str, Union[str, ModelRef]] = {**self.artifacts, **self.model_refs}
+        if key not in combined:
+            raise KeyError(f"Key {key} not found in the kwargs, current available keys are: {combined.keys()}")
+        return combined[key]
 
 
 class CustomModel:

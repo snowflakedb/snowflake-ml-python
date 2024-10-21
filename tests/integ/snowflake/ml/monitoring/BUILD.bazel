@@ -6,7 +6,6 @@ py_test(
     srcs = ["model_monitor_integ_test.py"],
     deps = [
         "//snowflake/ml/model/_client/model:model_version_impl",
-        "//snowflake/ml/monitoring:model_monitor_impl",
         "//snowflake/ml/registry:registry_impl",
         "//snowflake/ml/utils:connection_params",
         "//tests/integ/snowflake/ml/test_utils:db_manager",

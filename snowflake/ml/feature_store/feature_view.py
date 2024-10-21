@@ -169,6 +169,7 @@ class FeatureView(lineage_node.LineageNode):
         desc: str = "",
         warehouse: Optional[str] = None,
         initialize: str = "ON_CREATE",
+        refresh_mode: str = "AUTO",
         **_kwargs: Any,
     ) -> None:
         """
@@ -196,6 +197,9 @@ class FeatureView(lineage_node.LineageNode):
                 after you register the feature view. It supports ON_CREATE (default) or ON_SCHEDULE. ON_CREATE refreshes
                 the feature view synchronously at creation. ON_SCHEDULE refreshes the feature view at the next scheduled
                 refresh. It is only effective when refresh_freq is not None.
+            refresh_mode: The refresh mode of managed feature view. The value can be 'AUTO', 'FULL' or 'INCREMENETAL'.
+                For managed feature view, the default value is 'AUTO'. For static feature view it has no effect.
+                Check https://docs.snowflake.com/en/sql-reference/sql/create-dynamic-table for for details.
             _kwargs: reserved kwargs for system generated args. NOTE: DO NOT USE.
 
         Example::
@@ -242,7 +246,7 @@ class FeatureView(lineage_node.LineageNode):
         self._schema: Optional[SqlIdentifier] = None
         self._initialize: str = initialize
         self._warehouse: Optional[SqlIdentifier] = SqlIdentifier(warehouse) if warehouse is not None else None
-        self._refresh_mode: Optional[str] = _kwargs.get("refresh_mode", "AUTO")
+        self._refresh_mode: Optional[str] = refresh_mode
         self._refresh_mode_reason: Optional[str] = None
         self._owner: Optional[str] = None
         self._validate()

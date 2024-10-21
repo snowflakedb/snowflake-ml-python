@@ -3,6 +3,7 @@ import uuid
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from snowflake.ml.model import model_signature, type_hints as model_types
+from snowflake.ml.model._model_composer.model_manifest import model_manifest_schema
 from snowflake.ml.registry import registry
 from tests.integ.snowflake.ml.test_utils import (
     common_test_base,
@@ -43,6 +44,7 @@ class RegistryModelTestBase(common_test_base.CommonTestBase):
         options: Optional[model_types.ModelSaveOption] = None,
         signatures: Optional[Dict[str, model_signature.ModelSignature]] = None,
         additional_version_suffix: Optional[str] = None,
+        function_type_assert: Optional[Dict[str, model_manifest_schema.ModelMethodFunctionTypes]] = None,
     ) -> None:
         conda_dependencies = [
             test_env_utils.get_latest_package_version_spec_in_server(self.session, "snowflake-snowpark-python!=1.12.0")
@@ -71,6 +73,12 @@ class RegistryModelTestBase(common_test_base.CommonTestBase):
             res = mv.run(test_input, function_name=target_method)
             check_func(res)
 
+        if function_type_assert:
+            res = mv.show_functions()
+            for f in res:
+                if f["target_method"] in function_type_assert.keys():
+                    self.assertEqual(f["target_method_function_type"], function_type_assert[f["target_method"]].value)
+
         self.registry.show_models()
 
         self.registry.delete_model(model_name=name)
@@ -86,6 +94,7 @@ class RegistryModelTestBase(common_test_base.CommonTestBase):
         options: Optional[model_types.ModelSaveOption] = None,
         signatures: Optional[Dict[str, model_signature.ModelSignature]] = None,
         additional_version_suffix: Optional[str] = None,
+        function_type_assert: Optional[Dict[str, model_manifest_schema.ModelMethodFunctionTypes]] = None,
     ) -> None:
         conda_dependencies = [
             test_env_utils.get_latest_package_version_spec_in_server(self.session, "snowflake-snowpark-python!=1.12.0")
@@ -123,6 +132,12 @@ class RegistryModelTestBase(common_test_base.CommonTestBase):
             res = mv.run(test_input, function_name=target_method)
             check_func(res)
 
+        if function_type_assert:
+            res = mv.show_functions()
+            for f in res:
+                if f["target_method"] in function_type_assert.keys():
+                    self.assertEqual(f["target_method_function_type"], function_type_assert[f["target_method"]].value)
+
         self.registry.show_models()
 
         # Add a version when the model exists
@@ -136,6 +151,12 @@ class RegistryModelTestBase(common_test_base.CommonTestBase):
         for target_method, (test_input, check_func) in prediction_assert_fns.items():
             res = mv2.run(test_input, function_name=target_method)
             check_func(res)
+
+        if function_type_assert:
+            res = mv2.show_functions()
+            for f in res:
+                if f["target_method"] in function_type_assert.keys():
+                    self.assertEqual(f["target_method_function_type"], function_type_assert[f["target_method"]].value)
 
         self.registry.show_models()
         self.registry.delete_model(model_name=name)

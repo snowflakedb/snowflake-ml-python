@@ -17,7 +17,7 @@ build:
   noarch: python
 package:
   name: snowflake-ml-python
-  version: 1.6.4
+  version: 1.7.0
 requirements:
   build:
     - python
@@ -39,14 +39,14 @@ requirements:
     - requests
     - retrying>=1.3.3,<2
     - s3fs>=2022.11,<2024
-    - scikit-learn>=1.2.1,<1.6
+    - scikit-learn>=1.4,<1.6
     - scipy>=1.9,<2
     - snowflake-connector-python>=3.5.0,<4
     - snowflake-snowpark-python>=1.17.0,<2
     - sqlparse>=0.4,<1
     - typing-extensions>=4.1.0,<5
-    - xgboost>=1.7.3,<2.1
-    - python>=3.8,<3.12
+    - xgboost>=1.7.3,<3
+    - python>=3.9,<3.12
   run_constrained:
     - catboost>=1.2.0, <2
     - lightgbm>=3.3.5,<5
@@ -54,10 +54,19 @@ requirements:
     - pytorch>=2.0.1,<2.3.0
     - sentence-transformers>=2.2.2,<3
     - sentencepiece>=0.1.95,<1
-    - shap>=0.42.0,<1
+    - shap>=0.46.0,<1
     - tensorflow>=2.10,<3
     - tokenizers>=0.10,<1
     - torchdata>=0.4,<1
     - transformers>=4.32.1,<5
 source:
   path: ../../
+test:
+  commands:
+    - pip check
+  imports:
+    - snowflake.cortex
+    - snowflake.ml
+    - snowflake.ml.modeling
+  requires:
+    - pip

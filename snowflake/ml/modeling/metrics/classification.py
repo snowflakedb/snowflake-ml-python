@@ -300,7 +300,7 @@ def _register_confusion_matrix_computer(*, session: snowpark.Session, statement_
             ]
         ),
         input_types=[T.ArrayType(), T.IntegerType()],
-        packages=["numpy", "cloudpickle"],
+        packages=[f"numpy=={np.__version__}", f"cloudpickle=={cloudpickle.__version__}"],
         name=confusion_matrix_computer,
         is_permanent=False,
         replace=True,
@@ -535,9 +535,8 @@ def log_loss(
             assumed to be that of the positive class. The labels in ``y_pred``
             are assumed to be ordered alphabetically, as done by `LabelBinarizer`.
         eps: float or "auto", default="auto"
-            Log loss is undefined for p=0 or p=1, so probabilities are
-            clipped to `max(eps, min(1 - eps, p))`. The default will depend on the
-            data type of `y_pred` and is set to `np.finfo(y_pred.dtype).eps`.
+            Deprecated: if specified, it will be ignored and a warning emitted. Retained
+            for backward compatibility.
         normalize: boolean, default=True
             If true, return the mean loss per sample.
             Otherwise, return the sum of the per-sample losses.
@@ -557,8 +556,11 @@ def log_loss(
     y_true = y_true_col_names if isinstance(y_true_col_names, list) else [y_true_col_names]
     y_pred = y_pred_col_names if isinstance(y_pred_col_names, list) else [y_pred_col_names]
 
+    if eps != "auto":
+        warnings.warn("log_loss eps argument is deprecated and will be ignored.", DeprecationWarning, stacklevel=2)
+
     # If it is binary classification, use SQL because it is faster.
-    if len(y_pred) == 1 and eps == "auto":
+    if len(y_pred) == 1:
         metrics_utils.check_label_columns(y_true_col_names, y_pred_col_names)
         eps = float(np.finfo(float).eps)
         y_true_col = y_true[0]
@@ -592,7 +594,6 @@ def log_loss(
     log_loss_computer = _register_log_loss_computer(
         session=session,
         statement_params=statement_params,
-        eps=eps,
         labels=labels,
     )
     log_loss_computer_udtf = F.table_function(log_loss_computer)
@@ -625,7 +626,6 @@ def _register_log_loss_computer(
     *,
     session: snowpark.Session,
     statement_params: Dict[str, Any],
-    eps: Union[float, str] = "auto",
     labels: Optional[npt.ArrayLike] = None,
 ) -> str:
     """Registers log loss computation UDTF in Snowflake and returns the name of the UDTF.
@@ -633,10 +633,6 @@ def _register_log_loss_computer(
     Args:
         session: Snowpark session.
         statement_params: Dictionary used for tagging queries for tracking purposes.
-        eps: float or "auto", default="auto"
-            Log loss is undefined for p=0 or p=1, so probabilities are
-            clipped to `max(eps, min(1 - eps, p))`. The default will depend on the
-            data type of `y_pred` and is set to `np.finfo(y_pred.dtype).eps`.
         labels: If not provided, labels will be inferred from y_true. If ``labels``
             is ``None`` and ``y_pred`` has shape (n_samples,) the labels are
             assumed to be binary and are inferred from ``y_true``.
@@ -647,7 +643,6 @@ def _register_log_loss_computer(
 
     class LogLossComputer:
         def __init__(self) -> None:
-            self._eps = eps
             self._labels = labels
             self._y_true: List[List[int]] = []
             self._y_pred: List[List[float]] = []
@@ -662,7 +657,6 @@ def _register_log_loss_computer(
             res = metrics.log_loss(
                 self._y_true,
                 self._y_pred,
-                eps=self._eps,
                 normalize=False,
                 sample_weight=self._sample_weight,
                 labels=self._labels,
@@ -670,6 +664,7 @@ def _register_log_loss_computer(
             yield (float(res),)
 
     log_loss_computer = random_name_for_temp_object(TempObjectType.TABLE_FUNCTION)
+    sklearn_release = version.parse(sklearn.__version__).release
     session.udtf.register(
         LogLossComputer,
         output_schema=T.StructType(
@@ -677,7 +672,7 @@ def _register_log_loss_computer(
                 T.StructField("log_loss", T.FloatType()),
             ]
         ),
-        packages=["scikit-learn<1.4"],
+        packages=[f"scikit-learn=={sklearn_release[0]}.{sklearn_release[1]}.*"],
         name=log_loss_computer,
         is_permanent=False,
         replace=True,
@@ -814,7 +809,7 @@ def precision_recall_fscore_support(
             name=sproc_name,
             replace=True,
             packages=[
-                "cloudpickle",
+                f"cloudpickle=={cloudpickle.__version__}",
                 f"scikit-learn=={sklearn_release[0]}.{sklearn_release[1]}.*",
                 "snowflake-snowpark-python",
             ],
@@ -1071,6 +1066,7 @@ def _register_multilabel_confusion_matrix_computer(
             yield (tp_sum, pred_sum, true_sum)
 
     multilabel_confusion_matrix_computer = random_name_for_temp_object(TempObjectType.TABLE_FUNCTION)
+    sklearn_release = version.parse(sklearn.__version__).release
     session.udtf.register(
         MultilabelConfusionMatrixComputer,
         output_schema=T.StructType(
@@ -1080,7 +1076,7 @@ def _register_multilabel_confusion_matrix_computer(
                 T.StructField("TRUE_SUM", T.ArrayType()),
             ]
         ),
-        packages=["numpy", "scikit-learn<1.4"],
+        packages=[f"numpy=={np.__version__}", f"scikit-learn=={sklearn_release[0]}.{sklearn_release[1]}.*"],
         name=multilabel_confusion_matrix_computer,
         is_permanent=False,
         replace=True,

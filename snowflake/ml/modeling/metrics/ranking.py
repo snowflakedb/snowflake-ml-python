@@ -96,7 +96,7 @@ def precision_recall_curve(
         name=sproc_name,
         replace=True,
         packages=[
-            "cloudpickle",
+            f"cloudpickle=={cloudpickle.__version__}",
             f"scikit-learn=={sklearn_release[0]}.{sklearn_release[1]}.*",
             "snowflake-snowpark-python",
         ],
@@ -243,7 +243,7 @@ def roc_auc_score(
         name=sproc_name,
         replace=True,
         packages=[
-            "cloudpickle",
+            f"cloudpickle=={cloudpickle.__version__}",
             f"scikit-learn=={sklearn_release[0]}.{sklearn_release[1]}.*",
             "snowflake-snowpark-python",
         ],
@@ -346,7 +346,7 @@ def roc_curve(
         name=sproc_name,
         replace=True,
         packages=[
-            "cloudpickle",
+            f"cloudpickle=={cloudpickle.__version__}",
             f"scikit-learn=={sklearn_release[0]}.{sklearn_release[1]}.*",
             "snowflake-snowpark-python",
         ],

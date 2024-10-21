@@ -1,7 +1,7 @@
 def _fetch_conda_env_config_impl(rctx):
     # read the particular environment variable we are interested in
     env_name = rctx.os.environ.get("BAZEL_CONDA_ENV_NAME", "extended").lower()
-    python_ver = rctx.os.environ.get("BAZEL_CONDA_PYTHON_VERSION", "3.8").lower()
+    python_ver = rctx.os.environ.get("BAZEL_CONDA_PYTHON_VERSION", "3.9").lower()
 
     # necessary to create empty BUILD file for this rule
     # which will be located somewhere in the Bazel build files

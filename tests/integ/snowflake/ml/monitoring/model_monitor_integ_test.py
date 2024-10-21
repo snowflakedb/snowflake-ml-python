@@ -5,7 +5,8 @@ from absl.testing import absltest, parameterized
 
 from snowflake.ml._internal.utils import sql_identifier
 from snowflake.ml.model._client.model import model_version_impl
-from snowflake.ml.monitoring._client import model_monitor, monitor_sql_client
+from snowflake.ml.monitoring import model_monitor
+from snowflake.ml.monitoring._client import model_monitor_sql_client
 from snowflake.ml.monitoring.entities import model_monitor_config
 from snowflake.ml.registry import registry
 from snowflake.ml.utils import connection_params
@@ -113,7 +114,8 @@ class ModelMonitorRegistryIntegrationTest(parameterized.TestCase):
         self.assertEqual(
             self._session.sql(
                 f"""SELECT *
-                FROM {self._db_name}.{self._schema_name}.{monitor_sql_client.SNOWML_MONITORING_METADATA_TABLE_NAME}
+                FROM
+                {self._db_name}.{self._schema_name}.{model_monitor_sql_client.SNOWML_MONITORING_METADATA_TABLE_NAME}
                 WHERE FULLY_QUALIFIED_MODEL_NAME = '{self._db_name}.{self._schema_name}.{model_name}' AND
                 MODEL_VERSION_NAME = '{version_name}'"""
             ).count(),
@@ -198,7 +200,8 @@ class ModelMonitorRegistryIntegrationTest(parameterized.TestCase):
         self.assertEqual(
             self._session.sql(
                 f"""SELECT *
-                FROM {self._db_name}.{self._schema_name}.{monitor_sql_client.SNOWML_MONITORING_METADATA_TABLE_NAME}
+                FROM
+                {self._db_name}.{self._schema_name}.{model_monitor_sql_client.SNOWML_MONITORING_METADATA_TABLE_NAME}
                 WHERE MONITOR_NAME = '{monitor.name}'"""
             ).count(),
             0,
@@ -249,7 +252,8 @@ class ModelMonitorRegistryIntegrationTest(parameterized.TestCase):
         self.assertEqual(
             self._session.sql(
                 f"""SELECT *
-                FROM {self._db_name}.{self._schema_name}.{monitor_sql_client.SNOWML_MONITORING_METADATA_TABLE_NAME}
+                FROM
+                {self._db_name}.{self._schema_name}.{model_monitor_sql_client.SNOWML_MONITORING_METADATA_TABLE_NAME}
                 WHERE FULLY_QUALIFIED_MODEL_NAME = '{self._db_name}.{self._schema_name}.{model_name}' AND
                 MODEL_VERSION_NAME = '{version_name}'"""
             ).count(),

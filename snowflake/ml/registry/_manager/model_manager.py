@@ -3,10 +3,11 @@ from typing import Any, Dict, List, Optional, Union
 
 import pandas as pd
 from absl.logging import logging
+from packaging import version
 
 from snowflake.ml._internal import telemetry
 from snowflake.ml._internal.human_readable_id import hrid_generator
-from snowflake.ml._internal.utils import sql_identifier
+from snowflake.ml._internal.utils import snowflake_env, sql_identifier
 from snowflake.ml.model import model_signature, type_hints as model_types
 from snowflake.ml.model._client.model import model_impl, model_version_impl
 from snowflake.ml.model._client.ops import metadata_ops, model_ops, service_ops
@@ -45,6 +46,7 @@ class ModelManager:
         metrics: Optional[Dict[str, Any]] = None,
         conda_dependencies: Optional[List[str]] = None,
         pip_requirements: Optional[List[str]] = None,
+        target_platforms: Optional[List[model_types.SupportedTargetPlatformType]] = None,
         python_version: Optional[str] = None,
         signatures: Optional[Dict[str, model_signature.ModelSignature]] = None,
         sample_input_data: Optional[model_types.SupportedDataType] = None,
@@ -85,6 +87,7 @@ class ModelManager:
             metrics=metrics,
             conda_dependencies=conda_dependencies,
             pip_requirements=pip_requirements,
+            target_platforms=target_platforms,
             python_version=python_version,
             signatures=signatures,
             sample_input_data=sample_input_data,
@@ -105,6 +108,7 @@ class ModelManager:
         metrics: Optional[Dict[str, Any]] = None,
         conda_dependencies: Optional[List[str]] = None,
         pip_requirements: Optional[List[str]] = None,
+        target_platforms: Optional[List[model_types.SupportedTargetPlatformType]] = None,
         python_version: Optional[str] = None,
         signatures: Optional[Dict[str, model_signature.ModelSignature]] = None,
         sample_input_data: Optional[model_types.SupportedDataType] = None,
@@ -143,6 +147,15 @@ class ModelManager:
             statement_params=statement_params,
         )
 
+        platforms = None
+        # TODO(jbahk): Remove the version check after Snowflake 8.40.0 release
+        # User specified target platforms are defaulted to None and will not show up in the generated manifest.
+        # In the backend, we attempt to create a model for all platforms (WH, SPCS) regardless by default.
+        if snowflake_env.get_current_snowflake_version(self._model_ops._session) >= version.parse("8.40.0"):
+            # Convert any string target platforms to TargetPlatform objects
+            if target_platforms:
+                platforms = [model_types.TargetPlatform(platform) for platform in target_platforms]
+
         logger.info("Start packaging and uploading your model. It might take some time based on the size of the model.")
 
         mc = model_composer.ModelComposer(
@@ -155,6 +168,7 @@ class ModelManager:
             sample_input_data=sample_input_data,
             conda_dependencies=conda_dependencies,
             pip_requirements=pip_requirements,
+            target_platforms=platforms,
             python_version=python_version,
             code_paths=code_paths,
             ext_modules=ext_modules,

@@ -406,6 +406,97 @@ class TestRegistryCustomModelInteg(registry_model_test_base.RegistryModelTestBas
 
     @parameterized.product(  # type: ignore[misc]
         registry_test_fn=registry_model_test_base.RegistryModelTestBase.REGISTRY_TEST_FN_LIST,
+        key_name=["bias", "models", "artifacts"],
+    )
+    def test_custom_model_with_model_ref(self, registry_test_fn: str, key_name: str) -> None:
+        class DemoModelWithXGB(custom_model.CustomModel):
+            def __init__(self, context: custom_model.ModelContext) -> None:
+                super().__init__(context)
+
+            @custom_model.inference_api
+            def predict(self, input: pd.DataFrame) -> pd.DataFrame:
+                return pd.DataFrame(self.context[key_name].predict(input), columns=["output"])
+
+        from sklearn.datasets import load_breast_cancer
+        from sklearn.model_selection import train_test_split
+        from xgboost import XGBClassifier
+
+        data = load_breast_cancer()
+        X = data.data
+        y = data.target
+
+        # Split into train and test sets
+        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42, stratify=y)
+
+        # Initialize the classifier
+        model = XGBClassifier(
+            objective="binary:logistic",  # For binary classification
+            eval_metric="logloss",  # Evaluation metric
+            use_label_encoder=False,  # Disable the use of label encoder to avoid warnings
+            random_state=42,  # For reproducibility
+        )
+
+        # Train the model
+        model.fit(X_train, y_train)
+
+        output = pd.DataFrame(model.predict(X_test), columns=["output"])
+
+        kwargs = {key_name: model}
+        lm = DemoModelWithXGB(custom_model.ModelContext(**kwargs))
+
+        getattr(self, registry_test_fn)(
+            model=lm,
+            sample_input_data=X_test,
+            prediction_assert_fns={
+                "predict": (
+                    X_test,
+                    lambda res: pd.testing.assert_frame_equal(
+                        res,
+                        output,
+                    ),
+                )
+            },
+        )
+
+    @parameterized.product(  # type: ignore[misc]
+        registry_test_fn=registry_model_test_base.RegistryModelTestBase.REGISTRY_TEST_FN_LIST,
+        key_name=["bias", "models", "artifacts"],
+    )
+    def test_custom_model_with_kwargs(self, registry_test_fn: str, key_name: str) -> None:
+        class DemoModelWithKwargs(custom_model.CustomModel):
+            def __init__(self, context: custom_model.ModelContext) -> None:
+                super().__init__(context)
+                with open(context[key_name], encoding="utf-8") as f:
+                    v = int(f.read())
+                self.bias = v
+
+            @custom_model.inference_api
+            def predict(self, input: pd.DataFrame) -> pd.DataFrame:
+                return pd.DataFrame({"output": (input["c1"] + self.bias) > 12})
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with open(os.path.join(tmpdir, key_name), "w", encoding="utf-8") as f:
+                f.write("10")
+            kwargs = {key_name: os.path.join(tmpdir, key_name)}
+            lm = DemoModelWithKwargs(custom_model.ModelContext(**kwargs))
+            arr = np.array([[1, 2, 3], [4, 2, 5]])
+            pd_df = pd.DataFrame(arr, columns=["c1", "c2", "c3"])
+            getattr(self, registry_test_fn)(
+                model=lm,
+                sample_input_data=pd_df,
+                prediction_assert_fns={
+                    "predict": (
+                        pd_df,
+                        lambda res: pd.testing.assert_frame_equal(
+                            res,
+                            pd.DataFrame([False, True], columns=["output"]),
+                        ),
+                    )
+                },
+            )
+
+    @parameterized.product(  # type: ignore[misc]
+        registry_test_fn=registry_model_test_base.RegistryModelTestBase.REGISTRY_TEST_FN_LIST,
     )
     def test_custom_model_bool_sp(
         self,

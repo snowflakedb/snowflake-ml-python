@@ -19,6 +19,7 @@ from snowflake.ml._internal.utils import (
     snowpark_dataframe_utils,
     temp_file_utils,
 )
+from snowflake.ml.modeling._internal.estimator_utils import should_include_sample_weight
 from snowflake.ml.modeling._internal.model_specifications import (
     ModelSpecificationsBuilder,
 )
@@ -38,6 +39,7 @@ from snowflake.snowpark.udtf import UDTFRegistration
 cp.register_pickle_by_value(inspect.getmodule(temp_file_utils.get_temp_file_path))
 cp.register_pickle_by_value(inspect.getmodule(identifier.get_inferred_name))
 cp.register_pickle_by_value(inspect.getmodule(snowpark_dataframe_utils.cast_snowpark_dataframe))
+cp.register_pickle_by_value(inspect.getmodule(should_include_sample_weight))
 
 _PROJECT = "ModelDevelopment"
 DEFAULT_UDTF_NJOBS = 3
@@ -393,7 +395,10 @@ class DistributedHPOTrainer(SnowparkModelTrainer):
             import pandas as pd
             import pyarrow.parquet as pq
             from sklearn.metrics import check_scoring
-            from sklearn.metrics._scorer import _check_multimetric_scoring
+            from sklearn.metrics._scorer import (
+                _check_multimetric_scoring,
+                _MultimetricScorer,
+            )
 
             for import_name in udf_imports:
                 importlib.import_module(import_name)
@@ -606,6 +611,7 @@ class DistributedHPOTrainer(SnowparkModelTrainer):
                 scorers = _check_multimetric_scoring(estimator.estimator, estimator.scoring)
                 estimator._check_refit_for_multimetric(scorers)
                 refit_metric = original_refit
+                scorers = _MultimetricScorer(scorers=scorers)
 
             estimator.scorer_ = scorers
 
@@ -638,7 +644,7 @@ class DistributedHPOTrainer(SnowparkModelTrainer):
                 if label_cols:
                     label_arg_name = "Y" if "Y" in argspec.args else "y"
                     args[label_arg_name] = y
-                if sample_weight_col is not None and "sample_weight" in argspec.args:
+                if sample_weight_col is not None and should_include_sample_weight(estimator, "fit"):
                     args["sample_weight"] = df[sample_weight_col].squeeze()
                 estimator.refit = original_refit
                 refit_start_time = time.time()
@@ -797,8 +803,11 @@ class DistributedHPOTrainer(SnowparkModelTrainer):
             import pandas as pd
             import pyarrow.parquet as pq
             from sklearn.metrics import check_scoring
-            from sklearn.metrics._scorer import _check_multimetric_scoring
-            from sklearn.utils.validation import _check_fit_params, indexable
+            from sklearn.metrics._scorer import (
+                _check_multimetric_scoring,
+                _MultimetricScorer,
+            )
+            from sklearn.utils.validation import _check_method_params, indexable
 
             # import packages in sproc
             for import_name in udf_imports:
@@ -846,11 +855,12 @@ class DistributedHPOTrainer(SnowparkModelTrainer):
                 scorers = _check_multimetric_scoring(estimator.estimator, estimator.scoring)
                 estimator._check_refit_for_multimetric(scorers)
                 refit_metric = estimator.refit
+                scorers = _MultimetricScorer(scorers=scorers)
 
             # preprocess the attributes - (2) check fit_params
             groups = None
             X, y, _ = indexable(X, y, groups)
-            fit_params = _check_fit_params(X, fit_params)
+            fit_params = _check_method_params(X, fit_params)
 
             # preprocess the attributes - (3) safe clone base estimator
             base_estimator = clone(estimator.estimator)
@@ -863,6 +873,7 @@ class DistributedHPOTrainer(SnowparkModelTrainer):
             fit_and_score_kwargs = dict(
                 scorer=scorers,
                 fit_params=fit_params,
+                score_params=None,
                 return_train_score=estimator.return_train_score,
                 return_n_test_samples=True,
                 return_times=True,

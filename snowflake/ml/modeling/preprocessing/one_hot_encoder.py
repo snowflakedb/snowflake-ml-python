@@ -9,12 +9,12 @@ import pandas as pd
 import sklearn
 from packaging import version
 from scipy import sparse
-from sklearn import preprocessing, utils as sklearn_utils
+from sklearn import preprocessing
 
 from snowflake import snowpark
 from snowflake.ml._internal import telemetry, type_utils
 from snowflake.ml._internal.exceptions import error_codes, exceptions
-from snowflake.ml._internal.utils import identifier
+from snowflake.ml._internal.utils import identifier, import_utils
 from snowflake.ml.model import model_signature
 from snowflake.ml.modeling.framework import _utils, base
 from snowflake.snowpark import functions as F, types as T
@@ -22,6 +22,10 @@ from snowflake.snowpark._internal.utils import (
     TempObjectType,
     generate_random_alphanumeric,
     random_name_for_temp_object,
+)
+
+is_scalar_nan = import_utils.import_with_fallbacks(
+    "sklearn.utils.is_scalar_nan", "sklearn.utils._missing.is_scalar_nan"
 )
 
 _INFREQUENT_CATEGORY = "_INFREQUENT"
@@ -1293,7 +1297,7 @@ class OneHotEncoder(base.BaseTransformer):
             missing_drops = []
             drop_indices = []
             for feature_idx, (drop_val, cat_list) in enumerate(zip(drop_array, self._categories_list)):
-                if not sklearn_utils.is_scalar_nan(drop_val):
+                if not is_scalar_nan(drop_val):
                     drop_idx = np.where(cat_list == drop_val)[0]
                     if drop_idx.size:  # found drop idx
                         drop_indices.append(self._map_drop_idx_to_infrequent(feature_idx, drop_idx[0]))
@@ -1303,7 +1307,7 @@ class OneHotEncoder(base.BaseTransformer):
 
                 # drop_val is nan, find nan in categories manually
                 for cat_idx, cat in enumerate(cat_list):
-                    if sklearn_utils.is_scalar_nan(cat):
+                    if is_scalar_nan(cat):
                         drop_indices.append(self._map_drop_idx_to_infrequent(feature_idx, cat_idx))
                         break
                 else:  # loop did not break thus drop is missing

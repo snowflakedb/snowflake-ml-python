@@ -863,21 +863,23 @@ class Pipeline(base.BaseTransformer):
         ct.sparse_output_ = False
 
         # ColumnTransformer internally replaces the "passthrough" string in the "remainder" step with a
-        # fitted FunctionTransformer, saved in the _name_to_fitted_passthrough dict, during the transform()
-        # call. So we need to populate _name_to_fitted_passthrough dict with fitted FunctionTransformer so
-        # that the replacements works correctly during the transform() call.
-        ft = FunctionTransformer(
-            accept_sparse=True,
-            check_inverse=False,
-            feature_names_out="one-to-one",
-        )
+        # fitted FunctionTransformer during the fit() call. So we need to manually replace the "passthrough"
+        # string with a fitted FunctionTransformer
+        for i, (step, transform, indices) in enumerate(ct.transformers_):
+            if transform == "passthrough":
+                ft = FunctionTransformer(
+                    accept_sparse=True,
+                    check_inverse=False,
+                    feature_names_out="one-to-one",
+                )
+                if step == "remainder":
+                    ft.feature_names_in_ = remaining
+                    ft.n_features_in_ = len(remaining)
+                else:
+                    ft.feature_names_in_ = self._feature_names_in[step_index_in_pipeline]
+                    ft.n_features_in_ = self._n_features_in[step_index_in_pipeline]
+                ct.transformers_[i] = (step, ft, indices)
 
-        if remainder_action == "passthrough":
-            ft.n_features_in_ = len(remaining)
-            ct._name_to_fitted_passthrough = {"remainder": ft}
-        elif step_transformer_obj == "passthrough":
-            ft.n_features_in_ = self._n_features_in[step_index_in_pipeline]
-            ct._name_to_fitted_passthrough = {step_name_in_ct: ft}
         return ct
 
     def _fit_ml_runtime(self, dataset: snowpark.DataFrame) -> None:
