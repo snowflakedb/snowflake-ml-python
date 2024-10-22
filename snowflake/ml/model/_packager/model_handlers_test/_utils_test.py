@@ -47,16 +47,41 @@ class UtilTest(absltest.TestCase):
 
     def test_convert_explanations_to_2D_df_multi_value_string_labels(self) -> None:
         model = mock.MagicMock()
-        model.classes_ = ["2", "3"]
+        model.classes_ = ["2", "3", "4"]
         explanation_list = np.array(
-            [[[0.3, -0.3], [0.5, -0.5]], [[0.2, -0.2], [0.4, -0.4]], [[0.1, -0.1], [0.6, -0.6]]]
+            [
+                [[0.3, -0.2, -0.1], [0.5, -0.2, -0.3]],
+                [[0.2, -0.15, -0.05], [0.4, -0.2, -0.2]],
+                [[-0.05, 0.1, -0.05], [-0.6, -0.6, 1.2]],
+            ]
         )
         explanations_df = handlers_utils.convert_explanations_to_2D_df(model, explanation_list)
         expected_df = pd.DataFrame.from_dict(
             {
-                0: [json.dumps(v) for v in [{"2": 0.3, "3": -0.3}, {"2": 0.5, "3": -0.5}]],
-                1: [json.dumps(v) for v in [{"2": 0.2, "3": -0.2}, {"2": 0.4, "3": -0.4}]],
-                2: [json.dumps(v) for v in [{"2": 0.1, "3": -0.1}, {"2": 0.6, "3": -0.6}]],
+                0: [json.dumps(v) for v in [{"2": 0.3, "3": -0.2, "4": -0.1}, {"2": 0.5, "3": -0.2, "4": -0.3}]],
+                1: [json.dumps(v) for v in [{"2": 0.2, "3": -0.15, "4": -0.05}, {"2": 0.4, "3": -0.2, "4": -0.2}]],
+                2: [json.dumps(v) for v in [{"2": -0.05, "3": 0.1, "4": -0.05}, {"2": -0.6, "3": -0.6, "4": 1.2}]],
+            },
+            orient="index",
+        )
+        pd.testing.assert_frame_equal(explanations_df, expected_df)
+
+    def test_convert_explanations_to_2D_df_binary_string_labels(self) -> None:
+        model = mock.MagicMock()
+        model.classes_ = ["2", "3"]
+        explanation_list = np.array(
+            [
+                [[0.3, -0.2], [0.5, -0.2]],
+                [[0.2, -0.15], [0.4, -0.2]],
+                [[-0.05, 0.1], [-0.6, -0.6]],
+            ]
+        )
+        explanations_df = handlers_utils.convert_explanations_to_2D_df(model, explanation_list)
+        expected_df = pd.DataFrame.from_dict(
+            {
+                0: [-0.2, -0.2],
+                1: [-0.15, -0.2],
+                2: [0.1, -0.6],
             },
             orient="index",
         )
@@ -64,16 +89,41 @@ class UtilTest(absltest.TestCase):
 
     def test_convert_explanations_to_2D_df_multi_value_int_labels(self) -> None:
         model = mock.MagicMock()
-        model.classes_ = [2, 3]
+        model.classes_ = [2, 3, 4]
         explanation_list = np.array(
-            [[[0.3, -0.3], [0.5, -0.5]], [[0.2, -0.2], [0.4, -0.4]], [[0.1, -0.1], [0.6, -0.6]]]
+            [
+                [[0.3, -0.2, -0.1], [0.5, -0.2, -0.3]],
+                [[0.2, -0.15, -0.05], [0.4, -0.2, -0.2]],
+                [[-0.05, 0.1, -0.05], [-0.6, -0.6, 1.2]],
+            ]
         )
         explanations_df = handlers_utils.convert_explanations_to_2D_df(model, explanation_list)
         expected_df = pd.DataFrame.from_dict(
             {
-                0: [json.dumps(v) for v in [{2: 0.3, 3: -0.3}, {2: 0.5, 3: -0.5}]],
-                1: [json.dumps(v) for v in [{2: 0.2, 3: -0.2}, {2: 0.4, 3: -0.4}]],
-                2: [json.dumps(v) for v in [{2: 0.1, 3: -0.1}, {2: 0.6, 3: -0.6}]],
+                0: [json.dumps(v) for v in [{2: 0.3, 3: -0.2, 4: -0.1}, {2: 0.5, 3: -0.2, 4: -0.3}]],
+                1: [json.dumps(v) for v in [{2: 0.2, 3: -0.15, 4: -0.05}, {2: 0.4, 3: -0.2, 4: -0.2}]],
+                2: [json.dumps(v) for v in [{2: -0.05, 3: 0.1, 4: -0.05}, {2: -0.6, 3: -0.6, 4: 1.2}]],
+            },
+            orient="index",
+        )
+        pd.testing.assert_frame_equal(explanations_df, expected_df)
+
+    def test_convert_explanations_to_2D_df_binary_int_labels(self) -> None:
+        model = mock.MagicMock()
+        model.classes_ = [2, 3]
+        explanation_list = np.array(
+            [
+                [[0.3, -0.2], [0.5, -0.2]],
+                [[0.2, -0.15], [0.4, -0.2]],
+                [[-0.05, 0.1], [-0.6, -0.6]],
+            ]
+        )
+        explanations_df = handlers_utils.convert_explanations_to_2D_df(model, explanation_list)
+        expected_df = pd.DataFrame.from_dict(
+            {
+                0: [-0.2, -0.2],
+                1: [-0.15, -0.2],
+                2: [0.1, -0.6],
             },
             orient="index",
         )
@@ -96,14 +146,34 @@ class UtilTest(absltest.TestCase):
     def test_convert_explanations_to_2D_df_multi_value_no_class_attr(self) -> None:
         model = mock.MagicMock(spec=[])
         explanation_list = np.array(
+            [
+                [[0.3, -0.3, 0.1], [0.5, -0.5, 0.1]],
+                [[0.2, -0.2, 0.1], [0.4, -0.4, 0.1]],
+                [[0.1, -0.1, 0.1], [0.6, -0.6, 0.1]],
+            ]
+        )
+        explanations_df = handlers_utils.convert_explanations_to_2D_df(model, explanation_list)
+        expected_df = pd.DataFrame.from_dict(
+            {
+                0: [json.dumps(v) for v in [{0: 0.3, 1: -0.3, 2: 0.1}, {0: 0.5, 1: -0.5, 2: 0.1}]],
+                1: [json.dumps(v) for v in [{0: 0.2, 1: -0.2, 2: 0.1}, {0: 0.4, 1: -0.4, 2: 0.1}]],
+                2: [json.dumps(v) for v in [{0: 0.1, 1: -0.1, 2: 0.1}, {0: 0.6, 1: -0.6, 2: 0.1}]],
+            },
+            orient="index",
+        )
+        pd.testing.assert_frame_equal(explanations_df, expected_df)
+
+    def test_convert_explanations_to_2D_df_binary_no_class_attr(self) -> None:
+        model = mock.MagicMock(spec=[])
+        explanation_list = np.array(
             [[[0.3, -0.3], [0.5, -0.5]], [[0.2, -0.2], [0.4, -0.4]], [[0.1, -0.1], [0.6, -0.6]]]
         )
         explanations_df = handlers_utils.convert_explanations_to_2D_df(model, explanation_list)
         expected_df = pd.DataFrame.from_dict(
             {
-                0: [json.dumps(v) for v in [{0: 0.3, 1: -0.3}, {0: 0.5, 1: -0.5}]],
-                1: [json.dumps(v) for v in [{0: 0.2, 1: -0.2}, {0: 0.4, 1: -0.4}]],
-                2: [json.dumps(v) for v in [{0: 0.1, 1: -0.1}, {0: 0.6, 1: -0.6}]],
+                0: [-0.3, -0.5],
+                1: [-0.2, -0.4],
+                2: [-0.1, -0.6],
             },
             orient="index",
         )

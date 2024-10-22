@@ -3,9 +3,10 @@ from unittest import mock
 
 import pandas as pd
 from absl.testing import absltest
+from packaging import version
 
 from snowflake.ml._internal import telemetry
-from snowflake.ml._internal.utils import sql_identifier
+from snowflake.ml._internal.utils import snowflake_env, sql_identifier
 from snowflake.ml.model import type_hints
 from snowflake.ml.model._client.model import model_impl, model_version_impl
 from snowflake.ml.model._client.ops import service_ops
@@ -183,6 +184,8 @@ class ModelManagerTest(absltest.TestCase):
             self.m_r._hrid_generator, "generate", return_value=(1, "angry_yeti_1")
         ) as mock_hrid_generate, mock.patch.object(
             model_version_impl.ModelVersion, "_get_functions", return_value=[]
+        ), mock.patch.object(
+            snowflake_env, "get_current_snowflake_version", return_value=version.Version("8.40.0")
         ):
             mv = self.m_r.log_model(
                 model=m_model,
@@ -208,6 +211,7 @@ class ModelManagerTest(absltest.TestCase):
                 sample_input_data=m_sample_input_data,
                 conda_dependencies=None,
                 pip_requirements=None,
+                target_platforms=None,
                 python_version=None,
                 code_paths=None,
                 ext_modules=None,
@@ -250,6 +254,8 @@ class ModelManagerTest(absltest.TestCase):
             self.m_r._model_ops, "create_from_stage"
         ) as mock_create_from_stage, mock.patch.object(
             model_version_impl.ModelVersion, "_get_functions", return_value=[]
+        ), mock.patch.object(
+            snowflake_env, "get_current_snowflake_version", return_value=version.Version("8.40.0")
         ):
             mv = self.m_r.log_model(
                 model=m_model,
@@ -277,6 +283,7 @@ class ModelManagerTest(absltest.TestCase):
                 sample_input_data=m_sample_input_data,
                 conda_dependencies=m_conda_dependency,
                 pip_requirements=None,
+                target_platforms=None,
                 python_version=None,
                 code_paths=None,
                 ext_modules=None,
@@ -309,6 +316,8 @@ class ModelManagerTest(absltest.TestCase):
             self.m_r._model_ops, "create_from_stage"
         ) as mock_create_from_stage, mock.patch.object(
             model_version_impl.ModelVersion, "_get_functions", return_value=[]
+        ), mock.patch.object(
+            snowflake_env, "get_current_snowflake_version", return_value=version.Version("8.40.0")
         ):
             mv = self.m_r.log_model(
                 model=m_model,
@@ -331,6 +340,7 @@ class ModelManagerTest(absltest.TestCase):
                 sample_input_data=None,
                 conda_dependencies=None,
                 pip_requirements=m_pip_requirements,
+                target_platforms=None,
                 python_version=None,
                 code_paths=None,
                 ext_modules=None,
@@ -366,6 +376,8 @@ class ModelManagerTest(absltest.TestCase):
             self.m_r._model_ops, "create_from_stage"
         ) as mock_create_from_stage, mock.patch.object(
             model_version_impl.ModelVersion, "_get_functions", return_value=[]
+        ), mock.patch.object(
+            snowflake_env, "get_current_snowflake_version", return_value=version.Version("8.40.0")
         ):
             mv = self.m_r.log_model(
                 model=m_model,
@@ -388,6 +400,7 @@ class ModelManagerTest(absltest.TestCase):
                 sample_input_data=None,
                 conda_dependencies=None,
                 pip_requirements=None,
+                target_platforms=None,
                 python_version=m_python_version,
                 code_paths=m_code_paths,
                 ext_modules=m_ext_modules,
@@ -424,6 +437,8 @@ class ModelManagerTest(absltest.TestCase):
             self.m_r._model_ops._metadata_ops, "save"
         ) as mock_metadata_save, mock.patch.object(
             model_version_impl.ModelVersion, "_get_functions", return_value=[]
+        ), mock.patch.object(
+            snowflake_env, "get_current_snowflake_version", return_value=version.Version("8.40.0")
         ):
             mv = self.m_r.log_model(
                 model=m_model,
@@ -445,6 +460,7 @@ class ModelManagerTest(absltest.TestCase):
                 sample_input_data=None,
                 conda_dependencies=None,
                 pip_requirements=None,
+                target_platforms=None,
                 python_version=None,
                 code_paths=None,
                 ext_modules=None,
@@ -508,6 +524,83 @@ class ModelManagerTest(absltest.TestCase):
                 ]
             )
 
+    def test_log_model_unsupported_platform(self) -> None:
+        m_model = mock.MagicMock()
+        m_stage_path = "@TEMP.TEST.MODEL/V1"
+        with mock.patch.object(self.m_r._model_ops, "validate_existence", return_value=False), mock.patch.object(
+            self.m_r._model_ops, "prepare_model_stage_path", return_value=m_stage_path
+        ), mock.patch.object(
+            snowflake_env, "get_current_snowflake_version", return_value=version.Version("8.40.0")
+        ), self.assertRaises(
+            ValueError
+        ) as ex:
+            self.m_r.log_model(
+                model=m_model,
+                model_name="MODEL",
+                version_name="V1",
+                target_platforms=["UNSUPPORTED_PLATFORM"],
+            )
+            self.assertIn("is not a valid TargetPlatform", str(ex.exception))
+
+    def test_log_model_target_platforms(self) -> None:
+        m_model = mock.MagicMock()
+        m_stage_path = "@TEMP.TEST.MODEL/V1"
+        m_model_metadata = mock.MagicMock()
+        m_model_metadata.telemetry_metadata = mock.MagicMock(return_value=self.model_md_telemetry)
+        with mock.patch.object(self.m_r._model_ops, "validate_existence", return_value=False), mock.patch.object(
+            self.m_r._model_ops, "prepare_model_stage_path", return_value=m_stage_path
+        ), mock.patch.object(
+            model_composer.ModelComposer, "save", return_value=m_model_metadata
+        ) as mock_save, mock.patch.object(
+            self.m_r._model_ops, "create_from_stage"
+        ), mock.patch.object(
+            model_version_impl.ModelVersion, "_get_functions", return_value=[]
+        ), mock.patch.object(
+            snowflake_env, "get_current_snowflake_version", return_value=version.Version("8.40.0")
+        ):
+            self.m_r.log_model(
+                model=m_model,
+                model_name="MODEL",
+                version_name="V1",
+                statement_params=self.base_statement_params,
+                target_platforms=["SNOWPARK_CONTAINER_SERVICES"],
+            )
+            mock_save.assert_called_with(
+                name="MODEL",
+                model=m_model,
+                signatures=None,
+                sample_input_data=None,
+                conda_dependencies=None,
+                pip_requirements=None,
+                target_platforms=[type_hints.TargetPlatform.SNOWPARK_CONTAINER_SERVICES],
+                python_version=None,
+                code_paths=None,
+                ext_modules=None,
+                options=None,
+                task=type_hints.Task.UNKNOWN,
+            )
+            self.m_r.log_model(
+                model=m_model,
+                model_name="MODEL",
+                version_name="V2",
+                statement_params=self.base_statement_params,
+                target_platforms=[type_hints.TargetPlatform.WAREHOUSE],
+            )
+            mock_save.assert_called_with(
+                name="MODEL",
+                model=m_model,
+                signatures=None,
+                sample_input_data=None,
+                conda_dependencies=None,
+                pip_requirements=None,
+                target_platforms=[type_hints.TargetPlatform.WAREHOUSE],
+                python_version=None,
+                code_paths=None,
+                ext_modules=None,
+                options=None,
+                task=type_hints.Task.UNKNOWN,
+            )
+
     def test_log_model_fully_qualified(self) -> None:
         m_model = mock.MagicMock()
         m_stage_path = "@TEMP.TEST.MODEL/V1"
@@ -525,6 +618,8 @@ class ModelManagerTest(absltest.TestCase):
             self.m_r._model_ops._metadata_ops, "save"
         ) as mock_metadata_save, mock.patch.object(
             model_version_impl.ModelVersion, "_get_functions", return_value=[]
+        ), mock.patch.object(
+            snowflake_env, "get_current_snowflake_version", return_value=version.Version("8.40.0")
         ):
             mv = self.m_r.log_model(
                 model=m_model,
@@ -546,6 +641,7 @@ class ModelManagerTest(absltest.TestCase):
                 sample_input_data=None,
                 conda_dependencies=None,
                 pip_requirements=None,
+                target_platforms=None,
                 python_version=None,
                 code_paths=None,
                 ext_modules=None,

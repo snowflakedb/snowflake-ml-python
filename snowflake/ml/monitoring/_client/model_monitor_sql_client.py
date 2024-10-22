@@ -124,7 +124,7 @@ class _ModelMonitorParams(TypedDict):
     label_columns: Required[List[sql_identifier.SqlIdentifier]]
 
 
-class _ModelMonitorSQLClient:
+class ModelMonitorSQLClient:
     def __init__(
         self,
         session: session.Session,

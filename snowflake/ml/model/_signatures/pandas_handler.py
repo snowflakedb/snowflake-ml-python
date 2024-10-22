@@ -147,6 +147,22 @@ class PandasDataFrameHandler(base_handler.BaseDataHandler[pd.DataFrame]):
                     specs.append(core.FeatureSpec(dtype=core.DataType.STRING, name=ft_name))
                 elif isinstance(data[df_col].iloc[0], bytes):
                     specs.append(core.FeatureSpec(dtype=core.DataType.BYTES, name=ft_name))
+            elif isinstance(df_col_dtype, pd.CategoricalDtype):
+                category_dtype = df_col_dtype.categories.dtype
+                if category_dtype == np.dtype("O"):
+                    if isinstance(df_col_dtype.categories[0], str):
+                        specs.append(core.FeatureSpec(dtype=core.DataType.STRING, name=ft_name))
+                    elif isinstance(df_col_dtype.categories[0], bytes):
+                        specs.append(core.FeatureSpec(dtype=core.DataType.BYTES, name=ft_name))
+                    else:
+                        raise snowml_exceptions.SnowflakeMLException(
+                            error_code=error_codes.INVALID_DATA,
+                            original_exception=ValueError(
+                                f"Data Validation Error: Unsupported type confronted in {df_col_dtype.categories[0]}"
+                            ),
+                        )
+                else:
+                    specs.append(core.FeatureSpec(dtype=core.DataType.from_numpy_type(category_dtype), name=ft_name))
             elif isinstance(data[df_col].iloc[0], np.datetime64):
                 specs.append(core.FeatureSpec(dtype=core.DataType.TIMESTAMP_NTZ, name=ft_name))
             else:

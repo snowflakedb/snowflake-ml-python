@@ -1,0 +1,22 @@
+load("//bazel:py_rules.bzl", "py_library", "py_test")
+
+package(default_visibility = ["//visibility:public"])
+
+py_library(
+    name = "model_task_utils",
+    srcs = ["model_task_utils.py"],
+    deps = [
+        "//snowflake/ml/_internal:type_utils",
+        "//snowflake/ml/model/_packager/model_handlers:_utils",
+    ],
+)
+
+py_test(
+    name = "model_task_utils_test",
+    srcs = ["model_task_utils_test.py"],
+    deps = [
+        ":model_task_utils",
+        "//snowflake/ml/model:model_signature",
+        "//snowflake/ml/model/_packager/model_handlers:_utils",
+    ],
+)

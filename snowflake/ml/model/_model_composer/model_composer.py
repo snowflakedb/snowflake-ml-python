@@ -86,6 +86,7 @@ class ModelComposer:
         metadata: Optional[Dict[str, str]] = None,
         conda_dependencies: Optional[List[str]] = None,
         pip_requirements: Optional[List[str]] = None,
+        target_platforms: Optional[List[model_types.TargetPlatform]] = None,
         python_version: Optional[str] = None,
         ext_modules: Optional[List[ModuleType]] = None,
         code_paths: Optional[List[str]] = None,
@@ -131,6 +132,7 @@ class ModelComposer:
             model_rel_path=pathlib.PurePosixPath(ModelComposer.MODEL_DIR_REL_PATH),
             options=options,
             data_sources=self._get_data_sources(model, sample_input_data),
+            target_platforms=target_platforms,
         )
 
         file_utils.upload_directory_to_stage(

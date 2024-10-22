@@ -195,7 +195,7 @@ class LabelEncoderTest(TestCase):
         with tempfile.NamedTemporaryFile(suffix=".pkl", delete=False) as file:
             self._to_be_deleted_files.append(file.name)
             label_encoder_dump_cloudpickle = cloudpickle.dumps(label_encoder)
-            # disabling pickle and joblib serde due to the below error
+            # SNOW-1704904: Disabling pickle and joblib serde due to the below error
             # _pickle.PicklingError: Can't pickle <class 'snowflake.ml.modeling.preprocessing.label_encoder.LabelEncoder'>: it's not the same object as snowflake.ml.modeling.preprocessing.label_encoder.LabelEncoder # noqa: E501
             # label_encoder_dump_pickle = pickle.dumps(label_encoder)
             # joblib.dump(label_encoder, file.name)

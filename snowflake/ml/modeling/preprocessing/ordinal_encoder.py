@@ -5,15 +5,19 @@ from typing import Any, Dict, Iterable, List, Optional, Union
 
 import numpy as np
 import pandas as pd
-from sklearn import preprocessing, utils as sklearn_utils
+from sklearn import preprocessing
 
 from snowflake import snowpark
 from snowflake.ml._internal import telemetry, type_utils
 from snowflake.ml._internal.exceptions import error_codes, exceptions
-from snowflake.ml._internal.utils import identifier
+from snowflake.ml._internal.utils import identifier, import_utils
 from snowflake.ml.modeling.framework import _utils, base
 from snowflake.snowpark import functions as F, types as T
 from snowflake.snowpark._internal import utils as snowpark_utils
+
+is_scalar_nan = import_utils.import_with_fallbacks(
+    "sklearn.utils.is_scalar_nan", "sklearn.utils._missing.is_scalar_nan"
+)
 
 _COLUMN_NAME = "_COLUMN_NAME"
 _CATEGORY = "_CATEGORY"
@@ -440,7 +444,7 @@ class OrdinalEncoder(base.BaseTransformer):
                 used to encode a known category.
         """
         if self._missing_indices:
-            if not sklearn_utils.is_scalar_nan(self.encoded_missing_value):
+            if not is_scalar_nan(self.encoded_missing_value):
                 # Features are invalid when they contain a missing category
                 # and encoded_missing_value was already used to encode a
                 # known category
@@ -624,9 +628,7 @@ class OrdinalEncoder(base.BaseTransformer):
             )
 
         if self.handle_unknown == "use_encoded_value":
-            if not (
-                sklearn_utils.is_scalar_nan(self.unknown_value) or isinstance(self.unknown_value, numbers.Integral)
-            ):
+            if not (is_scalar_nan(self.unknown_value) or isinstance(self.unknown_value, numbers.Integral)):
                 raise exceptions.SnowflakeMLException(
                     error_code=error_codes.INVALID_ATTRIBUTE,
                     original_exception=TypeError(
@@ -663,7 +665,7 @@ class OrdinalEncoder(base.BaseTransformer):
 
         if self.handle_unknown == "use_encoded_value":
             # left outer join has already filled unknown values with null
-            if not (self.unknown_value is None or sklearn_utils.is_scalar_nan(self.unknown_value)):
+            if not (self.unknown_value is None or is_scalar_nan(self.unknown_value)):
                 transformed_dataset = transformed_dataset.na.fill(self.unknown_value, self.output_cols)
 
         return transformed_dataset

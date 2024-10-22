@@ -275,6 +275,31 @@ class PandasDataFrameHandlerTest(absltest.TestCase):
                 core.FeatureSpec("output_feature_1", core.DataType.DOUBLE),
             ],
         )
+        data = {
+            "color": ["red", "blue", "green", "red"],
+            "size": [1, 2, 2, 4],
+            "value": np.random.randint(0, 100, 4),
+        }
+
+        df = pd.DataFrame(data).astype(
+            {
+                "color": "category",
+                "size": "category",
+                "value": "int64",
+            }
+        )
+        labels = [f"{i} - {i + 9}" for i in range(0, 100, 10)]
+        df["group"] = pd.cut(df.value, range(0, 105, 10), right=False, labels=labels)
+
+        self.assertListEqual(
+            pandas_handler.PandasDataFrameHandler.infer_signature(df, role="input"),
+            [
+                core.FeatureSpec("color", core.DataType.STRING),
+                core.FeatureSpec("size", core.DataType.INT64),
+                core.FeatureSpec("value", core.DataType.INT64),
+                core.FeatureSpec("group", core.DataType.STRING),
+            ],
+        )
 
     def test_convert_to_df_pd_DataFrame(self) -> None:
         a = np.array([[2, 5], [6, 8]])

@@ -11,6 +11,7 @@ filegroup(
         "fixtures/MANIFEST_3.yml",
         "fixtures/MANIFEST_4.yml",
         "fixtures/MANIFEST_5.yml",
+        "fixtures/MANIFEST_6.yml",
     ],
 )
 

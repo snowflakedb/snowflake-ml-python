@@ -6,7 +6,9 @@ from snowflake.snowpark import DataFrame, Session
 
 
 # This function will be invoked by example_helper.py. Do not change the name.
-def create_draft_feature_view(session: Session, source_dfs: List[DataFrame], source_tables: List[str]) -> FeatureView:
+def create_draft_feature_view(
+    session: Session, source_dfs: List[DataFrame], source_tables: List[str], database: str, schema: str
+) -> FeatureView:
     """Create a feature view about trip station."""
     feature_df = source_dfs[0].select("WINE_ID", "SULPHATES", "ALCOHOL")
 

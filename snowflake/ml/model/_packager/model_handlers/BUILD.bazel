@@ -26,15 +26,6 @@ py_library(
 )
 
 py_library(
-    name = "model_objective_utils",
-    srcs = ["model_objective_utils.py"],
-    deps = [
-        ":_utils",
-        "//snowflake/ml/_internal:type_utils",
-    ],
-)
-
-py_library(
     name = "catboost",
     srcs = ["catboost.py"],
     deps = [
@@ -98,10 +89,10 @@ py_library(
         "//snowflake/ml/model:model_signature",
         "//snowflake/ml/model:type_hints",
         "//snowflake/ml/model/_packager/model_env",
-        "//snowflake/ml/model/_packager/model_handlers:model_objective_utils",
         "//snowflake/ml/model/_packager/model_handlers_migrator:base_migrator",
         "//snowflake/ml/model/_packager/model_meta",
         "//snowflake/ml/model/_packager/model_meta:model_blob_meta",
+        "//snowflake/ml/model/_packager/model_task:model_task_utils",
         "//snowflake/ml/model/_signatures:numpy_handler",
         "//snowflake/ml/model/_signatures:utils",
         "//snowflake/ml/modeling/framework",
@@ -119,11 +110,11 @@ py_library(
         "//snowflake/ml/model:custom_model",
         "//snowflake/ml/model:type_hints",
         "//snowflake/ml/model/_packager/model_env",
-        "//snowflake/ml/model/_packager/model_handlers:model_objective_utils",
         "//snowflake/ml/model/_packager/model_handlers_migrator:base_migrator",
         "//snowflake/ml/model/_packager/model_meta",
         "//snowflake/ml/model/_packager/model_meta:model_blob_meta",
         "//snowflake/ml/model/_packager/model_meta:model_meta_schema",
+        "//snowflake/ml/model/_packager/model_task:model_task_utils",
         "//snowflake/ml/model/_signatures:numpy_handler",
         "//snowflake/ml/model/_signatures:utils",
     ],
@@ -139,11 +130,11 @@ py_library(
         "//snowflake/ml/model:custom_model",
         "//snowflake/ml/model:type_hints",
         "//snowflake/ml/model/_packager/model_env",
-        "//snowflake/ml/model/_packager/model_handlers:model_objective_utils",
         "//snowflake/ml/model/_packager/model_handlers_migrator:base_migrator",
         "//snowflake/ml/model/_packager/model_meta",
         "//snowflake/ml/model/_packager/model_meta:model_blob_meta",
         "//snowflake/ml/model/_packager/model_meta:model_meta_schema",
+        "//snowflake/ml/model/_packager/model_task:model_task_utils",
         "//snowflake/ml/model/_signatures:numpy_handler",
         "//snowflake/ml/model/_signatures:utils",
     ],

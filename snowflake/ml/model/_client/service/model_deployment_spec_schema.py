@@ -12,7 +12,7 @@ class ImageBuildDict(TypedDict):
     compute_pool: Required[str]
     image_repo: Required[str]
     force_rebuild: Required[bool]
-    external_access_integrations: Required[List[str]]
+    external_access_integrations: NotRequired[List[str]]
 
 
 class ServiceDict(TypedDict):
@@ -20,6 +20,8 @@ class ServiceDict(TypedDict):
     compute_pool: Required[str]
     ingress_enabled: Required[bool]
     max_instances: Required[int]
+    cpu: NotRequired[str]
+    memory: NotRequired[str]
     gpu: NotRequired[str]
     num_workers: NotRequired[int]
     max_batch_rows: NotRequired[int]

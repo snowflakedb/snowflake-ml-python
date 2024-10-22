@@ -40,7 +40,7 @@ ENV="pip"
 WITH_SNOWPARK=false
 WITH_SPCS_IMAGE=false
 MODE="continuous_run"
-PYTHON_VERSION=3.8
+PYTHON_VERSION=3.9
 PYTHON_ENABLE_SCRIPT="bin/activate"
 SNOWML_DIR="snowml"
 SNOWPARK_DIR="snowpark-python"
@@ -149,13 +149,6 @@ if [ ${IS_NT} = true ]; then
 fi
 
 case ${PYTHON_VERSION} in
-  3.8)
-    if [ ${IS_NT} = true ]; then
-        PYTHON_EXECUTABLE="py -3.8"
-    else
-        PYTHON_EXECUTABLE="python3.8"
-    fi
-    ;;
   3.9)
     if [ ${IS_NT} = true ]; then
         PYTHON_EXECUTABLE="py -3.9"

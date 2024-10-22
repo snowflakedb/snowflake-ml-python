@@ -54,7 +54,7 @@ class ModelOpsTest(absltest.TestCase):
         return m_df
 
     def test_prepare_model_stage_path(self) -> None:
-        with mock.patch.object(self.m_ops._stage_client, "create_tmp_stage",) as mock_create_stage, mock.patch.object(
+        with mock.patch.object(self.m_ops._stage_client, "create_tmp_stage") as mock_create_stage, mock.patch.object(
             snowpark_utils, "random_name_for_temp_object", return_value="SNOWPARK_TEMP_STAGE_ABCDEF0123"
         ) as mock_random_name_for_temp_object:
             stage_path = self.m_ops.prepare_model_stage_path(
@@ -461,10 +461,15 @@ class ModelOpsTest(absltest.TestCase):
             )
 
     def test_list_inference_services(self) -> None:
-        m_list_res = [Row(inference_services='["a.b.c", "d.e.f"]')]
+        m_services_list_res = [Row(inference_services='["a.b.c", "d.e.f"]')]
+        m_endpoints_list_res_0 = [Row(name="fooendpoint"), Row(name="barendpoint")]
+        m_endpoints_list_res_1 = [Row(name="bazendpoint")]
+
         with mock.patch.object(
-            self.m_ops._model_client, "show_versions", return_value=m_list_res
-        ) as mock_show_versions:
+            self.m_ops._model_client, "show_versions", return_value=m_services_list_res
+        ) as mock_show_versions, mock.patch.object(
+            self.m_ops._model_client, "show_endpoints", side_effect=[m_endpoints_list_res_0, m_endpoints_list_res_1]
+        ):
             res = self.m_ops.list_inference_services(
                 database_name=sql_identifier.SqlIdentifier("TEMP"),
                 schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
@@ -472,7 +477,13 @@ class ModelOpsTest(absltest.TestCase):
                 version_name=sql_identifier.SqlIdentifier("v1", case_sensitive=True),
                 statement_params=self.m_statement_params,
             )
-            self.assertListEqual(res, ["a.b.c", "d.e.f"])
+            self.assertEqual(
+                res,
+                {
+                    "service_name": ["a.b.c", "a.b.c", "d.e.f"],
+                    "endpoints": ["fooendpoint", "barendpoint", "bazendpoint"],
+                },
+            )
             mock_show_versions.assert_called_once_with(
                 database_name=sql_identifier.SqlIdentifier("TEMP"),
                 schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
@@ -509,9 +520,12 @@ class ModelOpsTest(absltest.TestCase):
 
     def test_list_inference_services_skip_build(self) -> None:
         m_list_res = [Row(inference_services='["A.B.MODEL_BUILD_34d35ew", "A.B.SERVICE"]')]
+        m_endpoints_list_res = [Row(name="fooendpoint"), Row(name="barendpoint")]
         with mock.patch.object(
             self.m_ops._model_client, "show_versions", return_value=m_list_res
-        ) as mock_show_versions:
+        ) as mock_show_versions, mock.patch.object(
+            self.m_ops._model_client, "show_endpoints", side_effect=[m_endpoints_list_res]
+        ):
             res = self.m_ops.list_inference_services(
                 database_name=sql_identifier.SqlIdentifier("TEMP"),
                 schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
@@ -519,7 +533,13 @@ class ModelOpsTest(absltest.TestCase):
                 version_name=sql_identifier.SqlIdentifier("v1", case_sensitive=True),
                 statement_params=self.m_statement_params,
             )
-            self.assertListEqual(res, ["A.B.SERVICE"])
+            self.assertEqual(
+                res,
+                {
+                    "service_name": ["A.B.SERVICE", "A.B.SERVICE"],
+                    "endpoints": ["fooendpoint", "barendpoint"],
+                },
+            )
             mock_show_versions.assert_called_once_with(
                 database_name=sql_identifier.SqlIdentifier("TEMP"),
                 schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
@@ -530,13 +550,16 @@ class ModelOpsTest(absltest.TestCase):
 
     def test_delete_service_non_existent(self) -> None:
         m_list_res = [Row(inference_services='["A.B.C", "D.E.F"]')]
+        m_endpoints_list_res = [Row(name="fooendpoint"), Row(name="barendpoint")]
         with mock.patch.object(
             self.m_ops._model_client, "show_versions", return_value=m_list_res
         ) as mock_show_versions, mock.patch.object(
             self.m_session, attribute="get_current_database", return_value="a"
         ) as mock_get_database, mock.patch.object(
             self.m_session, attribute="get_current_schema", return_value="b"
-        ) as mock_get_schema:
+        ) as mock_get_schema, mock_show_versions, mock.patch.object(
+            self.m_ops._model_client, "show_endpoints", return_value=m_endpoints_list_res
+        ):
             with self.assertRaisesRegex(
                 ValueError, "Service 'A' does not exist or unauthorized or not associated with this model version."
             ):
@@ -580,6 +603,7 @@ class ModelOpsTest(absltest.TestCase):
 
     def test_delete_service_exists(self) -> None:
         m_list_res = [Row(inference_services='["A.B.C", "D.E.F"]')]
+        m_endpoints_list_res = [Row(name="fooendpoint"), Row(name="barendpoint")]
         with mock.patch.object(
             self.m_ops._model_client, "show_versions", return_value=m_list_res
         ) as mock_show_versions, mock.patch.object(
@@ -588,7 +612,9 @@ class ModelOpsTest(absltest.TestCase):
             self.m_session, attribute="get_current_database", return_value="a"
         ) as mock_get_database, mock.patch.object(
             self.m_session, attribute="get_current_schema", return_value="b"
-        ) as mock_get_schema:
+        ) as mock_get_schema, mock_show_versions, mock.patch.object(
+            self.m_ops._model_client, "show_endpoints", return_value=m_endpoints_list_res
+        ):
             self.m_ops.delete_service(
                 database_name=sql_identifier.SqlIdentifier("TEMP"),
                 schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),

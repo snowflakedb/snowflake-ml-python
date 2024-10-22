@@ -1,6 +1,70 @@
 # Release History
 
-## 1.6.4
+## 1.7.0
+
+### Behavior Change
+
+- Generic: Require python >= 3.9.
+- Data Connector: Update `to_torch_dataset` and `to_torch_datapipe` to add a dimension for scalar data.
+This allows for more seamless integration with PyTorch `DataLoader`, which creates batches by stacking inputs of each batch.
+
+Examples:
+
+```python
+ds = connector.to_torch_dataset(shuffle=False, batch_size=3)
+```
+
+- Input: "col1": [10, 11, 12]
+  - Previous batch: array([10., 11., 12.]) with shape (3,)
+  - New batch: array([[10.], [11.], [12.]]) with shape (3, 1)
+
+- Input: "col2": [[0, 100], [1, 110], [2, 200]]
+  - Previous batch: array([[  0, 100], [  1, 110], [  2, 200]]) with shape (3,2)
+  - New batch: No change
+
+- Model Registry: External access integrations are optional when creating a model inference service in
+  Snowflake >= 8.40.0.
+- Model Registry: Deprecate `build_external_access_integration` with `build_external_access_integrations` in
+  `ModelVersion.create_service()`.
+
+### Bug Fixes
+
+- Registry: Updated `log_model` API to accept both signature and sample_input_data parameters.
+- Feature Store: ExampleHelper uses fully qualified path for table name. change weather features aggregation from 1d to 1h.
+- Data Connector: Return numpy array with appropriate object type instead of list for multi-dimensional
+data from `to_torch_dataset` and `to_torch_datapipe`
+- Model explainability: Incompatibility between SHAP 0.42.1 and XGB 2.1.1 resolved by using latest SHAP 0.46.0.
+
+### New Features
+
+- Registry: Provide pass keyworded variable length of arguments to class ModelContext. Example usage:
+
+```python
+mc = custom_model.ModelContext(
+    config = 'local_model_dir/config.json',
+    m1 = model1
+)
+
+class ExamplePipelineModel(custom_model.CustomModel):
+    def __init__(self, context: custom_model.ModelContext) -> None:
+      super().__init__(context)
+      v = open(self.context['config']).read()
+      self.bias = json.loads(v)['bias']
+
+    @custom_model.inference_api
+    def predict(self, input: pd.DataFrame) -> pd.DataFrame:
+      model_output = self.context['m1'].predict(input)
+      return pd.DataFrame({'output': model_output + self.bias})
+```
+
+- Model Development: Upgrade scikit-learn in UDTF backend for log_loss metric. As a result, `eps` argument is now ignored.
+- Data Connector: Add the option of passing a `None` sized batch to `to_torch_dataset` for better
+interoperability with PyTorch DataLoader.
+- Model Registry: Support [pandas.CategoricalDtype](https://pandas.pydata.org/docs/reference/api/pandas.CategoricalDtype.html#pandas-categoricaldtype)
+- Registry: It is now possible to pass `signatures` and `sample_input_data` at the same time to capture background
+data from explainablity and data lineage.
+
+## 1.6.4 (2024-10-17)
 
 ### Bug Fixes
 
@@ -18,6 +82,9 @@
 - Registry: Fix a bug that `ModelVersion.run` is called in a nested way.
 - Registry: Fix an issue that leads to `log_model` failure when local package version contains parts other than
   base version.
+- Fix issue where `sample_weights` were not being applied to search estimators.
+- Model explainability: Fix bug which creates explain as a function instead of table function when enabling by default.
+- Model explainability: Update lightgbm binary classification to return non-json values, from customer feedback.
 
 ### New Features
 

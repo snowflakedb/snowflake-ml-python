@@ -374,6 +374,27 @@ class TelemetryTest(parameterized.TestCase):
         self.mock_telemetry.send_batch.assert_called()
 
     @mock.patch("snowflake.snowpark.session._get_active_sessions")
+    def test_native_error(self, mock_get_active_sessions: mock.MagicMock) -> None:
+        """Test send_api_usage_telemetry when the decorated function raises a native error."""
+        mock_get_active_sessions.return_value = {self.mock_session}
+
+        class DummyObject:
+            @utils_telemetry.send_api_usage_telemetry(
+                project=_PROJECT,
+            )
+            def foo(self) -> None:
+                raise RuntimeError("foo error")
+
+        def validate_traceback(ex: Exception) -> bool:
+            stack = traceback.extract_tb(ex.__traceback__)
+            self.assertEqual(stack[-1].name, DummyObject.foo.__name__)
+            return True
+
+        test_obj = DummyObject()
+        with self.assertRaisesWithPredicateMatch(RuntimeError, predicate=validate_traceback):
+            test_obj.foo()
+
+    @mock.patch("snowflake.snowpark.session._get_active_sessions")
     def test_snowml_error(self, mock_get_active_sessions: mock.MagicMock) -> None:
         """Test send_api_usage_telemetry when the decorated function raises a snowml error."""
         mock_get_active_sessions.return_value = {self.mock_session}

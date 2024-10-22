@@ -1,7 +1,6 @@
 # mypy: disable-error-code="import"
 import os
 import warnings
-from importlib import metadata as importlib_metadata
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -16,23 +15,19 @@ from typing import (
 
 import numpy as np
 import pandas as pd
-from packaging import version
 from typing_extensions import TypeGuard, Unpack
 
 from snowflake.ml._internal import type_utils
 from snowflake.ml.model import custom_model, model_signature, type_hints as model_types
 from snowflake.ml.model._packager.model_env import model_env
-from snowflake.ml.model._packager.model_handlers import (
-    _base,
-    _utils as handlers_utils,
-    model_objective_utils,
-)
+from snowflake.ml.model._packager.model_handlers import _base, _utils as handlers_utils
 from snowflake.ml.model._packager.model_handlers_migrator import base_migrator
 from snowflake.ml.model._packager.model_meta import (
     model_blob_meta,
     model_meta as model_meta_api,
     model_meta_schema,
 )
+from snowflake.ml.model._packager.model_task import model_task_utils
 from snowflake.ml.model._signatures import numpy_handler, utils as model_signature_utils
 
 if TYPE_CHECKING:
@@ -94,23 +89,6 @@ class XGBModelHandler(_base.BaseModelHandler[Union["xgboost.Booster", "xgboost.X
 
         assert isinstance(model, xgboost.Booster) or isinstance(model, xgboost.XGBModel)
 
-        local_xgb_version = None
-
-        try:
-            local_dist = importlib_metadata.distribution("xgboost")
-            local_xgb_version = version.parse(local_dist.version)
-        except importlib_metadata.PackageNotFoundError:
-            pass
-
-        if local_xgb_version and local_xgb_version >= version.parse("2.1.0") and enable_explainability:
-            warnings.warn(
-                f"This version of xgboost {local_xgb_version} does not work with shap 0.42.1."
-                + "If you want model explanations, lower the xgboost version to <2.1.0.",
-                category=UserWarning,
-                stacklevel=1,
-            )
-            enable_explainability = False
-
         if not is_sub_model:
             target_methods = handlers_utils.get_target_methods(
                 model=model,
@@ -139,7 +117,7 @@ class XGBModelHandler(_base.BaseModelHandler[Union["xgboost.Booster", "xgboost.X
                 sample_input_data=sample_input_data,
                 get_prediction_fn=get_prediction,
             )
-            model_task_and_output = model_objective_utils.get_model_task_and_output_type(model)
+            model_task_and_output = model_task_utils.get_model_task_and_output_type(model)
             model_meta.task = handlers_utils.validate_model_task(model_meta.task, model_task_and_output.task)
             if enable_explainability:
                 model_meta = handlers_utils.add_explain_method_signature(
@@ -187,23 +165,15 @@ class XGBModelHandler(_base.BaseModelHandler[Union["xgboost.Booster", "xgboost.X
             ],
             check_local_version=True,
         )
-        if local_xgb_version and local_xgb_version >= version.parse("2.0.0") and enable_explainability:
-            model_meta.env.include_if_absent(
-                [
-                    model_env.ModelDependency(requirement="xgboost==2.0.*", pip_name="xgboost"),
-                ],
-                check_local_version=False,
-            )
-        else:
-            model_meta.env.include_if_absent(
-                [
-                    model_env.ModelDependency(requirement="xgboost", pip_name="xgboost"),
-                ],
-                check_local_version=True,
-            )
+        model_meta.env.include_if_absent(
+            [
+                model_env.ModelDependency(requirement="xgboost", pip_name="xgboost"),
+            ],
+            check_local_version=True,
+        )
 
         if enable_explainability:
-            model_meta.env.include_if_absent([model_env.ModelDependency(requirement="shap", pip_name="shap")])
+            model_meta.env.include_if_absent([model_env.ModelDependency(requirement="shap>=0.46.0", pip_name="shap")])
             model_meta.explain_algorithm = model_meta_schema.ModelExplainAlgorithm.SHAP
         model_meta.env.cuda_version = kwargs.get("cuda_version", model_env.DEFAULT_CUDA_VERSION)
 

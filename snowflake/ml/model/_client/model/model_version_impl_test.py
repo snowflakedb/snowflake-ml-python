@@ -4,6 +4,7 @@ import tempfile
 from typing import cast
 from unittest import mock
 
+import pandas as pd
 from absl.testing import absltest
 
 from snowflake.ml._internal.utils import sql_identifier
@@ -730,11 +731,13 @@ class ModelVersionImplTest(absltest.TestCase):
                 service_compute_pool="SERVICE_COMPUTE_POOL",
                 image_repo="IMAGE_REPO",
                 max_instances=3,
+                cpu_requests="CPU",
+                memory_requests="MEMORY",
                 gpu_requests="GPU",
                 num_workers=1,
                 max_batch_rows=1024,
                 force_rebuild=True,
-                build_external_access_integration="EAI",
+                build_external_access_integrations=["EAI"],
             )
             mock_create_service.assert_called_once_with(
                 database_name=None,
@@ -751,11 +754,13 @@ class ModelVersionImplTest(absltest.TestCase):
                 image_repo_name=sql_identifier.SqlIdentifier("IMAGE_REPO"),
                 ingress_enabled=False,
                 max_instances=3,
+                cpu_requests="CPU",
+                memory_requests="MEMORY",
                 gpu_requests="GPU",
                 num_workers=1,
                 max_batch_rows=1024,
                 force_rebuild=True,
-                build_external_access_integration=sql_identifier.SqlIdentifier("EAI"),
+                build_external_access_integrations=[sql_identifier.SqlIdentifier("EAI")],
                 statement_params=mock.ANY,
             )
 
@@ -766,11 +771,13 @@ class ModelVersionImplTest(absltest.TestCase):
                 service_compute_pool="SERVICE_COMPUTE_POOL",
                 image_repo="IMAGE_REPO",
                 max_instances=3,
+                cpu_requests="CPU",
+                memory_requests="MEMORY",
                 gpu_requests="GPU",
                 num_workers=1,
                 max_batch_rows=1024,
                 force_rebuild=True,
-                build_external_access_integration="EAI",
+                build_external_access_integrations=["EAI"],
             )
             mock_create_service.assert_called_once_with(
                 database_name=None,
@@ -787,19 +794,72 @@ class ModelVersionImplTest(absltest.TestCase):
                 image_repo_name=sql_identifier.SqlIdentifier("IMAGE_REPO"),
                 ingress_enabled=False,
                 max_instances=3,
+                cpu_requests="CPU",
+                memory_requests="MEMORY",
                 gpu_requests="GPU",
                 num_workers=1,
                 max_batch_rows=1024,
                 force_rebuild=True,
-                build_external_access_integration=sql_identifier.SqlIdentifier("EAI"),
+                build_external_access_integrations=[sql_identifier.SqlIdentifier("EAI")],
+                statement_params=mock.ANY,
+            )
+
+    def test_create_service_no_eai(self) -> None:
+        with mock.patch.object(self.m_mv._service_ops, "create_service") as mock_create_service:
+            self.m_mv.create_service(
+                service_name="SERVICE",
+                image_build_compute_pool="IMAGE_BUILD_COMPUTE_POOL",
+                service_compute_pool="SERVICE_COMPUTE_POOL",
+                image_repo="IMAGE_REPO",
+                max_instances=3,
+                cpu_requests="CPU",
+                memory_requests="MEMORY",
+                gpu_requests="GPU",
+                num_workers=1,
+                max_batch_rows=1024,
+                force_rebuild=True,
+            )
+            mock_create_service.assert_called_once_with(
+                database_name=None,
+                schema_name=None,
+                model_name=sql_identifier.SqlIdentifier(self.m_mv.model_name),
+                version_name=sql_identifier.SqlIdentifier(self.m_mv.version_name),
+                service_database_name=None,
+                service_schema_name=None,
+                service_name=sql_identifier.SqlIdentifier("SERVICE"),
+                image_build_compute_pool_name=sql_identifier.SqlIdentifier("IMAGE_BUILD_COMPUTE_POOL"),
+                service_compute_pool_name=sql_identifier.SqlIdentifier("SERVICE_COMPUTE_POOL"),
+                image_repo_database_name=None,
+                image_repo_schema_name=None,
+                image_repo_name=sql_identifier.SqlIdentifier("IMAGE_REPO"),
+                ingress_enabled=False,
+                max_instances=3,
+                cpu_requests="CPU",
+                memory_requests="MEMORY",
+                gpu_requests="GPU",
+                num_workers=1,
+                max_batch_rows=1024,
+                force_rebuild=True,
+                build_external_access_integrations=None,
                 statement_params=mock.ANY,
             )
 
     def test_list_services(self) -> None:
+        m_df = pd.DataFrame(
+            {
+                "service_name": ["a.b.c", "a.b.c", "d.e.f"],
+                "endpoints": ["fooendpoint", "barendpoint", "bazendpoint"],
+            }
+        )
         with mock.patch.object(
-            self.m_mv._model_ops, attribute="list_inference_services", return_value=["a.b.c", "d.e.f"]
+            self.m_mv._model_ops,
+            attribute="list_inference_services",
+            return_value={
+                "service_name": ["a.b.c", "a.b.c", "d.e.f"],
+                "endpoints": ["fooendpoint", "barendpoint", "bazendpoint"],
+            },
         ) as mock_get_functions:
-            self.assertListEqual(["a.b.c", "d.e.f"], self.m_mv.list_services())
+            pd.testing.assert_frame_equal(m_df, self.m_mv.list_services())
             mock_get_functions.assert_called_once_with(
                 database_name=None,
                 schema_name=None,

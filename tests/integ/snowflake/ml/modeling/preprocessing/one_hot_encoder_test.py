@@ -13,7 +13,7 @@ import joblib
 import numpy as np
 import pandas as pd
 import pytest
-from absl.testing import parameterized
+from absl.testing import absltest, parameterized
 from absl.testing.absltest import main
 from scipy.sparse import csr_matrix
 from sklearn.preprocessing import OneHotEncoder as SklearnOneHotEncoder
@@ -366,7 +366,7 @@ class OneHotEncoderTest(parameterized.TestCase):
         actual_arr2 = transformed_df.sort(id_col)[encoder2.get_output_cols()].to_pandas().to_numpy()
 
         # sklearn
-        encoder_sklearn = SklearnOneHotEncoder(sparse=sparse)
+        encoder_sklearn = SklearnOneHotEncoder(sparse_output=sparse)
         encoder_sklearn.fit(df_pandas[input_cols])
         sklearn_arr = encoder_sklearn.transform(df_pandas.sort_values(by=[id_col])[input_cols])
 
@@ -479,7 +479,7 @@ class OneHotEncoderTest(parameterized.TestCase):
         actual_arr2 = self.convert_sparse_df_to_arr(transformed_df, output_cols, id_col)
 
         # sklearn
-        encoder_sklearn = SklearnOneHotEncoder(sparse=sparse)
+        encoder_sklearn = SklearnOneHotEncoder(sparse_output=sparse)
         encoder_sklearn.fit(df_pandas[input_cols])
         sklearn_arr = encoder_sklearn.transform(df_pandas.sort_values(by=[id_col])[input_cols])
 
@@ -521,7 +521,7 @@ class OneHotEncoderTest(parameterized.TestCase):
         actual_arr = transformed_df.sort(id_col)[encoder.get_output_cols()].to_pandas().to_numpy()
 
         # sklearn
-        encoder_sklearn = SklearnOneHotEncoder(sparse=sparse)
+        encoder_sklearn = SklearnOneHotEncoder(sparse_output=sparse)
         encoder_sklearn.fit(df_pandas[input_cols])
         sklearn_arr = encoder_sklearn.transform(df_pandas.sort_values(by=[id_col])[input_cols])
 
@@ -549,7 +549,7 @@ class OneHotEncoderTest(parameterized.TestCase):
         actual_arr = self.convert_sparse_df_to_arr(transformed_df, output_cols, id_col)
 
         # sklearn
-        encoder_sklearn = SklearnOneHotEncoder(sparse=sparse)
+        encoder_sklearn = SklearnOneHotEncoder(sparse_output=sparse)
         encoder_sklearn.fit(df_pandas[input_cols])
         sklearn_arr = encoder_sklearn.transform(df_pandas.sort_values(by=[id_col])[input_cols])
 
@@ -577,7 +577,7 @@ class OneHotEncoderTest(parameterized.TestCase):
         actual_arr = transformed_df.sort(id_col)[encoder.get_output_cols()].to_pandas().to_numpy()
 
         # sklearn
-        encoder_sklearn = SklearnOneHotEncoder(sparse=sparse)
+        encoder_sklearn = SklearnOneHotEncoder(sparse_output=sparse)
         encoder_sklearn.fit(df_pandas[input_cols])
         sklearn_arr = encoder_sklearn.transform(df_pandas.sort_values(by=[id_col])[input_cols])
 
@@ -605,7 +605,7 @@ class OneHotEncoderTest(parameterized.TestCase):
         actual_arr = self.convert_sparse_df_to_arr(transformed_df, output_cols, id_col)
 
         # sklearn
-        encoder_sklearn = SklearnOneHotEncoder(sparse=sparse)
+        encoder_sklearn = SklearnOneHotEncoder(sparse_output=sparse)
         encoder_sklearn.fit(df_pandas[input_cols])
         sklearn_arr = encoder_sklearn.transform(df_pandas.sort_values(by=[id_col])[input_cols])
 
@@ -633,7 +633,7 @@ class OneHotEncoderTest(parameterized.TestCase):
         actual_arr = transformed_df.sort(id_col)[encoder.get_output_cols()].to_pandas().to_numpy()
 
         # sklearn
-        encoder_sklearn = SklearnOneHotEncoder(sparse=sparse)
+        encoder_sklearn = SklearnOneHotEncoder(sparse_output=sparse)
         encoder_sklearn.fit(df_pandas[input_cols])
         sklearn_arr = encoder_sklearn.transform(df_pandas.sort_values(by=[id_col])[input_cols])
 
@@ -665,7 +665,7 @@ class OneHotEncoderTest(parameterized.TestCase):
         actual_arr = self.convert_sparse_df_to_arr(transformed_df, output_cols, id_col)
 
         # sklearn
-        encoder_sklearn = SklearnOneHotEncoder(sparse=sparse)
+        encoder_sklearn = SklearnOneHotEncoder(sparse_output=sparse)
         encoder_sklearn.fit(df_pandas[input_cols])
         sklearn_arr = encoder_sklearn.transform(df_pandas.sort_values(by=[id_col])[input_cols])
         sklearn_arr_dense = sklearn_arr.toarray()
@@ -707,7 +707,7 @@ class OneHotEncoderTest(parameterized.TestCase):
         actual_arr = transformed_df.sort(id_col)[encoder.get_output_cols()].to_pandas().to_numpy()
 
         # sklearn
-        encoder_sklearn = SklearnOneHotEncoder(sparse=sparse)
+        encoder_sklearn = SklearnOneHotEncoder(sparse_output=sparse)
         encoder_sklearn.fit(df_pandas[input_cols])
         sklearn_arr = encoder_sklearn.transform(df_pandas.sort_values(by=[id_col])[input_cols])
 
@@ -749,7 +749,7 @@ class OneHotEncoderTest(parameterized.TestCase):
         actual_arr = transformed_df.sort(id_col)[encoder.get_output_cols()].to_pandas().to_numpy()
 
         # sklearn
-        encoder_sklearn = SklearnOneHotEncoder(sparse=sparse, categories=categories_list)
+        encoder_sklearn = SklearnOneHotEncoder(sparse_output=sparse, categories=categories_list)
         encoder_sklearn.fit(df_pandas[input_cols])
         sklearn_arr = encoder_sklearn.transform(df_pandas.sort_values(by=[id_col])[input_cols])
 
@@ -803,7 +803,7 @@ class OneHotEncoderTest(parameterized.TestCase):
         actual_arr = transformed_df.sort(id_col)[encoder.get_output_cols()].to_pandas().to_numpy()
 
         # sklearn
-        encoder_sklearn = SklearnOneHotEncoder(sparse=sparse, categories=categories)
+        encoder_sklearn = SklearnOneHotEncoder(sparse_output=sparse, categories=categories)
         encoder_sklearn.fit(df_pandas[input_cols])
         sklearn_arr = encoder_sklearn.transform(df_pandas.sort_values(by=[id_col])[input_cols])
 
@@ -877,7 +877,7 @@ class OneHotEncoderTest(parameterized.TestCase):
         actual_arr = transformed_df.sort(id_col)[encoder.get_output_cols()].to_pandas().to_numpy()
 
         # sklearn
-        encoder_sklearn = SklearnOneHotEncoder(sparse=sparse, handle_unknown="ignore", drop="first")
+        encoder_sklearn = SklearnOneHotEncoder(sparse_output=sparse, handle_unknown="ignore", drop="first")
         encoder_sklearn.fit(df_pandas[input_cols])
         sklearn_arr = encoder_sklearn.transform(df_pandas.sort_values(by=[id_col])[input_cols])
 
@@ -909,7 +909,7 @@ class OneHotEncoderTest(parameterized.TestCase):
         actual_arr = transformed_df.sort(id_col)[encoder.get_output_cols()].to_pandas().to_numpy()
 
         # sklearn
-        encoder_sklearn = SklearnOneHotEncoder(sparse=sparse, handle_unknown="ignore", drop="if_binary")
+        encoder_sklearn = SklearnOneHotEncoder(sparse_output=sparse, handle_unknown="ignore", drop="if_binary")
         encoder_sklearn.fit(df_pandas[input_cols])
         sklearn_arr = encoder_sklearn.transform(df_pandas.sort_values(by=[id_col])[input_cols])
 
@@ -933,7 +933,9 @@ class OneHotEncoderTest(parameterized.TestCase):
         df_pandas, df = framework_utils.get_df(self._session, data, schema)
         for drop in ["first", ["d"]]:
             # sklearn
-            encoder_sklearn = SklearnOneHotEncoder(sparse=sparse, min_frequency=4, handle_unknown="ignore", drop=drop)
+            encoder_sklearn = SklearnOneHotEncoder(
+                sparse_output=sparse, min_frequency=4, handle_unknown="ignore", drop=drop
+            )
             encoder_sklearn.fit(df_pandas[input_cols])
             sklearn_arr = encoder_sklearn.transform(df_pandas.sort_values(by=input_cols)[input_cols])
             for _df in [df, df_pandas]:
@@ -959,7 +961,7 @@ class OneHotEncoderTest(parameterized.TestCase):
         df_pandas, df = framework_utils.get_df(self._session, data, schema)
         # sklearn
         encoder_sklearn = SklearnOneHotEncoder(
-            sparse=sparse, min_frequency=4, handle_unknown="ignore", drop="if_binary"
+            sparse_output=sparse, min_frequency=4, handle_unknown="ignore", drop="if_binary"
         )
         encoder_sklearn.fit(df_pandas[input_cols])
         sklearn_arr = encoder_sklearn.transform(df_pandas.sort_values(by=input_cols)[input_cols])
@@ -1052,7 +1054,7 @@ class OneHotEncoderTest(parameterized.TestCase):
         actual_arr = transformed_df.sort(input_cols[0])[encoder.get_output_cols()].to_pandas().to_numpy()
 
         # sklearn
-        encoder_sklearn = SklearnOneHotEncoder(sparse=sparse, handle_unknown="ignore")
+        encoder_sklearn = SklearnOneHotEncoder(sparse_output=sparse, handle_unknown="ignore")
         encoder_sklearn.fit(df_pandas[input_cols])
         sklearn_arr = encoder_sklearn.transform(unknown_pandas.sort_values(by=[input_cols[0]])[input_cols])
 
@@ -1140,7 +1142,7 @@ class OneHotEncoderTest(parameterized.TestCase):
         actual_arr = self.convert_sparse_df_to_arr(transformed_df, output_cols, input_cols[0])
 
         # sklearn
-        encoder_sklearn = SklearnOneHotEncoder(sparse=sparse, handle_unknown="ignore")
+        encoder_sklearn = SklearnOneHotEncoder(sparse_output=sparse, handle_unknown="ignore")
         encoder_sklearn.fit(df_pandas[input_cols])
         sklearn_arr = encoder_sklearn.transform(unknown_pandas.sort_values(by=[input_cols[0]])[input_cols])
 
@@ -1148,79 +1150,83 @@ class OneHotEncoderTest(parameterized.TestCase):
 
     # TODO(hayu): [SNOW-752263] Support OneHotEncoder handle_unknown="infrequent_if_exist".
     #  Add back when `handle_unknown="infrequent_if_exist"` is supported.
-    # def test_handle_unknown_infrequent_if_exist_dense(self):
-    #     """
-    #     Test dense `handle_unknown="infrequent_if_exist"` with `min_frequency` set.
+    @absltest.skip("SNOW-752263")
+    def test_handle_unknown_infrequent_if_exist_dense(self):
+        """
+        Test dense `handle_unknown="infrequent_if_exist"` with `min_frequency` set.
 
-    #     Raises
-    #     ------
-    #     AssertionError
-    #         If the transformed output does not match that of the sklearn encoder.
-    #     """
-    #     values_list = UNKNOWN_CATEGORICAL_VALUES_LIST
-    #     input_cols, output_cols = CATEGORICAL_COLS, OUTPUT_COLS
-    #     df_pandas, df = framework_utils.get_df(self._session, DATA, SCHEMA, np.nan)
+        Raises
+        ------
+        AssertionError
+            If the transformed output does not match that of the sklearn encoder.
+        """
+        values_list = UNKNOWN_CATEGORICAL_VALUES_LIST
+        input_cols, output_cols = CATEGORICAL_COLS, OUTPUT_COLS
+        df_pandas, df = framework_utils.get_df(self._session, DATA, SCHEMA, np.nan)
 
-    #     sparse = False
-    #     encoder = (
-    #         OneHotEncoder(sparse=sparse, handle_unknown="infrequent_if_exist", min_frequency=2)
-    #         .set_input_cols(input_cols)
-    #         .set_output_cols(output_cols)
-    #     )
-    #     encoder.fit(df)
+        sparse = False
+        encoder = (
+            OneHotEncoder(sparse=sparse, handle_unknown="infrequent_if_exist", min_frequency=2)
+            .set_input_cols(input_cols)
+            .set_output_cols(output_cols)
+        )
+        encoder.fit(df)
 
-    #     unknown_data = list(zip(*values_list))
-    #     unknown_pandas = pd.DataFrame(unknown_data, columns=input_cols)
-    #     unknown_df = self._session.create_dataframe(unknown_pandas)
+        unknown_data = list(zip(*values_list))
+        unknown_pandas = pd.DataFrame(unknown_data, columns=input_cols)
+        unknown_df = self._session.create_dataframe(unknown_pandas)
 
-    #     transformed_df = encoder.transform(unknown_df)
-    #     actual_arr = transformed_df.sort(input_cols[0])[encoder.get_output_cols()].to_pandas().to_numpy()
+        transformed_df = encoder.transform(unknown_df)
+        actual_arr = transformed_df.sort(input_cols[0])[encoder.get_output_cols()].to_pandas().to_numpy()
 
-    #     # sklearn
-    #     encoder_sklearn = SklearnOneHotEncoder(sparse=sparse, handle_unknown="infrequent_if_exist", min_frequency=2)
-    #     encoder_sklearn.fit(df_pandas[input_cols])
-    #     sklearn_arr = encoder_sklearn.transform(unknown_pandas.sort_values(by=[input_cols[0]])[input_cols])
+        # sklearn
+        encoder_sklearn = SklearnOneHotEncoder(
+            sparse_output=sparse, handle_unknown="infrequent_if_exist", min_frequency=2
+        )
+        encoder_sklearn.fit(df_pandas[input_cols])
+        sklearn_arr = encoder_sklearn.transform(unknown_pandas.sort_values(by=[input_cols[0]])[input_cols])
 
-    #     np.testing.assert_allclose(actual_arr, sklearn_arr)
+        np.testing.assert_allclose(actual_arr, sklearn_arr)
 
     # TODO(hayu): [SNOW-752263] Support OneHotEncoder handle_unknown="infrequent_if_exist".
     #  Add back when `handle_unknown="infrequent_if_exist"` is supported.
-    # def test_handle_unknown_infrequent_if_exist_sparse(self):
-    #     """
-    #     Test sparse `handle_unknown="infrequent_if_exist"` with `min_frequency` set.
+    @absltest.skip("SNOW-752263")
+    def test_handle_unknown_infrequent_if_exist_sparse(self):
+        """
+        Test sparse `handle_unknown="infrequent_if_exist"` with `min_frequency` set.
 
-    #     Raises
-    #     ------
-    #     AssertionError
-    #         If the transformed output does not match that of the sklearn encoder.
-    #     """
-    #     values_list = UNKNOWN_CATEGORICAL_VALUES_LIST
-    #     input_cols, output_cols = CATEGORICAL_COLS, OUTPUT_COLS
-    #     df_pandas, df = framework_utils.get_df(self._session, DATA, SCHEMA, np.nan)
+        Raises
+        ------
+        AssertionError
+            If the transformed output does not match that of the sklearn encoder.
+        """
+        values_list = UNKNOWN_CATEGORICAL_VALUES_LIST
+        input_cols, output_cols = CATEGORICAL_COLS, OUTPUT_COLS
+        df_pandas, df = framework_utils.get_df(self._session, DATA, SCHEMA, np.nan)
 
-    #     sparse = True
-    #     encoder = (
-    #         OneHotEncoder(sparse=sparse, handle_unknown="infrequent_if_exist", min_frequency=2)
-    #         .set_input_cols(input_cols)
-    #         .set_output_cols(output_cols)
-    #     )
-    #     encoder.fit(df)
+        sparse = True
+        encoder = (
+            OneHotEncoder(sparse=sparse, handle_unknown="infrequent_if_exist", min_frequency=2)
+            .set_input_cols(input_cols)
+            .set_output_cols(output_cols)
+        )
+        encoder.fit(df)
 
-    #     unknown_data = list(zip(*values_list))
-    #     unknown_pandas = pd.DataFrame(unknown_data, columns=input_cols)
-    #     unknown_df = self._session.create_dataframe(unknown_pandas)
+        unknown_data = list(zip(*values_list))
+        unknown_pandas = pd.DataFrame(unknown_data, columns=input_cols)
+        unknown_df = self._session.create_dataframe(unknown_pandas)
 
-    #     transformed_df = encoder.transform(unknown_df)
-    #     actual_arr = self.convert_sparse_df_to_arr(
-    #         transformed_df, output_cols, input_cols[0]
-    #     )
+        transformed_df = encoder.transform(unknown_df)
+        actual_arr = self.convert_sparse_df_to_arr(transformed_df, output_cols, input_cols[0])
 
-    #     # sklearn
-    #     encoder_sklearn = SklearnOneHotEncoder(sparse=sparse, handle_unknown="infrequent_if_exist", min_frequency=2)
-    #     encoder_sklearn.fit(df_pandas[input_cols])
-    #     sklearn_arr = encoder_sklearn.transform(unknown_pandas.sort_values(by=[input_cols[0]])[input_cols])
+        # sklearn
+        encoder_sklearn = SklearnOneHotEncoder(
+            sparse_output=sparse, handle_unknown="infrequent_if_exist", min_frequency=2
+        )
+        encoder_sklearn.fit(df_pandas[input_cols])
+        sklearn_arr = encoder_sklearn.transform(unknown_pandas.sort_values(by=[input_cols[0]])[input_cols])
 
-    #     assert self.compare_sparse_transform_results(actual_arr, sklearn_arr)
+        assert self.compare_sparse_transform_results(actual_arr, sklearn_arr)
 
     def test_min_frequency_dense(self) -> None:
         """
@@ -1251,7 +1257,7 @@ class OneHotEncoderTest(parameterized.TestCase):
         actual_arr = transformed_df.sort(id_col)[encoder.get_output_cols()].to_pandas().to_numpy()
 
         # sklearn
-        encoder_sklearn = SklearnOneHotEncoder(sparse=sparse, min_frequency=min_frequency_int)
+        encoder_sklearn = SklearnOneHotEncoder(sparse_output=sparse, min_frequency=min_frequency_int)
         encoder_sklearn.fit(df_pandas[input_cols])
         sklearn_arr = encoder_sklearn.transform(df_pandas.sort_values(by=[id_col])[input_cols])
 
@@ -1270,7 +1276,7 @@ class OneHotEncoderTest(parameterized.TestCase):
         actual_arr = transformed_df.sort(id_col)[encoder.get_output_cols()].to_pandas().to_numpy()
 
         # sklearn
-        encoder_sklearn = SklearnOneHotEncoder(sparse=sparse, min_frequency=min_frequency_float)
+        encoder_sklearn = SklearnOneHotEncoder(sparse_output=sparse, min_frequency=min_frequency_float)
         encoder_sklearn.fit(df_pandas[input_cols])
         sklearn_arr = encoder_sklearn.transform(df_pandas.sort_values(by=[id_col])[input_cols])
 
@@ -1305,7 +1311,7 @@ class OneHotEncoderTest(parameterized.TestCase):
         actual_arr = self.convert_sparse_df_to_arr(transformed_df, output_cols, id_col)
 
         # sklearn
-        encoder_sklearn = SklearnOneHotEncoder(sparse=sparse, min_frequency=min_frequency_int)
+        encoder_sklearn = SklearnOneHotEncoder(sparse_output=sparse, min_frequency=min_frequency_int)
         encoder_sklearn.fit(df_pandas[input_cols])
         sklearn_arr = encoder_sklearn.transform(df_pandas.sort_values(by=[id_col])[input_cols])
 
@@ -1324,7 +1330,7 @@ class OneHotEncoderTest(parameterized.TestCase):
         actual_arr = self.convert_sparse_df_to_arr(transformed_df, output_cols, id_col)
 
         # sklearn
-        encoder_sklearn = SklearnOneHotEncoder(sparse=sparse, min_frequency=min_frequency_float)
+        encoder_sklearn = SklearnOneHotEncoder(sparse_output=sparse, min_frequency=min_frequency_float)
         encoder_sklearn.fit(df_pandas[input_cols])
         sklearn_arr = encoder_sklearn.transform(df_pandas.sort_values(by=[id_col])[input_cols])
 
@@ -1352,7 +1358,7 @@ class OneHotEncoderTest(parameterized.TestCase):
         actual_arr = transformed_df.sort(id_col)[encoder.get_output_cols()].to_pandas().to_numpy()
 
         # sklearn
-        encoder_sklearn = SklearnOneHotEncoder(sparse=sparse, min_frequency=2)
+        encoder_sklearn = SklearnOneHotEncoder(sparse_output=sparse, min_frequency=2)
         encoder_sklearn.fit(df_pandas[input_cols])
         sklearn_arr = encoder_sklearn.transform(df_pandas.sort_values(by=[id_col])[input_cols])
 
@@ -1380,7 +1386,7 @@ class OneHotEncoderTest(parameterized.TestCase):
         actual_arr = self.convert_sparse_df_to_arr(transformed_df, output_cols, id_col)
 
         # sklearn
-        encoder_sklearn = SklearnOneHotEncoder(sparse=sparse, min_frequency=2)
+        encoder_sklearn = SklearnOneHotEncoder(sparse_output=sparse, min_frequency=2)
         encoder_sklearn.fit(df_pandas[input_cols])
         sklearn_arr = encoder_sklearn.transform(df_pandas.sort_values(by=[id_col])[input_cols])
 
@@ -1408,7 +1414,7 @@ class OneHotEncoderTest(parameterized.TestCase):
         actual_arr = transformed_df.sort(id_col)[encoder.get_output_cols()].to_pandas().to_numpy()
 
         # sklearn
-        encoder_sklearn = SklearnOneHotEncoder(sparse=sparse, max_categories=2)
+        encoder_sklearn = SklearnOneHotEncoder(sparse_output=sparse, max_categories=2)
         encoder_sklearn.fit(df_pandas[input_cols])
         sklearn_arr = encoder_sklearn.transform(df_pandas.sort_values(by=[id_col])[input_cols])
 
@@ -1436,7 +1442,7 @@ class OneHotEncoderTest(parameterized.TestCase):
         actual_arr = self.convert_sparse_df_to_arr(transformed_df, output_cols, id_col)
 
         # sklearn
-        encoder_sklearn = SklearnOneHotEncoder(sparse=sparse, max_categories=2)
+        encoder_sklearn = SklearnOneHotEncoder(sparse_output=sparse, max_categories=2)
         encoder_sklearn.fit(df_pandas[input_cols])
         sklearn_arr = encoder_sklearn.transform(df_pandas.sort_values(by=[id_col])[input_cols])
 
@@ -1462,7 +1468,7 @@ class OneHotEncoderTest(parameterized.TestCase):
         actual_arr = transformed_df[encoder.get_output_cols()].to_numpy()
 
         # sklearn
-        encoder_sklearn = SklearnOneHotEncoder(sparse=sparse)
+        encoder_sklearn = SklearnOneHotEncoder(sparse_output=sparse)
         encoder_sklearn.fit(df_pandas[input_cols])
         sklearn_arr = encoder_sklearn.transform(df_pandas[input_cols])
 
@@ -1487,7 +1493,7 @@ class OneHotEncoderTest(parameterized.TestCase):
         transformed_matrix = encoder.transform(df_pandas)
 
         # sklearn
-        encoder_sklearn = SklearnOneHotEncoder(sparse=sparse)
+        encoder_sklearn = SklearnOneHotEncoder(sparse_output=sparse)
         encoder_sklearn.fit(df_pandas[input_cols])
         sklearn_matrix = encoder_sklearn.transform(df_pandas[input_cols])
 
@@ -1514,7 +1520,7 @@ class OneHotEncoderTest(parameterized.TestCase):
         actual_arr = transformed_df[encoder.get_output_cols()].to_numpy()
 
         # sklearn
-        encoder_sklearn = SklearnOneHotEncoder(sparse=sparse)
+        encoder_sklearn = SklearnOneHotEncoder(sparse_output=sparse)
         encoder_sklearn.fit(df_pandas[input_cols])
         sklearn_arr = encoder_sklearn.transform(df_pandas[input_cols])
 
@@ -1540,7 +1546,7 @@ class OneHotEncoderTest(parameterized.TestCase):
         transformed_matrix = encoder.transform(converted_pandas)
 
         # sklearn
-        encoder_sklearn = SklearnOneHotEncoder(sparse=sparse)
+        encoder_sklearn = SklearnOneHotEncoder(sparse_output=sparse)
         encoder_sklearn.fit(df_pandas[input_cols])
         sklearn_matrix = encoder_sklearn.transform(df_pandas[input_cols])
 
@@ -1558,7 +1564,7 @@ class OneHotEncoderTest(parameterized.TestCase):
         actual_arr = transformed_df[encoder.get_output_cols()].to_numpy()
 
         # sklearn
-        encoder_sklearn = SklearnOneHotEncoder(sparse=sparse)
+        encoder_sklearn = SklearnOneHotEncoder(sparse_output=sparse)
         encoder_sklearn.fit(df_pandas[input_cols])
         sklearn_arr = encoder_sklearn.transform(df_pandas[input_cols])
 
@@ -1718,7 +1724,7 @@ class OneHotEncoderTest(parameterized.TestCase):
             )
 
             # sklearn
-            encoder_sklearn = SklearnOneHotEncoder(sparse=sparse)
+            encoder_sklearn = SklearnOneHotEncoder(sparse_output=sparse)
             encoder_sklearn.fit(df_pandas[input_cols])
             sklearn_arr = encoder_sklearn.transform(df_pandas[input_cols])
 

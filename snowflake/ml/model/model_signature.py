@@ -214,6 +214,8 @@ def _validate_pandas_df(data: pd.DataFrame, features: Sequence[core.BaseFeatureS
         assert isinstance(feature, core.FeatureSpec)  # assert for mypy.
         ft_type = feature._dtype
         ft_shape = feature._shape
+        if isinstance(df_col_dtype, pd.CategoricalDtype):
+            df_col_dtype = df_col_dtype.categories.dtype
         if df_col_dtype != np.dtype("O"):
             if not _validate_numpy_array(data_col.to_numpy(), ft_type, strict=strict):
                 raise snowml_exceptions.SnowflakeMLException(

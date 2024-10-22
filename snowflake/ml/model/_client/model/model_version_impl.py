@@ -614,6 +614,102 @@ class ModelVersion(lineage_node.LineageNode):
             version_name=sql_identifier.SqlIdentifier(version),
         )
 
+    @overload
+    def create_service(
+        self,
+        *,
+        service_name: str,
+        image_build_compute_pool: Optional[str] = None,
+        service_compute_pool: str,
+        image_repo: str,
+        ingress_enabled: bool = False,
+        max_instances: int = 1,
+        cpu_requests: Optional[str] = None,
+        memory_requests: Optional[str] = None,
+        gpu_requests: Optional[str] = None,
+        num_workers: Optional[int] = None,
+        max_batch_rows: Optional[int] = None,
+        force_rebuild: bool = False,
+        build_external_access_integration: Optional[str] = None,
+    ) -> str:
+        """Create an inference service with the given spec.
+
+        Args:
+            service_name: The name of the service, can be fully qualified. If not fully qualified, the database or
+                schema of the model will be used.
+            image_build_compute_pool: The name of the compute pool used to build the model inference image. It uses
+                the service compute pool if None.
+            service_compute_pool: The name of the compute pool used to run the inference service.
+            image_repo: The name of the image repository, can be fully qualified. If not fully qualified, the database
+                or schema of the model will be used.
+            ingress_enabled: If true, creates an service endpoint associated with the service. User must have
+                BIND SERVICE ENDPOINT privilege on the account.
+            max_instances: The maximum number of inference service instances to run. The same value it set to
+                MIN_INSTANCES property of the service.
+            cpu_requests: The cpu limit for CPU based inference. Can be an integer, fractional or string values. If
+                None, we attempt to utilize all the vCPU of the node.
+            memory_requests: The memory limit with for CPU based inference. Can be an integer or a fractional value, but
+                requires a unit (GiB, MiB). If None, we attempt to utilize all the memory of the node.
+            gpu_requests: The gpu limit for GPU based inference. Can be integer, fractional or string values. Use CPU
+                if None.
+            num_workers: The number of workers to run the inference service for handling requests in parallel within an
+                instance of the service. By default, it is set to 2*vCPU+1 of the node for CPU based inference and 1 for
+                GPU based inference. For GPU based inference, please see best practices before playing with this value.
+            max_batch_rows: The maximum number of rows to batch for inference. Auto determined if None. Minimum 32.
+            force_rebuild: Whether to force a model inference image rebuild.
+            build_external_access_integration: (Deprecated) The external access integration for image build. This is
+                usually permitting access to conda & PyPI repositories.
+        """
+        ...
+
+    @overload
+    def create_service(
+        self,
+        *,
+        service_name: str,
+        image_build_compute_pool: Optional[str] = None,
+        service_compute_pool: str,
+        image_repo: str,
+        ingress_enabled: bool = False,
+        max_instances: int = 1,
+        cpu_requests: Optional[str] = None,
+        memory_requests: Optional[str] = None,
+        gpu_requests: Optional[str] = None,
+        num_workers: Optional[int] = None,
+        max_batch_rows: Optional[int] = None,
+        force_rebuild: bool = False,
+        build_external_access_integrations: Optional[List[str]] = None,
+    ) -> str:
+        """Create an inference service with the given spec.
+
+        Args:
+            service_name: The name of the service, can be fully qualified. If not fully qualified, the database or
+                schema of the model will be used.
+            image_build_compute_pool: The name of the compute pool used to build the model inference image. It uses
+                the service compute pool if None.
+            service_compute_pool: The name of the compute pool used to run the inference service.
+            image_repo: The name of the image repository, can be fully qualified. If not fully qualified, the database
+                or schema of the model will be used.
+            ingress_enabled: If true, creates an service endpoint associated with the service. User must have
+                BIND SERVICE ENDPOINT privilege on the account.
+            max_instances: The maximum number of inference service instances to run. The same value it set to
+                MIN_INSTANCES property of the service.
+            cpu_requests: The cpu limit for CPU based inference. Can be an integer, fractional or string values. If
+                None, we attempt to utilize all the vCPU of the node.
+            memory_requests: The memory limit with for CPU based inference. Can be an integer or a fractional value, but
+                requires a unit (GiB, MiB). If None, we attempt to utilize all the memory of the node.
+            gpu_requests: The gpu limit for GPU based inference. Can be integer, fractional or string values. Use CPU
+                if None.
+            num_workers: The number of workers to run the inference service for handling requests in parallel within an
+                instance of the service. By default, it is set to 2*vCPU+1 of the node for CPU based inference and 1 for
+                GPU based inference. For GPU based inference, please see best practices before playing with this value.
+            max_batch_rows: The maximum number of rows to batch for inference. Auto determined if None. Minimum 32.
+            force_rebuild: Whether to force a model inference image rebuild.
+            build_external_access_integrations: The external access integrations for image build. This is usually
+                permitting access to conda & PyPI repositories.
+        """
+        ...
+
     @telemetry.send_api_usage_telemetry(
         project=_TELEMETRY_PROJECT,
         subproject=_TELEMETRY_SUBPROJECT,
@@ -638,11 +734,14 @@ class ModelVersion(lineage_node.LineageNode):
         image_repo: str,
         ingress_enabled: bool = False,
         max_instances: int = 1,
+        cpu_requests: Optional[str] = None,
+        memory_requests: Optional[str] = None,
         gpu_requests: Optional[str] = None,
         num_workers: Optional[int] = None,
         max_batch_rows: Optional[int] = None,
         force_rebuild: bool = False,
-        build_external_access_integration: str,
+        build_external_access_integration: Optional[str] = None,
+        build_external_access_integrations: Optional[List[str]] = None,
     ) -> str:
         """Create an inference service with the given spec.
 
@@ -658,6 +757,10 @@ class ModelVersion(lineage_node.LineageNode):
                 BIND SERVICE ENDPOINT privilege on the account.
             max_instances: The maximum number of inference service instances to run. The same value it set to
                 MIN_INSTANCES property of the service.
+            cpu_requests: The cpu limit for CPU based inference. Can be an integer, fractional or string values. If
+                None, we attempt to utilize all the vCPU of the node.
+            memory_requests: The memory limit with for CPU based inference. Can be an integer or a fractional value, but
+                requires a unit (GiB, MiB). If None, we attempt to utilize all the memory of the node.
             gpu_requests: The gpu limit for GPU based inference. Can be integer, fractional or string values. Use CPU
                 if None.
             num_workers: The number of workers to run the inference service for handling requests in parallel within an
@@ -665,8 +768,13 @@ class ModelVersion(lineage_node.LineageNode):
                 GPU based inference. For GPU based inference, please see best practices before playing with this value.
             max_batch_rows: The maximum number of rows to batch for inference. Auto determined if None. Minimum 32.
             force_rebuild: Whether to force a model inference image rebuild.
-            build_external_access_integration: The external access integration for image build. This is usually
+            build_external_access_integration: (Deprecated) The external access integration for image build. This is
+                usually permitting access to conda & PyPI repositories.
+            build_external_access_integrations: The external access integrations for image build. This is usually
                 permitting access to conda & PyPI repositories.
+
+        Raises:
+            ValueError: Illegal external access integration arguments.
 
         Returns:
             Result information about service creation from server.
@@ -675,6 +783,20 @@ class ModelVersion(lineage_node.LineageNode):
             project=_TELEMETRY_PROJECT,
             subproject=_TELEMETRY_SUBPROJECT,
         )
+        if build_external_access_integration is not None:
+            msg = (
+                "`build_external_access_integration` is deprecated. "
+                "Please use `build_external_access_integrations` instead."
+            )
+            warnings.warn(msg, DeprecationWarning, stacklevel=2)
+            if build_external_access_integrations is not None:
+                msg = (
+                    "`build_external_access_integration` and `build_external_access_integrations` cannot be set at the"
+                    "same time. Please use `build_external_access_integrations` only."
+                )
+                raise ValueError(msg)
+            build_external_access_integrations = [build_external_access_integration]
+
         service_db_id, service_schema_id, service_id = sql_identifier.parse_fully_qualified_name(service_name)
         image_repo_db_id, image_repo_schema_id, image_repo_id = sql_identifier.parse_fully_qualified_name(image_repo)
         return self._service_ops.create_service(
@@ -696,11 +818,17 @@ class ModelVersion(lineage_node.LineageNode):
             image_repo_name=image_repo_id,
             ingress_enabled=ingress_enabled,
             max_instances=max_instances,
+            cpu_requests=cpu_requests,
+            memory_requests=memory_requests,
             gpu_requests=gpu_requests,
             num_workers=num_workers,
             max_batch_rows=max_batch_rows,
             force_rebuild=force_rebuild,
-            build_external_access_integration=sql_identifier.SqlIdentifier(build_external_access_integration),
+            build_external_access_integrations=(
+                None
+                if build_external_access_integrations is None
+                else [sql_identifier.SqlIdentifier(eai) for eai in build_external_access_integrations]
+            ),
             statement_params=statement_params,
         )
 
@@ -710,7 +838,7 @@ class ModelVersion(lineage_node.LineageNode):
     )
     def list_services(
         self,
-    ) -> List[str]:
+    ) -> pd.DataFrame:
         """List all the service names using this model version.
 
         Returns:
@@ -722,12 +850,18 @@ class ModelVersion(lineage_node.LineageNode):
             subproject=_TELEMETRY_SUBPROJECT,
         )
 
-        return self._model_ops.list_inference_services(
-            database_name=None,
-            schema_name=None,
-            model_name=self._model_name,
-            version_name=self._version_name,
-            statement_params=statement_params,
+        return pd.DataFrame(
+            self._model_ops.list_inference_services(
+                database_name=None,
+                schema_name=None,
+                model_name=self._model_name,
+                version_name=self._version_name,
+                statement_params=statement_params,
+            ),
+            columns=[
+                self._model_ops.INFERENCE_SERVICE_NAME_COL_NAME,
+                self._model_ops.INFERENCE_SERVICE_ENDPOINT_COL_NAME,
+            ],
         )
 
     @telemetry.send_api_usage_telemetry(

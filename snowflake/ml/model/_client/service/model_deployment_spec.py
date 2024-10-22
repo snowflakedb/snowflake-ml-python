@@ -1,5 +1,5 @@
 import pathlib
-from typing import Optional
+from typing import List, Optional
 
 import yaml
 
@@ -36,11 +36,13 @@ class ModelDeploymentSpec:
         image_repo_name: sql_identifier.SqlIdentifier,
         ingress_enabled: bool,
         max_instances: int,
+        cpu: Optional[str],
+        memory: Optional[str],
         gpu: Optional[str],
         num_workers: Optional[int],
         max_batch_rows: Optional[int],
         force_rebuild: bool,
-        external_access_integration: sql_identifier.SqlIdentifier,
+        external_access_integrations: Optional[List[sql_identifier.SqlIdentifier]],
     ) -> None:
         # create the deployment spec
         # models spec
@@ -55,12 +57,15 @@ class ModelDeploymentSpec:
         fq_image_repo_name = identifier.get_schema_level_object_identifier(
             saved_image_repo_database.identifier(), saved_image_repo_schema.identifier(), image_repo_name.identifier()
         )
-        image_build_dict = model_deployment_spec_schema.ImageBuildDict(
-            compute_pool=image_build_compute_pool_name.identifier(),
-            image_repo=fq_image_repo_name,
-            force_rebuild=force_rebuild,
-            external_access_integrations=[external_access_integration.identifier()],
-        )
+        image_build_dict: model_deployment_spec_schema.ImageBuildDict = {
+            "compute_pool": image_build_compute_pool_name.identifier(),
+            "image_repo": fq_image_repo_name,
+            "force_rebuild": force_rebuild,
+        }
+        if external_access_integrations is not None:
+            image_build_dict["external_access_integrations"] = [
+                eai.identifier() for eai in external_access_integrations
+            ]
 
         # service spec
         saved_service_database = service_database_name or database_name
@@ -74,6 +79,12 @@ class ModelDeploymentSpec:
             ingress_enabled=ingress_enabled,
             max_instances=max_instances,
         )
+        if cpu:
+            service_dict["cpu"] = cpu
+
+        if memory:
+            service_dict["memory"] = memory
+
         if gpu:
             service_dict["gpu"] = gpu
 

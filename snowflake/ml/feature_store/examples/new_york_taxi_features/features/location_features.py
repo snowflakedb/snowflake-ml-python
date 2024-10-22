@@ -8,7 +8,9 @@ from snowflake.snowpark import DataFrame, Session
 
 
 # This function will be invoked by example_helper.py. Do not change the name.
-def create_draft_feature_view(session: Session, source_dfs: List[DataFrame], source_tables: List[str]) -> FeatureView:
+def create_draft_feature_view(
+    session: Session, source_dfs: List[DataFrame], source_tables: List[str], database: str, schema: str
+) -> FeatureView:
     """Create a draft feature view."""
     feature_df = session.sql(
         f"""
@@ -25,7 +27,7 @@ def create_draft_feature_view(session: Session, source_dfs: List[DataFrame], sou
                 order by TPEP_DROPOFF_DATETIME
                 range between interval '10 hours' preceding and current row
             ) AVG_FARE_10h
-        from {source_tables[0]}
+        from {database}.{schema}.{source_tables[0]}
     """
     )
 

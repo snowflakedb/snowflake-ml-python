@@ -1,3 +1,4 @@
+import inspect
 import logging
 import os
 from typing import TYPE_CHECKING, Callable, Dict, Optional, Type, cast, final
@@ -155,8 +156,14 @@ class SentenceTransformerHandler(_base.BaseModelHandler["sentence_transformers.S
         model_blob_filename = model_blob_metadata.path
         model_blob_file_or_dir_path = os.path.join(model_blob_path, model_blob_filename)
 
+        additional_kwargs = {}
+        if "trust_remote_code" in inspect.signature(sentence_transformers.SentenceTransformer).parameters:
+            additional_kwargs["trust_remote_code"] = True
+
         model = sentence_transformers.SentenceTransformer(
-            model_blob_file_or_dir_path, device=cls._get_device_config(**kwargs)
+            model_blob_file_or_dir_path,
+            device=cls._get_device_config(**kwargs),
+            **additional_kwargs,
         )
         return model
 
