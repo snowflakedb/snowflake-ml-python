@@ -58,8 +58,10 @@ class FakeSession:
 
 
 class FakeResponse:  # needed for testing, imitates some of requests.Response behaviors
-    def __init__(self, content: bytes) -> None:
+    def __init__(self, content: bytes, headers: Dict[str, str], data: bytes) -> None:
         self.content = BytesIO(content)
+        self.headers = headers
+        self.data = data
 
     def iter_content(self, chunk_size: int = 1) -> Iterator[bytes]:
         while True:
@@ -74,6 +76,9 @@ class FakeResponse:  # needed for testing, imitates some of requests.Response be
 
 class CompleteSQLBackendTest(absltest.TestCase):
     model = "|model|"
+    custom_model_stage = "@my.custom.model/stage"
+    custom_model_entity = "my.custom.model_entity"
+    all_models = [model, custom_model_stage, custom_model_entity]
     prompt = "|prompt|"
 
     @staticmethod
@@ -99,16 +104,23 @@ class CompleteSQLBackendTest(absltest.TestCase):
         self._session.close()
 
     def test_complete_sql_mode(self) -> None:
-        res = _complete._complete_impl(self.model, self.prompt, session=self._session, function="complete")
-        self.assertEqual(self.complete_for_test(self.model, self.prompt), res)
+        """Test call of complete with separate string arguments for model and prompt."""
+        for model in self.all_models:
+            res = _complete._complete_impl(model, self.prompt, session=self._session, function="complete")
+            self.assertEqual(self.complete_for_test(model, self.prompt), res)
 
     def test_complete_snowpark_mode(self) -> None:
-        df_in = self._session.create_dataframe([snowpark.Row(model=self.model, prompt=self.prompt)])
+        """Test complete call with a single dataframe argument with columns for model
+        and prompt."""
+        df_in = self._session.create_dataframe(
+            [snowpark.Row(model=model, prompt=self.prompt) for model in self.all_models]
+        )
         df_out = df_in.select(
             _complete._complete_impl(functions.col("model"), functions.col("prompt"), function="complete")
         )
-        res = df_out.collect()[0][0]
-        self.assertEqual(self.complete_for_test(self.model, self.prompt), res)
+        for row_index in range(len(self.all_models)):
+            res = df_out.collect()[row_index][0]
+            self.assertEqual(self.complete_for_test(self.all_models[row_index], self.prompt), res)
 
 
 class CompleteOptionsSQLBackendTest(absltest.TestCase):

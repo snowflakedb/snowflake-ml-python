@@ -116,7 +116,7 @@ class RegistryModelDeploymentTestBase(common_test_base.CommonTestBase):
             memory=None,
             gpu=gpu_requests,
             force_rebuild=force_rebuild,
-            external_access_integration=sql_identifier.SqlIdentifier(self._SPCS_EAI),
+            external_access_integrations=[sql_identifier.SqlIdentifier(self._SPCS_EAI)],
         )
 
         with (mv._service_ops.workspace_path / deploy_spec_file_rel_path).open("r", encoding="utf-8") as f:
@@ -241,7 +241,7 @@ class RegistryModelDeploymentTestBase(common_test_base.CommonTestBase):
                 num_workers=num_workers,
                 max_instances=max_instances,
                 max_batch_rows=max_batch_rows,
-                build_external_access_integration=self._SPCS_EAI,
+                build_external_access_integrations=[self._SPCS_EAI],
             )
 
         for target_method, (test_input, check_func) in prediction_assert_fns.items():

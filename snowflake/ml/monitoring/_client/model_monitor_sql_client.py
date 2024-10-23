@@ -6,7 +6,7 @@ from collections import Counter
 from typing import Any, Dict, List, Mapping, Optional, Set, Tuple, TypedDict
 
 from importlib_resources import files
-from typing_extensions import Required
+from typing_extensions import Required, deprecated
 
 from snowflake import snowpark
 from snowflake.connector import errors
@@ -48,40 +48,9 @@ _DASHBOARD_UDTFS_COMMON_LIST = ["record_count"]
 _DASHBOARD_UDTFS_REGRESSION_LIST = ["rmse"]
 
 
-def _initialize_monitoring_metadata_tables(
-    session: session.Session,
-    database_name: sql_identifier.SqlIdentifier,
-    schema_name: sql_identifier.SqlIdentifier,
-    statement_params: Optional[Dict[str, Any]] = None,
-) -> None:
-    """Create tables necessary for Model Monitoring in provided schema.
-
-    Args:
-        session: Active Snowpark session.
-        database_name: The database in which to setup resources for Model Monitoring.
-        schema_name: The schema in which to setup resources for Model Monitoring.
-        statement_params: Optional statement params for queries.
-    """
-    table_manager.create_single_table(
-        session,
-        database_name,
-        schema_name,
-        SNOWML_MONITORING_METADATA_TABLE_NAME,
-        [
-            (MONITOR_NAME_COL_NAME, "VARCHAR"),
-            (SOURCE_TABLE_NAME_COL_NAME, "VARCHAR"),
-            (FQ_MODEL_NAME_COL_NAME, "VARCHAR"),
-            (VERSION_NAME_COL_NAME, "VARCHAR"),
-            (FUNCTION_NAME_COL_NAME, "VARCHAR"),
-            (TASK_COL_NAME, "VARCHAR"),
-            (MONITORING_ENABLED_COL_NAME, "BOOLEAN"),
-            (TIMESTAMP_COL_NAME_COL_NAME, "VARCHAR"),
-            (PREDICTION_COL_NAMES_COL_NAME, "ARRAY"),
-            (LABEL_COL_NAMES_COL_NAME, "ARRAY"),
-            (ID_COL_NAMES_COL_NAME, "ARRAY"),
-        ],
-        statement_params=statement_params,
-    )
+_DEPRECATED_MONITORING_PRPR_WARNING = (
+    "This method uses the PrPr implementation of model monitoring in Python. This will be removed shortly."
+)
 
 
 def _create_baseline_table_name(model_name: str, version_name: str) -> str:
@@ -143,39 +112,6 @@ class ModelMonitorSQLClient:
         self._database_name = database_name
         self._schema_name = schema_name
 
-    @staticmethod
-    def initialize_monitoring_schema(
-        session: session.Session,
-        database_name: sql_identifier.SqlIdentifier,
-        schema_name: sql_identifier.SqlIdentifier,
-        statement_params: Optional[Dict[str, Any]] = None,
-    ) -> None:
-        """Initialize tables for tracking metadata associated with model monitoring.
-
-        Args:
-            session: The Snowpark Session to connect with Snowflake.
-            database_name: The database in which to setup resources for Model Monitoring.
-            schema_name: The schema in which to setup resources for Model Monitoring.
-            statement_params: Optional set of statement_params to include with query.
-        """
-        # Create metadata management tables
-        _initialize_monitoring_metadata_tables(session, database_name, schema_name, statement_params)
-
-    def _validate_is_initialized(self) -> bool:
-        """Validates whether monitoring metadata has been initialized.
-
-        Returns:
-            boolean to indicate whether tables have been initialized.
-        """
-        try:
-            return table_manager.validate_table_exist(
-                self._sql_client._session,
-                SNOWML_MONITORING_METADATA_TABLE_NAME,
-                f"{self._database_name}.{self._schema_name}",
-            )
-        except exceptions.SnowparkSQLException:
-            return False
-
     def _validate_unique_columns(
         self,
         timestamp_column: sql_identifier.SqlIdentifier,
@@ -189,6 +125,7 @@ class ModelMonitorSQLClient:
         if num_all_columns != num_unique_columns:
             raise ValueError("Column names must be unique across id, timestamp, prediction, and label columns.")
 
+    @deprecated(_DEPRECATED_MONITORING_PRPR_WARNING)
     def validate_existence_by_name(
         self,
         monitor_name: sql_identifier.SqlIdentifier,
@@ -208,6 +145,7 @@ class ModelMonitorSQLClient:
         )
         return len(res) >= 1
 
+    @deprecated(_DEPRECATED_MONITORING_PRPR_WARNING)
     def validate_existence(
         self,
         fully_qualified_model_name: str,
@@ -239,6 +177,7 @@ class ModelMonitorSQLClient:
         )
         return len(res) >= 1
 
+    @deprecated(_DEPRECATED_MONITORING_PRPR_WARNING)
     def validate_monitor_warehouse(
         self,
         warehouse_name: sql_identifier.SqlIdentifier,
@@ -261,6 +200,7 @@ class ModelMonitorSQLClient:
         ):
             raise ValueError(f"Warehouse '{warehouse_name}' not found.")
 
+    @deprecated(_DEPRECATED_MONITORING_PRPR_WARNING)
     def add_dashboard_udtfs(
         self,
         monitor_name: sql_identifier.SqlIdentifier,
@@ -288,6 +228,7 @@ class ModelMonitorSQLClient:
                 statement_params=statement_params,
             ).validate()
 
+    @deprecated(_DEPRECATED_MONITORING_PRPR_WARNING)
     def get_monitoring_table_fully_qualified_name(
         self,
         model_name: sql_identifier.SqlIdentifier,
@@ -296,6 +237,7 @@ class ModelMonitorSQLClient:
         table_name = f"{_SNOWML_MONITORING_TABLE_NAME_PREFIX}_{model_name}_{model_version_name}"
         return table_manager.get_fully_qualified_table_name(self._database_name, self._schema_name, table_name)
 
+    @deprecated(_DEPRECATED_MONITORING_PRPR_WARNING)
     def get_accuracy_monitoring_table_fully_qualified_name(
         self,
         model_name: sql_identifier.SqlIdentifier,
@@ -490,6 +432,7 @@ class ModelMonitorSQLClient:
                 f"Model function expected: {inputs} but got {table_schema_without_special_columns}"
             )
 
+    @deprecated(_DEPRECATED_MONITORING_PRPR_WARNING)
     def get_model_monitor_by_name(
         self,
         monitor_name: sql_identifier.SqlIdentifier,
@@ -546,6 +489,7 @@ class ModelMonitorSQLClient:
             ],
         )
 
+    @deprecated(_DEPRECATED_MONITORING_PRPR_WARNING)
     def get_model_monitor_by_model_version(
         self,
         *,
@@ -606,6 +550,7 @@ class ModelMonitorSQLClient:
             ],
         )
 
+    @deprecated(_DEPRECATED_MONITORING_PRPR_WARNING)
     def get_score_type(
         self,
         task: type_hints.Task,
@@ -691,6 +636,7 @@ class ModelMonitorSQLClient:
             WHERE {MONITOR_NAME_COL_NAME} = '{name}'""",
         ).collect(statement_params=statement_params)
 
+    @deprecated(_DEPRECATED_MONITORING_PRPR_WARNING)
     def delete_baseline_table(
         self,
         fully_qualified_model_name: str,
@@ -709,6 +655,7 @@ class ModelMonitorSQLClient:
             f"""DROP TABLE IF EXISTS {self._database_name}.{self._schema_name}.{table_name}"""
         ).collect(statement_params=statement_params)
 
+    @deprecated(_DEPRECATED_MONITORING_PRPR_WARNING)
     def delete_dynamic_tables(
         self,
         fully_qualified_model_name: str,
@@ -734,6 +681,7 @@ class ModelMonitorSQLClient:
             statement_params=statement_params
         )
 
+    @deprecated(_DEPRECATED_MONITORING_PRPR_WARNING)
     def create_monitor_on_model_version(
         self,
         monitor_name: sql_identifier.SqlIdentifier,
@@ -793,6 +741,7 @@ class ModelMonitorSQLClient:
             statement_params=statement_params,
         ).insertion_success(expected_num_rows=1).validate()
 
+    @deprecated(_DEPRECATED_MONITORING_PRPR_WARNING)
     def initialize_baseline_table(
         self,
         model_name: sql_identifier.SqlIdentifier,
@@ -834,6 +783,7 @@ class ModelMonitorSQLClient:
             statement_params=statement_params,
         )
 
+    @deprecated(_DEPRECATED_MONITORING_PRPR_WARNING)
     def get_all_model_monitor_metadata(
         self,
         statement_params: Optional[Dict[str, Any]] = None,
@@ -853,6 +803,7 @@ class ModelMonitorSQLClient:
             statement_params=statement_params,
         ).validate()
 
+    @deprecated(_DEPRECATED_MONITORING_PRPR_WARNING)
     def materialize_baseline_dataframe(
         self,
         baseline_df: DataFrame,
@@ -928,6 +879,7 @@ class ModelMonitorSQLClient:
             statement_params=statement_params,
         ).has_column("status").has_dimensions(1, 1).validate()
 
+    @deprecated(_DEPRECATED_MONITORING_PRPR_WARNING)
     def suspend_monitor_dynamic_tables(
         self,
         model_name: sql_identifier.SqlIdentifier,
@@ -941,6 +893,7 @@ class ModelMonitorSQLClient:
             statement_params=statement_params,
         )
 
+    @deprecated(_DEPRECATED_MONITORING_PRPR_WARNING)
     def resume_monitor_dynamic_tables(
         self,
         model_name: sql_identifier.SqlIdentifier,
@@ -954,6 +907,7 @@ class ModelMonitorSQLClient:
             statement_params=statement_params,
         )
 
+    @deprecated(_DEPRECATED_MONITORING_PRPR_WARNING)
     def create_dynamic_tables_for_monitor(
         self,
         *,

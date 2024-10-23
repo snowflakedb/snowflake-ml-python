@@ -1,7 +1,6 @@
 from typing import Any, Dict, List, Optional
 
 from snowflake import snowpark
-from snowflake.ml._internal import telemetry
 from snowflake.ml._internal.utils import db_utils, sql_identifier
 from snowflake.ml.model import type_hints
 from snowflake.ml.model._client.model import model_version_impl
@@ -32,27 +31,6 @@ def _validate_name_constraints(model_version: model_version_impl.ModelVersion) -
 class ModelMonitorManager:
     """Class to manage internal operations for Model Monitor workflows."""  # TODO: Move to Registry.
 
-    @staticmethod
-    def setup(session: session.Session, database_name: str, schema_name: str) -> None:
-        """Static method to set up schema for Model Monitoring resources.
-
-        Args:
-            session: The Snowpark Session to connect with Snowflake.
-            database_name: The name of the database. If None, the current database of the session
-                will be used. Defaults to None.
-            schema_name: The name of the schema. If None, the current schema of the session
-                will be used. If there is no active schema, the PUBLIC schema will be used. Defaults to None.
-        """
-        statement_params = telemetry.get_statement_params(
-            project=telemetry.TelemetryProject.MLOPS.value,
-            subproject=telemetry.TelemetrySubProject.MONITORING.value,
-        )
-        database_name_id = sql_identifier.SqlIdentifier(database_name)
-        schema_name_id = sql_identifier.SqlIdentifier(schema_name)
-        model_monitor_sql_client.ModelMonitorSQLClient.initialize_monitoring_schema(
-            session, database_name_id, schema_name_id, statement_params=statement_params
-        )
-
     def _fetch_task_from_model_version(
         self,
         model_version: model_version_impl.ModelVersion,
@@ -68,7 +46,6 @@ class ModelMonitorManager:
         database_name: sql_identifier.SqlIdentifier,
         schema_name: sql_identifier.SqlIdentifier,
         *,
-        create_if_not_exists: bool = False,
         statement_params: Optional[Dict[str, Any]] = None,
     ) -> None:
         """
@@ -79,11 +56,7 @@ class ModelMonitorManager:
             session: The Snowpark Session to connect with Snowflake.
             database_name: The name of the database.
             schema_name: The name of the schema.
-            create_if_not_exists: Flag whether to initialize resources in the schema needed for Model Monitoring.
             statement_params: Optional set of statement params.
-
-        Raises:
-            ValueError: When there is no specified or active database in the session.
         """
         self._database_name = database_name
         self._schema_name = schema_name
@@ -93,14 +66,6 @@ class ModelMonitorManager:
             database_name=self._database_name,
             schema_name=self._schema_name,
         )
-        if create_if_not_exists:
-            model_monitor_sql_client.ModelMonitorSQLClient.initialize_monitoring_schema(
-                session, self._database_name, self._schema_name, self.statement_params
-            )
-        elif not self._model_monitor_client._validate_is_initialized():
-            raise ValueError(
-                "Monitoring has not been setup. Set create_if_not_exists or call ModelMonitorManager.setup"
-            )
 
     def _get_and_validate_model_function_from_model_version(
         self, function: str, model_version: model_version_impl.ModelVersion
@@ -265,11 +230,6 @@ See https://docs.snowflake.com/en/sql-reference/sql/create-dynamic-table#require
         return model_monitor.ModelMonitor._ref(
             model_monitor_client=self._model_monitor_client,
             name=name_id,
-            fully_qualified_model_name=model_monitor_config.model_version.fully_qualified_model_name,
-            version_name=sql_identifier.SqlIdentifier(model_monitor_config.model_version.version_name),
-            function_name=sql_identifier.SqlIdentifier(model_monitor_config.model_function_name),
-            prediction_columns=prediction_columns,
-            label_columns=label_columns,
         )
 
     def get_monitor_by_model_version(
@@ -294,11 +254,6 @@ See https://docs.snowflake.com/en/sql-reference/sql/create-dynamic-table#require
             return model_monitor.ModelMonitor._ref(
                 model_monitor_client=self._model_monitor_client,
                 name=sql_identifier.SqlIdentifier(model_monitor_params["monitor_name"]),
-                fully_qualified_model_name=fq_model_name,
-                version_name=version_name,
-                function_name=sql_identifier.SqlIdentifier(model_monitor_params["function_name"]),
-                prediction_columns=model_monitor_params["prediction_columns"],
-                label_columns=model_monitor_params["label_columns"],
             )
 
         else:
@@ -325,18 +280,9 @@ See https://docs.snowflake.com/en/sql-reference/sql/create-dynamic-table#require
             statement_params=self.statement_params,
         ):
             raise ValueError(f"Unable to find model monitor '{name}'")
-        model_monitor_params: model_monitor_sql_client._ModelMonitorParams = (
-            self._model_monitor_client.get_model_monitor_by_name(name_id, statement_params=self.statement_params)
-        )
-
         return model_monitor.ModelMonitor._ref(
             model_monitor_client=self._model_monitor_client,
             name=name_id,
-            fully_qualified_model_name=model_monitor_params["fully_qualified_model_name"],
-            version_name=sql_identifier.SqlIdentifier(model_monitor_params["version_name"]),
-            function_name=sql_identifier.SqlIdentifier(model_monitor_params["function_name"]),
-            prediction_columns=model_monitor_params["prediction_columns"],
-            label_columns=model_monitor_params["label_columns"],
         )
 
     def show_model_monitors(self) -> List[snowpark.Row]:

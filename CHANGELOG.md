@@ -1,6 +1,14 @@
 # Release History
 
-## 1.7.0
+## 1.7.1
+
+### Bug Fixes
+
+### Behavior Changes
+
+### New Features
+
+## 1.7.0 (10-22-2024)
 
 ### Behavior Change
 

@@ -177,6 +177,35 @@ class SKLModelHandler(_base.BaseModelHandler[Union["sklearn.base.BaseEstimator",
         model_meta.models[name] = base_meta
         model_meta.min_snowpark_ml_version = cls._MIN_SNOWPARK_ML_VERSION
 
+        # if model instance is a pipeline, check the pipeline steps
+        if isinstance(model, sklearn.pipeline.Pipeline):
+            for _, pipeline_step in model.steps:
+                if type_utils.LazyType("lightgbm.LGBMModel").isinstance(pipeline_step) or type_utils.LazyType(
+                    "lightgbm.Booster"
+                ).isinstance(pipeline_step):
+                    model_meta.env.include_if_absent(
+                        [
+                            model_env.ModelDependency(requirement="lightgbm", pip_name="lightgbm"),
+                        ],
+                        check_local_version=True,
+                    )
+                elif type_utils.LazyType("xgboost.XGBModel").isinstance(pipeline_step) or type_utils.LazyType(
+                    "xgboost.Booster"
+                ).isinstance(pipeline_step):
+                    model_meta.env.include_if_absent(
+                        [
+                            model_env.ModelDependency(requirement="xgboost", pip_name="xgboost"),
+                        ],
+                        check_local_version=True,
+                    )
+                elif type_utils.LazyType("catboost.CatBoost").isinstance(pipeline_step):
+                    model_meta.env.include_if_absent(
+                        [
+                            model_env.ModelDependency(requirement="catboost", pip_name="catboost"),
+                        ],
+                        check_local_version=True,
+                    )
+
         if enable_explainability:
             model_meta.env.include_if_absent([model_env.ModelDependency(requirement="shap", pip_name="shap")])
             model_meta.explain_algorithm = model_meta_schema.ModelExplainAlgorithm.SHAP

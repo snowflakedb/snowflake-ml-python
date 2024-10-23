@@ -1,14 +1,14 @@
-from typing import List, cast
+import json
+from typing import List
 
-import requests
 from absl.testing import absltest
 
 from snowflake.cortex._sse_client import SSEClient
 from snowflake.cortex.complete_test import FakeResponse
 
 
-def _streaming_messages(response_data: bytes) -> List[str]:
-    client = SSEClient(cast(requests.Response, FakeResponse(response_data)))
+def _streaming_messages(response_data: bytes, content_type: str = "text/event-stream", data: bytes = b"") -> List[str]:
+    client = SSEClient(FakeResponse(response_data, {"Content-Type": content_type}, data=data))
     out = []
     for event in client.events():
         out.append(event.data)
@@ -114,7 +114,6 @@ class SSETest(absltest.TestCase):
         # fmt: on
 
         result_parsed = _streaming_messages(response_sth_else)
-
         assert result_parsed == []  # ignore anything that is not message
 
     def test_empty_data_json(self) -> None:
@@ -123,6 +122,12 @@ class SSETest(absltest.TestCase):
         result_parsed = _streaming_messages(response_sth_else)
 
         assert result_parsed == ["{}"]
+
+    def test_json_response(self) -> None:
+        d = {}
+        d["data"] = "random"
+        result_parsed = _streaming_messages(b"", "application/json", data=json.dumps([d]).encode("utf-8"))
+        assert result_parsed == ["random"]
 
 
 if __name__ == "__main__":

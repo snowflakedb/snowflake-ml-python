@@ -16,7 +16,10 @@ package(default_visibility = [
 py_library(
     name = "util",
     srcs = ["_util.py"],
-    deps = [":sse_client"],
+    deps = [
+        ":sse_client",
+        "//snowflake/ml/_internal/utils:formatting",
+    ],
 )
 
 py_library(
@@ -192,6 +195,27 @@ py_test(
 )
 
 py_library(
+    name = "finetune",
+    srcs = ["_finetune.py"],
+    deps = [
+        "//snowflake/cortex:util",
+        "//snowflake/ml/_internal:telemetry",
+        "//snowflake/ml/_internal/utils:snowpark_dataframe_utils",
+    ],
+)
+
+py_test(
+    name = "finetune_test",
+    srcs = ["finetune_test.py"],
+    deps = [
+        "//snowflake/cortex:cortex_pkg",
+        "//snowflake/cortex:test_util",
+        "//snowflake/ml/test_utils:mock_session",
+        "//snowflake/ml/utils:connection_params",
+    ],
+)
+
+py_library(
     name = "init",
     srcs = [
         "__init__.py",
@@ -202,6 +226,7 @@ py_library(
         ":embed_text_1024",
         ":embed_text_768",
         ":extract_answer",
+        ":finetune",
         ":sentiment",
         ":summarize",
         ":translate",

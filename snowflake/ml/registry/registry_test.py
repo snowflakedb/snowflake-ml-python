@@ -10,7 +10,7 @@ from snowflake.ml.model._model_composer.model_manifest import model_manifest_sch
 from snowflake.ml.monitoring import model_monitor
 from snowflake.ml.monitoring.entities import model_monitor_config
 from snowflake.ml.registry import registry
-from snowflake.ml.test_utils import mock_data_frame, mock_session
+from snowflake.ml.test_utils import mock_session
 from snowflake.snowpark import Row, Session, types
 
 
@@ -262,45 +262,7 @@ class MonitorRegistryTest(absltest.TestCase):
             mock_struct_fields.append(types.StructField(col, types.StringType(), True))
         self.mock_schema = types.StructType._from_attributes(mock_struct_fields)
 
-    def _add_expected_monitoring_init_calls(self, model_monitor_create_if_not_exists: bool = False) -> None:
-        self.m_session.add_mock_sql(
-            query="""CREATE TABLE IF NOT EXISTS SNOWML_OBSERVABILITY.METADATA._SYSTEM_MONITORING_METADATA
-            (MONITOR_NAME VARCHAR, SOURCE_TABLE_NAME VARCHAR, FULLY_QUALIFIED_MODEL_NAME VARCHAR,
-            MODEL_VERSION_NAME VARCHAR, FUNCTION_NAME VARCHAR, TASK VARCHAR, IS_ENABLED BOOLEAN,
-            TIMESTAMP_COLUMN_NAME VARCHAR, PREDICTION_COLUMN_NAMES ARRAY,
-            LABEL_COLUMN_NAMES ARRAY, ID_COLUMN_NAMES ARRAY)
-            """,
-            result=mock_data_frame.MockDataFrame([Row(status="Table successfully created.")]),
-        )
-
-        if not model_monitor_create_if_not_exists:  # this code path does validation on whether tables exist.
-            self.m_session.add_mock_sql(
-                query="""SHOW TABLES LIKE '_SYSTEM_MONITORING_METADATA' IN SNOWML_OBSERVABILITY.METADATA""",
-                result=mock_data_frame.MockDataFrame([Row(name="_SYSTEM_MONITORING_METADATA")]),
-            )
-
-    def test_init(self) -> None:
-        self._add_expected_monitoring_init_calls(model_monitor_create_if_not_exists=True)
-        session = cast(Session, self.m_session)
-        r1 = registry.Registry(
-            session,
-            database_name=self.test_db_name,
-            schema_name=self.test_schema_name,
-            options={"enable_monitoring": True},
-        )
-        self.assertEqual(r1.enable_monitoring, True)
-
-        r2 = registry.Registry(
-            session,
-            database_name=self.test_db_name,
-            schema_name=self.test_schema_name,
-        )
-        self.assertEqual(r2.enable_monitoring, False)
-        self.m_session.finalize()
-
     def test_add_monitor(self) -> None:
-        self._add_expected_monitoring_init_calls(model_monitor_create_if_not_exists=True)
-
         session = cast(Session, self.m_session)
         m_r = registry.Registry(
             session,
@@ -311,21 +273,19 @@ class MonitorRegistryTest(absltest.TestCase):
         m_monitor = mock.Mock()
         m_monitor.name = self.test_monitor_name
 
-        with mock.patch.object(m_r._model_monitor_manager, "add_monitor", return_value=m_monitor) as mock_add_monitor:
-            monitor: model_monitor.ModelMonitor = m_r.add_monitor(
-                self.test_monitor_name,
-                self.test_table_config,
-                self.test_monitor_config,
-            )
-            mock_add_monitor.assert_called_once_with(
-                self.test_monitor_name, self.test_table_config, self.test_monitor_config, add_dashboard_udtfs=False
-            )
-        self.assertEqual(monitor.name, self.test_monitor_name)
+        with mock.patch.object(m_r._model_monitor_manager, "add_monitor", return_value=m_monitor):
+            with self.assertRaisesRegex(
+                NotImplementedError,
+                registry._MODEL_MONITORING_UNIMPLEMENTED_ERROR,
+            ):
+                m_r.add_monitor(
+                    self.test_monitor_name,
+                    self.test_table_config,
+                    self.test_monitor_config,
+                )
         self.m_session.finalize()
 
     def test_get_monitor(self) -> None:
-        self._add_expected_monitoring_init_calls(model_monitor_create_if_not_exists=True)
-
         session = cast(Session, self.m_session)
         m_r = registry.Registry(
             session,
@@ -334,15 +294,15 @@ class MonitorRegistryTest(absltest.TestCase):
             options={"enable_monitoring": True},
         )
         m_model_monitor: model_monitor.ModelMonitor = mock.MagicMock()
-        with mock.patch.object(
-            m_r._model_monitor_manager, "get_monitor", return_value=m_model_monitor
-        ) as mock_get_monitor:
-            m_r.get_monitor(name=self.test_monitor_name)
-            mock_get_monitor.assert_called_once_with(name=self.test_monitor_name)
+        with mock.patch.object(m_r._model_monitor_manager, "get_monitor", return_value=m_model_monitor):
+            with self.assertRaisesRegex(
+                NotImplementedError,
+                registry._MODEL_MONITORING_UNIMPLEMENTED_ERROR,
+            ):
+                m_r.get_monitor(name=self.test_monitor_name)
         self.m_session.finalize()
 
     def test_get_monitor_by_model_version(self) -> None:
-        self._add_expected_monitoring_init_calls(model_monitor_create_if_not_exists=True)
         session = cast(Session, self.m_session)
         m_r = registry.Registry(
             session,
@@ -353,15 +313,18 @@ class MonitorRegistryTest(absltest.TestCase):
         m_model_monitor: model_monitor.ModelMonitor = mock.MagicMock()
         with mock.patch.object(
             m_r._model_monitor_manager, "get_monitor_by_model_version", return_value=m_model_monitor
-        ) as mock_get_monitor:
-            m_r.get_monitor(model_version=self.m_model_version)
-            mock_get_monitor.assert_called_once_with(model_version=self.m_model_version)
+        ):
+            with self.assertRaisesRegex(
+                NotImplementedError,
+                registry._MODEL_MONITORING_UNIMPLEMENTED_ERROR,
+            ):
+                m_r.get_monitor(model_version=self.m_model_version)
+                # mock_get_monitor.assert_called_once_with(model_version=self.m_model_version)
+
         self.m_session.finalize()
 
     @patch("snowflake.ml.monitoring._manager.model_monitor_manager.ModelMonitorManager", autospec=True)
     def test_show_model_monitors(self, m_model_monitor_manager_class: mock.MagicMock) -> None:
-        # Dont need to call self._add_expected_monitoring_init_calls since ModelMonitorManager.__init__ is
-        # auto mocked.
         m_model_monitor_manager = m_model_monitor_manager_class.return_value
         sql_result = [
             Row(
@@ -377,7 +340,11 @@ class MonitorRegistryTest(absltest.TestCase):
             schema_name=self.test_schema_name,
             options={"enable_monitoring": True},
         )
-        self.assertEqual(m_r.show_model_monitors(), sql_result)
+        with self.assertRaisesRegex(
+            NotImplementedError,
+            registry._MODEL_MONITORING_UNIMPLEMENTED_ERROR,
+        ):
+            m_r.show_model_monitors()
 
 
 if __name__ == "__main__":

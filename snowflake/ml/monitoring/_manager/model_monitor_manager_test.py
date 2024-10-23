@@ -15,8 +15,8 @@ from snowflake.ml.monitoring.entities import (
     model_monitor_interval,
     output_score_type,
 )
-from snowflake.ml.test_utils import mock_data_frame, mock_session
-from snowflake.snowpark import Row, Session
+from snowflake.ml.test_utils import mock_session
+from snowflake.snowpark import Session
 
 
 def _build_mock_model_version(
@@ -148,7 +148,6 @@ class ModelMonitorManagerHelpersTest(absltest.TestCase):
             statement_params=None,
         )
         self.assertEqual(model_monitor.name, "TEST_MONITOR_NAME")
-        self.assertEqual(model_monitor._function_name, "PREDICT")
 
     def test_get_monitor_by_model_version_not_exists(self) -> None:
         with self.assertRaisesRegex(ValueError, "ModelMonitor not found for model version"):
@@ -196,10 +195,6 @@ class ModelMonitorManagerTest(absltest.TestCase):
             background_compute_warehouse_name=self.test_warehouse,
         )
         session = cast(Session, self.m_session)
-        self.m_session.add_mock_sql(
-            query=f"""SHOW TABLES LIKE '_SYSTEM_MONITORING_METADATA' IN {self.test_db}.{self.test_schema}""",
-            result=mock_data_frame.MockDataFrame([Row(name="_SYSTEM_MONITORING_METADATA")]),
-        )
         self.mm = model_monitor_manager.ModelMonitorManager(
             session, database_name=self.test_db, schema_name=self.test_schema
         )
@@ -207,39 +202,6 @@ class ModelMonitorManagerTest(absltest.TestCase):
 
     def tearDown(self) -> None:
         self.m_session.finalize()
-
-    def test_manual_init(self) -> None:
-        self.m_session.add_mock_sql(
-            query=f"""CREATE TABLE IF NOT EXISTS {self.test_db}.{self.test_schema}._SYSTEM_MONITORING_METADATA
-            (MONITOR_NAME VARCHAR, SOURCE_TABLE_NAME VARCHAR, FULLY_QUALIFIED_MODEL_NAME VARCHAR,
-            MODEL_VERSION_NAME VARCHAR, FUNCTION_NAME VARCHAR, TASK VARCHAR, IS_ENABLED BOOLEAN,
-            TIMESTAMP_COLUMN_NAME VARCHAR, PREDICTION_COLUMN_NAMES ARRAY,
-            LABEL_COLUMN_NAMES ARRAY, ID_COLUMN_NAMES ARRAY)
-            """,
-            result=mock_data_frame.MockDataFrame([Row(status="Table successfully created.")]),
-        )
-        self.m_session.add_mock_sql(
-            query=f"""SHOW TABLES LIKE '_SYSTEM_MONITORING_METADATA' IN {self.test_db}.{self.test_schema}""",
-            result=mock_data_frame.MockDataFrame([Row(name="_SYSTEM_MONITORING_METADATA")]),
-        )
-        session = cast(Session, self.m_session)
-        model_monitor_manager.ModelMonitorManager.setup(session, self.test_db, self.test_schema)
-        model_monitor_manager.ModelMonitorManager(
-            session, database_name=self.test_db, schema_name=self.test_schema, create_if_not_exists=False
-        )
-
-    def test_init_fails_not_initialized(self) -> None:
-        self.m_session.add_mock_sql(
-            query=f"""SHOW TABLES LIKE '_SYSTEM_MONITORING_METADATA' IN {self.test_db}.{self.test_schema}""",
-            result=mock_data_frame.MockDataFrame([]),
-        )
-        session = cast(Session, self.m_session)
-        expected_msg = "Monitoring has not been setup. Set create_if_not_exists or call ModelMonitorManager.setup"
-
-        with self.assertRaisesRegex(ValueError, expected_msg):
-            model_monitor_manager.ModelMonitorManager(
-                session, database_name=self.test_db, schema_name=self.test_schema, create_if_not_exists=False
-            )
 
     def test_add_monitor(self) -> None:
         with mock.patch.object(

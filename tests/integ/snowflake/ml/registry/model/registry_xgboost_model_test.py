@@ -4,7 +4,13 @@ import pandas as pd
 import shap
 import xgboost
 from absl.testing import absltest, parameterized
-from sklearn import datasets, model_selection
+from sklearn import (
+    compose,
+    datasets,
+    model_selection,
+    pipeline as SK_pipeline,
+    preprocessing,
+)
 
 from snowflake.ml.model import model_signature
 from snowflake.ml.model._model_composer.model_manifest import model_manifest_schema
@@ -52,6 +58,39 @@ class TestRegistryXGBoostModelInteg(registry_model_test_base.RegistryModelTestBa
         cal_X.columns = [inflection.parameterize(c, "_") for c in cal_X.columns]
         cal_X_train, cal_X_test, cal_y_train, cal_y_test = model_selection.train_test_split(cal_X, cal_y)
         regressor = xgboost.XGBRegressor(n_estimators=100, reg_lambda=1, gamma=0, max_depth=3)
+        regressor.fit(cal_X_train, cal_y_train)
+        getattr(self, registry_test_fn)(
+            model=regressor,
+            sample_input_data=cal_X_test,
+            prediction_assert_fns={
+                "predict": (
+                    cal_X_test,
+                    lambda res: np.testing.assert_allclose(
+                        res.values, np.expand_dims(regressor.predict(cal_X_test), axis=1)
+                    ),
+                ),
+            },
+            options={"enable_explainability": False},
+        )
+
+    @parameterized.product(  # type: ignore[misc]
+        registry_test_fn=registry_model_test_base.RegistryModelTestBase.REGISTRY_TEST_FN_LIST,
+    )
+    def test_xgb_pipeline_no_explain(
+        self,
+        registry_test_fn: str,
+    ) -> None:
+        cal_data = datasets.load_breast_cancer(as_frame=True)
+        cal_X = cal_data.data
+        cal_y = cal_data.target
+        cal_X.columns = [inflection.parameterize(c, "_") for c in cal_X.columns]
+        cal_X_train, cal_X_test, cal_y_train, cal_y_test = model_selection.train_test_split(cal_X, cal_y)
+        regressor = SK_pipeline.Pipeline(
+            steps=[
+                ("regressor", xgboost.XGBRegressor(n_estimators=100, reg_lambda=1, gamma=0, max_depth=3)),
+            ]
+        )
+
         regressor.fit(cal_X_train, cal_y_train)
         getattr(self, registry_test_fn)(
             model=regressor,
@@ -366,6 +405,107 @@ class TestRegistryXGBoostModelInteg(registry_model_test_base.RegistryModelTestBa
             options={"enable_explainability": True},
             signatures=sig,
         )
+
+    @parameterized.product(  # type: ignore[misc]
+        registry_test_fn=registry_model_test_base.RegistryModelTestBase.REGISTRY_TEST_FN_LIST,
+    )
+    def test_xgb_model_with_categorical_dtype_columns(
+        self,
+        registry_test_fn: str,
+    ) -> None:
+        data = {
+            "color": ["red", "blue", "green", "red"],
+            "size": [1, 2, 2, 4],
+            "price": [10, 15, 20, 25],
+            "target": [0, 1, 1, 0],
+        }
+        input_features = ["color", "size", "price"]
+
+        df = pd.DataFrame(data)
+        df["color"] = df["color"].astype("category")
+        df["size"] = df["size"].astype("category")
+
+        # Define categorical columns
+        categorical_columns = ["color", "size"]
+
+        # Create a column transformer
+        preprocessor = compose.ColumnTransformer(
+            transformers=[
+                ("cat", preprocessing.OneHotEncoder(), categorical_columns),
+            ],
+            remainder="passthrough",
+        )
+
+        pipeline = SK_pipeline.Pipeline(
+            [
+                ("preprocessor", preprocessor),
+                ("classifier", xgboost.XGBClassifier(tree_method="hist")),
+            ]
+        )
+        pipeline.fit(df[input_features], df["target"])
+
+        getattr(self, registry_test_fn)(
+            model=pipeline,
+            sample_input_data=df[input_features],
+            prediction_assert_fns={
+                "predict": (
+                    df[input_features],
+                    lambda res: np.testing.assert_allclose(
+                        res["output_feature_0"].values, pipeline.predict(df[input_features])
+                    ),
+                ),
+            },
+            # TODO(SNOW-1677301): Add support for explainability for categorical columns
+            options={"enable_explainability": False},
+        )
+
+    @parameterized.product(  # type: ignore[misc]
+        registry_test_fn=registry_model_test_base.RegistryModelTestBase.REGISTRY_TEST_FN_LIST,
+    )
+    @absltest.skip("SNOW-1752904")
+    def test_xgb_model_with_native_categorical_dtype_columns(
+        self,
+        registry_test_fn: str,
+    ) -> None:
+        data = {
+            "color": ["red", "blue", "green", "red"],
+            "size": [1, 2, 2, 4],
+            "price": [10, 15, 20, 25],
+            "target": [0, 1, 1, 0],
+        }
+        input_features = ["color", "size", "price"]
+
+        df = pd.DataFrame(data)
+        df["color"] = df["color"].astype("category")
+        df["size"] = df["size"].astype("category")
+
+        # Define categorical columns
+        # categorical_columns = ["color", "size"]
+
+        classifier = xgboost.XGBClassifier(tree_method="hist", enable_categorical=True)
+        classifier.fit(df[input_features], df["target"])
+
+        getattr(self, registry_test_fn)(
+            model=classifier,
+            sample_input_data=df[input_features],
+            prediction_assert_fns={
+                "predict": (
+                    df[input_features],
+                    lambda res: np.testing.assert_allclose(
+                        res["output_feature_0"].values, classifier.predict(df[input_features])
+                    ),
+                ),
+            },
+            # TODO(SNOW-1677301): Add support for explainability for categorical columns
+            options={"enable_explainability": False},
+        )
+
+        # TODO(SNOW-1752904):
+        # The inference fails with message
+        # ValueError: DataFrame.dtypes for data must be int, float, bool or category.
+        # When categorical type is supplied, The experimental DMatrix parameter`enable_categorical`
+        # must be set to `True`.  Invalid columns:color: object
+        #  in function PREDICT with handler predict.infer
 
 
 if __name__ == "__main__":

@@ -16,8 +16,10 @@ from snowflake.cortex._util import (
 )
 from snowflake.ml._internal import telemetry
 from snowflake.snowpark import context, functions
+from snowflake.snowpark._internal.utils import is_in_stored_procedure
 
 logger = logging.getLogger(__name__)
+_REST_COMPLETE_URL = "api/v2/cortex/inference:complete"
 
 
 class ConversationMessage(TypedDict):
@@ -98,6 +100,9 @@ def _call_complete_rest(
             available in your environment."""
         )
 
+    if is_in_stored_procedure():  # type: ignore[no-untyped-call]
+        raise ValueError("running of rest not supported inside Notebook, Streamlit or Stored Procedures")
+
     if session.connection.host is None or session.connection.host == "":
         raise SnowflakeConfigurationException("Snowflake connection configuration does not specify 'host'")
 
@@ -110,7 +115,7 @@ def _call_complete_rest(
     scheme = "https"
     if hasattr(session.connection, "scheme"):
         scheme = session.connection.scheme
-    url = urlunparse((scheme, session.connection.host, "api/v2/cortex/inference:complete", "", "", ""))
+    url = urlunparse((scheme, session.connection.host, _REST_COMPLETE_URL, "", "", ""))
 
     headers = {
         "Content-Type": "application/json",

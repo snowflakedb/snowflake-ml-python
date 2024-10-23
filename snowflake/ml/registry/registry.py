@@ -23,6 +23,8 @@ from snowflake.snowpark import session
 _TELEMETRY_PROJECT = "MLOps"
 _MODEL_TELEMETRY_SUBPROJECT = "ModelManagement"
 
+_MODEL_MONITORING_UNIMPLEMENTED_ERROR = "Model Monitoring is not implemented in python yet."
+
 
 class Registry:
     def __init__(
@@ -84,7 +86,6 @@ class Registry:
                 session=session,
                 database_name=self._database_name,
                 schema_name=self._schema_name,
-                create_if_not_exists=True,  # TODO: Support static setup method to configure schema for monitoring.
                 statement_params=monitor_statement_params,
             )
 
@@ -398,17 +399,11 @@ class Registry:
             The newly added ModelMonitor object.
 
         Raises:
-            ValueError: If monitoring feature flag is not enabled.
-        """
-        if not self.enable_monitoring:
-            raise ValueError(
-                "Must enable monitoring in Registry to use this method. Please set the `enable_monitoring=True` option"
-            )
+            NotImplementedError: Until Model Monitoring is implemented in Python.
 
-        # TODO: Change to fully qualified source table reference to allow table to live in different DB.
-        return self._model_monitor_manager.add_monitor(
-            name, table_config, model_monitor_config, add_dashboard_udtfs=add_dashboard_udtfs
-        )
+        # noqa: DAR202
+        """
+        raise NotImplementedError(_MODEL_MONITORING_UNIMPLEMENTED_ERROR)
 
     @overload
     def get_monitor(self, model_version: model_version_impl.ModelVersion) -> model_monitor.ModelMonitor:
@@ -446,19 +441,11 @@ class Registry:
             The fetched ModelMonitor.
 
         Raises:
-            ValueError: If monitoring feature flag is not enabled.
-            ValueError: If neither name nor model_version specified.
+            NotImplementedError: Until Model Monitoring is implemented in Python.
+
+        # noqa: DAR202
         """
-        if not self.enable_monitoring:
-            raise ValueError(
-                "Must enable monitoring in Registry to use this method. Please set the `enable_monitoring=True` option"
-            )
-        if name is not None:
-            return self._model_monitor_manager.get_monitor(name=name)
-        elif model_version is not None:
-            return self._model_monitor_manager.get_monitor_by_model_version(model_version=model_version)
-        else:
-            raise ValueError("Must provide either `name` or `model_version` to get ModelMonitor")
+        raise NotImplementedError(_MODEL_MONITORING_UNIMPLEMENTED_ERROR)
 
     @telemetry.send_api_usage_telemetry(
         project=telemetry.TelemetryProject.MLOPS.value,
@@ -472,13 +459,11 @@ class Registry:
             List of snowpark.Row containing metadata for each model monitor.
 
         Raises:
-            ValueError: If monitoring feature flag is not enabled.
+            NotImplementedError: Until Model Monitoring is implemented in Python.
+
+        # noqa: DAR202
         """
-        if not self.enable_monitoring:
-            raise ValueError(
-                "Must enable monitoring in Registry to use this method. Please set the `enable_monitoring=True` option"
-            )
-        return self._model_monitor_manager.show_model_monitors()
+        raise NotImplementedError(_MODEL_MONITORING_UNIMPLEMENTED_ERROR)
 
     @telemetry.send_api_usage_telemetry(
         project=telemetry.TelemetryProject.MLOPS.value,
@@ -492,10 +477,6 @@ class Registry:
             name: Name of the Model Monitor to delete.
 
         Raises:
-            ValueError: If monitoring feature flag is not enabled.
+            NotImplementedError: Until Model Monitoring is implemented in Python.
         """
-        if not self.enable_monitoring:
-            raise ValueError(
-                "Must enable monitoring in Registry to use this method. Please set the `enable_monitoring=True` option"
-            )
-        self._model_monitor_manager.delete_monitor(name)
+        raise NotImplementedError(_MODEL_MONITORING_UNIMPLEMENTED_ERROR)
