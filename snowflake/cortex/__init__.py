@@ -1,5 +1,5 @@
 from snowflake.cortex._classify_text import ClassifyText
-from snowflake.cortex._complete import Complete, CompleteOptions
+from snowflake.cortex._complete import Complete, CompleteOptions, ConversationMessage
 from snowflake.cortex._embed_text_768 import EmbedText768
 from snowflake.cortex._embed_text_1024 import EmbedText1024
 from snowflake.cortex._extract_answer import ExtractAnswer
@@ -11,6 +11,7 @@ __all__ = [
     "ClassifyText",
     "Complete",
     "CompleteOptions",
+    "ConversationMessage",
     "EmbedText768",
     "EmbedText1024",
     "ExtractAnswer",
