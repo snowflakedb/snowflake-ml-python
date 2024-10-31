@@ -1,5 +1,6 @@
 import collections
 import copy
+import os
 import pathlib
 import re
 import textwrap
@@ -35,7 +36,9 @@ _SUPPORTED_PACKAGE_SPEC_OPS = ["==", ">=", "<=", ">", "<"]
 DEFAULT_CHANNEL_NAME = ""
 SNOWML_SPROC_ENV = "IN_SNOWML_SPROC"
 SNOWPARK_ML_PKG_NAME = "snowflake-ml-python"
-SNOWFLAKE_CONDA_CHANNEL_URL = "https://repo.anaconda.com/pkgs/snowflake"
+SNOWFLAKE_CONDA_CHANNEL_URL = os.getenv(
+    "SNOWFLAKE_CONDA_CHANNEL_URL", "https://repo.anaconda.com/pkgs/snowflake"
+)
 
 
 def _validate_pip_requirement_string(req_str: str) -> requirements.Requirement:
