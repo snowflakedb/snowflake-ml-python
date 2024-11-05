@@ -39,32 +39,44 @@ _DUMMY_BLOB = model_blob_meta.ModelBlobMeta(
     name="model1", model_type="custom", path="mock_path", handler_version="version_0"
 )
 
-_PACKAGING_REQUIREMENTS_TARGET_WITHOUT_SNOWML = (
-    list(
-        sorted(
-            map(
-                lambda x: str(env_utils.get_local_installed_version_of_pip_package(requirements.Requirement(x))),
-                model_meta._PACKAGING_REQUIREMENTS,
-            )
+_PACKAGING_REQUIREMENTS_TARGET_WITHOUT_SNOWML = list(
+    sorted(
+        map(
+            lambda x: str(env_utils.get_local_installed_version_of_pip_package(requirements.Requirement(x))),
+            model_meta._PACKAGING_REQUIREMENTS,
         )
     )
-    + model_runtime._SNOWML_INFERENCE_ALTERNATIVE_DEPENDENCIES
+) + list(
+    sorted(
+        filter(
+            lambda x: not any(
+                dep in x for dep in model_runtime.PACKAGES_NOT_ALLOWED_IN_WAREHOUSE + model_meta._PACKAGING_REQUIREMENTS
+            ),
+            model_runtime._SNOWML_INFERENCE_ALTERNATIVE_DEPENDENCIES,
+        ),
+    )
 )
 
-_PACKAGING_REQUIREMENTS_TARGET_WITHOUT_SNOWML_RELAXED = (
-    list(
-        sorted(
-            map(
-                lambda x: str(
-                    env_utils.relax_requirement_version(
-                        env_utils.get_local_installed_version_of_pip_package(requirements.Requirement(x))
-                    )
-                ),
-                model_meta._PACKAGING_REQUIREMENTS,
-            )
+_PACKAGING_REQUIREMENTS_TARGET_WITHOUT_SNOWML_RELAXED = list(
+    sorted(
+        map(
+            lambda x: str(
+                env_utils.relax_requirement_version(
+                    env_utils.get_local_installed_version_of_pip_package(requirements.Requirement(x))
+                )
+            ),
+            model_meta._PACKAGING_REQUIREMENTS,
         )
     )
-    + model_runtime._SNOWML_INFERENCE_ALTERNATIVE_DEPENDENCIES
+) + list(
+    sorted(
+        filter(
+            lambda x: not any(
+                dep in x for dep in model_runtime.PACKAGES_NOT_ALLOWED_IN_WAREHOUSE + model_meta._PACKAGING_REQUIREMENTS
+            ),
+            model_runtime._SNOWML_INFERENCE_ALTERNATIVE_DEPENDENCIES,
+        ),
+    )
 )
 
 _PACKAGING_REQUIREMENTS_TARGET_WITH_SNOWML = list(

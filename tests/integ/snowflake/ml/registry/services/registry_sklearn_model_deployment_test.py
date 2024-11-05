@@ -1,6 +1,6 @@
 from typing import List, Optional
 
-import numpy as np
+import pandas as pd
 from absl.testing import absltest, parameterized
 from sklearn import datasets, svm
 
@@ -22,12 +22,16 @@ class TestRegistrySklearnModelDeploymentInteg(registry_model_deployment_test_bas
             prediction_assert_fns={
                 "predict": (
                     iris_X,
-                    lambda res: np.testing.assert_allclose(
-                        res.values, np.expand_dims(svc.predict(iris_X), axis=1), rtol=1e-3
+                    lambda res: pd.testing.assert_frame_equal(
+                        res,
+                        pd.DataFrame(svc.predict(iris_X), columns=res.columns),
+                        rtol=1e-3,
+                        check_dtype=False,
                     ),
                 ),
             },
             pip_requirements=pip_requirements,
+            options={"enable_explainability": False},
         )
 
 

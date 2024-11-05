@@ -109,10 +109,10 @@ class SeqOfTensorflowTensorHandler(
             dtype = core.DataType.from_numpy_type(data_col.dtype.as_numpy_dtype)
             ft_name = f"{role_prefix}{feature_prefix}{i}"
             if len(data_col.shape) == 1:
-                features.append(core.FeatureSpec(dtype=dtype, name=ft_name))
+                features.append(core.FeatureSpec(dtype=dtype, name=ft_name, nullable=False))
             else:
                 ft_shape = tuple(data_col.shape[1:])
-                features.append(core.FeatureSpec(dtype=dtype, name=ft_name, shape=ft_shape))
+                features.append(core.FeatureSpec(dtype=dtype, name=ft_name, shape=ft_shape, nullable=False))
         return features
 
     @staticmethod

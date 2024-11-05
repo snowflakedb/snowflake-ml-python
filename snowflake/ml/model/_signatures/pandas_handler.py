@@ -1,4 +1,5 @@
-from typing import Literal, Sequence
+import warnings
+from typing import Literal, Sequence, Union
 
 import numpy as np
 import pandas as pd
@@ -14,8 +15,8 @@ from snowflake.ml.model._signatures import base_handler, core, utils
 
 class PandasDataFrameHandler(base_handler.BaseDataHandler[pd.DataFrame]):
     @staticmethod
-    def can_handle(data: model_types.SupportedDataType) -> TypeGuard[pd.DataFrame]:
-        return isinstance(data, pd.DataFrame)
+    def can_handle(data: model_types.SupportedDataType) -> TypeGuard[Union[pd.DataFrame, pd.Series]]:
+        return isinstance(data, pd.DataFrame) or isinstance(data, pd.Series)
 
     @staticmethod
     def count(data: pd.DataFrame) -> int:
@@ -26,7 +27,17 @@ class PandasDataFrameHandler(base_handler.BaseDataHandler[pd.DataFrame]):
         return data.head(min(PandasDataFrameHandler.count(data), PandasDataFrameHandler.SIG_INFER_ROWS_COUNT_LIMIT))
 
     @staticmethod
-    def validate(data: pd.DataFrame) -> None:
+    def validate(data: Union[pd.DataFrame, pd.Series]) -> None:
+        if isinstance(data, pd.Series):
+            # check if the series is empty and throw error
+            if data.empty:
+                raise snowml_exceptions.SnowflakeMLException(
+                    error_code=error_codes.INVALID_DATA,
+                    original_exception=ValueError("Data Validation Error: Empty data is found."),
+                )
+            # convert the series to a dataframe
+            data = data.to_frame()
+
         df_cols = data.columns
 
         if df_cols.has_duplicates:  # Rule out categorical index with duplicates
@@ -60,21 +71,44 @@ class PandasDataFrameHandler(base_handler.BaseDataHandler[pd.DataFrame]):
 
         df_col_dtypes = [data[col].dtype for col in data.columns]
         for df_col, df_col_dtype in zip(df_cols, df_col_dtypes):
+            df_col_data = data[df_col]
+            if df_col_data.isnull().all():
+                raise snowml_exceptions.SnowflakeMLException(
+                    error_code=error_codes.INVALID_DATA,
+                    original_exception=ValueError(
+                        f"Data Validation Error: There is no non-null data in column {df_col}."
+                    ),
+                )
+            if df_col_data.isnull().any():
+                warnings.warn(
+                    (
+                        f"Null value detected in column {df_col}, model signature inference might not accurate, "
+                        "or your prediction might fail if your model does not support null input. If this is not "
+                        "expected, please check your input dataframe."
+                    ),
+                    category=UserWarning,
+                    stacklevel=2,
+                )
+
+                df_col_data = utils.series_dropna(df_col_data)
+                df_col_dtype = df_col_data.dtype
+
             if df_col_dtype == np.dtype("O"):
                 # Check if all objects have the same type
-                if not all(isinstance(data_row, type(data[df_col].iloc[0])) for data_row in data[df_col]):
+                if not all(isinstance(data_row, type(df_col_data.iloc[0])) for data_row in df_col_data):
                     raise snowml_exceptions.SnowflakeMLException(
                         error_code=error_codes.INVALID_DATA,
                         original_exception=ValueError(
-                            f"Data Validation Error: Inconsistent type of object found in column data {data[df_col]}."
+                            "Data Validation Error: "
+                            + f"Inconsistent type of element in object found in column data {df_col_data}."
                         ),
                     )
 
-                if isinstance(data[df_col].iloc[0], list):
-                    arr = utils.convert_list_to_ndarray(data[df_col].iloc[0])
+                if isinstance(df_col_data.iloc[0], list):
+                    arr = utils.convert_list_to_ndarray(df_col_data.iloc[0])
                     arr_dtype = core.DataType.from_numpy_type(arr.dtype)
 
-                    converted_data_list = [utils.convert_list_to_ndarray(data_row) for data_row in data[df_col]]
+                    converted_data_list = [utils.convert_list_to_ndarray(data_row) for data_row in df_col_data]
 
                     if not all(
                         core.DataType.from_numpy_type(converted_data.dtype) == arr_dtype
@@ -84,32 +118,37 @@ class PandasDataFrameHandler(base_handler.BaseDataHandler[pd.DataFrame]):
                             error_code=error_codes.INVALID_DATA,
                             original_exception=ValueError(
                                 "Data Validation Error: "
-                                + f"Inconsistent type of element in object found in column data {data[df_col]}."
+                                + f"Inconsistent type of element in object found in column data {df_col_data}."
                             ),
                         )
 
-                elif isinstance(data[df_col].iloc[0], np.ndarray):
-                    arr_dtype = core.DataType.from_numpy_type(data[df_col].iloc[0].dtype)
+                elif isinstance(df_col_data.iloc[0], np.ndarray):
+                    arr_dtype = core.DataType.from_numpy_type(df_col_data.iloc[0].dtype)
 
-                    if not all(core.DataType.from_numpy_type(data_row.dtype) == arr_dtype for data_row in data[df_col]):
+                    if not all(core.DataType.from_numpy_type(data_row.dtype) == arr_dtype for data_row in df_col_data):
                         raise snowml_exceptions.SnowflakeMLException(
                             error_code=error_codes.INVALID_DATA,
                             original_exception=ValueError(
                                 "Data Validation Error: "
-                                + f"Inconsistent type of element in object found in column data {data[df_col]}."
+                                + f"Inconsistent type of element in object found in column data {df_col_data}."
                             ),
                         )
-                elif not isinstance(data[df_col].iloc[0], (str, bytes)):
+                elif not isinstance(df_col_data.iloc[0], (str, bytes)):
                     raise snowml_exceptions.SnowflakeMLException(
                         error_code=error_codes.INVALID_DATA,
                         original_exception=ValueError(
-                            f"Data Validation Error: Unsupported type confronted in {data[df_col]}"
+                            f"Data Validation Error: Unsupported type confronted in {df_col_data}"
                         ),
                     )
 
     @staticmethod
-    def infer_signature(data: pd.DataFrame, role: Literal["input", "output"]) -> Sequence[core.BaseFeatureSpec]:
+    def infer_signature(
+        data: Union[pd.DataFrame, pd.Series],
+        role: Literal["input", "output"],
+    ) -> Sequence[core.BaseFeatureSpec]:
         feature_prefix = f"{PandasDataFrameHandler.FEATURE_PREFIX}_"
+        if isinstance(data, pd.Series):
+            data = data.to_frame()
         df_cols = data.columns
         role_prefix = (
             PandasDataFrameHandler.INPUT_PREFIX if role == "input" else PandasDataFrameHandler.OUTPUT_PREFIX
@@ -123,29 +162,34 @@ class PandasDataFrameHandler(base_handler.BaseDataHandler[pd.DataFrame]):
 
         specs = []
         for df_col, df_col_dtype, ft_name in zip(df_cols, df_col_dtypes, ft_names):
-            if df_col_dtype == np.dtype("O"):
-                if isinstance(data[df_col].iloc[0], list):
-                    arr = utils.convert_list_to_ndarray(data[df_col].iloc[0])
-                    arr_dtype = core.DataType.from_numpy_type(arr.dtype)
-                    ft_shape = np.shape(data[df_col].iloc[0])
+            df_col_data = data[df_col]
+            if df_col_data.isnull().any():
+                df_col_data = utils.series_dropna(df_col_data)
+            df_col_dtype = df_col_data.dtype
 
-                    converted_data_list = [utils.convert_list_to_ndarray(data_row) for data_row in data[df_col]]
+            if df_col_dtype == np.dtype("O"):
+                if isinstance(df_col_data.iloc[0], list):
+                    arr = utils.convert_list_to_ndarray(df_col_data.iloc[0])
+                    arr_dtype = core.DataType.from_numpy_type(arr.dtype)
+                    ft_shape = np.shape(df_col_data.iloc[0])
+
+                    converted_data_list = [utils.convert_list_to_ndarray(data_row) for data_row in df_col_data]
 
                     if not all(np.shape(converted_data) == ft_shape for converted_data in converted_data_list):
                         ft_shape = (-1,)
 
                     specs.append(core.FeatureSpec(dtype=arr_dtype, name=ft_name, shape=ft_shape))
-                elif isinstance(data[df_col].iloc[0], np.ndarray):
-                    arr_dtype = core.DataType.from_numpy_type(data[df_col].iloc[0].dtype)
-                    ft_shape = np.shape(data[df_col].iloc[0])
+                elif isinstance(df_col_data.iloc[0], np.ndarray):
+                    arr_dtype = core.DataType.from_numpy_type(df_col_data.iloc[0].dtype)
+                    ft_shape = np.shape(df_col_data.iloc[0])
 
-                    if not all(np.shape(data_row) == ft_shape for data_row in data[df_col]):
+                    if not all(np.shape(data_row) == ft_shape for data_row in df_col_data):
                         ft_shape = (-1,)
 
                     specs.append(core.FeatureSpec(dtype=arr_dtype, name=ft_name, shape=ft_shape))
-                elif isinstance(data[df_col].iloc[0], str):
+                elif isinstance(df_col_data.iloc[0], str):
                     specs.append(core.FeatureSpec(dtype=core.DataType.STRING, name=ft_name))
-                elif isinstance(data[df_col].iloc[0], bytes):
+                elif isinstance(df_col_data.iloc[0], bytes):
                     specs.append(core.FeatureSpec(dtype=core.DataType.BYTES, name=ft_name))
             elif isinstance(df_col_dtype, pd.CategoricalDtype):
                 category_dtype = df_col_dtype.categories.dtype

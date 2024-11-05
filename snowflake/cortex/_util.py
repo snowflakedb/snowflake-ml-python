@@ -1,6 +1,8 @@
-from typing import Dict, List, Optional, Union, cast
+from typing import Any, Dict, List, Optional, Union, cast
 
 from snowflake import snowpark
+from snowflake.ml._internal.exceptions import error_codes, exceptions
+from snowflake.ml._internal.utils import formatting
 from snowflake.snowpark import context, functions
 
 CORTEX_FUNCTIONS_TELEMETRY_PROJECT = "CortexFunctions"
@@ -64,3 +66,30 @@ def _call_sql_function_immediate(
     empty_df = session.create_dataframe([snowpark.Row()])
     df = empty_df.select(functions.builtin(function)(*lit_args))
     return cast(str, df.collect()[0][0])
+
+
+def call_sql_function_literals(function: str, session: Optional[snowpark.Session], *args: Any) -> str:
+    r"""Call a SQL function with only literal arguments.
+
+    This is useful for calling system functions.
+
+    Args:
+        function: The name of the function to be called.
+        session: The Snowpark session to use.
+        *args: The list of arguments
+
+    Returns:
+        String value that corresponds the the first cell in the dataframe.
+
+    Raises:
+        SnowflakeMLException: If no session is given and no active session exists.
+    """
+    if session is None:
+        session = context.get_active_session()
+    if session is None:
+        raise exceptions.SnowflakeMLException(
+            error_code=error_codes.INVALID_SNOWPARK_SESSION,
+        )
+
+    function_arguments = ",".join(["NULL" if arg is None else formatting.format_value_for_select(arg) for arg in args])
+    return cast(str, session.sql(f"SELECT {function}({function_arguments})").collect()[0][0])

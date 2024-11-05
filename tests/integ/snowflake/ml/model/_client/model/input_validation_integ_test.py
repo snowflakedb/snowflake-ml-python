@@ -7,7 +7,7 @@ from absl.testing import absltest, parameterized
 from snowflake.ml.model import custom_model, model_signature
 from snowflake.ml.registry import registry
 from snowflake.ml.utils import connection_params
-from snowflake.snowpark import Session
+from snowflake.snowpark import Session, exceptions
 from tests.integ.snowflake.ml.test_utils import dataframe_utils, db_manager
 
 MODEL_NAME = "TEST_MODEL"
@@ -110,9 +110,13 @@ class TestInputValidationInteg(parameterized.TestCase):
         y_df_expected = pd.DataFrame([[1, 2, 3, 1], [4, 2, 5, 4]], columns=["c1", "c2", "c3", "output"])
         dataframe_utils.check_sp_df_res(self._mv.run(sp_df), y_df_expected, check_dtype=False)
 
-        sp_df = self._session.create_dataframe([[1, 2, 3], [257, 2, 5]], schema=['"c1"', '"c2"', '"c3"'])
-        y_df_expected = pd.DataFrame([[1, 2, 3, 1], [257, 2, 5, 1]], columns=["c1", "c2", "c3", "output"])
+        sp_df = self._session.create_dataframe([[None, 2, 3], [257, 2, 5]], schema=['"c1"', '"c2"', '"c3"'])
+        y_df_expected = pd.DataFrame([[None, 2, 3, None], [257, 2, 5, 1]], columns=["c1", "c2", "c3", "output"])
         dataframe_utils.check_sp_df_res(self._mv.run(sp_df), y_df_expected, check_dtype=False)
+
+        sp_df = self._session.create_dataframe([[1, 2, 3], [257, 2, 5]], schema=['"c1"', '"c2"', '"c3"'])
+        with self.assertRaisesRegex(exceptions.SnowparkSQLException, "Python Interpreter Error"):
+            self._mv.run(sp_df).collect()
 
     def test_strict(self) -> None:
         pd.testing.assert_frame_equal(

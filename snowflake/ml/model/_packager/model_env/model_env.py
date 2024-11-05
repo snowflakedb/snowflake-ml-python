@@ -174,6 +174,18 @@ class ModelEnv:
             except env_utils.DuplicateDependencyError:
                 pass
 
+    def remove_if_present_conda(self, conda_pkgs: List[str]) -> None:
+        """Remove conda requirements from model env if present.
+
+        Args:
+            conda_pkgs: A list of package name to be removed from conda requirements.
+        """
+        for pkg_name in conda_pkgs:
+            spec_conda = env_utils._find_conda_dep_spec(self._conda_dependencies, pkg_name)
+            if spec_conda:
+                channel, spec = spec_conda
+                self._conda_dependencies[channel].remove(spec)
+
     def generate_env_for_cuda(self) -> None:
         if self.cuda_version is None:
             return

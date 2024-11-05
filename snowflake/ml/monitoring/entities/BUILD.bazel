@@ -6,7 +6,6 @@ py_library(
     name = "entities_lib",
     srcs = [
         "model_monitor_config.py",
-        "model_monitor_interval.py",
         "output_score_type.py",
     ],
     deps = [
@@ -22,16 +21,5 @@ py_test(
     ],
     deps = [
         ":entities_lib",
-    ],
-)
-
-py_test(
-    name = "model_monitor_interval_test",
-    srcs = [
-        "model_monitor_interval_test.py",
-    ],
-    deps = [
-        ":entities_lib",
-        "//snowflake/ml/test_utils:mock_session",
     ],
 )

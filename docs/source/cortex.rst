@@ -10,16 +10,22 @@ snowflake.ml.cortex
 .. rubric:: Classes
 
 .. autosummary::
-    :toctree: api/model
+    :toctree: api/cortex
 
     CompleteOptions
+    Finetune
+    FinetuneJob
+    FinetuneStatus
 
 .. rubric:: Functions
 
 .. autosummary::
-    :toctree: api/model
+    :toctree: api/cortex
 
+    ClassifyText
     Complete
+    EmbedText768
+    EmbedText1024
     ExtractAnswer
     Sentiment
     Summarize

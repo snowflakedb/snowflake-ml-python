@@ -2,7 +2,7 @@ import inspect
 import os
 import pathlib
 import sys
-from typing import Dict, Optional, Type, final
+from typing import Dict, Optional, Type, cast, final
 
 import anyio
 import cloudpickle
@@ -108,6 +108,7 @@ class CustomModelHandler(_base.BaseModelHandler["custom_model.CustomModel"]):
                     model_meta=model_meta,
                     model_blobs_dir_path=model_blobs_dir_path,
                     is_sub_model=True,
+                    **cast(model_types.BaseModelSaveOption, kwargs),
                 )
 
         # Make sure that the module where the model is defined get pickled by value as well.
@@ -175,6 +176,7 @@ class CustomModelHandler(_base.BaseModelHandler["custom_model.CustomModel"]):
                 name=sub_model_name,
                 model_meta=model_meta,
                 model_blobs_dir_path=model_blobs_dir_path,
+                **cast(model_types.BaseModelLoadOption, kwargs),
             )
             models[sub_model_name] = sub_model
         reconstructed_context = custom_model.ModelContext(artifacts=artifacts, models=models)

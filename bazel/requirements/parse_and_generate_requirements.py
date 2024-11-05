@@ -418,7 +418,7 @@ def generate_requirements(
         )
         sys.stdout.writelines(results)
     elif (mode, format) == ("version_requirements", "python"):
-        results = list(
+        reqs = list(
             sorted(
                 filter(
                     None,
@@ -427,13 +427,28 @@ def generate_requirements(
                         filter(
                             lambda req_info: req_info.get("from_channel", SNOWFLAKE_CONDA_CHANNEL)
                             == SNOWFLAKE_CONDA_CHANNEL,
-                            requirements,
+                            filter(lambda req_info: filter_by_extras(req_info, False, True), requirements),
                         ),
                     ),
                 ),
             )
         )
-        sys.stdout.write(f"REQUIREMENTS = {json.dumps(results, indent=4)}\n")
+        all_reqs = list(
+            sorted(
+                filter(
+                    None,
+                    map(
+                        lambda req_info: generate_user_requirements_string(req_info, "conda"),
+                        filter(
+                            lambda req_info: req_info.get("from_channel", SNOWFLAKE_CONDA_CHANNEL)
+                            == SNOWFLAKE_CONDA_CHANNEL,
+                            filter(lambda req_info: filter_by_extras(req_info, False, False), requirements),
+                        ),
+                    ),
+                ),
+            )
+        )
+        sys.stdout.write(f"REQUIREMENTS = {repr(reqs)}\nALL_REQUIREMENTS={repr(all_reqs)}\n")
     elif (mode, format) == ("version_requirements", "toml"):
         extras_requirements = list(filter(lambda req_info: filter_by_extras(req_info, True, False), requirements))
         extras_results: MutableMapping[str, Sequence[str]] = {}
@@ -478,7 +493,13 @@ def generate_requirements(
     elif (mode, format) == ("version_requirements", "python"):
         results = list(
             sorted(
-                filter(None, map(lambda req_info: generate_user_requirements_string(req_info, "conda"), requirements)),
+                filter(
+                    None,
+                    map(
+                        lambda req_info: generate_user_requirements_string(req_info, "conda"),
+                        filter(lambda req_info: filter_by_extras(req_info, False, True), requirements),
+                    ),
+                )
             )
         )
         sys.stdout.writelines(f"REQUIREMENTS = {repr(results)}\n")
@@ -555,7 +576,6 @@ def main() -> None:
         ("dev_version", "text", False),  # requirements.txt
         ("version_requirements", "python", True),  # sproc test dependencies list
         ("version_requirements", "toml", False),  # wheel rule requirements
-        ("version_requirements", "python", False),  # model deployment core dependencies list
         ("dev_version", "conda_env", False),  # dev conda-env.yml file
         ("dev_gpu_version", "conda_env", False),  # dev conda-gpu-env.yml file
         ("dev_version", "conda_env", True),  # dev conda-env-snowflake.yml file

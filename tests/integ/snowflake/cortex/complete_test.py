@@ -4,8 +4,10 @@ from absl.testing import absltest
 
 from snowflake import snowpark
 from snowflake.cortex import Complete, CompleteOptions
+from snowflake.ml._internal.utils import snowflake_env
 from snowflake.ml.utils import connection_params
 from snowflake.snowpark import Session, functions
+from tests.integ.snowflake.ml.test_utils import test_env_utils
 
 _OPTIONS = CompleteOptions(  # random params
     max_tokens=10,
@@ -20,6 +22,10 @@ _CONVERSATION_HISTORY_PROMPT = [
 ]
 
 
+@absltest.skipUnless(
+    test_env_utils.get_current_snowflake_cloud_type() == snowflake_env.SnowflakeCloudType.AWS,
+    "Complete SQL only available in AWS",
+)
 class CompleteSQLTest(absltest.TestCase):
     def setUp(self) -> None:
         self._session = Session.builder.configs(connection_params.SnowflakeLoginOptions()).create()

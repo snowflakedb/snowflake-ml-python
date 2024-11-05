@@ -25,13 +25,14 @@ class DBManager:
         self,
         db_name: str,
         creation_mode: sql_client.CreationMode = _default_creation_mode,
+        data_retention_time_in_days: int = 0,
     ) -> str:
         actual_db_name = identifier.get_inferred_name(db_name)
         ddl_phrases = creation_mode.get_ddl_phrases()
         self._session.sql(
             f"CREATE{ddl_phrases[sql_client.CreationOption.OR_REPLACE]} DATABASE"
             f"{ddl_phrases[sql_client.CreationOption.CREATE_IF_NOT_EXIST]} "
-            f"{actual_db_name} DATA_RETENTION_TIME_IN_DAYS = 0"
+            f"{actual_db_name} DATA_RETENTION_TIME_IN_DAYS = {data_retention_time_in_days}"
         ).collect()
         return actual_db_name
 

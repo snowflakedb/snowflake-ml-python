@@ -17,7 +17,7 @@ build:
   noarch: python
 package:
   name: snowflake-ml-python
-  version: 1.7.0
+  version: 1.7.1
 requirements:
   build:
     - python
@@ -28,10 +28,11 @@ requirements:
     - anyio>=3.5.0,<4
     - cachetools>=3.1.1,<6
     - cloudpickle>=2.0.0
+    - cryptography
     - fsspec>=2022.11,<2024
     - importlib_resources>=6.1.1, <7
     - numpy>=1.23,<2
-    - packaging>=20.9,<24
+    - packaging>=20.9,<25
     - pandas>=1.0.0,<3
     - pyarrow
     - pytimeparse>=1.1.8,<2
@@ -49,7 +50,7 @@ requirements:
     - python>=3.9,<3.12
   run_constrained:
     - catboost>=1.2.0, <2
-    - lightgbm>=3.3.5,<5
+    - lightgbm>=4.1.0, <5
     - mlflow>=2.1.0,<2.4
     - pytorch>=2.0.1,<2.3.0
     - sentence-transformers>=2.2.2,<3

@@ -469,6 +469,56 @@ class ModelEnvTest(absltest.TestCase):
             self.assertListEqual(env.conda_dependencies, [])
             self.assertListEqual(env.pip_requirements, ["numpy==1.0.1"])
 
+    def test_remove_if_present_conda(self) -> None:
+        env = model_env.ModelEnv()
+        env.conda_dependencies = ["some-package==1.0.1"]
+
+        env.remove_if_present_conda(["some-package"])
+        self.assertListEqual(env.conda_dependencies, [])
+        self.assertListEqual(env.pip_requirements, [])
+
+        env = model_env.ModelEnv()
+        env.conda_dependencies = ["some-package==1.0.1"]
+
+        env.remove_if_present_conda(["some-package"])
+        self.assertListEqual(env.conda_dependencies, [])
+        self.assertListEqual(env.pip_requirements, [])
+
+        env = model_env.ModelEnv()
+        env.conda_dependencies = ["some-package==1.0.1"]
+
+        env.remove_if_present_conda(["another-package"])
+        self.assertListEqual(env.conda_dependencies, ["some-package==1.0.1"])
+        self.assertListEqual(env.pip_requirements, [])
+
+        env = model_env.ModelEnv()
+        env.conda_dependencies = ["another-package<2,>=1.0", "some-package==1.0.1"]
+
+        env.remove_if_present_conda(["some-package", "another-package"])
+        self.assertListEqual(env.conda_dependencies, [])
+        self.assertListEqual(env.pip_requirements, [])
+
+        env = model_env.ModelEnv()
+        env.conda_dependencies = ["another-package<2,>=1.0", "some-package==1.0.1"]
+
+        env.remove_if_present_conda(["another-package"])
+        self.assertListEqual(env.conda_dependencies, ["some-package==1.0.1"])
+        self.assertListEqual(env.pip_requirements, [])
+
+        env = model_env.ModelEnv()
+        env.conda_dependencies = ["channel::some-package==1.0.1"]
+
+        env.remove_if_present_conda(["some-package"])
+        self.assertListEqual(env.conda_dependencies, [])
+        self.assertListEqual(env.pip_requirements, [])
+
+        env = model_env.ModelEnv()
+        env.pip_requirements = ["some-package==1.0.1"]
+
+        env.remove_if_present_conda(["some-package"])
+        self.assertListEqual(env.conda_dependencies, [])
+        self.assertListEqual(env.pip_requirements, ["some-package==1.0.1"])
+
     def test_generate_conda_env_for_cuda(self) -> None:
         env = model_env.ModelEnv()
         env.conda_dependencies = ["somepackage==1.0.0", "another_channel::another_package==1.0.0"]

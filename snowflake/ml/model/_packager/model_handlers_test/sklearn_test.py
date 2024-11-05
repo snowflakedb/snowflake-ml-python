@@ -8,9 +8,13 @@ import pandas as pd
 import shap
 from absl.testing import absltest
 from sklearn import datasets, ensemble, linear_model, multioutput
+from sklearn.pipeline import Pipeline
 
 from snowflake.ml.model import model_signature, type_hints as model_types
 from snowflake.ml.model._packager import model_packager
+from snowflake.ml.model._packager.model_handlers.sklearn import (
+    _unpack_container_runtime_pipeline,
+)
 
 
 class SKLearnHandlerTest(absltest.TestCase):
@@ -343,6 +347,20 @@ class SKLearnHandlerTest(absltest.TestCase):
                 explain_method = getattr(pk.model, "explain", None)
                 assert callable(predict_method)
                 self.assertEqual(explain_method, None)
+
+    def test_skl_with_cr_estimator(self) -> None:
+        class SecondMockEstimator:
+            ...
+
+        class MockEstimator:
+            @property
+            def _sklearn_estimator(self) -> SecondMockEstimator:
+                return SecondMockEstimator()
+
+        skl_pipeline = Pipeline(steps=[("mock", MockEstimator())])
+        oss_pipeline = _unpack_container_runtime_pipeline(skl_pipeline)
+
+        assert isinstance(oss_pipeline.steps[0][1], SecondMockEstimator)
 
 
 if __name__ == "__main__":

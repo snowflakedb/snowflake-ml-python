@@ -3,7 +3,7 @@ import os
 import pathlib
 import tempfile
 import warnings
-from typing import Any, Dict, List, Literal, Optional, Union, cast, overload
+from typing import Any, Dict, List, Literal, Optional, TypedDict, Union, cast, overload
 
 import yaml
 
@@ -31,9 +31,14 @@ from snowflake.snowpark import dataframe, row, session
 from snowflake.snowpark._internal import utils as snowpark_utils
 
 
+class ServiceInfo(TypedDict):
+    name: str
+    inference_endpoint: Optional[str]
+
+
 class ModelOperator:
-    INFERENCE_SERVICE_NAME_COL_NAME = "service_name"
-    INFERENCE_SERVICE_ENDPOINT_COL_NAME = "endpoints"
+    INFERENCE_SERVICE_ENDPOINT_NAME = "inference"
+    INGRESS_ENDPOINT_URL_SUFFIX = "snowflakecomputing.app"
 
     def __init__(
         self,
@@ -517,7 +522,7 @@ class ModelOperator:
             statement_params=statement_params,
         )
 
-    def list_inference_services(
+    def show_services(
         self,
         *,
         database_name: Optional[sql_identifier.SqlIdentifier],
@@ -525,7 +530,7 @@ class ModelOperator:
         model_name: sql_identifier.SqlIdentifier,
         version_name: sql_identifier.SqlIdentifier,
         statement_params: Optional[Dict[str, Any]] = None,
-    ) -> Dict[str, List[str]]:
+    ) -> List[ServiceInfo]:
         res = self._model_client.show_versions(
             database_name=database_name,
             schema_name=schema_name,
@@ -546,21 +551,28 @@ class ModelOperator:
 
         json_array = json.loads(res[0][service_col_name])
         # TODO(sdas): Figure out a better way to filter out MODEL_BUILD_ services server side.
-        services = [str(service) for service in json_array if "MODEL_BUILD_" not in service]
-        endpoint_col_name = self._model_client.MODEL_INFERENCE_SERVICE_ENDPOINT_COL_NAME
+        fully_qualified_service_names = [str(service) for service in json_array if "MODEL_BUILD_" not in service]
 
-        services_col, endpoints_col = [], []
-        for service in services:
-            res = self._model_client.show_endpoints(service_name=service)
-            endpoints = [endpoint[endpoint_col_name] for endpoint in res]
-            for endpoint in endpoints:
-                services_col.append(service)
-                endpoints_col.append(endpoint)
+        result = []
+        ingress_url: Optional[str] = None
+        for fully_qualified_service_name in fully_qualified_service_names:
+            db, schema, service_name = sql_identifier.parse_fully_qualified_name(fully_qualified_service_name)
+            for res_row in self._service_client.show_endpoints(
+                database_name=db, schema_name=schema, service_name=service_name, statement_params=statement_params
+            ):
+                if (
+                    res_row[self._service_client.MODEL_INFERENCE_SERVICE_ENDPOINT_NAME_COL_NAME]
+                    == self.INFERENCE_SERVICE_ENDPOINT_NAME
+                    and res_row[self._service_client.MODEL_INFERENCE_SERVICE_ENDPOINT_INGRESS_URL_COL_NAME] is not None
+                ):
+                    ingress_url = str(
+                        res_row[self._service_client.MODEL_INFERENCE_SERVICE_ENDPOINT_INGRESS_URL_COL_NAME]
+                    )
+                    if not ingress_url.endswith(ModelOperator.INGRESS_ENDPOINT_URL_SUFFIX):
+                        ingress_url = None
+            result.append(ServiceInfo(name=fully_qualified_service_name, inference_endpoint=ingress_url))
 
-        return {
-            self.INFERENCE_SERVICE_NAME_COL_NAME: services_col,
-            self.INFERENCE_SERVICE_ENDPOINT_COL_NAME: endpoints_col,
-        }
+        return result
 
     def delete_service(
         self,
@@ -569,33 +581,42 @@ class ModelOperator:
         schema_name: Optional[sql_identifier.SqlIdentifier],
         model_name: sql_identifier.SqlIdentifier,
         version_name: sql_identifier.SqlIdentifier,
-        service_name: str,
+        service_database_name: Optional[sql_identifier.SqlIdentifier],
+        service_schema_name: Optional[sql_identifier.SqlIdentifier],
+        service_name: sql_identifier.SqlIdentifier,
         statement_params: Optional[Dict[str, Any]] = None,
     ) -> None:
-        services = self.list_inference_services(
+        services = self.show_services(
             database_name=database_name,
             schema_name=schema_name,
             model_name=model_name,
             version_name=version_name,
             statement_params=statement_params,
         )
-        db, schema, service_name = sql_identifier.parse_fully_qualified_name(service_name)
+
+        # Fall back to the model's database and schema.
+        # database_name or schema_name are set if the model is created or get using fully qualified name
+        # Otherwise, the model's database and schema are same as registry's database and schema, which are set in the
+        # self._model_client.
+
+        service_database_name = service_database_name or database_name or self._model_client._database_name
+        service_schema_name = service_schema_name or schema_name or self._model_client._schema_name
         fully_qualified_service_name = sql_identifier.get_fully_qualified_name(
-            db, schema, service_name, self._session.get_current_database(), self._session.get_current_schema()
+            service_database_name, service_schema_name, service_name
         )
 
-        service_col_name = self.INFERENCE_SERVICE_NAME_COL_NAME
-        for service in services[service_col_name]:
-            if service == fully_qualified_service_name:
+        for service_info in services:
+            if service_info["name"] == fully_qualified_service_name:
                 self._service_client.drop_service(
-                    database_name=db,
-                    schema_name=schema,
+                    database_name=service_database_name,
+                    schema_name=service_schema_name,
                     service_name=service_name,
                     statement_params=statement_params,
                 )
                 return
         raise ValueError(
-            f"Service '{service_name}' does not exist or unauthorized or not associated with this model version."
+            f"Service '{fully_qualified_service_name}' does not exist "
+            "or unauthorized or not associated with this model version."
         )
 
     def get_model_version_manifest(

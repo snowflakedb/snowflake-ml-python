@@ -1,6 +1,31 @@
 # Release History
 
-## 1.7.0
+## 1.7.1
+
+### Bug Fixes
+
+- Registry: Null value is now allowed in the dataframe used in model signature inference. Null values will be ignored
+ and others will be used to infer the signature.
+- Registry: Pandas Extension DTypes (`pandas.StringDType()`, `pandas.BooleanDType()`, etc.) are now supported in model
+signature inference.
+- Registry: Null value is now allowed in the dataframe used to predict.
+- Data: Fix missing `snowflake.ml.data.*` module exports in wheel
+- Dataset: Fix missing `snowflake.ml.dataset.*` module exports in wheel.
+- Registry: Fix the issue that `tf_keras.Model` is not recognized as keras model when logging.
+
+### Behavior Changes
+
+### New Features
+
+- Registry: Option to `enable_monitoring` set to False by default.  This will gate access to preview features of Model Monitoring.
+- Model Monitoring: `show_model_monitors` Registry method.  This feature is still in Private Preview.
+- Registry: Support `pd.Series` in input and output data.
+- Model Monitoring: `add_monitor` Registry method.  This feature is still in Private Preview.
+- Model Monitoring: `resume` and `suspend` ModelMonitor.  This feature is still in Private Preview.
+- Model Monitoring: `get_monitor` Registry method.  This feature is still in Private Preview.
+- Model Monitoring: `delete_monitor` Registry method.  This feature is still in Private Preview.
+
+## 1.7.0 (10-22-2024)
 
 ### Behavior Change
 

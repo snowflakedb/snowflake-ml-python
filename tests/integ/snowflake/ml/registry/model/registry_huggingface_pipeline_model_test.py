@@ -189,7 +189,7 @@ class TestRegistryHuggingFacePipelineModelInteg(registry_model_test_base.Registr
             self.assertEqual(res["score"].dtype.type, np.float64)
             self.assertEqual(res["start"].dtype.type, np.int64)
             self.assertEqual(res["end"].dtype.type, np.int64)
-            self.assertEqual(res["answer"].dtype.type, np.object_)
+            self.assertEqual(res["answer"].dtype.type, str)
 
         getattr(self, registry_test_fn)(
             model=model,
@@ -281,7 +281,7 @@ class TestRegistryHuggingFacePipelineModelInteg(registry_model_test_base.Registr
         def check_res(res: pd.DataFrame) -> None:
             pd.testing.assert_index_equal(res.columns, pd.Index(["summary_text"]))
 
-            self.assertEqual(res["summary_text"].dtype.type, np.object_)
+            self.assertEqual(res["summary_text"].dtype.type, str)
 
         getattr(self, registry_test_fn)(
             model=model,
@@ -341,12 +341,12 @@ class TestRegistryHuggingFacePipelineModelInteg(registry_model_test_base.Registr
         def check_res(res: pd.DataFrame) -> None:
             pd.testing.assert_index_equal(res.columns, pd.Index(["answer", "coordinates", "cells", "aggregator"]))
 
-            self.assertEqual(res["answer"].dtype.type, np.object_)
+            self.assertEqual(res["answer"].dtype.type, str)
             self.assertEqual(res["coordinates"].dtype.type, np.object_)
             self.assertIsInstance(res["coordinates"][0], list)
             self.assertEqual(res["cells"].dtype.type, np.object_)
             self.assertIsInstance(res["cells"][0], list)
-            self.assertEqual(res["aggregator"].dtype.type, np.object_)
+            self.assertEqual(res["aggregator"].dtype.type, str)
 
         getattr(self, registry_test_fn)(
             model=model,
@@ -376,7 +376,7 @@ class TestRegistryHuggingFacePipelineModelInteg(registry_model_test_base.Registr
         def check_res(res: pd.DataFrame) -> None:
             pd.testing.assert_index_equal(res.columns, pd.Index(["label", "score"]))
 
-            self.assertEqual(res["label"].dtype.type, np.object_)
+            self.assertEqual(res["label"].dtype.type, str)
             self.assertEqual(res["score"].dtype.type, np.float64)
 
         getattr(self, registry_test_fn)(
@@ -490,7 +490,7 @@ class TestRegistryHuggingFacePipelineModelInteg(registry_model_test_base.Registr
 
         def check_res(res: pd.DataFrame) -> None:
             pd.testing.assert_index_equal(res.columns, pd.Index(["generated_text"]))
-            self.assertEqual(res["generated_text"].dtype.type, np.object_)
+            self.assertEqual(res["generated_text"].dtype.type, str)
 
         getattr(self, registry_test_fn)(
             model=model,
@@ -532,7 +532,7 @@ class TestRegistryHuggingFacePipelineModelInteg(registry_model_test_base.Registr
 
         def check_res(res: pd.DataFrame) -> None:
             pd.testing.assert_index_equal(res.columns, pd.Index(["translation_text"]))
-            self.assertEqual(res["translation_text"].dtype.type, np.object_)
+            self.assertEqual(res["translation_text"].dtype.type, str)
 
         getattr(self, registry_test_fn)(
             model=model,
@@ -573,7 +573,7 @@ class TestRegistryHuggingFacePipelineModelInteg(registry_model_test_base.Registr
 
         def check_res(res: pd.DataFrame) -> None:
             pd.testing.assert_index_equal(res.columns, pd.Index(["sequence", "labels", "scores"]))
-            self.assertEqual(res["sequence"].dtype.type, np.object_)
+            self.assertEqual(res["sequence"].dtype.type, str)
             self.assertEqual(
                 res["sequence"][0],
                 "I have a problem with Snowflake that needs to be resolved asap!!",
@@ -586,8 +586,8 @@ class TestRegistryHuggingFacePipelineModelInteg(registry_model_test_base.Registr
             self.assertListEqual(sorted(res["labels"][0]), sorted(["urgent", "not urgent"]))
             self.assertListEqual(sorted(res["labels"][1]), sorted(["English", "Japanese"]))
             self.assertEqual(res["scores"].dtype.type, np.object_)
-            self.assertIsInstance(res["labels"][0], list)
-            self.assertIsInstance(res["labels"][1], list)
+            self.assertIsInstance(res["scores"][0], list)
+            self.assertIsInstance(res["scores"][1], list)
 
         getattr(self, registry_test_fn)(
             model=model,

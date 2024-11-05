@@ -84,7 +84,7 @@ def get_model_task_lightgbm(model: Union["lightgbm.Booster", "lightgbm.LGBMModel
     if type_utils.LazyType("lightgbm.Booster").isinstance(model):
         model_task = model.params["objective"]  # type: ignore[attr-defined]
     elif hasattr(model, "objective_"):
-        model_task = model.objective_
+        model_task = model.objective_  # type: ignore[assignment]
     if model_task in _BINARY_CLASSIFICATION_OBJECTIVES:
         return type_hints.Task.TABULAR_BINARY_CLASSIFICATION
     if model_task in _MULTI_CLASSIFICATION_OBJECTIVES:

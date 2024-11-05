@@ -1,6 +1,7 @@
 load("//bazel:py_rules.bzl", "py_genrule", "py_library", "py_test")
 
 package(default_visibility = [
+    "//tests/integ/snowflake/cortex:__subpackages__",
     "//tests/integ/snowflake/ml:__subpackages__",
     "//tests/perf:__subpackages__",
 ])

@@ -72,10 +72,10 @@ class SeqOfPyTorchTensorHandler(base_handler.BaseDataHandler[Sequence["torch.Ten
             dtype = core.DataType.from_torch_type(data_col.dtype)
             ft_name = f"{role_prefix}{feature_prefix}{i}"
             if len(data_col.shape) == 1:
-                features.append(core.FeatureSpec(dtype=dtype, name=ft_name))
+                features.append(core.FeatureSpec(dtype=dtype, name=ft_name, nullable=False))
             else:
                 ft_shape = tuple(data_col.shape[1:])
-                features.append(core.FeatureSpec(dtype=dtype, name=ft_name, shape=ft_shape))
+                features.append(core.FeatureSpec(dtype=dtype, name=ft_name, shape=ft_shape, nullable=False))
         return features
 
     @staticmethod

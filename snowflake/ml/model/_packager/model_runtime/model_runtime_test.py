@@ -19,6 +19,13 @@ _BASIC_DEPENDENCIES_TARGET_RELAXED = list(
     )
 )
 
+_BASIC_DEPENDENCIES_TARGET_RELAXED_WAREHOUSE = list(
+    filter(
+        lambda x: not any(dep in x for dep in model_runtime.PACKAGES_NOT_ALLOWED_IN_WAREHOUSE),
+        _BASIC_DEPENDENCIES_TARGET_RELAXED,
+    )
+)
+
 
 class ModelRuntimeTest(absltest.TestCase):
     def test_model_runtime(self) -> None:
@@ -138,7 +145,7 @@ class ModelRuntimeTest(absltest.TestCase):
             with open(os.path.join(workspace, "runtimes/cpu/env/conda.yml"), encoding="utf-8") as f:
                 dependencies = yaml.safe_load(f)
 
-            self.assertContainsSubset(_BASIC_DEPENDENCIES_TARGET_RELAXED + ["pyarrow"], dependencies["dependencies"])
+            self.assertContainsSubset(_BASIC_DEPENDENCIES_TARGET_RELAXED, dependencies["dependencies"])
 
     def test_model_runtime_local_snowml_warehouse(self) -> None:
         with tempfile.TemporaryDirectory() as workspace:
@@ -165,8 +172,7 @@ class ModelRuntimeTest(absltest.TestCase):
             with open(os.path.join(workspace, "runtimes/cpu/env/conda.yml"), encoding="utf-8") as f:
                 dependencies = yaml.safe_load(f)
 
-            self.assertContainsSubset(_BASIC_DEPENDENCIES_TARGET_RELAXED, dependencies["dependencies"])
-            self.assertNotIn("pyarrow", dependencies["dependencies"])
+            self.assertContainsSubset(_BASIC_DEPENDENCIES_TARGET_RELAXED_WAREHOUSE, dependencies["dependencies"])
 
     def test_model_runtime_dup_basic_dep(self) -> None:
         with tempfile.TemporaryDirectory() as workspace:

@@ -1,4 +1,4 @@
-import sys
+import importlib
 from typing import Any, Generic, Type, TypeVar, Union, cast
 
 import numpy as np
@@ -51,8 +51,8 @@ class LazyType(Generic[T]):
     def get_class(self) -> Type[T]:
         if self._runtime_class is None:
             try:
-                m = sys.modules[self.module]
-            except KeyError:
+                m = importlib.import_module(self.module)
+            except ModuleNotFoundError:
                 raise ValueError(f"Module {self.module} not imported.")
 
             self._runtime_class = cast("Type[T]", getattr(m, self.qualname))

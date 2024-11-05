@@ -137,7 +137,7 @@ class CommonTestBase(parameterized.TestCase):
 
                         imports = [snowml_zip_module_filename, tests_zip_module_filename]
                         packages = additional_packages or []
-                        for req_str in _snowml_requirements.REQUIREMENTS:
+                        for req_str in _snowml_requirements.ALL_REQUIREMENTS:
                             req = requirements.Requirement(req_str)
                             # Remove "_" not in req once Snowpark 1.11.0 available, it is a workaround for their bug.
                             if any(offending in req.name for offending in ["snowflake-connector-python", "pyarrow"]):

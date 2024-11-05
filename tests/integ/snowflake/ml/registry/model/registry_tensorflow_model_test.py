@@ -58,16 +58,25 @@ class TestRegistryTensorflowModelInteg(registry_model_test_base.RegistryModelTes
         x_df = tensorflow_handler.SeqOfTensorflowTensorHandler.convert_to_df([data_x], ensure_serializable=False)
         y_pred = model(data_x)
 
+        def assert_fn(res):
+            y_pred_df = tensorflow_handler.SeqOfTensorflowTensorHandler.convert_to_df(
+                tf.transpose(tf.expand_dims(y_pred, axis=0)),
+                ensure_serializable=False,
+            )
+            y_pred_df.columns = res.columns
+            pd.testing.assert_frame_equal(
+                res,
+                y_pred_df,
+                check_dtype=False,
+            )
+
         getattr(self, registry_test_fn)(
             model=model,
             sample_input_data=[data_x],
             prediction_assert_fns={
                 "": (
                     x_df,
-                    lambda res: np.testing.assert_allclose(
-                        tensorflow_handler.SeqOfTensorflowTensorHandler.convert_from_df(res)[0].numpy(),
-                        y_pred.numpy(),
-                    ),
+                    assert_fn,
                 ),
             },
         )
@@ -83,16 +92,25 @@ class TestRegistryTensorflowModelInteg(registry_model_test_base.RegistryModelTes
         x_df = tensorflow_handler.SeqOfTensorflowTensorHandler.convert_to_df([data_x], ensure_serializable=False)
         y_pred = model(data_x)
 
+        def assert_fn(res):
+            y_pred_df = tensorflow_handler.SeqOfTensorflowTensorHandler.convert_to_df(
+                tf.transpose(tf.expand_dims(y_pred, axis=0)),
+                ensure_serializable=False,
+            )
+            y_pred_df.columns = res.columns
+            pd.testing.assert_frame_equal(
+                res,
+                y_pred_df,
+                check_dtype=False,
+            )
+
         getattr(self, registry_test_fn)(
             model=model,
             sample_input_data=x_df,
             prediction_assert_fns={
                 "": (
                     x_df,
-                    lambda res: np.testing.assert_allclose(
-                        tensorflow_handler.SeqOfTensorflowTensorHandler.convert_from_df(res)[0].numpy(),
-                        y_pred.numpy(),
-                    ),
+                    assert_fn,
                 ),
             },
         )
@@ -137,17 +155,28 @@ class TestRegistryTensorflowModelInteg(registry_model_test_base.RegistryModelTes
         model, data_x, data_y = prepare_keras_model()
         x_df = tensorflow_handler.SeqOfTensorflowTensorHandler.convert_to_df([data_x], ensure_serializable=False)
         y_pred = model.predict(data_x)
+
+        def assert_fn(res):
+            y_pred_df = pd.DataFrame(y_pred)
+            y_pred_df.columns = res.columns
+            # res's shape:         (num_rows, 1, 1)
+            # y_pred_df's shape:   (num_rows, 1)
+            # convert list to scalar value before comparing
+            for col in res.columns:
+                res[col] = res[col].apply(lambda x: x[0])
+            pd.testing.assert_frame_equal(
+                res,
+                y_pred_df,
+                check_dtype=False,
+            )
+
         getattr(self, registry_test_fn)(
             model=model,
             sample_input_data=[data_x],
             prediction_assert_fns={
                 "": (
                     x_df,
-                    lambda res: np.testing.assert_allclose(
-                        tensorflow_handler.SeqOfTensorflowTensorHandler.convert_from_df(res)[0].numpy(),
-                        y_pred,
-                        atol=1e-6,
-                    ),
+                    assert_fn,
                 ),
             },
         )
@@ -162,17 +191,28 @@ class TestRegistryTensorflowModelInteg(registry_model_test_base.RegistryModelTes
         model, data_x, data_y = prepare_keras_model()
         x_df = tensorflow_handler.SeqOfTensorflowTensorHandler.convert_to_df([data_x], ensure_serializable=False)
         y_pred = model.predict(data_x)
+
+        def assert_fn(res):
+            y_pred_df = pd.DataFrame(y_pred)
+            y_pred_df.columns = res.columns
+            # res's shape:         (num_rows, 1, 1)
+            # y_pred_df's shape:   (num_rows, 1)
+            # convert list to scalar value before comparing
+            for col in res.columns:
+                res[col] = res[col].apply(lambda x: x[0])
+            pd.testing.assert_frame_equal(
+                res,
+                y_pred_df,
+                check_dtype=False,
+            )
+
         getattr(self, registry_test_fn)(
             model=model,
             sample_input_data=x_df,
             prediction_assert_fns={
                 "": (
                     x_df,
-                    lambda res: np.testing.assert_allclose(
-                        tensorflow_handler.SeqOfTensorflowTensorHandler.convert_from_df(res)[0].numpy(),
-                        y_pred,
-                        atol=1e-6,
-                    ),
+                    assert_fn,
                 ),
             },
         )

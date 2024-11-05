@@ -139,9 +139,32 @@ def _rename_signature_with_snowflake_identifiers(
     return signature
 
 
-def _validate_numpy_array(
-    arr: model_types._SupportedNumpyArray, feature_type: core.DataType, strict: bool = False
+def _validate_array_or_series_type(
+    arr: Union[model_types._SupportedNumpyArray, pd.Series], feature_type: core.DataType, strict: bool = False
 ) -> bool:
+    original_dtype = arr.dtype
+    dtype = arr.dtype
+    if isinstance(
+        dtype,
+        (
+            pd.Int8Dtype,
+            pd.Int16Dtype,
+            pd.Int32Dtype,
+            pd.Int64Dtype,
+            pd.UInt8Dtype,
+            pd.UInt16Dtype,
+            pd.UInt32Dtype,
+            pd.UInt64Dtype,
+            pd.Float32Dtype,
+            pd.Float64Dtype,
+            pd.BooleanDtype,
+        ),
+    ):
+        dtype = dtype.type
+    elif isinstance(dtype, pd.CategoricalDtype):
+        dtype = dtype.categories.dtype
+    elif isinstance(dtype, pd.StringDtype):
+        dtype = np.str_
     if feature_type in [
         core.DataType.INT8,
         core.DataType.INT16,
@@ -152,14 +175,17 @@ def _validate_numpy_array(
         core.DataType.UINT32,
         core.DataType.UINT64,
     ]:
-        if not (np.issubdtype(arr.dtype, np.integer)):
+        if not (np.issubdtype(dtype, np.integer)):
             return False
         if not strict:
             return True
-        min_v, max_v = arr.min(), arr.max()
+        if isinstance(original_dtype, pd.CategoricalDtype):
+            min_v, max_v = arr.cat.as_ordered().min(), arr.cat.as_ordered().min()  # type: ignore[union-attr]
+        else:
+            min_v, max_v = arr.min(), arr.max()
         return bool(max_v <= np.iinfo(feature_type._numpy_type).max and min_v >= np.iinfo(feature_type._numpy_type).min)
     elif feature_type in [core.DataType.FLOAT, core.DataType.DOUBLE]:
-        if not (np.issubdtype(arr.dtype, np.integer) or np.issubdtype(arr.dtype, np.floating)):
+        if not (np.issubdtype(dtype, np.integer) or np.issubdtype(dtype, np.floating)):
             return False
         if not strict:
             return True
@@ -171,7 +197,7 @@ def _validate_numpy_array(
     elif feature_type in [core.DataType.TIMESTAMP_NTZ]:
         return np.issubdtype(arr.dtype, np.datetime64)
     else:
-        return np.can_cast(arr.dtype, feature_type._numpy_type, casting="no")
+        return np.can_cast(dtype, feature_type._numpy_type, casting="no")
 
 
 def _validate_pandas_df(data: pd.DataFrame, features: Sequence[core.BaseFeatureSpec], strict: bool = False) -> None:
@@ -204,7 +230,10 @@ def _validate_pandas_df(data: pd.DataFrame, features: Sequence[core.BaseFeatureS
                 original_exception=ValueError(f"Data Validation Error: feature {ft_name} does not exist in data."),
             )
 
+        if data_col.isnull().any():
+            data_col = utils.series_dropna(data_col)
         df_col_dtype = data_col.dtype
+
         if isinstance(feature, core.FeatureGroupSpec):
             raise snowml_exceptions.SnowflakeMLException(
                 error_code=error_codes.NOT_IMPLEMENTED,
@@ -217,7 +246,7 @@ def _validate_pandas_df(data: pd.DataFrame, features: Sequence[core.BaseFeatureS
         if isinstance(df_col_dtype, pd.CategoricalDtype):
             df_col_dtype = df_col_dtype.categories.dtype
         if df_col_dtype != np.dtype("O"):
-            if not _validate_numpy_array(data_col.to_numpy(), ft_type, strict=strict):
+            if not _validate_array_or_series_type(data_col, ft_type, strict=strict):
                 raise snowml_exceptions.SnowflakeMLException(
                     error_code=error_codes.INVALID_DATA,
                     original_exception=ValueError(
@@ -247,7 +276,7 @@ def _validate_pandas_df(data: pd.DataFrame, features: Sequence[core.BaseFeatureS
                 converted_data_list = [utils.convert_list_to_ndarray(data_row) for data_row in data_col]
 
                 if not all(
-                    _validate_numpy_array(converted_data, ft_type, strict=strict)
+                    _validate_array_or_series_type(converted_data, ft_type, strict=strict)
                     for converted_data in converted_data_list
                 ):
                     raise snowml_exceptions.SnowflakeMLException(
@@ -278,7 +307,7 @@ def _validate_pandas_df(data: pd.DataFrame, features: Sequence[core.BaseFeatureS
                         ),
                     )
 
-                if not all(_validate_numpy_array(data_row, ft_type, strict=strict) for data_row in data_col):
+                if not all(_validate_array_or_series_type(data_row, ft_type, strict=strict) for data_row in data_col):
                     raise snowml_exceptions.SnowflakeMLException(
                         error_code=error_codes.INVALID_DATA,
                         original_exception=ValueError(

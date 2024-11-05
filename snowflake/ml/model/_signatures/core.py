@@ -14,10 +14,12 @@ from typing import (
     Type,
     Union,
     final,
+    get_args,
 )
 
 import numpy as np
 import numpy.typing as npt
+import pandas as pd
 
 import snowflake.snowpark.types as spt
 from snowflake.ml._internal.exceptions import (
@@ -28,6 +30,21 @@ from snowflake.ml._internal.exceptions import (
 if TYPE_CHECKING:
     import mlflow
     import torch
+
+PandasExtensionTypes = Union[
+    pd.Int8Dtype,
+    pd.Int16Dtype,
+    pd.Int32Dtype,
+    pd.Int64Dtype,
+    pd.UInt8Dtype,
+    pd.UInt16Dtype,
+    pd.UInt32Dtype,
+    pd.UInt64Dtype,
+    pd.Float32Dtype,
+    pd.Float64Dtype,
+    pd.BooleanDtype,
+    pd.StringDtype,
+]
 
 
 class DataType(Enum):
@@ -67,11 +84,11 @@ class DataType(Enum):
         return f"DataType.{self.name}"
 
     @classmethod
-    def from_numpy_type(cls, np_type: npt.DTypeLike) -> "DataType":
+    def from_numpy_type(cls, input_type: Union[npt.DTypeLike, PandasExtensionTypes]) -> "DataType":
         """Translate numpy dtype to DataType for signature definition.
 
         Args:
-            np_type: The numpy dtype.
+            input_type: The numpy dtype or Pandas Extension Dtype
 
         Raises:
             SnowflakeMLException: NotImplementedError: Raised when the given numpy type is not supported.
@@ -79,6 +96,10 @@ class DataType(Enum):
         Returns:
             Corresponding DataType.
         """
+        # To support pandas extension dtype
+        if isinstance(input_type, get_args(PandasExtensionTypes)):
+            input_type = input_type.type
+
         np_to_snowml_type_mapping = {i._numpy_type: i for i in DataType}
 
         # Add datetime types:
@@ -88,12 +109,12 @@ class DataType(Enum):
             np_to_snowml_type_mapping[f"datetime64[{res}]"] = DataType.TIMESTAMP_NTZ
 
         for potential_type in np_to_snowml_type_mapping.keys():
-            if np.can_cast(np_type, potential_type, casting="no"):
+            if np.can_cast(input_type, potential_type, casting="no"):
                 # This is used since the same dtype might represented in different ways.
                 return np_to_snowml_type_mapping[potential_type]
         raise snowml_exceptions.SnowflakeMLException(
             error_code=error_codes.NOT_IMPLEMENTED,
-            original_exception=NotImplementedError(f"Type {np_type} is not supported as a DataType."),
+            original_exception=NotImplementedError(f"Type {input_type} is not supported as a DataType."),
         )
 
     @classmethod
@@ -212,6 +233,7 @@ class FeatureSpec(BaseFeatureSpec):
         name: str,
         dtype: DataType,
         shape: Optional[Tuple[int, ...]] = None,
+        nullable: bool = True,
     ) -> None:
         """
         Initialize a feature.
@@ -219,6 +241,7 @@ class FeatureSpec(BaseFeatureSpec):
         Args:
             name: Name of the feature.
             dtype: Type of the elements in the feature.
+            nullable: Whether the feature is nullable. Defaults to True.
             shape: Used to represent scalar feature, 1-d feature list,
                 or n-d tensor. Use -1 to represent variable length. Defaults to None.
 
@@ -227,6 +250,7 @@ class FeatureSpec(BaseFeatureSpec):
                     - (2,): 1d list with a fixed length of 2.
                     - (-1,): 1d list with variable length, used for ragged tensor representation.
                     - (d1, d2, d3): 3d tensor.
+            nullable: Whether the feature is nullable. Defaults to True.
 
         Raises:
             SnowflakeMLException: TypeError: When the dtype input type is incorrect.
@@ -248,6 +272,8 @@ class FeatureSpec(BaseFeatureSpec):
             )
         self._shape = shape
 
+        self._nullable = nullable
+
     def as_snowpark_type(self) -> spt.DataType:
         result_type = self._dtype.as_snowpark_type()
         if not self._shape:
@@ -256,13 +282,34 @@ class FeatureSpec(BaseFeatureSpec):
             result_type = spt.ArrayType(result_type)
         return result_type
 
-    def as_dtype(self) -> Union[npt.DTypeLike, str]:
+    def as_dtype(self) -> Union[npt.DTypeLike, str, PandasExtensionTypes]:
         """Convert to corresponding local Type."""
+
         if not self._shape:
             # scalar dtype: use keys from `np.sctypeDict` to prevent unit-less dtype 'datetime64'
             if "datetime64" in self._dtype._value:
                 return self._dtype._value
-            return self._dtype._numpy_type
+
+            np_type = self._dtype._numpy_type
+            if self._nullable:
+                np_to_pd_dtype_mapping = {
+                    np.int8: pd.Int8Dtype(),
+                    np.int16: pd.Int16Dtype(),
+                    np.int32: pd.Int32Dtype(),
+                    np.int64: pd.Int64Dtype(),
+                    np.uint8: pd.UInt8Dtype(),
+                    np.uint16: pd.UInt16Dtype(),
+                    np.uint32: pd.UInt32Dtype(),
+                    np.uint64: pd.UInt64Dtype(),
+                    np.float32: pd.Float32Dtype(),
+                    np.float64: pd.Float64Dtype(),
+                    np.bool_: pd.BooleanDtype(),
+                    np.str_: pd.StringDtype(),
+                }
+
+                return np_to_pd_dtype_mapping.get(np_type, np_type)  # type: ignore[arg-type]
+
+            return np_type
         return np.object_
 
     def __eq__(self, other: object) -> bool:
@@ -273,7 +320,10 @@ class FeatureSpec(BaseFeatureSpec):
 
     def __repr__(self) -> str:
         shape_str = f", shape={repr(self._shape)}" if self._shape else ""
-        return f"FeatureSpec(dtype={repr(self._dtype)}, name={repr(self._name)}{shape_str})"
+        return (
+            f"FeatureSpec(dtype={repr(self._dtype)}, "
+            f"name={repr(self._name)}{shape_str}, nullable={repr(self._nullable)})"
+        )
 
     def to_dict(self) -> Dict[str, Any]:
         """Serialize the feature group into a dict.
@@ -281,10 +331,7 @@ class FeatureSpec(BaseFeatureSpec):
         Returns:
             A dict that serializes the feature group.
         """
-        base_dict: Dict[str, Any] = {
-            "type": self._dtype.name,
-            "name": self._name,
-        }
+        base_dict: Dict[str, Any] = {"type": self._dtype.name, "name": self._name, "nullable": self._nullable}
         if self._shape is not None:
             base_dict["shape"] = self._shape
         return base_dict
@@ -304,7 +351,9 @@ class FeatureSpec(BaseFeatureSpec):
         if shape:
             shape = tuple(shape)
         type = DataType[input_dict["type"]]
-        return FeatureSpec(name=name, dtype=type, shape=shape)
+        # If nullable is not provided, default to False for backward compatibility.
+        nullable = input_dict.get("nullable", False)
+        return FeatureSpec(name=name, dtype=type, shape=shape, nullable=nullable)
 
     @classmethod
     def from_mlflow_spec(
@@ -475,10 +524,8 @@ class ModelSignature:
         sig_outs = loaded["outputs"]
         sig_inputs = loaded["inputs"]
 
-        deserialize_spec: Callable[[Dict[str, Any]], BaseFeatureSpec] = (
-            lambda sig_spec: FeatureGroupSpec.from_dict(sig_spec)
-            if "feature_group" in sig_spec
-            else FeatureSpec.from_dict(sig_spec)
+        deserialize_spec: Callable[[Dict[str, Any]], BaseFeatureSpec] = lambda sig_spec: (
+            FeatureGroupSpec.from_dict(sig_spec) if "feature_group" in sig_spec else FeatureSpec.from_dict(sig_spec)
         )
 
         return ModelSignature(

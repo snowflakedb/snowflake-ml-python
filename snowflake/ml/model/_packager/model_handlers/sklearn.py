@@ -19,10 +19,24 @@ from snowflake.ml.model._packager.model_meta import (
 )
 from snowflake.ml.model._packager.model_task import model_task_utils
 from snowflake.ml.model._signatures import numpy_handler, utils as model_signature_utils
+from snowflake.ml.modeling._internal.constants import IN_ML_RUNTIME_ENV_VAR
 
 if TYPE_CHECKING:
     import sklearn.base
     import sklearn.pipeline
+
+
+def _unpack_container_runtime_pipeline(model: "sklearn.pipeline.Pipeline") -> "sklearn.pipeline.Pipeline":
+    new_steps = []
+    for step_name, step in model.steps:
+        new_reg = step
+        if hasattr(step, "_sklearn_estimator") and step._sklearn_estimator is not None:
+            # Unpack estimator to open source.
+            new_reg = step._sklearn_estimator
+        new_steps.append((step_name, new_reg))
+
+    model.steps = new_steps
+    return model
 
 
 @final
@@ -101,6 +115,10 @@ class SKLModelHandler(_base.BaseModelHandler[Union["sklearn.base.BaseEstimator",
             if sample_input_data is None:
                 raise ValueError("Sample input data is required to enable explainability.")
 
+        # If this is a pipeline and we are in the container runtime, check for distributed estimator.
+        if os.getenv(IN_ML_RUNTIME_ENV_VAR) and isinstance(model, sklearn.pipeline.Pipeline):
+            model = _unpack_container_runtime_pipeline(model)
+
         if not is_sub_model:
             target_methods = handlers_utils.get_target_methods(
                 model=model,
@@ -135,7 +153,7 @@ class SKLModelHandler(_base.BaseModelHandler[Union["sklearn.base.BaseEstimator",
             )
 
             model_task_and_output_type = model_task_utils.get_model_task_and_output_type(model)
-            model_meta.task = model_task_and_output_type.task
+            model_meta.task = handlers_utils.validate_model_task(model_meta.task, model_task_and_output_type.task)
 
             # if users did not ask then we enable if we have background data
             if enable_explainability is None:
@@ -176,6 +194,35 @@ class SKLModelHandler(_base.BaseModelHandler[Union["sklearn.base.BaseEstimator",
         )
         model_meta.models[name] = base_meta
         model_meta.min_snowpark_ml_version = cls._MIN_SNOWPARK_ML_VERSION
+
+        # if model instance is a pipeline, check the pipeline steps
+        if isinstance(model, sklearn.pipeline.Pipeline):
+            for _, pipeline_step in model.steps:
+                if type_utils.LazyType("lightgbm.LGBMModel").isinstance(pipeline_step) or type_utils.LazyType(
+                    "lightgbm.Booster"
+                ).isinstance(pipeline_step):
+                    model_meta.env.include_if_absent(
+                        [
+                            model_env.ModelDependency(requirement="lightgbm", pip_name="lightgbm"),
+                        ],
+                        check_local_version=True,
+                    )
+                elif type_utils.LazyType("xgboost.XGBModel").isinstance(pipeline_step) or type_utils.LazyType(
+                    "xgboost.Booster"
+                ).isinstance(pipeline_step):
+                    model_meta.env.include_if_absent(
+                        [
+                            model_env.ModelDependency(requirement="xgboost", pip_name="xgboost"),
+                        ],
+                        check_local_version=True,
+                    )
+                elif type_utils.LazyType("catboost.CatBoost").isinstance(pipeline_step):
+                    model_meta.env.include_if_absent(
+                        [
+                            model_env.ModelDependency(requirement="catboost", pip_name="catboost"),
+                        ],
+                        check_local_version=True,
+                    )
 
         if enable_explainability:
             model_meta.env.include_if_absent([model_env.ModelDependency(requirement="shap", pip_name="shap")])

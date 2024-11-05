@@ -13,6 +13,7 @@ from snowflake.ml.model._packager.model_handlers_migrator import base_migrator
 from snowflake.ml.model._packager.model_meta import (
     model_blob_meta,
     model_meta as model_meta_api,
+    model_meta_schema,
 )
 from snowflake.ml.model._signatures import (
     numpy_handler,
@@ -76,7 +77,11 @@ class TensorFlowHandler(_base.BaseModelHandler["tensorflow.Module"]):
 
         assert isinstance(model, tensorflow.Module)
 
-        if isinstance(model, tensorflow.keras.Model):
+        is_keras_model = type_utils.LazyType("tensorflow.keras.Model").isinstance(model) or type_utils.LazyType(
+            "tf_keras.Model"
+        ).isinstance(model)
+
+        if is_keras_model:
             default_target_methods = ["predict"]
         else:
             default_target_methods = cls.DEFAULT_TARGET_METHODS
@@ -117,8 +122,14 @@ class TensorFlowHandler(_base.BaseModelHandler["tensorflow.Module"]):
 
         model_blob_path = os.path.join(model_blobs_dir_path, name)
         os.makedirs(model_blob_path, exist_ok=True)
-        if isinstance(model, tensorflow.keras.Model):
+        if is_keras_model:
             tensorflow.keras.models.save_model(model, os.path.join(model_blob_path, cls.MODEL_BLOB_FILE_OR_DIR))
+            model_meta.env.include_if_absent(
+                [
+                    model_env.ModelDependency(requirement="keras<3", pip_name="keras"),
+                ],
+                check_local_version=False,
+            )
         else:
             tensorflow.saved_model.save(model, os.path.join(model_blob_path, cls.MODEL_BLOB_FILE_OR_DIR))
 
@@ -127,12 +138,16 @@ class TensorFlowHandler(_base.BaseModelHandler["tensorflow.Module"]):
             model_type=cls.HANDLER_TYPE,
             handler_version=cls.HANDLER_VERSION,
             path=cls.MODEL_BLOB_FILE_OR_DIR,
+            options=model_meta_schema.TensorflowModelBlobOptions(is_keras_model=is_keras_model),
         )
         model_meta.models[name] = base_meta
         model_meta.min_snowpark_ml_version = cls._MIN_SNOWPARK_ML_VERSION
 
         model_meta.env.include_if_absent(
-            [model_env.ModelDependency(requirement="tensorflow", pip_name="tensorflow")], check_local_version=True
+            [
+                model_env.ModelDependency(requirement="tensorflow", pip_name="tensorflow"),
+            ],
+            check_local_version=True,
         )
         model_meta.env.cuda_version = kwargs.get("cuda_version", model_env.DEFAULT_CUDA_VERSION)
 
@@ -150,9 +165,11 @@ class TensorFlowHandler(_base.BaseModelHandler["tensorflow.Module"]):
         model_blobs_metadata = model_meta.models
         model_blob_metadata = model_blobs_metadata[name]
         model_blob_filename = model_blob_metadata.path
-        m = tensorflow.keras.models.load_model(os.path.join(model_blob_path, model_blob_filename), compile=False)
-        if isinstance(m, tensorflow.keras.Model):
-            return m
+        model_blob_options = cast(model_meta_schema.TensorflowModelBlobOptions, model_blob_metadata.options)
+        if model_blob_options.get("is_keras_model", False):
+            m = tensorflow.keras.models.load_model(os.path.join(model_blob_path, model_blob_filename), compile=False)
+        else:
+            m = tensorflow.saved_model.load(os.path.join(model_blob_path, model_blob_filename))
         return cast(tensorflow.Module, m)
 
     @classmethod

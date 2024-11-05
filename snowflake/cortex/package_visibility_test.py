@@ -31,6 +31,11 @@ class PackageVisibilityTest(absltest.TestCase):
     def test_translate_visible(self) -> None:
         self.assertTrue(callable(cortex.Translate))
 
+    def test_finetune_visible(self) -> None:
+        self.assertTrue(callable(cortex.Finetune))
+        self.assertTrue(callable(cortex.FinetuneJob))
+        self.assertTrue(callable(cortex.FinetuneStatus))
+
 
 if __name__ == "__main__":
     absltest.main()

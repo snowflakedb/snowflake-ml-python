@@ -40,11 +40,19 @@ class TestRegistrySKLearnModelInteg(registry_model_test_base.RegistryModelTestBa
             prediction_assert_fns={
                 "predict": (
                     iris_X,
-                    lambda res: np.testing.assert_allclose(res["output_feature_0"].values, classifier.predict(iris_X)),
+                    lambda res: pd.testing.assert_frame_equal(
+                        res["output_feature_0"].to_frame("output_feature_0"),
+                        pd.DataFrame(classifier.predict(iris_X), columns=["output_feature_0"]),
+                        check_dtype=False,
+                    ),
                 ),
                 "predict_proba": (
                     iris_X[:10],
-                    lambda res: np.testing.assert_allclose(res.values, classifier.predict_proba(iris_X[:10])),
+                    lambda res: pd.testing.assert_frame_equal(
+                        res,
+                        pd.DataFrame(classifier.predict_proba(iris_X[:10]), columns=res.columns),
+                        check_dtype=False,
+                    ),
                 ),
             },
             function_type_assert={
@@ -68,23 +76,41 @@ class TestRegistrySKLearnModelInteg(registry_model_test_base.RegistryModelTestBa
         classifier.fit(iris_X_df, iris_y)
         expected_explanations = shap.Explainer(classifier, iris_X_df)(iris_X_df).values
 
+        def _check_explain(res: pd.DataFrame) -> None:
+            actual_explain_df = handlers_utils.convert_explanations_to_2D_df(classifier, expected_explanations)
+            rename_columns = {
+                old_col_name: new_col_name for old_col_name, new_col_name in zip(actual_explain_df.columns, res.columns)
+            }
+            actual_explain_df.rename(columns=rename_columns, inplace=True)
+            pd.testing.assert_frame_equal(
+                res,
+                actual_explain_df,
+                check_dtype=False,
+            )
+
         getattr(self, registry_test_fn)(
             model=classifier,
             sample_input_data=iris_X_df,
             prediction_assert_fns={
                 "predict": (
                     iris_X_df,
-                    lambda res: np.testing.assert_allclose(res["output_feature_0"].values, classifier.predict(iris_X)),
+                    lambda res: pd.testing.assert_frame_equal(
+                        res["output_feature_0"].to_frame("output_feature_0"),
+                        pd.DataFrame(classifier.predict(iris_X), columns=["output_feature_0"]),
+                        check_dtype=False,
+                    ),
                 ),
                 "predict_proba": (
                     iris_X_df.iloc[:10],
-                    lambda res: np.testing.assert_allclose(res.values, classifier.predict_proba(iris_X[:10])),
+                    lambda res: pd.testing.assert_frame_equal(
+                        res,
+                        pd.DataFrame(classifier.predict_proba(iris_X_df[:10]), columns=res.columns),
+                        check_dtype=False,
+                    ),
                 ),
                 "explain": (
                     iris_X_df,
-                    lambda res: np.testing.assert_allclose(
-                        dataframe_utils.convert2D_json_to_3D(res.values), expected_explanations
-                    ),
+                    _check_explain,
                 ),
             },
             options={"enable_explainability": True},
@@ -153,11 +179,19 @@ class TestRegistrySKLearnModelInteg(registry_model_test_base.RegistryModelTestBa
             prediction_assert_fns={
                 '"predict"': (
                     iris_X,
-                    lambda res: np.testing.assert_allclose(res["output_feature_0"].values, regr.predict(iris_X)),
+                    lambda res: pd.testing.assert_frame_equal(
+                        res["output_feature_0"].to_frame("output_feature_0"),
+                        pd.DataFrame(regr.predict(iris_X), columns=["output_feature_0"]),
+                        check_dtype=False,
+                    ),
                 ),
                 '"predict_proba"': (
                     iris_X[:10],
-                    lambda res: np.testing.assert_allclose(res.values, regr.predict_proba(iris_X[:10])),
+                    lambda res: pd.testing.assert_frame_equal(
+                        res,
+                        pd.DataFrame(regr.predict_proba(iris_X[:10]), columns=res.columns),
+                        check_dtype=False,
+                    ),
                 ),
             },
         )
@@ -180,7 +214,11 @@ class TestRegistrySKLearnModelInteg(registry_model_test_base.RegistryModelTestBa
             prediction_assert_fns={
                 "predict": (
                     iris_X[-10:],
-                    lambda res: np.testing.assert_allclose(res.to_numpy(), model.predict(iris_X[-10:])),
+                    lambda res: pd.testing.assert_frame_equal(
+                        res,
+                        pd.DataFrame(model.predict(iris_X[-10:]), columns=res.columns),
+                        check_dtype=False,
+                    ),
                 ),
                 "predict_proba": (
                     iris_X[-10:],
@@ -218,7 +256,11 @@ class TestRegistrySKLearnModelInteg(registry_model_test_base.RegistryModelTestBa
         )
 
         res = mv.run(iris_X[-10:], function_name="predict")
-        np.testing.assert_allclose(res.to_numpy(), model.predict(iris_X[-10:]))
+        pd.testing.assert_frame_equal(
+            res,
+            pd.DataFrame(model.predict(iris_X[-10:]), columns=res.columns),
+            check_dtype=False,
+        )
 
         res = mv.run(iris_X[-10:], function_name="predict_proba")
         np.testing.assert_allclose(
@@ -252,19 +294,33 @@ class TestRegistrySKLearnModelInteg(registry_model_test_base.RegistryModelTestBa
             "predict": model_signature.infer_signature(iris_X_df, y_pred),
         }
 
+        def _check_explain(res: pd.DataFrame) -> None:
+            actual_explain_df = handlers_utils.convert_explanations_to_2D_df(classifier, expected_explanations)
+            rename_columns = {
+                old_col_name: new_col_name for old_col_name, new_col_name in zip(actual_explain_df.columns, res.columns)
+            }
+            actual_explain_df.rename(columns=rename_columns, inplace=True)
+            pd.testing.assert_frame_equal(
+                res,
+                actual_explain_df,
+                check_dtype=False,
+            )
+
         getattr(self, registry_test_fn)(
             model=classifier,
             sample_input_data=iris_X_df,
             prediction_assert_fns={
                 "predict": (
                     iris_X_df,
-                    lambda res: np.testing.assert_allclose(res["output_feature_0"].values, classifier.predict(iris_X)),
+                    lambda res: pd.testing.assert_frame_equal(
+                        res["output_feature_0"].to_frame("output_feature_0"),
+                        pd.DataFrame(classifier.predict(iris_X), columns=["output_feature_0"]),
+                        check_dtype=False,
+                    ),
                 ),
                 "explain": (
                     iris_X_df,
-                    lambda res: np.testing.assert_allclose(
-                        dataframe_utils.convert2D_json_to_3D(res.values), expected_explanations
-                    ),
+                    _check_explain,
                 ),
             },
             options={"enable_explainability": True},
@@ -306,6 +362,12 @@ class TestRegistrySKLearnModelInteg(registry_model_test_base.RegistryModelTestBa
             ]
         )
         pipeline.fit(df.drop("target", axis=1), df["target"])
+        expected_signatures = {
+            "predict": model_signature.infer_signature(
+                df[input_features],
+                df["target"].rename("output_feature_0"),
+            ),
+        }
 
         getattr(self, registry_test_fn)(
             model=pipeline,
@@ -313,13 +375,16 @@ class TestRegistrySKLearnModelInteg(registry_model_test_base.RegistryModelTestBa
             prediction_assert_fns={
                 "predict": (
                     df[input_features],
-                    lambda res: np.testing.assert_allclose(
-                        res["output_feature_0"].values, pipeline.predict(df[input_features])
+                    lambda res: pd.testing.assert_series_equal(
+                        res["output_feature_0"],
+                        pd.Series(pipeline.predict(df[input_features]), name="output_feature_0"),
+                        check_dtype=False,
                     ),
                 ),
             },
             # TODO(SNOW-1677301): Add support for explainability for categorical columns
             options={"enable_explainability": False},
+            signatures=expected_signatures,
         )
 
 

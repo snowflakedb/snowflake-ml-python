@@ -44,13 +44,17 @@ class PandasDataFrameHandlerTest(absltest.TestCase):
 
         df = pd.DataFrame([[1, "Hello"], [2, [2, 6]]], columns=["a", "b"])
         with exception_utils.assert_snowml_exceptions(
-            self, expected_original_error_type=ValueError, expected_regex="Inconsistent type of object"
+            self,
+            expected_original_error_type=ValueError,
+            expected_regex="Inconsistent type of element in object found in column data",
         ):
             pandas_handler.PandasDataFrameHandler.validate(df)
 
         df = pd.DataFrame([[1, 2], [2, [2, 6]]], columns=["a", "b"])
         with exception_utils.assert_snowml_exceptions(
-            self, expected_original_error_type=ValueError, expected_regex="Inconsistent type of object"
+            self,
+            expected_original_error_type=ValueError,
+            expected_regex="Inconsistent type of element in object found in column data",
         ):
             pandas_handler.PandasDataFrameHandler.validate(df)
 
@@ -86,8 +90,32 @@ class PandasDataFrameHandlerTest(absltest.TestCase):
         with exception_utils.assert_snowml_exceptions(
             self,
             expected_original_error_type=ValueError,
-            expected_regex="Inconsistent type of object found in column data",
+            expected_regex="Inconsistent type of element in object found in column data",
         ):
+            pandas_handler.PandasDataFrameHandler.validate(df)
+
+        df = pd.DataFrame([[None, 2], [None, 6]], columns=["a", "b"])
+        with exception_utils.assert_snowml_exceptions(
+            self,
+            expected_original_error_type=ValueError,
+            expected_regex="There is no non-null data in column",
+        ):
+            pandas_handler.PandasDataFrameHandler.validate(df)
+
+        df = pd.DataFrame([[1, None], [2, 6]], columns=["a", "b"])
+        with self.assertWarnsRegex(UserWarning, "Null value detected in column"):
+            pandas_handler.PandasDataFrameHandler.validate(df)
+
+        df = pd.DataFrame([[1, np.array([2.5, 6.8])], [2, np.array([2.5, 6.8])], [3, None]], columns=["a", "b"])
+        with self.assertWarnsRegex(UserWarning, "Null value detected in column"):
+            pandas_handler.PandasDataFrameHandler.validate(df)
+
+        df = pd.DataFrame([[1, None], [2, [6]]], columns=["a", "b"])
+        with self.assertWarnsRegex(UserWarning, "Null value detected in column"):
+            pandas_handler.PandasDataFrameHandler.validate(df)
+
+        df = pd.DataFrame([[1, None], [2, "a"]], columns=["a", "b"])
+        with self.assertWarnsRegex(UserWarning, "Null value detected in column"):
             pandas_handler.PandasDataFrameHandler.validate(df)
 
     def test_trunc_pd_DataFrame(self) -> None:
@@ -118,13 +146,31 @@ class PandasDataFrameHandlerTest(absltest.TestCase):
             [core.FeatureSpec("a", core.DataType.INT64)],
         )
 
+        df = pd.DataFrame([1, 2, 3, None], columns=["a"])
+        self.assertListEqual(
+            pandas_handler.PandasDataFrameHandler.infer_signature(df, role="input"),
+            [core.FeatureSpec("a", core.DataType.INT64)],
+        )
+
         df = pd.DataFrame(["a", "b", "c", "d"], columns=["a"])
         self.assertListEqual(
             pandas_handler.PandasDataFrameHandler.infer_signature(df, role="input"),
             [core.FeatureSpec("a", core.DataType.STRING)],
         )
 
+        df = pd.DataFrame(["a", "b", None, "d"], columns=["a"])
+        self.assertListEqual(
+            pandas_handler.PandasDataFrameHandler.infer_signature(df, role="input"),
+            [core.FeatureSpec("a", core.DataType.STRING)],
+        )
+
         df = pd.DataFrame([ele.encode() for ele in ["a", "b", "c", "d"]], columns=["a"])
+        self.assertListEqual(
+            pandas_handler.PandasDataFrameHandler.infer_signature(df, role="input"),
+            [core.FeatureSpec("a", core.DataType.BYTES)],
+        )
+
+        df = pd.DataFrame([ele.encode() for ele in ["a", "b", "c", "d"]] + [None], columns=["a"])
         self.assertListEqual(
             pandas_handler.PandasDataFrameHandler.infer_signature(df, role="input"),
             [core.FeatureSpec("a", core.DataType.BYTES)],
@@ -139,7 +185,34 @@ class PandasDataFrameHandlerTest(absltest.TestCase):
             ],
         )
 
+        df = pd.DataFrame([[1, 2.0], [2, None]])
+        self.assertListEqual(
+            pandas_handler.PandasDataFrameHandler.infer_signature(df, role="input"),
+            [
+                core.FeatureSpec("input_feature_0", core.DataType.INT64),
+                core.FeatureSpec("input_feature_1", core.DataType.INT64),
+            ],
+        )
+
+        df = pd.DataFrame([[1, 2.4], [2, None]])
+        self.assertListEqual(
+            pandas_handler.PandasDataFrameHandler.infer_signature(df, role="input"),
+            [
+                core.FeatureSpec("input_feature_0", core.DataType.INT64),
+                core.FeatureSpec("input_feature_1", core.DataType.DOUBLE),
+            ],
+        )
+
         df = pd.DataFrame([[1, [2.5, 6.8]], [2, [2.5, 6.8]]], columns=["a", "b"])
+        self.assertListEqual(
+            pandas_handler.PandasDataFrameHandler.infer_signature(df, role="input"),
+            [
+                core.FeatureSpec("a", core.DataType.INT64),
+                core.FeatureSpec("b", core.DataType.DOUBLE, shape=(2,)),
+            ],
+        )
+
+        df = pd.DataFrame([[1, [2.5, 6.8]], [2, None]], columns=["a", "b"])
         self.assertListEqual(
             pandas_handler.PandasDataFrameHandler.infer_signature(df, role="input"),
             [
@@ -166,8 +239,27 @@ class PandasDataFrameHandlerTest(absltest.TestCase):
             ],
         )
 
+        df = pd.DataFrame([[1, [[2.5], [6.8]]], [2, None]], columns=["a", "b"])
+        self.assertListEqual(
+            pandas_handler.PandasDataFrameHandler.infer_signature(df, role="input"),
+            [
+                core.FeatureSpec("a", core.DataType.INT64),
+                core.FeatureSpec("b", core.DataType.DOUBLE, shape=(2, 1)),
+            ],
+        )
+
         a = np.array([2.5, 6.8])
         df = pd.DataFrame([[1, a], [2, a]], columns=["a", "b"])
+        self.assertListEqual(
+            pandas_handler.PandasDataFrameHandler.infer_signature(df, role="input"),
+            [
+                core.FeatureSpec("a", core.DataType.INT64),
+                core.FeatureSpec("b", core.DataType.DOUBLE, shape=(2,)),
+            ],
+        )
+
+        a = np.array([2.5, 6.8])
+        df = pd.DataFrame([[1, a], [2, None]], columns=["a", "b"])
         self.assertListEqual(
             pandas_handler.PandasDataFrameHandler.infer_signature(df, role="input"),
             [
@@ -313,6 +405,86 @@ class PandasDataFrameHandlerTest(absltest.TestCase):
         df.index = [10, 11, 12, 13]
         df["input"] = df["input"].astype(np.dtype("O"))
         pandas_handler.PandasDataFrameHandler.validate(df)
+
+    def test_validate_pd_Series(self) -> None:
+        s = pd.Series([], dtype=pd.Int16Dtype())
+        with exception_utils.assert_snowml_exceptions(
+            self, expected_original_error_type=ValueError, expected_regex="Empty data is found."
+        ):
+            pandas_handler.PandasDataFrameHandler.validate(s)
+
+        s = pd.Series([1, 2, 3, 4])
+        pandas_handler.PandasDataFrameHandler.validate(s)
+
+        s = pd.Series([1, 2, 3, 4], name="a")
+        pandas_handler.PandasDataFrameHandler.validate(s)
+
+        s = pd.Series(["a", "b", "c", "d"], name="a")
+        pandas_handler.PandasDataFrameHandler.validate(s)
+
+        s = pd.Series(
+            [ele.encode() for ele in ["a", "b", "c", "d"]],
+            name="a",
+        )
+        pandas_handler.PandasDataFrameHandler.validate(s)
+
+        s = pd.Series([1, 2.0])
+        pandas_handler.PandasDataFrameHandler.validate(s)
+
+        s = pd.Series([1, [2.5, 6.8]], name="a")
+        with exception_utils.assert_snowml_exceptions(
+            self,
+            expected_original_error_type=ValueError,
+            expected_regex="Inconsistent type of element in object found in column data",
+        ):
+            pandas_handler.PandasDataFrameHandler.validate(s)
+
+        a = np.array([2.5, 6.8])
+        s = pd.Series([1, a], name="a")
+        with exception_utils.assert_snowml_exceptions(
+            self,
+            expected_original_error_type=ValueError,
+            expected_regex="Inconsistent type of element in object found in column data",
+        ):
+            pandas_handler.PandasDataFrameHandler.validate(s)
+
+    def test_infer_signature_pd_Series(self) -> None:
+        s = pd.Series([1, 2, 3, 4])
+        self.assertListEqual(
+            pandas_handler.PandasDataFrameHandler.infer_signature(s, role="input"),
+            [core.FeatureSpec("input_feature_0", core.DataType.INT64)],
+        )
+
+        s = pd.Series([1, 2, 3, 4], name="a")
+        self.assertListEqual(
+            pandas_handler.PandasDataFrameHandler.infer_signature(s, role="input"),
+            [core.FeatureSpec("a", core.DataType.INT64)],
+        )
+
+        s = pd.Series(["a", "b", "c", "d"], name="a")
+        self.assertListEqual(
+            pandas_handler.PandasDataFrameHandler.infer_signature(s, role="input"),
+            [core.FeatureSpec("a", core.DataType.STRING)],
+        )
+
+        s = pd.Series([ele.encode() for ele in ["a", "b", "c", "d"]], name="a")
+        self.assertListEqual(
+            pandas_handler.PandasDataFrameHandler.infer_signature(s, role="input"),
+            [core.FeatureSpec("a", core.DataType.BYTES)],
+        )
+
+        s = pd.Series([1, 2.0])
+        self.assertListEqual(
+            pandas_handler.PandasDataFrameHandler.infer_signature(s, role="input"),
+            [core.FeatureSpec("input_feature_0", core.DataType.DOUBLE)],
+        )
+
+        # series with bytes data
+        s = pd.Series([b"1", b"2", b"3", b"4"])
+        self.assertListEqual(
+            pandas_handler.PandasDataFrameHandler.infer_signature(s, role="input"),
+            [core.FeatureSpec("input_feature_0", core.DataType.BYTES)],
+        )
 
 
 if __name__ == "__main__":

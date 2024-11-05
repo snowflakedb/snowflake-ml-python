@@ -845,19 +845,15 @@ class ModelVersionImplTest(absltest.TestCase):
             )
 
     def test_list_services(self) -> None:
-        m_df = pd.DataFrame(
-            {
-                "service_name": ["a.b.c", "a.b.c", "d.e.f"],
-                "endpoints": ["fooendpoint", "barendpoint", "bazendpoint"],
-            }
-        )
+        data = [
+            {"name": "a.b.c", "inference_endpoint": "fooendpoint"},
+            {"name": "d.e.f", "inference_endpoint": "bazendpoint"},
+        ]
+        m_df = pd.DataFrame(data)
         with mock.patch.object(
             self.m_mv._model_ops,
-            attribute="list_inference_services",
-            return_value={
-                "service_name": ["a.b.c", "a.b.c", "d.e.f"],
-                "endpoints": ["fooendpoint", "barendpoint", "bazendpoint"],
-            },
+            attribute="show_services",
+            return_value=data,
         ) as mock_get_functions:
             pd.testing.assert_frame_equal(m_df, self.m_mv.list_services())
             mock_get_functions.assert_called_once_with(
@@ -881,7 +877,23 @@ class ModelVersionImplTest(absltest.TestCase):
                 schema_name=None,
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
                 version_name=sql_identifier.SqlIdentifier("v1", case_sensitive=True),
-                service_name="c",
+                service_database_name=None,
+                service_schema_name=None,
+                service_name=sql_identifier.SqlIdentifier("c"),
+                statement_params=mock.ANY,
+            )
+
+        with mock.patch.object(self.m_mv._model_ops, attribute="delete_service") as mock_delete_service:
+            self.m_mv.delete_service("a.b.c")
+
+            mock_delete_service.assert_called_with(
+                database_name=None,
+                schema_name=None,
+                model_name=sql_identifier.SqlIdentifier("MODEL"),
+                version_name=sql_identifier.SqlIdentifier("v1", case_sensitive=True),
+                service_database_name=sql_identifier.SqlIdentifier("a"),
+                service_schema_name=sql_identifier.SqlIdentifier("b"),
+                service_name=sql_identifier.SqlIdentifier("c"),
                 statement_params=mock.ANY,
             )
 

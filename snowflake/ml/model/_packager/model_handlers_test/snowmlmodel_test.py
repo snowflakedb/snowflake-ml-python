@@ -8,7 +8,7 @@ import shap
 from absl.testing import absltest
 from sklearn import datasets
 
-from snowflake.ml.model import model_signature
+from snowflake.ml.model import model_signature, type_hints as model_types
 from snowflake.ml.model._packager import model_packager
 from snowflake.ml.modeling.linear_model import (  # type:ignore[attr-defined]
     LinearRegression,
@@ -49,6 +49,7 @@ class SnowMLModelHandlerTest(absltest.TestCase):
                 model=regr,
                 metadata={"author": "halu", "version": "1"},
                 options={"enable_explainability": False},
+                task=model_types.Task.TABULAR_REGRESSION,
             )
             with warnings.catch_warnings():
                 warnings.simplefilter("error")
@@ -67,6 +68,8 @@ class SnowMLModelHandlerTest(absltest.TestCase):
                 predict_method = getattr(pk.model, "predict", None)
                 assert callable(predict_method)
                 np.testing.assert_allclose(predictions, predict_method(df[:1])[[OUTPUT_COLUMNS]])
+                # correctly set when specified
+                self.assertEqual(pk.meta.task, model_types.Task.TABULAR_REGRESSION)
 
     def test_snowml_signature_partial_input(self) -> None:
         iris = datasets.load_iris()
@@ -171,6 +174,7 @@ class SnowMLModelHandlerTest(absltest.TestCase):
                 name="model1",
                 model=regr,
                 metadata={"author": "halu", "version": "1"},
+                task=model_types.Task.TABULAR_BINARY_CLASSIFICATION,  # incorrect type but should be inferred properly
             )
             with warnings.catch_warnings():
                 warnings.simplefilter("error")
@@ -185,6 +189,8 @@ class SnowMLModelHandlerTest(absltest.TestCase):
                 assert callable(explain_method)
                 np.testing.assert_allclose(predictions, predict_method(df[:1])[[OUTPUT_COLUMNS]])
                 np.testing.assert_allclose(explanations, explain_method(df[INPUT_COLUMNS]).values)
+                # correctly set even when incorrect
+                self.assertEqual(pk.meta.task, model_types.Task.TABULAR_REGRESSION)
 
     def test_snowml_all_input_with_explain(self) -> None:
         iris = datasets.load_iris()

@@ -58,11 +58,16 @@ class XgboostModelBlobOptions(BaseModelBlobOptions):
     xgb_estimator_type: Required[str]
 
 
+class TensorflowModelBlobOptions(BaseModelBlobOptions):
+    is_keras_model: Required[bool]
+
+
 ModelBlobOptions = Union[
     BaseModelBlobOptions,
     HuggingFacePipelineModelBlobOptions,
     MLFlowModelBlobOptions,
     XgboostModelBlobOptions,
+    TensorflowModelBlobOptions,
 ]
 
 

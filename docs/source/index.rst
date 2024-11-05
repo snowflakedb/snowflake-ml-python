@@ -26,6 +26,7 @@ Table of Contents
    :maxdepth: 3
 
    cortex
+   data
    dataset
    feature_store
    fileset

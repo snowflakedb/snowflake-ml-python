@@ -32,7 +32,7 @@ snowflake.ml.model.custom_model
     CustomModel
 
 snowflake.ml.model.model_signature
----------------------------------
+----------------------------------
 
 .. currentmodule:: snowflake.ml.model.model_signature
 

@@ -85,6 +85,7 @@ class LightGBMHandlerTest(absltest.TestCase):
             predict_method = getattr(pk.model, "predict", None)
             assert callable(predict_method)
             np.testing.assert_allclose(predict_method(cal_X_test), np.expand_dims(y_pred, axis=1))
+            self.assertEqual(pk.meta.task, model_types.Task.TABULAR_BINARY_CLASSIFICATION)
 
     def test_lightgbm_booster_explainablity_enabled(self) -> None:
         cal_data = datasets.load_breast_cancer()

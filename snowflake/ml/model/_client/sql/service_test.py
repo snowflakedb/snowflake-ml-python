@@ -355,6 +355,46 @@ class ServiceSQLTest(absltest.TestCase):
             statement_params=m_statement_params,
         )
 
+    def test_show_endpoints(self) -> None:
+        m_statement_params = {"test": "1"}
+        m_df = mock_data_frame.MockDataFrame(
+            collect_result=[Row(name="inference", ingress_url="foo.snowflakecomputing.app")],
+            collect_statement_params=m_statement_params,
+        )
+        self.m_session.add_mock_sql(
+            """SHOW ENDPOINTS IN SERVICE TEMP."test".MYSERVICE""",
+            copy.deepcopy(m_df),
+        )
+        c_session = cast(Session, self.m_session)
+
+        service_sql.ServiceSQLClient(
+            c_session,
+            database_name=sql_identifier.SqlIdentifier("TEMP"),
+            schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
+        ).show_endpoints(
+            database_name=None,
+            schema_name=None,
+            service_name=sql_identifier.SqlIdentifier("MYSERVICE"),
+            statement_params=m_statement_params,
+        )
+
+        self.m_session.add_mock_sql(
+            """SHOW ENDPOINTS IN SERVICE TEMP."test".MYSERVICE""",
+            copy.deepcopy(m_df),
+        )
+        c_session = cast(Session, self.m_session)
+
+        service_sql.ServiceSQLClient(
+            c_session,
+            database_name=sql_identifier.SqlIdentifier("foo"),
+            schema_name=sql_identifier.SqlIdentifier("bar", case_sensitive=True),
+        ).show_endpoints(
+            database_name=sql_identifier.SqlIdentifier("TEMP"),
+            schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
+            service_name=sql_identifier.SqlIdentifier("MYSERVICE"),
+            statement_params=m_statement_params,
+        )
+
 
 if __name__ == "__main__":
     absltest.main()

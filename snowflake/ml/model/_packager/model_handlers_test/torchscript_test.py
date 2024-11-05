@@ -52,7 +52,7 @@ def _prepare_torch_model(
 class TorchScriptHandlerTest(absltest.TestCase):
     def test_torchscript(self) -> None:
         model, data_x, data_y = _prepare_torch_model()
-        model_script = torch.jit.script(model)  # type:ignore[attr-defined]
+        model_script = torch.jit.script(model)
 
         with tempfile.TemporaryDirectory() as tmpdir:
             s = {"forward": model_signature.infer_signature([data_x], [data_y])}
@@ -94,7 +94,7 @@ class TorchScriptHandlerTest(absltest.TestCase):
                 pk.load()
                 assert pk.model
                 assert pk.meta
-                assert isinstance(pk.model, torch.jit.ScriptModule)  # type:ignore[attr-defined]
+                assert isinstance(pk.model, torch.jit.ScriptModule)
                 torch.testing.assert_close(pk.model.forward(data_x), y_pred)
 
                 with self.assertRaisesRegex(RuntimeError, "Attempting to deserialize object on a CUDA device"):
@@ -124,7 +124,7 @@ class TorchScriptHandlerTest(absltest.TestCase):
             pk.load()
             assert pk.model
             assert pk.meta
-            assert isinstance(pk.model, torch.jit.ScriptModule)  # type:ignore[attr-defined]
+            assert isinstance(pk.model, torch.jit.ScriptModule)
             torch.testing.assert_close(pk.model.forward(data_x), y_pred)
             self.assertEqual(s["forward"], pk.meta.signatures["forward"])
 

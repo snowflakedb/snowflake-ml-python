@@ -92,7 +92,7 @@ class TestRegistryPytorchModelInteg(registry_model_test_base.RegistryModelTestBa
     ) -> None:
         model, data_x, data_y = model_factory.ModelFactory.prepare_jittable_torch_model(torch.float32)
         x_df = pytorch_handler.SeqOfPyTorchTensorHandler.convert_to_df([data_x], ensure_serializable=False)
-        model_script = torch.jit.script(model)  # type:ignore[attr-defined]
+        model_script = torch.jit.script(model)
         y_pred = model_script.forward(data_x).detach()
 
         getattr(self, registry_test_fn)(
@@ -117,7 +117,7 @@ class TestRegistryPytorchModelInteg(registry_model_test_base.RegistryModelTestBa
     ) -> None:
         model, data_x, data_y = model_factory.ModelFactory.prepare_jittable_torch_model(torch.float64)
         x_df = pytorch_handler.SeqOfPyTorchTensorHandler.convert_to_df([data_x], ensure_serializable=False)
-        model_script = torch.jit.script(model)  # type:ignore[attr-defined]
+        model_script = torch.jit.script(model)
         y_pred = model_script.forward(data_x).detach()
 
         getattr(self, registry_test_fn)(
@@ -143,7 +143,7 @@ class TestRegistryPytorchModelInteg(registry_model_test_base.RegistryModelTestBa
         model, data_x, data_y = model_factory.ModelFactory.prepare_jittable_torch_model(torch.float64)
         x_df = pytorch_handler.SeqOfPyTorchTensorHandler.convert_to_df([data_x], ensure_serializable=False)
         x_df.columns = ["col_0"]
-        model_script = torch.jit.script(model)  # type:ignore[attr-defined]
+        model_script = torch.jit.script(model)
         y_pred = model_script.forward(data_x)
         x_df_sp = snowpark_handler.SnowparkDataFrameHandler.convert_from_df(self.session, x_df)
         y_pred_df = pytorch_handler.SeqOfPyTorchTensorHandler.convert_to_df([y_pred])

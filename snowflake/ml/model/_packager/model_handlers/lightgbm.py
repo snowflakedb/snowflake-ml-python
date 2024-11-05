@@ -196,13 +196,14 @@ class LGBMModelHandler(_base.BaseModelHandler[Union["lightgbm.Booster", "lightgb
         with open(model_blob_file_path, "rb") as f:
             model = cloudpickle.load(f)
         assert isinstance(model, getattr(lightgbm, lightgbm_estimator_type))
+        assert isinstance(model, lightgbm.Booster) or isinstance(model, lightgbm.LGBMModel)
 
         return model
 
     @classmethod
     def convert_as_custom_model(
         cls,
-        raw_model: Union["lightgbm.Booster", "lightgbm.XGBModel"],
+        raw_model: Union["lightgbm.Booster", "lightgbm.LGBMModel"],
         model_meta: model_meta_api.ModelMetadata,
         background_data: Optional[pd.DataFrame] = None,
         **kwargs: Unpack[model_types.LGBMModelLoadOptions],

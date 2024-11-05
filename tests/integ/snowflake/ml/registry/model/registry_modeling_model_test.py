@@ -1,7 +1,7 @@
 import os
 import posixpath
 
-import numpy as np
+import pandas as pd
 import shap
 import yaml
 from absl.testing import absltest, parameterized
@@ -12,13 +12,14 @@ from snowflake.ml._internal.utils import identifier
 from snowflake.ml.model import model_signature
 from snowflake.ml.model._model_composer import model_composer
 from snowflake.ml.model._model_composer.model_manifest import model_manifest_schema
+from snowflake.ml.model._packager.model_handlers import _utils as handlers_utils
 from snowflake.ml.modeling.lightgbm import LGBMRegressor
 from snowflake.ml.modeling.linear_model import LogisticRegression
 from snowflake.ml.modeling.pipeline import Pipeline
 from snowflake.ml.modeling.xgboost import XGBRegressor
 from snowflake.snowpark import types as T
 from tests.integ.snowflake.ml.registry.model import registry_model_test_base
-from tests.integ.snowflake.ml.test_utils import dataframe_utils, test_env_utils
+from tests.integ.snowflake.ml.test_utils import test_env_utils
 
 
 class TestRegistryModelingModelInteg(registry_model_test_base.RegistryModelTestBase):
@@ -44,8 +45,10 @@ class TestRegistryModelingModelInteg(registry_model_test_base.RegistryModelTestB
             prediction_assert_fns={
                 "predict": (
                     test_features,
-                    lambda res: np.testing.assert_allclose(
-                        res[OUTPUT_COLUMNS].values, regr.predict(test_features)[OUTPUT_COLUMNS].values
+                    lambda res: pd.testing.assert_series_equal(
+                        res[OUTPUT_COLUMNS],
+                        regr.predict(test_features)[OUTPUT_COLUMNS],
+                        check_dtype=False,
                     ),
                 ),
             },
@@ -65,7 +68,7 @@ class TestRegistryModelingModelInteg(registry_model_test_base.RegistryModelTestB
         INPUT_COLUMNS = ["SEPALLENGTH", "SEPALWIDTH", "PETALLENGTH", "PETALWIDTH"]
         LABEL_COLUMNS = "TARGET"
         OUTPUT_COLUMNS = "PREDICTED_TARGET"
-        EXPLAIN_OUTPUT_COLUMNS = [identifier.concat_names([feature, "_explanation"]) for feature in INPUT_COLUMNS]
+        # EXPLAIN_OUTPUT_COLUMNS = [identifier.concat_names([feature, "_explanation"]) for feature in INPUT_COLUMNS]
         regr = LogisticRegression(input_cols=INPUT_COLUMNS, output_cols=OUTPUT_COLUMNS, label_cols=LABEL_COLUMNS)
         test_features = iris_X
         regr.fit(test_features)
@@ -73,22 +76,35 @@ class TestRegistryModelingModelInteg(registry_model_test_base.RegistryModelTestB
         test_data = test_features[INPUT_COLUMNS]
         expected_explanations = shap.Explainer(regr.to_sklearn(), masker=test_data)(test_data).values
 
+        def _check_explain(res: pd.DataFrame) -> None:
+            actual_explain_df = handlers_utils.convert_explanations_to_2D_df(regr, expected_explanations)
+            rename_columns = {
+                old_col_name: new_col_name for old_col_name, new_col_name in zip(actual_explain_df.columns, res.columns)
+            }
+            actual_explain_df.rename(columns=rename_columns, inplace=True)
+            pd.testing.assert_frame_equal(
+                res,
+                actual_explain_df,
+                check_dtype=False,
+            )
+
+        def _check_predict(res) -> None:
+            pd.testing.assert_series_equal(
+                res[OUTPUT_COLUMNS],
+                regr.predict(test_features)[OUTPUT_COLUMNS],
+                check_dtype=False,
+            )
+
         getattr(self, registry_test_fn)(
             model=regr,
             prediction_assert_fns={
                 "predict": (
                     test_features,
-                    lambda res: np.testing.assert_allclose(
-                        res[OUTPUT_COLUMNS].values, regr.predict(test_features)[OUTPUT_COLUMNS].values
-                    ),
+                    _check_predict,
                 ),
                 "explain": (
                     test_features,
-                    lambda res: np.testing.assert_allclose(
-                        dataframe_utils.convert2D_json_to_3D(res[EXPLAIN_OUTPUT_COLUMNS].values),
-                        expected_explanations,
-                        rtol=1e-4,
-                    ),
+                    _check_explain,
                 ),
             },
             sample_input_data=test_data,
@@ -107,10 +123,29 @@ class TestRegistryModelingModelInteg(registry_model_test_base.RegistryModelTestB
         INPUT_COLUMNS = ["SEPALLENGTH", "SEPALWIDTH", "PETALLENGTH", "PETALWIDTH"]
         LABEL_COLUMNS = "TARGET"
         OUTPUT_COLUMNS = "PREDICTED_TARGET"
-        EXPLAIN_OUTPUT_COLUMNS = [identifier.concat_names([feature, "_explanation"]) for feature in INPUT_COLUMNS]
+        # EXPLAIN_OUTPUT_COLUMNS = [identifier.concat_names([feature, "_explanation"]) for feature in INPUT_COLUMNS]
         regr = LogisticRegression(input_cols=INPUT_COLUMNS, output_cols=OUTPUT_COLUMNS, label_cols=LABEL_COLUMNS)
         test_features = iris_X
         regr.fit(test_features)
+
+        def _check_explain(res: pd.DataFrame) -> None:
+            actual_explain_df = handlers_utils.convert_explanations_to_2D_df(regr, expected_explanations)
+            rename_columns = {
+                old_col_name: new_col_name for old_col_name, new_col_name in zip(actual_explain_df.columns, res.columns)
+            }
+            actual_explain_df.rename(columns=rename_columns, inplace=True)
+            pd.testing.assert_frame_equal(
+                res,
+                actual_explain_df,
+                check_dtype=False,
+            )
+
+        def _check_predict(res) -> None:
+            pd.testing.assert_series_equal(
+                res[OUTPUT_COLUMNS],
+                regr.predict(test_features)[OUTPUT_COLUMNS],
+                check_dtype=False,
+            )
 
         test_data = test_features[INPUT_COLUMNS]
         expected_explanations = shap.Explainer(regr.to_sklearn(), masker=test_data)(test_data).values
@@ -119,17 +154,11 @@ class TestRegistryModelingModelInteg(registry_model_test_base.RegistryModelTestB
             prediction_assert_fns={
                 "predict": (
                     test_features,
-                    lambda res: np.testing.assert_allclose(
-                        res[OUTPUT_COLUMNS].values, regr.predict(test_features)[OUTPUT_COLUMNS].values
-                    ),
+                    _check_predict,
                 ),
                 "explain": (
                     test_features,
-                    lambda res: np.testing.assert_allclose(
-                        dataframe_utils.convert2D_json_to_3D(res[EXPLAIN_OUTPUT_COLUMNS].values),
-                        expected_explanations,
-                        rtol=1e-4,
-                    ),
+                    _check_explain,
                 ),
             },
             sample_input_data=test_data,
@@ -158,8 +187,10 @@ class TestRegistryModelingModelInteg(registry_model_test_base.RegistryModelTestB
             prediction_assert_fns={
                 "predict": (
                     test_features,
-                    lambda res: np.testing.assert_allclose(
-                        res[OUTPUT_COLUMNS].values, regr.predict(test_features)[OUTPUT_COLUMNS].values
+                    lambda res: pd.testing.assert_series_equal(
+                        res[OUTPUT_COLUMNS],
+                        regr.predict(test_features)[OUTPUT_COLUMNS],
+                        check_dtype=False,
                     ),
                 ),
             },
@@ -192,14 +223,18 @@ class TestRegistryModelingModelInteg(registry_model_test_base.RegistryModelTestB
             prediction_assert_fns={
                 "predict": (
                     test_features,
-                    lambda res: np.testing.assert_allclose(
-                        res[PRED_OUTPUT_COLUMNS].values, regr.predict(test_features)[PRED_OUTPUT_COLUMNS].values
+                    lambda res: pd.testing.assert_series_equal(
+                        res[PRED_OUTPUT_COLUMNS],
+                        regr.predict(test_features)[PRED_OUTPUT_COLUMNS],
+                        check_dtype=False,
                     ),
                 ),
                 "explain": (
                     test_features,
-                    lambda res: np.testing.assert_allclose(
-                        res[EXPLAIN_OUTPUT_COLUMNS].values, expected_explanations, rtol=1e-4
+                    lambda res: pd.testing.assert_frame_equal(
+                        res[EXPLAIN_OUTPUT_COLUMNS],
+                        pd.DataFrame(expected_explanations, columns=EXPLAIN_OUTPUT_COLUMNS),
+                        check_dtype=False,
                     ),
                 ),
             },
@@ -231,14 +266,18 @@ class TestRegistryModelingModelInteg(registry_model_test_base.RegistryModelTestB
             prediction_assert_fns={
                 "predict": (
                     test_features,
-                    lambda res: np.testing.assert_allclose(
-                        res[PRED_OUTPUT_COLUMNS].values, regr.predict(test_features)[PRED_OUTPUT_COLUMNS].values
+                    lambda res: pd.testing.assert_series_equal(
+                        res[PRED_OUTPUT_COLUMNS],
+                        regr.predict(test_features)[PRED_OUTPUT_COLUMNS],
+                        check_dtype=False,
                     ),
                 ),
                 "explain": (
                     test_features,
-                    lambda res: np.testing.assert_allclose(
-                        res[EXPLAIN_OUTPUT_COLUMNS].values, expected_explanations, rtol=1e-4
+                    lambda res: pd.testing.assert_frame_equal(
+                        res[EXPLAIN_OUTPUT_COLUMNS],
+                        pd.DataFrame(expected_explanations, columns=EXPLAIN_OUTPUT_COLUMNS),
+                        check_dtype=False,
                     ),
                 ),
             },
@@ -246,6 +285,57 @@ class TestRegistryModelingModelInteg(registry_model_test_base.RegistryModelTestB
             function_type_assert={
                 "explain": model_manifest_schema.ModelMethodFunctionTypes.TABLE_FUNCTION,
                 "predict": model_manifest_schema.ModelMethodFunctionTypes.FUNCTION,
+            },
+        )
+
+    @parameterized.product(  # type: ignore[misc]
+        registry_test_fn=registry_model_test_base.RegistryModelTestBase.REGISTRY_TEST_FN_LIST,
+    )
+    def test_snowml_model_deploy_xgboost_explain(
+        self,
+        registry_test_fn: str,
+    ) -> None:
+        iris_X = datasets.load_iris(as_frame=True).frame
+        iris_X.columns = [s.replace(" (CM)", "").replace(" ", "") for s in iris_X.columns.str.upper()]
+
+        INPUT_COLUMNS = ["SEPALLENGTH", "SEPALWIDTH", "PETALLENGTH", "PETALWIDTH"]
+        LABEL_COLUMNS = "TARGET"
+        PRED_OUTPUT_COLUMNS = "PREDICTED_TARGET"
+        EXPLAIN_OUTPUT_COLUMNS = [feature + "_explanation" for feature in INPUT_COLUMNS]
+
+        regr = XGBRegressor(input_cols=INPUT_COLUMNS, output_cols=PRED_OUTPUT_COLUMNS, label_cols=LABEL_COLUMNS)
+        test_features = iris_X
+        regr.fit(test_features)
+
+        expected_explanations = shap.Explainer(regr.to_xgboost())(test_features[INPUT_COLUMNS]).values
+
+        def _check_explain(res: pd.DataFrame) -> None:
+            expected_explanations_df = pd.DataFrame(
+                expected_explanations,
+                columns=EXPLAIN_OUTPUT_COLUMNS,
+            )
+            res.columns = EXPLAIN_OUTPUT_COLUMNS
+            pd.testing.assert_frame_equal(
+                res,
+                expected_explanations_df,
+                check_dtype=False,
+            )
+
+        getattr(self, registry_test_fn)(
+            model=regr,
+            prediction_assert_fns={
+                "predict": (
+                    test_features,
+                    lambda res: pd.testing.assert_series_equal(
+                        res[PRED_OUTPUT_COLUMNS],
+                        regr.predict(test_features)[PRED_OUTPUT_COLUMNS],
+                        check_dtype=False,
+                    ),
+                ),
+                "explain": (
+                    test_features,
+                    _check_explain,
+                ),
             },
         )
 
@@ -271,8 +361,10 @@ class TestRegistryModelingModelInteg(registry_model_test_base.RegistryModelTestB
             prediction_assert_fns={
                 "predict": (
                     test_features,
-                    lambda res: np.testing.assert_allclose(
-                        res[OUTPUT_COLUMNS].values, regr.predict(test_features)[OUTPUT_COLUMNS].values
+                    lambda res: pd.testing.assert_series_equal(
+                        res[OUTPUT_COLUMNS],
+                        regr.predict(test_features)[OUTPUT_COLUMNS],
+                        check_dtype=False,
                     ),
                 ),
             },
@@ -299,22 +391,32 @@ class TestRegistryModelingModelInteg(registry_model_test_base.RegistryModelTestB
 
         expected_explanations = shap.Explainer(regr.to_lightgbm())(test_features[INPUT_COLUMNS]).values
 
+        def _check_explain(res: pd.DataFrame) -> None:
+            expected_explanations_df = pd.DataFrame(
+                expected_explanations,
+                columns=EXPLAIN_OUTPUT_COLUMNS,
+            )
+            res.columns = EXPLAIN_OUTPUT_COLUMNS
+            pd.testing.assert_frame_equal(
+                res,
+                expected_explanations_df,
+                check_dtype=False,
+            )
+
         getattr(self, registry_test_fn)(
             model=regr,
             prediction_assert_fns={
                 "predict": (
                     test_features,
-                    lambda res: np.testing.assert_allclose(
-                        res[PRED_OUTPUT_COLUMNS].values, regr.predict(test_features)[PRED_OUTPUT_COLUMNS].values
+                    lambda res: pd.testing.assert_series_equal(
+                        res[PRED_OUTPUT_COLUMNS],
+                        regr.predict(test_features)[PRED_OUTPUT_COLUMNS],
+                        check_dtype=False,
                     ),
                 ),
                 "explain": (
                     test_features,
-                    lambda res: np.testing.assert_allclose(
-                        res[EXPLAIN_OUTPUT_COLUMNS].values,
-                        expected_explanations,
-                        rtol=1e-5,
-                    ),
+                    _check_explain,
                 ),
             },
             function_type_assert={
@@ -343,28 +445,88 @@ class TestRegistryModelingModelInteg(registry_model_test_base.RegistryModelTestB
 
         expected_explanations = shap.Explainer(regr.to_lightgbm())(test_features[INPUT_COLUMNS]).values
 
+        def _check_explain(res: pd.DataFrame) -> None:
+            expected_explanations_df = pd.DataFrame(
+                expected_explanations,
+                columns=EXPLAIN_OUTPUT_COLUMNS,
+            )
+            res.columns = EXPLAIN_OUTPUT_COLUMNS
+            pd.testing.assert_frame_equal(
+                res[EXPLAIN_OUTPUT_COLUMNS],
+                expected_explanations_df,
+                check_dtype=False,
+            )
+
         getattr(self, registry_test_fn)(
             model=regr,
             prediction_assert_fns={
                 "predict": (
                     test_features,
-                    lambda res: np.testing.assert_allclose(
-                        res[PRED_OUTPUT_COLUMNS].values, regr.predict(test_features)[PRED_OUTPUT_COLUMNS].values
+                    lambda res: pd.testing.assert_series_equal(
+                        res[PRED_OUTPUT_COLUMNS],
+                        regr.predict(test_features)[PRED_OUTPUT_COLUMNS],
+                        check_dtype=False,
                     ),
                 ),
                 "explain": (
                     test_features,
-                    lambda res: np.testing.assert_allclose(
-                        res[EXPLAIN_OUTPUT_COLUMNS].values,
-                        expected_explanations,
-                        rtol=1e-5,
-                    ),
+                    _check_explain,
                 ),
             },
             options={"enable_explainability": True},
             function_type_assert={
                 "explain": model_manifest_schema.ModelMethodFunctionTypes.TABLE_FUNCTION,
                 "predict": model_manifest_schema.ModelMethodFunctionTypes.FUNCTION,
+            },
+        )
+
+    @parameterized.product(  # type: ignore[misc]
+        registry_test_fn=registry_model_test_base.RegistryModelTestBase.REGISTRY_TEST_FN_LIST,
+    )
+    def test_snowml_model_deploy_lightgbm_explain(
+        self,
+        registry_test_fn: str,
+    ) -> None:
+        iris_X = datasets.load_iris(as_frame=True).frame
+        iris_X.columns = [s.replace(" (CM)", "").replace(" ", "") for s in iris_X.columns.str.upper()]
+
+        INPUT_COLUMNS = ["SEPALLENGTH", "SEPALWIDTH", "PETALLENGTH", "PETALWIDTH"]
+        LABEL_COLUMNS = "TARGET"
+        PRED_OUTPUT_COLUMNS = "PREDICTED_TARGET"
+        EXPLAIN_OUTPUT_COLUMNS = [feature + "_explanation" for feature in INPUT_COLUMNS]
+        regr = LGBMRegressor(input_cols=INPUT_COLUMNS, output_cols=PRED_OUTPUT_COLUMNS, label_cols=LABEL_COLUMNS)
+        test_features = iris_X
+        regr.fit(test_features)
+
+        expected_explanations = shap.Explainer(regr.to_lightgbm())(test_features[INPUT_COLUMNS]).values
+
+        def check_explain(res: pd.DataFrame) -> None:
+            expected_explanations_df = pd.DataFrame(
+                expected_explanations,
+                columns=EXPLAIN_OUTPUT_COLUMNS,
+            )
+            res.columns = EXPLAIN_OUTPUT_COLUMNS
+            pd.testing.assert_frame_equal(
+                res,
+                expected_explanations_df,
+                check_dtype=False,
+            )
+
+        getattr(self, registry_test_fn)(
+            model=regr,
+            prediction_assert_fns={
+                "predict": (
+                    test_features,
+                    lambda res: pd.testing.assert_series_equal(
+                        res[PRED_OUTPUT_COLUMNS],
+                        regr.predict(test_features)[PRED_OUTPUT_COLUMNS],
+                        check_dtype=False,
+                    ),
+                ),
+                "explain": (
+                    test_features,
+                    check_explain,
+                ),
             },
         )
 
@@ -419,12 +581,13 @@ class TestRegistryModelingModelInteg(registry_model_test_base.RegistryModelTestB
             prediction_assert_fns={
                 "predict": (
                     iris_X,
-                    lambda res: np.testing.assert_allclose(
-                        res[OUTPUT_COLUMNS].values, regr.predict(iris_X)[OUTPUT_COLUMNS].values
+                    lambda res: pd.testing.assert_series_equal(
+                        res[OUTPUT_COLUMNS],
+                        regr.predict(iris_X)[OUTPUT_COLUMNS],
+                        check_dtype=False,
                     ),
                 ),
             },
-            additional_dependencies=["fsspec", "aiohttp", "cryptography"],
         )
 
         # Case 3 : Capture Lineage via sample_input of log_model of MANIFEST.yml file

@@ -10,7 +10,7 @@ from snowflake.ml._internal.utils import (
     sql_identifier,
 )
 from snowflake.ml.model._client.sql import _base
-from snowflake.snowpark import dataframe, functions as F, types as spt
+from snowflake.snowpark import dataframe, functions as F, row, types as spt
 from snowflake.snowpark._internal import utils as snowpark_utils
 
 
@@ -26,6 +26,9 @@ class ServiceStatus(enum.Enum):
 
 
 class ServiceSQLClient(_base._BaseSQLClient):
+    MODEL_INFERENCE_SERVICE_ENDPOINT_NAME_COL_NAME = "name"
+    MODEL_INFERENCE_SERVICE_ENDPOINT_INGRESS_URL_COL_NAME = "ingress_url"
+
     def build_model_container(
         self,
         *,
@@ -216,3 +219,24 @@ class ServiceSQLClient(_base._BaseSQLClient):
             f"DROP SERVICE {self.fully_qualified_object_name(database_name, schema_name, service_name)}",
             statement_params=statement_params,
         ).has_dimensions(expected_rows=1, expected_cols=1).validate()
+
+    def show_endpoints(
+        self,
+        *,
+        database_name: Optional[sql_identifier.SqlIdentifier],
+        schema_name: Optional[sql_identifier.SqlIdentifier],
+        service_name: sql_identifier.SqlIdentifier,
+        statement_params: Optional[Dict[str, Any]] = None,
+    ) -> List[row.Row]:
+        fully_qualified_service_name = self.fully_qualified_object_name(database_name, schema_name, service_name)
+        res = (
+            query_result_checker.SqlResultValidator(
+                self._session,
+                (f"SHOW ENDPOINTS IN SERVICE {fully_qualified_service_name}"),
+                statement_params=statement_params,
+            )
+            .has_column(ServiceSQLClient.MODEL_INFERENCE_SERVICE_ENDPOINT_NAME_COL_NAME, allow_empty=True)
+            .has_column(ServiceSQLClient.MODEL_INFERENCE_SERVICE_ENDPOINT_INGRESS_URL_COL_NAME, allow_empty=True)
+        )
+
+        return res.validate()
