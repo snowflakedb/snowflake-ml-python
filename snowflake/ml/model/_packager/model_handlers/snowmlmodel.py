@@ -138,7 +138,7 @@ class SnowMLModelHandler(_base.BaseModelHandler["BaseEstimator"]):
                 enable_explainability = False
             else:
                 model_task_and_output_type = model_task_utils.get_model_task_and_output_type(python_base_obj)
-                model_meta.task = model_task_and_output_type.task
+                model_meta.task = handlers_utils.validate_model_task(model_meta.task, model_task_and_output_type.task)
                 explain_target_method = handlers_utils.get_explain_target_method(model_meta, cls.EXPLAIN_TARGET_METHODS)
                 model_meta = handlers_utils.add_explain_method_signature(
                     model_meta=model_meta,

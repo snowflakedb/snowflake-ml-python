@@ -1,17 +1,19 @@
 from dataclasses import dataclass
-from typing import List
+from typing import List, Optional
 
 from snowflake.ml.model._client.model import model_version_impl
-from snowflake.ml.monitoring.entities import model_monitor_interval
 
 
 @dataclass
-class ModelMonitorTableConfig:
-    source_table: str
+class ModelMonitorSourceConfig:
+    source: str
     timestamp_column: str
-    prediction_columns: List[str]
-    label_columns: List[str]
     id_columns: List[str]
+    prediction_score_columns: Optional[List[str]] = None
+    prediction_class_columns: Optional[List[str]] = None
+    actual_score_columns: Optional[List[str]] = None
+    actual_class_columns: Optional[List[str]] = None
+    baseline: Optional[str] = None
 
 
 @dataclass
@@ -22,7 +24,5 @@ class ModelMonitorConfig:
     model_function_name: str
     background_compute_warehouse_name: str
     # TODO: Add support for pythonic notion of time.
-    refresh_interval: str = model_monitor_interval.ModelMonitorRefreshInterval.DAILY
-    aggregation_window: model_monitor_interval.ModelMonitorAggregationWindow = (
-        model_monitor_interval.ModelMonitorAggregationWindow.WINDOW_1_DAY
-    )
+    refresh_interval: str = "1 hour"
+    aggregation_window: str = "1 day"

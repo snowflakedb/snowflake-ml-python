@@ -47,6 +47,10 @@ numerical_columns = [
     "PDAYS",
     "PREVIOUS",
 ]
+# Columns in imputer must be of same type, so that we can infer output types.
+COLUMNS_TO_IMPUTE = [
+    "DURATION",
+]
 label_column = ["LABEL"]
 IN_ML_RUNTIME_ENV_VAR = "IN_SPCS_ML_RUNTIME"
 feature_cols = categorical_columns + numerical_columns
@@ -70,7 +74,7 @@ class PipelineXGBRTest(absltest.TestCase):
         ]
 
         if use_knn_imputer:
-            transformers.append(("knn_imputer", KNNImputer(), numerical_columns))
+            transformers.append(("knn_imputer", KNNImputer(), COLUMNS_TO_IMPUTE))
 
         return ColumnTransformer(
             transformers=transformers,
@@ -111,7 +115,7 @@ class PipelineXGBRTest(absltest.TestCase):
         ]
 
         if use_knn_imputer:
-            steps.insert(2, ("KNNImputer", KNNImputer(input_cols=numerical_columns, output_cols=numerical_columns)))
+            steps.insert(2, ("KNNImputer", KNNImputer(input_cols=COLUMNS_TO_IMPUTE, output_cols=COLUMNS_TO_IMPUTE)))
 
         return Pipeline(steps=steps)
 
@@ -132,7 +136,7 @@ class PipelineXGBRTest(absltest.TestCase):
                         [
                             ("cat_transformer", SkOneHotEncoder(), categorical_columns),
                             ("num_transforms", SkMinMaxScaler(), numerical_columns),
-                            ("num_imputer", SkKNNImputer(), numerical_columns),
+                            ("num_imputer", SkKNNImputer(), COLUMNS_TO_IMPUTE),
                         ]
                     ),
                 ),
@@ -169,9 +173,10 @@ class PipelineXGBRTest(absltest.TestCase):
                     SkColumnTransformer(
                         [
                             ("cat_transformer", SkOneHotEncoder(), categorical_columns),
-                            ("num_transforms", SkMinMaxScaler(), numerical_columns),
-                            ("num_imputer", SkKNNImputer(), numerical_columns),
-                        ]
+                            ("num_transforms", SkMinMaxScaler(clip=True), numerical_columns),
+                            ("num_imputer", SkKNNImputer(), COLUMNS_TO_IMPUTE),
+                        ],
+                        remainder="passthrough",
                     ),
                 ),
                 ("Training", XGB_XGBClassifier()),

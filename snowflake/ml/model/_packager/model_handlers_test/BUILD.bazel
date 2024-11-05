@@ -70,6 +70,7 @@ py_test(
         "//snowflake/ml/model:model_signature",
         "//snowflake/ml/model:type_hints",
         "//snowflake/ml/model/_packager:model_packager",
+        "//snowflake/ml/model/_packager/model_handlers:sklearn",
     ],
 )
 

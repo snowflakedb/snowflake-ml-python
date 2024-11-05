@@ -90,77 +90,77 @@ class SeqOfPyTorchTensorHandlerTest(absltest.TestCase):
         t1 = [torch.IntTensor([1, 2, 3, 4])]
         self.assertListEqual(
             pytorch_handler.SeqOfPyTorchTensorHandler.infer_signature(t1, role="input"),
-            [core.FeatureSpec("input_feature_0", core.DataType.INT32)],
+            [core.FeatureSpec("input_feature_0", core.DataType.INT32, nullable=False)],
         )
 
         t2 = [torch.LongTensor([1, 2, 3, 4])]
         self.assertListEqual(
             pytorch_handler.SeqOfPyTorchTensorHandler.infer_signature(t2, role="input"),
-            [core.FeatureSpec("input_feature_0", core.DataType.INT64)],
+            [core.FeatureSpec("input_feature_0", core.DataType.INT64, nullable=False)],
         )
 
         t3 = [torch.ShortTensor([1, 2, 3, 4])]
         self.assertListEqual(
             pytorch_handler.SeqOfPyTorchTensorHandler.infer_signature(t3, role="input"),
-            [core.FeatureSpec("input_feature_0", core.DataType.INT16)],
+            [core.FeatureSpec("input_feature_0", core.DataType.INT16, nullable=False)],
         )
 
         t4 = [torch.CharTensor([1, 2, 3, 4])]
         self.assertListEqual(
             pytorch_handler.SeqOfPyTorchTensorHandler.infer_signature(t4, role="input"),
-            [core.FeatureSpec("input_feature_0", core.DataType.INT8)],
+            [core.FeatureSpec("input_feature_0", core.DataType.INT8, nullable=False)],
         )
 
         t5 = [torch.ByteTensor([1, 2, 3, 4])]
         self.assertListEqual(
             pytorch_handler.SeqOfPyTorchTensorHandler.infer_signature(t5, role="input"),
-            [core.FeatureSpec("input_feature_0", core.DataType.UINT8)],
+            [core.FeatureSpec("input_feature_0", core.DataType.UINT8, nullable=False)],
         )
 
         t6 = [torch.BoolTensor([False, True])]
         self.assertListEqual(
             pytorch_handler.SeqOfPyTorchTensorHandler.infer_signature(t6, role="input"),
-            [core.FeatureSpec("input_feature_0", core.DataType.BOOL)],
+            [core.FeatureSpec("input_feature_0", core.DataType.BOOL, nullable=False)],
         )
 
         t7 = [torch.FloatTensor([1.2, 3.4])]
         self.assertListEqual(
             pytorch_handler.SeqOfPyTorchTensorHandler.infer_signature(t7, role="input"),
-            [core.FeatureSpec("input_feature_0", core.DataType.FLOAT)],
+            [core.FeatureSpec("input_feature_0", core.DataType.FLOAT, nullable=False)],
         )
 
         t8 = [torch.DoubleTensor([1.2, 3.4])]
         self.assertListEqual(
             pytorch_handler.SeqOfPyTorchTensorHandler.infer_signature(t8, role="input"),
-            [core.FeatureSpec("input_feature_0", core.DataType.DOUBLE)],
+            [core.FeatureSpec("input_feature_0", core.DataType.DOUBLE, nullable=False)],
         )
 
         t9 = [torch.LongTensor([[1, 2], [3, 4]])]
         self.assertListEqual(
             pytorch_handler.SeqOfPyTorchTensorHandler.infer_signature(t9, role="input"),
             [
-                core.FeatureSpec("input_feature_0", core.DataType.INT64, shape=(2,)),
+                core.FeatureSpec("input_feature_0", core.DataType.INT64, shape=(2,), nullable=False),
             ],
         )
 
         t10 = [torch.LongTensor([[[1, 1], [2, 2]], [[3, 3], [4, 4]]])]
         self.assertListEqual(
             pytorch_handler.SeqOfPyTorchTensorHandler.infer_signature(t10, role="input"),
-            [core.FeatureSpec("input_feature_0", core.DataType.INT64, shape=(2, 2))],
+            [core.FeatureSpec("input_feature_0", core.DataType.INT64, shape=(2, 2), nullable=False)],
         )
 
         t11 = [torch.LongTensor([1, 2, 3, 4])]
         self.assertListEqual(
             pytorch_handler.SeqOfPyTorchTensorHandler.infer_signature(t11, role="output"),
-            [core.FeatureSpec("output_feature_0", core.DataType.INT64)],
+            [core.FeatureSpec("output_feature_0", core.DataType.INT64, nullable=False)],
         )
 
         t12 = [torch.LongTensor([1, 2]), torch.LongTensor([3, 4])]
         self.assertListEqual(
             pytorch_handler.SeqOfPyTorchTensorHandler.infer_signature(t12, role="output"),
             [
-                core.FeatureSpec("output_feature_0", core.DataType.INT64),
-                core.FeatureSpec("output_feature_1", core.DataType.INT64),
+                core.FeatureSpec("output_feature_0", core.DataType.INT64, nullable=False),
+                core.FeatureSpec("output_feature_1", core.DataType.INT64, nullable=False),
             ],
         )
 
@@ -168,8 +168,8 @@ class SeqOfPyTorchTensorHandlerTest(absltest.TestCase):
         self.assertListEqual(
             pytorch_handler.SeqOfPyTorchTensorHandler.infer_signature(t13, role="output"),
             [
-                core.FeatureSpec("output_feature_0", core.DataType.FLOAT),
-                core.FeatureSpec("output_feature_1", core.DataType.INT64),
+                core.FeatureSpec("output_feature_0", core.DataType.FLOAT, nullable=False),
+                core.FeatureSpec("output_feature_1", core.DataType.INT64, nullable=False),
             ],
         )
 
@@ -177,8 +177,8 @@ class SeqOfPyTorchTensorHandlerTest(absltest.TestCase):
         self.assertListEqual(
             pytorch_handler.SeqOfPyTorchTensorHandler.infer_signature(t14, role="output"),
             [
-                core.FeatureSpec("output_feature_0", core.DataType.INT64, shape=(2,)),
-                core.FeatureSpec("output_feature_1", core.DataType.INT64, shape=(2,)),
+                core.FeatureSpec("output_feature_0", core.DataType.INT64, shape=(2,), nullable=False),
+                core.FeatureSpec("output_feature_1", core.DataType.INT64, shape=(2,), nullable=False),
             ],
         )
 
@@ -186,8 +186,8 @@ class SeqOfPyTorchTensorHandlerTest(absltest.TestCase):
         self.assertListEqual(
             pytorch_handler.SeqOfPyTorchTensorHandler.infer_signature(t15, role="output"),
             [
-                core.FeatureSpec("output_feature_0", core.DataType.INT64, shape=(2,)),
-                core.FeatureSpec("output_feature_1", core.DataType.DOUBLE, shape=(2,)),
+                core.FeatureSpec("output_feature_0", core.DataType.INT64, shape=(2,), nullable=False),
+                core.FeatureSpec("output_feature_1", core.DataType.DOUBLE, shape=(2,), nullable=False),
             ],
         )
 

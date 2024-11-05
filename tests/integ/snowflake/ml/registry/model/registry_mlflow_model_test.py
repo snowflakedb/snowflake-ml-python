@@ -1,7 +1,7 @@
 from importlib import metadata as importlib_metadata
 
 import mlflow
-import numpy as np
+import pandas as pd
 from absl.testing import absltest, parameterized
 from sklearn import datasets, ensemble, model_selection
 
@@ -58,7 +58,11 @@ class TestRegistryMLFlowModelInteg(registry_model_test_base.RegistryModelTestBas
             prediction_assert_fns={
                 "predict": (
                     X_test,
-                    lambda res: np.testing.assert_allclose(np.expand_dims(predictions, axis=1), res.to_numpy()),
+                    lambda res: pd.testing.assert_frame_equal(
+                        res,
+                        pd.DataFrame(predictions, columns=res.columns),
+                        check_dtype=False,
+                    ),
                 ),
             },
             options={"relax_version": False},
@@ -113,7 +117,11 @@ class TestRegistryMLFlowModelInteg(registry_model_test_base.RegistryModelTestBas
             prediction_assert_fns={
                 "predict": (
                     X_test_df,
-                    lambda res: np.testing.assert_allclose(np.expand_dims(predictions, axis=1), res.to_numpy()),
+                    lambda res: pd.testing.assert_frame_equal(
+                        res,
+                        pd.DataFrame(predictions, columns=res.columns),
+                        check_dtype=False,
+                    ),
                 ),
             },
             options={"relax_version": False},

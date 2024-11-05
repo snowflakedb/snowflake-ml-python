@@ -23,7 +23,7 @@ if TYPE_CHECKING:
 
 
 @final
-class TorchScriptHandler(_base.BaseModelHandler["torch.jit.ScriptModule"]):  # type:ignore[name-defined]
+class TorchScriptHandler(_base.BaseModelHandler["torch.jit.ScriptModule"]):
     """Handler for PyTorch JIT based model.
 
     Currently torch.jit.ScriptModule based classes are supported.
@@ -41,25 +41,25 @@ class TorchScriptHandler(_base.BaseModelHandler["torch.jit.ScriptModule"]):  # t
     def can_handle(
         cls,
         model: model_types.SupportedModelType,
-    ) -> TypeGuard["torch.jit.ScriptModule"]:  # type:ignore[name-defined]
+    ) -> TypeGuard["torch.jit.ScriptModule"]:
         return type_utils.LazyType("torch.jit.ScriptModule").isinstance(model)
 
     @classmethod
     def cast_model(
         cls,
         model: model_types.SupportedModelType,
-    ) -> "torch.jit.ScriptModule":  # type:ignore[name-defined]
+    ) -> "torch.jit.ScriptModule":
         import torch
 
-        assert isinstance(model, torch.jit.ScriptModule)  # type:ignore[attr-defined]
+        assert isinstance(model, torch.jit.ScriptModule)
 
-        return cast(torch.jit.ScriptModule, model)  # type:ignore[name-defined]
+        return cast(torch.jit.ScriptModule, model)
 
     @classmethod
     def save_model(
         cls,
         name: str,
-        model: "torch.jit.ScriptModule",  # type:ignore[name-defined]
+        model: "torch.jit.ScriptModule",
         model_meta: model_meta_api.ModelMetadata,
         model_blobs_dir_path: str,
         sample_input_data: Optional[model_types.SupportedDataType] = None,
@@ -72,7 +72,7 @@ class TorchScriptHandler(_base.BaseModelHandler["torch.jit.ScriptModule"]):  # t
 
         import torch
 
-        assert isinstance(model, torch.jit.ScriptModule)  # type:ignore[attr-defined]
+        assert isinstance(model, torch.jit.ScriptModule)
 
         if not is_sub_model:
             target_methods = handlers_utils.get_target_methods(
@@ -111,7 +111,7 @@ class TorchScriptHandler(_base.BaseModelHandler["torch.jit.ScriptModule"]):  # t
         model_blob_path = os.path.join(model_blobs_dir_path, name)
         os.makedirs(model_blob_path, exist_ok=True)
         with open(os.path.join(model_blob_path, cls.MODEL_BLOB_FILE_OR_DIR), "wb") as f:
-            torch.jit.save(model, f)  # type:ignore[no-untyped-call, attr-defined]
+            torch.jit.save(model, f)  # type:ignore[no-untyped-call]
         base_meta = model_blob_meta.ModelBlobMeta(
             name=name,
             model_type=cls.HANDLER_TYPE,
@@ -133,7 +133,7 @@ class TorchScriptHandler(_base.BaseModelHandler["torch.jit.ScriptModule"]):  # t
         model_meta: model_meta_api.ModelMetadata,
         model_blobs_dir_path: str,
         **kwargs: Unpack[model_types.TorchScriptLoadOptions],
-    ) -> "torch.jit.ScriptModule":  # type:ignore[name-defined]
+    ) -> "torch.jit.ScriptModule":
         import torch
 
         model_blob_path = os.path.join(model_blobs_dir_path, name)
@@ -141,10 +141,10 @@ class TorchScriptHandler(_base.BaseModelHandler["torch.jit.ScriptModule"]):  # t
         model_blob_metadata = model_blobs_metadata[name]
         model_blob_filename = model_blob_metadata.path
         with open(os.path.join(model_blob_path, model_blob_filename), "rb") as f:
-            m = torch.jit.load(  # type:ignore[no-untyped-call, attr-defined]
+            m = torch.jit.load(  # type:ignore[no-untyped-call]
                 f, map_location="cuda" if kwargs.get("use_gpu", False) else "cpu"
             )
-        assert isinstance(m, torch.jit.ScriptModule)  # type:ignore[attr-defined]
+        assert isinstance(m, torch.jit.ScriptModule)
 
         if kwargs.get("use_gpu", False):
             m = m.cuda()
@@ -154,7 +154,7 @@ class TorchScriptHandler(_base.BaseModelHandler["torch.jit.ScriptModule"]):  # t
     @classmethod
     def convert_as_custom_model(
         cls,
-        raw_model: "torch.jit.ScriptModule",  # type:ignore[name-defined]
+        raw_model: "torch.jit.ScriptModule",
         model_meta: model_meta_api.ModelMetadata,
         background_data: Optional[pd.DataFrame] = None,
         **kwargs: Unpack[model_types.TorchScriptLoadOptions],
@@ -162,11 +162,11 @@ class TorchScriptHandler(_base.BaseModelHandler["torch.jit.ScriptModule"]):  # t
         from snowflake.ml.model import custom_model
 
         def _create_custom_model(
-            raw_model: "torch.jit.ScriptModule",  # type:ignore[name-defined]
+            raw_model: "torch.jit.ScriptModule",
             model_meta: model_meta_api.ModelMetadata,
         ) -> Type[custom_model.CustomModel]:
             def fn_factory(
-                raw_model: "torch.jit.ScriptModule",  # type:ignore[name-defined]
+                raw_model: "torch.jit.ScriptModule",
                 signature: model_signature.ModelSignature,
                 target_method: str,
             ) -> Callable[[custom_model.CustomModel, pd.DataFrame], pd.DataFrame]:

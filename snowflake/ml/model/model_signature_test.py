@@ -18,6 +18,12 @@ class ModelSignatureMiscTest(absltest.TestCase):
             [model_signature.FeatureSpec("input_feature_0", model_signature.DataType.INT64)],
         )
 
+        df = pd.DataFrame([1, 2, None, 4])
+        self.assertListEqual(
+            model_signature._infer_signature(df, role="input"),
+            [model_signature.FeatureSpec("input_feature_0", model_signature.DataType.INT64)],
+        )
+
         arr = np.array([1, 2, 3, 4])
         self.assertListEqual(
             model_signature._infer_signature(arr, role="input"),
@@ -120,6 +126,26 @@ class ModelSignatureMiscTest(absltest.TestCase):
             ],
         )
 
+        # categorical column
+        df = pd.DataFrame({"column_0": ["a", "b", "c", "d"], "column_1": [1, 2, 3, 4]})
+        df["column_0"] = df["column_0"].astype("category")
+        df["column_1"] = df["column_1"].astype("category")
+
+        self.assertListEqual(
+            model_signature._infer_signature(df, role="input"),
+            [
+                model_signature.FeatureSpec("column_0", model_signature.DataType.STRING),
+                model_signature.FeatureSpec("column_1", model_signature.DataType.INT64),
+            ],
+        )
+
+        series = pd.Series(["a", "b", "c", "d"], name="column_0")
+        series = series.astype("category")
+        self.assertListEqual(
+            model_signature._infer_signature(series, role="input"),
+            [model_signature.FeatureSpec("column_0", model_signature.DataType.STRING)],
+        )
+
         df = pd.DataFrame([1, 2, 3, 4])
         lt = [df, arr]
         with exception_utils.assert_snowml_exceptions(
@@ -186,6 +212,10 @@ class ModelSignatureMiscTest(absltest.TestCase):
         ]
 
         model_signature._validate_pandas_df(pd.DataFrame([[2, 5], [6, 8]], columns=["a", "b"]), fts)
+
+        model_signature._validate_pandas_df(pd.DataFrame([[2, None], [6, 8]], columns=["a", "b"]), fts)
+
+        model_signature._validate_pandas_df(pd.DataFrame([[2, None], [6, 8.0]], columns=["a", "b"]), fts)
 
         with exception_utils.assert_snowml_exceptions(
             self,
@@ -257,6 +287,8 @@ class ModelSignatureMiscTest(absltest.TestCase):
         ]
 
         model_signature._validate_pandas_df(pd.DataFrame([[1, [2.5, 6.8]], [2, [2.5, 6.8]]], columns=["a", "b"]), fts)
+
+        model_signature._validate_pandas_df(pd.DataFrame([[1, [2.5, 6.8]], [2, None]], columns=["a", "b"]), fts)
 
         with exception_utils.assert_snowml_exceptions(
             self,
@@ -353,6 +385,10 @@ class ModelSignatureMiscTest(absltest.TestCase):
         )
 
         model_signature._validate_pandas_df(
+            pd.DataFrame([[1, np.array([2.5, 6.8])], [2, None]], columns=["a", "b"]), fts
+        )
+
+        model_signature._validate_pandas_df(
             pd.DataFrame([[1, np.array([2.5, 6.8, 6.8])], [2, np.array([2.5, 6.8, 6.8])]], columns=["a", "b"]), fts
         )
 
@@ -372,6 +408,8 @@ class ModelSignatureMiscTest(absltest.TestCase):
         model_signature._validate_pandas_df(
             pd.DataFrame([[1, [[2.5], [6.8]]], [2, [[2.5], [6.8]]]], columns=["a", "b"]), fts
         )
+
+        model_signature._validate_pandas_df(pd.DataFrame([[1, [[2.5], [6.8]]], [2, None]], columns=["a", "b"]), fts)
 
         with exception_utils.assert_snowml_exceptions(
             self,
@@ -424,6 +462,8 @@ class ModelSignatureMiscTest(absltest.TestCase):
         model_signature._validate_pandas_df(pd.DataFrame(["a", "b", "c", "d"], columns=["a"]), fts)
         model_signature._validate_pandas_df(pd.DataFrame(["a", "b", "c", "d"], columns=["a"], index=[2, 5, 6, 8]), fts)
 
+        model_signature._validate_pandas_df(pd.DataFrame(["a", "b", None, "d"], columns=["a"]), fts)
+
         with exception_utils.assert_snowml_exceptions(
             self,
             expected_original_error_type=ValueError,
@@ -454,6 +494,9 @@ class ModelSignatureMiscTest(absltest.TestCase):
 
         model_signature._validate_pandas_df(
             pd.DataFrame([ele.encode() for ele in ["a", "b", "c", "d"]], columns=["a"], index=[2, 5, 6, 8]), fts
+        )
+        model_signature._validate_pandas_df(
+            pd.DataFrame([ele.encode() for ele in ["a", "b", "c", "d"]] + [None], columns=["a"]), fts
         )
 
         with exception_utils.assert_snowml_exceptions(

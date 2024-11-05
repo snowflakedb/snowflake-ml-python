@@ -143,7 +143,7 @@ class PyTorchHandlerTest(absltest.TestCase):
 
     def test_torch_df_sample_input(self) -> None:
         model, data_x, data_y = _prepare_torch_model(torch.float64)
-        model_script = torch.jit.script(model)  # type:ignore[attr-defined]
+        model_script = torch.jit.script(model)
         s = {"forward": model_signature.infer_signature([data_x], [data_y])}
 
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -192,7 +192,7 @@ class PyTorchHandlerTest(absltest.TestCase):
             pk.load()
             assert pk.model
             assert pk.meta
-            assert isinstance(pk.model, torch.jit.ScriptModule)  # type:ignore[attr-defined]
+            assert isinstance(pk.model, torch.jit.ScriptModule)
             torch.testing.assert_close(pk.model.forward(data_x), y_pred)
 
             pk = model_packager.ModelPackager(os.path.join(tmpdir, "model1_no_sig_2"))

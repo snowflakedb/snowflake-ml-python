@@ -297,3 +297,7 @@ def huggingface_pipeline_signature_auto_infer(task: str, params: Dict[str, Any])
         )
 
     return None
+
+
+def series_dropna(series: pd.Series) -> pd.Series:
+    return series.dropna(inplace=False).reset_index(drop=True).convert_dtypes()

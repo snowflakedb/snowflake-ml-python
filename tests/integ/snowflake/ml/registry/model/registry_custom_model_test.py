@@ -62,6 +62,15 @@ class DemoModelWithArtifacts(custom_model.CustomModel):
         return pd.DataFrame({"output": (input["c1"] + self.bias) > 12})
 
 
+class DemoModelWithPdSeriesOutPut(custom_model.CustomModel):
+    def __init__(self, context: custom_model.ModelContext) -> None:
+        super().__init__(context)
+
+    @custom_model.inference_api
+    def predict(self, input: pd.DataFrame) -> pd.Series:
+        return input["c1"]
+
+
 class TestRegistryCustomModelInteg(registry_model_test_base.RegistryModelTestBase):
     @parameterized.product(  # type: ignore[misc]
         registry_test_fn=registry_model_test_base.RegistryModelTestBase.REGISTRY_TEST_FN_LIST,
@@ -89,7 +98,7 @@ class TestRegistryCustomModelInteg(registry_model_test_base.RegistryModelTestBas
                         pd_df,
                         lambda res: pd.testing.assert_frame_equal(
                             res,
-                            pd.DataFrame(arr[:, 0], columns=["output"], dtype=float),
+                            pd.DataFrame(arr[:, 0], columns=["output"], dtype=pd.Float64Dtype()),
                         ),
                     ),
                 },
@@ -116,7 +125,7 @@ class TestRegistryCustomModelInteg(registry_model_test_base.RegistryModelTestBas
                     pd_df,
                     lambda res: pd.testing.assert_frame_equal(
                         res,
-                        pd.DataFrame(arr[:, 0], columns=["output"]),
+                        pd.DataFrame(arr[:, 0], columns=["output"], dtype=pd.Int64Dtype()),
                     ),
                 ),
             },
@@ -190,6 +199,118 @@ class TestRegistryCustomModelInteg(registry_model_test_base.RegistryModelTestBas
     @parameterized.product(  # type: ignore[misc]
         registry_test_fn=registry_model_test_base.RegistryModelTestBase.REGISTRY_TEST_FN_LIST,
     )
+    def test_custom_demo_model_none(
+        self,
+        registry_test_fn: str,
+    ) -> None:
+        lm = DemoModel(custom_model.ModelContext())
+        arr = [[1, 2, 3], [None, 2, 5]]
+        pd_df = pd.DataFrame(arr, columns=["c1", "c2", "c3"])
+        getattr(self, registry_test_fn)(
+            model=lm,
+            sample_input_data=pd_df,
+            prediction_assert_fns={
+                "predict": (
+                    pd_df,
+                    lambda res: pd.testing.assert_frame_equal(
+                        res,
+                        pd.DataFrame([1, None], columns=["output"], dtype=pd.Int64Dtype()),
+                    ),
+                )
+            },
+        )
+
+    @parameterized.product(  # type: ignore[misc]
+        registry_test_fn=registry_model_test_base.RegistryModelTestBase.REGISTRY_TEST_FN_LIST,
+    )
+    def test_custom_demo_model_none_multi_block(
+        self,
+        registry_test_fn: str,
+    ) -> None:
+        lm = DemoModel(custom_model.ModelContext())
+        arr = [[1, 2]] * 5000 + [[None, 2]] * 5000
+        pd_df = pd.DataFrame(arr, columns=["c1", "c2"])
+        getattr(self, registry_test_fn)(
+            model=lm,
+            sample_input_data=pd_df,
+            prediction_assert_fns={
+                "predict": (
+                    pd_df,
+                    lambda res: pd.testing.assert_frame_equal(
+                        res,
+                        pd.DataFrame([1] * 5000 + [None] * 5000, columns=["output"], dtype=pd.Float64Dtype()),
+                    ),
+                )
+            },
+        )
+
+    @parameterized.product(  # type: ignore[misc]
+        registry_test_fn=registry_model_test_base.RegistryModelTestBase.REGISTRY_TEST_FN_LIST,
+    )
+    def test_custom_demo_model_none_sp(
+        self,
+        registry_test_fn: str,
+    ) -> None:
+        lm = DemoModel(custom_model.ModelContext())
+        arr = [[1, 2, 3], [None, 2, 5]]
+        sp_df = self.session.create_dataframe(arr, schema=['"c1"', '"c2"', '"c3"'])
+        y_df_expected = pd.DataFrame([[1, 2, 3, 1], [None, 2, 5, None]], columns=["c1", "c2", "c3", "output"])
+        getattr(self, registry_test_fn)(
+            model=lm,
+            sample_input_data=sp_df,
+            prediction_assert_fns={
+                "predict": (sp_df, lambda res: dataframe_utils.check_sp_df_res(res, y_df_expected, check_dtype=False))
+            },
+        )
+
+    @parameterized.product(  # type: ignore[misc]
+        registry_test_fn=registry_model_test_base.RegistryModelTestBase.REGISTRY_TEST_FN_LIST,
+    )
+    def test_custom_demo_model_none_sp_mix1(
+        self,
+        registry_test_fn: str,
+    ) -> None:
+        lm = DemoModel(custom_model.ModelContext())
+        arr = [[1, 2, 3], [None, 2, 5]]
+        pd_df = pd.DataFrame(arr, columns=["c1", "c2", "c3"])
+        sp_df = self.session.create_dataframe(arr, schema=['"c1"', '"c2"', '"c3"'])
+        y_df_expected = pd.DataFrame([[1, 2, 3, 1], [None, 2, 5, None]], columns=["c1", "c2", "c3", "output"])
+        getattr(self, registry_test_fn)(
+            model=lm,
+            sample_input_data=pd_df,
+            prediction_assert_fns={
+                "predict": (sp_df, lambda res: dataframe_utils.check_sp_df_res(res, y_df_expected, check_dtype=False))
+            },
+        )
+
+    @parameterized.product(  # type: ignore[misc]
+        registry_test_fn=registry_model_test_base.RegistryModelTestBase.REGISTRY_TEST_FN_LIST,
+    )
+    def test_custom_demo_model_none_sp_mix2(
+        self,
+        registry_test_fn: str,
+    ) -> None:
+        lm = DemoModel(custom_model.ModelContext())
+        arr = [[1, 2, 3], [None, 2, 5]]
+        pd_df = pd.DataFrame(arr, columns=["c1", "c2", "c3"])
+        sp_df = self.session.create_dataframe(arr, schema=['"c1"', '"c2"', '"c3"'])
+        getattr(self, registry_test_fn)(
+            model=lm,
+            sample_input_data=sp_df,
+            prediction_assert_fns={
+                "predict": (
+                    pd_df,
+                    lambda res: pd.testing.assert_frame_equal(
+                        res,
+                        pd.DataFrame([1, None], columns=["output"], dtype=pd.Int64Dtype()),
+                    ),
+                )
+            },
+        )
+
+    @parameterized.product(  # type: ignore[misc]
+        registry_test_fn=registry_model_test_base.RegistryModelTestBase.REGISTRY_TEST_FN_LIST,
+    )
     def test_custom_demo_model_sp_quote(
         self,
         registry_test_fn: str,
@@ -206,7 +327,7 @@ class TestRegistryCustomModelInteg(registry_model_test_base.RegistryModelTestBas
                     pd_df,
                     lambda res: pd.testing.assert_frame_equal(
                         res,
-                        pd.DataFrame([1, 4], columns=['"output"'], dtype=np.int8),
+                        pd.DataFrame([1, 4], columns=['"output"'], dtype=pd.Int8Dtype()),
                     ),
                 )
             },
@@ -254,7 +375,7 @@ class TestRegistryCustomModelInteg(registry_model_test_base.RegistryModelTestBas
                     pd_df,
                     lambda res: pd.testing.assert_frame_equal(
                         res,
-                        pd.DataFrame([1, 4], columns=["output"], dtype=np.int8),
+                        pd.DataFrame([1, 4], columns=["output"], dtype=pd.Int8Dtype()),
                     ),
                 )
             },
@@ -287,6 +408,31 @@ class TestRegistryCustomModelInteg(registry_model_test_base.RegistryModelTestBas
     @parameterized.product(  # type: ignore[misc]
         registry_test_fn=registry_model_test_base.RegistryModelTestBase.REGISTRY_TEST_FN_LIST,
     )
+    @absltest.skip("Skip until we support pd.Series as output")
+    def test_custom_demo_model_pd_series(
+        self,
+        registry_test_fn: str,
+    ) -> None:
+        lm = DemoModelWithPdSeriesOutPut(custom_model.ModelContext())
+        arr = np.array([[1, 2, 3], [4, 2, 5]])
+        pd_df = pd.DataFrame(arr, columns=["c1", "c2", "c3"])
+        getattr(self, registry_test_fn)(
+            model=lm,
+            sample_input_data=pd_df,
+            prediction_assert_fns={
+                "predict": (
+                    pd_df,
+                    lambda res: pd.testing.assert_series_equal(
+                        res["output"],
+                        pd.Series([1, 4], name="output"),
+                    ),
+                )
+            },
+        )
+
+    @parameterized.product(  # type: ignore[misc]
+        registry_test_fn=registry_model_test_base.RegistryModelTestBase.REGISTRY_TEST_FN_LIST,
+    )
     def test_custom_demo_model_str(
         self,
         registry_test_fn: str,
@@ -301,8 +447,33 @@ class TestRegistryCustomModelInteg(registry_model_test_base.RegistryModelTestBas
                     pd_df,
                     lambda res: pd.testing.assert_frame_equal(
                         res,
-                        pd.DataFrame(data={"output": ["Yogiri", "Artia"]}),
+                        pd.DataFrame(data={"output": ["Yogiri", "Artia"]}, dtype=pd.StringDtype()),
                     ),
+                )
+            },
+        )
+
+    @parameterized.product(  # type: ignore[misc]
+        registry_test_fn=registry_model_test_base.RegistryModelTestBase.REGISTRY_TEST_FN_LIST,
+    )
+    def test_custom_demo_model_str_sp_none(
+        self,
+        registry_test_fn: str,
+    ) -> None:
+        lm = DemoModel(custom_model.ModelContext())
+        pd_df = pd.DataFrame([[None, "Civia", "Echo"], ["Artia", "Doris", "Rosalyn"]], columns=["c1", "c2", "c3"])
+        sp_df = self.session.create_dataframe(pd_df)
+        y_df_expected = pd.DataFrame(
+            [[None, "Civia", "Echo", None], ["Artia", "Doris", "Rosalyn", "Artia"]],
+            columns=["c1", "c2", "c3", "output"],
+        )
+        getattr(self, registry_test_fn)(
+            model=lm,
+            sample_input_data=sp_df,
+            prediction_assert_fns={
+                "predict": (
+                    sp_df,
+                    lambda res: dataframe_utils.check_sp_df_res(res, y_df_expected, check_dtype=False),
                 )
             },
         )
@@ -398,7 +569,7 @@ class TestRegistryCustomModelInteg(registry_model_test_base.RegistryModelTestBas
                         pd_df,
                         lambda res: pd.testing.assert_frame_equal(
                             res,
-                            pd.DataFrame([False, True], columns=["output"]),
+                            pd.DataFrame([False, True], columns=["output"], dtype=pd.BooleanDtype()),
                         ),
                     )
                 },
@@ -453,6 +624,7 @@ class TestRegistryCustomModelInteg(registry_model_test_base.RegistryModelTestBas
                     lambda res: pd.testing.assert_frame_equal(
                         res,
                         output,
+                        check_dtype=False,
                     ),
                 )
             },
@@ -490,6 +662,7 @@ class TestRegistryCustomModelInteg(registry_model_test_base.RegistryModelTestBas
                         lambda res: pd.testing.assert_frame_equal(
                             res,
                             pd.DataFrame([False, True], columns=["output"]),
+                            check_dtype=False,
                         ),
                     )
                 },

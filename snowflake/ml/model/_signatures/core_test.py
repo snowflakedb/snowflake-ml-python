@@ -1,4 +1,5 @@
 import numpy as np
+import pandas as pd
 from absl.testing import absltest
 
 import snowflake.snowpark.types as spt
@@ -12,6 +13,12 @@ class DataTypeTest(absltest.TestCase):
         self.assertEqual(core.DataType.INT64, core.DataType.from_numpy_type(data.dtype))
 
         data = np.array(["a", "b", "c", "d"])
+        self.assertEqual(core.DataType.STRING, core.DataType.from_numpy_type(data.dtype))
+
+        data = pd.Series([1, 2, 3, 4]).convert_dtypes()
+        self.assertEqual(core.DataType.INT64, core.DataType.from_numpy_type(data.dtype))
+
+        data = pd.Series(["a", "b", "c", "d"]).convert_dtypes()
         self.assertEqual(core.DataType.STRING, core.DataType.from_numpy_type(data.dtype))
 
     def test_snowpark_type(self) -> None:
@@ -37,11 +44,19 @@ class FeatureSpecTest(absltest.TestCase):
         self.assertEqual(ft, eval(repr(ft), core.__dict__))
         self.assertEqual(ft, core.FeatureSpec.from_dict(ft.to_dict()))
         self.assertEqual(ft.as_snowpark_type(), spt.LongType())
+        self.assertEqual(ft.as_dtype(), pd.Int64Dtype())
+
+        ft = core.FeatureSpec(name="feature", dtype=core.DataType.INT64, nullable=False)
+        self.assertEqual(ft, eval(repr(ft), core.__dict__))
+        self.assertEqual(ft, core.FeatureSpec.from_dict(ft.to_dict()))
+        self.assertEqual(ft.as_snowpark_type(), spt.LongType())
+        self.assertEqual(ft.as_dtype(), np.int64)
 
         ft = core.FeatureSpec(name="feature", dtype=core.DataType.INT64, shape=(2,))
         self.assertEqual(ft, eval(repr(ft), core.__dict__))
         self.assertEqual(ft, core.FeatureSpec.from_dict(input_dict=ft.to_dict()))
         self.assertEqual(ft.as_snowpark_type(), spt.ArrayType(spt.LongType()))
+        self.assertEqual(ft.as_dtype(), np.object_)
 
 
 class FeatureGroupSpecTest(absltest.TestCase):
@@ -102,13 +117,11 @@ class ModelSignatureTest(absltest.TestCase):
                 core.FeatureGroupSpec(
                     name="cg1",
                     specs=[
-                        core.FeatureSpec(
-                            dtype=core.DataType.FLOAT,
-                            name="cc1",
-                        ),
+                        core.FeatureSpec(dtype=core.DataType.FLOAT, name="cc1", nullable=True),
                         core.FeatureSpec(
                             dtype=core.DataType.FLOAT,
                             name="cc2",
+                            nullable=False,
                         ),
                     ],
                 ),
@@ -118,16 +131,19 @@ class ModelSignatureTest(absltest.TestCase):
         )
         target = {
             "inputs": [
-                {"type": "FLOAT", "name": "c1"},
+                {"type": "FLOAT", "name": "c1", "nullable": True},
                 {
                     "feature_group": {
                         "name": "cg1",
-                        "specs": [{"type": "FLOAT", "name": "cc1"}, {"type": "FLOAT", "name": "cc2"}],
+                        "specs": [
+                            {"type": "FLOAT", "name": "cc1", "nullable": True},
+                            {"type": "FLOAT", "name": "cc2", "nullable": False},
+                        ],
                     }
                 },
-                {"type": "FLOAT", "name": "c2", "shape": (-1,)},
+                {"type": "FLOAT", "name": "c2", "shape": (-1,), "nullable": True},
             ],
-            "outputs": [{"type": "FLOAT", "name": "output"}],
+            "outputs": [{"type": "FLOAT", "name": "output", "nullable": True}],
         }
         self.assertDictEqual(s.to_dict(), target)
         self.assertEqual(s, eval(repr(s), core.__dict__))
@@ -140,13 +156,11 @@ class ModelSignatureTest(absltest.TestCase):
                 core.FeatureGroupSpec(
                     name="cg1",
                     specs=[
-                        core.FeatureSpec(
-                            dtype=core.DataType.FLOAT,
-                            name="cc1",
-                        ),
+                        core.FeatureSpec(dtype=core.DataType.FLOAT, name="cc1", nullable=True),
                         core.FeatureSpec(
                             dtype=core.DataType.FLOAT,
                             name="cc2",
+                            nullable=False,
                         ),
                     ],
                 ),

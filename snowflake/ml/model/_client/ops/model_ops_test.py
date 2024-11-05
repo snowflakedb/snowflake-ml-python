@@ -460,29 +460,29 @@ class ModelOpsTest(absltest.TestCase):
                 statement_params=self.m_statement_params,
             )
 
-    def test_list_inference_services(self) -> None:
+    def test_show_services_1(self) -> None:
         m_services_list_res = [Row(inference_services='["a.b.c", "d.e.f"]')]
-        m_endpoints_list_res_0 = [Row(name="fooendpoint"), Row(name="barendpoint")]
-        m_endpoints_list_res_1 = [Row(name="bazendpoint")]
+        m_endpoints_list_res_0 = [Row(name="inference", ingress_url="Waiting")]
+        m_endpoints_list_res_1 = [Row(name="inference", ingress_url="foo.snowflakecomputing.app")]
 
         with mock.patch.object(
             self.m_ops._model_client, "show_versions", return_value=m_services_list_res
         ) as mock_show_versions, mock.patch.object(
-            self.m_ops._model_client, "show_endpoints", side_effect=[m_endpoints_list_res_0, m_endpoints_list_res_1]
+            self.m_ops._service_client, "show_endpoints", side_effect=[m_endpoints_list_res_0, m_endpoints_list_res_1]
         ):
-            res = self.m_ops.list_inference_services(
+            res = self.m_ops.show_services(
                 database_name=sql_identifier.SqlIdentifier("TEMP"),
                 schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
                 version_name=sql_identifier.SqlIdentifier("v1", case_sensitive=True),
                 statement_params=self.m_statement_params,
             )
-            self.assertEqual(
+            self.assertListEqual(
                 res,
-                {
-                    "service_name": ["a.b.c", "a.b.c", "d.e.f"],
-                    "endpoints": ["fooendpoint", "barendpoint", "bazendpoint"],
-                },
+                [
+                    {"name": "a.b.c", "inference_endpoint": None},
+                    {"name": "d.e.f", "inference_endpoint": "foo.snowflakecomputing.app"},
+                ],
             )
             mock_show_versions.assert_called_once_with(
                 database_name=sql_identifier.SqlIdentifier("TEMP"),
@@ -492,13 +492,106 @@ class ModelOpsTest(absltest.TestCase):
                 statement_params=self.m_statement_params,
             )
 
-    def test_list_inference_services_pre_bcr(self) -> None:
+    def test_show_services_2(self) -> None:
+        m_services_list_res = [Row(inference_services='["a.b.c"]')]
+        m_endpoints_list_res = [Row(name="inference", ingress_url=None)]
+
+        with mock.patch.object(
+            self.m_ops._model_client, "show_versions", return_value=m_services_list_res
+        ) as mock_show_versions, mock.patch.object(
+            self.m_ops._service_client, "show_endpoints", return_value=m_endpoints_list_res
+        ):
+            res = self.m_ops.show_services(
+                database_name=sql_identifier.SqlIdentifier("TEMP"),
+                schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
+                model_name=sql_identifier.SqlIdentifier("MODEL"),
+                version_name=sql_identifier.SqlIdentifier("v1", case_sensitive=True),
+                statement_params=self.m_statement_params,
+            )
+            self.assertListEqual(
+                res,
+                [
+                    {"name": "a.b.c", "inference_endpoint": None},
+                ],
+            )
+            mock_show_versions.assert_called_once_with(
+                database_name=sql_identifier.SqlIdentifier("TEMP"),
+                schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
+                model_name=sql_identifier.SqlIdentifier("MODEL"),
+                version_name=sql_identifier.SqlIdentifier("v1", case_sensitive=True),
+                statement_params=self.m_statement_params,
+            )
+
+    def test_show_services_3(self) -> None:
+        m_services_list_res = [Row(inference_services='["a.b.c"]')]
+        m_endpoints_list_res = [
+            Row(name="inference", ingress_url="foo.snowflakecomputing.app"),
+            Row(name="another", ingress_url="bar.snowflakecomputing.app"),
+        ]
+
+        with mock.patch.object(
+            self.m_ops._model_client, "show_versions", return_value=m_services_list_res
+        ) as mock_show_versions, mock.patch.object(
+            self.m_ops._service_client, "show_endpoints", return_value=m_endpoints_list_res
+        ):
+            res = self.m_ops.show_services(
+                database_name=sql_identifier.SqlIdentifier("TEMP"),
+                schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
+                model_name=sql_identifier.SqlIdentifier("MODEL"),
+                version_name=sql_identifier.SqlIdentifier("v1", case_sensitive=True),
+                statement_params=self.m_statement_params,
+            )
+            self.assertListEqual(
+                res,
+                [
+                    {"name": "a.b.c", "inference_endpoint": "foo.snowflakecomputing.app"},
+                ],
+            )
+            mock_show_versions.assert_called_once_with(
+                database_name=sql_identifier.SqlIdentifier("TEMP"),
+                schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
+                model_name=sql_identifier.SqlIdentifier("MODEL"),
+                version_name=sql_identifier.SqlIdentifier("v1", case_sensitive=True),
+                statement_params=self.m_statement_params,
+            )
+
+    def test_show_services_4(self) -> None:
+        m_services_list_res = [Row(inference_services='["a.b.c"]')]
+        m_endpoints_list_res = [Row(name="custom", ingress_url="foo.snowflakecomputing.app")]
+
+        with mock.patch.object(
+            self.m_ops._model_client, "show_versions", return_value=m_services_list_res
+        ) as mock_show_versions, mock.patch.object(
+            self.m_ops._service_client, "show_endpoints", return_value=m_endpoints_list_res
+        ):
+            res = self.m_ops.show_services(
+                database_name=sql_identifier.SqlIdentifier("TEMP"),
+                schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
+                model_name=sql_identifier.SqlIdentifier("MODEL"),
+                version_name=sql_identifier.SqlIdentifier("v1", case_sensitive=True),
+                statement_params=self.m_statement_params,
+            )
+            self.assertListEqual(
+                res,
+                [
+                    {"name": "a.b.c", "inference_endpoint": None},
+                ],
+            )
+            mock_show_versions.assert_called_once_with(
+                database_name=sql_identifier.SqlIdentifier("TEMP"),
+                schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
+                model_name=sql_identifier.SqlIdentifier("MODEL"),
+                version_name=sql_identifier.SqlIdentifier("v1", case_sensitive=True),
+                statement_params=self.m_statement_params,
+            )
+
+    def test_show_services_pre_bcr(self) -> None:
         m_list_res = [Row(comment="mycomment")]
         with mock.patch.object(
             self.m_ops._model_client, "show_versions", return_value=m_list_res
         ) as mock_show_versions:
             with self.assertRaises(exceptions.SnowflakeMLException) as context:
-                self.m_ops.list_inference_services(
+                self.m_ops.show_services(
                     database_name=sql_identifier.SqlIdentifier("TEMP"),
                     schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
                     model_name=sql_identifier.SqlIdentifier("MODEL"),
@@ -518,27 +611,26 @@ class ModelOpsTest(absltest.TestCase):
                 statement_params=self.m_statement_params,
             )
 
-    def test_list_inference_services_skip_build(self) -> None:
+    def test_show_services_skip_build(self) -> None:
         m_list_res = [Row(inference_services='["A.B.MODEL_BUILD_34d35ew", "A.B.SERVICE"]')]
         m_endpoints_list_res = [Row(name="fooendpoint"), Row(name="barendpoint")]
         with mock.patch.object(
             self.m_ops._model_client, "show_versions", return_value=m_list_res
         ) as mock_show_versions, mock.patch.object(
-            self.m_ops._model_client, "show_endpoints", side_effect=[m_endpoints_list_res]
+            self.m_ops._service_client, "show_endpoints", side_effect=[m_endpoints_list_res]
         ):
-            res = self.m_ops.list_inference_services(
+            res = self.m_ops.show_services(
                 database_name=sql_identifier.SqlIdentifier("TEMP"),
                 schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
                 version_name=sql_identifier.SqlIdentifier("v1", case_sensitive=True),
                 statement_params=self.m_statement_params,
             )
-            self.assertEqual(
+            self.assertListEqual(
                 res,
-                {
-                    "service_name": ["A.B.SERVICE", "A.B.SERVICE"],
-                    "endpoints": ["fooendpoint", "barendpoint"],
-                },
+                [
+                    {"name": "A.B.SERVICE", "inference_endpoint": None},
+                ],
             )
             mock_show_versions.assert_called_once_with(
                 database_name=sql_identifier.SqlIdentifier("TEMP"),
@@ -554,43 +646,20 @@ class ModelOpsTest(absltest.TestCase):
         with mock.patch.object(
             self.m_ops._model_client, "show_versions", return_value=m_list_res
         ) as mock_show_versions, mock.patch.object(
-            self.m_session, attribute="get_current_database", return_value="a"
-        ) as mock_get_database, mock.patch.object(
-            self.m_session, attribute="get_current_schema", return_value="b"
-        ) as mock_get_schema, mock_show_versions, mock.patch.object(
-            self.m_ops._model_client, "show_endpoints", return_value=m_endpoints_list_res
+            self.m_ops._service_client, "show_endpoints", return_value=m_endpoints_list_res
         ):
             with self.assertRaisesRegex(
-                ValueError, "Service 'A' does not exist or unauthorized or not associated with this model version."
+                ValueError, "Service 'A.B.A' does not exist or unauthorized or not associated with this model version."
             ):
                 self.m_ops.delete_service(
                     database_name=sql_identifier.SqlIdentifier("TEMP"),
                     schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
                     model_name=sql_identifier.SqlIdentifier("MODEL"),
                     version_name=sql_identifier.SqlIdentifier("v1", case_sensitive=True),
-                    service_name="a",
+                    service_database_name=sql_identifier.SqlIdentifier("A"),
+                    service_schema_name=sql_identifier.SqlIdentifier("B"),
+                    service_name=sql_identifier.SqlIdentifier("A"),
                 )
-            with self.assertRaisesRegex(
-                ValueError, "Service 'B' does not exist or unauthorized or not associated with this model version."
-            ):
-                self.m_ops.delete_service(
-                    database_name=sql_identifier.SqlIdentifier("TEMP"),
-                    schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
-                    model_name=sql_identifier.SqlIdentifier("MODEL"),
-                    version_name=sql_identifier.SqlIdentifier("v1", case_sensitive=True),
-                    service_name="a.b",
-                )
-            with self.assertRaisesRegex(
-                ValueError, "Service 'D' does not exist or unauthorized or not associated with this model version."
-            ):
-                self.m_ops.delete_service(
-                    database_name=sql_identifier.SqlIdentifier("TEMP"),
-                    schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
-                    model_name=sql_identifier.SqlIdentifier("MODEL"),
-                    version_name=sql_identifier.SqlIdentifier("v1", case_sensitive=True),
-                    service_name="b.c.d",
-                )
-
             mock_show_versions.assert_called_with(
                 database_name=sql_identifier.SqlIdentifier("TEMP"),
                 schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
@@ -598,8 +667,58 @@ class ModelOpsTest(absltest.TestCase):
                 version_name=sql_identifier.SqlIdentifier("v1", case_sensitive=True),
                 statement_params=mock.ANY,
             )
-            mock_get_database.assert_called()
-            mock_get_schema.assert_called()
+
+        with mock.patch.object(
+            self.m_ops._model_client, "show_versions", return_value=m_list_res
+        ) as mock_show_versions, mock.patch.object(
+            self.m_ops._service_client, "show_endpoints", return_value=m_endpoints_list_res
+        ):
+            with self.assertRaisesRegex(
+                ValueError,
+                "Service 'FOO.\"bar\".B' does not exist or unauthorized or not associated with this model version.",
+            ):
+                self.m_ops.delete_service(
+                    database_name=sql_identifier.SqlIdentifier("foo"),
+                    schema_name=sql_identifier.SqlIdentifier("bar", case_sensitive=True),
+                    model_name=sql_identifier.SqlIdentifier("MODEL"),
+                    version_name=sql_identifier.SqlIdentifier("v1", case_sensitive=True),
+                    service_database_name=None,
+                    service_schema_name=None,
+                    service_name=sql_identifier.SqlIdentifier("B"),
+                )
+            mock_show_versions.assert_called_with(
+                database_name=sql_identifier.SqlIdentifier("foo"),
+                schema_name=sql_identifier.SqlIdentifier("bar", case_sensitive=True),
+                model_name=sql_identifier.SqlIdentifier("MODEL"),
+                version_name=sql_identifier.SqlIdentifier("v1", case_sensitive=True),
+                statement_params=mock.ANY,
+            )
+
+        with mock.patch.object(
+            self.m_ops._model_client, "show_versions", return_value=m_list_res
+        ) as mock_show_versions, mock.patch.object(
+            self.m_ops._service_client, "show_endpoints", return_value=m_endpoints_list_res
+        ):
+            with self.assertRaisesRegex(
+                ValueError,
+                "Service 'TEMP.\"test\".D' does not exist or unauthorized or not associated with this model version.",
+            ):
+                self.m_ops.delete_service(
+                    database_name=None,
+                    schema_name=None,
+                    model_name=sql_identifier.SqlIdentifier("MODEL"),
+                    version_name=sql_identifier.SqlIdentifier("v1", case_sensitive=True),
+                    service_database_name=None,
+                    service_schema_name=None,
+                    service_name=sql_identifier.SqlIdentifier("D"),
+                )
+            mock_show_versions.assert_called_with(
+                database_name=None,
+                schema_name=None,
+                model_name=sql_identifier.SqlIdentifier("MODEL"),
+                version_name=sql_identifier.SqlIdentifier("v1", case_sensitive=True),
+                statement_params=mock.ANY,
+            )
 
     def test_delete_service_exists(self) -> None:
         m_list_res = [Row(inference_services='["A.B.C", "D.E.F"]')]
@@ -609,34 +728,17 @@ class ModelOpsTest(absltest.TestCase):
         ) as mock_show_versions, mock.patch.object(
             self.m_ops._service_client, "drop_service"
         ) as mock_drop_service, mock.patch.object(
-            self.m_session, attribute="get_current_database", return_value="a"
-        ) as mock_get_database, mock.patch.object(
-            self.m_session, attribute="get_current_schema", return_value="b"
-        ) as mock_get_schema, mock_show_versions, mock.patch.object(
-            self.m_ops._model_client, "show_endpoints", return_value=m_endpoints_list_res
+            self.m_ops._service_client, "show_endpoints", return_value=m_endpoints_list_res
         ):
             self.m_ops.delete_service(
                 database_name=sql_identifier.SqlIdentifier("TEMP"),
                 schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
                 version_name=sql_identifier.SqlIdentifier("v1", case_sensitive=True),
-                service_name="c",
+                service_database_name=sql_identifier.SqlIdentifier("A"),
+                service_schema_name=sql_identifier.SqlIdentifier("B"),
+                service_name=sql_identifier.SqlIdentifier("C"),
             )
-            self.m_ops.delete_service(
-                database_name=sql_identifier.SqlIdentifier("TEMP"),
-                schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
-                model_name=sql_identifier.SqlIdentifier("MODEL"),
-                version_name=sql_identifier.SqlIdentifier("v1", case_sensitive=True),
-                service_name="b.c",
-            )
-            self.m_ops.delete_service(
-                database_name=sql_identifier.SqlIdentifier("TEMP"),
-                schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
-                model_name=sql_identifier.SqlIdentifier("MODEL"),
-                version_name=sql_identifier.SqlIdentifier("v1", case_sensitive=True),
-                service_name="a.b.c",
-            )
-
             mock_show_versions.assert_called_with(
                 database_name=sql_identifier.SqlIdentifier("TEMP"),
                 schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
@@ -644,12 +746,71 @@ class ModelOpsTest(absltest.TestCase):
                 version_name=sql_identifier.SqlIdentifier("v1", case_sensitive=True),
                 statement_params=mock.ANY,
             )
-            mock_get_database.assert_called()
-            mock_get_schema.assert_called()
             mock_drop_service.assert_called_with(
-                database_name="A",
-                schema_name="B",
-                service_name="C",
+                database_name=sql_identifier.SqlIdentifier("A"),
+                schema_name=sql_identifier.SqlIdentifier("B"),
+                service_name=sql_identifier.SqlIdentifier("C"),
+                statement_params=mock.ANY,
+            )
+
+        with mock.patch.object(
+            self.m_ops._model_client, "show_versions", return_value=m_list_res
+        ) as mock_show_versions, mock.patch.object(
+            self.m_ops._service_client, "drop_service"
+        ) as mock_drop_service, mock.patch.object(
+            self.m_ops._service_client, "show_endpoints", return_value=m_endpoints_list_res
+        ):
+            self.m_ops.delete_service(
+                database_name=sql_identifier.SqlIdentifier("A"),
+                schema_name=sql_identifier.SqlIdentifier("B"),
+                model_name=sql_identifier.SqlIdentifier("MODEL"),
+                version_name=sql_identifier.SqlIdentifier("v1", case_sensitive=True),
+                service_database_name=None,
+                service_schema_name=None,
+                service_name=sql_identifier.SqlIdentifier("C"),
+            )
+            mock_show_versions.assert_called_with(
+                database_name=sql_identifier.SqlIdentifier("A"),
+                schema_name=sql_identifier.SqlIdentifier("B"),
+                model_name=sql_identifier.SqlIdentifier("MODEL"),
+                version_name=sql_identifier.SqlIdentifier("v1", case_sensitive=True),
+                statement_params=mock.ANY,
+            )
+            mock_drop_service.assert_called_with(
+                database_name=sql_identifier.SqlIdentifier("A"),
+                schema_name=sql_identifier.SqlIdentifier("B"),
+                service_name=sql_identifier.SqlIdentifier("C"),
+                statement_params=mock.ANY,
+            )
+        with mock.patch.object(
+            self.m_ops._model_client,
+            "show_versions",
+            return_value=[Row(inference_services='["TEMP.\\"test\\".C", "D.E.F"]')],
+        ) as mock_show_versions, mock.patch.object(
+            self.m_ops._service_client, "drop_service"
+        ) as mock_drop_service, mock.patch.object(
+            self.m_ops._service_client, "show_endpoints", return_value=m_endpoints_list_res
+        ):
+            self.m_ops.delete_service(
+                database_name=None,
+                schema_name=None,
+                model_name=sql_identifier.SqlIdentifier("MODEL"),
+                version_name=sql_identifier.SqlIdentifier("v1", case_sensitive=True),
+                service_database_name=None,
+                service_schema_name=None,
+                service_name=sql_identifier.SqlIdentifier("C"),
+            )
+            mock_show_versions.assert_called_with(
+                database_name=None,
+                schema_name=None,
+                model_name=sql_identifier.SqlIdentifier("MODEL"),
+                version_name=sql_identifier.SqlIdentifier("v1", case_sensitive=True),
+                statement_params=mock.ANY,
+            )
+            mock_drop_service.assert_called_with(
+                database_name=sql_identifier.SqlIdentifier("TEMP"),
+                schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
+                service_name=sql_identifier.SqlIdentifier("C"),
                 statement_params=mock.ANY,
             )
 

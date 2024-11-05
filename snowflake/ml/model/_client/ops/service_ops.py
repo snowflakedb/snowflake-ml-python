@@ -109,6 +109,17 @@ class ServiceOperator:
         build_external_access_integrations: Optional[List[sql_identifier.SqlIdentifier]],
         statement_params: Optional[Dict[str, Any]] = None,
     ) -> str:
+
+        # Fall back to the registry's database and schema if not provided
+        database_name = database_name or self._database_name
+        schema_name = schema_name or self._schema_name
+
+        # Fall back to the model's database and schema if not provided then to the registry's database and schema
+        service_database_name = service_database_name or database_name or self._database_name
+        service_schema_name = service_schema_name or schema_name or self._schema_name
+
+        image_repo_database_name = image_repo_database_name or database_name or self._database_name
+        image_repo_schema_name = image_repo_schema_name or schema_name or self._schema_name
         # create a temp stage
         stage_name = sql_identifier.SqlIdentifier(
             snowpark_utils.random_name_for_temp_object(snowpark_utils.TempObjectType.STAGE)
@@ -130,8 +141,8 @@ class ServiceOperator:
             raise ValueError("External access integrations are required in Snowflake < 8.40.0.")
 
         self._model_deployment_spec.save(
-            database_name=database_name or self._database_name,
-            schema_name=schema_name or self._schema_name,
+            database_name=database_name,
+            schema_name=schema_name,
             model_name=model_name,
             version_name=version_name,
             service_database_name=service_database_name,

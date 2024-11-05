@@ -66,7 +66,7 @@ SupportedRequireSignatureModelType = Union[
     "xgboost.XGBModel",
     "xgboost.Booster",
     "torch.nn.Module",
-    "torch.jit.ScriptModule",  # type:ignore[name-defined]
+    "torch.jit.ScriptModule",
     "tensorflow.Module",
 ]
 

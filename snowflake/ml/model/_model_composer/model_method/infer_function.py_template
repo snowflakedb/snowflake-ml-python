@@ -5,6 +5,7 @@ import sys
 
 import anyio
 import pandas as pd
+import numpy as np
 from _snowflake import vectorized
 
 from snowflake.ml.model._packager import model_packager
@@ -47,4 +48,4 @@ def {function_name}(df: pd.DataFrame) -> dict:
     df.columns = input_cols
     input_df = df.astype(dtype=dtype_map)
     predictions_df = runner(input_df[input_cols])
-    return predictions_df.to_dict("records")
+    return predictions_df.replace({{pd.NA: None, np.nan: None}}).to_dict("records")

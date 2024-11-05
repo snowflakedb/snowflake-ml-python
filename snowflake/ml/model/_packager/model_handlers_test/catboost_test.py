@@ -91,6 +91,7 @@ class CatBoostHandlerTest(absltest.TestCase):
             predict_method = getattr(pk.model, "predict_proba", None)
             assert callable(predict_method)
             np.testing.assert_allclose(predict_method(cal_X_test), y_pred_proba)
+            self.assertEqual(pk.meta.task, model_types.Task.TABULAR_BINARY_CLASSIFICATION)
 
     def test_catboost_explainablity_enabled(self) -> None:
         cal_data = datasets.load_breast_cancer()

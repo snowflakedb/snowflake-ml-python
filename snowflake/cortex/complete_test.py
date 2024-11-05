@@ -7,7 +7,7 @@ import unittest
 from dataclasses import dataclass
 from io import BytesIO
 from types import GeneratorType
-from typing import Dict, Iterable, Iterator, List, cast
+from typing import Dict, Iterable, Iterator, cast
 
 import _test_util
 from absl.testing import absltest
@@ -15,10 +15,9 @@ from requests.exceptions import HTTPError
 
 from snowflake import snowpark
 from snowflake.cortex import _complete
-from snowflake.cortex._complete import CompleteOptions, ConversationMessage
 from snowflake.snowpark import functions, types
 
-_OPTIONS = CompleteOptions(  # random params
+_OPTIONS = _complete.CompleteOptions(  # random params
     max_tokens=10,
     temperature=0.7,
     top_p=1,
@@ -58,8 +57,10 @@ class FakeSession:
 
 
 class FakeResponse:  # needed for testing, imitates some of requests.Response behaviors
-    def __init__(self, content: bytes) -> None:
+    def __init__(self, content: bytes, headers: Dict[str, str], data: bytes) -> None:
         self.content = BytesIO(content)
+        self.headers = headers
+        self.data = data
 
     def iter_content(self, chunk_size: int = 1) -> Iterator[bytes]:
         while True:
@@ -74,6 +75,9 @@ class FakeResponse:  # needed for testing, imitates some of requests.Response be
 
 class CompleteSQLBackendTest(absltest.TestCase):
     model = "|model|"
+    custom_model_stage = "@my.custom.model/stage"
+    custom_model_entity = "my.custom.model_entity"
+    all_models = [model, custom_model_stage, custom_model_entity]
     prompt = "|prompt|"
 
     @staticmethod
@@ -98,74 +102,18 @@ class CompleteSQLBackendTest(absltest.TestCase):
         self._session.sql("drop function complete(string,string)").collect()
         self._session.close()
 
-    def test_complete_sql_mode(self) -> None:
-        res = _complete._complete_impl(self.model, self.prompt, session=self._session, function="complete")
-        self.assertEqual(self.complete_for_test(self.model, self.prompt), res)
-
     def test_complete_snowpark_mode(self) -> None:
-        df_in = self._session.create_dataframe([snowpark.Row(model=self.model, prompt=self.prompt)])
+        """Test complete call with a single dataframe argument with columns for model
+        and prompt."""
+        df_in = self._session.create_dataframe(
+            [snowpark.Row(model=model, prompt=self.prompt) for model in self.all_models]
+        )
         df_out = df_in.select(
             _complete._complete_impl(functions.col("model"), functions.col("prompt"), function="complete")
         )
-        res = df_out.collect()[0][0]
-        self.assertEqual(self.complete_for_test(self.model, self.prompt), res)
-
-
-class CompleteOptionsSQLBackendTest(absltest.TestCase):
-    model = "|model|"
-
-    @staticmethod
-    def format_as_complete(model: str, prompt: List[ConversationMessage], options: CompleteOptions) -> str:
-        prompt_str = ""
-        for d in prompt:
-            prompt_str += f"({d['role']}, {d['content']}), "
-        return f"model: {model}, prompt: {prompt_str}, options: {options}"
-
-    @staticmethod
-    def complete_for_test(model: str, prompt: List[Dict[str, str]], options: Dict[str, float]) -> str:
-        prompt_str = ""
-        for d in prompt:
-            prompt_str += f"({d['role']}, {d['content']}), "
-        return f"model: {model}, prompt: {prompt_str}, options: {options}"
-
-    def setUp(self) -> None:
-        self._session = _test_util.create_test_session()
-        functions.udf(
-            self.complete_for_test,
-            name="complete",
-            return_type=types.StringType(),
-            input_types=[types.StringType(), types.ArrayType(), types.MapType()],
-            session=self._session,
-            is_permanent=False,
-        )
-
-    def tearDown(self) -> None:
-        self._session.sql("drop function complete(string,array,object)").collect()
-        self._session.close()
-
-    def test_conversation_history_immediate_mode(self) -> None:
-        conversation_history_prompt = [
-            ConversationMessage({"role": "system", "content": "content for system"}),
-            ConversationMessage({"role": "user", "content": "content for user"}),
-        ]
-        res = _complete._complete_impl(
-            self.model, conversation_history_prompt, session=self._session, function="complete"
-        )
-        self.assertEqual(self.format_as_complete(self.model, conversation_history_prompt, {}), res)
-
-    def test_populated_options(self) -> None:
-        prompt = "|prompt|"
-        equivalent_prompt_for_sql = [ConversationMessage({"role": "user", "content": "|prompt|"})]
-        res = _complete._complete_impl(self.model, prompt, options=_OPTIONS, session=self._session, function="complete")
-        self.assertEqual(self.format_as_complete(self.model, equivalent_prompt_for_sql, _OPTIONS), res)
-
-    def test_empty_options(self) -> None:
-        prompt = "|prompt|"
-        equivalent_prompt_for_sql = [ConversationMessage({"role": "user", "content": "|prompt|"})]
-        res = _complete._complete_impl(
-            self.model, prompt, options=_complete.CompleteOptions(), session=self._session, function="complete"
-        )
-        self.assertEqual(self.format_as_complete(self.model, equivalent_prompt_for_sql, CompleteOptions()), res)
+        for row_index in range(len(self.all_models)):
+            res = df_out.collect()[row_index][0]
+            self.assertEqual(self.complete_for_test(self.all_models[row_index], self.prompt), res)
 
 
 class MockIpifyHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
@@ -327,6 +275,16 @@ class CompleteRESTBackendTest(unittest.TestCase):
                 timeout=1,
             ),
         )
+
+    def test_complete_non_streaming_mode(self) -> None:
+        result = _complete._complete_impl(
+            model="my_models",
+            prompt="test_prompt",
+            options=_complete.CompleteOptions(),
+            session=self.session,
+        )
+        self.assertIsInstance(result, str)
+        self.assertEqual("This is a streaming response", result)
 
     def test_deadline(self) -> None:
         self.assertRaises(

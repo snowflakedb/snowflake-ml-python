@@ -17,6 +17,8 @@ _SNOWML_INFERENCE_ALTERNATIVE_DEPENDENCIES = [
     for r in _snowml_inference_alternative_requirements.REQUIREMENTS
 ]
 
+PACKAGES_NOT_ALLOWED_IN_WAREHOUSE = ["snowflake-connector-python", "pyarrow"]
+
 
 class ModelRuntime:
     """Class to represent runtime in a model, which controls the runtime and version, imports and dependencies.
@@ -61,15 +63,8 @@ class ModelRuntime:
             ],
         )
 
-        if not is_warehouse and self.embed_local_ml_library:
-            self.runtime_env.include_if_absent(
-                [
-                    model_env.ModelDependency(
-                        requirement="pyarrow",
-                        pip_name="pyarrow",
-                    )
-                ],
-            )
+        if is_warehouse and self.embed_local_ml_library:
+            self.runtime_env.remove_if_present_conda(PACKAGES_NOT_ALLOWED_IN_WAREHOUSE)
 
         if is_gpu:
             self.runtime_env.generate_env_for_cuda()

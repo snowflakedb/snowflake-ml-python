@@ -22,14 +22,14 @@ class XgboostHandlerTest(absltest.TestCase):
         cal_y = pd.Series(cal_data.target)
         cal_X_train, cal_X_test, cal_y_train, cal_y_test = model_selection.train_test_split(cal_X, cal_y)
         params = dict(n_estimators=100, reg_lambda=1, gamma=0, max_depth=3, objective="binary:logistic")
-        regressor = xgboost.train(params, xgboost.DMatrix(data=cal_X_train, label=cal_y_train))
-        y_pred = regressor.predict(xgboost.DMatrix(data=cal_X_test))
+        classifier = xgboost.train(params, xgboost.DMatrix(data=cal_X_train, label=cal_y_train))
+        y_pred = classifier.predict(xgboost.DMatrix(data=cal_X_test))
         with tempfile.TemporaryDirectory() as tmpdir:
             s = {"predict": model_signature.infer_signature(cal_X_test, y_pred)}
             with self.assertRaises(ValueError):
                 model_packager.ModelPackager(os.path.join(tmpdir, "model1")).save(
                     name="model1",
-                    model=regressor,
+                    model=classifier,
                     signatures={**s, "another_predict": s["predict"]},
                     metadata={"author": "halu", "version": "1"},
                     options=model_types.XGBModelSaveOptions(enable_explainability=False),
@@ -37,7 +37,7 @@ class XgboostHandlerTest(absltest.TestCase):
 
             model_packager.ModelPackager(os.path.join(tmpdir, "model1")).save(
                 name="model1",
-                model=regressor,
+                model=classifier,
                 signatures=s,
                 metadata={"author": "halu", "version": "1"},
             )
@@ -58,10 +58,12 @@ class XgboostHandlerTest(absltest.TestCase):
                 predict_method = getattr(pk.model, "predict", None)
                 assert callable(predict_method)
                 np.testing.assert_allclose(predict_method(cal_X_test), np.expand_dims(y_pred, axis=1))
+                # test task is set even without explain
+                self.assertEqual(pk.meta.task, model_types.Task.TABULAR_BINARY_CLASSIFICATION)
 
             model_packager.ModelPackager(os.path.join(tmpdir, "model1_no_sig")).save(
                 name="model1_no_sig",
-                model=regressor,
+                model=classifier,
                 sample_input_data=cal_X_test,
                 metadata={"author": "halu", "version": "1"},
                 options=model_types.XGBModelSaveOptions(enable_explainability=False),
@@ -155,6 +157,7 @@ class XgboostHandlerTest(absltest.TestCase):
             predict_method = getattr(pk.model, "predict_proba", None)
             assert callable(predict_method)
             np.testing.assert_allclose(predict_method(cal_X_test), y_pred_proba)
+            self.assertEqual(pk.meta.task, model_types.Task.TABULAR_BINARY_CLASSIFICATION)
 
     def test_xgb_explainablity_enabled(self) -> None:
         cal_data = datasets.load_breast_cancer()
@@ -177,6 +180,7 @@ class XgboostHandlerTest(absltest.TestCase):
                     model=classifier,
                     signatures={"predict": model_signature.infer_signature(cal_X_test, y_pred)},
                     metadata={"author": "halu", "version": "1"},
+                    task=model_types.Task.UNKNOWN,
                 )
 
             with warnings.catch_warnings():
@@ -213,6 +217,9 @@ class XgboostHandlerTest(absltest.TestCase):
             explain_method = getattr(pk.model, "explain", None)
             assert callable(explain_method)
             np.testing.assert_allclose(explain_method(cal_X_test), explanations)
+            assert pk.meta
+            # correctly inferred even when unknown
+            self.assertEqual(pk.meta.task, model_types.Task.TABULAR_BINARY_CLASSIFICATION)
 
     def test_xgb_explainablity_multiclass(self) -> None:
         cal_data = datasets.load_iris()

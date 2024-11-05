@@ -95,7 +95,7 @@ class CatBoostModelHandler(_base.BaseModelHandler["catboost.CatBoost"]):
                 get_prediction_fn=get_prediction,
             )
             model_task_and_output = model_task_utils.get_model_task_and_output_type(model)
-            model_meta.task = model_task_and_output.task
+            model_meta.task = handlers_utils.validate_model_task(model_meta.task, model_task_and_output.task)
             if enable_explainability:
                 explain_target_method = handlers_utils.get_explain_target_method(model_meta, cls.EXPLAIN_TARGET_METHODS)
                 model_meta = handlers_utils.add_explain_method_signature(

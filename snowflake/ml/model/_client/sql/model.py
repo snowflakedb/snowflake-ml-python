@@ -17,8 +17,6 @@ class ModelSQLClient(_base._BaseSQLClient):
     MODEL_VERSION_ALIASES_COL_NAME = "aliases"
     MODEL_VERSION_INFERENCE_SERVICES_COL_NAME = "inference_services"
 
-    MODEL_INFERENCE_SERVICE_ENDPOINT_COL_NAME = "name"
-
     def show_models(
         self,
         *,
@@ -82,18 +80,6 @@ class ModelSQLClient(_base._BaseSQLClient):
             res = res.has_dimensions(expected_rows=1)
         if check_model_details:
             res = res.has_column(ModelSQLClient.MODEL_VERSION_MODEL_SPEC_COL_NAME, allow_empty=True)
-
-        return res.validate()
-
-    def show_endpoints(
-        self,
-        *,
-        service_name: str,
-    ) -> List[row.Row]:
-        res = query_result_checker.SqlResultValidator(
-            self._session,
-            (f"SHOW ENDPOINTS IN SERVICE {service_name}"),
-        ).has_column(ModelSQLClient.MODEL_VERSION_NAME_COL_NAME, allow_empty=True)
 
         return res.validate()
 

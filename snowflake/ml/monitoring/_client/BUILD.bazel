@@ -41,3 +41,14 @@ py_test(
         "//snowflake/ml/test_utils:mock_session",
     ],
 )
+
+py_test(
+    name = "model_monitor_sql_client_server_test",
+    srcs = [
+        "model_monitor_sql_client_server_test.py",
+    ],
+    deps = [
+        ":model_monitor_sql_client",
+        "//snowflake/ml/test_utils:mock_session",
+    ],
+)

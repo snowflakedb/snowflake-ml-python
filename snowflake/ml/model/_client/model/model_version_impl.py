@@ -851,17 +851,13 @@ class ModelVersion(lineage_node.LineageNode):
         )
 
         return pd.DataFrame(
-            self._model_ops.list_inference_services(
+            self._model_ops.show_services(
                 database_name=None,
                 schema_name=None,
                 model_name=self._model_name,
                 version_name=self._version_name,
                 statement_params=statement_params,
-            ),
-            columns=[
-                self._model_ops.INFERENCE_SERVICE_NAME_COL_NAME,
-                self._model_ops.INFERENCE_SERVICE_ENDPOINT_COL_NAME,
-            ],
+            )
         )
 
     @telemetry.send_api_usage_telemetry(
@@ -889,12 +885,16 @@ class ModelVersion(lineage_node.LineageNode):
             project=_TELEMETRY_PROJECT,
             subproject=_TELEMETRY_SUBPROJECT,
         )
+
+        database_name_id, schema_name_id, service_name_id = sql_identifier.parse_fully_qualified_name(service_name)
         self._model_ops.delete_service(
             database_name=None,
             schema_name=None,
             model_name=self._model_name,
             version_name=self._version_name,
-            service_name=service_name,
+            service_database_name=database_name_id,
+            service_schema_name=schema_name_id,
+            service_name=service_name_id,
             statement_params=statement_params,
         )
 

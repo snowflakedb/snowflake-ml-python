@@ -1,7 +1,8 @@
 import json
 import logging
 import time
-from typing import Any, Callable, Iterator, List, Optional, TypedDict, Union, cast
+from io import BytesIO
+from typing import Any, Callable, Dict, Iterator, List, Optional, TypedDict, Union, cast
 from urllib.parse import urlunparse
 
 import requests
@@ -16,8 +17,10 @@ from snowflake.cortex._util import (
 )
 from snowflake.ml._internal import telemetry
 from snowflake.snowpark import context, functions
+from snowflake.snowpark._internal.utils import is_in_stored_procedure
 
 logger = logging.getLogger(__name__)
+_REST_COMPLETE_URL = "/api/v2/cortex/inference:complete"
 
 
 class ConversationMessage(TypedDict):
@@ -84,6 +87,76 @@ def retry(func: Callable[..., requests.Response]) -> Callable[..., requests.Resp
     return inner
 
 
+def _make_common_request_headers() -> Dict[str, str]:
+    headers = {
+        "Content-Type": "application/json",
+        "Accept": "application/json, text/event-stream",
+    }
+    return headers
+
+
+def _make_request_body(
+    model: str,
+    prompt: Union[str, List[ConversationMessage]],
+    options: Optional[CompleteOptions] = None,
+) -> Dict[str, Any]:
+    data = {
+        "model": model,
+        "stream": True,
+    }
+    if isinstance(prompt, List):
+        data["messages"] = prompt
+    else:
+        data["messages"] = [{"content": prompt}]
+
+    if options:
+        if "max_tokens" in options:
+            data["max_tokens"] = options["max_tokens"]
+            data["max_output_tokens"] = options["max_tokens"]
+        if "temperature" in options:
+            data["temperature"] = options["temperature"]
+        if "top_p" in options:
+            data["top_p"] = options["top_p"]
+    return data
+
+
+# XP endpoint returns a dict response which needs to be converted to a format which can
+# be consumed by the SSEClient. This method does that.
+def _xp_dict_to_response(raw_resp: Dict[str, Any]) -> requests.Response:
+    response = requests.Response()
+    response.status_code = int(raw_resp["status"])
+    response.headers = raw_resp["headers"]
+
+    data = raw_resp["content"]
+    data = json.loads(data)
+    # Convert the dictionary to a string format that resembles the SSE event format
+    # For example, if the dict is {'event': 'message', 'data': 'your data'}, it should be formatted like this:
+    sse_format_data = ""
+    for event in data:
+        event_type = event.get("event", "message")
+        event_data = event.get("data", "")
+        event_data = json.dumps(event_data)
+        sse_format_data += f"event: {event_type}\ndata: {event_data}\n\n"  # Add each event with new lines
+
+    response.raw = BytesIO(sse_format_data.encode("utf-8"))
+    return response
+
+
+@retry
+def _call_complete_xp(
+    model: str,
+    prompt: Union[str, List[ConversationMessage]],
+    options: Optional[CompleteOptions] = None,
+    deadline: Optional[float] = None,
+) -> requests.Response:
+    headers = _make_common_request_headers()
+    body = _make_request_body(model, prompt, options)
+    import _snowflake
+
+    raw_resp = _snowflake.send_snow_api_request("POST", _REST_COMPLETE_URL, {}, headers, body, {}, deadline)
+    return _xp_dict_to_response(raw_resp)
+
+
 @retry
 def _call_complete_rest(
     model: str,
@@ -110,36 +183,16 @@ def _call_complete_rest(
     scheme = "https"
     if hasattr(session.connection, "scheme"):
         scheme = session.connection.scheme
-    url = urlunparse((scheme, session.connection.host, "api/v2/cortex/inference:complete", "", "", ""))
+    url = urlunparse((scheme, session.connection.host, _REST_COMPLETE_URL, "", "", ""))
 
-    headers = {
-        "Content-Type": "application/json",
-        "Authorization": f'Snowflake Token="{session.connection.rest.token}"',
-        "Accept": "application/json, text/event-stream",
-    }
+    headers = _make_common_request_headers()
+    headers["Authorization"] = f'Snowflake Token="{session.connection.rest.token}"'
 
-    data = {
-        "model": model,
-        "stream": True,
-    }
-    if isinstance(prompt, List):
-        data["messages"] = prompt
-    else:
-        data["messages"] = [{"content": prompt}]
-
-    if options:
-        if "max_tokens" in options:
-            data["max_tokens"] = options["max_tokens"]
-            data["max_output_tokens"] = options["max_tokens"]
-        if "temperature" in options:
-            data["temperature"] = options["temperature"]
-        if "top_p" in options:
-            data["top_p"] = options["top_p"]
-
+    body = _make_request_body(model, prompt, options)
     logger.debug(f"making POST request to {url} (model={model})")
     return requests.post(
         url,
-        json=data,
+        json=body,
         headers=headers,
         stream=True,
     )
@@ -164,49 +217,24 @@ def _complete_call_sql_function_snowpark(
     return cast(snowpark.Column, functions.builtin(function)(*args))
 
 
-def _complete_call_sql_function_immediate(
-    function: str,
+def _complete_non_streaming_immediate(
     model: str,
     prompt: Union[str, List[ConversationMessage]],
     options: Optional[CompleteOptions],
-    session: Optional[snowpark.Session],
+    session: Optional[snowpark.Session] = None,
+    deadline: Optional[float] = None,
 ) -> str:
-    session = session or context.get_active_session()
-    if session is None:
-        raise SnowflakeAuthenticationException(
-            """Session required. Provide the session through a session=... argument or ensure an active session is
-            available in your environment."""
-        )
-
-    # https://docs.snowflake.com/en/sql-reference/functions/complete-snowflake-cortex
-    if options is not None or not isinstance(prompt, str):
-        if isinstance(prompt, List):
-            prompt_arg = prompt
-        else:
-            prompt_arg = [{"role": "user", "content": prompt}]
-        options = options or {}
-        lit_args = [
-            functions.lit(model),
-            functions.lit(prompt_arg),
-            functions.lit(options),
-        ]
-    else:
-        lit_args = [
-            functions.lit(model),
-            functions.lit(prompt),
-        ]
-
-    empty_df = session.create_dataframe([snowpark.Row()])
-    df = empty_df.select(functions.builtin(function)(*lit_args))
-    return cast(str, df.collect()[0][0])
+    response = _complete_rest(model=model, prompt=prompt, options=options, session=session, deadline=deadline)
+    return "".join(response)
 
 
-def _complete_sql_impl(
+def _complete_non_streaming_impl(
     function: str,
     model: Union[str, snowpark.Column],
     prompt: Union[str, List[ConversationMessage], snowpark.Column],
     options: Optional[Union[CompleteOptions, snowpark.Column]],
-    session: Optional[snowpark.Session],
+    session: Optional[snowpark.Session] = None,
+    deadline: Optional[float] = None,
 ) -> Union[str, snowpark.Column]:
     if isinstance(prompt, snowpark.Column):
         if options is not None:
@@ -217,7 +245,24 @@ def _complete_sql_impl(
         raise ValueError("'model' cannot be a snowpark.Column when 'prompt' is a string.")
     if isinstance(options, snowpark.Column):
         raise ValueError("'options' cannot be a snowpark.Column when 'prompt' is a string.")
-    return _complete_call_sql_function_immediate(function, model, prompt, options, session)
+    return _complete_non_streaming_immediate(
+        model=model, prompt=prompt, options=options, session=session, deadline=deadline
+    )
+
+
+def _complete_rest(
+    model: str,
+    prompt: Union[str, List[ConversationMessage]],
+    options: Optional[CompleteOptions] = None,
+    session: Optional[snowpark.Session] = None,
+    deadline: Optional[float] = None,
+) -> Iterator[str]:
+    if is_in_stored_procedure():  # type: ignore[no-untyped-call]
+        response = _call_complete_xp(model=model, prompt=prompt, options=options, deadline=deadline)
+    else:
+        response = _call_complete_rest(model=model, prompt=prompt, options=options, session=session, deadline=deadline)
+    assert response.status_code >= 200 and response.status_code < 300
+    return _return_stream_response(response, deadline)
 
 
 def _complete_impl(
@@ -239,10 +284,8 @@ def _complete_impl(
             raise ValueError("in REST mode, 'model' must be a string")
         if not isinstance(prompt, str) and not isinstance(prompt, List):
             raise ValueError("in REST mode, 'prompt' must be a string or a list of ConversationMessage")
-        response = _call_complete_rest(model, prompt, options, session=session, deadline=deadline)
-        assert response.status_code >= 200 and response.status_code < 300
-        return _return_stream_response(response, deadline)
-    return _complete_sql_impl(function, model, prompt, options, session)
+        return _complete_rest(model=model, prompt=prompt, options=options, session=session, deadline=deadline)
+    return _complete_non_streaming_impl(function, model, prompt, options, session, deadline)
 
 
 @telemetry.send_api_usage_telemetry(

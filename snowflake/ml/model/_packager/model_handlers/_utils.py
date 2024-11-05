@@ -179,7 +179,7 @@ def convert_explanations_to_2D_df(
         return pd.DataFrame(explanations)
 
     if hasattr(model, "classes_"):
-        classes_list = [str(cl) for cl in model.classes_]  # type:ignore[union-attr]
+        classes_list = [str(cl) for cl in model.classes_]
         len_classes = len(classes_list)
         if explanations.shape[2] != len_classes:
             raise ValueError(f"Model has {len_classes} classes but explanations have {explanations.shape[2]}")

@@ -1,0 +1,30 @@
+load("//bazel:py_rules.bzl", "py_test")
+
+package(default_visibility = [
+    "//bazel:snowml_public_common",
+])
+
+py_test(
+    name = "complete_test",
+    timeout = "long",
+    srcs = ["complete_test.py"],
+    deps = [
+        "//snowflake/cortex:init",
+        "//snowflake/ml/_internal/utils:snowflake_env",
+        "//snowflake/ml/utils:connection_params",
+        "//tests/integ/snowflake/ml/test_utils:common_test_base",
+        "//tests/integ/snowflake/ml/test_utils:test_env_utils",
+    ],
+)
+
+py_test(
+    name = "embed_text_test",
+    timeout = "long",
+    srcs = ["embed_text_test.py"],
+    deps = [
+        "//snowflake/cortex:init",
+        "//snowflake/ml/_internal/utils:snowflake_env",
+        "//snowflake/ml/utils:connection_params",
+        "//tests/integ/snowflake/ml/test_utils:test_env_utils",
+    ],
+)

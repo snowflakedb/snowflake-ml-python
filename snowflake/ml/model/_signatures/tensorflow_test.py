@@ -157,95 +157,95 @@ class SeqOfTensorflowTensorHandlerTest(absltest.TestCase):
         t1 = [tf.constant([1, 2, 3, 4], dtype=tf.int32)]
         self.assertListEqual(
             tensorflow_handler.SeqOfTensorflowTensorHandler.infer_signature(t1, role="input"),
-            [core.FeatureSpec("input_feature_0", core.DataType.INT32)],
+            [core.FeatureSpec("input_feature_0", core.DataType.INT32, nullable=False)],
         )
 
         t2 = [tf.constant([1, 2, 3, 4], dtype=tf.int64)]
         self.assertListEqual(
             tensorflow_handler.SeqOfTensorflowTensorHandler.infer_signature(t2, role="input"),
-            [core.FeatureSpec("input_feature_0", core.DataType.INT64)],
+            [core.FeatureSpec("input_feature_0", core.DataType.INT64, nullable=False)],
         )
 
         t3 = [tf.constant([1, 2, 3, 4], dtype=tf.int16)]
         self.assertListEqual(
             tensorflow_handler.SeqOfTensorflowTensorHandler.infer_signature(t3, role="input"),
-            [core.FeatureSpec("input_feature_0", core.DataType.INT16)],
+            [core.FeatureSpec("input_feature_0", core.DataType.INT16, nullable=False)],
         )
 
         t4 = [tf.constant([1, 2, 3, 4], dtype=tf.int8)]
         self.assertListEqual(
             tensorflow_handler.SeqOfTensorflowTensorHandler.infer_signature(t4, role="input"),
-            [core.FeatureSpec("input_feature_0", core.DataType.INT8)],
+            [core.FeatureSpec("input_feature_0", core.DataType.INT8, nullable=False)],
         )
 
         t5 = [tf.constant([1, 2, 3, 4], dtype=tf.uint32)]
         self.assertListEqual(
             tensorflow_handler.SeqOfTensorflowTensorHandler.infer_signature(t5, role="input"),
-            [core.FeatureSpec("input_feature_0", core.DataType.UINT32)],
+            [core.FeatureSpec("input_feature_0", core.DataType.UINT32, nullable=False)],
         )
 
         t6 = [tf.constant([1, 2, 3, 4], dtype=tf.uint64)]
         self.assertListEqual(
             tensorflow_handler.SeqOfTensorflowTensorHandler.infer_signature(t6, role="input"),
-            [core.FeatureSpec("input_feature_0", core.DataType.UINT64)],
+            [core.FeatureSpec("input_feature_0", core.DataType.UINT64, nullable=False)],
         )
 
         t7 = [tf.constant([1, 2, 3, 4], dtype=tf.uint16)]
         self.assertListEqual(
             tensorflow_handler.SeqOfTensorflowTensorHandler.infer_signature(t7, role="input"),
-            [core.FeatureSpec("input_feature_0", core.DataType.UINT16)],
+            [core.FeatureSpec("input_feature_0", core.DataType.UINT16, nullable=False)],
         )
 
         t8 = [tf.constant([1, 2, 3, 4], dtype=tf.uint8)]
         self.assertListEqual(
             tensorflow_handler.SeqOfTensorflowTensorHandler.infer_signature(t8, role="input"),
-            [core.FeatureSpec("input_feature_0", core.DataType.UINT8)],
+            [core.FeatureSpec("input_feature_0", core.DataType.UINT8, nullable=False)],
         )
 
         t9 = [tf.constant([False, True])]
         self.assertListEqual(
             tensorflow_handler.SeqOfTensorflowTensorHandler.infer_signature(t9, role="input"),
-            [core.FeatureSpec("input_feature_0", core.DataType.BOOL)],
+            [core.FeatureSpec("input_feature_0", core.DataType.BOOL, nullable=False)],
         )
 
         t10 = [tf.constant([1.2, 3.4], dtype=tf.float32)]
         self.assertListEqual(
             tensorflow_handler.SeqOfTensorflowTensorHandler.infer_signature(t10, role="input"),
-            [core.FeatureSpec("input_feature_0", core.DataType.FLOAT)],
+            [core.FeatureSpec("input_feature_0", core.DataType.FLOAT, nullable=False)],
         )
 
         t11 = [tf.constant([1.2, 3.4], dtype=tf.float64)]
         self.assertListEqual(
             tensorflow_handler.SeqOfTensorflowTensorHandler.infer_signature(t11, role="input"),
-            [core.FeatureSpec("input_feature_0", core.DataType.DOUBLE)],
+            [core.FeatureSpec("input_feature_0", core.DataType.DOUBLE, nullable=False)],
         )
 
         t12 = [tf.constant([[1, 2], [3, 4]])]
         self.assertListEqual(
             tensorflow_handler.SeqOfTensorflowTensorHandler.infer_signature(t12, role="input"),
             [
-                core.FeatureSpec("input_feature_0", core.DataType.INT32, shape=(2,)),
+                core.FeatureSpec("input_feature_0", core.DataType.INT32, shape=(2,), nullable=False),
             ],
         )
 
         t13 = [tf.constant([[[1, 1], [2, 2]], [[3, 3], [4, 4]]])]
         self.assertListEqual(
             tensorflow_handler.SeqOfTensorflowTensorHandler.infer_signature(t13, role="input"),
-            [core.FeatureSpec("input_feature_0", core.DataType.INT32, shape=(2, 2))],
+            [core.FeatureSpec("input_feature_0", core.DataType.INT32, shape=(2, 2), nullable=False)],
         )
 
         t14 = [tf.constant([1, 2, 3, 4])]
         self.assertListEqual(
             tensorflow_handler.SeqOfTensorflowTensorHandler.infer_signature(t14, role="output"),
-            [core.FeatureSpec("output_feature_0", core.DataType.INT32)],
+            [core.FeatureSpec("output_feature_0", core.DataType.INT32, nullable=False)],
         )
 
         t15 = [tf.constant([1, 2]), tf.constant([3, 4])]
         self.assertListEqual(
             tensorflow_handler.SeqOfTensorflowTensorHandler.infer_signature(t15, role="output"),
             [
-                core.FeatureSpec("output_feature_0", core.DataType.INT32),
-                core.FeatureSpec("output_feature_1", core.DataType.INT32),
+                core.FeatureSpec("output_feature_0", core.DataType.INT32, nullable=False),
+                core.FeatureSpec("output_feature_1", core.DataType.INT32, nullable=False),
             ],
         )
 
@@ -253,8 +253,8 @@ class SeqOfTensorflowTensorHandlerTest(absltest.TestCase):
         self.assertListEqual(
             tensorflow_handler.SeqOfTensorflowTensorHandler.infer_signature(t16, role="output"),
             [
-                core.FeatureSpec("output_feature_0", core.DataType.FLOAT),
-                core.FeatureSpec("output_feature_1", core.DataType.INT32),
+                core.FeatureSpec("output_feature_0", core.DataType.FLOAT, nullable=False),
+                core.FeatureSpec("output_feature_1", core.DataType.INT32, nullable=False),
             ],
         )
 
@@ -262,8 +262,8 @@ class SeqOfTensorflowTensorHandlerTest(absltest.TestCase):
         self.assertListEqual(
             tensorflow_handler.SeqOfTensorflowTensorHandler.infer_signature(t17, role="output"),
             [
-                core.FeatureSpec("output_feature_0", core.DataType.INT32, shape=(2,)),
-                core.FeatureSpec("output_feature_1", core.DataType.INT32, shape=(2,)),
+                core.FeatureSpec("output_feature_0", core.DataType.INT32, shape=(2,), nullable=False),
+                core.FeatureSpec("output_feature_1", core.DataType.INT32, shape=(2,), nullable=False),
             ],
         )
 
@@ -271,103 +271,103 @@ class SeqOfTensorflowTensorHandlerTest(absltest.TestCase):
         self.assertListEqual(
             tensorflow_handler.SeqOfTensorflowTensorHandler.infer_signature(t18, role="output"),
             [
-                core.FeatureSpec("output_feature_0", core.DataType.INT32, shape=(2,)),
-                core.FeatureSpec("output_feature_1", core.DataType.FLOAT, shape=(2,)),
+                core.FeatureSpec("output_feature_0", core.DataType.INT32, shape=(2,), nullable=False),
+                core.FeatureSpec("output_feature_1", core.DataType.FLOAT, shape=(2,), nullable=False),
             ],
         )
 
         t21 = [tf.constant([1, 2, 3, 4], dtype=tf.int32)]
         self.assertListEqual(
             tensorflow_handler.SeqOfTensorflowTensorHandler.infer_signature(t21, role="input"),
-            [core.FeatureSpec("input_feature_0", core.DataType.INT32)],
+            [core.FeatureSpec("input_feature_0", core.DataType.INT32, nullable=False)],
         )
 
         t22 = [tf.constant([1, 2, 3, 4], dtype=tf.int64)]
         self.assertListEqual(
             tensorflow_handler.SeqOfTensorflowTensorHandler.infer_signature(t22, role="input"),
-            [core.FeatureSpec("input_feature_0", core.DataType.INT64)],
+            [core.FeatureSpec("input_feature_0", core.DataType.INT64, nullable=False)],
         )
 
         t23 = [tf.constant([1, 2, 3, 4], dtype=tf.int16)]
         self.assertListEqual(
             tensorflow_handler.SeqOfTensorflowTensorHandler.infer_signature(t23, role="input"),
-            [core.FeatureSpec("input_feature_0", core.DataType.INT16)],
+            [core.FeatureSpec("input_feature_0", core.DataType.INT16, nullable=False)],
         )
 
         t24 = [tf.constant([1, 2, 3, 4], dtype=tf.int8)]
         self.assertListEqual(
             tensorflow_handler.SeqOfTensorflowTensorHandler.infer_signature(t24, role="input"),
-            [core.FeatureSpec("input_feature_0", core.DataType.INT8)],
+            [core.FeatureSpec("input_feature_0", core.DataType.INT8, nullable=False)],
         )
 
         t25 = [tf.constant([1, 2, 3, 4], dtype=tf.uint32)]
         self.assertListEqual(
             tensorflow_handler.SeqOfTensorflowTensorHandler.infer_signature(t25, role="input"),
-            [core.FeatureSpec("input_feature_0", core.DataType.UINT32)],
+            [core.FeatureSpec("input_feature_0", core.DataType.UINT32, nullable=False)],
         )
 
         t26 = [tf.constant([1, 2, 3, 4], dtype=tf.uint64)]
         self.assertListEqual(
             tensorflow_handler.SeqOfTensorflowTensorHandler.infer_signature(t26, role="input"),
-            [core.FeatureSpec("input_feature_0", core.DataType.UINT64)],
+            [core.FeatureSpec("input_feature_0", core.DataType.UINT64, nullable=False)],
         )
 
         t27 = [tf.constant([1, 2, 3, 4], dtype=tf.uint16)]
         self.assertListEqual(
             tensorflow_handler.SeqOfTensorflowTensorHandler.infer_signature(t27, role="input"),
-            [core.FeatureSpec("input_feature_0", core.DataType.UINT16)],
+            [core.FeatureSpec("input_feature_0", core.DataType.UINT16, nullable=False)],
         )
 
         t28 = [tf.constant([1, 2, 3, 4], dtype=tf.uint8)]
         self.assertListEqual(
             tensorflow_handler.SeqOfTensorflowTensorHandler.infer_signature(t28, role="input"),
-            [core.FeatureSpec("input_feature_0", core.DataType.UINT8)],
+            [core.FeatureSpec("input_feature_0", core.DataType.UINT8, nullable=False)],
         )
 
         t29 = [tf.constant([False, True])]
         self.assertListEqual(
             tensorflow_handler.SeqOfTensorflowTensorHandler.infer_signature(t29, role="input"),
-            [core.FeatureSpec("input_feature_0", core.DataType.BOOL)],
+            [core.FeatureSpec("input_feature_0", core.DataType.BOOL, nullable=False)],
         )
 
         t30 = [tf.constant([1.2, 3.4], dtype=tf.float32)]
         self.assertListEqual(
             tensorflow_handler.SeqOfTensorflowTensorHandler.infer_signature(t30, role="input"),
-            [core.FeatureSpec("input_feature_0", core.DataType.FLOAT)],
+            [core.FeatureSpec("input_feature_0", core.DataType.FLOAT, nullable=False)],
         )
 
         t31 = [tf.constant([1.2, 3.4], dtype=tf.float64)]
         self.assertListEqual(
             tensorflow_handler.SeqOfTensorflowTensorHandler.infer_signature(t31, role="input"),
-            [core.FeatureSpec("input_feature_0", core.DataType.DOUBLE)],
+            [core.FeatureSpec("input_feature_0", core.DataType.DOUBLE, nullable=False)],
         )
 
         t32 = [tf.constant([[1, 2], [3, 4]])]
         self.assertListEqual(
             tensorflow_handler.SeqOfTensorflowTensorHandler.infer_signature(t32, role="input"),
             [
-                core.FeatureSpec("input_feature_0", core.DataType.INT32, shape=(2,)),
+                core.FeatureSpec("input_feature_0", core.DataType.INT32, shape=(2,), nullable=False),
             ],
         )
 
         t33 = [tf.constant([[[1, 1], [2, 2]], [[3, 3], [4, 4]]])]
         self.assertListEqual(
             tensorflow_handler.SeqOfTensorflowTensorHandler.infer_signature(t33, role="input"),
-            [core.FeatureSpec("input_feature_0", core.DataType.INT32, shape=(2, 2))],
+            [core.FeatureSpec("input_feature_0", core.DataType.INT32, shape=(2, 2), nullable=False)],
         )
 
         t34 = [tf.constant([1, 2, 3, 4])]
         self.assertListEqual(
             tensorflow_handler.SeqOfTensorflowTensorHandler.infer_signature(t34, role="output"),
-            [core.FeatureSpec("output_feature_0", core.DataType.INT32)],
+            [core.FeatureSpec("output_feature_0", core.DataType.INT32, nullable=False)],
         )
 
         t35 = [tf.constant([1, 2]), tf.constant([3, 4])]
         self.assertListEqual(
             tensorflow_handler.SeqOfTensorflowTensorHandler.infer_signature(t35, role="output"),
             [
-                core.FeatureSpec("output_feature_0", core.DataType.INT32),
-                core.FeatureSpec("output_feature_1", core.DataType.INT32),
+                core.FeatureSpec("output_feature_0", core.DataType.INT32, nullable=False),
+                core.FeatureSpec("output_feature_1", core.DataType.INT32, nullable=False),
             ],
         )
 
@@ -375,8 +375,8 @@ class SeqOfTensorflowTensorHandlerTest(absltest.TestCase):
         self.assertListEqual(
             tensorflow_handler.SeqOfTensorflowTensorHandler.infer_signature(t36, role="output"),
             [
-                core.FeatureSpec("output_feature_0", core.DataType.FLOAT),
-                core.FeatureSpec("output_feature_1", core.DataType.INT32),
+                core.FeatureSpec("output_feature_0", core.DataType.FLOAT, nullable=False),
+                core.FeatureSpec("output_feature_1", core.DataType.INT32, nullable=False),
             ],
         )
 
@@ -384,8 +384,8 @@ class SeqOfTensorflowTensorHandlerTest(absltest.TestCase):
         self.assertListEqual(
             tensorflow_handler.SeqOfTensorflowTensorHandler.infer_signature(t37, role="output"),
             [
-                core.FeatureSpec("output_feature_0", core.DataType.INT32, shape=(2,)),
-                core.FeatureSpec("output_feature_1", core.DataType.INT32, shape=(2,)),
+                core.FeatureSpec("output_feature_0", core.DataType.INT32, shape=(2,), nullable=False),
+                core.FeatureSpec("output_feature_1", core.DataType.INT32, shape=(2,), nullable=False),
             ],
         )
 
@@ -393,8 +393,8 @@ class SeqOfTensorflowTensorHandlerTest(absltest.TestCase):
         self.assertListEqual(
             tensorflow_handler.SeqOfTensorflowTensorHandler.infer_signature(t38, role="output"),
             [
-                core.FeatureSpec("output_feature_0", core.DataType.INT32, shape=(2,)),
-                core.FeatureSpec("output_feature_1", core.DataType.FLOAT, shape=(2,)),
+                core.FeatureSpec("output_feature_0", core.DataType.INT32, shape=(2,), nullable=False),
+                core.FeatureSpec("output_feature_1", core.DataType.FLOAT, shape=(2,), nullable=False),
             ],
         )
 

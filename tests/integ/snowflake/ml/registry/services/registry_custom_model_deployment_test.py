@@ -2,7 +2,6 @@ import json
 import tempfile
 
 import inflection
-import numpy as np
 import pandas as pd
 import xgboost
 from absl.testing import absltest
@@ -57,11 +56,15 @@ class TestRegistryCustomModelDeploymentInteg(registry_model_deployment_test_base
             prediction_assert_fns={
                 "predict": (
                     cal_X_test,
-                    lambda res: np.testing.assert_allclose(
-                        res.values, np.expand_dims(my_custom_model.predict(cal_X_test), axis=1), rtol=1e-3
+                    lambda res: pd.testing.assert_frame_equal(
+                        res,
+                        my_custom_model.predict(cal_X_test),
+                        rtol=1e-3,
+                        check_dtype=False,
                     ),
                 ),
             },
+            options={"enable_explainability": False},
         )
 
 

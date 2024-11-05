@@ -82,7 +82,8 @@ class SnowparkDataFrameHandler(base_handler.BaseDataHandler[snowflake.snowpark.D
                     identifier.get_unescaped_names(field.name)
                 ].map(json.loads)
         # Only when the feature is not from inference, we are confident to do the type casting.
-        # Otherwise, dtype_map will be empty
+        # Otherwise, dtype_map will be empty.
+        # Errors are ignored to make sure None won't be converted and won't raise Error
         df_local = df_local.astype(dtype=dtype_map)
         return df_local
 

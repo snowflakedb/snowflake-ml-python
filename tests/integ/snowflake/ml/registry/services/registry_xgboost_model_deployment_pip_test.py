@@ -1,7 +1,5 @@
-from typing import List
-
 import inflection
-import numpy as np
+import pandas as pd
 import xgboost
 from absl.testing import absltest, parameterized
 from sklearn import datasets, model_selection
@@ -14,12 +12,10 @@ from tests.integ.snowflake.ml.registry.services import (
 class TestRegistryXGBoostModelDeploymentInteg(registry_model_deployment_test_base.RegistryModelDeploymentTestBase):
     @parameterized.product(  # type: ignore[misc]
         gpu_requests=[None, "1"],
-        pip_requirements=[None, ["xgboost"]],
     )
     def test_xgb(
         self,
         gpu_requests: str,
-        pip_requirements: List[str],
     ) -> None:
         cal_data = datasets.load_breast_cancer(as_frame=True)
         cal_X = cal_data.data
@@ -34,14 +30,21 @@ class TestRegistryXGBoostModelDeploymentInteg(registry_model_deployment_test_bas
             prediction_assert_fns={
                 "predict": (
                     cal_X_test,
-                    lambda res: np.testing.assert_allclose(
-                        res.values, np.expand_dims(regressor.predict(cal_X_test), axis=1), rtol=1e-3
+                    lambda res: pd.testing.assert_frame_equal(
+                        res,
+                        pd.DataFrame(regressor.predict(cal_X_test), columns=res.columns),
+                        rtol=1e-3,
+                        check_dtype=False,
                     ),
                 ),
             },
-            options={"cuda_version": "11.8"} if gpu_requests else {},
+            options=(
+                {"cuda_version": "11.8", "enable_explainability": False}
+                if gpu_requests
+                else {"enable_explainability": False}
+            ),
             gpu_requests=gpu_requests,
-            pip_requirements=pip_requirements,
+            pip_requirements=[f"xgboost=={xgboost.__version__}"],
         )
 
 
