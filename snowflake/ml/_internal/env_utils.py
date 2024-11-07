@@ -1,6 +1,7 @@
 import collections
 import copy
 import pathlib
+import os
 import re
 import textwrap
 import warnings
@@ -37,6 +38,8 @@ SNOWML_SPROC_ENV = "IN_SNOWML_SPROC"
 SNOWPARK_ML_PKG_NAME = "snowflake-ml-python"
 SNOWFLAKE_CONDA_CHANNEL_URL = "https://repo.anaconda.com/pkgs/snowflake"
 
+# defaults to None.  Any value for SKIP_CONDA_CHECK will skip the Conda verification step. 
+SKIP_CONDA_CHECK = os.getenv("SKIP_CONDA_CHECK") 
 
 def _validate_pip_requirement_string(req_str: str) -> requirements.Requirement:
     """Validate the input pip requirement string according to PEP 508.
@@ -371,7 +374,7 @@ def get_matched_package_versions_in_snowflake_conda_channel(
 
     url = f"{SNOWFLAKE_CONDA_CHANNEL_URL}/{conda_os.value}/repodata.json"
 
-    if req.name not in _SNOWFLAKE_CONDA_PACKAGE_CACHE:
+    if req.name not in _SNOWFLAKE_CONDA_PACKAGE_CACHE and not SKIP_CONDA_CHECK:
         try:
             http_client = retryable_http.get_http_client()
             parsed_python_version = version.Version(python_version)
