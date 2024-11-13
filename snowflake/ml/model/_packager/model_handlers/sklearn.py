@@ -164,6 +164,8 @@ class SKLModelHandler(_base.BaseModelHandler[Union["sklearn.base.BaseEstimator",
                         stacklevel=1,
                     )
                     enable_explainability = False
+                elif model_meta.task == model_types.Task.UNKNOWN:
+                    enable_explainability = False
                 else:
                     enable_explainability = True
             if enable_explainability:

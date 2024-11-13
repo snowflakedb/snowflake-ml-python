@@ -91,6 +91,10 @@ class CompleteSQLTest(absltest.TestCase):
         self.assertTrue(res)
 
 
+@absltest.skipUnless(
+    test_env_utils.get_current_snowflake_cloud_type() == snowflake_env.SnowflakeCloudType.AWS,
+    "Complete SQL only available in AWS",
+)
 class CompleteRestTest(absltest.TestCase):
     def setUp(self) -> None:
         self._session = Session.builder.configs(connection_params.SnowflakeLoginOptions()).create()

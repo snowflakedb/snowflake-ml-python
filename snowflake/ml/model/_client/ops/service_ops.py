@@ -6,7 +6,7 @@ import re
 import tempfile
 import threading
 import time
-from typing import Any, Dict, List, Optional, Tuple, cast
+from typing import Any, Dict, List, Optional, Tuple, Union, cast
 
 from packaging import version
 
@@ -15,7 +15,7 @@ from snowflake.ml._internal import file_utils
 from snowflake.ml._internal.utils import service_logger, snowflake_env, sql_identifier
 from snowflake.ml.model._client.service import model_deployment_spec
 from snowflake.ml.model._client.sql import service as service_sql, stage as stage_sql
-from snowflake.snowpark import exceptions, row, session
+from snowflake.snowpark import async_job, exceptions, row, session
 from snowflake.snowpark._internal import utils as snowpark_utils
 
 module_logger = service_logger.get_logger(__name__, service_logger.LogColor.GREY)
@@ -107,8 +107,9 @@ class ServiceOperator:
         max_batch_rows: Optional[int],
         force_rebuild: bool,
         build_external_access_integrations: Optional[List[sql_identifier.SqlIdentifier]],
+        block: bool,
         statement_params: Optional[Dict[str, Any]] = None,
-    ) -> str:
+    ) -> Union[str, async_job.AsyncJob]:
 
         # Fall back to the registry's database and schema if not provided
         database_name = database_name or self._database_name
@@ -204,11 +205,15 @@ class ServiceOperator:
         log_thread = self._start_service_log_streaming(
             async_job, services, model_inference_service_exists, force_rebuild, statement_params
         )
-        log_thread.join()
 
-        res = cast(str, cast(List[row.Row], async_job.result())[0][0])
-        module_logger.info(f"Inference service {service_name} deployment complete: {res}")
-        return res
+        if block:
+            log_thread.join()
+
+            res = cast(str, cast(List[row.Row], async_job.result())[0][0])
+            module_logger.info(f"Inference service {service_name} deployment complete: {res}")
+            return res
+        else:
+            return async_job
 
     def _start_service_log_streaming(
         self,

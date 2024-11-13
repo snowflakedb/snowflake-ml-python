@@ -32,4 +32,5 @@ Table of Contents
    fileset
    model
    modeling
+   monitoring
    registry

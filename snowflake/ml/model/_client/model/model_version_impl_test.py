@@ -738,6 +738,7 @@ class ModelVersionImplTest(absltest.TestCase):
                 max_batch_rows=1024,
                 force_rebuild=True,
                 build_external_access_integrations=["EAI"],
+                block=True,
             )
             mock_create_service.assert_called_once_with(
                 database_name=None,
@@ -761,6 +762,7 @@ class ModelVersionImplTest(absltest.TestCase):
                 max_batch_rows=1024,
                 force_rebuild=True,
                 build_external_access_integrations=[sql_identifier.SqlIdentifier("EAI")],
+                block=True,
                 statement_params=mock.ANY,
             )
 
@@ -778,6 +780,7 @@ class ModelVersionImplTest(absltest.TestCase):
                 max_batch_rows=1024,
                 force_rebuild=True,
                 build_external_access_integrations=["EAI"],
+                block=True,
             )
             mock_create_service.assert_called_once_with(
                 database_name=None,
@@ -801,6 +804,7 @@ class ModelVersionImplTest(absltest.TestCase):
                 max_batch_rows=1024,
                 force_rebuild=True,
                 build_external_access_integrations=[sql_identifier.SqlIdentifier("EAI")],
+                block=True,
                 statement_params=mock.ANY,
             )
 
@@ -818,6 +822,7 @@ class ModelVersionImplTest(absltest.TestCase):
                 num_workers=1,
                 max_batch_rows=1024,
                 force_rebuild=True,
+                block=True,
             )
             mock_create_service.assert_called_once_with(
                 database_name=None,
@@ -841,6 +846,50 @@ class ModelVersionImplTest(absltest.TestCase):
                 max_batch_rows=1024,
                 force_rebuild=True,
                 build_external_access_integrations=None,
+                block=True,
+                statement_params=mock.ANY,
+            )
+
+    def test_create_service_async_job(self) -> None:
+        with mock.patch.object(self.m_mv._service_ops, "create_service") as mock_create_service:
+            self.m_mv.create_service(
+                service_name="SERVICE",
+                image_build_compute_pool="IMAGE_BUILD_COMPUTE_POOL",
+                service_compute_pool="SERVICE_COMPUTE_POOL",
+                image_repo="IMAGE_REPO",
+                max_instances=3,
+                cpu_requests="CPU",
+                memory_requests="MEMORY",
+                gpu_requests="GPU",
+                num_workers=1,
+                max_batch_rows=1024,
+                force_rebuild=True,
+                build_external_access_integrations=["EAI"],
+                block=False,
+            )
+            mock_create_service.assert_called_once_with(
+                database_name=None,
+                schema_name=None,
+                model_name=sql_identifier.SqlIdentifier(self.m_mv.model_name),
+                version_name=sql_identifier.SqlIdentifier(self.m_mv.version_name),
+                service_database_name=None,
+                service_schema_name=None,
+                service_name=sql_identifier.SqlIdentifier("SERVICE"),
+                image_build_compute_pool_name=sql_identifier.SqlIdentifier("IMAGE_BUILD_COMPUTE_POOL"),
+                service_compute_pool_name=sql_identifier.SqlIdentifier("SERVICE_COMPUTE_POOL"),
+                image_repo_database_name=None,
+                image_repo_schema_name=None,
+                image_repo_name=sql_identifier.SqlIdentifier("IMAGE_REPO"),
+                ingress_enabled=False,
+                max_instances=3,
+                cpu_requests="CPU",
+                memory_requests="MEMORY",
+                gpu_requests="GPU",
+                num_workers=1,
+                max_batch_rows=1024,
+                force_rebuild=True,
+                build_external_access_integrations=[sql_identifier.SqlIdentifier("EAI")],
+                block=False,
                 statement_params=mock.ANY,
             )
 

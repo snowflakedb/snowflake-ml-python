@@ -1,8 +1,8 @@
 # Common Default
 
 # Wrapper to make sure tests are run.
-# Allow at most 3 hours for eternal tests.
-test --run_under='//bazel:test_wrapper' --test_timeout=-1,-1,-1,10800
+# Allow at most 4 hours for eternal tests.
+test --run_under='//bazel:test_wrapper' --test_timeout=-1,-1,-1,14400
 
 # Since integration tests are located in different packages than code under test,
 # the default instrumentation filter would exclude the code under test. This

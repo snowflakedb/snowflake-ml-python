@@ -67,6 +67,7 @@ class ModelOpsTest(absltest.TestCase):
                 max_batch_rows=1024,
                 force_rebuild=True,
                 build_external_access_integrations=[sql_identifier.SqlIdentifier("EXTERNAL_ACCESS_INTEGRATION")],
+                block=True,
                 statement_params=self.m_statement_params,
             )
             mock_create_stage.assert_called_once_with(
@@ -159,6 +160,7 @@ class ModelOpsTest(absltest.TestCase):
                 max_batch_rows=1024,
                 force_rebuild=True,
                 build_external_access_integrations=[sql_identifier.SqlIdentifier("EXTERNAL_ACCESS_INTEGRATION")],
+                block=True,
                 statement_params=self.m_statement_params,
             )
             mock_create_stage.assert_called_once_with(
@@ -251,6 +253,7 @@ class ModelOpsTest(absltest.TestCase):
                 max_batch_rows=1024,
                 force_rebuild=True,
                 build_external_access_integrations=[sql_identifier.SqlIdentifier("EXTERNAL_ACCESS_INTEGRATION")],
+                block=True,
                 statement_params=self.m_statement_params,
             )
             mock_create_stage.assert_called_once_with(
@@ -306,6 +309,47 @@ class ModelOpsTest(absltest.TestCase):
                 include_message=False,
                 statement_params=self.m_statement_params,
             )
+
+    def test_create_service_async_job(self) -> None:
+        with mock.patch.object(self.m_ops._stage_client, "create_tmp_stage",), mock.patch.object(
+            snowpark_utils, "random_name_for_temp_object", return_value="SNOWPARK_TEMP_STAGE_ABCDEF0123"
+        ), mock.patch.object(self.m_ops._model_deployment_spec, "save",), mock.patch.object(
+            file_utils, "upload_directory_to_stage", return_value=None
+        ), mock.patch.object(
+            self.m_ops._service_client,
+            "deploy_model",
+            return_value=(str(uuid.uuid4()), mock.MagicMock(spec=snowpark.AsyncJob)),
+        ), mock.patch.object(
+            self.m_ops._service_client,
+            "get_service_status",
+            return_value=(service_sql.ServiceStatus.PENDING, None),
+        ):
+            res = self.m_ops.create_service(
+                database_name=sql_identifier.SqlIdentifier("DB"),
+                schema_name=sql_identifier.SqlIdentifier("SCHEMA"),
+                model_name=sql_identifier.SqlIdentifier("MODEL"),
+                version_name=sql_identifier.SqlIdentifier("VERSION"),
+                service_database_name=sql_identifier.SqlIdentifier("SERVICE_DB"),
+                service_schema_name=sql_identifier.SqlIdentifier("SERVICE_SCHEMA"),
+                service_name=sql_identifier.SqlIdentifier("MYSERVICE"),
+                image_build_compute_pool_name=sql_identifier.SqlIdentifier("IMAGE_BUILD_COMPUTE_POOL"),
+                service_compute_pool_name=sql_identifier.SqlIdentifier("SERVICE_COMPUTE_POOL"),
+                image_repo_database_name=sql_identifier.SqlIdentifier("IMAGE_REPO_DB"),
+                image_repo_schema_name=sql_identifier.SqlIdentifier("IMAGE_REPO_SCHEMA"),
+                image_repo_name=sql_identifier.SqlIdentifier("IMAGE_REPO"),
+                ingress_enabled=True,
+                max_instances=1,
+                cpu_requests="1",
+                memory_requests="6GiB",
+                gpu_requests="1",
+                num_workers=1,
+                max_batch_rows=1024,
+                force_rebuild=True,
+                build_external_access_integrations=[sql_identifier.SqlIdentifier("EXTERNAL_ACCESS_INTEGRATION")],
+                block=False,
+                statement_params=self.m_statement_params,
+            )
+            self.assertIsInstance(res, snowpark.AsyncJob)
 
     def test_get_model_build_service_name(self) -> None:
         query_id = "01b6fc10-0002-c121-0000-6ed10736311e"

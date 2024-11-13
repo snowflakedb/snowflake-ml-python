@@ -14,15 +14,6 @@ from snowflake.snowpark import session
 class ModelMonitorManager:
     """Class to manage internal operations for Model Monitor workflows."""
 
-    def _validate_task_from_model_version(
-        self,
-        model_version: model_version_impl.ModelVersion,
-    ) -> type_hints.Task:
-        task = model_version.get_model_task()
-        if task == type_hints.Task.UNKNOWN:
-            raise ValueError("Registry model must be logged with task in order to be monitored.")
-        return task
-
     def __init__(
         self,
         session: session.Session,
@@ -50,6 +41,15 @@ class ModelMonitorManager:
             database_name=self._database_name,
             schema_name=self._schema_name,
         )
+
+    def _validate_task_from_model_version(
+        self,
+        model_version: model_version_impl.ModelVersion,
+    ) -> type_hints.Task:
+        task = model_version.get_model_task()
+        if task == type_hints.Task.UNKNOWN:
+            raise ValueError("Registry model must be logged with task in order to be monitored.")
+        return task
 
     def _validate_model_function_from_model_version(
         self, function: str, model_version: model_version_impl.ModelVersion

@@ -3,6 +3,22 @@ load("//bazel:py_rules.bzl", "py_library", "py_package", "py_test")
 package(default_visibility = ["//visibility:public"])
 
 py_library(
+    name = "authentication",
+    srcs = ["authentication.py"],
+    deps = [
+        "//snowflake/ml/_internal/utils:jwt_generator",
+    ],
+)
+
+py_test(
+    name = "authentication_test",
+    srcs = ["authentication_test.py"],
+    deps = [
+        ":authentication",
+    ],
+)
+
+py_library(
     name = "connection_params",
     srcs = ["connection_params.py"],
 )
@@ -46,8 +62,10 @@ py_package(
     name = "utils_pkg",
     packages = ["snowflake.ml"],
     deps = [
+        ":authentication",
         ":connection_params",
         ":sparse",
+        ":sql_client",
         "//snowflake/ml/_internal/utils:snowflake_env",  # Mitigate BuildSnowML failure
     ],
 )

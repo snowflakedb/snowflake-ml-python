@@ -15,6 +15,6 @@ class StageSQLClient(_base._BaseSQLClient):
     ) -> None:
         query_result_checker.SqlResultValidator(
             self._session,
-            f"CREATE TEMPORARY STAGE {self.fully_qualified_object_name(database_name, schema_name, stage_name)}",
+            f"CREATE SCOPED TEMPORARY STAGE {self.fully_qualified_object_name(database_name, schema_name, stage_name)}",
             statement_params=statement_params,
         ).has_dimensions(expected_rows=1, expected_cols=1).validate()

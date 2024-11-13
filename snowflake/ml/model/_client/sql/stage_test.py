@@ -18,7 +18,7 @@ class StageSQLTest(absltest.TestCase):
         m_df = mock_data_frame.MockDataFrame(
             collect_result=[Row("Stage MODEL successfully created.")], collect_statement_params=m_statement_params
         )
-        self.m_session.add_mock_sql("""CREATE TEMPORARY STAGE TEMP."test".MODEL""", copy.deepcopy(m_df))
+        self.m_session.add_mock_sql("""CREATE SCOPED TEMPORARY STAGE TEMP."test".MODEL""", copy.deepcopy(m_df))
         c_session = cast(Session, self.m_session)
         stage_sql.StageSQLClient(
             c_session,
@@ -31,7 +31,7 @@ class StageSQLTest(absltest.TestCase):
             statement_params=m_statement_params,
         )
 
-        self.m_session.add_mock_sql("""CREATE TEMPORARY STAGE TEMP."test".MODEL""", copy.deepcopy(m_df))
+        self.m_session.add_mock_sql("""CREATE SCOPED TEMPORARY STAGE TEMP."test".MODEL""", copy.deepcopy(m_df))
         c_session = cast(Session, self.m_session)
         stage_sql.StageSQLClient(
             c_session,

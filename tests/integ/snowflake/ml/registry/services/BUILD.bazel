@@ -17,6 +17,7 @@ py_library(
         "//snowflake/ml/model:type_hints",
         "//snowflake/ml/model/_client/model:model_version_impl",
         "//snowflake/ml/registry",
+        "//snowflake/ml/utils:authentication",
         "//snowflake/ml/utils:connection_params",
         "//tests/integ/snowflake/ml/test_utils:common_test_base",
         "//tests/integ/snowflake/ml/test_utils:db_manager",
@@ -98,7 +99,6 @@ py_test(
     name = "registry_model_deployment_test",
     timeout = "eternal",
     srcs = ["registry_model_deployment_test.py"],
-    shard_count = 2,
     deps = [
         ":registry_model_deployment_test_base",
     ],

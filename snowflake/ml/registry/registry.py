@@ -388,15 +388,15 @@ class Registry:
         source_config: model_monitor_config.ModelMonitorSourceConfig,
         model_monitor_config: model_monitor_config.ModelMonitorConfig,
     ) -> model_monitor.ModelMonitor:
-        """Add a Model Monitor to the Registry
+        """Add a Model Monitor to the Registry.
 
         Args:
-            name: Name of Model Monitor to create
-            source_config: Configuration options of table for ModelMonitor.
-            model_monitor_config: Configuration options of ModelMonitor.
+            name: Name of Model Monitor to create.
+            source_config: Configuration options of table for Model Monitor.
+            model_monitor_config: Configuration options of Model Monitor.
 
         Returns:
-            The newly added ModelMonitor object.
+            The newly added Model Monitor object.
 
         Raises:
             ValueError: If monitoring is not enabled in the Registry.
@@ -407,16 +407,16 @@ class Registry:
 
     @overload
     def get_monitor(self, model_version: model_version_impl.ModelVersion) -> model_monitor.ModelMonitor:
-        """Get a Model Monitor on a ModelVersion from the Registry
+        """Get a Model Monitor on a Model Version from the Registry.
 
         Args:
-            model_version: ModelVersion for which to retrieve the ModelMonitor.
+            model_version: Model Version for which to retrieve the Model Monitor.
         """
         ...
 
     @overload
     def get_monitor(self, name: str) -> model_monitor.ModelMonitor:
-        """Get a Model Monitor from the Registry
+        """Get a Model Monitor by name from the Registry.
 
         Args:
             name: Name of Model Monitor to retrieve.
@@ -431,14 +431,14 @@ class Registry:
     def get_monitor(
         self, *, name: Optional[str] = None, model_version: Optional[model_version_impl.ModelVersion] = None
     ) -> model_monitor.ModelMonitor:
-        """Get a Model Monitor from the Registry
+        """Get a Model Monitor from the Registry.
 
         Args:
             name: Name of Model Monitor to retrieve.
-            model_version: ModelVersion for which to retrieve the ModelMonitor.
+            model_version: Model Version for which to retrieve the Model Monitor.
 
         Returns:
-            The fetched ModelMonitor.
+            The fetched Model Monitor.
 
         Raises:
             ValueError: If monitoring is not enabled in the Registry.
@@ -476,7 +476,7 @@ class Registry:
     )
     @snowpark._internal.utils.private_preview(version=model_monitor_version.SNOWFLAKE_ML_MONITORING_MIN_VERSION)
     def delete_monitor(self, name: str) -> None:
-        """Delete a Model Monitor from the Registry
+        """Delete a Model Monitor by name from the Registry.
 
         Args:
             name: Name of the Model Monitor to delete.
