@@ -249,3 +249,8 @@ py_test(
         "//snowflake/ml/test_utils:mock_session",
     ],
 )
+
+py_library(
+    name = "jwt_generator",
+    srcs = ["jwt_generator.py"],
+)

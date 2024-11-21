@@ -12,7 +12,7 @@ and deployment process, and includes two key components.
 
 ### Snowpark ML Development
 
-[Snowpark ML Development](https://docs.snowflake.com/en/developer-guide/snowpark-ml/index#snowpark-ml-development)
+[Snowpark ML Development](https://docs.snowflake.com/en/developer-guide/snowpark-ml/index#ml-modeling)
 provides a collection of python APIs enabling efficient ML model development directly in Snowflake:
 
 1. Modeling API (`snowflake.ml.modeling`) for data preprocessing, feature engineering and model training in Snowflake.
@@ -26,14 +26,21 @@ their native data loader formats.
 1. FileSet API: FileSet provides a Python fsspec-compliant API for materializing data into a Snowflake internal stage
 from a query or Snowpark Dataframe along with a number of convenience APIs.
 
-### Snowpark Model Management [Public Preview]
+### Snowflake MLOps
 
-[Snowpark Model Management](https://docs.snowflake.com/en/developer-guide/snowpark-ml/index#snowpark-ml-ops) complements
-the Snowpark ML Development API, and provides model management capabilities along with integrated deployment into Snowflake.
+Snowflake MLOps contains suit of tools and objects to make ML development cycle. It complements
+the Snowpark ML Development API, and provides end to end development to deployment within Snowflake.
 Currently, the API consists of:
 
-1. Registry: A python API for managing models within Snowflake which also supports deployment of ML models into Snowflake
-as native MODEL object running with Snowflake Warehouse.
+1. [Registry](https://docs.snowflake.com/en/developer-guide/snowpark-ml/index#snowflake-model-registry): A python API
+  allows secure deployment and management of models in Snowflake, supporting models trained both inside and outside of
+  Snowflake.
+2. [Feature Store](https://docs.snowflake.com/en/developer-guide/snowpark-ml/index#snowflake-feature-store): A fully
+  integrated solution for defining, managing, storing and discovering ML features derived from your data. The
+  Snowflake Feature Store supports automated, incremental refresh from batch and streaming data sources, so that
+  feature pipelines need be defined only once to be continuously updated with new data.
+3. [Datasets](https://docs.snowflake.com/developer-guide/snowflake-ml/overview#snowflake-datasets): Dataset provide an
+  immutable, versioned snapshot of your data suitable for ingestion by your machine learning models.
 
 ## Getting started
 
@@ -80,3 +87,19 @@ conda install \
 
 Note that until a `snowflake-ml-python` package version is available in the official Snowflake conda channel, there may
 be compatibility issues. Server-side functionality that `snowflake-ml-python` depends on may not yet be released.
+
+### Verifying the package
+
+1. Install cosign.
+  This example is using golang installation: [installing-cosign-with-go](https://edu.chainguard.dev/open-source/sigstore/cosign/how-to-install-cosign/#installing-cosign-with-go).
+1. Download the file from the repository like [pypi](https://pypi.org/project/snowflake-ml-python/#files).
+1. Download the signature files from the [release tag](https://github.com/snowflakedb/snowflake-ml-python/releases/tag/1.7.0).
+1. Verify signature on projects signed using Jenkins job:
+
+   ```sh
+   cosign verify-blob snowflake_ml_python-1.7.0.tar.gz --key snowflake-ml-python-1.7.0.pub --signature resources.linux.snowflake_ml_python-1.7.0.tar.gz.sig
+
+   cosign verify-blob snowflake_ml_python-1.7.0.tar.gz --key snowflake-ml-python-1.7.0.pub --signature resources.linux.snowflake_ml_python-1.7.0
+   ```
+
+NOTE: Version 1.7.0 is used as example here. Please choose the the latest version.

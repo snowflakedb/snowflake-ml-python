@@ -348,6 +348,33 @@ class SKLearnHandlerTest(absltest.TestCase):
                 assert callable(predict_method)
                 self.assertEqual(explain_method, None)
 
+    def test_skl_no_default_explain_sklearn_pipeline(self) -> None:
+        iris_X, iris_y = datasets.load_iris(return_X_y=True)
+        regr = linear_model.LinearRegression()
+        pipe = Pipeline([("regr", regr)])
+        # The pipeline can be used as any other estimator
+        # and avoids leaking the test set into the train set
+        pipe.fit(iris_X, iris_y)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            model_packager.ModelPackager(os.path.join(tmpdir, "model1")).save(
+                name="model1",
+                model=pipe,
+                sample_input_data=iris_X,
+                metadata={"author": "halu", "version": "1"},
+            )
+
+            with warnings.catch_warnings():
+                warnings.simplefilter("error")
+
+                pk = model_packager.ModelPackager(os.path.join(tmpdir, "model1"))
+                pk.load(as_custom_model=True)
+                assert pk.model
+                assert pk.meta
+                predict_method = getattr(pk.model, "predict", None)
+                explain_method = getattr(pk.model, "explain", None)
+                assert callable(predict_method)
+                self.assertEqual(explain_method, None)
+
     def test_skl_with_cr_estimator(self) -> None:
         class SecondMockEstimator:
             ...

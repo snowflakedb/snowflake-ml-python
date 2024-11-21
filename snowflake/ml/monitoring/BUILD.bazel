@@ -32,6 +32,7 @@ py_library(
         "model_monitor.py",
     ],
     deps = [
+        ":model_monitor_version",
         "//snowflake/ml/_internal:telemetry",
         "//snowflake/ml/_internal/utils:sql_identifier",
         "//snowflake/ml/monitoring/_client:model_monitor_sql_client",

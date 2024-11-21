@@ -118,7 +118,6 @@ def huggingface_pipeline_signature_auto_infer(task: str, params: Dict[str, Any])
             category=DeprecationWarning,
             stacklevel=1,
         )
-
         return core.ModelSignature(
             inputs=[
                 core.FeatureSpec(name="user_inputs", dtype=core.DataType.STRING, shape=(-1,)),

@@ -14,7 +14,7 @@ from snowflake.ml.model._client.ops import metadata_ops, model_ops, service_ops
 from snowflake.ml.model._model_composer import model_composer
 from snowflake.ml.model._model_composer.model_manifest import model_manifest_schema
 from snowflake.ml.model._packager.model_handlers import snowmlmodel
-from snowflake.snowpark import Session, dataframe
+from snowflake.snowpark import Session, async_job, dataframe
 
 _TELEMETRY_PROJECT = "MLOps"
 _TELEMETRY_SUBPROJECT = "ModelManagement"
@@ -631,7 +631,8 @@ class ModelVersion(lineage_node.LineageNode):
         max_batch_rows: Optional[int] = None,
         force_rebuild: bool = False,
         build_external_access_integration: Optional[str] = None,
-    ) -> str:
+        block: bool = True,
+    ) -> Union[str, async_job.AsyncJob]:
         """Create an inference service with the given spec.
 
         Args:
@@ -659,6 +660,9 @@ class ModelVersion(lineage_node.LineageNode):
             force_rebuild: Whether to force a model inference image rebuild.
             build_external_access_integration: (Deprecated) The external access integration for image build. This is
                 usually permitting access to conda & PyPI repositories.
+            block: A bool value indicating whether this function will wait until the service is available.
+                When it is ``False``, this function executes the underlying service creation asynchronously
+                and returns an :class:`AsyncJob`.
         """
         ...
 
@@ -679,7 +683,8 @@ class ModelVersion(lineage_node.LineageNode):
         max_batch_rows: Optional[int] = None,
         force_rebuild: bool = False,
         build_external_access_integrations: Optional[List[str]] = None,
-    ) -> str:
+        block: bool = True,
+    ) -> Union[str, async_job.AsyncJob]:
         """Create an inference service with the given spec.
 
         Args:
@@ -707,6 +712,9 @@ class ModelVersion(lineage_node.LineageNode):
             force_rebuild: Whether to force a model inference image rebuild.
             build_external_access_integrations: The external access integrations for image build. This is usually
                 permitting access to conda & PyPI repositories.
+            block: A bool value indicating whether this function will wait until the service is available.
+                When it is ``False``, this function executes the underlying service creation asynchronously
+                and returns an :class:`AsyncJob`.
         """
         ...
 
@@ -742,7 +750,8 @@ class ModelVersion(lineage_node.LineageNode):
         force_rebuild: bool = False,
         build_external_access_integration: Optional[str] = None,
         build_external_access_integrations: Optional[List[str]] = None,
-    ) -> str:
+        block: bool = True,
+    ) -> Union[str, async_job.AsyncJob]:
         """Create an inference service with the given spec.
 
         Args:
@@ -772,12 +781,16 @@ class ModelVersion(lineage_node.LineageNode):
                 usually permitting access to conda & PyPI repositories.
             build_external_access_integrations: The external access integrations for image build. This is usually
                 permitting access to conda & PyPI repositories.
+            block: A bool value indicating whether this function will wait until the service is available.
+                When it is False, this function executes the underlying service creation asynchronously
+                and returns an AsyncJob.
 
         Raises:
             ValueError: Illegal external access integration arguments.
 
         Returns:
-            Result information about service creation from server.
+            If `block=True`, return result information about service creation from server.
+            Otherwise, return the service creation AsyncJob.
         """
         statement_params = telemetry.get_statement_params(
             project=_TELEMETRY_PROJECT,
@@ -829,6 +842,7 @@ class ModelVersion(lineage_node.LineageNode):
                 if build_external_access_integrations is None
                 else [sql_identifier.SqlIdentifier(eai) for eai in build_external_access_integrations]
             ),
+            block=block,
             statement_params=statement_params,
         )
 

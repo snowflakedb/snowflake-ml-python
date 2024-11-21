@@ -1,3 +1,4 @@
+import http
 import inspect
 import logging
 import os
@@ -6,17 +7,29 @@ import time
 import uuid
 from typing import Any, Callable, Dict, List, Optional, Tuple, cast
 
+import numpy as np
+import pandas as pd
 import pytest
+import requests
+import retrying
 import yaml
 from absl.testing import absltest
+from cryptography.hazmat import backends
+from cryptography.hazmat.primitives import serialization
 from packaging import version
 
 from snowflake.ml._internal import file_utils
-from snowflake.ml._internal.utils import snowflake_env, sql_identifier
-from snowflake.ml.model import ModelVersion, type_hints as model_types
+from snowflake.ml._internal.utils import (
+    identifier,
+    jwt_generator,
+    snowflake_env,
+    sql_identifier,
+)
+from snowflake.ml.model import ModelVersion, model_signature, type_hints as model_types
 from snowflake.ml.model._client.ops import service_ops
 from snowflake.ml.model._client.service import model_deployment_spec
 from snowflake.ml.registry import registry
+from snowflake.ml.utils import authentication
 from snowflake.snowpark import row
 from snowflake.snowpark._internal import utils as snowpark_utils
 from tests.integ.snowflake.ml.test_utils import (
@@ -34,7 +47,6 @@ from tests.integ.snowflake.ml.test_utils import (
 class RegistryModelDeploymentTestBase(common_test_base.CommonTestBase):
     _TEST_CPU_COMPUTE_POOL = "REGTEST_INFERENCE_CPU_POOL"
     _TEST_GPU_COMPUTE_POOL = "REGTEST_INFERENCE_GPU_POOL"
-    _SPCS_EAI = "SPCS_EGRESS_ACCESS_INTEGRATION"
     _TEST_SPCS_WH = "REGTEST_ML_SMALL"
 
     BUILDER_IMAGE_PATH = os.getenv("BUILDER_IMAGE_PATH", None)
@@ -44,6 +56,11 @@ class RegistryModelDeploymentTestBase(common_test_base.CommonTestBase):
     def setUp(self) -> None:
         """Creates Snowpark and Snowflake environments for testing."""
         super().setUp()
+
+        with open(self.session._conn._lower_case_parameters["private_key_path"], "rb") as f:
+            self.private_key = serialization.load_pem_private_key(
+                f.read(), password=None, backend=backends.default_backend()
+            )
 
         self._run_id = uuid.uuid4().hex[:2]
         self._test_db = db_manager.TestObjectNameGenerator.get_snowml_test_object_name(self._run_id, "db").upper()
@@ -104,11 +121,11 @@ class RegistryModelDeploymentTestBase(common_test_base.CommonTestBase):
             service_schema_name=schema_name,
             service_name=sql_identifier.SqlIdentifier(service_name),
             image_build_compute_pool_name=build_compute_pool,
-            service_compute_pool_name=service_compute_pool,
+            service_compute_pool_name=sql_identifier.SqlIdentifier(service_compute_pool),
             image_repo_database_name=database_name,
             image_repo_schema_name=schema_name,
             image_repo_name=image_repo_name,
-            ingress_enabled=False,
+            ingress_enabled=True,
             max_instances=max_instances,
             num_workers=num_workers,
             max_batch_rows=max_batch_rows,
@@ -116,7 +133,6 @@ class RegistryModelDeploymentTestBase(common_test_base.CommonTestBase):
             memory=None,
             gpu=gpu_requests,
             force_rebuild=force_rebuild,
-            external_access_integrations=[sql_identifier.SqlIdentifier(self._SPCS_EAI)],
         )
 
         with (mv._service_ops.workspace_path / deploy_spec_file_rel_path).open("r", encoding="utf-8") as f:
@@ -166,7 +182,6 @@ class RegistryModelDeploymentTestBase(common_test_base.CommonTestBase):
 
         res = cast(str, cast(List[row.Row], async_job.result())[0][0])
         logging.info(f"Inference service {service_name} deployment complete: {res}")
-        return res
 
     def _test_registry_model_deployment(
         self,
@@ -241,11 +256,77 @@ class RegistryModelDeploymentTestBase(common_test_base.CommonTestBase):
                 num_workers=num_workers,
                 max_instances=max_instances,
                 max_batch_rows=max_batch_rows,
-                build_external_access_integrations=[self._SPCS_EAI],
+                ingress_enabled=True,
             )
 
         for target_method, (test_input, check_func) in prediction_assert_fns.items():
             res = mv.run(test_input, function_name=target_method, service_name=service_name)
             check_func(res)
 
+        endpoint = RegistryModelDeploymentTestBase._ensure_ingress_url(mv)
+        jwt_token_generator = self._get_jwt_token_generator()
+
+        for target_method, (test_input, check_func) in prediction_assert_fns.items():
+            res_df = self._inference_using_rest_api(
+                test_input, endpoint=endpoint, jwt_token_generator=jwt_token_generator, target_method=target_method
+            )
+            check_func(res_df)
+
         return mv
+
+    @staticmethod
+    def retry_if_result_status_retriable(result: requests.Response) -> bool:
+        if result.status_code in [
+            http.HTTPStatus.SERVICE_UNAVAILABLE,
+            http.HTTPStatus.TOO_MANY_REQUESTS,
+            http.HTTPStatus.GATEWAY_TIMEOUT,
+        ]:
+            return True
+        return False
+
+    @staticmethod
+    def _ensure_ingress_url(mv: ModelVersion) -> str:
+        while True:
+            endpoint = mv.list_services().loc[0, "inference_endpoint"]
+            if endpoint is not None:
+                break
+            time.sleep(10)
+        return endpoint
+
+    def _get_jwt_token_generator(self) -> jwt_generator.JWTGenerator:
+        account = identifier.get_unescaped_names(self.session.get_current_account())
+        user = identifier.get_unescaped_names(self.session.get_current_user())
+        if not account or not user:
+            raise ValueError("Account and user must be set.")
+
+        return authentication.get_jwt_token_generator(
+            account,
+            user,
+            self.private_key,
+        )
+
+    def _inference_using_rest_api(
+        self,
+        test_input: pd.DataFrame,
+        *,
+        endpoint: str,
+        jwt_token_generator: jwt_generator.JWTGenerator,
+        target_method: str,
+    ) -> pd.DataFrame:
+        test_input_arr = model_signature._convert_local_data_to_df(test_input).values
+        test_input_arr = np.column_stack([range(test_input_arr.shape[0]), test_input_arr])
+        res = retrying.retry(
+            wait_exponential_multiplier=100,
+            wait_exponential_max=4000,
+            retry_on_result=RegistryModelDeploymentTestBase.retry_if_result_status_retriable,
+        )(requests.post)(
+            f"https://{endpoint}/{target_method.replace('_', '-')}",
+            json={"data": test_input_arr.tolist()},
+            auth=authentication.SnowflakeJWTTokenAuth(
+                jwt_token_generator=jwt_token_generator,
+                role=identifier.get_unescaped_names(self.session.get_current_role()),
+                endpoint=endpoint,
+            ),
+        )
+        res.raise_for_status()
+        return pd.DataFrame([x[1] for x in res.json()["data"]])

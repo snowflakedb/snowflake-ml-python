@@ -32,4 +32,5 @@ The following files are in the `docs/source` directory:
 - `index.rst`: ReStructuredText (RST) file that will be built as the index page.
   It mainly as a landing point and indicates the subp-ackages to include in the API reference.
   Currently these include the Modeling and FileSet/FileSystem APIs.
-- `fileset.rst`, `modeling.rst`, `registry.rst`: RST files that direct Sphinx to include the specific classes in each submodule.
+- RST files that direct Sphinx to include the specific classes in each submodule.
+  - `fileset.rst`, `modeling.rst`, `monitoring.rst`, `registry.rst`

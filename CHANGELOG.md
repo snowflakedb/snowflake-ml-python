@@ -1,6 +1,20 @@
 # Release History
 
-## 1.7.1
+## 1.7.2
+
+### Bug Fixes
+
+- Model Explainability: Fix issue that explain is enabled for scikit-learn pipeline
+whose task is UNKNOWN and fails later when invoked.
+
+### Behavior Changes
+
+### New Features
+
+- Registry: Support asynchronous model inference service creation with the `block` option
+  in `ModelVersion.create_service()` set to True by default.
+
+## 1.7.1 (2024-11-05)
 
 ### Bug Fixes
 

@@ -17,7 +17,7 @@ build:
   noarch: python
 package:
   name: snowflake-ml-python
-  version: 1.7.1
+  version: 1.7.2
 requirements:
   build:
     - python
@@ -35,6 +35,7 @@ requirements:
     - packaging>=20.9,<25
     - pandas>=1.0.0,<3
     - pyarrow
+    - pyjwt>=2.0.0, <3
     - pytimeparse>=1.1.8,<2
     - pyyaml>=6.0,<7
     - requests

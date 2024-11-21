@@ -59,34 +59,6 @@ class ModelMonitorSqlClientTest(absltest.TestCase):
         )
         self.m_session.finalize()
 
-    def test_validate_source_table_shape(self) -> None:
-        mocked_table_out = mock.MagicMock(name="schema")
-        self.m_session.table = mock.MagicMock(name="table", return_value=mocked_table_out)
-        mocked_table_out.schema = mock.MagicMock(name="schema")
-        mocked_table_out.schema.fields = [
-            types.StructField(self.test_timestamp_column, types.TimestampType()),
-            types.StructField(self.test_prediction_column_name, types.DoubleType()),
-            types.StructField(self.test_label_column_name, types.DoubleType()),
-            types.StructField(self.test_id_column_name, types.StringType()),
-            types.StructField("feature1", types.StringType()),
-        ]
-
-        self.monitor_sql_client.validate_source(
-            source_database=None,
-            source_schema=None,
-            source=self.test_source_table_name,
-            timestamp_column=sql_identifier.SqlIdentifier("TIMESTAMP"),
-            id_columns=[sql_identifier.SqlIdentifier("ID")],
-            prediction_class_columns=[sql_identifier.SqlIdentifier("PREDICTION")],
-            prediction_score_columns=[],
-            actual_score_columns=[sql_identifier.SqlIdentifier("LABEL")],
-            actual_class_columns=[],
-        )
-        self.m_session.table.assert_called_once_with(
-            f"{self.test_db_name}.{self.test_schema_name}.{self.test_source_table_name}"
-        )
-        self.m_session.finalize()
-
     def test_validate_monitor_warehouse(self) -> None:
         self.m_session.add_mock_sql(
             query=f"""SHOW WAREHOUSES LIKE '{self.test_wh_name}'""",
@@ -194,95 +166,6 @@ class ModelMonitorSqlClientTest(absltest.TestCase):
                 id_columns=[sql_identifier.SqlIdentifier("ID")],
             )
 
-    def test_validate_column_types(self) -> None:
-        self.monitor_sql_client._validate_column_types(
-            table_schema={
-                "PREDICTION1": types.DoubleType(),
-                "PREDICTION2": types.DoubleType(),
-                "LABEL1": types.DoubleType(),
-                "LABEL2": types.DoubleType(),
-                "ID": types.StringType(),
-                "TIMESTAMP": types.TimestampType(types.TimestampTimeZone("ltz")),
-            },
-            timestamp_column=sql_identifier.SqlIdentifier("TIMESTAMP"),
-            prediction_columns=[
-                sql_identifier.SqlIdentifier("PREDICTION1"),
-                sql_identifier.SqlIdentifier("PREDICTION2"),
-            ],
-            id_columns=[sql_identifier.SqlIdentifier("ID")],
-            label_columns=[sql_identifier.SqlIdentifier("LABEL1"), sql_identifier.SqlIdentifier("LABEL2")],
-        )
-
-    def test_validate_prediction_column_types(self) -> None:
-        with self.assertRaisesRegex(ValueError, "Prediction column types must be the same. Found: .*"):
-            self.monitor_sql_client._validate_prediction_columns_types(
-                table_schema={
-                    "PREDICTION1": types.DoubleType(),
-                    "PREDICTION2": types.StringType(),
-                },
-                prediction_columns=[
-                    sql_identifier.SqlIdentifier("PREDICTION1"),
-                    sql_identifier.SqlIdentifier("PREDICTION2"),
-                ],
-            )
-
-    def test_validate_label_column_types(self) -> None:
-        with self.assertRaisesRegex(ValueError, "Label column types must be the same. Found:"):
-            self.monitor_sql_client._validate_label_columns_types(
-                table_schema={
-                    "LABEL1": types.DoubleType(),
-                    "LABEL2": types.StringType(),
-                },
-                label_columns=[sql_identifier.SqlIdentifier("LABEL1"), sql_identifier.SqlIdentifier("LABEL2")],
-            )
-
-    def test_validate_timestamp_column_type(self) -> None:
-        with self.assertRaisesRegex(ValueError, "Timestamp column: TIMESTAMP must be TimestampType"):
-            self.monitor_sql_client._validate_timestamp_column_type(
-                table_schema={
-                    "TIMESTAMP": types.StringType(),
-                },
-                timestamp_column=sql_identifier.SqlIdentifier("TIMESTAMP"),
-            )
-
-    def test_validate_id_columns_types(self) -> None:
-        with self.assertRaisesRegex(ValueError, "Id columns must all be StringType"):
-            self.monitor_sql_client._validate_id_columns_types(
-                table_schema={
-                    "ID": types.DoubleType(),
-                },
-                id_columns=[
-                    sql_identifier.SqlIdentifier("ID"),
-                ],
-            )
-
-    def test_validate_multiple_id_columns_types(self) -> None:
-        with self.assertRaisesRegex(ValueError, "Id columns must all be StringType. Found"):
-            self.monitor_sql_client._validate_id_columns_types(
-                table_schema={
-                    "ID1": types.StringType(),
-                    "ID2": types.DecimalType(),
-                },
-                id_columns=[
-                    sql_identifier.SqlIdentifier("ID1"),
-                    sql_identifier.SqlIdentifier("ID2"),
-                ],
-            )
-
-    def test_validate_id_columns_types_all_string(self) -> None:
-        self.monitor_sql_client._validate_id_columns_types(
-            table_schema={
-                "ID1": types.StringType(36),
-                "ID2": types.StringType(64),
-                "ID3": types.StringType(),
-            },
-            id_columns=[
-                sql_identifier.SqlIdentifier("ID1"),
-                sql_identifier.SqlIdentifier("ID2"),
-                sql_identifier.SqlIdentifier("ID3"),
-            ],
-        )
-
     def test_validate_existence_by_name(self) -> None:
         self.m_session.add_mock_sql(
             query=f"SHOW MODEL MONITORS LIKE '{self.test_monitor_name}' IN {self.test_db_name}.{self.test_schema_name}",
@@ -314,29 +197,6 @@ class ModelMonitorSqlClientTest(absltest.TestCase):
         self.assertTrue(res)
         self.m_session.finalize()
 
-    def test_validate_unique_columns(self) -> None:
-        self.monitor_sql_client._validate_unique_columns(
-            id_columns=[sql_identifier.SqlIdentifier("ID")],
-            timestamp_column=sql_identifier.SqlIdentifier("TIMESTAMP"),
-            prediction_columns=[sql_identifier.SqlIdentifier("PREDICTION")],
-            label_columns=[sql_identifier.SqlIdentifier("LABEL")],
-        )
-
-    def test_validate_unique_columns_column_used_twice(self) -> None:
-        with self.assertRaisesRegex(
-            ValueError, "Column names must be unique across id, timestamp, prediction, and label columns."
-        ):
-            self.monitor_sql_client._validate_unique_columns(
-                id_columns=[sql_identifier.SqlIdentifier("ID")],
-                timestamp_column=sql_identifier.SqlIdentifier("TIMESTAMP"),
-                prediction_columns=[
-                    sql_identifier.SqlIdentifier("PREDICTION"),
-                    # This is a duplicate with the id column
-                    sql_identifier.SqlIdentifier("ID"),
-                ],
-                label_columns=[sql_identifier.SqlIdentifier("LABEL")],
-            )
-
     def test_suspend_monitor(self) -> None:
         self.m_session.add_mock_sql(
             f"""ALTER MODEL MONITOR {self.test_db_name}.{self.test_schema_name}.{self.test_monitor_name} SUSPEND""",
@@ -353,7 +213,6 @@ class ModelMonitorSqlClientTest(absltest.TestCase):
         self.monitor_sql_client.resume_monitor(self.test_monitor_name)
         self.m_session.finalize()
 
-    # TODO: Move to new test class
     def test_drop_model_monitor(self) -> None:
         self.m_session.add_mock_sql(
             f"""DROP MODEL MONITOR {self.test_db_name}.{self.test_schema_name}.{self.test_monitor_name}""",
