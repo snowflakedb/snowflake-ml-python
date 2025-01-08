@@ -13,6 +13,9 @@ from snowflake.ml.model._packager import model_packager
 from snowflake.ml.modeling.linear_model import (  # type:ignore[attr-defined]
     LinearRegression,
 )
+from snowflake.ml.modeling.preprocessing import (  # type: ignore[attr-defined]
+    StandardScaler,
+)
 from snowflake.ml.modeling.xgboost import XGBRegressor
 
 
@@ -228,6 +231,25 @@ class SnowMLModelHandlerTest(absltest.TestCase):
                 explain_method = getattr(pk.model, "explain", None)
                 assert callable(explain_method)
                 np.testing.assert_allclose(explanations, explain_method(df[INPUT_COLUMNS]).values)
+
+    def test_snowml_preprocessing(self) -> None:
+        input_cols = ["F"]
+        output_cols = ["F"]
+        pandas_df = pd.DataFrame(data={"F": [1, 2, 3]})
+
+        scaler = StandardScaler(input_cols=input_cols, output_cols=output_cols)
+        scaler.fit(pandas_df)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with self.assertRaisesRegex(
+                AssertionError,
+                "Model does not have model signatures as expected.",
+            ):
+                model_packager.ModelPackager(os.path.join(tmpdir, "model1")).save(
+                    name="model1",
+                    model=scaler,
+                    sample_input_data=pandas_df,
+                    metadata={"author": "halu", "version": "1"},
+                )
 
 
 if __name__ == "__main__":

@@ -286,11 +286,25 @@ class TestSnowFileSystem(absltest.TestCase):
         for version in [self.version1, self.version2]:
             for pattern, expected in [
                 (
-                    f"snow://{self.domain}/{self.entity}/versions/{version}/*",
+                    f"snow://{self.domain}/{self.entity}/versions/{version}/",
                     [
-                        f"{self.domain}/{self.entity}/versions/{version}/test/",
-                        f"{self.domain}/{self.entity}/versions/{version}/train/",
+                        f"{self.domain}/{self.entity}/versions/{version}",
                     ],
+                ),
+                (
+                    f"snow://{self.domain}/{self.entity}/versions/{version}/*",
+                    [],  # Single asterisk only matches files, in this case nothing
+                ),
+                (
+                    f"snow://{self.domain}/{self.entity}/versions/{version}/**",
+                    sorted(
+                        [
+                            f"{self.domain}/{self.entity}/versions/{version}",
+                            f"{self.domain}/{self.entity}/versions/{version}/train/",
+                            f"{self.domain}/{self.entity}/versions/{version}/test/",
+                        ]
+                        + [f for f in self.files if f.startswith(f"{self.domain}/{self.entity}/versions/{version}/")]
+                    ),
                 ),
                 (
                     f"snow://{self.domain}/{self.entity}/versions/{version}/**/*.parquet",
@@ -302,8 +316,9 @@ class TestSnowFileSystem(absltest.TestCase):
                 ),
             ]:
                 for fs in [self.sffs1, self.sffs2]:
-                    actual = fs.glob(pattern)
-                    self.assertEqual(actual, expected)
+                    with self.subTest(f"pattern={pattern}"):
+                        actual = fs.glob(pattern)
+                        self.assertEqual(actual, expected)
 
     def test_negative_optimize_read(self) -> None:
         """Test if optimize_read() can raise error is presigned url fetching failed."""

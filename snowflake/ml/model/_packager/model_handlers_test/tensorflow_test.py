@@ -1,11 +1,11 @@
 import os
 import tempfile
 import warnings
-from typing import Optional, Tuple
+from typing import Callable, Optional, Tuple
 
 import numpy as np
 import tensorflow as tf
-from absl.testing import absltest
+from absl.testing import absltest, parameterized
 
 from snowflake.ml.model import model_signature
 from snowflake.ml.model._packager import model_packager
@@ -26,22 +26,21 @@ class SimpleModule(tf.Module):
         return self.a_variable * tensor + self.non_trainable_variable
 
 
-class KerasModel(tf.keras.Model):
-    def __init__(self, n_hidden: int, n_out: int) -> None:
-        super().__init__()
-        self.fc_1 = tf.keras.layers.Dense(n_hidden, activation="relu")
-        self.fc_2 = tf.keras.layers.Dense(n_out, activation="sigmoid")
-
-    def call(self, tensors: tf.Tensor) -> tf.Tensor:
-        input = tensors
-        x = self.fc_1(input)
-        x = self.fc_2(x)
-        return x
-
-
-def _prepare_keras_model(
+def _prepare_keras_subclass_model(
     dtype: tf.dtypes.DType = tf.float32,
 ) -> Tuple[tf.keras.Model, tf.Tensor, tf.Tensor]:
+    class KerasModel(tf.keras.Model):
+        def __init__(self, n_hidden: int, n_out: int) -> None:
+            super().__init__()
+            self.fc_1 = tf.keras.layers.Dense(n_hidden, activation="relu")
+            self.fc_2 = tf.keras.layers.Dense(n_out, activation="sigmoid")
+
+        def call(self, tensors: tf.Tensor) -> tf.Tensor:
+            input = tensors
+            x = self.fc_1(input)
+            x = self.fc_2(x)
+            return x
+
     n_input, n_hidden, n_out, batch_size, learning_rate = 10, 15, 1, 100, 0.01
     x = np.random.rand(batch_size, n_input)
     data_x = tf.convert_to_tensor(x, dtype=dtype)
@@ -57,7 +56,51 @@ def _prepare_keras_model(
     return model, data_x, data_y
 
 
-class TensorflowHandlerTest(absltest.TestCase):
+def _prepare_keras_sequential_model(
+    dtype: tf.dtypes.DType = tf.float32,
+) -> Tuple[tf.keras.Model, tf.Tensor, tf.Tensor]:
+    n_input, n_hidden, n_out, batch_size, learning_rate = 10, 15, 1, 100, 0.01
+    x = np.random.rand(batch_size, n_input)
+    data_x = tf.convert_to_tensor(x, dtype=dtype)
+    raw_data_y = tf.random.uniform((batch_size, 1))
+    raw_data_y = tf.where(raw_data_y > 0.5, tf.ones_like(raw_data_y), tf.zeros_like(raw_data_y))
+    data_y = tf.cast(raw_data_y, dtype=dtype)
+
+    model = tf.keras.Sequential(
+        [
+            tf.keras.layers.Dense(n_hidden, activation="relu"),
+            tf.keras.layers.Dense(n_out, activation="sigmoid"),
+        ]
+    )
+    model.compile(
+        optimizer=tf.keras.optimizers.SGD(learning_rate=learning_rate), loss=tf.keras.losses.MeanSquaredError()
+    )
+    model.fit(data_x, data_y, batch_size=batch_size, epochs=100)
+    return model, data_x, data_y
+
+
+def _prepare_keras_functional_model(
+    dtype: tf.dtypes.DType = tf.float32,
+) -> Tuple[tf.keras.Model, tf.Tensor, tf.Tensor]:
+    n_input, n_hidden, n_out, batch_size, learning_rate = 10, 15, 1, 100, 0.01
+    x = np.random.rand(batch_size, n_input)
+    data_x = tf.convert_to_tensor(x, dtype=dtype)
+    raw_data_y = tf.random.uniform((batch_size, 1))
+    raw_data_y = tf.where(raw_data_y > 0.5, tf.ones_like(raw_data_y), tf.zeros_like(raw_data_y))
+    data_y = tf.cast(raw_data_y, dtype=dtype)
+
+    input = tf.keras.Input(shape=(n_input,))
+    x = tf.keras.layers.Dense(n_hidden, activation="relu")(input)
+    output = tf.keras.layers.Dense(n_out, activation="sigmoid")(x)
+    model = tf.keras.Model(inputs=input, outputs=output)
+    model.compile(
+        optimizer=tf.keras.optimizers.SGD(learning_rate=learning_rate), loss=tf.keras.losses.MeanSquaredError()
+    )
+    model.fit(data_x, data_y, batch_size=batch_size, epochs=100)
+    return model, data_x, data_y
+
+
+class TensorflowHandlerTest(parameterized.TestCase):
     def test_tensorflow(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             simple_module = SimpleModule(name="simple")
@@ -160,9 +203,16 @@ class TensorflowHandlerTest(absltest.TestCase):
                 y_pred,
             )
 
-    def test_tensorflow_keras(self) -> None:
+    @parameterized.parameters(  # type: ignore[misc]
+        {"model_fn": _prepare_keras_subclass_model},
+        {"model_fn": _prepare_keras_sequential_model},
+        {"model_fn": _prepare_keras_functional_model},
+    )
+    def test_tensorflow_keras(
+        self, model_fn: Callable[[tf.dtypes.DType], Tuple[tf.keras.Model, tf.Tensor, tf.Tensor]]
+    ) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
-            model, data_x, data_y = _prepare_keras_model()
+            model, data_x, data_y = model_fn(tf.float32)
             s = {"predict": model_signature.infer_signature([data_x], [data_y])}
             with self.assertRaises(ValueError):
                 model_packager.ModelPackager(os.path.join(tmpdir, "model1")).save(

@@ -88,6 +88,7 @@ class ModelComposer:
         pip_requirements: Optional[List[str]] = None,
         target_platforms: Optional[List[model_types.TargetPlatform]] = None,
         python_version: Optional[str] = None,
+        user_files: Optional[Dict[str, List[str]]] = None,
         ext_modules: Optional[List[ModuleType]] = None,
         code_paths: Optional[List[str]] = None,
         task: model_types.Task = model_types.Task.UNKNOWN,
@@ -97,9 +98,12 @@ class ModelComposer:
             options = model_types.BaseModelSaveOption()
 
         if not snowpark_utils.is_in_stored_procedure():  # type: ignore[no-untyped-call]
-            snowml_matched_versions = env_utils.get_matched_package_versions_in_snowflake_conda_channel(
-                req=requirements.Requirement(f"snowflake-ml-python=={snowml_env.VERSION}")
-            )
+            snowml_matched_versions = env_utils.get_matched_package_versions_in_information_schema(
+                self.session,
+                reqs=[requirements.Requirement(f"{env_utils.SNOWPARK_ML_PKG_NAME}=={snowml_env.VERSION}")],
+                python_version=python_version or snowml_env.PYTHON_VERSION,
+                statement_params=self._statement_params,
+            ).get(env_utils.SNOWPARK_ML_PKG_NAME, [])
 
             if len(snowml_matched_versions) < 1 and options.get("embed_local_ml_library", False) is False:
                 logging.info(
@@ -131,6 +135,7 @@ class ModelComposer:
             model_meta=self.packager.meta,
             model_rel_path=pathlib.PurePosixPath(ModelComposer.MODEL_DIR_REL_PATH),
             options=options,
+            user_files=user_files,
             data_sources=self._get_data_sources(model, sample_input_data),
             target_platforms=target_platforms,
         )

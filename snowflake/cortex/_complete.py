@@ -6,7 +6,7 @@ from typing import Any, Callable, Dict, Iterator, List, Optional, TypedDict, Uni
 from urllib.parse import urlunparse
 
 import requests
-from typing_extensions import NotRequired
+from typing_extensions import NotRequired, deprecated
 
 from snowflake import snowpark
 from snowflake.cortex._sse_client import SSEClient
@@ -127,8 +127,26 @@ def _xp_dict_to_response(raw_resp: Dict[str, Any]) -> requests.Response:
     response.status_code = int(raw_resp["status"])
     response.headers = raw_resp["headers"]
 
+    request_id = None
+    for key, value in raw_resp["headers"].items():
+        # Note: there is some whitespace in the headers making it not possible
+        # to directly index the header reliably.
+        if key.strip().lower() == "x-snowflake-request-id":
+            request_id = value
+            break
+
     data = raw_resp["content"]
-    data = json.loads(data)
+    try:
+        data = json.loads(data)
+    except json.JSONDecodeError:
+        raise ValueError(f"Request failed (request id: {request_id})")
+
+    if response.status_code < 200 or response.status_code >= 300:
+        if "message" not in data:
+            raise ValueError(f"Request failed (request id: {request_id})")
+        message = data["message"]
+        raise ValueError(f"Request failed: {message} (request id: {request_id})")
+
     # Convert the dictionary to a string format that resembles the SSE event format
     # For example, if the dict is {'event': 'message', 'data': 'your data'}, it should be formatted like this:
     sse_format_data = ""
@@ -144,6 +162,7 @@ def _xp_dict_to_response(raw_resp: Dict[str, Any]) -> requests.Response:
 
 @retry
 def _call_complete_xp(
+    snow_api_xp_request_handler: Optional[Callable[..., Dict[str, Any]]],
     model: str,
     prompt: Union[str, List[ConversationMessage]],
     options: Optional[CompleteOptions] = None,
@@ -151,9 +170,8 @@ def _call_complete_xp(
 ) -> requests.Response:
     headers = _make_common_request_headers()
     body = _make_request_body(model, prompt, options)
-    import _snowflake
-
-    raw_resp = _snowflake.send_snow_api_request("POST", _REST_COMPLETE_URL, {}, headers, body, {}, deadline)
+    assert snow_api_xp_request_handler is not None
+    raw_resp = snow_api_xp_request_handler("POST", _REST_COMPLETE_URL, {}, headers, body, {}, deadline)
     return _xp_dict_to_response(raw_resp)
 
 
@@ -218,17 +236,26 @@ def _complete_call_sql_function_snowpark(
 
 
 def _complete_non_streaming_immediate(
+    snow_api_xp_request_handler: Optional[Callable[..., Dict[str, Any]]],
     model: str,
     prompt: Union[str, List[ConversationMessage]],
     options: Optional[CompleteOptions],
     session: Optional[snowpark.Session] = None,
     deadline: Optional[float] = None,
 ) -> str:
-    response = _complete_rest(model=model, prompt=prompt, options=options, session=session, deadline=deadline)
+    response = _complete_rest(
+        snow_api_xp_request_handler=snow_api_xp_request_handler,
+        model=model,
+        prompt=prompt,
+        options=options,
+        session=session,
+        deadline=deadline,
+    )
     return "".join(response)
 
 
 def _complete_non_streaming_impl(
+    snow_api_xp_request_handler: Optional[Callable[..., Dict[str, Any]]],
     function: str,
     model: Union[str, snowpark.Column],
     prompt: Union[str, List[ConversationMessage], snowpark.Column],
@@ -246,19 +273,31 @@ def _complete_non_streaming_impl(
     if isinstance(options, snowpark.Column):
         raise ValueError("'options' cannot be a snowpark.Column when 'prompt' is a string.")
     return _complete_non_streaming_immediate(
-        model=model, prompt=prompt, options=options, session=session, deadline=deadline
+        snow_api_xp_request_handler=snow_api_xp_request_handler,
+        model=model,
+        prompt=prompt,
+        options=options,
+        session=session,
+        deadline=deadline,
     )
 
 
 def _complete_rest(
+    snow_api_xp_request_handler: Optional[Callable[..., Dict[str, Any]]],
     model: str,
     prompt: Union[str, List[ConversationMessage]],
     options: Optional[CompleteOptions] = None,
     session: Optional[snowpark.Session] = None,
     deadline: Optional[float] = None,
 ) -> Iterator[str]:
-    if is_in_stored_procedure():  # type: ignore[no-untyped-call]
-        response = _call_complete_xp(model=model, prompt=prompt, options=options, deadline=deadline)
+    if snow_api_xp_request_handler is not None:
+        response = _call_complete_xp(
+            snow_api_xp_request_handler=snow_api_xp_request_handler,
+            model=model,
+            prompt=prompt,
+            options=options,
+            deadline=deadline,
+        )
     else:
         response = _call_complete_rest(model=model, prompt=prompt, options=options, session=session, deadline=deadline)
     assert response.status_code >= 200 and response.status_code < 300
@@ -268,10 +307,11 @@ def _complete_rest(
 def _complete_impl(
     model: Union[str, snowpark.Column],
     prompt: Union[str, List[ConversationMessage], snowpark.Column],
+    snow_api_xp_request_handler: Optional[Callable[..., Dict[str, Any]]] = None,
+    function: str = "snowflake.cortex.complete",
     options: Optional[CompleteOptions] = None,
     session: Optional[snowpark.Session] = None,
     stream: bool = False,
-    function: str = "snowflake.cortex.complete",
     timeout: Optional[float] = None,
     deadline: Optional[float] = None,
 ) -> Union[str, Iterator[str], snowpark.Column]:
@@ -284,14 +324,29 @@ def _complete_impl(
             raise ValueError("in REST mode, 'model' must be a string")
         if not isinstance(prompt, str) and not isinstance(prompt, List):
             raise ValueError("in REST mode, 'prompt' must be a string or a list of ConversationMessage")
-        return _complete_rest(model=model, prompt=prompt, options=options, session=session, deadline=deadline)
-    return _complete_non_streaming_impl(function, model, prompt, options, session, deadline)
+        return _complete_rest(
+            snow_api_xp_request_handler=snow_api_xp_request_handler,
+            model=model,
+            prompt=prompt,
+            options=options,
+            session=session,
+            deadline=deadline,
+        )
+    return _complete_non_streaming_impl(
+        snow_api_xp_request_handler=snow_api_xp_request_handler,
+        function=function,
+        model=model,
+        prompt=prompt,
+        options=options,
+        session=session,
+        deadline=deadline,
+    )
 
 
 @telemetry.send_api_usage_telemetry(
     project=CORTEX_FUNCTIONS_TELEMETRY_PROJECT,
 )
-def Complete(
+def complete(
     model: Union[str, snowpark.Column],
     prompt: Union[str, List[ConversationMessage], snowpark.Column],
     *,
@@ -319,10 +374,19 @@ def Complete(
     Returns:
         A column of string responses.
     """
+
+    # Set the XP snow api function, if available.
+    snow_api_xp_request_handler = None
+    if is_in_stored_procedure():  # type: ignore[no-untyped-call]
+        import _snowflake
+
+        snow_api_xp_request_handler = _snowflake.send_snow_api_request
+
     try:
         return _complete_impl(
             model,
             prompt,
+            snow_api_xp_request_handler=snow_api_xp_request_handler,
             options=options,
             session=session,
             stream=stream,
@@ -331,3 +395,8 @@ def Complete(
         )
     except ValueError as err:
         raise err
+
+
+Complete = deprecated("Complete() is deprecated and will be removed in a future release. Use complete() instead")(
+    telemetry.send_api_usage_telemetry(project=CORTEX_FUNCTIONS_TELEMETRY_PROJECT)(complete)
+)

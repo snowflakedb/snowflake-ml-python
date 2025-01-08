@@ -152,8 +152,8 @@ class SKLModelHandler(_base.BaseModelHandler[Union["sklearn.base.BaseEstimator",
                 sample_input_data, model_meta, explain_target_method
             )
 
-            model_task_and_output_type = model_task_utils.get_model_task_and_output_type(model)
-            model_meta.task = handlers_utils.validate_model_task(model_meta.task, model_task_and_output_type.task)
+            model_task_and_output_type = model_task_utils.resolve_model_task_and_output_type(model, model_meta.task)
+            model_meta.task = model_task_and_output_type.task
 
             # if users did not ask then we enable if we have background data
             if enable_explainability is None:
@@ -164,24 +164,23 @@ class SKLModelHandler(_base.BaseModelHandler[Union["sklearn.base.BaseEstimator",
                         stacklevel=1,
                     )
                     enable_explainability = False
-                elif model_meta.task == model_types.Task.UNKNOWN:
+                elif model_meta.task == model_types.Task.UNKNOWN or explain_target_method is None:
                     enable_explainability = False
                 else:
                     enable_explainability = True
             if enable_explainability:
+                model_meta = handlers_utils.add_explain_method_signature(
+                    model_meta=model_meta,
+                    explain_method="explain",
+                    target_method=explain_target_method,
+                    output_return_type=model_task_and_output_type.output_type,
+                )
                 handlers_utils.save_background_data(
                     model_blobs_dir_path,
                     cls.EXPLAIN_ARTIFACTS_DIR,
                     cls.BG_DATA_FILE_SUFFIX,
                     name,
                     background_data,
-                )
-
-                model_meta = handlers_utils.add_explain_method_signature(
-                    model_meta=model_meta,
-                    explain_method="explain",
-                    target_method=explain_target_method,
-                    output_return_type=model_task_and_output_type.output_type,
                 )
 
         model_blob_path = os.path.join(model_blobs_dir_path, name)

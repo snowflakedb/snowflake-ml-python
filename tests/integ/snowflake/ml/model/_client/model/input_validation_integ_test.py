@@ -1,14 +1,20 @@
 import datetime
+import unittest
 import uuid
 
 import pandas as pd
 from absl.testing import absltest, parameterized
+from packaging import version
 
 from snowflake.ml.model import custom_model, model_signature
 from snowflake.ml.registry import registry
 from snowflake.ml.utils import connection_params
 from snowflake.snowpark import Session, exceptions
-from tests.integ.snowflake.ml.test_utils import dataframe_utils, db_manager
+from tests.integ.snowflake.ml.test_utils import (
+    dataframe_utils,
+    db_manager,
+    test_env_utils,
+)
 
 MODEL_NAME = "TEST_MODEL"
 TIMESTAMP_MODEL_NAME = "TEST_TIMESTAMP_MODEL"
@@ -166,6 +172,43 @@ class TestInputValidationInteg(parameterized.TestCase):
         )
         with self.assertRaisesRegex(ValueError, "Data Validation Error"):
             self._mv_timestamp.run(sp_df, strict_input_validation=True)
+
+    @unittest.skipUnless(
+        test_env_utils.get_current_snowflake_version() >= version.parse("8.47.0"),
+        "Wide-input support on model only available when the Snowflake Version is newer than 8.47.0",
+    )
+    def test_udf_limit(self) -> None:
+        lm = DemoModel(custom_model.ModelContext())
+        num_cols = 501
+
+        mv = self.registry.log_model(
+            model=lm,
+            model_name=MODEL_NAME,
+            version_name="NEW_VERSION",
+            signatures={
+                "predict": model_signature.ModelSignature(
+                    inputs=[
+                        model_signature.FeatureSpec(name=f"c{i}", dtype=model_signature.DataType.INT8)
+                        for i in range(num_cols)
+                    ],
+                    outputs=[
+                        model_signature.FeatureSpec(name="output", dtype=model_signature.DataType.INT8),
+                    ],
+                )
+            },
+        )
+
+        sp_df = self._session.create_dataframe(
+            [[0] * num_cols, [1] * num_cols], schema=[f'"c{i}"' for i in range(num_cols)]
+        )
+        y_df_expected = pd.DataFrame(
+            [[0] * (num_cols + 1), [1] * (num_cols + 1)], columns=[f"c{i}" for i in range(num_cols)] + ["output"]
+        )
+        dataframe_utils.check_sp_df_res(
+            mv.run(sp_df),
+            y_df_expected,
+            check_dtype=False,
+        )
 
 
 if __name__ == "__main__":

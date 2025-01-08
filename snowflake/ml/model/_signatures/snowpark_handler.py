@@ -1,5 +1,5 @@
 import json
-from typing import Literal, Optional, Sequence, cast
+from typing import Any, Literal, Optional, Sequence, cast
 
 import numpy as np
 import pandas as pd
@@ -73,14 +73,20 @@ class SnowparkDataFrameHandler(base_handler.BaseDataHandler[snowflake.snowpark.D
                 assert isinstance(feature, core.FeatureSpec), "Invalid feature kind."
                 dtype_map[feature.name] = feature.as_dtype()
         df_local = data.to_pandas()
+
         # This is because Array will become string (Even though the correct schema is set)
         # and object will become variant type and requires an additional loads
         # to get correct data otherwise it would be string.
+        def load_if_not_null(x: str) -> Optional[Any]:
+            if x is None:
+                return None
+            return json.loads(x)
+
         for field in data.schema.fields:
             if isinstance(field.datatype, spt.ArrayType):
                 df_local[identifier.get_unescaped_names(field.name)] = df_local[
                     identifier.get_unescaped_names(field.name)
-                ].map(json.loads)
+                ].map(load_if_not_null)
         # Only when the feature is not from inference, we are confident to do the type casting.
         # Otherwise, dtype_map will be empty.
         # Errors are ignored to make sure None won't be converted and won't raise Error

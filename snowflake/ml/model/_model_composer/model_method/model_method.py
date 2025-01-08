@@ -7,7 +7,10 @@ from typing_extensions import NotRequired
 from snowflake.ml._internal.utils import sql_identifier
 from snowflake.ml.model import model_signature, type_hints
 from snowflake.ml.model._model_composer.model_manifest import model_manifest_schema
-from snowflake.ml.model._model_composer.model_method import function_generator
+from snowflake.ml.model._model_composer.model_method import (
+    constants,
+    function_generator,
+)
 from snowflake.ml.model._packager.model_meta import model_meta as model_meta_api
 from snowflake.snowpark._internal import type_utils
 
@@ -64,6 +67,7 @@ class ModelMethod:
         runtime_name: str,
         function_generator: function_generator.FunctionGenerator,
         is_partitioned_function: bool = False,
+        wide_input: bool = False,
         options: Optional[ModelMethodOptions] = None,
     ) -> None:
         self.model_meta = model_meta
@@ -71,6 +75,7 @@ class ModelMethod:
         self.function_generator = function_generator
         self.is_partitioned_function = is_partitioned_function
         self.runtime_name = runtime_name
+        self.wide_input = wide_input
         self.options = options or {}
         try:
             self.method_name = sql_identifier.SqlIdentifier(
@@ -114,12 +119,15 @@ class ModelMethod:
             self.target_method,
             self.function_type,
             self.is_partitioned_function,
+            self.wide_input,
             options=options,
         )
         input_list = [
             ModelMethod._get_method_arg_from_feature(ft, case_sensitive=self.options.get("case_sensitive", False))
             for ft in self.model_meta.signatures[self.target_method].inputs
         ]
+        if len(input_list) > constants.SNOWPARK_UDF_INPUT_COL_LIMIT:
+            input_list = [{"name": "INPUT", "type": "OBJECT"}]
         input_name_counter = collections.Counter([input_info["name"] for input_info in input_list])
         dup_input_names = [k for k, v in input_name_counter.items() if v > 1]
         if dup_input_names:

@@ -11,11 +11,9 @@ from snowflake.ml._internal.exceptions import (
     fileset_error_messages,
     fileset_errors,
 )
-from snowflake.ml._internal.utils import (
-    identifier,
-    import_utils,
-    snowpark_dataframe_utils,
-)
+from snowflake.ml._internal.utils import identifier, snowpark_dataframe_utils
+from snowflake.ml.data import data_connector
+from snowflake.ml.data._internal import arrow_ingestor
 from snowflake.ml.fileset import sfcfs
 from snowflake.snowpark import exceptions as snowpark_exceptions, functions
 
@@ -285,6 +283,16 @@ class FileSet:
         """Get the Snowflake absolute path to this FileSet directory."""
         return _fileset_absolute_path(self._target_stage_loc, self.name)
 
+    def _to_data_connector(self) -> data_connector.DataConnector:
+        self._fs.optimize_read(self._list_files())
+        ingester = arrow_ingestor.ArrowIngestor(
+            self._snowpark_session,
+            self._list_files(),
+            format="parquet",
+            filesystem=self._fs,
+        )
+        return data_connector.DataConnector(ingester, expand_dims=False)
+
     @telemetry.send_api_usage_telemetry(
         project=_PROJECT,
     )
@@ -362,13 +370,9 @@ class FileSet:
         ----
         {'_COL_1':[10]}
         """
-        IterableWrapper, _ = import_utils.import_or_get_dummy("torchdata.datapipes.iter.IterableWrapper")
-        torch_datapipe_module, _ = import_utils.import_or_get_dummy("snowflake.ml.fileset.torch_datapipe")
-
-        self._fs.optimize_read(self._list_files())
-
-        input_dp = IterableWrapper(self._list_files())
-        return torch_datapipe_module.ReadAndParseParquet(input_dp, self._fs, batch_size, shuffle, drop_last_batch)
+        return self._to_data_connector().to_torch_datapipe(
+            batch_size=batch_size, shuffle=shuffle, drop_last_batch=drop_last_batch
+        )
 
     @telemetry.send_api_usage_telemetry(
         project=_PROJECT,
@@ -402,12 +406,8 @@ class FileSet:
         ----
         {'_COL_1': <tf.Tensor: shape=(1,), dtype=int64, numpy=[10]>}
         """
-        tf_dataset_module, _ = import_utils.import_or_get_dummy("snowflake.ml.fileset.tf_dataset")
-
-        self._fs.optimize_read(self._list_files())
-
-        return tf_dataset_module.read_and_parse_parquet(
-            self._list_files(), self._fs, batch_size, shuffle, drop_last_batch
+        return self._to_data_connector().to_tf_dataset(
+            batch_size=batch_size, shuffle=shuffle, drop_last_batch=drop_last_batch
         )
 
     @telemetry.send_api_usage_telemetry(

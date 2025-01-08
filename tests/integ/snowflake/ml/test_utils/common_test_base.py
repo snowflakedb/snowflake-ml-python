@@ -1,3 +1,4 @@
+import importlib
 import inspect
 import itertools
 import os
@@ -136,6 +137,12 @@ class CommonTestBase(parameterized.TestCase):
                         file_utils.zip_python_package(tests_zip_module_filename, "tests")
 
                         imports = [snowml_zip_module_filename, tests_zip_module_filename]
+                        try:
+                            snowcortex_zip_module_filename = os.path.join(tmpdir, "snowflake-cortex-python.zip")
+                            file_utils.zip_python_package(snowcortex_zip_module_filename, "snowflake.cortex")
+                            imports.append(snowcortex_zip_module_filename)
+                        except ModuleNotFoundError:
+                            pass
                         packages = additional_packages or []
                         for req_str in _snowml_requirements.ALL_REQUIREMENTS:
                             req = requirements.Requirement(req_str)
@@ -194,7 +201,11 @@ class CommonTestBase(parameterized.TestCase):
                             IMPORT_DIRECTORY_NAME = "snowflake_import_directory"
                             import_dir = sys._xoptions[IMPORT_DIRECTORY_NAME]
 
-                            for file_name in ["snowflake-ml-python", "snowflake-ml-test"]:
+                            files = ["snowflake-ml-python", "snowflake-ml-test"]
+                            if importlib.util.find_spec("snowflake.cortex") is not None:
+                                files.append("snowflake-cortex-python")
+
+                            for file_name in files:
                                 zip_path = os.path.join(import_dir, file_name + ".zip")
                                 for sys_path in sys.path:
                                     if file_name + ".zip" in sys_path:

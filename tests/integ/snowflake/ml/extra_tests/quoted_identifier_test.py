@@ -1,5 +1,4 @@
 import os
-from unittest import skipIf
 
 import numpy as np
 from absl.testing import absltest, parameterized
@@ -30,10 +29,6 @@ class QuotedIdentifierTest(parameterized.TestCase):
     def tearDown(self):
         self._session.close()
 
-    @skipIf(
-        os.getenv("IN_SPCS_ML_RUNTIME") == "True",
-        "Skipping this test on Container Runtimes. See: https://snowflakecomputing.atlassian.net/browse/SNOW-1633651",
-    )
     @parameterized.parameters(False, True)
     def test_sp_quoted_identifier_modeling(self, test_within_sproc) -> None:
         if test_within_sproc:

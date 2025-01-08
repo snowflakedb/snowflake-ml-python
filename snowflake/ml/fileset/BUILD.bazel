@@ -93,14 +93,13 @@ py_library(
     srcs = ["fileset.py"],
     deps = [
         ":sfcfs",
-        ":tf_dataset",
-        ":torch_datapipe",
         "//snowflake/ml/_internal:telemetry",
         "//snowflake/ml/_internal/exceptions",
         "//snowflake/ml/_internal/exceptions:fileset_error_messages",
         "//snowflake/ml/_internal/exceptions:fileset_errors",
         "//snowflake/ml/_internal/utils:import_utils",
         "//snowflake/ml/_internal/utils:snowpark_dataframe_utils",
+        "//snowflake/ml/data:data_connector",
     ],
 )
 
@@ -111,53 +110,6 @@ py_test(
         ":fileset",
         "//snowflake/ml/_internal/exceptions:fileset_errors",
         "//snowflake/ml/test_utils:mock_data_frame",
-    ],
-)
-
-py_library(
-    name = "parquet_parser",
-    srcs = ["parquet_parser.py"],
-)
-
-py_test(
-    name = "parquet_parser_test",
-    srcs = ["parquet_parser_test.py"],
-    deps = [
-        ":parquet_parser",
-        ":parquet_test_util",
-    ],
-)
-
-py_library(
-    name = "torch_datapipe",
-    srcs = ["torch_datapipe.py"],
-    deps = [":parquet_parser"],
-)
-
-py_test(
-    name = "torch_datapipe_test",
-    srcs = ["torch_datapipe_test.py"],
-    deps = [
-        ":parquet_test_util",
-        ":torch_datapipe",
-    ],
-)
-
-py_library(
-    name = "tf_dataset",
-    srcs = ["tf_dataset.py"],
-    deps = [
-        ":parquet_parser",
-        "//snowflake/ml/_internal/exceptions",
-    ],
-)
-
-py_test(
-    name = "tf_dataset_test",
-    srcs = ["tf_dataset_test.py"],
-    deps = [
-        ":parquet_test_util",
-        ":tf_dataset",
     ],
 )
 

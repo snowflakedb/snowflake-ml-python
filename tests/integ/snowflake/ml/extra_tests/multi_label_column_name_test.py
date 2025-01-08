@@ -1,7 +1,4 @@
-import os
-
 import numpy as np
-import pytest
 from absl.testing.absltest import TestCase, main
 from sklearn.datasets import make_multilabel_classification
 from sklearn.ensemble import RandomForestClassifier as SkRandomForestClassifier
@@ -87,13 +84,6 @@ class MultiLabelTargetTest(TestCase):
             training_predictions_log_proba.flatten(), concatenated_array_log_proba.flatten(), rtol=1.0e-1, atol=1.0e-2
         )
 
-    @pytest.mark.skipif(
-        os.getenv("IN_SPCS_ML_RUNTIME") == "True",
-        reason=(
-            "Skipping test, xgboost_ray doesn't support multi-output"
-            "See: https://github.com/ray-project/xgboost_ray/issues/286"
-        ),
-    )
     def test_xgb_regressor_with_five_label_cols(self):
         snf_df = self._session.create_dataframe(self.mult_cl_data.tolist(), schema=self.feature_cols + self.target_cols)
         snf_df.write.save_as_table("multi_target_cl", mode="overwrite")

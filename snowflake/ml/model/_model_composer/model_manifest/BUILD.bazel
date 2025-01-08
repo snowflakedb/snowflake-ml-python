@@ -12,6 +12,7 @@ filegroup(
         "fixtures/MANIFEST_4.yml",
         "fixtures/MANIFEST_5.yml",
         "fixtures/MANIFEST_6.yml",
+        "fixtures/MANIFEST_7.yml",
     ],
 )
 
@@ -22,7 +23,9 @@ py_library(
         ":model_manifest_schema",
         "//snowflake/ml/_internal:env_utils",
         "//snowflake/ml/model/_model_composer/model_method",
+        "//snowflake/ml/model/_model_composer/model_method:constants",
         "//snowflake/ml/model/_model_composer/model_method:function_generator",
+        "//snowflake/ml/model/_model_composer/model_user_file",
         "//snowflake/ml/model/_packager/model_meta",
         "//snowflake/ml/model/_packager/model_runtime",
     ],

@@ -45,8 +45,9 @@ class ExampleHelper:
         """Return a dataframe object about descriptions of all examples."""
         root_dir = Path(__file__).parent
         rows = []
+        hide_folders = ["citibike_trip_features", "source_data"]
         for f_name in os.listdir(root_dir):
-            if os.path.isdir(os.path.join(root_dir, f_name)) and f_name[0].isalpha() and f_name != "source_data":
+            if os.path.isdir(os.path.join(root_dir, f_name)) and f_name[0].isalpha() and f_name not in hide_folders:
                 source_file_path = root_dir.joinpath(f"{f_name}/source.yaml")
                 source_dict = self._read_yaml(str(source_file_path))
                 rows.append((f_name, source_dict["model_category"], source_dict["desc"], source_dict["label_columns"]))

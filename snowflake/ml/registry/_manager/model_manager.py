@@ -1,13 +1,13 @@
 from types import ModuleType
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 import pandas as pd
 from absl.logging import logging
-from packaging import version
 
 from snowflake.ml._internal import telemetry
+from snowflake.ml._internal.exceptions import error_codes, exceptions
 from snowflake.ml._internal.human_readable_id import hrid_generator
-from snowflake.ml._internal.utils import snowflake_env, sql_identifier
+from snowflake.ml._internal.utils import sql_identifier
 from snowflake.ml.model import model_signature, type_hints as model_types
 from snowflake.ml.model._client.model import model_impl, model_version_impl
 from snowflake.ml.model._client.ops import metadata_ops, model_ops, service_ops
@@ -50,14 +50,40 @@ class ModelManager:
         python_version: Optional[str] = None,
         signatures: Optional[Dict[str, model_signature.ModelSignature]] = None,
         sample_input_data: Optional[model_types.SupportedDataType] = None,
+        user_files: Optional[Dict[str, List[str]]] = None,
         code_paths: Optional[List[str]] = None,
         ext_modules: Optional[List[ModuleType]] = None,
         task: model_types.Task = model_types.Task.UNKNOWN,
         options: Optional[model_types.ModelSaveOption] = None,
         statement_params: Optional[Dict[str, Any]] = None,
     ) -> model_version_impl.ModelVersion:
-        if not version_name:
-            version_name = self._hrid_generator.generate()[1]
+
+        database_name_id, schema_name_id, model_name_id = self._parse_fully_qualified_name(model_name)
+
+        model_exists = self._model_ops.validate_existence(
+            database_name=database_name_id,
+            schema_name=schema_name_id,
+            model_name=model_name_id,
+            statement_params=statement_params,
+        )
+
+        if version_name is None:
+            if model_exists:
+                versions = self._model_ops.list_models_or_versions(
+                    database_name=database_name_id,
+                    schema_name=schema_name_id,
+                    model_name=model_name_id,
+                    statement_params=statement_params,
+                )
+                for _ in range(1000):
+                    hrid = self._hrid_generator.generate()[1]
+                    if sql_identifier.SqlIdentifier(hrid) not in versions:
+                        version_name = hrid
+                        break
+                if version_name is None:
+                    raise RuntimeError("Random version name generation failed.")
+            else:
+                version_name = self._hrid_generator.generate()[1]
 
         if isinstance(model, model_version_impl.ModelVersion):
             (
@@ -75,9 +101,23 @@ class ModelManager:
                 schema_name=None,
                 model_name=sql_identifier.SqlIdentifier(model_name),
                 version_name=sql_identifier.SqlIdentifier(version_name),
+                model_exists=model_exists,
                 statement_params=statement_params,
             )
             return self.get_model(model_name=model_name, statement_params=statement_params).version(version_name)
+
+        version_name_id = sql_identifier.SqlIdentifier(version_name)
+        if model_exists and self._model_ops.validate_existence(
+            database_name=database_name_id,
+            schema_name=schema_name_id,
+            model_name=model_name_id,
+            version_name=version_name_id,
+            statement_params=statement_params,
+        ):
+            raise ValueError(
+                f"Model {model_name} version {version_name} already existed. "
+                + "To auto-generate `version_name`, skip that argument."
+            )
 
         return self._log_model(
             model=model,
@@ -91,6 +131,7 @@ class ModelManager:
             python_version=python_version,
             signatures=signatures,
             sample_input_data=sample_input_data,
+            user_files=user_files,
             code_paths=code_paths,
             ext_modules=ext_modules,
             task=task,
@@ -103,7 +144,7 @@ class ModelManager:
         model: model_types.SupportedModelType,
         *,
         model_name: str,
-        version_name: Optional[str] = None,
+        version_name: str,
         comment: Optional[str] = None,
         metrics: Optional[Dict[str, Any]] = None,
         conda_dependencies: Optional[List[str]] = None,
@@ -112,6 +153,7 @@ class ModelManager:
         python_version: Optional[str] = None,
         signatures: Optional[Dict[str, model_signature.ModelSignature]] = None,
         sample_input_data: Optional[model_types.SupportedDataType] = None,
+        user_files: Optional[Dict[str, List[str]]] = None,
         code_paths: Optional[List[str]] = None,
         ext_modules: Optional[List[ModuleType]] = None,
         task: model_types.Task = model_types.Task.UNKNOWN,
@@ -119,27 +161,7 @@ class ModelManager:
         statement_params: Optional[Dict[str, Any]] = None,
     ) -> model_version_impl.ModelVersion:
         database_name_id, schema_name_id, model_name_id = sql_identifier.parse_fully_qualified_name(model_name)
-
-        if not version_name:
-            version_name = self._hrid_generator.generate()[1]
         version_name_id = sql_identifier.SqlIdentifier(version_name)
-
-        if self._model_ops.validate_existence(
-            database_name=database_name_id,
-            schema_name=schema_name_id,
-            model_name=model_name_id,
-            statement_params=statement_params,
-        ) and self._model_ops.validate_existence(
-            database_name=database_name_id,
-            schema_name=schema_name_id,
-            model_name=model_name_id,
-            version_name=version_name_id,
-            statement_params=statement_params,
-        ):
-            raise ValueError(
-                f"Model {model_name} version {version_name} already existed. "
-                + "To auto-generate `version_name`, skip that argument."
-            )
 
         stage_path = self._model_ops.prepare_model_stage_path(
             database_name=database_name_id,
@@ -148,13 +170,10 @@ class ModelManager:
         )
 
         platforms = None
-        # TODO(jbahk): Remove the version check after Snowflake 8.40.0 release
         # User specified target platforms are defaulted to None and will not show up in the generated manifest.
-        # In the backend, we attempt to create a model for all platforms (WH, SPCS) regardless by default.
-        if snowflake_env.get_current_snowflake_version(self._model_ops._session) >= version.parse("8.40.0"):
+        if target_platforms:
             # Convert any string target platforms to TargetPlatform objects
-            if target_platforms:
-                platforms = [model_types.TargetPlatform(platform) for platform in target_platforms]
+            platforms = [model_types.TargetPlatform(platform) for platform in target_platforms]
 
         logger.info("Start packaging and uploading your model. It might take some time based on the size of the model.")
 
@@ -170,6 +189,7 @@ class ModelManager:
             pip_requirements=pip_requirements,
             target_platforms=platforms,
             python_version=python_version,
+            user_files=user_files,
             code_paths=code_paths,
             ext_modules=ext_modules,
             options=options,
@@ -229,7 +249,7 @@ class ModelManager:
         *,
         statement_params: Optional[Dict[str, Any]] = None,
     ) -> model_impl.Model:
-        database_name_id, schema_name_id, model_name_id = sql_identifier.parse_fully_qualified_name(model_name)
+        database_name_id, schema_name_id, model_name_id = self._parse_fully_qualified_name(model_name)
         if self._model_ops.validate_existence(
             database_name=database_name_id,
             schema_name=schema_name_id,
@@ -289,7 +309,7 @@ class ModelManager:
         *,
         statement_params: Optional[Dict[str, Any]] = None,
     ) -> None:
-        database_name_id, schema_name_id, model_name_id = sql_identifier.parse_fully_qualified_name(model_name)
+        database_name_id, schema_name_id, model_name_id = self._parse_fully_qualified_name(model_name)
 
         self._model_ops.delete_model_or_version(
             database_name=database_name_id,
@@ -297,3 +317,20 @@ class ModelManager:
             model_name=model_name_id,
             statement_params=statement_params,
         )
+
+    def _parse_fully_qualified_name(
+        self, model_name: str
+    ) -> Tuple[
+        Optional[sql_identifier.SqlIdentifier], Optional[sql_identifier.SqlIdentifier], sql_identifier.SqlIdentifier
+    ]:
+        try:
+            return sql_identifier.parse_fully_qualified_name(model_name)
+        except ValueError:
+            raise exceptions.SnowflakeMLException(
+                error_code=error_codes.INVALID_ARGUMENT,
+                original_exception=ValueError(
+                    f"The model_name `{model_name}` cannot be parsed as a SQL identifier. Alphanumeric characters and "
+                    "underscores are permitted. See https://docs.snowflake.com/en/sql-reference/identifiers-syntax for "
+                    "more information."
+                ),
+            )

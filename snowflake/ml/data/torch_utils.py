@@ -17,6 +17,7 @@ class TorchDatasetWrapper(torch.utils.data.IterableDataset[Dict[str, Any]]):
         batch_size: Optional[int],
         shuffle: bool = False,
         drop_last: bool = False,
+        expand_dims: bool = True,
     ) -> None:
         """Not intended for direct usage. Use DataConnector.to_torch_dataset() instead"""
         squeeze = False
@@ -29,6 +30,7 @@ class TorchDatasetWrapper(torch.utils.data.IterableDataset[Dict[str, Any]]):
         self._shuffle = shuffle
         self._drop_last = drop_last
         self._squeeze_outputs = squeeze
+        self._expand_dims = expand_dims
 
     def __iter__(self) -> Iterator[Dict[str, Union[npt.NDArray[Any], List[Any]]]]:
         max_idx = 0
@@ -47,7 +49,10 @@ class TorchDatasetWrapper(torch.utils.data.IterableDataset[Dict[str, Any]]):
         ):
             # Skip indices during multi-process data loading to prevent data duplication
             if counter == filter_idx:
-                yield {k: _preprocess_array(v, squeeze=self._squeeze_outputs) for k, v in batch.items()}
+                yield {
+                    k: _preprocess_array(v, squeeze=self._squeeze_outputs, expand_dims=self._expand_dims)
+                    for k, v in batch.items()
+                }
             if counter < max_idx:
                 counter += 1
             else:
@@ -58,13 +63,21 @@ class TorchDataPipeWrapper(TorchDatasetWrapper, torch.utils.data.IterDataPipe[Di
     """Wrap a DataIngestor into a PyTorch IterDataPipe"""
 
     def __init__(
-        self, ingestor: data_ingestor.DataIngestor, *, batch_size: int, shuffle: bool = False, drop_last: bool = False
+        self,
+        ingestor: data_ingestor.DataIngestor,
+        *,
+        batch_size: int,
+        shuffle: bool = False,
+        drop_last: bool = False,
+        expand_dims: bool = True,
     ) -> None:
         """Not intended for direct usage. Use DataConnector.to_torch_datapipe() instead"""
-        super().__init__(ingestor, batch_size=batch_size, shuffle=shuffle, drop_last=drop_last)
+        super().__init__(ingestor, batch_size=batch_size, shuffle=shuffle, drop_last=drop_last, expand_dims=expand_dims)
 
 
-def _preprocess_array(arr: npt.NDArray[Any], squeeze: bool = False) -> Union[npt.NDArray[Any], List[np.object_]]:
+def _preprocess_array(
+    arr: npt.NDArray[Any], squeeze: bool = False, expand_dims: bool = True
+) -> Union[npt.NDArray[Any], List[np.object_]]:
     """Preprocesses batch column values."""
     single_dimensional = arr.ndim < 2 and not arr.dtype == np.object_
 
@@ -73,7 +86,7 @@ def _preprocess_array(arr: npt.NDArray[Any], squeeze: bool = False) -> Union[npt
         arr = arr.squeeze(axis=0)
 
     # For single dimensional data,
-    if single_dimensional:
+    if single_dimensional and expand_dims:
         axis = 0 if arr.ndim == 0 else 1
         arr = np.expand_dims(arr, axis=axis)
 

@@ -1,6 +1,6 @@
 manifest_version: '1.0'
 methods:
-- handler: functions.__call__.infer
+- handler: functions.predict.infer
   inputs:
   - name: INPUT_1
     type: FLOAT
@@ -10,7 +10,7 @@ methods:
     type: ARRAY
   - name: INPUT_4
     type: ARRAY
-  name: __CALL__
+  name: PREDICT
   outputs:
   - type: OBJECT
   runtime: python_runtime
@@ -24,4 +24,6 @@ runtimes:
     - runtimes/python_runtime/snowflake-ml-python.zip
     language: PYTHON
     version: '3.8'
-user_files: []
+user_files:
+- subdir1/file1
+- subdir2/nested/dir/file1

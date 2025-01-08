@@ -2,7 +2,7 @@ import collections
 import logging
 import pathlib
 import warnings
-from typing import List, Optional, cast
+from typing import Dict, List, Optional, cast
 
 import yaml
 
@@ -11,9 +11,11 @@ from snowflake.ml.data import data_source
 from snowflake.ml.model import type_hints
 from snowflake.ml.model._model_composer.model_manifest import model_manifest_schema
 from snowflake.ml.model._model_composer.model_method import (
+    constants,
     function_generator,
     model_method,
 )
+from snowflake.ml.model._model_composer.model_user_file import model_user_file
 from snowflake.ml.model._packager.model_meta import (
     model_meta as model_meta_api,
     model_meta_schema,
@@ -30,9 +32,11 @@ class ModelManifest:
         workspace_path: A local path where model related files should be dumped to.
         runtimes: A list of ModelRuntime objects managing the runtimes and environment in the MODEL object.
         methods: A list of ModelMethod objects managing the method we registered to the MODEL object.
+        user_files: A list of ModelUserFile objects managing extra files uploaded to the workspace.
     """
 
     MANIFEST_FILE_REL_PATH = "MANIFEST.yml"
+    _ENABLE_USER_FILES = False
     _DEFAULT_RUNTIME_NAME = "python_runtime"
 
     def __init__(self, workspace_path: pathlib.Path) -> None:
@@ -42,6 +46,7 @@ class ModelManifest:
         self,
         model_meta: model_meta_api.ModelMetadata,
         model_rel_path: pathlib.PurePosixPath,
+        user_files: Optional[Dict[str, List[str]]] = None,
         options: Optional[type_hints.ModelSaveOption] = None,
         data_sources: Optional[List[data_source.DataSource]] = None,
         target_platforms: Optional[List[type_hints.TargetPlatform]] = None,
@@ -79,6 +84,7 @@ class ModelManifest:
 
         self.function_generator = function_generator.FunctionGenerator(model_dir_rel_path=model_rel_path)
         self.methods: List[model_method.ModelMethod] = []
+
         for target_method in model_meta.signatures.keys():
             method = model_method.ModelMethod(
                 model_meta=model_meta,
@@ -88,10 +94,20 @@ class ModelManifest:
                 is_partitioned_function=model_meta.function_properties.get(target_method, {}).get(
                     model_meta_schema.FunctionProperties.PARTITIONED.value, False
                 ),
+                wide_input=len(model_meta.signatures[target_method].inputs) > constants.SNOWPARK_UDF_INPUT_COL_LIMIT,
                 options=model_method.get_model_method_options_from_options(options, target_method),
             )
 
             self.methods.append(method)
+
+        self.user_files: List[model_user_file.ModelUserFile] = []
+
+        if user_files is not None:
+            for subdirectory, paths in user_files.items():
+                for path in paths:
+                    self.user_files.append(
+                        model_user_file.ModelUserFile(pathlib.PurePosixPath(subdirectory), pathlib.Path(path))
+                    )
 
         method_name_counter = collections.Counter([method.method_name for method in self.methods])
         dup_method_names = [k for k, v in method_name_counter.items() if v > 1]
@@ -128,6 +144,9 @@ class ModelManifest:
                 for method in self.methods
             ],
         )
+
+        if self._ENABLE_USER_FILES:
+            manifest_dict["user_files"] = [user_file.save(self.workspace_path) for user_file in self.user_files]
 
         lineage_sources = self._extract_lineage_info(data_sources)
         if lineage_sources:

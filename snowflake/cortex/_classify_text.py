@@ -1,5 +1,7 @@
 from typing import List, Optional, Union, cast
 
+from typing_extensions import deprecated
+
 from snowflake import snowpark
 from snowflake.cortex._util import CORTEX_FUNCTIONS_TELEMETRY_PROJECT, call_sql_function
 from snowflake.ml._internal import telemetry
@@ -8,7 +10,7 @@ from snowflake.ml._internal import telemetry
 @telemetry.send_api_usage_telemetry(
     project=CORTEX_FUNCTIONS_TELEMETRY_PROJECT,
 )
-def ClassifyText(
+def classify_text(
     str_input: Union[str, snowpark.Column],
     categories: Union[List[str], snowpark.Column],
     session: Optional[snowpark.Session] = None,
@@ -34,3 +36,12 @@ def _classify_text_impl(
     session: Optional[snowpark.Session] = None,
 ) -> Union[str, snowpark.Column]:
     return cast(Union[str, snowpark.Column], call_sql_function(function, session, str_input, categories))
+
+
+ClassifyText = deprecated(
+    "ClassifyText() is deprecated and will be removed in a future release. Please use classify_text() instead."
+)(
+    telemetry.send_api_usage_telemetry(
+        project=CORTEX_FUNCTIONS_TELEMETRY_PROJECT,
+    )(classify_text)
+)

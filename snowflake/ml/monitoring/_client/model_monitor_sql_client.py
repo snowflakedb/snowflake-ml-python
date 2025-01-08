@@ -42,7 +42,7 @@ class ModelMonitorSQLClient:
     def _infer_qualified_schema(
         self, database_name: Optional[sql_identifier.SqlIdentifier], schema_name: Optional[sql_identifier.SqlIdentifier]
     ) -> str:
-        return f"{database_name or self._database_name}.{schema_name or self._schema_name}"
+        return f"""{database_name or self._database_name}.{schema_name or self._schema_name}"""
 
     def create_model_monitor(
         self,
@@ -74,17 +74,17 @@ class ModelMonitorSQLClient:
     ) -> None:
         baseline_sql = ""
         if baseline:
-            baseline_sql = f"BASELINE='{self._infer_qualified_schema(baseline_database, baseline_schema)}.{baseline}'"
+            baseline_sql = f"""BASELINE={self._infer_qualified_schema(baseline_database, baseline_schema)}.{baseline}"""
         query_result_checker.SqlResultValidator(
             self._sql_client._session,
             f"""
             CREATE MODEL MONITOR {self._infer_qualified_schema(monitor_database, monitor_schema)}.{monitor_name}
                 WITH
-                    MODEL='{self._infer_qualified_schema(model_database, model_schema)}.{model_name}'
+                    MODEL={self._infer_qualified_schema(model_database, model_schema)}.{model_name}
                     VERSION='{version_name}'
                     FUNCTION='{function_name}'
                     WAREHOUSE='{warehouse_name}'
-                    SOURCE='{self._infer_qualified_schema(source_database, source_schema)}.{source}'
+                    SOURCE={self._infer_qualified_schema(source_database, source_schema)}.{source}
                     ID_COLUMNS={_build_sql_list_from_columns(id_columns)}
                     PREDICTION_SCORE_COLUMNS={_build_sql_list_from_columns(prediction_score_columns)}
                     PREDICTION_CLASS_COLUMNS={_build_sql_list_from_columns(prediction_class_columns)}

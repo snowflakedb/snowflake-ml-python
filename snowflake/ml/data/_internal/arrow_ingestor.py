@@ -2,7 +2,7 @@ import collections
 import logging
 import os
 import time
-from typing import Any, Deque, Dict, Iterator, List, Optional, Union
+from typing import Any, Deque, Dict, Iterator, List, Optional, Sequence, Union
 
 import numpy as np
 import numpy.typing as npt
@@ -47,7 +47,7 @@ class ArrowIngestor(data_ingestor.DataIngestor):
     def __init__(
         self,
         session: snowpark.Session,
-        data_sources: List[data_source.DataSource],
+        data_sources: Sequence[data_source.DataSource],
         format: Optional[str] = None,
         **kwargs: Any,
     ) -> None:
@@ -60,14 +60,14 @@ class ArrowIngestor(data_ingestor.DataIngestor):
             kwargs: Miscellaneous arguments passed to underlying PyArrow Dataset initializer.
         """
         self._session = session
-        self._data_sources = data_sources
+        self._data_sources = list(data_sources)
         self._format = format
         self._kwargs = kwargs
 
         self._schema: Optional[pa.Schema] = None
 
     @classmethod
-    def from_sources(cls, session: snowpark.Session, sources: List[data_source.DataSource]) -> "ArrowIngestor":
+    def from_sources(cls, session: snowpark.Session, sources: Sequence[data_source.DataSource]) -> "ArrowIngestor":
         return cls(session, sources)
 
     @property

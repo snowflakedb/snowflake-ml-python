@@ -13,8 +13,8 @@ from snowflake.ml.model._packager import model_packager
 
 # User-defined parameters
 MODEL_DIR_REL_PATH = "model"
-TARGET_METHOD = "__call__"
-MAX_BATCH_SIZE = 10
+TARGET_METHOD = "predict"
+MAX_BATCH_SIZE = None
 
 # Retrieve the model
 IMPORT_DIRECTORY_NAME = "snowflake_import_directory"
@@ -43,7 +43,7 @@ dtype_map = {feature.name: feature.as_dtype() for feature in features}
 
 
 # Actual function
-@vectorized(input=pd.DataFrame, max_batch_size=MAX_BATCH_SIZE, flatten_object_input=False)
+@vectorized(input=pd.DataFrame, max_batch_size=MAX_BATCH_SIZE, flatten_object_input=True)
 def infer(df: pd.DataFrame) -> dict:
     df.columns = input_cols
     input_df = df.astype(dtype=dtype_map)

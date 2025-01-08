@@ -1,5 +1,7 @@
 from typing import Optional, Union, cast
 
+from typing_extensions import deprecated
+
 from snowflake import snowpark
 from snowflake.cortex._util import CORTEX_FUNCTIONS_TELEMETRY_PROJECT, call_sql_function
 from snowflake.ml._internal import telemetry
@@ -8,11 +10,11 @@ from snowflake.ml._internal import telemetry
 @telemetry.send_api_usage_telemetry(
     project=CORTEX_FUNCTIONS_TELEMETRY_PROJECT,
 )
-def Summarize(
+def summarize(
     text: Union[str, snowpark.Column],
     session: Optional[snowpark.Session] = None,
 ) -> Union[str, snowpark.Column]:
-    """Summarize calls into the LLM inference service to summarize the input text.
+    """Calls into the LLM inference service to summarize the input text.
 
     Args:
         text: A Column of strings to summarize.
@@ -31,3 +33,8 @@ def _summarize_impl(
     session: Optional[snowpark.Session] = None,
 ) -> Union[str, snowpark.Column]:
     return cast(Union[str, snowpark.Column], call_sql_function(function, session, text))
+
+
+Summarize = deprecated("Summarize() is deprecated and will be removed in a future release. Use summarize() instead")(
+    telemetry.send_api_usage_telemetry(project=CORTEX_FUNCTIONS_TELEMETRY_PROJECT)(summarize)
+)

@@ -62,22 +62,21 @@ class TelemetryTest(parameterized.TestCase):
         data = message["data"]
 
         # message
-        assert message[connector_telemetry.TelemetryField.KEY_SOURCE.value] == _SOURCE
-        assert message[utils_telemetry.TelemetryField.KEY_PROJECT.value] == _PROJECT
-        assert message[utils_telemetry.TelemetryField.KEY_SUBPROJECT.value] == _SUBPROJECT
-        assert message[connector_telemetry.TelemetryField.KEY_TYPE.value] == self.telemetry_type
-        assert message[utils_telemetry.TelemetryField.KEY_VERSION.value] == _VERSION
-        assert message[utils_telemetry.TelemetryField.KEY_PYTHON_VERSION.value] == _PYTHON_VERSION
-        assert message[utils_telemetry.TelemetryField.KEY_OS.value] == _OS
+        self.assertEqual(message[connector_telemetry.TelemetryField.KEY_SOURCE.value], _SOURCE)
+        self.assertEqual(message[utils_telemetry.TelemetryField.KEY_PROJECT.value], _PROJECT)
+        self.assertEqual(message[utils_telemetry.TelemetryField.KEY_SUBPROJECT.value], _SUBPROJECT)
+        self.assertEqual(message[connector_telemetry.TelemetryField.KEY_TYPE.value], self.telemetry_type)
+        self.assertEqual(message[utils_telemetry.TelemetryField.KEY_VERSION.value], _VERSION)
+        self.assertEqual(message[utils_telemetry.TelemetryField.KEY_PYTHON_VERSION.value], _PYTHON_VERSION)
+        self.assertEqual(message[utils_telemetry.TelemetryField.KEY_OS.value], _OS)
 
         # data
-        assert (
-            data[utils_telemetry.TelemetryField.KEY_CATEGORY.value]
-            == utils_telemetry.TelemetryField.FUNC_CAT_USAGE.value
+        self.assertEqual(
+            data[utils_telemetry.TelemetryField.KEY_CATEGORY.value], utils_telemetry.TelemetryField.FUNC_CAT_USAGE.value
         )
-        assert "DummyObject.foo" in data[utils_telemetry.TelemetryField.KEY_FUNC_NAME.value]
-        assert data[utils_telemetry.TelemetryField.KEY_FUNC_PARAMS.value] == {"param": "'val'"}
-        assert data[utils_telemetry.TelemetryField.KEY_CUSTOM_TAGS.value] == {"custom_tag": "tag"}
+        self.assertIn("DummyObject.foo", data[utils_telemetry.TelemetryField.KEY_FUNC_NAME.value])
+        self.assertEqual(data[utils_telemetry.TelemetryField.KEY_FUNC_PARAMS.value], {"param": "'val'"})
+        self.assertEqual(data[utils_telemetry.TelemetryField.KEY_CUSTOM_TAGS.value], {"custom_tag": "tag"})
 
         # TODO(hayu): [SNOW-750523] Add json level comparisons in telemetry unit tests.
 
@@ -154,8 +153,8 @@ class TelemetryTest(parameterized.TestCase):
         full_func_name_sleep = utils_telemetry._get_full_func_name(time.sleep)
         api_call_time = {utils_telemetry.TelemetryField.NAME.value: full_func_name_time}
         api_call_sleep = {utils_telemetry.TelemetryField.NAME.value: full_func_name_sleep}
-        assert api_call_time in data[utils_telemetry.TelemetryField.KEY_API_CALLS.value]
-        assert api_call_sleep in data[utils_telemetry.TelemetryField.KEY_API_CALLS.value]
+        self.assertIn(api_call_time, data[utils_telemetry.TelemetryField.KEY_API_CALLS.value])
+        self.assertIn(api_call_sleep, data[utils_telemetry.TelemetryField.KEY_API_CALLS.value])
 
     @mock.patch("snowflake.snowpark.session._get_active_sessions")
     def test_client_error(self, mock_get_active_sessions: mock.MagicMock) -> None:
@@ -200,7 +199,7 @@ class TelemetryTest(parameterized.TestCase):
         actual_func_name = test_obj.foo()
         module = inspect.getmodule(inspect.currentframe())
         expected_func_name = f"{module.__name__}.DummyObject.foo" if module else "DummyObject.foo"
-        assert actual_func_name == expected_func_name
+        self.assertEqual(actual_func_name, expected_func_name)
 
     def test_get_function_usage_statement_params(self) -> None:
         """Test get_function_usage_statement_params."""
@@ -247,7 +246,7 @@ class TelemetryTest(parameterized.TestCase):
             utils_telemetry.TelemetryField.KEY_API_CALLS.value: [api_call_time, api_call_sleep],
             utils_telemetry.TelemetryField.KEY_CUSTOM_TAGS.value: {"custom_tag": "tag"},
         }
-        assert actual_statement_params == expected_statement_params
+        self.assertEqual(actual_statement_params, expected_statement_params)
 
     @mock.patch("snowflake.snowpark.session._get_active_sessions")
     def test_client_telemetry_multiple_active_sessions(self, mock_get_active_sessions: mock.MagicMock) -> None:
@@ -352,7 +351,7 @@ class TelemetryTest(parameterized.TestCase):
         }
         self.assertIsNotNone(actual_statement_params)
         assert actual_statement_params is not None  # mypy
-        self.assertLessEqual(expected_statement_params.items(), actual_statement_params.items())
+        self.assertEqual(actual_statement_params, actual_statement_params | expected_statement_params)
         self.assertIn("DummyObject.foo", actual_statement_params[utils_telemetry.TelemetryField.KEY_FUNC_NAME.value])
         self.assertFalse(hasattr(test_obj.foo2(), "_statement_params"))
 
@@ -546,10 +545,10 @@ class TelemetryTest(parameterized.TestCase):
 
         statement_params = {"test": "test"}
         kwargs = utils_telemetry.get_sproc_statement_params_kwargs(test_sproc_statement_params, statement_params)
-        assert "statement_params" in kwargs
+        self.assertIn("statement_params", kwargs)
 
         kwargs = utils_telemetry.get_sproc_statement_params_kwargs(test_sproc_no_statement_params, statement_params)
-        assert "statement_params" not in kwargs
+        self.assertNotIn("statement_params", kwargs)
 
     def test_add_statement_params_custom_tags(self) -> None:
         project = "m_project"
@@ -697,8 +696,14 @@ class TelemetryTest(parameterized.TestCase):
         }
 
         default_params = {"source": "SnowML", "snowml_telemetry_type": "SNOWML_AUTO_TELEMETRY"}
-        self.assertDictContainsSubset({**default_params, "project": "PROJECT_1"}, statement_params_by_query[query1])
-        self.assertDictContainsSubset({**default_params, "project": "PROJECT_2"}, statement_params_by_query[query2])
+        self.assertEqual(
+            statement_params_by_query[query1],
+            statement_params_by_query[query1] | {**default_params, "project": "PROJECT_1"},
+        )
+        self.assertEqual(
+            statement_params_by_query[query2],
+            statement_params_by_query[query2] | {**default_params, "project": "PROJECT_2"},
+        )
 
     def test_statement_params_external_function(self) -> None:
         # Create and decorate a test function that calls some SQL query
@@ -751,7 +756,7 @@ class TelemetryTest(parameterized.TestCase):
 
         expected_dict = {"source": "SnowML", "snowml_telemetry_type": "SNOWML_AUTO_TELEMETRY"}
         expected_dict.update(expected_params or {})
-        self.assertDictContainsSubset(expected_dict, statement_params)
+        self.assertEqual(statement_params, statement_params | expected_dict)
 
 
 if __name__ == "__main__":

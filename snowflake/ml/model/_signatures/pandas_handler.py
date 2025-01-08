@@ -224,6 +224,6 @@ class PandasDataFrameHandler(base_handler.BaseDataHandler[pd.DataFrame]):
         df_col_dtypes = [df[col].dtype for col in df.columns]
         for df_col, df_col_dtype in zip(df_cols, df_col_dtypes):
             if df_col_dtype == np.dtype("O"):
-                if isinstance(df[df_col][0], np.ndarray):
+                if isinstance(df[df_col].iloc[0], np.ndarray):
                     df[df_col] = df[df_col].map(np.ndarray.tolist)
         return df

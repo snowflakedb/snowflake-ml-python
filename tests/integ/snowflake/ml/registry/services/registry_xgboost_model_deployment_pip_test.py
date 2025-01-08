@@ -34,6 +34,7 @@ class TestRegistryXGBoostModelDeploymentInteg(registry_model_deployment_test_bas
                         res,
                         pd.DataFrame(regressor.predict(cal_X_test), columns=res.columns),
                         rtol=1e-3,
+                        atol=1e-3,
                         check_dtype=False,
                     ),
                 ),

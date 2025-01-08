@@ -149,8 +149,9 @@ def _get_model_task(model: Any) -> type_hints.Task:
     raise ValueError(f"Model type {type(model)} is not supported")
 
 
-def get_model_task_and_output_type(model: Any) -> ModelTaskAndOutputType:
-    task = _get_model_task(model)
+def resolve_model_task_and_output_type(model: Any, passed_model_task: type_hints.Task) -> ModelTaskAndOutputType:
+    inferred_task = _get_model_task(model)
+    task = handlers_utils.validate_model_task(passed_model_task, inferred_task)
     output_type = model_signature.DataType.DOUBLE
     if task == type_hints.Task.TABULAR_MULTI_CLASSIFICATION:
         output_type = model_signature.DataType.STRING

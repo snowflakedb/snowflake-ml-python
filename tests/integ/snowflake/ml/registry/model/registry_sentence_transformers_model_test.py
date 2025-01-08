@@ -5,14 +5,7 @@ import tempfile
 import pandas as pd
 from absl.testing import absltest, parameterized
 
-from snowflake.ml.model import model_signature
-from snowflake.ml.model._packager.model_handlers.sentence_transformers import (
-    _sentence_transformer_encode,
-)
-from snowflake.ml.model._signatures import (
-    snowpark_handler,
-    utils as model_signature_utils,
-)
+from snowflake.ml.model._signatures import snowpark_handler
 from tests.integ.snowflake.ml.registry.model import registry_model_test_base
 from tests.integ.snowflake.ml.test_utils import dataframe_utils
 
@@ -55,10 +48,7 @@ class TestRegistrySentenceTransformerModelInteg(registry_model_test_base.Registr
             }
         )
         model = sentence_transformers.SentenceTransformer(random.choice(MODEL_NAMES))
-        embeddings = _sentence_transformer_encode(model, sentences)
-        sig = {"encode": model_signature.infer_signature(sentences, embeddings)}
-        embeddings = model_signature_utils.rename_pandas_df(embeddings, sig["encode"].outputs)
-
+        embeddings = pd.DataFrame({"output_feature_0": model.encode(sentences["SENTENCES"].tolist()).tolist()})
         getattr(self, registry_test_fn)(
             model=model,
             sample_input_data=sentences,
@@ -93,9 +83,7 @@ class TestRegistrySentenceTransformerModelInteg(registry_model_test_base.Registr
         )
         sentences_sp = snowpark_handler.SnowparkDataFrameHandler.convert_from_df(self.session, sentences)
         model = sentence_transformers.SentenceTransformer(random.choice(MODEL_NAMES))
-        embeddings = _sentence_transformer_encode(model, sentences)
-        sig = {"encode": model_signature.infer_signature(sentences, embeddings)}
-        embeddings = model_signature_utils.rename_pandas_df(embeddings, sig["encode"].outputs)
+        embeddings = pd.DataFrame({"output_feature_0": model.encode(sentences["SENTENCES"].tolist()).tolist()})
         y_df_expected = pd.concat([sentences_sp.to_pandas(), embeddings], axis=1)
 
         getattr(self, registry_test_fn)(

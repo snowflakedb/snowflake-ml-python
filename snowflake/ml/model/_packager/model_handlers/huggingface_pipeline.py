@@ -195,8 +195,12 @@ class HuggingFacePipelineHandler(
         os.makedirs(model_blob_path, exist_ok=True)
 
         if type_utils.LazyType("transformers.Pipeline").isinstance(model):
+            save_path = os.path.join(model_blob_path, cls.MODEL_BLOB_FILE_OR_DIR)
             model.save_pretrained(  # type:ignore[attr-defined]
-                os.path.join(model_blob_path, cls.MODEL_BLOB_FILE_OR_DIR)
+                save_path
+            )
+            handlers_utils.save_transformers_config_with_auto_map(
+                save_path,
             )
             pipeline_params = {
                 "_batch_size": model._batch_size,  # type:ignore[attr-defined]

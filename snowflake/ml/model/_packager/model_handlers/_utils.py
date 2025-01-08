@@ -1,7 +1,8 @@
 import json
 import os
+import pathlib
 import warnings
-from typing import Any, Callable, Iterable, List, Optional, Sequence, cast
+from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, cast
 
 import numpy as np
 import numpy.typing as npt
@@ -118,7 +119,7 @@ def get_explainability_supported_background(
     meta: model_meta.ModelMetadata,
     explain_target_method: Optional[str],
 ) -> pd.DataFrame:
-    if sample_input_data is None:
+    if sample_input_data is None or explain_target_method is None:
         return None
 
     if isinstance(sample_input_data, pd.DataFrame):
@@ -223,3 +224,27 @@ def get_explain_target_method(
         if method in target_methods_list:
             return method
     return None
+
+
+def save_transformers_config_with_auto_map(local_model_path: str) -> None:
+    import huggingface_hub
+
+    for f_path in pathlib.Path(local_model_path).iterdir():
+        if f_path.name in ["config.json", "tokenizer_config.json"]:
+            with open(f_path) as f:
+                config_dict = json.load(f)
+
+            # a. get repository and class_path from configs
+            auto_map_configs = cast(Dict[str, str], config_dict.get("auto_map", {}))
+            for config_name, config_value in auto_map_configs.items():
+                repository, _, class_path = config_value.rpartition("--")
+
+                # b. download required configs from hf hub
+                if repository:
+                    huggingface_hub.snapshot_download(repo_id=repository, local_dir=local_model_path)
+
+                # c. update config files
+                config_dict["auto_map"][config_name] = class_path
+
+            with open(f_path, "w") as f:
+                json.dump(config_dict, f)

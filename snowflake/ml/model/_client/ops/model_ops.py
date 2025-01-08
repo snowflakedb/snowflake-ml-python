@@ -168,14 +168,10 @@ class ModelOperator:
         schema_name: Optional[sql_identifier.SqlIdentifier],
         model_name: sql_identifier.SqlIdentifier,
         version_name: sql_identifier.SqlIdentifier,
+        model_exists: bool,
         statement_params: Optional[Dict[str, Any]] = None,
     ) -> None:
-        if self.validate_existence(
-            database_name=database_name,
-            schema_name=schema_name,
-            model_name=model_name,
-            statement_params=statement_params,
-        ):
+        if model_exists:
             return self._model_version_client.add_version_from_model_version(
                 source_database_name=source_database_name,
                 source_schema_name=source_schema_name,
