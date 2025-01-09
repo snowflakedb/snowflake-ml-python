@@ -43,6 +43,7 @@ class FunctionGenerator:
         target_method: str,
         function_type: str,
         is_partitioned_function: bool = False,
+        wide_input: bool = False,
         options: Optional[FunctionGenerateOptions] = None,
     ) -> None:
         import importlib_resources
@@ -70,6 +71,7 @@ class FunctionGenerator:
             model_dir_name=self.model_dir_rel_path.name,
             target_method=target_method,
             max_batch_size=options.get("max_batch_size", None),
+            wide_input=wide_input,
             function_name=FunctionGenerator.FUNCTION_NAME,
         )
         with open(function_file_path, "w", encoding="utf-8") as f:

@@ -220,14 +220,14 @@ class CustomHandlerTest(absltest.TestCase):
                 assert pk.model
                 assert pk.meta
                 assert isinstance(pk.model, AsyncComposeModel)
-                p3 = await pk.model.predict(d)  # type: ignore[misc]
+                p3 = await pk.model.predict(d)
 
                 pk = model_packager.ModelPackager(os.path.join(tmpdir, "model1"))
                 pk.load(as_custom_model=True)
                 assert pk.model
                 assert pk.meta
                 assert isinstance(pk.model, AsyncComposeModel)
-                p4 = await pk.model.predict(d)  # type: ignore[misc]
+                p4 = await pk.model.predict(d)
                 np.testing.assert_allclose(p1, p2)
                 np.testing.assert_allclose(p2, p3)
                 np.testing.assert_allclose(p2, p4)

@@ -199,6 +199,7 @@ class HuggingFaceSaveOptions(BaseModelSaveOption):
 class SentenceTransformersSaveOptions(BaseModelSaveOption):
     target_methods: NotRequired[Sequence[str]]
     cuda_version: NotRequired[str]
+    batch_size: NotRequired[int]
 
 
 ModelSaveOption = Union[

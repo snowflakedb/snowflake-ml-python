@@ -931,7 +931,7 @@ class ModelOpsTest(absltest.TestCase):
     def test_create_from_model_version_create(self) -> None:
         with mock.patch.object(
             self.m_ops._model_version_client, "create_from_model_version"
-        ) as mock_create_from_model_version, mock.patch.object(self.m_ops, "validate_existence", return_value=False):
+        ) as mock_create_from_model_version:
             self.m_ops.create_from_model_version(
                 source_database_name=sql_identifier.SqlIdentifier("TEMP"),
                 source_schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
@@ -941,6 +941,7 @@ class ModelOpsTest(absltest.TestCase):
                 schema_name=None,
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
                 version_name=sql_identifier.SqlIdentifier("V1"),
+                model_exists=False,
                 statement_params=self.m_statement_params,
             )
             mock_create_from_model_version.assert_called_once_with(
@@ -958,9 +959,7 @@ class ModelOpsTest(absltest.TestCase):
     def test_create_from_model_version_add(self) -> None:
         with mock.patch.object(
             self.m_ops._model_version_client, "add_version_from_model_version"
-        ) as mock_add_version_from_model_version, mock.patch.object(
-            self.m_ops, "validate_existence", return_value=True
-        ):
+        ) as mock_add_version_from_model_version:
             self.m_ops.create_from_model_version(
                 source_database_name=sql_identifier.SqlIdentifier("TEMP"),
                 source_schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
@@ -970,6 +969,7 @@ class ModelOpsTest(absltest.TestCase):
                 schema_name=None,
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
                 version_name=sql_identifier.SqlIdentifier("V1"),
+                model_exists=True,
                 statement_params=self.m_statement_params,
             )
             mock_add_version_from_model_version.assert_called_once_with(

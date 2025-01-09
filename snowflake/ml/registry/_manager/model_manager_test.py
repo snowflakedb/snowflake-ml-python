@@ -3,10 +3,9 @@ from unittest import mock
 
 import pandas as pd
 from absl.testing import absltest
-from packaging import version
 
 from snowflake.ml._internal import telemetry
-from snowflake.ml._internal.utils import snowflake_env, sql_identifier
+from snowflake.ml._internal.utils import sql_identifier
 from snowflake.ml.model import type_hints
 from snowflake.ml.model._client.model import model_impl, model_version_impl
 from snowflake.ml.model._client.ops import service_ops
@@ -181,11 +180,11 @@ class ModelManagerTest(absltest.TestCase):
         ) as mock_save, mock.patch.object(
             self.m_r._model_ops, "create_from_stage"
         ) as mock_create_from_stage, mock.patch.object(
+            self.m_r._model_ops, "list_models_or_versions", return_value=[]
+        ) as mock_list_models_or_versions, mock.patch.object(
             self.m_r._hrid_generator, "generate", return_value=(1, "angry_yeti_1")
         ) as mock_hrid_generate, mock.patch.object(
             model_version_impl.ModelVersion, "_get_functions", return_value=[]
-        ), mock.patch.object(
-            snowflake_env, "get_current_snowflake_version", return_value=version.Version("8.40.0")
         ):
             mv = self.m_r.log_model(
                 model=m_model,
@@ -213,6 +212,7 @@ class ModelManagerTest(absltest.TestCase):
                 pip_requirements=None,
                 target_platforms=None,
                 python_version=None,
+                user_files=None,
                 code_paths=None,
                 ext_modules=None,
                 options=None,
@@ -226,6 +226,7 @@ class ModelManagerTest(absltest.TestCase):
                 version_name=sql_identifier.SqlIdentifier("angry_yeti_1"),
                 statement_params=self._build_expected_create_model_statement_params("angry_yeti_1"),
             )
+            mock_list_models_or_versions.assert_not_called()
             mock_hrid_generate.assert_called_once_with()
             self.assertEqual(
                 mv,
@@ -254,8 +255,6 @@ class ModelManagerTest(absltest.TestCase):
             self.m_r._model_ops, "create_from_stage"
         ) as mock_create_from_stage, mock.patch.object(
             model_version_impl.ModelVersion, "_get_functions", return_value=[]
-        ), mock.patch.object(
-            snowflake_env, "get_current_snowflake_version", return_value=version.Version("8.40.0")
         ):
             mv = self.m_r.log_model(
                 model=m_model,
@@ -285,6 +284,7 @@ class ModelManagerTest(absltest.TestCase):
                 pip_requirements=None,
                 target_platforms=None,
                 python_version=None,
+                user_files=None,
                 code_paths=None,
                 ext_modules=None,
                 options=None,
@@ -316,8 +316,6 @@ class ModelManagerTest(absltest.TestCase):
             self.m_r._model_ops, "create_from_stage"
         ) as mock_create_from_stage, mock.patch.object(
             model_version_impl.ModelVersion, "_get_functions", return_value=[]
-        ), mock.patch.object(
-            snowflake_env, "get_current_snowflake_version", return_value=version.Version("8.40.0")
         ):
             mv = self.m_r.log_model(
                 model=m_model,
@@ -342,6 +340,7 @@ class ModelManagerTest(absltest.TestCase):
                 pip_requirements=m_pip_requirements,
                 target_platforms=None,
                 python_version=None,
+                user_files=None,
                 code_paths=None,
                 ext_modules=None,
                 options=m_options,
@@ -376,8 +375,6 @@ class ModelManagerTest(absltest.TestCase):
             self.m_r._model_ops, "create_from_stage"
         ) as mock_create_from_stage, mock.patch.object(
             model_version_impl.ModelVersion, "_get_functions", return_value=[]
-        ), mock.patch.object(
-            snowflake_env, "get_current_snowflake_version", return_value=version.Version("8.40.0")
         ):
             mv = self.m_r.log_model(
                 model=m_model,
@@ -402,6 +399,7 @@ class ModelManagerTest(absltest.TestCase):
                 pip_requirements=None,
                 target_platforms=None,
                 python_version=m_python_version,
+                user_files=None,
                 code_paths=m_code_paths,
                 ext_modules=m_ext_modules,
                 options=None,
@@ -437,8 +435,6 @@ class ModelManagerTest(absltest.TestCase):
             self.m_r._model_ops._metadata_ops, "save"
         ) as mock_metadata_save, mock.patch.object(
             model_version_impl.ModelVersion, "_get_functions", return_value=[]
-        ), mock.patch.object(
-            snowflake_env, "get_current_snowflake_version", return_value=version.Version("8.40.0")
         ):
             mv = self.m_r.log_model(
                 model=m_model,
@@ -462,6 +458,7 @@ class ModelManagerTest(absltest.TestCase):
                 pip_requirements=None,
                 target_platforms=None,
                 python_version=None,
+                user_files=None,
                 code_paths=None,
                 ext_modules=None,
                 options=None,
@@ -529,11 +526,7 @@ class ModelManagerTest(absltest.TestCase):
         m_stage_path = "@TEMP.TEST.MODEL/V1"
         with mock.patch.object(self.m_r._model_ops, "validate_existence", return_value=False), mock.patch.object(
             self.m_r._model_ops, "prepare_model_stage_path", return_value=m_stage_path
-        ), mock.patch.object(
-            snowflake_env, "get_current_snowflake_version", return_value=version.Version("8.40.0")
-        ), self.assertRaises(
-            ValueError
-        ) as ex:
+        ), self.assertRaises(ValueError) as ex:
             self.m_r.log_model(
                 model=m_model,
                 model_name="MODEL",
@@ -555,8 +548,6 @@ class ModelManagerTest(absltest.TestCase):
             self.m_r._model_ops, "create_from_stage"
         ), mock.patch.object(
             model_version_impl.ModelVersion, "_get_functions", return_value=[]
-        ), mock.patch.object(
-            snowflake_env, "get_current_snowflake_version", return_value=version.Version("8.40.0")
         ):
             self.m_r.log_model(
                 model=m_model,
@@ -574,6 +565,7 @@ class ModelManagerTest(absltest.TestCase):
                 pip_requirements=None,
                 target_platforms=[type_hints.TargetPlatform.SNOWPARK_CONTAINER_SERVICES],
                 python_version=None,
+                user_files=None,
                 code_paths=None,
                 ext_modules=None,
                 options=None,
@@ -595,6 +587,7 @@ class ModelManagerTest(absltest.TestCase):
                 pip_requirements=None,
                 target_platforms=[type_hints.TargetPlatform.WAREHOUSE],
                 python_version=None,
+                user_files=None,
                 code_paths=None,
                 ext_modules=None,
                 options=None,
@@ -618,8 +611,6 @@ class ModelManagerTest(absltest.TestCase):
             self.m_r._model_ops._metadata_ops, "save"
         ) as mock_metadata_save, mock.patch.object(
             model_version_impl.ModelVersion, "_get_functions", return_value=[]
-        ), mock.patch.object(
-            snowflake_env, "get_current_snowflake_version", return_value=version.Version("8.40.0")
         ):
             mv = self.m_r.log_model(
                 model=m_model,
@@ -643,6 +634,7 @@ class ModelManagerTest(absltest.TestCase):
                 pip_requirements=None,
                 target_platforms=None,
                 python_version=None,
+                user_files=None,
                 code_paths=None,
                 ext_modules=None,
                 options=None,
@@ -696,7 +688,11 @@ class ModelManagerTest(absltest.TestCase):
         m_model_version.version_name = "SOURCE_VERSION"
         with mock.patch.object(
             self.m_r._model_ops, "create_from_model_version"
-        ) as mock_create_from_model_version, mock.patch.object(self.m_r, "get_model") as mock_get_model:
+        ) as mock_create_from_model_version, mock.patch.object(
+            self.m_r, "get_model"
+        ) as mock_get_model, mock.patch.object(
+            self.m_r._model_ops, "validate_existence", return_value=False
+        ):
             self.m_r.log_model(
                 model=m_model_version,
                 model_name="MODEL",
@@ -712,12 +708,47 @@ class ModelManagerTest(absltest.TestCase):
                 schema_name=None,
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
                 version_name=sql_identifier.SqlIdentifier("V1"),
+                model_exists=False,
                 statement_params=mock.ANY,
             )
             mock_get_model.assert_called_once_with(
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
                 statement_params=mock.ANY,
             )
+
+    def test_log_model_version_name_dedup(self) -> None:
+        def validate_existence_side_effect(**kwargs: Any) -> bool:
+            if kwargs.get("version_name") is not None:
+                return False
+            return True
+
+        m_model = mock.MagicMock()
+        m_sample_input_data = mock.MagicMock()
+        m_model_metadata = mock.MagicMock()
+        m_model_metadata.telemetry_metadata = mock.MagicMock(return_value=self.model_md_telemetry)
+        m_stage_path = "@TEMP.TEST.MODEL/V1"
+        with mock.patch.object(
+            self.m_r._model_ops, "validate_existence", side_effect=validate_existence_side_effect
+        ), mock.patch.object(
+            self.m_r._model_ops, "prepare_model_stage_path", return_value=m_stage_path
+        ), mock.patch.object(
+            model_composer.ModelComposer, "save", return_value=m_model_metadata
+        ), mock.patch.object(
+            self.m_r._model_ops, "create_from_stage"
+        ), mock.patch.object(
+            self.m_r._model_ops, "list_models_or_versions", return_value=[sql_identifier.SqlIdentifier("angry_yeti_1")]
+        ), mock.patch.object(
+            self.m_r._hrid_generator, "generate", side_effect=[(1, "angry_yeti_1"), (2, "angry_yeti_2")]
+        ) as mock_hrid_generate, mock.patch.object(
+            model_version_impl.ModelVersion, "_get_functions", return_value=[]
+        ):
+            self.m_r.log_model(
+                model=m_model,
+                model_name="MODEL",
+                sample_input_data=m_sample_input_data,
+                statement_params=self.base_statement_params,
+            )
+            self.assertEqual(mock_hrid_generate.call_count, 2)
 
     def test_delete_model(self) -> None:
         with mock.patch.object(self.m_r._model_ops, "delete_model_or_version") as mock_delete_model_or_version:

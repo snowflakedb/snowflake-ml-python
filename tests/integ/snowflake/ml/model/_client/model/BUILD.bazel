@@ -39,5 +39,6 @@ py_test(
         "//snowflake/ml/utils:connection_params",
         "//tests/integ/snowflake/ml/test_utils:dataframe_utils",
         "//tests/integ/snowflake/ml/test_utils:db_manager",
+        "//tests/integ/snowflake/ml/test_utils:test_env_utils",
     ],
 )

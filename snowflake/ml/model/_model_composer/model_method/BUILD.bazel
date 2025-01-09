@@ -9,6 +9,15 @@ filegroup(
         "fixtures/function_2.py",
         "fixtures/function_3.py",
         "fixtures/function_4.py",
+        "fixtures/function_5.py",
+    ],
+)
+
+py_library(
+    name = "constants",
+    srcs = ["constants.py"],
+    deps = [
+        "//snowflake/ml/model:type_hints",
     ],
 )
 
@@ -41,6 +50,7 @@ py_library(
     name = "model_method",
     srcs = ["model_method.py"],
     deps = [
+        ":constants",
         ":function_generator",
         "//snowflake/ml/_internal/utils:sql_identifier",
         "//snowflake/ml/model:model_signature",

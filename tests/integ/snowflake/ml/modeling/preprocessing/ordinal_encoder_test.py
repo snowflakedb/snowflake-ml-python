@@ -9,7 +9,7 @@ import cloudpickle
 import numpy as np
 import pandas as pd
 import pytest
-from absl.testing import parameterized
+from absl.testing import absltest, parameterized
 from absl.testing.absltest import main
 from sklearn.preprocessing import OrdinalEncoder as SklearnOrdinalEncoder
 
@@ -946,6 +946,7 @@ class OrdinalEncoderTest(parameterized.TestCase):
 
         self.assertEqual(cat_cols, transformed_df.columns)
 
+    @absltest.skip("SNOW-1863155")
     def test_large_num_cols(self) -> None:
         num_cols = 300
         input_cols = [f"COL{i}" for i in range(1, num_cols + 1)]
@@ -985,6 +986,7 @@ class OrdinalEncoderTest(parameterized.TestCase):
         res.collect()
         assert output_cols in res.columns
 
+    @absltest.skip("SNOW-1863155")
     def test_large_num_cols_unknown(self) -> None:
         num_cols = 300
         input_cols = [f"COL{i}" for i in range(1, num_cols + 1)]

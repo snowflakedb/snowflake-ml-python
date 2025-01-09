@@ -277,9 +277,24 @@ class TestSnowflakeFileSystem(absltest.TestCase):
         for stage in [self.stage1, self.stage2]:
             for pattern, expected in [
                 (
+                    f"@{stage}/train/",
+                    [
+                        f"@{stage}/train",
+                    ],
+                ),
+                (
                     f"@{stage}/train/*",
                     [
+                        f"@{stage}/train/helloworld.txt",
+                    ],
+                ),
+                (
+                    f"@{stage}/train/**",
+                    [
+                        f"@{stage}/train",
                         f"@{stage}/train/dataset/",
+                        f"@{stage}/train/dataset/helloworld1.txt",
+                        f"@{stage}/train/dataset/helloworld2.txt",
                         f"@{stage}/train/helloworld.txt",
                     ],
                 ),
@@ -291,8 +306,9 @@ class TestSnowflakeFileSystem(absltest.TestCase):
                 ),
             ]:
                 for fs in [self.sffs1, self.sffs2]:
-                    actual = fs.glob(pattern)
-                    self.assertEqual(actual, expected)
+                    with self.subTest(f"pattern={pattern}"):
+                        actual = fs.glob(pattern)
+                        self.assertEqual(actual, expected)
 
     def test_negative_optimize_read(self) -> None:
         """Test if optimize_read() can raise error is presigned url fetching failed."""

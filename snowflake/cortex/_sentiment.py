@@ -1,5 +1,7 @@
 from typing import Optional, Union, cast
 
+from typing_extensions import deprecated
+
 from snowflake import snowpark
 from snowflake.cortex._util import CORTEX_FUNCTIONS_TELEMETRY_PROJECT, call_sql_function
 from snowflake.ml._internal import telemetry
@@ -8,10 +10,10 @@ from snowflake.ml._internal import telemetry
 @telemetry.send_api_usage_telemetry(
     project=CORTEX_FUNCTIONS_TELEMETRY_PROJECT,
 )
-def Sentiment(
+def sentiment(
     text: Union[str, snowpark.Column], session: Optional[snowpark.Session] = None
 ) -> Union[float, snowpark.Column]:
-    """Sentiment calls into the LLM inference service to perform sentiment analysis on the input text.
+    """Calls into the LLM inference service to perform sentiment analysis on the input text.
 
     Args:
         text: A Column of text strings to send to the LLM.
@@ -31,3 +33,8 @@ def _sentiment_impl(
     if isinstance(output, snowpark.Column):
         return output
     return float(cast(str, output))
+
+
+Sentiment = deprecated("Sentiment() is deprecated and will be removed in a future release. Use sentiment() instead")(
+    telemetry.send_api_usage_telemetry(project=CORTEX_FUNCTIONS_TELEMETRY_PROJECT)(sentiment)
+)

@@ -1,6 +1,32 @@
 # Release History
 
-## 1.7.2
+## 1.7.3
+
+- Added lowercase versions of Cortex functions, added deprecation warning to Capitalized versions.
+- Bumped the requirements of `fsspec` and `s3fs` to `>=2024.6.1,<2026`
+- Bumped the requirement of `mlflow` to `>=2.16.0, <3`
+- Registry: Support 500+ features for model registry
+
+### Bug Fixes
+
+- Registry: Fixed a bug when providing non-range index pandas DataFrame as the input to a `ModelVersion.run`.
+- Registry: Improved random model version name generation to prevent collisions.
+- Registry: Fix an issue when inferring signature or running inference with Snowpark data that has a column whose type
+  is `ARRAY` and contains `NULL` value.
+- Registry: `ModelVersion.run` now accepts fully qualified service name.
+- Monitoring: Fix issue in SDK with creating monitors using fully qualified names.
+- Registry: Fix error in log_model for any sklearn models with only data pre-processing including pre-processing only
+  pipeline models due to default explainability enablement.
+
+### Behavior Changes
+
+### New Features
+
+- Added `user_files` argument to `Registry.log_model` for including images or any extra file with the model.
+- Registry: Added support for handling Hugging Face model configurations with auto-mapping functionality
+- DataConnector: Add new `DataConnector.from_sql()` constructor
+
+## 1.7.2 (2024-11-21)
 
 ### Bug Fixes
 
@@ -13,6 +39,7 @@ whose task is UNKNOWN and fails later when invoked.
 
 - Registry: Support asynchronous model inference service creation with the `block` option
   in `ModelVersion.create_service()` set to True by default.
+- Registry: Allow specify `batch_size` when inferencing using sentence-transformers model.
 
 ## 1.7.1 (2024-11-05)
 

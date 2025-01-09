@@ -7,7 +7,7 @@ from snowflake.cortex import Complete, CompleteOptions
 from snowflake.ml._internal.utils import snowflake_env
 from snowflake.ml.utils import connection_params
 from snowflake.snowpark import Session, functions
-from tests.integ.snowflake.ml.test_utils import test_env_utils
+from tests.integ.snowflake.ml.test_utils import common_test_base, test_env_utils
 
 _OPTIONS = CompleteOptions(  # random params
     max_tokens=10,
@@ -132,6 +132,27 @@ class CompleteRestTest(absltest.TestCase):
             prompt=_PROMPT,
             options=_OPTIONS,
             session=self._session,
+            stream=True,
+        )
+        self.assertIsInstance(result, GeneratorType)
+        for out in result:
+            self.assertIsInstance(out, str)
+            self.assertTrue(out)  # nonempty
+
+
+class CompleteRestSnowparkTest(common_test_base.CommonTestBase):
+    # Disable local testing for this as it runs in a non-spark environment
+    # SPROC tests can run the test as both owners rights and caller rights. While caller rights test
+    # passes, owners rights tets fails with `Unsupported statement type 'SHOW DEPLOYMENT_LOCATION'`.
+    # This could be because when running with owner rights, there a lot of limitations to what can be done and
+    # SHOW statements are one of those:
+    # https://docs.snowflake.com/en/developer-guide/stored-procedure/stored-procedures-rights
+    @common_test_base.CommonTestBase.sproc_test(local=False, test_owners_rights=False)
+    def test_rest_snowpark_env(self) -> None:
+        result = Complete(
+            model=_MODEL_NAME,
+            prompt=_PROMPT,
+            session=None,
             stream=True,
         )
         self.assertIsInstance(result, GeneratorType)

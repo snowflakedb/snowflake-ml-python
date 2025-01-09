@@ -497,6 +497,54 @@ class ModelManifestTest(absltest.TestCase):
                     f.read(),
                 )
 
+    def test_model_manifest_user_files(self) -> None:
+        with tempfile.TemporaryDirectory() as workspace, tempfile.TemporaryDirectory() as tmpdir:
+            mm = model_manifest.ModelManifest(pathlib.Path(workspace))
+            with model_meta.create_model_metadata(
+                model_dir_path=tmpdir,
+                name="model1",
+                model_type="custom",
+                signatures={"predict": _DUMMY_SIG["predict"]},
+                python_version="3.8",
+                embed_local_ml_library=True,
+            ) as meta:
+                meta.models["model1"] = _DUMMY_BLOB
+
+            with open(f"{tmpdir}/file1", "w") as f:
+                path = os.path.abspath(f.name)
+                f.write("user file")
+
+            user_files = {
+                "subdir1": [path],
+                "subdir2/nested/dir": [path],
+            }
+
+            mm.save(
+                meta,
+                pathlib.PurePosixPath("model"),
+                user_files=user_files,
+            )
+            with open(os.path.join(workspace, "MANIFEST.yml"), encoding="utf-8") as f:
+                self.assertEqual(
+                    (
+                        importlib_resources.files("snowflake.ml.model._model_composer.model_manifest")
+                        .joinpath("fixtures")
+                        .joinpath("MANIFEST_7.yml")
+                        .read_text()
+                    ),
+                    f.read(),
+                )
+            with open(pathlib.Path(workspace, "functions", "predict.py"), encoding="utf-8") as f:
+                self.assertEqual(
+                    (
+                        importlib_resources.files("snowflake.ml.model._model_composer.model_method")
+                        .joinpath("fixtures")
+                        .joinpath("function_1.py")
+                        .read_text()
+                    ),
+                    f.read(),
+                )
+
     def test_load(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             with open(os.path.join(tmpdir, "MANIFEST.yml"), "w", encoding="utf-8") as f:
@@ -506,6 +554,8 @@ class ModelManifestTest(absltest.TestCase):
 
             with self.assertRaisesRegex(ValueError, "Unable to get the version of the MANIFEST file."):
                 mm.load()
+
+        model_manifest.ModelManifest._ENABLE_USER_FILES = True
 
         raw_input = {
             "manifest_version": "1.0",

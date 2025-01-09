@@ -357,6 +357,12 @@ class SnowParkDataFrameHandlerTest(absltest.TestCase):
             pd_df, snowpark_handler.SnowparkDataFrameHandler.convert_to_df(sp_df), check_dtype=False
         )
 
+        pd_df = pd.DataFrame({"a": [1, 2], "b": [[2.5], None]}, columns=["a", "b"])
+        sp_df = snowpark_handler.SnowparkDataFrameHandler.convert_from_df(self._session, pd_df, keep_order=False)
+        pd.testing.assert_frame_equal(
+            pd_df, snowpark_handler.SnowparkDataFrameHandler.convert_to_df(sp_df), check_dtype=False
+        )
+
 
 if __name__ == "__main__":
     absltest.main()

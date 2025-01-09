@@ -15,7 +15,6 @@ import snowflake.connector
 from snowflake.ml._internal import env as snowml_env
 from snowflake.ml._internal.utils import query_result_checker
 from snowflake.snowpark import context, exceptions, session
-from snowflake.snowpark._internal import utils as snowpark_utils
 
 
 class CONDA_OS(Enum):
@@ -344,55 +343,6 @@ def relax_requirement_version(req: requirements.Requirement) -> requirements.Req
     return new_req
 
 
-def get_matched_package_versions_in_snowflake_conda_channel(
-    req: requirements.Requirement,
-    python_version: str = snowml_env.PYTHON_VERSION,
-    conda_os: CONDA_OS = CONDA_OS.LINUX_64,
-) -> List[version.Version]:
-    """Search the snowflake anaconda channel for packages that matches the specifier. Note that this will be the
-    source of truth for checking whether a package indeed exists in Snowflake conda channel.
-
-    Given that a package comes in different architectures, we only check for the Linux x86_64 architecture and assume
-    the package exists in other architectures. If such an assumption does not hold true for a certain package, the
-    caller should specify the architecture to search for.
-
-    Args:
-        req: Requirement specifier.
-        python_version: A string of python version where model is run.
-        conda_os: Specified platform to search availability of the package.
-
-    Returns:
-        List of package versions that meet the requirement specifier.
-    """
-    # Move the retryable_http import here as when UDF import this file, it won't have the "requests" dependency.
-    from snowflake.ml._internal.utils import retryable_http
-
-    assert not snowpark_utils.is_in_stored_procedure()  # type: ignore[no-untyped-call]
-
-    url = f"{SNOWFLAKE_CONDA_CHANNEL_URL}/{conda_os.value}/repodata.json"
-
-    if req.name not in _SNOWFLAKE_CONDA_PACKAGE_CACHE:
-        try:
-            http_client = retryable_http.get_http_client()
-            parsed_python_version = version.Version(python_version)
-            python_version_build_str = f"py{parsed_python_version.major}{parsed_python_version.minor}"
-            repodata = http_client.get(url).json()
-            assert isinstance(repodata, dict)
-            packages_info = repodata["packages"]
-            assert isinstance(packages_info, dict)
-            version_list = [
-                version.parse(package_info["version"])
-                for package_info in packages_info.values()
-                if package_info["name"] == req.name and python_version_build_str in package_info["build"]
-            ]
-            _SNOWFLAKE_CONDA_PACKAGE_CACHE[req.name] = version_list
-        except Exception:
-            pass
-
-    matched_versions = list(req.specifier.filter(set(_SNOWFLAKE_CONDA_PACKAGE_CACHE.get(req.name, []))))
-    return matched_versions
-
-
 def get_matched_package_versions_in_information_schema_with_active_session(
     reqs: List[requirements.Requirement], python_version: str
 ) -> Dict[str, List[version.Version]]:
@@ -404,7 +354,10 @@ def get_matched_package_versions_in_information_schema_with_active_session(
 
 
 def get_matched_package_versions_in_information_schema(
-    session: session.Session, reqs: List[requirements.Requirement], python_version: str
+    session: session.Session,
+    reqs: List[requirements.Requirement],
+    python_version: str,
+    statement_params: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, List[version.Version]]:
     """Look up the information_schema table to check if a package with the specified specifier exists in the Snowflake
     Conda channel. Note that this is not the source of truth due to the potential delay caused by a package that might
@@ -414,6 +367,7 @@ def get_matched_package_versions_in_information_schema(
         session: Snowflake connection session.
         reqs: List of requirement specifiers.
         python_version: A string of python version where model is run.
+        statement_params: Optional statement parameters.
 
     Returns:
         A Dict, whose key is the package name, and value is a list of versions match the requirements.
@@ -451,8 +405,9 @@ def get_matched_package_versions_in_information_schema(
                 query_result_checker.SqlResultValidator(
                     session=session,
                     query=sql,
+                    statement_params=statement_params,
                 )
-                .has_column("VERSION")
+                .has_column("VERSION", allow_empty=True)
                 .has_dimensions(expected_rows=None, expected_cols=2)
                 .validate()
             )

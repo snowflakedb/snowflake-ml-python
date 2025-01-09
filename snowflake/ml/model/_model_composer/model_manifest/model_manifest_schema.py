@@ -94,5 +94,6 @@ class ModelManifestDict(TypedDict):
     runtimes: Required[Dict[str, ModelRuntimeDict]]
     methods: Required[List[ModelMethodDict]]
     user_data: NotRequired[Dict[str, Any]]
+    user_files: NotRequired[List[str]]
     lineage_sources: NotRequired[List[LineageSourceDict]]
     target_platforms: NotRequired[List[str]]

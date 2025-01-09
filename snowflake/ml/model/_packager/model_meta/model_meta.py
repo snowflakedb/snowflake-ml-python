@@ -215,6 +215,7 @@ class ModelMetadata:
         function_properties: A dict mapping function names to dict mapping function property key to value.
         metadata: User provided key-value metadata of the model. Defaults to None.
         creation_timestamp: Unix timestamp when the model metadata is created.
+        user_files: Dict mapping subdirectories to extra artifact file paths for files to include in the model.
         task: Model task like TABULAR_REGRESSION, tabular_classification, timeseries_forecasting etc.
     """
 
@@ -234,6 +235,7 @@ class ModelMetadata:
         runtimes: Optional[Dict[str, model_runtime.ModelRuntime]] = None,
         signatures: Optional[Dict[str, model_signature.ModelSignature]] = None,
         function_properties: Optional[Dict[str, Dict[str, Any]]] = None,
+        user_files: Optional[Dict[str, List[str]]] = None,
         metadata: Optional[Dict[str, str]] = None,
         creation_timestamp: Optional[str] = None,
         min_snowpark_ml_version: Optional[str] = None,
@@ -247,6 +249,7 @@ class ModelMetadata:
         if signatures:
             self.signatures = signatures
         self.function_properties = function_properties or {}
+        self.user_files = user_files
         self.metadata = metadata
         self.model_type = model_type
         self.env = env

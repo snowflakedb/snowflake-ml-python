@@ -94,8 +94,8 @@ class CatBoostModelHandler(_base.BaseModelHandler["catboost.CatBoost"]):
                 sample_input_data=sample_input_data,
                 get_prediction_fn=get_prediction,
             )
-            model_task_and_output = model_task_utils.get_model_task_and_output_type(model)
-            model_meta.task = handlers_utils.validate_model_task(model_meta.task, model_task_and_output.task)
+            model_task_and_output = model_task_utils.resolve_model_task_and_output_type(model, model_meta.task)
+            model_meta.task = model_task_and_output.task
             if enable_explainability:
                 explain_target_method = handlers_utils.get_explain_target_method(model_meta, cls.EXPLAIN_TARGET_METHODS)
                 model_meta = handlers_utils.add_explain_method_signature(
@@ -227,7 +227,7 @@ class CatBoostModelHandler(_base.BaseModelHandler["catboost.CatBoost"]):
                     import shap
 
                     explainer = shap.TreeExplainer(raw_model)
-                    df = handlers_utils.convert_explanations_to_2D_df(raw_model, explainer(X).values)
+                    df = handlers_utils.convert_explanations_to_2D_df(raw_model, explainer.shap_values(X))
                     return model_signature_utils.rename_pandas_df(df, signature.outputs)
 
                 if target_method == "explain":

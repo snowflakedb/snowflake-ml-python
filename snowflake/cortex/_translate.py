@@ -1,5 +1,7 @@
 from typing import Optional, Union, cast
 
+from typing_extensions import deprecated
+
 from snowflake import snowpark
 from snowflake.cortex._util import CORTEX_FUNCTIONS_TELEMETRY_PROJECT, call_sql_function
 from snowflake.ml._internal import telemetry
@@ -8,13 +10,13 @@ from snowflake.ml._internal import telemetry
 @telemetry.send_api_usage_telemetry(
     project=CORTEX_FUNCTIONS_TELEMETRY_PROJECT,
 )
-def Translate(
+def translate(
     text: Union[str, snowpark.Column],
     from_language: Union[str, snowpark.Column],
     to_language: Union[str, snowpark.Column],
     session: Optional[snowpark.Session] = None,
 ) -> Union[str, snowpark.Column]:
-    """Translate calls into the LLM inference service to perform translation.
+    """Calls into the LLM inference service to perform translation.
 
     Args:
         text: A Column of strings to translate.
@@ -37,3 +39,8 @@ def _translate_impl(
     session: Optional[snowpark.Session] = None,
 ) -> Union[str, snowpark.Column]:
     return cast(Union[str, snowpark.Column], call_sql_function(function, session, text, from_language, to_language))
+
+
+Translate = deprecated("Translate() is deprecated and will be removed in a future release. Use translate() instead")(
+    telemetry.send_api_usage_telemetry(project=CORTEX_FUNCTIONS_TELEMETRY_PROJECT)(translate)
+)

@@ -14,14 +14,33 @@ from snowflake.ml.model._packager.model_handlers_migrator import base_migrator
 from snowflake.ml.model._packager.model_meta import (
     model_blob_meta,
     model_meta as model_meta_api,
+    model_meta_schema,
 )
-from snowflake.ml.model._signatures import utils as model_signature_utils
 from snowflake.snowpark._internal import utils as snowpark_utils
 
 if TYPE_CHECKING:
     import sentence_transformers
 
 logger = logging.getLogger(__name__)
+
+
+def _validate_sentence_transformers_signatures(sigs: Dict[str, model_signature.ModelSignature]) -> None:
+    if list(sigs.keys()) != ["encode"]:
+        raise ValueError("target_methods can only be ['encode']")
+
+    if len(sigs["encode"].inputs) != 1:
+        raise ValueError("SentenceTransformer can only accept 1 input column")
+
+    if len(sigs["encode"].outputs) != 1:
+        raise ValueError("SentenceTransformer can only return 1 output column")
+
+    assert isinstance(sigs["encode"].inputs[0], model_signature.FeatureSpec)
+
+    if sigs["encode"].inputs[0]._shape is not None:
+        raise ValueError("SentenceTransformer does not support input shape")
+
+    if sigs["encode"].inputs[0]._dtype != model_signature.DataType.STRING:
+        raise ValueError("SentenceTransformer only accepts string input")
 
 
 @final
@@ -68,6 +87,10 @@ class SentenceTransformerHandler(_base.BaseModelHandler["sentence_transformers.S
         if enable_explainability:
             raise NotImplementedError("Explainability is not supported for Sentence Transformer model.")
 
+        batch_size = kwargs.get("batch_size", 32)
+        if not isinstance(batch_size, int) or batch_size <= 0:
+            raise ValueError("batch_size must be a positive integer")
+
         # Validate target methods and signature (if possible)
         if not is_sub_model:
             target_methods = handlers_utils.get_target_methods(
@@ -75,12 +98,23 @@ class SentenceTransformerHandler(_base.BaseModelHandler["sentence_transformers.S
                 target_methods=kwargs.pop("target_methods", None),
                 default_target_methods=cls.DEFAULT_TARGET_METHODS,
             )
-            assert target_methods == ["encode"], "target_methods can only be ['encode']"
+            if target_methods != ["encode"]:
+                raise ValueError("target_methods can only be ['encode']")
 
             def get_prediction(
                 target_method_name: str, sample_input_data: model_types.SupportedLocalDataType
             ) -> model_types.SupportedLocalDataType:
-                return _sentence_transformer_encode(model, sample_input_data)
+                if not isinstance(sample_input_data, pd.DataFrame):
+                    sample_input_data = model_signature._convert_local_data_to_df(data=sample_input_data)
+
+                if sample_input_data.shape[1] != 1:
+                    raise ValueError(
+                        "SentenceTransformer can only accept 1 input column when converted to pd.DataFrame"
+                    )
+                X_list = sample_input_data.iloc[:, 0].tolist()
+
+                assert callable(getattr(model, "encode", None))
+                return pd.DataFrame({0: model.encode(X_list, batch_size=batch_size).tolist()})
 
             if model_meta.signatures:
                 handlers_utils.validate_target_methods(model, list(model_meta.signatures.keys()))
@@ -102,10 +136,16 @@ class SentenceTransformerHandler(_base.BaseModelHandler["sentence_transformers.S
                         get_prediction_fn=get_prediction,
                     )
 
+            _validate_sentence_transformers_signatures(model_meta.signatures)
+
         # save model
         model_blob_path = os.path.join(model_blobs_dir_path, name)
         os.makedirs(model_blob_path, exist_ok=True)
-        model.save(os.path.join(model_blob_path, cls.MODEL_BLOB_FILE_OR_DIR))
+        save_path = os.path.join(model_blob_path, cls.MODEL_BLOB_FILE_OR_DIR)
+        model.save(save_path)
+        handlers_utils.save_transformers_config_with_auto_map(
+            save_path,
+        )
 
         # save model metadata
         base_meta = model_blob_meta.ModelBlobMeta(
@@ -113,6 +153,7 @@ class SentenceTransformerHandler(_base.BaseModelHandler["sentence_transformers.S
             model_type=cls.HANDLER_TYPE,
             handler_version=cls.HANDLER_VERSION,
             path=cls.MODEL_BLOB_FILE_OR_DIR,
+            options=model_meta_schema.SentenceTransformersModelBlobOptions(batch_size=batch_size),
         )
         model_meta.models[name] = base_meta
         model_meta.min_snowpark_ml_version = cls._MIN_SNOWPARK_ML_VERSION
@@ -149,6 +190,7 @@ class SentenceTransformerHandler(_base.BaseModelHandler["sentence_transformers.S
         if snowpark_utils.is_in_stored_procedure():  # type: ignore[no-untyped-call]
             # We need to redirect the same folders to a writable location in the sandbox.
             os.environ["TRANSFORMERS_CACHE"] = "/tmp"
+            os.environ["HF_HOME"] = "/tmp"
 
         model_blob_path = os.path.join(model_blobs_dir_path, name)
         model_blobs_metadata = model_meta.models
@@ -183,6 +225,10 @@ class SentenceTransformerHandler(_base.BaseModelHandler["sentence_transformers.S
             raw_model: "sentence_transformers.SentenceTransformer",
             model_meta: model_meta_api.ModelMetadata,
         ) -> Type[custom_model.CustomModel]:
+            batch_size = cast(
+                model_meta_schema.SentenceTransformersModelBlobOptions, model_meta.models[model_meta.name].options
+            ).get("batch_size", None)
+
             def get_prediction(
                 raw_model: "sentence_transformers.SentenceTransformer",
                 signature: model_signature.ModelSignature,
@@ -190,8 +236,11 @@ class SentenceTransformerHandler(_base.BaseModelHandler["sentence_transformers.S
             ) -> Callable[[custom_model.CustomModel, pd.DataFrame], pd.DataFrame]:
                 @custom_model.inference_api
                 def fn(self: custom_model.CustomModel, X: pd.DataFrame) -> pd.DataFrame:
-                    predictions_df = _sentence_transformer_encode(raw_model, X)
-                    return model_signature_utils.rename_pandas_df(predictions_df, signature.outputs)
+                    X_list = X.iloc[:, 0].tolist()
+
+                    return pd.DataFrame(
+                        {signature.outputs[0].name: raw_model.encode(X_list, batch_size=batch_size).tolist()}
+                    )
 
                 return fn
 
@@ -217,17 +266,3 @@ class SentenceTransformerHandler(_base.BaseModelHandler["sentence_transformers.S
         predict_method = getattr(sentence_transformers_SentenceTransformer_model, "encode", None)
         assert callable(predict_method)
         return sentence_transformers_SentenceTransformer_model
-
-
-def _sentence_transformer_encode(
-    model: "sentence_transformers.SentenceTransformer", X: model_types.SupportedLocalDataType
-) -> model_types.SupportedLocalDataType:
-
-    if not isinstance(X, pd.DataFrame):
-        X = model_signature._convert_local_data_to_df(X)
-
-    assert X.shape[1] == 1, "SentenceTransformer can only accept 1 input column when converted to pd.DataFrame"
-    X_list = X.iloc[:, 0].tolist()
-
-    assert callable(getattr(model, "encode", None))
-    return pd.DataFrame({0: model.encode(X_list, batch_size=X.shape[0]).tolist()})

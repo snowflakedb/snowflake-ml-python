@@ -12,10 +12,7 @@ from snowflake.ml.fileset import parquet_test_util
 
 
 class DataConnectorTest(parameterized.TestCase):
-    """Tests the DataConnector wrappers around the parquet parser.
-
-    parquet_parser_test.py contains more comprehensive test cases.
-    """
+    """Tests the DataConnector class"""
 
     def setUp(self) -> None:
         self._files = parquet_test_util.write_parquet_file()

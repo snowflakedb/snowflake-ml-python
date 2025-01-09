@@ -1,5 +1,16 @@
 import os
-from typing import TYPE_CHECKING, Any, Dict, Generator, List, Optional, Type, TypeVar
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Dict,
+    Generator,
+    List,
+    Optional,
+    Sequence,
+    Type,
+    TypeVar,
+    cast,
+)
 
 import numpy.typing as npt
 from typing_extensions import deprecated
@@ -12,6 +23,7 @@ from snowflake.ml.modeling._internal.constants import (
     IN_ML_RUNTIME_ENV_VAR,
     USE_OPTIMIZED_DATA_INGESTOR,
 )
+from snowflake.snowpark import context as sf_context
 
 if TYPE_CHECKING:
     import pandas as pd
@@ -35,8 +47,10 @@ class DataConnector:
     def __init__(
         self,
         ingestor: data_ingestor.DataIngestor,
+        **kwargs: Any,
     ) -> None:
         self._ingestor = ingestor
+        self._kwargs = kwargs
 
     @classmethod
     @snowpark._internal.utils.private_preview(version="1.6.0")
@@ -44,20 +58,34 @@ class DataConnector:
         cls: Type[DataConnectorType],
         df: snowpark.DataFrame,
         ingestor_class: Optional[Type[data_ingestor.DataIngestor]] = None,
-        **kwargs: Any
+        **kwargs: Any,
     ) -> DataConnectorType:
         if len(df.queries["queries"]) != 1 or len(df.queries["post_actions"]) != 0:
             raise ValueError("DataFrames with multiple queries and/or post-actions not supported")
-        source = data_source.DataFrameInfo(df.queries["queries"][0])
-        assert df._session is not None
-        return cls.from_sources(df._session, [source], ingestor_class=ingestor_class, **kwargs)
+        return cast(
+            DataConnectorType,
+            cls.from_sql(df.queries["queries"][0], session=df._session, ingestor_class=ingestor_class, **kwargs),
+        )
+
+    @classmethod
+    @snowpark._internal.utils.private_preview(version="1.7.3")
+    def from_sql(
+        cls: Type[DataConnectorType],
+        query: str,
+        session: Optional[snowpark.Session] = None,
+        ingestor_class: Optional[Type[data_ingestor.DataIngestor]] = None,
+        **kwargs: Any,
+    ) -> DataConnectorType:
+        session = session or sf_context.get_active_session()
+        source = data_source.DataFrameInfo(query)
+        return cls.from_sources(session, [source], ingestor_class=ingestor_class, **kwargs)
 
     @classmethod
     def from_dataset(
         cls: Type[DataConnectorType],
         ds: "dataset.Dataset",
         ingestor_class: Optional[Type[data_ingestor.DataIngestor]] = None,
-        **kwargs: Any
+        **kwargs: Any,
     ) -> DataConnectorType:
         dsv = ds.selected_version
         assert dsv is not None
@@ -75,9 +103,9 @@ class DataConnector:
     def from_sources(
         cls: Type[DataConnectorType],
         session: snowpark.Session,
-        sources: List[data_source.DataSource],
+        sources: Sequence[data_source.DataSource],
         ingestor_class: Optional[Type[data_ingestor.DataIngestor]] = None,
-        **kwargs: Any
+        **kwargs: Any,
     ) -> DataConnectorType:
         ingestor_class = ingestor_class or cls.DEFAULT_INGESTOR_CLASS
         ingestor = ingestor_class.from_sources(session, sources)
@@ -130,7 +158,11 @@ class DataConnector:
         func_params_to_log=["batch_size", "shuffle", "drop_last_batch"],
     )
     def to_torch_datapipe(
-        self, *, batch_size: int, shuffle: bool = False, drop_last_batch: bool = True
+        self,
+        *,
+        batch_size: int,
+        shuffle: bool = False,
+        drop_last_batch: bool = True,
     ) -> "torch_data.IterDataPipe":  # type: ignore[type-arg]
         """Transform the Snowflake data into a ready-to-use Pytorch datapipe.
 
@@ -149,8 +181,13 @@ class DataConnector:
         """
         from snowflake.ml.data import torch_utils
 
+        expand_dims = self._kwargs.get("expand_dims", True)
         return torch_utils.TorchDataPipeWrapper(
-            self._ingestor, batch_size=batch_size, shuffle=shuffle, drop_last=drop_last_batch
+            self._ingestor,
+            batch_size=batch_size,
+            shuffle=shuffle,
+            drop_last=drop_last_batch,
+            expand_dims=expand_dims,
         )
 
     @telemetry.send_api_usage_telemetry(
@@ -179,8 +216,13 @@ class DataConnector:
         """
         from snowflake.ml.data import torch_utils
 
+        expand_dims = self._kwargs.get("expand_dims", True)
         return torch_utils.TorchDatasetWrapper(
-            self._ingestor, batch_size=batch_size, shuffle=shuffle, drop_last=drop_last_batch
+            self._ingestor,
+            batch_size=batch_size,
+            shuffle=shuffle,
+            drop_last=drop_last_batch,
+            expand_dims=expand_dims,
         )
 
     @telemetry.send_api_usage_telemetry(

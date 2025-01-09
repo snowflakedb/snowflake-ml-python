@@ -1449,7 +1449,7 @@ class FeatureStoreTest(parameterized.TestCase):
             )
 
         # Invalid dataset names should be rejected
-        with self.assertRaisesRegex(ValueError, "Invalid identifier"):
+        with self.assertRaisesRegex(ValueError, "Invalid object name"):
             fs.generate_training_set(
                 spine_df=spine_df,
                 features=[fv1, fv2],
@@ -1568,7 +1568,7 @@ class FeatureStoreTest(parameterized.TestCase):
             )
 
         # Invalid dataset names should be rejected
-        with self.assertRaisesRegex(ValueError, "Invalid identifier"):
+        with self.assertRaisesRegex(ValueError, "Invalid object name"):
             fs.generate_dataset(
                 spine_df=spine_df,
                 features=[fv1, fv2],
@@ -1739,7 +1739,7 @@ class FeatureStoreTest(parameterized.TestCase):
             )
 
         # Invalid dataset names should be rejected
-        with self.assertRaisesRegex(ValueError, "Invalid identifier"):
+        with self.assertRaisesRegex(ValueError, "Invalid object name"):
             fs.generate_dataset(
                 spine_df=spine_df,
                 features=[fv1, fv2],

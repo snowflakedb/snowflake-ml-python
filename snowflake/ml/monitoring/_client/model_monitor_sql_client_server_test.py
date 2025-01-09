@@ -50,15 +50,15 @@ class ModelMonitorSqlClientServerTest(absltest.TestCase):
             if db_override and schema_override
             else f"{self.test_db}.{self.test_schema}"
         )
-        baseline_sql = f"BASELINE='{fq_schema}.{baseline}'" if baseline else ""
+        baseline_sql = f"BASELINE={fq_schema}.{baseline}" if baseline else ""
         return f"""
             CREATE MODEL MONITOR {fq_schema}.M
             WITH
-                MODEL='{fq_schema}.{self.model_name}'
+                MODEL={fq_schema}.{self.model_name}
                 VERSION='{self.model_version}'
                 FUNCTION='{self.model_function}'
                 WAREHOUSE='{self.warehouse_name}'
-                SOURCE='{fq_schema}.{self.source}'
+                SOURCE={fq_schema}.{self.source}
                 ID_COLUMNS={id_cols_sql}
                 PREDICTION_SCORE_COLUMNS=('PRED_SCORE')
                 PREDICTION_CLASS_COLUMNS=('PRED_CLASS')

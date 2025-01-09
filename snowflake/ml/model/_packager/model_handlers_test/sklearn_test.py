@@ -9,6 +9,7 @@ import shap
 from absl.testing import absltest
 from sklearn import datasets, ensemble, linear_model, multioutput
 from sklearn.pipeline import Pipeline
+from sklearn.preprocessing import StandardScaler
 
 from snowflake.ml.model import model_signature, type_hints as model_types
 from snowflake.ml.model._packager import model_packager
@@ -373,6 +374,74 @@ class SKLearnHandlerTest(absltest.TestCase):
                 predict_method = getattr(pk.model, "predict", None)
                 explain_method = getattr(pk.model, "explain", None)
                 assert callable(predict_method)
+                self.assertEqual(explain_method, None)
+
+    def test_skl_object_no_explainable_method(self) -> None:
+        iris_X, _ = datasets.load_iris(return_X_y=True)
+        scaler = StandardScaler()
+        scaler.fit(iris_X)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            model_packager.ModelPackager(os.path.join(tmpdir, "transform_model")).save(
+                name="transform_model",
+                model=scaler,
+                sample_input_data=iris_X,
+                metadata={"author": "halu", "version": "1"},
+            )
+
+            with warnings.catch_warnings():
+                warnings.simplefilter("error")
+
+                pk = model_packager.ModelPackager(os.path.join(tmpdir, "transform_model"))
+                pk.load(as_custom_model=True)
+                assert pk.model
+                assert pk.meta
+                transform_method = getattr(pk.model, "transform", None)
+                explain_method = getattr(pk.model, "explain", None)
+                assert callable(transform_method)
+                self.assertEqual(explain_method, None)
+
+    def test_skl_object_no_explainable_method_set_enable(self) -> None:
+        iris_X, _ = datasets.load_iris(return_X_y=True)
+        scaler = StandardScaler()
+        scaler.fit(iris_X)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with self.assertRaisesRegex(
+                ValueError,
+                "Signature for target method None is missing or no method to explain.",
+            ):
+                model_packager.ModelPackager(os.path.join(tmpdir, "model1")).save(
+                    name="transform_model",
+                    model=scaler,
+                    sample_input_data=iris_X,
+                    metadata={"author": "halu", "version": "1"},
+                    options={"enable_explainability": True},
+                )
+
+    def test_skl_pipeline_object_no_explainable_method(self) -> None:
+        iris_X, iris_y = datasets.load_iris(return_X_y=True)
+        scaler = StandardScaler()
+        pipe = Pipeline([("scaler", scaler)])
+        # The pipeline can be used as any other estimator
+        # and avoids leaking the test set into the train set
+        pipe.fit(iris_X, iris_y)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            model_packager.ModelPackager(os.path.join(tmpdir, "pipeline_transform_model")).save(
+                name="pipeline_transform_model",
+                model=pipe,
+                sample_input_data=iris_X,
+                metadata={"author": "halu", "version": "1"},
+            )
+
+            with warnings.catch_warnings():
+                warnings.simplefilter("error")
+
+                pk = model_packager.ModelPackager(os.path.join(tmpdir, "pipeline_transform_model"))
+                pk.load(as_custom_model=True)
+                assert pk.model
+                assert pk.meta
+                transform_method = getattr(pk.model, "transform", None)
+                explain_method = getattr(pk.model, "explain", None)
+                assert callable(transform_method)
                 self.assertEqual(explain_method, None)
 
     def test_skl_with_cr_estimator(self) -> None:

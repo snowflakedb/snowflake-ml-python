@@ -68,21 +68,45 @@ class SnowMLModelHandler(_base.BaseModelHandler["BaseEstimator"]):
         return cast("BaseEstimator", model)
 
     @classmethod
-    def _get_supported_object_for_explainability(cls, estimator: "BaseEstimator") -> Any:
+    def _get_supported_object_for_explainability(
+        cls,
+        estimator: "BaseEstimator",
+        background_data: Optional[model_types.SupportedDataType],
+        enable_explainability: Optional[bool],
+    ) -> Any:
         from snowflake.ml.modeling import pipeline as snowml_pipeline
 
         # handle pipeline objects separately
         if isinstance(estimator, snowml_pipeline.Pipeline):  # type: ignore[attr-defined]
             return None
 
-        methods = ["to_xgboost", "to_lightgbm", "to_sklearn"]
-        for method_name in methods:
+        tree_methods = ["to_xgboost", "to_lightgbm", "to_sklearn"]
+        non_tree_methods = ["to_sklearn"]
+        for method_name in tree_methods:
             if hasattr(estimator, method_name):
                 try:
                     result = getattr(estimator, method_name)()
                     return result
                 except exceptions.SnowflakeMLException:
                     pass  # Do nothing and continue to the next method
+        for method_name in non_tree_methods:
+            if hasattr(estimator, method_name):
+                try:
+                    result = getattr(estimator, method_name)()
+                    if enable_explainability is None and background_data is None:
+                        return None  # cannot get explain without background data
+                    elif enable_explainability and background_data is None:
+                        raise ValueError(
+                            "Provide `sample_input_data` to generate explanations for sklearn Snowpark ML models."
+                        )
+                    return result
+                except exceptions.SnowflakeMLException:
+                    pass  # Do nothing and continue to the next method
+
+        if enable_explainability:
+            raise ValueError(
+                "Explain only supported for xgboost, lightgbm and sklearn (not pipeline) Snowpark ML models."
+            )
         return None
 
     @classmethod
@@ -127,34 +151,39 @@ class SnowMLModelHandler(_base.BaseModelHandler["BaseEstimator"]):
                         raise ValueError(f"Target method {method_name} does not exist in the model.")
                 model_meta.signatures = temp_model_signature_dict
 
-        if enable_explainability or enable_explainability is None:
-            python_base_obj = cls._get_supported_object_for_explainability(model)
-            if python_base_obj is None:
-                if enable_explainability:  # if user set enable_explainability to True, throw error else silently skip
-                    raise ValueError(
-                        "Explain only supported for xgboost, lightgbm and sklearn (not pipeline) Snowpark ML models."
-                    )
+        python_base_obj = cls._get_supported_object_for_explainability(model, sample_input_data, enable_explainability)
+        explain_target_method = handlers_utils.get_explain_target_method(model_meta, cls.EXPLAIN_TARGET_METHODS)
+
+        if enable_explainability:
+            if explain_target_method is None:
+                raise ValueError(
+                    "The model must have one of the following methods to enable explainability: "
+                    + ", ".join(cls.EXPLAIN_TARGET_METHODS)
+                )
+        if enable_explainability is None:
+            if python_base_obj is None or explain_target_method is None:
                 # set None to False so we don't include shap in the environment
                 enable_explainability = False
             else:
-                model_task_and_output_type = model_task_utils.get_model_task_and_output_type(python_base_obj)
-                model_meta.task = handlers_utils.validate_model_task(model_meta.task, model_task_and_output_type.task)
-                explain_target_method = handlers_utils.get_explain_target_method(model_meta, cls.EXPLAIN_TARGET_METHODS)
-                model_meta = handlers_utils.add_explain_method_signature(
-                    model_meta=model_meta,
-                    explain_method="explain",
-                    target_method=explain_target_method,
-                    output_return_type=model_task_and_output_type.output_type,
-                )
                 enable_explainability = True
-
-                background_data = handlers_utils.get_explainability_supported_background(
-                    sample_input_data, model_meta, explain_target_method
+        if enable_explainability:
+            model_task_and_output_type = model_task_utils.resolve_model_task_and_output_type(
+                python_base_obj, model_meta.task
+            )
+            model_meta.task = model_task_and_output_type.task
+            model_meta = handlers_utils.add_explain_method_signature(
+                model_meta=model_meta,
+                explain_method="explain",
+                target_method=explain_target_method,
+                output_return_type=model_task_and_output_type.output_type,
+            )
+            background_data = handlers_utils.get_explainability_supported_background(
+                sample_input_data, model_meta, explain_target_method
+            )
+            if background_data is not None:
+                handlers_utils.save_background_data(
+                    model_blobs_dir_path, cls.EXPLAIN_ARTIFACTS_DIR, cls.BG_DATA_FILE_SUFFIX, name, background_data
                 )
-                if background_data is not None:
-                    handlers_utils.save_background_data(
-                        model_blobs_dir_path, cls.EXPLAIN_ARTIFACTS_DIR, cls.BG_DATA_FILE_SUFFIX, name, background_data
-                    )
 
         model_blob_path = os.path.join(model_blobs_dir_path, name)
         os.makedirs(model_blob_path, exist_ok=True)
@@ -237,8 +266,17 @@ class SnowMLModelHandler(_base.BaseModelHandler["BaseEstimator"]):
                 def explain_fn(self: custom_model.CustomModel, X: pd.DataFrame) -> pd.DataFrame:
                     import shap
 
-                    methods = ["to_xgboost", "to_lightgbm", "to_sklearn"]
-                    for method_name in methods:
+                    tree_methods = ["to_xgboost", "to_lightgbm"]
+                    non_tree_methods = ["to_sklearn"]
+                    for method_name in tree_methods:
+                        try:
+                            base_model = getattr(raw_model, method_name)()
+                            explainer = shap.TreeExplainer(base_model)
+                            df = handlers_utils.convert_explanations_to_2D_df(raw_model, explainer.shap_values(X))
+                            return model_signature_utils.rename_pandas_df(df, signature.outputs)
+                        except exceptions.SnowflakeMLException:
+                            pass  # Do nothing and continue to the next method
+                    for method_name in non_tree_methods:
                         try:
                             base_model = getattr(raw_model, method_name)()
                             explainer = shap.Explainer(base_model, masker=background_data)

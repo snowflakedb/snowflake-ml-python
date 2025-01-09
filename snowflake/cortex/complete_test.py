@@ -1,13 +1,14 @@
 import http.server
 import json
 import logging
+import re
 import threading
 import time
 import unittest
 from dataclasses import dataclass
 from io import BytesIO
 from types import GeneratorType
-from typing import Dict, Iterable, Iterator, cast
+from typing import Any, Dict, Iterable, Iterator, cast
 
 import _test_util
 from absl.testing import absltest
@@ -192,6 +193,103 @@ class MockIpifyHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
         self.wfile.write(json.dumps(response_json).encode("utf-8"))
 
 
+# This is a fake implementation of the function that sends the request to the Snowflake API via XP.
+def fake_xp_request_handler(
+    method: str,
+    url: str,
+    queryParams: Dict[str, str],
+    headers: Dict[str, str],
+    body: Dict[str, Any],
+    postParams: Dict[str, str],
+    timeoutMs: Any,
+) -> Any:
+    assert method == "POST"
+    assert "/cortex/" in url
+
+    if body["model"] == "empty_content":
+        return {
+            "status": 500,
+            "content": "",
+            "headers": {
+                "Content-Type": "application/json",
+                "Content-Length": "243",
+                "Date": "Thu, 05 Dec 2024 16:51:28 GMT",
+                "X-Snowflake-Request-ID": "80b66f5c-f955-42f7-8d6d-e524533f4f1a",
+            },
+        }
+
+    if body["model"] == "unknown_model":
+        # Response from a real request.
+        return {
+            "status": 400,
+            "content": """{
+                "code":	"300014",
+                    "message":	"unknown model: \\"fake_model\\"",
+                    "request_id":	"80b66f5c-f955-42f7-8d6d-e524533f4f1a",
+                    "error_code":	"300014"
+                }""",
+            "headers": {
+                "Content-Type": "application/json",
+                "Content-Length": "243",
+                "Date": "Thu, 05 Dec 2024 16:51:28 GMT",
+                "X-Snowflake-Request-ID": "80b66f5c-f955-42f7-8d6d-e524533f4f1a",
+            },
+        }
+
+    # Response from a real request.
+    return {
+        "status": 200,
+        "content": """[{
+            "data":	{
+                "id":	"6e577fa0-9673-4214-84d9-20f1a9033df8",
+                "created":	1733417829,
+                "model":	"mistral-large",
+                "choices":	[{
+                        "delta":	{
+                            "content":	" Sure"
+                        }
+                    }],
+                "usage":	{
+                    "prompt_tokens":	14,
+                    "completion_tokens":	1,
+                    "total_tokens":	15
+                }
+            }
+        }, {
+            "data":	{
+                "id":	"6e577fa0-9673-4214-84d9-20f1a9033df8",
+                "created":	1733417829,
+                "model":	"mistral-large",
+                "choices":	[{
+                        "delta":	{
+                            "content":	","
+                        }
+                    }],
+                "usage":	{
+                    "prompt_tokens":	14,
+                    "completion_tokens":	2,
+                    "total_tokens":	16
+                }
+            }
+        }]""",
+        "headers": {
+            "Transfer-Encoding": "chunked",
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+            "X-Snowflake-Request-ID": "6e577fa0-9673-4214-84d9-20f1a9033df8",
+            "Date": "Thu, 05 Dec 2024 16:57:09 GMT",
+            "Content-Type": "text/event-stream",
+        },
+    }
+
+
+def replace_uuid(input: str) -> str:
+    # Matches a UUID, e.g. 6e577fa0-9673-4214-84d9-20f1a9033df8.
+    return re.sub(
+        r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}", "[UUID]", input
+    )
+
+
 class CompleteRESTBackendTest(unittest.TestCase):
     def setUp(self) -> None:
         self.server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), MockIpifyHTTPRequestHandler)
@@ -308,6 +406,50 @@ class CompleteRESTBackendTest(unittest.TestCase):
         self.assertIsInstance(result, GeneratorType)
         output = "".join(list(cast(Iterable[str], result)))
         self.assertEqual("This is a streaming response", output)
+
+    def test_xp(self) -> None:
+        result = _complete._complete_impl(
+            snow_api_xp_request_handler=fake_xp_request_handler,
+            model="my_models",
+            prompt="test_prompt",
+            session=self.session,
+            stream=False,
+        )
+        self.assertEqual(" Sure,", result)
+
+    def test_xp_stream(self) -> None:
+        result = _complete._complete_impl(
+            snow_api_xp_request_handler=fake_xp_request_handler,
+            model="my_models",
+            prompt="test_prompt",
+            session=self.session,
+            stream=True,
+        )
+        self.assertIsInstance(result, GeneratorType)
+        output = "".join(list(cast(Iterable[str], result)))
+        self.assertEqual(" Sure,", output)
+
+    def test_xp_unknown_model(self) -> None:
+        with self.assertRaises(ValueError) as ar:
+            _complete._complete_impl(
+                snow_api_xp_request_handler=fake_xp_request_handler,
+                model="unknown_model",
+                prompt="test_prompt",
+                session=self.session,
+            )
+        self.assertEqual(
+            'Request failed: unknown model: "fake_model" (request id: [UUID])', replace_uuid(str(ar.exception))
+        )
+
+    def test_xp_empty_content(self) -> None:
+        with self.assertRaises(ValueError) as ar:
+            _complete._complete_impl(
+                snow_api_xp_request_handler=fake_xp_request_handler,
+                model="empty_content",
+                prompt="test_prompt",
+                session=self.session,
+            )
+        self.assertEqual("Request failed (request id: [UUID])", replace_uuid(str(ar.exception)))
 
 
 if __name__ == "__main__":

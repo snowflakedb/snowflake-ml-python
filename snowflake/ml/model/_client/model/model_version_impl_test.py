@@ -496,6 +496,19 @@ class ModelVersionImplTest(absltest.TestCase):
                 statement_params=mock.ANY,
             )
 
+        with mock.patch.object(self.m_mv._model_ops, "invoke_method", return_value=m_df) as mock_invoke_method:
+            self.m_mv.run(m_df, service_name="DB.SCHEMA.SERVICE", function_name='"predict"')
+            mock_invoke_method.assert_called_once_with(
+                method_name='"predict"',
+                signature=_DUMMY_SIG["predict"],
+                X=m_df,
+                database_name=sql_identifier.SqlIdentifier("DB"),
+                schema_name=sql_identifier.SqlIdentifier("SCHEMA"),
+                service_name=sql_identifier.SqlIdentifier("SERVICE"),
+                strict_input_validation=False,
+                statement_params=mock.ANY,
+            )
+
     def test_description_getter(self) -> None:
         with mock.patch.object(
             self.m_mv._model_ops, "get_comment", return_value="this is a comment"

@@ -59,7 +59,11 @@ class XgboostModelBlobOptions(BaseModelBlobOptions):
 
 
 class TensorflowModelBlobOptions(BaseModelBlobOptions):
-    is_keras_model: Required[bool]
+    save_format: Required[str]
+
+
+class SentenceTransformersModelBlobOptions(BaseModelBlobOptions):
+    batch_size: Required[int]
 
 
 ModelBlobOptions = Union[
@@ -68,6 +72,7 @@ ModelBlobOptions = Union[
     MLFlowModelBlobOptions,
     XgboostModelBlobOptions,
     TensorflowModelBlobOptions,
+    SentenceTransformersModelBlobOptions,
 ]
 
 

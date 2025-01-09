@@ -259,6 +259,41 @@ class ModelMethodTest(absltest.TestCase):
                 },
             )
 
+        with tempfile.TemporaryDirectory() as workspace, tempfile.TemporaryDirectory() as tmpdir:
+            with model_meta.create_model_metadata(
+                model_dir_path=tmpdir, name="model5", model_type="custom", signatures=_DUMMY_SIG
+            ) as meta:
+                meta.models["model5"] = _DUMMY_BLOB
+            mm = model_method.ModelMethod(
+                meta,
+                "predict",
+                "python_runtime",
+                fg,
+                wide_input=True,
+            )
+            method_dict = mm.save(pathlib.Path(workspace))
+            with open(pathlib.Path(workspace, "functions", "predict.py"), encoding="utf-8") as f:
+                self.assertEqual(
+                    (
+                        importlib_resources.files(model_method_pkg)
+                        .joinpath("fixtures")
+                        .joinpath("function_5.py")
+                        .read_text()
+                    ),
+                    f.read(),
+                )
+            self.assertDictEqual(
+                method_dict,
+                {
+                    "name": "PREDICT",
+                    "runtime": "python_runtime",
+                    "type": "FUNCTION",
+                    "handler": "functions.predict.infer",
+                    "inputs": [{"name": "INPUT", "type": "FLOAT"}, {"name": "NAME", "type": "STRING"}],
+                    "outputs": [{"type": "OBJECT"}],
+                },
+            )
+
 
 class ModelMethodOptionsTest(absltest.TestCase):
     def test_get_model_method_options(self) -> None:

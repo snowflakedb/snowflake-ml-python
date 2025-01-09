@@ -42,14 +42,3 @@ def get_latest_package_version_spec_in_server(
     if len(available_version_list) == 0:
         return str(package_req)
     return f"{package_req.name}=={max(available_version_list)}"
-
-
-@functools.lru_cache
-def get_latest_package_version_spec_in_conda(package_req_str: str, python_version: str = env.PYTHON_VERSION) -> str:
-    package_req = requirements.Requirement(package_req_str)
-    available_version_list = env_utils.get_matched_package_versions_in_snowflake_conda_channel(
-        package_req, python_version=python_version
-    )
-    if len(available_version_list) == 0:
-        return str(package_req)
-    return f"{package_req.name}=={max(available_version_list)}"

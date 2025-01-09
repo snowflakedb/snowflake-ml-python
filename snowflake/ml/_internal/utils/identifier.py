@@ -158,8 +158,10 @@ def parse_schema_level_object_identifier(
     res = _SF_SCHEMA_LEVEL_OBJECT_RE.fullmatch(object_name)
     if not res:
         raise ValueError(
-            "Invalid identifier because it does not follow the pattern. "
-            f"It should start with [[database.]schema.]object. Getting {object_name}"
+            f"Invalid object name `{object_name}` cannot be parsed as a SQL identifier. "
+            "Alphanumeric characters and underscores are permitted. "
+            "See https://docs.snowflake.com/en/sql-reference/identifiers-syntax for "
+            "more information."
         )
     return (
         res.group("db"),

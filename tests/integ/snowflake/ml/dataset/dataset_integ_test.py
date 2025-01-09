@@ -1,6 +1,7 @@
 import logging
 import os
 import random
+import unittest
 from typing import Any, Dict, Generator
 from uuid import uuid4
 
@@ -256,6 +257,7 @@ class TestSnowflakeDataset(dataset_integ_test_base.TestSnowflakeDatasetBase):
 
         self.assertEqual(num_rows, len(ds.read.to_pandas()))
 
+    @unittest.skip("Fails due to server side issue. Need to be investigated SNOW-1862761")
     @common_test_base.CommonTestBase.sproc_test(local=True, additional_packages=[])
     def test_dataset_from_dataset(self) -> None:
         # Generate random prefixes due to race condition between sprocs causing dataset collision

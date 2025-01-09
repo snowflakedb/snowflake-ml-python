@@ -6,6 +6,7 @@ from typing import (
     List,
     Optional,
     Protocol,
+    Sequence,
     Type,
     TypeVar,
 )
@@ -25,7 +26,7 @@ DataIngestorType = TypeVar("DataIngestorType", bound="DataIngestor")
 class DataIngestor(Protocol):
     @classmethod
     def from_sources(
-        cls: Type[DataIngestorType], session: snowpark.Session, sources: List[data_source.DataSource]
+        cls: Type[DataIngestorType], session: snowpark.Session, sources: Sequence[data_source.DataSource]
     ) -> DataIngestorType:
         raise NotImplementedError
 

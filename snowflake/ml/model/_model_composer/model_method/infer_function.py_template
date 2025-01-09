@@ -43,7 +43,7 @@ dtype_map = {{feature.name: feature.as_dtype() for feature in features}}
 
 
 # Actual function
-@vectorized(input=pd.DataFrame, max_batch_size=MAX_BATCH_SIZE)
+@vectorized(input=pd.DataFrame, max_batch_size=MAX_BATCH_SIZE, flatten_object_input={wide_input})
 def {function_name}(df: pd.DataFrame) -> dict:
     df.columns = input_cols
     input_df = df.astype(dtype=dtype_map)

@@ -1,6 +1,9 @@
 load("//bazel:py_rules.bzl", "py_library", "py_test")
 
-package(default_visibility = ["//tests/integ/snowflake/ml:__subpackages__"])
+package(default_visibility = [
+    "//tests/integ/snowflake/ml:__subpackages__",
+    "//tests/perf:__subpackages__",
+])
 
 filegroup(
     name = "ext_module",
@@ -130,7 +133,7 @@ py_test(
     name = "registry_tensorflow_model_test",
     timeout = "long",
     srcs = ["registry_tensorflow_model_test.py"],
-    shard_count = 4,
+    shard_count = 8,
     deps = [
         ":registry_model_test_base",
         "//snowflake/ml/model/_signatures:numpy_handler",

@@ -42,7 +42,7 @@ class ModelTaskUtilsTest(absltest.TestCase):
         expected_task: type_hints.Task,
         expected_output: model_signature.DataType,
     ) -> None:
-        model_task_and_output = model_task_utils.get_model_task_and_output_type(model)
+        model_task_and_output = model_task_utils.resolve_model_task_and_output_type(model, type_hints.Task.UNKNOWN)
         self.assertEqual(expected_task, model_task_and_output.task)
         self.assertEqual(expected_output, model_task_and_output.output_type)
 
@@ -188,7 +188,7 @@ class ModelTaskUtilsTest(absltest.TestCase):
             return x + 1
 
         with self.assertRaises(ValueError) as e:
-            model_task_utils.get_model_task_and_output_type(unknown_model)
+            model_task_utils.resolve_model_task_and_output_type(unknown_model, type_hints.Task.UNKNOWN)
         self.assertEqual(str(e.exception), "Model type <class 'function'> is not supported")
 
 

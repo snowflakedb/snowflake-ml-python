@@ -43,7 +43,7 @@ dtype_map = {feature.name: feature.as_dtype() for feature in features}
 
 # Actual table function
 class infer:
-    @vectorized(input=pd.DataFrame, max_batch_size=MAX_BATCH_SIZE)
+    @vectorized(input=pd.DataFrame, max_batch_size=MAX_BATCH_SIZE, flatten_object_input=False)
     def process(self, df: pd.DataFrame) -> pd.DataFrame:
         df.columns = input_cols
         input_df = df.astype(dtype=dtype_map)

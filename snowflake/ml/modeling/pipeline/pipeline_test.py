@@ -1,5 +1,3 @@
-import os
-
 import numpy as np
 import pandas as pd
 from absl.testing import absltest
@@ -10,7 +8,7 @@ from sklearn.preprocessing import MinMaxScaler as sklearn_MMS
 
 from snowflake.ml.modeling.lightgbm import LGBMClassifier
 from snowflake.ml.modeling.linear_model import LinearRegression
-from snowflake.ml.modeling.pipeline.pipeline import IN_ML_RUNTIME_ENV_VAR, Pipeline
+from snowflake.ml.modeling.pipeline.pipeline import Pipeline
 from snowflake.ml.modeling.preprocessing import (
     MinMaxScaler,
     OneHotEncoder,
@@ -74,51 +72,6 @@ class PipelineTest(absltest.TestCase):
         self._test_data["ROW_INDEX"] = self._test_data.index
 
         return super().setUp()
-
-    def test_dataset_can_be_trained_in_ml_runtime(self) -> None:
-        """Test that the pipeline can only be trained in ml runtime if correct dataset type and
-        environment variables present.
-        """
-
-        assert self.simple_pipeline._can_be_trained_in_ml_runtime(dataset=pd.DataFrame()) is False
-        assert self.simple_pipeline._can_be_trained_in_ml_runtime(dataset=self.dataframe_snowpark) is False
-
-        os.environ[IN_ML_RUNTIME_ENV_VAR] = "True"
-        assert self.simple_pipeline._can_be_trained_in_ml_runtime(dataset=pd.DataFrame()) is False
-        assert self.simple_pipeline._can_be_trained_in_ml_runtime(dataset=self.dataframe_snowpark) is True
-
-        del os.environ[IN_ML_RUNTIME_ENV_VAR]
-
-    def test_pipeline_can_be_trained_in_ml_runtime(self) -> None:
-        """Test that the pipeline can be trained in the ml runtime if it has the correct configuration
-        of steps.
-        """
-        os.environ[IN_ML_RUNTIME_ENV_VAR] = "True"
-
-        assert self.simple_pipeline._can_be_trained_in_ml_runtime(dataset=self.dataframe_snowpark) is True
-
-        pipeline_three_steps = Pipeline(
-            steps=[
-                (
-                    "MMS",
-                    MinMaxScaler(input_cols=["col1"], output_cols=["col1"]),
-                ),
-            ]
-            * 3
-        )
-
-        assert pipeline_three_steps._can_be_trained_in_ml_runtime(dataset=self.dataframe_snowpark) is False
-
-        assert (
-            self.pipeline_two_steps_no_estimator._can_be_trained_in_ml_runtime(dataset=self.dataframe_snowpark) is False
-        )
-
-        assert (
-            self.pipeline_two_steps_with_estimator._can_be_trained_in_ml_runtime(dataset=self.dataframe_snowpark)
-            is True
-        )
-
-        del os.environ[IN_ML_RUNTIME_ENV_VAR]
 
     def test_wrap_transformer_in_column_transformer(self):
         input_cols = ["col1"]
@@ -256,33 +209,32 @@ class PipelineTest(absltest.TestCase):
         assert isinstance(self.simple_pipeline.to_sklearn(), sklearn_Pipeline)
 
     def test_fit_and_compare_results_pandas_dataframe(self) -> None:
-        with absltest.mock.patch.dict(os.environ, {IN_ML_RUNTIME_ENV_VAR: ""}, clear=True):
-            raw_data_pandas = self._test_data
+        raw_data_pandas = self._test_data
 
-            pipeline = Pipeline(
-                steps=[
-                    (
-                        "OHE",
-                        OneHotEncoder(
-                            input_cols=self.categorical_columns,
-                            output_cols=self.categorical_columns,
-                            drop_input_cols=True,
-                        ),
+        pipeline = Pipeline(
+            steps=[
+                (
+                    "OHE",
+                    OneHotEncoder(
+                        input_cols=self.categorical_columns,
+                        output_cols=self.categorical_columns,
+                        drop_input_cols=True,
                     ),
-                    (
-                        "MMS",
-                        MinMaxScaler(
-                            clip=True,
-                            input_cols=self.numerical_columns,
-                            output_cols=self.numerical_columns,
-                        ),
+                ),
+                (
+                    "MMS",
+                    MinMaxScaler(
+                        clip=True,
+                        input_cols=self.numerical_columns,
+                        output_cols=self.numerical_columns,
                     ),
-                    ("regression", XGBClassifier(label_cols=self.label_column)),
-                ]
-            )
+                ),
+                ("regression", XGBClassifier(label_cols=self.label_column)),
+            ]
+        )
 
-            pipeline.fit(raw_data_pandas)
-            pipeline.predict(raw_data_pandas)
+        pipeline.fit(raw_data_pandas)
+        pipeline.predict(raw_data_pandas)
 
     def test_pipeline_export(self):
         raw_data_pandas = self._test_data
@@ -342,7 +294,6 @@ class PipelineTest(absltest.TestCase):
         np.testing.assert_allclose(snow_results, sk_results, rtol=1.0e-1, atol=1.0e-2)
 
     def tearDown(self) -> None:
-        os.environ.pop(IN_ML_RUNTIME_ENV_VAR, None)
         self.send_custom_usage_mock.stop()
         return super().tearDown()
 

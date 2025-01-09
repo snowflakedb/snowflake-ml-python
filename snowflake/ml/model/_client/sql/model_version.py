@@ -10,6 +10,7 @@ from snowflake.ml._internal.utils import (
     sql_identifier,
 )
 from snowflake.ml.model._client.sql import _base
+from snowflake.ml.model._model_composer.model_method import constants
 from snowflake.snowpark import dataframe, functions as F, row, types as spt
 from snowflake.snowpark._internal import utils as snowpark_utils
 
@@ -333,6 +334,11 @@ class ModelVersionSQLClient(_base._BaseSQLClient):
 
         args_sql = ", ".join(args_sql_list)
 
+        wide_input = len(input_args) > constants.SNOWPARK_UDF_INPUT_COL_LIMIT
+        if wide_input:
+            input_args_sql = ", ".join(f"'{arg}', {arg.identifier()}" for arg in input_args)
+            args_sql = f"object_construct_keep_null({input_args_sql})"
+
         sql = textwrap.dedent(
             f"""WITH {','.join(with_statements)}
                 SELECT *,
@@ -411,6 +417,11 @@ class ModelVersionSQLClient(_base._BaseSQLClient):
             args_sql_list.append(input_arg_value)
 
         args_sql = ", ".join(args_sql_list)
+
+        wide_input = len(input_args) > constants.SNOWPARK_UDF_INPUT_COL_LIMIT
+        if wide_input:
+            input_args_sql = ", ".join(f"'{arg}', {arg.identifier()}" for arg in input_args)
+            args_sql = f"object_construct_keep_null({input_args_sql})"
 
         sql = textwrap.dedent(
             f"""WITH {','.join(with_statements)}

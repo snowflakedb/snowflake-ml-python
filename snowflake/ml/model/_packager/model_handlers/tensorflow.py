@@ -3,6 +3,7 @@ from typing import TYPE_CHECKING, Callable, Dict, Optional, Type, cast, final
 
 import numpy as np
 import pandas as pd
+from packaging import version
 from typing_extensions import TypeGuard, Unpack
 
 from snowflake.ml._internal import type_utils
@@ -73,13 +74,42 @@ class TensorFlowHandler(_base.BaseModelHandler["tensorflow.Module"]):
         if enable_explainability:
             raise NotImplementedError("Explainability is not supported for Tensorflow model.")
 
+        # When tensorflow is installed, keras is also installed.
+        import keras
         import tensorflow
 
         assert isinstance(model, tensorflow.Module)
 
         is_keras_model = type_utils.LazyType("tensorflow.keras.Model").isinstance(model) or type_utils.LazyType(
-            "tf_keras.Model"
+            "keras.Model"
         ).isinstance(model)
+        is_tf_keras_model = type_utils.LazyType("tf_keras.Model").isinstance(model)
+        is_keras_functional_or_sequential_model = (
+            getattr(model, "_is_graph_network", False)
+            or type_utils.LazyType("tensorflow.keras.engine.sequential.Sequential").isinstance(model)
+            or type_utils.LazyType("keras.engine.sequential.Sequential").isinstance(model)
+            or type_utils.LazyType("tf_keras.engine.sequential.Sequential").isinstance(model)
+        )
+
+        assert isinstance(model, tensorflow.Module)
+
+        keras_version = version.parse(keras.__version__)
+
+        # Tensorflow and keras model save format is different.
+        # Keras functional or sequential models are saved as keras format
+        # Keras v3 other models are saved using cloudpickle
+        # Keras v2 other models are saved using tensorflow saved model format
+        # Tensorflow models are saved using tensorflow saved model format
+
+        if is_keras_model or is_tf_keras_model:
+            if is_keras_functional_or_sequential_model:
+                save_format = "keras"
+            elif keras_version.major == 2 or is_tf_keras_model:
+                save_format = "keras_tf"
+            else:
+                save_format = "cloudpickle"
+        else:
+            save_format = "tf"
 
         if is_keras_model:
             default_target_methods = ["predict"]
@@ -92,6 +122,9 @@ class TensorFlowHandler(_base.BaseModelHandler["tensorflow.Module"]):
                 target_methods=kwargs.pop("target_methods", None),
                 default_target_methods=default_target_methods,
             )
+
+            if is_keras_model and len(target_methods) > 1:
+                raise ValueError("Keras model can only have one target method.")
 
             def get_prediction(
                 target_method_name: str, sample_input_data: "model_types.SupportedLocalDataType"
@@ -122,31 +155,43 @@ class TensorFlowHandler(_base.BaseModelHandler["tensorflow.Module"]):
 
         model_blob_path = os.path.join(model_blobs_dir_path, name)
         os.makedirs(model_blob_path, exist_ok=True)
-        if is_keras_model:
-            tensorflow.keras.models.save_model(model, os.path.join(model_blob_path, cls.MODEL_BLOB_FILE_OR_DIR))
-            model_meta.env.include_if_absent(
-                [
-                    model_env.ModelDependency(requirement="keras<3", pip_name="keras"),
-                ],
-                check_local_version=False,
-            )
+        save_path = os.path.join(model_blob_path, cls.MODEL_BLOB_FILE_OR_DIR)
+        if save_format == "keras":
+            model.save(save_path, save_format="keras")
+        elif save_format == "keras_tf":
+            model.save(save_path, save_format="tf")
+        elif save_format == "cloudpickle":
+            import cloudpickle
+
+            with open(save_path, "wb") as f:
+                cloudpickle.dump(model, f)
         else:
-            tensorflow.saved_model.save(model, os.path.join(model_blob_path, cls.MODEL_BLOB_FILE_OR_DIR))
+            tensorflow.saved_model.save(
+                model,
+                save_path,
+                options=tensorflow.saved_model.SaveOptions(experimental_custom_gradients=False),
+            )
 
         base_meta = model_blob_meta.ModelBlobMeta(
             name=name,
             model_type=cls.HANDLER_TYPE,
             handler_version=cls.HANDLER_VERSION,
             path=cls.MODEL_BLOB_FILE_OR_DIR,
-            options=model_meta_schema.TensorflowModelBlobOptions(is_keras_model=is_keras_model),
+            options=model_meta_schema.TensorflowModelBlobOptions(save_format=save_format),
         )
         model_meta.models[name] = base_meta
         model_meta.min_snowpark_ml_version = cls._MIN_SNOWPARK_ML_VERSION
 
+        dependencies = [
+            model_env.ModelDependency(requirement="tensorflow", pip_name="tensorflow"),
+        ]
+        if is_keras_model:
+            dependencies.append(model_env.ModelDependency(requirement="keras", pip_name="keras"))
+        elif is_tf_keras_model:
+            dependencies.append(model_env.ModelDependency(requirement="tf-keras", pip_name="tf-keras"))
+
         model_meta.env.include_if_absent(
-            [
-                model_env.ModelDependency(requirement="tensorflow", pip_name="tensorflow"),
-            ],
+            dependencies,
             check_local_version=True,
         )
         model_meta.env.cuda_version = kwargs.get("cuda_version", model_env.DEFAULT_CUDA_VERSION)
@@ -166,10 +211,18 @@ class TensorFlowHandler(_base.BaseModelHandler["tensorflow.Module"]):
         model_blob_metadata = model_blobs_metadata[name]
         model_blob_filename = model_blob_metadata.path
         model_blob_options = cast(model_meta_schema.TensorflowModelBlobOptions, model_blob_metadata.options)
-        if model_blob_options.get("is_keras_model", False):
-            m = tensorflow.keras.models.load_model(os.path.join(model_blob_path, model_blob_filename), compile=False)
+        load_path = os.path.join(model_blob_path, model_blob_filename)
+        save_format = model_blob_options.get("save_format", "tf")
+        if save_format == "keras" or save_format == "keras_tf":
+            m = tensorflow.keras.models.load_model(load_path)
+        elif save_format == "cloudpickle":
+            import cloudpickle
+
+            with open(load_path, "rb") as f:
+                m = cloudpickle.load(f)
         else:
-            m = tensorflow.saved_model.load(os.path.join(model_blob_path, model_blob_filename))
+            m = tensorflow.saved_model.load(load_path)
+
         return cast(tensorflow.Module, m)
 
     @classmethod

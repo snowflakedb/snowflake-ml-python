@@ -39,7 +39,6 @@ class FeatureStoreExampleHelperTest(absltest.TestCase):
         all_examples = helper.list_examples()
         self.assertIsNotNone(all_examples)
         expected_examples = [
-            "citibike_trip_features",
             "new_york_taxi_features",
             "wine_quality_features",
             "airline_features",

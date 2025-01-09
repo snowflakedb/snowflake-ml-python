@@ -62,6 +62,10 @@ class RegistryModelDeploymentTestBase(common_test_base.CommonTestBase):
                 f.read(), password=None, backend=backends.default_backend()
             )
 
+        self.snowflake_account_url = self.session._conn._lower_case_parameters.get("host", None)
+        if self.snowflake_account_url:
+            self.snowflake_account_url = f"https://{self.snowflake_account_url}"
+
         self._run_id = uuid.uuid4().hex[:2]
         self._test_db = db_manager.TestObjectNameGenerator.get_snowml_test_object_name(self._run_id, "db").upper()
         self._test_schema = "PUBLIC"
@@ -133,6 +137,7 @@ class RegistryModelDeploymentTestBase(common_test_base.CommonTestBase):
             memory=None,
             gpu=gpu_requests,
             force_rebuild=force_rebuild,
+            external_access_integrations=None,
         )
 
         with (mv._service_ops.workspace_path / deploy_spec_file_rel_path).open("r", encoding="utf-8") as f:
@@ -326,6 +331,7 @@ class RegistryModelDeploymentTestBase(common_test_base.CommonTestBase):
                 jwt_token_generator=jwt_token_generator,
                 role=identifier.get_unescaped_names(self.session.get_current_role()),
                 endpoint=endpoint,
+                snowflake_account_url=self.snowflake_account_url,
             ),
         )
         res.raise_for_status()

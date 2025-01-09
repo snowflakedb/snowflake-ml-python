@@ -447,13 +447,15 @@ class ModelVersion(lineage_node.LineageNode):
             target_function_info = functions[0]
 
         if service_name:
+            database_name_id, schema_name_id, service_name_id = sql_identifier.parse_fully_qualified_name(service_name)
+
             return self._model_ops.invoke_method(
                 method_name=sql_identifier.SqlIdentifier(target_function_info["name"]),
                 signature=target_function_info["signature"],
                 X=X,
-                database_name=None,
-                schema_name=None,
-                service_name=sql_identifier.SqlIdentifier(service_name),
+                database_name=database_name_id,
+                schema_name=schema_name_id,
+                service_name=service_name_id,
                 strict_input_validation=strict_input_validation,
                 statement_params=statement_params,
             )

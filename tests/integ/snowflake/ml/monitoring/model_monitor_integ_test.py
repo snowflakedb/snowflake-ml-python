@@ -1,4 +1,3 @@
-import unittest
 import uuid
 
 from absl.testing import absltest, parameterized
@@ -15,7 +14,6 @@ from tests.integ.snowflake.ml.test_utils import db_manager, model_factory
 INPUT_FEATURE_COLUMNS_NAMES = [f"input_feature_{i}" for i in range(64)]
 
 
-# NOTE: In order to run the tests, must remove the DATA_RETENTION_TIME_IN_DAYS=0 parameter in test_utils/db_manager.py
 class ModelMonitorRegistryIntegrationTest(parameterized.TestCase):
     def _create_test_table(self, fully_qualified_table_name: str, id_column_type: str = "STRING") -> None:
         s = ", ".join([f"{i} FLOAT" for i in INPUT_FEATURE_COLUMNS_NAMES])
@@ -60,8 +58,6 @@ class ModelMonitorRegistryIntegrationTest(parameterized.TestCase):
             options={"enable_monitoring": True},
         )
 
-        self._session.sql("ALTER SESSION SET FEATURE_ML_OBSERVABILITY=enabled").collect()
-
     def tearDown(self) -> None:
         self._db_manager.drop_database(self._db_name)
         super().tearDown()
@@ -105,7 +101,6 @@ class ModelMonitorRegistryIntegrationTest(parameterized.TestCase):
         mv = self._add_sample_model_version(model_name=model_name, version_name=version_name)
         self._add_sample_monitor(monitor_name=monitor_name, source=table_name, model_version=mv)
 
-    @unittest.skip("Not implemented in the backend yet")
     def test_show_model_monitors(self):
         res = self.registry.show_model_monitors()
         self.assertEqual(len(res), 0)
@@ -116,7 +111,6 @@ class ModelMonitorRegistryIntegrationTest(parameterized.TestCase):
         self.assertEqual(len(res), 1)
         self.assertEqual(res[0]["name"], "MONITOR")
 
-    @unittest.skip("Not implemented in the backend yet")
     def test_add_monitor_duplicate_fails(self):
         source_table_name = "source_table"
         model_name_original = "model_name"
@@ -145,7 +139,6 @@ class ModelMonitorRegistryIntegrationTest(parameterized.TestCase):
                 model_version=mv,
             )
 
-    @unittest.skip("Not implemented in the backend yet")
     def test_suspend_resume_monitor(self):
         self._create_sample_table_model_and_monitor(
             monitor_name="monitor", table_name="source_table", model_name="model_name"
@@ -162,7 +155,6 @@ class ModelMonitorRegistryIntegrationTest(parameterized.TestCase):
         monitor.resume()  # resume after suspending
         self.assertEqual(self.registry.show_model_monitors()[0]["monitor_state"], "RUNNING")
 
-    @unittest.skip("Not implemented in the backend yet")
     def test_get_monitor(self):
         self._create_sample_table_model_and_monitor(
             monitor_name="monitor", table_name="source_table", model_name="model_name", version_name="V1"
@@ -185,7 +177,6 @@ class ModelMonitorRegistryIntegrationTest(parameterized.TestCase):
         with self.assertRaisesRegex(ValueError, "Unable to find model monitor for the given model version."):
             self.registry.get_monitor(model_version=model_version_not_monitored)
 
-    @unittest.skip("Not implemented in the backend yet")
     def test_delete_monitor(self) -> None:
         self._create_sample_table_model_and_monitor(
             monitor_name="monitor", table_name="source_table", model_name="model_name"
@@ -196,7 +187,6 @@ class ModelMonitorRegistryIntegrationTest(parameterized.TestCase):
             self.registry.get_monitor(name="monitor")
         self.assertEqual(len(self.registry.show_model_monitors()), 0)
 
-    @unittest.skip("Not implemented in the backend yet")
     def test_create_model_monitor_from_view(self):
         res = self.registry.show_model_monitors()
         self.assertEqual(len(res), 0)
