@@ -1,0 +1,50 @@
+load("//bazel:py_rules.bzl", "py_library", "py_package")
+
+package(default_visibility = ["//visibility:public"])
+
+py_package(
+    name = "jobs_pkg",
+    packages = ["snowflake.ml"],
+    deps = [
+        ":jobs",
+    ],
+)
+
+py_library(
+    name = "ml_job",
+    srcs = ["job.py"],
+    deps = [
+        "//snowflake/ml/_internal:telemetry",
+        "//snowflake/ml/jobs/_utils:job_utils",
+    ],
+)
+
+py_library(
+    name = "job_manager",
+    srcs = ["manager.py"],
+    deps = [
+        ":ml_job",
+        "//snowflake/ml/_internal:telemetry",
+        "//snowflake/ml/_internal/utils:identifier",
+        "//snowflake/ml/jobs/_utils:job_utils",
+    ],
+)
+
+py_library(
+    name = "job_decorators",
+    srcs = ["decorators.py"],
+    deps = [
+        ":job_manager",
+    ],
+)
+
+py_library(
+    name = "jobs",
+    srcs = [
+        "__init__.py",
+    ],
+    deps = [
+        ":job_decorators",
+        ":job_manager",
+    ],
+)

@@ -2,6 +2,8 @@ import functools
 import inspect
 from typing import Any, Callable, List, Optional
 
+from typing_extensions import deprecated
+
 from snowflake import snowpark
 from snowflake.connector import connection
 from snowflake.ml._internal import telemetry
@@ -42,6 +44,10 @@ def _raise_if_deleted(func: Callable[..., Any]) -> Callable[..., Any]:
     return raise_if_deleted_helper
 
 
+@deprecated(
+    "FileSet is deprecated and will be removed in a future release."
+    " Use snowflake.ml.dataset.Dataset and snowflake.ml.data.DataConnector instead"
+)
 class FileSet:
     """A FileSet represents an immutable snapshot of the result of a query in the form of files."""
 

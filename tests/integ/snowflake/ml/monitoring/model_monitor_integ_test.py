@@ -144,16 +144,16 @@ class ModelMonitorRegistryIntegrationTest(parameterized.TestCase):
             monitor_name="monitor", table_name="source_table", model_name="model_name"
         )
         monitor = self.registry.get_monitor(name="monitor")
-        self.assertEqual(self.registry.show_model_monitors()[0]["monitor_state"], "RUNNING")
+        self.assertTrue(self.registry.show_model_monitors()[0]["monitor_state"] in ["ACTIVE", "RUNNING"])
 
         monitor.resume()  # resume while already running
-        self.assertEqual(self.registry.show_model_monitors()[0]["monitor_state"], "RUNNING")
+        self.assertTrue(self.registry.show_model_monitors()[0]["monitor_state"] in ["ACTIVE", "RUNNING"])
         monitor.suspend()  # suspend after running
         self.assertEqual(self.registry.show_model_monitors()[0]["monitor_state"], "SUSPENDED")
         monitor.suspend()  # suspend while already suspended
         self.assertEqual(self.registry.show_model_monitors()[0]["monitor_state"], "SUSPENDED")
         monitor.resume()  # resume after suspending
-        self.assertEqual(self.registry.show_model_monitors()[0]["monitor_state"], "RUNNING")
+        self.assertTrue(self.registry.show_model_monitors()[0]["monitor_state"] in ["ACTIVE", "RUNNING"])
 
     def test_get_monitor(self):
         self._create_sample_table_model_and_monitor(

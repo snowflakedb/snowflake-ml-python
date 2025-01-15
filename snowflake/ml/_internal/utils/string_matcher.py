@@ -13,11 +13,21 @@ class StringMatcherIgnoreWhitespace:
     """Matcher that removes all whitespace from strings before comparison."""
 
     def __init__(self, expected: str) -> None:
-        self._normalizer = re.compile(r"\s+")
+        self._space_remover = re.compile(r"\s+")
+        self._punc_fixer = re.compile(r"\s+([.,!?:;])")
         self._expected = expected
 
     def _normalize(self, s: str) -> str:
-        return self._normalizer.sub("", s).strip()
+        # Remove leading and trailing whitespace
+        s = s.strip()
+
+        # Replace multiple spaces with a single space
+        s = re.sub(r"\s+", " ", s)
+
+        # Remove space before punctuation
+        s = re.sub(r"\s+([.,!?:;])", r"\1", s)
+
+        return s
 
     def __eq__(self, other: object) -> bool:
         return self._normalize(str(other)) == self._normalize(self._expected)

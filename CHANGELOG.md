@@ -1,6 +1,26 @@
 # Release History
 
-## 1.7.3
+## 1.7.4
+
+- FileSet: The `snowflake.ml.fileset.FileSet` has been deprecated and will be removed in a future version.
+  Use [snowflake.ml.dataset.Dataset](https://docs.snowflake.com/en/developer-guide/snowflake-ml/dataset) and
+  [snowflake.ml.data.DataConnector](https://docs.snowflake.com/en/developer-guide/snowpark-ml/reference/latest/api/data/snowflake.ml.data.data_connector.DataConnector)
+  instead.
+
+### Bug Fixes
+
+- Registry: Fixed an issue that the hugging face pipeline is loaded using incorrect dtype.
+
+### Behavior Changes
+
+### New Features
+
+- Add new `snowflake.ml.jobs` preview API for running headless workloads on SPCS using
+  [Container Runtime for ML](https://docs.snowflake.com/en/developer-guide/snowflake-ml/container-runtime-ml)
+- Added `guardrails` option to Cortex `complete` function, enabling
+  [Cortex Guard](https://docs.snowflake.com/en/user-guide/snowflake-cortex/llm-functions#cortex-guard) support
+
+## 1.7.3 (2025-01-08)
 
 - Added lowercase versions of Cortex functions, added deprecation warning to Capitalized versions.
 - Bumped the requirements of `fsspec` and `s3fs` to `>=2024.6.1,<2026`

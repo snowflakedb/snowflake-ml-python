@@ -16,7 +16,6 @@ import yaml
 from absl.testing import absltest
 from cryptography.hazmat import backends
 from cryptography.hazmat.primitives import serialization
-from packaging import version
 
 from snowflake.ml._internal import file_utils
 from snowflake.ml._internal.utils import (
@@ -160,30 +159,23 @@ class RegistryModelDeploymentTestBase(common_test_base.CommonTestBase):
             stage_path=stage_path, model_deployment_spec_file_rel_path=deploy_spec_file_rel_path
         )
 
-        # TODO(hayu): Remove the version check after Snowflake 8.37.0 release
-        if snowflake_env.get_current_snowflake_version(self.session) >= version.parse("8.37.0"):
-            # stream service logs in a thread
-            model_build_service_name = sql_identifier.SqlIdentifier(
-                mv._service_ops._get_model_build_service_name(query_id)
-            )
-            model_build_service = service_ops.ServiceLogInfo(
-                database_name=database_name,
-                schema_name=schema_name,
-                service_name=model_build_service_name,
-                container_name="model-build",
-            )
-            model_inference_service = service_ops.ServiceLogInfo(
-                database_name=database_name,
-                schema_name=schema_name,
-                service_name=sql_identifier.SqlIdentifier(service_name),
-                container_name="model-inference",
-            )
-            services = [model_build_service, model_inference_service]
-            log_thread = mv._service_ops._start_service_log_streaming(async_job, services, False, True)
-            log_thread.join()
-        else:
-            while not async_job.is_done():
-                time.sleep(5)
+        # stream service logs in a thread
+        model_build_service_name = sql_identifier.SqlIdentifier(mv._service_ops._get_model_build_service_name(query_id))
+        model_build_service = service_ops.ServiceLogInfo(
+            database_name=database_name,
+            schema_name=schema_name,
+            service_name=model_build_service_name,
+            container_name="model-build",
+        )
+        model_inference_service = service_ops.ServiceLogInfo(
+            database_name=database_name,
+            schema_name=schema_name,
+            service_name=sql_identifier.SqlIdentifier(service_name),
+            container_name="model-inference",
+        )
+        services = [model_build_service, model_inference_service]
+        log_thread = mv._service_ops._start_service_log_streaming(async_job, services, False, True)
+        log_thread.join()
 
         res = cast(str, cast(List[row.Row], async_job.result())[0][0])
         logging.info(f"Inference service {service_name} deployment complete: {res}")
@@ -263,6 +255,12 @@ class RegistryModelDeploymentTestBase(common_test_base.CommonTestBase):
                 max_batch_rows=max_batch_rows,
                 ingress_enabled=True,
             )
+
+        while True:
+            service_status = mv.list_services().loc[0, "status"]
+            if service_status != "PENDING":
+                break
+            time.sleep(10)
 
         for target_method, (test_input, check_func) in prediction_assert_fns.items():
             res = mv.run(test_input, function_name=target_method, service_name=service_name)

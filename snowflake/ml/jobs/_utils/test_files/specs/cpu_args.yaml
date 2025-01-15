@@ -1,0 +1,36 @@
+---
+spec:
+  containers:
+    - args:
+        - /opt/app/main.py
+        - pos_arg
+        - --named_arg
+        - value
+      image: dummy_repo/dummy_image:latest
+      name: main
+      resources:
+        limits:
+          cpu: 1000m
+          memory: 4Gi
+        requests:
+          cpu: 1000m
+          memory: 4Gi
+      volumeMounts:
+        - mountPath: /var/log/managedservices/system/mlrs
+          name: system-logs
+        - mountPath: /var/log/managedservices/user/mlrs
+          name: user-logs
+        - mountPath: /dev/shm
+          name: dshm
+        - mountPath: /opt/app
+          name: stage-volume
+  volumes:
+    - name: system-logs
+      source: local
+    - name: user-logs
+      source: local
+    - name: dshm
+      size: 2Gi
+      source: memory
+    - name: stage-volume
+      source: '@dummy_stage'
