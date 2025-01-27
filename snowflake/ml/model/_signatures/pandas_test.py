@@ -119,18 +119,18 @@ class PandasDataFrameHandlerTest(absltest.TestCase):
             pandas_handler.PandasDataFrameHandler.validate(df)
 
     def test_trunc_pd_DataFrame(self) -> None:
-        df = pd.DataFrame([1] * (pandas_handler.PandasDataFrameHandler.SIG_INFER_ROWS_COUNT_LIMIT + 1))
+        df = pd.DataFrame([1] * 11)
 
         pd.testing.assert_frame_equal(
-            pd.DataFrame([1] * (pandas_handler.PandasDataFrameHandler.SIG_INFER_ROWS_COUNT_LIMIT)),
-            pandas_handler.PandasDataFrameHandler.truncate(df),
+            pd.DataFrame([1] * 10),
+            pandas_handler.PandasDataFrameHandler.truncate(df, 10),
         )
 
-        df = pd.DataFrame([1] * (pandas_handler.PandasDataFrameHandler.SIG_INFER_ROWS_COUNT_LIMIT - 1))
+        df = pd.DataFrame([1] * 9)
 
         pd.testing.assert_frame_equal(
             df,
-            pandas_handler.PandasDataFrameHandler.truncate(df),
+            pandas_handler.PandasDataFrameHandler.truncate(df, 10),
         )
 
     def test_infer_signature_pd_DataFrame(self) -> None:

@@ -33,11 +33,8 @@ class SeqOfPyTorchTensorHandler(base_handler.BaseDataHandler[Sequence["torch.Ten
         return min(data_col.shape[0] for data_col in data)  # type: ignore[no-any-return]
 
     @staticmethod
-    def truncate(data: Sequence["torch.Tensor"]) -> Sequence["torch.Tensor"]:
-        return [
-            data_col[: min(SeqOfPyTorchTensorHandler.count(data), SeqOfPyTorchTensorHandler.SIG_INFER_ROWS_COUNT_LIMIT)]
-            for data_col in data
-        ]
+    def truncate(data: Sequence["torch.Tensor"], length: int) -> Sequence["torch.Tensor"]:
+        return [data_col[: min(SeqOfPyTorchTensorHandler.count(data), 10)] for data_col in data]
 
     @staticmethod
     def validate(data: Sequence["torch.Tensor"]) -> None:

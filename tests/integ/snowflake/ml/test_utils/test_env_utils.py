@@ -19,14 +19,20 @@ def get_available_session() -> session.Session:
 
 @functools.lru_cache
 def get_current_snowflake_version() -> version.Version:
-    return snowflake_env.get_current_snowflake_version(get_available_session())
+    with get_available_session() as sess:
+        return snowflake_env.get_current_snowflake_version(sess)
 
 
 @functools.lru_cache
 def get_current_snowflake_cloud_type() -> snowflake_env.SnowflakeCloudType:
-    sess = get_available_session()
-    region = snowflake_env.get_regions(sess)[snowflake_env.get_current_region_id(sess)]
+    region = get_current_snowflake_region()
     return region["cloud"]
+
+
+@functools.lru_cache
+def get_current_snowflake_region() -> snowflake_env.SnowflakeRegion:
+    with get_available_session() as sess:
+        return snowflake_env.get_regions(sess)[snowflake_env.get_current_region_id(sess)]
 
 
 @functools.lru_cache

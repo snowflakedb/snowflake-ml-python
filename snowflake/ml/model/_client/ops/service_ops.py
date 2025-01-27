@@ -8,11 +8,9 @@ import threading
 import time
 from typing import Any, Dict, List, Optional, Tuple, Union, cast
 
-from packaging import version
-
 from snowflake import snowpark
 from snowflake.ml._internal import file_utils
-from snowflake.ml._internal.utils import service_logger, snowflake_env, sql_identifier
+from snowflake.ml._internal.utils import service_logger, sql_identifier
 from snowflake.ml.model._client.service import model_deployment_spec
 from snowflake.ml.model._client.sql import service as service_sql, stage as stage_sql
 from snowflake.snowpark import async_job, exceptions, row, session
@@ -132,14 +130,6 @@ class ServiceOperator:
             statement_params=statement_params,
         )
         stage_path = self._stage_client.fully_qualified_object_name(database_name, schema_name, stage_name)
-
-        # TODO(hayu): Remove the version check after Snowflake 8.40.0 release
-        if (
-            snowflake_env.get_current_snowflake_version(self._session, statement_params=statement_params)
-            < version.parse("8.40.0")
-            and build_external_access_integrations is None
-        ):
-            raise ValueError("External access integrations are required in Snowflake < 8.40.0.")
 
         self._model_deployment_spec.save(
             database_name=database_name,

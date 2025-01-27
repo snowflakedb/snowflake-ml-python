@@ -124,33 +124,27 @@ class SeqOfTensorflowTensorHandlerTest(absltest.TestCase):
         self.assertEqual(tensorflow_handler.SeqOfTensorflowTensorHandler.count(t), 1)
 
     def test_trunc_tf_tensor(self) -> None:
-        t = [tf.constant([1] * (tensorflow_handler.SeqOfTensorflowTensorHandler.SIG_INFER_ROWS_COUNT_LIMIT + 1))]
+        t = [tf.constant([1] * 11)]
 
-        for ts in tensorflow_handler.SeqOfTensorflowTensorHandler.truncate(t):
-            tf.assert_equal(
-                tf.constant([1] * (tensorflow_handler.SeqOfTensorflowTensorHandler.SIG_INFER_ROWS_COUNT_LIMIT)), ts
-            )
+        for ts in tensorflow_handler.SeqOfTensorflowTensorHandler.truncate(t, 10):
+            tf.assert_equal(tf.constant([1] * 10), ts)
 
-        t = [tf.constant([1] * (tensorflow_handler.SeqOfTensorflowTensorHandler.SIG_INFER_ROWS_COUNT_LIMIT - 1))]
+        t = [tf.constant([1] * 9)]
 
-        for ts in tensorflow_handler.SeqOfTensorflowTensorHandler.truncate(t):
-            tf.assert_equal(
-                tf.constant([1] * (tensorflow_handler.SeqOfTensorflowTensorHandler.SIG_INFER_ROWS_COUNT_LIMIT - 1)), ts
-            )
+        for ts in tensorflow_handler.SeqOfTensorflowTensorHandler.truncate(t, 10):
+            tf.assert_equal(tf.constant([1] * 9), ts)
 
-        t = [tf.constant([1] * (tensorflow_handler.SeqOfTensorflowTensorHandler.SIG_INFER_ROWS_COUNT_LIMIT + 1))] * 2
+        t = [tf.constant([1] * 11)] * 2
 
-        for ts in tensorflow_handler.SeqOfTensorflowTensorHandler.truncate(t):
-            tf.assert_equal(
-                tf.constant([1] * (tensorflow_handler.SeqOfTensorflowTensorHandler.SIG_INFER_ROWS_COUNT_LIMIT)), ts
-            )
+        for ts in tensorflow_handler.SeqOfTensorflowTensorHandler.truncate(t, 10):
+            tf.assert_equal(tf.constant([1] * 10), ts)
 
         t = [
             tf.constant([1]),
-            tf.constant([1] * (tensorflow_handler.SeqOfTensorflowTensorHandler.SIG_INFER_ROWS_COUNT_LIMIT - 1)),
+            tf.constant([1] * 9),
         ]
 
-        for ts in tensorflow_handler.SeqOfTensorflowTensorHandler.truncate(t):
+        for ts in tensorflow_handler.SeqOfTensorflowTensorHandler.truncate(t, 10):
             tf.assert_equal(tf.constant([1]), ts)
 
     def test_infer_schema_tf_tensor(self) -> None:

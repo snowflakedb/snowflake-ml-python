@@ -1,0 +1,67 @@
+load("//bazel:py_rules.bzl", "py_library", "py_test")
+
+package(default_visibility = ["//visibility:public"])
+
+py_library(
+    name = "types",
+    srcs = ["types.py"],
+)
+
+py_library(
+    name = "constants",
+    srcs = ["constants.py"],
+    deps = [
+        ":types",
+        "//snowflake/ml/_internal/utils:snowflake_env",
+    ],
+)
+
+py_library(
+    name = "spec_utils",
+    srcs = [
+        "spec_utils.py",
+    ],
+    deps = [
+        ":constants",
+        ":types",
+        "//snowflake/ml/_internal/utils:snowflake_env",
+    ],
+)
+
+py_test(
+    name = "spec_utils_test",
+    srcs = ["spec_utils_test.py"],
+    data = glob(["test_files/**"]),
+    deps = [
+        ":spec_utils",
+    ],
+)
+
+py_library(
+    name = "payload_utils",
+    srcs = ["payload_utils.py"],
+    deps = [
+        ":constants",
+        ":types",
+    ],
+)
+
+py_test(
+    name = "payload_utils_test",
+    srcs = [
+        "payload_utils_test.py",
+        "payload_utils_test_helper.py",
+    ],
+    deps = [
+        ":payload_utils",
+    ],
+)
+
+py_library(
+    name = "job_utils",
+    srcs = [],
+    deps = [
+        ":payload_utils",
+        ":spec_utils",
+    ],
+)

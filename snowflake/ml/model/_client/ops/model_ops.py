@@ -33,6 +33,7 @@ from snowflake.snowpark._internal import utils as snowpark_utils
 
 class ServiceInfo(TypedDict):
     name: str
+    status: str
     inference_endpoint: Optional[str]
 
 
@@ -550,9 +551,13 @@ class ModelOperator:
         fully_qualified_service_names = [str(service) for service in json_array if "MODEL_BUILD_" not in service]
 
         result = []
-        ingress_url: Optional[str] = None
+
         for fully_qualified_service_name in fully_qualified_service_names:
+            ingress_url: Optional[str] = None
             db, schema, service_name = sql_identifier.parse_fully_qualified_name(fully_qualified_service_name)
+            service_status, _ = self._service_client.get_service_status(
+                database_name=db, schema_name=schema, service_name=service_name, statement_params=statement_params
+            )
             for res_row in self._service_client.show_endpoints(
                 database_name=db, schema_name=schema, service_name=service_name, statement_params=statement_params
             ):
@@ -566,7 +571,11 @@ class ModelOperator:
                     )
                     if not ingress_url.endswith(ModelOperator.INGRESS_ENDPOINT_URL_SUFFIX):
                         ingress_url = None
-            result.append(ServiceInfo(name=fully_qualified_service_name, inference_endpoint=ingress_url))
+            result.append(
+                ServiceInfo(
+                    name=fully_qualified_service_name, status=service_status.value, inference_endpoint=ingress_url
+                )
+            )
 
         return result
 

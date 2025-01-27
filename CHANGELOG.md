@@ -1,6 +1,29 @@
 # Release History
 
-## 1.7.3
+## 1.7.4
+
+- FileSet: The `snowflake.ml.fileset.FileSet` has been deprecated and will be removed in a future version.
+  Use [snowflake.ml.dataset.Dataset](https://docs.snowflake.com/en/developer-guide/snowflake-ml/dataset) and
+  [snowflake.ml.data.DataConnector](https://docs.snowflake.com/en/developer-guide/snowpark-ml/reference/latest/api/data/snowflake.ml.data.data_connector.DataConnector)
+  instead.
+
+### Bug Fixes
+
+- Registry: Fixed an issue that the hugging face pipeline is loaded using incorrect dtype.
+- Registry: Fixed an issue that only 1 row is used when infer the model signature in the modeling model.
+
+### Behavior Changes
+
+- Registry: `ModelVersion.run` on a service would require redeploying the service once account opts into nested function.
+
+### New Features
+
+- Add new `snowflake.ml.jobs` preview API for running headless workloads on SPCS using
+  [Container Runtime for ML](https://docs.snowflake.com/en/developer-guide/snowflake-ml/container-runtime-ml)
+- Added `guardrails` option to Cortex `complete` function, enabling
+  [Cortex Guard](https://docs.snowflake.com/en/user-guide/snowflake-cortex/llm-functions#cortex-guard) support
+
+## 1.7.3 (2025-01-08)
 
 - Added lowercase versions of Cortex functions, added deprecation warning to Capitalized versions.
 - Bumped the requirements of `fsspec` and `s3fs` to `>=2024.6.1,<2026`
@@ -18,13 +41,13 @@
 - Registry: Fix error in log_model for any sklearn models with only data pre-processing including pre-processing only
   pipeline models due to default explainability enablement.
 
-### Behavior Changes
-
 ### New Features
 
 - Added `user_files` argument to `Registry.log_model` for including images or any extra file with the model.
 - Registry: Added support for handling Hugging Face model configurations with auto-mapping functionality
 - DataConnector: Add new `DataConnector.from_sql()` constructor
+- Registry: Provided new arguments to `snowflake.ml.model.model_signature.infer_signature` method to specify rows limit
+  to be used when inferring the signature.
 
 ## 1.7.2 (2024-11-21)
 
@@ -32,8 +55,6 @@
 
 - Model Explainability: Fix issue that explain is enabled for scikit-learn pipeline
 whose task is UNKNOWN and fails later when invoked.
-
-### Behavior Changes
 
 ### New Features
 
@@ -53,8 +74,6 @@ signature inference.
 - Data: Fix missing `snowflake.ml.data.*` module exports in wheel
 - Dataset: Fix missing `snowflake.ml.dataset.*` module exports in wheel.
 - Registry: Fix the issue that `tf_keras.Model` is not recognized as keras model when logging.
-
-### Behavior Changes
 
 ### New Features
 
@@ -303,10 +322,6 @@ data from explainablity and data lineage.
 - Registry: Fix an issue that leads to unable to log model in store procedure.
 - Modeling: Quick fix `import snowflake.ml.modeling.parameters.enable_anonymous_sproc` cannot be imported due to package
   dependency error.
-
-### Behavior Changes
-
-### New Features
 
 ## 1.5.1 (05-22-2024)
 

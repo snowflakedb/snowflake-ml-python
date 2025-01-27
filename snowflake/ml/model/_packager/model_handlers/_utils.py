@@ -38,8 +38,10 @@ def _is_callable(model: model_types.SupportedModelType, method_name: str) -> boo
     return callable(getattr(model, method_name, None))
 
 
-def get_truncated_sample_data(sample_input_data: model_types.SupportedDataType) -> model_types.SupportedLocalDataType:
-    trunc_sample_input = model_signature._truncate_data(sample_input_data)
+def get_truncated_sample_data(
+    sample_input_data: model_types.SupportedDataType, length: int = 100
+) -> model_types.SupportedLocalDataType:
+    trunc_sample_input = model_signature._truncate_data(sample_input_data, length=length)
     local_sample_input: model_types.SupportedLocalDataType = None
     if isinstance(sample_input_data, SnowparkDataFrame):
         # Added because of Any from missing stubs.
@@ -78,7 +80,14 @@ def validate_signature(
     local_sample_input = get_truncated_sample_data(sample_input_data)
     for target_method in target_methods:
         predictions_df = get_prediction_fn(target_method, local_sample_input)
-        sig = model_signature.infer_signature(local_sample_input, predictions_df)
+        sig = model_signature.infer_signature(
+            sample_input_data,
+            predictions_df,
+            input_feature_names=None,
+            output_feature_names=None,
+            input_data_limit=100,
+            output_data_limit=100,
+        )
         model_meta.signatures[target_method] = sig
 
     return model_meta

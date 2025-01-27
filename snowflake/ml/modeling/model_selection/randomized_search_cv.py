@@ -18,6 +18,7 @@ from snowflake.ml.model.model_signature import (
     ModelSignature,
     _infer_signature,
     _rename_signature_with_snowflake_identifiers,
+    _truncate_data,
 )
 from snowflake.ml.modeling._internal.estimator_utils import (
     gather_dependencies,
@@ -43,6 +44,8 @@ _PROJECT = "ModelDevelopment"
 # e.g. sklearn.linear_model -> LinearModel.
 _SUBPROJECT = "ModelSelection"
 DEFAULT_UDTF_NJOBS = 3
+
+INFER_SIGNATURE_MAX_ROWS = 100
 
 DATAFRAME_TYPE = Union[DataFrame, pd.DataFrame]
 
@@ -825,7 +828,13 @@ class RandomizedSearchCV(BaseTransformer):
 
         PROB_FUNCTIONS = ["predict_log_proba", "predict_proba", "decision_function"]
 
-        inputs = list(_infer_signature(dataset[self.input_cols], "input", use_snowflake_identifiers=True))
+        inputs = list(
+            _infer_signature(
+                _truncate_data(dataset[self.input_cols], INFER_SIGNATURE_MAX_ROWS),
+                "input",
+                use_snowflake_identifiers=True,
+            )
+        )
         outputs: List[BaseFeatureSpec] = []
         if hasattr(self, "predict"):
             # keep mypy happy
@@ -833,7 +842,13 @@ class RandomizedSearchCV(BaseTransformer):
             # For classifier, the type of predict is the same as the type of label
             if self._sklearn_object._estimator_type == "classifier":
                 # label columns is the desired type for output
-                outputs = list(_infer_signature(dataset[self.label_cols], "output", use_snowflake_identifiers=True))
+                outputs = list(
+                    _infer_signature(
+                        _truncate_data(dataset[self.label_cols], INFER_SIGNATURE_MAX_ROWS),
+                        "output",
+                        use_snowflake_identifiers=True,
+                    )
+                )
                 # rename the output columns
                 outputs = list(model_signature_utils.rename_features(outputs, self.output_cols))
                 self._model_signature_dict["predict"] = ModelSignature(

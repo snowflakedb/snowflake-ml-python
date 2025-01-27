@@ -10,19 +10,14 @@ from snowflake.ml._internal import file_utils
 from snowflake.ml._internal.utils import sql_identifier
 from snowflake.ml.model._client.ops import service_ops
 from snowflake.ml.model._client.sql import service as service_sql
-from snowflake.ml.test_utils import mock_data_frame, mock_session
-from snowflake.snowpark import Session, row
+from snowflake.ml.test_utils import mock_session
+from snowflake.snowpark import Session
 from snowflake.snowpark._internal import utils as snowpark_utils
 
 
 class ModelOpsTest(absltest.TestCase):
     def setUp(self) -> None:
         self.m_session = mock_session.MockSession(conn=None, test_case=self)
-        # TODO(hayu): Remove mock sql after Snowflake 8.40.0 release
-        query = "SELECT CURRENT_VERSION() AS CURRENT_VERSION"
-        sql_result = [row.Row(CURRENT_VERSION="8.40.0 1234567890ab")]
-        self.m_session.add_mock_sql(query=query, result=mock_data_frame.MockDataFrame(sql_result))
-
         self.m_statement_params = {"test": "1"}
         self.c_session = cast(Session, self.m_session)
         self.m_ops = service_ops.ServiceOperator(

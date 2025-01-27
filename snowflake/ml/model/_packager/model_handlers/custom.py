@@ -66,7 +66,7 @@ class CustomModelHandler(_base.BaseModelHandler["custom_model.CustomModel"]):
                 sample_input_data = model_signature._convert_local_data_to_df(sample_input_data)
 
             if inspect.iscoroutinefunction(target_method):
-                with anyio.start_blocking_portal() as portal:
+                with anyio.from_thread.start_blocking_portal() as portal:
                     predictions_df = portal.call(target_method, model, sample_input_data)
             else:
                 predictions_df = target_method(model, sample_input_data)
@@ -98,7 +98,6 @@ class CustomModelHandler(_base.BaseModelHandler["custom_model.CustomModel"]):
         if model.context.model_refs:
             for sub_name, model_ref in model.context.model_refs.items():
                 handler = model_handler.find_handler(model_ref.model)
-                assert handler is not None
                 if handler is None:
                     raise TypeError("Your input type to custom model is not currently supported")
                 sub_model = handler.cast_model(model_ref.model)

@@ -12,7 +12,6 @@ class BaseDataHandler(ABC, Generic[model_types._DataType]):
     FEATURE_PREFIX: Final[str] = "feature"
     INPUT_PREFIX: Final[str] = "input"
     OUTPUT_PREFIX: Final[str] = "output"
-    SIG_INFER_ROWS_COUNT_LIMIT: Final[int] = 10
 
     @staticmethod
     @abstractmethod
@@ -26,7 +25,7 @@ class BaseDataHandler(ABC, Generic[model_types._DataType]):
 
     @staticmethod
     @abstractmethod
-    def truncate(data: model_types._DataType) -> model_types._DataType:
+    def truncate(data: model_types._DataType, length: int) -> model_types._DataType:
         ...
 
     @staticmethod

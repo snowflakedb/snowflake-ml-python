@@ -35,8 +35,8 @@ class ListOfBuiltinHandler(base_handler.BaseDataHandler[model_types._SupportedBu
         return len(data)
 
     @staticmethod
-    def truncate(data: model_types._SupportedBuiltinsList) -> model_types._SupportedBuiltinsList:
-        return data[: min(ListOfBuiltinHandler.count(data), ListOfBuiltinHandler.SIG_INFER_ROWS_COUNT_LIMIT)]
+    def truncate(data: model_types._SupportedBuiltinsList, length: int) -> model_types._SupportedBuiltinsList:
+        return data[: min(ListOfBuiltinHandler.count(data), length)]
 
     @staticmethod
     def validate(data: model_types._SupportedBuiltinsList) -> None:

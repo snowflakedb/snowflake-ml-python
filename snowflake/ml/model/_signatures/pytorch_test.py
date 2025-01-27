@@ -57,33 +57,27 @@ class SeqOfPyTorchTensorHandlerTest(absltest.TestCase):
             pytorch_handler.SeqOfPyTorchTensorHandler.validate(t)
 
     def test_trunc_torch_tensor(self) -> None:
-        t = [torch.Tensor([1] * (pytorch_handler.SeqOfPyTorchTensorHandler.SIG_INFER_ROWS_COUNT_LIMIT + 1))]
+        t = [torch.Tensor([1] * 11)]
 
-        for ts in pytorch_handler.SeqOfPyTorchTensorHandler.truncate(t):
-            torch.testing.assert_close(
-                torch.Tensor([1] * (pytorch_handler.SeqOfPyTorchTensorHandler.SIG_INFER_ROWS_COUNT_LIMIT)), ts
-            )
+        for ts in pytorch_handler.SeqOfPyTorchTensorHandler.truncate(t, 10):
+            torch.testing.assert_close(torch.Tensor([1] * 10), ts)
 
-        t = [torch.Tensor([1] * (pytorch_handler.SeqOfPyTorchTensorHandler.SIG_INFER_ROWS_COUNT_LIMIT - 1))]
+        t = [torch.Tensor([1] * 9)]
 
-        for ts in pytorch_handler.SeqOfPyTorchTensorHandler.truncate(t):
-            torch.testing.assert_close(
-                torch.Tensor([1] * (pytorch_handler.SeqOfPyTorchTensorHandler.SIG_INFER_ROWS_COUNT_LIMIT - 1)), ts
-            )
+        for ts in pytorch_handler.SeqOfPyTorchTensorHandler.truncate(t, 10):
+            torch.testing.assert_close(torch.Tensor([1] * 9), ts)
 
-        t = [torch.Tensor([1] * (pytorch_handler.SeqOfPyTorchTensorHandler.SIG_INFER_ROWS_COUNT_LIMIT + 1))] * 2
+        t = [torch.Tensor([1] * 11)] * 2
 
-        for ts in pytorch_handler.SeqOfPyTorchTensorHandler.truncate(t):
-            torch.testing.assert_close(
-                torch.Tensor([1] * (pytorch_handler.SeqOfPyTorchTensorHandler.SIG_INFER_ROWS_COUNT_LIMIT)), ts
-            )
+        for ts in pytorch_handler.SeqOfPyTorchTensorHandler.truncate(t, 10):
+            torch.testing.assert_close(torch.Tensor([1] * 10), ts)
 
         t = [
             torch.Tensor([1]),
-            torch.Tensor([1] * (pytorch_handler.SeqOfPyTorchTensorHandler.SIG_INFER_ROWS_COUNT_LIMIT - 1)),
+            torch.Tensor([1] * 9),
         ]
 
-        for ts in pytorch_handler.SeqOfPyTorchTensorHandler.truncate(t):
+        for ts in pytorch_handler.SeqOfPyTorchTensorHandler.truncate(t, 10):
             torch.testing.assert_close(torch.Tensor([1]), ts)
 
     def test_infer_schema_torch_tensor(self) -> None:

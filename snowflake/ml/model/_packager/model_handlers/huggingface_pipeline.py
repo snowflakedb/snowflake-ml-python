@@ -323,6 +323,7 @@ class HuggingFacePipelineHandler(
                 model_blob_options["task"],
                 model=model_blob_file_or_dir_path,
                 trust_remote_code=True,
+                torch_dtype="auto",
                 **device_config,
             )
 

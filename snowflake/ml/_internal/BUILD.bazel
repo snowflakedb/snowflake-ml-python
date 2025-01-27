@@ -92,3 +92,22 @@ py_library(
     name = "migrator_utils",
     srcs = ["migrator_utils.py"],
 )
+
+py_library(
+    name = "platform_capabilities",
+    srcs = ["platform_capabilities.py"],
+    deps = [
+        "//snowflake/ml/_internal/exceptions",
+        "//snowflake/ml/_internal/utils:query_result_checker",
+    ],
+)
+
+py_test(
+    name = "platform_capabilities_test",
+    srcs = ["platform_capabilities_test.py"],
+    deps = [
+        ":platform_capabilities",
+        "//snowflake/ml/test_utils:mock_data_frame",
+        "//snowflake/ml/test_utils:mock_session",
+    ],
+)

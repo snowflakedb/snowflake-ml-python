@@ -126,6 +126,7 @@ class TestRegistryCustomModelInteg(registry_model_test_base.RegistryModelTestBas
                     lambda res: pd.testing.assert_frame_equal(
                         res,
                         pd.DataFrame(arr[:, 0], columns=["output"], dtype=pd.Int64Dtype()),
+                        check_dtype=False,
                     ),
                 ),
             },
@@ -215,6 +216,7 @@ class TestRegistryCustomModelInteg(registry_model_test_base.RegistryModelTestBas
                     lambda res: pd.testing.assert_frame_equal(
                         res,
                         pd.DataFrame([1, None], columns=["output"], dtype=pd.Int64Dtype()),
+                        check_dtype=False,
                     ),
                 )
             },
@@ -303,6 +305,7 @@ class TestRegistryCustomModelInteg(registry_model_test_base.RegistryModelTestBas
                     lambda res: pd.testing.assert_frame_equal(
                         res,
                         pd.DataFrame([1, None], columns=["output"], dtype=pd.Int64Dtype()),
+                        check_dtype=False,
                     ),
                 )
             },

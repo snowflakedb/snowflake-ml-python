@@ -15,7 +15,7 @@ class StringMatcherIgnoreWhitespaceTest(TestCase):
 
     def test_with_tabs(self) -> None:
         """Test that tabs are ignored when matching strings."""
-        self.assertEqual(StringMatcherIgnoreWhitespace("\ttext\twith\ttabs\t"), "textwith\ttabs")
+        self.assertEqual(StringMatcherIgnoreWhitespace("\ttext\twith\ttabs\t"), "text with\ttabs")
 
     def test_with_newlines_cr(self) -> None:
         """Test that newline and carriage return are ignored when matching strings."""
