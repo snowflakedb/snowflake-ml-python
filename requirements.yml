@@ -77,7 +77,7 @@
   version_requirements_conda: '!=4.0.0a0, !=4.0.0a1'
 - name: anyio
   dev_version: 3.5.0
-  version_requirements: '>=3.5.0,<4'
+  version_requirements: '>=3.5.0,<5'
 - name: build
   dev_version: 0.10.0
   tags:
@@ -242,7 +242,7 @@
   version_requirements: '>=3.5.0,<4'
 - name: snowflake-snowpark-python
   dev_version: 1.17.0
-  version_requirements: '>=1.17.0,<2'
+  version_requirements: '>=1.17.0,<2,!=1.26.0'
 - name: sphinx
   dev_version: 5.0.2
   tags:

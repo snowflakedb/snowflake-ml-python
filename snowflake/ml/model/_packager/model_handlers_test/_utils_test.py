@@ -300,19 +300,18 @@ class UtilTest(absltest.TestCase):
         self.assertEqual(predict_sig, meta.signatures.get("predict"))
 
     def test_get_truncated_sample_data(self) -> None:
-        # the data is truncated w.r.t SIG_INFER_ROWS_COUNT_LIMIT
 
         # when data_size > 10 rows
         df = pd.DataFrame(np.random.randint(0, 100, size=(100, 3)))
-        self.assertEqual(10, cast(pd.DataFrame, handlers_utils.get_truncated_sample_data(df)).shape[0])
+        self.assertEqual(10, cast(pd.DataFrame, handlers_utils.get_truncated_sample_data(df, 10)).shape[0])
 
         # when data_size = 10 rows
         df = pd.DataFrame(np.random.randint(0, 100, size=(10, 3)))
-        self.assertEqual(10, cast(pd.DataFrame, handlers_utils.get_truncated_sample_data(df)).shape[0])
+        self.assertEqual(10, cast(pd.DataFrame, handlers_utils.get_truncated_sample_data(df, 10)).shape[0])
 
         # when data_size < 10 rows
         df = pd.DataFrame(np.random.randint(0, 100, size=(5, 3)))
-        self.assertEqual(5, cast(pd.DataFrame, handlers_utils.get_truncated_sample_data(df)).shape[0])
+        self.assertEqual(5, cast(pd.DataFrame, handlers_utils.get_truncated_sample_data(df, 10)).shape[0])
 
 
 if __name__ == "__main__":

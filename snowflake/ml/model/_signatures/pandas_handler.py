@@ -23,8 +23,8 @@ class PandasDataFrameHandler(base_handler.BaseDataHandler[pd.DataFrame]):
         return len(data.index)
 
     @staticmethod
-    def truncate(data: pd.DataFrame) -> pd.DataFrame:
-        return data.head(min(PandasDataFrameHandler.count(data), PandasDataFrameHandler.SIG_INFER_ROWS_COUNT_LIMIT))
+    def truncate(data: pd.DataFrame, length: int) -> pd.DataFrame:
+        return data.head(min(PandasDataFrameHandler.count(data), length))
 
     @staticmethod
     def validate(data: Union[pd.DataFrame, pd.Series]) -> None:

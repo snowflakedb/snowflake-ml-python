@@ -60,14 +60,9 @@ class SeqOfTensorflowTensorHandler(
 
     @staticmethod
     def truncate(
-        data: Sequence[Union["tensorflow.Tensor", "tensorflow.Variable"]]
+        data: Sequence[Union["tensorflow.Tensor", "tensorflow.Variable"]], length: int
     ) -> Sequence[Union["tensorflow.Tensor", "tensorflow.Variable"]]:
-        return [
-            data_col[
-                : min(SeqOfTensorflowTensorHandler.count(data), SeqOfTensorflowTensorHandler.SIG_INFER_ROWS_COUNT_LIMIT)
-            ]
-            for data_col in data
-        ]
+        return [data_col[: min(SeqOfTensorflowTensorHandler.count(data), length)] for data_col in data]
 
     @staticmethod
     def validate(data: Sequence[Union["tensorflow.Tensor", "tensorflow.Variable"]]) -> None:

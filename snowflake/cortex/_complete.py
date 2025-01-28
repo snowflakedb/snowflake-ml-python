@@ -49,11 +49,24 @@ class CompleteOptions(TypedDict):
     generally used as an alternative to temperature. The difference is that top_p restricts the set of possible tokens
     that the model outputs, while temperature influences which tokens are chosen at each step. """
 
+    guardrails: NotRequired[bool]
+    """ A boolean value that controls whether Cortex Guard filters unsafe or harmful responses
+    from the language model. """
+
 
 class ResponseParseException(Exception):
     """This exception is raised when the server response cannot be parsed."""
 
     pass
+
+
+class GuardrailsOptions(TypedDict):
+    enabled: bool
+    """A boolean value that controls whether Cortex Guard filters unsafe or harmful responses
+    from the language model."""
+
+    response_when_unsafe: str
+    """The response to return when the language model generates unsafe or harmful content."""
 
 
 _MAX_RETRY_SECONDS = 30
@@ -117,6 +130,12 @@ def _make_request_body(
             data["temperature"] = options["temperature"]
         if "top_p" in options:
             data["top_p"] = options["top_p"]
+        if "guardrails" in options and options["guardrails"]:
+            guardrails_options: GuardrailsOptions = {
+                "enabled": True,
+                "response_when_unsafe": "Response filtered by Cortex Guard",
+            }
+            data["guardrails"] = guardrails_options
     return data
 
 

@@ -59,11 +59,16 @@ _ALL_DATA_HANDLERS = _LOCAL_DATA_HANDLERS + [snowpark_handler.SnowparkDataFrameH
 
 def _truncate_data(
     data: model_types.SupportedDataType,
+    length: Optional[int] = 100,
 ) -> model_types.SupportedDataType:
     for handler in _ALL_DATA_HANDLERS:
         if handler.can_handle(data):
+            # If length is None, return the original data
+            if length is None:
+                return data
+
             row_count = handler.count(data)
-            if row_count <= handler.SIG_INFER_ROWS_COUNT_LIMIT:
+            if row_count <= length:
                 return data
 
             warnings.warn(
@@ -77,7 +82,7 @@ def _truncate_data(
                 category=UserWarning,
                 stacklevel=1,
             )
-            return handler.truncate(data)
+            return handler.truncate(data, length)
     raise snowml_exceptions.SnowflakeMLException(
         error_code=error_codes.NOT_IMPLEMENTED,
         original_exception=NotImplementedError(
@@ -687,6 +692,8 @@ def infer_signature(
     output_data: model_types.SupportedLocalDataType,
     input_feature_names: Optional[List[str]] = None,
     output_feature_names: Optional[List[str]] = None,
+    input_data_limit: Optional[int] = 100,
+    output_data_limit: Optional[int] = 100,
 ) -> core.ModelSignature:
     """
     Infer model signature from given input and output sample data.
@@ -710,12 +717,18 @@ def infer_signature(
         output_data: Sample output data for the model.
         input_feature_names: Names for input features. Defaults to None.
         output_feature_names: Names for output features. Defaults to None.
+        input_data_limit: Limit the number of rows to be used in signature inference in the input data. Defaults to 100.
+            If None, all rows are used. If the number of rows in the input data is less than the limit, all rows are
+            used.
+        output_data_limit: Limit the number of rows to be used in signature inference in the output data. Defaults to
+            100. If None, all rows are used. If the number of rows in the output data is less than the limit, all rows
+            are used.
 
     Returns:
         A model signature inferred from the given input and output sample data.
     """
-    inputs = _infer_signature(input_data, role="input")
+    inputs = _infer_signature(_truncate_data(input_data, input_data_limit), role="input")
     inputs = utils.rename_features(inputs, input_feature_names)
-    outputs = _infer_signature(output_data, role="output")
+    outputs = _infer_signature(_truncate_data(output_data, output_data_limit), role="output")
     outputs = utils.rename_features(outputs, output_feature_names)
     return core.ModelSignature(inputs, outputs)

@@ -6,7 +6,8 @@ from unittest import mock
 from absl.testing import absltest
 
 from snowflake import snowpark
-from snowflake.ml._internal.utils import sql_identifier
+from snowflake.ml._internal import platform_capabilities
+from snowflake.ml._internal.utils import sql_identifier, string_matcher
 from snowflake.ml.model._client.sql import service as service_sql
 from snowflake.ml.test_utils import mock_data_frame, mock_session
 from snowflake.snowpark import DataFrame, Row, Session, functions as F, types as spt
@@ -115,9 +116,13 @@ class ServiceSQLTest(absltest.TestCase):
         m_df.__setattr__("write", mock_writer)
         m_df.add_query("queries", "query_1")
         m_df.add_query("queries", "query_2")
+        mock_capabilities = mock.MagicMock()
+        mock_capabilities.is_nested_function_enabled.return_value = False
+
         with mock.patch.object(mock_writer, "save_as_table") as mock_save_as_table, mock.patch.object(
             snowpark_utils, "generate_random_alphanumeric", return_value="ABCDEF0123"
-        ):
+        ), mock.patch.object(platform_capabilities.PlatformCapabilities, "get_instance") as mock_get_instance:
+            mock_get_instance.return_value = mock_capabilities
             service_sql.ServiceSQLClient(
                 c_session,
                 database_name=sql_identifier.SqlIdentifier("TEMP"),
@@ -142,11 +147,14 @@ class ServiceSQLTest(absltest.TestCase):
     def test_invoke_function_method_1(self) -> None:
         m_statement_params = {"test": "1"}
         m_df = mock_data_frame.MockDataFrame()
+        # sqlparse library does not know ! syntax, hence use string matcher. We need to be careful about
+        # upper/lower case of keywords in expected SQL statement.
         self.m_session.add_mock_sql(
             """SELECT *,
-                FOO."bar"."service_PREDICT"(COL1, COL2) AS TMP_RESULT_ABCDEF0123
+                FOO."bar"."service"!PREDICT(COL1, COL2) AS TMP_RESULT_ABCDEF0123
             FROM FOO."bar".SNOWPARK_TEMP_TABLE_ABCDEF0123""",
             m_df,
+            matcher=string_matcher.StringMatcherIgnoreWhitespace,
         )
         m_df.add_mock_with_columns(["OUTPUT_1"], [F.col("OUTPUT_1")]).add_mock_drop("TMP_RESULT_ABCDEF0123")
         c_session = cast(Session, self.m_session)
@@ -154,11 +162,17 @@ class ServiceSQLTest(absltest.TestCase):
         m_df.__setattr__("write", mock_writer)
         m_df.add_query("queries", "query_1")
         m_df.add_query("queries", "query_2")
+        mock_capabilities = mock.MagicMock()
+        mock_capabilities.is_nested_function_enabled.return_value = True
+
         with mock.patch.object(mock_writer, "save_as_table") as mock_save_as_table, mock.patch.object(
             snowpark_utils, "random_name_for_temp_object", return_value="SNOWPARK_TEMP_TABLE_ABCDEF0123"
         ) as mock_random_name_for_temp_object, mock.patch.object(
             snowpark_utils, "generate_random_alphanumeric", return_value="ABCDEF0123"
-        ):
+        ), mock.patch.object(
+            platform_capabilities.PlatformCapabilities, "get_instance"
+        ) as mock_get_instance:
+            mock_get_instance.return_value = mock_capabilities
             service_sql.ServiceSQLClient(
                 c_session,
                 database_name=sql_identifier.SqlIdentifier("TEMP"),
@@ -194,7 +208,12 @@ class ServiceSQLTest(absltest.TestCase):
         m_df.add_mock_with_columns(["OUTPUT_1"], [F.col("OUTPUT_1")]).add_mock_drop("TMP_RESULT_ABCDEF0123")
         c_session = cast(Session, self.m_session)
         m_df.add_query("queries", "query_1")
-        with mock.patch.object(snowpark_utils, "generate_random_alphanumeric", return_value="ABCDEF0123"):
+        mock_capabilities = mock.MagicMock()
+        mock_capabilities.is_nested_function_enabled.return_value = False
+        with mock.patch.object(
+            snowpark_utils, "generate_random_alphanumeric", return_value="ABCDEF0123"
+        ), mock.patch.object(platform_capabilities.PlatformCapabilities, "get_instance") as mock_get_instance:
+            mock_get_instance.return_value = mock_capabilities
             service_sql.ServiceSQLClient(
                 c_session,
                 database_name=sql_identifier.SqlIdentifier("TEMP"),

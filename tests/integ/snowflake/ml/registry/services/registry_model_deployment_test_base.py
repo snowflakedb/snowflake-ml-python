@@ -16,7 +16,6 @@ import yaml
 from absl.testing import absltest
 from cryptography.hazmat import backends
 from cryptography.hazmat.primitives import serialization
-from packaging import version
 
 from snowflake.ml._internal import file_utils
 from snowflake.ml._internal.utils import (
@@ -102,32 +101,35 @@ class RegistryModelDeploymentTestBase(common_test_base.CommonTestBase):
         build_compute_pool = sql_identifier.SqlIdentifier(self._TEST_CPU_COMPUTE_POOL)
 
         # create a temp stage
-        database_name = sql_identifier.SqlIdentifier(self._test_db)
-        schema_name = sql_identifier.SqlIdentifier(self._test_schema)
+        database_name_id, schema_name_id, service_name_id = sql_identifier.parse_fully_qualified_name(service_name)
+        database_name_id = database_name_id or sql_identifier.SqlIdentifier(self._test_db)
+        schema_name_id = schema_name_id or sql_identifier.SqlIdentifier(self._test_schema)
         stage_name = sql_identifier.SqlIdentifier(
             snowpark_utils.random_name_for_temp_object(snowpark_utils.TempObjectType.STAGE)
         )
         image_repo_name = sql_identifier.SqlIdentifier(self._test_image_repo)
 
         mv._service_ops._stage_client.create_tmp_stage(
-            database_name=database_name, schema_name=schema_name, stage_name=stage_name
+            database_name=database_name_id, schema_name=schema_name_id, stage_name=stage_name
         )
-        stage_path = mv._service_ops._stage_client.fully_qualified_object_name(database_name, schema_name, stage_name)
+        stage_path = mv._service_ops._stage_client.fully_qualified_object_name(
+            database_name_id, schema_name_id, stage_name
+        )
 
         deploy_spec_file_rel_path = model_deployment_spec.ModelDeploymentSpec.DEPLOY_SPEC_FILE_REL_PATH
 
         mv._service_ops._model_deployment_spec.save(
-            database_name=database_name,
-            schema_name=schema_name,
+            database_name=mv._model_ops._model_version_client._database_name,
+            schema_name=mv._model_ops._model_version_client._schema_name,
             model_name=mv._model_name,
             version_name=mv._version_name,
-            service_database_name=database_name,
-            service_schema_name=schema_name,
-            service_name=sql_identifier.SqlIdentifier(service_name),
+            service_database_name=database_name_id,
+            service_schema_name=schema_name_id,
+            service_name=service_name_id,
             image_build_compute_pool_name=build_compute_pool,
             service_compute_pool_name=sql_identifier.SqlIdentifier(service_compute_pool),
-            image_repo_database_name=database_name,
-            image_repo_schema_name=schema_name,
+            image_repo_database_name=database_name_id,
+            image_repo_schema_name=schema_name_id,
             image_repo_name=image_repo_name,
             ingress_enabled=True,
             max_instances=max_instances,
@@ -160,30 +162,23 @@ class RegistryModelDeploymentTestBase(common_test_base.CommonTestBase):
             stage_path=stage_path, model_deployment_spec_file_rel_path=deploy_spec_file_rel_path
         )
 
-        # TODO(hayu): Remove the version check after Snowflake 8.37.0 release
-        if snowflake_env.get_current_snowflake_version(self.session) >= version.parse("8.37.0"):
-            # stream service logs in a thread
-            model_build_service_name = sql_identifier.SqlIdentifier(
-                mv._service_ops._get_model_build_service_name(query_id)
-            )
-            model_build_service = service_ops.ServiceLogInfo(
-                database_name=database_name,
-                schema_name=schema_name,
-                service_name=model_build_service_name,
-                container_name="model-build",
-            )
-            model_inference_service = service_ops.ServiceLogInfo(
-                database_name=database_name,
-                schema_name=schema_name,
-                service_name=sql_identifier.SqlIdentifier(service_name),
-                container_name="model-inference",
-            )
-            services = [model_build_service, model_inference_service]
-            log_thread = mv._service_ops._start_service_log_streaming(async_job, services, False, True)
-            log_thread.join()
-        else:
-            while not async_job.is_done():
-                time.sleep(5)
+        # stream service logs in a thread
+        model_build_service_name = sql_identifier.SqlIdentifier(mv._service_ops._get_model_build_service_name(query_id))
+        model_build_service = service_ops.ServiceLogInfo(
+            database_name=database_name_id,
+            schema_name=schema_name_id,
+            service_name=model_build_service_name,
+            container_name="model-build",
+        )
+        model_inference_service = service_ops.ServiceLogInfo(
+            database_name=database_name_id,
+            schema_name=schema_name_id,
+            service_name=sql_identifier.SqlIdentifier(service_name),
+            container_name="model-inference",
+        )
+        services = [model_build_service, model_inference_service]
+        log_thread = mv._service_ops._start_service_log_streaming(async_job, services, False, True)
+        log_thread.join()
 
         res = cast(str, cast(List[row.Row], async_job.result())[0][0])
         logging.info(f"Inference service {service_name} deployment complete: {res}")
@@ -204,15 +199,6 @@ class RegistryModelDeploymentTestBase(common_test_base.CommonTestBase):
         max_batch_rows: Optional[int] = None,
         force_rebuild: bool = True,
     ) -> ModelVersion:
-        if self.BUILDER_IMAGE_PATH and self.BASE_CPU_IMAGE_PATH and self.BASE_GPU_IMAGE_PATH:
-            with_image_override = True
-        elif not self.BUILDER_IMAGE_PATH and not self.BASE_CPU_IMAGE_PATH and not self.BASE_GPU_IMAGE_PATH:
-            with_image_override = False
-        else:
-            raise ValueError(
-                "Please set or unset BUILDER_IMAGE_PATH, BASE_CPU_IMAGE_PATH, and BASE_GPU_IMAGE_PATH at the same time."
-            )
-
         conda_dependencies = [
             test_env_utils.get_latest_package_version_spec_in_server(
                 self.session, "snowflake-snowpark-python!=1.12.0, <1.21.1"
@@ -234,6 +220,37 @@ class RegistryModelDeploymentTestBase(common_test_base.CommonTestBase):
             options=options,
         )
 
+        return self._deploy_model_service(
+            mv,
+            prediction_assert_fns=prediction_assert_fns,
+            service_name=service_name,
+            gpu_requests=gpu_requests,
+            service_compute_pool=service_compute_pool,
+            num_workers=num_workers,
+            max_instances=max_instances,
+            max_batch_rows=max_batch_rows,
+        )
+
+    def _deploy_model_service(
+        self,
+        mv: ModelVersion,
+        prediction_assert_fns: Dict[str, Tuple[Any, Callable[[Any], Any]]],
+        service_name: Optional[str] = None,
+        gpu_requests: Optional[str] = None,
+        service_compute_pool: Optional[str] = None,
+        num_workers: Optional[int] = None,
+        max_instances: int = 1,
+        max_batch_rows: Optional[int] = None,
+    ) -> ModelVersion:
+        if self.BUILDER_IMAGE_PATH and self.BASE_CPU_IMAGE_PATH and self.BASE_GPU_IMAGE_PATH:
+            with_image_override = True
+        elif not self.BUILDER_IMAGE_PATH and not self.BASE_CPU_IMAGE_PATH and not self.BASE_GPU_IMAGE_PATH:
+            with_image_override = False
+        else:
+            raise ValueError(
+                "Please set or unset BUILDER_IMAGE_PATH, BASE_CPU_IMAGE_PATH, and BASE_GPU_IMAGE_PATH at the same time."
+            )
+
         if service_name is None:
             service_name = f"service_{inspect.stack()[1].function}_{self._run_id}"
         if service_compute_pool is None:
@@ -248,21 +265,27 @@ class RegistryModelDeploymentTestBase(common_test_base.CommonTestBase):
                 num_workers=num_workers,
                 max_instances=max_instances,
                 max_batch_rows=max_batch_rows,
-                force_rebuild=force_rebuild,
+                force_rebuild=False,
             )
         else:
             mv.create_service(
                 service_name=service_name,
                 image_build_compute_pool=self._TEST_CPU_COMPUTE_POOL,
                 service_compute_pool=service_compute_pool,
-                image_repo=self._test_image_repo,
+                image_repo=".".join([self._test_db, self._test_schema, self._test_image_repo]),
                 gpu_requests=gpu_requests,
-                force_rebuild=force_rebuild,
+                force_rebuild=True,
                 num_workers=num_workers,
                 max_instances=max_instances,
                 max_batch_rows=max_batch_rows,
                 ingress_enabled=True,
             )
+
+        while True:
+            service_status = mv.list_services().loc[0, "status"]
+            if service_status != "PENDING":
+                break
+            time.sleep(10)
 
         for target_method, (test_input, check_func) in prediction_assert_fns.items():
             res = mv.run(test_input, function_name=target_method, service_name=service_name)

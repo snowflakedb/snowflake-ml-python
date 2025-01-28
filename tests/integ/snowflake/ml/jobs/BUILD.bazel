@@ -1,0 +1,44 @@
+load("//bazel:py_rules.bzl", "py_library", "py_test")
+
+package(default_visibility = ["//visibility:public"])
+
+py_library(
+    name = "test_file_helper",
+    testonly = True,
+    srcs = ["test_file_helper.py"],
+    data = glob(["test_files/**"]),
+)
+
+py_test(
+    name = "payload_utils_integ_test",
+    srcs = ["payload_utils_integ_test.py"],
+    deps = [
+        ":test_file_helper",
+        "//snowflake/ml/jobs/_utils:payload_utils",
+        "//tests/integ/snowflake/ml/test_utils:db_manager",
+        "//tests/integ/snowflake/ml/test_utils:test_env_utils",
+    ],
+)
+
+py_test(
+    name = "spec_utils_integ_test",
+    srcs = ["spec_utils_integ_test.py"],
+    deps = [
+        "//snowflake/ml/jobs/_utils:spec_utils",
+        "//tests/integ/snowflake/ml/test_utils:db_manager",
+        "//tests/integ/snowflake/ml/test_utils:test_env_utils",
+    ],
+)
+
+py_test(
+    name = "jobs_integ_test",
+    timeout = "long",
+    srcs = ["jobs_integ_test.py"],
+    shard_count = 2,
+    deps = [
+        ":test_file_helper",
+        "//snowflake/ml/jobs",
+        "//tests/integ/snowflake/ml/test_utils:db_manager",
+        "//tests/integ/snowflake/ml/test_utils:test_env_utils",
+    ],
+)

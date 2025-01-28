@@ -20,7 +20,11 @@ from snowflake.ml._internal.exceptions import error_codes, exceptions
 from snowflake.ml._internal.lineage import lineage_utils
 from snowflake.ml._internal.utils import snowpark_dataframe_utils, temp_file_utils
 from snowflake.ml.data import data_source
-from snowflake.ml.model.model_signature import ModelSignature, _infer_signature
+from snowflake.ml.model.model_signature import (
+    ModelSignature,
+    _infer_signature,
+    _truncate_data,
+)
 from snowflake.ml.modeling._internal.model_transformer_builder import (
     ModelTransformerBuilder,
 )
@@ -30,6 +34,8 @@ from snowflake.snowpark._internal import utils as snowpark_utils
 
 _PROJECT = "ModelDevelopment"
 _SUBPROJECT = "Framework"
+
+INFER_SIGNATURE_MAX_ROWS = 100
 
 
 def _final_step_has(attr: str) -> Callable[..., bool]:
@@ -885,7 +891,9 @@ class Pipeline(base.BaseTransformer):
         self._model_signature_dict = dict()
 
         input_columns = self._get_sanitized_list_of_columns(dataset.columns)
-        inputs_signature = _infer_signature(dataset[input_columns], "input", use_snowflake_identifiers=True)
+        inputs_signature = _infer_signature(
+            _truncate_data(dataset[input_columns], INFER_SIGNATURE_MAX_ROWS), "input", use_snowflake_identifiers=True
+        )
 
         estimator_step = self._get_estimator()
         if estimator_step:

@@ -419,7 +419,6 @@ class Dataset(lineage_node.LineageNode):
     @telemetry.send_api_usage_telemetry(project=_PROJECT)
     def delete(self) -> None:
         """Delete Dataset and all contained versions"""
-        # TODO: Check and warn if any versions exist
         self._session.sql(f"DROP DATASET {self.fully_qualified_name}").collect(
             statement_params=_TELEMETRY_STATEMENT_PARAMS
         )

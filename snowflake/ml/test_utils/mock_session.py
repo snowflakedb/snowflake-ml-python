@@ -1,10 +1,10 @@
 from __future__ import annotations  # for return self methods
 
-from typing import Any, Optional, Type
+from typing import Any, Optional, Type, Union
 from unittest import TestCase
 
 from snowflake import snowpark
-from snowflake.ml._internal.utils.string_matcher import StringMatcherSql
+from snowflake.ml._internal.utils import string_matcher as smatcher
 from snowflake.ml.test_utils import mock_data_frame, mock_snowml_base
 from snowflake.snowpark import Session
 
@@ -58,9 +58,16 @@ class MockSession(mock_snowml_base.MockSnowMLBase):
 
     # Helpers for setting up the MockDataFrame.
 
-    def add_mock_sql(self, query: str, result: mock_data_frame.MockDataFrame) -> mock_snowml_base.MockSnowMLBase:
+    def add_mock_sql(
+        self,
+        query: str,
+        result: mock_data_frame.MockDataFrame,
+        matcher: Union[
+            type[smatcher.StringMatcherSql], type[smatcher.StringMatcherIgnoreWhitespace]
+        ] = smatcher.StringMatcherSql,
+    ) -> mock_snowml_base.MockSnowMLBase:
         """Add an expected query-result pair to the session."""
-        return self.add_operation(operation="sql", args=(), kwargs={"query": StringMatcherSql(query)}, result=result)
+        return self.add_operation(operation="sql", args=(), kwargs={"query": matcher(query)}, result=result)
 
     # DataFrame Operations
 

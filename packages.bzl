@@ -15,6 +15,7 @@ PACKAGES = [
     "//snowflake/ml/registry:model_registry_pkg",
     "//snowflake/ml/data:data_pkg",
     "//snowflake/ml/dataset:dataset_pkg",
+    "//snowflake/ml/jobs:jobs_pkg",
     # Auotgen packages
     "//snowflake/ml/modeling/linear_model:sklearn_linear_model_pkg",
     "//snowflake/ml/modeling/ensemble:sklearn_ensemble_pkg",

@@ -23,8 +23,8 @@ class NumpyArrayHandler(base_handler.BaseDataHandler[model_types._SupportedNumpy
         return data.shape[0]
 
     @staticmethod
-    def truncate(data: model_types._SupportedNumpyArray) -> model_types._SupportedNumpyArray:
-        return data[: min(NumpyArrayHandler.count(data), NumpyArrayHandler.SIG_INFER_ROWS_COUNT_LIMIT)]
+    def truncate(data: model_types._SupportedNumpyArray, length: int) -> model_types._SupportedNumpyArray:
+        return data[: min(NumpyArrayHandler.count(data), length)]
 
     @staticmethod
     def validate(data: model_types._SupportedNumpyArray) -> None:
@@ -94,11 +94,10 @@ class SeqOfNumpyArrayHandler(base_handler.BaseDataHandler[Sequence[model_types._
         return min(NumpyArrayHandler.count(data_col) for data_col in data)
 
     @staticmethod
-    def truncate(data: Sequence[model_types._SupportedNumpyArray]) -> Sequence[model_types._SupportedNumpyArray]:
-        return [
-            data_col[: min(SeqOfNumpyArrayHandler.count(data), SeqOfNumpyArrayHandler.SIG_INFER_ROWS_COUNT_LIMIT)]
-            for data_col in data
-        ]
+    def truncate(
+        data: Sequence[model_types._SupportedNumpyArray], length: int
+    ) -> Sequence[model_types._SupportedNumpyArray]:
+        return [data_col[: min(SeqOfNumpyArrayHandler.count(data), length)] for data_col in data]
 
     @staticmethod
     def validate(data: Sequence[model_types._SupportedNumpyArray]) -> None:

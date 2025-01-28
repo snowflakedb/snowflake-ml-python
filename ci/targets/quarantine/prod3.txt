@@ -1,7 +1,3 @@
 //tests/integ/snowflake/ml/extra_tests:xgboost_external_memory_training_test
-//tests/integ/snowflake/ml/modeling/ensemble:isolation_forest_test
-//tests/integ/snowflake/ml/modeling/linear_model:sgd_one_class_svm_test
-//tests/integ/snowflake/ml/modeling/preprocessing:k_bins_discretizer_test
-//tests/integ/snowflake/ml/modeling/linear_model:logistic_regression_test
 //tests/integ/snowflake/ml/extra_tests:pipeline_with_ohe_and_xgbr_test
-//tests/integ/snowflake/ml/modeling/neighbors:kernel_density_test
+//tests/integ/snowflake/ml/modeling/...

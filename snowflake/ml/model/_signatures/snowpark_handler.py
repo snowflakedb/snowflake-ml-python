@@ -29,8 +29,8 @@ class SnowparkDataFrameHandler(base_handler.BaseDataHandler[snowflake.snowpark.D
         return data.count()
 
     @staticmethod
-    def truncate(data: snowflake.snowpark.DataFrame) -> snowflake.snowpark.DataFrame:
-        return cast(snowflake.snowpark.DataFrame, data.limit(SnowparkDataFrameHandler.SIG_INFER_ROWS_COUNT_LIMIT))
+    def truncate(data: snowflake.snowpark.DataFrame, length: int) -> snowflake.snowpark.DataFrame:
+        return cast(snowflake.snowpark.DataFrame, data.limit(length))
 
     @staticmethod
     def validate(data: snowflake.snowpark.DataFrame) -> None:
@@ -52,7 +52,7 @@ class SnowparkDataFrameHandler(base_handler.BaseDataHandler[snowflake.snowpark.D
         data: snowflake.snowpark.DataFrame, role: Literal["input", "output"]
     ) -> Sequence[core.BaseFeatureSpec]:
         return pandas_handler.PandasDataFrameHandler.infer_signature(
-            SnowparkDataFrameHandler.convert_to_df(data.limit(n=1)), role=role
+            SnowparkDataFrameHandler.convert_to_df(data), role=role
         )
 
     @staticmethod

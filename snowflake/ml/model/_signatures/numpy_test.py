@@ -21,18 +21,18 @@ class NumpyArrayHandlerTest(absltest.TestCase):
             numpy_handler.NumpyArrayHandler.validate(arr)
 
     def test_trunc_np_ndarray(self) -> None:
-        arr = np.array([1] * (numpy_handler.NumpyArrayHandler.SIG_INFER_ROWS_COUNT_LIMIT + 1))
+        arr = np.array([1] * 11)
 
         np.testing.assert_equal(
-            np.array([1] * (numpy_handler.NumpyArrayHandler.SIG_INFER_ROWS_COUNT_LIMIT)),
-            numpy_handler.NumpyArrayHandler.truncate(arr),
+            np.array([1] * (10)),
+            numpy_handler.NumpyArrayHandler.truncate(arr, 10),
         )
 
-        arr = np.array([1] * (numpy_handler.NumpyArrayHandler.SIG_INFER_ROWS_COUNT_LIMIT - 1))
+        arr = np.array([1] * 9)
 
         np.testing.assert_equal(
             arr,
-            numpy_handler.NumpyArrayHandler.truncate(arr),
+            numpy_handler.NumpyArrayHandler.truncate(arr, 10),
         )
 
     def test_infer_schema_np_ndarray(self) -> None:
@@ -125,19 +125,17 @@ class SeqOfNumpyArrayHandlerTest(absltest.TestCase):
         self.assertFalse(numpy_handler.SeqOfNumpyArrayHandler.can_handle(lt6))
 
     def test_trunc_np_ndarray(self) -> None:
-        arrs = [np.array([1] * (numpy_handler.SeqOfNumpyArrayHandler.SIG_INFER_ROWS_COUNT_LIMIT + 1))] * 2
+        arrs = [np.array([1] * 11)] * 2
 
-        for arr in numpy_handler.SeqOfNumpyArrayHandler.truncate(arrs):
-            np.testing.assert_equal(
-                np.array([1] * (numpy_handler.SeqOfNumpyArrayHandler.SIG_INFER_ROWS_COUNT_LIMIT)), arr
-            )
+        for arr in numpy_handler.SeqOfNumpyArrayHandler.truncate(arrs, 10):
+            np.testing.assert_equal(np.array([1] * 10), arr)
 
         arrs = [
             np.array([1]),
-            np.array([1] * (numpy_handler.SeqOfNumpyArrayHandler.SIG_INFER_ROWS_COUNT_LIMIT - 1)),
+            np.array([1] * 9),
         ]
 
-        for arr in numpy_handler.SeqOfNumpyArrayHandler.truncate(arrs):
+        for arr in numpy_handler.SeqOfNumpyArrayHandler.truncate(arrs, 10):
             np.testing.assert_equal(np.array([1]), arr)
 
     def test_infer_signature_list_of_numpy_array(self) -> None:
