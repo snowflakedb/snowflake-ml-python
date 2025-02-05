@@ -44,6 +44,9 @@ class CatBoostModelBlobOptions(BaseModelBlobOptions):
 class HuggingFacePipelineModelBlobOptions(BaseModelBlobOptions):
     task: Required[str]
     batch_size: Required[int]
+    has_tokenizer: NotRequired[bool]
+    has_feature_extractor: NotRequired[bool]
+    has_image_preprocessor: NotRequired[bool]
 
 
 class LightGBMModelBlobOptions(BaseModelBlobOptions):

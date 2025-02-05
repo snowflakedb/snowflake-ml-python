@@ -78,7 +78,7 @@ class Registry:
             session, database_name=self._database_name, schema_name=self._schema_name
         )
 
-        self.enable_monitoring = options.get("enable_monitoring", False) if options else False
+        self.enable_monitoring = options.get("enable_monitoring", True) if options else True
         if self.enable_monitoring:
             monitor_statement_params = telemetry.get_statement_params(
                 project=telemetry.TelemetryProject.MLOPS.value,

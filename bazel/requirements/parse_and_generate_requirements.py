@@ -1,15 +1,11 @@
 import argparse
 import collections
-import contextlib
 import copy
 import functools
 import itertools
 import json
-import os
-import platform
 import sys
 from typing import (
-    Generator,
     List,
     Literal,
     MutableMapping,
@@ -23,7 +19,6 @@ from typing import (
 
 import jsonschema
 import toml
-from conda_libmamba_solver import solver
 from packaging import requirements as packaging_requirements
 from ruamel.yaml import YAML
 
@@ -242,35 +237,6 @@ def validate_dev_version_and_user_requirements(req_info: RequirementInfo, env: L
     return
 
 
-def resolve_conda_environment(specs: Sequence[str], channels: Sequence[str]) -> None:
-    """Use conda api to check if given packages are resolvable in given channels.
-
-    Args:
-        specs: Packages to be installed.
-        channels: Anaconda channels (name or url) where conda should search into.
-
-    Raises:
-        ValueError: Raised when the resolving result is empty.
-
-    """
-
-    @contextlib.contextmanager
-    def _block_print() -> Generator[None, None, None]:
-        _original_stdout = sys.stdout
-        sys.stdout = open(os.devnull, "w")
-        yield
-        sys.stdout.close()
-        sys.stdout = _original_stdout
-
-    with _block_print():
-        conda_solver = solver.LibMambaSolver(
-            "snowml-dev", channels=channels, specs_to_add=list(specs) + [f"python=={platform.python_version()}"]
-        )
-        solve_result = conda_solver.solve_final_state()
-        if solve_result is None:
-            raise ValueError("Unable to resolve the environment.")
-
-
 def fold_extras_tags(extras_tags: Set[str], req_info: RequirementInfo) -> Set[str]:
     """Left-fold style function to get all extras tags in all requirements.
 
@@ -396,10 +362,7 @@ def generate_requirements(
     if pip_only_reqs:
         extended_env.extend(["pip", {"pip": pip_only_reqs}])
 
-    if (mode, format) == ("validate", None):
-        resolve_conda_environment(snowflake_only_env, channels=channels_to_use)
-        resolve_conda_environment(extended_env_conda, channels=channels_to_use)
-    elif (mode, format) == ("dev_version", "text"):
+    if (mode, format) == ("dev_version", "text"):
         results = list(
             sorted(
                 map(
@@ -551,7 +514,7 @@ def main() -> None:
     parser.add_argument(
         "--mode",
         type=str,
-        choices=["dev_version", "dev_gpu_version", "version_requirements", "version_requirements_extras", "validate"],
+        choices=["dev_version", "dev_gpu_version", "version_requirements", "version_requirements_extras"],
         help="Define the mode when specifying the requirements.",
         required=True,
     )
@@ -572,7 +535,6 @@ def main() -> None:
     args = parser.parse_args()
 
     VALID_SETTINGS = [
-        ("validate", None, False),  # Validate the environment
         ("dev_version", "text", False),  # requirements.txt
         ("version_requirements", "python", True),  # sproc test dependencies list
         ("version_requirements", "toml", False),  # wheel rule requirements

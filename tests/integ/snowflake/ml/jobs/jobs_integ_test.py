@@ -3,8 +3,10 @@ from typing import Any, Dict, List, Tuple
 from unittest import mock
 
 from absl.testing import absltest, parameterized
+from packaging import version
 
 from snowflake.ml import jobs
+from snowflake.ml._internal import env
 from snowflake.ml._internal.utils import snowflake_env
 from snowflake.ml.jobs import manager as jm
 from snowflake.ml.jobs._utils import constants
@@ -50,11 +52,6 @@ class JobManagerTest(parameterized.TestCase):
         except sp_exceptions.SnowparkSQLException:
             if not cls.dbm.show_compute_pools(_TEST_COMPUTE_POOL).count() > 0:
                 raise cls.failureException(f"Compute pool {_TEST_COMPUTE_POOL} not available and could not be created")
-        try:
-            cls.session.sql("ALTER SESSION SET ENABLE_SNOWSERVICES_ASYNC_JOBS = TRUE").collect()
-            cls.async_job_enabled = True
-        except sp_exceptions.SnowparkSQLException:
-            cls.async_job_enabled = False
 
     @classmethod
     def tearDownClass(cls) -> None:
@@ -62,12 +59,12 @@ class JobManagerTest(parameterized.TestCase):
         cls.session.close()
         super().tearDownClass()
 
-    def setUp(self) -> None:
-        if not self.async_job_enabled:
-            self.skipTest("SPCS Async Jobs not enabled in environment. Skipping tests.")
-        super().setUp()
-
     def test_async_job_parameter(self) -> None:
+        try:
+            self.session.sql("ALTER SESSION SET ENABLE_SNOWSERVICES_ASYNC_JOBS = TRUE").collect()
+        except sp_exceptions.SnowparkSQLException:
+            self.skipTest("Unable to toggle SPCS Async Jobs parameter. Skipping test.")
+
         try:
             self.session.sql("ALTER SESSION SET ENABLE_SNOWSERVICES_ASYNC_JOBS = FALSE").collect()
             with self.assertRaisesRegex(RuntimeError, "ENABLE_SNOWSERVICES_ASYNC_JOBS"):
@@ -256,6 +253,10 @@ class JobManagerTest(parameterized.TestCase):
         self.assertIn("Job complete", loaded_job.get_logs())
 
     def test_job_decorator(self) -> None:
+        # TODO(SNOW-1911482): Enable test for Python 3.11+
+        if version.Version(env.PYTHON_VERSION) >= version.Version("3.11"):
+            self.skipTest("Decorator test only works for Python 3.10 and below due to pickle compatibility")
+
         @jobs.remote(self.compute_pool, "payload_stage", session=self.session)  # type: ignore[misc]
         def decojob_fn(arg1: str, arg2: int) -> None:
             from datetime import datetime

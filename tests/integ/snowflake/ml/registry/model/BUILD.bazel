@@ -155,6 +155,8 @@ py_test(
         "//snowflake/ml/modeling/lightgbm:lgbm_regressor",
         "//snowflake/ml/modeling/linear_model:logistic_regression",
         "//snowflake/ml/modeling/pipeline",
+        "//snowflake/ml/modeling/preprocessing:min_max_scaler",
+        "//snowflake/ml/modeling/preprocessing:one_hot_encoder",
         "//snowflake/ml/modeling/xgboost:xgb_regressor",
         "//tests/integ/snowflake/ml/test_utils:dataframe_utils",
     ],
@@ -203,5 +205,33 @@ py_test(
         ":registry_model_test_base",
         "//snowflake/ml/_internal/utils:identifier",
         "//tests/integ/snowflake/ml/test_utils:model_factory",
+    ],
+)
+
+py_test(
+    name = "registry_keras_tensorflow_model_test",
+    timeout = "long",
+    srcs = ["registry_keras_model_test.py"],
+    main = "registry_keras_model_test.py",
+    shard_count = 6,
+    deps = [
+        ":registry_model_test_base",
+        "//snowflake/ml/model/_signatures:numpy_handler",
+        "//snowflake/ml/model/_signatures:snowpark_handler",
+        "//tests/integ/snowflake/ml/test_utils:dataframe_utils",
+    ],
+)
+
+py_test(
+    name = "registry_keras_torch_model_test",
+    timeout = "long",
+    srcs = ["registry_keras_model_test.py"],
+    main = "registry_keras_model_test.py",
+    shard_count = 6,
+    deps = [
+        ":registry_model_test_base",
+        "//snowflake/ml/model/_signatures:numpy_handler",
+        "//snowflake/ml/model/_signatures:snowpark_handler",
+        "//tests/integ/snowflake/ml/test_utils:dataframe_utils",
     ],
 )

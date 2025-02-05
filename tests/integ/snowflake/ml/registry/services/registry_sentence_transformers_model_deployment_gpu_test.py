@@ -70,7 +70,6 @@ class TestRegistrySentenceTransformerDeploymentModelInteg(
             },
             options={"cuda_version": "11.8"},
             gpu_requests="1",
-            additional_dependencies=["pytorch==2.1.0", "huggingface_hub<0.26"],
             pip_requirements=pip_requirements,
         )
 

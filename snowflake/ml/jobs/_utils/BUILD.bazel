@@ -17,6 +17,13 @@ py_library(
 )
 
 py_library(
+    name = "test_file_helper",
+    testonly = True,
+    srcs = ["test_file_helper.py"],
+    data = glob(["test_files/**"]),
+)
+
+py_library(
     name = "spec_utils",
     srcs = [
         "spec_utils.py",
@@ -31,9 +38,9 @@ py_library(
 py_test(
     name = "spec_utils_test",
     srcs = ["spec_utils_test.py"],
-    data = glob(["test_files/**"]),
     deps = [
         ":spec_utils",
+        ":test_file_helper",
     ],
 )
 
@@ -54,6 +61,7 @@ py_test(
     ],
     deps = [
         ":payload_utils",
+        ":test_file_helper",
     ],
 )
 

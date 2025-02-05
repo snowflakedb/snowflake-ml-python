@@ -337,6 +337,18 @@ class CompleteRESTBackendTest(unittest.TestCase):
         output = "".join(list(cast(Iterable[str], result)))
         self.assertEqual("This is a streaming response", output)
 
+    def test_streaming_with_cortexguard(self) -> None:
+        result = _complete._complete_impl(
+            model="my_models",
+            prompt="test_prompt",
+            options={"guardrails": True},
+            session=self.session,
+            stream=True,
+        )
+        self.assertIsInstance(result, GeneratorType)
+        output = "".join(list(cast(Iterable[str], result)))
+        self.assertEqual("This is a streaming response", output)
+
     def test_streaming_unexpected_response_format(self) -> None:
         response = _complete._complete_impl(
             model=_UNEXPECTED_RESPONSE_FORMAT_MODEL_NAME,

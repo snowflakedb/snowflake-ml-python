@@ -191,14 +191,14 @@ class ModelMetaEnvTest(absltest.TestCase):
                 dep_target.remove(f"cloudpickle=={importlib_metadata.version('cloudpickle')}")
                 dep_target.sort()
 
-                self.assertListEqual(meta.env.pip_requirements, ["cloudpickle"])
-                self.assertListEqual(meta.env.conda_dependencies, dep_target)
+                self.assertListEqual(meta.env.pip_requirements, ["cloudpickle"] + dep_target)
+                self.assertListEqual(meta.env.conda_dependencies, [])
 
                 with self.assertWarns(UserWarning):
                     loaded_meta = model_meta.ModelMetadata.load(tmpdir)
 
-                self.assertListEqual(loaded_meta.env.pip_requirements, ["cloudpickle"])
-                self.assertListEqual(loaded_meta.env.conda_dependencies, dep_target)
+                self.assertListEqual(loaded_meta.env.pip_requirements, ["cloudpickle"] + dep_target)
+                self.assertListEqual(loaded_meta.env.conda_dependencies, [])
 
     def test_model_meta_dependencies_conda(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -260,13 +260,13 @@ class ModelMetaEnvTest(absltest.TestCase):
             dep_target = _PACKAGING_REQUIREMENTS_TARGET_WITH_SNOWML[:]
             dep_target.sort()
 
-            self.assertListEqual(meta.env.pip_requirements, ["torch"])
-            self.assertListEqual(meta.env.conda_dependencies, dep_target)
+            self.assertListEqual(meta.env.pip_requirements, dep_target + ["torch"])
+            self.assertListEqual(meta.env.conda_dependencies, [])
 
             loaded_meta = model_meta.ModelMetadata.load(tmpdir)
 
-            self.assertListEqual(loaded_meta.env.pip_requirements, ["torch"])
-            self.assertListEqual(loaded_meta.env.conda_dependencies, dep_target)
+            self.assertListEqual(loaded_meta.env.pip_requirements, dep_target + ["torch"])
+            self.assertListEqual(loaded_meta.env.conda_dependencies, [])
 
     def test_model_meta_dependencies_both(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -474,16 +474,16 @@ class ModelMetaEnvTest(absltest.TestCase):
             with open(os.path.join(tmpdir, "runtimes", "cpu", "env", "conda.yml"), encoding="utf-8") as f:
                 self.assertListEqual(yaml.safe_load(f)["channels"], ["conda-forge", "nodefaults"])
             self.assertContainsSubset(
-                ["nvidia::cuda==11.7.*", "pytorch"],
+                ["pytorch"],
                 meta.runtimes["gpu"].runtime_env.conda_dependencies,
             )
             with open(os.path.join(tmpdir, "runtimes", "gpu", "env", "conda.yml"), encoding="utf-8") as f:
-                self.assertListEqual(yaml.safe_load(f)["channels"], ["conda-forge", "nvidia", "nodefaults"])
+                self.assertListEqual(yaml.safe_load(f)["channels"], ["conda-forge", "nodefaults"])
 
             loaded_meta = model_meta.ModelMetadata.load(tmpdir)
             self.assertContainsSubset(["pytorch"], loaded_meta.runtimes["cpu"].runtime_env.conda_dependencies)
             self.assertContainsSubset(
-                ["nvidia::cuda==11.7.*", "pytorch"],
+                ["pytorch"],
                 loaded_meta.runtimes["gpu"].runtime_env.conda_dependencies,
             )
 

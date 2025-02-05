@@ -1,20 +1,42 @@
 # Release History
 
-## 1.7.4
+## 1.8.0
+
+- Support Python 3.12.
+
+### Bug Fixes
+
+- Registry: Fixed a compatibility issue when using `snowflake-ml-python` 1.7.0 or greater to save a `tensorflow.keras`
+  model with `keras` 2.x, if `relax_version` is set or default to True, and newer version of `snowflake-ml-python`
+  is available in Snowflake Anaconda Channel, model could not be run in Snowflake. If you have such model, you could
+  use the latest version of `snowflake-ml-python` and call `ModelVersion.load` to load it back, and re-log it.
+  Alternatively, you can prevent this issue by setting `relax_version=False` when saving the model.
+- Registry: Removed the validation that disallows data that does not have non-null values being passed to
+  `ModelVersion.run`.
+- ML Job (PrPr): No longer require CREATE STAGE privilege if `stage_name` points to an existing stage
+- ML Job (PrPr): Fixed a bug causing some payload source and entrypoint path
+  combinations to be erroneously rejected with
+  `ValueError(f"{self.entrypoint} must be a subpath of {self.source}")`
+
+### Behavior Change
+
+### New Features
+
+- Registry: Added support for handling Hugging Face model configurations with auto-mapping functionality.
+- Registry: Added support for `keras` 3.x model with `tensorflow` and `pytorch` backend
+
+## 1.7.4 (01-28-2025)
 
 - FileSet: The `snowflake.ml.fileset.FileSet` has been deprecated and will be removed in a future version.
   Use [snowflake.ml.dataset.Dataset](https://docs.snowflake.com/en/developer-guide/snowflake-ml/dataset) and
   [snowflake.ml.data.DataConnector](https://docs.snowflake.com/en/developer-guide/snowpark-ml/reference/latest/api/data/snowflake.ml.data.data_connector.DataConnector)
   instead.
+- Registry: `ModelVersion.run` on a service would require redeploying the service once account opts into nested function.
 
 ### Bug Fixes
 
 - Registry: Fixed an issue that the hugging face pipeline is loaded using incorrect dtype.
 - Registry: Fixed an issue that only 1 row is used when infer the model signature in the modeling model.
-
-### Behavior Changes
-
-- Registry: `ModelVersion.run` on a service would require redeploying the service once account opts into nested function.
 
 ### New Features
 
@@ -22,6 +44,7 @@
   [Container Runtime for ML](https://docs.snowflake.com/en/developer-guide/snowflake-ml/container-runtime-ml)
 - Added `guardrails` option to Cortex `complete` function, enabling
   [Cortex Guard](https://docs.snowflake.com/en/user-guide/snowflake-cortex/llm-functions#cortex-guard) support
+- Model Monitoring: Expose Model Monitoring Python API by default.
 
 ## 1.7.3 (2025-01-08)
 
@@ -29,6 +52,7 @@
 - Bumped the requirements of `fsspec` and `s3fs` to `>=2024.6.1,<2026`
 - Bumped the requirement of `mlflow` to `>=2.16.0, <3`
 - Registry: Support 500+ features for model registry
+- Feature Store: Add support for `cluster_by` for feature views.
 
 ### Bug Fixes
 
@@ -146,6 +170,10 @@ class ExamplePipelineModel(custom_model.CustomModel):
 - Data Connector: Add the option of passing a `None` sized batch to `to_torch_dataset` for better
 interoperability with PyTorch DataLoader.
 - Model Registry: Support [pandas.CategoricalDtype](https://pandas.pydata.org/docs/reference/api/pandas.CategoricalDtype.html#pandas-categoricaldtype)
+  - Limitations:
+    - The native categorical data handling handling by XGBoost using `enable_categorical=True` is not supported.
+    Instead please use [`sklearn.pipeline`](https://scikit-learn.org/stable/modules/generated/sklearn.pipeline.Pipeline.html)
+    to preprocess the categorical datatype and log the pipeline with the XGBoost model.
 - Registry: It is now possible to pass `signatures` and `sample_input_data` at the same time to capture background
 data from explainablity and data lineage.
 

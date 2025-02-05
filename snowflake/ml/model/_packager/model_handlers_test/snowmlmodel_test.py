@@ -239,17 +239,24 @@ class SnowMLModelHandlerTest(absltest.TestCase):
 
         scaler = StandardScaler(input_cols=input_cols, output_cols=output_cols)
         scaler.fit(pandas_df)
+
+        predictions = scaler.transform(pandas_df)
+
         with tempfile.TemporaryDirectory() as tmpdir:
-            with self.assertRaisesRegex(
-                AssertionError,
-                "Model does not have model signatures as expected.",
-            ):
-                model_packager.ModelPackager(os.path.join(tmpdir, "model1")).save(
-                    name="model1",
-                    model=scaler,
-                    sample_input_data=pandas_df,
-                    metadata={"author": "halu", "version": "1"},
-                )
+            model_packager.ModelPackager(os.path.join(tmpdir, "model1")).save(
+                name="model1",
+                model=scaler,
+                sample_input_data=pandas_df,
+                metadata={"author": "halu", "version": "1"},
+            )
+
+            pk = model_packager.ModelPackager(os.path.join(tmpdir, "model1"))
+            pk.load(as_custom_model=True)
+            assert pk.model
+            assert pk.meta
+            predict_method = getattr(pk.model, "transform", None)
+            assert callable(predict_method)
+            np.testing.assert_allclose(predictions, predict_method(pandas_df))
 
 
 if __name__ == "__main__":

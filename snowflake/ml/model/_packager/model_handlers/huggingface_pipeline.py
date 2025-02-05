@@ -146,6 +146,10 @@ class HuggingFacePipelineHandler(
             framework = getattr(model, "framework", None)
             batch_size = getattr(model, "batch_size", None)
 
+        has_tokenizer = getattr(model, "tokenizer", None) is not None
+        has_feature_extractor = getattr(model, "feature_extractor", None) is not None
+        has_image_preprocessor = getattr(model, "image_preprocessor", None) is not None
+
         if type_utils.LazyType("transformers.Pipeline").isinstance(model):
             params = {
                 **model._preprocess_params,  # type:ignore[attr-defined]
@@ -234,6 +238,9 @@ class HuggingFacePipelineHandler(
                 {
                     "task": task,
                     "batch_size": batch_size if batch_size is not None else 1,
+                    "has_tokenizer": has_tokenizer,
+                    "has_feature_extractor": has_feature_extractor,
+                    "has_image_preprocessor": has_image_preprocessor,
                 }
             ),
         )
@@ -308,6 +315,14 @@ class HuggingFacePipelineHandler(
         if os.path.isdir(model_blob_file_or_dir_path):
             import transformers
 
+            additional_pipeline_params = {}
+            if model_blob_options.get("has_tokenizer", False):
+                additional_pipeline_params["tokenizer"] = model_blob_file_or_dir_path
+            if model_blob_options.get("has_feature_extractor", False):
+                additional_pipeline_params["feature_extractor"] = model_blob_file_or_dir_path
+            if model_blob_options.get("has_image_preprocessor", False):
+                additional_pipeline_params["image_preprocessor"] = model_blob_file_or_dir_path
+
             with open(
                 os.path.join(
                     model_blob_file_or_dir_path,
@@ -324,6 +339,7 @@ class HuggingFacePipelineHandler(
                 model=model_blob_file_or_dir_path,
                 trust_remote_code=True,
                 torch_dtype="auto",
+                **additional_pipeline_params,
                 **device_config,
             )
 

@@ -302,6 +302,41 @@ Example:
     - build_essential
 ```
 
+### Checking Package Latest Versions
+
+The `bazel/requirements/update_version_requirements.py` script helps you check the latest available versions of
+Python packages from both PyPI and Snowflake Conda repositories against your current requirements.
+
+#### Usage
+
+Run the script in dry-run mode to safely check latest versions without modifying files:
+
+```bash
+bazel run //bazel/requirements:update_version_requirements -- requirements.yml --dry-run
+```
+
+This will scan `requirements.yml` and show the latest version of packages and the suggest changes:
+
+```sh
+INFO: [DRY-RUN] PyPI/Conda package 'scikit-learn' latest PYPI version 1.6.1: '>=1.4,<1.6' -> '>=1.4,<2'
+INFO: [DRY-RUN] PyPI/Conda package 'scikit-learn' latest Conda version 1.5.2: '>=1.4,<1.6' -> '>=1.4,<2'
+```
+
+Each line shows:
+
++ Package availbility (PyPI only, Conda only, or PyPI/Conda)
++ Package name (e.g., 'scikit-learn')
++ The package source (PyPI or Conda)
++ Latest version available in that source repo (e.g., '1.6.1')
++ Current version constraints in your requirements.yml (e.g., '>=1.4,<1.6')
++ Suggested version constraints ('>=1.4,<2')
+
+If you want to apply all the suggested changes, run the following command to update the `requirements.yml` file
+
+```sh
+bazel run //bazel/requirements:update_version_requirements -- requirements.yml
+```
+
 ## Unit Testing
 
 Write Python `unittest` style unit tests. Pytest is allowed, but not recommended.

@@ -122,10 +122,15 @@ esac
 # Detect the architecture
 ARCH="$(uname -m)"
 case "$ARCH" in
-  aarch64|ppc64le|arm64)
-    ARCH="arm64" ;;
+  aarch64|arm64)
+    ARCH="arm64"
+    MICROMAMBA_ARCH="aarch64" ;;
+  ppc64le)
+    ARCH="ppc64le"
+    MICROMAMBA_ARCH="ppc64le" ;;
   *)
-    ARCH="amd64" ;;
+    ARCH="amd64"
+    MICROMAMBA_ARCH="64" ;;
 esac
 
 # Compute the platform-arch string used to download yq.
@@ -170,16 +175,35 @@ case ${PYTHON_VERSION} in
         PYTHON_EXECUTABLE="python3.11"
     fi
     ;;
+  3.12)
+    if [ ${IS_NT} = true ]; then
+        PYTHON_EXECUTABLE="py -3.12"
+    else
+        PYTHON_EXECUTABLE="python3.12"
+    fi
+    ;;
 esac
 
 cd "${WORKSPACE}"
 
 # Check and download yq if not presented.
+TEMP_BIN=$(mktemp -d "${WORKSPACE}/tmp_bin_XXXXX")
+trap 'rm -rf "${TEMP_BIN}"' EXIT
+
 _YQ_BIN="yq${EXT}"
 if ! command -v "${_YQ_BIN}" &>/dev/null; then
-    TEMP_BIN=$(mktemp -d "${WORKSPACE}/tmp_bin_XXXXX")
     curl -Lsv https://github.com/mikefarah/yq/releases/latest/download/yq_${PLATFORM}_${ARCH}${EXT} -o "${TEMP_BIN}/yq${EXT}" && chmod +x "${TEMP_BIN}/yq${EXT}"
     _YQ_BIN="${TEMP_BIN}/yq${EXT}"
+fi
+
+# Install micromamba
+_MICROMAMBA_BIN="micromamba${EXT}"
+if [ "${ENV}" = "conda" ]; then
+    if ! command -v "${_MICROMAMBA_BIN}" &>/dev/null; then
+        curl -Lsv "https://github.com/mamba-org/micromamba-releases/releases/latest/download/micromamba-${PLATFORM}-${MICROMAMBA_ARCH}" -o "${TEMP_BIN}/micromamba${EXT}" && chmod +x "${TEMP_BIN}/micromamba${EXT}"
+        _MICROMAMBA_BIN="${TEMP_BIN}/micromamba${EXT}"
+        export MAMBA_ROOT_PREFIX="${WORKSPACE}/micromamba"
+    fi
 fi
 
 # Create temp release folder
@@ -325,12 +349,12 @@ else
     conda index "${WORKSPACE}/conda-bld"
 
     # Clean conda cache
-    conda clean --all --force-pkgs-dirs -y
+    "${_MICROMAMBA_BIN}" clean --all --force-pkgs-dirs -y
 
     # Create testing env
-    conda create -y -p testenv -c "${WORKSPACE}/conda-bld" -c "https://repo.anaconda.com/pkgs/snowflake/" --override-channels "python=${PYTHON_VERSION}" snowflake-ml-python "${OPTIONAL_REQUIREMENTS[@]}"
-    conda env update -p testenv -f "${WORKSPACE}/${SNOWML_DIR}/bazel/environments/conda-env-build-test.yml"
-    conda list -p testenv
+    "${_MICROMAMBA_BIN}" create -y -p testenv -c "${WORKSPACE}/conda-bld" -c "https://repo.anaconda.com/pkgs/snowflake/" --override-channels "python=${PYTHON_VERSION}" snowflake-ml-python "${OPTIONAL_REQUIREMENTS[@]}"
+    "${_MICROMAMBA_BIN}" env update -p testenv -f "${WORKSPACE}/${SNOWML_DIR}/bazel/environments/conda-env-build-test.yml"
+    "${_MICROMAMBA_BIN}" list -p testenv
 
     # Run integration tests
     set +e
@@ -339,7 +363,7 @@ else
     set -e
 
     # Clean the conda environment
-    conda env remove -p testenv
+    "${_MICROMAMBA_BIN}" env remove -p testenv
 fi
 
 popd

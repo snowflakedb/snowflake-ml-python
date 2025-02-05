@@ -665,7 +665,7 @@ class WrapperGeneratorBase:
             # numpy is already imported in all the wrapper classes with alias np.
             return f"{'-' if str(default_value).startswith('-') else ''}np.{str(default_value).lstrip('-')}"
 
-        if inspect.isfunction(default_value):
+        if inspect.isroutine(default_value):
             import_stmt = f"import {default_value.__module__}"
             if import_stmt not in self.estimator_imports_list:
                 self.estimator_imports_list.append(import_stmt)

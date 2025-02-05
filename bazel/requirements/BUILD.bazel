@@ -11,6 +11,12 @@ py_binary(
     srcs = ["parse_and_generate_requirements.py"],
 )
 
+py_binary(
+    name = "update_version_requirements",
+    srcs = ["update_version_requirements.py"],
+    data = ["//:requirements.yml"],
+)
+
 _SRC_REQUIREMENT_FILE = "//:requirements.yml"
 
 _CURRENT_PATH = "bazel/requirements"

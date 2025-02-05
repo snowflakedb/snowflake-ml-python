@@ -45,18 +45,21 @@ class FeatureSpecTest(absltest.TestCase):
         self.assertEqual(ft, core.FeatureSpec.from_dict(ft.to_dict()))
         self.assertEqual(ft.as_snowpark_type(), spt.LongType())
         self.assertEqual(ft.as_dtype(), pd.Int64Dtype())
+        self.assertEqual(ft.as_dtype(force_numpy_dtype=True), np.int64)
 
         ft = core.FeatureSpec(name="feature", dtype=core.DataType.INT64, nullable=False)
         self.assertEqual(ft, eval(repr(ft), core.__dict__))
         self.assertEqual(ft, core.FeatureSpec.from_dict(ft.to_dict()))
         self.assertEqual(ft.as_snowpark_type(), spt.LongType())
         self.assertEqual(ft.as_dtype(), np.int64)
+        self.assertEqual(ft.as_dtype(force_numpy_dtype=True), np.int64)
 
         ft = core.FeatureSpec(name="feature", dtype=core.DataType.INT64, shape=(2,))
         self.assertEqual(ft, eval(repr(ft), core.__dict__))
         self.assertEqual(ft, core.FeatureSpec.from_dict(input_dict=ft.to_dict()))
         self.assertEqual(ft.as_snowpark_type(), spt.ArrayType(spt.LongType()))
         self.assertEqual(ft.as_dtype(), np.object_)
+        self.assertEqual(ft.as_dtype(force_numpy_dtype=True), np.object_)
 
 
 class FeatureGroupSpecTest(absltest.TestCase):

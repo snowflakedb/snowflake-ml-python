@@ -52,7 +52,7 @@ class TelemetryTest(parameterized.TestCase):
                 custom_tags={"custom_tag": "tag"},
             )
             def foo(self, param: Any) -> None:
-                pass
+                time.sleep(0.1)  # sleep for 100 ms
 
         test_obj = DummyObject()
         test_obj.foo(param="val")
@@ -69,6 +69,8 @@ class TelemetryTest(parameterized.TestCase):
         self.assertEqual(message[utils_telemetry.TelemetryField.KEY_VERSION.value], _VERSION)
         self.assertEqual(message[utils_telemetry.TelemetryField.KEY_PYTHON_VERSION.value], _PYTHON_VERSION)
         self.assertEqual(message[utils_telemetry.TelemetryField.KEY_OS.value], _OS)
+        self.assertIsInstance(message[utils_telemetry.TelemetryField.KEY_DURATION.value], float)
+        self.assertGreaterEqual(message[utils_telemetry.TelemetryField.KEY_DURATION.value], 0.1)
 
         # data
         self.assertEqual(
@@ -157,7 +159,7 @@ class TelemetryTest(parameterized.TestCase):
         self.assertIn(api_call_sleep, data[utils_telemetry.TelemetryField.KEY_API_CALLS.value])
 
     @mock.patch("snowflake.snowpark.session._get_active_sessions")
-    def test_client_error(self, mock_get_active_sessions: mock.MagicMock) -> None:
+    def test_client_telemetry_error(self, mock_get_active_sessions: mock.MagicMock) -> None:
         """Test send_api_usage_telemetry when the decorated function raises an error."""
         mock_get_active_sessions.return_value = {self.mock_session}
         message = "foo error"

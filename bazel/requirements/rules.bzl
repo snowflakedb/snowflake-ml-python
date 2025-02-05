@@ -124,17 +124,6 @@ def sync_target(
         root_path,
         targets,
         src_requirement_file):
-    py_genrule(
-        name = "validate_env_{name}".format(name = name),
-        srcs = [
-            src_requirement_file,
-            _SCHEMA_FILE,
-        ],
-        outs = ["validate_env_{name}_dummy_out".format(name = name)],
-        cmd = _GENERATE_COMMAND.format(src_requirement_file = src_requirement_file, options = "--mode validate"),
-        tools = [_GENERATE_TOOL],
-    )
-
     write_file(
         name = "gen_{name}".format(name = name),
         out = "{name}.sh".format(name = name),
