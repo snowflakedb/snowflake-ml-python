@@ -19,9 +19,11 @@ import cloudpickle as cp
 
 from snowflake import snowpark
 from snowflake.ml.jobs._utils import constants, types
+from snowflake.snowpark import exceptions as sp_exceptions
 from snowflake.snowpark._internal import code_generation
 
 _SUPPORTED_ARG_TYPES = {str, int, float}
+_SUPPORTED_ENTRYPOINT_EXTENSIONS = {".py"}
 _STARTUP_SCRIPT_PATH = PurePath("startup.sh")
 _STARTUP_SCRIPT_CODE = textwrap.dedent(
     f"""
@@ -120,6 +122,34 @@ _STARTUP_SCRIPT_CODE = textwrap.dedent(
 ).strip()
 
 
+def _resolve_entrypoint(parent: Path, entrypoint: Optional[Path]) -> Path:
+    parent = parent.absolute()
+    if entrypoint is None:
+        if parent.is_file():
+            # Infer entrypoint from source
+            entrypoint = parent
+        else:
+            raise ValueError("entrypoint must be provided when source is a directory")
+    elif entrypoint.is_absolute():
+        # Absolute path - validate it's a subpath of source dir
+        if not entrypoint.is_relative_to(parent):
+            raise ValueError(f"Entrypoint must be a subpath of {parent}, got: {entrypoint})")
+    else:
+        # Relative path
+        if (abs_entrypoint := entrypoint.absolute()).is_relative_to(parent) and abs_entrypoint.is_file():
+            # Relative to working dir iff path is relative to source dir and exists
+            entrypoint = abs_entrypoint
+        else:
+            # Relative to source dir
+            entrypoint = parent.joinpath(entrypoint)
+    if not entrypoint.is_file():
+        raise FileNotFoundError(
+            "Entrypoint not found. Ensure the entrypoint is a valid file and is under"
+            f" the source directory (source={parent}, entrypoint={entrypoint})"
+        )
+    return entrypoint
+
+
 class JobPayload:
     def __init__(
         self,
@@ -138,23 +168,23 @@ class JobPayload:
             # since we will generate the file from the serialized callable
             pass
         elif isinstance(self.source, Path):
-            # Validate self.source and self.entrypoint for files
-            if not self.source.exists():
-                raise FileNotFoundError(f"{self.source} does not exist")
-            if self.entrypoint is None:
-                if self.source.is_file():
-                    self.entrypoint = self.source
-                else:
-                    raise ValueError("entrypoint must be provided when source is a directory")
-            if not self.entrypoint.is_file():
-                # Check if self.entrypoint is a valid relative path
-                self.entrypoint = self.source.joinpath(self.entrypoint)
-                if not self.entrypoint.is_file():
-                    raise FileNotFoundError(f"File {self.entrypoint} does not exist")
-            if not self.entrypoint.is_relative_to(self.source):
-                raise ValueError(f"{self.entrypoint} must be a subpath of {self.source}")
-            if self.entrypoint.suffix != ".py":
-                raise NotImplementedError("Only Python entrypoints are supported currently")
+            # Validate source
+            source = self.source
+            if not source.exists():
+                raise FileNotFoundError(f"{source} does not exist")
+            source = source.absolute()
+
+            # Validate entrypoint
+            entrypoint = _resolve_entrypoint(source, self.entrypoint)
+            if entrypoint.suffix not in _SUPPORTED_ENTRYPOINT_EXTENSIONS:
+                raise ValueError(
+                    "Unsupported entrypoint type:"
+                    f" supported={','.join(_SUPPORTED_ENTRYPOINT_EXTENSIONS)} got={entrypoint.suffix}"
+                )
+
+            # Update fields with normalized values
+            self.source = source
+            self.entrypoint = entrypoint
         else:
             raise ValueError("Unsupported source type. Source must be a file, directory, or callable.")
 
@@ -168,12 +198,16 @@ class JobPayload:
         entrypoint = self.entrypoint or Path(constants.DEFAULT_ENTRYPOINT_PATH)
 
         # Create stage if necessary
-        stage_name = stage_path.parts[0]
-        session.sql(
-            f"create stage if not exists {stage_name.lstrip('@')}"
-            " encryption = ( type = 'SNOWFLAKE_SSE' )"
-            " comment = 'Created by snowflake.ml.jobs Python API'"
-        ).collect()
+        stage_name = stage_path.parts[0].lstrip("@")
+        # Explicitly check if stage exists first since we may not have CREATE STAGE privilege
+        try:
+            session.sql(f"describe stage {stage_name}").collect()
+        except sp_exceptions.SnowparkSQLException:
+            session.sql(
+                f"create stage if not exists {stage_name}"
+                " encryption = ( type = 'SNOWFLAKE_SSE' )"
+                " comment = 'Created by snowflake.ml.jobs Python API'"
+            ).collect()
 
         # Upload payload to stage
         if not isinstance(source, Path):

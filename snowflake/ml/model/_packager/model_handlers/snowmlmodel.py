@@ -129,27 +129,54 @@ class SnowMLModelHandler(_base.BaseModelHandler["BaseEstimator"]):
         # Pipeline is inherited from BaseEstimator, so no need to add one more check
 
         if not is_sub_model:
-            if model_meta.signatures:
+            if model_meta.signatures or sample_input_data is not None:
                 warnings.warn(
                     "Providing model signature for Snowpark ML "
                     + "Modeling model is not required. Model signature will automatically be inferred during fitting. ",
                     UserWarning,
                     stacklevel=2,
                 )
-            assert hasattr(model, "model_signatures"), "Model does not have model signatures as expected."
-            model_signature_dict = getattr(model, "model_signatures", {})
-            target_methods = kwargs.pop("target_methods", None)
-            if not target_methods:
-                model_meta.signatures = model_signature_dict
+                target_methods = handlers_utils.get_target_methods(
+                    model=model,
+                    target_methods=kwargs.pop("target_methods", None),
+                    default_target_methods=cls.DEFAULT_TARGET_METHODS,
+                )
+
+                def get_prediction(
+                    target_method_name: str,
+                    sample_input_data: model_types.SupportedLocalDataType,
+                ) -> model_types.SupportedLocalDataType:
+                    if not isinstance(sample_input_data, (pd.DataFrame, np.ndarray)):
+                        sample_input_data = model_signature._convert_local_data_to_df(sample_input_data)
+
+                    target_method = getattr(model, target_method_name, None)
+                    assert callable(target_method)
+                    predictions_df = target_method(sample_input_data)
+                    return predictions_df
+
+                model_meta = handlers_utils.validate_signature(
+                    model=model,
+                    model_meta=model_meta,
+                    target_methods=target_methods,
+                    sample_input_data=sample_input_data,
+                    get_prediction_fn=get_prediction,
+                    is_for_modeling_model=True,
+                )
             else:
-                temp_model_signature_dict = {}
-                for method_name in target_methods:
-                    method_model_signature = model_signature_dict.get(method_name, None)
-                    if method_model_signature is not None:
-                        temp_model_signature_dict[method_name] = method_model_signature
-                    else:
-                        raise ValueError(f"Target method {method_name} does not exist in the model.")
-                model_meta.signatures = temp_model_signature_dict
+                assert hasattr(model, "model_signatures"), "Model does not have model signatures as expected."
+                model_signature_dict = getattr(model, "model_signatures", {})
+                optional_target_methods = kwargs.pop("target_methods", None)
+                if not optional_target_methods:
+                    model_meta.signatures = model_signature_dict
+                else:
+                    temp_model_signature_dict = {}
+                    for method_name in optional_target_methods:
+                        method_model_signature = model_signature_dict.get(method_name, None)
+                        if method_model_signature is not None:
+                            temp_model_signature_dict[method_name] = method_model_signature
+                        else:
+                            raise ValueError(f"Target method {method_name} does not exist in the model.")
+                    model_meta.signatures = temp_model_signature_dict
 
         python_base_obj = cls._get_supported_object_for_explainability(model, sample_input_data, enable_explainability)
         explain_target_method = handlers_utils.get_explain_target_method(model_meta, cls.EXPLAIN_TARGET_METHODS)

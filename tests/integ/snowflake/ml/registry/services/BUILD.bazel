@@ -99,6 +99,7 @@ py_test(
     name = "registry_model_deployment_test",
     timeout = "eternal",
     srcs = ["registry_model_deployment_test.py"],
+    shard_count = 3,
     deps = [
         ":registry_model_deployment_test_base",
     ],

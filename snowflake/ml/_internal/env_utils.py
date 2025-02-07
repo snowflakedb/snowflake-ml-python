@@ -56,6 +56,8 @@ def _validate_pip_requirement_string(req_str: str) -> requirements.Requirement:
 
         if r.name == "python":
             raise ValueError("Don't specify python as a dependency, use python version argument instead.")
+        if r.name == "cuda":
+            raise ValueError("Don't specify cuda as a dependency, use cuda version argument instead.")
     except requirements.InvalidRequirement:
         raise ValueError(f"Invalid package requirement {req_str} found.")
 
@@ -431,10 +433,11 @@ def save_conda_env_file(
     path: pathlib.Path,
     conda_chan_deps: DefaultDict[str, List[requirements.Requirement]],
     python_version: str,
+    cuda_version: Optional[str] = None,
     default_channel_override: str = SNOWFLAKE_CONDA_CHANNEL_URL,
 ) -> None:
     """Generate conda.yml file given a dict of dependencies after validation.
-    The channels part of conda.yml file will contains Snowflake Anaconda Channel, nodefaults and all channel names
+    The channels part of conda.yml file will contain Snowflake Anaconda Channel, nodefaults and all channel names
     in keys of the dict, ordered by the number of the packages which belongs to.
     The dependencies part of conda.yml file will contains requirements specifications. If the requirements is in the
     value list whose key is DEFAULT_CHANNEL_NAME, then the channel won't be specified explicitly. Otherwise, it will be
@@ -443,7 +446,8 @@ def save_conda_env_file(
     Args:
         path: Path to the conda.yml file.
         conda_chan_deps: Dict of conda dependencies after validated.
-        python_version: A string 'major.minor' showing python version relate to model.
+        python_version: A string 'major.minor' for the model's python version.
+        cuda_version: A string 'major.minor' for the model's cuda version.
         default_channel_override: The default channel to be put in the first place of the channels section.
     """
     assert path.suffix in [".yml", ".yaml"], "Conda environment file should have extension of yml or yaml."
@@ -461,6 +465,10 @@ def save_conda_env_file(
 
     env["channels"] = [default_channel_override] + channels + [_NODEFAULTS]
     env["dependencies"] = [f"python=={python_version}.*"]
+
+    if cuda_version is not None:
+        env["dependencies"].extend([f"nvidia::cuda=={cuda_version}.*"])
+
     for chan, reqs in conda_chan_deps.items():
         env["dependencies"].extend(
             [f"{chan}::{str(req)}" if chan != DEFAULT_CHANNEL_NAME else str(req) for req in reqs]
@@ -487,7 +495,12 @@ def save_requirements_file(path: pathlib.Path, pip_deps: List[requirements.Requi
 
 def load_conda_env_file(
     path: pathlib.Path,
-) -> Tuple[DefaultDict[str, List[requirements.Requirement]], Optional[List[requirements.Requirement]], Optional[str]]:
+) -> Tuple[
+    DefaultDict[str, List[requirements.Requirement]],
+    Optional[List[requirements.Requirement]],
+    Optional[str],
+    Optional[str],
+]:
     """Read conda.yml file to get a dict of dependencies after validation.
     The channels part of conda.yml file will be processed with following rules:
     1. If it is Snowflake Anaconda Channel, ignore as it is default.
@@ -515,7 +528,7 @@ def load_conda_env_file(
         and a string 'major.minor.patchlevel' of python version.
     """
     if not path.exists():
-        return collections.defaultdict(list), None, None
+        return collections.defaultdict(list), None, None, None
 
     with open(path, encoding="utf-8") as f:
         env = yaml.safe_load(stream=f)
@@ -526,6 +539,7 @@ def load_conda_env_file(
     pip_deps = []
 
     python_version = None
+    cuda_version = None
 
     channels = env.get("channels", [])
     if len(channels) >= 1:
@@ -541,6 +555,9 @@ def load_conda_env_file(
             # ver is str: python w/ specifier
             if ver:
                 python_version = ver
+            elif dep.startswith("nvidia::cuda"):
+                r = requirements.Requirement(dep.split("nvidia::")[1])
+                cuda_version = list(r.specifier)[0].version.strip(".*")
             elif ver is None:
                 deps.append(dep)
         elif isinstance(dep, dict) and "pip" in dep:
@@ -555,7 +572,7 @@ def load_conda_env_file(
         if channel not in conda_dep_dict:
             conda_dep_dict[channel] = []
 
-    return conda_dep_dict, pip_deps_list if pip_deps_list else None, python_version
+    return conda_dep_dict, pip_deps_list if pip_deps_list else None, python_version, cuda_version
 
 
 def load_requirements_file(path: pathlib.Path) -> List[requirements.Requirement]:
