@@ -1,13 +1,17 @@
+import contextlib
 import io
+import os
+import pathlib
 import subprocess
 import sys
 import tempfile
-from typing import Any, Callable, Dict, List, Optional, Tuple, Type
+from typing import Any, Callable, Dict, Generator, List, Optional, Tuple, Type
 
 from absl.testing import absltest, parameterized
 
 from snowflake.ml.jobs._utils import payload_utils
 from snowflake.ml.jobs._utils.payload_utils_test_helper import dummy_function
+from snowflake.ml.jobs._utils.test_file_helper import resolve_path
 
 _CONSTANT_VALUE = "hello world"
 
@@ -56,7 +60,65 @@ def function_with_object_arg(obj: object) -> None:
     print(obj)  # noqa: T201: we need to print here.
 
 
-class JobUtilsTests(parameterized.TestCase):
+@contextlib.contextmanager
+def pushd(new_dir: str) -> Generator[None, None, None]:
+    """Context manager to emulate pushd/popd behavior."""
+    # Save the current working directory
+    original_dir = os.getcwd()
+    try:
+        # Change to the new directory
+        os.chdir(new_dir)
+        yield  # Allow the test code to run inside the context
+    finally:
+        # Ensure we return to the original directory after the test
+        os.chdir(original_dir)
+
+
+class PayloadUtilsTests(parameterized.TestCase):
+    @parameterized.parameters(  # type: ignore[misc]
+        ("file1.py", None, resolve_path("file1.py")),
+        (resolve_path("file1.py"), None, resolve_path("file1.py")),
+        (".", "file1.py", resolve_path("file1.py")),
+        (resolve_path(""), "file1.py", resolve_path("file1.py")),
+        ("src", "file2.py", resolve_path("src/file2.py")),
+        ("src", "subdir1/file3.py", resolve_path("src/subdir1/file3.py")),
+        ("src", resolve_path("src/subdir1/file3.py"), resolve_path("src/subdir1/file3.py")),
+        ("src", resolve_path("src/src/subdir1/file3.py"), resolve_path("src/src/subdir1/file3.py")),
+        ("src", "src/subdir1/file3.py", resolve_path("src/subdir1/file3.py")),  # Prefer more direct match
+        ("src", resolve_path("src/src/subdir1/file5.py"), resolve_path("src/src/subdir1/file5.py")),
+        ("src", "src/subdir1/file5.py", resolve_path("src/src/subdir1/file5.py")),
+        (resolve_path("src"), "subdir1/file3.py", resolve_path("src/subdir1/file3.py")),
+        (resolve_path("src"), "src/subdir1/file3.py", resolve_path("src/subdir1/file3.py")),
+        (resolve_path("src"), resolve_path("src/subdir1/file3.py"), resolve_path("src/subdir1/file3.py")),
+    )
+    def test_payload_validate(self, source: str, entrypoint: Optional[str], expected_entrypoint: str) -> None:
+        with pushd(resolve_path("")):
+            payload = payload_utils.JobPayload(source, entrypoint)
+            payload.validate()
+            assert isinstance(payload.source, pathlib.PurePath)
+            assert isinstance(payload.entrypoint, pathlib.PurePath)
+            self.assertEqual(payload.source.as_posix(), pathlib.Path(source).absolute().as_posix())
+            self.assertEqual(payload.entrypoint.as_posix(), expected_entrypoint)
+
+    @parameterized.parameters(  # type: ignore[misc]
+        ("not_exist", "file1.py", FileNotFoundError),  # not_exist/ does not exist
+        ("src", "file1.py", FileNotFoundError),  # src/file1.py does not exist
+        (resolve_path("src"), "file1.py", FileNotFoundError),  # src/file1.py does not exist
+        (resolve_path("src"), resolve_path("src/file1.py"), FileNotFoundError),  # src/file1.py does not exist
+        ("src", resolve_path("file1.py"), ValueError),  # file1.py is not under src
+        (resolve_path("src"), resolve_path("file1.py"), ValueError),  # file1.py is not under src
+        ("src/subdir1", resolve_path("src/subdir2/file4.py"), ValueError),  # subdir2/ is not under subdir1/
+        ("src/subdir1", "src/subdir2/file4.py", FileNotFoundError),  # relative path resolution fails to find file
+        (".", "script1.sh", ValueError),  # script1.sh does not have a .py extension
+    )
+    def test_payload_validate_negative(
+        self, source: str, entrypoint: Optional[str], expected_error: Type[Exception] = ValueError
+    ) -> None:
+        with pushd(resolve_path("")):
+            payload = payload_utils.JobPayload(source, entrypoint)
+            with self.assertRaises(expected_error):
+                payload.validate()
+
     @parameterized.parameters(  # type: ignore[misc]
         (function_with_pos_arg, ("Hello world", 100)),
         (function_with_pos_arg, ("Hello world", 100), None, True),

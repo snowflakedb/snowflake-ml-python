@@ -156,7 +156,7 @@ conda_create_rule = repository_rule(
         "python_version": attr.string(
             mandatory = True,
             doc = "The Python version to use when creating the environment.",
-            values = ["3.9", "3.10", "3.11"],
+            values = ["3.9", "3.10", "3.11", "3.12"],
         ),
         "quiet": attr.bool(
             default = True,

@@ -98,6 +98,18 @@ py_test(
 )
 
 py_test(
+    name = "tf_keras_test",
+    srcs = ["tf_keras_test.py"],
+    compatible_with_snowpark = False,
+    deps = [
+        "//snowflake/ml/model:model_signature",
+        "//snowflake/ml/model/_packager:model_packager",
+        "//snowflake/ml/model/_signatures:tensorflow_handler",
+        "//snowflake/ml/model/_signatures:utils",
+    ],
+)
+
+py_test(
     name = "torchscript_test",
     srcs = ["torchscript_test.py"],
     deps = [
@@ -144,6 +156,36 @@ py_test(
     srcs = ["sentence_transformers_test.py"],
     deps = [
         "//snowflake/ml/model/_packager:model_packager",
+        "//snowflake/ml/model/_signatures:utils",
+    ],
+)
+
+py_test(
+    name = "keras_tensorflow_test",
+    srcs = ["keras_test.py"],
+    env = {
+        "KERAS_BACKEND": "tensorflow",
+    },
+    main = "keras_test.py",
+    deps = [
+        "//snowflake/ml/model:model_signature",
+        "//snowflake/ml/model/_packager:model_packager",
+        "//snowflake/ml/model/_signatures:numpy_handler",
+        "//snowflake/ml/model/_signatures:utils",
+    ],
+)
+
+py_test(
+    name = "keras_torch_test",
+    srcs = ["keras_test.py"],
+    env = {
+        "KERAS_BACKEND": "torch",
+    },
+    main = "keras_test.py",
+    deps = [
+        "//snowflake/ml/model:model_signature",
+        "//snowflake/ml/model/_packager:model_packager",
+        "//snowflake/ml/model/_signatures:numpy_handler",
         "//snowflake/ml/model/_signatures:utils",
     ],
 )

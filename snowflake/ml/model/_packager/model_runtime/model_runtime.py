@@ -45,6 +45,7 @@ class ModelRuntime:
         self.name = name
         self.runtime_env = copy.deepcopy(env)
         self.imports = imports or []
+        self.is_gpu = is_gpu
 
         if loading_from_file:
             return
@@ -88,7 +89,9 @@ class ModelRuntime:
         self.runtime_env.conda_env_rel_path = self.runtime_rel_path / self.runtime_env.conda_env_rel_path
         self.runtime_env.pip_requirements_rel_path = self.runtime_rel_path / self.runtime_env.pip_requirements_rel_path
 
-        env_dict = self.runtime_env.save_as_dict(packager_path, default_channel_override=default_channel_override)
+        env_dict = self.runtime_env.save_as_dict(
+            packager_path, default_channel_override=default_channel_override, is_gpu=self.is_gpu
+        )
 
         return model_meta_schema.ModelRuntimeDict(
             imports=list(map(str, self.imports)),

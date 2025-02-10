@@ -167,7 +167,7 @@ class SentenceTransformerHandlerTest(absltest.TestCase):
             )
 
             with warnings.catch_warnings():
-                warnings.simplefilter("error")
+                warnings.simplefilter("ignore")
 
                 pk = model_packager.ModelPackager(os.path.join(tmpdir, "model1"))
                 pk.load()

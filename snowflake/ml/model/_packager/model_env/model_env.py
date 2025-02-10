@@ -113,7 +113,33 @@ class ModelEnv:
             self._snowpark_ml_version = version.parse(snowpark_ml_version)
 
     def include_if_absent(self, pkgs: List[ModelDependency], check_local_version: bool = False) -> None:
-        """Append requirements into model env if absent.
+        """Append requirements into model env if absent. Depending on the environment, requirements may be added
+        to either the pip requirements or conda dependencies.
+
+        Args:
+            pkgs: A list of ModelDependency namedtuple to be appended.
+            check_local_version: Flag to indicate if it is required to pin to local version. Defaults to False.
+        """
+        if self.pip_requirements and not self.conda_dependencies and pkgs:
+            pip_pkg_reqs: List[str] = []
+            warnings.warn(
+                (
+                    "Dependencies specified from pip requirements."
+                    " This may prevent model deploying to Snowflake Warehouse."
+                ),
+                category=UserWarning,
+                stacklevel=2,
+            )
+            for conda_req_str, pip_name in pkgs:
+                _, conda_req = env_utils._validate_conda_dependency_string(conda_req_str)
+                pip_req = requirements.Requirement(f"{pip_name}{conda_req.specifier}")
+                pip_pkg_reqs.append(str(pip_req))
+            self._include_if_absent_pip(pip_pkg_reqs, check_local_version)
+        else:
+            self._include_if_absent_conda(pkgs, check_local_version)
+
+    def _include_if_absent_conda(self, pkgs: List[ModelDependency], check_local_version: bool = False) -> None:
+        """Append requirements into model env conda dependencies if absent.
 
         Args:
             pkgs: A list of ModelDependency namedtuple to be appended.
@@ -134,8 +160,8 @@ class ModelEnv:
                 if show_warning_message:
                     warnings.warn(
                         (
-                            f"Basic dependency {req_to_add.name} specified from PIP requirements."
-                            + " This may prevent model deploying to Snowflake Warehouse."
+                            f"Basic dependency {req_to_add.name} specified from pip requirements."
+                            " This may prevent model deploying to Snowflake Warehouse."
                         ),
                         category=UserWarning,
                         stacklevel=2,
@@ -157,11 +183,11 @@ class ModelEnv:
                         stacklevel=2,
                     )
 
-    def include_if_absent_pip(self, pkgs: List[str], check_local_version: bool = False) -> None:
-        """Append pip requirements into model env if absent.
+    def _include_if_absent_pip(self, pkgs: List[str], check_local_version: bool = False) -> None:
+        """Append pip requirements into model env pip requirements if absent.
 
         Args:
-            pkgs: A list of string to be appended in pip requirement.
+            pkgs: A list of strings to be appended to pip environment.
             check_local_version: Flag to indicate if it is required to pin to local version. Defaults to False.
         """
 
@@ -187,25 +213,6 @@ class ModelEnv:
                 self._conda_dependencies[channel].remove(spec)
 
     def generate_env_for_cuda(self) -> None:
-        if self.cuda_version is None:
-            return
-
-        cuda_spec = env_utils.find_dep_spec(
-            self._conda_dependencies, self._pip_requirements, conda_pkg_name="cuda", remove_spec=False
-        )
-        if cuda_spec and not cuda_spec.specifier.contains(self.cuda_version):
-            raise ValueError(
-                "The CUDA requirement you specified in your conda dependencies or pip requirements is"
-                " conflicting with CUDA version required. Please do not specify CUDA dependency using conda"
-                " dependencies or pip requirements."
-            )
-
-        if not cuda_spec:
-            self.include_if_absent(
-                [ModelDependency(requirement=f"nvidia::cuda=={self.cuda_version}.*", pip_name="cuda")],
-                check_local_version=False,
-            )
-
         xgboost_spec = env_utils.find_dep_spec(
             self._conda_dependencies, self._pip_requirements, conda_pkg_name="xgboost", remove_spec=True
         )
@@ -236,7 +243,7 @@ class ModelEnv:
                 check_local_version=False,
             )
 
-            self.include_if_absent_pip(["bitsandbytes>=0.41.0"], check_local_version=False)
+            self._include_if_absent_pip(["bitsandbytes>=0.41.0"], check_local_version=False)
 
     def relax_version(self) -> None:
         """Relax the version requirements for both conda dependencies and pip requirements.
@@ -252,7 +259,9 @@ class ModelEnv:
         self._pip_requirements = list(map(env_utils.relax_requirement_version, self._pip_requirements))
 
     def load_from_conda_file(self, conda_env_path: pathlib.Path) -> None:
-        conda_dependencies_dict, pip_requirements_list, python_version = env_utils.load_conda_env_file(conda_env_path)
+        conda_dependencies_dict, pip_requirements_list, python_version, cuda_version = env_utils.load_conda_env_file(
+            conda_env_path
+        )
 
         for channel, channel_dependencies in conda_dependencies_dict.items():
             if channel != env_utils.DEFAULT_CHANNEL_NAME:
@@ -310,6 +319,9 @@ class ModelEnv:
         if python_version:
             self.python_version = python_version
 
+        if cuda_version:
+            self.cuda_version = cuda_version
+
     def load_from_pip_file(self, pip_requirements_path: pathlib.Path) -> None:
         pip_requirements_list = env_utils.load_requirements_file(pip_requirements_path)
 
@@ -342,12 +354,17 @@ class ModelEnv:
         self.snowpark_ml_version = env_dict["snowpark_ml_version"]
 
     def save_as_dict(
-        self, base_dir: pathlib.Path, default_channel_override: str = env_utils.SNOWFLAKE_CONDA_CHANNEL_URL
+        self,
+        base_dir: pathlib.Path,
+        default_channel_override: str = env_utils.SNOWFLAKE_CONDA_CHANNEL_URL,
+        is_gpu: Optional[bool] = False,
     ) -> model_meta_schema.ModelEnvDict:
+        cuda_version = self.cuda_version if is_gpu else None
         env_utils.save_conda_env_file(
             pathlib.Path(base_dir / self.conda_env_rel_path),
             self._conda_dependencies,
             self.python_version,
+            cuda_version,
             default_channel_override=default_channel_override,
         )
         env_utils.save_requirements_file(

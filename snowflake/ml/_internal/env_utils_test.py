@@ -819,7 +819,7 @@ class EnvFileTest(absltest.TestCase):
             cd = collections.defaultdict(list)
             env_file_path = pathlib.Path(tmpdir, "conda.yml")
             env_utils.save_conda_env_file(env_file_path, cd, python_version="3.8")
-            loaded_cd, _, _ = env_utils.load_conda_env_file(env_file_path)
+            loaded_cd, _, _, _ = env_utils.load_conda_env_file(env_file_path)
             self.assertEqual(cd, loaded_cd)
 
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -827,7 +827,7 @@ class EnvFileTest(absltest.TestCase):
             cd[env_utils.DEFAULT_CHANNEL_NAME] = [requirements.Requirement("numpy")]
             env_file_path = pathlib.Path(tmpdir, "conda.yml")
             env_utils.save_conda_env_file(env_file_path, cd, python_version="3.8")
-            loaded_cd, _, _ = env_utils.load_conda_env_file(env_file_path)
+            loaded_cd, _, _, _ = env_utils.load_conda_env_file(env_file_path)
             self.assertEqual(cd, loaded_cd)
 
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -835,7 +835,7 @@ class EnvFileTest(absltest.TestCase):
             cd[env_utils.DEFAULT_CHANNEL_NAME] = [requirements.Requirement("numpy>=1.22.4")]
             env_file_path = pathlib.Path(tmpdir, "conda.yml")
             env_utils.save_conda_env_file(env_file_path, cd, python_version="3.8")
-            loaded_cd, _, _ = env_utils.load_conda_env_file(env_file_path)
+            loaded_cd, _, _, _ = env_utils.load_conda_env_file(env_file_path)
             self.assertEqual(cd, loaded_cd)
 
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -845,7 +845,7 @@ class EnvFileTest(absltest.TestCase):
             env_utils.save_conda_env_file(
                 env_file_path, cd, python_version="3.8", default_channel_override="conda-forge"
             )
-            loaded_cd, _, _ = env_utils.load_conda_env_file(env_file_path)
+            loaded_cd, _, _, _ = env_utils.load_conda_env_file(env_file_path)
             self.assertEqual(cd, loaded_cd)
 
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -858,7 +858,7 @@ class EnvFileTest(absltest.TestCase):
             )
             env_file_path = pathlib.Path(tmpdir, "conda.yml")
             env_utils.save_conda_env_file(env_file_path, cd, python_version="3.8")
-            loaded_cd, _, _ = env_utils.load_conda_env_file(env_file_path)
+            loaded_cd, _, _, _ = env_utils.load_conda_env_file(env_file_path)
             self.assertEqual(cd, loaded_cd)
 
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -886,7 +886,7 @@ class EnvFileTest(absltest.TestCase):
                     ],
                 },
             )
-            loaded_cd, pip_reqs, _ = env_utils.load_conda_env_file(env_file_path)
+            loaded_cd, pip_reqs, _, _ = env_utils.load_conda_env_file(env_file_path)
             self.assertEqual(cd, loaded_cd)
             self.assertIsNone(pip_reqs)
 
@@ -917,7 +917,7 @@ class EnvFileTest(absltest.TestCase):
                     ],
                 },
             )
-            loaded_cd, pip_reqs, _ = env_utils.load_conda_env_file(env_file_path)
+            loaded_cd, pip_reqs, _, _ = env_utils.load_conda_env_file(env_file_path)
             self.assertEqual(cd, loaded_cd)
             self.assertIsNone(pip_reqs)
 
@@ -935,7 +935,7 @@ class EnvFileTest(absltest.TestCase):
                         ],
                     },
                 )
-            loaded_cd, pip_reqs, python_ver = env_utils.load_conda_env_file(env_file_path)
+            loaded_cd, pip_reqs, python_ver, cuda_ver = env_utils.load_conda_env_file(env_file_path)
             self.assertEqual(
                 {
                     env_utils.DEFAULT_CHANNEL_NAME: [requirements.Requirement("numpy>=1.22.4")],
@@ -962,7 +962,7 @@ class EnvFileTest(absltest.TestCase):
                         ],
                     },
                 )
-            loaded_cd, pip_reqs, python_ver = env_utils.load_conda_env_file(env_file_path)
+            loaded_cd, pip_reqs, python_ver, cuda_ver = env_utils.load_conda_env_file(env_file_path)
             self.assertEqual(
                 {
                     env_utils.DEFAULT_CHANNEL_NAME: [requirements.Requirement("numpy>=1.22.4")],
@@ -989,7 +989,7 @@ class EnvFileTest(absltest.TestCase):
                         ],
                     },
                 )
-            loaded_cd, pip_reqs, python_ver = env_utils.load_conda_env_file(env_file_path)
+            loaded_cd, pip_reqs, python_ver, cuda_ver = env_utils.load_conda_env_file(env_file_path)
             self.assertEqual(
                 {
                     env_utils.DEFAULT_CHANNEL_NAME: [requirements.Requirement("numpy>=1.22.4")],
@@ -1017,7 +1017,7 @@ class EnvFileTest(absltest.TestCase):
                         ],
                     },
                 )
-            loaded_cd, pip_reqs, python_ver = env_utils.load_conda_env_file(env_file_path)
+            loaded_cd, pip_reqs, python_ver, cuda_ver = env_utils.load_conda_env_file(env_file_path)
             self.assertEqual(
                 {
                     env_utils.DEFAULT_CHANNEL_NAME: [requirements.Requirement("numpy>=1.22.4")],

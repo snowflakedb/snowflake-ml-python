@@ -4,6 +4,7 @@ import enum
 import functools
 import inspect
 import operator
+import time
 import types
 from typing import (
     Any,
@@ -75,6 +76,7 @@ class TelemetryField(enum.Enum):
     KEY_FUNC_PARAMS = "func_params"
     KEY_ERROR_INFO = "error_info"
     KEY_ERROR_CODE = "error_code"
+    KEY_DURATION = "duration"
     KEY_VERSION = "version"
     KEY_PYTHON_VERSION = "python_version"
     KEY_OS = "operating_system"
@@ -435,6 +437,7 @@ def send_api_usage_telemetry(
 
     # noqa: DAR402
     """
+    start_time = time.perf_counter()
 
     if subproject is not None and subproject_extractor is not None:
         raise ValueError("Specifying both subproject and subproject_extractor is not allowed")
@@ -565,6 +568,7 @@ def send_api_usage_telemetry(
                 else:
                     raise me.original_exception from e
             finally:
+                telemetry_args["duration"] = time.perf_counter() - start_time  # type: ignore[assignment]
                 telemetry.send_function_usage_telemetry(**telemetry_args)
                 global _log_counter
                 _log_counter += 1
@@ -718,6 +722,7 @@ class _SourceTelemetryClient:
         self,
         func_name: str,
         function_category: str,
+        duration: float,
         func_params: Optional[Dict[str, Any]] = None,
         api_calls: Optional[List[Dict[str, Any]]] = None,
         sfqids: Optional[List[Any]] = None,
@@ -731,6 +736,7 @@ class _SourceTelemetryClient:
         Args:
             func_name: Function name.
             function_category: Function category.
+            duration: Function duration.
             func_params: Function parameters.
             api_calls: API calls.
             sfqids: Snowflake query IDs.
@@ -755,6 +761,7 @@ class _SourceTelemetryClient:
         message: Dict[str, Any] = {
             **self._create_basic_telemetry_data(telemetry_type),
             TelemetryField.KEY_DATA.value: data,
+            TelemetryField.KEY_DURATION.value: duration,
         }
 
         if error:
