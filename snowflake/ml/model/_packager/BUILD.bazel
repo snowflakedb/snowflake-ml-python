@@ -23,6 +23,7 @@ py_library(
         "//snowflake/ml/model/_packager/model_handlers:catboost",
         "//snowflake/ml/model/_packager/model_handlers:custom",
         "//snowflake/ml/model/_packager/model_handlers:huggingface_pipeline",
+        "//snowflake/ml/model/_packager/model_handlers:keras",
         "//snowflake/ml/model/_packager/model_handlers:lightgbm",
         "//snowflake/ml/model/_packager/model_handlers:mlflow",
         "//snowflake/ml/model/_packager/model_handlers:pytorch",

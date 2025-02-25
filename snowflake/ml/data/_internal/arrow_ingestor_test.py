@@ -1,4 +1,5 @@
 import numpy as np
+import pandas.testing as pd_testing
 from absl.testing import absltest
 
 from snowflake.ml.data._internal import arrow_ingestor
@@ -93,6 +94,10 @@ class ArrowIngestorTest(absltest.TestCase):
 
         pd_df2 = batch_producer.to_pandas(limit=2)
         self.assertEqual(2, len(pd_df2))
+
+        # Ensure multiple reads is safe
+        pd_df3 = batch_producer.to_pandas()
+        pd_testing.assert_frame_equal(pd_df1, pd_df3)
 
 
 if __name__ == "__main__":

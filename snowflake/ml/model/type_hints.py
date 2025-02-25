@@ -7,6 +7,7 @@ from typing_extensions import NotRequired
 
 if TYPE_CHECKING:
     import catboost
+    import keras
     import lightgbm
     import mlflow
     import numpy as np
@@ -68,6 +69,7 @@ SupportedRequireSignatureModelType = Union[
     "torch.nn.Module",
     "torch.jit.ScriptModule",
     "tensorflow.Module",
+    "keras.Model",
 ]
 
 SupportedNoSignatureRequirementsModelType = Union[
@@ -103,6 +105,7 @@ Here is all acceptable types of Snowflake native model packaging and its handler
 | transformers.Pipeline | huggingface_pipeline.py | _HuggingFacePipelineHandler |
 | huggingface_pipeline.HuggingFacePipelineModel | huggingface_pipeline.py | _HuggingFacePipelineHandler |
 | sentence_transformers.SentenceTransformer | sentence_transformers.py | _SentenceTransformerHandler |
+| keras.Model | keras.py | _KerasHandler |
 """
 
 SupportedModelHandlerType = Literal[
@@ -118,6 +121,7 @@ SupportedModelHandlerType = Literal[
     "tensorflow",
     "torchscript",
     "xgboost",
+    "keras",
 ]
 
 _ModelType = TypeVar("_ModelType", bound=SupportedModelType)
@@ -202,6 +206,11 @@ class SentenceTransformersSaveOptions(BaseModelSaveOption):
     batch_size: NotRequired[int]
 
 
+class KerasSaveOptions(BaseModelSaveOption):
+    target_methods: NotRequired[Sequence[str]]
+    cuda_version: NotRequired[str]
+
+
 ModelSaveOption = Union[
     BaseModelSaveOption,
     CatBoostModelSaveOptions,
@@ -216,6 +225,7 @@ ModelSaveOption = Union[
     MLFlowSaveOptions,
     HuggingFaceSaveOptions,
     SentenceTransformersSaveOptions,
+    KerasSaveOptions,
 ]
 
 
@@ -276,6 +286,10 @@ class SentenceTransformersLoadOptions(BaseModelLoadOption):
     device: NotRequired[str]
 
 
+class KerasLoadOptions(BaseModelLoadOption):
+    use_gpu: NotRequired[bool]
+
+
 ModelLoadOption = Union[
     BaseModelLoadOption,
     CatBoostModelLoadOptions,
@@ -290,6 +304,7 @@ ModelLoadOption = Union[
     MLFlowLoadOptions,
     HuggingFaceLoadOptions,
     SentenceTransformersLoadOptions,
+    KerasLoadOptions,
 ]
 
 

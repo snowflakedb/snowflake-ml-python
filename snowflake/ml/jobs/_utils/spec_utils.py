@@ -141,37 +141,35 @@ def generate_service_spec(
         )
 
     # Mount 30% of memory limit as a memory-backed volume
-    memory_volume_name = "dshm"
     memory_volume_size = min(
         ceil(image_spec.resource_limits.memory * constants.MEMORY_VOLUME_SIZE),
         image_spec.resource_requests.memory,
     )
     volume_mounts.append(
         {
-            "name": memory_volume_name,
+            "name": constants.MEMORY_VOLUME_NAME,
             "mountPath": "/dev/shm",
         }
     )
     volumes.append(
         {
-            "name": memory_volume_name,
+            "name": constants.MEMORY_VOLUME_NAME,
             "source": "memory",
             "size": f"{memory_volume_size}Gi",
         }
     )
 
     # Mount payload as volume
-    stage_mount = PurePath("/opt/app")
-    stage_volume_name = "stage-volume"
+    stage_mount = PurePath(constants.STAGE_VOLUME_MOUNT_PATH)
     volume_mounts.append(
         {
-            "name": stage_volume_name,
+            "name": constants.STAGE_VOLUME_NAME,
             "mountPath": stage_mount.as_posix(),
         }
     )
     volumes.append(
         {
-            "name": stage_volume_name,
+            "name": constants.STAGE_VOLUME_NAME,
             "source": payload.stage_path.as_posix(),
         }
     )

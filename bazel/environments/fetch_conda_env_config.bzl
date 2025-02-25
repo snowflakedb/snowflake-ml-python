@@ -1,6 +1,8 @@
+load("//bazel/platforms:optional_dependency_groups.bzl", "OPTIONAL_DEPENDENCY_GROUPS")
+
 def _fetch_conda_env_config_impl(rctx):
     # read the particular environment variable we are interested in
-    env_name = rctx.os.environ.get("BAZEL_CONDA_ENV_NAME", "extended").lower()
+    env_name = rctx.os.environ.get("BAZEL_CONDA_ENV_NAME", "core").lower()
     python_ver = rctx.os.environ.get("BAZEL_CONDA_PYTHON_VERSION", "3.9").lower()
 
     # necessary to create empty BUILD file for this rule
@@ -8,29 +10,39 @@ def _fetch_conda_env_config_impl(rctx):
     rctx.file("BUILD")
 
     conda_env_map = {
+        "all": {
+            "compatible_target": [
+                "@SnowML//bazel/platforms:core_conda_channel",
+            ] + [
+                "@SnowML//bazel/platforms:{}_conda_channel".format(group_name)
+                for group_name in OPTIONAL_DEPENDENCY_GROUPS.keys()
+            ],
+            "environment": "@//bazel/environments:conda-env-all.yml",
+        },
         "build": {
-            "compatible_target": ["@SnowML//bazel/platforms:snowflake_conda_channel"],
+            "compatible_target": [
+                "@SnowML//bazel/platforms:core_conda_channel",
+            ],
             "environment": "@//bazel/environments:conda-env-build.yml",
         },
-        "extended": {
-            "compatible_target": ["@SnowML//bazel/platforms:extended_conda_channels"],
-            "environment": "@//bazel/environments:conda-env.yml",
-        },
-        "extended_gpu_oss": {
-            "compatible_target": ["@SnowML//bazel/platforms:extended_conda_channels", "@SnowML//bazel/platforms:has_gpu"],
-            "environment": "@//bazel/environments:conda-gpu-env.yml",
-        },
-        # `extended_oss` is the extended env for OSS repo which is a  strict subset of `extended`.
-        # It's intended for development without dev VPN.
-        "extended_oss": {
-            "compatible_target": ["@SnowML//bazel/platforms:extended_conda_channels"],
-            "environment": "@//bazel/environments:conda-env.yml",
-        },
-        "sf_only": {
-            "compatible_target": ["@SnowML//bazel/platforms:snowflake_conda_channel"],
-            "environment": "@//bazel/environments:conda-env-snowflake.yml",
+        "core": {
+            "compatible_target": [
+                "@SnowML//bazel/platforms:core_conda_channel",
+            ],
+            "environment": "@//bazel/environments:conda-env-core.yml",
         },
     }
+
+    conda_env_map.update({
+        group_name: {
+            "compatible_target": [
+                "@SnowML//bazel/platforms:core_conda_channel",
+                "@SnowML//bazel/platforms:{}_conda_channel".format(group_name),
+            ],
+            "environment": "@//bazel/environments:conda-env-{}.yml".format(group_name),
+        }
+        for group_name in OPTIONAL_DEPENDENCY_GROUPS.keys()
+    })
 
     if env_name not in conda_env_map.keys():
         fail("Unsupported conda env {} specified. Only {} is supported.".format(env_name, repr(conda_env_map.keys())))

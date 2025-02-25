@@ -116,7 +116,7 @@ class ArrowIngestor(data_ingestor.DataIngestor):
     def to_pandas(self, limit: Optional[int] = None) -> pd.DataFrame:
         ds = self._get_dataset(shuffle=False)
         table = ds.to_table() if limit is None else ds.head(num_rows=limit)
-        return table.to_pandas()
+        return table.to_pandas(split_blocks=True, self_destruct=True)
 
     def _get_dataset(self, shuffle: bool) -> pds.Dataset:
         format = self._format

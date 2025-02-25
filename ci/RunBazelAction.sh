@@ -34,7 +34,7 @@ action=$1 && shift
 
 help() {
     local exit_code=$1
-    echo "Usage: ${PROG} <test|coverage> [-b <bazel_path>] [-m merge_gate|continuous_run|quarantined|local_unittest|local_all] [-e <snowflake_env>] [--with-spcs-image]"
+    echo "Usage: ${PROG} <test|coverage> [-b <bazel_path>] [-m merge_gate|continuous_run|quarantined|local_unittest|local_all|perf] [-e <snowflake_env>] [--with-spcs-image]"
     exit "${exit_code}"
 }
 
@@ -46,11 +46,8 @@ while (($#)); do
     case $1 in
     -m | --mode)
         shift
-        if [[ $1 = "merge_gate" || $1 = "continuous_run" || $1 = "quarantined" || $1 = "release" || $1 = "local_unittest" || $1 = "local_all" ]]; then
+        if [[ $1 = "merge_gate" || $1 = "continuous_run" || $1 = "quarantined" || $1 = "local_unittest" || $1 = "local_all" || $1 = "perf" ]]; then
             mode=$1
-            if [[ $mode = "release" ]]; then
-                mode="continuous_run"
-            fi
         else
             help 1
         fi
@@ -99,6 +96,7 @@ fi
 action_env=()
 
 if [[ "${WITH_SPCS_IMAGE}" = true ]]; then
+    export SKIP_GRYPE=true
     source model_container_services_deployment/ci/build_and_push_images.sh
     action_env=("--action_env=BUILDER_IMAGE_PATH=${BUILDER_IMAGE_PATH}" "--action_env=BASE_CPU_IMAGE_PATH=${BASE_CPU_IMAGE_PATH}" "--action_env=BASE_GPU_IMAGE_PATH=${BASE_GPU_IMAGE_PATH}")
 fi
@@ -132,6 +130,25 @@ local_all)
 
     query_expr='kind(".*_test rule", rdeps(//..., '"${target}"'))'
     ;;
+perf)
+    cache_test_results="--cache_test_results=no"
+
+    query_expr='kind(".*_test rule", //tests/perf/...)'
+
+    if [[ -n "${USER_LDAP:-}" ]]; then
+        action_env+=("--action_env=USER_LDAP=${USER_LDAP}")
+    fi
+
+    # BUILD_URL is set by CI systems (e.g., Jenkins) to point to the build's web UI
+    if [[ -n "${BUILD_URL:-}" ]]; then
+        action_env+=("--action_env=BUILD_URL=${BUILD_URL}")
+    fi
+    git_commit=$(git rev-parse HEAD)
+    if [[ -n "${git_commit:-}" ]]; then
+        action_env+=("--action_env=GIT_COMMIT=${git_commit}")
+    fi
+
+    ;;
 *)
     help 1
     ;;
@@ -147,70 +164,132 @@ if [[ ! -s "${all_test_targets_file}" && "${mode}" = "merge_gate" ]]; then
     exit 0
 fi
 
-# Filter out targets need to run with extended env
-extended_test_targets_query_expr="set($(<"${all_test_targets_file}"))"
-extended_test_targets_query_file=${working_dir}/all_test_targets_query
-printf "%s" "${extended_test_targets_query_expr}" >"${extended_test_targets_query_file}"
-extended_test_targets_file=${working_dir}/extended_test_targets
-"${bazel}" cquery --query_file="${extended_test_targets_query_file}" --output=starlark --starlark:file=bazel/platforms/filter_incompatible_targets.cquery | awk NF >"${extended_test_targets_file}"
+# Read groups from optional_dependency_groups.bzl
+groups=()
+while IFS= read -r line; do
+    groups+=("$line")
+done < <(python3 -c '
+import ast
+with open("bazel/platforms/optional_dependency_groups.bzl", "r") as f:
+    tree = ast.parse(f.read())
+    for node in ast.walk(tree):
+        if type(node) == ast.Assign and node.targets[0].id == "OPTIONAL_DEPENDENCY_GROUPS":
+            groups = ast.literal_eval(node.value)
+            for group in groups.keys():
+                print(group)
+')
 
-# Subtract to get targets to run in sf_only env
-sf_only_test_targets_file=${working_dir}/sf_only_test_targets
-comm -2 -3 <(sort "${all_test_targets_file}") <(sort "${extended_test_targets_file}") >"${sf_only_test_targets_file}"
+if [ ${#groups[@]} -eq 0 ]; then
+    echo "Error: No groups found in optional_dependency_groups.bzl"
+    exit 1
+fi
+
+# Create files for each group's targets
+# Create arrays for each group's files and exit codes
+group_test_targets_files=()
+group_bazel_exit_codes=()
+group_coverage_report_files=()
+
+# Filter targets for each group
+for i in "${!groups[@]}"; do
+    group="${groups[$i]}"
+    group_test_targets_files[$i]="${working_dir}/${group}_test_targets"
+
+    # Filter out targets that are incompatible with the group
+    "${bazel}" cquery --config="${group}" \
+        --output=starlark --starlark:file=bazel/platforms/filter_incompatible_targets.cquery \
+        'set('"$(<"${all_test_targets_file}")"')' | \
+        awk NF >"${working_dir}/filtered_targets"
+
+    # Compare two sorted files and output lines that are unique to the first file
+    comm -2 -3 <(sort "${all_test_targets_file}") \
+        <(sort "${working_dir}/filtered_targets") >"${group_test_targets_files[$i]}"
+done
+
+# Find targets compatible with core group
+core_targets_file="${working_dir}/core_targets"
+"${bazel}" cquery --config=core  \
+    --output=starlark --starlark:file=bazel/platforms/filter_incompatible_targets.cquery \
+    'set('"$(<"${all_test_targets_file}")"')' | \
+    awk NF >"${working_dir}/filtered_targets"
+
+comm -2 -3 <(sort "${all_test_targets_file}") \
+    <(sort "${working_dir}/filtered_targets") >"${core_targets_file}"
+
+# Remove core-compatible targets from other groups
+for i in "${!groups[@]}"; do
+    group="${groups[$i]}"
+    # Create temporary file for filtered targets
+    filtered_file="${working_dir}/${group}_filtered"
+    # Keep only targets that are not in core_targets
+    comm -2 -3 <(sort "${group_test_targets_files[$i]}") \
+        <(sort "${core_targets_file}") >"${filtered_file}"
+    # Replace original file with filtered results
+    mv "${filtered_file}" "${group_test_targets_files[$i]}"
+done
+
+groups+=("core")
+group_test_targets_files+=("${core_targets_file}")
+
+for i in "${!groups[@]}"; do
+    group="${groups[$i]}"
+    echo "Running tests for group: ${group}"
+    echo "----------------------------------"
+    cat "${group_test_targets_files[$i]}"
+    echo "----------------------------------"
+done
 
 set +e
 if [[ "${action}" = "test" ]]; then
-    "${bazel}" test \
-        "${cache_test_results}" \
-        --test_output=errors \
-        --flaky_test_attempts=2 \
-        ${action_env[@]+"${action_env[@]}"} \
-        "${tag_filter}" \
-        --target_pattern_file "${sf_only_test_targets_file}"
-    sf_only_bazel_exit_code=$?
+    # Run tests for each group
+    for i in "${!groups[@]}"; do
+        group="${groups[$i]}"
+        "${bazel}" test \
+            --config="${group}" \
+            "${cache_test_results}" \
+            --test_output=errors \
+            --flaky_test_attempts=2 \
+            ${action_env[@]+"${action_env[@]}"} \
+            "${tag_filter}" \
+            --target_pattern_file "${group_test_targets_files[$i]}"
+        group_bazel_exit_codes[$i]=$?
+    done
 
-    # Test with extended env
-    "${bazel}" test \
-        --config=extended \
-        "${cache_test_results}" \
-        --test_output=errors \
-        --flaky_test_attempts=2 \
-        ${action_env[@]+"${action_env[@]}"} \
-        "${tag_filter}" \
-        --target_pattern_file "${extended_test_targets_file}"
-    extended_bazel_exit_code=$?
 elif [[ "${action}" = "coverage" ]]; then
-    "${bazel}" coverage \
-        "${cache_test_results}" \
-        --combined_report=lcov \
-        ${action_env[@]+"${action_env[@]}"} \
-        "${tag_filter}" \
-        --experimental_collect_code_coverage_for_generated_files \
-        --target_pattern_file "${sf_only_test_targets_file}"
-    sf_only_bazel_exit_code=$?
+    # Run coverage for each group
+    for i in "${!groups[@]}"; do
+        group="${groups[$i]}"
+        group_coverage_report_files[$i]="${working_dir}/${group}_coverage_report.dat"
 
-    sf_only_coverage_report_file=${working_dir}/sf_only_coverage_report.dat
-    cp "$(${bazel} info output_path)/_coverage/_coverage_report.dat" "${sf_only_coverage_report_file}"
+        "${bazel}" coverage \
+            --config="${group}" \
+            "${cache_test_results}" \
+            --combined_report=lcov \
+            ${action_env[@]+"${action_env[@]}"} \
+            "${tag_filter}" \
+            --experimental_collect_code_coverage_for_generated_files \
+            --target_pattern_file "${group_test_targets_files[$i]}"
+        group_bazel_exit_codes[$i]=$?
 
-    # Test with extended env
-    "${bazel}" coverage \
-        --config=extended \
-        "${cache_test_results}" \
-        --combined_report=lcov \
-        ${action_env[@]+"${action_env[@]}"} \
-        "${tag_filter}" \
-        --experimental_collect_code_coverage_for_generated_files \
-        --target_pattern_file "${extended_test_targets_file}"
-    extended_bazel_exit_code=$?
+        cp "$(${bazel} info output_path)/_coverage/_coverage_report.dat" "${group_coverage_report_files[$i]}"
+    done
 
-    extended_coverage_report_file=${working_dir}/extended_coverage_report.dat
-    cp "$(${bazel} info output_path)/_coverage/_coverage_report.dat" "${extended_coverage_report_file}"
-
+    # Combine all coverage reports
     if [ -z "${coverage_report_file+x}" ]; then
         coverage_report_file=${working_dir}/coverage_report.dat
     fi
 
-    lcov -a "${sf_only_coverage_report_file}" -a "${extended_coverage_report_file}" -o "${coverage_report_file}"
+    # Combine the first two files
+    lcov -a "${group_coverage_report_files[0]}" \
+         -a "${group_coverage_report_files[1]}" \
+         -o "${coverage_report_file}"
+
+    # Add remaining files if they exist
+    for ((i=2; i<${#groups[@]}; i++)); do
+        lcov -a "${coverage_report_file}" \
+             -a "${group_coverage_report_files[$i]}" \
+             -o "${coverage_report_file}"
+    done
 
     if [[ "${mode}" = "local_unittest" || "${mode}" = "local_all" ]]; then
         cp -f "${coverage_report_file}" ".coverage.dat"
@@ -219,21 +298,19 @@ elif [[ "${action}" = "coverage" ]]; then
     genhtml --prefix "$(pwd)" --output html_coverage_report "${coverage_report_file}"
 fi
 
-# Bazel exit code
-#   0: Success;
-#   4: Build Successful but no tests found
-# See https://bazel.build/run/scripts#exit-codes
-# We allow exit code be 4 only when the targets is empty file.
-if ! grep -q '[^[:space:]]' "${sf_only_test_targets_file}" && [[ ${sf_only_bazel_exit_code} -eq 4 ]]; then
-    sf_only_bazel_exit_code=0
-fi
+# Check exit codes for all groups
+exit_code=0
+for i in "${!groups[@]}"; do
+    # Allow exit code 4 if the target file is empty
+    if ! grep -q '[^[:space:]]' "${group_test_targets_files[$i]}" && \
+       [[ ${group_bazel_exit_codes[$i]} -eq 4 ]]; then
+        group_bazel_exit_codes[$i]=0
+    fi
 
-if ! grep -q '[^[:space:]]' "${extended_test_targets_file}" && [[ ${extended_bazel_exit_code} -eq 4 ]]; then
-    extended_bazel_exit_code=0
-fi
+    # If any group fails, mark the overall execution as failed
+    if [[ ${group_bazel_exit_codes[$i]} -ne 0 ]]; then
+        exit_code=1
+    fi
+done
 
-if [[ ${sf_only_bazel_exit_code} -eq 0 && ${extended_bazel_exit_code} -eq 0 ]]; then
-    exit 0
-else
-    exit 1
-fi
+exit $exit_code

@@ -1,4 +1,5 @@
 load("//bazel:py_rules.bzl", "py_binary")
+load("//bazel/platforms:optional_dependency_groups.bzl", "OPTIONAL_DEPENDENCY_GROUPS")
 load("//bazel/requirements:rules.bzl", "generate_requirement_file", "generate_requirement_file_yaml", "sync_target")
 load("//snowflake/ml:version.bzl", "VERSION")
 
@@ -9,6 +10,17 @@ exports_files(["requirements.schema.json"])
 py_binary(
     name = "parse_and_generate_requirements",
     srcs = ["parse_and_generate_requirements.py"],
+)
+
+py_binary(
+    name = "update_version_requirements",
+    srcs = ["update_version_requirements.py"],
+    data = ["//:requirements.yml"],
+)
+
+py_binary(
+    name = "update_bazelrc",
+    srcs = ["update_bazelrc.py"],
 )
 
 _SRC_REQUIREMENT_FILE = "//:requirements.yml"
@@ -23,41 +35,68 @@ _SYNC_BAZEL_CMD = "bazel run --config=pre_build //{current_path}:{sync_rule}".fo
 )
 
 _GENERATED_REQUIREMENTS_FILES = {
-    "conda_env_build_test_yml": {
-        "cmd": "--mode dev_version --format conda_env --filter_by_tag build_test_env",
-        "generated": "conda-env-build-test.yml",
-        "target": "//bazel/environments:conda-env-build-test.yml",
-    },
-    "conda_env_build_yml": {
-        "cmd": "--mode dev_version --format conda_env --filter_by_tag build_essential",
-        "generated": "conda-env-build.yml",
-        "target": "//bazel/environments:conda-env-build.yml",
-    },
-    "conda_env_snowflake_yml": {
-        "cmd": "--mode dev_version --format conda_env --snowflake_channel_only",
-        "generated": "conda-env-snowflake.yml",
-        "target": "//bazel/environments:conda-env-snowflake.yml",
-    },
-    "conda_env_yml": {
-        "cmd": "--mode dev_version --format conda_env",
-        "generated": "conda-env.yml",
-        "target": "//bazel/environments:conda-env.yml",
-    },
-    "conda_gpu_env_yml": {
-        "cmd": "--mode dev_gpu_version --format conda_env",
-        "generated": "conda-gpu-env.yml",
-        "target": "//bazel/environments:conda-gpu-env.yml",
-    },
-    "conda_meta": {
-        "cmd": "--mode version_requirements --format conda_meta --version " + VERSION,
-        "generated": "meta.yaml",
-        "target": "//ci/conda_recipe:meta.yaml",
-    },
-    "requirements_txt": {
-        "cmd": "--mode dev_version --format text",
-        "generated": "requirements.txt",
-        "target": "//:requirements.txt",
-    },
+    k: v
+    for d in [
+        {
+            "conda_env_all_yml": {
+                "cmd": "--mode dev_version --format conda_env",
+                "generated": "conda-env-all.yml",
+                "target": "//bazel/environments:conda-env-all.yml",
+            },
+            "conda_env_build_test_yml": {
+                "cmd": "--mode dev_version --format conda_env --filter_by_tag build_test_env",
+                "generated": "conda-env-build-test.yml",
+                "target": "//bazel/environments:conda-env-build-test.yml",
+            },
+            "conda_env_build_yml": {
+                "cmd": "--mode dev_version --format conda_env --filter_by_tag build_essential",
+                "generated": "conda-env-build.yml",
+                "target": "//bazel/environments:conda-env-build.yml",
+            },
+            "conda_env_core_yml": {
+                "cmd": "--mode dev_version --format conda_env --filter_by_extras no_extras",
+                "generated": "conda-env-core.yml",
+                "target": "//bazel/environments:conda-env-core.yml",
+            },
+            "conda_meta": {
+                "cmd": "--mode version_requirements --format conda_meta --version " + VERSION,
+                "generated": "meta.yaml",
+                "target": "//ci/conda_recipe:meta.yaml",
+            },
+            "requirements_core_txt": {
+                "cmd": "--mode dev_version --format text --filter_by_extras none",
+                "generated": "requirements_core.txt",
+                "target": "//bazel/environments:requirements_core.txt",
+            },
+        },
+        {
+            "conda_env_{}.yml".format(name): {
+                "cmd": "--mode dev_version --format conda_env --filter_by_extras {}".format(",".join(extras)),
+                "generated": "conda-env-{}.yml".format(name),
+                "target": "//bazel/environments:conda-env-{}.yml".format(name),
+            }
+            for name, extras in OPTIONAL_DEPENDENCY_GROUPS.items()
+        },
+        {
+            "conda_optional_dependency_{}.yml".format(name): {
+                "cmd": "--mode version_requirements --format conda_env --filter_by_extras {}".format(
+                    ",".join(extras),
+                ),
+                "generated": "conda-optional-dependency-{}.yml".format(name),
+                "target": "//bazel/environments:conda-optional-dependency-{}.yml".format(name),
+            }
+            for name, extras in OPTIONAL_DEPENDENCY_GROUPS.items()
+        },
+        {
+            "requirements_{}.txt".format(name): {
+                "cmd": "--mode dev_version --format text --filter_by_extras {}".format(",".join(extras)),
+                "generated": "requirements-{}.in".format(name),
+                "target": "//bazel/environments:requirements_{}.txt".format(name),
+            }
+            for name, extras in OPTIONAL_DEPENDENCY_GROUPS.items()
+        },
+    ]
+    for k, v in d.items()
 }
 
 [

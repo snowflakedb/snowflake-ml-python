@@ -72,13 +72,6 @@ class PandasDataFrameHandler(base_handler.BaseDataHandler[pd.DataFrame]):
         df_col_dtypes = [data[col].dtype for col in data.columns]
         for df_col, df_col_dtype in zip(df_cols, df_col_dtypes):
             df_col_data = data[df_col]
-            if df_col_data.isnull().all():
-                raise snowml_exceptions.SnowflakeMLException(
-                    error_code=error_codes.INVALID_DATA,
-                    original_exception=ValueError(
-                        f"Data Validation Error: There is no non-null data in column {df_col}."
-                    ),
-                )
             if df_col_data.isnull().any():
                 warnings.warn(
                     (
@@ -163,6 +156,15 @@ class PandasDataFrameHandler(base_handler.BaseDataHandler[pd.DataFrame]):
         specs = []
         for df_col, df_col_dtype, ft_name in zip(df_cols, df_col_dtypes, ft_names):
             df_col_data = data[df_col]
+
+            if df_col_data.isnull().all():
+                raise snowml_exceptions.SnowflakeMLException(
+                    error_code=error_codes.INVALID_DATA,
+                    original_exception=ValueError(
+                        "Data Validation Error: "
+                        f"There is no non-null data in column {df_col} so the signature cannot be inferred."
+                    ),
+                )
             if df_col_data.isnull().any():
                 df_col_data = utils.series_dropna(df_col_data)
             df_col_dtype = df_col_data.dtype

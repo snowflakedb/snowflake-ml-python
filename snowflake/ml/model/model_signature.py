@@ -21,6 +21,7 @@ from typing_extensions import Never
 import snowflake.snowpark
 import snowflake.snowpark.functions as F
 import snowflake.snowpark.types as spt
+from snowflake.ml._internal import telemetry
 from snowflake.ml._internal.exceptions import (
     error_codes,
     exceptions as snowml_exceptions,
@@ -55,6 +56,9 @@ _LOCAL_DATA_HANDLERS: List[Type[base_handler.BaseDataHandler[Any]]] = [
     tensorflow_handler.SeqOfTensorflowTensorHandler,
 ]
 _ALL_DATA_HANDLERS = _LOCAL_DATA_HANDLERS + [snowpark_handler.SnowparkDataFrameHandler]
+
+_TELEMETRY_PROJECT = "MLOps"
+_MODEL_TELEMETRY_SUBPROJECT = "ModelSignature"
 
 
 def _truncate_data(
@@ -687,6 +691,10 @@ def _convert_and_validate_local_data(
     return df
 
 
+@telemetry.send_api_usage_telemetry(
+    project=_TELEMETRY_PROJECT,
+    subproject=_MODEL_TELEMETRY_SUBPROJECT,
+)
 def infer_signature(
     input_data: model_types.SupportedLocalDataType,
     output_data: model_types.SupportedLocalDataType,

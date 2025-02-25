@@ -4,6 +4,9 @@ import enum
 import functools
 import inspect
 import operator
+import sys
+import time
+import traceback
 import types
 from typing import (
     Any,
@@ -75,6 +78,8 @@ class TelemetryField(enum.Enum):
     KEY_FUNC_PARAMS = "func_params"
     KEY_ERROR_INFO = "error_info"
     KEY_ERROR_CODE = "error_code"
+    KEY_STACK_TRACE = "stack_trace"
+    KEY_DURATION = "duration"
     KEY_VERSION = "version"
     KEY_PYTHON_VERSION = "python_version"
     KEY_OS = "operating_system"
@@ -435,6 +440,7 @@ def send_api_usage_telemetry(
 
     # noqa: DAR402
     """
+    start_time = time.perf_counter()
 
     if subproject is not None and subproject_extractor is not None:
         raise ValueError("Specifying both subproject and subproject_extractor is not allowed")
@@ -555,8 +561,16 @@ def send_api_usage_telemetry(
                         )
                 else:
                     me = e
+
                 telemetry_args["error"] = repr(me)
                 telemetry_args["error_code"] = me.error_code
+                # exclude telemetry frames
+                excluded_frames = 2
+                tb = traceback.extract_tb(sys.exc_info()[2])
+                formatted_tb = "".join(traceback.format_list(tb[excluded_frames:]))
+                formatted_exception = traceback.format_exception_only(*sys.exc_info()[:2])[0]  # error type + message
+                telemetry_args["stack_trace"] = formatted_tb + formatted_exception
+
                 me.original_exception._snowflake_ml_handled = True  # type: ignore[attr-defined]
                 if e is not me:
                     raise  # Directly raise non-wrapped exceptions to preserve original stacktrace
@@ -565,6 +579,7 @@ def send_api_usage_telemetry(
                 else:
                     raise me.original_exception from e
             finally:
+                telemetry_args["duration"] = time.perf_counter() - start_time  # type: ignore[assignment]
                 telemetry.send_function_usage_telemetry(**telemetry_args)
                 global _log_counter
                 _log_counter += 1
@@ -718,12 +733,14 @@ class _SourceTelemetryClient:
         self,
         func_name: str,
         function_category: str,
+        duration: float,
         func_params: Optional[Dict[str, Any]] = None,
         api_calls: Optional[List[Dict[str, Any]]] = None,
         sfqids: Optional[List[Any]] = None,
         custom_tags: Optional[Dict[str, Union[bool, int, str, float]]] = None,
         error: Optional[str] = None,
         error_code: Optional[str] = None,
+        stack_trace: Optional[str] = None,
     ) -> None:
         """
         Send function usage telemetry message.
@@ -731,12 +748,14 @@ class _SourceTelemetryClient:
         Args:
             func_name: Function name.
             function_category: Function category.
+            duration: Function duration.
             func_params: Function parameters.
             api_calls: API calls.
             sfqids: Snowflake query IDs.
             custom_tags: Custom tags.
             error: Error.
             error_code: Error code.
+            stack_trace: Error stack trace.
         """
         data: Dict[str, Any] = {
             TelemetryField.KEY_FUNC_NAME.value: func_name,
@@ -755,11 +774,13 @@ class _SourceTelemetryClient:
         message: Dict[str, Any] = {
             **self._create_basic_telemetry_data(telemetry_type),
             TelemetryField.KEY_DATA.value: data,
+            TelemetryField.KEY_DURATION.value: duration,
         }
 
         if error:
             message[TelemetryField.KEY_ERROR_INFO.value] = error
             message[TelemetryField.KEY_ERROR_CODE.value] = error_code
+            message[TelemetryField.KEY_STACK_TRACE.value] = stack_trace
 
         self._send(message)
 

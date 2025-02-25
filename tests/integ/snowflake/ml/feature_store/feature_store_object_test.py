@@ -38,6 +38,12 @@ class FeatureViewTest(absltest.TestCase):
         with self.assertRaisesRegex(ValueError, "join_key.*is not found in input dataframe.*"):
             FeatureView(name="my_fv", entities=[e], feature_df=df)
 
+    def test_invalid_named_args(self) -> None:
+        df = self._session.create_dataframe([1, 2, 3], schema=["a"])
+        e = Entity(name="foo", join_keys=["a"])
+        with self.assertRaisesRegex(TypeError, "[Uu]nexpected keyword argument"):
+            FeatureView(name="my_fv", entities=[e], feature_df=df, refresh_interval="1h")
+
     def test_happy_path(self) -> None:
         df = self._session.create_dataframe([1, 2, 3], schema=["a"])
         e = Entity(name="foo", join_keys=["a"])

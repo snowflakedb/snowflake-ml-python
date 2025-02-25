@@ -4,12 +4,15 @@ from snowflake.ml.jobs._utils.types import ComputeResources
 # SPCS specification constants
 DEFAULT_CONTAINER_NAME = "main"
 PAYLOAD_DIR_ENV_VAR = "MLRS_PAYLOAD_DIR"
+MEMORY_VOLUME_NAME = "dshm"
+STAGE_VOLUME_NAME = "stage-volume"
+STAGE_VOLUME_MOUNT_PATH = "/mnt/app"
 
 # Default container image information
 DEFAULT_IMAGE_REPO = "/snowflake/images/snowflake_images"
 DEFAULT_IMAGE_CPU = "st_plat/runtime/x86/runtime_image/snowbooks"
 DEFAULT_IMAGE_GPU = "st_plat/runtime/x86/generic_gpu/runtime_image/snowbooks"
-DEFAULT_IMAGE_TAG = "0.8.0"
+DEFAULT_IMAGE_TAG = "0.9.2"
 DEFAULT_ENTRYPOINT_PATH = "func.py"
 
 # Percent of container memory to allocate for /dev/shm volume
@@ -18,6 +21,9 @@ MEMORY_VOLUME_SIZE = 0.3
 # Job status polling constants
 JOB_POLL_INITIAL_DELAY_SECONDS = 0.1
 JOB_POLL_MAX_DELAY_SECONDS = 1
+
+# Magic attributes
+IS_MLJOB_REMOTE_ATTR = "_is_mljob_remote_callable"
 
 # Compute pool resource information
 # TODO: Query Snowflake for resource information instead of relying on this hardcoded

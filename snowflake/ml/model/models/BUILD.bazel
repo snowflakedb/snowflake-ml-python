@@ -10,5 +10,6 @@ py_library(
 py_test(
     name = "huggingface_pipeline_test",
     srcs = ["huggingface_pipeline_test.py"],
+    optional_dependencies = ["transformers"],
     deps = [":huggingface_pipeline"],
 )

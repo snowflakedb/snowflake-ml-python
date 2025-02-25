@@ -899,7 +899,23 @@ class Pipeline(base.BaseTransformer):
         if estimator_step:
             estimator_signatures = estimator_step[1].model_signatures
             for method, signature in estimator_signatures.items():
-                self._model_signature_dict[method] = ModelSignature(inputs=inputs_signature, outputs=signature.outputs)
+                # Add the inferred input signature to the model signature dictionary for each method
+                self._model_signature_dict[method] = ModelSignature(
+                    inputs=inputs_signature,
+                    outputs=(
+                        # If _drop_input_cols is True, do not include any input columns in the output signature
+                        []
+                        if self._drop_input_cols
+                        else [
+                            # Include input columns in the output signature if they are not already present
+                            # Those already present means they are overwritten by the output of the estimator
+                            spec
+                            for spec in inputs_signature
+                            if spec.name not in [_spec.name for _spec in signature.outputs]
+                        ]
+                    )
+                    + signature.outputs,  # Append the existing output signature
+                )
 
     @property
     def model_signatures(self) -> Dict[str, ModelSignature]:

@@ -238,12 +238,13 @@ class MonitorRegistryTest(absltest.TestCase):
             options={"enable_monitoring": True},
         )
 
-    def test_registry_monitoring_disabled_by_default(self) -> None:
+    def test_registry_monitoring_disabled_properly(self) -> None:
         session = cast(Session, self.m_session)
         m_r = registry.Registry(
             session,
             database_name=self.test_db_name,
             schema_name=self.test_schema_name,
+            options={"enable_monitoring": False},
         )
 
         with self.assertRaisesRegex(ValueError, registry._MODEL_MONITORING_DISABLED_ERROR):

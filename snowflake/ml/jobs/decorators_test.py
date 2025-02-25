@@ -13,23 +13,17 @@ class JobDecoratorTests(absltest.TestCase):
         cls.session = absltest.mock.MagicMock(spec=snowpark.Session)
 
     def test_job_decorator_unsupported_arg_type(self) -> None:
-        with self.assertRaisesRegex(ValueError, "Unsupported argument type.*'session'"):
-
-            @decorators.remote(self.compute_pool, "payload_stage", session=self.session)  # type: ignore[misc]
-            def decojob_fn1(a, b: str, session: snowpark.Session) -> None:  # type: ignore[no-untyped-def]
-                pass
-
         @decorators.remote(self.compute_pool, "payload_stage", session=self.session)  # type: ignore[misc]
         def decojob_fn2(a, b: int, session) -> None:  # type: ignore[no-untyped-def]
             pass
 
-        with self.assertRaisesRegex(ValueError, "Unsupported argument type.*'session'"):
+        with self.assertRaisesRegex(ValueError, "Unable to serialize positional arg 2.*'Session'"):
             decojob_fn2(1, 2, self.session)
 
-        with self.assertRaisesRegex(ValueError, "Unsupported argument type.*'session'"):
+        with self.assertRaisesRegex(ValueError, "Unable to serialize keyword arg 'session'.*'Session'"):
             decojob_fn2(1, 2, session=self.session)
 
-        with self.assertRaisesRegex(ValueError, "Unsupported argument type.*'a'"):
+        with self.assertRaisesRegex(ValueError, "Unable to serialize positional arg 0.*'Session'"):
             decojob_fn2(self.session, 2, self.session)
 
 

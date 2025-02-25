@@ -665,7 +665,7 @@ class WrapperGeneratorBase:
             # numpy is already imported in all the wrapper classes with alias np.
             return f"{'-' if str(default_value).startswith('-') else ''}np.{str(default_value).lstrip('-')}"
 
-        if inspect.isfunction(default_value):
+        if inspect.isroutine(default_value):
             import_stmt = f"import {default_value.__module__}"
             if import_stmt not in self.estimator_imports_list:
                 self.estimator_imports_list.append(import_stmt)
@@ -913,7 +913,12 @@ label_cols: Optional[Union[str, List[str]]]
         self.estimator_args_gathering_calls = "\n        ".join(deps_gathering_calls)
 
         # TODO(snandamuri): Implement type inference for classifiers.
-        self.udf_datatype = "float" if self._from_data_py or self._is_regressor else ""
+        # `_is_preprocessing_module_obj` is included because PolynomialFeatures
+        # is currently our only preprocessing module and it returns float.
+        if self._from_data_py or self._is_regressor or self._is_preprocessing_module_obj:
+            self.udf_datatype = "float"
+        else:
+            self.udf_datatype = ""
 
     def _populate_file_paths(self) -> None:
         snow_ml_module_name = WrapperGeneratorFactory.get_snow_ml_module_name(self.root_module_name)
