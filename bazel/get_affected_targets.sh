@@ -69,15 +69,11 @@ trap 'rm -rf "${working_dir}"' EXIT
 starting_hashes_json="${working_dir}/starting_hashes.json"
 final_hashes_json="${working_dir}/final_hashes.json"
 impacted_targets_path="${working_dir}/impacted_targets.txt"
-ci_hash_file_pr="${working_dir}/ci_hash_file_pr"
-ci_hash_file_base="${working_dir}/ci_hash_file_base"
 
 git -C "${workspace_path}" checkout "${pr_revision}" --quiet
 trap 'git -C "${workspace_path}" checkout "${current_revision}" --quiet' EXIT
 
 echo "Generating Hashes for Revision '${pr_revision}'"
-
-git ls-files -s "${workspace_path}/ci" "${workspace_path}/bazel" | git hash-object --stdin >"${ci_hash_file_pr}"
 
 "${bazel}" run --config=pre_build :bazel-diff -- generate-hashes -w "${workspace_path}" -b "${bazel}"  "${final_hashes_json}"
 
@@ -86,17 +82,11 @@ git -C "${workspace_path}" checkout "${MERGE_BASE_MAIN}" --quiet
 
 echo "Generating Hashes for merge base ${MERGE_BASE_MAIN}"
 
-git ls-files -s "${workspace_path}/ci" "${workspace_path}/bazel" | git hash-object --stdin >"${ci_hash_file_base}"
-
 "${bazel}" run --config=pre_build :bazel-diff -- generate-hashes -w "${workspace_path}" -b "${bazel}" "${starting_hashes_json}"
 
 git -C "${workspace_path}" checkout "${pr_revision}" --quiet
 echo "Determining Impacted Targets and output to ${output_path}"
 "${bazel}" run --config=pre_build :bazel-diff -- get-impacted-targets -sh "${starting_hashes_json}" -fh "${final_hashes_json}" -o "${impacted_targets_path}"
-
-if ! cmp -s "$ci_hash_file_pr" "$ci_hash_file_base"; then
-    echo '//...' >> "${impacted_targets_path}"
-fi
 
 filter_query_rules_file="${working_dir}/filter_query_rules"
 

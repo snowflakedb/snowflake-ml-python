@@ -74,11 +74,6 @@ class SnowMLModelHandler(_base.BaseModelHandler["BaseEstimator"]):
         background_data: Optional[model_types.SupportedDataType],
         enable_explainability: Optional[bool],
     ) -> Any:
-        from snowflake.ml.modeling import pipeline as snowml_pipeline
-
-        # handle pipeline objects separately
-        if isinstance(estimator, snowml_pipeline.Pipeline):  # type: ignore[attr-defined]
-            return None
 
         tree_methods = ["to_xgboost", "to_lightgbm", "to_sklearn"]
         non_tree_methods = ["to_sklearn"]
@@ -129,27 +124,54 @@ class SnowMLModelHandler(_base.BaseModelHandler["BaseEstimator"]):
         # Pipeline is inherited from BaseEstimator, so no need to add one more check
 
         if not is_sub_model:
-            if model_meta.signatures:
+            if model_meta.signatures or sample_input_data is not None:
                 warnings.warn(
                     "Providing model signature for Snowpark ML "
                     + "Modeling model is not required. Model signature will automatically be inferred during fitting. ",
                     UserWarning,
                     stacklevel=2,
                 )
-            assert hasattr(model, "model_signatures"), "Model does not have model signatures as expected."
-            model_signature_dict = getattr(model, "model_signatures", {})
-            target_methods = kwargs.pop("target_methods", None)
-            if not target_methods:
-                model_meta.signatures = model_signature_dict
+                target_methods = handlers_utils.get_target_methods(
+                    model=model,
+                    target_methods=kwargs.pop("target_methods", None),
+                    default_target_methods=cls.DEFAULT_TARGET_METHODS,
+                )
+
+                def get_prediction(
+                    target_method_name: str,
+                    sample_input_data: model_types.SupportedLocalDataType,
+                ) -> model_types.SupportedLocalDataType:
+                    if not isinstance(sample_input_data, (pd.DataFrame, np.ndarray)):
+                        sample_input_data = model_signature._convert_local_data_to_df(sample_input_data)
+
+                    target_method = getattr(model, target_method_name, None)
+                    assert callable(target_method)
+                    predictions_df = target_method(sample_input_data)
+                    return predictions_df
+
+                model_meta = handlers_utils.validate_signature(
+                    model=model,
+                    model_meta=model_meta,
+                    target_methods=target_methods,
+                    sample_input_data=sample_input_data,
+                    get_prediction_fn=get_prediction,
+                    is_for_modeling_model=True,
+                )
             else:
-                temp_model_signature_dict = {}
-                for method_name in target_methods:
-                    method_model_signature = model_signature_dict.get(method_name, None)
-                    if method_model_signature is not None:
-                        temp_model_signature_dict[method_name] = method_model_signature
-                    else:
-                        raise ValueError(f"Target method {method_name} does not exist in the model.")
-                model_meta.signatures = temp_model_signature_dict
+                assert hasattr(model, "model_signatures"), "Model does not have model signatures as expected."
+                model_signature_dict = getattr(model, "model_signatures", {})
+                optional_target_methods = kwargs.pop("target_methods", None)
+                if not optional_target_methods:
+                    model_meta.signatures = model_signature_dict
+                else:
+                    temp_model_signature_dict = {}
+                    for method_name in optional_target_methods:
+                        method_model_signature = model_signature_dict.get(method_name, None)
+                        if method_model_signature is not None:
+                            temp_model_signature_dict[method_name] = method_model_signature
+                        else:
+                            raise ValueError(f"Target method {method_name} does not exist in the model.")
+                    model_meta.signatures = temp_model_signature_dict
 
         python_base_obj = cls._get_supported_object_for_explainability(model, sample_input_data, enable_explainability)
         explain_target_method = handlers_utils.get_explain_target_method(model_meta, cls.EXPLAIN_TARGET_METHODS)
@@ -279,9 +301,40 @@ class SnowMLModelHandler(_base.BaseModelHandler["BaseEstimator"]):
                     for method_name in non_tree_methods:
                         try:
                             base_model = getattr(raw_model, method_name)()
-                            explainer = shap.Explainer(base_model, masker=background_data)
-                            df = handlers_utils.convert_explanations_to_2D_df(raw_model, explainer(X).values)
+                            try:
+                                explainer = shap.Explainer(base_model, masker=background_data)
+                                df = handlers_utils.convert_explanations_to_2D_df(base_model, explainer(X).values)
+                            except TypeError:
+                                try:
+                                    dtype_map = {
+                                        spec.name: spec.as_dtype(force_numpy_dtype=True)  # type: ignore[attr-defined]
+                                        for spec in signature.inputs
+                                    }
+
+                                    if isinstance(X, pd.DataFrame):
+                                        X = X.astype(dtype_map, copy=False)
+                                    if hasattr(base_model, "predict_proba"):
+                                        if isinstance(X, np.ndarray):
+                                            explainer = shap.Explainer(
+                                                base_model.predict_proba,
+                                                background_data.values,  # type: ignore[union-attr]
+                                            )
+                                        else:
+                                            explainer = shap.Explainer(base_model.predict_proba, background_data)
+                                    elif hasattr(base_model, "predict"):
+                                        if isinstance(X, np.ndarray):
+                                            explainer = shap.Explainer(
+                                                base_model.predict, background_data.values  # type: ignore[union-attr]
+                                            )
+                                        else:
+                                            explainer = shap.Explainer(base_model.predict, background_data)
+                                    else:
+                                        raise ValueError("Missing any supported target method to explain.")
+                                    df = handlers_utils.convert_explanations_to_2D_df(base_model, explainer(X).values)
+                                except TypeError as e:
+                                    raise ValueError(f"Explanation for this model type not supported yet: {str(e)}")
                             return model_signature_utils.rename_pandas_df(df, signature.outputs)
+
                         except exceptions.SnowflakeMLException:
                             pass  # Do nothing and continue to the next method
                     raise ValueError("The model must be an xgboost, lightgbm or sklearn (not pipeline) estimator.")

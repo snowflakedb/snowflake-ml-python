@@ -359,6 +359,7 @@ class FeatureStoreAccessTest(parameterized.TestCase):
     @parameterized.product(  # type: ignore[misc]
         required_access=[Role.PRODUCER], test_access=list(Role), output_type=["dataset", "table"]
     )
+    @absltest.skip("https://snowflakecomputing.atlassian.net/browse/SNOW-1951758")  # type: ignore[misc]
     def test_generate_dataset(self, required_access: Role, test_access: Role, output_type: str) -> None:
         spine_df = self._session.sql(f"SELECT id FROM {self._mock_table}")
         fv1 = self._feature_store.get_feature_view("fv1", "v1")

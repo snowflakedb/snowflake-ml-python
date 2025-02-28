@@ -170,6 +170,7 @@ class FeatureView(lineage_node.LineageNode):
         warehouse: Optional[str] = None,
         initialize: str = "ON_CREATE",
         refresh_mode: str = "AUTO",
+        cluster_by: Optional[List[str]] = None,
         **_kwargs: Any,
     ) -> None:
         """
@@ -200,6 +201,9 @@ class FeatureView(lineage_node.LineageNode):
             refresh_mode: The refresh mode of managed feature view. The value can be 'AUTO', 'FULL' or 'INCREMENETAL'.
                 For managed feature view, the default value is 'AUTO'. For static feature view it has no effect.
                 Check https://docs.snowflake.com/en/sql-reference/sql/create-dynamic-table for for details.
+            cluster_by: Columns to cluster the feature view by.
+                - Defaults to the join keys from entities.
+                - If `timestamp_col` is provided, it is added to the default clustering keys.
             _kwargs: reserved kwargs for system generated args. NOTE: DO NOT USE.
 
         Example::
@@ -224,6 +228,7 @@ class FeatureView(lineage_node.LineageNode):
             >>> print(registered_fv.status)
             FeatureViewStatus.ACTIVE
 
+        # noqa: DAR401
         """
 
         self._name: SqlIdentifier = SqlIdentifier(name)
@@ -233,7 +238,7 @@ class FeatureView(lineage_node.LineageNode):
             SqlIdentifier(timestamp_col) if timestamp_col is not None else None
         )
         self._desc: str = desc
-        self._infer_schema_df: DataFrame = _kwargs.get("_infer_schema_df", self._feature_df)
+        self._infer_schema_df: DataFrame = _kwargs.pop("_infer_schema_df", self._feature_df)
         self._query: str = self._get_query()
         self._version: Optional[FeatureViewVersion] = None
         self._status: FeatureViewStatus = FeatureViewStatus.DRAFT
@@ -249,6 +254,14 @@ class FeatureView(lineage_node.LineageNode):
         self._refresh_mode: Optional[str] = refresh_mode
         self._refresh_mode_reason: Optional[str] = None
         self._owner: Optional[str] = None
+        self._cluster_by: List[SqlIdentifier] = (
+            [SqlIdentifier(col) for col in cluster_by] if cluster_by is not None else self._get_default_cluster_by()
+        )
+
+        # Validate kwargs
+        if _kwargs:
+            raise TypeError(f"FeatureView.__init__ got an unexpected keyword argument: '{next(iter(_kwargs.keys()))}'")
+
         self._validate()
 
     def slice(self, names: List[str]) -> FeatureViewSlice:
@@ -393,6 +406,10 @@ class FeatureView(lineage_node.LineageNode):
     @property
     def timestamp_col(self) -> Optional[SqlIdentifier]:
         return self._timestamp_col
+
+    @property
+    def cluster_by(self) -> Optional[List[SqlIdentifier]]:
+        return self._cluster_by
 
     @property
     def desc(self) -> str:
@@ -656,6 +673,14 @@ Got {len(self._feature_df.queries['queries'])}: {self._feature_df.queries['queri
                 if not isinstance(col_type, (DateType, TimeType, TimestampType, _NumericType)):
                     raise ValueError(f"Invalid data type for timestamp_col {ts_col}: {col_type}.")
 
+            if self.cluster_by is not None:
+                for column in self.cluster_by:
+                    if column not in df_cols:
+                        raise ValueError(
+                            f"Column '{column}' in `cluster_by` is not in the feature DataFrame schema. "
+                            f"{df_cols}, {self.cluster_by}"
+                        )
+
         if re.match(_RESULT_SCAN_QUERY_PATTERN, self._query) is not None:
             raise ValueError(f"feature_df should not be reading from RESULT_SCAN. Invalid query: {self._query}")
 
@@ -890,6 +915,7 @@ Got {len(self._feature_df.queries['queries'])}: {self._feature_df.queries['queri
         owner: Optional[str],
         infer_schema_df: Optional[DataFrame],
         session: Session,
+        cluster_by: Optional[List[str]] = None,
     ) -> FeatureView:
         fv = FeatureView(
             name=name,
@@ -898,6 +924,7 @@ Got {len(self._feature_df.queries['queries'])}: {self._feature_df.queries['queri
             timestamp_col=timestamp_col,
             desc=desc,
             _infer_schema_df=infer_schema_df,
+            cluster_by=cluster_by,
         )
         fv._version = FeatureViewVersion(version) if version is not None else None
         fv._status = status
@@ -915,6 +942,24 @@ Got {len(self._feature_df.queries['queries'])}: {self._feature_df.queries['queri
             fv, session=session, name=f"{fv.database}.{fv._schema}.{name}", domain="feature_view", version=version
         )
         return fv
+
+    #
+    def _get_default_cluster_by(self) -> List[SqlIdentifier]:
+        """
+        Get default columns to cluster the feature view by.
+        Default cluster_by columns are join keys from entities and timestamp_col if it exists
+
+        Returns:
+            List of SqlIdentifiers representing the default columns to cluster the feature view by.
+        """
+        # We don't focus on the order of entities here, as users can define a custom 'cluster_by'
+        # if a specific order is required.
+        default_cluster_by_cols = [key for entity in self.entities if entity.join_keys for key in entity.join_keys]
+
+        if self.timestamp_col:
+            default_cluster_by_cols.append(self.timestamp_col)
+
+        return default_cluster_by_cols
 
 
 lineage_node.DOMAIN_LINEAGE_REGISTRY["feature_view"] = FeatureView

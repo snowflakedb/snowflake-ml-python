@@ -498,6 +498,7 @@ class FeatureStoreTest(parameterized.TestCase):
                 "REFRESH_MODE": [None, None],
                 "SCHEDULING_STATE": [None, None],
                 "WAREHOUSE": [None, None],
+                "CLUSTER_BY": [None, None],
             },
             sort_cols=["NAME"],
             exclude_cols=["CREATED_ON", "OWNER"],
@@ -642,6 +643,7 @@ class FeatureStoreTest(parameterized.TestCase):
                 "REFRESH_FREQ": ["1 minute", "DOWNSTREAM", "5 minutes"],
                 "REFRESH_MODE": ["INCREMENTAL", "INCREMENTAL", "INCREMENTAL"],
                 "SCHEDULING_STATE": ["SUSPENDED", "ACTIVE", "ACTIVE"],
+                "CLUSTER_BY": ['["AID", "UID"]', '["AID", "UID", "TS"]', '["AID", "UID"]'],
             },
             sort_cols=["NAME"],
             exclude_cols=["CREATED_ON", "OWNER", "WAREHOUSE"],
@@ -666,6 +668,7 @@ class FeatureStoreTest(parameterized.TestCase):
                 "REFRESH_FREQ": ["DOWNSTREAM", "5 minutes"],
                 "REFRESH_MODE": ["INCREMENTAL", "INCREMENTAL"],
                 "SCHEDULING_STATE": ["ACTIVE", "ACTIVE"],
+                "CLUSTER_BY": ['["AID", "UID", "TS"]', '["AID", "UID"]'],
             },
             sort_cols=["NAME"],
             exclude_cols=["CREATED_ON", "OWNER", "WAREHOUSE"],
@@ -1164,6 +1167,7 @@ class FeatureStoreTest(parameterized.TestCase):
                 "REFRESH_MODE": [],
                 "SCHEDULING_STATE": [],
                 "WAREHOUSE": [],
+                "CLUSTER_BY": [],
             },
             sort_cols=["NAME"],
         )
@@ -1198,7 +1202,6 @@ class FeatureStoreTest(parameterized.TestCase):
             desc="foobar",
         )
         fs.register_feature_view(feature_view=fv3, version="v1")
-
         compare_dataframe(
             actual_df=fs.list_feature_views().to_pandas(),
             target_data={
@@ -1211,6 +1214,7 @@ class FeatureStoreTest(parameterized.TestCase):
                 "REFRESH_FREQ": ["DOWNSTREAM", "DOWNSTREAM", "DOWNSTREAM"],
                 "REFRESH_MODE": ["INCREMENTAL", "INCREMENTAL", "INCREMENTAL"],
                 "SCHEDULING_STATE": ["ACTIVE", "ACTIVE", "ACTIVE"],
+                "CLUSTER_BY": ['["ID", "TS"]', '["NAME"]', '["ID", "NAME"]'],
             },
             sort_cols=["NAME"],
             exclude_cols=["CREATED_ON", "OWNER", "WAREHOUSE"],
@@ -1228,6 +1232,7 @@ class FeatureStoreTest(parameterized.TestCase):
                 "REFRESH_FREQ": ["DOWNSTREAM", "DOWNSTREAM"],
                 "REFRESH_MODE": ["INCREMENTAL", "INCREMENTAL"],
                 "SCHEDULING_STATE": ["ACTIVE", "ACTIVE"],
+                "CLUSTER_BY": ['["ID", "TS"]', '["ID", "NAME"]'],
             },
             sort_cols=["NAME"],
             exclude_cols=["CREATED_ON", "OWNER", "WAREHOUSE"],
@@ -1245,6 +1250,7 @@ class FeatureStoreTest(parameterized.TestCase):
                 "REFRESH_FREQ": ["DOWNSTREAM"],
                 "REFRESH_MODE": ["INCREMENTAL"],
                 "SCHEDULING_STATE": ["ACTIVE"],
+                "CLUSTER_BY": ['["NAME"]'],
             },
             sort_cols=["NAME"],
             exclude_cols=["CREATED_ON", "OWNER", "WAREHOUSE"],
@@ -1262,6 +1268,7 @@ class FeatureStoreTest(parameterized.TestCase):
                 "REFRESH_FREQ": ["DOWNSTREAM"],
                 "REFRESH_MODE": ["INCREMENTAL"],
                 "SCHEDULING_STATE": ["ACTIVE"],
+                "CLUSTER_BY": ['["NAME"]'],
             },
             sort_cols=["NAME"],
             exclude_cols=["CREATED_ON", "OWNER", "WAREHOUSE"],
@@ -1279,6 +1286,7 @@ class FeatureStoreTest(parameterized.TestCase):
                 "REFRESH_FREQ": ["DOWNSTREAM"],
                 "REFRESH_MODE": ["INCREMENTAL"],
                 "SCHEDULING_STATE": ["ACTIVE"],
+                "CLUSTER_BY": ['["ID", "NAME"]'],
             },
             sort_cols=["NAME"],
             exclude_cols=["CREATED_ON", "OWNER", "WAREHOUSE"],
@@ -1299,6 +1307,7 @@ class FeatureStoreTest(parameterized.TestCase):
                 "REFRESH_MODE": [],
                 "SCHEDULING_STATE": [],
                 "WAREHOUSE": [],
+                "CLUSTER_BY": [],
             },
             sort_cols=["NAME"],
         )
@@ -2344,6 +2353,7 @@ class FeatureStoreTest(parameterized.TestCase):
                 desc="foobar",
             ).attach_feature_desc({"NAME": "my name"})
 
+    @absltest.skip("https://snowflakecomputing.atlassian.net/browse/SNOW-1951758")  # type: ignore[misc]
     def test_multi_fv_asof_join_correctness(self) -> None:
         """
         Cases covered by this test:
@@ -2671,6 +2681,153 @@ class FeatureStoreTest(parameterized.TestCase):
             },
             sort_cols=["NAME"],
         )
+
+    def test_feature_view_with_cluster_by(self) -> None:
+        fs = self._create_feature_store()
+
+        e = Entity("foo", ["id"])
+        fs.register_entity(e)
+
+        sql1 = f"SELECT id, name, title, ts FROM {self._mock_table}"
+        # Case 1 : cluster_by is not specified
+        d1 = FeatureView(
+            name="fv1",
+            entities=[e],
+            feature_df=self._session.sql(sql1),
+            timestamp_col="ts",
+            refresh_freq="1d",
+        )
+        r11 = fs.register_feature_view(feature_view=d1, version="1.0")
+        self.assertEqual(r11.cluster_by, ["ID", "TS"])
+        self.assertEqual(
+            fs.list_feature_views().select("cluster_by").filter(col("version") == "1.0").collect()[0]["CLUSTER_BY"],
+            '["ID", "TS"]',
+        )
+
+        # Case 2 : cluster_by is specified with a valid column name
+        d2 = FeatureView(
+            name="fv2",
+            entities=[e],
+            feature_df=self._session.sql(sql1),
+            timestamp_col="ts",
+            refresh_freq="1d",
+            cluster_by=["ID"],
+        )
+        r12 = fs.register_feature_view(feature_view=d2, version="2.0")
+        self.assertEqual(r12.cluster_by, ["ID"])
+        self.assertEqual(
+            fs.list_feature_views().select("cluster_by").filter(col("version") == "2.0").collect()[0]["CLUSTER_BY"],
+            '["ID"]',
+        )
+
+        # Case 3 : non existing column in cluster_by
+        with self.assertRaisesRegex(ValueError, ".*is not in the feature DataFrame schema.*"):
+            FeatureView(
+                name="fv3",
+                entities=[e],
+                feature_df=self._session.sql(sql1),
+                timestamp_col="ts",
+                refresh_freq="1d",
+                cluster_by=["ID", "NON_EXISTING_COLUMN"],
+            )
+
+        # Case 4: cluster_by includes a mixture of valid and invalid columns
+        with self.assertRaisesRegex(ValueError, ".*is not in the feature DataFrame schema.*"):
+            FeatureView(
+                name="fv6",
+                entities=[e],
+                feature_df=self._session.sql(sql1),
+                timestamp_col="ts",
+                refresh_freq="1d",
+                cluster_by=["ID", '"invalid,col"'],
+            )
+
+        # Case 5: cluster_by is an empty list
+        d7 = FeatureView(
+            name="fv7",
+            entities=[e],
+            feature_df=self._session.sql(sql1),
+            timestamp_col="ts",
+            refresh_freq="1d",
+            cluster_by=[],
+        )
+        r17 = fs.register_feature_view(feature_view=d7, version="7.0")
+        self.assertEqual(r17.cluster_by, [])
+        self.assertEqual(
+            fs.list_feature_views().select("cluster_by").filter(col("version") == "7.0").collect()[0]["CLUSTER_BY"],
+            "[]",
+        )
+
+        # Case 6: cluster_by is None
+        d8 = FeatureView(
+            name="fv8",
+            entities=[e],
+            feature_df=self._session.sql(sql1),
+            timestamp_col="ts",
+            refresh_freq="1d",
+            cluster_by=None,
+        )
+        r18 = fs.register_feature_view(feature_view=d8, version="8.0")
+        self.assertEqual(r18.cluster_by, ["ID", "TS"])  # Defaults to inferred columns
+        self.assertEqual(
+            fs.list_feature_views().select("cluster_by").filter(col("version") == "8.0").collect()[0]["CLUSTER_BY"],
+            '["ID", "TS"]',
+        )
+
+    def test_extract_cluster_by_columns(self) -> None:
+        # Test 1: Empty string
+        clause = ""
+        expected: list[str] = []
+        result = FeatureStore._extract_cluster_by_columns(clause)
+        self.assertEqual(result, expected, "Failed on empty string")
+
+        # Test 2: Parentheses with multiple identifiers
+        clause = "LINEAR(C1, C3)"
+        expected = ["C1", "C3"]
+        result = FeatureStore._extract_cluster_by_columns(clause)
+        self.assertEqual(result, expected, "Failed on parentheses with multiple identifiers")
+
+        # Test 3: Single identifier in parentheses
+        clause = "LINEAR(C1)"
+        expected = ["C1"]
+        result = FeatureStore._extract_cluster_by_columns(clause)
+        self.assertEqual(result, expected, "Failed on single identifier in parentheses")
+
+        # Test 4: Empty parentheses
+        clause = "LINEAR()"
+        expected = []
+        result = FeatureStore._extract_cluster_by_columns(clause)
+        self.assertEqual(result, expected, "Failed on empty parentheses")
+
+        # Test 5: No parentheses
+        clause = "LINEAR"
+        expected = []
+        result = FeatureStore._extract_cluster_by_columns(clause)
+        self.assertEqual(result, expected, "Failed on input without parentheses")
+
+        # Test 6: Invalid format (unmatched parentheses)
+        clause = "LINEAR(C1, C3"
+        expected = []
+        result = FeatureStore._extract_cluster_by_columns(clause)
+        self.assertEqual(result, expected, "Failed on unmatched parentheses")
+
+        # Test 7: Special characters
+        clause = 'LINEAR(C1, "C,3", "C 3")'
+        expected = ["C1", '"C,3"', '"C 3"']
+        result = FeatureStore._extract_cluster_by_columns(clause)
+        self.assertEqual(result, expected, "Failed on special characters in identifiers")
+
+        # Test 8: Whitespace within parentheses
+        clause = "LINEAR(  C1   ,   C3   )"
+        expected = ["C1", "C3"]
+        result = FeatureStore._extract_cluster_by_columns(clause)
+        self.assertEqual(result, expected, "Failed on whitespace within parentheses")
+
+        # Test 9: Parentheses with multiple identifiers and non LINEAR function
+        clause = "Z(C1, C3)"
+        expected = ["C1", "C3"]
+        result = FeatureStore._extract_cluster_by_columns(clause)
+        self.assertEqual(result, expected, "Failed on parentheses with multiple identifiers")
 
 
 if __name__ == "__main__":

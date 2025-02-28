@@ -85,7 +85,7 @@ class TestModelVersionImplInteg(parameterized.TestCase):
             self.assertLen(list(glob.iglob(os.path.join(tmpdir, "**", "*"), recursive=True)), 29)
 
     def test_load(self) -> None:
-        loaded_model = self._mv.load()
+        loaded_model = self._mv.load(force=True)
         assert isinstance(loaded_model, svm.SVC)
         np.testing.assert_allclose(loaded_model.predict(self.test_features), self.model.predict(self.test_features))
 

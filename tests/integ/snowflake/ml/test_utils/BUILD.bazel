@@ -6,7 +6,7 @@ package(default_visibility = [
     "//tests/perf:__subpackages__",
 ])
 
-GEN_SNOWML_REQ_CMD = "$(location //bazel/requirements:parse_and_generate_requirements) $(location //:requirements.yml) --schema $(location //bazel/requirements:requirements.schema.json) --mode version_requirements --format python --snowflake_channel_only > $@"
+GEN_SNOWML_REQ_CMD = "$(location //bazel/requirements:parse_and_generate_requirements) $(location //:requirements.yml) --schema $(location //bazel/requirements:requirements.schema.json) --mode version_requirements --format python > $@"
 
 py_genrule(
     name = "gen_snowml_requirements",

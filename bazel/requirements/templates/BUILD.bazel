@@ -1,4 +1,5 @@
 exports_files([
     "meta.tpl.yaml",
     "pyproject.toml",
+    "bazelrc.tpl",
 ])

@@ -94,14 +94,6 @@ class PandasDataFrameHandlerTest(absltest.TestCase):
         ):
             pandas_handler.PandasDataFrameHandler.validate(df)
 
-        df = pd.DataFrame([[None, 2], [None, 6]], columns=["a", "b"])
-        with exception_utils.assert_snowml_exceptions(
-            self,
-            expected_original_error_type=ValueError,
-            expected_regex="There is no non-null data in column",
-        ):
-            pandas_handler.PandasDataFrameHandler.validate(df)
-
         df = pd.DataFrame([[1, None], [2, 6]], columns=["a", "b"])
         with self.assertWarnsRegex(UserWarning, "Null value detected in column"):
             pandas_handler.PandasDataFrameHandler.validate(df)
@@ -392,6 +384,14 @@ class PandasDataFrameHandlerTest(absltest.TestCase):
                 core.FeatureSpec("group", core.DataType.STRING),
             ],
         )
+
+        df = pd.DataFrame([[None, 2], [None, 6]], columns=["a", "b"])
+        with exception_utils.assert_snowml_exceptions(
+            self,
+            expected_original_error_type=ValueError,
+            expected_regex="There is no non-null data in column",
+        ):
+            pandas_handler.PandasDataFrameHandler.infer_signature(df, role="input")
 
     def test_convert_to_df_pd_DataFrame(self) -> None:
         a = np.array([[2, 5], [6, 8]])

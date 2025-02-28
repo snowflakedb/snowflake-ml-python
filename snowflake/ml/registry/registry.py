@@ -78,7 +78,7 @@ class Registry:
             session, database_name=self._database_name, schema_name=self._schema_name
         )
 
-        self.enable_monitoring = options.get("enable_monitoring", False) if options else False
+        self.enable_monitoring = options.get("enable_monitoring", True) if options else True
         if self.enable_monitoring:
             monitor_statement_params = telemetry.get_statement_params(
                 project=telemetry.TelemetryProject.MLOPS.value,
@@ -162,8 +162,12 @@ class Registry:
                 - relax_version: Whether to relax the version constraints of the dependencies when running in the
                     Warehouse. It detects any ==x.y.z in specifiers and replaced with >=x.y, <(x+1). Defaults to True.
                 - function_type: Set the method function type globally. To set method function types individually see
-                  function_type in model_options.
-                - method_options: Per-method saving options including:
+                    function_type in model_options.
+                - method_options: Per-method saving options. This dictionary has method names as keys and dictionary
+                    values with the desired options.
+
+                    The following are the available method options:
+
                     - case_sensitive: Indicates whether the method and its signature should be case sensitive.
                         This means when you refer the method in the SQL, you need to double quote it.
                         This will be helpful if you need case to tell apart your methods or features, or you have
@@ -283,7 +287,11 @@ class Registry:
                     Warehouse. It detects any ==x.y.z in specifiers and replaced with >=x.y, <(x+1). Defaults to True.
                 - function_type: Set the method function type globally. To set method function types individually see
                   function_type in model_options.
-                - method_options: Per-method saving options including:
+                - method_options: Per-method saving options. This dictionary has method names as keys and dictionary
+                    values with the desired options. See the example below.
+
+                    The following are the available method options:
+
                     - case_sensitive: Indicates whether the method and its signature should be case sensitive.
                         This means when you refer the method in the SQL, you need to double quote it.
                         This will be helpful if you need case to tell apart your methods or features, or you have
@@ -294,6 +302,28 @@ class Registry:
 
         Returns:
             ModelVersion: ModelVersion object corresponding to the model just logged.
+
+        Example::
+
+            from snowflake.ml.registry import Registry
+
+            # create a session
+            session = ...
+
+            registry = Registry(session=session)
+
+            # Define `method_options` for each inference method if needed.
+            method_options={
+              "predict": {
+                "case_sensitive": True
+              }
+            }
+
+            registry.log_model(
+              model=model,
+              model_name="my_model",
+              method_options=method_options,
+            )
         """
         statement_params = telemetry.get_statement_params(
             project=_TELEMETRY_PROJECT,

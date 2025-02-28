@@ -40,8 +40,9 @@ from tests.integ.snowflake.ml.test_utils import (
 
 @pytest.mark.spcs_deployment_image
 @absltest.skipUnless(
-    test_env_utils.get_current_snowflake_cloud_type() == snowflake_env.SnowflakeCloudType.AWS,
-    "SPCS only available in AWS",
+    test_env_utils.get_current_snowflake_cloud_type()
+    in [snowflake_env.SnowflakeCloudType.AWS, snowflake_env.SnowflakeCloudType.AZURE],
+    "SPCS only available in AWS and Azure",
 )
 class RegistryModelDeploymentTestBase(common_test_base.CommonTestBase):
     _TEST_CPU_COMPUTE_POOL = "REGTEST_INFERENCE_CPU_POOL"
@@ -94,6 +95,8 @@ class RegistryModelDeploymentTestBase(common_test_base.CommonTestBase):
         max_instances: int = 1,
         max_batch_rows: Optional[int] = None,
         force_rebuild: bool = True,
+        cpu_requests: Optional[str] = None,
+        memory_requests: Optional[str] = None,
     ) -> None:
         """Deploy model with image override."""
         is_gpu = gpu_requests is not None
@@ -135,8 +138,8 @@ class RegistryModelDeploymentTestBase(common_test_base.CommonTestBase):
             max_instances=max_instances,
             num_workers=num_workers,
             max_batch_rows=max_batch_rows,
-            cpu=None,
-            memory=None,
+            cpu=cpu_requests,
+            memory=memory_requests,
             gpu=gpu_requests,
             force_rebuild=force_rebuild,
             external_access_integrations=None,
@@ -198,6 +201,8 @@ class RegistryModelDeploymentTestBase(common_test_base.CommonTestBase):
         max_instances: int = 1,
         max_batch_rows: Optional[int] = None,
         force_rebuild: bool = True,
+        cpu_requests: Optional[str] = None,
+        memory_requests: Optional[str] = None,
     ) -> ModelVersion:
         conda_dependencies = [
             test_env_utils.get_latest_package_version_spec_in_server(
@@ -229,6 +234,8 @@ class RegistryModelDeploymentTestBase(common_test_base.CommonTestBase):
             num_workers=num_workers,
             max_instances=max_instances,
             max_batch_rows=max_batch_rows,
+            cpu_requests=cpu_requests,
+            memory_requests=memory_requests,
         )
 
     def _deploy_model_service(
@@ -241,6 +248,8 @@ class RegistryModelDeploymentTestBase(common_test_base.CommonTestBase):
         num_workers: Optional[int] = None,
         max_instances: int = 1,
         max_batch_rows: Optional[int] = None,
+        cpu_requests: Optional[str] = None,
+        memory_requests: Optional[str] = None,
     ) -> ModelVersion:
         if self.BUILDER_IMAGE_PATH and self.BASE_CPU_IMAGE_PATH and self.BASE_GPU_IMAGE_PATH:
             with_image_override = True
@@ -266,6 +275,8 @@ class RegistryModelDeploymentTestBase(common_test_base.CommonTestBase):
                 max_instances=max_instances,
                 max_batch_rows=max_batch_rows,
                 force_rebuild=False,
+                cpu_requests=cpu_requests,
+                memory_requests=memory_requests,
             )
         else:
             mv.create_service(
@@ -279,6 +290,8 @@ class RegistryModelDeploymentTestBase(common_test_base.CommonTestBase):
                 max_instances=max_instances,
                 max_batch_rows=max_batch_rows,
                 ingress_enabled=True,
+                cpu_requests=cpu_requests,
+                memory_requests=memory_requests,
             )
 
         while True:

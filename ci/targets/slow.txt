@@ -1,3 +1,6 @@
 //tests/integ/snowflake/ml/registry/services:registry_huggingface_pipeline_model_deployment_gpu_test
 //tests/integ/snowflake/ml/registry/services:registry_sentence_transformers_model_deployment_gpu_test
 //tests/integ/snowflake/ml/registry/services:registry_xgboost_model_deployment_pip_test
+//tests/integ/snowflake/ml/registry/services:registry_sentence_transformers_model_deployment_test
+//tests/integ/snowflake/ml/registry/services:registry_huggingface_pipeline_model_deployment_test
+//tests/integ/snowflake/ml/registry/services:registry_sklearn_model_deployment_test

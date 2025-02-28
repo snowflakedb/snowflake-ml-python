@@ -15,6 +15,9 @@ py_library(
 py_test(
     name = "model_env_test",
     srcs = ["model_env_test.py"],
+    optional_dependencies = [
+        "torch",
+    ],
     deps = [
         ":model_env",
         "//snowflake/ml/_internal:env",

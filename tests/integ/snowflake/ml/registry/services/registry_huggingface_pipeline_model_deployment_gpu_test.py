@@ -62,7 +62,6 @@ class TestRegistryHuggingFacePipelineDeploymentModelInteg(
                 ),
             },
             options={"cuda_version": "11.8"},
-            additional_dependencies=["pytorch==2.1.0"],
             gpu_requests="1",
             pip_requirements=pip_requirements,
         )

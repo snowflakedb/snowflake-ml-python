@@ -1,7 +1,5 @@
-exports_files([
-    "conda-env-snowflake.yml",
-    "conda-env-build.yml",
-    "conda-env.yml",
-    "conda-gpu-env.yml",
-    "conda-env-build-test.yml",
-])
+exports_files(glob([
+    "conda-env-*.yml",
+    "requirements_*.txt",
+    "conda-optional-dependency-*.yml",
+]))

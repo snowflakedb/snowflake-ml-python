@@ -73,6 +73,10 @@ py_test(
 py_test(
     name = "model_signature_test",
     srcs = ["model_signature_test.py"],
+    optional_dependencies = [
+        "torch",
+        "tensorflow",
+    ],
     deps = [
         ":model_signature",
         "//snowflake/ml/test_utils:exception_utils",

@@ -1,15 +1,11 @@
 import argparse
 import collections
-import contextlib
 import copy
 import functools
 import itertools
 import json
-import os
-import platform
 import sys
 from typing import (
-    Generator,
     List,
     Literal,
     MutableMapping,
@@ -23,7 +19,6 @@ from typing import (
 
 import jsonschema
 import toml
-from conda_libmamba_solver import solver
 from packaging import requirements as packaging_requirements
 from ruamel.yaml import YAML
 
@@ -50,7 +45,6 @@ class RequirementInfo(TypedDict, total=False):
     version_requirements: str
     version_requirements_pypi: str
     version_requirements_conda: str
-    require_gpu: bool
     requirements_extra_tags: Sequence[str]
     tags: Sequence[str]
 
@@ -74,23 +68,19 @@ def filter_by_tag(
     return tag_filter is None or tag_filter in req_info.get(field, [])
 
 
-def filter_by_extras(req_info: RequirementInfo, extras: bool, no_extras: bool) -> bool:
+def filter_by_extras(req_info: RequirementInfo, mode: Literal["no_extras", "extras_only"]) -> bool:
     """Filter the requirements by whether it contains extras.
 
     Args:
         req_info: requirement information.
-        extras: if set to True, only filter those requirements are extras.
-        no_extras: if set to True, only filter those requirements are not extras.
+        mode: mode to filter the requirement. If no_extras, only requirements without extras will be returned.
+            If extras_only, only requirements with extras will be returned.
 
     Returns:
-        True, for all requirements if extras and no_extras are both False;
-        or for all extras requirements if extras is True;
-        or for all non-extras requirements if no_extras is True.
+        True if the requirement is in the mode.
     """
-    return (
-        (not extras and not no_extras)
-        or (extras and len(req_info.get("requirements_extra_tags", [])) > 0)
-        or (no_extras and len(req_info.get("requirements_extra_tags", [])) == 0)
+    return (mode == "no_extras" and len(req_info.get("requirements_extra_tags", [])) == 0) or (
+        mode == "extras_only" and len(req_info.get("requirements_extra_tags", [])) > 0
     )
 
 
@@ -126,7 +116,7 @@ def get_req_name(req_info: RequirementInfo, env: Literal["conda", "pip", "conda-
 
 
 def generate_dev_pinned_string(
-    req_info: RequirementInfo, env: Literal["conda", "pip", "conda-only", "pip-only"], has_gpu: bool = False
+    req_info: RequirementInfo, env: Literal["conda", "pip", "conda-only", "pip-only"]
 ) -> Optional[str]:
     """Get the pinned version for dev environment of the requirement in the given env.
     For each env, env specific pinned version will be chosen, if not presented, common pinned version will be chosen.
@@ -134,7 +124,6 @@ def generate_dev_pinned_string(
     Args:
         req_info: requirement information.
         env: environment indicator, choose from conda and pip.
-        has_gpu: If the environment has GPU, present to filter require required GPU package.
 
     Raises:
         ValueError: Illegal env argument.
@@ -146,8 +135,6 @@ def generate_dev_pinned_string(
     """
     name = get_req_name(req_info, env)
     if name is None:
-        return None
-    if not has_gpu and req_info.get("require_gpu", False):
         return None
     if env.startswith("conda"):
         version = req_info.get("dev_version_conda", req_info.get("dev_version", None))
@@ -242,35 +229,6 @@ def validate_dev_version_and_user_requirements(req_info: RequirementInfo, env: L
     return
 
 
-def resolve_conda_environment(specs: Sequence[str], channels: Sequence[str]) -> None:
-    """Use conda api to check if given packages are resolvable in given channels.
-
-    Args:
-        specs: Packages to be installed.
-        channels: Anaconda channels (name or url) where conda should search into.
-
-    Raises:
-        ValueError: Raised when the resolving result is empty.
-
-    """
-
-    @contextlib.contextmanager
-    def _block_print() -> Generator[None, None, None]:
-        _original_stdout = sys.stdout
-        sys.stdout = open(os.devnull, "w")
-        yield
-        sys.stdout.close()
-        sys.stdout = _original_stdout
-
-    with _block_print():
-        conda_solver = solver.LibMambaSolver(
-            "snowml-dev", channels=channels, specs_to_add=list(specs) + [f"python=={platform.python_version()}"]
-        )
-        solve_result = conda_solver.solve_final_state()
-        if solve_result is None:
-            raise ValueError("Unable to resolve the environment.")
-
-
 def fold_extras_tags(extras_tags: Set[str], req_info: RequirementInfo) -> Set[str]:
     """Left-fold style function to get all extras tags in all requirements.
 
@@ -308,7 +266,7 @@ def generate_requirements(
     pyproject_file_path: str,
     mode: str,
     format: Optional[str],
-    snowflake_channel_only: bool,
+    extras_filter: Optional[List[str]] = None,
     tag_filter: Optional[str] = None,
     version: Optional[str] = None,
 ) -> None:
@@ -336,41 +294,26 @@ def generate_requirements(
             raise ValueError(f"Duplicate Requirements: {duplicates}")
     channels_to_use = [SNOWFLAKE_CONDA_CHANNEL, "nodefaults"]
 
-    if mode == "dev_gpu_version":
-        pytorch_req = next(filter(lambda req: get_req_name(req, "conda") == "pytorch", requirements), None)
-        if pytorch_req:
-            pytorch_req["from_channel"] = "pytorch"
-            # TODO(halu): Central place for supported CUDA version.
-            # To integrate with cuda util.
-            cuda_req = RequirementInfo(
-                name_conda="cuda",
-                dev_version_conda="11.7.*",
-                from_channel="nvidia",
-            )
-            pytorch_cuda_req = RequirementInfo(name_conda="pytorch-cuda", dev_version="11.7.*", from_channel="pytorch")
-            requirements.extend([cuda_req, pytorch_cuda_req])
-
-    snowflake_only_env = list(
-        sorted(
+    if extras_filter is None:
+        requirements = requirements
+    elif extras_filter == ["no_extras"]:
+        requirements = list(filter(lambda req_info: filter_by_extras(req_info, "no_extras"), requirements))
+    else:
+        requirements = list(filter(lambda req_info: filter_by_extras(req_info, "no_extras"), requirements)) + list(
             filter(
-                None,
-                map(
-                    lambda req_info: generate_dev_pinned_string(req_info, "conda", has_gpu=(mode == "dev_gpu_version")),
-                    filter(
-                        lambda req_info: req_info.get("from_channel", SNOWFLAKE_CONDA_CHANNEL)
-                        == SNOWFLAKE_CONDA_CHANNEL,
-                        requirements,
-                    ),
+                lambda req_info: any(
+                    filter_by_tag(req_info, "requirements_extra_tags", extra) for extra in extras_filter
                 ),
+                requirements,
             )
         )
-    )
+
     extended_env_conda = list(
         sorted(
             filter(
                 None,
                 map(
-                    lambda req_info: generate_dev_pinned_string(req_info, "conda", has_gpu=(mode == "dev_gpu_version")),
+                    lambda req_info: generate_dev_pinned_string(req_info, "conda"),
                     requirements,
                 ),
             )
@@ -388,18 +331,16 @@ def generate_requirements(
         filter(
             None,
             map(
-                lambda req_info: generate_dev_pinned_string(req_info, "pip-only", has_gpu=(mode == "dev_gpu_version")),
+                lambda req_info: generate_dev_pinned_string(req_info, "pip-only"),
                 requirements,
             ),
         )
     )
+
     if pip_only_reqs:
         extended_env.extend(["pip", {"pip": pip_only_reqs}])
 
-    if (mode, format) == ("validate", None):
-        resolve_conda_environment(snowflake_only_env, channels=channels_to_use)
-        resolve_conda_environment(extended_env_conda, channels=channels_to_use)
-    elif (mode, format) == ("dev_version", "text"):
+    if (mode, format) == ("dev_version", "text"):
         results = list(
             sorted(
                 map(
@@ -407,9 +348,7 @@ def generate_requirements(
                     filter(
                         None,
                         map(
-                            lambda req_info: generate_dev_pinned_string(
-                                req_info, "pip", has_gpu=(mode == "dev_gpu_version")
-                            ),
+                            lambda req_info: generate_dev_pinned_string(req_info, "pip"),
                             requirements,
                         ),
                     ),
@@ -424,11 +363,7 @@ def generate_requirements(
                     None,
                     map(
                         lambda req_info: generate_user_requirements_string(req_info, "conda"),
-                        filter(
-                            lambda req_info: req_info.get("from_channel", SNOWFLAKE_CONDA_CHANNEL)
-                            == SNOWFLAKE_CONDA_CHANNEL,
-                            filter(lambda req_info: filter_by_extras(req_info, False, True), requirements),
-                        ),
+                        filter(lambda req_info: filter_by_extras(req_info, "no_extras"), requirements),
                     ),
                 ),
             )
@@ -439,18 +374,14 @@ def generate_requirements(
                     None,
                     map(
                         lambda req_info: generate_user_requirements_string(req_info, "conda"),
-                        filter(
-                            lambda req_info: req_info.get("from_channel", SNOWFLAKE_CONDA_CHANNEL)
-                            == SNOWFLAKE_CONDA_CHANNEL,
-                            filter(lambda req_info: filter_by_extras(req_info, False, False), requirements),
-                        ),
+                        requirements,
                     ),
                 ),
             )
         )
         sys.stdout.write(f"REQUIREMENTS = {repr(reqs)}\nALL_REQUIREMENTS={repr(all_reqs)}\n")
     elif (mode, format) == ("version_requirements", "toml"):
-        extras_requirements = list(filter(lambda req_info: filter_by_extras(req_info, True, False), requirements))
+        extras_requirements = list(filter(lambda req_info: filter_by_extras(req_info, "extras_only"), requirements))
         extras_results: MutableMapping[str, Sequence[str]] = {}
         all_extras_tags: Set[str] = set()
         all_extras_tags = functools.reduce(fold_extras_tags, requirements, all_extras_tags)
@@ -480,7 +411,7 @@ def generate_requirements(
                     None,
                     map(
                         lambda req_info: generate_user_requirements_string(req_info, "pip"),
-                        filter(lambda req_info: filter_by_extras(req_info, False, True), requirements),
+                        filter(lambda req_info: filter_by_extras(req_info, "no_extras"), requirements),
                     ),
                 )
             )
@@ -490,23 +421,27 @@ def generate_requirements(
         pyproject_config["project"]["dependencies"] = results
         pyproject_config["project"]["optional-dependencies"] = extras_results
         toml.dump(pyproject_config, sys.stdout)
-    elif (mode, format) == ("version_requirements", "python"):
+    elif (mode, format) == ("dev_version", "conda_env"):
+        env_result = {
+            "channels": channels_to_use,
+            "dependencies": extended_env,
+        }
+        yaml.dump(env_result, sys.stdout)
+    elif (mode, format) == ("version_requirements", "conda_env"):
         results = list(
             sorted(
                 filter(
                     None,
                     map(
                         lambda req_info: generate_user_requirements_string(req_info, "conda"),
-                        filter(lambda req_info: filter_by_extras(req_info, False, True), requirements),
+                        filter(lambda req_info: filter_by_extras(req_info, "extras_only"), requirements),
                     ),
                 )
             )
         )
-        sys.stdout.writelines(f"REQUIREMENTS = {repr(results)}\n")
-    elif (mode, format) == ("dev_version", "conda_env") or (mode, format) == ("dev_gpu_version", "conda_env"):
         env_result = {
             "channels": channels_to_use,
-            "dependencies": snowflake_only_env if snowflake_channel_only else extended_env,
+            "dependencies": results,
         }
         yaml.dump(env_result, sys.stdout)
     elif (mode, format) == ("version_requirements", "conda_meta"):
@@ -518,7 +453,7 @@ def generate_requirements(
                     None,
                     map(
                         lambda req_info: generate_user_requirements_string(req_info, "conda"),
-                        filter(lambda req_info: filter_by_extras(req_info, False, True), requirements),
+                        filter(lambda req_info: filter_by_extras(req_info, "no_extras"), requirements),
                     ),
                 )
             )
@@ -529,7 +464,7 @@ def generate_requirements(
                     None,
                     map(
                         lambda req_info: generate_user_requirements_string(req_info, "conda"),
-                        filter(lambda req_info: filter_by_extras(req_info, True, False), requirements),
+                        filter(lambda req_info: filter_by_extras(req_info, "extras_only"), requirements),
                     ),
                 )
             )
@@ -551,7 +486,7 @@ def main() -> None:
     parser.add_argument(
         "--mode",
         type=str,
-        choices=["dev_version", "dev_gpu_version", "version_requirements", "version_requirements_extras", "validate"],
+        choices=["dev_version", "version_requirements"],
         help="Define the mode when specifying the requirements.",
         required=True,
     )
@@ -562,28 +497,25 @@ def main() -> None:
         help="Define the output format.",
     )
     parser.add_argument("--filter_by_tag", type=str, default=None, help="Filter the result by tags.")
+    parser.add_argument("--filter_by_extras", type=str, default=None, help="Filter the result by extras.")
     parser.add_argument("--version", type=str, default=None, help="Filter the result by tags.")
-    parser.add_argument(
-        "--snowflake_channel_only",
-        action="store_true",
-        default=False,
-        help="Flag to set if only output dependencies in Snowflake Anaconda Channel.",
-    )
     args = parser.parse_args()
 
     VALID_SETTINGS = [
-        ("validate", None, False),  # Validate the environment
-        ("dev_version", "text", False),  # requirements.txt
-        ("version_requirements", "python", True),  # sproc test dependencies list
-        ("version_requirements", "toml", False),  # wheel rule requirements
-        ("dev_version", "conda_env", False),  # dev conda-env.yml file
-        ("dev_gpu_version", "conda_env", False),  # dev conda-gpu-env.yml file
-        ("dev_version", "conda_env", True),  # dev conda-env-snowflake.yml file
-        ("version_requirements", "conda_meta", False),  # conda build recipe metadata file
+        ("dev_version", "text"),  # requirements.txt
+        ("version_requirements", "python"),  # sproc test dependencies list
+        ("version_requirements", "toml"),  # wheel rule requirements
+        ("dev_version", "conda_env"),  # dev conda-env.yml file
+        ("version_requirements", "conda_env"),  # build and test conda-env.yml file
+        ("version_requirements", "conda_meta"),  # conda build recipe metadata file
     ]
 
-    if (args.mode, args.format, args.snowflake_channel_only) not in VALID_SETTINGS:
+    if (args.mode, args.format) not in VALID_SETTINGS:
         raise ValueError("Invalid config combination found.")
+
+    filter_by_extras: Optional[List[str]] = None
+    if args.filter_by_extras:
+        filter_by_extras = args.filter_by_extras.split(",")
 
     generate_requirements(
         args.requirement_file,
@@ -591,9 +523,9 @@ def main() -> None:
         args.pyproject_template,
         args.mode,
         args.format,
-        args.snowflake_channel_only,
-        args.filter_by_tag,
-        args.version,
+        extras_filter=filter_by_extras,
+        tag_filter=args.filter_by_tag,
+        version=args.version,
     )
 
 

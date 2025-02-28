@@ -53,7 +53,7 @@ class PayloadUtilsTests(parameterized.TestCase):
 
     @parameterized.named_parameters(  # type: ignore[misc]
         ("payload_not_exist", TestAsset("not-exist"), TestAsset("src/main.py"), FileNotFoundError),
-        ("entrypoint_not_exist", TestAsset("src"), TestAsset("not-exist"), FileNotFoundError),
+        ("entrypoint_not_exist", TestAsset("src"), TestAsset("src/not-exist"), FileNotFoundError),
         ("entrypoint_null", TestAsset("src"), None, ValueError),
         ("both_not_exist", TestAsset("not-exist"), TestAsset("not-exist"), FileNotFoundError),
         ("dir_as_entrypoint_absolute", TestAsset("src"), TestAsset("src/subdir"), FileNotFoundError),

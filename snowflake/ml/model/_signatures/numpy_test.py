@@ -39,15 +39,15 @@ class NumpyArrayHandlerTest(absltest.TestCase):
         arr = np.array([1, 2, 3, 4])
         self.assertListEqual(
             numpy_handler.NumpyArrayHandler.infer_signature(arr, role="input"),
-            [core.FeatureSpec("input_feature_0", core.DataType.INT64)],
+            [core.FeatureSpec("input_feature_0", core.DataType.INT64, nullable=False)],
         )
 
         arr = np.array([[1, 2], [3, 4]])
         self.assertListEqual(
             numpy_handler.NumpyArrayHandler.infer_signature(arr, role="input"),
             [
-                core.FeatureSpec("input_feature_0", core.DataType.INT64),
-                core.FeatureSpec("input_feature_1", core.DataType.INT64),
+                core.FeatureSpec("input_feature_0", core.DataType.INT64, nullable=False),
+                core.FeatureSpec("input_feature_1", core.DataType.INT64, nullable=False),
             ],
         )
 
@@ -55,23 +55,23 @@ class NumpyArrayHandlerTest(absltest.TestCase):
         self.assertListEqual(
             numpy_handler.NumpyArrayHandler.infer_signature(arr, role="input"),
             [
-                core.FeatureSpec("input_feature_0", core.DataType.INT64, shape=(2,)),
-                core.FeatureSpec("input_feature_1", core.DataType.INT64, shape=(2,)),
+                core.FeatureSpec("input_feature_0", core.DataType.INT64, shape=(2,), nullable=False),
+                core.FeatureSpec("input_feature_1", core.DataType.INT64, shape=(2,), nullable=False),
             ],
         )
 
         arr = np.array([1, 2, 3, 4])
         self.assertListEqual(
             numpy_handler.NumpyArrayHandler.infer_signature(arr, role="output"),
-            [core.FeatureSpec("output_feature_0", core.DataType.INT64)],
+            [core.FeatureSpec("output_feature_0", core.DataType.INT64, nullable=False)],
         )
 
         arr = np.array([[1, 2], [3, 4]])
         self.assertListEqual(
             numpy_handler.NumpyArrayHandler.infer_signature(arr, role="output"),
             [
-                core.FeatureSpec("output_feature_0", core.DataType.INT64),
-                core.FeatureSpec("output_feature_1", core.DataType.INT64),
+                core.FeatureSpec("output_feature_0", core.DataType.INT64, nullable=False),
+                core.FeatureSpec("output_feature_1", core.DataType.INT64, nullable=False),
             ],
         )
 
@@ -79,8 +79,8 @@ class NumpyArrayHandlerTest(absltest.TestCase):
         self.assertListEqual(
             numpy_handler.NumpyArrayHandler.infer_signature(arr, role="output"),
             [
-                core.FeatureSpec("output_feature_0", core.DataType.INT64, shape=(2,)),
-                core.FeatureSpec("output_feature_1", core.DataType.INT64, shape=(2,)),
+                core.FeatureSpec("output_feature_0", core.DataType.INT64, shape=(2,), nullable=False),
+                core.FeatureSpec("output_feature_1", core.DataType.INT64, shape=(2,), nullable=False),
             ],
         )
 
@@ -144,8 +144,8 @@ class SeqOfNumpyArrayHandlerTest(absltest.TestCase):
         self.assertListEqual(
             numpy_handler.SeqOfNumpyArrayHandler.infer_signature(lt, role="input"),
             [
-                core.FeatureSpec("input_feature_0", core.DataType.INT64),
-                core.FeatureSpec("input_feature_1", core.DataType.INT64),
+                core.FeatureSpec("input_feature_0", core.DataType.INT64, nullable=False),
+                core.FeatureSpec("input_feature_1", core.DataType.INT64, nullable=False),
             ],
         )
 
@@ -154,8 +154,8 @@ class SeqOfNumpyArrayHandlerTest(absltest.TestCase):
         self.assertListEqual(
             numpy_handler.SeqOfNumpyArrayHandler.infer_signature(lt, role="input"),
             [
-                core.FeatureSpec("input_feature_0", core.DataType.INT64, shape=(2,)),
-                core.FeatureSpec("input_feature_1", core.DataType.INT64, shape=(2,)),
+                core.FeatureSpec("input_feature_0", core.DataType.INT64, shape=(2,), nullable=False),
+                core.FeatureSpec("input_feature_1", core.DataType.INT64, shape=(2,), nullable=False),
             ],
         )
 
@@ -164,8 +164,8 @@ class SeqOfNumpyArrayHandlerTest(absltest.TestCase):
         self.assertListEqual(
             numpy_handler.SeqOfNumpyArrayHandler.infer_signature(lt, role="output"),
             [
-                core.FeatureSpec("output_feature_0", core.DataType.INT64, shape=(2, 2)),
-                core.FeatureSpec("output_feature_1", core.DataType.INT64, shape=(2, 2)),
+                core.FeatureSpec("output_feature_0", core.DataType.INT64, shape=(2, 2), nullable=False),
+                core.FeatureSpec("output_feature_1", core.DataType.INT64, shape=(2, 2), nullable=False),
             ],
         )
 
