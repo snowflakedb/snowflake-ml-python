@@ -1,5 +1,8 @@
+import functools
 import inspect
 import io
+import itertools
+import pickle
 import sys
 import textwrap
 from pathlib import Path, PurePath
@@ -19,9 +22,11 @@ import cloudpickle as cp
 
 from snowflake import snowpark
 from snowflake.ml.jobs._utils import constants, types
+from snowflake.snowpark import exceptions as sp_exceptions
 from snowflake.snowpark._internal import code_generation
 
 _SUPPORTED_ARG_TYPES = {str, int, float}
+_SUPPORTED_ENTRYPOINT_EXTENSIONS = {".py"}
 _STARTUP_SCRIPT_PATH = PurePath("startup.sh")
 _STARTUP_SCRIPT_CODE = textwrap.dedent(
     f"""
@@ -69,12 +74,11 @@ _STARTUP_SCRIPT_CODE = textwrap.dedent(
     shm_size=$(df --output=size --block-size=1 /dev/shm | tail -n 1)
 
     # Configure IP address and logging directory
-    eth0Ip=$(ifconfig eth0 | sed -En -e 's/.*inet ([0-9.]+).*/\1/p')
+    eth0Ip=$(ifconfig eth0 2>/dev/null | sed -En -e 's/.*inet ([0-9.]+).*/\1/p')
     log_dir="/tmp/ray"
 
-    # Check if eth0Ip is empty and set default if necessary
-    if [ -z "$eth0Ip" ]; then
-        # This should never happen, but just in case ethOIp is not set, we should default to localhost
+    # Check if eth0Ip is a valid IP address and fall back to default if necessary
+    if [[ ! $eth0Ip =~ ^[0-9]+\\.[0-9]+\\.[0-9]+\\.[0-9]+$ ]]; then
         eth0Ip="127.0.0.1"
     fi
 
@@ -120,6 +124,34 @@ _STARTUP_SCRIPT_CODE = textwrap.dedent(
 ).strip()
 
 
+def _resolve_entrypoint(parent: Path, entrypoint: Optional[Path]) -> Path:
+    parent = parent.absolute()
+    if entrypoint is None:
+        if parent.is_file():
+            # Infer entrypoint from source
+            entrypoint = parent
+        else:
+            raise ValueError("entrypoint must be provided when source is a directory")
+    elif entrypoint.is_absolute():
+        # Absolute path - validate it's a subpath of source dir
+        if not entrypoint.is_relative_to(parent):
+            raise ValueError(f"Entrypoint must be a subpath of {parent}, got: {entrypoint})")
+    else:
+        # Relative path
+        if (abs_entrypoint := entrypoint.absolute()).is_relative_to(parent) and abs_entrypoint.is_file():
+            # Relative to working dir iff path is relative to source dir and exists
+            entrypoint = abs_entrypoint
+        else:
+            # Relative to source dir
+            entrypoint = parent.joinpath(entrypoint)
+    if not entrypoint.is_file():
+        raise FileNotFoundError(
+            "Entrypoint not found. Ensure the entrypoint is a valid file and is under"
+            f" the source directory (source={parent}, entrypoint={entrypoint})"
+        )
+    return entrypoint
+
+
 class JobPayload:
     def __init__(
         self,
@@ -138,23 +170,23 @@ class JobPayload:
             # since we will generate the file from the serialized callable
             pass
         elif isinstance(self.source, Path):
-            # Validate self.source and self.entrypoint for files
-            if not self.source.exists():
-                raise FileNotFoundError(f"{self.source} does not exist")
-            if self.entrypoint is None:
-                if self.source.is_file():
-                    self.entrypoint = self.source
-                else:
-                    raise ValueError("entrypoint must be provided when source is a directory")
-            if not self.entrypoint.is_file():
-                # Check if self.entrypoint is a valid relative path
-                self.entrypoint = self.source.joinpath(self.entrypoint)
-                if not self.entrypoint.is_file():
-                    raise FileNotFoundError(f"File {self.entrypoint} does not exist")
-            if not self.entrypoint.is_relative_to(self.source):
-                raise ValueError(f"{self.entrypoint} must be a subpath of {self.source}")
-            if self.entrypoint.suffix != ".py":
-                raise NotImplementedError("Only Python entrypoints are supported currently")
+            # Validate source
+            source = self.source
+            if not source.exists():
+                raise FileNotFoundError(f"{source} does not exist")
+            source = source.absolute()
+
+            # Validate entrypoint
+            entrypoint = _resolve_entrypoint(source, self.entrypoint)
+            if entrypoint.suffix not in _SUPPORTED_ENTRYPOINT_EXTENSIONS:
+                raise ValueError(
+                    "Unsupported entrypoint type:"
+                    f" supported={','.join(_SUPPORTED_ENTRYPOINT_EXTENSIONS)} got={entrypoint.suffix}"
+                )
+
+            # Update fields with normalized values
+            self.source = source
+            self.entrypoint = entrypoint
         else:
             raise ValueError("Unsupported source type. Source must be a file, directory, or callable.")
 
@@ -168,12 +200,16 @@ class JobPayload:
         entrypoint = self.entrypoint or Path(constants.DEFAULT_ENTRYPOINT_PATH)
 
         # Create stage if necessary
-        stage_name = stage_path.parts[0]
-        session.sql(
-            f"create stage if not exists {stage_name.lstrip('@')}"
-            " encryption = ( type = 'SNOWFLAKE_SSE' )"
-            " comment = 'Created by snowflake.ml.jobs Python API'"
-        ).collect()
+        stage_name = stage_path.parts[0].lstrip("@")
+        # Explicitly check if stage exists first since we may not have CREATE STAGE privilege
+        try:
+            session.sql(f"describe stage {stage_name}").collect()
+        except sp_exceptions.SnowparkSQLException:
+            session.sql(
+                f"create stage if not exists {stage_name}"
+                " encryption = ( type = 'SNOWFLAKE_SSE' )"
+                " comment = 'Created by snowflake.ml.jobs Python API'"
+            ).collect()
 
         # Upload payload to stage
         if not isinstance(source, Path):
@@ -237,7 +273,7 @@ class JobPayload:
         )
 
 
-def get_parameter_type(param: inspect.Parameter) -> Optional[Type[object]]:
+def _get_parameter_type(param: inspect.Parameter) -> Optional[Type[object]]:
     # Unwrap Optional type annotations
     param_type = param.annotation
     if get_origin(param_type) is Union and len(get_args(param_type)) == 2 and type(None) in get_args(param_type):
@@ -249,7 +285,7 @@ def get_parameter_type(param: inspect.Parameter) -> Optional[Type[object]]:
     return cast(Type[object], param_type)
 
 
-def validate_parameter_type(param_type: Type[object], param_name: str) -> None:
+def _validate_parameter_type(param_type: Type[object], param_name: str) -> None:
     # Validate param_type is a supported type
     if param_type not in _SUPPORTED_ARG_TYPES:
         raise ValueError(
@@ -258,41 +294,60 @@ def validate_parameter_type(param_type: Type[object], param_name: str) -> None:
         )
 
 
-def generate_python_code(func: Callable[..., Any], source_code_display: bool = False) -> str:
-    signature = inspect.signature(func)
-    if any(
-        p.kind in {inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD}
-        for p in signature.parameters.values()
-    ):
-        raise NotImplementedError("Function must not have unpacking arguments (* or **)")
-
-    # Mirrored from Snowpark generate_python_code() function
-    # https://github.com/snowflakedb/snowpark-python/blob/main/src/snowflake/snowpark/_internal/udf_utils.py
+def _generate_source_code_comment(func: Callable[..., Any]) -> str:
+    """Generate a comment string containing the source code of a function for readability."""
     try:
-        source_code_comment = (
-            code_generation.generate_source_code(func) if source_code_display else ""  # type: ignore[arg-type]
-        )
+        if isinstance(func, functools.partial):
+            # Unwrap functools.partial and generate source code comment from the original function
+            comment = code_generation.generate_source_code(func.func)  # type: ignore[arg-type]
+            args = itertools.chain((repr(a) for a in func.args), (f"{k}={v!r}" for k, v in func.keywords.items()))
+
+            # Update invocation comment to show arguments passed via functools.partial
+            comment = comment.replace(
+                f"= {func.func.__name__}",
+                "= functools.partial({}({}))".format(
+                    func.func.__name__,
+                    ", ".join(args),
+                ),
+            )
+            return comment
+        else:
+            return code_generation.generate_source_code(func)  # type: ignore[arg-type]
     except Exception as exc:
         error_msg = f"Source code comment could not be generated for {func} due to error {exc}."
-        source_code_comment = code_generation.comment_source_code(error_msg)
+        return code_generation.comment_source_code(error_msg)
 
-    func_name = "func"
-    func_code = f"""
-{source_code_comment}
 
-import pickle
-{func_name} = pickle.loads(bytes.fromhex('{cp.dumps(func).hex()}'))
-"""
+def _serialize_callable(func: Callable[..., Any]) -> bytes:
+    try:
+        func_bytes: bytes = cp.dumps(func)
+        return func_bytes
+    except pickle.PicklingError as e:
+        if isinstance(func, functools.partial):
+            # Try to find which part of the partial isn't serializable for better debuggability
+            objects = [
+                ("function", func.func),
+                *((f"positional arg {i}", a) for i, a in enumerate(func.args)),
+                *((f"keyword arg '{k}'", v) for k, v in func.keywords.items()),
+            ]
+            for name, obj in objects:
+                try:
+                    cp.dumps(obj)
+                except pickle.PicklingError:
+                    raise ValueError(f"Unable to serialize {name}: {obj}") from e
+        raise ValueError(f"Unable to serialize function: {func}") from e
 
+
+def _generate_param_handler_code(signature: inspect.Signature, output_name: str = "kwargs") -> str:
     # Generate argparse logic for argument handling (type coercion, default values, etc)
     argparse_code = ["import argparse", "", "parser = argparse.ArgumentParser()"]
     argparse_postproc = []
     for name, param in signature.parameters.items():
         opts = {}
 
-        param_type = get_parameter_type(param)
+        param_type = _get_parameter_type(param)
         if param_type is not None:
-            validate_parameter_type(param_type, name)
+            _validate_parameter_type(param_type, name)
             opts["type"] = param_type.__name__
 
         if param.default != inspect.Parameter.empty:
@@ -324,6 +379,37 @@ import pickle
             )
     argparse_code.append("args = parser.parse_args()")
     param_code = "\n".join(argparse_code + argparse_postproc)
+    param_code += f"\n{output_name} = vars(args)"
+
+    return param_code
+
+
+def generate_python_code(func: Callable[..., Any], source_code_display: bool = False) -> str:
+    """Generate an entrypoint script from a Python function."""
+    signature = inspect.signature(func)
+    if any(
+        p.kind in {inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD}
+        for p in signature.parameters.values()
+    ):
+        raise NotImplementedError("Function must not have unpacking arguments (* or **)")
+
+    # Mirrored from Snowpark generate_python_code() function
+    # https://github.com/snowflakedb/snowpark-python/blob/main/src/snowflake/snowpark/_internal/udf_utils.py
+    source_code_comment = _generate_source_code_comment(func) if source_code_display else ""
+
+    func_name = "func"
+    func_code = f"""
+{source_code_comment}
+
+import pickle
+{func_name} = pickle.loads(bytes.fromhex('{_serialize_callable(func).hex()}'))
+"""
+
+    arg_dict_name = "kwargs"
+    if getattr(func, constants.IS_MLJOB_REMOTE_ATTR, None):
+        param_code = f"{arg_dict_name} = {{}}"
+    else:
+        param_code = _generate_param_handler_code(signature, arg_dict_name)
 
     return f"""
 ### Version guard to check compatibility across Python versions ###
@@ -348,5 +434,5 @@ if sys.version_info.major != {sys.version_info.major} or sys.version_info.minor 
 if __name__ == '__main__':
 {textwrap.indent(param_code, '    ')}
 
-    {func_name}(**vars(args))
+    {func_name}(**{arg_dict_name})
 """

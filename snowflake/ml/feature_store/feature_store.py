@@ -144,6 +144,7 @@ _LIST_FEATURE_VIEW_SCHEMA = StructType(
         StructField("refresh_mode", StringType()),
         StructField("scheduling_state", StringType()),
         StructField("warehouse", StringType()),
+        StructField("cluster_by", StringType()),
     ]
 )
 
@@ -1832,6 +1833,12 @@ class FeatureStore:
                 WAREHOUSE = {warehouse}
                 REFRESH_MODE = {feature_view.refresh_mode}
                 INITIALIZE = {feature_view.initialize}
+            """
+            if feature_view.cluster_by:
+                cluster_by_clause = f"CLUSTER BY ({', '.join(feature_view.cluster_by)})"
+                query += f"{cluster_by_clause}"
+
+            query += f"""
                 AS {feature_view.query}
             """
             self._session.sql(query).collect(block=block, statement_params=self._telemetry_stmp)
@@ -2249,6 +2256,7 @@ class FeatureStore:
         values.append(row["refresh_mode"] if "refresh_mode" in row else None)
         values.append(row["scheduling_state"] if "scheduling_state" in row else None)
         values.append(row["warehouse"] if "warehouse" in row else None)
+        values.append(json.dumps(self._extract_cluster_by_columns(row["cluster_by"])) if "cluster_by" in row else None)
         output_values.append(values)
 
     def _lookup_feature_view_metadata(self, row: Row, fv_name: str) -> Tuple[_FeatureViewMetadata, str]:
@@ -2335,6 +2343,7 @@ class FeatureStore:
                 owner=row["owner"],
                 infer_schema_df=infer_schema_df,
                 session=self._session,
+                cluster_by=self._extract_cluster_by_columns(row["cluster_by"]),
             )
             return fv
         else:
@@ -2625,3 +2634,12 @@ class FeatureStore:
             )
 
         return feature_view
+
+    @staticmethod
+    def _extract_cluster_by_columns(cluster_by_clause: str) -> List[str]:
+        # Use regex to extract elements inside the parentheses.
+        match = re.search(r"\((.*?)\)", cluster_by_clause)
+        if match:
+            # Handle both quoted and unquoted column names.
+            return re.findall(identifier.SF_IDENTIFIER_RE, match.group(1))
+        return []

@@ -12,7 +12,7 @@ import yaml
 from absl.testing import absltest
 from packaging import requirements, specifiers, version
 
-from snowflake.ml._internal import env as snowml_env, env_utils
+from snowflake.ml._internal import env as snowml_env, env_utils, relax_version_strategy
 from snowflake.ml.test_utils import mock_data_frame, mock_session
 from snowflake.snowpark import row, session
 
@@ -318,26 +318,51 @@ class EnvUtilsTest(absltest.TestCase):
         )
         self.assertIsNot(env_utils.get_package_spec_with_supported_ops_only(r), r)
 
+    def test_relax_specifier_set(self) -> None:
+        spec_set = specifiers.SpecifierSet("==1.0.1")
+        relaxed_spec_set = env_utils._relax_specifier_set(
+            spec_set, relax_version_strategy.RelaxVersionStrategy.NO_RELAX
+        )
+        self.assertEqual(relaxed_spec_set, spec_set)
+
+        spec_set = specifiers.SpecifierSet("==1.0.*")
+        relaxed_spec_set = env_utils._relax_specifier_set(spec_set, relax_version_strategy.RelaxVersionStrategy.MINOR)
+        self.assertEqual(relaxed_spec_set, spec_set)
+
+        spec_set = specifiers.SpecifierSet("!=1.0.2")
+        relaxed_spec_set = env_utils._relax_specifier_set(spec_set, relax_version_strategy.RelaxVersionStrategy.MINOR)
+        self.assertEqual(relaxed_spec_set, spec_set)
+
+        spec_set = specifiers.SpecifierSet("==1.0.1")
+        relaxed_spec_set = env_utils._relax_specifier_set(spec_set, relax_version_strategy.RelaxVersionStrategy.PATCH)
+        self.assertEqual(relaxed_spec_set, specifiers.SpecifierSet(">=1.0,<1.1"))
+
+        spec_set = specifiers.SpecifierSet("==1.0.1")
+        relaxed_spec_set = env_utils._relax_specifier_set(spec_set, relax_version_strategy.RelaxVersionStrategy.MINOR)
+        self.assertEqual(relaxed_spec_set, specifiers.SpecifierSet(">=1.0,<2"))
+
+        spec_set = specifiers.SpecifierSet("==1.1.1")
+        relaxed_spec_set = env_utils._relax_specifier_set(spec_set, relax_version_strategy.RelaxVersionStrategy.MAJOR)
+        self.assertEqual(relaxed_spec_set, specifiers.SpecifierSet(">=1.0, <2"))
+
+        spec_set = specifiers.SpecifierSet(">=1.0, ==1.0.1")
+        relaxed_spec_set = env_utils._relax_specifier_set(spec_set, relax_version_strategy.RelaxVersionStrategy.MINOR)
+        self.assertEqual(relaxed_spec_set, specifiers.SpecifierSet(">=1.0,<2"))
+
+        spec_set = specifiers.SpecifierSet("==1.0.*")
+        relaxed_spec_set = env_utils._relax_specifier_set(spec_set, relax_version_strategy.RelaxVersionStrategy.MINOR)
+        self.assertEqual(relaxed_spec_set, spec_set)
+
+        spec_set = specifiers.SpecifierSet("==1.0.1, !=1.0.2")
+        relaxed_spec_set = env_utils._relax_specifier_set(spec_set, relax_version_strategy.RelaxVersionStrategy.MINOR)
+        self.assertEqual(
+            relaxed_spec_set,
+            specifiers.SpecifierSet(">=1.0,<2, !=1.0.2"),
+        )
+
     def test_relax_requirement_version(self) -> None:
         r = requirements.Requirement("python-package==1.0.1")
         self.assertEqual(env_utils.relax_requirement_version(r), requirements.Requirement("python-package>=1.0,<2"))
-
-        r = requirements.Requirement("python-package==1.0.*")
-        self.assertEqual(env_utils.relax_requirement_version(r), requirements.Requirement("python-package==1.0.*"))
-
-        r = requirements.Requirement("python-package==1.0")
-        self.assertEqual(env_utils.relax_requirement_version(r), requirements.Requirement("python-package>=1.0,<2"))
-
-        r = requirements.Requirement("python-package==1.*")
-        self.assertEqual(env_utils.relax_requirement_version(r), requirements.Requirement("python-package==1.*"))
-
-        r = requirements.Requirement("python-package==1")
-        self.assertEqual(env_utils.relax_requirement_version(r), requirements.Requirement("python-package>=1.0,<2"))
-
-        r = requirements.Requirement("python-package==1.0.1, !=1.0.2")
-        self.assertEqual(
-            env_utils.relax_requirement_version(r), requirements.Requirement("python-package>=1.0,<2,!=1.0.2")
-        )
 
         r = requirements.Requirement("python-package[extra]==1.0.1")
         self.assertEqual(
@@ -347,6 +372,12 @@ class EnvUtilsTest(absltest.TestCase):
         r = requirements.Requirement("python-package")
         self.assertEqual(env_utils.relax_requirement_version(r), requirements.Requirement("python-package"))
         self.assertIsNot(env_utils.relax_requirement_version(r), r)
+
+        r = requirements.Requirement("cloudpickle==1.0.1")
+        self.assertEqual(env_utils.relax_requirement_version(r), requirements.Requirement("cloudpickle==1.0.1"))
+
+        r = requirements.Requirement("scikit-learn==1.0.1")
+        self.assertEqual(env_utils.relax_requirement_version(r), requirements.Requirement("scikit-learn>=1.0,<1.1"))
 
     def test_get_matched_package_versions_in_information_schema(self) -> None:
         m_session = mock_session.MockSession(conn=None, test_case=self)
@@ -819,7 +850,7 @@ class EnvFileTest(absltest.TestCase):
             cd = collections.defaultdict(list)
             env_file_path = pathlib.Path(tmpdir, "conda.yml")
             env_utils.save_conda_env_file(env_file_path, cd, python_version="3.8")
-            loaded_cd, _, _ = env_utils.load_conda_env_file(env_file_path)
+            loaded_cd, _, _, _ = env_utils.load_conda_env_file(env_file_path)
             self.assertEqual(cd, loaded_cd)
 
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -827,7 +858,7 @@ class EnvFileTest(absltest.TestCase):
             cd[env_utils.DEFAULT_CHANNEL_NAME] = [requirements.Requirement("numpy")]
             env_file_path = pathlib.Path(tmpdir, "conda.yml")
             env_utils.save_conda_env_file(env_file_path, cd, python_version="3.8")
-            loaded_cd, _, _ = env_utils.load_conda_env_file(env_file_path)
+            loaded_cd, _, _, _ = env_utils.load_conda_env_file(env_file_path)
             self.assertEqual(cd, loaded_cd)
 
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -835,7 +866,7 @@ class EnvFileTest(absltest.TestCase):
             cd[env_utils.DEFAULT_CHANNEL_NAME] = [requirements.Requirement("numpy>=1.22.4")]
             env_file_path = pathlib.Path(tmpdir, "conda.yml")
             env_utils.save_conda_env_file(env_file_path, cd, python_version="3.8")
-            loaded_cd, _, _ = env_utils.load_conda_env_file(env_file_path)
+            loaded_cd, _, _, _ = env_utils.load_conda_env_file(env_file_path)
             self.assertEqual(cd, loaded_cd)
 
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -845,7 +876,7 @@ class EnvFileTest(absltest.TestCase):
             env_utils.save_conda_env_file(
                 env_file_path, cd, python_version="3.8", default_channel_override="conda-forge"
             )
-            loaded_cd, _, _ = env_utils.load_conda_env_file(env_file_path)
+            loaded_cd, _, _, _ = env_utils.load_conda_env_file(env_file_path)
             self.assertEqual(cd, loaded_cd)
 
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -858,7 +889,7 @@ class EnvFileTest(absltest.TestCase):
             )
             env_file_path = pathlib.Path(tmpdir, "conda.yml")
             env_utils.save_conda_env_file(env_file_path, cd, python_version="3.8")
-            loaded_cd, _, _ = env_utils.load_conda_env_file(env_file_path)
+            loaded_cd, _, _, _ = env_utils.load_conda_env_file(env_file_path)
             self.assertEqual(cd, loaded_cd)
 
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -886,7 +917,7 @@ class EnvFileTest(absltest.TestCase):
                     ],
                 },
             )
-            loaded_cd, pip_reqs, _ = env_utils.load_conda_env_file(env_file_path)
+            loaded_cd, pip_reqs, _, _ = env_utils.load_conda_env_file(env_file_path)
             self.assertEqual(cd, loaded_cd)
             self.assertIsNone(pip_reqs)
 
@@ -917,7 +948,7 @@ class EnvFileTest(absltest.TestCase):
                     ],
                 },
             )
-            loaded_cd, pip_reqs, _ = env_utils.load_conda_env_file(env_file_path)
+            loaded_cd, pip_reqs, _, _ = env_utils.load_conda_env_file(env_file_path)
             self.assertEqual(cd, loaded_cd)
             self.assertIsNone(pip_reqs)
 
@@ -935,7 +966,7 @@ class EnvFileTest(absltest.TestCase):
                         ],
                     },
                 )
-            loaded_cd, pip_reqs, python_ver = env_utils.load_conda_env_file(env_file_path)
+            loaded_cd, pip_reqs, python_ver, cuda_ver = env_utils.load_conda_env_file(env_file_path)
             self.assertEqual(
                 {
                     env_utils.DEFAULT_CHANNEL_NAME: [requirements.Requirement("numpy>=1.22.4")],
@@ -962,7 +993,7 @@ class EnvFileTest(absltest.TestCase):
                         ],
                     },
                 )
-            loaded_cd, pip_reqs, python_ver = env_utils.load_conda_env_file(env_file_path)
+            loaded_cd, pip_reqs, python_ver, cuda_ver = env_utils.load_conda_env_file(env_file_path)
             self.assertEqual(
                 {
                     env_utils.DEFAULT_CHANNEL_NAME: [requirements.Requirement("numpy>=1.22.4")],
@@ -989,7 +1020,7 @@ class EnvFileTest(absltest.TestCase):
                         ],
                     },
                 )
-            loaded_cd, pip_reqs, python_ver = env_utils.load_conda_env_file(env_file_path)
+            loaded_cd, pip_reqs, python_ver, cuda_ver = env_utils.load_conda_env_file(env_file_path)
             self.assertEqual(
                 {
                     env_utils.DEFAULT_CHANNEL_NAME: [requirements.Requirement("numpy>=1.22.4")],
@@ -1017,7 +1048,7 @@ class EnvFileTest(absltest.TestCase):
                         ],
                     },
                 )
-            loaded_cd, pip_reqs, python_ver = env_utils.load_conda_env_file(env_file_path)
+            loaded_cd, pip_reqs, python_ver, cuda_ver = env_utils.load_conda_env_file(env_file_path)
             self.assertEqual(
                 {
                     env_utils.DEFAULT_CHANNEL_NAME: [requirements.Requirement("numpy>=1.22.4")],

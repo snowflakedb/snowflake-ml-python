@@ -145,6 +145,7 @@ def autogen_tests_for_estimators(module, module_root_dir, estimator_info_list):
             timeout = "long",
             legacy_create_init = 0,
             shard_count = 5,
+            optional_dependencies = ["lightgbm"] if module == "lightgbm" else None,
             tags = ["autogen"],
         )
 
@@ -183,5 +184,6 @@ def autogen_snowpark_pandas_tests(module, module_root_dir, snowpark_pandas_estim
             timeout = "long",
             legacy_create_init = 0,
             shard_count = 5,
+            optional_dependencies = ["lightgbm"] if module == "lightgbm" else None,
             tags = ["snowpark_pandas_autogen"],
         )

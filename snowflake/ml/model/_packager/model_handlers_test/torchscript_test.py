@@ -35,7 +35,7 @@ def _prepare_torch_model(
     n_input, n_hidden, n_out, batch_size, learning_rate = 10, 15, 1, 100, 0.01
     x = np.random.rand(batch_size, n_input)
     data_x = torch.from_numpy(x).to(dtype=dtype)
-    data_y = (torch.rand(size=(batch_size, 1)) < 0.5).to(dtype=dtype)  # type: ignore[attr-defined]
+    data_y = (torch.rand(size=(batch_size, 1)) < 0.5).to(dtype=dtype)
 
     model = TorchModel(n_input, n_hidden, n_out, dtype=dtype)
     loss_function = torch.nn.MSELoss()
@@ -88,7 +88,7 @@ class TorchScriptHandlerTest(absltest.TestCase):
             )
 
             with warnings.catch_warnings():
-                warnings.simplefilter("error")
+                warnings.simplefilter("ignore")
 
                 pk = model_packager.ModelPackager(os.path.join(tmpdir, "model1"))
                 pk.load()

@@ -1,10 +1,15 @@
+import inspect
+import tempfile
+import textwrap
 import time
-from typing import Any, Dict, List, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 from unittest import mock
 
 from absl.testing import absltest, parameterized
+from packaging import version
 
 from snowflake.ml import jobs
+from snowflake.ml._internal import env
 from snowflake.ml._internal.utils import snowflake_env
 from snowflake.ml.jobs import manager as jm
 from snowflake.ml.jobs._utils import constants
@@ -19,9 +24,6 @@ _SUPPORTED_CLOUDS = {
     snowflake_env.SnowflakeCloudType.AWS,
     snowflake_env.SnowflakeCloudType.AZURE,
 }
-_UNSUPPORTED_REGIONS = {
-    "azpreprod",  # FIXME(dhung): Ongoing investigation from SPCS why jobs are stuck pending in azpreprod
-}
 INVALID_JOB_IDS = [
     "has'quote",
     "quote', 0, 'main'); drop table foo; select system$get_service_logs('job_id'",
@@ -29,9 +31,7 @@ INVALID_JOB_IDS = [
 
 
 @absltest.skipIf(
-    (region := test_env_utils.get_current_snowflake_region()) is None
-    or region["cloud"] not in _SUPPORTED_CLOUDS
-    or region["snowflake_region"].lower() in _UNSUPPORTED_REGIONS,
+    (region := test_env_utils.get_current_snowflake_region()) is None or region["cloud"] not in _SUPPORTED_CLOUDS,
     "Test only for SPCS supported clouds",
 )
 class JobManagerTest(parameterized.TestCase):
@@ -50,11 +50,6 @@ class JobManagerTest(parameterized.TestCase):
         except sp_exceptions.SnowparkSQLException:
             if not cls.dbm.show_compute_pools(_TEST_COMPUTE_POOL).count() > 0:
                 raise cls.failureException(f"Compute pool {_TEST_COMPUTE_POOL} not available and could not be created")
-        try:
-            cls.session.sql("ALTER SESSION SET ENABLE_SNOWSERVICES_ASYNC_JOBS = TRUE").collect()
-            cls.async_job_enabled = True
-        except sp_exceptions.SnowparkSQLException:
-            cls.async_job_enabled = False
 
     @classmethod
     def tearDownClass(cls) -> None:
@@ -62,12 +57,12 @@ class JobManagerTest(parameterized.TestCase):
         cls.session.close()
         super().tearDownClass()
 
-    def setUp(self) -> None:
-        if not self.async_job_enabled:
-            self.skipTest("SPCS Async Jobs not enabled in environment. Skipping tests.")
-        super().setUp()
-
     def test_async_job_parameter(self) -> None:
+        try:
+            self.session.sql("ALTER SESSION SET ENABLE_SNOWSERVICES_ASYNC_JOBS = TRUE").collect()
+        except sp_exceptions.SnowparkSQLException:
+            self.skipTest("Unable to toggle SPCS Async Jobs parameter. Skipping test.")
+
         try:
             self.session.sql("ALTER SESSION SET ENABLE_SNOWSERVICES_ASYNC_JOBS = FALSE").collect()
             with self.assertRaisesRegex(RuntimeError, "ENABLE_SNOWSERVICES_ASYNC_JOBS"):
@@ -255,21 +250,34 @@ class JobManagerTest(parameterized.TestCase):
         self.assertIn("Job start", loaded_job.get_logs())
         self.assertIn("Job complete", loaded_job.get_logs())
 
+    # TODO(SNOW-1911482): Enable test for Python 3.11+
+    @absltest.skipIf(
+        version.Version(env.PYTHON_VERSION) >= version.Version("3.11"),
+        "Decorator test only works for Python 3.10 and below due to pickle compatibility",
+    )
     def test_job_decorator(self) -> None:
         @jobs.remote(self.compute_pool, "payload_stage", session=self.session)  # type: ignore[misc]
-        def decojob_fn(arg1: str, arg2: int) -> None:
+        def decojob_fn(arg1: str, arg2: int, arg3: Optional[Any] = None) -> None:
             from datetime import datetime
-            from time import sleep
 
-            print(f"{datetime.now()}\t[{arg1}, {arg2}+1={arg2+1}] Job start", flush=True)
-            sleep(1)
-            print(f"{datetime.now()}\t[{arg1}, {arg2}+1={arg2+1}] Job complete", flush=True)
+            print(f"{datetime.now()}\t[{arg1}, {arg2}+1={arg2+1}, arg3={arg3}] Job complete", flush=True)
+
+        class MyDataClass:
+            def __init__(self, x: int, y: int) -> None:
+                self.x = x
+                self.y = y
+
+            def __str__(self) -> str:
+                return f"MyDataClass({self.x}, {self.y})"
 
         # Define parameter combinations to test
         params: List[Tuple[Tuple[Any, ...], Dict[str, Any]]] = [
             (("Positional Arg", 5), {}),
             (("Positional Arg",), {"arg2": 5}),
             (tuple(), {"arg1": "Named Arg", "arg2": 5}),
+            (("Positional Arg", 5, {"key": "value"}), {}),
+            (("Positional Arg", 5, MyDataClass(1, 2)), {}),
+            (("Positional Arg", 5), {"arg3": MyDataClass(1, 2)}),
         ]
 
         # Kick off jobs in parallel
@@ -286,7 +294,6 @@ class JobManagerTest(parameterized.TestCase):
         for param, job in zip(params, job_list):
             with self.subTest(param):
                 self.assertEqual(job.wait(), "DONE", job_logs := job.get_logs())
-                self.assertIn("Job start", job_logs)
                 self.assertIn("Job complete", job_logs)
 
                 args, kwargs = param
@@ -294,6 +301,39 @@ class JobManagerTest(parameterized.TestCase):
                     self.assertIn(str(arg), job_logs)
                 for k, v in kwargs.items():
                     self.assertIn(str(v), job_logs, f"key={k}")
+
+    def test_job_runtime_api(self) -> None:
+        # Submit this function via file to avoid pickling issues
+        # TODO: Test this via job decorator as well
+        def runtime_func() -> None:
+            # NOTE: This Runtime module path may change in the future
+            import ray
+
+            from snowflake.ml.data.data_connector import DataConnector
+            from snowflake.ml.utils.connection_params import SnowflakeLoginOptions
+            from snowflake.snowpark import Session
+
+            # Will throw a ConnectionError if Ray is not initialized
+            ray.init(address="auto")
+
+            # Validate simple data ingestion
+            session = Session.builder.configs(SnowflakeLoginOptions()).create()
+            num_rows = 100
+            df = session.sql(
+                f"SELECT uniform(1, 1000, random()) as random_val FROM table(generator(rowcount => {num_rows}))"
+            )
+            dc = DataConnector.from_dataframe(df)
+            assert "Ray" in type(dc._ingestor).__name__, type(dc._ingestor).__qualname__
+            assert len(dc.to_pandas()) == num_rows, len(dc.to_pandas())
+
+            # Print success message which will be checked in the test
+            print("Runtime API test success")
+
+        job = self._submit_func_as_file(runtime_func)
+        self.assertEqual(job.wait(), "DONE", job_logs := job.get_logs())
+        self.assertIn("Runtime API test success", job_logs)
+
+        # TODO: Add test for DataConnector serialization/deserialization
 
     def test_job_with_pip_requirements(self) -> None:
         rows = self.session.sql("SHOW EXTERNAL ACCESS INTEGRATIONS LIKE 'PYPI%'").collect()
@@ -390,6 +430,19 @@ class JobManagerTest(parameterized.TestCase):
         job.wait()
         self.assertEqual(job.status, "DONE", job.get_logs())
         self.assertIn(expected_string, job.get_logs())
+
+    def _submit_func_as_file(self, func: Callable[[], None]) -> jobs.MLJob:
+        func_source = inspect.getsource(func)
+        payload_str = textwrap.dedent(func_source) + "\n" + func.__name__ + "()\n"
+        with tempfile.NamedTemporaryFile(suffix=".py") as temp_file:
+            temp_file.write(payload_str.encode("utf-8"))
+            temp_file.flush()
+            return jobs.submit_file(
+                temp_file.name,
+                self.compute_pool,
+                stage_name="payload_stage",
+                session=self.session,
+            )
 
 
 if __name__ == "__main__":

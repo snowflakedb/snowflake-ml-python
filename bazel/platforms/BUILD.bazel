@@ -1,52 +1,58 @@
+load(":optional_dependency_groups.bzl", "OPTIONAL_DEPENDENCY_GROUPS")
+
 package(default_visibility = ["//visibility:public"])
 
-constraint_setting(name = "conda_env")
+exports_files(["optional_dependency_groups.bzl"])
 
-constraint_setting(name = "gpu_env")
+constraint_setting(name = "core_env")
 
-constraint_value(
-    name = "snowflake_conda_channel",
-    constraint_setting = ":conda_env",
-)
-
-constraint_value(
-    name = "extended_conda_channels",
-    constraint_setting = ":conda_env",
-)
+[
+    constraint_setting(
+        name = group_name + "_env",
+    )
+    for group_name in OPTIONAL_DEPENDENCY_GROUPS.keys()
+]
 
 constraint_value(
-    name = "has_gpu",
-    constraint_setting = ":gpu_env",
+    name = "core_conda_channel",
+    constraint_setting = ":core_env",
 )
 
-constraint_value(
-    name = "no_gpu",
-    constraint_setting = ":gpu_env",
-)
+[
+    constraint_value(
+        name = group_name + "_conda_channel",
+        constraint_setting = ":" + group_name + "_env",
+    )
+    for group_name in OPTIONAL_DEPENDENCY_GROUPS.keys()
+]
 
 platform(
-    name = "snowflake_conda_env",
+    name = "core_conda_env",
     constraint_values = [
-        ":snowflake_conda_channel",
-        ":no_gpu",
+        ":core_conda_channel",
     ],
     parents = ["@local_config_platform//:host"],
 )
 
-platform(
-    name = "extended_conda_env",
-    constraint_values = [
-        ":extended_conda_channels",
-        ":no_gpu",
-    ],
-    parents = ["@local_config_platform//:host"],
-)
+[
+    platform(
+        name = group_name + "_conda_env",
+        constraint_values = [
+            ":core_conda_channel",
+            ":" + group_name + "_conda_channel",
+        ],
+        parents = ["@local_config_platform//:host"],
+    )
+    for group_name in OPTIONAL_DEPENDENCY_GROUPS.keys()
+]
 
 platform(
-    name = "extended_conda_gpu_env",
+    name = "all_conda_env",
     constraint_values = [
-        ":extended_conda_channels",
-        ":has_gpu",
+        ":core_conda_channel",
+    ] + [
+        ":" + group_name + "_conda_channel"
+        for group_name in OPTIONAL_DEPENDENCY_GROUPS.keys()
     ],
     parents = ["@local_config_platform//:host"],
 )

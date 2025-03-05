@@ -122,20 +122,12 @@ esac
 # Detect the architecture
 ARCH="$(uname -m)"
 case "$ARCH" in
-  aarch64|ppc64le|arm64)
-    ARCH="arm64" ;;
+  aarch64|arm64)
+    MICROMAMBA_ARCH="aarch64" ;;
+  ppc64le)
+    MICROMAMBA_ARCH="ppc64le" ;;
   *)
-    ARCH="amd64" ;;
-esac
-
-# Compute the platform-arch string used to download yq.
-case "${PLATFORM}_${ARCH}" in
-  linux_arm64|linux_amd64|darwin_arm64|darwin_amd64|windows_amd64)
-      ;;  # pass
-  *)
-    echo "Platform / Architecture is not supported by yq." >&2
-    exit 1
-    ;;
+    MICROMAMBA_ARCH="64" ;;
 esac
 
 if [ ${IS_NT} = true ]; then
@@ -170,16 +162,29 @@ case ${PYTHON_VERSION} in
         PYTHON_EXECUTABLE="python3.11"
     fi
     ;;
+  3.12)
+    if [ ${IS_NT} = true ]; then
+        PYTHON_EXECUTABLE="py -3.12"
+    else
+        PYTHON_EXECUTABLE="python3.12"
+    fi
+    ;;
 esac
 
 cd "${WORKSPACE}"
 
 # Check and download yq if not presented.
-_YQ_BIN="yq${EXT}"
-if ! command -v "${_YQ_BIN}" &>/dev/null; then
-    TEMP_BIN=$(mktemp -d "${WORKSPACE}/tmp_bin_XXXXX")
-    curl -Lsv https://github.com/mikefarah/yq/releases/latest/download/yq_${PLATFORM}_${ARCH}${EXT} -o "${TEMP_BIN}/yq${EXT}" && chmod +x "${TEMP_BIN}/yq${EXT}"
-    _YQ_BIN="${TEMP_BIN}/yq${EXT}"
+TEMP_BIN=$(mktemp -d "${WORKSPACE}/tmp_bin_XXXXX")
+trap 'rm -rf "${TEMP_BIN}"' EXIT
+
+# Install micromamba
+_MICROMAMBA_BIN="micromamba${EXT}"
+if [ "${ENV}" = "conda" ]; then
+    if ! command -v "${_MICROMAMBA_BIN}" &>/dev/null; then
+        curl -Lsv "https://github.com/mamba-org/micromamba-releases/releases/latest/download/micromamba-${PLATFORM}-${MICROMAMBA_ARCH}" -o "${TEMP_BIN}/micromamba${EXT}" && chmod +x "${TEMP_BIN}/micromamba${EXT}"
+        _MICROMAMBA_BIN="${TEMP_BIN}/micromamba${EXT}"
+        export MAMBA_ROOT_PREFIX="${WORKSPACE}/micromamba"
+    fi
 fi
 
 # Create temp release folder
@@ -191,26 +196,43 @@ pushd ${SNOWML_DIR}
 VERSION=$(grep -oE "VERSION = \"[0-9]+\\.[0-9]+\\.[0-9]+.*\"" snowflake/ml/version.bzl | cut -d'"' -f2)
 echo "Extracted Package Version from code: ${VERSION}"
 
-# Get optional requirements from snowflake/ml/requirements.bzl
-OPTIONAL_REQUIREMENTS=()
-while IFS='' read -r line; do OPTIONAL_REQUIREMENTS+=("$line"); done < <("${_YQ_BIN}" '.requirements.run_constrained.[] | ... style=""' ci/conda_recipe/meta.yaml)
-
-# Compare test required dependencies with wheel pkg dependencies and exclude tests if necessary
-EXCLUDE_TESTS=$(mktemp "${TEMP_TEST_DIR}/exclude_tests_XXXXX")
-./ci/get_excluded_tests.sh -f "${EXCLUDE_TESTS}" -m "${MODE}" -b "${BAZEL}" -e "${SF_ENV}"
-
 # Generate and copy auto-gen tests.
-"${BAZEL}" "${BAZEL_ADDITIONAL_STARTUP_FLAGS[@]+"${BAZEL_ADDITIONAL_STARTUP_FLAGS[@]}"}" build "${BAZEL_ADDITIONAL_BUILD_FLAGS[@]+"${BAZEL_ADDITIONAL_BUILD_FLAGS[@]}"}" //tests/integ/...
+"${BAZEL}" "${BAZEL_ADDITIONAL_STARTUP_FLAGS[@]+"${BAZEL_ADDITIONAL_STARTUP_FLAGS[@]}"}" build --config=build "${BAZEL_ADDITIONAL_BUILD_FLAGS[@]+"${BAZEL_ADDITIONAL_BUILD_FLAGS[@]}"}" //tests/integ/...
 
 # Rsync cannot work well with path that has drive letter in Windows,
-# Thus, these two rsync has to use relative path instead of absolute ones.
+# Thus, rsync has to use relative path instead of absolute ones.
 
 rsync -av --exclude '*.runfiles_manifest' --exclude '*.runfiles/**' "bazel-bin/tests" .
 
-# Copy tests into temp directory
-pushd "${TEMP_TEST_DIR}"
-rsync -av --exclude-from "${EXCLUDE_TESTS}" "../${SNOWML_DIR}/tests" .
-popd
+# Read environments from optional_dependency_groups.bzl
+groups=()
+while IFS= read -r line; do
+    groups+=("$line")
+done < <(python3 -c '
+import ast
+with open("bazel/platforms/optional_dependency_groups.bzl", "r") as f:
+    tree = ast.parse(f.read())
+    for node in ast.walk(tree):
+        if type(node) == ast.Assign and node.targets[0].id == "OPTIONAL_DEPENDENCY_GROUPS":
+            groups = ast.literal_eval(node.value)
+            for group in groups.keys():
+                print(group)
+')
+
+groups+=("core")
+
+for i in "${!groups[@]}"; do
+    group="${groups[$i]}"
+
+    # Compare test required dependencies with wheel pkg dependencies and exclude tests if necessary
+    EXCLUDE_TESTS=$(mktemp "${TEMP_TEST_DIR}/exclude_tests_${group}_XXXXX")
+    ./ci/get_excluded_tests.sh -f "${EXCLUDE_TESTS}" -m "${MODE}" -b "${BAZEL}" -e "${SF_ENV}" -g "${group}"
+
+    # Copy tests into temp directory
+    pushd "${TEMP_TEST_DIR}"
+    rsync -av --exclude-from "${EXCLUDE_TESTS}" "../${SNOWML_DIR}/tests" "${group}"
+    popd
+done
 
 "${BAZEL}" "${BAZEL_ADDITIONAL_STARTUP_FLAGS[@]+"${BAZEL_ADDITIONAL_STARTUP_FLAGS[@]}"}" clean --expunge
 popd
@@ -238,7 +260,7 @@ if [ "${ENV}" = "pip" ]; then
 
     # Build SnowML
     pushd ${SNOWML_DIR}
-    "${BAZEL}" "${BAZEL_ADDITIONAL_STARTUP_FLAGS[@]+"${BAZEL_ADDITIONAL_STARTUP_FLAGS[@]}"}" build "${BAZEL_ADDITIONAL_BUILD_FLAGS[@]+"${BAZEL_ADDITIONAL_BUILD_FLAGS[@]}"}" //:wheel
+    "${BAZEL}" "${BAZEL_ADDITIONAL_STARTUP_FLAGS[@]+"${BAZEL_ADDITIONAL_STARTUP_FLAGS[@]}"}" build --config=build "${BAZEL_ADDITIONAL_BUILD_FLAGS[@]+"${BAZEL_ADDITIONAL_BUILD_FLAGS[@]}"}" //:wheel
     cp "$("${BAZEL}" "${BAZEL_ADDITIONAL_STARTUP_FLAGS[@]+"${BAZEL_ADDITIONAL_STARTUP_FLAGS[@]}"}" info bazel-bin)/dist/snowflake_ml_python-${VERSION}-py3-none-any.whl" "${WORKSPACE}"
     popd
 else
@@ -280,76 +302,145 @@ COMMON_PYTEST_FLAG+=(--import-mode=append)
 COMMON_PYTEST_FLAG+=(--log-cli-level=INFO)
 COMMON_PYTEST_FLAG+=(-n logical)
 COMMON_PYTEST_FLAG+=(--reruns 1)
+COMMON_PYTEST_FLAG+=(--timeout=3600)
 
-if [[ -n "${JUNIT_REPORT_PATH}" ]]; then
-    COMMON_PYTEST_FLAG+=(--junitxml "${JUNIT_REPORT_PATH}")
-fi
+group_exit_codes=()
+group_coverage_report_files=()
 
-if [ "${ENV}" = "pip" ]; then
-    if [ "${WITH_SPCS_IMAGE}" = true ]; then
-        COMMON_PYTEST_FLAG+=(-m "spcs_deployment_image and not pip_incompatible")
+for i in "${!groups[@]}"; do
+    group="${groups[$i]}"
+
+    if [[ -n "${JUNIT_REPORT_PATH}" ]]; then
+        group_coverage_report_files[$i]=$(mktemp "${TEMP_TEST_DIR}/junit_report_${group}_XXXXX")
+        COMMON_PYTEST_FLAG+=(--junitxml "${group_coverage_report_files[$i]}")
+    fi
+
+    pushd "${group}"
+    if [ "${ENV}" = "pip" ]; then
+        if [ "${WITH_SPCS_IMAGE}" = true ]; then
+            COMMON_PYTEST_FLAG+=(-m "spcs_deployment_image and not pip_incompatible")
+        else
+            COMMON_PYTEST_FLAG+=(-m "not pip_incompatible")
+        fi
+        # Copy wheel package
+        cp "${WORKSPACE}/snowflake_ml_python-${VERSION}-py3-none-any.whl" "${TEMP_TEST_DIR}/${group}"
+
+        # Create testing env
+        ${PYTHON_EXECUTABLE} -m venv testenv
+        # shellcheck disable=SC1090
+        source "testenv/${PYTHON_ENABLE_SCRIPT}"
+        # Install all of the packages in single line,
+        # otherwise it will fail in dependency resolution.
+        if [ -f /opt/rh/devtoolset-10/root/usr/bin/gcc ]; then
+            export CXX=/opt/rh/devtoolset-10/root/usr/bin/g++
+            export CC=/opt/rh/devtoolset-10/root/usr/bin/gcc
+        fi
+        python --version
+        python -m pip install --upgrade pip
+        python -m pip list
+        python -m pip install "snowflake_ml_python-${VERSION}-py3-none-any.whl" -r "${WORKSPACE}/${SNOWML_DIR}/bazel/environments/requirements_${group}.txt" --no-cache-dir --force-reinstall
+        if [ "${WITH_SNOWPARK}" = true ]; then
+            cp "$(find "${WORKSPACE}" -maxdepth 1 -iname 'snowflake_snowpark_python-*.whl')" "${TEMP_TEST_DIR}"
+            python -m pip install "$(find "${TEMP_TEST_DIR}" -maxdepth 1 -iname 'snowflake_snowpark_python-*.whl')" --no-deps --force-reinstall
+        fi
+        python -m pip list
+
+        # Run the tests
+        set +e
+        TEST_SRCDIR="${TEMP_TEST_DIR}" python -m pytest "${COMMON_PYTEST_FLAG[@]}" tests/integ/
+        group_exit_codes[$i]=$?
+        set -e
     else
-        COMMON_PYTEST_FLAG+=(-m "not pip_incompatible")
+        if [ "${WITH_SPCS_IMAGE}" = true ]; then
+            COMMON_PYTEST_FLAG+=(-m "spcs_deployment_image and not conda_incompatible")
+        else
+            COMMON_PYTEST_FLAG+=(-m "not conda_incompatible")
+        fi
+        # Create local conda channel
+        conda index "${WORKSPACE}/conda-bld"
+
+        # Clean conda cache
+        "${_MICROMAMBA_BIN}" clean --all --force-pkgs-dirs -y
+
+        # Create testing env
+        "${_MICROMAMBA_BIN}" create -y -p ./testenv -c "${WORKSPACE}/conda-bld" -c "https://repo.anaconda.com/pkgs/snowflake/" --override-channels "python=${PYTHON_VERSION}" snowflake-ml-python
+        if [[ "${group}" != "core" ]]; then
+            "${_MICROMAMBA_BIN}" env update -p ./testenv -f "${WORKSPACE}/${SNOWML_DIR}/bazel/environments/conda-optional-dependency-${group}.yml"
+        fi
+        "${_MICROMAMBA_BIN}" env update -p ./testenv -f "${WORKSPACE}/${SNOWML_DIR}/bazel/environments/conda-env-build-test.yml"
+        "${_MICROMAMBA_BIN}" list -p ./testenv
+
+        # Run integration tests
+        set +e
+        TEST_SRCDIR="${TEMP_TEST_DIR}" conda run -p ./testenv --no-capture-output python -m pytest "${COMMON_PYTEST_FLAG[@]}" tests/integ/
+        group_exit_codes[$i]=$?
+        set -e
+
+        # Clean the conda environment
+        "${_MICROMAMBA_BIN}" env remove -p ./testenv
     fi
-    # Copy wheel package
-    cp "${WORKSPACE}/snowflake_ml_python-${VERSION}-py3-none-any.whl" "${TEMP_TEST_DIR}"
 
-    # Create testing env
-    ${PYTHON_EXECUTABLE} -m venv testenv
-    # shellcheck disable=SC1090
-    source "testenv/${PYTHON_ENABLE_SCRIPT}"
-    # Install all of the packages in single line,
-    # otherwise it will fail in dependency resolution.
-    python --version
-    python -m pip install --upgrade pip
-    python -m pip list
-    python -m pip install "snowflake_ml_python-${VERSION}-py3-none-any.whl[all]" -r "${WORKSPACE}/${SNOWML_DIR}/requirements.txt" --no-cache-dir --force-reinstall
-    if [ "${WITH_SNOWPARK}" = true ]; then
-        cp "$(find "${WORKSPACE}" -maxdepth 1 -iname 'snowflake_snowpark_python-*.whl')" "${TEMP_TEST_DIR}"
-        python -m pip install "$(find . -maxdepth 1 -iname 'snowflake_snowpark_python-*.whl')" --no-deps --force-reinstall
-    fi
-    python -m pip list
+    popd
 
-    # Run the tests
-    set +e
-    TEST_SRCDIR="${TEMP_TEST_DIR}" python -m pytest "${COMMON_PYTEST_FLAG[@]}" tests/integ/
-    TEST_RETCODE=$?
-    set -e
-else
-    if [ "${WITH_SPCS_IMAGE}" = true ]; then
-        COMMON_PYTEST_FLAG+=(-m "spcs_deployment_image and not conda_incompatible")
-    else
-        COMMON_PYTEST_FLAG+=(-m "not conda_incompatible")
-    fi
-    # Create local conda channel
-    conda index "${WORKSPACE}/conda-bld"
-
-    # Clean conda cache
-    conda clean --all --force-pkgs-dirs -y
-
-    # Create testing env
-    conda create -y -p testenv -c "${WORKSPACE}/conda-bld" -c "https://repo.anaconda.com/pkgs/snowflake/" --override-channels "python=${PYTHON_VERSION}" snowflake-ml-python "${OPTIONAL_REQUIREMENTS[@]}"
-    conda env update -p testenv -f "${WORKSPACE}/${SNOWML_DIR}/bazel/environments/conda-env-build-test.yml"
-    conda list -p testenv
-
-    # Run integration tests
-    set +e
-    TEST_SRCDIR="${TEMP_TEST_DIR}" conda run -p testenv --no-capture-output python -m pytest "${COMMON_PYTEST_FLAG[@]}" tests/integ/
-    TEST_RETCODE=$?
-    set -e
-
-    # Clean the conda environment
-    conda env remove -p testenv
-fi
+done
 
 popd
 
-echo "Done running ${PROG}"
+
 # Pytest exit code
 #   0: Success;
 #   5: no tests found
 # See https://docs.pytest.org/en/7.1.x/reference/exit-codes.html
-if [[ (${MODE} = "merge_gate" || ${MODE} = "quarantined") && ${TEST_RETCODE} -eq 5 ]]; then
-    exit 0
+# Initialize final exit code as 0
+final_exit_code=0
+
+# Merge all junit test report files
+if [[ -n "${JUNIT_REPORT_PATH}" ]]; then
+    # Merge all JUnit report files into one
+    JUNIT_REPORT_MERGED="${TEMP_TEST_DIR}/junit_report_merged.xml"
+
+    # Python script to merge JUnit XML files
+    ${PYTHON_EXECUTABLE} -c "
+import xml.etree.ElementTree as ET
+import os
+
+def merge_junit_reports(report_files, output_file):
+    root = ET.Element('testsuites')
+    for report_file in report_files:
+        if os.path.exists(report_file):
+            try:
+                tree = ET.parse(report_file)
+                testsuite = tree.getroot()
+                if testsuite.tag == 'testsuite':
+                    root.append(testsuite)
+                elif testsuite.tag == 'testsuites':
+                    for suite in testsuite:
+                        root.append(suite)
+            except ET.ParseError as e:
+                print(f'Error parsing XML file {report_file}: {e}')
+        else:
+            print(f'Warning: Report file not found: {report_file}')
+    tree = ET.ElementTree(root)
+    tree.write(output_file, encoding='utf-8', xml_declaration=True)
+
+report_files_str = '${group_coverage_report_files[*]}'
+report_files = report_files_str.split()
+output_file = '${JUNIT_REPORT_MERGED}'
+merge_junit_reports(report_files, output_file)
+"
+    # Copy the merged JUnit report to the specified path
+    cp "${JUNIT_REPORT_MERGED}" "${JUNIT_REPORT_PATH}"
 fi
-exit ${TEST_RETCODE}
+
+# Check all group exit codes
+for exit_code in "${group_exit_codes[@]}"; do
+    if [[ (${MODE} = "merge_gate" || ${MODE} = "quarantined" || ${WITH_SPCS_IMAGE} = "true" ) && ${exit_code} -eq 5 ]]; then
+        continue
+    fi
+    if [[ ${exit_code} -ne 0 ]]; then
+        final_exit_code=${exit_code}
+    fi
+done
+
+echo "Done running ${PROG}"
+exit ${final_exit_code}

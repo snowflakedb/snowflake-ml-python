@@ -199,8 +199,21 @@ class SnowparkTransformHandlers:
         if expected_output_cols_type == "":
             expected_output_cols_type = "string"
         assert expected_output_cols_type is not None
+
+        # If there is only one output column, the UDF might have generate complex objects (lists, dicts).
+        # In such cases, we attempt to not do explicit cast. (Example: PolynomialFeatures.transform)
+        try_parse_object = len(expected_output_cols) == 1 and expected_output_cols_type != "string"
         for output_feature in expected_output_cols:
-            output_cols.append(F.col(INTERMEDIATE_OBJ_NAME)[output_feature].astype(expected_output_cols_type))
+            column_expr = F.col(INTERMEDIATE_OBJ_NAME)[output_feature]
+
+            if try_parse_object and df_res.count() > 0:
+                # Only do type casting if it's not an array
+                if not df_res.select(F.is_array(column_expr)).first()[0]:
+                    column_expr = column_expr.astype(expected_output_cols_type)
+            else:
+                column_expr = column_expr.astype(expected_output_cols_type)
+
+            output_cols.append(column_expr)
             output_col_names.append(identifier.get_inferred_name(output_feature))
 
         # Extract output from INTERMEDIATE_OBJ_NAME and drop that column

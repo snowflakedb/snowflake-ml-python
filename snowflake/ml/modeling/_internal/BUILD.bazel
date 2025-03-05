@@ -72,6 +72,7 @@ py_library(
 py_test(
     name = "model_specifications_test",
     srcs = ["model_specifications_test.py"],
+    optional_dependencies = ["lightgbm"],
     deps = [
         ":model_specifications",
         "//snowflake/ml/modeling/_internal/snowpark_implementations:distributed_hpo_trainer",

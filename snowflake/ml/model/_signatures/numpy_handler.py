@@ -50,7 +50,7 @@ class NumpyArrayHandler(base_handler.BaseDataHandler[model_types._SupportedNumpy
         dtype = core.DataType.from_numpy_type(data.dtype)
         role_prefix = (NumpyArrayHandler.INPUT_PREFIX if role == "input" else NumpyArrayHandler.OUTPUT_PREFIX) + "_"
         if len(data.shape) == 1:
-            return [core.FeatureSpec(dtype=dtype, name=f"{role_prefix}{feature_prefix}0")]
+            return [core.FeatureSpec(dtype=dtype, name=f"{role_prefix}{feature_prefix}0", nullable=False)]
         else:
             # For high-dimension array, 0-axis is for batch, 1-axis is for column, further more is details of columns.
             features = []
@@ -59,9 +59,9 @@ class NumpyArrayHandler(base_handler.BaseDataHandler[model_types._SupportedNumpy
             for col_data, ft_name in zip(data[0], ft_names):
                 if isinstance(col_data, np.ndarray):
                     ft_shape = np.shape(col_data)
-                    features.append(core.FeatureSpec(dtype=dtype, name=ft_name, shape=ft_shape))
+                    features.append(core.FeatureSpec(dtype=dtype, name=ft_name, shape=ft_shape, nullable=False))
                 else:
-                    features.append(core.FeatureSpec(dtype=dtype, name=ft_name))
+                    features.append(core.FeatureSpec(dtype=dtype, name=ft_name, nullable=False))
             return features
 
     @staticmethod
@@ -118,10 +118,10 @@ class SeqOfNumpyArrayHandler(base_handler.BaseDataHandler[Sequence[model_types._
             dtype = core.DataType.from_numpy_type(data_col.dtype)
             ft_name = f"{role_prefix}{feature_prefix}{i}"
             if len(data_col.shape) == 1:
-                features.append(core.FeatureSpec(dtype=dtype, name=ft_name))
+                features.append(core.FeatureSpec(dtype=dtype, name=ft_name, nullable=False))
             else:
                 ft_shape = tuple(data_col.shape[1:])
-                features.append(core.FeatureSpec(dtype=dtype, name=ft_name, shape=ft_shape))
+                features.append(core.FeatureSpec(dtype=dtype, name=ft_name, shape=ft_shape, nullable=False))
         return features
 
     @staticmethod

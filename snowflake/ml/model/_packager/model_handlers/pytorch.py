@@ -49,6 +49,7 @@ class PyTorchHandler(_base.BaseModelHandler["torch.nn.Module"]):
             type_utils.LazyType("torch.nn.Module").isinstance(model)
             and not type_utils.LazyType("torch.jit.ScriptModule").isinstance(model)
             and not type_utils.LazyType("sentence_transformers.SentenceTransformer").isinstance(model)
+            and not type_utils.LazyType("keras.Model").isinstance(model)
         )
 
     @classmethod

@@ -24,7 +24,11 @@ def get_task_skl(model: Union["sklearn.base.BaseEstimator", "sklearn.pipeline.Pi
     from sklearn.base import is_classifier, is_regressor
 
     if type_utils.LazyType("sklearn.pipeline.Pipeline").isinstance(model):
-        return type_hints.Task.UNKNOWN
+        if hasattr(model, "predict_proba") or hasattr(model, "predict"):
+            model = model.steps[-1][1]  # type: ignore[attr-defined]
+            return _get_model_task(model)
+        else:
+            return type_hints.Task.UNKNOWN
     if is_regressor(model):
         return type_hints.Task.TABULAR_REGRESSION
     if is_classifier(model):

@@ -15,7 +15,7 @@ from tests.integ.snowflake.ml.test_utils import common_test_base, db_manager
     version.Version(env.PYTHON_VERSION) >= version.Version("3.11"),
     "Skip compat test for Python higher than 3.11 since we previously does not support it.",
 )
-class RegistryCompatTest(common_test_base.CommonTestBase):
+class RegistrySklearnCompatTest(common_test_base.CommonTestBase):
     def setUp(self) -> None:
         """Creates Snowpark and Snowflake environments for testing."""
         super().setUp()

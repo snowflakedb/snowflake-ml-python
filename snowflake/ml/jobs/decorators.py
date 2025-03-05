@@ -1,6 +1,5 @@
 import copy
 import functools
-import inspect
 from typing import Callable, Dict, List, Optional, TypeVar
 
 from typing_extensions import ParamSpec
@@ -8,7 +7,7 @@ from typing_extensions import ParamSpec
 from snowflake import snowpark
 from snowflake.ml._internal import telemetry
 from snowflake.ml.jobs import job as jb, manager as jm
-from snowflake.ml.jobs._utils import payload_utils
+from snowflake.ml.jobs._utils import constants
 
 _PROJECT = "MLJob"
 
@@ -50,31 +49,12 @@ def remote(
         wrapped_func = copy.copy(func)
         wrapped_func.__code__ = wrapped_func.__code__.replace(co_firstlineno=func.__code__.co_firstlineno + 1)
 
-        # Validate function arguments based on signature
-        signature = inspect.signature(func)
-        pos_arg_names = []
-        for name, param in signature.parameters.items():
-            param_type = payload_utils.get_parameter_type(param)
-            if param_type is not None:
-                payload_utils.validate_parameter_type(param_type, name)
-            if param.kind in (param.POSITIONAL_ONLY, param.POSITIONAL_OR_KEYWORD):
-                pos_arg_names.append(name)
-
         @functools.wraps(func)
         def wrapper(*args: _Args.args, **kwargs: _Args.kwargs) -> jb.MLJob:
-            # Validate positional args
-            for i, arg in enumerate(args):
-                arg_name = pos_arg_names[i] if i < len(pos_arg_names) else f"args[{i}]"
-                payload_utils.validate_parameter_type(type(arg), arg_name)
-
-            # Validate keyword args
-            for k, v in kwargs.items():
-                payload_utils.validate_parameter_type(type(v), k)
-
-            arg_list = [str(v) for v in args] + [x for k, v in kwargs.items() for x in (f"--{k}", str(v))]
+            payload = functools.partial(func, *args, **kwargs)
+            setattr(payload, constants.IS_MLJOB_REMOTE_ATTR, True)
             job = jm._submit_job(
-                source=wrapped_func,
-                args=arg_list,
+                source=payload,
                 stage_name=stage_name,
                 compute_pool=compute_pool,
                 pip_requirements=pip_requirements,
@@ -83,7 +63,7 @@ def remote(
                 env_vars=env_vars,
                 session=session,
             )
-            assert isinstance(job, jb.MLJob)
+            assert isinstance(job, jb.MLJob), f"Unexpected job type: {type(job)}"
             return job
 
         return wrapper

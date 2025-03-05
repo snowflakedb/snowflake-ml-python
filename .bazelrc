@@ -1,3 +1,6 @@
+# DO NOT EDIT!
+# Generate by running 'bazel run --config=pre_build //:sync_bazelrc'
+
 # Common Default
 
 # Wrapper to make sure tests are run.
@@ -12,12 +15,9 @@ coverage --instrumentation_filter="-//tests[/:]"
 # Internal definitions
 
 # Make the target platform and the host platform the same
-build:_build --platforms //bazel/platforms:snowflake_conda_env --host_platform //bazel/platforms:snowflake_conda_env --repo_env=BAZEL_CONDA_ENV_NAME=build
-build:_sf_only --platforms //bazel/platforms:snowflake_conda_env --host_platform //bazel/platforms:snowflake_conda_env --repo_env=BAZEL_CONDA_ENV_NAME=sf_only
-build:_extended --platforms //bazel/platforms:extended_conda_env --host_platform //bazel/platforms:extended_conda_env --repo_env=BAZEL_CONDA_ENV_NAME=extended
-build:_extended_oss --platforms //bazel/platforms:extended_conda_env --host_platform //bazel/platforms:extended_conda_env --repo_env=BAZEL_CONDA_ENV_NAME=extended_oss
-build:_extended_gpu_oss --platforms //bazel/platforms:extended_conda_gpu_env --host_platform //bazel/platforms:extended_conda_gpu_env --repo_env=BAZEL_CONDA_ENV_NAME=extended_gpu_oss
-
+build:_build --platforms //bazel/platforms:core_conda_env --host_platform //bazel/platforms:core_conda_env --repo_env=BAZEL_CONDA_ENV_NAME=build
+build:_core --platforms //bazel/platforms:core_conda_env --host_platform //bazel/platforms:core_conda_env --repo_env=BAZEL_CONDA_ENV_NAME=core
+build:_all --platforms //bazel/platforms:all_conda_env --host_platform //bazel/platforms:all_conda_env --repo_env=BAZEL_CONDA_ENV_NAME=all
 
 # Public definitions
 
@@ -26,33 +26,44 @@ build:_extended_gpu_oss --platforms //bazel/platforms:extended_conda_gpu_env --h
 build:py3.9 --repo_env=BAZEL_CONDA_PYTHON_VERSION=3.9
 build:py3.10 --repo_env=BAZEL_CONDA_PYTHON_VERSION=3.10
 build:py3.11 --repo_env=BAZEL_CONDA_PYTHON_VERSION=3.11
+build:py3.12 --repo_env=BAZEL_CONDA_PYTHON_VERSION=3.12
 
-# Default
-
-build --config=_build
-test --config=_sf_only
-run --config=_sf_only
-cquery --config=_sf_only
+build:build --config=_build
 
 # Config to sync files
 run:pre_build --config=_build --config=py3.9
 
 # Config to run type check
-build:typecheck --aspects @rules_mypy//:mypy.bzl%mypy_aspect --output_groups=mypy --config=_extended --config=py3.9
-build:typecheck_oss --aspects @rules_mypy//:mypy.bzl%mypy_aspect --output_groups=mypy --config=_extended_oss --config=py3.9
-build:typecheck_gpu_oss --aspects @rules_mypy//:mypy.bzl%mypy_aspect --output_groups=mypy --config=_extended_gpu_oss --config=py3.9
+build:typecheck --aspects @rules_mypy//:mypy.bzl%mypy_aspect --output_groups=mypy --config=_all --config=py3.9
 
 # Config to build the doc
-build:docs --config=_sf_only --config=py3.9
+build:docs --config=_all --config=py3.9
 
 # Public the extended setting
 
-test:extended --config=_extended
-run:extended --config=_extended
-cquery:extended --config=_extended
-test:extended_oss --config=_extended_oss
-run:extended_oss --config=_extended_oss
-cquery:extended_oss --config=_extended_oss
-test:extended_gpu_oss --config=_extended_gpu_oss
-run:extended_gpu_oss --config=_extended_gpu_oss
-cquery:extended_gpu_oss --config=_extended_gpu_oss
+cquery:core --config=_core
+test:core --config=_core
+run:core --config=_core
+cquery:all --config=_all
+test:all --config=_all
+run:all --config=_all
+
+# Below are auto-generated settings, do not modify them directly
+
+build:_keras --platforms //bazel/platforms:keras_conda_env --host_platform //bazel/platforms:keras_conda_env --repo_env=BAZEL_CONDA_ENV_NAME=keras
+cquery:keras --config=_keras
+build:keras --config=_keras
+test:keras --config=_keras
+run:keras --config=_keras
+
+build:_ml --platforms //bazel/platforms:ml_conda_env --host_platform //bazel/platforms:ml_conda_env --repo_env=BAZEL_CONDA_ENV_NAME=ml
+cquery:ml --config=_ml
+build:ml --config=_ml
+test:ml --config=_ml
+run:ml --config=_ml
+
+build:_torch --platforms //bazel/platforms:torch_conda_env --host_platform //bazel/platforms:torch_conda_env --repo_env=BAZEL_CONDA_ENV_NAME=torch
+cquery:torch --config=_torch
+build:torch --config=_torch
+test:torch --config=_torch
+run:torch --config=_torch

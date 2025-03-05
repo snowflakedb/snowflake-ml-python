@@ -4,7 +4,7 @@ from typing import Any, List, Optional, cast
 from snowflake import snowpark
 from snowflake.ml._internal import telemetry
 from snowflake.ml.jobs._utils import constants, types
-from snowflake.snowpark.context import get_active_session
+from snowflake.snowpark import context as sp_context
 
 _PROJECT = "MLJob"
 TERMINAL_JOB_STATUSES = {"FAILED", "DONE", "INTERNAL_ERROR"}
@@ -13,7 +13,7 @@ TERMINAL_JOB_STATUSES = {"FAILED", "DONE", "INTERNAL_ERROR"}
 class MLJob:
     def __init__(self, id: str, session: Optional[snowpark.Session] = None) -> None:
         self._id = id
-        self._session = session or get_active_session()
+        self._session = session or sp_context.get_active_session()
         self._status: types.JOB_STATUS = "PENDING"
 
     @property
@@ -79,7 +79,7 @@ class MLJob:
         return self.status
 
 
-@telemetry.send_api_usage_telemetry(project=_PROJECT)
+@telemetry.send_api_usage_telemetry(project=_PROJECT, func_params_to_log=["job_id"])
 def _get_status(session: snowpark.Session, job_id: str) -> types.JOB_STATUS:
     """Retrieve job execution status."""
     # TODO: snowflake-snowpark-python<1.24.0 shows spurious error messages on
@@ -90,7 +90,7 @@ def _get_status(session: snowpark.Session, job_id: str) -> types.JOB_STATUS:
     return cast(types.JOB_STATUS, row["status"])
 
 
-@telemetry.send_api_usage_telemetry(project=_PROJECT)
+@telemetry.send_api_usage_telemetry(project=_PROJECT, func_params_to_log=["job_id", "limit"])
 def _get_logs(session: snowpark.Session, job_id: str, limit: int = -1) -> str:
     """
     Retrieve the job's execution logs.
