@@ -52,7 +52,7 @@ class TelemetryTest(parameterized.TestCase):
                 custom_tags={"custom_tag": "tag"},
             )
             def foo(self, param: Any) -> None:
-                pass
+                time.sleep(0.1)  # sleep for 100 ms
 
         test_obj = DummyObject()
         test_obj.foo(param="val")
@@ -69,6 +69,8 @@ class TelemetryTest(parameterized.TestCase):
         self.assertEqual(message[utils_telemetry.TelemetryField.KEY_VERSION.value], _VERSION)
         self.assertEqual(message[utils_telemetry.TelemetryField.KEY_PYTHON_VERSION.value], _PYTHON_VERSION)
         self.assertEqual(message[utils_telemetry.TelemetryField.KEY_OS.value], _OS)
+        self.assertIsInstance(message[utils_telemetry.TelemetryField.KEY_DURATION.value], float)
+        self.assertGreaterEqual(message[utils_telemetry.TelemetryField.KEY_DURATION.value], 0.1)
 
         # data
         self.assertEqual(
@@ -157,7 +159,7 @@ class TelemetryTest(parameterized.TestCase):
         self.assertIn(api_call_sleep, data[utils_telemetry.TelemetryField.KEY_API_CALLS.value])
 
     @mock.patch("snowflake.snowpark.session._get_active_sessions")
-    def test_client_error(self, mock_get_active_sessions: mock.MagicMock) -> None:
+    def test_client_telemetry_error(self, mock_get_active_sessions: mock.MagicMock) -> None:
         """Test send_api_usage_telemetry when the decorated function raises an error."""
         mock_get_active_sessions.return_value = {self.mock_session}
         message = "foo error"
@@ -166,7 +168,6 @@ class TelemetryTest(parameterized.TestCase):
             @utils_telemetry.send_api_usage_telemetry(
                 project=_PROJECT,
                 subproject=_SUBPROJECT,
-                func_params_to_log=["param"],
             )
             def foo(self) -> None:
                 raise RuntimeError(message)
@@ -181,6 +182,9 @@ class TelemetryTest(parameterized.TestCase):
         expected_error = exceptions.SnowflakeMLException(error_codes.UNDEFINED, RuntimeError(message))
         self.assertEqual(error_codes.UNDEFINED, telemetry_message[utils_telemetry.TelemetryField.KEY_ERROR_CODE.value])
         self.assertEqual(repr(expected_error), telemetry_message[utils_telemetry.TelemetryField.KEY_ERROR_INFO.value])
+        self.assertIn(
+            "raise RuntimeError(message)", telemetry_message[utils_telemetry.TelemetryField.KEY_STACK_TRACE.value]
+        )
 
     def test_get_statement_params_full_func_name(self) -> None:
         """Test get_statement_params_full_func_name."""
@@ -458,6 +462,8 @@ class TelemetryTest(parameterized.TestCase):
             test_obj.foo()
         except RuntimeError:
             self.assertIn("nested_foo", traceback.format_exc())
+            telemetry_message = self.mock_telemetry.try_add_log_to_batch.call_args.args[0].to_dict()["message"]
+            self.assertIn("self.nested_foo()", telemetry_message[utils_telemetry.TelemetryField.KEY_STACK_TRACE.value])
 
     @mock.patch("snowflake.snowpark.session._get_active_sessions")
     def test_snowml_nested_error_tb_2(self, mock_get_active_sessions: mock.MagicMock) -> None:
@@ -481,6 +487,8 @@ class TelemetryTest(parameterized.TestCase):
             test_obj.foo()
         except RuntimeError:
             self.assertIn("nested_foo", traceback.format_exc())
+            telemetry_message = self.mock_telemetry.try_add_log_to_batch.call_args.args[0].to_dict()["message"]
+            self.assertIn("self.nested_foo()", telemetry_message[utils_telemetry.TelemetryField.KEY_STACK_TRACE.value])
 
     @mock.patch("snowflake.snowpark.session._get_active_sessions")
     def test_disable_telemetry(self, mock_get_active_sessions: mock.MagicMock) -> None:

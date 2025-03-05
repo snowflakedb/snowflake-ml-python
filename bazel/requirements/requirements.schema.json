@@ -59,11 +59,6 @@
           "pattern": "^$|^([1-9][0-9]*!)?(0|[1-9][0-9]*)(\\.(0|[1-9][0-9]*))*((a|b|rc|alpha|beta)(0|[1-9][0-9]*))?(\\.post(0|[1-9][0-9]*))?(\\.dev(0|[1-9][0-9]*))?$",
           "type": "string"
         },
-        "gpu_only": {
-          "default": false,
-          "description": "The package is required when running in an environment where GPU is available.",
-          "type": "boolean"
-        },
         "name": {
           "description": "The name of the required packages.",
           "type": "string"

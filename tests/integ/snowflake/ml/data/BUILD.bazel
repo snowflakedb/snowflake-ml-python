@@ -7,6 +7,10 @@ package(default_visibility = [
 py_test(
     name = "data_connector_integ_test",
     srcs = ["data_connector_integ_test.py"],
+    optional_dependencies = [
+        "torch",
+        "tensorflow",
+    ],
     shard_count = 8,
     deps = [
         "//snowflake/ml/data",

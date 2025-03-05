@@ -21,6 +21,7 @@ py_test(
     name = "dataset_integ_test",
     timeout = "long",
     srcs = ["dataset_integ_test.py"],
+    optional_dependencies = ["torch"],
     shard_count = 6,
     deps = [
         ":dataset_integ_test_base",
@@ -32,6 +33,9 @@ py_test(
     name = "dataset_tensorflow_integ_test",
     timeout = "long",
     srcs = ["dataset_tensorflow_integ_test.py"],
+    optional_dependencies = [
+        "tensorflow",
+    ],
     shard_count = 4,
     deps = [
         ":dataset_integ_test_base",

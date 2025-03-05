@@ -2,22 +2,11 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 from unittest import mock
 
-import importlib_resources
 import yaml
 from absl.testing import absltest, parameterized
 
 from snowflake.ml.jobs._utils import spec_utils, types
-
-
-class TestAsset:
-    def __init__(self, name: str, resolve_path: bool = True) -> None:
-        self.name = name
-        self.path = (
-            importlib_resources.files("snowflake.ml.jobs._utils.test_files").joinpath(name) if resolve_path else name
-        )
-
-    def __repr__(self) -> str:
-        return f"TestAsset({self.name})"
+from snowflake.ml.jobs._utils.test_file_helper import TestAsset
 
 
 def _get_dict_difference(expected: Dict[str, Any], actual: Dict[str, Any], prefix: str = "") -> str:
@@ -343,7 +332,8 @@ class SpecUtilsTests(parameterized.TestCase):
                 args=args,
             )
 
-        expected_spec = yaml.safe_load(expected.path.read_text())
+        with open(expected.path) as f:
+            expected_spec = yaml.safe_load(f)
         self.assertEmpty(_get_dict_difference(expected_spec, spec))
 
 

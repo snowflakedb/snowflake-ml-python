@@ -99,7 +99,7 @@ EndOfMessage
 
 set +e
 "${bazel}" test \
-    --config=extended \
+    --config=all \
     --cache_test_results=no \
     --test_output=errors \
     //ci/type_check/runner:mypy_type_checking

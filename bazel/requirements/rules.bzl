@@ -69,7 +69,7 @@ def generate_requirement_file(
     )
     diff_test(
         name = "check_{name}".format(name = name),
-        failure_message = "Please run:  bazel run --config=pre_build {generation_cmd}".format(generation_cmd = generation_cmd),
+        failure_message = "Please run: {generation_cmd}".format(generation_cmd = generation_cmd),
         file1 = ":{generated}".format(generated = generated_file),
         file2 = target,
     )
@@ -114,7 +114,7 @@ def generate_requirement_file_yaml(
 
     diff_test(
         name = "check_{name}".format(name = name),
-        failure_message = "Please run:  bazel run --config=pre_build {generation_cmd}".format(generation_cmd = generation_cmd),
+        failure_message = "Please run: {generation_cmd}".format(generation_cmd = generation_cmd),
         file1 = ":{generated}".format(generated = generated_file),
         file2 = target,
     )
@@ -124,17 +124,6 @@ def sync_target(
         root_path,
         targets,
         src_requirement_file):
-    py_genrule(
-        name = "validate_env_{name}".format(name = name),
-        srcs = [
-            src_requirement_file,
-            _SCHEMA_FILE,
-        ],
-        outs = ["validate_env_{name}_dummy_out".format(name = name)],
-        cmd = _GENERATE_COMMAND.format(src_requirement_file = src_requirement_file, options = "--mode validate"),
-        tools = [_GENERATE_TOOL],
-    )
-
     write_file(
         name = "gen_{name}".format(name = name),
         out = "{name}.sh".format(name = name),
@@ -161,4 +150,57 @@ def sync_target(
         name = name,
         srcs = ["{name}.sh".format(name = name)],
         data = [":{generated}".format(generated = value["generated"]) for value in targets],
+    )
+
+def sync_bazelrc_file(
+        name,
+        root_path,
+        target,
+        generation_cmd):
+    generated_file = "synced.bazelrc"
+    py_genrule(
+        name = "gen_{name}_body".format(name = name),
+        srcs = ["//bazel/requirements/templates:bazelrc.tpl", "//bazel/platforms:optional_dependency_groups.bzl"],
+        outs = ["{generated}.body".format(generated = generated_file)],
+        cmd = "$(location //bazel/requirements:update_bazelrc) $(location //bazel/requirements/templates:bazelrc.tpl) > $@",
+        tools = ["//bazel/requirements:update_bazelrc"],
+    )
+
+    native.genrule(
+        name = "gen_{name}".format(name = name),
+        srcs = [
+            "{generated}.body".format(generated = generated_file),
+        ],
+        outs = [generated_file],
+        cmd = "(echo -e \"" + _AUTOGEN_HEADERS.format(generation_cmd = generation_cmd) + "\" ; cat $(location :{generated}.body) ) > $@".format(
+            generated = generated_file,
+        ),
+    )
+    diff_test(
+        name = "check_{name}".format(name = name),
+        failure_message = "Please run: {generation_cmd}".format(generation_cmd = generation_cmd),
+        file1 = ":{generated}".format(generated = generated_file),
+        file2 = target,
+    )
+    write_file(
+        name = "write_{name}".format(name = name),
+        out = "{name}.sh".format(name = name),
+        content = [
+            # This depends on bash, would need tweaks for Windows
+            "#!/usr/bin/env sh",
+            # Bazel gives us a way to access the source folder!
+            "cd $BUILD_WORKSPACE_DIRECTORY",
+            "cp -fv bazel-bin/{root_path}/{generated} {target}".format(
+                root_path = root_path,
+                generated = generated_file,
+                target = target,
+            ),
+        ],
+    )
+
+    # This is what you can `bazel run` and it can write to the source folder
+    native.sh_binary(
+        name = name,
+        srcs = ["{name}.sh".format(name = name)],
+        data = [":{generated}".format(generated = generated_file)],
     )

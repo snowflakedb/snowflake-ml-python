@@ -1,6 +1,7 @@
 import os
 import posixpath
 
+import numpy as np
 import pandas as pd
 import shap
 import yaml
@@ -16,10 +17,11 @@ from snowflake.ml.model._packager.model_handlers import _utils as handlers_utils
 from snowflake.ml.modeling.lightgbm import LGBMRegressor
 from snowflake.ml.modeling.linear_model import LogisticRegression
 from snowflake.ml.modeling.pipeline import Pipeline
+from snowflake.ml.modeling.preprocessing import MinMaxScaler, OneHotEncoder
 from snowflake.ml.modeling.xgboost import XGBRegressor
-from snowflake.snowpark import types as T
+from snowflake.snowpark import functions as F, types as T
 from tests.integ.snowflake.ml.registry.model import registry_model_test_base
-from tests.integ.snowflake.ml.test_utils import test_env_utils
+from tests.integ.snowflake.ml.test_utils import dataframe_utils, test_env_utils
 
 
 class TestRegistryModelingModelInteg(registry_model_test_base.RegistryModelTestBase):
@@ -68,7 +70,6 @@ class TestRegistryModelingModelInteg(registry_model_test_base.RegistryModelTestB
         INPUT_COLUMNS = ["SEPALLENGTH", "SEPALWIDTH", "PETALLENGTH", "PETALWIDTH"]
         LABEL_COLUMNS = "TARGET"
         OUTPUT_COLUMNS = "PREDICTED_TARGET"
-        # EXPLAIN_OUTPUT_COLUMNS = [identifier.concat_names([feature, "_explanation"]) for feature in INPUT_COLUMNS]
         regr = LogisticRegression(input_cols=INPUT_COLUMNS, output_cols=OUTPUT_COLUMNS, label_cols=LABEL_COLUMNS)
         test_features = iris_X
         regr.fit(test_features)
@@ -123,7 +124,6 @@ class TestRegistryModelingModelInteg(registry_model_test_base.RegistryModelTestB
         INPUT_COLUMNS = ["SEPALLENGTH", "SEPALWIDTH", "PETALLENGTH", "PETALWIDTH"]
         LABEL_COLUMNS = "TARGET"
         OUTPUT_COLUMNS = "PREDICTED_TARGET"
-        # EXPLAIN_OUTPUT_COLUMNS = [identifier.concat_names([feature, "_explanation"]) for feature in INPUT_COLUMNS]
         regr = LogisticRegression(input_cols=INPUT_COLUMNS, output_cols=OUTPUT_COLUMNS, label_cols=LABEL_COLUMNS)
         test_features = iris_X
         regr.fit(test_features)
@@ -162,6 +162,59 @@ class TestRegistryModelingModelInteg(registry_model_test_base.RegistryModelTestB
                 ),
             },
             sample_input_data=test_data,
+            options={"enable_explainability": True},
+        )
+
+    @parameterized.product(  # type: ignore[misc]
+        registry_test_fn=registry_model_test_base.RegistryModelTestBase.REGISTRY_TEST_FN_LIST,
+    )
+    @absltest.skip("https://snowflakecomputing.atlassian.net/browse/SNOW-1955551")  # type: ignore[misc]
+    def test_snowml_model_deploy_snowml_pipeline_explain_enabled(
+        self,
+        registry_test_fn: str,
+    ) -> None:
+        iris_X = datasets.load_iris(as_frame=True).frame
+        iris_X.columns = [s.replace(" (CM)", "").replace(" ", "") for s in iris_X.columns.str.upper()]
+
+        INPUT_COLUMNS = ["SEPALLENGTH", "SEPALWIDTH", "PETALLENGTH", "PETALWIDTH"]
+        LABEL_COLUMNS = "TARGET"
+        OUTPUT_COLUMNS = "PREDICTED_TARGET"
+        regr = LogisticRegression(input_cols=INPUT_COLUMNS, output_cols=OUTPUT_COLUMNS, label_cols=LABEL_COLUMNS)
+        regr = Pipeline([("regr", regr)])
+        regr.fit(iris_X)
+        test_features = iris_X[:1]
+
+        def _check_explain(res: pd.DataFrame) -> None:
+            actual_explain_df = handlers_utils.convert_explanations_to_2D_df(regr, expected_explanations)
+            rename_columns = {
+                old_col_name: new_col_name for old_col_name, new_col_name in zip(actual_explain_df.columns, res.columns)
+            }
+            actual_explain_df.rename(columns=rename_columns, inplace=True)
+            pd.testing.assert_frame_equal(res.astype(object), actual_explain_df, check_dtype=False)
+
+        def _check_predict(res) -> None:
+            pd.testing.assert_series_equal(
+                res[OUTPUT_COLUMNS],
+                regr.predict(test_features)[OUTPUT_COLUMNS],
+                check_dtype=False,
+            )
+
+        bg_data = iris_X[INPUT_COLUMNS]
+        test_data = test_features[INPUT_COLUMNS]
+        expected_explanations = shap.Explainer(regr.to_sklearn().predict_proba, masker=bg_data)(test_data).values
+        getattr(self, registry_test_fn)(
+            model=regr,
+            prediction_assert_fns={
+                "predict": (
+                    test_features,
+                    _check_predict,
+                ),
+                "explain": (
+                    test_features,
+                    _check_explain,
+                ),
+            },
+            sample_input_data=bg_data,
             options={"enable_explainability": True},
         )
 
@@ -663,6 +716,167 @@ class TestRegistryModelingModelInteg(registry_model_test_base.RegistryModelTestB
                     assert data_source in source.get("entity")
             else:
                 assert "lineage_sources" not in yaml_content
+
+    @parameterized.product(  # type: ignore[misc]
+        registry_test_fn=registry_model_test_base.RegistryModelTestBase.REGISTRY_TEST_FN_LIST,
+    )
+    def test_snowml_model_deploy_transformers_only_pipeline_sp(
+        self,
+        registry_test_fn: str,
+    ) -> None:
+        iris = datasets.load_iris()
+        df = pd.DataFrame(data=np.c_[iris["data"], iris["target"]], columns=iris["feature_names"] + ["target"])
+        df.columns = [s.replace(" (CM)", "").replace(" ", "") for s in df.columns.str.upper()]
+
+        def add_simple_category(df: pd.DataFrame) -> pd.DataFrame:
+            bins = (-1, 4, 5, 6, 10)
+            group_names = ["Unknown", "1_quartile", "2_quartile", "3_quartile"]
+            categories = pd.cut(df.SEPALLENGTH, bins, labels=group_names)
+            df["SIMPLE"] = categories
+            return df
+
+        # Add string to the dataset
+        df_cat = add_simple_category(df)
+        iris_df = self.session.create_dataframe(df_cat)
+
+        fields = iris_df.schema.fields
+        # Map DoubleType to DecimalType
+        selected_cols = []
+        count = 0
+        for field in fields:
+            src = field.column_identifier.quoted_name
+            if isinstance(field.datatype, T.DoubleType) and count == 0:
+                dest = T.DecimalType(15, 10)
+                selected_cols.append(F.cast(F.col(src), dest).alias(src))
+                count += 1
+            else:
+                selected_cols.append(F.col(src))
+        iris_df = iris_df.select(selected_cols)
+
+        numeric_features = ["SEPALLENGTH", "SEPALWIDTH", "PETALLENGTH", "PETALWIDTH"]
+        categorical_features = ["SIMPLE"]
+        numeric_features_output = [x + "_O" for x in numeric_features]
+
+        pipeline = Pipeline(
+            steps=[
+                (
+                    "OHEHOT",
+                    OneHotEncoder(input_cols=categorical_features, output_cols="CAT_OUTPUT"),
+                ),
+                (
+                    "SCALER",
+                    MinMaxScaler(
+                        clip=True,
+                        input_cols=numeric_features,
+                        output_cols=numeric_features_output,
+                    ),
+                ),
+            ]
+        )
+        pipeline.fit(iris_df)
+
+        test_features_sp = iris_df.select(categorical_features + numeric_features).limit(10)
+        expected_res_sp = pipeline.transform(test_features_sp)
+        expected_res = expected_res_sp.to_pandas()
+        expected_res.columns = expected_res_sp.columns
+
+        getattr(self, registry_test_fn)(
+            model=pipeline,
+            sample_input_data=test_features_sp,
+            prediction_assert_fns={
+                "transform": (
+                    test_features_sp,
+                    lambda res: dataframe_utils.check_sp_df_res(
+                        res,
+                        expected_res,
+                        check_dtype=False,
+                    ),
+                )
+            },
+        )
+
+    @parameterized.product(  # type: ignore[misc]
+        registry_test_fn=registry_model_test_base.RegistryModelTestBase.REGISTRY_TEST_FN_LIST,
+    )
+    def test_snowml_model_deploy_xgboost_pipeline_sp(
+        self,
+        registry_test_fn: str,
+    ) -> None:
+        iris = datasets.load_iris()
+        df = pd.DataFrame(data=np.c_[iris["data"], iris["target"]], columns=iris["feature_names"] + ["target"])
+        df.columns = [s.replace(" (CM)", "").replace(" ", "") for s in df.columns.str.upper()]
+
+        def add_simple_category(df: pd.DataFrame) -> pd.DataFrame:
+            bins = (-1, 4, 5, 6, 10)
+            group_names = ["Unknown", "1_quartile", "2_quartile", "3_quartile"]
+            categories = pd.cut(df.SEPALLENGTH, bins, labels=group_names)
+            df["SIMPLE"] = categories
+            return df
+
+        # Add string to the dataset
+        df_cat = add_simple_category(df)
+        iris_df = self.session.create_dataframe(df_cat)
+
+        fields = iris_df.schema.fields
+        # Map DoubleType to DecimalType
+        selected_cols = []
+        count = 0
+        for field in fields:
+            src = field.column_identifier.quoted_name
+            if isinstance(field.datatype, T.DoubleType) and count == 0:
+                dest = T.DecimalType(15, 10)
+                selected_cols.append(F.cast(F.col(src), dest).alias(src))
+                count += 1
+            else:
+                selected_cols.append(F.col(src))
+        iris_df = iris_df.select(selected_cols)
+
+        numeric_features = ["SEPALLENGTH", "SEPALWIDTH", "PETALLENGTH", "PETALWIDTH"]
+        categorical_features = ["SIMPLE"]
+        numeric_features_output = [x + "_O" for x in numeric_features]
+        label_cols = "TARGET"
+
+        pipeline = Pipeline(
+            steps=[
+                (
+                    "OHEHOT",
+                    OneHotEncoder(input_cols=categorical_features, output_cols="CAT_OUTPUT", drop_input_cols=True),
+                ),
+                (
+                    "SCALER",
+                    MinMaxScaler(
+                        clip=True,
+                        input_cols=numeric_features,
+                        output_cols=numeric_features_output,
+                        drop_input_cols=True,
+                    ),
+                ),
+                (
+                    "CLASSIFIER",
+                    LogisticRegression(label_cols=label_cols),
+                ),
+            ]
+        )
+        pipeline.fit(iris_df)
+
+        test_features_sp = iris_df.drop(label_cols).limit(10)
+        expected_res_sp = pipeline.predict(test_features_sp)
+        expected_res = expected_res_sp.to_pandas()
+        expected_res.columns = expected_res_sp.columns
+
+        getattr(self, registry_test_fn)(
+            model=pipeline,
+            prediction_assert_fns={
+                "predict": (
+                    test_features_sp,
+                    lambda res: dataframe_utils.check_sp_df_res(
+                        res,
+                        expected_res,
+                        check_dtype=False,
+                    ),
+                )
+            },
+        )
 
 
 if __name__ == "__main__":

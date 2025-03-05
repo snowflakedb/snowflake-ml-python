@@ -46,19 +46,19 @@ Note: You may need to configure your editor to run this on save.
 To build the package, run:
 
 ```shell
-> bazel build //:wheel
+> bazel build --config=build //:wheel
 ```
 
 `bazel` can be run from anywhere under the monorepo and it can accept absolute path or a relative path. For example,
 
 ```sh
-snowml> bazel build :wheel
+snowml> bazel build --config=build :wheel
 ```
 
 You can build an entire sub-tree as:
 
 ```sh
-> bazel build //snowflake/...
+> bazel build --config=build //snowflake/...
 ```
 
 ### Notes when you add new target in a `BUILD.bazel` file
@@ -300,6 +300,82 @@ Example:
   tags:
     - deployment_core
     - build_essential
+```
+
+### Using optional dependencies
+
+By default, tests are running in an environment without any optional dependencies (dependencies with
+`requirements_extra_tags` set). This is to reduce the number of the packages in the environments to make it less likely
+to conflict with each other. To use optional dependencies in tests or binary, you need to specify
+`optional_dependencies` in your `py_test` or `py_binary` target to include the `requirements_extra_tags` of the
+dependencies. For example,
+
+```starlark
+py_test(
+    name = "keras_torch_test",
+    srcs = ["keras_test.py"],
+    env = {
+        "KERAS_BACKEND": "torch",
+        "PYTORCH_ENABLE_MPS_FALLBACK": 1,
+    },
+    main = "keras_test.py",
+    optional_dependencies = ["keras"],
+    deps = [
+        "//snowflake/ml/model:model_signature",
+        "//snowflake/ml/model/_packager:model_packager",
+        "//snowflake/ml/model/_signatures:numpy_handler",
+        "//snowflake/ml/model/_signatures:utils",
+    ],
+)
+```
+
+If you added a new tag in `requirements_extra_tags`, you need to update `bazel/platforms/optional_dependency_groups.bzl`
+to either create a new group or add your tag into existing group. Every group here will create a test environment with
+corresponding optional dependencies installed to run the tests or binaries. Here are guidelines:
+
+1. If there are tests needs multiple tags, there should be at least 1 group that has these tags.
+1. Tags in the same group should not have conflicting packages.
+1. Ideally, avoid too many groups and keep test numbers balanced across groups.
+
+If you add a new group, please run the, following command to update the bazelrc file.
+
+```sh
+bazel run --config=pre_build //:sync_bazelrc
+```
+
+### Checking Package Latest Versions
+
+The `bazel/requirements/update_version_requirements.py` script helps you check the latest available versions of
+Python packages from both PyPI and Snowflake Conda repositories against your current requirements.
+
+#### Usage
+
+Run the script in dry-run mode to safely check latest versions without modifying files:
+
+```bash
+bazel run //bazel/requirements:update_version_requirements -- requirements.yml --dry-run
+```
+
+This will scan `requirements.yml` and show the latest version of packages and the suggest changes:
+
+```sh
+INFO: [DRY-RUN] PyPI/Conda package 'scikit-learn' latest PYPI version 1.6.1: '>=1.4,<1.6' -> '>=1.4,<2'
+INFO: [DRY-RUN] PyPI/Conda package 'scikit-learn' latest Conda version 1.5.2: '>=1.4,<1.6' -> '>=1.4,<2'
+```
+
+Each line shows:
+
++ Package availbility (PyPI only, Conda only, or PyPI/Conda)
++ Package name (e.g., 'scikit-learn')
++ The package source (PyPI or Conda)
++ Latest version available in that source repo (e.g., '1.6.1')
++ Current version constraints in your requirements.yml (e.g., '>=1.4,<1.6')
++ Suggested version constraints ('>=1.4,<2')
+
+If you want to apply all the suggested changes, run the following command to update the `requirements.yml` file
+
+```sh
+bazel run --config=core //bazel/requirements:update_version_requirements -- requirements.yml
 ```
 
 ## Unit Testing

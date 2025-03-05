@@ -1,0 +1,12 @@
+---
+# DO NOT EDIT!
+# Generate by running 'bazel run --config=pre_build //bazel/requirements:sync_requirements'
+
+channels:
+  - https://repo.anaconda.com/pkgs/snowflake
+  - nodefaults
+dependencies:
+  - catboost>=1.2.0, <2
+  - lightgbm>=4.1.0, <5
+  - mlflow>=2.16.0, <3
+  - shap>=0.46.0,<1

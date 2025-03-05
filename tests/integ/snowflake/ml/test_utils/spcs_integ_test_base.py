@@ -1,4 +1,3 @@
-import unittest
 import uuid
 
 from absl.testing import absltest
@@ -9,9 +8,10 @@ from snowflake.snowpark import Session
 from tests.integ.snowflake.ml.test_utils import db_manager, test_env_utils
 
 
-@unittest.skipUnless(
-    test_env_utils.get_current_snowflake_cloud_type() == snowflake_env.SnowflakeCloudType.AWS,
-    "SPCS only available in AWS",
+@absltest.skipUnless(
+    test_env_utils.get_current_snowflake_cloud_type()
+    in [snowflake_env.SnowflakeCloudType.AWS, snowflake_env.SnowflakeCloudType.AZURE],
+    "SPCS only available in AWS and Azure",
 )
 class SpcsIntegTestBase(absltest.TestCase):
     _TEST_CPU_COMPUTE_POOL = "REGTEST_INFERENCE_CPU_POOL"

@@ -2,6 +2,7 @@ import os
 import pathlib
 from typing import cast
 from unittest import mock
+from urllib import parse
 
 import numpy as np
 import pandas as pd
@@ -84,6 +85,39 @@ class ModelInterfaceTest(absltest.TestCase):
                         c_session,
                         local_path=mock.ANY,
                         stage_path=pathlib.PurePosixPath(stage_path),
+                        statement_params=None,
+                    )
+                mock_save.assert_called_once()
+                mock_manifest_save.assert_called_once()
+
+        # test for live and commit model
+        # the snow url is passed to ModelComposer
+        snow_stage_path = "snow://model/a_model_name/versions/a_version_name"
+        m = model_composer.ModelComposer(session=c_session, stage_path=snow_stage_path)
+        m.packager = mock_pk
+        with open(os.path.join(m._packager_workspace_path, "model.yaml"), "w", encoding="utf-8") as f:
+            f.write("")
+        with mock.patch.object(m.packager, "save", return_value=mock_pk.meta) as mock_save:
+            with mock.patch.object(m.manifest, "save") as mock_manifest_save:
+                with mock.patch.object(
+                    file_utils, "upload_directory_to_stage", return_value=None
+                ) as mock_upload_directory_to_stage:
+                    with mock.patch.object(
+                        env_utils,
+                        "get_matched_package_versions_in_information_schema",
+                        return_value={env_utils.SNOWPARK_ML_PKG_NAME: []},
+                    ):
+                        m.save(
+                            name="model1",
+                            model=linear_model.LinearRegression(),
+                            sample_input_data=d,
+                            task=model_types.Task.TABULAR_REGRESSION,
+                        )
+
+                    mock_upload_directory_to_stage.assert_called_once_with(
+                        c_session,
+                        local_path=mock.ANY,
+                        stage_path=parse.urlparse(snow_stage_path),
                         statement_params=None,
                     )
                 mock_save.assert_called_once()

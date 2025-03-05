@@ -47,6 +47,9 @@ def check_sp_df_res(
         "check_exact": check_exact,
     }
 
+    if check_names:
+        res_pd_df = res_pd_df[expected_pd_df.columns]
+
     if check_exact is False:
         if atol is not None:
             kwargs["atol"] = atol

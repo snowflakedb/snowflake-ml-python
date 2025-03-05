@@ -2,9 +2,9 @@ from typing import Any, Dict, cast
 from unittest import mock
 
 import pandas as pd
-from absl.testing import absltest
+from absl.testing import absltest, parameterized
 
-from snowflake.ml._internal import telemetry
+from snowflake.ml._internal import platform_capabilities, telemetry
 from snowflake.ml._internal.utils import sql_identifier
 from snowflake.ml.model import type_hints
 from snowflake.ml.model._client.model import model_impl, model_version_impl
@@ -17,7 +17,7 @@ from snowflake.ml.test_utils import mock_session
 from snowflake.snowpark import Row, Session
 
 
-class ModelManagerTest(absltest.TestCase):
+class ModelManagerTest(parameterized.TestCase):
     base_statement_params = {
         "project": "MLOps",
         "subproject": "UnitTest",
@@ -60,7 +60,7 @@ class ModelManagerTest(absltest.TestCase):
         with mock.patch.object(self.m_r._model_ops, "validate_existence", return_value=True) as mock_validate_existence:
             m = self.m_r.get_model("MODEL")
             self.assertEqual(m, m_model)
-            mock_validate_existence.assert_called_once_with(
+            mock_validate_existence.assert_called_with(
                 database_name=None,
                 schema_name=None,
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
@@ -165,17 +165,24 @@ class ModelManagerTest(absltest.TestCase):
                 statement_params=mock.ANY,
             )
 
-    def test_log_model_minimal(self) -> None:
+    @parameterized.parameters(  # type: ignore[misc]
+        {"is_live_commit_enabled": True},
+        {"is_live_commit_enabled": False},
+    )
+    def test_log_model_minimal(self, is_live_commit_enabled: bool = False) -> None:
         m_model = mock.MagicMock()
         m_sample_input_data = mock.MagicMock()
         m_model_metadata = mock.MagicMock()
         m_model_metadata.telemetry_metadata = mock.MagicMock(return_value=self.model_md_telemetry)
         m_stage_path = "@TEMP.TEST.MODEL/V1"
+        mock_capabilities = mock.MagicMock()
+        mock_capabilities.is_live_commit_enabled.return_value = is_live_commit_enabled
+
         with mock.patch.object(
             self.m_r._model_ops, "validate_existence", return_value=False
         ) as mock_validate_existence, mock.patch.object(
-            self.m_r._model_ops, "prepare_model_stage_path", return_value=m_stage_path
-        ) as mock_prepare_model_stage_path, mock.patch.object(
+            self.m_r._model_ops, "prepare_model_temp_stage_path", return_value=m_stage_path
+        ) as mock_prepare_model_temp_stage_path, mock.patch.object(
             model_composer.ModelComposer, "save", return_value=m_model_metadata
         ) as mock_save, mock.patch.object(
             self.m_r._model_ops, "create_from_stage"
@@ -185,20 +192,23 @@ class ModelManagerTest(absltest.TestCase):
             self.m_r._hrid_generator, "generate", return_value=(1, "angry_yeti_1")
         ) as mock_hrid_generate, mock.patch.object(
             model_version_impl.ModelVersion, "_get_functions", return_value=[]
-        ):
+        ), mock.patch.object(
+            platform_capabilities.PlatformCapabilities, "get_instance"
+        ) as mock_get_instance:
+            mock_get_instance.return_value = mock_capabilities
             mv = self.m_r.log_model(
                 model=m_model,
                 model_name="MODEL",
                 sample_input_data=m_sample_input_data,
                 statement_params=self.base_statement_params,
             )
-            mock_validate_existence.assert_called_once_with(
+            mock_validate_existence.assert_called_with(
                 database_name=None,
                 schema_name=None,
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
                 statement_params=mock.ANY,
             )
-            mock_prepare_model_stage_path.assert_called_once_with(
+            mock_prepare_model_temp_stage_path.assert_called_once_with(
                 database_name=None,
                 schema_name=None,
                 statement_params=mock.ANY,
@@ -225,6 +235,7 @@ class ModelManagerTest(absltest.TestCase):
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
                 version_name=sql_identifier.SqlIdentifier("angry_yeti_1"),
                 statement_params=self._build_expected_create_model_statement_params("angry_yeti_1"),
+                use_live_commit=False,
             )
             mock_list_models_or_versions.assert_not_called()
             mock_hrid_generate.assert_called_once_with()
@@ -238,24 +249,34 @@ class ModelManagerTest(absltest.TestCase):
                 ),
             )
 
-    def test_log_model_1(self) -> None:
+    @parameterized.parameters(  # type: ignore[misc]
+        {"is_live_commit_enabled": True},
+        {"is_live_commit_enabled": False},
+    )
+    def test_log_model_1(self, is_live_commit_enabled: bool = False) -> None:
         m_model = mock.MagicMock()
         m_conda_dependency = mock.MagicMock()
         m_sample_input_data = mock.MagicMock()
         m_stage_path = "@TEMP.TEST.MODEL/V1"
         m_model_metadata = mock.MagicMock()
         m_model_metadata.telemetry_metadata = mock.MagicMock(return_value=self.model_md_telemetry)
+        mock_capabilities = mock.MagicMock()
+        mock_capabilities.is_live_commit_enabled.return_value = is_live_commit_enabled
+
         with mock.patch.object(
             self.m_r._model_ops, "validate_existence", return_value=False
         ) as mock_validate_existence, mock.patch.object(
-            self.m_r._model_ops, "prepare_model_stage_path", return_value=m_stage_path
-        ) as mock_prepare_model_stage_path, mock.patch.object(
+            self.m_r._model_ops, "prepare_model_temp_stage_path", return_value=m_stage_path
+        ) as mock_prepare_model_temp_stage_path, mock.patch.object(
             model_composer.ModelComposer, "save", return_value=m_model_metadata
         ) as mock_save, mock.patch.object(
             self.m_r._model_ops, "create_from_stage"
         ) as mock_create_from_stage, mock.patch.object(
             model_version_impl.ModelVersion, "_get_functions", return_value=[]
-        ):
+        ), mock.patch.object(
+            platform_capabilities.PlatformCapabilities, "get_instance"
+        ) as mock_get_instance:
+            mock_get_instance.return_value = mock_capabilities
             mv = self.m_r.log_model(
                 model=m_model,
                 model_name="MODEL",
@@ -264,13 +285,13 @@ class ModelManagerTest(absltest.TestCase):
                 sample_input_data=m_sample_input_data,
                 statement_params=self.base_statement_params,
             )
-            mock_validate_existence.assert_called_once_with(
+            mock_validate_existence.assert_called_with(
                 database_name=None,
                 schema_name=None,
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
                 statement_params=mock.ANY,
             )
-            mock_prepare_model_stage_path.assert_called_once_with(
+            mock_prepare_model_temp_stage_path.assert_called_once_with(
                 database_name=None,
                 schema_name=None,
                 statement_params=mock.ANY,
@@ -297,10 +318,15 @@ class ModelManagerTest(absltest.TestCase):
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
                 version_name=sql_identifier.SqlIdentifier("v1"),
                 statement_params=self._build_expected_create_model_statement_params("v1"),
+                use_live_commit=False,
             )
             self.assertEqual(mv, self.m_mv)
 
-    def test_log_model_2(self) -> None:
+    @parameterized.parameters(  # type: ignore[misc]
+        {"is_live_commit_enabled": True},
+        {"is_live_commit_enabled": False},
+    )
+    def test_log_model_2(self, is_live_commit_enabled: bool = False) -> None:
         m_model = mock.MagicMock()
         m_pip_requirements = mock.MagicMock()
         m_signatures = mock.MagicMock()
@@ -308,15 +334,21 @@ class ModelManagerTest(absltest.TestCase):
         m_stage_path = "@TEMP.TEST.MODEL/V1"
         m_model_metadata = mock.MagicMock()
         m_model_metadata.telemetry_metadata = mock.MagicMock(return_value=self.model_md_telemetry)
+        mock_capabilities = mock.MagicMock()
+        mock_capabilities.is_live_commit_enabled.return_value = is_live_commit_enabled
+
         with mock.patch.object(self.m_r._model_ops, "validate_existence", return_value=False), mock.patch.object(
-            self.m_r._model_ops, "prepare_model_stage_path", return_value=m_stage_path
-        ) as mock_prepare_model_stage_path, mock.patch.object(
+            self.m_r._model_ops, "prepare_model_temp_stage_path", return_value=m_stage_path
+        ) as mock_prepare_model_temp_stage_path, mock.patch.object(
             model_composer.ModelComposer, "save", return_value=m_model_metadata
         ) as mock_save, mock.patch.object(
             self.m_r._model_ops, "create_from_stage"
         ) as mock_create_from_stage, mock.patch.object(
             model_version_impl.ModelVersion, "_get_functions", return_value=[]
-        ):
+        ), mock.patch.object(
+            platform_capabilities.PlatformCapabilities, "get_instance"
+        ) as mock_get_instance:
+            mock_get_instance.return_value = mock_capabilities
             mv = self.m_r.log_model(
                 model=m_model,
                 model_name="MODEL",
@@ -326,7 +358,7 @@ class ModelManagerTest(absltest.TestCase):
                 options=m_options,
                 statement_params=self.base_statement_params,
             )
-            mock_prepare_model_stage_path.assert_called_once_with(
+            mock_prepare_model_temp_stage_path.assert_called_once_with(
                 database_name=None,
                 schema_name=None,
                 statement_params=mock.ANY,
@@ -353,13 +385,18 @@ class ModelManagerTest(absltest.TestCase):
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
                 version_name=sql_identifier.SqlIdentifier("V1"),
                 statement_params=self._build_expected_create_model_statement_params("V1"),
+                use_live_commit=False,
             )
             self.assertEqual(
                 mv,
                 self.m_mv,
             )
 
-    def test_log_model_3(self) -> None:
+    @parameterized.parameters(  # type: ignore[misc]
+        {"is_live_commit_enabled": True},
+        {"is_live_commit_enabled": False},
+    )
+    def test_log_model_3(self, is_live_commit_enabled: bool = False) -> None:
         m_model = mock.MagicMock()
         m_python_version = mock.MagicMock()
         m_code_paths = mock.MagicMock()
@@ -367,15 +404,21 @@ class ModelManagerTest(absltest.TestCase):
         m_stage_path = "@TEMP.TEST.MODEL/V1"
         m_model_metadata = mock.MagicMock()
         m_model_metadata.telemetry_metadata = mock.MagicMock(return_value=self.model_md_telemetry)
+        mock_capabilities = mock.MagicMock()
+        mock_capabilities.is_live_commit_enabled.return_value = is_live_commit_enabled
+
         with mock.patch.object(self.m_r._model_ops, "validate_existence", return_value=False), mock.patch.object(
-            self.m_r._model_ops, "prepare_model_stage_path", return_value=m_stage_path
-        ) as mock_prepare_model_stage_path, mock.patch.object(
+            self.m_r._model_ops, "prepare_model_temp_stage_path", return_value=m_stage_path
+        ) as mock_prepare_model_temp_stage_path, mock.patch.object(
             model_composer.ModelComposer, "save", return_value=m_model_metadata
         ) as mock_save, mock.patch.object(
             self.m_r._model_ops, "create_from_stage"
         ) as mock_create_from_stage, mock.patch.object(
             model_version_impl.ModelVersion, "_get_functions", return_value=[]
-        ):
+        ), mock.patch.object(
+            platform_capabilities.PlatformCapabilities, "get_instance"
+        ) as mock_get_instance:
+            mock_get_instance.return_value = mock_capabilities
             mv = self.m_r.log_model(
                 model=m_model,
                 model_name="MODEL",
@@ -385,7 +428,7 @@ class ModelManagerTest(absltest.TestCase):
                 ext_modules=m_ext_modules,
                 statement_params=self.base_statement_params,
             )
-            mock_prepare_model_stage_path.assert_called_once_with(
+            mock_prepare_model_temp_stage_path.assert_called_once_with(
                 database_name=None,
                 schema_name=None,
                 statement_params=mock.ANY,
@@ -412,20 +455,28 @@ class ModelManagerTest(absltest.TestCase):
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
                 version_name=sql_identifier.SqlIdentifier("V1"),
                 statement_params=self._build_expected_create_model_statement_params("V1"),
+                use_live_commit=False,
             )
             self.assertEqual(
                 mv,
                 self.m_mv,
             )
 
-    def test_log_model_4(self) -> None:
+    @parameterized.parameters(  # type: ignore[misc]
+        {"is_live_commit_enabled": True},
+        {"is_live_commit_enabled": False},
+    )
+    def test_log_model_4(self, is_live_commit_enabled: bool = False) -> None:
         m_model = mock.MagicMock()
         m_stage_path = "@TEMP.TEST.MODEL/V1"
         m_model_metadata = mock.MagicMock()
         m_model_metadata.telemetry_metadata = mock.MagicMock(return_value=self.model_md_telemetry)
+        mock_capabilities = mock.MagicMock()
+        mock_capabilities.is_live_commit_enabled.return_value = is_live_commit_enabled
+
         with mock.patch.object(self.m_r._model_ops, "validate_existence", return_value=False), mock.patch.object(
-            self.m_r._model_ops, "prepare_model_stage_path", return_value=m_stage_path
-        ) as mock_prepare_model_stage_path, mock.patch.object(
+            self.m_r._model_ops, "prepare_model_temp_stage_path", return_value=m_stage_path
+        ) as mock_prepare_model_temp_stage_path, mock.patch.object(
             model_composer.ModelComposer, "save", return_value=m_model_metadata
         ) as mock_save, mock.patch.object(
             self.m_r._model_ops, "create_from_stage"
@@ -435,7 +486,10 @@ class ModelManagerTest(absltest.TestCase):
             self.m_r._model_ops._metadata_ops, "save"
         ) as mock_metadata_save, mock.patch.object(
             model_version_impl.ModelVersion, "_get_functions", return_value=[]
-        ):
+        ), mock.patch.object(
+            platform_capabilities.PlatformCapabilities, "get_instance"
+        ) as mock_get_instance:
+            mock_get_instance.return_value = mock_capabilities
             mv = self.m_r.log_model(
                 model=m_model,
                 model_name="MODEL",
@@ -444,7 +498,7 @@ class ModelManagerTest(absltest.TestCase):
                 metrics={"a": 1},
                 statement_params=self.base_statement_params,
             )
-            mock_prepare_model_stage_path.assert_called_once_with(
+            mock_prepare_model_temp_stage_path.assert_called_once_with(
                 database_name=None,
                 schema_name=None,
                 statement_params=mock.ANY,
@@ -471,6 +525,7 @@ class ModelManagerTest(absltest.TestCase):
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
                 version_name=sql_identifier.SqlIdentifier("V1"),
                 statement_params=self._build_expected_create_model_statement_params("V1"),
+                use_live_commit=False,
             )
             self.assertEqual(
                 mv,
@@ -521,12 +576,21 @@ class ModelManagerTest(absltest.TestCase):
                 ]
             )
 
-    def test_log_model_unsupported_platform(self) -> None:
+    @parameterized.parameters(  # type: ignore[misc]
+        {"is_live_commit_enabled": True},
+        {"is_live_commit_enabled": False},
+    )
+    def test_log_model_unsupported_platform(self, is_live_commit_enabled: bool = False) -> None:
         m_model = mock.MagicMock()
         m_stage_path = "@TEMP.TEST.MODEL/V1"
+        mock_capabilities = mock.MagicMock()
+        mock_capabilities.is_live_commit_enabled.return_value = is_live_commit_enabled
         with mock.patch.object(self.m_r._model_ops, "validate_existence", return_value=False), mock.patch.object(
-            self.m_r._model_ops, "prepare_model_stage_path", return_value=m_stage_path
-        ), self.assertRaises(ValueError) as ex:
+            self.m_r._model_ops, "prepare_model_temp_stage_path", return_value=m_stage_path
+        ), self.assertRaises(ValueError) as ex, mock.patch.object(
+            platform_capabilities.PlatformCapabilities, "get_instance"
+        ) as mock_get_instance:
+            mock_get_instance.return_value = mock_capabilities
             self.m_r.log_model(
                 model=m_model,
                 model_name="MODEL",
@@ -535,20 +599,30 @@ class ModelManagerTest(absltest.TestCase):
             )
             self.assertIn("is not a valid TargetPlatform", str(ex.exception))
 
-    def test_log_model_target_platforms(self) -> None:
+    @parameterized.parameters(  # type: ignore[misc]
+        {"is_live_commit_enabled": True},
+        {"is_live_commit_enabled": False},
+    )
+    def test_log_model_target_platforms(self, is_live_commit_enabled: bool = False) -> None:
         m_model = mock.MagicMock()
         m_stage_path = "@TEMP.TEST.MODEL/V1"
         m_model_metadata = mock.MagicMock()
         m_model_metadata.telemetry_metadata = mock.MagicMock(return_value=self.model_md_telemetry)
+        mock_capabilities = mock.MagicMock()
+        mock_capabilities.is_live_commit_enabled.return_value = is_live_commit_enabled
+
         with mock.patch.object(self.m_r._model_ops, "validate_existence", return_value=False), mock.patch.object(
-            self.m_r._model_ops, "prepare_model_stage_path", return_value=m_stage_path
+            self.m_r._model_ops, "prepare_model_temp_stage_path", return_value=m_stage_path
         ), mock.patch.object(
             model_composer.ModelComposer, "save", return_value=m_model_metadata
         ) as mock_save, mock.patch.object(
             self.m_r._model_ops, "create_from_stage"
         ), mock.patch.object(
             model_version_impl.ModelVersion, "_get_functions", return_value=[]
-        ):
+        ), mock.patch.object(
+            platform_capabilities.PlatformCapabilities, "get_instance"
+        ) as mock_get_instance:
+            mock_get_instance.return_value = mock_capabilities
             self.m_r.log_model(
                 model=m_model,
                 model_name="MODEL",
@@ -594,14 +668,21 @@ class ModelManagerTest(absltest.TestCase):
                 task=type_hints.Task.UNKNOWN,
             )
 
-    def test_log_model_fully_qualified(self) -> None:
+    @parameterized.parameters(  # type: ignore[misc]
+        {"is_live_commit_enabled": True},
+        {"is_live_commit_enabled": False},
+    )
+    def test_log_model_fully_qualified(self, is_live_commit_enabled: bool = False) -> None:
         m_model = mock.MagicMock()
         m_stage_path = "@TEMP.TEST.MODEL/V1"
         m_model_metadata = mock.MagicMock()
         m_model_metadata.telemetry_metadata = mock.MagicMock(return_value=self.model_md_telemetry)
+        mock_capabilities = mock.MagicMock()
+        mock_capabilities.is_live_commit_enabled.return_value = is_live_commit_enabled
+
         with mock.patch.object(self.m_r._model_ops, "validate_existence", return_value=False), mock.patch.object(
-            self.m_r._model_ops, "prepare_model_stage_path", return_value=m_stage_path
-        ) as mock_prepare_model_stage_path, mock.patch.object(
+            self.m_r._model_ops, "prepare_model_temp_stage_path", return_value=m_stage_path
+        ) as mock_prepare_model_temp_stage_path, mock.patch.object(
             model_composer.ModelComposer, "save", return_value=m_model_metadata
         ) as mock_save, mock.patch.object(
             self.m_r._model_ops, "create_from_stage"
@@ -611,7 +692,10 @@ class ModelManagerTest(absltest.TestCase):
             self.m_r._model_ops._metadata_ops, "save"
         ) as mock_metadata_save, mock.patch.object(
             model_version_impl.ModelVersion, "_get_functions", return_value=[]
-        ):
+        ), mock.patch.object(
+            platform_capabilities.PlatformCapabilities, "get_instance"
+        ) as mock_get_instance:
+            mock_get_instance.return_value = mock_capabilities
             mv = self.m_r.log_model(
                 model=m_model,
                 model_name="FOO.BAR.MODEL",
@@ -620,7 +704,7 @@ class ModelManagerTest(absltest.TestCase):
                 metrics={"a": 1},
                 statement_params=self.base_statement_params,
             )
-            mock_prepare_model_stage_path.assert_called_once_with(
+            mock_prepare_model_temp_stage_path.assert_called_once_with(
                 database_name=sql_identifier.SqlIdentifier("FOO"),
                 schema_name=sql_identifier.SqlIdentifier("BAR"),
                 statement_params=mock.ANY,
@@ -647,6 +731,7 @@ class ModelManagerTest(absltest.TestCase):
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
                 version_name=sql_identifier.SqlIdentifier("V1"),
                 statement_params=self._build_expected_create_model_statement_params("V1"),
+                use_live_commit=False,
             )
             self.assertEqual(
                 mv,
@@ -716,7 +801,11 @@ class ModelManagerTest(absltest.TestCase):
                 statement_params=mock.ANY,
             )
 
-    def test_log_model_version_name_dedup(self) -> None:
+    @parameterized.parameters(  # type: ignore[misc]
+        {"is_live_commit_enabled": True},
+        {"is_live_commit_enabled": False},
+    )
+    def test_log_model_version_name_dedup(self, is_live_commit_enabled: bool = False) -> None:
         def validate_existence_side_effect(**kwargs: Any) -> bool:
             if kwargs.get("version_name") is not None:
                 return False
@@ -727,10 +816,13 @@ class ModelManagerTest(absltest.TestCase):
         m_model_metadata = mock.MagicMock()
         m_model_metadata.telemetry_metadata = mock.MagicMock(return_value=self.model_md_telemetry)
         m_stage_path = "@TEMP.TEST.MODEL/V1"
+        mock_capabilities = mock.MagicMock()
+        mock_capabilities.is_live_commit_enabled.return_value = is_live_commit_enabled
+
         with mock.patch.object(
             self.m_r._model_ops, "validate_existence", side_effect=validate_existence_side_effect
         ), mock.patch.object(
-            self.m_r._model_ops, "prepare_model_stage_path", return_value=m_stage_path
+            self.m_r._model_ops, "prepare_model_temp_stage_path", return_value=m_stage_path
         ), mock.patch.object(
             model_composer.ModelComposer, "save", return_value=m_model_metadata
         ), mock.patch.object(
@@ -741,7 +833,10 @@ class ModelManagerTest(absltest.TestCase):
             self.m_r._hrid_generator, "generate", side_effect=[(1, "angry_yeti_1"), (2, "angry_yeti_2")]
         ) as mock_hrid_generate, mock.patch.object(
             model_version_impl.ModelVersion, "_get_functions", return_value=[]
-        ):
+        ), mock.patch.object(
+            platform_capabilities.PlatformCapabilities, "get_instance"
+        ) as mock_get_instance:
+            mock_get_instance.return_value = mock_capabilities
             self.m_r.log_model(
                 model=m_model,
                 model_name="MODEL",

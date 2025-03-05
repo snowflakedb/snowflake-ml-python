@@ -41,6 +41,7 @@ py_library(
     srcs = ["env_utils.py"],
     deps = [
         ":env",
+        ":relax_version_strategy",
         "//snowflake/ml/_internal/utils:query_result_checker",
     ],
 )
@@ -51,6 +52,7 @@ py_test(
     deps = [
         ":env",
         ":env_utils",
+        ":relax_version_strategy",
         "//snowflake/ml/test_utils:mock_data_frame",
         "//snowflake/ml/test_utils:mock_session",
     ],
@@ -110,4 +112,9 @@ py_test(
         "//snowflake/ml/test_utils:mock_data_frame",
         "//snowflake/ml/test_utils:mock_session",
     ],
+)
+
+py_library(
+    name = "relax_version_strategy",
+    srcs = ["relax_version_strategy.py"],
 )

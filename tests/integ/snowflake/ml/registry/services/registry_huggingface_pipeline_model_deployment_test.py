@@ -62,7 +62,6 @@ class TestRegistryHuggingFacePipelineDeploymentModelInteg(
                 ),
             },
             options={},
-            additional_dependencies=["pytorch==2.1.0"],
             pip_requirements=pip_requirements,
         )
 

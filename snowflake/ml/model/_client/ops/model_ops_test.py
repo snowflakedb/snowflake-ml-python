@@ -54,11 +54,11 @@ class ModelOpsTest(absltest.TestCase):
         m_df.add_collect_result(collect_result)
         return m_df
 
-    def test_prepare_model_stage_path(self) -> None:
+    def test_prepare_model_temp_stage_path(self) -> None:
         with mock.patch.object(self.m_ops._stage_client, "create_tmp_stage") as mock_create_stage, mock.patch.object(
             snowpark_utils, "random_name_for_temp_object", return_value="SNOWPARK_TEMP_STAGE_ABCDEF0123"
         ) as mock_random_name_for_temp_object:
-            stage_path = self.m_ops.prepare_model_stage_path(
+            stage_path = self.m_ops.prepare_model_temp_stage_path(
                 database_name=sql_identifier.SqlIdentifier("TEMP"),
                 schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
                 statement_params=self.m_statement_params,

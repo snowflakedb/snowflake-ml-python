@@ -39,7 +39,7 @@ def _is_callable(model: model_types.SupportedModelType, method_name: str) -> boo
 
 
 def get_truncated_sample_data(
-    sample_input_data: model_types.SupportedDataType, length: int = 100
+    sample_input_data: model_types.SupportedDataType, length: int = 100, is_for_modeling_model: bool = False
 ) -> model_types.SupportedLocalDataType:
     trunc_sample_input = model_signature._truncate_data(sample_input_data, length=length)
     local_sample_input: model_types.SupportedLocalDataType = None
@@ -47,6 +47,8 @@ def get_truncated_sample_data(
         # Added because of Any from missing stubs.
         trunc_sample_input = cast(SnowparkDataFrame, trunc_sample_input)
         local_sample_input = snowpark_handler.SnowparkDataFrameHandler.convert_to_df(trunc_sample_input)
+        if is_for_modeling_model:
+            local_sample_input.columns = trunc_sample_input.columns
     else:
         local_sample_input = trunc_sample_input
     return local_sample_input
@@ -58,13 +60,15 @@ def validate_signature(
     target_methods: Iterable[str],
     sample_input_data: Optional[model_types.SupportedDataType],
     get_prediction_fn: Callable[[str, model_types.SupportedLocalDataType], model_types.SupportedLocalDataType],
+    is_for_modeling_model: bool = False,
 ) -> model_meta.ModelMetadata:
     if model_meta.signatures:
         validate_target_methods(model, list(model_meta.signatures.keys()))
         if sample_input_data is not None:
-            local_sample_input = get_truncated_sample_data(sample_input_data)
+            local_sample_input = get_truncated_sample_data(
+                sample_input_data, is_for_modeling_model=is_for_modeling_model
+            )
             for target_method in model_meta.signatures.keys():
-
                 model_signature_inst = model_meta.signatures.get(target_method)
                 if model_signature_inst is not None:
                     # strict validation the input signature
@@ -77,7 +81,7 @@ def validate_signature(
     assert (
         sample_input_data is not None
     ), "Model signature and sample input are None at the same time. This should not happen with local model."
-    local_sample_input = get_truncated_sample_data(sample_input_data)
+    local_sample_input = get_truncated_sample_data(sample_input_data, is_for_modeling_model=is_for_modeling_model)
     for target_method in target_methods:
         predictions_df = get_prediction_fn(target_method, local_sample_input)
         sig = model_signature.infer_signature(

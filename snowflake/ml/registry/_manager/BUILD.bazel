@@ -11,6 +11,7 @@ py_library(
         "model_manager.py",
     ],
     deps = [
+        "//snowflake/ml/_internal:platform_capabilities",
         "//snowflake/ml/_internal/human_readable_id:hrid_generator",
         "//snowflake/ml/_internal/utils:sql_identifier",
         "//snowflake/ml/model",

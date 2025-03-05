@@ -352,7 +352,7 @@ class ModelMetadata:
             version.parse(loaded_meta_min_snowpark_ml_version) > version.parse(snowml_env.VERSION)
         ):
             raise RuntimeError(
-                f"The minimal version required to load the model is {loaded_meta_min_snowpark_ml_version},"
+                f"The minimal version required to load the model is {loaded_meta_min_snowpark_ml_version}, "
                 f"while current version of Snowpark ML library is {snowml_env.VERSION}."
             )
         return model_meta_schema.ModelMetadataDict(

@@ -2,7 +2,8 @@ import pathlib
 import tempfile
 import uuid
 from types import ModuleType
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
+from urllib import parse
 
 from absl import logging
 from packaging import requirements
@@ -44,7 +45,13 @@ class ModelComposer:
         statement_params: Optional[Dict[str, Any]] = None,
     ) -> None:
         self.session = session
-        self.stage_path = pathlib.PurePosixPath(stage_path)
+        self.stage_path: Union[pathlib.PurePosixPath, parse.ParseResult] = None  # type: ignore[assignment]
+        if stage_path.startswith("snow://"):
+            # The stage path is a snowflake internal stage path
+            self.stage_path = parse.urlparse(stage_path)
+        else:
+            # The stage path is a user stage path
+            self.stage_path = pathlib.PurePosixPath(stage_path)
 
         self._workspace = tempfile.TemporaryDirectory()
         self._packager_workspace = tempfile.TemporaryDirectory()
@@ -70,7 +77,20 @@ class ModelComposer:
 
     @property
     def model_stage_path(self) -> str:
-        return (self.stage_path / self.model_file_rel_path).as_posix()
+        if isinstance(self.stage_path, parse.ParseResult):
+            model_file_path = (pathlib.PosixPath(self.stage_path.path) / self.model_file_rel_path).as_posix()
+            new_url = parse.ParseResult(
+                scheme=self.stage_path.scheme,
+                netloc=self.stage_path.netloc,
+                path=str(model_file_path),
+                params=self.stage_path.params,
+                query=self.stage_path.query,
+                fragment=self.stage_path.fragment,
+            )
+            return str(parse.urlunparse(new_url))
+        else:
+            assert isinstance(self.stage_path, pathlib.PurePosixPath)
+            return (self.stage_path / self.model_file_rel_path).as_posix()
 
     @property
     def model_local_path(self) -> str:

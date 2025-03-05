@@ -38,9 +38,22 @@ class HuggingFacePipelineTest(absltest.TestCase):
 
         huggingface_pipeline.HuggingFacePipelineModel(model=testing_utils.DUMMY_UNKNOWN_IDENTIFIER)
 
-        huggingface_pipeline.HuggingFacePipelineModel(
-            model=testing_utils.SMALL_MODEL_IDENTIFIER, token=testing_utils.TOKEN
-        )
+        with absltest.mock.patch("transformers.AutoConfig.from_pretrained") as mock_from_pretrained:
+            mock_config = absltest.mock.Mock()
+            mock_config._commit_hash = "fake_commit_hash"
+            mock_config.custom_pipelines = {}
+            mock_from_pretrained.return_value = mock_config
+            huggingface_pipeline.HuggingFacePipelineModel(
+                task="fill-mask", model=testing_utils.SMALL_MODEL_IDENTIFIER, token=testing_utils.TOKEN
+            )
+            mock_from_pretrained.assert_called_once_with(
+                testing_utils.SMALL_MODEL_IDENTIFIER,
+                _from_pipeline="fill-mask",
+                revision=None,
+                token=testing_utils.TOKEN,
+                trust_remote_code=None,
+                _commit_hash=None,
+            )
 
         with self.assertRaisesRegex(
             ValueError,

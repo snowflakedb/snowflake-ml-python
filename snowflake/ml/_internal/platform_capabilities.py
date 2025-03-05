@@ -37,6 +37,9 @@ class PlatformCapabilities:
     def is_nested_function_enabled(self) -> bool:
         return self._get_bool_feature("SPCS_MODEL_ENABLE_EMBEDDED_SERVICE_FUNCTIONS", False)
 
+    def is_live_commit_enabled(self) -> bool:
+        return self._get_bool_feature("ENABLE_BUNDLE_MODULE_CHECKOUT", False)
+
     @staticmethod
     def _get_features(session: snowpark_session.Session) -> Dict[str, Any]:
         try:

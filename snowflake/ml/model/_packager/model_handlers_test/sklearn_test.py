@@ -349,13 +349,46 @@ class SKLearnHandlerTest(absltest.TestCase):
                 assert callable(predict_method)
                 self.assertEqual(explain_method, None)
 
-    def test_skl_no_default_explain_sklearn_pipeline(self) -> None:
+    def test_skl_default_explain_sklearn_pipeline(self) -> None:
+        iris_X, iris_y = datasets.load_iris(return_X_y=True)
+        regr = linear_model.LinearRegression()
+        pipe = Pipeline([("regr", regr)])
+
+        iris_X_df = pd.DataFrame(iris_X, columns=["c1", "c2", "c3", "c4"])
+        pipe.fit(iris_X_df, iris_y)
+
+        explanations = shap.Explainer(regr, iris_X_df)(iris_X_df).values
+        with tempfile.TemporaryDirectory() as tmpdir:
+            model_packager.ModelPackager(os.path.join(tmpdir, "model1")).save(
+                name="model1",
+                model=pipe,
+                sample_input_data=iris_X_df,
+                metadata={"author": "halu", "version": "1"},
+            )
+
+            with warnings.catch_warnings():
+                warnings.simplefilter("error")
+
+                pk = model_packager.ModelPackager(os.path.join(tmpdir, "model1"))
+                pk.load(as_custom_model=True)
+                assert pk.model
+                assert pk.meta
+                predict_method = getattr(pk.model, "predict", None)
+                explain_method = getattr(pk.model, "explain", None)
+                assert callable(predict_method)
+                assert callable(explain_method)
+                np.testing.assert_allclose(np.array([[-0.08254936]]), predict_method(iris_X_df[:1]))
+                np.testing.assert_allclose(explain_method(iris_X_df), explanations)
+
+    def test_skl_default_explain_sklearn_pipeline_with_np(self) -> None:
         iris_X, iris_y = datasets.load_iris(return_X_y=True)
         regr = linear_model.LinearRegression()
         pipe = Pipeline([("regr", regr)])
         # The pipeline can be used as any other estimator
         # and avoids leaking the test set into the train set
         pipe.fit(iris_X, iris_y)
+
+        explanations = shap.Explainer(regr, iris_X)(iris_X).values
         with tempfile.TemporaryDirectory() as tmpdir:
             model_packager.ModelPackager(os.path.join(tmpdir, "model1")).save(
                 name="model1",
@@ -374,7 +407,9 @@ class SKLearnHandlerTest(absltest.TestCase):
                 predict_method = getattr(pk.model, "predict", None)
                 explain_method = getattr(pk.model, "explain", None)
                 assert callable(predict_method)
-                self.assertEqual(explain_method, None)
+                assert callable(explain_method)
+                np.testing.assert_allclose(np.array([[-0.08254936]]), predict_method(iris_X[:1]))
+                np.testing.assert_allclose(explain_method(iris_X), explanations)
 
     def test_skl_object_no_explainable_method(self) -> None:
         iris_X, _ = datasets.load_iris(return_X_y=True)

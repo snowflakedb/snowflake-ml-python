@@ -282,7 +282,7 @@ class FeatureSpec(BaseFeatureSpec):
             result_type = spt.ArrayType(result_type)
         return result_type
 
-    def as_dtype(self) -> Union[npt.DTypeLike, str, PandasExtensionTypes]:
+    def as_dtype(self, force_numpy_dtype: bool = False) -> Union[npt.DTypeLike, str, PandasExtensionTypes]:
         """Convert to corresponding local Type."""
 
         if not self._shape:
@@ -291,7 +291,7 @@ class FeatureSpec(BaseFeatureSpec):
                 return self._dtype._value
 
             np_type = self._dtype._numpy_type
-            if self._nullable:
+            if self._nullable and not force_numpy_dtype:
                 np_to_pd_dtype_mapping = {
                     np.int8: pd.Int8Dtype(),
                     np.int16: pd.Int16Dtype(),

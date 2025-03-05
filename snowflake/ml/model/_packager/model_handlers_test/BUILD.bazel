@@ -11,6 +11,7 @@ py_library(
 py_test(
     name = "_utils_test",
     srcs = ["_utils_test.py"],
+    optional_dependencies = ["catboost"],
     deps = [
         "//snowflake/ml/model:model_signature",
         "//snowflake/ml/model:type_hints",
@@ -25,6 +26,10 @@ py_test(
 py_test(
     name = "catboost_test",
     srcs = ["catboost_test.py"],
+    optional_dependencies = [
+        "catboost",
+        "shap",
+    ],
     deps = [
         "//snowflake/ml/model:model_signature",
         "//snowflake/ml/model:type_hints",
@@ -46,6 +51,10 @@ py_test(
 py_test(
     name = "mlflow_test",
     srcs = ["mlflow_test.py"],
+    optional_dependencies = [
+        "mlflow",
+        "torch",
+    ],
     deps = [
         "//snowflake/ml/model:model_signature",
         "//snowflake/ml/model/_packager:model_packager",
@@ -55,6 +64,7 @@ py_test(
 py_test(
     name = "pytorch_test",
     srcs = ["pytorch_test.py"],
+    optional_dependencies = ["torch"],
     deps = [
         "//snowflake/ml/model:model_signature",
         "//snowflake/ml/model/_packager:model_packager",
@@ -66,6 +76,7 @@ py_test(
 py_test(
     name = "sklearn_test",
     srcs = ["sklearn_test.py"],
+    optional_dependencies = ["shap"],
     deps = [
         "//snowflake/ml/model:model_signature",
         "//snowflake/ml/model:type_hints",
@@ -77,6 +88,7 @@ py_test(
 py_test(
     name = "snowmlmodel_test",
     srcs = ["snowmlmodel_test.py"],
+    optional_dependencies = ["shap"],
     deps = [
         "//snowflake/ml/model:model_signature",
         "//snowflake/ml/model/_packager:model_packager",
@@ -89,6 +101,19 @@ py_test(
 py_test(
     name = "tensorflow_test",
     srcs = ["tensorflow_test.py"],
+    optional_dependencies = ["tensorflow"],
+    deps = [
+        "//snowflake/ml/model:model_signature",
+        "//snowflake/ml/model/_packager:model_packager",
+        "//snowflake/ml/model/_signatures:tensorflow_handler",
+        "//snowflake/ml/model/_signatures:utils",
+    ],
+)
+
+py_test(
+    name = "tf_keras_test",
+    srcs = ["tf_keras_test.py"],
+    optional_dependencies = ["keras"],
     deps = [
         "//snowflake/ml/model:model_signature",
         "//snowflake/ml/model/_packager:model_packager",
@@ -100,6 +125,7 @@ py_test(
 py_test(
     name = "torchscript_test",
     srcs = ["torchscript_test.py"],
+    optional_dependencies = ["torch"],
     deps = [
         "//snowflake/ml/model:model_signature",
         "//snowflake/ml/model/_packager:model_packager",
@@ -111,6 +137,9 @@ py_test(
 py_test(
     name = "xgboost_test",
     srcs = ["xgboost_test.py"],
+    optional_dependencies = [
+        "shap",
+    ],
     deps = [
         "//snowflake/ml/model:model_signature",
         "//snowflake/ml/model/_packager:model_packager",
@@ -121,6 +150,10 @@ py_test(
 py_test(
     name = "lightgbm_test",
     srcs = ["lightgbm_test.py"],
+    optional_dependencies = [
+        "lightgbm",
+        "shap",
+    ],
     deps = [
         "//snowflake/ml/model:model_signature",
         "//snowflake/ml/model/_packager:model_packager",
@@ -131,7 +164,7 @@ py_test(
 py_test(
     name = "huggingface_pipeline_test",
     srcs = ["huggingface_pipeline_test.py"],
-    compatible_with_snowpark = False,
+    optional_dependencies = ["transformers"],
     deps = [
         "//snowflake/ml/model/_packager:model_packager",
         "//snowflake/ml/model/_signatures:utils",
@@ -142,8 +175,42 @@ py_test(
 py_test(
     name = "sentence_transformers_test",
     srcs = ["sentence_transformers_test.py"],
+    optional_dependencies = ["transformers"],
     deps = [
         "//snowflake/ml/model/_packager:model_packager",
+        "//snowflake/ml/model/_signatures:utils",
+    ],
+)
+
+py_test(
+    name = "keras_tensorflow_test",
+    srcs = ["keras_test.py"],
+    env = {
+        "KERAS_BACKEND": "tensorflow",
+    },
+    main = "keras_test.py",
+    optional_dependencies = ["keras"],
+    deps = [
+        "//snowflake/ml/model:model_signature",
+        "//snowflake/ml/model/_packager:model_packager",
+        "//snowflake/ml/model/_signatures:numpy_handler",
+        "//snowflake/ml/model/_signatures:utils",
+    ],
+)
+
+py_test(
+    name = "keras_torch_test",
+    srcs = ["keras_test.py"],
+    env = {
+        "KERAS_BACKEND": "torch",
+        "PYTORCH_ENABLE_MPS_FALLBACK": "1",
+    },
+    main = "keras_test.py",
+    optional_dependencies = ["keras"],
+    deps = [
+        "//snowflake/ml/model:model_signature",
+        "//snowflake/ml/model/_packager:model_packager",
+        "//snowflake/ml/model/_signatures:numpy_handler",
         "//snowflake/ml/model/_signatures:utils",
     ],
 )

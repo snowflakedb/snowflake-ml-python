@@ -292,12 +292,37 @@ class SKLModelHandler(_base.BaseModelHandler[Union["sklearn.base.BaseEstimator",
                 def explain_fn(self: custom_model.CustomModel, X: pd.DataFrame) -> pd.DataFrame:
                     import shap
 
-                    # TODO: if not resolved by explainer, we need to pass the callable function
                     try:
                         explainer = shap.Explainer(raw_model, background_data)
                         df = handlers_utils.convert_explanations_to_2D_df(raw_model, explainer(X).values)
-                    except TypeError as e:
-                        raise ValueError(f"Explanation for this model type not supported yet: {str(e)}")
+                    except TypeError:
+                        try:
+                            dtype_map = {
+                                spec.name: spec.as_dtype(force_numpy_dtype=True)  # type: ignore[attr-defined]
+                                for spec in signature.inputs
+                            }
+
+                            if isinstance(X, pd.DataFrame):
+                                X = X.astype(dtype_map, copy=False)
+                            if hasattr(raw_model, "predict_proba"):
+                                if isinstance(X, np.ndarray):
+                                    explanations = shap.Explainer(
+                                        raw_model.predict_proba, background_data.values  # type: ignore[union-attr]
+                                    )(X).values
+                                else:
+                                    explanations = shap.Explainer(raw_model.predict_proba, background_data)(X).values
+                            elif hasattr(raw_model, "predict"):
+                                if isinstance(X, np.ndarray):
+                                    explanations = shap.Explainer(
+                                        raw_model.predict, background_data.values  # type: ignore[union-attr]
+                                    )(X).values
+                                else:
+                                    explanations = shap.Explainer(raw_model.predict, background_data)(X).values
+                            else:
+                                raise ValueError("Missing any supported target method to explain.")
+                            df = handlers_utils.convert_explanations_to_2D_df(raw_model, explanations)
+                        except TypeError as e:
+                            raise ValueError(f"Explanation for this model type not supported yet: {str(e)}")
                     return model_signature_utils.rename_pandas_df(df, signature.outputs)
 
                 if target_method == "explain":
