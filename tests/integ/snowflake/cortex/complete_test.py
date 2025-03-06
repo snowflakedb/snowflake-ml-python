@@ -164,6 +164,7 @@ class CompleteRestSnowparkTest(common_test_base.CommonTestBase):
     # SHOW statements are one of those:
     # https://docs.snowflake.com/en/developer-guide/stored-procedure/stored-procedures-rights
     @common_test_base.CommonTestBase.sproc_test(local=False, test_owners_rights=False)
+    @absltest.skip("https://snowflakecomputing.atlassian.net/browse/SNOW-1957615")  # type: ignore[misc]
     def test_rest_snowpark_env(self) -> None:
         result = Complete(
             model=_MODEL_NAME,
