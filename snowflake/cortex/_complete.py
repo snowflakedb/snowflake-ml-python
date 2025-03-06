@@ -53,6 +53,9 @@ class CompleteOptions(TypedDict):
     """ A boolean value that controls whether Cortex Guard filters unsafe or harmful responses
     from the language model. """
 
+    response_format: NotRequired[dict[str, Any]]
+    """ A response format for structured output. """
+
 
 class ResponseParseException(Exception):
     """This exception is raised when the server response cannot be parsed."""
@@ -136,6 +139,8 @@ def _make_request_body(
                 "response_when_unsafe": "Response filtered by Cortex Guard",
             }
             data["guardrails"] = guardrails_options
+        if "response_format" in options:
+            data["response_format"] = options["response_format"]
     return data
 
 
