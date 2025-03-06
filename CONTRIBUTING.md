@@ -52,7 +52,7 @@ To build the package, run:
 `bazel` can be run from anywhere under the monorepo and it can accept absolute path or a relative path. For example,
 
 ```sh
-snowml> bazel build :wheel
+snowml> bazel build --config=build :wheel
 ```
 
 You can build an entire sub-tree as:
@@ -375,7 +375,7 @@ Each line shows:
 If you want to apply all the suggested changes, run the following command to update the `requirements.yml` file
 
 ```sh
-bazel run //bazel/requirements:update_version_requirements -- requirements.yml
+bazel run --config=core //bazel/requirements:update_version_requirements -- requirements.yml
 ```
 
 ## Unit Testing
