@@ -162,8 +162,6 @@
 - name: pandas
   dev_version: 1.5.3
   version_requirements: '>=1.0.0,<3'
-  tags:
-    - build_essential
 - name: protobuf
   dev_version: 4.25.3
 - name: psutil
@@ -173,12 +171,8 @@
 - name: pyarrow
   dev_version: 16.1.0
   version_requirements: ''
-  tags:
-    - build_essential
 - name: pydantic
   dev_version: 2.8.2
-  tags:
-    - build_essential
 - name: pyjwt
   dev_version: 2.8.0
   version_requirements: '>=2.0.0, <3'
@@ -245,17 +239,11 @@
   name_pypi: snowflake-connector-python[pandas]
   dev_version: 3.10.0
   version_requirements: '>=3.5.0,<4'
-  tags:
-    - build_essential
 - name: snowflake-snowpark-python
   dev_version: 1.17.0
   version_requirements: '>=1.17.0,<2,!=1.26.0'
-  tags:
-    - build_essential
 - name: sphinx
   dev_version: 5.0.2
-  tags:
-    - build_essential
 - name: starlette
   dev_version: 0.27.0
 - name: sqlparse
