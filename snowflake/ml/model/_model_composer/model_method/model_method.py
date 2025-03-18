@@ -98,7 +98,6 @@ class ModelMethod:
     def _get_method_arg_from_feature(
         feature: model_signature.BaseFeatureSpec, case_sensitive: bool = False
     ) -> model_manifest_schema.ModelMethodSignatureFieldWithName:
-        assert isinstance(feature, model_signature.FeatureSpec), "FeatureGroupSpec is not supported."
         try:
             feature_name = sql_identifier.SqlIdentifier(feature.name, case_sensitive=case_sensitive)
         except ValueError as e:

@@ -83,6 +83,12 @@ class ModelSignatureMiscTest(absltest.TestCase):
         )
 
         torch_tensor = torch.LongTensor([1, 2, 3, 4])
+        self.assertListEqual(
+            model_signature._infer_signature(torch_tensor, role="output"),
+            [
+                model_signature.FeatureSpec("output_feature_0", model_signature.DataType.INT64),
+            ],
+        )
         lt4 = [torch_tensor, torch_tensor]
         self.assertListEqual(
             model_signature._infer_signature(lt4, role="output"),
@@ -109,6 +115,12 @@ class ModelSignatureMiscTest(absltest.TestCase):
         )
 
         tf_tensor = tf.constant([1, 2, 3, 4], dtype=tf.int64)
+        self.assertListEqual(
+            model_signature._infer_signature(tf_tensor, role="output"),
+            [
+                model_signature.FeatureSpec("output_feature_0", model_signature.DataType.INT64),
+            ],
+        )
         lt5 = [tf_tensor, tf_tensor]
         self.assertListEqual(
             model_signature._infer_signature(lt5, role="output"),
@@ -169,6 +181,60 @@ class ModelSignatureMiscTest(absltest.TestCase):
             self, expected_original_error_type=NotImplementedError, expected_regex="Un-supported type provided"
         ):
             model_signature._infer_signature([], role="input")
+
+        df = pd.DataFrame([[{"a": 1}], [{"a": 1}]])
+        self.assertListEqual(
+            model_signature._infer_signature(df, role="input"),
+            [
+                model_signature.FeatureGroupSpec(
+                    "input_feature_0",
+                    [
+                        model_signature.FeatureSpec("a", model_signature.DataType.INT64),
+                    ],
+                )
+            ],
+        )
+
+        df = pd.DataFrame([[[{"a": 1}]], [[{"a": 1}]]])
+        self.assertListEqual(
+            model_signature._infer_signature(df, role="input"),
+            [
+                model_signature.FeatureGroupSpec(
+                    "input_feature_0",
+                    [
+                        model_signature.FeatureSpec("a", model_signature.DataType.INT64),
+                    ],
+                    shape=(-1,),
+                )
+            ],
+        )
+
+        lt = [[{"a": 1}], [{"a": 1}]]
+        self.assertListEqual(
+            model_signature._infer_signature(lt, role="input"),
+            [
+                model_signature.FeatureGroupSpec(
+                    "input_feature_0",
+                    [
+                        model_signature.FeatureSpec("a", model_signature.DataType.INT64),
+                    ],
+                )
+            ],
+        )
+
+        lt = [[[{"a": 1}]], [[{"a": 1}]]]
+        self.assertListEqual(
+            model_signature._infer_signature(lt, role="input"),
+            [
+                model_signature.FeatureGroupSpec(
+                    "input_feature_0",
+                    [
+                        model_signature.FeatureSpec("a", model_signature.DataType.INT64),
+                    ],
+                    shape=(-1,),
+                )
+            ],
+        )
 
     def test_validate_pandas_df(self) -> None:
         fts = [
@@ -520,6 +586,33 @@ class ModelSignatureMiscTest(absltest.TestCase):
         ):
             model_signature._validate_pandas_df(pd.DataFrame(data={"a": [np.array([1, 2])]}), fts)
 
+        ftgs = [
+            model_signature.FeatureGroupSpec(
+                "a",
+                [
+                    model_signature.FeatureSpec("b", model_signature.DataType.INT64),
+                    model_signature.FeatureSpec("c", model_signature.DataType.INT64),
+                ],
+            )
+        ]
+        model_signature._validate_pandas_df(
+            pd.DataFrame({"a": [{"b": 1, "c": 2}, {"b": 3, "c": 4}]}, columns=["a"]), ftgs
+        )
+
+        ftgs = [
+            model_signature.FeatureGroupSpec(
+                "a",
+                [
+                    model_signature.FeatureSpec("b", model_signature.DataType.INT64),
+                    model_signature.FeatureSpec("c", model_signature.DataType.INT64, shape=(2,)),
+                ],
+                shape=(-1,),
+            )
+        ]
+        model_signature._validate_pandas_df(
+            pd.DataFrame({"a": [[{"b": 1, "c": [2, 3]}, {"b": 4, "c": [5, 6]}], [{"b": 7, "c": [8, 9]}]]}), ftgs
+        )
+
     def test_validate_data_with_features(self) -> None:
         fts = [
             model_signature.FeatureSpec("input_feature_0", model_signature.DataType.INT64),
@@ -621,6 +714,22 @@ class ModelSignatureMiscTest(absltest.TestCase):
 
         df = model_signature._convert_and_validate_local_data([[2, 5], [6, 8]], fts)
         self.assertListEqual(df.columns.to_list(), ["input_feature_0", "input_feature_1"])
+
+        ftgs = [
+            model_signature.FeatureGroupSpec(
+                "input_feature_0",
+                [
+                    model_signature.FeatureSpec("a", model_signature.DataType.INT64),
+                    model_signature.FeatureSpec("b", model_signature.DataType.INT64),
+                ],
+            )
+        ]
+
+        df = model_signature._convert_and_validate_local_data(
+            pd.DataFrame({0: [{"a": 1, "b": 2}, {"a": 3, "b": 4}]}), ftgs
+        )
+
+        self.assertListEqual(df.columns.to_list(), ["input_feature_0"])
 
 
 if __name__ == "__main__":

@@ -368,18 +368,7 @@ def generate_requirements(
                 ),
             )
         )
-        all_reqs = list(
-            sorted(
-                filter(
-                    None,
-                    map(
-                        lambda req_info: generate_user_requirements_string(req_info, "conda"),
-                        requirements,
-                    ),
-                ),
-            )
-        )
-        sys.stdout.write(f"REQUIREMENTS = {repr(reqs)}\nALL_REQUIREMENTS={repr(all_reqs)}\n")
+        sys.stdout.write(f"REQUIREMENTS = {repr(reqs)}\n")
     elif (mode, format) == ("version_requirements", "toml"):
         extras_requirements = list(filter(lambda req_info: filter_by_extras(req_info, "extras_only"), requirements))
         extras_results: MutableMapping[str, Sequence[str]] = {}

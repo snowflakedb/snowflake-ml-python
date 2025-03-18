@@ -199,8 +199,15 @@ class DataType(Enum):
 class BaseFeatureSpec(ABC):
     """Abstract Class for specification of a feature."""
 
-    def __init__(self, name: str) -> None:
+    def __init__(self, name: str, shape: Optional[Tuple[int, ...]]) -> None:
         self._name = name
+
+        if shape and not isinstance(shape, tuple):
+            raise snowml_exceptions.SnowflakeMLException(
+                error_code=error_codes.INVALID_TYPE,
+                original_exception=TypeError("Shape should be a tuple if presented."),
+            )
+        self._shape = shape
 
     @final
     @property
@@ -211,6 +218,11 @@ class BaseFeatureSpec(ABC):
     @abstractmethod
     def as_snowpark_type(self) -> spt.DataType:
         """Convert to corresponding Snowpark Type."""
+        pass
+
+    @abstractmethod
+    def as_dtype(self, force_numpy_dtype: bool = False) -> Union[npt.DTypeLike, str, PandasExtensionTypes]:
+        """Convert to corresponding local Type."""
         pass
 
     @abstractmethod
@@ -256,7 +268,7 @@ class FeatureSpec(BaseFeatureSpec):
             SnowflakeMLException: TypeError: When the dtype input type is incorrect.
             SnowflakeMLException: TypeError: When the shape input type is incorrect.
         """
-        super().__init__(name=name)
+        super().__init__(name=name, shape=shape)
 
         if not isinstance(dtype, DataType):
             raise snowml_exceptions.SnowflakeMLException(
@@ -264,13 +276,6 @@ class FeatureSpec(BaseFeatureSpec):
                 original_exception=TypeError("dtype should be a model signature datatype."),
             )
         self._dtype = dtype
-
-        if shape and not isinstance(shape, tuple):
-            raise snowml_exceptions.SnowflakeMLException(
-                error_code=error_codes.INVALID_TYPE,
-                original_exception=TypeError("Shape should be a tuple if presented."),
-            )
-        self._shape = shape
 
         self._nullable = nullable
 
@@ -386,15 +391,23 @@ class FeatureSpec(BaseFeatureSpec):
 class FeatureGroupSpec(BaseFeatureSpec):
     """Specification of a group of features in Snowflake native model packaging."""
 
-    def __init__(self, name: str, specs: List[FeatureSpec]) -> None:
+    def __init__(self, name: str, specs: List[BaseFeatureSpec], shape: Optional[Tuple[int, ...]] = None) -> None:
         """Initialize a feature group.
 
         Args:
             name: Name of the feature group.
             specs: A list of feature specifications that composes the group. All children feature specs have to have
                 name. And all of them should have the same type.
+            shape: Used to represent scalar feature, 1-d feature list,
+                or n-d tensor. Use -1 to represent variable length. Defaults to None.
+
+                Examples:
+                    - None: scalar
+                    - (2,): 1d list with a fixed length of 2.
+                    - (-1,): 1d list with variable length, used for ragged tensor representation.
+                    - (d1, d2, d3): 3d tensor.
         """
-        super().__init__(name=name)
+        super().__init__(name=name, shape=shape)
         self._specs = specs
         self._validate()
 
@@ -409,39 +422,41 @@ class FeatureGroupSpec(BaseFeatureSpec):
                 error_code=error_codes.INVALID_ARGUMENT,
                 original_exception=ValueError("All children feature specs have to have name."),
             )
-        if not (all(s._shape is None for s in self._specs) or all(s._shape is not None for s in self._specs)):
-            raise snowml_exceptions.SnowflakeMLException(
-                error_code=error_codes.INVALID_ARGUMENT,
-                original_exception=ValueError("All children feature specs have to have same shape."),
-            )
-        first_type = self._specs[0]._dtype
-        if not all(s._dtype == first_type for s in self._specs):
-            raise snowml_exceptions.SnowflakeMLException(
-                error_code=error_codes.INVALID_ARGUMENT,
-                original_exception=ValueError("All children feature specs have to have same type."),
-            )
 
     def as_snowpark_type(self) -> spt.DataType:
-        first_type = self._specs[0].as_snowpark_type()
-        return spt.MapType(spt.StringType(), first_type)
+        spt_type = spt.StructType(
+            fields=[
+                spt.StructField(
+                    s._name, datatype=s.as_snowpark_type(), nullable=s._nullable if isinstance(s, FeatureSpec) else True
+                )
+                for s in self._specs
+            ]
+        )
+        if not self._shape:
+            return spt_type
+        return spt.ArrayType(spt_type)
 
     def __eq__(self, other: object) -> bool:
         if isinstance(other, FeatureGroupSpec):
-            return self._specs == other._specs
+            return self._name == other._name and self._specs == other._specs and self._shape == other._shape
         else:
             return False
 
     def __repr__(self) -> str:
         spec_strs = ",\n\t\t".join(repr(spec) for spec in self._specs)
+        shape_str = f", shape={repr(self._shape)}" if self._shape else ""
         return textwrap.dedent(
             f"""FeatureGroupSpec(
                 name={repr(self._name)},
                 specs=[
                     {spec_strs}
-                ]
+                ]{shape_str}
             )
             """
         )
+
+    def as_dtype(self, force_numpy_dtype: bool = False) -> Union[npt.DTypeLike, str, PandasExtensionTypes]:
+        return np.object_
 
     def to_dict(self) -> Dict[str, Any]:
         """Serialize the feature group into a dict.
@@ -449,7 +464,10 @@ class FeatureGroupSpec(BaseFeatureSpec):
         Returns:
             A dict that serializes the feature group.
         """
-        return {"feature_group": {"name": self._name, "specs": [s.to_dict() for s in self._specs]}}
+        base_dict: Dict[str, Any] = {"name": self._name, "specs": [s.to_dict() for s in self._specs]}
+        if self._shape is not None:
+            base_dict["shape"] = self._shape
+        return base_dict
 
     @classmethod
     def from_dict(cls, input_dict: Dict[str, Any]) -> "FeatureGroupSpec":
@@ -462,10 +480,13 @@ class FeatureGroupSpec(BaseFeatureSpec):
             A feature group instance deserialized and created from the dict.
         """
         specs = []
-        for e in input_dict["feature_group"]["specs"]:
-            spec = FeatureSpec.from_dict(e)
+        for e in input_dict["specs"]:
+            spec = FeatureGroupSpec.from_dict(e) if "specs" in e else FeatureSpec.from_dict(e)
             specs.append(spec)
-        return FeatureGroupSpec(name=input_dict["feature_group"]["name"], specs=specs)
+        shape = input_dict.get("shape", None)
+        if shape:
+            shape = tuple(shape)
+        return FeatureGroupSpec(name=input_dict["name"], specs=specs, shape=shape)
 
 
 class ModelSignature:
@@ -525,7 +546,7 @@ class ModelSignature:
         sig_inputs = loaded["inputs"]
 
         deserialize_spec: Callable[[Dict[str, Any]], BaseFeatureSpec] = lambda sig_spec: (
-            FeatureGroupSpec.from_dict(sig_spec) if "feature_group" in sig_spec else FeatureSpec.from_dict(sig_spec)
+            FeatureGroupSpec.from_dict(sig_spec) if "specs" in sig_spec else FeatureSpec.from_dict(sig_spec)
         )
 
         return ModelSignature(

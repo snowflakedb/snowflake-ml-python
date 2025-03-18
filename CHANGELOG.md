@@ -1,9 +1,284 @@
 # Release History
 
-## 1.7.5
+## 1.8.0
+
+### Bug Fixes
+
+- Modeling: Fix a bug in some metrics that allowed an unsupported version of numpy to be installed
+  automatically in the stored procedure, resulting in a numpy error on execution
+- Registry: Fix a bug that leads to incorrect `Model is does not have _is_inference_api` error message when assigning
+  a supported model as a property of a CustomModel.
+- Registry: Fix a bug that inference is not working when models with more than 500 input features
+  are deployed to SPCS.
+
+### Behavior Change
+
+- Registry: With FeatureGroupSpec support, auto inferred model signature for `transformers.Pipeline` models have been
+  updated, including:
+  - Signature for fill-mask task has been changed from
+
+    ```python
+    ModelSignature(
+        inputs=[
+            FeatureSpec(name="inputs", dtype=DataType.STRING),
+        ],
+        outputs=[
+            FeatureSpec(name="outputs", dtype=DataType.STRING),
+        ],
+    )
+    ```
+
+    to
+
+    ```python
+    ModelSignature(
+        inputs=[
+            FeatureSpec(name="inputs", dtype=DataType.STRING),
+        ],
+        outputs=[
+            FeatureGroupSpec(
+                name="outputs",
+                specs=[
+                    FeatureSpec(name="sequence", dtype=DataType.STRING),
+                    FeatureSpec(name="score", dtype=DataType.DOUBLE),
+                    FeatureSpec(name="token", dtype=DataType.INT64),
+                    FeatureSpec(name="token_str", dtype=DataType.STRING),
+                ],
+                shape=(-1,),
+            ),
+        ],
+    )
+    ```
+
+  - Signature for token-classification task has been changed from
+
+    ```python
+    ModelSignature(
+        inputs=[
+            FeatureSpec(name="inputs", dtype=DataType.STRING),
+        ],
+        outputs=[
+            FeatureSpec(name="outputs", dtype=DataType.STRING),
+        ],
+    )
+    ```
+
+    to
+
+    ```python
+    ModelSignature(
+        inputs=[FeatureSpec(name="inputs", dtype=DataType.STRING)],
+        outputs=[
+            FeatureGroupSpec(
+                name="outputs",
+                specs=[
+                    FeatureSpec(name="word", dtype=DataType.STRING),
+                    FeatureSpec(name="score", dtype=DataType.DOUBLE),
+                    FeatureSpec(name="entity", dtype=DataType.STRING),
+                    FeatureSpec(name="index", dtype=DataType.INT64),
+                    FeatureSpec(name="start", dtype=DataType.INT64),
+                    FeatureSpec(name="end", dtype=DataType.INT64),
+                ],
+                shape=(-1,),
+            ),
+        ],
+    )
+    ```
+
+  - Signature for question-answering task when top_k is larger than 1 has been changed from
+
+    ```python
+    ModelSignature(
+        inputs=[
+            FeatureSpec(name="question", dtype=DataType.STRING),
+            FeatureSpec(name="context", dtype=DataType.STRING),
+        ],
+        outputs=[
+            FeatureSpec(name="outputs", dtype=DataType.STRING),
+        ],
+    )
+    ```
+
+    to
+
+    ```python
+    ModelSignature(
+        inputs=[
+            FeatureSpec(name="question", dtype=DataType.STRING),
+            FeatureSpec(name="context", dtype=DataType.STRING),
+        ],
+        outputs=[
+            FeatureGroupSpec(
+                name="answers",
+                specs=[
+                    FeatureSpec(name="score", dtype=DataType.DOUBLE),
+                    FeatureSpec(name="start", dtype=DataType.INT64),
+                    FeatureSpec(name="end", dtype=DataType.INT64),
+                    FeatureSpec(name="answer", dtype=DataType.STRING),
+                ],
+                shape=(-1,),
+            ),
+        ],
+    )
+    ```
+
+  - Signature for text-classification task when top_k is `None` has been changed from
+
+    ```python
+    ModelSignature(
+        inputs=[
+            FeatureSpec(name="text", dtype=DataType.STRING),
+            FeatureSpec(name="text_pair", dtype=DataType.STRING),
+        ],
+        outputs=[
+            FeatureSpec(name="label", dtype=DataType.STRING),
+            FeatureSpec(name="score", dtype=DataType.DOUBLE),
+        ],
+    )
+    ```
+
+    to
+
+    ```python
+    ModelSignature(
+        inputs=[
+            FeatureSpec(name="text", dtype=DataType.STRING),
+        ],
+        outputs=[
+            FeatureSpec(name="label", dtype=DataType.STRING),
+            FeatureSpec(name="score", dtype=DataType.DOUBLE),
+        ],
+    )
+    ```
+
+  - Signature for text-classification task when top_k is not `None` has been changed from
+
+    ```python
+    ModelSignature(
+        inputs=[
+            FeatureSpec(name="text", dtype=DataType.STRING),
+            FeatureSpec(name="text_pair", dtype=DataType.STRING),
+        ],
+        outputs=[
+            FeatureSpec(name="outputs", dtype=DataType.STRING),
+        ],
+    )
+    ```
+
+    to
+
+    ```python
+    ModelSignature(
+        inputs=[
+            FeatureSpec(name="text", dtype=DataType.STRING),
+        ],
+        outputs=[
+            FeatureGroupSpec(
+                name="labels",
+                specs=[
+                    FeatureSpec(name="label", dtype=DataType.STRING),
+                    FeatureSpec(name="score", dtype=DataType.DOUBLE),
+                ],
+                shape=(-1,),
+            ),
+        ],
+    )
+    ```
+
+  - Signature for text-generation task has been changed from
+
+    ```python
+    ModelSignature(
+        inputs=[FeatureSpec(name="inputs", dtype=DataType.STRING)],
+        outputs=[
+            FeatureSpec(name="outputs", dtype=DataType.STRING),
+        ],
+    )
+    ```
+
+    to
+
+    ```python
+    ModelSignature(
+        inputs=[
+            FeatureGroupSpec(
+                name="inputs",
+                specs=[
+                    FeatureSpec(name="role", dtype=DataType.STRING),
+                    FeatureSpec(name="content", dtype=DataType.STRING),
+                ],
+                shape=(-1,),
+            ),
+        ],
+        outputs=[
+            FeatureGroupSpec(
+                name="outputs",
+                specs=[
+                    FeatureSpec(name="generated_text", dtype=DataType.STRING),
+                ],
+                shape=(-1,),
+            )
+        ],
+    )
+    ```
+
+- Registry: PyTorch and TensorFlow models now expect a single tensor input/output by default when logging to Model
+  Registry. To use multiple tensors (previous behavior), set `options={"multiple_inputs": True}`.
+
+  Example with single tensor input:
+
+  ```python
+  import torch
+
+  class TorchModel(torch.nn.Module):
+      def __init__(self, n_input: int, n_hidden: int, n_out: int, dtype: torch.dtype = torch.float32) -> None:
+          super().__init__()
+          self.model = torch.nn.Sequential(
+              torch.nn.Linear(n_input, n_hidden, dtype=dtype),
+              torch.nn.ReLU(),
+              torch.nn.Linear(n_hidden, n_out, dtype=dtype),
+              torch.nn.Sigmoid(),
+          )
+
+      def forward(self, tensor: torch.Tensor) -> torch.Tensor:
+          return cast(torch.Tensor, self.model(tensor))
+
+  # Sample usage:
+  data_x = torch.rand(size=(batch_size, n_input))
+
+  # Log model with single tensor
+  reg.log_model(
+      model=model,
+      ...,
+      sample_input_data=data_x
+  )
+
+  # Run inference with single tensor
+  mv.run(data_x)
+  ```
+
+  For multiple tensor inputs/outputs, use:
+
+  ```python
+  reg.log_model(
+      model=model,
+      ...,
+      sample_input_data=[data_x_1, data_x_2],
+      options={"multiple_inputs": True}
+  )
+  ```
+
+- Registry: Default `enable_explainability` to False when the model can be deployed to Snowpark Container Services.
+
+### New Features
+
+- Registry: Added support to single `torch.Tensor`, `tensorflow.Tensor` and `tensorflow.Variable` as input or output
+  data.
+
+## 1.7.5 (03-06-2025)
 
 - Support Python 3.12.
-- Explainability: Support native and snowml sklearn pipeline
+- Explainability: Support native and snowflake.ml.modeling sklearn pipeline
 
 ### Bug Fixes
 
@@ -19,8 +294,6 @@
   combinations to be erroneously rejected with
   `ValueError(f"{self.entrypoint} must be a subpath of {self.source}")`
 - ML Job (PrPr): Fixed a bug in Ray cluster startup config which caused certain Runtime APIs to fail
-
-### Behavior Change
 
 ### New Features
 

@@ -3,7 +3,7 @@ import itertools
 import os
 import pathlib
 import warnings
-from typing import DefaultDict, List, Optional
+from typing import DefaultDict, Dict, List, Optional
 
 from packaging import requirements, version
 
@@ -36,6 +36,7 @@ class ModelEnv:
             pip_requirements_rel_path = os.path.join(_DEFAULT_ENV_DIR, _DEFAULT_PIP_REQUIREMENTS_FILENAME)
         self.conda_env_rel_path = pathlib.PurePosixPath(pathlib.Path(conda_env_rel_path).as_posix())
         self.pip_requirements_rel_path = pathlib.PurePosixPath(pathlib.Path(pip_requirements_rel_path).as_posix())
+        self.artifact_repository_map: Optional[Dict[str, str]] = None
         self._conda_dependencies: DefaultDict[str, List[requirements.Requirement]] = collections.defaultdict(list)
         self._pip_requirements: List[requirements.Requirement] = []
         self._python_version: version.Version = version.parse(snowml_env.PYTHON_VERSION)
@@ -345,6 +346,7 @@ class ModelEnv:
     def load_from_dict(self, base_dir: pathlib.Path, env_dict: model_meta_schema.ModelEnvDict) -> None:
         self.conda_env_rel_path = pathlib.PurePosixPath(env_dict["conda"])
         self.pip_requirements_rel_path = pathlib.PurePosixPath(env_dict["pip"])
+        self.artifact_repository_map = env_dict.get("artifact_repository_map", None)
 
         self.load_from_conda_file(base_dir / self.conda_env_rel_path)
         self.load_from_pip_file(base_dir / self.pip_requirements_rel_path)
@@ -373,6 +375,7 @@ class ModelEnv:
         return {
             "conda": self.conda_env_rel_path.as_posix(),
             "pip": self.pip_requirements_rel_path.as_posix(),
+            "artifact_repository_map": self.artifact_repository_map if self.artifact_repository_map is not None else {},
             "python_version": self.python_version,
             "cuda_version": self.cuda_version,
             "snowpark_ml_version": self.snowpark_ml_version,

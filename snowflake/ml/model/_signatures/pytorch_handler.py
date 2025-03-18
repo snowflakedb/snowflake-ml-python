@@ -1,5 +1,5 @@
 from collections import abc
-from typing import TYPE_CHECKING, List, Literal, Optional, Sequence
+from typing import TYPE_CHECKING, Literal, Optional, Sequence
 
 import numpy as np
 import pandas as pd
@@ -11,10 +11,52 @@ from snowflake.ml._internal.exceptions import (
     exceptions as snowml_exceptions,
 )
 from snowflake.ml.model import type_hints as model_types
-from snowflake.ml.model._signatures import base_handler, core
+from snowflake.ml.model._signatures import base_handler, core, numpy_handler
 
 if TYPE_CHECKING:
     import torch
+
+
+class PyTorchTensorHandler(base_handler.BaseDataHandler["torch.Tensor"]):
+    @staticmethod
+    def can_handle(data: model_types.SupportedDataType) -> TypeGuard["torch.Tensor"]:
+        return type_utils.LazyType("torch.Tensor").isinstance(data)
+
+    @staticmethod
+    def count(data: "torch.Tensor") -> int:
+        return data.shape[0]
+
+    @staticmethod
+    def truncate(data: "torch.Tensor", length: int) -> "torch.Tensor":
+        return data[: min(PyTorchTensorHandler.count(data), length)]
+
+    @staticmethod
+    def validate(data: "torch.Tensor") -> None:
+        return numpy_handler.NumpyArrayHandler.validate(data.detach().cpu().numpy())
+
+    @staticmethod
+    def infer_signature(data: "torch.Tensor", role: Literal["input", "output"]) -> Sequence[core.BaseFeatureSpec]:
+        return numpy_handler.NumpyArrayHandler.infer_signature(data.detach().cpu().numpy(), role=role)
+
+    @staticmethod
+    def convert_to_df(data: "torch.Tensor", ensure_serializable: bool = True) -> pd.DataFrame:
+        return numpy_handler.NumpyArrayHandler.convert_to_df(
+            data.detach().cpu().numpy(), ensure_serializable=ensure_serializable
+        )
+
+    @staticmethod
+    def convert_from_df(df: pd.DataFrame, features: Optional[Sequence[core.BaseFeatureSpec]] = None) -> "torch.Tensor":
+        import torch
+
+        if features is None:
+            if any(dtype == np.dtype("O") for dtype in df.dtypes):
+                return torch.from_numpy(np.array(df.to_numpy().tolist()))
+            return torch.from_numpy(df.to_numpy())
+
+        assert isinstance(features[0], core.FeatureSpec)
+        return torch.from_numpy(
+            np.array(df.to_numpy().tolist(), dtype=features[0]._dtype._numpy_type),
+        )
 
 
 class SeqOfPyTorchTensorHandler(base_handler.BaseDataHandler[Sequence["torch.Tensor"]]):
@@ -24,56 +66,28 @@ class SeqOfPyTorchTensorHandler(base_handler.BaseDataHandler[Sequence["torch.Ten
             return False
         if len(data) == 0:
             return False
-        if type_utils.LazyType("torch.Tensor").isinstance(data[0]):
-            return all(type_utils.LazyType("torch.Tensor").isinstance(data_col) for data_col in data)
-        return False
+        return all(PyTorchTensorHandler.can_handle(data_col) for data_col in data)
 
     @staticmethod
     def count(data: Sequence["torch.Tensor"]) -> int:
-        return min(data_col.shape[0] for data_col in data)
+        return min(PyTorchTensorHandler.count(data_col) for data_col in data)
 
     @staticmethod
     def truncate(data: Sequence["torch.Tensor"], length: int) -> Sequence["torch.Tensor"]:
-        return [data_col[: min(SeqOfPyTorchTensorHandler.count(data), 10)] for data_col in data]
+        return [data_col[: min(SeqOfPyTorchTensorHandler.count(data), length)] for data_col in data]
 
     @staticmethod
     def validate(data: Sequence["torch.Tensor"]) -> None:
-        import torch
-
         for data_col in data:
-            if data_col.shape == torch.Size([0]):
-                # Empty array
-                raise snowml_exceptions.SnowflakeMLException(
-                    error_code=error_codes.INVALID_DATA,
-                    original_exception=ValueError("Data Validation Error: Empty data is found."),
-                )
-
-            if data_col.shape == torch.Size([1]):
-                # scalar
-                raise snowml_exceptions.SnowflakeMLException(
-                    error_code=error_codes.INVALID_DATA,
-                    original_exception=ValueError("Data Validation Error: Scalar data is found."),
-                )
+            PyTorchTensorHandler.validate(data_col)
 
     @staticmethod
     def infer_signature(
         data: Sequence["torch.Tensor"], role: Literal["input", "output"]
     ) -> Sequence[core.BaseFeatureSpec]:
-        feature_prefix = f"{SeqOfPyTorchTensorHandler.FEATURE_PREFIX}_"
-        features: List[core.BaseFeatureSpec] = []
-        role_prefix = (
-            SeqOfPyTorchTensorHandler.INPUT_PREFIX if role == "input" else SeqOfPyTorchTensorHandler.OUTPUT_PREFIX
-        ) + "_"
-
-        for i, data_col in enumerate(data):
-            dtype = core.DataType.from_torch_type(data_col.dtype)
-            ft_name = f"{role_prefix}{feature_prefix}{i}"
-            if len(data_col.shape) == 1:
-                features.append(core.FeatureSpec(dtype=dtype, name=ft_name, nullable=False))
-            else:
-                ft_shape = tuple(data_col.shape[1:])
-                features.append(core.FeatureSpec(dtype=dtype, name=ft_name, shape=ft_shape, nullable=False))
-        return features
+        return numpy_handler.SeqOfNumpyArrayHandler.infer_signature(
+            [data_col.detach().cpu().numpy() for data_col in data], role=role
+        )
 
     @staticmethod
     def convert_to_df(data: Sequence["torch.Tensor"], ensure_serializable: bool = True) -> pd.DataFrame:
@@ -81,8 +95,8 @@ class SeqOfPyTorchTensorHandler(base_handler.BaseDataHandler[Sequence["torch.Ten
         # the content is still numpy array so that the type could be preserved.
         # But that would not serializable and cannot use as UDF input and output.
         if ensure_serializable:
-            return pd.DataFrame({i: data_col.detach().to("cpu").numpy().tolist() for i, data_col in enumerate(data)})
-        return pd.DataFrame({i: list(data_col.detach().to("cpu").numpy()) for i, data_col in enumerate(data)})
+            return pd.DataFrame({i: data_col.detach().cpu().numpy().tolist() for i, data_col in enumerate(data)})
+        return pd.DataFrame({i: list(data_col.detach().cpu().numpy()) for i, data_col in enumerate(data)})
 
     @staticmethod
     def convert_from_df(
@@ -95,8 +109,10 @@ class SeqOfPyTorchTensorHandler(base_handler.BaseDataHandler[Sequence["torch.Ten
             for feature in features:
                 if isinstance(feature, core.FeatureGroupSpec):
                     raise snowml_exceptions.SnowflakeMLException(
-                        error_code=error_codes.NOT_IMPLEMENTED,
-                        original_exception=NotImplementedError("FeatureGroupSpec is not supported."),
+                        error_code=error_codes.INVALID_DATA_TYPE,
+                        original_exception=NotImplementedError(
+                            "FeatureGroupSpec is not supported when converting to Tensorflow tensor."
+                        ),
                     )
                 assert isinstance(feature, core.FeatureSpec), "Invalid feature kind."
                 res.append(torch.from_numpy(np.stack(df[feature.name].to_numpy()).astype(feature._dtype._numpy_type)))

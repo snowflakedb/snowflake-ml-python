@@ -127,7 +127,10 @@ class FileSetTest(absltest.TestCase):
                         "  HEADER  = True"
                     )
                     mock_cursor.execute.assert_called_with(
-                        expected_query, params=absltest.mock.ANY, _statement_params=absltest.mock.ANY
+                        expected_query,
+                        params=absltest.mock.ANY,
+                        _statement_params=absltest.mock.ANY,
+                        _dataframe_ast=absltest.mock.ANY,
                     )
 
                     # FileSet.make() will shuffle rows by random if shuffle is true
@@ -146,7 +149,10 @@ class FileSetTest(absltest.TestCase):
                             "  HEADER  = True"
                         )
                         mock_cursor.execute.assert_called_with(
-                            expected_query, params=absltest.mock.ANY, _statement_params=absltest.mock.ANY
+                            expected_query,
+                            params=absltest.mock.ANY,
+                            _statement_params=absltest.mock.ANY,
+                            _dataframe_ast=absltest.mock.ANY,
                         )
 
     def test_make_and_no_cast(self) -> None:
@@ -197,7 +203,10 @@ class FileSetTest(absltest.TestCase):
                         "  HEADER  = True"
                     )
                     mock_cursor.execute.assert_called_with(
-                        expected_query, params=absltest.mock.ANY, _statement_params=absltest.mock.ANY
+                        expected_query,
+                        params=absltest.mock.ANY,
+                        _statement_params=absltest.mock.ANY,
+                        _dataframe_ast=absltest.mock.ANY,
                     )
 
     def test_make_fail_by_files_from_different_query(self) -> None:

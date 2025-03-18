@@ -257,7 +257,6 @@ class FileSet:
                     function_name=telemetry.get_statement_params_full_func_name(
                         inspect.currentframe(), cls.__class__.__name__
                     ),
-                    api_calls=[snowpark.DataFrameWriter.copy_into_location],
                 ),
             )
         except snowpark_exceptions.SnowparkSQLException as e:

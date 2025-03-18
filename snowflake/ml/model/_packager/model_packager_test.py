@@ -71,6 +71,7 @@ class ModelLoadHygieneTest(absltest.TestCase):
                         sample_input_data=d,
                         metadata={"author": "halu", "version": "1"},
                         code_paths=[os.path.join(src_path, "snowflake")],
+                        options=type_hints.BaseModelSaveOption(),
                     )
 
             with tempfile.TemporaryDirectory() as src_path:
@@ -89,6 +90,7 @@ class ModelLoadHygieneTest(absltest.TestCase):
                         sample_input_data=d,
                         metadata={"author": "halu", "version": "1"},
                         code_paths=[py_file_path],
+                        options=type_hints.BaseModelSaveOption(),
                     )
 
     @absltest.skipIf(  # type: ignore[misc]
@@ -140,6 +142,7 @@ class ModelPackagerTest(absltest.TestCase):
                 pk.save(
                     name="model1",
                     model=linear_model.LinearRegression(),
+                    options=type_hints.BaseModelSaveOption(),
                 )
 
     def test_save_validation_2(self) -> None:
@@ -162,6 +165,7 @@ class ModelPackagerTest(absltest.TestCase):
                 model=regr,
                 metadata={"author": "halu", "version": "1"},
                 task=type_hints.Task.TABULAR_REGRESSION,
+                options=type_hints.BaseModelSaveOption(),
             )
 
             pk = model_packager.ModelPackager(os.path.join(tmpdir, "model1"))

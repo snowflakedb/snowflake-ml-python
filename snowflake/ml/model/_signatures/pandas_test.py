@@ -10,20 +10,26 @@ class PandasDataFrameHandlerTest(absltest.TestCase):
     def test_validate_pd_DataFrame(self) -> None:
         df = pd.DataFrame([])
         with exception_utils.assert_snowml_exceptions(
-            self, expected_original_error_type=ValueError, expected_regex="Empty data is found."
+            self,
+            expected_original_error_type=ValueError,
+            expected_regex="Empty data is found.",
         ):
             pandas_handler.PandasDataFrameHandler.validate(df)
 
         df = pd.DataFrame([[1, 2], [2, 4]], columns=["a", "a"])
         with exception_utils.assert_snowml_exceptions(
-            self, expected_original_error_type=ValueError, expected_regex="Duplicate column index is found"
+            self,
+            expected_original_error_type=ValueError,
+            expected_regex="Duplicate column index is found",
         ):
             pandas_handler.PandasDataFrameHandler.validate(df)
 
         sub_df = pd.DataFrame([2.5, 6.8])
         df = pd.DataFrame([[1, sub_df], [2, sub_df]], columns=["a", "b"])
         with exception_utils.assert_snowml_exceptions(
-            self, expected_original_error_type=ValueError, expected_regex="Unsupported type confronted in"
+            self,
+            expected_original_error_type=ValueError,
+            expected_regex="Unsupported type confronted in",
         ):
             pandas_handler.PandasDataFrameHandler.validate(df)
 
@@ -32,13 +38,17 @@ class PandasDataFrameHandlerTest(absltest.TestCase):
             columns=pd.CategoricalIndex(["a", "b", "c", "a", "b", "c"]),
         )
         with exception_utils.assert_snowml_exceptions(
-            self, expected_original_error_type=ValueError, expected_regex="Duplicate column index is found"
+            self,
+            expected_original_error_type=ValueError,
+            expected_regex="Duplicate column index is found",
         ):
             pandas_handler.PandasDataFrameHandler.validate(df)
 
         df = pd.DataFrame([[1, 2], [2, 4]], columns=["a", "a"])
         with exception_utils.assert_snowml_exceptions(
-            self, expected_original_error_type=ValueError, expected_regex="Duplicate column index is found"
+            self,
+            expected_original_error_type=ValueError,
+            expected_regex="Duplicate column index is found",
         ):
             pandas_handler.PandasDataFrameHandler.validate(df)
 
@@ -58,25 +68,8 @@ class PandasDataFrameHandlerTest(absltest.TestCase):
         ):
             pandas_handler.PandasDataFrameHandler.validate(df)
 
-        df = pd.DataFrame([[1, [2, [6]]], [2, [2, 6]]], columns=["a", "b"])
-        with exception_utils.assert_snowml_exceptions(
-            self, expected_original_error_type=ValueError, expected_regex="Ragged nested or Unsupported list-like data"
-        ):
-            pandas_handler.PandasDataFrameHandler.validate(df)
-
-        df = pd.DataFrame([[1, [2, 6]], [2, [2, [6]]]], columns=["a", "b"])
-        with exception_utils.assert_snowml_exceptions(
-            self, expected_original_error_type=ValueError, expected_regex="Ragged nested or Unsupported list-like data"
-        ):
-            pandas_handler.PandasDataFrameHandler.validate(df)
-
         df = pd.DataFrame([[1, [2.5, 6.8]], [2, [2, 6]]], columns=["a", "b"])
-        with exception_utils.assert_snowml_exceptions(
-            self,
-            expected_original_error_type=ValueError,
-            expected_regex="Inconsistent type of element in object found in column data",
-        ):
-            pandas_handler.PandasDataFrameHandler.validate(df)
+        pandas_handler.PandasDataFrameHandler.validate(df)
 
         df = pd.DataFrame([[1, np.array([2.5, 6.8])], [2, np.array([2, 6])]], columns=["a", "b"])
         with exception_utils.assert_snowml_exceptions(
@@ -98,7 +91,10 @@ class PandasDataFrameHandlerTest(absltest.TestCase):
         with self.assertWarnsRegex(UserWarning, "Null value detected in column"):
             pandas_handler.PandasDataFrameHandler.validate(df)
 
-        df = pd.DataFrame([[1, np.array([2.5, 6.8])], [2, np.array([2.5, 6.8])], [3, None]], columns=["a", "b"])
+        df = pd.DataFrame(
+            [[1, np.array([2.5, 6.8])], [2, np.array([2.5, 6.8])], [3, None]],
+            columns=["a", "b"],
+        )
         with self.assertWarnsRegex(UserWarning, "Null value detected in column"):
             pandas_handler.PandasDataFrameHandler.validate(df)
 
@@ -279,7 +275,10 @@ class PandasDataFrameHandlerTest(absltest.TestCase):
             ],
         )
 
-        df = pd.DataFrame([[1, 2.0], [2, 4.0]], columns=pd.PeriodIndex(year=[2000, 2002], quarter=[1, 3]))
+        df = pd.DataFrame(
+            [[1, 2.0], [2, 4.0]],
+            columns=pd.PeriodIndex(year=[2000, 2002], quarter=[1, 3]),
+        )
         self.assertListEqual(
             pandas_handler.PandasDataFrameHandler.infer_signature(df, role="input"),
             [
@@ -288,7 +287,10 @@ class PandasDataFrameHandlerTest(absltest.TestCase):
             ],
         )
 
-        df = pd.DataFrame([[1, 2.0], [2, 4.0]], columns=pd.date_range("2020-01-06", "2020-03-03", freq="MS"))
+        df = pd.DataFrame(
+            [[1, 2.0], [2, 4.0]],
+            columns=pd.date_range("2020-01-06", "2020-03-03", freq="MS"),
+        )
         self.assertListEqual(
             pandas_handler.PandasDataFrameHandler.infer_signature(df, role="input"),
             [
@@ -298,7 +300,8 @@ class PandasDataFrameHandlerTest(absltest.TestCase):
         )
 
         df = pd.DataFrame(
-            [[1, 2.0], [2, 4.0]], columns=pd.TimedeltaIndex(data=["1 days 02:00:00", "1 days 06:05:01.000030"])
+            [[1, 2.0], [2, 4.0]],
+            columns=pd.TimedeltaIndex(data=["1 days 02:00:00", "1 days 06:05:01.000030"]),
         )
         self.assertListEqual(
             pandas_handler.PandasDataFrameHandler.infer_signature(df, role="input"),
@@ -318,7 +321,10 @@ class PandasDataFrameHandlerTest(absltest.TestCase):
         )
 
         arrays = [[1, 2], ["red", "blue"]]
-        df = pd.DataFrame([[1, 2.0], [2, 4.0]], columns=pd.MultiIndex.from_arrays(arrays, names=("number", "color")))
+        df = pd.DataFrame(
+            [[1, 2.0], [2, 4.0]],
+            columns=pd.MultiIndex.from_arrays(arrays, names=("number", "color")),
+        )
         self.assertListEqual(
             pandas_handler.PandasDataFrameHandler.infer_signature(df, role="input"),
             [
@@ -393,6 +399,30 @@ class PandasDataFrameHandlerTest(absltest.TestCase):
         ):
             pandas_handler.PandasDataFrameHandler.infer_signature(df, role="input")
 
+        df = pd.DataFrame([[1, [2, [6]]], [2, [2, 6]]], columns=["a", "b"])
+        with exception_utils.assert_snowml_exceptions(
+            self,
+            expected_original_error_type=ValueError,
+            expected_regex="Ragged nested or Unsupported list-like data",
+        ):
+            pandas_handler.PandasDataFrameHandler.infer_signature(df, role="input")
+
+        df = pd.DataFrame([[1, [2, 6]], [2, [2, [6]]]], columns=["a", "b"])
+        with exception_utils.assert_snowml_exceptions(
+            self,
+            expected_original_error_type=ValueError,
+            expected_regex="Ragged nested or Unsupported list-like data",
+        ):
+            pandas_handler.PandasDataFrameHandler.infer_signature(df, role="input")
+
+        df = pd.DataFrame([[1, [2.5, 6.8]], [2, [2, 6]]], columns=["a", "b"])
+        with exception_utils.assert_snowml_exceptions(
+            self,
+            expected_original_error_type=ValueError,
+            expected_regex="Ragged nested or Unsupported list-like data",
+        ):
+            pandas_handler.PandasDataFrameHandler.infer_signature(df, role="input")
+
     def test_convert_to_df_pd_DataFrame(self) -> None:
         a = np.array([[2, 5], [6, 8]])
         li = [[2, 5], [6, 8]]
@@ -409,7 +439,9 @@ class PandasDataFrameHandlerTest(absltest.TestCase):
     def test_validate_pd_Series(self) -> None:
         s = pd.Series([], dtype=pd.Int16Dtype())
         with exception_utils.assert_snowml_exceptions(
-            self, expected_original_error_type=ValueError, expected_regex="Empty data is found."
+            self,
+            expected_original_error_type=ValueError,
+            expected_regex="Empty data is found.",
         ):
             pandas_handler.PandasDataFrameHandler.validate(s)
 

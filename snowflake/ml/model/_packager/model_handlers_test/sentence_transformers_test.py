@@ -8,7 +8,7 @@ import sentence_transformers
 from absl.testing import absltest
 from pandas.testing import assert_frame_equal
 
-from snowflake.ml.model import model_signature
+from snowflake.ml.model import model_signature, type_hints as model_types
 from snowflake.ml.model._packager import model_packager
 from snowflake.ml.model._packager.model_handlers.sentence_transformers import (
     _validate_sentence_transformers_signatures,
@@ -141,6 +141,7 @@ class SentenceTransformerHandlerTest(absltest.TestCase):
                     model=model,
                     signatures={**sig, "another_encode": sig["encode"]},
                     metadata={"author": "halu", "version": "1"},
+                    options=model_types.SentenceTransformersSaveOptions(),
                 )
 
             with self.assertRaises(NotImplementedError):
@@ -157,6 +158,7 @@ class SentenceTransformerHandlerTest(absltest.TestCase):
                 model=model,
                 signatures=sig,
                 metadata={"author": "halu", "version": "2"},
+                options=model_types.SentenceTransformersSaveOptions(),
             )
 
             model_packager.ModelPackager(os.path.join(tmpdir, "model2")).save(
@@ -164,6 +166,7 @@ class SentenceTransformerHandlerTest(absltest.TestCase):
                 model=model,
                 sample_input_data=sentences,
                 metadata={"author": "halu", "version": "2"},
+                options=model_types.SentenceTransformersSaveOptions(),
             )
 
             with warnings.catch_warnings():

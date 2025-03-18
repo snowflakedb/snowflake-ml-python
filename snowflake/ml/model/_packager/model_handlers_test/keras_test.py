@@ -8,7 +8,7 @@ import numpy as np
 import numpy.typing as npt
 from absl.testing import absltest, parameterized
 
-from snowflake.ml.model import model_signature
+from snowflake.ml.model import model_signature, type_hints as model_types
 from snowflake.ml.model._packager import model_packager
 from snowflake.ml.model._signatures import numpy_handler, utils as model_signature_utils
 
@@ -91,6 +91,7 @@ class KerasHandlerTest(parameterized.TestCase):
                     model=model,
                     signatures={**s, "another_forward": s["predict"]},
                     metadata={"author": "halu", "version": "1"},
+                    options=model_types.KerasSaveOptions(),
                 )
 
             model_packager.ModelPackager(os.path.join(tmpdir, "model1")).save(
@@ -98,6 +99,7 @@ class KerasHandlerTest(parameterized.TestCase):
                 model=model,
                 signatures=s,
                 metadata={"author": "halu", "version": "1"},
+                options=model_types.KerasSaveOptions(),
             )
 
             y_pred = model.predict(data_x)
@@ -133,6 +135,7 @@ class KerasHandlerTest(parameterized.TestCase):
                 model=model,
                 sample_input_data=data_x,
                 metadata={"author": "halu", "version": "1"},
+                options=model_types.KerasSaveOptions(),
             )
 
             pk = model_packager.ModelPackager(os.path.join(tmpdir, "model1_no_sig_1"))

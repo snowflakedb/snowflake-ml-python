@@ -78,6 +78,7 @@ class ModelManifest:
             logger.info("Relaxing version constraints for dependencies in the model.")
             logger.info(f"Conda dependencies: {runtime_to_use.runtime_env.conda_dependencies}")
             logger.info(f"Pip requirements: {runtime_to_use.runtime_env.pip_requirements}")
+            logger.info(f"artifact_repository_map: {runtime_to_use.runtime_env.artifact_repository_map}")
         runtime_dict = runtime_to_use.save(
             self.workspace_path, default_channel_override=env_utils.SNOWFLAKE_CONDA_CHANNEL_URL
         )
@@ -123,6 +124,9 @@ class ModelManifest:
         # We only want to include pip dependencies file if there are any pip requirements.
         if len(model_meta.env.pip_requirements) > 0:
             dependencies["pip"] = runtime_dict["dependencies"]["pip"]
+
+        if model_meta.env.artifact_repository_map:
+            dependencies["artifact_repository_map"] = runtime_dict["dependencies"]["artifact_repository_map"]
 
         manifest_dict = model_manifest_schema.ModelManifestDict(
             manifest_version=model_manifest_schema.MODEL_MANIFEST_VERSION,

@@ -111,6 +111,7 @@ class LightGBMHandlerTest(absltest.TestCase):
                     model=regressor,
                     signatures=s,
                     metadata={"author": "halu", "version": "1"},
+                    options=model_types.LGBMModelSaveOptions(),
                 )
 
             with warnings.catch_warnings():
@@ -142,6 +143,7 @@ class LightGBMHandlerTest(absltest.TestCase):
                     model=regressor,
                     sample_input_data=cal_X_test,
                     metadata={"author": "halu", "version": "1"},
+                    options=model_types.LGBMModelSaveOptions(),
                 )
                 save_background_data.assert_called_once()
 
@@ -255,6 +257,7 @@ class LightGBMHandlerTest(absltest.TestCase):
                 model=classifier,
                 signatures=s,
                 metadata={"author": "halu", "version": "1"},
+                options=model_types.LGBMModelSaveOptions(),
             )
 
             with warnings.catch_warnings():
@@ -282,6 +285,7 @@ class LightGBMHandlerTest(absltest.TestCase):
                 model=classifier,
                 sample_input_data=cal_X_test,
                 metadata={"author": "halu", "version": "1"},
+                options=model_types.LGBMModelSaveOptions(),
             )
 
             pk = model_packager.ModelPackager(os.path.join(tmpdir, "model1_no_sig"))

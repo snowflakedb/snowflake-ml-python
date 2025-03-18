@@ -26,7 +26,15 @@ if TYPE_CHECKING:
     from snowflake.ml.modeling.framework import base  # noqa: F401
 
 
-_SupportedBuiltins = Union[int, float, bool, str, bytes, "_SupportedBuiltinsList"]
+_SupportedBuiltins = Union[
+    int,
+    float,
+    bool,
+    str,
+    bytes,
+    Dict[str, Union["_SupportedBuiltins", "_SupportedBuiltinsList"]],
+    "_SupportedBuiltinsList",
+]
 _SupportedNumpyDtype = Union[
     "np.int8",
     "np.int16",
@@ -48,7 +56,7 @@ _SupportedBuiltinsList = Sequence[_SupportedBuiltins]
 _SupportedArrayLike = Union[_SupportedNumpyArray, "torch.Tensor", "tensorflow.Tensor", "tensorflow.Variable"]
 
 SupportedLocalDataType = Union[
-    "pd.DataFrame", _SupportedNumpyArray, Sequence[_SupportedArrayLike], _SupportedBuiltinsList
+    "pd.DataFrame", _SupportedArrayLike, Sequence[_SupportedArrayLike], _SupportedBuiltinsList
 ]
 
 SupportedDataType = Union[SupportedLocalDataType, "snowflake.snowpark.DataFrame"]
@@ -177,16 +185,19 @@ class SNOWModelSaveOptions(BaseModelSaveOption):
 class PyTorchSaveOptions(BaseModelSaveOption):
     target_methods: NotRequired[Sequence[str]]
     cuda_version: NotRequired[str]
+    multiple_inputs: NotRequired[bool]
 
 
 class TorchScriptSaveOptions(BaseModelSaveOption):
     target_methods: NotRequired[Sequence[str]]
     cuda_version: NotRequired[str]
+    multiple_inputs: NotRequired[bool]
 
 
 class TensorflowSaveOptions(BaseModelSaveOption):
     target_methods: NotRequired[Sequence[str]]
     cuda_version: NotRequired[str]
+    multiple_inputs: NotRequired[bool]
 
 
 class MLFlowSaveOptions(BaseModelSaveOption):

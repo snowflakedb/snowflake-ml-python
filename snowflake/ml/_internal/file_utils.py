@@ -23,6 +23,7 @@ from typing import (
     Tuple,
     Union,
 )
+from urllib import parse
 
 import cloudpickle
 
@@ -294,7 +295,7 @@ def _retry_on_sql_error(exception: Exception) -> bool:
 def upload_directory_to_stage(
     session: snowpark.Session,
     local_path: pathlib.Path,
-    stage_path: pathlib.PurePosixPath,
+    stage_path: Union[pathlib.PurePosixPath, parse.ParseResult],
     *,
     statement_params: Optional[Dict[str, Any]] = None,
 ) -> None:
@@ -314,9 +315,22 @@ def upload_directory_to_stage(
         root_path = pathlib.Path(root)
         for filename in filenames:
             local_file_path = root_path / filename
-            stage_dir_path = (
-                stage_path / pathlib.PurePosixPath(local_file_path.relative_to(local_path).as_posix()).parent
-            )
+            relative_path = pathlib.PurePosixPath(local_file_path.relative_to(local_path).as_posix())
+
+            if isinstance(stage_path, parse.ParseResult):
+                relative_stage_path = (pathlib.PosixPath(stage_path.path) / relative_path).parent
+                new_url = parse.ParseResult(
+                    scheme=stage_path.scheme,
+                    netloc=stage_path.netloc,
+                    path=str(relative_stage_path),
+                    params=stage_path.params,
+                    query=stage_path.query,
+                    fragment=stage_path.fragment,
+                )
+                stage_dir_path = parse.urlunparse(new_url)
+            else:
+                stage_dir_path = str((stage_path / relative_path).parent)
+
             retrying.retry(
                 retry_on_exception=_retry_on_sql_error,
                 stop_max_attempt_number=5,

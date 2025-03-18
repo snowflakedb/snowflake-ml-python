@@ -108,6 +108,7 @@ class Registry:
         metrics: Optional[Dict[str, Any]] = None,
         conda_dependencies: Optional[List[str]] = None,
         pip_requirements: Optional[List[str]] = None,
+        artifact_repository_map: Optional[Dict[str, str]] = None,
         target_platforms: Optional[List[model_types.SupportedTargetPlatformType]] = None,
         python_version: Optional[str] = None,
         signatures: Optional[Dict[str, model_signature.ModelSignature]] = None,
@@ -140,6 +141,13 @@ class Registry:
                 See https://docs.snowflake.com/en/developer-guide/snowflake-ml/model-registry/container for more.
                 Models with pip requirements specified will not be executable in Snowflake Warehouse where all
                 dependencies must be retrieved from Snowflake Anaconda Channel.
+            artifact_repository_map: Specifies a mapping of package channels or platforms to custom artifact
+                repositories. Defaults to None. Currently, the mapping applies only to warehouse execution.
+                Note : This feature is currently in Private Preview; please contact your Snowflake account team
+                to enable it.
+                Format: {channel_name: artifact_repository_name}, where:
+                   - channel_name: The name of the Conda package channel (e.g., 'condaforge') or 'pip' for pip packages.
+                   - artifact_repository_name: The name or URL of the repository to fetch packages from.
             target_platforms: List of target platforms to run the model. The only acceptable inputs are a combination of
                 {"WAREHOUSE", "SNOWPARK_CONTAINER_SERVICES"}. Defaults to None.
             python_version: Python version in which the model is run. Defaults to None.
@@ -210,6 +218,7 @@ class Registry:
             "metrics",
             "conda_dependencies",
             "pip_requirements",
+            "artifact_repository_map",
             "target_platforms",
             "python_version",
             "signatures",
@@ -225,6 +234,7 @@ class Registry:
         metrics: Optional[Dict[str, Any]] = None,
         conda_dependencies: Optional[List[str]] = None,
         pip_requirements: Optional[List[str]] = None,
+        artifact_repository_map: Optional[Dict[str, str]] = None,
         target_platforms: Optional[List[model_types.SupportedTargetPlatformType]] = None,
         python_version: Optional[str] = None,
         signatures: Optional[Dict[str, model_signature.ModelSignature]] = None,
@@ -259,6 +269,13 @@ class Registry:
                 See https://docs.snowflake.com/en/developer-guide/snowflake-ml/model-registry/container for more.
                 Models with pip requirements specified will not be executable in Snowflake Warehouse where all
                 dependencies must be retrieved from Snowflake Anaconda Channel.
+            artifact_repository_map: Specifies a mapping of package channels or platforms to custom artifact
+                repositories. Defaults to None. Currently, the mapping applies only to warehouse execution.
+                Note : This feature is currently in Private Preview; please contact your Snowflake account team to
+                enable it.
+                Format: {channel_name: artifact_repository_name}, where:
+                   - channel_name: The name of the Conda package channel (e.g., 'condaforge') or 'pip' for pip packages.
+                   - artifact_repository_name: The name or URL of the repository to fetch packages from.
             target_platforms: List of target platforms to run the model. The only acceptable inputs are a combination of
                 {"WAREHOUSE", "SNOWPARK_CONTAINER_SERVICES"}. Defaults to None.
             python_version: Python version in which the model is run. Defaults to None.
@@ -345,6 +362,7 @@ class Registry:
             metrics=metrics,
             conda_dependencies=conda_dependencies,
             pip_requirements=pip_requirements,
+            artifact_repository_map=artifact_repository_map,
             target_platforms=target_platforms,
             python_version=python_version,
             signatures=signatures,

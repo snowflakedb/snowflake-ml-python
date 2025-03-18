@@ -18,6 +18,7 @@ class FunctionProperties(Enum):
 class ModelRuntimeDependenciesDict(TypedDict):
     conda: Required[str]
     pip: Required[str]
+    artifact_repository_map: NotRequired[Optional[Dict[str, str]]]
 
 
 class ModelRuntimeDict(TypedDict):
@@ -28,6 +29,7 @@ class ModelRuntimeDict(TypedDict):
 class ModelEnvDict(TypedDict):
     conda: Required[str]
     pip: Required[str]
+    artifact_repository_map: NotRequired[Optional[Dict[str, str]]]
     python_version: Required[str]
     cuda_version: NotRequired[Optional[str]]
     snowpark_ml_version: Required[str]
@@ -61,8 +63,17 @@ class XgboostModelBlobOptions(BaseModelBlobOptions):
     xgb_estimator_type: Required[str]
 
 
+class PyTorchModelBlobOptions(BaseModelBlobOptions):
+    multiple_inputs: Required[bool]
+
+
+class TorchScriptModelBlobOptions(BaseModelBlobOptions):
+    multiple_inputs: Required[bool]
+
+
 class TensorflowModelBlobOptions(BaseModelBlobOptions):
     save_format: Required[str]
+    multiple_inputs: Required[bool]
 
 
 class SentenceTransformersModelBlobOptions(BaseModelBlobOptions):
@@ -74,6 +85,8 @@ ModelBlobOptions = Union[
     HuggingFacePipelineModelBlobOptions,
     MLFlowModelBlobOptions,
     XgboostModelBlobOptions,
+    PyTorchModelBlobOptions,
+    TorchScriptModelBlobOptions,
     TensorflowModelBlobOptions,
     SentenceTransformersModelBlobOptions,
 ]

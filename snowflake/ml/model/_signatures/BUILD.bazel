@@ -56,6 +56,7 @@ py_library(
     deps = [
         ":base_handler",
         ":core",
+        ":pandas_handler",
         "//snowflake/ml/_internal/exceptions",
         "//snowflake/ml/model:type_hints",
     ],
@@ -77,6 +78,7 @@ py_library(
     deps = [
         ":base_handler",
         ":core",
+        ":numpy_handler",
         "//snowflake/ml/_internal:type_utils",
         "//snowflake/ml/_internal/exceptions",
         "//snowflake/ml/model:type_hints",
@@ -101,6 +103,7 @@ py_library(
     deps = [
         ":base_handler",
         ":core",
+        ":numpy_handler",
         "//snowflake/ml/_internal:type_utils",
         "//snowflake/ml/_internal/exceptions",
         "//snowflake/ml/model:type_hints",

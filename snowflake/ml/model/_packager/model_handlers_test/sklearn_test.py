@@ -34,6 +34,7 @@ class SKLearnHandlerTest(absltest.TestCase):
                 signatures=s,
                 metadata={"author": "halu", "version": "1"},
                 conda_dependencies=["scikit-learn"],
+                options=model_types.SKLModelSaveOptions(),
             )
 
             orig_res = model.predict_proba(iris_X_df[-10:])
@@ -137,6 +138,7 @@ class SKLearnHandlerTest(absltest.TestCase):
                 model=model,
                 sample_input_data=iris_X_df,
                 metadata={"author": "halu", "version": "1"},
+                options=model_types.SKLModelSaveOptions(enable_explainability=True),
             )
 
             pk = model_packager.ModelPackager(os.path.join(tmpdir, "model1_no_sig"))
@@ -268,6 +270,7 @@ class SKLearnHandlerTest(absltest.TestCase):
                     model=regr,
                     sample_input_data=iris_X_df,
                     metadata={"author": "halu", "version": "1"},
+                    options=model_types.SKLModelSaveOptions(),
                 )
                 save_background_data.assert_called_once()
 
@@ -276,6 +279,7 @@ class SKLearnHandlerTest(absltest.TestCase):
                 model=regr,
                 sample_input_data=iris_X_df,
                 metadata={"author": "halu", "version": "1"},
+                options=model_types.SKLModelSaveOptions(),
             )
 
             with warnings.catch_warnings():
@@ -306,6 +310,7 @@ class SKLearnHandlerTest(absltest.TestCase):
                 model=regr,
                 sample_input_data=iris_X_df.values,
                 metadata={"author": "halu", "version": "1"},
+                options=model_types.SKLModelSaveOptions(),
             )
 
             with warnings.catch_warnings():
@@ -335,6 +340,7 @@ class SKLearnHandlerTest(absltest.TestCase):
                 model=regr,
                 signatures=s,
                 metadata={"author": "halu", "version": "1"},
+                options=model_types.SKLModelSaveOptions(),
             )
 
             with warnings.catch_warnings():
@@ -364,6 +370,7 @@ class SKLearnHandlerTest(absltest.TestCase):
                 model=pipe,
                 sample_input_data=iris_X_df,
                 metadata={"author": "halu", "version": "1"},
+                options=model_types.SKLModelSaveOptions(),
             )
 
             with warnings.catch_warnings():
@@ -395,6 +402,7 @@ class SKLearnHandlerTest(absltest.TestCase):
                 model=pipe,
                 sample_input_data=iris_X,
                 metadata={"author": "halu", "version": "1"},
+                options=model_types.SKLModelSaveOptions(),
             )
 
             with warnings.catch_warnings():
@@ -421,6 +429,7 @@ class SKLearnHandlerTest(absltest.TestCase):
                 model=scaler,
                 sample_input_data=iris_X,
                 metadata={"author": "halu", "version": "1"},
+                options=model_types.SKLModelSaveOptions(),
             )
 
             with warnings.catch_warnings():
@@ -465,6 +474,7 @@ class SKLearnHandlerTest(absltest.TestCase):
                 model=pipe,
                 sample_input_data=iris_X,
                 metadata={"author": "halu", "version": "1"},
+                options=model_types.SKLModelSaveOptions(),
             )
 
             with warnings.catch_warnings():

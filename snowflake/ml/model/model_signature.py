@@ -52,7 +52,9 @@ _LOCAL_DATA_HANDLERS: List[Type[base_handler.BaseDataHandler[Any]]] = [
     numpy_handler.NumpyArrayHandler,
     builtins_handler.ListOfBuiltinHandler,
     numpy_handler.SeqOfNumpyArrayHandler,
+    pytorch_handler.PyTorchTensorHandler,
     pytorch_handler.SeqOfPyTorchTensorHandler,
+    tensorflow_handler.TensorflowTensorHandler,
     tensorflow_handler.SeqOfTensorflowTensorHandler,
 ]
 _ALL_DATA_HANDLERS = _LOCAL_DATA_HANDLERS + [snowpark_handler.SnowparkDataFrameHandler]
@@ -218,7 +220,6 @@ def _validate_pandas_df(data: pd.DataFrame, features: Sequence[core.BaseFeatureS
         strict: Enable strict validation, this includes value range based validation
 
     Raises:
-        SnowflakeMLException: NotImplementedError: FeatureGroupSpec is not supported.
         SnowflakeMLException: ValueError: Raised when a feature cannot be found.
         SnowflakeMLException: ValueError: Raised when feature is scalar but confront list element.
         SnowflakeMLException: ValueError: Raised when feature type is not aligned in list element.
@@ -244,10 +245,15 @@ def _validate_pandas_df(data: pd.DataFrame, features: Sequence[core.BaseFeatureS
         df_col_dtype = data_col.dtype
 
         if isinstance(feature, core.FeatureGroupSpec):
-            raise snowml_exceptions.SnowflakeMLException(
-                error_code=error_codes.NOT_IMPLEMENTED,
-                original_exception=NotImplementedError("FeatureGroupSpec is not supported."),
-            )
+            if df_col_dtype != np.dtype("O"):
+                raise snowml_exceptions.SnowflakeMLException(
+                    error_code=error_codes.INVALID_DATA,
+                    original_exception=ValueError(
+                        f"Data Validation Error in feature group {ft_name}: "
+                        + f"It needs to be a dictionary or list of dictionary, but get {df_col_dtype}."
+                    ),
+                )
+            continue
 
         assert isinstance(feature, core.FeatureSpec)  # assert for mypy.
         ft_type = feature._dtype
@@ -437,7 +443,6 @@ def _validate_snowpark_data(
         strict: Enable strict validation, this includes value range based validation.
 
     Raises:
-        SnowflakeMLException: NotImplementedError: FeatureGroupSpec is not supported.
         SnowflakeMLException: ValueError: Raised when confronting invalid feature.
         SnowflakeMLException: ValueError: Raised when a feature cannot be found.
 
@@ -467,10 +472,15 @@ def _validate_snowpark_data(
                 if field.name == ft_name:
                     found = True
                     if isinstance(feature, core.FeatureGroupSpec):
-                        raise snowml_exceptions.SnowflakeMLException(
-                            error_code=error_codes.NOT_IMPLEMENTED,
-                            original_exception=NotImplementedError("FeatureGroupSpec is not supported."),
-                        )
+                        if not isinstance(field.datatype, (spt.ArrayType, spt.StructType, spt.VariantType)):
+                            errors[identifier_rule].append(
+                                ValueError(
+                                    f"Data Validation Error in feature group {feature.name}: "
+                                    + f"Feature expects {feature.as_snowpark_type()},"
+                                    + f" while {field.name} has type {field.datatype}."
+                                ),
+                            )
+                        continue
                     assert isinstance(feature, core.FeatureSpec)  # mypy
                     ft_type = feature._dtype
                     field_data_type = field.datatype
@@ -644,11 +654,14 @@ def _validate_snowpark_type_feature(
             )
 
 
-def _convert_local_data_to_df(data: model_types.SupportedLocalDataType) -> pd.DataFrame:
+def _convert_local_data_to_df(
+    data: model_types.SupportedLocalDataType, ensure_serializable: bool = False
+) -> pd.DataFrame:
     """Convert local data to pandas DataFrame or Snowpark DataFrame
 
     Args:
         data: The provided data.
+        ensure_serializable: Ensure the data is serializable. Defaults to False.
 
     Raises:
         SnowflakeMLException: NotImplementedError: Raised when data cannot be handled by any data handler.
@@ -660,7 +673,7 @@ def _convert_local_data_to_df(data: model_types.SupportedLocalDataType) -> pd.Da
     for handler in _LOCAL_DATA_HANDLERS:
         if handler.can_handle(data):
             handler.validate(data)
-            df = handler.convert_to_df(data, ensure_serializable=False)
+            df = handler.convert_to_df(data, ensure_serializable=ensure_serializable)
             break
     if df is None:
         raise snowml_exceptions.SnowflakeMLException(

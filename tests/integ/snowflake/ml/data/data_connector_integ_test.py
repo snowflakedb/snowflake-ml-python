@@ -3,7 +3,6 @@ from typing import Any, Dict, Generator, List
 
 import numpy as np
 import pandas as pd
-import tensorflow  # noqa: F401 # SNOW-1502273 test fails if TensorFlow not imported globally
 from absl.testing import absltest, parameterized
 from numpy import typing as npt
 
@@ -87,7 +86,7 @@ class TestDataConnector(common_test_base.CommonTestBase):
             cls.session.close()
         super().tearDownClass()
 
-    @common_test_base.CommonTestBase.sproc_test()
+    @common_test_base.CommonTestBase.sproc_test(additional_packages=["tensorflow"])
     @parameterized.parameters(  # type: ignore[misc]
         {"batch_size": 2048, "shuffle": False, "drop_last_batch": False},
     )
@@ -113,7 +112,7 @@ class TestDataConnector(common_test_base.CommonTestBase):
                     ),
                 )
 
-    @common_test_base.CommonTestBase.sproc_test()
+    @common_test_base.CommonTestBase.sproc_test(additional_packages=["pytorch", "torchdata"])
     @parameterized.parameters(  # type: ignore[misc]
         {"batch_size": 2048, "shuffle": False, "drop_last_batch": False},
     )
@@ -140,7 +139,7 @@ class TestDataConnector(common_test_base.CommonTestBase):
                     ),
                 )
 
-    @common_test_base.CommonTestBase.sproc_test()
+    @common_test_base.CommonTestBase.sproc_test(additional_packages=["pytorch", "torchdata"])
     @parameterized.parameters(  # type: ignore[misc]
         {"batch_size": 2048, "shuffle": False, "drop_last_batch": False},
     )

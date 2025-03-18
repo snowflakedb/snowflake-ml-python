@@ -746,7 +746,7 @@ class ModelVersion(lineage_node.LineageNode):
         max_instances: int = 1,
         cpu_requests: Optional[str] = None,
         memory_requests: Optional[str] = None,
-        gpu_requests: Optional[str] = None,
+        gpu_requests: Optional[Union[str, int]] = None,
         num_workers: Optional[int] = None,
         max_batch_rows: Optional[int] = None,
         force_rebuild: bool = False,

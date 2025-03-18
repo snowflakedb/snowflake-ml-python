@@ -76,7 +76,7 @@ class ModelRef:
     def __getattr__(self, method_name: str) -> Any:
         if hasattr(self._model, method_name):
             return MethodRef(self, method_name)
-        raise TypeError(f"Model is does not have {method_name}.")
+        raise AttributeError(f"Method {method_name} not found in model {self._name}.")
 
     def __getstate__(self) -> Dict[str, Any]:
         state = self.__dict__.copy()
@@ -94,7 +94,16 @@ class ModelRef:
 
 class ModelContext:
     """
-    Context for a custom model showing paths to artifacts and mapping between model name and object reference.
+    Context for a custom model storing paths to file artifacts and model object references.
+
+    Keyword argument values can be string file paths or supported in-memory models. Paths and model references
+    can be accessed with dictionary access methods in the custom model.
+
+    For example, in a custom model with `context=ModelContext(my_file='my_file.pkl', my_model=my_model)`,
+    the filepath and model reference can be accessed with `self.context['my_file']` and `self.context['my_model']`
+    in the inference and init methods.
+
+    The use of `artifacts` and `model_refs` arguments is deprecated. Set keyword arguments directly instead.
 
     Attributes:
         artifacts: A dictionary mapping the name of the artifact to its path.
@@ -267,14 +276,14 @@ def _validate_predict_function(func: Callable[[model_types.CustomModelType, pd.D
 
 
 def inference_api(
-    func: Callable[[model_types.CustomModelType, pd.DataFrame], pd.DataFrame]
+    func: Callable[[model_types.CustomModelType, pd.DataFrame], pd.DataFrame],
 ) -> Callable[[model_types.CustomModelType, pd.DataFrame], pd.DataFrame]:
     func.__dict__["_is_inference_api"] = True
     return func
 
 
 def partitioned_inference_api(
-    func: Callable[[model_types.CustomModelType, pd.DataFrame], pd.DataFrame]
+    func: Callable[[model_types.CustomModelType, pd.DataFrame], pd.DataFrame],
 ) -> Callable[[model_types.CustomModelType, pd.DataFrame], pd.DataFrame]:
     func.__dict__["_is_inference_api"] = True
     func.__dict__["_is_partitioned_inference_api"] = True
