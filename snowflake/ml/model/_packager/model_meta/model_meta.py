@@ -48,6 +48,7 @@ def create_model_metadata(
     ext_modules: Optional[List[ModuleType]] = None,
     conda_dependencies: Optional[List[str]] = None,
     pip_requirements: Optional[List[str]] = None,
+    artifact_repository_map: Optional[Dict[str, str]] = None,
     python_version: Optional[str] = None,
     task: model_types.Task = model_types.Task.UNKNOWN,
     **kwargs: Any,
@@ -67,6 +68,7 @@ def create_model_metadata(
         ext_modules: List of names of modules that need to be pickled with the model. Defaults to None.
         conda_dependencies: List of conda requirements for running the model. Defaults to None.
         pip_requirements: List of pip Python packages requirements for running the model. Defaults to None.
+        artifact_repository_map: A dict mapping from package channel to artifact repository name.
         python_version: A string of python version where model is run. Used for user override. If specified as None,
             current version would be captured. Defaults to None.
         task: The task of the Model Version. It is an enum class Task with values TABULAR_REGRESSION,
@@ -102,6 +104,7 @@ def create_model_metadata(
     env = _create_env_for_model_metadata(
         conda_dependencies=conda_dependencies,
         pip_requirements=pip_requirements,
+        artifact_repository_map=artifact_repository_map,
         python_version=python_version,
         embed_local_ml_library=embed_local_ml_library,
     )
@@ -151,6 +154,7 @@ def _create_env_for_model_metadata(
     *,
     conda_dependencies: Optional[List[str]] = None,
     pip_requirements: Optional[List[str]] = None,
+    artifact_repository_map: Optional[Dict[str, str]] = None,
     python_version: Optional[str] = None,
     embed_local_ml_library: bool = False,
 ) -> model_env.ModelEnv:
@@ -159,6 +163,7 @@ def _create_env_for_model_metadata(
     # Mypy doesn't like getter and setter have different types. See python/mypy #3004
     env.conda_dependencies = conda_dependencies  # type: ignore[assignment]
     env.pip_requirements = pip_requirements  # type: ignore[assignment]
+    env.artifact_repository_map = artifact_repository_map
     env.python_version = python_version  # type: ignore[assignment]
     env.snowpark_ml_version = snowml_env.VERSION
 
@@ -331,7 +336,6 @@ class ModelMetadata:
                 "function_properties": self.function_properties,
             }
         )
-
         with open(model_yaml_path, "w", encoding="utf-8") as out:
             yaml.SafeDumper.ignore_aliases = lambda *args: True  # type: ignore[method-assign]
             yaml.safe_dump(model_dict, stream=out, default_flow_style=False)

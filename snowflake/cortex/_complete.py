@@ -23,6 +23,15 @@ logger = logging.getLogger(__name__)
 _REST_COMPLETE_URL = "/api/v2/cortex/inference:complete"
 
 
+class ResponseFormat(TypedDict):
+    """Represents an object describing response format config for structured-output mode"""
+
+    type: str
+    """The response format type (e.g. "json")"""
+    schema: Dict[str, Any]
+    """The schema defining the structure of the response. For json it should be a valid json schema object"""
+
+
 class ConversationMessage(TypedDict):
     """Represents an conversation interaction."""
 
@@ -52,6 +61,9 @@ class CompleteOptions(TypedDict):
     guardrails: NotRequired[bool]
     """ A boolean value that controls whether Cortex Guard filters unsafe or harmful responses
     from the language model. """
+
+    response_format: NotRequired[ResponseFormat]
+    """ An object describing response format config for structured-output mode """
 
 
 class ResponseParseException(Exception):
@@ -108,6 +120,32 @@ def _make_common_request_headers() -> Dict[str, str]:
     return headers
 
 
+def _validate_response_format_object(options: CompleteOptions) -> None:
+    """Validate the response format object for structured-output mode.
+
+    More details can be found in:
+    docs.snowflake.com/en/user-guide/snowflake-cortex/complete-structured-outputs#using-complete-structured-outputs
+
+    Args:
+        options: The complete options object.
+
+    Raises:
+        ValueError: If the response format object is invalid or missing required fields.
+    """
+    if options is not None and options.get("response_format") is not None:
+        options_obj = options.get("response_format")
+        if not isinstance(options_obj, dict):
+            raise ValueError("'response_format' should be an object")
+        if options_obj.get("type") is None:
+            raise ValueError("'type' cannot be empty for 'response_format' object")
+        if not isinstance(options_obj.get("type"), str):
+            raise ValueError("'type' needs to be a str for 'response_format' object")
+        if options_obj.get("schema") is None:
+            raise ValueError("'schema' cannot be empty for 'response_format' object")
+        if not isinstance(options_obj.get("schema"), dict):
+            raise ValueError("'schema' needs to be a dict for 'response_format' object")
+
+
 def _make_request_body(
     model: str,
     prompt: Union[str, List[ConversationMessage]],
@@ -136,12 +174,16 @@ def _make_request_body(
                 "response_when_unsafe": "Response filtered by Cortex Guard",
             }
             data["guardrails"] = guardrails_options
+        if "response_format" in options:
+            data["response_format"] = options["response_format"]
+
     return data
 
 
 # XP endpoint returns a dict response which needs to be converted to a format which can
 # be consumed by the SSEClient. This method does that.
 def _xp_dict_to_response(raw_resp: Dict[str, Any]) -> requests.Response:
+
     response = requests.Response()
     response.status_code = int(raw_resp["status"])
     response.headers = raw_resp["headers"]
@@ -159,7 +201,6 @@ def _xp_dict_to_response(raw_resp: Dict[str, Any]) -> requests.Response:
         data = json.loads(data)
     except json.JSONDecodeError:
         raise ValueError(f"Request failed (request id: {request_id})")
-
     if response.status_code < 200 or response.status_code >= 300:
         if "message" not in data:
             raise ValueError(f"Request failed (request id: {request_id})")
@@ -241,11 +282,21 @@ def _return_stream_response(response: requests.Response, deadline: Optional[floa
         if deadline is not None and time.time() > deadline:
             raise TimeoutError()
         try:
-            yield json.loads(event.data)["choices"][0]["delta"]["content"]
+            parsed_resp = json.loads(event.data)
+        except json.JSONDecodeError:
+            raise ResponseParseException("Server response cannot be parsed")
+        try:
+            yield parsed_resp["choices"][0]["delta"]["content"]
         except (json.JSONDecodeError, KeyError, IndexError):
             # For the sake of evolution of the output format,
             # ignore stream messages that don't match the expected format.
-            pass
+
+            # This is the case of midstream errors which were introduced specifically for structured output.
+            # TODO: discuss during code review
+            if parsed_resp.get("error"):
+                yield json.dumps(parsed_resp)
+            else:
+                pass
 
 
 def _complete_call_sql_function_snowpark(
@@ -291,6 +342,8 @@ def _complete_non_streaming_impl(
         raise ValueError("'model' cannot be a snowpark.Column when 'prompt' is a string.")
     if isinstance(options, snowpark.Column):
         raise ValueError("'options' cannot be a snowpark.Column when 'prompt' is a string.")
+    if options and not isinstance(options, snowpark.Column):
+        _validate_response_format_object(options)
     return _complete_non_streaming_immediate(
         snow_api_xp_request_handler=snow_api_xp_request_handler,
         model=model,
@@ -309,6 +362,8 @@ def _complete_rest(
     session: Optional[snowpark.Session] = None,
     deadline: Optional[float] = None,
 ) -> Iterator[str]:
+    if options:
+        _validate_response_format_object(options)
     if snow_api_xp_request_handler is not None:
         response = _call_complete_xp(
             snow_api_xp_request_handler=snow_api_xp_request_handler,

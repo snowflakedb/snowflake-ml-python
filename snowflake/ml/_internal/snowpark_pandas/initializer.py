@@ -147,7 +147,9 @@ def init(session: Optional[snowpark.Session] = None, enable_relax_version: Optio
         pickled_kwargs_data: bytes,
     ) -> bytes:
         from snowflake.snowpark import files
-        from snowflake.snowpark.modin import pandas as SnowparkPandas
+        from snowflake.snowpark.modin import (  # type: ignore[attr-defined]
+            pandas as SnowparkPandas,
+        )
 
         def replace_snowflake_table_name_with_pandas(obj: Any) -> Any:
             if isinstance(obj, dict) and obj.get(TABLE_NAME, None) is not None:

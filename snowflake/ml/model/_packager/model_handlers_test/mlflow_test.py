@@ -9,7 +9,7 @@ import torch
 from absl.testing import absltest
 from sklearn import datasets, ensemble, model_selection
 
-from snowflake.ml.model import model_signature
+from snowflake.ml.model import model_signature, type_hints as model_types
 from snowflake.ml.model._packager import model_packager
 
 
@@ -268,6 +268,7 @@ class MLFlowHandlerTest(absltest.TestCase):
             model_packager.ModelPackager(os.path.join(tmpdir, "model2_again")).save(
                 name="model2_again",
                 model=pk.model,
+                options=model_types.KerasSaveOptions(),
             )
 
             pk = model_packager.ModelPackager(os.path.join(tmpdir, "model2"))

@@ -191,11 +191,7 @@ class KerasHandler(_base.BaseModelHandler["keras.Model"]):
                 signature: model_signature.ModelSignature,
                 target_method: str,
             ) -> Callable[[custom_model.CustomModel, pd.DataFrame], pd.DataFrame]:
-                dtype_map = {
-                    spec.name: spec.as_dtype(force_numpy_dtype=True)
-                    for spec in signature.inputs
-                    if isinstance(spec, model_signature.FeatureSpec)
-                }
+                dtype_map = {spec.name: spec.as_dtype(force_numpy_dtype=True) for spec in signature.inputs}
 
                 @custom_model.inference_api
                 def fn(self: custom_model.CustomModel, X: pd.DataFrame) -> pd.DataFrame:

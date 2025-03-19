@@ -30,10 +30,7 @@ from snowflake.ml.model._packager.model_meta import (
     model_meta as model_meta_api,
     model_meta_schema,
 )
-from snowflake.ml.model._signatures import (
-    builtins_handler,
-    utils as model_signature_utils,
-)
+from snowflake.ml.model._signatures import utils as model_signature_utils
 from snowflake.ml.model.models import huggingface_pipeline
 from snowflake.snowpark._internal import utils as snowpark_utils
 
@@ -66,16 +63,16 @@ def get_requirements_from_task(task: str, spcs_only: bool = False) -> List[model
     return []
 
 
-class NumpyEncoder(json.JSONEncoder):
-    # This is a JSON encoder class to ensure the output from Huggingface pipeline is JSON serializable.
-    # What it covers is numpy object.
-    def default(self, z: object) -> object:
-        if isinstance(z, np.number):
-            if np.can_cast(z, np.int64, casting="safe"):
-                return int(z)
-            elif np.can_cast(z, np.float64, casting="safe"):
-                return z.astype(np.float64)
-        return super().default(z)
+def sanitize_output(data: Any) -> Any:
+    if isinstance(data, np.number):
+        return data.item()
+    if isinstance(data, np.ndarray):
+        return sanitize_output(data.tolist())
+    if isinstance(data, list):
+        return [sanitize_output(x) for x in data]
+    if isinstance(data, dict):
+        return {k: sanitize_output(v) for k, v in data.items()}
+    return data
 
 
 @final
@@ -410,13 +407,17 @@ class HuggingFacePipelineHandler(
                                 )
                                 for conv_data in X.to_dict("records")
                             ]
-                        elif len(signature.inputs) == 1:
-                            input_data = X.to_dict("list")[signature.inputs[0].name]
                         else:
                             if isinstance(raw_model, transformers.TableQuestionAnsweringPipeline):
                                 X["table"] = X["table"].apply(json.loads)
 
-                            input_data = X.to_dict("records")
+                            # Most pipelines if it is expecting more than one arguments,
+                            # it is expecting a list of dict, where each dict has keys corresponding to the argument.
+                            if len(signature.inputs) > 1:
+                                input_data = X.to_dict("records")
+                            # If it is only expecting one argument, Then it is expecting a list of something.
+                            else:
+                                input_data = X[signature.inputs[0].name].to_list()
                         temp_res = getattr(raw_model, target_method)(input_data)
 
                     # Some huggingface pipeline will omit the outer list when there is only 1 input.
@@ -439,7 +440,6 @@ class HuggingFacePipelineHandler(
                                 ),
                             )
                             and X.shape[0] == 1
-                            and isinstance(temp_res[0], dict)
                         )
                     ):
                         temp_res = [temp_res]
@@ -453,14 +453,18 @@ class HuggingFacePipelineHandler(
                         temp_res = [[conv.generated_responses] for conv in temp_res]
 
                     # To concat those who outputs a list with one input.
-                    if builtins_handler.ListOfBuiltinHandler.can_handle(temp_res):
-                        res = builtins_handler.ListOfBuiltinHandler.convert_to_df(temp_res)
-                    elif isinstance(temp_res[0], dict):
-                        res = pd.DataFrame(temp_res)
-                    elif isinstance(temp_res[0], list):
-                        res = pd.DataFrame([json.dumps(output, cls=NumpyEncoder) for output in temp_res])
+                    if isinstance(temp_res[0], list):
+                        if isinstance(temp_res[0][0], dict):
+                            res = pd.DataFrame({0: temp_res})
+                        else:
+                            res = pd.DataFrame(temp_res)
                     else:
-                        raise ValueError(f"Cannot parse output {temp_res} from pipeline object")
+                        res = pd.DataFrame(temp_res)
+
+                    if hasattr(res, "map"):
+                        res = res.map(sanitize_output)
+                    else:
+                        res = res.applymap(sanitize_output)
 
                     return model_signature_utils.rename_pandas_df(data=res, features=signature.outputs)
 

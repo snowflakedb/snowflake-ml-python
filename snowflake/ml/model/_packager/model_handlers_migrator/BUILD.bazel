@@ -43,3 +43,66 @@ py_test(
         "//snowflake/ml/model/_packager/model_meta:model_blob_meta",
     ],
 )
+
+py_library(
+    name = "pytorch_migrator_2023_12_01",
+    srcs = ["pytorch_migrator_2023_12_01.py"],
+    deps = [
+        ":base_migrator",
+        "//snowflake/ml/model/_packager/model_meta",
+        "//snowflake/ml/model/_packager/model_meta:model_meta_schema",
+    ],
+)
+
+py_test(
+    name = "pytorch_migrator_2023_12_01_test",
+    srcs = ["pytorch_migrator_2023_12_01_test.py"],
+    deps = [
+        ":pytorch_migrator_2023_12_01",
+        "//snowflake/ml/model:model_signature",
+        "//snowflake/ml/model/_packager/model_meta",
+        "//snowflake/ml/model/_packager/model_meta:model_blob_meta",
+    ],
+)
+
+py_library(
+    name = "torchscript_migrator_2023_12_01",
+    srcs = ["torchscript_migrator_2023_12_01.py"],
+    deps = [
+        ":base_migrator",
+        "//snowflake/ml/model/_packager/model_meta",
+        "//snowflake/ml/model/_packager/model_meta:model_meta_schema",
+    ],
+)
+
+py_test(
+    name = "torchscript_migrator_2023_12_01_test",
+    srcs = ["torchscript_migrator_2023_12_01_test.py"],
+    deps = [
+        ":torchscript_migrator_2023_12_01",
+        "//snowflake/ml/model:model_signature",
+        "//snowflake/ml/model/_packager/model_meta",
+        "//snowflake/ml/model/_packager/model_meta:model_blob_meta",
+    ],
+)
+
+py_library(
+    name = "tensorflow_migrator_2025_01_01",
+    srcs = ["tensorflow_migrator_2025_01_01.py"],
+    deps = [
+        ":base_migrator",
+        "//snowflake/ml/model/_packager/model_meta",
+        "//snowflake/ml/model/_packager/model_meta:model_meta_schema",
+    ],
+)
+
+py_test(
+    name = "tensorflow_migrator_2025_01_01_test",
+    srcs = ["tensorflow_migrator_2025_01_01_test.py"],
+    deps = [
+        ":tensorflow_migrator_2025_01_01",
+        "//snowflake/ml/model:model_signature",
+        "//snowflake/ml/model/_packager/model_meta",
+        "//snowflake/ml/model/_packager/model_meta:model_blob_meta",
+    ],
+)

@@ -99,10 +99,10 @@ class XGBModelHandler(_base.BaseModelHandler[Union["xgboost.Booster", "xgboost.X
             def get_prediction(
                 target_method_name: str, sample_input_data: model_types.SupportedLocalDataType
             ) -> model_types.SupportedLocalDataType:
-                if not isinstance(sample_input_data, (pd.DataFrame, np.ndarray)):
+                if not isinstance(sample_input_data, (pd.DataFrame, np.ndarray, xgboost.DMatrix)):
                     sample_input_data = model_signature._convert_local_data_to_df(sample_input_data)
 
-                if isinstance(model, xgboost.Booster):
+                if isinstance(model, xgboost.Booster) and not isinstance(sample_input_data, xgboost.DMatrix):
                     sample_input_data = xgboost.DMatrix(sample_input_data)
 
                 target_method = getattr(model, target_method_name, None)

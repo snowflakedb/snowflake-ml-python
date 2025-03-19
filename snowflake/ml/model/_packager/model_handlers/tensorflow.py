@@ -1,7 +1,6 @@
 import os
 from typing import TYPE_CHECKING, Callable, Dict, Optional, Type, cast, final
 
-import numpy as np
 import pandas as pd
 from packaging import version
 from typing_extensions import TypeGuard, Unpack
@@ -13,6 +12,7 @@ from snowflake.ml.model._packager.model_handlers import _base, _utils as handler
 from snowflake.ml.model._packager.model_handlers_migrator import (
     base_migrator,
     tensorflow_migrator_2023_12_01,
+    tensorflow_migrator_2025_01_01,
 )
 from snowflake.ml.model._packager.model_meta import (
     model_blob_meta,
@@ -20,7 +20,6 @@ from snowflake.ml.model._packager.model_meta import (
     model_meta_schema,
 )
 from snowflake.ml.model._signatures import (
-    numpy_handler,
     tensorflow_handler,
     utils as model_signature_utils,
 )
@@ -37,10 +36,11 @@ class TensorFlowHandler(_base.BaseModelHandler["tensorflow.Module"]):
     """
 
     HANDLER_TYPE = "tensorflow"
-    HANDLER_VERSION = "2025-01-01"
-    _MIN_SNOWPARK_ML_VERSION = "1.7.5"
+    HANDLER_VERSION = "2025-03-01"
+    _MIN_SNOWPARK_ML_VERSION = "1.8.0"
     _HANDLER_MIGRATOR_PLANS: Dict[str, Type[base_migrator.BaseModelHandlerMigrator]] = {
-        "2023-12-01": tensorflow_migrator_2023_12_01.TensorflowHandlerMigrator20231201
+        "2023-12-01": tensorflow_migrator_2023_12_01.TensorflowHandlerMigrator20231201,
+        "2025-01-01": tensorflow_migrator_2025_01_01.TensorflowHandlerMigrator20250101,
     }
 
     MODEL_BLOB_FILE_OR_DIR = "model"
@@ -112,25 +112,35 @@ class TensorFlowHandler(_base.BaseModelHandler["tensorflow.Module"]):
                 default_target_methods=default_target_methods,
             )
 
+            multiple_inputs = kwargs.get("multiple_inputs", False)
+
             if is_keras_model and len(target_methods) > 1:
                 raise ValueError("Keras model can only have one target method.")
 
             def get_prediction(
                 target_method_name: str, sample_input_data: "model_types.SupportedLocalDataType"
             ) -> model_types.SupportedLocalDataType:
-                if not tensorflow_handler.SeqOfTensorflowTensorHandler.can_handle(sample_input_data):
-                    sample_input_data = tensorflow_handler.SeqOfTensorflowTensorHandler.convert_from_df(
-                        model_signature._convert_local_data_to_df(sample_input_data)
-                    )
+                if multiple_inputs:
+                    if not tensorflow_handler.SeqOfTensorflowTensorHandler.can_handle(sample_input_data):
+                        sample_input_data = tensorflow_handler.SeqOfTensorflowTensorHandler.convert_from_df(
+                            model_signature._convert_local_data_to_df(sample_input_data)
+                        )
+                else:
+                    if not tensorflow_handler.TensorflowTensorHandler.can_handle(sample_input_data):
+                        sample_input_data = tensorflow_handler.TensorflowTensorHandler.convert_from_df(
+                            model_signature._convert_local_data_to_df(sample_input_data)
+                        )
 
                 target_method = getattr(model, target_method_name, None)
                 assert callable(target_method)
                 for tensor in sample_input_data:
                     tensorflow.stop_gradient(tensor)
-                predictions_df = target_method(*sample_input_data)
-
-                if isinstance(predictions_df, (tensorflow.Tensor, tensorflow.Variable, np.ndarray)):
-                    predictions_df = [predictions_df]
+                if multiple_inputs:
+                    predictions_df = target_method(*sample_input_data)
+                    if not isinstance(predictions_df, tuple):
+                        predictions_df = [predictions_df]
+                else:
+                    predictions_df = target_method(sample_input_data)
 
                 return predictions_df
 
@@ -159,7 +169,9 @@ class TensorFlowHandler(_base.BaseModelHandler["tensorflow.Module"]):
             model_type=cls.HANDLER_TYPE,
             handler_version=cls.HANDLER_VERSION,
             path=cls.MODEL_BLOB_FILE_OR_DIR,
-            options=model_meta_schema.TensorflowModelBlobOptions(save_format=save_format),
+            options=model_meta_schema.TensorflowModelBlobOptions(
+                save_format=save_format, multiple_inputs=multiple_inputs
+            ),
         )
         model_meta.models[name] = base_meta
         model_meta.min_snowpark_ml_version = cls._MIN_SNOWPARK_ML_VERSION
@@ -219,6 +231,10 @@ class TensorFlowHandler(_base.BaseModelHandler["tensorflow.Module"]):
             raw_model: "tensorflow.Module",
             model_meta: model_meta_api.ModelMetadata,
         ) -> Type[custom_model.CustomModel]:
+            multiple_inputs = cast(
+                model_meta_schema.TensorflowModelBlobOptions, model_meta.models[model_meta.name].options
+            )["multiple_inputs"]
+
             def fn_factory(
                 raw_model: "tensorflow.Module",
                 signature: model_signature.ModelSignature,
@@ -229,21 +245,25 @@ class TensorFlowHandler(_base.BaseModelHandler["tensorflow.Module"]):
                     if X.isnull().any(axis=None):
                         raise ValueError("Tensor cannot handle null values.")
 
-                    t = tensorflow_handler.SeqOfTensorflowTensorHandler.convert_from_df(X, signature.inputs)
+                    if multiple_inputs:
+                        t = tensorflow_handler.SeqOfTensorflowTensorHandler.convert_from_df(X, signature.inputs)
 
-                    for tensor in t:
-                        tensorflow.stop_gradient(tensor)
-                    res = getattr(raw_model, target_method)(*t)
+                        for tensor in t:
+                            tensorflow.stop_gradient(tensor)
+                        res = getattr(raw_model, target_method)(*t)
 
-                    if isinstance(res, (tensorflow.Tensor, tensorflow.Variable, np.ndarray)):
-                        res = [res]
-
-                    if isinstance(res, list) and len(res) > 0 and isinstance(res[0], np.ndarray):
-                        # In case of running on CPU, it will return numpy array
-                        df = numpy_handler.SeqOfNumpyArrayHandler.convert_to_df(res)
+                        if not isinstance(res, tuple):
+                            res = [res]
                     else:
-                        df = tensorflow_handler.SeqOfTensorflowTensorHandler.convert_to_df(res)
-                    return model_signature_utils.rename_pandas_df(df, signature.outputs)
+                        t = tensorflow_handler.TensorflowTensorHandler.convert_from_df(X, signature.inputs)
+
+                        tensorflow.stop_gradient(t)
+                        res = getattr(raw_model, target_method)(t)
+
+                    return model_signature_utils.rename_pandas_df(
+                        model_signature._convert_local_data_to_df(res, ensure_serializable=True),
+                        features=signature.outputs,
+                    )
 
                 return fn
 

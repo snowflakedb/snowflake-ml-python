@@ -1,7 +1,6 @@
 from typing import Dict, Iterable, Optional
 
 import numpy as np
-import tensorflow  # noqa: F401 # SNOW-1502273 test fails if TensorFlow not imported globally
 import torch
 import torch.utils.data as torch_data
 from absl.testing import absltest, parameterized

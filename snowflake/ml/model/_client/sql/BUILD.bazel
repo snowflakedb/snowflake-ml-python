@@ -113,6 +113,7 @@ py_library(
         "//snowflake/ml/_internal/utils:query_result_checker",
         "//snowflake/ml/_internal/utils:snowflake_env",
         "//snowflake/ml/_internal/utils:sql_identifier",
+        "//snowflake/ml/model/_model_composer/model_method:constants",
     ],
 )
 

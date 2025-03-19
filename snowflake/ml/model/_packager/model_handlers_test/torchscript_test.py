@@ -7,7 +7,7 @@ import numpy as np
 import torch
 from absl.testing import absltest
 
-from snowflake.ml.model import model_signature
+from snowflake.ml.model import model_signature, type_hints as model_types
 from snowflake.ml.model._packager import model_packager
 from snowflake.ml.model._signatures import (
     pytorch_handler,
@@ -62,6 +62,7 @@ class TorchScriptHandlerTest(absltest.TestCase):
                     model=model_script,
                     signatures={**s, "another_forward": s["forward"]},
                     metadata={"author": "halu", "version": "1"},
+                    options={"multiple_inputs": True},
                 )
             with self.assertRaises(NotImplementedError):
                 model_packager.ModelPackager(os.path.join(tmpdir, "model1")).save(
@@ -77,6 +78,7 @@ class TorchScriptHandlerTest(absltest.TestCase):
                 model=model_script,
                 signatures=s,
                 metadata={"author": "halu", "version": "1"},
+                options={"multiple_inputs": True},
             )
 
             model_script.eval()
@@ -118,6 +120,7 @@ class TorchScriptHandlerTest(absltest.TestCase):
                 model=model_script,
                 sample_input_data=[data_x],
                 metadata={"author": "halu", "version": "1"},
+                options={"multiple_inputs": True},
             )
 
             pk = model_packager.ModelPackager(os.path.join(tmpdir, "model1_no_sig_1"))
@@ -139,6 +142,72 @@ class TorchScriptHandlerTest(absltest.TestCase):
                     0
                 ],
                 y_pred,
+            )
+
+    def test_torch_df_sample_input_single_input(self) -> None:
+        model, data_x, data_y = _prepare_torch_model(torch.float64)
+        model_script = torch.jit.script(model)
+        s = {"forward": model_signature.infer_signature(data_x, data_y)}
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            model_script.eval()
+            y_pred = model_script.forward(data_x).detach()
+
+            x_df = model_signature_utils.rename_pandas_df(
+                pytorch_handler.PyTorchTensorHandler.convert_to_df(data_x, ensure_serializable=False),
+                s["forward"].inputs,
+            )
+            model_packager.ModelPackager(os.path.join(tmpdir, "model1_no_sig_1")).save(
+                name="model1_no_sig_1",
+                model=model_script,
+                sample_input_data=x_df,
+                metadata={"author": "halu", "version": "1"},
+                options=model_types.TorchScriptSaveOptions(),
+            )
+
+            pk = model_packager.ModelPackager(os.path.join(tmpdir, "model1_no_sig_1"))
+            pk.load()
+            assert pk.model
+            assert pk.meta
+            assert isinstance(pk.model, torch.nn.Module)
+            torch.testing.assert_close(pk.model.forward(data_x), y_pred)
+
+            pk = model_packager.ModelPackager(os.path.join(tmpdir, "model1_no_sig_1"))
+            pk.load(as_custom_model=True)
+            assert pk.model
+            assert pk.meta
+            predict_method = getattr(pk.model, "forward", None)
+            assert callable(predict_method)
+            torch.testing.assert_close(
+                pytorch_handler.PyTorchTensorHandler.convert_from_df(predict_method(x_df)), y_pred
+            )
+
+            model_script.eval()
+            y_pred = model_script.forward(data_x).detach()
+
+            model_packager.ModelPackager(os.path.join(tmpdir, "model1_no_sig_2")).save(
+                name="model1_no_sig_2",
+                model=model_script,
+                sample_input_data=x_df,
+                metadata={"author": "halu", "version": "1"},
+                options=model_types.TorchScriptSaveOptions(),
+            )
+
+            pk = model_packager.ModelPackager(os.path.join(tmpdir, "model1_no_sig_2"))
+            pk.load()
+            assert pk.model
+            assert pk.meta
+            assert isinstance(pk.model, torch.jit.ScriptModule)
+            torch.testing.assert_close(pk.model.forward(data_x), y_pred)
+
+            pk = model_packager.ModelPackager(os.path.join(tmpdir, "model1_no_sig_2"))
+            pk.load(as_custom_model=True)
+            assert pk.model
+            assert pk.meta
+            predict_method = getattr(pk.model, "forward", None)
+            assert callable(predict_method)
+            torch.testing.assert_close(
+                pytorch_handler.PyTorchTensorHandler.convert_from_df(predict_method(x_df)), y_pred
             )
 
 

@@ -30,7 +30,7 @@ class TestSnowflakeDataseTensorflow(dataset_integ_test_base.TestSnowflakeDataset
     def test_dataset_connectors(self, dataset_shuffle: bool, datapipe_shuffle: bool, drop_last_batch: bool) -> None:
         self._test_dataset_connectors(dataset_shuffle, datapipe_shuffle, drop_last_batch)
 
-    @common_test_base.CommonTestBase.sproc_test(local=False, additional_packages=[])
+    @common_test_base.CommonTestBase.sproc_test(local=False, additional_packages=["tensorflow"])
     @parameterized.parameters(  # type: ignore[misc]
         {"dataset_shuffle": True, "datapipe_shuffle": True, "drop_last_batch": True},
     )

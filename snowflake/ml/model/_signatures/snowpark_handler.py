@@ -65,12 +65,6 @@ class SnowparkDataFrameHandler(base_handler.BaseDataHandler[snowflake.snowpark.D
         dtype_map = {}
         if features:
             for feature in features:
-                if isinstance(feature, core.FeatureGroupSpec):
-                    raise snowml_exceptions.SnowflakeMLException(
-                        error_code=error_codes.NOT_IMPLEMENTED,
-                        original_exception=NotImplementedError("FeatureGroupSpec is not supported."),
-                    )
-                assert isinstance(feature, core.FeatureSpec), "Invalid feature kind."
                 dtype_map[feature.name] = feature.as_dtype()
         df_local = data.to_pandas()
 
@@ -122,12 +116,6 @@ class SnowparkDataFrameHandler(base_handler.BaseDataHandler[snowflake.snowpark.D
         column_names = []
         columns = []
         for feature in features:
-            if isinstance(feature, core.FeatureGroupSpec):
-                raise snowml_exceptions.SnowflakeMLException(
-                    error_code=error_codes.NOT_IMPLEMENTED,
-                    original_exception=NotImplementedError("FeatureGroupSpec is not supported."),
-                )
-            assert isinstance(feature, core.FeatureSpec), "Invalid feature kind."
             column_names.append(identifier.get_inferred_name(feature.name))
             columns.append(F.col(identifier.get_inferred_name(feature.name)).cast(feature.as_snowpark_type()))
 

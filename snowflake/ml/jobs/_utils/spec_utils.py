@@ -26,19 +26,22 @@ def _get_node_resources(session: snowpark.Session, compute_pool: str) -> types.C
     )
 
 
-def _get_image_spec(session: snowpark.Session, compute_pool: str) -> types.ImageSpec:
+def _get_image_spec(session: snowpark.Session, compute_pool: str, image_tag: Optional[str] = None) -> types.ImageSpec:
     # Retrieve compute pool node resources
     resources = _get_node_resources(session, compute_pool=compute_pool)
 
     # Use MLRuntime image
     image_repo = constants.DEFAULT_IMAGE_REPO
     image_name = constants.DEFAULT_IMAGE_GPU if resources.gpu > 0 else constants.DEFAULT_IMAGE_CPU
-    image_tag = constants.DEFAULT_IMAGE_TAG
 
     # Try to pull latest image tag from server side if possible
-    query_result = session.sql("SHOW PARAMETERS LIKE 'constants.RUNTIME_BASE_IMAGE_TAG' IN ACCOUNT").collect()
-    if query_result:
-        image_tag = query_result[0]["value"]
+    if not image_tag:
+        query_result = session.sql("SHOW PARAMETERS LIKE 'constants.RUNTIME_BASE_IMAGE_TAG' IN ACCOUNT").collect()
+        if query_result:
+            image_tag = query_result[0]["value"]
+
+    if image_tag is None:
+        image_tag = constants.DEFAULT_IMAGE_TAG
 
     # TODO: Should each instance consume the entire pod?
     return types.ImageSpec(
@@ -93,6 +96,7 @@ def generate_service_spec(
     compute_pool: str,
     payload: types.UploadedPayload,
     args: Optional[List[str]] = None,
+    num_instances: Optional[int] = None,
 ) -> Dict[str, Any]:
     """
     Generate a service specification for a job.
@@ -102,12 +106,21 @@ def generate_service_spec(
         compute_pool: Compute pool for job execution
         payload: Uploaded job payload
         args: Arguments to pass to entrypoint script
+        num_instances: Number of instances for multi-node job
 
     Returns:
         Job service specification
     """
+    is_multi_node = num_instances is not None and num_instances > 1
+
     # Set resource requests/limits, including nvidia.com/gpu quantity if applicable
-    image_spec = _get_image_spec(session, compute_pool)
+    if is_multi_node:
+        # If the job is of multi-node, we will need a different image which contains
+        # module snowflake.runtime.utils.get_instance_ip
+        # TODO(SNOW-1961849): Remove the hard-coded image name
+        image_spec = _get_image_spec(session, compute_pool, constants.MULTINODE_HEADLESS_IMAGE_TAG)
+    else:
+        image_spec = _get_image_spec(session, compute_pool)
     resource_requests: Dict[str, Union[str, int]] = {
         "cpu": f"{int(image_spec.resource_requests.cpu * 1000)}m",
         "memory": f"{image_spec.resource_limits.memory}Gi",
@@ -176,31 +189,53 @@ def generate_service_spec(
 
     # TODO: Add hooks for endpoints for integration with TensorBoard etc
 
-    # Assemble into service specification dict
-    spec = {
-        "spec": {
-            "containers": [
-                {
-                    "name": constants.DEFAULT_CONTAINER_NAME,
-                    "image": image_spec.full_name,
-                    "command": ["/usr/local/bin/_entrypoint.sh"],
-                    "args": [
-                        stage_mount.joinpath(v).as_posix() if isinstance(v, PurePath) else v for v in payload.entrypoint
-                    ]
-                    + (args or []),
-                    "env": {
-                        constants.PAYLOAD_DIR_ENV_VAR: stage_mount.as_posix(),
-                    },
-                    "volumeMounts": volume_mounts,
-                    "resources": {
-                        "requests": resource_requests,
-                        "limits": resource_limits,
-                    },
+    env_vars = {constants.PAYLOAD_DIR_ENV_VAR: stage_mount.as_posix()}
+    endpoints = []
+
+    if is_multi_node:
+        # Update environment variables for multi-node job
+        env_vars.update(constants.RAY_PORTS)
+        env_vars["ENABLE_HEALTH_CHECKS"] = constants.ENABLE_HEALTH_CHECKS
+
+        # Define Ray endpoints for intra-service instance communication
+        ray_endpoints = [
+            {"name": "ray-client-server-endpoint", "port": 10001, "protocol": "TCP"},
+            {"name": "ray-gcs-endpoint", "port": 12001, "protocol": "TCP"},
+            {"name": "ray-dashboard-grpc-endpoint", "port": 12002, "protocol": "TCP"},
+            {"name": "ray-object-manager-endpoint", "port": 12011, "protocol": "TCP"},
+            {"name": "ray-node-manager-endpoint", "port": 12012, "protocol": "TCP"},
+            {"name": "ray-runtime-agent-endpoint", "port": 12013, "protocol": "TCP"},
+            {"name": "ray-dashboard-agent-grpc-endpoint", "port": 12014, "protocol": "TCP"},
+            {"name": "ephemeral-port-range", "portRange": "32768-60999", "protocol": "TCP"},
+            {"name": "ray-worker-port-range", "portRange": "12031-13000", "protocol": "TCP"},
+        ]
+        endpoints.extend(ray_endpoints)
+
+    spec_dict = {
+        "containers": [
+            {
+                "name": constants.DEFAULT_CONTAINER_NAME,
+                "image": image_spec.full_name,
+                "command": ["/usr/local/bin/_entrypoint.sh"],
+                "args": [
+                    (stage_mount.joinpath(v).as_posix() if isinstance(v, PurePath) else v) for v in payload.entrypoint
+                ]
+                + (args or []),
+                "env": env_vars,
+                "volumeMounts": volume_mounts,
+                "resources": {
+                    "requests": resource_requests,
+                    "limits": resource_limits,
                 },
-            ],
-            "volumes": volumes,
-        }
+            },
+        ],
+        "volumes": volumes,
     }
+    if endpoints:
+        spec_dict["endpoints"] = endpoints
+
+    # Assemble into service specification dict
+    spec = {"spec": spec_dict}
 
     return spec
 
@@ -248,7 +283,10 @@ def merge_patch(base: Any, patch: Any, display_name: str = "") -> Any:
 
 
 def _merge_lists_of_dicts(
-    base: List[Dict[str, Any]], patch: List[Dict[str, Any]], merge_key: str = "name", display_name: str = ""
+    base: List[Dict[str, Any]],
+    patch: List[Dict[str, Any]],
+    merge_key: str = "name",
+    display_name: str = "",
 ) -> List[Dict[str, Any]]:
     """
     Attempts to merge lists of dicts by matching on a merge key (default "name").
@@ -288,7 +326,11 @@ def _merge_lists_of_dicts(
 
         # Apply patch
         if key in result:
-            d = merge_patch(result[key], d, display_name=f"{display_name}[{merge_key}={d[merge_key]}]")
+            d = merge_patch(
+                result[key],
+                d,
+                display_name=f"{display_name}[{merge_key}={d[merge_key]}]",
+            )
             # TODO: Should we drop the item if the patch result is empty save for the merge key?
             #       Can check `d.keys() <= {merge_key}`
         result[key] = d

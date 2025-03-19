@@ -7,6 +7,225 @@ from snowflake.ml.model._signatures import core, pytorch_handler, utils
 from snowflake.ml.test_utils import exception_utils
 
 
+class PyTorchTensorHandlerTest(absltest.TestCase):
+    def test_can_handle_pytorch_tensor(self) -> None:
+        t1 = torch.Tensor([1, 2])
+        self.assertTrue(pytorch_handler.PyTorchTensorHandler.can_handle(t1))
+
+        t2 = np.array([1, 2, 3, 4])
+        self.assertFalse(pytorch_handler.PyTorchTensorHandler.can_handle(t2))
+
+    def test_validate_torch_tensor(self) -> None:
+        t = torch.Tensor([])
+        with exception_utils.assert_snowml_exceptions(
+            self, expected_original_error_type=ValueError, expected_regex="Empty data is found."
+        ):
+            pytorch_handler.PyTorchTensorHandler.validate(t)
+
+        t = torch.tensor(1)
+        with exception_utils.assert_snowml_exceptions(
+            self, expected_original_error_type=ValueError, expected_regex="Scalar data is found."
+        ):
+            pytorch_handler.PyTorchTensorHandler.validate(t)
+
+        t = torch.Tensor([1, 2])
+        pytorch_handler.PyTorchTensorHandler.validate(t)
+
+    def test_trunc_torch_tensor(self) -> None:
+        t = torch.Tensor([1] * 11)
+
+        torch.testing.assert_close(
+            torch.Tensor([1] * 10),
+            pytorch_handler.PyTorchTensorHandler.truncate(t, 10),
+        )
+
+        t = torch.Tensor([1] * 9)
+
+        torch.testing.assert_close(
+            torch.Tensor([1] * 9),
+            pytorch_handler.PyTorchTensorHandler.truncate(t, 10),
+        )
+
+    def test_infer_schema_torch_tensor(self) -> None:
+        t0 = torch.IntTensor(1)
+        self.assertListEqual(
+            pytorch_handler.PyTorchTensorHandler.infer_signature(t0, role="input"),
+            [core.FeatureSpec("input_feature_0", core.DataType.INT32, nullable=False)],
+        )
+
+        t1 = torch.IntTensor([1, 2, 3, 4])
+        self.assertListEqual(
+            pytorch_handler.PyTorchTensorHandler.infer_signature(t1, role="input"),
+            [core.FeatureSpec("input_feature_0", core.DataType.INT32, nullable=False)],
+        )
+
+        t2 = torch.LongTensor([1, 2, 3, 4])
+        self.assertListEqual(
+            pytorch_handler.PyTorchTensorHandler.infer_signature(t2, role="input"),
+            [core.FeatureSpec("input_feature_0", core.DataType.INT64, nullable=False)],
+        )
+
+        t3 = torch.ShortTensor([1, 2, 3, 4])
+        self.assertListEqual(
+            pytorch_handler.PyTorchTensorHandler.infer_signature(t3, role="input"),
+            [core.FeatureSpec("input_feature_0", core.DataType.INT16, nullable=False)],
+        )
+
+        t4 = torch.CharTensor([1, 2, 3, 4])
+        self.assertListEqual(
+            pytorch_handler.PyTorchTensorHandler.infer_signature(t4, role="input"),
+            [core.FeatureSpec("input_feature_0", core.DataType.INT8, nullable=False)],
+        )
+
+        t5 = torch.ByteTensor([1, 2, 3, 4])
+        self.assertListEqual(
+            pytorch_handler.PyTorchTensorHandler.infer_signature(t5, role="input"),
+            [core.FeatureSpec("input_feature_0", core.DataType.UINT8, nullable=False)],
+        )
+
+        t6 = torch.BoolTensor([False, True])
+        self.assertListEqual(
+            pytorch_handler.PyTorchTensorHandler.infer_signature(t6, role="input"),
+            [core.FeatureSpec("input_feature_0", core.DataType.BOOL, nullable=False)],
+        )
+
+        t7 = torch.FloatTensor([1.2, 3.4])
+        self.assertListEqual(
+            pytorch_handler.PyTorchTensorHandler.infer_signature(t7, role="input"),
+            [core.FeatureSpec("input_feature_0", core.DataType.FLOAT, nullable=False)],
+        )
+
+        t8 = torch.DoubleTensor([1.2, 3.4])
+        self.assertListEqual(
+            pytorch_handler.PyTorchTensorHandler.infer_signature(t8, role="input"),
+            [core.FeatureSpec("input_feature_0", core.DataType.DOUBLE, nullable=False)],
+        )
+
+        t9 = torch.LongTensor([[1, 2], [3, 4]])
+        self.assertListEqual(
+            pytorch_handler.PyTorchTensorHandler.infer_signature(t9, role="input"),
+            [
+                core.FeatureSpec("input_feature_0", core.DataType.INT64, nullable=False),
+                core.FeatureSpec("input_feature_1", core.DataType.INT64, nullable=False),
+            ],
+        )
+
+        t10 = torch.LongTensor([[[1, 1], [2, 2]], [[3, 3], [4, 4]]])
+        self.assertListEqual(
+            pytorch_handler.PyTorchTensorHandler.infer_signature(t10, role="input"),
+            [
+                core.FeatureSpec("input_feature_0", core.DataType.INT64, shape=(2,), nullable=False),
+                core.FeatureSpec("input_feature_1", core.DataType.INT64, shape=(2,), nullable=False),
+            ],
+        )
+
+        t11 = torch.LongTensor([1, 2, 3, 4])
+        self.assertListEqual(
+            pytorch_handler.PyTorchTensorHandler.infer_signature(t11, role="output"),
+            [core.FeatureSpec("output_feature_0", core.DataType.INT64, nullable=False)],
+        )
+
+    def test_convert_to_df_torch_tensor(self) -> None:
+        t1 = torch.LongTensor([1, 2, 3, 4])
+        pd.testing.assert_frame_equal(
+            pytorch_handler.PyTorchTensorHandler.convert_to_df(t1),
+            pd.DataFrame([1, 2, 3, 4]),
+        )
+
+        t2 = torch.DoubleTensor([1, 2, 3, 4])
+        t2[0].requires_grad = True
+        pd.testing.assert_frame_equal(
+            pytorch_handler.PyTorchTensorHandler.convert_to_df(t2),
+            pd.DataFrame([1, 2, 3, 4], dtype=np.double),
+        )
+
+        t3 = torch.LongTensor([[1, 1], [2, 2], [3, 3], [4, 4]])
+        pd.testing.assert_frame_equal(
+            pytorch_handler.PyTorchTensorHandler.convert_to_df(t3),
+            pd.DataFrame([[1, 1], [2, 2], [3, 3], [4, 4]]),
+        )
+
+        t4 = torch.LongTensor([[[1, 1], [2, 2]], [[3, 3], [4, 4]]])
+        pd.testing.assert_frame_equal(
+            pytorch_handler.PyTorchTensorHandler.convert_to_df(t4),
+            pd.DataFrame([[[1, 1], [2, 2]], [[3, 3], [4, 4]]]),
+        )
+
+    def test_convert_from_df_torch_tensor(self) -> None:
+
+        t1 = torch.LongTensor([1, 2, 3, 4])
+        torch.testing.assert_close(
+            pytorch_handler.PyTorchTensorHandler.convert_from_df(
+                pytorch_handler.PyTorchTensorHandler.convert_to_df(t1)
+            ),
+            t1.unsqueeze(1),
+        )
+
+        t2 = torch.DoubleTensor([1, 2, 3, 4])
+        torch.testing.assert_close(
+            pytorch_handler.PyTorchTensorHandler.convert_from_df(
+                pytorch_handler.PyTorchTensorHandler.convert_to_df(t2)
+            ),
+            t2.unsqueeze(1),
+        )
+
+        t3 = torch.LongTensor([[1, 1], [2, 2], [3, 3], [4, 4]])
+        torch.testing.assert_close(
+            pytorch_handler.PyTorchTensorHandler.convert_from_df(
+                pytorch_handler.PyTorchTensorHandler.convert_to_df(t3)
+            ),
+            t3,
+        )
+
+        t4 = torch.LongTensor([[[1, 1], [2, 2]], [[3, 3], [4, 4]]])
+        torch.testing.assert_close(
+            pytorch_handler.PyTorchTensorHandler.convert_from_df(
+                pytorch_handler.PyTorchTensorHandler.convert_to_df(t4)
+            ),
+            t4,
+        )
+
+        t5 = torch.IntTensor([1, 2, 3, 4])
+        fts = pytorch_handler.PyTorchTensorHandler.infer_signature(t5, role="input")
+        torch.testing.assert_close(
+            pytorch_handler.PyTorchTensorHandler.convert_from_df(
+                utils.rename_pandas_df(pytorch_handler.PyTorchTensorHandler.convert_to_df(t5), fts),
+                fts,
+            ),
+            t5.unsqueeze(1),
+        )
+
+        t6 = torch.tensor([1.2, 3.4])
+        fts = pytorch_handler.PyTorchTensorHandler.infer_signature(t6, role="input")
+        torch.testing.assert_close(
+            pytorch_handler.PyTorchTensorHandler.convert_from_df(
+                utils.rename_pandas_df(pytorch_handler.PyTorchTensorHandler.convert_to_df(t6), fts),
+                fts,
+            ),
+            t6.unsqueeze(1),
+        )
+
+        t7 = torch.tensor([[1, 1], [2, 2], [3, 3], [4, 4]])
+        fts = pytorch_handler.PyTorchTensorHandler.infer_signature(t7, role="input")
+        torch.testing.assert_close(
+            pytorch_handler.PyTorchTensorHandler.convert_from_df(
+                utils.rename_pandas_df(pytorch_handler.PyTorchTensorHandler.convert_to_df(t7), fts),
+                fts,
+            ),
+            t7,
+        )
+
+        t8 = torch.tensor([[[1, 1], [2, 2]], [[3, 3], [4, 4]]])
+        fts = pytorch_handler.PyTorchTensorHandler.infer_signature(t8, role="input")
+        torch.testing.assert_close(
+            pytorch_handler.PyTorchTensorHandler.convert_from_df(
+                utils.rename_pandas_df(pytorch_handler.PyTorchTensorHandler.convert_to_df(t8), fts),
+                fts,
+            ),
+            t8,
+        )
+
+
 class SeqOfPyTorchTensorHandlerTest(absltest.TestCase):
     def test_can_handle_list_pytorch_tensor(self) -> None:
         lt1 = [torch.Tensor([1, 2]), torch.Tensor([1, 2])]
@@ -44,13 +263,13 @@ class SeqOfPyTorchTensorHandlerTest(absltest.TestCase):
         ):
             pytorch_handler.SeqOfPyTorchTensorHandler.validate(t)
 
-        t = [torch.Tensor(1)]
+        t = [torch.tensor(1)]
         with exception_utils.assert_snowml_exceptions(
             self, expected_original_error_type=ValueError, expected_regex="Scalar data is found."
         ):
             pytorch_handler.SeqOfPyTorchTensorHandler.validate(t)
 
-        t = [torch.Tensor([1, 2]), torch.Tensor(1)]
+        t = [torch.Tensor([1, 2]), torch.tensor(1)]
         with exception_utils.assert_snowml_exceptions(
             self, expected_original_error_type=ValueError, expected_regex="Scalar data is found."
         ):

@@ -69,47 +69,50 @@ class FeatureGroupSpecTest(absltest.TestCase):
         ):
             _ = core.FeatureGroupSpec(name="features", specs=[])
 
-        with exception_utils.assert_snowml_exceptions(
-            self,
-            expected_original_error_type=ValueError,
-            expected_regex="All children feature specs have to have name.",
-        ):
-            ft1 = core.FeatureSpec(name="feature1", dtype=core.DataType.INT64)
-            ft2 = core.FeatureSpec(name="feature2", dtype=core.DataType.INT64)
-            ft2._name = None  # type: ignore[assignment]
-            _ = core.FeatureGroupSpec(name="features", specs=[ft1, ft2])
-
-        with exception_utils.assert_snowml_exceptions(
-            self,
-            expected_original_error_type=ValueError,
-            expected_regex="All children feature specs have to have same type.",
-        ):
-            ft1 = core.FeatureSpec(name="feature1", dtype=core.DataType.INT64)
-            ft2 = core.FeatureSpec(name="feature2", dtype=core.DataType.FLOAT)
-            _ = core.FeatureGroupSpec(name="features", specs=[ft1, ft2])
-
-        with exception_utils.assert_snowml_exceptions(
-            self,
-            expected_original_error_type=ValueError,
-            expected_regex="All children feature specs have to have same shape.",
-        ):
-            ft1 = core.FeatureSpec(name="feature1", dtype=core.DataType.INT64)
-            ft2 = core.FeatureSpec(name="feature2", dtype=core.DataType.INT64, shape=(2,))
-            fts = core.FeatureGroupSpec(name="features", specs=[ft1, ft2])
-
-        ft1 = core.FeatureSpec(name="feature1", dtype=core.DataType.INT64)
-        ft2 = core.FeatureSpec(name="feature2", dtype=core.DataType.INT64)
+        ft1 = core.FeatureSpec(name="feature1", dtype=core.DataType.INT64, nullable=True)
+        ft2 = core.FeatureSpec(name="feature2", dtype=core.DataType.DOUBLE, nullable=False)
         fts = core.FeatureGroupSpec(name="features", specs=[ft1, ft2])
         self.assertEqual(fts, eval(repr(fts), core.__dict__))
         self.assertEqual(fts, core.FeatureGroupSpec.from_dict(fts.to_dict()))
-        self.assertEqual(fts.as_snowpark_type(), spt.MapType(spt.StringType(), spt.LongType()))
+        self.assertEqual(
+            fts.as_snowpark_type(),
+            spt.StructType(
+                [
+                    spt.StructField("feature1", spt.LongType(), True),
+                    spt.StructField("feature2", spt.DoubleType(), False),
+                ]
+            ),
+        )
+        self.assertEqual(np.object_, fts.as_dtype())
 
-        ft1 = core.FeatureSpec(name="feature1", dtype=core.DataType.INT64, shape=(3,))
-        ft2 = core.FeatureSpec(name="feature2", dtype=core.DataType.INT64, shape=(2,))
-        fts = core.FeatureGroupSpec(name="features", specs=[ft1, ft2])
+        ft1 = core.FeatureSpec(name="feature1", dtype=core.DataType.INT64, shape=(3,), nullable=True)
+        ft2 = core.FeatureSpec(name="feature2", dtype=core.DataType.INT64, shape=(2,), nullable=False)
+        ft3 = core.FeatureGroupSpec(name="features", specs=[ft1, ft2], shape=(-1,))
+        fts = core.FeatureGroupSpec(name="features", specs=[ft1, ft3], shape=(-1,))
         self.assertEqual(fts, eval(repr(fts), core.__dict__))
         self.assertEqual(fts, core.FeatureGroupSpec.from_dict(fts.to_dict()))
-        self.assertEqual(fts.as_snowpark_type(), spt.MapType(spt.StringType(), spt.ArrayType(spt.LongType())))
+        self.assertEqual(
+            fts.as_snowpark_type(),
+            spt.ArrayType(
+                spt.StructType(
+                    [
+                        spt.StructField("feature1", spt.ArrayType(spt.LongType()), True),
+                        spt.StructField(
+                            "features",
+                            spt.ArrayType(
+                                spt.StructType(
+                                    [
+                                        spt.StructField("feature1", spt.ArrayType(spt.LongType()), True),
+                                        spt.StructField("feature2", spt.ArrayType(spt.LongType()), False),
+                                    ]
+                                )
+                            ),
+                        ),
+                    ]
+                ),
+            ),
+        )
+        self.assertEqual(np.object_, fts.as_dtype())
 
 
 class ModelSignatureTest(absltest.TestCase):
@@ -128,6 +131,19 @@ class ModelSignatureTest(absltest.TestCase):
                         ),
                     ],
                 ),
+                core.FeatureGroupSpec(
+                    name="cg2",
+                    specs=[
+                        core.FeatureSpec(dtype=core.DataType.FLOAT, name="cc1", shape=(-1,), nullable=True),
+                        core.FeatureSpec(
+                            dtype=core.DataType.FLOAT,
+                            name="cc2",
+                            shape=(2,),
+                            nullable=False,
+                        ),
+                    ],
+                    shape=(3,),
+                ),
                 core.FeatureSpec(dtype=core.DataType.FLOAT, name="c2", shape=(-1,)),
             ],
             outputs=[core.FeatureSpec(name="output", dtype=core.DataType.FLOAT)],
@@ -136,13 +152,19 @@ class ModelSignatureTest(absltest.TestCase):
             "inputs": [
                 {"type": "FLOAT", "name": "c1", "nullable": True},
                 {
-                    "feature_group": {
-                        "name": "cg1",
-                        "specs": [
-                            {"type": "FLOAT", "name": "cc1", "nullable": True},
-                            {"type": "FLOAT", "name": "cc2", "nullable": False},
-                        ],
-                    }
+                    "name": "cg1",
+                    "specs": [
+                        {"type": "FLOAT", "name": "cc1", "nullable": True},
+                        {"type": "FLOAT", "name": "cc2", "nullable": False},
+                    ],
+                },
+                {
+                    "name": "cg2",
+                    "specs": [
+                        {"type": "FLOAT", "name": "cc1", "shape": (-1,), "nullable": True},
+                        {"type": "FLOAT", "name": "cc2", "shape": (2,), "nullable": False},
+                    ],
+                    "shape": (3,),
                 },
                 {"type": "FLOAT", "name": "c2", "shape": (-1,), "nullable": True},
             ],
@@ -166,6 +188,19 @@ class ModelSignatureTest(absltest.TestCase):
                             nullable=False,
                         ),
                     ],
+                ),
+                core.FeatureGroupSpec(
+                    name="cg2",
+                    specs=[
+                        core.FeatureSpec(dtype=core.DataType.FLOAT, name="cc1", shape=(-1,), nullable=True),
+                        core.FeatureSpec(
+                            dtype=core.DataType.FLOAT,
+                            name="cc2",
+                            shape=(2,),
+                            nullable=False,
+                        ),
+                    ],
+                    shape=(3,),
                 ),
                 core.FeatureSpec(dtype=core.DataType.FLOAT, name="c2", shape=(-1,)),
             ],

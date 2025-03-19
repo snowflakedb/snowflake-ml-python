@@ -18,6 +18,30 @@ DEFAULT_ENTRYPOINT_PATH = "func.py"
 # Percent of container memory to allocate for /dev/shm volume
 MEMORY_VOLUME_SIZE = 0.3
 
+# Multi Node Headless prototype constants
+# TODO: Replace this placeholder with the actual container runtime image tag.
+MULTINODE_HEADLESS_IMAGE_TAG = "latest"
+
+# Ray port configuration
+RAY_PORTS = {
+    "HEAD_CLIENT_SERVER_PORT": "10001",
+    "HEAD_GCS_PORT": "12001",
+    "HEAD_DASHBOARD_GRPC_PORT": "12002",
+    "HEAD_DASHBOARD_PORT": "12003",
+    "OBJECT_MANAGER_PORT": "12011",
+    "NODE_MANAGER_PORT": "12012",
+    "RUNTIME_ENV_AGENT_PORT": "12013",
+    "DASHBOARD_AGENT_GRPC_PORT": "12014",
+    "DASHBOARD_AGENT_LISTEN_PORT": "12015",
+    "MIN_WORKER_PORT": "12031",
+    "MAX_WORKER_PORT": "13000",
+}
+
+# Node health check configuration
+# TODO(SNOW-1937020): Revisit the health check configuration
+ML_RUNTIME_HEALTH_CHECK_PORT = "5001"
+ENABLE_HEALTH_CHECKS = "false"
+
 # Job status polling constants
 JOB_POLL_INITIAL_DELAY_SECONDS = 0.1
 JOB_POLL_MAX_DELAY_SECONDS = 1

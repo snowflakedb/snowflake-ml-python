@@ -25,6 +25,7 @@ def remote(
     query_warehouse: Optional[str] = None,
     env_vars: Optional[Dict[str, str]] = None,
     session: Optional[snowpark.Session] = None,
+    num_instances: Optional[int] = None,
 ) -> Callable[[Callable[_Args, _ReturnValue]], Callable[_Args, jb.MLJob]]:
     """
     Submit a job to the compute pool.
@@ -37,6 +38,7 @@ def remote(
         query_warehouse: The query warehouse to use. Defaults to session warehouse.
         env_vars: Environment variables to set in container
         session: The Snowpark session to use. If none specified, uses active session.
+        num_instances: The number of nodes in the job. If none specified, create a single node job.
 
     Returns:
         Decorator that dispatches invocations of the decorated function as remote jobs.
@@ -62,6 +64,7 @@ def remote(
                 query_warehouse=query_warehouse,
                 env_vars=env_vars,
                 session=session,
+                num_instances=num_instances,
             )
             assert isinstance(job, jb.MLJob), f"Unexpected job type: {type(job)}"
             return job

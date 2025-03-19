@@ -1,5 +1,5 @@
 import pathlib
-from typing import List, Optional
+from typing import List, Optional, Union
 
 import yaml
 
@@ -38,7 +38,7 @@ class ModelDeploymentSpec:
         max_instances: int,
         cpu: Optional[str],
         memory: Optional[str],
-        gpu: Optional[str],
+        gpu: Optional[Union[str, int]],
         num_workers: Optional[int],
         max_batch_rows: Optional[int],
         force_rebuild: bool,
@@ -86,7 +86,11 @@ class ModelDeploymentSpec:
             service_dict["memory"] = memory
 
         if gpu:
-            service_dict["gpu"] = gpu
+            if isinstance(gpu, int):
+                gpu_str = str(gpu)
+            else:
+                gpu_str = gpu
+            service_dict["gpu"] = gpu_str
 
         if num_workers:
             service_dict["num_workers"] = num_workers

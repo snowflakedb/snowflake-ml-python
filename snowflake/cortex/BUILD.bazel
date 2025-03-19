@@ -57,11 +57,18 @@ py_library(
     ],
 )
 
+py_library(
+    name = "schema_utils",
+    testonly = True,
+    srcs = ["json_mode_test_utils/schema_utils.py"],
+)
+
 py_test(
     name = "complete_test",
     srcs = ["complete_test.py"],
     deps = [
         ":complete",
+        ":schema_utils",
         ":test_util",
         "//snowflake/ml/utils:connection_params",
     ],

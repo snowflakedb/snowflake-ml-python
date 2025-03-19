@@ -1,0 +1,30 @@
+manifest_version: '1.0'
+methods:
+- handler: functions.predict.infer
+  inputs:
+  - name: INPUT_1
+    type: FLOAT
+  - name: INPUT_2
+    type: ARRAY
+  - name: INPUT_3
+    type: ARRAY
+  - name: INPUT_4
+    type: ARRAY
+  name: PREDICT
+  outputs:
+  - type: OBJECT
+  runtime: python_runtime
+  type: FUNCTION
+runtimes:
+  python_runtime:
+    dependencies:
+      artifact_repository_map:
+        pip: db.sc.my_pypi_mirror
+      conda: runtimes/python_runtime/env/conda.yml
+      pip: runtimes/python_runtime/env/requirements.txt
+    imports:
+    - model/
+    - runtimes/python_runtime/snowflake-ml-python.zip
+    language: PYTHON
+    version: '3.8'
+user_files: []

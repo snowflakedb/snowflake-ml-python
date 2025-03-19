@@ -297,10 +297,7 @@ class SKLModelHandler(_base.BaseModelHandler[Union["sklearn.base.BaseEstimator",
                         df = handlers_utils.convert_explanations_to_2D_df(raw_model, explainer(X).values)
                     except TypeError:
                         try:
-                            dtype_map = {
-                                spec.name: spec.as_dtype(force_numpy_dtype=True)  # type: ignore[attr-defined]
-                                for spec in signature.inputs
-                            }
+                            dtype_map = {spec.name: spec.as_dtype(force_numpy_dtype=True) for spec in signature.inputs}
 
                             if isinstance(X, pd.DataFrame):
                                 X = X.astype(dtype_map, copy=False)

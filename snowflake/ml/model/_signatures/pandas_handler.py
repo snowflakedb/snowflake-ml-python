@@ -97,25 +97,7 @@ class PandasDataFrameHandler(base_handler.BaseDataHandler[pd.DataFrame]):
                         ),
                     )
 
-                if isinstance(df_col_data.iloc[0], list):
-                    arr = utils.convert_list_to_ndarray(df_col_data.iloc[0])
-                    arr_dtype = core.DataType.from_numpy_type(arr.dtype)
-
-                    converted_data_list = [utils.convert_list_to_ndarray(data_row) for data_row in df_col_data]
-
-                    if not all(
-                        core.DataType.from_numpy_type(converted_data.dtype) == arr_dtype
-                        for converted_data in converted_data_list
-                    ):
-                        raise snowml_exceptions.SnowflakeMLException(
-                            error_code=error_codes.INVALID_DATA,
-                            original_exception=ValueError(
-                                "Data Validation Error: "
-                                + f"Inconsistent type of element in object found in column data {df_col_data}."
-                            ),
-                        )
-
-                elif isinstance(df_col_data.iloc[0], np.ndarray):
+                if isinstance(df_col_data.iloc[0], np.ndarray):
                     arr_dtype = core.DataType.from_numpy_type(df_col_data.iloc[0].dtype)
 
                     if not all(core.DataType.from_numpy_type(data_row.dtype) == arr_dtype for data_row in df_col_data):
@@ -126,7 +108,7 @@ class PandasDataFrameHandler(base_handler.BaseDataHandler[pd.DataFrame]):
                                 + f"Inconsistent type of element in object found in column data {df_col_data}."
                             ),
                         )
-                elif not isinstance(df_col_data.iloc[0], (str, bytes)):
+                elif not isinstance(df_col_data.iloc[0], (str, bytes, dict, list)):
                     raise snowml_exceptions.SnowflakeMLException(
                         error_code=error_codes.INVALID_DATA,
                         original_exception=ValueError(
@@ -171,16 +153,23 @@ class PandasDataFrameHandler(base_handler.BaseDataHandler[pd.DataFrame]):
 
             if df_col_dtype == np.dtype("O"):
                 if isinstance(df_col_data.iloc[0], list):
-                    arr = utils.convert_list_to_ndarray(df_col_data.iloc[0])
-                    arr_dtype = core.DataType.from_numpy_type(arr.dtype)
-                    ft_shape = np.shape(df_col_data.iloc[0])
-
-                    converted_data_list = [utils.convert_list_to_ndarray(data_row) for data_row in df_col_data]
-
-                    if not all(np.shape(converted_data) == ft_shape for converted_data in converted_data_list):
-                        ft_shape = (-1,)
-
-                    specs.append(core.FeatureSpec(dtype=arr_dtype, name=ft_name, shape=ft_shape))
+                    spec_0 = utils.infer_list(ft_name, df_col_data.iloc[0])
+                    for i in range(1, len(df_col_data)):
+                        spec = utils.infer_list(ft_name, df_col_data.iloc[i])
+                        if spec._shape != spec_0._shape:
+                            spec_0._shape = (-1,)
+                            spec._shape = (-1,)
+                        if spec != spec_0:
+                            raise snowml_exceptions.SnowflakeMLException(
+                                error_code=error_codes.INVALID_DATA,
+                                original_exception=ValueError(
+                                    "Unable to construct signature: "
+                                    f"Ragged nested or Unsupported list-like data {df_col_data} confronted."
+                                ),
+                            )
+                    specs.append(spec_0)
+                elif isinstance(df_col_data.iloc[0], dict):
+                    specs.append(utils.infer_dict(ft_name, df_col_data.iloc[0]))
                 elif isinstance(df_col_data.iloc[0], np.ndarray):
                     arr_dtype = core.DataType.from_numpy_type(df_col_data.iloc[0].dtype)
                     ft_shape = np.shape(df_col_data.iloc[0])

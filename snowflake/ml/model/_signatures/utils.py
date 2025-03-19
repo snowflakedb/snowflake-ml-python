@@ -135,7 +135,16 @@ def huggingface_pipeline_signature_auto_infer(task: str, params: Dict[str, Any])
                 core.FeatureSpec(name="inputs", dtype=core.DataType.STRING),
             ],
             outputs=[
-                core.FeatureSpec(name="outputs", dtype=core.DataType.STRING),
+                core.FeatureGroupSpec(
+                    name="outputs",
+                    specs=[
+                        core.FeatureSpec(name="sequence", dtype=core.DataType.STRING),
+                        core.FeatureSpec(name="score", dtype=core.DataType.DOUBLE),
+                        core.FeatureSpec(name="token", dtype=core.DataType.INT64),
+                        core.FeatureSpec(name="token_str", dtype=core.DataType.STRING),
+                    ],
+                    shape=(-1,),
+                ),
             ],
         )
 
@@ -144,7 +153,18 @@ def huggingface_pipeline_signature_auto_infer(task: str, params: Dict[str, Any])
         return core.ModelSignature(
             inputs=[core.FeatureSpec(name="inputs", dtype=core.DataType.STRING)],
             outputs=[
-                core.FeatureSpec(name="outputs", dtype=core.DataType.STRING),
+                core.FeatureGroupSpec(
+                    name="outputs",
+                    specs=[
+                        core.FeatureSpec(name="word", dtype=core.DataType.STRING),
+                        core.FeatureSpec(name="score", dtype=core.DataType.DOUBLE),
+                        core.FeatureSpec(name="entity", dtype=core.DataType.STRING),
+                        core.FeatureSpec(name="index", dtype=core.DataType.INT64),
+                        core.FeatureSpec(name="start", dtype=core.DataType.INT64),
+                        core.FeatureSpec(name="end", dtype=core.DataType.INT64),
+                    ],
+                    shape=(-1,),
+                ),
             ],
         )
 
@@ -171,7 +191,16 @@ def huggingface_pipeline_signature_auto_infer(task: str, params: Dict[str, Any])
                 core.FeatureSpec(name="context", dtype=core.DataType.STRING),
             ],
             outputs=[
-                core.FeatureSpec(name="outputs", dtype=core.DataType.STRING),
+                core.FeatureGroupSpec(
+                    name="answers",
+                    specs=[
+                        core.FeatureSpec(name="score", dtype=core.DataType.DOUBLE),
+                        core.FeatureSpec(name="start", dtype=core.DataType.INT64),
+                        core.FeatureSpec(name="end", dtype=core.DataType.INT64),
+                        core.FeatureSpec(name="answer", dtype=core.DataType.STRING),
+                    ],
+                    shape=(-1,),
+                ),
             ],
         )
 
@@ -216,17 +245,22 @@ def huggingface_pipeline_signature_auto_infer(task: str, params: Dict[str, Any])
             return core.ModelSignature(
                 inputs=[
                     core.FeatureSpec(name="text", dtype=core.DataType.STRING),
-                    core.FeatureSpec(name="text_pair", dtype=core.DataType.STRING),
                 ],
                 outputs=[
-                    core.FeatureSpec(name="outputs", dtype=core.DataType.STRING),
+                    core.FeatureGroupSpec(
+                        name="labels",
+                        specs=[
+                            core.FeatureSpec(name="label", dtype=core.DataType.STRING),
+                            core.FeatureSpec(name="score", dtype=core.DataType.DOUBLE),
+                        ],
+                        shape=(-1,),
+                    ),
                 ],
             )
         # Else, return a dict per input
         return core.ModelSignature(
             inputs=[
                 core.FeatureSpec(name="text", dtype=core.DataType.STRING),
-                core.FeatureSpec(name="text_pair", dtype=core.DataType.STRING),
             ],
             outputs=[
                 core.FeatureSpec(name="label", dtype=core.DataType.STRING),
@@ -243,9 +277,24 @@ def huggingface_pipeline_signature_auto_infer(task: str, params: Dict[str, Any])
             )
         # Always generate a list of dict per input
         return core.ModelSignature(
-            inputs=[core.FeatureSpec(name="inputs", dtype=core.DataType.STRING)],
+            inputs=[
+                core.FeatureGroupSpec(
+                    name="inputs",
+                    specs=[
+                        core.FeatureSpec(name="role", dtype=core.DataType.STRING),
+                        core.FeatureSpec(name="content", dtype=core.DataType.STRING),
+                    ],
+                    shape=(-1,),
+                ),
+            ],
             outputs=[
-                core.FeatureSpec(name="outputs", dtype=core.DataType.STRING),
+                core.FeatureGroupSpec(
+                    name="outputs",
+                    specs=[
+                        core.FeatureSpec(name="generated_text", dtype=core.DataType.STRING),
+                    ],
+                    shape=(-1,),
+                )
             ],
         )
 
@@ -300,3 +349,66 @@ def huggingface_pipeline_signature_auto_infer(task: str, params: Dict[str, Any])
 
 def series_dropna(series: pd.Series) -> pd.Series:
     return series.dropna(inplace=False).reset_index(drop=True).convert_dtypes()
+
+
+def infer_list(name: str, data: List[Any]) -> core.BaseFeatureSpec:
+    """Infer the feature specification from a list.
+
+    Args:
+        name: Feature name.
+        data: A list.
+
+    Raises:
+        SnowflakeMLException: ValueError: Raised when empty list is provided.
+
+    Returns:
+        A feature specification.
+    """
+    if not data:
+        raise snowml_exceptions.SnowflakeMLException(
+            error_code=error_codes.INVALID_DATA,
+            original_exception=ValueError("Data Validation Error: Empty list is found."),
+        )
+
+    if all(isinstance(value, dict) for value in data):
+        ft = infer_dict(name, data[0])
+        ft._name = name
+        ft._shape = (-1,)
+        return ft
+
+    arr = convert_list_to_ndarray(data)
+    arr_dtype = core.DataType.from_numpy_type(arr.dtype)
+
+    return core.FeatureSpec(name=name, dtype=arr_dtype, shape=arr.shape)
+
+
+def infer_dict(name: str, data: Dict[str, Any]) -> core.FeatureGroupSpec:
+    """Infer the feature specification from a dictionary.
+
+    Args:
+        name: Feature name.
+        data: A dictionary.
+
+    Raises:
+        SnowflakeMLException: ValueError: Raised when empty dictionary is provided.
+        SnowflakeMLException: ValueError: Raised when empty list is found in the dictionary.
+
+    Returns:
+        A feature group specification.
+    """
+    if not data:
+        raise snowml_exceptions.SnowflakeMLException(
+            error_code=error_codes.INVALID_DATA,
+            original_exception=ValueError("Data Validation Error: Empty dictionary is found."),
+        )
+
+    specs = []
+    for key, value in data.items():
+        if isinstance(value, list):
+            specs.append(infer_list(key, value))
+        elif isinstance(value, dict):
+            specs.append(infer_dict(key, value))
+        else:
+            specs.append(core.FeatureSpec(name=key, dtype=core.DataType.from_numpy_type(np.array(value).dtype)))
+
+    return core.FeatureGroupSpec(name=name, specs=specs)

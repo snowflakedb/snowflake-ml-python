@@ -100,7 +100,7 @@ class ServiceOperator:
         max_instances: int,
         cpu_requests: Optional[str],
         memory_requests: Optional[str],
-        gpu_requests: Optional[str],
+        gpu_requests: Optional[Union[int, str]],
         num_workers: Optional[int],
         max_batch_rows: Optional[int],
         force_rebuild: bool,

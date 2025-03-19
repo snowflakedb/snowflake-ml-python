@@ -353,6 +353,10 @@ def get_function_usage_statement_params(
                 statement_params[TelemetryField.KEY_API_CALLS.value].append({TelemetryField.NAME.value: api_call})
     if custom_tags:
         statement_params[TelemetryField.KEY_CUSTOM_TAGS.value] = custom_tags
+    # Snowpark doesn't support None value in statement_params from version 1.29
+    for k in statement_params:
+        if statement_params[k] is None:
+            statement_params[k] = ""
     return statement_params
 
 

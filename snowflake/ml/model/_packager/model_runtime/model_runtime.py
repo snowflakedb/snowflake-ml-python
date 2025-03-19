@@ -98,6 +98,9 @@ class ModelRuntime:
             dependencies=model_meta_schema.ModelRuntimeDependenciesDict(
                 conda=env_dict["conda"],
                 pip=env_dict["pip"],
+                artifact_repository_map=env_dict["artifact_repository_map"]
+                if env_dict.get("artifact_repository_map") is not None
+                else {},
             ),
         )
 
@@ -112,6 +115,7 @@ class ModelRuntime:
         env.python_version = meta_env.python_version
         env.cuda_version = meta_env.cuda_version
         env.snowpark_ml_version = meta_env.snowpark_ml_version
+        env.artifact_repository_map = meta_env.artifact_repository_map
 
         conda_env_rel_path = pathlib.PurePosixPath(loaded_dict["dependencies"]["conda"])
         pip_requirements_rel_path = pathlib.PurePosixPath(loaded_dict["dependencies"]["pip"])

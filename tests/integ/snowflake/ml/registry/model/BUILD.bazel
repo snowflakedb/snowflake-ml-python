@@ -255,3 +255,11 @@ py_test(
         "//tests/integ/snowflake/ml/test_utils:dataframe_utils",
     ],
 )
+
+py_test(
+    name = "registry_artifact_repository_test",
+    srcs = ["registry_artifact_repository_test.py"],
+    deps = [
+        ":registry_model_test_base",
+    ],
+)

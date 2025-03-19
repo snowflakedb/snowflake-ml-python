@@ -1,9 +1,12 @@
+import json
 from types import GeneratorType
 
 from absl.testing import absltest
+from requests.exceptions import HTTPError
 
 from snowflake import snowpark
 from snowflake.cortex import Complete, CompleteOptions
+from snowflake.cortex.json_mode_test_utils import schema_utils
 from snowflake.ml._internal.utils import snowflake_env
 from snowflake.ml.utils import connection_params
 from snowflake.snowpark import Session, functions
@@ -154,6 +157,62 @@ class CompleteRestTest(absltest.TestCase):
         for out in result:
             self.assertIsInstance(out, str)
             self.assertTrue(out)  # nonempty
+
+    def test_json_mode_streaming_with_chat_history_positive(self) -> None:
+        options = CompleteOptions(  # random params
+            max_tokens=4096,
+            temperature=0.7,
+            top_p=1,
+            guardrails=False,
+            response_format=schema_utils.response_format_positive.response_format,
+        )
+        result = Complete(
+            model=_MODEL_NAME,
+            prompt=schema_utils.response_format_positive.prompt,
+            session=self._session,
+            stream=True,
+            options=options,
+        )
+        self.assertIsInstance(result, GeneratorType)
+
+        output = ""
+        for out in result:
+            output += out
+            self.assertIsInstance(out, str)
+            self.assertTrue(out)
+        # Expected response should be a json object
+        parsed_dict = json.loads(output)
+        people_list = parsed_dict.get("people")
+        self.assertIsNotNone(people_list)
+        self.assertIsInstance(people_list, list)
+        for person in people_list:
+            self.assertIsInstance(person, dict)
+            name = person.get("name")
+            age = person.get("age")
+            self.assertIsNotNone(name)
+            self.assertIsInstance(name, str)
+            self.assertIsNotNone(age)
+            self.assertIsInstance(age, int)
+
+    def test_json_mode_streaming_validation_error(self) -> None:
+        options = CompleteOptions(  # random params
+            max_tokens=4096,
+            temperature=0.7,
+            top_p=1,
+            guardrails=False,
+            response_format=schema_utils.response_format_failing_input_validation.response_format,
+        )
+        with self.assertRaises(HTTPError) as ar:
+            Complete(
+                model=_MODEL_NAME,
+                prompt=schema_utils.response_format_failing_input_validation.prompt,
+                session=self._session,
+                stream=True,
+                options=options,
+            )
+
+            # Expected response should be a json object
+            self.assertTrue("json mode output validation error" in ar.exception)
 
 
 class CompleteRestSnowparkTest(common_test_base.CommonTestBase):

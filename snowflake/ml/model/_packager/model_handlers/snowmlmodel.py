@@ -307,8 +307,7 @@ class SnowMLModelHandler(_base.BaseModelHandler["BaseEstimator"]):
                             except TypeError:
                                 try:
                                     dtype_map = {
-                                        spec.name: spec.as_dtype(force_numpy_dtype=True)  # type: ignore[attr-defined]
-                                        for spec in signature.inputs
+                                        spec.name: spec.as_dtype(force_numpy_dtype=True) for spec in signature.inputs
                                     }
 
                                     if isinstance(X, pd.DataFrame):

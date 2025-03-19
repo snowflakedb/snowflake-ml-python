@@ -15,20 +15,31 @@ from snowflake.ml.model._signatures import base_handler, core, pandas_handler
 
 class ListOfBuiltinHandler(base_handler.BaseDataHandler[model_types._SupportedBuiltinsList]):
     @staticmethod
+    def _can_handle_element(
+        element: model_types._SupportedBuiltins,
+    ) -> TypeGuard[model_types._SupportedBuiltins]:
+        if isinstance(element, abc.Sequence) and not isinstance(element, str):
+            for sub_element in element:
+                if not ListOfBuiltinHandler._can_handle_element(sub_element):
+                    return False
+            return True
+        elif isinstance(element, abc.Mapping):
+            for key, value in element.items():
+                if not isinstance(key, str):
+                    return False
+                if not ListOfBuiltinHandler._can_handle_element(value):
+                    return False
+            return True
+        else:
+            return isinstance(element, (int, float, bool, str, datetime.datetime))
+
+    @staticmethod
     def can_handle(data: model_types.SupportedDataType) -> TypeGuard[model_types._SupportedBuiltinsList]:
         if not isinstance(data, abc.Sequence) or isinstance(data, str):
             return False
         if len(data) == 0:
             return False
-        can_handle = True
-        for element in data:
-            # String is a Sequence but we take them as an whole
-            if isinstance(element, abc.Sequence) and not isinstance(element, str):
-                can_handle = ListOfBuiltinHandler.can_handle(element)
-            elif not isinstance(element, (int, float, bool, str, datetime.datetime)):
-                can_handle = False
-                break
-        return can_handle
+        return ListOfBuiltinHandler._can_handle_element(data)
 
     @staticmethod
     def count(data: model_types._SupportedBuiltinsList) -> int:

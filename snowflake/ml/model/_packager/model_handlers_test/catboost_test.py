@@ -117,6 +117,7 @@ class CatBoostHandlerTest(absltest.TestCase):
                     model=classifier,
                     signatures=s,
                     metadata={"author": "halu", "version": "1"},
+                    options=model_types.CatBoostModelSaveOptions(),
                 )
 
             with warnings.catch_warnings():
@@ -136,6 +137,7 @@ class CatBoostHandlerTest(absltest.TestCase):
                 model=classifier,
                 sample_input_data=cal_X_test,
                 metadata={"author": "halu", "version": "1"},
+                options=model_types.CatBoostModelSaveOptions(),
             )
 
             pk = model_packager.ModelPackager(os.path.join(tmpdir, "model1_no_sig"))
@@ -188,6 +190,7 @@ class CatBoostHandlerTest(absltest.TestCase):
                 model=classifier,
                 signatures=s,
                 metadata={"author": "halu", "version": "1"},
+                options=model_types.CatBoostModelSaveOptions(),
             )
 
             with warnings.catch_warnings():
@@ -209,6 +212,7 @@ class CatBoostHandlerTest(absltest.TestCase):
                 model=classifier,
                 sample_input_data=cal_X_test,
                 metadata={"author": "halu", "version": "1"},
+                options=model_types.CatBoostModelSaveOptions(),
             )
 
             pk = model_packager.ModelPackager(os.path.join(tmpdir, "model1_no_sig"))

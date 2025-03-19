@@ -8,6 +8,7 @@ from absl.testing import absltest, parameterized
 from packaging import requirements, version
 
 from snowflake.ml._internal import env_utils
+from snowflake.ml.model import model_signature
 from tests.integ.snowflake.ml.registry.model import registry_model_test_base
 
 
@@ -96,13 +97,11 @@ class TestRegistryHuggingFacePipelineModelInteg(registry_model_test_base.Registr
             pd.testing.assert_index_equal(res.columns, pd.Index(["outputs"]))
 
             for row in res["outputs"]:
-                self.assertIsInstance(row, str)
-                resp = json.loads(row)
-                self.assertIsInstance(resp, list)
-                self.assertIn("score", resp[0])
-                self.assertIn("token", resp[0])
-                self.assertIn("token_str", resp[0])
-                self.assertIn("sequence", resp[0])
+                self.assertIsInstance(row, list)
+                self.assertIn("score", row[0])
+                self.assertIn("token", row[0])
+                self.assertIn("token_str", row[0])
+                self.assertIn("sequence", row[0])
 
         getattr(self, registry_test_fn)(
             model=model,
@@ -135,15 +134,13 @@ class TestRegistryHuggingFacePipelineModelInteg(registry_model_test_base.Registr
             pd.testing.assert_index_equal(res.columns, pd.Index(["outputs"]))
 
             for row in res["outputs"]:
-                self.assertIsInstance(row, str)
-                resp = json.loads(row)
-                self.assertIsInstance(resp, list)
-                self.assertIn("entity", resp[0])
-                self.assertIn("score", resp[0])
-                self.assertIn("index", resp[0])
-                self.assertIn("word", resp[0])
-                self.assertIn("start", resp[0])
-                self.assertIn("end", resp[0])
+                self.assertIsInstance(row, list)
+                self.assertIn("entity", row[0])
+                self.assertIn("score", row[0])
+                self.assertIn("index", row[0])
+                self.assertIn("word", row[0])
+                self.assertIn("start", row[0])
+                self.assertIn("end", row[0])
 
         getattr(self, registry_test_fn)(
             model=model,
@@ -230,16 +227,14 @@ class TestRegistryHuggingFacePipelineModelInteg(registry_model_test_base.Registr
         )
 
         def check_res(res: pd.DataFrame) -> None:
-            pd.testing.assert_index_equal(res.columns, pd.Index(["outputs"]))
+            pd.testing.assert_index_equal(res.columns, pd.Index(["answers"]))
 
-            for row in res["outputs"]:
-                self.assertIsInstance(row, str)
-                resp = json.loads(row)
-                self.assertIsInstance(resp, list)
-                self.assertIn("score", resp[0])
-                self.assertIn("start", resp[0])
-                self.assertIn("end", resp[0])
-                self.assertIn("answer", resp[0])
+            for row in res["answers"]:
+                self.assertIsInstance(row, list)
+                self.assertIn("score", row[0])
+                self.assertIn("start", row[0])
+                self.assertIn("end", row[0])
+                self.assertIn("answer", row[0])
 
         getattr(self, registry_test_fn)(
             model=model,
@@ -377,7 +372,7 @@ class TestRegistryHuggingFacePipelineModelInteg(registry_model_test_base.Registr
             pd.testing.assert_index_equal(res.columns, pd.Index(["label", "score"]))
 
             self.assertEqual(res["label"].dtype.type, str)
-            self.assertEqual(res["score"].dtype.type, np.float64)
+            self.assertEqual(res["score"].dtype.type, np.float32)
 
         getattr(self, registry_test_fn)(
             model=model,
@@ -385,6 +380,18 @@ class TestRegistryHuggingFacePipelineModelInteg(registry_model_test_base.Registr
                 "": (
                     x_df,
                     check_res,
+                ),
+            },
+            signatures={
+                "__call__": model_signature.ModelSignature(
+                    inputs=[
+                        model_signature.FeatureSpec(dtype=model_signature.DataType.STRING, name="text"),
+                        model_signature.FeatureSpec(dtype=model_signature.DataType.STRING, name="text_pair"),
+                    ],
+                    outputs=[
+                        model_signature.FeatureSpec(dtype=model_signature.DataType.STRING, name="label"),
+                        model_signature.FeatureSpec(dtype=model_signature.DataType.FLOAT, name="score"),
+                    ],
                 ),
             },
         )
@@ -408,20 +415,17 @@ class TestRegistryHuggingFacePipelineModelInteg(registry_model_test_base.Registr
             [
                 {
                     "text": "I am wondering if I should have udon or rice for lunch",
-                    "text_pair": "",
                 }
             ],
         )
 
         def check_res(res: pd.DataFrame) -> None:
-            pd.testing.assert_index_equal(res.columns, pd.Index(["outputs"]))
+            pd.testing.assert_index_equal(res.columns, pd.Index(["labels"]))
 
-            for row in res["outputs"]:
-                self.assertIsInstance(row, str)
-                resp = json.loads(row)
-                self.assertIsInstance(resp, list)
-                self.assertIn("label", resp[0])
-                self.assertIn("score", resp[0])
+            for row in res["labels"]:
+                self.assertIsInstance(row, list)
+                self.assertIn("label", row[0])
+                self.assertIn("score", row[0])
 
         getattr(self, registry_test_fn)(
             model=model,
@@ -455,10 +459,68 @@ class TestRegistryHuggingFacePipelineModelInteg(registry_model_test_base.Registr
             pd.testing.assert_index_equal(res.columns, pd.Index(["outputs"]))
 
             for row in res["outputs"]:
-                self.assertIsInstance(row, str)
-                resp = json.loads(row)
-                self.assertIsInstance(resp, list)
-                self.assertIn("generated_text", resp[0])
+                self.assertIsInstance(row, list)
+                self.assertIn("generated_text", row[0])
+
+        getattr(self, registry_test_fn)(
+            model=model,
+            prediction_assert_fns={
+                "": (
+                    x_df,
+                    check_res,
+                ),
+            },
+            signatures={
+                "__call__": model_signature.ModelSignature(
+                    inputs=[model_signature.FeatureSpec(dtype=model_signature.DataType.STRING, name="inputs")],
+                    outputs=[
+                        model_signature.FeatureGroupSpec(
+                            name="outputs",
+                            specs=[
+                                model_signature.FeatureSpec(
+                                    dtype=model_signature.DataType.STRING, name="generated_text"
+                                )
+                            ],
+                            shape=(-1,),
+                        )
+                    ],
+                )
+            },
+        )
+
+    @parameterized.product(  # type: ignore[misc]
+        registry_test_fn=registry_model_test_base.RegistryModelTestBase.REGISTRY_TEST_FN_LIST,
+    )
+    def test_text_generation_chat_template_pipeline(
+        self,
+        registry_test_fn: str,
+    ) -> None:
+        import transformers
+
+        model = transformers.pipeline(
+            task="text-generation",
+            model="hf-internal-testing/tiny-gpt2-with-chatml-template",
+            max_length=200,
+        )
+
+        x = [
+            [
+                {"role": "system", "content": "Complete the sentence."},
+                {
+                    "role": "user",
+                    "content": "A descendant of the Lost City of Atlantis, who swam to Earth while saying, ",
+                },
+            ]
+        ]
+
+        x_df = pd.DataFrame([x], columns=["inputs"])
+
+        def check_res(res: pd.DataFrame) -> None:
+            pd.testing.assert_index_equal(res.columns, pd.Index(["outputs"]))
+
+            for row in res["outputs"]:
+                self.assertIsInstance(row, list)
+                self.assertIn("generated_text", row[0])
 
         getattr(self, registry_test_fn)(
             model=model,
