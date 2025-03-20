@@ -10,10 +10,14 @@ from snowflake.ml._internal import type_utils
 from snowflake.ml.model import custom_model, model_signature, type_hints as model_types
 from snowflake.ml.model._packager.model_env import model_env
 from snowflake.ml.model._packager.model_handlers import _base, _utils as handlers_utils
-from snowflake.ml.model._packager.model_handlers_migrator import base_migrator
+from snowflake.ml.model._packager.model_handlers_migrator import (
+    base_migrator,
+    pytorch_migrator_2023_12_01,
+)
 from snowflake.ml.model._packager.model_meta import (
     model_blob_meta,
     model_meta as model_meta_api,
+    model_meta_schema,
 )
 from snowflake.ml.model._signatures import (
     pytorch_handler,
@@ -21,7 +25,6 @@ from snowflake.ml.model._signatures import (
 )
 
 if TYPE_CHECKING:
-    import sentence_transformers  # noqa: F401
     import torch
 
 
@@ -33,9 +36,11 @@ class PyTorchHandler(_base.BaseModelHandler["torch.nn.Module"]):
     """
 
     HANDLER_TYPE = "pytorch"
-    HANDLER_VERSION = "2023-12-01"
-    _MIN_SNOWPARK_ML_VERSION = "1.0.12"
-    _HANDLER_MIGRATOR_PLANS: Dict[str, Type[base_migrator.BaseModelHandlerMigrator]] = {}
+    HANDLER_VERSION = "2025-03-01"
+    _MIN_SNOWPARK_ML_VERSION = "1.8.0"
+    _HANDLER_MIGRATOR_PLANS: Dict[str, Type[base_migrator.BaseModelHandlerMigrator]] = {
+        "2023-12-01": pytorch_migrator_2023_12_01.PyTorchHandlerMigrator20231201
+    }
 
     MODEL_BLOB_FILE_OR_DIR = "model.pt"
     DEFAULT_TARGET_METHODS = ["forward"]
@@ -89,22 +94,33 @@ class PyTorchHandler(_base.BaseModelHandler["torch.nn.Module"]):
                 default_target_methods=cls.DEFAULT_TARGET_METHODS,
             )
 
+            multiple_inputs = kwargs.get("multiple_inputs", False)
+
             def get_prediction(
                 target_method_name: str, sample_input_data: "model_types.SupportedLocalDataType"
             ) -> model_types.SupportedLocalDataType:
-                if not pytorch_handler.SeqOfPyTorchTensorHandler.can_handle(sample_input_data):
-                    sample_input_data = pytorch_handler.SeqOfPyTorchTensorHandler.convert_from_df(
-                        model_signature._convert_local_data_to_df(sample_input_data)
-                    )
+                if multiple_inputs:
+                    if not pytorch_handler.SeqOfPyTorchTensorHandler.can_handle(sample_input_data):
+                        sample_input_data = pytorch_handler.SeqOfPyTorchTensorHandler.convert_from_df(
+                            model_signature._convert_local_data_to_df(sample_input_data)
+                        )
+                else:
+                    if not pytorch_handler.PyTorchTensorHandler.can_handle(sample_input_data):
+                        sample_input_data = pytorch_handler.PyTorchTensorHandler.convert_from_df(
+                            model_signature._convert_local_data_to_df(sample_input_data)
+                        )
 
                 model.eval()
                 target_method = getattr(model, target_method_name, None)
                 assert callable(target_method)
                 with torch.no_grad():
-                    predictions_df = target_method(*sample_input_data)
+                    if multiple_inputs:
+                        predictions_df = target_method(*sample_input_data)
+                        if not isinstance(predictions_df, tuple):
+                            predictions_df = [predictions_df]
+                    else:
+                        predictions_df = target_method(sample_input_data)
 
-                if isinstance(predictions_df, torch.Tensor):
-                    predictions_df = [predictions_df]
                 return predictions_df
 
             model_meta = handlers_utils.validate_signature(
@@ -127,6 +143,7 @@ class PyTorchHandler(_base.BaseModelHandler["torch.nn.Module"]):
             model_type=cls.HANDLER_TYPE,
             handler_version=cls.HANDLER_VERSION,
             path=cls.MODEL_BLOB_FILE_OR_DIR,
+            options=model_meta_schema.PyTorchModelBlobOptions(multiple_inputs=multiple_inputs),
         )
         model_meta.models[name] = base_meta
         model_meta.min_snowpark_ml_version = cls._MIN_SNOWPARK_ML_VERSION
@@ -172,6 +189,10 @@ class PyTorchHandler(_base.BaseModelHandler["torch.nn.Module"]):
             raw_model: "torch.nn.Module",
             model_meta: model_meta_api.ModelMetadata,
         ) -> Type[custom_model.CustomModel]:
+            multiple_inputs = cast(
+                model_meta_schema.PyTorchModelBlobOptions, model_meta.models[model_meta.name].options
+            )["multiple_inputs"]
+
             def fn_factory(
                 raw_model: "torch.nn.Module",
                 signature: model_signature.ModelSignature,
@@ -183,19 +204,28 @@ class PyTorchHandler(_base.BaseModelHandler["torch.nn.Module"]):
                         raise ValueError("Tensor cannot handle null values.")
 
                     raw_model.eval()
-                    t = pytorch_handler.SeqOfPyTorchTensorHandler.convert_from_df(X, signature.inputs)
+                    if multiple_inputs:
+                        st = pytorch_handler.SeqOfPyTorchTensorHandler.convert_from_df(X, signature.inputs)
 
-                    if kwargs.get("use_gpu", False):
-                        t = [element.cuda() for element in t]
+                        if kwargs.get("use_gpu", False):
+                            st = [element.cuda() for element in st]
 
-                    with torch.no_grad():
-                        res = getattr(raw_model, target_method)(*t)
+                        with torch.no_grad():
+                            res = getattr(raw_model, target_method)(*st)
 
-                    if isinstance(res, torch.Tensor):
-                        res = [res]
+                        if not isinstance(res, tuple):
+                            res = [res]
+                    else:
+                        t = pytorch_handler.PyTorchTensorHandler.convert_from_df(X, signature.inputs)
+                        if kwargs.get("use_gpu", False):
+                            t = t.cuda()
+
+                        with torch.no_grad():
+                            res = getattr(raw_model, target_method)(t)
 
                     return model_signature_utils.rename_pandas_df(
-                        data=pytorch_handler.SeqOfPyTorchTensorHandler.convert_to_df(res), features=signature.outputs
+                        model_signature._convert_local_data_to_df(res, ensure_serializable=True),
+                        features=signature.outputs,
                     )
 
                 return fn

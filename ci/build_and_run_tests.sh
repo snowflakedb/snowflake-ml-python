@@ -111,11 +111,11 @@ BAZEL_ADDITIONAL_STARTUP_FLAGS=()
 # Detect the platform, also update some platform specific bazel settings
 case "$(uname)" in
   Linux)
-    PLATFORM="linux" ;;
+    MICROMAMBA_PLATFORM="linux" ;;
   Darwin)
-    PLATFORM="darwin" ;;
+    MICROMAMBA_PLATFORM="osx" ;;
   *NT*)
-    PLATFORM="windows"
+    MICROMAMBA_PLATFORM="win"
     IS_NT=true ;;
 esac
 
@@ -181,7 +181,7 @@ trap 'rm -rf "${TEMP_BIN}"' EXIT
 _MICROMAMBA_BIN="micromamba${EXT}"
 if [ "${ENV}" = "conda" ]; then
     if ! command -v "${_MICROMAMBA_BIN}" &>/dev/null; then
-        curl -Lsv "https://github.com/mamba-org/micromamba-releases/releases/latest/download/micromamba-${PLATFORM}-${MICROMAMBA_ARCH}" -o "${TEMP_BIN}/micromamba${EXT}" && chmod +x "${TEMP_BIN}/micromamba${EXT}"
+        curl -Lsv "https://github.com/mamba-org/micromamba-releases/releases/latest/download/micromamba-${MICROMAMBA_PLATFORM}-${MICROMAMBA_ARCH}" -o "${TEMP_BIN}/micromamba${EXT}" && chmod +x "${TEMP_BIN}/micromamba${EXT}"
         _MICROMAMBA_BIN="${TEMP_BIN}/micromamba${EXT}"
         export MAMBA_ROOT_PREFIX="${WORKSPACE}/micromamba"
     fi

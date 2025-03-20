@@ -1,5 +1,4 @@
 import inflection
-import numpy as np
 import pandas as pd
 import shap
 import xgboost
@@ -506,6 +505,54 @@ class TestRegistryXGBoostModelInteg(registry_model_test_base.RegistryModelTestBa
     @parameterized.product(  # type: ignore[misc]
         registry_test_fn=registry_model_test_base.RegistryModelTestBase.REGISTRY_TEST_FN_LIST,
     )
+    def test_xgb_model_with_dmatrix_input(
+        self,
+        registry_test_fn: str,
+    ) -> None:
+        data = {
+            "size": [1, 2, 2, 4],
+            "price": [10, 15, 20, 25],
+            "dimension": [0, 2.2, -3, 4.665656],
+            "target": [0, 1, 1, 0],
+        }
+        input_features = ["size", "price", "dimension"]
+
+        df = pd.DataFrame(data)
+
+        d_matrix = xgboost.DMatrix(data=df[input_features], label=df["target"])
+        xgb_model = xgboost.train(
+            params={"objective": "binary:logistic", "eval_metric": "logloss"},
+            dtrain=d_matrix,
+            num_boost_round=100,
+        )
+
+        d_matrix_input = xgboost.DMatrix(
+            data=df[input_features],
+        )
+
+        def check_predict_fn(res: pd.DataFrame) -> None:
+            pd.testing.assert_frame_equal(
+                res,
+                pd.DataFrame(xgb_model.predict(d_matrix_input), columns=res.columns),
+                check_dtype=False,
+            )
+
+        getattr(self, registry_test_fn)(
+            model=xgb_model,
+            sample_input_data=d_matrix,
+            prediction_assert_fns={
+                "predict": (
+                    d_matrix_input,
+                    check_predict_fn,
+                ),
+            },
+            # TODO(SNOW-1677301): Add support for explainability for categorical columns
+            options={"enable_explainability": False},
+        )
+
+    @parameterized.product(  # type: ignore[misc]
+        registry_test_fn=registry_model_test_base.RegistryModelTestBase.REGISTRY_TEST_FN_LIST,
+    )
     @absltest.skip("SNOW-1752904")
     def test_xgb_model_with_native_categorical_dtype_columns(
         self,
@@ -517,7 +564,11 @@ class TestRegistryXGBoostModelInteg(registry_model_test_base.RegistryModelTestBa
             "price": [10, 15, 20, 25],
             "target": [0, 1, 1, 0],
         }
-        input_features = ["color", "size", "price"]
+        input_features = [
+            "color",
+            "size",
+            "price",
+        ]
 
         df = pd.DataFrame(data)
         df["color"] = df["color"].astype("category")
@@ -526,29 +577,44 @@ class TestRegistryXGBoostModelInteg(registry_model_test_base.RegistryModelTestBa
         # Define categorical columns
         # categorical_columns = ["color", "size"]
 
-        classifier = xgboost.XGBClassifier(tree_method="hist", enable_categorical=True)
-        classifier.fit(df[input_features], df["target"])
+        d_matrix = xgboost.DMatrix(data=df[input_features], label=df["target"], enable_categorical=True)
+        xgb_model = xgboost.train(
+            params={"objective": "binary:logistic", "eval_metric": "logloss"},
+            dtrain=d_matrix,
+            num_boost_round=100,
+        )
+
+        d_matrix_input = xgboost.DMatrix(
+            data=df[input_features],
+            enable_categorical=True,
+        )
+
+        def check_predict_fn(res) -> None:
+            pd.testing.assert_frame_equal(
+                res.to_frame(),
+                pd.DataFrame(xgb_model.predict(d_matrix_input), columns=res.columns),
+                check_dtype=False,
+            )
 
         getattr(self, registry_test_fn)(
-            model=classifier,
-            sample_input_data=df[input_features],
+            model=xgb_model,
+            sample_input_data=d_matrix,
             prediction_assert_fns={
                 "predict": (
-                    df[input_features],
-                    lambda res: np.testing.assert_allclose(
-                        res["output_feature_0"].values, classifier.predict(df[input_features])
-                    ),
+                    d_matrix_input,
+                    check_predict_fn,
                 ),
             },
             # TODO(SNOW-1677301): Add support for explainability for categorical columns
             options={"enable_explainability": False},
+            # signatures=expected_signatures,
         )
 
         # TODO(SNOW-1752904):
         # The inference fails with message
         # ValueError: DataFrame.dtypes for data must be int, float, bool or category.
         # When categorical type is supplied, The experimental DMatrix parameter`enable_categorical`
-        # must be set to `True`.  Invalid columns:color: object
+        # must be set to `True`.  Invalid columns: color: |S1, size: |S1
         #  in function PREDICT with handler predict.infer
 
 

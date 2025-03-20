@@ -45,6 +45,8 @@ class RegistryModelTestBase(common_test_base.CommonTestBase):
         signatures: Optional[Dict[str, model_signature.ModelSignature]] = None,
         additional_version_suffix: Optional[str] = None,
         function_type_assert: Optional[Dict[str, model_manifest_schema.ModelMethodFunctionTypes]] = None,
+        pip_requirements: Optional[List[str]] = None,
+        artifact_repository_map: Optional[Dict[str, str]] = None,
     ) -> None:
         conda_dependencies = [
             test_env_utils.get_latest_package_version_spec_in_server(self.session, "snowflake-snowpark-python!=1.12.0")
@@ -67,6 +69,8 @@ class RegistryModelTestBase(common_test_base.CommonTestBase):
             conda_dependencies=conda_dependencies,
             options=options,
             signatures=signatures,
+            artifact_repository_map=artifact_repository_map,
+            pip_requirements=pip_requirements,
         )
 
         for target_method, (test_input, check_func) in prediction_assert_fns.items():
@@ -95,6 +99,8 @@ class RegistryModelTestBase(common_test_base.CommonTestBase):
         signatures: Optional[Dict[str, model_signature.ModelSignature]] = None,
         additional_version_suffix: Optional[str] = None,
         function_type_assert: Optional[Dict[str, model_manifest_schema.ModelMethodFunctionTypes]] = None,
+        pip_requirements: Optional[List[str]] = None,
+        artifact_repository_map: Optional[Dict[str, str]] = None,
     ) -> None:
         conda_dependencies = [
             test_env_utils.get_latest_package_version_spec_in_server(self.session, "snowflake-snowpark-python!=1.12.0")
@@ -119,6 +125,8 @@ class RegistryModelTestBase(common_test_base.CommonTestBase):
             conda_dependencies=conda_dependencies,
             options=options,
             signatures=signatures,
+            artifact_repository_map=artifact_repository_map,
+            pip_requirements=pip_requirements,
         )
 
         # Create a new model when the model doesn't exist

@@ -56,6 +56,7 @@ py_library(
     deps = [
         ":base_handler",
         ":core",
+        ":pandas_handler",
         "//snowflake/ml/_internal/exceptions",
         "//snowflake/ml/model:type_hints",
     ],
@@ -77,6 +78,7 @@ py_library(
     deps = [
         ":base_handler",
         ":core",
+        ":numpy_handler",
         "//snowflake/ml/_internal:type_utils",
         "//snowflake/ml/_internal/exceptions",
         "//snowflake/ml/model:type_hints",
@@ -101,6 +103,7 @@ py_library(
     deps = [
         ":base_handler",
         ":core",
+        ":numpy_handler",
         "//snowflake/ml/_internal:type_utils",
         "//snowflake/ml/_internal/exceptions",
         "//snowflake/ml/model:type_hints",
@@ -184,5 +187,28 @@ py_test(
         "//snowflake/ml/model:model_signature",
         "//snowflake/ml/test_utils:exception_utils",
         "//snowflake/ml/utils:connection_params",
+    ],
+)
+
+py_library(
+    name = "dmatrix_handler",
+    srcs = ["dmatrix_handler.py"],
+    deps = [
+        ":base_handler",
+        ":core",
+        ":utils",
+        "//snowflake/ml/_internal:type_utils",
+        "//snowflake/ml/_internal/exceptions",
+        "//snowflake/ml/model:type_hints",
+    ],
+)
+
+py_test(
+    name = "dmatrix_test",
+    srcs = ["dmatrix_test.py"],
+    deps = [
+        ":core",
+        ":dmatrix_handler",
+        "//snowflake/ml/test_utils:exception_utils",
     ],
 )

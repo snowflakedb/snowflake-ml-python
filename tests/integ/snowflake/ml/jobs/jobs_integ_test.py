@@ -1,4 +1,5 @@
 import inspect
+import sys
 import tempfile
 import textwrap
 import time
@@ -254,7 +255,11 @@ class JobManagerTest(parameterized.TestCase):
     @absltest.skipIf(
         version.Version(env.PYTHON_VERSION) >= version.Version("3.11"),
         "Decorator test only works for Python 3.10 and below due to pickle compatibility",
-    )
+    )  # type: ignore[misc]
+    @absltest.skipIf(
+        (sys.version_info.major < 3) or (sys.version_info.major == 3 and sys.version_info.minor < 10),
+        "https://snowflakecomputing.atlassian.net/browse/SNOW-1962040",
+    )  # type: ignore[misc]
     def test_job_decorator(self) -> None:
         @jobs.remote(self.compute_pool, "payload_stage", session=self.session)  # type: ignore[misc]
         def decojob_fn(arg1: str, arg2: int, arg3: Optional[Any] = None) -> None:

@@ -73,7 +73,7 @@ class TensorflowHandlerMigrator20250101Test(absltest.TestCase):
                     model_type="custom",
                     path="mock_path",
                     handler_version="2023-12-01",
-                    options={"save_format": "keras"},
+                    options={"save_format": "keras"},  # type: ignore[arg-type]
                 )
 
                 migrator_1 = tensorflow_migrator_2023_12_01.TensorflowHandlerMigrator20231201()
@@ -93,7 +93,7 @@ class TensorflowHandlerMigrator20250101Test(absltest.TestCase):
                     model_type="custom",
                     path="mock_path",
                     handler_version="2023-12-01",
-                    options={"save_format": "keras_tf"},
+                    options={"save_format": "keras_tf"},  # type: ignore[arg-type]
                 )
 
                 migrator_1 = tensorflow_migrator_2023_12_01.TensorflowHandlerMigrator20231201()
@@ -113,7 +113,7 @@ class TensorflowHandlerMigrator20250101Test(absltest.TestCase):
                     model_type="custom",
                     path="mock_path",
                     handler_version="2023-12-01",
-                    options={"save_format": "tf"},
+                    options={"save_format": "tf"},  # type: ignore[arg-type]
                 )
 
                 migrator_1 = tensorflow_migrator_2023_12_01.TensorflowHandlerMigrator20231201()
@@ -133,7 +133,7 @@ class TensorflowHandlerMigrator20250101Test(absltest.TestCase):
                     model_type="custom",
                     path="mock_path",
                     handler_version="2023-12-01",
-                    options={"save_format": "cloudpickle"},
+                    options={"save_format": "cloudpickle"},  # type: ignore[arg-type]
                 )
 
                 migrator_1 = tensorflow_migrator_2023_12_01.TensorflowHandlerMigrator20231201()

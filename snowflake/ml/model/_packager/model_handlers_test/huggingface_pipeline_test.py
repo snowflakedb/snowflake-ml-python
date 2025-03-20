@@ -11,6 +11,7 @@ import torch
 from absl.testing import absltest
 from packaging import version
 
+from snowflake.ml.model import model_signature, type_hints as model_types
 from snowflake.ml.model._packager import model_packager
 from snowflake.ml.model._packager.model_handlers.huggingface_pipeline import (
     HuggingFacePipelineHandler,
@@ -96,16 +97,18 @@ class HuggingFacePipelineHandlerTest(absltest.TestCase):
         options: Dict[str, object],
         check_pipeline_fn: Callable[["transformers.Pipeline", "transformers.Pipeline"], None],
         check_udf_res_fn: Callable[[pd.DataFrame], None],
+        signature: Optional[model_signature.ModelSignature] = None,
         check_gpu: bool = True,
     ) -> None:
         import transformers
 
         model = transformers.pipeline(task=task, model=model_id, **options)
 
-        sig = utils.huggingface_pipeline_signature_auto_infer(task=task, params=options)
-        assert sig
+        is_signature_auto_infer = signature is None
+        signature = signature or utils.huggingface_pipeline_signature_auto_infer(task=task, params=options)
+        assert signature is not None
 
-        s = {"__call__": sig}
+        s = {"__call__": signature}
 
         with tempfile.TemporaryDirectory() as tmpdir:
             with self.assertRaises(ValueError):
@@ -114,6 +117,7 @@ class HuggingFacePipelineHandlerTest(absltest.TestCase):
                     model=model,
                     signatures={**s, "another_predict": s["__call__"]},
                     metadata={"author": "halu", "version": "1"},
+                    options=model_types.HuggingFaceSaveOptions(),
                 )
             with self.assertRaises(NotImplementedError):
                 model_packager.ModelPackager(os.path.join(tmpdir, "model1")).save(
@@ -129,6 +133,7 @@ class HuggingFacePipelineHandlerTest(absltest.TestCase):
                 model=model,
                 signatures=s,
                 metadata={"author": "halu", "version": "1"},
+                options=model_types.HuggingFaceSaveOptions(),
             )
 
             pk = model_packager.ModelPackager(os.path.join(tmpdir, "model1"))
@@ -148,29 +153,31 @@ class HuggingFacePipelineHandlerTest(absltest.TestCase):
             res = pk.model(udf_test_input.copy(deep=True))
             check_udf_res_fn(res)
 
-            model_packager.ModelPackager(os.path.join(tmpdir, "model1_no_sig")).save(
-                name="model1_no_sig",
-                model=model,
-                metadata={"author": "halu", "version": "1"},
-            )
+            if is_signature_auto_infer:
+                model_packager.ModelPackager(os.path.join(tmpdir, "model1_no_sig")).save(
+                    name="model1_no_sig",
+                    model=model,
+                    metadata={"author": "halu", "version": "1"},
+                    options=model_types.HuggingFaceSaveOptions(),
+                )
 
-            pk = model_packager.ModelPackager(os.path.join(tmpdir, "model1_no_sig"))
-            pk.load()
-            assert pk.model
-            assert pk.meta
-            assert isinstance(pk.model, transformers.Pipeline)
-            self._check_loaded_pipeline_object(model, pk.model)
+                pk = model_packager.ModelPackager(os.path.join(tmpdir, "model1_no_sig"))
+                pk.load()
+                assert pk.model
+                assert pk.meta
+                assert isinstance(pk.model, transformers.Pipeline)
+                self._check_loaded_pipeline_object(model, pk.model)
 
-            check_pipeline_fn(model, pk.model)
-            self.assertEqual(s, pk.meta.signatures)
+                check_pipeline_fn(model, pk.model)
+                self.assertEqual(s, pk.meta.signatures)
 
-            pk = model_packager.ModelPackager(os.path.join(tmpdir, "model1_no_sig"))
-            pk.load(as_custom_model=True)
-            assert pk.model
-            assert pk.meta
-            assert callable(pk.model)
-            res = pk.model(udf_test_input.copy(deep=True))
-            check_udf_res_fn(res)
+                pk = model_packager.ModelPackager(os.path.join(tmpdir, "model1_no_sig"))
+                pk.load(as_custom_model=True)
+                assert pk.model
+                assert pk.meta
+                assert callable(pk.model)
+                res = pk.model(udf_test_input.copy(deep=True))
+                check_udf_res_fn(res)
 
         wrapper_model = huggingface_pipeline.HuggingFacePipelineModel(
             task=task, model=model_id, **options  # type:ignore[arg-type]
@@ -183,46 +190,49 @@ class HuggingFacePipelineHandlerTest(absltest.TestCase):
                     model=wrapper_model,
                     signatures=s,
                     metadata={"author": "halu", "version": "1"},
+                    options=model_types.HuggingFaceSaveOptions(),
                 )
 
-            model_packager.ModelPackager(os.path.join(tmpdir, "model1_no_sig")).save(
-                name="model1_no_sig",
-                model=wrapper_model,
-                metadata={"author": "halu", "version": "1"},
-            )
+            if is_signature_auto_infer:
+                model_packager.ModelPackager(os.path.join(tmpdir, "model1_no_sig")).save(
+                    name="model1_no_sig",
+                    model=wrapper_model,
+                    metadata={"author": "halu", "version": "1"},
+                    options=model_types.HuggingFaceSaveOptions(),
+                )
 
-            pk = model_packager.ModelPackager(os.path.join(tmpdir, "model1_no_sig"))
-            pk.load()
-            assert pk.model
-            assert pk.meta
-            assert isinstance(pk.model, huggingface_pipeline.HuggingFacePipelineModel)
-            self._check_loaded_pipeline_wrapper_object(wrapper_model, pk.model)
-            self.assertEqual(s, pk.meta.signatures)
-
-            pk = model_packager.ModelPackager(os.path.join(tmpdir, "model1_no_sig"))
-            pk.load(as_custom_model=True)
-            assert pk.model
-            assert pk.meta
-            assert callable(pk.model)
-            res = pk.model(udf_test_input.copy(deep=True))
-            check_udf_res_fn(res)
-
-            if check_gpu:
                 pk = model_packager.ModelPackager(os.path.join(tmpdir, "model1_no_sig"))
-                pk.load(options={"use_gpu": True})
+                pk.load()
                 assert pk.model
                 assert pk.meta
                 assert isinstance(pk.model, huggingface_pipeline.HuggingFacePipelineModel)
-                self._check_loaded_pipeline_wrapper_object(wrapper_model, pk.model, use_gpu=True)
+                self._check_loaded_pipeline_wrapper_object(wrapper_model, pk.model)
                 self.assertEqual(s, pk.meta.signatures)
 
                 pk = model_packager.ModelPackager(os.path.join(tmpdir, "model1_no_sig"))
-                pk.load(as_custom_model=True, options={"use_gpu": True})
+                pk.load(as_custom_model=True)
                 assert pk.model
                 assert pk.meta
                 assert callable(pk.model)
                 res = pk.model(udf_test_input.copy(deep=True))
                 check_udf_res_fn(res)
+
+                if check_gpu:
+                    pk = model_packager.ModelPackager(os.path.join(tmpdir, "model1_no_sig"))
+                    pk.load(options={"use_gpu": True})
+                    assert pk.model
+                    assert pk.meta
+                    assert isinstance(pk.model, huggingface_pipeline.HuggingFacePipelineModel)
+                    self._check_loaded_pipeline_wrapper_object(wrapper_model, pk.model, use_gpu=True)
+                    self.assertEqual(s, pk.meta.signatures)
+
+                    pk = model_packager.ModelPackager(os.path.join(tmpdir, "model1_no_sig"))
+                    pk.load(as_custom_model=True, options={"use_gpu": True})
+                    assert pk.model
+                    assert pk.meta
+                    assert callable(pk.model)
+                    res = pk.model(udf_test_input.copy(deep=True))
+                    check_udf_res_fn(res)
 
     def test_conversational_pipeline(self) -> None:
         import transformers
@@ -287,13 +297,11 @@ class HuggingFacePipelineHandlerTest(absltest.TestCase):
             pd.testing.assert_index_equal(res.columns, pd.Index(["outputs"]))
 
             for row in res["outputs"]:
-                self.assertIsInstance(row, str)
-                resp = json.loads(row)
-                self.assertIsInstance(resp, list)
-                self.assertIn("score", resp[0])
-                self.assertIn("token", resp[0])
-                self.assertIn("token_str", resp[0])
-                self.assertIn("sequence", resp[0])
+                self.assertIsInstance(row, list)
+                self.assertIn("score", row[0])
+                self.assertIn("token", row[0])
+                self.assertIn("token_str", row[0])
+                self.assertIn("sequence", row[0])
 
         self._basic_test_case(
             task="fill-mask",
@@ -344,19 +352,17 @@ class HuggingFacePipelineHandlerTest(absltest.TestCase):
                 pd.testing.assert_index_equal(res.columns, pd.Index(["outputs"]))
 
                 for row in res["outputs"]:
-                    self.assertIsInstance(row, str)
-                    resp = json.loads(row)
-                    self.assertIsInstance(resp, list)
+                    self.assertIsInstance(row, list)
                     if aggregation_strategy:
-                        self.assertIn("entity_group", resp[0])
+                        self.assertIn("entity_group", row[0])
                     else:
-                        self.assertIn("entity", resp[0])
-                        self.assertIn("index", resp[0])
+                        self.assertIn("entity", row[0])
+                        self.assertIn("index", row[0])
 
-                    self.assertIn("score", resp[0])
-                    self.assertIn("word", resp[0])
-                    self.assertIn("start", resp[0])
-                    self.assertIn("end", resp[0])
+                    self.assertIn("score", row[0])
+                    self.assertIn("word", row[0])
+                    self.assertIn("start", row[0])
+                    self.assertIn("end", row[0])
 
             return check_udf_res
 
@@ -421,16 +427,14 @@ class HuggingFacePipelineHandlerTest(absltest.TestCase):
                     self.assertEqual(res["end"].dtype.type, np.int64)
                     self.assertEqual(res["answer"].dtype.type, np.object_)
                 else:
-                    pd.testing.assert_index_equal(res.columns, pd.Index(["outputs"]))
+                    pd.testing.assert_index_equal(res.columns, pd.Index(["answers"]))
 
-                    for row in res["outputs"]:
-                        self.assertIsInstance(row, str)
-                        resp = json.loads(row)
-                        self.assertIsInstance(resp, list)
-                        self.assertIn("score", resp[0])
-                        self.assertIn("start", resp[0])
-                        self.assertIn("end", resp[0])
-                        self.assertIn("answer", resp[0])
+                    for row in res["answers"]:
+                        self.assertIsInstance(row, list)
+                        self.assertIn("score", row[0])
+                        self.assertIn("start", row[0])
+                        self.assertIn("end", row[0])
+                        self.assertIn("answer", row[0])
 
             return check_udf_res
 
@@ -608,6 +612,16 @@ class HuggingFacePipelineHandlerTest(absltest.TestCase):
             check_pipeline_fn=check_pipeline,
             check_udf_res_fn=check_udf_res,
             check_gpu=False,
+            signature=model_signature.ModelSignature(
+                inputs=[
+                    model_signature.FeatureSpec(dtype=model_signature.DataType.STRING, name="text"),
+                    model_signature.FeatureSpec(dtype=model_signature.DataType.STRING, name="text_pair"),
+                ],
+                outputs=[
+                    model_signature.FeatureSpec(dtype=model_signature.DataType.STRING, name="label"),
+                    model_signature.FeatureSpec(dtype=model_signature.DataType.FLOAT, name="score"),
+                ],
+            ),
         )
 
     def test_text_classification_pipeline(
@@ -616,7 +630,6 @@ class HuggingFacePipelineHandlerTest(absltest.TestCase):
         x = [
             {
                 "text": "I am wondering if I should have udon or rice for lunch",
-                "text_pair": "",
             }
         ]
 
@@ -632,14 +645,12 @@ class HuggingFacePipelineHandlerTest(absltest.TestCase):
         ) -> Callable[[pd.DataFrame], None]:
             def check_udf_res(res: pd.DataFrame) -> None:
                 if top_k:
-                    pd.testing.assert_index_equal(res.columns, pd.Index(["outputs"]))
+                    pd.testing.assert_index_equal(res.columns, pd.Index(["labels"]))
 
-                    for row in res["outputs"]:
-                        self.assertIsInstance(row, str)
-                        resp = json.loads(row)
-                        self.assertIsInstance(resp, list)
-                        self.assertIn("label", resp[0])
-                        self.assertIn("score", resp[0])
+                    for row in res["labels"]:
+                        self.assertIsInstance(row, list)
+                        self.assertIn("label", row[0])
+                        self.assertIn("score", container=row[0])
                 else:
                     pd.testing.assert_index_equal(res.columns, pd.Index(["label", "score"]))
 
@@ -694,11 +705,19 @@ class HuggingFacePipelineHandlerTest(absltest.TestCase):
             pd.testing.assert_index_equal(res.columns, pd.Index(["outputs"]))
 
             for row in res["outputs"]:
-                self.assertIsInstance(row, str)
-                resp = json.loads(row)
-                self.assertIsInstance(resp, list)
-                self.assertIn("generated_text", resp[0])
+                self.assertIsInstance(row, list)
+                self.assertIn("generated_text", row[0])
 
+        signature = model_signature.ModelSignature(
+            inputs=[model_signature.FeatureSpec(dtype=model_signature.DataType.STRING, name="inputs")],
+            outputs=[
+                model_signature.FeatureGroupSpec(
+                    name="outputs",
+                    specs=[model_signature.FeatureSpec(dtype=model_signature.DataType.STRING, name="generated_text")],
+                    shape=(-1,),
+                )
+            ],
+        )
         self._basic_test_case(
             task="text-generation",
             model_id="sshleifer/tiny-ctrl",
@@ -707,6 +726,7 @@ class HuggingFacePipelineHandlerTest(absltest.TestCase):
             check_pipeline_fn=check_pipeline,
             check_udf_res_fn=check_udf_res,
             check_gpu=False,
+            signature=signature,
         )
 
         with self.assertRaisesRegex(
@@ -731,6 +751,7 @@ class HuggingFacePipelineHandlerTest(absltest.TestCase):
             check_pipeline_fn=check_pipeline,
             check_udf_res_fn=check_udf_res,
             check_gpu=False,
+            signature=signature,
         )
 
         self._basic_test_case(
@@ -738,6 +759,78 @@ class HuggingFacePipelineHandlerTest(absltest.TestCase):
             model_id="sshleifer/tiny-ctrl",
             udf_test_input=x_df,
             options={"num_return_sequences": 4, "do_sample": True, "num_beams": 1},
+            check_pipeline_fn=lambda x, y: None,  # ignore this check
+            check_udf_res_fn=check_udf_res,
+            check_gpu=False,
+            signature=signature,
+        )
+
+    def test_text_generation_chat_template_pipeline(
+        self,
+    ) -> None:
+        x = [
+            [
+                {"role": "system", "content": "Complete the sentence."},
+                {
+                    "role": "user",
+                    "content": "A descendant of the Lost City of Atlantis, who swam to Earth while saying, ",
+                },
+            ]
+        ]
+
+        x_df = pd.DataFrame([x], columns=["inputs"])
+
+        def check_pipeline(original: "transformers.Pipeline", loaded: "transformers.Pipeline") -> None:
+            original_res = original(x)
+            loaded_res = loaded(x)
+            self.assertEqual(len(original_res), len(loaded_res))
+
+        def check_udf_res(res: pd.DataFrame) -> None:
+            pd.testing.assert_index_equal(res.columns, pd.Index(["outputs"]))
+
+            for row in res["outputs"]:
+                self.assertIsInstance(row, list)
+                self.assertIn("generated_text", row[0])
+
+        self._basic_test_case(
+            task="text-generation",
+            model_id="hf-internal-testing/tiny-gpt2-with-chatml-template",
+            udf_test_input=x_df,
+            options={"max_length": 200},
+            check_pipeline_fn=check_pipeline,
+            check_udf_res_fn=check_udf_res,
+            check_gpu=False,
+        )
+
+        with self.assertRaisesRegex(
+            NotImplementedError,
+            "when `return_tensors` set to `True` has not been supported yet.",
+        ):
+            self._basic_test_case(
+                task="text-generation",
+                model_id="hf-internal-testing/tiny-gpt2-with-chatml-template",
+                udf_test_input=x_df,
+                options={"max_length": 200, "return_tensors": True},
+                check_pipeline_fn=check_pipeline,
+                check_udf_res_fn=check_udf_res,
+                check_gpu=False,
+            )
+
+        self._basic_test_case(
+            task="text-generation",
+            model_id="hf-internal-testing/tiny-gpt2-with-chatml-template",
+            udf_test_input=x_df,
+            options={"max_length": 200, "num_return_sequences": 1},
+            check_pipeline_fn=check_pipeline,
+            check_udf_res_fn=check_udf_res,
+            check_gpu=False,
+        )
+
+        self._basic_test_case(
+            task="text-generation",
+            model_id="hf-internal-testing/tiny-gpt2-with-chatml-template",
+            udf_test_input=x_df,
+            options={"max_length": 200, "num_return_sequences": 4, "do_sample": True, "num_beams": 1},
             check_pipeline_fn=lambda x, y: None,  # ignore this check
             check_udf_res_fn=check_udf_res,
             check_gpu=False,

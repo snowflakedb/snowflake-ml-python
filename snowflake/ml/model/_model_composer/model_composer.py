@@ -1,8 +1,10 @@
 import pathlib
 import tempfile
 import uuid
+import warnings
 from types import ModuleType
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
+from urllib import parse
 
 from absl import logging
 from packaging import requirements
@@ -44,7 +46,13 @@ class ModelComposer:
         statement_params: Optional[Dict[str, Any]] = None,
     ) -> None:
         self.session = session
-        self.stage_path = pathlib.PurePosixPath(stage_path)
+        self.stage_path: Union[pathlib.PurePosixPath, parse.ParseResult] = None  # type: ignore[assignment]
+        if stage_path.startswith("snow://"):
+            # The stage path is a snowflake internal stage path
+            self.stage_path = parse.urlparse(stage_path)
+        else:
+            # The stage path is a user stage path
+            self.stage_path = pathlib.PurePosixPath(stage_path)
 
         self._workspace = tempfile.TemporaryDirectory()
         self._packager_workspace = tempfile.TemporaryDirectory()
@@ -70,7 +78,20 @@ class ModelComposer:
 
     @property
     def model_stage_path(self) -> str:
-        return (self.stage_path / self.model_file_rel_path).as_posix()
+        if isinstance(self.stage_path, parse.ParseResult):
+            model_file_path = (pathlib.PosixPath(self.stage_path.path) / self.model_file_rel_path).as_posix()
+            new_url = parse.ParseResult(
+                scheme=self.stage_path.scheme,
+                netloc=self.stage_path.netloc,
+                path=str(model_file_path),
+                params=self.stage_path.params,
+                query=self.stage_path.query,
+                fragment=self.stage_path.fragment,
+            )
+            return str(parse.urlunparse(new_url))
+        else:
+            assert isinstance(self.stage_path, pathlib.PurePosixPath)
+            return (self.stage_path / self.model_file_rel_path).as_posix()
 
     @property
     def model_local_path(self) -> str:
@@ -86,6 +107,7 @@ class ModelComposer:
         metadata: Optional[Dict[str, str]] = None,
         conda_dependencies: Optional[List[str]] = None,
         pip_requirements: Optional[List[str]] = None,
+        artifact_repository_map: Optional[Dict[str, str]] = None,
         target_platforms: Optional[List[model_types.TargetPlatform]] = None,
         python_version: Optional[str] = None,
         user_files: Optional[Dict[str, List[str]]] = None,
@@ -94,8 +116,32 @@ class ModelComposer:
         task: model_types.Task = model_types.Task.UNKNOWN,
         options: Optional[model_types.ModelSaveOption] = None,
     ) -> model_meta.ModelMetadata:
+        # set enable_explainability=False if the model is not runnable in WH or the target platforms include SPCS
+        conda_dep_dict = env_utils.validate_conda_dependency_string_list(
+            conda_dependencies if conda_dependencies else []
+        )
+        is_warehouse_runnable = (
+            not conda_dep_dict
+            or all(
+                chan == env_utils.DEFAULT_CHANNEL_NAME or chan == env_utils.SNOWFLAKE_CONDA_CHANNEL_URL
+                for chan in conda_dep_dict
+            )
+        ) and (not pip_requirements)
+        disable_explainability = (
+            target_platforms and model_types.TargetPlatform.SNOWPARK_CONTAINER_SERVICES in target_platforms
+        ) or (not is_warehouse_runnable)
+
+        if disable_explainability and options and options.get("enable_explainability", False):
+            warnings.warn(
+                ("The model can be deployed to Snowpark Container Services only if `enable_explainability=False`."),
+                category=UserWarning,
+                stacklevel=2,
+            )
+
         if not options:
             options = model_types.BaseModelSaveOption()
+            if disable_explainability:
+                options["enable_explainability"] = False
 
         if not snowpark_utils.is_in_stored_procedure():  # type: ignore[no-untyped-call]
             snowml_matched_versions = env_utils.get_matched_package_versions_in_information_schema(
@@ -120,6 +166,7 @@ class ModelComposer:
             metadata=metadata,
             conda_dependencies=conda_dependencies,
             pip_requirements=pip_requirements,
+            artifact_repository_map=artifact_repository_map,
             python_version=python_version,
             ext_modules=ext_modules,
             code_paths=code_paths,

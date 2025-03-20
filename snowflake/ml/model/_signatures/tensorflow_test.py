@@ -7,6 +7,359 @@ from snowflake.ml.model._signatures import core, tensorflow_handler, utils
 from snowflake.ml.test_utils import exception_utils
 
 
+class TensorflowTensorHandlerTest(absltest.TestCase):
+    def test_can_handle_list_tf_tensor(self) -> None:
+        t1 = tf.constant([1, 2])
+        self.assertTrue(tensorflow_handler.TensorflowTensorHandler.can_handle(t1))
+
+        t2 = tf.Variable([1, 2])
+        self.assertTrue(tensorflow_handler.TensorflowTensorHandler.can_handle(t2))
+
+        t3 = np.array([1, 2, 3, 4])
+        self.assertFalse(tensorflow_handler.TensorflowTensorHandler.can_handle(t3))
+
+    def test_validate_tf_tensor(self) -> None:
+        t1 = tf.constant([])
+        with exception_utils.assert_snowml_exceptions(
+            self, expected_original_error_type=ValueError, expected_regex="Empty data is found."
+        ):
+            tensorflow_handler.TensorflowTensorHandler.validate(t1)
+
+        t2 = tf.Variable([1, 2], shape=tf.TensorShape(None))
+        tensorflow_handler.TensorflowTensorHandler.validate(t2)
+
+        t3 = tf.Variable([[1, 2]], shape=tf.TensorShape([None, 2]))
+        tensorflow_handler.TensorflowTensorHandler.validate(t3)
+
+        t4 = tf.Variable([[1, 2]], shape=tf.TensorShape([1, None]))
+        tensorflow_handler.TensorflowTensorHandler.validate(t4)
+
+        t5 = tf.constant(1)
+        with exception_utils.assert_snowml_exceptions(
+            self, expected_original_error_type=ValueError, expected_regex="Scalar data is found."
+        ):
+            tensorflow_handler.TensorflowTensorHandler.validate(t5)
+
+        t6 = tf.constant([1])
+        tensorflow_handler.TensorflowTensorHandler.validate(t6)
+
+        t7 = tf.Variable(1)
+        with exception_utils.assert_snowml_exceptions(
+            self, expected_original_error_type=ValueError, expected_regex="Scalar data is found."
+        ):
+            tensorflow_handler.TensorflowTensorHandler.validate(t7)
+
+        t8 = tf.Variable([1])
+        tensorflow_handler.TensorflowTensorHandler.validate(t8)
+
+    def test_count_tf_tensor(self) -> None:
+        t1 = tf.constant([1, 2])
+        self.assertEqual(tensorflow_handler.TensorflowTensorHandler.count(t1), 2)
+
+        t2 = tf.constant([[1, 2]])
+        self.assertEqual(tensorflow_handler.TensorflowTensorHandler.count(t2), 1)
+
+        t3 = tf.Variable([1, 2])
+        self.assertEqual(tensorflow_handler.TensorflowTensorHandler.count(t3), 2)
+
+        t4 = tf.Variable([1, 2], shape=tf.TensorShape(None))
+        self.assertEqual(tensorflow_handler.TensorflowTensorHandler.count(t4), 2)
+
+        t5 = tf.Variable([[1, 2]], shape=tf.TensorShape([None, 2]))
+        self.assertEqual(tensorflow_handler.TensorflowTensorHandler.count(t5), 1)
+
+        t6 = tf.Variable([[1, 2]], shape=tf.TensorShape([1, None]))
+        self.assertEqual(tensorflow_handler.TensorflowTensorHandler.count(t6), 1)
+
+    def test_trunc_tf_tensor(self) -> None:
+        t = tf.constant([1] * 11)
+
+        tf.assert_equal(
+            tf.constant([1] * 10),
+            tensorflow_handler.TensorflowTensorHandler.truncate(t, 10),
+        )
+
+        t = tf.constant([1] * 9)
+
+        tf.assert_equal(
+            tf.constant([1] * 9),
+            tensorflow_handler.TensorflowTensorHandler.truncate(t, 10),
+        )
+
+    def test_infer_schema_tf_tensor(self) -> None:
+        t1 = tf.constant([1, 2, 3, 4], dtype=tf.int32)
+        self.assertListEqual(
+            tensorflow_handler.TensorflowTensorHandler.infer_signature(t1, role="input"),
+            [core.FeatureSpec("input_feature_0", core.DataType.INT32, nullable=False)],
+        )
+
+        t2 = tf.constant([1, 2, 3, 4], dtype=tf.int64)
+        self.assertListEqual(
+            tensorflow_handler.TensorflowTensorHandler.infer_signature(t2, role="input"),
+            [core.FeatureSpec("input_feature_0", core.DataType.INT64, nullable=False)],
+        )
+
+        t3 = tf.constant([1, 2, 3, 4], dtype=tf.int16)
+        self.assertListEqual(
+            tensorflow_handler.TensorflowTensorHandler.infer_signature(t3, role="input"),
+            [core.FeatureSpec("input_feature_0", core.DataType.INT16, nullable=False)],
+        )
+
+        t4 = tf.constant([1, 2, 3, 4], dtype=tf.int8)
+        self.assertListEqual(
+            tensorflow_handler.TensorflowTensorHandler.infer_signature(t4, role="input"),
+            [core.FeatureSpec("input_feature_0", core.DataType.INT8, nullable=False)],
+        )
+
+        t5 = tf.constant([1, 2, 3, 4], dtype=tf.uint32)
+        self.assertListEqual(
+            tensorflow_handler.TensorflowTensorHandler.infer_signature(t5, role="input"),
+            [core.FeatureSpec("input_feature_0", core.DataType.UINT32, nullable=False)],
+        )
+
+        t6 = tf.constant([1, 2, 3, 4], dtype=tf.uint64)
+        self.assertListEqual(
+            tensorflow_handler.TensorflowTensorHandler.infer_signature(t6, role="input"),
+            [core.FeatureSpec("input_feature_0", core.DataType.UINT64, nullable=False)],
+        )
+
+        t7 = tf.constant([1, 2, 3, 4], dtype=tf.uint16)
+        self.assertListEqual(
+            tensorflow_handler.TensorflowTensorHandler.infer_signature(t7, role="input"),
+            [core.FeatureSpec("input_feature_0", core.DataType.UINT16, nullable=False)],
+        )
+
+        t8 = tf.constant([1, 2, 3, 4], dtype=tf.uint8)
+        self.assertListEqual(
+            tensorflow_handler.TensorflowTensorHandler.infer_signature(t8, role="input"),
+            [core.FeatureSpec("input_feature_0", core.DataType.UINT8, nullable=False)],
+        )
+
+        t9 = tf.constant([False, True])
+        self.assertListEqual(
+            tensorflow_handler.TensorflowTensorHandler.infer_signature(t9, role="input"),
+            [core.FeatureSpec("input_feature_0", core.DataType.BOOL, nullable=False)],
+        )
+
+        t10 = tf.constant([1.2, 3.4], dtype=tf.float32)
+        self.assertListEqual(
+            tensorflow_handler.TensorflowTensorHandler.infer_signature(t10, role="input"),
+            [core.FeatureSpec("input_feature_0", core.DataType.FLOAT, nullable=False)],
+        )
+
+        t11 = tf.constant([1.2, 3.4], dtype=tf.float64)
+        self.assertListEqual(
+            tensorflow_handler.TensorflowTensorHandler.infer_signature(t11, role="input"),
+            [core.FeatureSpec("input_feature_0", core.DataType.DOUBLE, nullable=False)],
+        )
+
+        t12 = tf.constant([[1, 2], [3, 4]])
+        self.assertListEqual(
+            tensorflow_handler.TensorflowTensorHandler.infer_signature(t12, role="input"),
+            [
+                core.FeatureSpec("input_feature_0", core.DataType.INT32, nullable=False),
+                core.FeatureSpec("input_feature_1", core.DataType.INT32, nullable=False),
+            ],
+        )
+
+        t13 = tf.constant([[[1, 1], [2, 2]], [[3, 3], [4, 4]]])
+        self.assertListEqual(
+            tensorflow_handler.TensorflowTensorHandler.infer_signature(t13, role="input"),
+            [
+                core.FeatureSpec("input_feature_0", core.DataType.INT32, shape=(2,), nullable=False),
+                core.FeatureSpec("input_feature_1", core.DataType.INT32, shape=(2,), nullable=False),
+            ],
+        )
+
+        t14 = tf.Variable([1, 2, 3, 4])
+        self.assertListEqual(
+            tensorflow_handler.TensorflowTensorHandler.infer_signature(t14, role="output"),
+            [core.FeatureSpec("output_feature_0", core.DataType.INT32, nullable=False)],
+        )
+
+        t15 = tf.Variable([1, 2, 3, 4], dtype=tf.int32)
+        self.assertListEqual(
+            tensorflow_handler.TensorflowTensorHandler.infer_signature(t15, role="input"),
+            [core.FeatureSpec("input_feature_0", core.DataType.INT32, nullable=False)],
+        )
+
+        t16 = tf.Variable([1, 2, 3, 4], dtype=tf.int64)
+        self.assertListEqual(
+            tensorflow_handler.TensorflowTensorHandler.infer_signature(t16, role="input"),
+            [core.FeatureSpec("input_feature_0", core.DataType.INT64, nullable=False)],
+        )
+
+        t17 = tf.Variable([1, 2, 3, 4], dtype=tf.int16)
+        self.assertListEqual(
+            tensorflow_handler.TensorflowTensorHandler.infer_signature(t17, role="input"),
+            [core.FeatureSpec("input_feature_0", core.DataType.INT16, nullable=False)],
+        )
+
+        t18 = tf.Variable([1, 2, 3, 4], dtype=tf.int8)
+        self.assertListEqual(
+            tensorflow_handler.TensorflowTensorHandler.infer_signature(t18, role="input"),
+            [core.FeatureSpec("input_feature_0", core.DataType.INT8, nullable=False)],
+        )
+
+        t19 = tf.Variable([1, 2, 3, 4], dtype=tf.uint32)
+        self.assertListEqual(
+            tensorflow_handler.TensorflowTensorHandler.infer_signature(t19, role="input"),
+            [core.FeatureSpec("input_feature_0", core.DataType.UINT32, nullable=False)],
+        )
+
+        t20 = tf.Variable([1, 2, 3, 4], dtype=tf.uint64)
+        self.assertListEqual(
+            tensorflow_handler.TensorflowTensorHandler.infer_signature(t20, role="input"),
+            [core.FeatureSpec("input_feature_0", core.DataType.UINT64, nullable=False)],
+        )
+
+        t21 = tf.Variable([1, 2, 3, 4], dtype=tf.uint16)
+        self.assertListEqual(
+            tensorflow_handler.TensorflowTensorHandler.infer_signature(t21, role="input"),
+            [core.FeatureSpec("input_feature_0", core.DataType.UINT16, nullable=False)],
+        )
+
+        t22 = tf.Variable([1, 2, 3, 4], dtype=tf.uint8)
+        self.assertListEqual(
+            tensorflow_handler.TensorflowTensorHandler.infer_signature(t22, role="input"),
+            [core.FeatureSpec("input_feature_0", core.DataType.UINT8, nullable=False)],
+        )
+
+        t23 = tf.Variable([False, True])
+        self.assertListEqual(
+            tensorflow_handler.TensorflowTensorHandler.infer_signature(t23, role="input"),
+            [core.FeatureSpec("input_feature_0", core.DataType.BOOL, nullable=False)],
+        )
+
+        t24 = tf.Variable([1.2, 3.4], dtype=tf.float32)
+        self.assertListEqual(
+            tensorflow_handler.TensorflowTensorHandler.infer_signature(t24, role="input"),
+            [core.FeatureSpec("input_feature_0", core.DataType.FLOAT, nullable=False)],
+        )
+
+        t25 = tf.Variable([1.2, 3.4], dtype=tf.float64)
+        self.assertListEqual(
+            tensorflow_handler.TensorflowTensorHandler.infer_signature(t25, role="input"),
+            [core.FeatureSpec("input_feature_0", core.DataType.DOUBLE, nullable=False)],
+        )
+
+        t26 = tf.Variable([[1, 2], [3, 4]])
+        self.assertListEqual(
+            tensorflow_handler.TensorflowTensorHandler.infer_signature(t26, role="input"),
+            [
+                core.FeatureSpec("input_feature_0", core.DataType.INT32, nullable=False),
+                core.FeatureSpec("input_feature_1", core.DataType.INT32, nullable=False),
+            ],
+        )
+
+        t27 = tf.Variable([[[1, 1], [2, 2]], [[3, 3], [4, 4]]])
+        self.assertListEqual(
+            tensorflow_handler.TensorflowTensorHandler.infer_signature(t27, role="input"),
+            [
+                core.FeatureSpec("input_feature_0", core.DataType.INT32, shape=(2,), nullable=False),
+                core.FeatureSpec("input_feature_1", core.DataType.INT32, shape=(2,), nullable=False),
+            ],
+        )
+
+    def test_convert_to_df_tf_tensor(self) -> None:
+        t1 = tf.constant([1, 2, 3, 4], dtype=tf.int64)
+        pd.testing.assert_frame_equal(
+            tensorflow_handler.TensorflowTensorHandler.convert_to_df(t1),
+            pd.DataFrame([1, 2, 3, 4]),
+        )
+
+        t2 = tf.Variable([1, 2, 3, 4], dtype=tf.int64)
+        pd.testing.assert_frame_equal(
+            tensorflow_handler.TensorflowTensorHandler.convert_to_df(t2),
+            pd.DataFrame([1, 2, 3, 4]),
+        )
+
+        t3 = tf.constant([[1, 1], [2, 2], [3, 3], [4, 4]], dtype=tf.int64)
+        pd.testing.assert_frame_equal(
+            tensorflow_handler.TensorflowTensorHandler.convert_to_df(t3),
+            pd.DataFrame([[1, 1], [2, 2], [3, 3], [4, 4]]),
+        )
+
+        t4 = tf.constant([[[1, 1], [2, 2]], [[3, 3], [4, 4]]], dtype=tf.int64)
+        pd.testing.assert_frame_equal(
+            tensorflow_handler.TensorflowTensorHandler.convert_to_df(t4),
+            pd.DataFrame([[[1, 1], [2, 2]], [[3, 3], [4, 4]]]),
+        )
+
+    def test_convert_from_df_tf_tensor(self) -> None:
+        t1 = tf.constant([1, 2, 3, 4], dtype=tf.int64)
+        tf.assert_equal(
+            tensorflow_handler.TensorflowTensorHandler.convert_from_df(
+                tensorflow_handler.TensorflowTensorHandler.convert_to_df(t1)
+            ),
+            tf.expand_dims(t1, axis=1),
+        )
+
+        t2 = tf.Variable([1, 2, 3, 4], dtype=tf.int64)
+        tf.assert_equal(
+            tensorflow_handler.TensorflowTensorHandler.convert_from_df(
+                tensorflow_handler.TensorflowTensorHandler.convert_to_df(t2)
+            ),
+            tf.expand_dims(t2, axis=1),
+        )
+
+        t3 = tf.constant([[1, 1], [2, 2], [3, 3], [4, 4]], dtype=tf.int64)
+        tf.assert_equal(
+            tensorflow_handler.TensorflowTensorHandler.convert_from_df(
+                tensorflow_handler.TensorflowTensorHandler.convert_to_df(t3)
+            ),
+            t3,
+        )
+
+        t4 = tf.constant([[[1, 1], [2, 2]], [[3, 3], [4, 4]]], dtype=tf.int64)
+        tf.assert_equal(
+            tensorflow_handler.TensorflowTensorHandler.convert_from_df(
+                tensorflow_handler.TensorflowTensorHandler.convert_to_df(t4)
+            ),
+            t4,
+        )
+
+        t5 = tf.constant([1, 2, 3, 4])
+        fts = tensorflow_handler.TensorflowTensorHandler.infer_signature(t5, role="input")
+        tf.assert_equal(
+            tensorflow_handler.TensorflowTensorHandler.convert_from_df(
+                utils.rename_pandas_df(tensorflow_handler.TensorflowTensorHandler.convert_to_df(t5), fts),
+                fts,
+            ),
+            tf.expand_dims(t5, axis=1),
+        )
+
+        t6 = tf.constant([1.2, 3.4])
+        fts = tensorflow_handler.TensorflowTensorHandler.infer_signature(t6, role="input")
+        tf.assert_equal(
+            tensorflow_handler.TensorflowTensorHandler.convert_from_df(
+                utils.rename_pandas_df(tensorflow_handler.TensorflowTensorHandler.convert_to_df(t6), fts),
+                fts,
+            ),
+            tf.expand_dims(t6, axis=1),
+        )
+
+        t7 = tf.constant([[1, 1], [2, 2], [3, 3], [4, 4]])
+        fts = tensorflow_handler.TensorflowTensorHandler.infer_signature(t7, role="input")
+        tf.assert_equal(
+            tensorflow_handler.TensorflowTensorHandler.convert_from_df(
+                utils.rename_pandas_df(tensorflow_handler.TensorflowTensorHandler.convert_to_df(t7), fts),
+                fts,
+            ),
+            t7,
+        )
+
+        t8 = tf.constant([[[1, 1], [2, 2]], [[3, 3], [4, 4]]])
+        fts = tensorflow_handler.TensorflowTensorHandler.infer_signature(t8, role="input")
+        tf.assert_equal(
+            tensorflow_handler.TensorflowTensorHandler.convert_from_df(
+                utils.rename_pandas_df(tensorflow_handler.TensorflowTensorHandler.convert_to_df(t8), fts),
+                fts,
+            ),
+            t8,
+        )
+
+
 class SeqOfTensorflowTensorHandlerTest(absltest.TestCase):
     def test_can_handle_list_tf_tensor(self) -> None:
         lt1 = [tf.constant([1, 2]), tf.constant([1, 2])]
@@ -51,22 +404,13 @@ class SeqOfTensorflowTensorHandlerTest(absltest.TestCase):
             tensorflow_handler.SeqOfTensorflowTensorHandler.validate(t)
 
         t = [tf.Variable([1, 2], shape=tf.TensorShape(None))]
-        with exception_utils.assert_snowml_exceptions(
-            self, expected_original_error_type=ValueError, expected_regex="Unknown shape data is found."
-        ):
-            tensorflow_handler.SeqOfTensorflowTensorHandler.validate(t)
+        tensorflow_handler.SeqOfTensorflowTensorHandler.validate(t)
 
         t = [tf.Variable([[1, 2]], shape=tf.TensorShape([None, 2]))]
-        with exception_utils.assert_snowml_exceptions(
-            self, expected_original_error_type=ValueError, expected_regex="Unknown shape data is found."
-        ):
-            tensorflow_handler.SeqOfTensorflowTensorHandler.validate(t)
+        tensorflow_handler.SeqOfTensorflowTensorHandler.validate(t)
 
         t = [tf.Variable([[1, 2]], shape=tf.TensorShape([1, None]))]
-        with exception_utils.assert_snowml_exceptions(
-            self, expected_original_error_type=ValueError, expected_regex="Unknown shape data is found."
-        ):
-            tensorflow_handler.SeqOfTensorflowTensorHandler.validate(t)
+        tensorflow_handler.SeqOfTensorflowTensorHandler.validate(t)
 
         t = [tf.constant(1)]
         with exception_utils.assert_snowml_exceptions(
@@ -75,10 +419,7 @@ class SeqOfTensorflowTensorHandlerTest(absltest.TestCase):
             tensorflow_handler.SeqOfTensorflowTensorHandler.validate(t)
 
         t = [tf.constant([1])]
-        with exception_utils.assert_snowml_exceptions(
-            self, expected_original_error_type=ValueError, expected_regex="Scalar data is found."
-        ):
-            tensorflow_handler.SeqOfTensorflowTensorHandler.validate(t)
+        tensorflow_handler.SeqOfTensorflowTensorHandler.validate(t)
 
         t = [tf.Variable(1)]
         with exception_utils.assert_snowml_exceptions(
@@ -87,10 +428,7 @@ class SeqOfTensorflowTensorHandlerTest(absltest.TestCase):
             tensorflow_handler.SeqOfTensorflowTensorHandler.validate(t)
 
         t = [tf.Variable([1])]
-        with exception_utils.assert_snowml_exceptions(
-            self, expected_original_error_type=ValueError, expected_regex="Scalar data is found."
-        ):
-            tensorflow_handler.SeqOfTensorflowTensorHandler.validate(t)
+        tensorflow_handler.SeqOfTensorflowTensorHandler.validate(t)
 
         t = [tf.constant([1, 2]), tf.constant(1)]
         with exception_utils.assert_snowml_exceptions(
@@ -109,16 +447,10 @@ class SeqOfTensorflowTensorHandlerTest(absltest.TestCase):
         self.assertEqual(tensorflow_handler.SeqOfTensorflowTensorHandler.count(t), 2)
 
         t = [tf.Variable([1, 2], shape=tf.TensorShape(None))]
-        with exception_utils.assert_snowml_exceptions(
-            self, expected_original_error_type=ValueError, expected_regex="Unknown shape data is found."
-        ):
-            tensorflow_handler.SeqOfTensorflowTensorHandler.validate(t)
+        self.assertEqual(tensorflow_handler.SeqOfTensorflowTensorHandler.count(t), 2)
 
         t = [tf.Variable([[1, 2]], shape=tf.TensorShape([None, 2]))]
-        with exception_utils.assert_snowml_exceptions(
-            self, expected_original_error_type=ValueError, expected_regex="Unknown shape data is found."
-        ):
-            tensorflow_handler.SeqOfTensorflowTensorHandler.validate(t)
+        self.assertEqual(tensorflow_handler.SeqOfTensorflowTensorHandler.count(t), 1)
 
         t = [tf.Variable([[1, 2]], shape=tf.TensorShape([1, None]))]
         self.assertEqual(tensorflow_handler.SeqOfTensorflowTensorHandler.count(t), 1)

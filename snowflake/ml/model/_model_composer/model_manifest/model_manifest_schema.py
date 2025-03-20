@@ -1,6 +1,6 @@
 # This files contains schema definition of what will be written into MANIFEST.yml
 import enum
-from typing import Any, Dict, List, Literal, TypedDict, Union
+from typing import Any, Dict, List, Literal, Optional, TypedDict, Union
 
 from typing_extensions import NotRequired, Required
 
@@ -20,6 +20,7 @@ class ModelMethodFunctionTypes(enum.Enum):
 class ModelRuntimeDependenciesDict(TypedDict):
     conda: NotRequired[str]
     pip: NotRequired[str]
+    artifact_repository_map: NotRequired[Optional[Dict[str, str]]]
 
 
 class ModelRuntimeDict(TypedDict):

@@ -30,7 +30,7 @@ class TestSnowflakeFileSetTensorflow(fileset_integ_test_base.TestSnowflakeFileSe
     ) -> None:
         self._test_fileset_make_and_call(use_snowpark, fileset_shuffle, datapipe_shuffle, drop_last_batch)
 
-    @common_test_base.CommonTestBase.sproc_test(additional_packages=[])
+    @common_test_base.CommonTestBase.sproc_test(additional_packages=["tensorflow"])
     @parameterized.parameters(  # type: ignore[misc]
         {"fileset_shuffle": False, "datapipe_shuffle": False, "drop_last_batch": True},
         {"fileset_shuffle": True, "datapipe_shuffle": True, "drop_last_batch": False},

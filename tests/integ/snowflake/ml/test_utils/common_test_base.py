@@ -85,7 +85,7 @@ class CommonTestBase(parameterized.TestCase):
         Union[parameterized._ParameterizedTestIter, Callable[Concatenate[_V, _T_args], None]],
     ]:
         def decorator(
-            fn: Union[parameterized._ParameterizedTestIter, Callable[Concatenate[_V, _T_args], None]]
+            fn: Union[parameterized._ParameterizedTestIter, Callable[Concatenate[_V, _T_args], None]],
         ) -> Union[parameterized._ParameterizedTestIter, Callable[Concatenate[_V, _T_args], None]]:
             if snowpark_utils.is_in_stored_procedure():  # type: ignore[no-untyped-call]
                 return fn
@@ -144,7 +144,7 @@ class CommonTestBase(parameterized.TestCase):
                         except ModuleNotFoundError:
                             pass
                         packages = additional_packages or []
-                        for req_str in _snowml_requirements.ALL_REQUIREMENTS:
+                        for req_str in _snowml_requirements.REQUIREMENTS:
                             req = requirements.Requirement(req_str)
                             # Remove "_" not in req once Snowpark 1.11.0 available, it is a workaround for their bug.
                             if any(offending in req.name for offending in ["snowflake-connector-python", "pyarrow"]):
@@ -269,7 +269,7 @@ class CommonTestBase(parameterized.TestCase):
         parameterized._ParameterizedTestIter,
     ]:
         def decorator(
-            fn: Union[parameterized._ParameterizedTestIter, Callable[Concatenate[_V, _T_args], None]]
+            fn: Union[parameterized._ParameterizedTestIter, Callable[Concatenate[_V, _T_args], None]],
         ) -> parameterized._ParameterizedTestIter:
             if isinstance(fn, parameterized._ParameterizedTestIter):
                 actual_method = fn._test_method

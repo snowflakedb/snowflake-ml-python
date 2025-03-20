@@ -1,5 +1,5 @@
 from collections import abc
-from typing import List, Literal, Sequence
+from typing import Literal, Sequence
 
 import numpy as np
 import pandas as pd
@@ -10,7 +10,7 @@ from snowflake.ml._internal.exceptions import (
     exceptions as snowml_exceptions,
 )
 from snowflake.ml.model import type_hints as model_types
-from snowflake.ml.model._signatures import base_handler, core
+from snowflake.ml.model._signatures import base_handler, core, pandas_handler
 
 
 class NumpyArrayHandler(base_handler.BaseDataHandler[model_types._SupportedNumpyArray]):
@@ -46,6 +46,10 @@ class NumpyArrayHandler(base_handler.BaseDataHandler[model_types._SupportedNumpy
     def infer_signature(
         data: model_types._SupportedNumpyArray, role: Literal["input", "output"]
     ) -> Sequence[core.BaseFeatureSpec]:
+        if data.dtype == np.object_:
+            return pandas_handler.PandasDataFrameHandler.infer_signature(
+                NumpyArrayHandler.convert_to_df(data), role=role
+            )
         feature_prefix = f"{NumpyArrayHandler.FEATURE_PREFIX}_"
         dtype = core.DataType.from_numpy_type(data.dtype)
         role_prefix = (NumpyArrayHandler.INPUT_PREFIX if role == "input" else NumpyArrayHandler.OUTPUT_PREFIX) + "_"
@@ -108,21 +112,9 @@ class SeqOfNumpyArrayHandler(base_handler.BaseDataHandler[Sequence[model_types._
     def infer_signature(
         data: Sequence[model_types._SupportedNumpyArray], role: Literal["input", "output"]
     ) -> Sequence[core.BaseFeatureSpec]:
-        feature_prefix = f"{SeqOfNumpyArrayHandler.FEATURE_PREFIX}_"
-        features: List[core.BaseFeatureSpec] = []
-        role_prefix = (
-            SeqOfNumpyArrayHandler.INPUT_PREFIX if role == "input" else SeqOfNumpyArrayHandler.OUTPUT_PREFIX
-        ) + "_"
-
-        for i, data_col in enumerate(data):
-            dtype = core.DataType.from_numpy_type(data_col.dtype)
-            ft_name = f"{role_prefix}{feature_prefix}{i}"
-            if len(data_col.shape) == 1:
-                features.append(core.FeatureSpec(dtype=dtype, name=ft_name, nullable=False))
-            else:
-                ft_shape = tuple(data_col.shape[1:])
-                features.append(core.FeatureSpec(dtype=dtype, name=ft_name, shape=ft_shape, nullable=False))
-        return features
+        return pandas_handler.PandasDataFrameHandler.infer_signature(
+            SeqOfNumpyArrayHandler.convert_to_df(data, ensure_serializable=False), role=role
+        )
 
     @staticmethod
     def convert_to_df(

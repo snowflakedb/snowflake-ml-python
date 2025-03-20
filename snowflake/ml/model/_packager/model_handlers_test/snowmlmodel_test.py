@@ -178,6 +178,7 @@ class SnowMLModelHandlerTest(absltest.TestCase):
                 model=regr,
                 metadata={"author": "halu", "version": "1"},
                 task=model_types.Task.TABULAR_BINARY_CLASSIFICATION,  # incorrect type but should be inferred properly
+                options=model_types.SNOWModelSaveOptions(),
             )
             with warnings.catch_warnings():
                 warnings.simplefilter("error")
@@ -248,6 +249,7 @@ class SnowMLModelHandlerTest(absltest.TestCase):
                 model=scaler,
                 sample_input_data=pandas_df,
                 metadata={"author": "halu", "version": "1"},
+                options=model_types.SNOWModelSaveOptions(),
             )
 
             pk = model_packager.ModelPackager(os.path.join(tmpdir, "model1"))

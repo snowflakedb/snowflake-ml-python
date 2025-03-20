@@ -73,13 +73,54 @@ _STARTUP_SCRIPT_CODE = textwrap.dedent(
     ##### Ray configuration #####
     shm_size=$(df --output=size --block-size=1 /dev/shm | tail -n 1)
 
+    # Check if the instance ip retrieval module exists, which is a prerequisite for multi node jobs
+    HELPER_EXISTS=$(
+        python3 -c "import snowflake.runtime.utils.get_instance_ip" 2>/dev/null && echo "true" || echo "false"
+    )
+
     # Configure IP address and logging directory
-    eth0Ip=$(ifconfig eth0 2>/dev/null | sed -En -e 's/.*inet ([0-9.]+).*/\1/p')
+    if [ "$HELPER_EXISTS" = "true" ]; then
+        eth0Ip=$(python3 -m snowflake.runtime.utils.get_instance_ip "$SNOWFLAKE_SERVICE_NAME" --instance-index=-1)
+    else
+        eth0Ip=$(ifconfig eth0 2>/dev/null | sed -En -e 's/.*inet ([0-9.]+).*/\1/p')
+    fi
     log_dir="/tmp/ray"
 
     # Check if eth0Ip is a valid IP address and fall back to default if necessary
     if [[ ! $eth0Ip =~ ^[0-9]+\\.[0-9]+\\.[0-9]+\\.[0-9]+$ ]]; then
         eth0Ip="127.0.0.1"
+    fi
+
+    # Get the environment values of SNOWFLAKE_JOBS_COUNT and SNOWFLAKE_JOB_INDEX for batch jobs
+    # These variables don't exist for non-batch jobs, so set defaults
+    if [ -z "$SNOWFLAKE_JOBS_COUNT" ]; then
+        SNOWFLAKE_JOBS_COUNT=1
+    fi
+
+    if [ -z "$SNOWFLAKE_JOB_INDEX" ]; then
+        SNOWFLAKE_JOB_INDEX=0
+    fi
+
+    # Determine if it should be a worker or a head node for batch jobs
+    if [[ "$SNOWFLAKE_JOBS_COUNT" -gt 1 && "$HELPER_EXISTS" = "true" ]]; then
+        head_info=$(python3 -m snowflake.runtime.utils.get_instance_ip "$SNOWFLAKE_SERVICE_NAME" --head)
+        if [ $? -eq 0 ]; then
+            # Parse the output using read
+            read head_index head_ip <<< "$head_info"
+
+            # Use the parsed variables
+            echo "Head Instance Index: $head_index"
+            echo "Head Instance IP: $head_ip"
+
+        else
+            echo "Error: Failed to get head instance information."
+            echo "$head_info" # Print the error message
+            exit 1
+        fi
+
+        if [ "$SNOWFLAKE_JOB_INDEX" -ne "$head_index" ]; then
+            NODE_TYPE="worker"
+        fi
     fi
 
     # Common parameters for both head and worker nodes
@@ -97,29 +138,62 @@ _STARTUP_SCRIPT_CODE = textwrap.dedent(
         "--disable-usage-stats"
     )
 
-    # Additional head-specific parameters
-    head_params=(
-        "--head"
-        "--port=${{RAY_HEAD_GCS_PORT:-12001}}"                                  # Port of Ray (GCS server)
-        "--ray-client-server-port=${{RAY_HEAD_CLIENT_SERVER_PORT:-10001}}"      # Listening port for Ray Client Server
-        "--dashboard-host=${{NODE_IP_ADDRESS}}"                                 # Host to bind the dashboard server
-        "--dashboard-grpc-port=${{RAY_HEAD_DASHBOARD_GRPC_PORT:-12002}}"        # Dashboard head to listen for grpc on
-        "--dashboard-port=${{DASHBOARD_PORT}}"                  # Port to bind the dashboard server for local debugging
-        "--resources={{\\"node_tag:head\\":1}}"                   # Resource tag for selecting head as coordinator
-    )
+    if [ "$NODE_TYPE" = "worker" ]; then
+        # Use head_ip as head address if it exists
+        if [ ! -z "$head_ip" ]; then
+            RAY_HEAD_ADDRESS="$head_ip"
+        fi
 
-    # Start Ray on the head node
-    ray start "${{common_params[@]}}" "${{head_params[@]}}" &
-    ##### End Ray configuration #####
+        # If RAY_HEAD_ADDRESS is still empty, exit with an error
+        if [ -z "$RAY_HEAD_ADDRESS" ]; then
+            echo "Error: Failed to determine head node address using default instance-index=0"
+            exit 1
+        fi
 
-    # TODO: Monitor MLRS and handle process crashes
-    python -m web.ml_runtime_grpc_server &
+        if [ -z "$SERVICE_NAME" ]; then
+            SERVICE_NAME="$SNOWFLAKE_SERVICE_NAME"
+        fi
 
-    # TODO: Launch worker service(s) using SQL if Ray and MLRS successfully started
+        if [ -z "$RAY_HEAD_ADDRESS" ] || [ -z "$SERVICE_NAME" ]; then
+            echo "Error: RAY_HEAD_ADDRESS and SERVICE_NAME must be set."
+            exit 1
+        fi
 
-    # Run user's Python entrypoint
-    echo Running command: python "$@"
-    python "$@"
+        # Additional worker-specific parameters
+        worker_params=(
+            "--address=${{RAY_HEAD_ADDRESS}}:12001"       # Connect to head node
+            "--resources={{\\"${{SERVICE_NAME}}\\":1, \\"node_tag:worker\\":1}}"  # Tag for node identification
+            "--object-store-memory=${{shm_size}}"
+        )
+
+        # Start Ray on a worker node
+        ray start "${{common_params[@]}}" "${{worker_params[@]}}" -v --block
+    else
+
+        # Additional head-specific parameters
+        head_params=(
+            "--head"
+            "--port=${{RAY_HEAD_GCS_PORT:-12001}}"                                  # Port of Ray (GCS server)
+            "--ray-client-server-port=${{RAY_HEAD_CLIENT_SERVER_PORT:-10001}}"      # Rort for Ray Client Server
+            "--dashboard-host=${{NODE_IP_ADDRESS}}"                                 # Host to bind the dashboard server
+            "--dashboard-grpc-port=${{RAY_HEAD_DASHBOARD_GRPC_PORT:-12002}}"        # Dashboard head to listen for grpc
+            "--dashboard-port=${{DASHBOARD_PORT}}"                  # Port to bind the dashboard server for debugging
+            "--resources={{\\"node_tag:head\\":1}}"                   # Resource tag for selecting head as coordinator
+        )
+
+        # Start Ray on the head node
+        ray start "${{common_params[@]}}" "${{head_params[@]}}" -v
+        ##### End Ray configuration #####
+
+        # TODO: Monitor MLRS and handle process crashes
+        python -m web.ml_runtime_grpc_server &
+
+        # TODO: Launch worker service(s) using SQL if Ray and MLRS successfully started
+
+        # Run user's Python entrypoint
+        echo Running command: python "$@"
+        python "$@"
+    fi
     """
 ).strip()
 

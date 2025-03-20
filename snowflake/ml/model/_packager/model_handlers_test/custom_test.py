@@ -7,7 +7,7 @@ import numpy as np
 import pandas as pd
 from absl.testing import absltest
 
-from snowflake.ml.model import custom_model, model_signature
+from snowflake.ml.model import custom_model, model_signature, type_hints as model_types
 from snowflake.ml.model._packager import model_packager
 from snowflake.ml.model._packager.model_meta import model_meta_schema
 
@@ -116,6 +116,7 @@ class CustomHandlerTest(absltest.TestCase):
                 model=lm,
                 signatures=s,
                 metadata={"author": "halu", "version": "1"},
+                options=model_types.CustomModelSaveOption(),
             )
             with warnings.catch_warnings():
                 warnings.simplefilter("error")
@@ -175,6 +176,7 @@ class CustomHandlerTest(absltest.TestCase):
                 model=acm,
                 signatures=s,
                 metadata={"author": "halu", "version": "1"},
+                options=model_types.CustomModelSaveOption(),
             )
             pk = model_packager.ModelPackager(os.path.join(tmpdir, "model1"))
             pk.load()
@@ -214,6 +216,7 @@ class CustomHandlerTest(absltest.TestCase):
                     model=acm,
                     signatures=s,
                     metadata={"author": "halu", "version": "1"},
+                    options=model_types.CustomModelSaveOption(),
                 )
                 pk = model_packager.ModelPackager(os.path.join(tmpdir, "model1"))
                 pk.load()
@@ -249,6 +252,7 @@ class CustomHandlerTest(absltest.TestCase):
                 model=lm,
                 signatures=s,
                 metadata={"author": "halu", "version": "1"},
+                options=model_types.CustomModelSaveOption(),
             )
 
             pk = model_packager.ModelPackager(os.path.join(tmpdir, "model1"))
@@ -286,6 +290,7 @@ class CustomHandlerTest(absltest.TestCase):
                 name="model1",
                 model=lm,
                 signatures=s,
+                options=model_types.CustomModelSaveOption(),
             )
 
             pk = model_packager.ModelPackager(os.path.join(tmpdir, "model1"))

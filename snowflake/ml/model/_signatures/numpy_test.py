@@ -169,6 +169,16 @@ class SeqOfNumpyArrayHandlerTest(absltest.TestCase):
             ],
         )
 
+        arr = np.array([1, 2, 3, 4], dtype=np.float32)
+        lt = [arr, arr]
+        self.assertListEqual(
+            numpy_handler.SeqOfNumpyArrayHandler.infer_signature(lt, role="input"),
+            [
+                core.FeatureSpec("input_feature_0", core.DataType.FLOAT, nullable=False),
+                core.FeatureSpec("input_feature_1", core.DataType.FLOAT, nullable=False),
+            ],
+        )
+
     def test_convert_to_df_list_of_numpy_array(self) -> None:
         arr1 = np.array([1, 2, 3, 4])
         lt = [arr1, arr1]

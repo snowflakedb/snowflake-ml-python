@@ -1,4 +1,5 @@
 import json
+import os
 import tempfile
 
 import inflection
@@ -11,6 +12,15 @@ from snowflake.ml.model import custom_model
 from tests.integ.snowflake.ml.registry.services import (
     registry_model_deployment_test_base,
 )
+
+
+class DemoModel(custom_model.CustomModel):
+    def __init__(self, context: custom_model.ModelContext) -> None:
+        super().__init__(context)
+
+    @custom_model.inference_api
+    def predict(self, input: pd.DataFrame) -> pd.DataFrame:
+        return pd.DataFrame({"output": input["c1"]})
 
 
 class MyCustomModel(custom_model.CustomModel):
@@ -65,6 +75,31 @@ class TestRegistryCustomModelDeploymentInteg(registry_model_deployment_test_base
                 ),
             },
             options={"enable_explainability": False},
+        )
+
+    @absltest.skipIf(os.getenv("BASE_CPU_IMAGE_PATH", None) is None, "BASE_CPU_IMAGE_PATH is not set")
+    def test_udf_500_column_limit(self) -> None:
+        lm = DemoModel(custom_model.ModelContext())
+        num_cols = 501
+
+        sp_df = self.session.create_dataframe(
+            [[0] * num_cols, [1] * num_cols], schema=[f'"c{i}"' for i in range(num_cols)]
+        )
+        y_df_expected = pd.DataFrame([[0], [1]], columns=["output"])
+
+        self._test_registry_model_deployment(
+            model=lm,
+            sample_input_data=sp_df,
+            prediction_assert_fns={
+                "predict": (
+                    sp_df.to_pandas(),
+                    lambda res: pd.testing.assert_frame_equal(
+                        res,
+                        y_df_expected,
+                        check_dtype=False,
+                    ),
+                ),
+            },
         )
 
 

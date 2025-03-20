@@ -43,6 +43,7 @@ class ModelRuntimeTest(absltest.TestCase):
                     "dependencies": {
                         "conda": "runtimes/cpu/env/conda.yml",
                         "pip": "runtimes/cpu/env/requirements.txt",
+                        "artifact_repository_map": {},
                     },
                 },
             )
@@ -66,6 +67,7 @@ class ModelRuntimeTest(absltest.TestCase):
                     "dependencies": {
                         "conda": "runtimes/cpu/env/conda.yml",
                         "pip": "runtimes/cpu/env/requirements.txt",
+                        "artifact_repository_map": {},
                     },
                 },
             )
@@ -90,6 +92,7 @@ class ModelRuntimeTest(absltest.TestCase):
                     "dependencies": {
                         "conda": "runtimes/cpu/env/conda.yml",
                         "pip": "runtimes/cpu/env/requirements.txt",
+                        "artifact_repository_map": {},
                     },
                 },
             )
@@ -113,6 +116,7 @@ class ModelRuntimeTest(absltest.TestCase):
                     "dependencies": {
                         "conda": "runtimes/cpu/env/conda.yml",
                         "pip": "runtimes/cpu/env/requirements.txt",
+                        "artifact_repository_map": {},
                     },
                 },
             )
@@ -139,6 +143,7 @@ class ModelRuntimeTest(absltest.TestCase):
                     "dependencies": {
                         "conda": "runtimes/cpu/env/conda.yml",
                         "pip": "runtimes/cpu/env/requirements.txt",
+                        "artifact_repository_map": {},
                     },
                 },
             )
@@ -166,6 +171,7 @@ class ModelRuntimeTest(absltest.TestCase):
                     "dependencies": {
                         "conda": "runtimes/cpu/env/conda.yml",
                         "pip": "runtimes/cpu/env/requirements.txt",
+                        "artifact_repository_map": {},
                     },
                 },
             )
@@ -296,6 +302,7 @@ class ModelRuntimeTest(absltest.TestCase):
                     "dependencies": {
                         "conda": "runtimes/gpu/env/conda.yml",
                         "pip": "runtimes/gpu/env/requirements.txt",
+                        "artifact_repository_map": {},
                     },
                 },
             )
@@ -305,6 +312,49 @@ class ModelRuntimeTest(absltest.TestCase):
             self.assertContainsSubset(
                 ["python==3.9.*", "pytorch", "snowflake-ml-python==1.0.0", "nvidia::cuda==11.7.*"],
                 dependencies["dependencies"],
+            )
+
+    def test_artifact_repository(self) -> None:
+        with tempfile.TemporaryDirectory() as workspace:
+            m_env = model_env.ModelEnv()
+            m_env.snowpark_ml_version = "1.0.0"
+            m_env.conda_dependencies = ["pytorch"]
+            m_env.cuda_version = "11.7"
+
+            mr = model_runtime.ModelRuntime("gpu", m_env, is_gpu=True)
+            returned_dict = mr.save(pathlib.Path(workspace))
+
+            self.assertDictEqual(
+                returned_dict,
+                {
+                    "imports": [],
+                    "dependencies": {
+                        "conda": "runtimes/gpu/env/conda.yml",
+                        "pip": "runtimes/gpu/env/requirements.txt",
+                        "artifact_repository_map": {},
+                    },
+                },
+            )
+
+            m_env.artifact_repository_map = {
+                "my_channel": "db.sch.my_repo",
+            }
+
+            mr = model_runtime.ModelRuntime("gpu", m_env, is_gpu=True)
+            returned_dict = mr.save(pathlib.Path(workspace))
+
+            self.assertDictEqual(
+                returned_dict,
+                {
+                    "imports": [],
+                    "dependencies": {
+                        "conda": "runtimes/gpu/env/conda.yml",
+                        "pip": "runtimes/gpu/env/requirements.txt",
+                        "artifact_repository_map": {
+                            "my_channel": "db.sch.my_repo",
+                        },
+                    },
+                },
             )
 
     def test_model_runtime_load_from_file(self) -> None:

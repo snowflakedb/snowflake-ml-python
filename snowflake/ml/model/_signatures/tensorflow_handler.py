@@ -1,5 +1,5 @@
 from collections import abc
-from typing import TYPE_CHECKING, List, Literal, Optional, Sequence, Union
+from typing import TYPE_CHECKING, Literal, Optional, Sequence, Union
 
 import numpy as np
 import pandas as pd
@@ -11,10 +11,60 @@ from snowflake.ml._internal.exceptions import (
     exceptions as snowml_exceptions,
 )
 from snowflake.ml.model import type_hints as model_types
-from snowflake.ml.model._signatures import base_handler, core
+from snowflake.ml.model._signatures import base_handler, core, numpy_handler
 
 if TYPE_CHECKING:
     import tensorflow
+
+
+class TensorflowTensorHandler(base_handler.BaseDataHandler[Union["tensorflow.Tensor", "tensorflow.Variable"]]):
+    @staticmethod
+    def can_handle(
+        data: model_types.SupportedDataType,
+    ) -> TypeGuard[Union["tensorflow.Tensor", "tensorflow.Variable"]]:
+        return type_utils.LazyType("tensorflow.Tensor").isinstance(data) or type_utils.LazyType(
+            "tensorflow.Variable"
+        ).isinstance(data)
+
+    @staticmethod
+    def count(data: Union["tensorflow.Tensor", "tensorflow.Variable"]) -> int:
+        return numpy_handler.NumpyArrayHandler.count(data.numpy())
+
+    @staticmethod
+    def truncate(
+        data: Union["tensorflow.Tensor", "tensorflow.Variable"], length: int
+    ) -> Union["tensorflow.Tensor", "tensorflow.Variable"]:
+        return data[: min(TensorflowTensorHandler.count(data), length)]
+
+    @staticmethod
+    def validate(data: Union["tensorflow.Tensor", "tensorflow.Variable"]) -> None:
+        numpy_handler.NumpyArrayHandler.validate(data.numpy())
+
+    @staticmethod
+    def infer_signature(
+        data: Union["tensorflow.Tensor", "tensorflow.Variable"], role: Literal["input", "output"]
+    ) -> Sequence[core.BaseFeatureSpec]:
+        return numpy_handler.NumpyArrayHandler.infer_signature(data.numpy(), role=role)
+
+    @staticmethod
+    def convert_to_df(
+        data: Union["tensorflow.Tensor", "tensorflow.Variable"], ensure_serializable: bool = True
+    ) -> pd.DataFrame:
+        return numpy_handler.NumpyArrayHandler.convert_to_df(data.numpy(), ensure_serializable=ensure_serializable)
+
+    @staticmethod
+    def convert_from_df(
+        df: pd.DataFrame, features: Optional[Sequence[core.BaseFeatureSpec]] = None
+    ) -> Union["tensorflow.Tensor", "tensorflow.Variable"]:
+        import tensorflow as tf
+
+        if features is None:
+            if any(dtype == np.dtype("O") for dtype in df.dtypes):
+                return tf.convert_to_tensor(np.array(df.to_numpy().tolist()))
+            return tf.convert_to_tensor(df.to_numpy())
+
+        assert isinstance(features[0], core.FeatureSpec)
+        return tf.convert_to_tensor(np.array(df.to_numpy().tolist()), dtype=features[0]._dtype._numpy_type)
 
 
 class SeqOfTensorflowTensorHandler(
@@ -28,35 +78,12 @@ class SeqOfTensorflowTensorHandler(
             return False
         if len(data) == 0:
             return False
-        if type_utils.LazyType("tensorflow.Tensor").isinstance(data[0]) or type_utils.LazyType(
-            "tensorflow.Variable"
-        ).isinstance(data[0]):
-            return all(
-                type_utils.LazyType("tensorflow.Tensor").isinstance(data_col)
-                or type_utils.LazyType("tensorflow.Variable").isinstance(data_col)
-                for data_col in data
-            )
-        return False
+
+        return all(TensorflowTensorHandler.can_handle(data_col) for data_col in data)
 
     @staticmethod
     def count(data: Sequence[Union["tensorflow.Tensor", "tensorflow.Variable"]]) -> int:
-        import tensorflow as tf
-
-        rows = []
-        for data_col in data:
-            shapes = data_col.shape.as_list()
-            if data_col.shape == tf.TensorShape(None) or (not shapes) or (shapes[0] is None):
-                # Unknown shape array
-                raise snowml_exceptions.SnowflakeMLException(
-                    error_code=error_codes.INVALID_DATA,
-                    original_exception=ValueError("Data Validation Error: Unknown shape data is found."),
-                )
-            # Make mypy happy
-            assert isinstance(shapes[0], int)
-
-            rows.append(shapes[0])
-
-        return min(rows)
+        return min(TensorflowTensorHandler.count(data_col) for data_col in data)
 
     @staticmethod
     def truncate(
@@ -66,49 +93,14 @@ class SeqOfTensorflowTensorHandler(
 
     @staticmethod
     def validate(data: Sequence[Union["tensorflow.Tensor", "tensorflow.Variable"]]) -> None:
-        import tensorflow as tf
-
         for data_col in data:
-            if data_col.shape == tf.TensorShape(None) or any(dim is None for dim in data_col.shape.as_list()):
-                # Unknown shape array
-                raise snowml_exceptions.SnowflakeMLException(
-                    error_code=error_codes.INVALID_DATA,
-                    original_exception=ValueError("Data Validation Error: Unknown shape data is found."),
-                )
-
-            if data_col.shape == tf.TensorShape([0]):
-                # Empty array
-                raise snowml_exceptions.SnowflakeMLException(
-                    error_code=error_codes.INVALID_DATA,
-                    original_exception=ValueError("Data Validation Error: Empty data is found."),
-                )
-
-            if data_col.shape == tf.TensorShape([1]) or data_col.shape == tf.TensorShape([]):
-                # scalar
-                raise snowml_exceptions.SnowflakeMLException(
-                    error_code=error_codes.INVALID_DATA,
-                    original_exception=ValueError("Data Validation Error: Scalar data is found."),
-                )
+            TensorflowTensorHandler.validate(data_col)
 
     @staticmethod
     def infer_signature(
         data: Sequence[Union["tensorflow.Tensor", "tensorflow.Variable"]], role: Literal["input", "output"]
     ) -> Sequence[core.BaseFeatureSpec]:
-        feature_prefix = f"{SeqOfTensorflowTensorHandler.FEATURE_PREFIX}_"
-        features: List[core.BaseFeatureSpec] = []
-        role_prefix = (
-            SeqOfTensorflowTensorHandler.INPUT_PREFIX if role == "input" else SeqOfTensorflowTensorHandler.OUTPUT_PREFIX
-        ) + "_"
-
-        for i, data_col in enumerate(data):
-            dtype = core.DataType.from_numpy_type(data_col.dtype.as_numpy_dtype)
-            ft_name = f"{role_prefix}{feature_prefix}{i}"
-            if len(data_col.shape) == 1:
-                features.append(core.FeatureSpec(dtype=dtype, name=ft_name, nullable=False))
-            else:
-                ft_shape = tuple(data_col.shape[1:])
-                features.append(core.FeatureSpec(dtype=dtype, name=ft_name, shape=ft_shape, nullable=False))
-        return features
+        return numpy_handler.SeqOfNumpyArrayHandler.infer_signature([data_col.numpy() for data_col in data], role=role)
 
     @staticmethod
     def convert_to_df(
@@ -129,8 +121,10 @@ class SeqOfTensorflowTensorHandler(
             for feature in features:
                 if isinstance(feature, core.FeatureGroupSpec):
                     raise snowml_exceptions.SnowflakeMLException(
-                        error_code=error_codes.NOT_IMPLEMENTED,
-                        original_exception=NotImplementedError("FeatureGroupSpec is not supported."),
+                        error_code=error_codes.INVALID_DATA_TYPE,
+                        original_exception=NotImplementedError(
+                            "FeatureGroupSpec is not supported when converting to Tensorflow tensor."
+                        ),
                     )
                 assert isinstance(feature, core.FeatureSpec), "Invalid feature kind."
                 res.append(

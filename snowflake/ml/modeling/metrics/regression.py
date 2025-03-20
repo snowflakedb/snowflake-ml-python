@@ -83,6 +83,7 @@ def d2_absolute_error_score(
         packages=[
             f"cloudpickle=={cloudpickle.__version__}",
             f"scikit-learn=={sklearn_release[0]}.{sklearn_release[1]}.*",
+            f"numpy=={np.__version__}",
             "snowflake-snowpark-python",
         ],
         statement_params=statement_params,
@@ -180,6 +181,7 @@ def d2_pinball_score(
         packages=[
             f"cloudpickle=={cloudpickle.__version__}",
             f"scikit-learn=={sklearn_release[0]}.{sklearn_release[1]}.*",
+            f"numpy=={np.__version__}",
             "snowflake-snowpark-python",
         ],
         statement_params=statement_params,
@@ -295,6 +297,7 @@ def explained_variance_score(
         packages=[
             f"cloudpickle=={cloudpickle.__version__}",
             f"scikit-learn=={sklearn_release[0]}.{sklearn_release[1]}.*",
+            f"numpy=={np.__version__}",
             "snowflake-snowpark-python",
         ],
         statement_params=statement_params,

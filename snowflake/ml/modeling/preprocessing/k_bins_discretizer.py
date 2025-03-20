@@ -341,7 +341,7 @@ class KBinsDiscretizer(base.BaseTransformer):
             is_permanent=False,
             name=udf_name,
             replace=True,
-            packages=["numpy"],
+            packages=[f"numpy=={np.__version__}"],
             session=dataset._session,
             statement_params=telemetry.get_statement_params(base.PROJECT, base.SUBPROJECT, self.__class__.__name__),
         )

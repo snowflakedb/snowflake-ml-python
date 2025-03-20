@@ -123,10 +123,11 @@ class ModelTest(absltest.TestCase):
         class AsyncComposeModel(custom_model.CustomModel):
             def __init__(self, context: custom_model.ModelContext) -> None:
                 super().__init__(context)
+                self.m1 = self.context["m1"]
 
             @custom_model.inference_api
             async def predict(self, input: pd.DataFrame) -> pd.DataFrame:
-                res_sum = await self.context.model_ref("m1").predict.async_run(input) + self.context.model_ref(
+                res_sum = await self.m1.predict.async_run(input) + self.context.model_ref(  # type: ignore[union-attr]
                     "m2"
                 ).predict(input)
                 return pd.DataFrame({"output": res_sum / 2})

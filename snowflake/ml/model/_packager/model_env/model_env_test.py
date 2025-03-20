@@ -798,6 +798,15 @@ class ModelEnvTest(absltest.TestCase):
 
         self.assertListEqual(env.pip_requirements, ["pip-packages<4,>=3.0"])
 
+    def test_artifact_repository(self) -> None:
+        env = model_env.ModelEnv()
+        env.conda_dependencies = ["somepackage==1.0.0,!=1.1"]
+        env.pip_requirements = ["pip-packages==3"]
+
+        env.artifact_repository_map = {"channel": "db.sc.repo"}
+
+        self.assertListEqual(env.artifact_repository_map, {"channel": "db.sc.repo"})
+
     def test_load_from_conda_file(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             env_file_path = pathlib.Path(os.path.join(tmpdir, "conda.yml"))

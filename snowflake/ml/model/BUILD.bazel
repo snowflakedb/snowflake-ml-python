@@ -24,6 +24,7 @@ py_library(
         "//snowflake/ml/model/_signatures:base_handler",
         "//snowflake/ml/model/_signatures:builtins_handler",
         "//snowflake/ml/model/_signatures:core",
+        "//snowflake/ml/model/_signatures:dmatrix_handler",
         "//snowflake/ml/model/_signatures:numpy_handler",
         "//snowflake/ml/model/_signatures:pandas_handler",
         "//snowflake/ml/model/_signatures:pytorch_handler",

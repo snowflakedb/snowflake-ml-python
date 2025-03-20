@@ -40,6 +40,7 @@ class XgboostHandlerTest(absltest.TestCase):
                 model=classifier,
                 signatures=s,
                 metadata={"author": "halu", "version": "1"},
+                options=model_types.XGBModelSaveOptions(enable_explainability=False),
             )
 
             with warnings.catch_warnings():
@@ -110,6 +111,7 @@ class XgboostHandlerTest(absltest.TestCase):
                 model=classifier,
                 signatures=s,
                 metadata={"author": "halu", "version": "1"},
+                options=model_types.XGBModelSaveOptions(),
             )
 
             with warnings.catch_warnings():
@@ -181,6 +183,7 @@ class XgboostHandlerTest(absltest.TestCase):
                     signatures={"predict": model_signature.infer_signature(cal_X_test, y_pred)},
                     metadata={"author": "halu", "version": "1"},
                     task=model_types.Task.UNKNOWN,
+                    options=model_types.XGBModelSaveOptions(),
                 )
 
             with warnings.catch_warnings():
@@ -203,6 +206,7 @@ class XgboostHandlerTest(absltest.TestCase):
                     model=classifier,
                     sample_input_data=cal_X_test,
                     metadata={"author": "halu", "version": "1"},
+                    options=model_types.XGBModelSaveOptions(),
                 )
                 save_background_data.assert_called_once()
 
@@ -237,6 +241,7 @@ class XgboostHandlerTest(absltest.TestCase):
                 model=classifier,
                 signatures={"predict": model_signature.infer_signature(cal_X_test, y_pred)},
                 metadata={"author": "halu", "version": "1"},
+                options=model_types.XGBModelSaveOptions(),
             )
 
             with warnings.catch_warnings():
@@ -258,6 +263,7 @@ class XgboostHandlerTest(absltest.TestCase):
                 model=classifier,
                 sample_input_data=cal_X_test,
                 metadata={"author": "halu", "version": "1"},
+                options=model_types.XGBModelSaveOptions(),
             )
 
             pk = model_packager.ModelPackager(os.path.join(tmpdir, "model1_no_sig"))

@@ -8,7 +8,7 @@ import tensorflow as tf
 import tf_keras
 from absl.testing import absltest, parameterized
 
-from snowflake.ml.model import model_signature
+from snowflake.ml.model import model_signature, type_hints as model_types
 from snowflake.ml.model._packager import model_packager
 from snowflake.ml.model._signatures import (
     tensorflow_handler,
@@ -101,13 +101,14 @@ class TensorflowHandlerTest(parameterized.TestCase):
     ) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             model, data_x, data_y = model_fn(tf.float32)
-            s = {"predict": model_signature.infer_signature([data_x], [data_y])}
+            s = {"predict": model_signature.infer_signature(data_x, data_y)}
             with self.assertRaises(ValueError):
                 model_packager.ModelPackager(os.path.join(tmpdir, "model1")).save(
                     name="model1",
                     model=model,
                     signatures={**s, "another_forward": s["predict"]},
                     metadata={"author": "halu", "version": "1"},
+                    options=model_types.KerasSaveOptions(),
                 )
 
             model_packager.ModelPackager(os.path.join(tmpdir, "model1")).save(
@@ -115,6 +116,90 @@ class TensorflowHandlerTest(parameterized.TestCase):
                 model=model,
                 signatures=s,
                 metadata={"author": "halu", "version": "1"},
+                options=model_types.KerasSaveOptions(),
+            )
+
+            y_pred = model.predict(data_x)
+
+            x_df = model_signature_utils.rename_pandas_df(
+                tensorflow_handler.TensorflowTensorHandler.convert_to_df(data_x, ensure_serializable=False),
+                s["predict"].inputs,
+            )
+
+            with warnings.catch_warnings():
+                warnings.simplefilter("error")
+
+                pk = model_packager.ModelPackager(os.path.join(tmpdir, "model1"))
+                pk.load()
+                assert pk.model
+                assert pk.meta
+                assert isinstance(pk.model, tf_keras.Model)
+                tf.debugging.assert_near(pk.model.predict(data_x), y_pred)
+
+                pk = model_packager.ModelPackager(os.path.join(tmpdir, "model1"))
+                pk.load(as_custom_model=True)
+                assert pk.model
+                assert pk.meta
+                predict_method = getattr(pk.model, "predict", None)
+                assert callable(predict_method)
+                tf.debugging.assert_near(
+                    predict_method(x_df),
+                    y_pred,
+                )
+
+            model_packager.ModelPackager(os.path.join(tmpdir, "model1_no_sig_1")).save(
+                name="model1_no_sig_1",
+                model=model,
+                sample_input_data=data_x,
+                metadata={"author": "halu", "version": "1"},
+                options=model_types.KerasSaveOptions(),
+            )
+
+            pk = model_packager.ModelPackager(os.path.join(tmpdir, "model1_no_sig_1"))
+            pk.load()
+            assert pk.model
+            assert pk.meta
+            assert isinstance(pk.model, tf_keras.Model)
+            tf.debugging.assert_near(pk.model.predict(data_x), y_pred)
+            self.assertEqual(s["predict"], pk.meta.signatures["predict"])
+
+            pk = model_packager.ModelPackager(os.path.join(tmpdir, "model1_no_sig_1"))
+            pk.load(as_custom_model=True)
+            assert pk.model
+            assert pk.meta
+            predict_method = getattr(pk.model, "predict", None)
+            assert callable(predict_method)
+            tf.debugging.assert_near(
+                predict_method(x_df),
+                y_pred,
+            )
+
+    @parameterized.parameters(  # type: ignore[misc]
+        {"model_fn": _prepare_keras_subclass_model},
+        {"model_fn": _prepare_keras_sequential_model},
+        {"model_fn": _prepare_keras_functional_model},
+    )
+    def test_tensorflow_keras_multiple_inputs(
+        self, model_fn: Callable[[tf.dtypes.DType], Tuple[tf_keras.Model, tf.Tensor, tf.Tensor]]
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            model, data_x, data_y = model_fn(tf.float32)
+            s = {"predict": model_signature.infer_signature([data_x], [data_y])}
+            with self.assertRaises(ValueError):
+                model_packager.ModelPackager(os.path.join(tmpdir, "model1")).save(
+                    name="model1",
+                    model=model,
+                    signatures={**s, "another_forward": s["predict"]},
+                    metadata={"author": "halu", "version": "1"},
+                    options={"multiple_inputs": True},
+                )
+
+            model_packager.ModelPackager(os.path.join(tmpdir, "model1")).save(
+                name="model1",
+                model=model,
+                signatures=s,
+                metadata={"author": "halu", "version": "1"},
+                options={"multiple_inputs": True},
             )
 
             y_pred = model.predict(data_x)
@@ -152,6 +237,7 @@ class TensorflowHandlerTest(parameterized.TestCase):
                 model=model,
                 sample_input_data=[data_x],
                 metadata={"author": "halu", "version": "1"},
+                options={"multiple_inputs": True},
             )
 
             pk = model_packager.ModelPackager(os.path.join(tmpdir, "model1_no_sig_1"))

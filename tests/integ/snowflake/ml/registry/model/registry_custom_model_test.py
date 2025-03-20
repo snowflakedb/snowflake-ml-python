@@ -42,6 +42,7 @@ class DemoModelArray(custom_model.CustomModel):
 class AsyncComposeModel(custom_model.CustomModel):
     def __init__(self, context: custom_model.ModelContext) -> None:
         super().__init__(context)
+        self.m1 = self.context["m1"]
 
     @custom_model.inference_api
     async def predict(self, input: pd.DataFrame) -> pd.DataFrame:

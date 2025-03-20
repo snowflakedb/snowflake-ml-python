@@ -213,6 +213,7 @@ def _submit_job(
     query_warehouse: Optional[str] = None,
     spec_overrides: Optional[Dict[str, Any]] = None,
     session: Optional[snowpark.Session] = None,
+    num_instances: Optional[int] = None,
 ) -> jb.MLJob:
     """
     Submit a job to the compute pool.
@@ -229,6 +230,7 @@ def _submit_job(
         query_warehouse: The query warehouse to use. Defaults to session warehouse.
         spec_overrides: Custom service specification overrides to apply.
         session: The Snowpark session to use. If none specified, uses active session.
+        num_instances: The number of instances to use for the job. If none specified, single node job is created.
 
     Returns:
         An object representing the submitted job.
@@ -254,6 +256,7 @@ def _submit_job(
         compute_pool=compute_pool,
         payload=uploaded_payload,
         args=args,
+        num_instances=num_instances,
     )
     spec_overrides = spec_utils.generate_spec_overrides(
         environment_vars=env_vars,
@@ -281,6 +284,8 @@ def _submit_job(
     query_warehouse = query_warehouse or session.get_current_warehouse()
     if query_warehouse:
         query.append(f"QUERY_WAREHOUSE = {query_warehouse}")
+    if num_instances:
+        query.append(f"REPLICAS = {num_instances}")
 
     # Submit job
     query_text = "\n".join(line for line in query if line)

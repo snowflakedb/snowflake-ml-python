@@ -1,7 +1,7 @@
 import enum
 import json
 import textwrap
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 from snowflake import snowpark
 from snowflake.ml._internal import platform_capabilities
@@ -11,6 +11,7 @@ from snowflake.ml._internal.utils import (
     sql_identifier,
 )
 from snowflake.ml.model._client.sql import _base
+from snowflake.ml.model._model_composer.model_method import constants
 from snowflake.snowpark import dataframe, functions as F, row, types as spt
 from snowflake.snowpark._internal import utils as snowpark_utils
 
@@ -41,7 +42,7 @@ class ServiceSQLClient(_base._BaseSQLClient):
         image_repo_database_name: Optional[sql_identifier.SqlIdentifier],
         image_repo_schema_name: Optional[sql_identifier.SqlIdentifier],
         image_repo_name: sql_identifier.SqlIdentifier,
-        gpu: Optional[str],
+        gpu: Optional[Union[str, int]],
         force_rebuild: bool,
         external_access_integration: sql_identifier.SqlIdentifier,
         statement_params: Optional[Dict[str, Any]] = None,
@@ -120,6 +121,11 @@ class ServiceSQLClient(_base._BaseSQLClient):
         for input_arg_value in input_args:
             args_sql_list.append(input_arg_value)
         args_sql = ", ".join(args_sql_list)
+
+        wide_input = len(input_args) > constants.SNOWPARK_UDF_INPUT_COL_LIMIT
+        if wide_input:
+            input_args_sql = ", ".join(f"'{arg}', {arg.identifier()}" for arg in input_args)
+            args_sql = f"object_construct_keep_null({input_args_sql})"
 
         if platform_capabilities.PlatformCapabilities.get_instance().is_nested_function_enabled():
             fully_qualified_service_name = self.fully_qualified_object_name(

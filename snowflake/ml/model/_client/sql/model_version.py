@@ -71,6 +71,64 @@ class ModelVersionSQLClient(_base._BaseSQLClient):
             statement_params=statement_params,
         ).has_dimensions(expected_rows=1, expected_cols=1).validate()
 
+    def create_live_version(
+        self,
+        *,
+        database_name: Optional[sql_identifier.SqlIdentifier],
+        schema_name: Optional[sql_identifier.SqlIdentifier],
+        model_name: sql_identifier.SqlIdentifier,
+        version_name: sql_identifier.SqlIdentifier,
+        statement_params: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        sql = (
+            f"CREATE MODEL {self.fully_qualified_object_name(database_name, schema_name, model_name)}"
+            f" WITH LIVE VERSION {version_name.identifier()}"
+        )
+        query_result_checker.SqlResultValidator(
+            self._session,
+            sql,
+            statement_params=statement_params,
+        ).has_dimensions(expected_rows=1, expected_cols=1).validate()
+
+    def add_live_version(
+        self,
+        *,
+        database_name: Optional[sql_identifier.SqlIdentifier],
+        schema_name: Optional[sql_identifier.SqlIdentifier],
+        model_name: sql_identifier.SqlIdentifier,
+        version_name: sql_identifier.SqlIdentifier,
+        statement_params: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        sql = (
+            f"ALTER MODEL {self.fully_qualified_object_name(database_name, schema_name, model_name)}"
+            f" ADD LIVE VERSION {version_name.identifier()}"
+        )
+        query_result_checker.SqlResultValidator(
+            self._session,
+            sql,
+            statement_params=statement_params,
+        ).has_dimensions(expected_rows=1, expected_cols=1).validate()
+
+    def commit_version(
+        self,
+        *,
+        database_name: Optional[sql_identifier.SqlIdentifier],
+        schema_name: Optional[sql_identifier.SqlIdentifier],
+        model_name: sql_identifier.SqlIdentifier,
+        version_name: sql_identifier.SqlIdentifier,
+        statement_params: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        sql = (
+            f"ALTER MODEL {self.fully_qualified_object_name(database_name, schema_name, model_name)}"
+            f" COMMIT VERSION {version_name.identifier()}"
+        )
+
+        query_result_checker.SqlResultValidator(
+            self._session,
+            sql,
+            statement_params=statement_params,
+        ).has_dimensions(expected_rows=1, expected_cols=1).validate()
+
     # TODO(SNOW-987381): Merge with above when we have `create or alter module m [with] version v1 ...`
     def add_version_from_stage(
         self,

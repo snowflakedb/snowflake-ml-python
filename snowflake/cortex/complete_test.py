@@ -1,21 +1,26 @@
 import http.server
 import json
 import logging
+import random
 import re
 import threading
 import time
 import unittest
+import uuid
 from dataclasses import dataclass
 from io import BytesIO
 from types import GeneratorType
-from typing import Any, Dict, Iterable, Iterator, cast
+from typing import Any, Dict, Iterable, Iterator, List, Union, cast
 
 import _test_util
 from absl.testing import absltest
+from pandas.core.interchange.dataframe_protocol import Column
 from requests.exceptions import HTTPError
 
 from snowflake import snowpark
 from snowflake.cortex import _complete
+from snowflake.cortex._complete import ConversationMessage
+from snowflake.cortex.json_mode_test_utils import schema_utils
 from snowflake.snowpark import functions, types
 
 _OPTIONS = _complete.CompleteOptions(  # random params
@@ -133,8 +138,11 @@ class MockIpifyHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
         params = json.loads(post_data)
         model = params["model"]
         stream = params["stream"]
-
         logger.info(f"model: {model} stream: {stream}")
+        response_format_obj = params.get("response_format")
+        prompt = params.get("messages")
+
+        json_mode = True if response_format_obj is not None else False
 
         if model == _MISSING_MODEL_NAME:
             self.send_response(400)
@@ -161,6 +169,9 @@ class MockIpifyHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
             logger.info("sending successful response")
 
         if stream:
+            if json_mode:
+                return self._handle_json_mode_stream(response_format_obj, prompt)
+
             self.send_response(200)
             self.send_header("Content-Type", "text/event-stream")
             self.end_headers()
@@ -173,11 +184,10 @@ class MockIpifyHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
 
             # Simulate streaming by sending the response in chunks
             data_out = "This is a streaming response"
+
             chunk_size = 4
-            for i in range(0, len(data_out), chunk_size):
-                json_msg = json.dumps({"choices": [{"delta": {"content": data_out[i : i + chunk_size]}}]})
-                self.wfile.write(f"data: {json_msg}\n\n".encode())
-                self.wfile.flush()
+            self._write_chunked_response(chunk_size, data_out)
+
             return
 
         response_json = {"choices": [{"message": {"content": "This is a non streaming response"}}]}
@@ -192,6 +202,45 @@ class MockIpifyHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
 
         self.wfile.write(json.dumps(response_json).encode("utf-8"))
 
+    def _handle_json_mode_stream(self, response_format_obj: Dict[str, Any], prompt: List[Dict[str, str]]) -> None:
+        people_case = response_format_obj.get("schema", {}).get("properties", {}).get("people", {})
+        if response_format_obj.get("type") != "json":
+            self._handle_json_mode_stream_rest_response(schema_utils.response_format_with_bad_input, 400, True)
+            return
+        if people_case.get("type") == "i_dont_exist":
+            self._handle_json_mode_stream_rest_response(
+                schema_utils.response_format_failing_input_validation, 400, True
+            )
+            return
+        if len(prompt) == 2:
+            self._handle_json_mode_stream_rest_response(schema_utils.response_format_positive, 200, False)
+            return
+
+    def _handle_json_mode_stream_rest_response(
+        self, test_utils: schema_utils.JsonModeTestUtils, err_code: int, mid_stream_err: bool
+    ) -> None:
+        self.send_response(err_code)
+        if 200 <= err_code < 300:
+            self.send_header("Content-Type", "text/event-stream")
+        else:
+            self.send_header("Content-Type", "application/json")
+        self.end_headers()
+        expected_res = json.dumps(test_utils.expected_response) if test_utils.expected_response else "[]"
+        if mid_stream_err:
+            if 200 <= err_code < 300:
+                self._write_chunked_response(10, expected_res)
+            additional_error_message = json.dumps({"error": test_utils.error_message_rest})
+            self.wfile.write(f"data:{additional_error_message}\n\n".encode())
+            self.wfile.flush()
+        else:
+            self._write_chunked_response(10, expected_res)
+
+    def _write_chunked_response(self, chunk_size: int, data_out: str) -> None:
+        for i in range(0, len(data_out), chunk_size):
+            json_msg = json.dumps({"choices": [{"delta": {"content": data_out[i : i + chunk_size]}}]})
+            self.wfile.write(f"data: {json_msg}\n\n".encode())
+            self.wfile.flush()
+
 
 # This is a fake implementation of the function that sends the request to the Snowflake API via XP.
 def fake_xp_request_handler(
@@ -205,6 +254,81 @@ def fake_xp_request_handler(
 ) -> Any:
     assert method == "POST"
     assert "/cortex/" in url
+
+    def _handle_json_mode_xp(
+        response_format_obj: Dict[str, Any], prompt: Union[str, list[ConversationMessage], Column]
+    ) -> Union[Dict[str, Any], None]:
+        def _prepare_error_response_template(
+            status_code: int, message: str, error_code: str, request_id: str
+        ) -> Dict[str, Any]:
+            return {
+                "status": status_code,
+                "content": f"""{{
+                    "code":	"{error_code}",
+                        "message":	"{message}",
+                        "request_id":	"{request_id}",
+                        "error_code":	"{error_code}"
+                    }}""",
+                "headers": {
+                    "Content-Type": "application/json",
+                    "Content-Length": "243",
+                    "Date": "Thu, 05 Dec 2024 16:51:28 GMT",
+                    "X-Snowflake-Request-ID": f"{request_id}",
+                },
+            }
+
+        def _prepare_response_template(status_code: int, message: Dict[str, Any], request_id: str) -> Dict[str, Any]:
+            return {
+                "status": status_code,
+                "content": f"""[{{
+                        "data":	{{
+                            "id":	"{request_id}",
+                            "created":	1733417829,
+                            "model":	"mistral-large",
+                            "choices":	[{{
+                                    "delta":	{{
+                                        "content":	"{message}"
+                                    }}
+                                }}],
+                            "usage":	{{
+                                "prompt_tokens":	14,
+                                "completion_tokens":	1,
+                                "total_tokens":	15
+                            }}
+                        }}
+                    }}]""",
+                "headers": {
+                    "Transfer-Encoding": "chunked",
+                    "Cache-Control": "no-cache",
+                    "X-Accel-Buffering": "no",
+                    "X-Snowflake-Request-ID": f"{request_id}",
+                    "Date": "Thu, 05 Dec 2024 16:57:09 GMT",
+                    "Content-Type": "text/event-stream",
+                },
+            }
+
+        people_case = response_format_obj.get("schema", {}).get("properties", {}).get("people", {})
+        if response_format_obj.get("type") != "json":
+            return _prepare_error_response_template(
+                400,
+                schema_utils.response_format_with_bad_input.error_message_sql,
+                str(random.randint(1000, 9999)),
+                str(uuid.uuid4()),
+            )
+        if people_case.get("type") == "i_dont_exist":
+            return _prepare_error_response_template(
+                422,
+                schema_utils.response_format_failing_input_validation.error_message_sql,
+                str(random.randint(1000, 9999)),
+                str(uuid.uuid4()),
+            )
+
+        if len(prompt) == 2:
+            return _prepare_response_template(
+                200, schema_utils.response_format_positive.expected_response, str(uuid.uuid4())
+            )
+
+        return None
 
     if body["model"] == "empty_content":
         return {
@@ -235,6 +359,10 @@ def fake_xp_request_handler(
                 "X-Snowflake-Request-ID": "80b66f5c-f955-42f7-8d6d-e524533f4f1a",
             },
         }
+    response_format_obj = body.get("response_format")
+    prompt = body.get("messages")
+    if response_format_obj:
+        return _handle_json_mode_xp(response_format_obj, cast(list[ConversationMessage], prompt))
 
     # Response from a real request.
     return {
@@ -286,7 +414,9 @@ def fake_xp_request_handler(
 def replace_uuid(input: str) -> str:
     # Matches a UUID, e.g. 6e577fa0-9673-4214-84d9-20f1a9033df8.
     return re.sub(
-        r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}", "[UUID]", input
+        r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}",
+        "[UUID]",
+        input,
     )
 
 
@@ -299,7 +429,9 @@ class CompleteRESTBackendTest(unittest.TestCase):
 
         faketoken = FakeToken()
         fakeconnectionparameters = FakeConnParams(
-            scheme="http", host=f"127.0.0.1:{self.server.server_address[1]}", rest=faketoken
+            scheme="http",
+            host=f"127.0.0.1:{self.server.server_address[1]}",
+            rest=faketoken,
         )
         self.session = cast(snowpark.Session, FakeSession(fakeconnectionparameters))
 
@@ -308,7 +440,12 @@ class CompleteRESTBackendTest(unittest.TestCase):
         self.server_thread.join()
 
     def test_streaming(self) -> None:
-        result = _complete._complete_impl(model="my_models", prompt="test_prompt", session=self.session, stream=True)
+        result = _complete._complete_impl(
+            model="my_models",
+            prompt="test_prompt",
+            session=self.session,
+            stream=True,
+        )
         self.assertIsInstance(result, GeneratorType)
         output = "".join(list(cast(Iterable[str], result)))
         self.assertEqual("This is a streaming response", output)
@@ -450,7 +587,8 @@ class CompleteRESTBackendTest(unittest.TestCase):
                 session=self.session,
             )
         self.assertEqual(
-            'Request failed: unknown model: "fake_model" (request id: [UUID])', replace_uuid(str(ar.exception))
+            'Request failed: unknown model: "fake_model" (request id: [UUID])',
+            replace_uuid(str(ar.exception)),
         )
 
     def test_xp_empty_content(self) -> None:
@@ -462,6 +600,89 @@ class CompleteRESTBackendTest(unittest.TestCase):
                 session=self.session,
             )
         self.assertEqual("Request failed (request id: [UUID])", replace_uuid(str(ar.exception)))
+
+    def test_xp_json_mode_response_format_with_bad_input(self) -> None:
+        with self.assertRaises(ValueError) as ar:
+            self._execute_json_mode_complete_xp("mistral-7b", schema_utils.response_format_with_bad_input)
+
+        parsed_err_str = schema_utils.response_format_with_bad_input.error_message_sql
+        self.assertEqual(
+            f"Request failed: {parsed_err_str} (request id: [UUID])",
+            replace_uuid(str(ar.exception)),
+        )
+
+    def test_rest_streaming_json_mode_response_format_with_bad_input(self) -> None:
+        try:
+            self._execute_json_mode_complete_rest("mistral-7b", schema_utils.response_format_with_bad_input)
+        except HTTPError as e:
+            self.assertEqual(400, e.response.status_code)
+            # TODO: ASK DURING REVIEW. While testing it with real session object e.response.text was empty
+            # I'd expect it to be equal to json.dumps(response_format_with_wrong_type.error_message_rest), and this
+            # erroris present in body while using a postman, so either something removes it here or it's not being
+            # sent at all?
+            # Just leaving this comment for review to get some kind of clarification.
+            self.assertTrue(
+                json.dumps(schema_utils.response_format_with_bad_input.error_message_rest["message"]) in e.response.text
+            )
+
+    def test_xp_json_mode_response_format_failing_input_validation(self) -> None:
+        with self.assertRaises(ValueError) as ar:
+            self._execute_json_mode_complete_xp("mistral-7b", schema_utils.response_format_failing_input_validation)
+
+        parsed_error_str = schema_utils.response_format_failing_input_validation.error_message_sql.encode().decode(
+            "unicode_escape"
+        )
+        self.assertEqual(
+            f"Request failed: {parsed_error_str} (request id: [UUID])",
+            replace_uuid(str(ar.exception)),
+        )
+
+    def test_rest_streaming_json_mode_response_format_failing_input_validation(self) -> None:
+        try:
+            self._execute_json_mode_complete_rest("mistral-7b", schema_utils.response_format_failing_input_validation)
+        except HTTPError as e:
+            self.assertEqual(400, e.response.status_code)
+            self.assertTrue(
+                schema_utils.response_format_failing_input_validation.error_message_rest["message"]
+                in e.response.text.encode().decode("unicode_escape")
+            )
+
+    def test_xp_json_mode_positive(self) -> None:
+        result = self._execute_json_mode_complete_xp("mistral-7b", schema_utils.response_format_positive)
+
+        self.assertDictEqual(
+            json.loads(cast(str, result).replace("'", '"')),
+            schema_utils.response_format_positive.expected_response,
+        )
+
+    def test_rest_streaming_json_mode_positive(self) -> None:
+        result = self._execute_json_mode_complete_rest("mistral-7b", schema_utils.response_format_positive)
+
+        self.assertIsInstance(result, GeneratorType)
+        output = "".join(list(cast(Iterable[str], result)))
+        self.assertDictEqual(schema_utils.response_format_positive.expected_response, json.loads(output))
+
+    def _execute_json_mode_complete_xp(
+        self, model_name: str, jsonmode_utils_obj: schema_utils.JsonModeTestUtils
+    ) -> Union[str, Iterator[str], snowpark.Column]:
+        return _complete._complete_impl(
+            snow_api_xp_request_handler=fake_xp_request_handler,
+            model=model_name,
+            prompt=jsonmode_utils_obj.prompt,
+            options=_complete.CompleteOptions(response_format=jsonmode_utils_obj.response_format),
+            session=self.session,
+        )
+
+    def _execute_json_mode_complete_rest(
+        self, model_name: str, jsonmode_utils_obj: schema_utils.JsonModeTestUtils
+    ) -> Union[str, Iterator[str], snowpark.Column]:
+        return _complete._complete_impl(
+            model=model_name,
+            prompt=jsonmode_utils_obj.prompt,
+            options=_complete.CompleteOptions(response_format=jsonmode_utils_obj.response_format),
+            session=self.session,
+            stream=True,
+        )
 
 
 if __name__ == "__main__":

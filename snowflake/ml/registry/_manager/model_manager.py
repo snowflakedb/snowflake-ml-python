@@ -4,7 +4,7 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 import pandas as pd
 from absl.logging import logging
 
-from snowflake.ml._internal import telemetry
+from snowflake.ml._internal import platform_capabilities, telemetry
 from snowflake.ml._internal.exceptions import error_codes, exceptions
 from snowflake.ml._internal.human_readable_id import hrid_generator
 from snowflake.ml._internal.utils import sql_identifier
@@ -13,7 +13,7 @@ from snowflake.ml.model._client.model import model_impl, model_version_impl
 from snowflake.ml.model._client.ops import metadata_ops, model_ops, service_ops
 from snowflake.ml.model._model_composer import model_composer
 from snowflake.ml.model._packager.model_meta import model_meta
-from snowflake.snowpark import session
+from snowflake.snowpark import exceptions as snowpark_exceptions, session
 
 logger = logging.getLogger(__name__)
 
@@ -46,6 +46,7 @@ class ModelManager:
         metrics: Optional[Dict[str, Any]] = None,
         conda_dependencies: Optional[List[str]] = None,
         pip_requirements: Optional[List[str]] = None,
+        artifact_repository_map: Optional[Dict[str, str]] = None,
         target_platforms: Optional[List[model_types.SupportedTargetPlatformType]] = None,
         python_version: Optional[str] = None,
         signatures: Optional[Dict[str, model_signature.ModelSignature]] = None,
@@ -127,6 +128,7 @@ class ModelManager:
             metrics=metrics,
             conda_dependencies=conda_dependencies,
             pip_requirements=pip_requirements,
+            artifact_repository_map=artifact_repository_map,
             target_platforms=target_platforms,
             python_version=python_version,
             signatures=signatures,
@@ -149,6 +151,7 @@ class ModelManager:
         metrics: Optional[Dict[str, Any]] = None,
         conda_dependencies: Optional[List[str]] = None,
         pip_requirements: Optional[List[str]] = None,
+        artifact_repository_map: Optional[Dict[str, str]] = None,
         target_platforms: Optional[List[model_types.SupportedTargetPlatformType]] = None,
         python_version: Optional[str] = None,
         signatures: Optional[Dict[str, model_signature.ModelSignature]] = None,
@@ -163,17 +166,60 @@ class ModelManager:
         database_name_id, schema_name_id, model_name_id = sql_identifier.parse_fully_qualified_name(model_name)
         version_name_id = sql_identifier.SqlIdentifier(version_name)
 
-        stage_path = self._model_ops.prepare_model_stage_path(
-            database_name=database_name_id,
-            schema_name=schema_name_id,
-            statement_params=statement_params,
-        )
+        use_live_commit = platform_capabilities.PlatformCapabilities.get_instance().is_live_commit_enabled()
+        if use_live_commit:
+            logger.info("Using live commit model version")
+        else:
+            logger.info("Using non-live commit model version")
+
+        if use_live_commit:
+            # This step creates the live model version, and the files can be written directly to the stage
+            # after this.
+            try:
+                self._model_ops.add_or_create_live_version(
+                    database_name=database_name_id,
+                    schema_name=schema_name_id,
+                    model_name=model_name_id,
+                    version_name=version_name_id,
+                    statement_params=statement_params,
+                )
+            except (AssertionError, snowpark_exceptions.SnowparkSQLException) as e:
+                logger.info(f"Failed to create live model version: {e}, falling back to regular model version creation")
+                use_live_commit = False
+
+        if use_live_commit:
+            # using model version's stage path to write files directly to the stage
+            stage_path = self._model_ops.get_model_version_stage_path(
+                database_name=database_name_id,
+                schema_name=schema_name_id,
+                model_name=model_name_id,
+                version_name=version_name_id,
+            )
+        else:
+            # using a temp path to write files and then upload to the model version's stage
+            stage_path = self._model_ops.prepare_model_temp_stage_path(
+                database_name=database_name_id,
+                schema_name=schema_name_id,
+                statement_params=statement_params,
+            )
 
         platforms = None
         # User specified target platforms are defaulted to None and will not show up in the generated manifest.
         if target_platforms:
             # Convert any string target platforms to TargetPlatform objects
             platforms = [model_types.TargetPlatform(platform) for platform in target_platforms]
+
+        if artifact_repository_map:
+            for channel, artifact_repository_name in artifact_repository_map.items():
+                db_id, schema_id, repo_id = sql_identifier.parse_fully_qualified_name(artifact_repository_name)
+
+                artifact_repository_map[channel] = sql_identifier.get_fully_qualified_name(
+                    db_id,
+                    schema_id,
+                    repo_id,
+                    self._database_name,
+                    self._schema_name,
+                )
 
         logger.info("Start packaging and uploading your model. It might take some time based on the size of the model.")
 
@@ -187,6 +233,7 @@ class ModelManager:
             sample_input_data=sample_input_data,
             conda_dependencies=conda_dependencies,
             pip_requirements=pip_requirements,
+            artifact_repository_map=artifact_repository_map,
             target_platforms=platforms,
             python_version=python_version,
             user_files=user_files,
@@ -211,6 +258,7 @@ class ModelManager:
             model_name=model_name_id,
             version_name=version_name_id,
             statement_params=statement_params,
+            use_live_commit=use_live_commit,
         )
 
         mv = model_version_impl.ModelVersion._ref(

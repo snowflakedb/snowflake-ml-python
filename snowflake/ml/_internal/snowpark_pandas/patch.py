@@ -11,7 +11,9 @@ from snowflake.ml._internal import file_utils
 from snowflake.ml._internal.utils import identifier
 from snowflake.snowpark import context, functions as F
 from snowflake.snowpark._internal import utils
-from snowflake.snowpark.modin import pandas as SnowparkPandas
+from snowflake.snowpark.modin import (  # type: ignore[attr-defined]
+    pandas as SnowparkPandas,
+)
 
 PATCH_SPROC_NAME = f"{utils.random_name_for_temp_object(utils.TempObjectType.PROCEDURE)}_patch_sproc"
 PATCH_UDF_NAME = f"{utils.random_name_for_temp_object(utils.TempObjectType.FUNCTION)}_patch_udf"

@@ -43,13 +43,13 @@ class ModelPackager:
         metadata: Optional[Dict[str, str]] = None,
         conda_dependencies: Optional[List[str]] = None,
         pip_requirements: Optional[List[str]] = None,
+        artifact_repository_map: Optional[Dict[str, str]] = None,
         python_version: Optional[str] = None,
         ext_modules: Optional[List[ModuleType]] = None,
         code_paths: Optional[List[str]] = None,
-        options: Optional[model_types.ModelSaveOption] = None,
+        options: model_types.ModelSaveOption,
         task: model_types.Task = model_types.Task.UNKNOWN,
     ) -> model_meta.ModelMetadata:
-
         if (signatures is None) and (sample_input_data is None) and not model_handler.is_auto_signature_model(model):
             raise snowml_exceptions.SnowflakeMLException(
                 error_code=error_codes.INVALID_ARGUMENT,
@@ -57,9 +57,6 @@ class ModelPackager:
                     "Either of `signatures` or `sample_input_data` must be provided for this kind of model."
                 ),
             )
-
-        if not options:
-            options = model_types.BaseModelSaveOption()
 
         handler = model_handler.find_handler(model)
         if handler is None:
@@ -77,6 +74,7 @@ class ModelPackager:
             ext_modules=ext_modules,
             conda_dependencies=conda_dependencies,
             pip_requirements=pip_requirements,
+            artifact_repository_map=artifact_repository_map,
             python_version=python_version,
             task=task,
             **options,

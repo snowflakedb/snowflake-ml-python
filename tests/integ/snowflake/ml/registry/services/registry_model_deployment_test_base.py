@@ -176,7 +176,7 @@ class RegistryModelDeploymentTestBase(common_test_base.CommonTestBase):
         model_inference_service = service_ops.ServiceLogInfo(
             database_name=database_name_id,
             schema_name=schema_name_id,
-            service_name=sql_identifier.SqlIdentifier(service_name),
+            service_name=service_name_id,
             container_name="model-inference",
         )
         services = [model_build_service, model_inference_service]

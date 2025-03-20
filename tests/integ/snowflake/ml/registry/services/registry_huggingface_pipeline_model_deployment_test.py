@@ -1,4 +1,3 @@
-import json
 import os
 import tempfile
 from typing import List, Optional
@@ -37,21 +36,28 @@ class TestRegistryHuggingFacePipelineDeploymentModelInteg(
 
         model = transformers.pipeline(
             task="text-generation",
-            model="openai-community/gpt2",
+            model="hf-internal-testing/tiny-gpt2-with-chatml-template",
+            max_length=200,
         )
 
-        x_df = pd.DataFrame(
-            [['A descendant of the Lost City of Atlantis, who swam to Earth while saying, "']],
-        )
+        x = [
+            [
+                {"role": "system", "content": "Complete the sentence."},
+                {
+                    "role": "user",
+                    "content": "A descendant of the Lost City of Atlantis, who swam to Earth while saying, ",
+                },
+            ]
+        ]
+
+        x_df = pd.DataFrame([x], columns=["inputs"])
 
         def check_res(res: pd.DataFrame) -> None:
             pd.testing.assert_index_equal(res.columns, pd.Index(["outputs"]))
 
             for row in res["outputs"]:
-                self.assertIsInstance(row, str)
-                resp = json.loads(row)
-                self.assertIsInstance(resp, list)
-                self.assertIn("generated_text", resp[0])
+                self.assertIsInstance(row, list)
+                self.assertIn("generated_text", row[0])
 
         self._test_registry_model_deployment(
             model=model,

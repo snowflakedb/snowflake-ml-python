@@ -80,7 +80,7 @@ class RegistryTensorflowCompatTest(common_test_base.CommonTestBase):
 
     @common_test_base.CommonTestBase.compatibility_test(
         prepare_fn_factory=_prepare_registry_and_log_model_fn_factory_tf_keras_subclass,  # type: ignore[arg-type]
-        version_range=">=1.7.0",
+        version_range=">=1.7.0,<1.7.5",
         additional_packages=["tensorflow==2.12.0", "wrapt==1.14.1"],
     )
     def test_log_model_compat_tf_keras_subclass(self) -> None:
@@ -136,7 +136,7 @@ class RegistryTensorflowCompatTest(common_test_base.CommonTestBase):
 
     @common_test_base.CommonTestBase.compatibility_test(
         prepare_fn_factory=_prepare_registry_and_log_model_fn_factory_tf_keras_sequential,  # type: ignore[arg-type]
-        version_range=">=1.7.0",
+        version_range=">=1.7.0,<1.7.5",
         additional_packages=["tensorflow==2.12.0", "wrapt==1.14.1"],
     )
     def test_log_model_compat_tf_keras_sequential(self) -> None:
@@ -190,7 +190,7 @@ class RegistryTensorflowCompatTest(common_test_base.CommonTestBase):
 
     @common_test_base.CommonTestBase.compatibility_test(
         prepare_fn_factory=_prepare_registry_and_log_model_fn_factory_tf_keras_functional,  # type: ignore[arg-type]
-        version_range=">=1.7.0",
+        version_range=">=1.7.0,<1.7.5",
         additional_packages=["tensorflow==2.12.0", "wrapt==1.14.1"],
     )
     def test_log_model_compat_tf_keras_functional(self) -> None:
