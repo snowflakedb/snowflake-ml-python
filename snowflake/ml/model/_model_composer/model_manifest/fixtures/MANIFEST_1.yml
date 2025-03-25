@@ -23,4 +23,3 @@ runtimes:
     - model/
     language: PYTHON
     version: '3.8'
-user_files: []

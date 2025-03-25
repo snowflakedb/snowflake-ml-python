@@ -14,7 +14,6 @@ import inflection
 from absl import app
 
 from codegen import sklearn_wrapper_autogen as swa
-from snowflake.ml._internal.snowpark_pandas import imports
 
 
 @dataclass(frozen=True)
@@ -175,27 +174,6 @@ def get_test_build_file_content(module: ModuleInfo, module_root_dir: str) -> str
     )
 
 
-def get_snowpark_pandas_test_build_file_content(module: imports.ModuleInfo, module_root_dir: str) -> str:
-    """Generates the content of BUILD.bazel file for snowpark_pandas test directory of the given module.
-
-    Args:
-        module: Module information.
-        module_root_dir: Relative directory path of the module source code.
-
-    Returns:
-        Returns content of the BUILD.bazel file for module test directory.
-    """
-    return (
-        'load("//codegen:codegen_rules.bzl", "autogen_snowpark_pandas_tests")\n'
-        f'load("//{module_root_dir}:estimators_info.bzl", "snowpark_pandas_estimator_info_list")\n'
-        'package(default_visibility = ["//snowflake/ml/_internal/snowpark_pandas"])\n'
-        "\nautogen_snowpark_pandas_tests(\n"
-        f'    module = "{module.module_name}",\n'
-        f'    module_root_dir = "{module_root_dir}",\n'
-        "    snowpark_pandas_estimator_info_list=snowpark_pandas_estimator_info_list\n)"
-    )
-
-
 def main(argv: List[str]) -> None:
     del argv  # Unused.
 
@@ -223,19 +201,6 @@ def main(argv: List[str]) -> None:
         # Test build file:
         # Contains genrules and py_test rules for all the estimator wrappers.
         test_build_file_content = get_test_build_file_content(module, module_root_dir)
-        os.makedirs("/".join(test_build_file_path.split("/")[:-1]), exist_ok=True)
-        open(test_build_file_path, "w").write(test_build_file_content)
-
-    for module in imports.MODULES:
-        if len(module.exclude_list) > 0 and len(module.include_list) > 0:
-            raise ValueError(f"Both include_list and exclude_list can't be specified for module {module.module_name}!")
-
-        module_root_dir = swa.AutogenTool.module_root_dir(module.module_name)
-        test_build_file_path = os.path.join(TEST_OUTPUT_PATH, module_root_dir, "BUILD.bazel")
-
-        # Snowpandas test build file:
-        # Contains genrules and py_test rules for all the snowpark_pandas estimators.
-        test_build_file_content = get_snowpark_pandas_test_build_file_content(module, module_root_dir)
         os.makedirs("/".join(test_build_file_path.split("/")[:-1]), exist_ok=True)
         open(test_build_file_path, "w").write(test_build_file_content)
 

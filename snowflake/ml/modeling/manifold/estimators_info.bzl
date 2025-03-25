@@ -4,5 +4,3 @@ estimator_info_list = [
     struct(class_name = "SpectralEmbedding", normalized_class_name = "spectral_embedding"),
     struct(class_name = "TSNE", normalized_class_name = "tsne"),
 ]
-
-snowpark_pandas_estimator_info_list = estimator_info_list

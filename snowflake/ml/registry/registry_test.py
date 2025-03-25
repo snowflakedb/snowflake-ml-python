@@ -4,8 +4,9 @@ from unittest import mock
 from absl.testing import absltest
 
 from snowflake.ml._internal.utils import sql_identifier
-from snowflake.ml.model import type_hints
+from snowflake.ml.model import type_hints, type_hints as model_types
 from snowflake.ml.model._client.model import model_version_impl
+from snowflake.ml.model._client.model.model_version_impl import ModelVersion
 from snowflake.ml.monitoring import model_monitor
 from snowflake.ml.monitoring.entities import model_monitor_config
 from snowflake.ml.registry import registry
@@ -191,6 +192,29 @@ class RegistryTest(absltest.TestCase):
                 options=None,
                 statement_params=mock.ANY,
                 task=type_hints.Task.UNKNOWN,
+            )
+
+    def test_log_model_from_model_version_bad_arguments(self) -> None:
+        m_model_version = mock.MagicMock(spec=ModelVersion)
+        with self.assertRaisesRegex(
+            ValueError,
+            "When calling log_model with a ModelVersion, only model_name and version_name may be specified.",
+        ):
+            self.m_r.log_model(
+                model=m_model_version,
+                model_name="MODEL",
+                version_name="v1",
+                comment="not allowed",
+            )
+
+        with self.assertRaisesRegex(
+            ValueError, "`task` cannot be specified when calling log_model with a ModelVersion."
+        ):
+            self.m_r.log_model(
+                model=m_model_version,
+                model_name="MODEL",
+                version_name="v1",
+                task=model_types.Task.TABULAR_RANKING,
             )
 
     def test_log_model_with_artifact_repo(self) -> None:

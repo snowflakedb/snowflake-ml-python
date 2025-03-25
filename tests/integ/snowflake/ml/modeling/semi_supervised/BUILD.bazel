@@ -1,5 +1,5 @@
-load("//codegen:codegen_rules.bzl", "autogen_snowpark_pandas_tests", "autogen_tests_for_estimators")
-load("//snowflake/ml/modeling/semi_supervised:estimators_info.bzl", "estimator_info_list", "snowpark_pandas_estimator_info_list")
+load("//codegen:codegen_rules.bzl", "autogen_tests_for_estimators")
+load("//snowflake/ml/modeling/semi_supervised:estimators_info.bzl", "estimator_info_list")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -7,10 +7,4 @@ autogen_tests_for_estimators(
     estimator_info_list = estimator_info_list,
     module = "sklearn.semi_supervised",
     module_root_dir = "snowflake/ml/modeling/semi_supervised",
-)
-
-autogen_snowpark_pandas_tests(
-    module = "sklearn.semi_supervised",
-    module_root_dir = "snowflake/ml/modeling/semi_supervised",
-    snowpark_pandas_estimator_info_list = snowpark_pandas_estimator_info_list,
 )

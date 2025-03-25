@@ -97,6 +97,7 @@ def generate_service_spec(
     payload: types.UploadedPayload,
     args: Optional[List[str]] = None,
     num_instances: Optional[int] = None,
+    enable_metrics: bool = False,
 ) -> Dict[str, Any]:
     """
     Generate a service specification for a job.
@@ -107,6 +108,7 @@ def generate_service_spec(
         payload: Uploaded job payload
         args: Arguments to pass to entrypoint script
         num_instances: Number of instances for multi-node job
+        enable_metrics: Enable platform metrics for the job
 
     Returns:
         Job service specification
@@ -211,6 +213,16 @@ def generate_service_spec(
         ]
         endpoints.extend(ray_endpoints)
 
+    metrics = []
+    if enable_metrics:
+        # https://docs.snowflake.com/en/developer-guide/snowpark-container-services/monitoring-services#label-spcs-available-platform-metrics
+        metrics = [
+            "system",
+            "status",
+            "network",
+            "storage",
+        ]
+
     spec_dict = {
         "containers": [
             {
@@ -233,6 +245,16 @@ def generate_service_spec(
     }
     if endpoints:
         spec_dict["endpoints"] = endpoints
+    if metrics:
+        spec_dict.update(
+            {
+                "platformMonitor": {
+                    "metricConfig": {
+                        "groups": metrics,
+                    },
+                },
+            }
+        )
 
     # Assemble into service specification dict
     spec = {"spec": spec_dict}

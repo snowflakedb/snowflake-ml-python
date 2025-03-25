@@ -10,6 +10,7 @@ from sklearn import (
     ensemble,
     linear_model,
     multioutput,
+    neighbors,
     pipeline as SK_pipeline,
     preprocessing,
 )
@@ -31,7 +32,7 @@ class TestRegistrySKLearnModelInteg(registry_model_test_base.RegistryModelTestBa
         registry_test_fn: str,
     ) -> None:
         iris_X, iris_y = datasets.load_iris(return_X_y=True)
-        # LogisticRegression is for classfication task, such as iris
+        # LogisticRegression is for classification task, such as iris
         classifier = linear_model.LogisticRegression()
         classifier.fit(iris_X, iris_y)
         getattr(self, registry_test_fn)(
@@ -166,7 +167,7 @@ class TestRegistrySKLearnModelInteg(registry_model_test_base.RegistryModelTestBa
         registry_test_fn: str,
     ) -> None:
         iris_X, iris_y = datasets.load_iris(return_X_y=True)
-        # LogisticRegression is for classfication task, such as iris
+        # LogisticRegression is for classification task, such as iris
         regr = linear_model.LogisticRegression()
         regr.fit(iris_X, iris_y)
         getattr(self, registry_test_fn)(
@@ -383,6 +384,49 @@ class TestRegistrySKLearnModelInteg(registry_model_test_base.RegistryModelTestBa
                 ),
             },
             # TODO(SNOW-1677301): Add support for explainability for categorical columns
+            options={"enable_explainability": False},
+            signatures=expected_signatures,
+        )
+
+    @parameterized.product(  # type: ignore[misc]
+        registry_test_fn=registry_model_test_base.RegistryModelTestBase.REGISTRY_TEST_FN_LIST,
+    )
+    def test_skl_KDensity_model(
+        self,
+        registry_test_fn: str,
+    ) -> None:
+
+        # Generate sample data
+        X = np.arange(0, 10)[:, np.newaxis]
+
+        # Instantiate and fit the Kernel Density Estimator
+        kde = neighbors.KernelDensity(kernel="gaussian", bandwidth=0.5)
+        kde.fit(X)
+
+        expected_signatures = {
+            "score_samples": model_signature.infer_signature(
+                X,
+                kde.score_samples(X),
+            ),
+        }
+
+        def _check_score_samples(res: pd.DataFrame) -> None:
+            expected = kde.score_samples(X)
+            pd.testing.assert_series_equal(
+                res["output_feature_0"],
+                pd.Series(expected, name="output_feature_0"),
+                check_dtype=False,
+            )
+
+        getattr(self, registry_test_fn)(
+            model=kde,
+            sample_input_data=X,
+            prediction_assert_fns={
+                "score_samples": (
+                    X,
+                    _check_score_samples,
+                ),
+            },
             options={"enable_explainability": False},
             signatures=expected_signatures,
         )

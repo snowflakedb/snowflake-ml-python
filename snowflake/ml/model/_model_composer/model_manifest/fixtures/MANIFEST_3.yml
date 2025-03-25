@@ -39,4 +39,3 @@ runtimes:
     - runtimes/python_runtime/snowflake-ml-python.zip
     language: PYTHON
     version: '3.8'
-user_files: []

@@ -8,6 +8,7 @@ from absl.testing import absltest, parameterized
 from sklearn import svm
 
 from snowflake.ml.model import ExportMode
+from snowflake.ml.model.type_hints import Task
 from snowflake.ml.registry import registry
 from snowflake.ml.utils import connection_params
 from snowflake.snowpark import Session
@@ -88,6 +89,9 @@ class TestModelVersionImplInteg(parameterized.TestCase):
         loaded_model = self._mv.load(force=True)
         assert isinstance(loaded_model, svm.SVC)
         np.testing.assert_allclose(loaded_model.predict(self.test_features), self.model.predict(self.test_features))
+
+    def test_get_model_task(self) -> None:
+        self.assertEqual(self._mv.get_model_task(), Task.TABULAR_BINARY_CLASSIFICATION)
 
 
 if __name__ == "__main__":

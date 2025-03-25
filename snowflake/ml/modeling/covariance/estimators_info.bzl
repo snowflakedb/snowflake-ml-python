@@ -8,5 +8,3 @@ estimator_info_list = [
     struct(class_name = "OAS", normalized_class_name = "oas"),
     struct(class_name = "ShrunkCovariance", normalized_class_name = "shrunk_covariance"),
 ]
-
-snowpark_pandas_estimator_info_list = estimator_info_list

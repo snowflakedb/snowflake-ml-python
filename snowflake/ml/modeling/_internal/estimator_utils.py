@@ -130,7 +130,11 @@ def is_single_node(session: Session) -> bool:
     warehouse_name = session.get_current_warehouse()
     if warehouse_name:
         warehouse_name = warehouse_name.replace('"', "")
-        df = session.sql(f"SHOW WAREHOUSES like '{warehouse_name}';")['"type"', '"size"'].collect()[0]
+        df_list = session.sql(f"SHOW WAREHOUSES like '{warehouse_name}';")['"type"', '"size"'].collect()
+        # If no warehouse data is found, default to True (single node)
+        if not df_list:
+            return True
+        df = df_list[0]
         # filter out the conditions when it is single node
         single_node: bool = (df[0] == "SNOWPARK-OPTIMIZED" and df[1] == "Medium") or (
             df[0] == "STANDARD" and df[1] == "X-Small"

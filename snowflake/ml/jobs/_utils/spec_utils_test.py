@@ -336,6 +336,32 @@ class SpecUtilsTests(parameterized.TestCase):
             expected_spec = yaml.safe_load(f)
         self.assertEmpty(_get_dict_difference(expected_spec, spec))
 
+    def test_prepare_spec_with_metrics(self) -> None:
+        resources = types.ComputeResources(cpu=1, memory=4)
+        entrypoint = Path("src/main.py")
+        with mock.patch("snowflake.ml.jobs._utils.spec_utils._get_image_spec") as mock_get_image_spec:
+            mock_get_image_spec.return_value = types.ImageSpec(
+                repo="dummy_repo",
+                image_name="dummy_image",
+                image_tag="latest",
+                resource_requests=resources,
+                resource_limits=resources,
+            )
+            payload = types.UploadedPayload(
+                Path("@dummy_stage"),
+                [entrypoint],
+            )
+            spec = spec_utils.generate_service_spec(
+                None,  # type: ignore[arg-type] # (Don't need session since we mock out _get_image_spec)
+                compute_pool="dummy_pool",
+                payload=payload,
+                enable_metrics=True,
+            )
+            self.assertIn("platformMonitor", spec["spec"])
+            self.assertIn("metricConfig", spec["spec"]["platformMonitor"])
+            self.assertIn("groups", spec["spec"]["platformMonitor"]["metricConfig"])
+            self.assertGreater(len(spec["spec"]["platformMonitor"]["metricConfig"]["groups"]), 0)
+
 
 if __name__ == "__main__":
     absltest.main()

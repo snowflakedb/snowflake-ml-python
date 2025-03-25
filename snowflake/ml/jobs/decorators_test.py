@@ -13,7 +13,7 @@ class JobDecoratorTests(absltest.TestCase):
         cls.session = absltest.mock.MagicMock(spec=snowpark.Session)
 
     def test_job_decorator_unsupported_arg_type(self) -> None:
-        @decorators.remote(self.compute_pool, "payload_stage", session=self.session)  # type: ignore[misc]
+        @decorators.remote(self.compute_pool, stage_name="payload_stage", session=self.session)  # type: ignore[misc]
         def decojob_fn2(a, b: int, session) -> None:  # type: ignore[no-untyped-def]
             pass
 

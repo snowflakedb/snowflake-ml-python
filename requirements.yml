@@ -92,7 +92,7 @@
     - catboost
 - name: cloudpickle
   dev_version: 2.2.1
-  version_requirements: '>=2.0.0'
+  version_requirements: '>=2.0.0,<3'
   tags:
     - model_packaging
 - name: cryptography

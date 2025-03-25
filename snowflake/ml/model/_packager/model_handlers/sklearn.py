@@ -57,6 +57,7 @@ class SKLModelHandler(_base.BaseModelHandler[Union["sklearn.base.BaseEstimator",
         "predict_proba",
         "predict_log_proba",
         "decision_function",
+        "score_samples",
     ]
     EXPLAIN_TARGET_METHODS = ["predict", "predict_proba", "predict_log_proba"]
 
@@ -74,10 +75,6 @@ class SKLModelHandler(_base.BaseModelHandler[Union["sklearn.base.BaseEstimator",
             and (
                 not type_utils.LazyType("lightgbm.LGBMModel").isinstance(model)
             )  # LGBMModel is actually a BaseEstimator
-            and any(
-                (hasattr(model, method) and callable(getattr(model, method, None)))
-                for method in cls.DEFAULT_TARGET_METHODS
-            )
         )
 
     @classmethod

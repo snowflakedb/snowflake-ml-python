@@ -39,10 +39,9 @@ flags.DEFINE_list(
 flags.DEFINE_string(
     "gen_mode",
     None,
-    "Options: ['SRC', 'TEST', 'SNOWPARK_PANDAS_TEST']."
+    "Options: ['SRC', 'TEST']."
     + "SRC mode generates source code for snowflake wrapper for all the estimator objects in the given modules.\n"
-    + "TEST mode generates integration tests for all the auto generated python wrappers in the given module.\n"
-    + "SNOWPARK_PANDAS_TEST mode generates snowpark pandas integration tests in the given module.\n",
+    + "TEST mode generates integration tests for all the auto generated python wrappers in the given module.\n",
 )
 flags.DEFINE_string(
     "bazel_out_dir", None, "Takes bazel out directory as input to compute relative path to bazel-bin folder"

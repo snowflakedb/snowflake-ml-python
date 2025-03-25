@@ -113,8 +113,10 @@ class Registry:
         python_version: Optional[str] = None,
         signatures: Optional[Dict[str, model_signature.ModelSignature]] = None,
         sample_input_data: Optional[model_types.SupportedDataType] = None,
+        user_files: Optional[Dict[str, List[str]]] = None,
         code_paths: Optional[List[str]] = None,
         ext_modules: Optional[List[ModuleType]] = None,
+        task: model_types.Task = model_types.Task.UNKNOWN,
         options: Optional[model_types.ModelSaveOption] = None,
     ) -> ModelVersion:
         """
@@ -156,10 +158,15 @@ class Registry:
                 infer the signature. If not None, sample_input_data should not be specified. Defaults to None.
             sample_input_data: Sample input data to infer model signatures from.
                 It would also be used as background data in explanation and to capture data lineage. Defaults to None.
+            user_files: Dictionary where the keys are subdirectories, and values are lists of local file name
+                strings. The local file name strings can include wildcards (? or *) for matching multiple files.
             code_paths: List of directories containing code to import. Defaults to None.
             ext_modules: List of external modules to pickle with the model object.
                 Only supported when logging the following types of model:
                 Scikit-learn, Snowpark ML, PyTorch, TorchScript and Custom Model. Defaults to None.
+            task: The task of the Model Version. It is an enum class Task with values TABULAR_REGRESSION,
+                TABULAR_BINARY_CLASSIFICATION, TABULAR_MULTI_CLASSIFICATION, TABULAR_RANKING, or UNKNOWN. By default,
+                it is set to Task.UNKNOWN and may be overridden by inferring from the Model Object.
             options (Dict[str, Any], optional): Additional model saving options.
 
                 Model Saving Options include:
@@ -171,6 +178,9 @@ class Registry:
                     Warehouse. It detects any ==x.y.z in specifiers and replaced with >=x.y, <(x+1). Defaults to True.
                 - function_type: Set the method function type globally. To set method function types individually see
                     function_type in model_options.
+                - target_methods: List of target methods to register when logging the model.
+                  This option is not used in MLFlow models. Defaults to None, in which case the model handler's
+                  default target methods will be used.
                 - method_options: Per-method saving options. This dictionary has method names as keys and dictionary
                     values with the desired options.
 
@@ -304,6 +314,9 @@ class Registry:
                     Warehouse. It detects any ==x.y.z in specifiers and replaced with >=x.y, <(x+1). Defaults to True.
                 - function_type: Set the method function type globally. To set method function types individually see
                   function_type in model_options.
+                - target_methods: List of target methods to register when logging the model.
+                  This option is not used in MLFlow models. Defaults to None, in which case the model handler's
+                  default target methods will be used.
                 - method_options: Per-method saving options. This dictionary has method names as keys and dictionary
                     values with the desired options. See the example below.
 
@@ -316,6 +329,9 @@ class Registry:
                     - max_batch_size: Maximum batch size that the method could accept in the Snowflake Warehouse.
                         Defaults to None, determined automatically by Snowflake.
                     - function_type: One of supported model method function types (FUNCTION or TABLE_FUNCTION).
+
+        Raises:
+            ValueError: If extra arguments are specified ModelVersion is provided.
 
         Returns:
             ModelVersion: ModelVersion object corresponding to the model just logged.
@@ -339,13 +355,37 @@ class Registry:
             registry.log_model(
               model=model,
               model_name="my_model",
-              method_options=method_options,
+              options={"method_options": method_options},
             )
         """
         statement_params = telemetry.get_statement_params(
             project=_TELEMETRY_PROJECT,
             subproject=_MODEL_TELEMETRY_SUBPROJECT,
         )
+        if isinstance(model, ModelVersion):
+            # check that no arguments are provided other than the ones for copy model.
+            invalid_args = [
+                comment,
+                conda_dependencies,
+                pip_requirements,
+                artifact_repository_map,
+                target_platforms,
+                python_version,
+                signatures,
+                sample_input_data,
+                user_files,
+                code_paths,
+                ext_modules,
+                options,
+            ]
+            for arg in invalid_args:
+                if arg is not None:
+                    raise ValueError(
+                        "When calling log_model with a ModelVersion, only model_name and version_name may be specified."
+                    )
+            if task is not model_types.Task.UNKNOWN:
+                raise ValueError("`task` cannot be specified when calling log_model with a ModelVersion.")
+
         if pip_requirements:
             warnings.warn(
                 "Models logged specifying `pip_requirements` can not be executed "

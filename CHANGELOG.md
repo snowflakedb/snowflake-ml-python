@@ -1,5 +1,21 @@
 # Release History
 
+## 1.8.1
+
+### Bug Fixes
+
+### Behavior Change
+
+### New Features
+
+- ML Job (PrPr): Update Container Runtime image version to `1.0.1`
+- ML Job (PrPr): Add `enable_metrics` argument to job submission APIs to enable publishing service metrics to Event Table.
+  See [Accessing Event Table service metrics](https://docs.snowflake.com/en/developer-guide/snowpark-container-services/monitoring-services#accessing-event-table-service-metrics)
+  for retrieving published metrics
+  and [Costs of telemetry data collection](https://docs.snowflake.com/en/developer-guide/logging-tracing/logging-tracing-billing)
+  for cost implications.
+- When creating a copy of a `ModelVersion` with `log_model`, raise an exception if unsupported arguments are provided.
+
 ## 1.8.0
 
 ### Bug Fixes
@@ -10,6 +26,9 @@
   a supported model as a property of a CustomModel.
 - Registry: Fix a bug that inference is not working when models with more than 500 input features
   are deployed to SPCS.
+- Registry: Fix a bug that caused `unsupported model type` error while logging a sklearn model with `score_samples`
+  inference method.
+- Registry: Fix a bug that model inference service creation fails on an existing and suspended service.
 
 ### Behavior Change
 

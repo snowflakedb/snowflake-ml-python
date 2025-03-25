@@ -35,5 +35,3 @@ estimator_info_list = [
     struct(class_name = "TheilSenRegressor", normalized_class_name = "theil_sen_regressor"),
     struct(class_name = "TweedieRegressor", normalized_class_name = "tweedie_regressor"),
 ]
-
-snowpark_pandas_estimator_info_list = estimator_info_list

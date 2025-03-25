@@ -19,13 +19,15 @@ _ReturnValue = TypeVar("_ReturnValue")
 @telemetry.send_api_usage_telemetry(project=_PROJECT)
 def remote(
     compute_pool: str,
+    *,
     stage_name: str,
     pip_requirements: Optional[List[str]] = None,
     external_access_integrations: Optional[List[str]] = None,
     query_warehouse: Optional[str] = None,
     env_vars: Optional[Dict[str, str]] = None,
-    session: Optional[snowpark.Session] = None,
     num_instances: Optional[int] = None,
+    enable_metrics: bool = False,
+    session: Optional[snowpark.Session] = None,
 ) -> Callable[[Callable[_Args, _ReturnValue]], Callable[_Args, jb.MLJob]]:
     """
     Submit a job to the compute pool.
@@ -37,8 +39,9 @@ def remote(
         external_access_integrations: A list of external access integrations.
         query_warehouse: The query warehouse to use. Defaults to session warehouse.
         env_vars: Environment variables to set in container
-        session: The Snowpark session to use. If none specified, uses active session.
         num_instances: The number of nodes in the job. If none specified, create a single node job.
+        enable_metrics: Whether to enable metrics publishing for the job.
+        session: The Snowpark session to use. If none specified, uses active session.
 
     Returns:
         Decorator that dispatches invocations of the decorated function as remote jobs.
@@ -63,8 +66,9 @@ def remote(
                 external_access_integrations=external_access_integrations,
                 query_warehouse=query_warehouse,
                 env_vars=env_vars,
-                session=session,
                 num_instances=num_instances,
+                enable_metrics=enable_metrics,
+                session=session,
             )
             assert isinstance(job, jb.MLJob), f"Unexpected job type: {type(job)}"
             return job

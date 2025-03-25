@@ -17,7 +17,7 @@ build:
   noarch: python
 package:
   name: snowflake-ml-python
-  version: 1.8.0
+  version: 1.8.1
 requirements:
   build:
     - python
@@ -27,7 +27,7 @@ requirements:
     - aiohttp!=4.0.0a0, !=4.0.0a1
     - anyio>=3.5.0,<5
     - cachetools>=3.1.1,<6
-    - cloudpickle>=2.0.0
+    - cloudpickle>=2.0.0,<3
     - cryptography
     - fsspec>=2024.6.1,<2026
     - importlib_resources>=6.1.1, <7

@@ -582,8 +582,6 @@ class ModelManifestTest(absltest.TestCase):
             with self.assertRaisesRegex(ValueError, "Unable to get the version of the MANIFEST file."):
                 mm.load()
 
-        model_manifest.ModelManifest._ENABLE_USER_FILES = True
-
         raw_input = {
             "manifest_version": "1.0",
             "runtimes": {
