@@ -1,5 +1,4 @@
 import argparse
-import collections
 import copy
 import functools
 import itertools
@@ -287,11 +286,7 @@ def generate_requirements(
     reqs_pypi = list(filter(None, map(lambda req_info: get_req_name(req_info, "pip"), requirements)))
     reqs_conda = list(filter(None, map(lambda req_info: get_req_name(req_info, "conda"), requirements)))
     if len(reqs_pypi) != len(set(reqs_pypi)) or len(reqs_conda) != len(set(reqs_conda)):
-        # TODO: Remove this after snowpandas is released and is no longer a CI internal requirement.
-        counter = collections.Counter(reqs_pypi)
-        duplicates = {item for item, count in counter.items() if count > 1}
-        if duplicates and duplicates != {"snowflake-snowpark-python"}:
-            raise ValueError(f"Duplicate Requirements: {duplicates}")
+        raise ValueError("Duplicate Requirements found!")
     channels_to_use = [SNOWFLAKE_CONDA_CHANNEL, "nodefaults"]
 
     if extras_filter is None:

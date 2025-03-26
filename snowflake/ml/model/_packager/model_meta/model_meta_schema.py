@@ -82,6 +82,7 @@ class SentenceTransformersModelBlobOptions(BaseModelBlobOptions):
 
 ModelBlobOptions = Union[
     BaseModelBlobOptions,
+    CatBoostModelBlobOptions,
     HuggingFacePipelineModelBlobOptions,
     MLFlowModelBlobOptions,
     XgboostModelBlobOptions,

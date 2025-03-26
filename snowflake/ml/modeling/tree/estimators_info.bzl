@@ -4,5 +4,3 @@ estimator_info_list = [
     struct(class_name = "ExtraTreeClassifier", normalized_class_name = "extra_tree_classifier"),
     struct(class_name = "ExtraTreeRegressor", normalized_class_name = "extra_tree_regressor"),
 ]
-
-snowpark_pandas_estimator_info_list = estimator_info_list

@@ -27,4 +27,3 @@ runtimes:
     version: '3.8'
 target_platforms:
 - WAREHOUSE
-user_files: []

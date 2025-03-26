@@ -6,5 +6,3 @@ estimator_info_list = [
     struct(class_name = "SVC", normalized_class_name = "svc"),
     struct(class_name = "SVR", normalized_class_name = "svr"),
 ]
-
-snowpark_pandas_estimator_info_list = estimator_info_list

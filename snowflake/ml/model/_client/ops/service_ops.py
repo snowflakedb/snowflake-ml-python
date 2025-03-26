@@ -161,12 +161,16 @@ class ServiceOperator:
             statement_params=statement_params,
         )
 
-        # check if the inference service is already running
+        # check if the inference service is already running/suspended
         model_inference_service_exists = self._check_if_service_exists(
             database_name=service_database_name,
             schema_name=service_schema_name,
             service_name=service_name,
-            service_status_list_if_exists=[service_sql.ServiceStatus.READY],
+            service_status_list_if_exists=[
+                service_sql.ServiceStatus.READY,
+                service_sql.ServiceStatus.SUSPENDING,
+                service_sql.ServiceStatus.SUSPENDED,
+            ],
             statement_params=statement_params,
         )
 
@@ -309,7 +313,10 @@ class ServiceOperator:
                         set_service_log_metadata_to_model_inference(
                             service_log_meta,
                             model_inference_service,
-                            "Model Inference image build is not rebuilding the image and using previously built image.",
+                            (
+                                "Model Inference image build is not rebuilding the image, but using a previously built "
+                                "image."
+                            ),
                         )
                         continue
 
@@ -366,7 +373,9 @@ class ServiceOperator:
             time.sleep(5)
 
         if model_inference_service_exists:
-            module_logger.info(f"Inference service {model_inference_service.display_service_name} is already RUNNING.")
+            module_logger.info(
+                f"Inference service {model_inference_service.display_service_name} has already been deployed."
+            )
         else:
             self._finalize_logs(
                 service_log_meta.service_logger, service_log_meta.service, service_log_meta.log_offset, statement_params
@@ -416,6 +425,8 @@ class ServiceOperator:
             service_status_list_if_exists = [
                 service_sql.ServiceStatus.PENDING,
                 service_sql.ServiceStatus.READY,
+                service_sql.ServiceStatus.SUSPENDING,
+                service_sql.ServiceStatus.SUSPENDED,
                 service_sql.ServiceStatus.DONE,
                 service_sql.ServiceStatus.FAILED,
             ]

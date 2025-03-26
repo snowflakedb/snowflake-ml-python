@@ -106,6 +106,8 @@ def submit_file(
     external_access_integrations: Optional[List[str]] = None,
     query_warehouse: Optional[str] = None,
     spec_overrides: Optional[Dict[str, Any]] = None,
+    num_instances: Optional[int] = None,
+    enable_metrics: bool = False,
     session: Optional[snowpark.Session] = None,
 ) -> jb.MLJob:
     """
@@ -121,6 +123,8 @@ def submit_file(
         external_access_integrations: A list of external access integrations.
         query_warehouse: The query warehouse to use. Defaults to session warehouse.
         spec_overrides: Custom service specification overrides to apply.
+        num_instances: The number of instances to use for the job. If none specified, single node job is created.
+        enable_metrics: Whether to enable metrics publishing for the job.
         session: The Snowpark session to use. If none specified, uses active session.
 
     Returns:
@@ -136,6 +140,8 @@ def submit_file(
         external_access_integrations=external_access_integrations,
         query_warehouse=query_warehouse,
         spec_overrides=spec_overrides,
+        num_instances=num_instances,
+        enable_metrics=enable_metrics,
         session=session,
     )
 
@@ -154,6 +160,8 @@ def submit_directory(
     external_access_integrations: Optional[List[str]] = None,
     query_warehouse: Optional[str] = None,
     spec_overrides: Optional[Dict[str, Any]] = None,
+    num_instances: Optional[int] = None,
+    enable_metrics: bool = False,
     session: Optional[snowpark.Session] = None,
 ) -> jb.MLJob:
     """
@@ -170,6 +178,8 @@ def submit_directory(
         external_access_integrations: A list of external access integrations.
         query_warehouse: The query warehouse to use. Defaults to session warehouse.
         spec_overrides: Custom service specification overrides to apply.
+        num_instances: The number of instances to use for the job. If none specified, single node job is created.
+        enable_metrics: Whether to enable metrics publishing for the job.
         session: The Snowpark session to use. If none specified, uses active session.
 
     Returns:
@@ -186,6 +196,8 @@ def submit_directory(
         external_access_integrations=external_access_integrations,
         query_warehouse=query_warehouse,
         spec_overrides=spec_overrides,
+        num_instances=num_instances,
+        enable_metrics=enable_metrics,
         session=session,
     )
 
@@ -212,8 +224,9 @@ def _submit_job(
     external_access_integrations: Optional[List[str]] = None,
     query_warehouse: Optional[str] = None,
     spec_overrides: Optional[Dict[str, Any]] = None,
-    session: Optional[snowpark.Session] = None,
     num_instances: Optional[int] = None,
+    enable_metrics: bool = False,
+    session: Optional[snowpark.Session] = None,
 ) -> jb.MLJob:
     """
     Submit a job to the compute pool.
@@ -229,8 +242,9 @@ def _submit_job(
         external_access_integrations: A list of external access integrations.
         query_warehouse: The query warehouse to use. Defaults to session warehouse.
         spec_overrides: Custom service specification overrides to apply.
-        session: The Snowpark session to use. If none specified, uses active session.
         num_instances: The number of instances to use for the job. If none specified, single node job is created.
+        enable_metrics: Whether to enable metrics publishing for the job.
+        session: The Snowpark session to use. If none specified, uses active session.
 
     Returns:
         An object representing the submitted job.
@@ -257,6 +271,7 @@ def _submit_job(
         payload=uploaded_payload,
         args=args,
         num_instances=num_instances,
+        enable_metrics=enable_metrics,
     )
     spec_overrides = spec_utils.generate_spec_overrides(
         environment_vars=env_vars,

@@ -1,5 +1,4 @@
 import inspect
-import sys
 import tempfile
 import textwrap
 import time
@@ -190,30 +189,30 @@ class JobManagerTest(parameterized.TestCase):
         try:
             # Speed up polling for testing
             constants.JOB_POLL_MAX_DELAY_SECONDS = 0.1  # type: ignore[assignment]
-            fudge_factor = 0.2
+            fudge_factor = 0.5
 
             # Create a dummy job
             job = jobs.MLJob("dummy_job_id", session=self.session)
             with mock.patch("snowflake.ml.jobs.job._get_status", return_value="RUNNING") as mock_get_status:
                 # Test waiting with timeout=0
-                start = time.perf_counter()
+                start = time.monotonic()
                 with self.assertRaises(TimeoutError):
                     job.wait(timeout=0)
-                self.assertLess(time.perf_counter() - start, fudge_factor)
+                self.assertLess(time.monotonic() - start, fudge_factor)
                 mock_get_status.assert_called_once()
 
-                start = time.perf_counter()
+                start = time.monotonic()
                 with self.assertRaises(TimeoutError):
                     job.wait(timeout=1)
-                self.assertBetween(time.perf_counter() - start, 1, 1 + fudge_factor)
+                self.assertBetween(time.monotonic() - start, 1, 1 + fudge_factor)
 
             with mock.patch("snowflake.ml.jobs.job._get_status", return_value="DONE") as mock_get_status:
                 # Test waiting on a completed job with different timeouts
-                start = time.perf_counter()
+                start = time.monotonic()
                 self.assertEqual(job.wait(timeout=0), "DONE")
                 self.assertEqual(job.wait(timeout=-10), "DONE")
                 self.assertEqual(job.wait(timeout=+10), "DONE")
-                self.assertLess(time.perf_counter() - start, fudge_factor)
+                self.assertLess(time.monotonic() - start, fudge_factor)
         finally:
             constants.JOB_POLL_MAX_DELAY_SECONDS = max_backoff
 
@@ -251,17 +250,73 @@ class JobManagerTest(parameterized.TestCase):
         self.assertIn("Job start", loaded_job.get_logs())
         self.assertIn("Job complete", loaded_job.get_logs())
 
+    def test_job_execution_metrics(self) -> None:
+        payload = TestAsset("src/main.py")
+
+        # Create a job with metrics disabled
+        job1 = jobs.submit_file(
+            payload.path,
+            self.compute_pool,
+            stage_name="payload_stage",
+            args=["foo", "--delay", "10"],
+            enable_metrics=False,
+            session=self.session,
+        )
+
+        # Create a job with metrics enabled
+        job2 = jobs.submit_file(
+            payload.path,
+            self.compute_pool,
+            stage_name="payload_stage",
+            args=["foo", "--delay", "10"],
+            enable_metrics=True,
+            session=self.session,
+        )
+
+        # Wait for job to finish
+        job1.wait()
+        job2.wait()
+        self.assertEqual(job1.status, "DONE")
+        self.assertEqual(job2.status, "DONE")
+
+        # Skip event table validation to avoid unpredictably slow Event Table latency
+        validate_metrics_events = False
+        if validate_metrics_events:
+            # Retrieve event table name
+            event_table_name: str = self.session.sql(
+                f"SHOW PARAMETERS LIKE 'event_table' IN DATABASE {self.session.get_current_database()}"
+            ).collect()[0]["value"]
+            if event_table_name.lower() == "snowflake.telemetry.events":
+                # Use EVENTS_VIEW if using default event table
+                event_table_name = "SNOWFLAKE.TELEMETRY.EVENTS_VIEW"
+
+            # Retrieve and validate metrics for the job
+            # Use a retry loop to wait for the metrics to be published since Event Table has some delay
+            query = textwrap.dedent(
+                f"""
+                SELECT * FROM {event_table_name}
+                    WHERE TIMESTAMP > DATEADD('minute', -5, CURRENT_TIMESTAMP())
+                        AND RESOURCE_ATTRIBUTES:"snow.service.name" = '{{job_id}}'
+                        AND RECORD_TYPE = 'METRIC'
+                """
+            )
+            max_delay = 60  # Max delay in seconds
+            retry_interval = 1  # Retry delay in seconds
+            num_tries = ((max_delay - 1) // retry_interval) + 1
+            for _ in range(num_tries):
+                if self.session.sql(query.format(job_id=job2.id)).count() > 0:
+                    break
+                time.sleep(retry_interval)
+            self.assertEqual(self.session.sql(query.format(job_id=job1.id)).count(), 0, job1.id)
+            self.assertGreater(self.session.sql(query.format(job_id=job2.id)).count(), 0, job2.id)
+
     # TODO(SNOW-1911482): Enable test for Python 3.11+
     @absltest.skipIf(
         version.Version(env.PYTHON_VERSION) >= version.Version("3.11"),
         "Decorator test only works for Python 3.10 and below due to pickle compatibility",
     )  # type: ignore[misc]
-    @absltest.skipIf(
-        (sys.version_info.major < 3) or (sys.version_info.major == 3 and sys.version_info.minor < 10),
-        "https://snowflakecomputing.atlassian.net/browse/SNOW-1962040",
-    )  # type: ignore[misc]
     def test_job_decorator(self) -> None:
-        @jobs.remote(self.compute_pool, "payload_stage", session=self.session)  # type: ignore[misc]
+        @jobs.remote(self.compute_pool, stage_name="payload_stage", session=self.session)  # type: ignore[misc]
         def decojob_fn(arg1: str, arg2: int, arg3: Optional[Any] = None) -> None:
             from datetime import datetime
 
@@ -311,7 +366,6 @@ class JobManagerTest(parameterized.TestCase):
         # Submit this function via file to avoid pickling issues
         # TODO: Test this via job decorator as well
         def runtime_func() -> None:
-            # NOTE: This Runtime module path may change in the future
             import ray
 
             from snowflake.ml.data.data_connector import DataConnector

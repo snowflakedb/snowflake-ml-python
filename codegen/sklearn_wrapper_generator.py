@@ -644,8 +644,6 @@ class WrapperGeneratorBase:
         self.test_class_name = ""
         self.test_estimator_imports = ""
         self.test_estimator_imports_list: List[str] = []
-        self.test_snowpark_pandas_imports = ""
-        self.test_snowpark_pandas_imports_list: List[str] = []
 
         # Dependencies
         self.predict_udf_deps = ""
@@ -930,10 +928,6 @@ label_cols: Optional[Union[str, List[str]]]
             "/".join(snow_ml_module_name.split(".")),
             inflection.underscore(self.original_class_name) + "_test.py",
         )
-        self.snowpark_pandas_test_file_name = os.path.join(
-            "/".join(snow_ml_module_name.split(".")),
-            inflection.underscore(self.original_class_name) + "_snowpark_pandas_test.py",
-        )
 
     def _populate_integ_test_fields(self) -> None:
         snow_ml_module_name = WrapperGeneratorFactory.get_snow_ml_module_name(self.root_module_name)
@@ -989,14 +983,10 @@ label_cols: Optional[Union[str, List[str]]]
         if self._is_randomized_search_cv:
             self.test_estimator_imports_list.append("from scipy.stats import uniform")
 
-        self.test_snowpark_pandas_imports_list = self.test_estimator_imports_list.copy()
-        self.test_snowpark_pandas_imports_list.remove(snow_ml_class_import)
-
     def _construct_string_from_lists(self) -> None:
         self.estimator_imports = "\n".join(self.estimator_imports_list)
         self.test_estimator_imports = "\n".join(self.test_estimator_imports_list)
         self.test_estimator_input_args = ", ".join(self.test_estimator_input_args_list)
-        self.test_snowpark_pandas_imports = "\n".join(self.test_snowpark_pandas_imports_list)
 
     def generate(self) -> "WrapperGeneratorBase":
         self.module_name = ".".join(self.class_object[1].__module__.split(".")[:-1])

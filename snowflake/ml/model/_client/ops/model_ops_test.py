@@ -1816,23 +1816,12 @@ class ModelOpsTest(absltest.TestCase):
             mock_validate_model_metadata.assert_called_once_with(m_spec)
 
     def test_get_model_task(self) -> None:
-        m_spec = {
-            "signatures": {
-                "predict": _DUMMY_SIG["predict"].to_dict(),
-                "predict_table": _DUMMY_SIG["predict_table"].to_dict(),
-            },
-            "task": "TABULAR_BINARY_CLASSIFICATION",
-        }
-        m_show_versions_result = [Row(model_spec=yaml.safe_dump(m_spec))]
+        m_show_versions_result = [Row(name='"v1"', model_attributes='{"task": "TABULAR_BINARY_CLASSIFICATION"}')]
         with mock.patch.object(
             self.m_ops._model_client,
             "show_versions",
             return_value=m_show_versions_result,
-        ) as mock_show_versions, mock.patch.object(
-            model_meta.ModelMetadata,
-            "_validate_model_metadata",
-            return_value=cast(model_meta_schema.ModelMetadataDict, m_spec),
-        ) as mock_validate_model_metadata:
+        ) as mock_show_versions:
             res = self.m_ops.get_model_task(
                 database_name=sql_identifier.SqlIdentifier("TEMP"),
                 schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
@@ -1845,29 +1834,18 @@ class ModelOpsTest(absltest.TestCase):
                 schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
                 version_name=sql_identifier.SqlIdentifier('"v1"'),
-                check_model_details=True,
-                statement_params={**self.m_statement_params, "SHOW_MODEL_DETAILS_IN_SHOW_VERSIONS_IN_MODEL": True},
+                validate_result=True,
+                statement_params=self.m_statement_params,
             )
-            mock_validate_model_metadata.assert_called_once_with(m_spec)
             self.assertEqual(res, type_hints.Task.TABULAR_BINARY_CLASSIFICATION)
 
     def test_get_model_task_empty(self) -> None:
-        m_spec = {
-            "signatures": {
-                "predict": _DUMMY_SIG["predict"].to_dict(),
-                "predict_table": _DUMMY_SIG["predict_table"].to_dict(),
-            }
-        }
-        m_show_versions_result = [Row(model_spec=yaml.safe_dump(m_spec))]
+        m_show_versions_result = [Row(name='"v1"', model_attributes="{}")]
         with mock.patch.object(
             self.m_ops._model_client,
             "show_versions",
             return_value=m_show_versions_result,
-        ) as mock_show_versions, mock.patch.object(
-            model_meta.ModelMetadata,
-            "_validate_model_metadata",
-            return_value=cast(model_meta_schema.ModelMetadataDict, m_spec),
-        ) as mock_validate_model_metadata:
+        ) as mock_show_versions:
             res = self.m_ops.get_model_task(
                 database_name=sql_identifier.SqlIdentifier("TEMP"),
                 schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
@@ -1880,10 +1858,9 @@ class ModelOpsTest(absltest.TestCase):
                 schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
                 version_name=sql_identifier.SqlIdentifier('"v1"'),
-                check_model_details=True,
-                statement_params={**self.m_statement_params, "SHOW_MODEL_DETAILS_IN_SHOW_VERSIONS_IN_MODEL": True},
+                validate_result=True,
+                statement_params=self.m_statement_params,
             )
-            mock_validate_model_metadata.assert_called_once_with(m_spec)
             self.assertEqual(res, type_hints.Task.UNKNOWN)
 
     def test_download_files_minimal(self) -> None:

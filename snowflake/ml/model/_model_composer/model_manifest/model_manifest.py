@@ -36,7 +36,6 @@ class ModelManifest:
     """
 
     MANIFEST_FILE_REL_PATH = "MANIFEST.yml"
-    _ENABLE_USER_FILES = False
     _DEFAULT_RUNTIME_NAME = "python_runtime"
 
     def __init__(self, workspace_path: pathlib.Path) -> None:
@@ -149,7 +148,7 @@ class ModelManifest:
             ],
         )
 
-        if self._ENABLE_USER_FILES:
+        if self.user_files:
             manifest_dict["user_files"] = [user_file.save(self.workspace_path) for user_file in self.user_files]
 
         lineage_sources = self._extract_lineage_info(data_sources)

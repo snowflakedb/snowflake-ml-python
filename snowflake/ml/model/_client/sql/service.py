@@ -20,6 +20,8 @@ class ServiceStatus(enum.Enum):
     UNKNOWN = "UNKNOWN"  # status is unknown because we have not received enough data from K8s yet.
     PENDING = "PENDING"  # resource set is being created, can't be used yet
     READY = "READY"  # resource set has been deployed.
+    SUSPENDING = "SUSPENDING"  # the service is set to suspended but the resource set is still in deleting state
+    SUSPENDED = "SUSPENDED"  # the service is suspended and the resource set is deleted
     DELETING = "DELETING"  # resource set is being deleted
     FAILED = "FAILED"  # resource set has failed and cannot be used anymore
     DONE = "DONE"  # resource set has finished running

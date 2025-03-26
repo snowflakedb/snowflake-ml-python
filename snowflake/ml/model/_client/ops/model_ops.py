@@ -789,14 +789,17 @@ class ModelOperator:
         version_name: sql_identifier.SqlIdentifier,
         statement_params: Optional[Dict[str, Any]] = None,
     ) -> type_hints.Task:
-        model_spec = self._fetch_model_spec(
+        model_version = self._model_client.show_versions(
             database_name=database_name,
             schema_name=schema_name,
             model_name=model_name,
             version_name=version_name,
+            validate_result=True,
             statement_params=statement_params,
-        )
-        task_val = model_spec.get("task", type_hints.Task.UNKNOWN.value)
+        )[0]
+
+        model_attributes = json.loads(model_version.model_attributes)
+        task_val = model_attributes.get("task", type_hints.Task.UNKNOWN.value)
         return type_hints.Task(task_val)
 
     def get_functions(
