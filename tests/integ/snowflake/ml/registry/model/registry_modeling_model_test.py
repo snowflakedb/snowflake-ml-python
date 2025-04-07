@@ -168,7 +168,6 @@ class TestRegistryModelingModelInteg(registry_model_test_base.RegistryModelTestB
     @parameterized.product(  # type: ignore[misc]
         registry_test_fn=registry_model_test_base.RegistryModelTestBase.REGISTRY_TEST_FN_LIST,
     )
-    @absltest.skip("https://snowflakecomputing.atlassian.net/browse/SNOW-1955551")  # type: ignore[misc]
     def test_snowml_model_deploy_snowml_pipeline_explain_enabled(
         self,
         registry_test_fn: str,
@@ -182,7 +181,7 @@ class TestRegistryModelingModelInteg(registry_model_test_base.RegistryModelTestB
         regr = LogisticRegression(input_cols=INPUT_COLUMNS, output_cols=OUTPUT_COLUMNS, label_cols=LABEL_COLUMNS)
         regr = Pipeline([("regr", regr)])
         regr.fit(iris_X)
-        test_features = iris_X[:1]
+        test_features = iris_X[:10]
 
         def _check_explain(res: pd.DataFrame) -> None:
             actual_explain_df = handlers_utils.convert_explanations_to_2D_df(regr, expected_explanations)
@@ -190,7 +189,10 @@ class TestRegistryModelingModelInteg(registry_model_test_base.RegistryModelTestB
                 old_col_name: new_col_name for old_col_name, new_col_name in zip(actual_explain_df.columns, res.columns)
             }
             actual_explain_df.rename(columns=rename_columns, inplace=True)
-            pd.testing.assert_frame_equal(res.astype(object), actual_explain_df, check_dtype=False)
+            EXPLAIN_OUTPUT_COLUMNS = [identifier.concat_names([feature, "_explanation"]) for feature in INPUT_COLUMNS]
+            res = pd.json_normalize(res[EXPLAIN_OUTPUT_COLUMNS])
+            actual_explain_df = pd.json_normalize(actual_explain_df[EXPLAIN_OUTPUT_COLUMNS])
+            pd.testing.assert_frame_equal(res, actual_explain_df, check_dtype=False)
 
         def _check_predict(res) -> None:
             pd.testing.assert_series_equal(

@@ -173,6 +173,19 @@ class ModelEnvTest(absltest.TestCase):
         self.assertListEqual(env.conda_dependencies, [])
         self.assertListEqual(env.pip_requirements, ["some-package==1.0.1"])
 
+        env = model_env.ModelEnv(prefer_pip=True)
+        env.include_if_absent([model_env.ModelDependency(requirement="channel::some-package", pip_name="some-package")])
+        self.assertListEqual(env.conda_dependencies, [])
+        self.assertListEqual(env.pip_requirements, ["some-package==1.0.1"])
+
+        env = model_env.ModelEnv(prefer_pip=True)
+        env.conda_dependencies = ["channel::some-package==1.0.1"]
+        env.include_if_absent(
+            [model_env.ModelDependency(requirement="another-package>=1.0,<2", pip_name="some-package")]
+        )
+        self.assertListEqual(env.conda_dependencies, ["another-package<2,>=1.0", "some-package==1.0.1"])
+        self.assertListEqual(env.pip_requirements, [])
+
     def test_include_if_absent_check_local(self) -> None:
         env = model_env.ModelEnv()
         env.conda_dependencies = []

@@ -12,6 +12,12 @@ JOB_STATUS = Literal[
 
 
 @dataclass(frozen=True)
+class PayloadEntrypoint:
+    file_path: PurePath
+    main_func: Optional[str]
+
+
+@dataclass(frozen=True)
 class UploadedPayload:
     # TODO: Include manifest of payload files for validation
     stage_path: PurePath

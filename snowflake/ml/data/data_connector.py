@@ -27,6 +27,7 @@ from snowflake.snowpark import context as sf_context
 
 if TYPE_CHECKING:
     import pandas as pd
+    import ray
     import tensorflow as tf
     from torch.utils import data as torch_data
 
@@ -240,6 +241,30 @@ class DataConnector:
             A Pandas DataFrame.
         """
         return self._ingestor.to_pandas(limit)
+
+    @telemetry.send_api_usage_telemetry(
+        project=_PROJECT,
+        subproject_extractor=lambda self: type(self).__name__,
+        func_params_to_log=["limit"],
+    )
+    def to_ray_dataset(self) -> "ray.data.Dataset":
+        """Retrieve the Snowflake data as a Ray Dataset.
+
+        Returns:
+            A Ray Dataset.
+
+        Raises:
+            ImportError: If Ray is not installed in the local environment.
+        """
+        if hasattr(self._ingestor, "to_ray_dataset"):
+            return self._ingestor.to_ray_dataset()
+
+        try:
+            import ray
+
+            return ray.data.from_pandas(self._ingestor.to_pandas())
+        except ImportError as e:
+            raise ImportError("Ray is not installed, please install ray in your local environment.") from e
 
 
 # Switch to use Runtime's Data Ingester if running in ML runtime

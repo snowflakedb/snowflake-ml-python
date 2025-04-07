@@ -45,10 +45,16 @@ py_test(
 )
 
 py_library(
+    name = "payload_scripts",
+    data = glob(["scripts/**"]),
+)
+
+py_library(
     name = "payload_utils",
     srcs = ["payload_utils.py"],
     deps = [
         ":constants",
+        ":payload_scripts",
         ":types",
     ],
 )
@@ -66,9 +72,35 @@ py_test(
 )
 
 py_library(
+    name = "interop_utils",
+    srcs = ["interop_utils.py"],
+)
+
+py_test(
+    name = "interop_utils_test",
+    srcs = ["interop_utils_test.py"],
+    deps = [
+        ":interop_utils",
+    ],
+)
+
+py_test(
+    name = "mljob_launcher_test",
+    srcs = ["mljob_launcher_test.py"],
+    deps = [
+        ":constants",
+        ":interop_utils",
+        ":payload_scripts",
+        ":test_file_helper",
+        "//snowflake/ml/utils:connection_params",
+    ],
+)
+
+py_library(
     name = "job_utils",
     srcs = [],
     deps = [
+        ":interop_utils",
         ":payload_utils",
         ":spec_utils",
     ],

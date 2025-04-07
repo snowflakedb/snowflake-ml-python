@@ -35,7 +35,7 @@ class ModelDeploymentSpecTest(absltest.TestCase):
                 force_rebuild=False,
                 external_access_integrations=[sql_identifier.SqlIdentifier("external_access_integration")],
             )
-
+            assert mds.workspace_path
             file_path = mds.workspace_path / mds.DEPLOY_SPEC_FILE_REL_PATH
             with file_path.open("r", encoding="utf-8") as f:
                 result = yaml.safe_load(f)
@@ -57,6 +57,52 @@ class ModelDeploymentSpecTest(absltest.TestCase):
                         },
                     },
                 )
+
+    def test_minimal_inline_yaml(self) -> None:
+        mds = model_deployment_spec.ModelDeploymentSpec()
+        yaml_str = mds.save(
+            database_name=sql_identifier.SqlIdentifier("db"),
+            schema_name=sql_identifier.SqlIdentifier("schema"),
+            model_name=sql_identifier.SqlIdentifier("model"),
+            version_name=sql_identifier.SqlIdentifier("version"),
+            service_database_name=None,
+            service_schema_name=None,
+            service_name=sql_identifier.SqlIdentifier("service"),
+            image_build_compute_pool_name=sql_identifier.SqlIdentifier("image_build_compute_pool"),
+            service_compute_pool_name=sql_identifier.SqlIdentifier("service_compute_pool"),
+            image_repo_database_name=None,
+            image_repo_schema_name=None,
+            image_repo_name=sql_identifier.SqlIdentifier("image_repo"),
+            ingress_enabled=True,
+            max_instances=1,
+            cpu=None,
+            memory=None,
+            gpu=None,
+            num_workers=None,
+            max_batch_rows=None,
+            force_rebuild=False,
+            external_access_integrations=[sql_identifier.SqlIdentifier("external_access_integration")],
+        )
+        assert yaml_str
+        result = yaml.safe_load(yaml_str)
+        self.assertDictEqual(
+            result,
+            {
+                "models": [{"name": "DB.SCHEMA.MODEL", "version": "VERSION"}],
+                "image_build": {
+                    "compute_pool": "IMAGE_BUILD_COMPUTE_POOL",
+                    "image_repo": "DB.SCHEMA.IMAGE_REPO",
+                    "force_rebuild": False,
+                    "external_access_integrations": ["EXTERNAL_ACCESS_INTEGRATION"],
+                },
+                "service": {
+                    "name": "DB.SCHEMA.SERVICE",
+                    "compute_pool": "SERVICE_COMPUTE_POOL",
+                    "ingress_enabled": True,
+                    "max_instances": 1,
+                },
+            },
+        )
 
     def test_minimal_case_sensitive(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -88,7 +134,7 @@ class ModelDeploymentSpecTest(absltest.TestCase):
                     sql_identifier.SqlIdentifier("external_access_integration", case_sensitive=True)
                 ],
             )
-
+            assert mds.workspace_path
             file_path = mds.workspace_path / mds.DEPLOY_SPEC_FILE_REL_PATH
             with file_path.open("r", encoding="utf-8") as f:
                 result = yaml.safe_load(f)
@@ -137,7 +183,7 @@ class ModelDeploymentSpecTest(absltest.TestCase):
                 force_rebuild=True,
                 external_access_integrations=[sql_identifier.SqlIdentifier("external_access_integration")],
             )
-
+            assert mds.workspace_path
             file_path = mds.workspace_path / mds.DEPLOY_SPEC_FILE_REL_PATH
             with file_path.open("r", encoding="utf-8") as f:
                 result = yaml.safe_load(f)
@@ -191,7 +237,7 @@ class ModelDeploymentSpecTest(absltest.TestCase):
                 force_rebuild=False,
                 external_access_integrations=None,
             )
-
+            assert mds.workspace_path
             file_path = mds.workspace_path / mds.DEPLOY_SPEC_FILE_REL_PATH
             with file_path.open("r", encoding="utf-8") as f:
                 result = yaml.safe_load(f)

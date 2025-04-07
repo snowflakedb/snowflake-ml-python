@@ -4,6 +4,7 @@ from snowflake.ml.jobs._utils.types import ComputeResources
 # SPCS specification constants
 DEFAULT_CONTAINER_NAME = "main"
 PAYLOAD_DIR_ENV_VAR = "MLRS_PAYLOAD_DIR"
+RESULT_PATH_ENV_VAR = "MLRS_RESULT_PATH"
 MEMORY_VOLUME_NAME = "dshm"
 STAGE_VOLUME_NAME = "stage-volume"
 STAGE_VOLUME_MOUNT_PATH = "/mnt/app"
@@ -17,10 +18,6 @@ DEFAULT_ENTRYPOINT_PATH = "func.py"
 
 # Percent of container memory to allocate for /dev/shm volume
 MEMORY_VOLUME_SIZE = 0.3
-
-# Multi Node Headless prototype constants
-# TODO: Replace this placeholder with the actual container runtime image tag.
-MULTINODE_HEADLESS_IMAGE_TAG = "latest"
 
 # Ray port configuration
 RAY_PORTS = {
@@ -48,6 +45,7 @@ JOB_POLL_MAX_DELAY_SECONDS = 1
 
 # Magic attributes
 IS_MLJOB_REMOTE_ATTR = "_is_mljob_remote_callable"
+RESULT_PATH_DEFAULT_VALUE = "mljob_result.pkl"
 
 # Compute pool resource information
 # TODO: Query Snowflake for resource information instead of relying on this hardcoded

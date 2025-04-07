@@ -99,11 +99,11 @@ class PayloadUtilsTests(parameterized.TestCase):
     def test_payload_validate(self, source: str, entrypoint: Optional[str], expected_entrypoint: str) -> None:
         with pushd(resolve_path("")):
             payload = payload_utils.JobPayload(source, entrypoint)
-            payload.validate()
-            assert isinstance(payload.source, pathlib.PurePath)
-            assert isinstance(payload.entrypoint, pathlib.PurePath)
-            self.assertEqual(payload.source.as_posix(), pathlib.Path(source).absolute().as_posix())
-            self.assertEqual(payload.entrypoint.as_posix(), expected_entrypoint)
+            resolved_source = payload_utils.resolve_source(payload.source)
+            resolved_entrypoint = payload_utils.resolve_entrypoint(payload.source, payload.entrypoint)
+            assert isinstance(resolved_source, pathlib.PurePath)
+            self.assertEqual(resolved_source.as_posix(), pathlib.Path(source).absolute().as_posix())
+            self.assertEqual(resolved_entrypoint.file_path.as_posix(), expected_entrypoint)
 
     @parameterized.parameters(  # type: ignore[misc]
         ("not_exist", "file1.py", FileNotFoundError),  # not_exist/ does not exist
@@ -122,7 +122,8 @@ class PayloadUtilsTests(parameterized.TestCase):
         with pushd(resolve_path("")):
             payload = payload_utils.JobPayload(source, entrypoint)
             with self.assertRaises(expected_error):
-                payload.validate()
+                _ = payload_utils.resolve_source(payload.source)
+                _ = payload_utils.resolve_entrypoint(payload.source, payload.entrypoint)
 
     @parameterized.parameters(  # type: ignore[misc]
         (function_with_pos_arg, ("Hello world", 100)),

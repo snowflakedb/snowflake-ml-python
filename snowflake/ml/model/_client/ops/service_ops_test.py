@@ -6,7 +6,7 @@ from unittest import mock
 from absl.testing import absltest
 
 from snowflake import snowpark
-from snowflake.ml._internal import file_utils
+from snowflake.ml._internal import file_utils, platform_capabilities as pc
 from snowflake.ml._internal.utils import sql_identifier
 from snowflake.ml.model._client.ops import service_ops
 from snowflake.ml.model._client.sql import service as service_sql
@@ -20,11 +20,12 @@ class ModelOpsTest(absltest.TestCase):
         self.m_session = mock_session.MockSession(conn=None, test_case=self)
         self.m_statement_params = {"test": "1"}
         self.c_session = cast(Session, self.m_session)
-        self.m_ops = service_ops.ServiceOperator(
-            self.c_session,
-            database_name=sql_identifier.SqlIdentifier("TEMP"),
-            schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
-        )
+        with pc.PlatformCapabilities.mock_features({"SPCS_MODEL_ENABLE_EMBEDDED_SERVICE_FUNCTIONS": True}):
+            self.m_ops = service_ops.ServiceOperator(
+                self.c_session,
+                database_name=sql_identifier.SqlIdentifier("TEMP"),
+                schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
+            )
 
     def test_create_service(self) -> None:
         with mock.patch.object(self.m_ops._stage_client, "create_tmp_stage",) as mock_create_stage, mock.patch.object(
@@ -109,6 +110,7 @@ class ModelOpsTest(absltest.TestCase):
             mock_deploy_model.assert_called_once_with(
                 stage_path="DB.SCHEMA.SNOWPARK_TEMP_STAGE_ABCDEF0123",
                 model_deployment_spec_file_rel_path=self.m_ops._model_deployment_spec.DEPLOY_SPEC_FILE_REL_PATH,
+                model_deployment_spec_yaml_str=None,
                 statement_params=self.m_statement_params,
             )
             mock_get_service_status.assert_called_once_with(
@@ -202,6 +204,7 @@ class ModelOpsTest(absltest.TestCase):
             mock_deploy_model.assert_called_once_with(
                 stage_path="DB.SCHEMA.SNOWPARK_TEMP_STAGE_ABCDEF0123",
                 model_deployment_spec_file_rel_path=self.m_ops._model_deployment_spec.DEPLOY_SPEC_FILE_REL_PATH,
+                model_deployment_spec_yaml_str=None,
                 statement_params=self.m_statement_params,
             )
             mock_get_service_status.assert_called_once_with(
@@ -295,6 +298,7 @@ class ModelOpsTest(absltest.TestCase):
             mock_deploy_model.assert_called_once_with(
                 stage_path='TEMP."test".SNOWPARK_TEMP_STAGE_ABCDEF0123',
                 model_deployment_spec_file_rel_path=self.m_ops._model_deployment_spec.DEPLOY_SPEC_FILE_REL_PATH,
+                model_deployment_spec_yaml_str=None,
                 statement_params=self.m_statement_params,
             )
             mock_get_service_status.assert_called_once_with(

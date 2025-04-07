@@ -5,6 +5,7 @@ from snowflake.ml._internal import telemetry
 from snowflake.ml._internal.lineage import lineage_utils
 from snowflake.ml.data import data_connector, data_ingestor, data_source, ingestor_utils
 from snowflake.ml.fileset import snowfs
+from snowflake.snowpark._internal import utils as snowpark_utils
 
 _PROJECT = "Dataset"
 _SUBPROJECT = "DatasetReader"
@@ -94,7 +95,10 @@ class DatasetReader(data_connector.DataConnector):
         dfs: List[snowpark.DataFrame] = []
         for source in self.data_sources:
             assert isinstance(source, data_source.DatasetInfo) and source.url is not None
-            df = self._session.read.option("pattern", file_path_pattern).parquet(source.url)
+            stage_reader = self._session.read.option("pattern", file_path_pattern)
+            if "INFER_SCHEMA_OPTIONS" in snowpark_utils.NON_FORMAT_TYPE_OPTIONS:
+                stage_reader = stage_reader.option("INFER_SCHEMA_OPTIONS", {"MAX_FILE_COUNT": 1})
+            df = stage_reader.parquet(source.url)
             if only_feature_cols and source.exclude_cols:
                 df = df.drop(source.exclude_cols)
             dfs.append(df)

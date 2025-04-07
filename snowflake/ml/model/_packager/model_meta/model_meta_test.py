@@ -487,6 +487,19 @@ class ModelMetaEnvTest(absltest.TestCase):
                 loaded_meta.runtimes["gpu"].runtime_env.conda_dependencies,
             )
 
+    def test_model_meta_prefer_pip(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with model_meta.create_model_metadata(
+                model_dir_path=tmpdir,
+                name="model1",
+                model_type="custom",
+                signatures=_DUMMY_SIG,
+                target_platforms=[type_hints.TargetPlatform.SNOWPARK_CONTAINER_SERVICES],
+            ) as meta:
+                meta.models["model1"] = _DUMMY_BLOB
+
+        self.assertTrue(meta.env.prefer_pip)
+
 
 if __name__ == "__main__":
     absltest.main()

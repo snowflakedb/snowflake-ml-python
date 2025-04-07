@@ -23,8 +23,8 @@ class TestSnowFileSystem(absltest.TestCase):
     version1 = "version1"
     version2 = "version2"
     row_counts = {
-        version1: 10,
-        version2: 20,
+        version1: 20,
+        version2: 30,
     }
 
     @classmethod
@@ -334,7 +334,7 @@ def _create_file_based_entity(
     session.sql(
         f"ALTER {domain} {entity} ADD VERSION '{version}' FROM "
         f"(SELECT seq4() AS ID, uniform(1, 10, random({seed})) AS PART FROM TABLE(GENERATOR(ROWCOUNT => {row_count}))) "
-        "PARTITION BY IFF(PART > 8, 'train', 'test')"
+        "PARTITION BY IFF(PART < 8, 'train', 'test')"
     ).collect()
 
 

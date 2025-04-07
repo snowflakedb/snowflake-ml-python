@@ -28,7 +28,7 @@ def remote(
     num_instances: Optional[int] = None,
     enable_metrics: bool = False,
     session: Optional[snowpark.Session] = None,
-) -> Callable[[Callable[_Args, _ReturnValue]], Callable[_Args, jb.MLJob]]:
+) -> Callable[[Callable[_Args, _ReturnValue]], Callable[_Args, jb.MLJob[_ReturnValue]]]:
     """
     Submit a job to the compute pool.
 
@@ -47,7 +47,7 @@ def remote(
         Decorator that dispatches invocations of the decorated function as remote jobs.
     """
 
-    def decorator(func: Callable[_Args, _ReturnValue]) -> Callable[_Args, jb.MLJob]:
+    def decorator(func: Callable[_Args, _ReturnValue]) -> Callable[_Args, jb.MLJob[_ReturnValue]]:
         # Copy the function to avoid modifying the original
         # We need to modify the line number of the function to exclude the
         # decorator from the copied source code
@@ -55,7 +55,7 @@ def remote(
         wrapped_func.__code__ = wrapped_func.__code__.replace(co_firstlineno=func.__code__.co_firstlineno + 1)
 
         @functools.wraps(func)
-        def wrapper(*args: _Args.args, **kwargs: _Args.kwargs) -> jb.MLJob:
+        def wrapper(*args: _Args.args, **kwargs: _Args.kwargs) -> jb.MLJob[_ReturnValue]:
             payload = functools.partial(func, *args, **kwargs)
             setattr(payload, constants.IS_MLJOB_REMOTE_ATTR, True)
             job = jm._submit_job(

@@ -9,7 +9,7 @@ import time
 from typing import Any, Dict, List, Optional, Tuple, Union, cast
 
 from snowflake import snowpark
-from snowflake.ml._internal import file_utils
+from snowflake.ml._internal import file_utils, platform_capabilities as pc
 from snowflake.ml._internal.utils import service_logger, sql_identifier
 from snowflake.ml.model._client.service import model_deployment_spec
 from snowflake.ml.model._client.sql import service as service_sql, stage as stage_sql
@@ -57,29 +57,29 @@ class ServiceOperator:
         self._session = session
         self._database_name = database_name
         self._schema_name = schema_name
-        self._workspace = tempfile.TemporaryDirectory()
         self._service_client = service_sql.ServiceSQLClient(
             session,
             database_name=database_name,
             schema_name=schema_name,
         )
-        self._stage_client = stage_sql.StageSQLClient(
-            session,
-            database_name=database_name,
-            schema_name=schema_name,
-        )
-        self._model_deployment_spec = model_deployment_spec.ModelDeploymentSpec(
-            workspace_path=pathlib.Path(self._workspace.name)
-        )
+        if pc.PlatformCapabilities.get_instance().is_inlined_deployment_spec_enabled():
+            self._workspace = None
+            self._model_deployment_spec = model_deployment_spec.ModelDeploymentSpec()
+        else:
+            self._workspace = tempfile.TemporaryDirectory()
+            self._stage_client = stage_sql.StageSQLClient(
+                session,
+                database_name=database_name,
+                schema_name=schema_name,
+            )
+            self._model_deployment_spec = model_deployment_spec.ModelDeploymentSpec(
+                workspace_path=pathlib.Path(self._workspace.name)
+            )
 
     def __eq__(self, __value: object) -> bool:
         if not isinstance(__value, ServiceOperator):
             return False
         return self._service_client == __value._service_client
-
-    @property
-    def workspace_path(self) -> pathlib.Path:
-        return pathlib.Path(self._workspace.name)
 
     def create_service(
         self,
@@ -119,19 +119,21 @@ class ServiceOperator:
 
         image_repo_database_name = image_repo_database_name or database_name or self._database_name
         image_repo_schema_name = image_repo_schema_name or schema_name or self._schema_name
-        # create a temp stage
-        stage_name = sql_identifier.SqlIdentifier(
-            snowpark_utils.random_name_for_temp_object(snowpark_utils.TempObjectType.STAGE)
-        )
-        self._stage_client.create_tmp_stage(
-            database_name=database_name,
-            schema_name=schema_name,
-            stage_name=stage_name,
-            statement_params=statement_params,
-        )
-        stage_path = self._stage_client.fully_qualified_object_name(database_name, schema_name, stage_name)
-
-        self._model_deployment_spec.save(
+        if self._workspace:
+            # create a temp stage
+            stage_name = sql_identifier.SqlIdentifier(
+                snowpark_utils.random_name_for_temp_object(snowpark_utils.TempObjectType.STAGE)
+            )
+            self._stage_client.create_tmp_stage(
+                database_name=database_name,
+                schema_name=schema_name,
+                stage_name=stage_name,
+                statement_params=statement_params,
+            )
+            stage_path = self._stage_client.fully_qualified_object_name(database_name, schema_name, stage_name)
+        else:
+            stage_path = None
+        spec_yaml_str_or_path = self._model_deployment_spec.save(
             database_name=database_name,
             schema_name=schema_name,
             model_name=model_name,
@@ -154,12 +156,14 @@ class ServiceOperator:
             force_rebuild=force_rebuild,
             external_access_integrations=build_external_access_integrations,
         )
-        file_utils.upload_directory_to_stage(
-            self._session,
-            local_path=self.workspace_path,
-            stage_path=pathlib.PurePosixPath(stage_path),
-            statement_params=statement_params,
-        )
+        if self._workspace:
+            assert stage_path is not None
+            file_utils.upload_directory_to_stage(
+                self._session,
+                local_path=pathlib.Path(self._workspace.name),
+                stage_path=pathlib.PurePosixPath(stage_path),
+                statement_params=statement_params,
+            )
 
         # check if the inference service is already running/suspended
         model_inference_service_exists = self._check_if_service_exists(
@@ -176,8 +180,11 @@ class ServiceOperator:
 
         # deploy the model service
         query_id, async_job = self._service_client.deploy_model(
-            stage_path=stage_path,
-            model_deployment_spec_file_rel_path=model_deployment_spec.ModelDeploymentSpec.DEPLOY_SPEC_FILE_REL_PATH,
+            stage_path=stage_path if self._workspace else None,
+            model_deployment_spec_file_rel_path=(
+                model_deployment_spec.ModelDeploymentSpec.DEPLOY_SPEC_FILE_REL_PATH if self._workspace else None
+            ),
+            model_deployment_spec_yaml_str=None if self._workspace else spec_yaml_str_or_path,
             statement_params=statement_params,
         )
 

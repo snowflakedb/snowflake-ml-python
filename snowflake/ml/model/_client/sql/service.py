@@ -73,13 +73,17 @@ class ServiceSQLClient(_base._BaseSQLClient):
     def deploy_model(
         self,
         *,
-        stage_path: str,
-        model_deployment_spec_file_rel_path: str,
+        stage_path: Optional[str] = None,
+        model_deployment_spec_yaml_str: Optional[str] = None,
+        model_deployment_spec_file_rel_path: Optional[str] = None,
         statement_params: Optional[Dict[str, Any]] = None,
     ) -> Tuple[str, snowpark.AsyncJob]:
-        async_job = self._session.sql(
-            f"CALL SYSTEM$DEPLOY_MODEL('@{stage_path}/{model_deployment_spec_file_rel_path}')"
-        ).collect(block=False, statement_params=statement_params)
+        assert model_deployment_spec_yaml_str or model_deployment_spec_file_rel_path
+        if model_deployment_spec_yaml_str:
+            sql_str = f"CALL SYSTEM$DEPLOY_MODEL('{model_deployment_spec_yaml_str}')"
+        else:
+            sql_str = f"CALL SYSTEM$DEPLOY_MODEL('@{stage_path}/{model_deployment_spec_file_rel_path}')"
+        async_job = self._session.sql(sql_str).collect(block=False, statement_params=statement_params)
         assert isinstance(async_job, snowpark.AsyncJob)
         return async_job.query_id, async_job
 

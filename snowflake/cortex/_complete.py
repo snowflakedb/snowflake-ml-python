@@ -1,11 +1,13 @@
 import json
 import logging
 import time
+import typing
 from io import BytesIO
 from typing import Any, Callable, Dict, Iterator, List, Optional, TypedDict, Union, cast
 from urllib.parse import urlunparse
 
 import requests
+from snowflake.core.rest import RESTResponse
 from typing_extensions import NotRequired, deprecated
 
 from snowflake import snowpark
@@ -72,6 +74,27 @@ class ResponseParseException(Exception):
     pass
 
 
+class MidStreamException(Exception):
+    """The SSE (Server-sent Event) stream can contain error messages in the middle of the stream,
+    using the “error” event type. This exception is raised when there is such a mid-stream error."""
+
+    def __init__(
+        self,
+        reason: typing.Optional[str] = None,
+        http_resp: typing.Optional["RESTResponse"] = None,
+        request_id: typing.Optional[str] = None,
+    ) -> None:
+        message = ""
+        if reason is not None:
+            message = reason
+        if http_resp:
+            message = f"Error in stream (HTTP Response: {http_resp.status}) - {http_resp.reason}"
+        if request_id != "":
+            # add request_id to error message
+            message += f" (Request ID: {request_id})"
+        super().__init__(message)
+
+
 class GuardrailsOptions(TypedDict):
     enabled: bool
     """A boolean value that controls whether Cortex Guard filters unsafe or harmful responses
@@ -118,6 +141,18 @@ def _make_common_request_headers() -> Dict[str, str]:
         "Accept": "application/json, text/event-stream",
     }
     return headers
+
+
+def _get_request_id(resp: Dict[str, Any]) -> Optional[Any]:
+    request_id = None
+    if "headers" in resp:
+        for key, value in resp["headers"].items():
+            # Note: There is some whitespace in the headers making it not possible
+            # to directly index the header reliably.
+            if key.strip().lower() == "x-snowflake-request-id":
+                request_id = value
+                break
+    return request_id
 
 
 def _validate_response_format_object(options: CompleteOptions) -> None:
@@ -188,13 +223,7 @@ def _xp_dict_to_response(raw_resp: Dict[str, Any]) -> requests.Response:
     response.status_code = int(raw_resp["status"])
     response.headers = raw_resp["headers"]
 
-    request_id = None
-    for key, value in raw_resp["headers"].items():
-        # Note: there is some whitespace in the headers making it not possible
-        # to directly index the header reliably.
-        if key.strip().lower() == "x-snowflake-request-id":
-            request_id = value
-            break
+    request_id = _get_request_id(raw_resp)
 
     data = raw_resp["content"]
     try:
@@ -276,7 +305,12 @@ def _call_complete_rest(
     )
 
 
-def _return_stream_response(response: requests.Response, deadline: Optional[float]) -> Iterator[str]:
+def _return_stream_response(
+    response: requests.Response,
+    deadline: Optional[float],
+    session: Optional[snowpark.Session] = None,
+) -> Iterator[str]:
+    request_id = _get_request_id(dict(response.headers))
     client = SSEClient(response)
     for event in client.events():
         if deadline is not None and time.time() > deadline:
@@ -294,7 +328,7 @@ def _return_stream_response(response: requests.Response, deadline: Optional[floa
             # This is the case of midstream errors which were introduced specifically for structured output.
             # TODO: discuss during code review
             if parsed_resp.get("error"):
-                yield json.dumps(parsed_resp)
+                raise MidStreamException(reason=response.text, request_id=request_id)
             else:
                 pass
 
@@ -375,7 +409,7 @@ def _complete_rest(
     else:
         response = _call_complete_rest(model=model, prompt=prompt, options=options, session=session, deadline=deadline)
     assert response.status_code >= 200 and response.status_code < 300
-    return _return_stream_response(response, deadline)
+    return _return_stream_response(response, deadline, session)
 
 
 def _complete_impl(

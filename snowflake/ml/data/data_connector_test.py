@@ -1,4 +1,5 @@
 from typing import Dict, Iterable, Optional
+from unittest import mock
 
 import numpy as np
 import torch
@@ -245,6 +246,30 @@ class DataConnectorTest(parameterized.TestCase):
             np.testing.assert_array_equal(batch["col3"].numpy(), expected_res[count2]["col3"])
             count2 += 1
         self.assertEqual(count2, len(expected_res))
+
+    def test_to_ray_dataset(self) -> None:
+        ray_data_ingestor = mock.Mock()
+        ray_data_ingestor.to_ray_dataset = mock.Mock()
+        self._sut._ingestor = ray_data_ingestor
+        self._sut.to_ray_dataset()
+        ray_data_ingestor.to_ray_dataset.assert_called_once()
+
+    def test_to_ray_dataset_with_ingestor_method(self) -> None:
+        """Test to_ray_dataset when the ingestor has a to_ray_dataset method."""
+        ray_data_ingestor = mock.Mock()
+        ray_data_ingestor.to_ray_dataset = mock.Mock(return_value="mock_ray_dataset")
+        self._sut._ingestor = ray_data_ingestor
+
+        result = self._sut.to_ray_dataset()
+        ray_data_ingestor.to_ray_dataset.assert_called_once()
+        self.assertEqual(result, "mock_ray_dataset")
+
+    @mock.patch("builtins.__import__", side_effect=ImportError("Ray not installed"))
+    def test_to_ray_dataset_ray_not_installed(self, mock_ray: mock.Mock) -> None:
+        """Test to_ray_dataset when Ray is not installed."""
+        with self.assertRaises(ImportError) as context:
+            self._sut.to_ray_dataset()
+        self.assertIn("Ray is not installed, please install ray in your local environment.", str(context.exception))
 
 
 if __name__ == "__main__":

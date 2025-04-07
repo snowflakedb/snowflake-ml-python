@@ -239,6 +239,9 @@
   name_pypi: snowflake-connector-python[pandas]
   dev_version: 3.12.0
   version_requirements: '>=3.12.0,<4'
+- name: snowflake.core
+  dev_version: 1.0.2
+  version_requirements: '>=1.0.2,<2'
 - name: snowflake-snowpark-python
   dev_version: 1.28.0
   version_requirements: '>=1.17.0,<2,!=1.26.0'

@@ -44,6 +44,7 @@ class ModelComposer:
         stage_path: str,
         *,
         statement_params: Optional[Dict[str, Any]] = None,
+        save_location: Optional[str] = None,
     ) -> None:
         self.session = session
         self.stage_path: Union[pathlib.PurePosixPath, parse.ParseResult] = None  # type: ignore[assignment]
@@ -54,10 +55,29 @@ class ModelComposer:
             # The stage path is a user stage path
             self.stage_path = pathlib.PurePosixPath(stage_path)
 
-        self._workspace = tempfile.TemporaryDirectory()
-        self._packager_workspace = tempfile.TemporaryDirectory()
+        # Set up workspace based on save_location if provided, otherwise use temporary directory
+        self.save_location = save_location
+        if save_location:
+            # Use the save_location directory directly
+            self._workspace_path = pathlib.Path(save_location)
+            self._workspace_path.mkdir(exist_ok=True)
+            # ensure that the directory is empty
+            if any(self._workspace_path.iterdir()):
+                raise ValueError(f"The directory {self._workspace_path} is not empty.")
+            self._workspace = None
 
-        self.packager = model_packager.ModelPackager(local_dir_path=str(self._packager_workspace_path))
+            self._packager_workspace_path = self._workspace_path / ModelComposer.MODEL_DIR_REL_PATH
+            self._packager_workspace_path.mkdir(exist_ok=True)
+            self._packager_workspace = None
+        else:
+            # Use a temporary directory
+            self._workspace = tempfile.TemporaryDirectory()
+            self._workspace_path = pathlib.Path(self._workspace.name)
+
+            self._packager_workspace_path = self._workspace_path / ModelComposer.MODEL_DIR_REL_PATH
+            self._packager_workspace_path.mkdir(exist_ok=True)
+
+        self.packager = model_packager.ModelPackager(local_dir_path=str(self.packager_workspace_path))
         self.manifest = model_manifest.ModelManifest(workspace_path=self.workspace_path)
 
         self.model_file_rel_path = f"model-{uuid.uuid4().hex}.zip"
@@ -65,16 +85,16 @@ class ModelComposer:
         self._statement_params = statement_params
 
     def __del__(self) -> None:
-        self._workspace.cleanup()
-        self._packager_workspace.cleanup()
+        if self._workspace:
+            self._workspace.cleanup()
 
     @property
     def workspace_path(self) -> pathlib.Path:
-        return pathlib.Path(self._workspace.name)
+        return self._workspace_path
 
     @property
-    def _packager_workspace_path(self) -> pathlib.Path:
-        return pathlib.Path(self._packager_workspace.name)
+    def packager_workspace_path(self) -> pathlib.Path:
+        return self._packager_workspace_path
 
     @property
     def model_stage_path(self) -> str:
@@ -167,6 +187,7 @@ class ModelComposer:
             conda_dependencies=conda_dependencies,
             pip_requirements=pip_requirements,
             artifact_repository_map=artifact_repository_map,
+            target_platforms=target_platforms,
             python_version=python_version,
             ext_modules=ext_modules,
             code_paths=code_paths,
@@ -175,9 +196,6 @@ class ModelComposer:
         )
         assert self.packager.meta is not None
 
-        file_utils.copytree(
-            str(self._packager_workspace_path), str(self.workspace_path / ModelComposer.MODEL_DIR_REL_PATH)
-        )
         self.manifest.save(
             model_meta=self.packager.meta,
             model_rel_path=pathlib.PurePosixPath(ModelComposer.MODEL_DIR_REL_PATH),
