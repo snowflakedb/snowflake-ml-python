@@ -100,6 +100,31 @@ class ServiceSQLTest(absltest.TestCase):
             statement_params=m_statement_params,
         )
 
+    def test_deploy_model_inline_yaml(self) -> None:
+        m_statement_params = {"test": "1"}
+        m_async_job = mock.MagicMock(spec=snowpark.AsyncJob)
+        m_async_job.query_id = uuid.uuid4()
+        m_df = mock_data_frame.MockDataFrame(
+            collect_block=False,
+            collect_result=m_async_job,
+            collect_statement_params=m_statement_params,
+        )
+
+        self.m_session.add_mock_sql(
+            """CALL SYSTEM$DEPLOY_MODEL('mock_yaml_str')""",
+            copy.deepcopy(m_df),
+        )
+        c_session = cast(Session, self.m_session)
+
+        service_sql.ServiceSQLClient(
+            c_session,
+            database_name=sql_identifier.SqlIdentifier("TEMP"),
+            schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
+        ).deploy_model(
+            model_deployment_spec_yaml_str="mock_yaml_str",
+            statement_params=m_statement_params,
+        )
+
     def test_invoke_function_method(self) -> None:
         m_statement_params = {"test": "1"}
         m_df = mock_data_frame.MockDataFrame()
@@ -116,13 +141,12 @@ class ServiceSQLTest(absltest.TestCase):
         m_df.__setattr__("write", mock_writer)
         m_df.add_query("queries", "query_1")
         m_df.add_query("queries", "query_2")
-        mock_capabilities = mock.MagicMock()
-        mock_capabilities.is_nested_function_enabled.return_value = False
 
         with mock.patch.object(mock_writer, "save_as_table") as mock_save_as_table, mock.patch.object(
             snowpark_utils, "generate_random_alphanumeric", return_value="ABCDEF0123"
-        ), mock.patch.object(platform_capabilities.PlatformCapabilities, "get_instance") as mock_get_instance:
-            mock_get_instance.return_value = mock_capabilities
+        ), platform_capabilities.PlatformCapabilities.mock_features(
+            {"SPCS_MODEL_ENABLE_EMBEDDED_SERVICE_FUNCTIONS": False}
+        ):
             service_sql.ServiceSQLClient(
                 c_session,
                 database_name=sql_identifier.SqlIdentifier("TEMP"),
@@ -162,17 +186,14 @@ class ServiceSQLTest(absltest.TestCase):
         m_df.__setattr__("write", mock_writer)
         m_df.add_query("queries", "query_1")
         m_df.add_query("queries", "query_2")
-        mock_capabilities = mock.MagicMock()
-        mock_capabilities.is_nested_function_enabled.return_value = True
 
         with mock.patch.object(mock_writer, "save_as_table") as mock_save_as_table, mock.patch.object(
             snowpark_utils, "random_name_for_temp_object", return_value="SNOWPARK_TEMP_TABLE_ABCDEF0123"
         ) as mock_random_name_for_temp_object, mock.patch.object(
             snowpark_utils, "generate_random_alphanumeric", return_value="ABCDEF0123"
-        ), mock.patch.object(
-            platform_capabilities.PlatformCapabilities, "get_instance"
-        ) as mock_get_instance:
-            mock_get_instance.return_value = mock_capabilities
+        ), platform_capabilities.PlatformCapabilities.mock_features(
+            {"SPCS_MODEL_ENABLE_EMBEDDED_SERVICE_FUNCTIONS": True}
+        ):
             service_sql.ServiceSQLClient(
                 c_session,
                 database_name=sql_identifier.SqlIdentifier("TEMP"),
@@ -208,12 +229,11 @@ class ServiceSQLTest(absltest.TestCase):
         m_df.add_mock_with_columns(["OUTPUT_1"], [F.col("OUTPUT_1")]).add_mock_drop("TMP_RESULT_ABCDEF0123")
         c_session = cast(Session, self.m_session)
         m_df.add_query("queries", "query_1")
-        mock_capabilities = mock.MagicMock()
-        mock_capabilities.is_nested_function_enabled.return_value = False
         with mock.patch.object(
             snowpark_utils, "generate_random_alphanumeric", return_value="ABCDEF0123"
-        ), mock.patch.object(platform_capabilities.PlatformCapabilities, "get_instance") as mock_get_instance:
-            mock_get_instance.return_value = mock_capabilities
+        ), platform_capabilities.PlatformCapabilities.mock_features(
+            {"SPCS_MODEL_ENABLE_EMBEDDED_SERVICE_FUNCTIONS": False}
+        ):
             service_sql.ServiceSQLClient(
                 c_session,
                 database_name=sql_identifier.SqlIdentifier("TEMP"),

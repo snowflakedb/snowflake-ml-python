@@ -147,6 +147,7 @@ class BaseModelSaveOption(TypedDict):
     embed_local_ml_library: Embedding local SnowML into the code directory of the folder.
     relax_version: Whether or not relax the version constraints of the dependencies if unresolvable in Warehouse.
         It detects any ==x.y.z in specifiers and replaced with >=x.y, <(x+1). Defaults to True.
+    save_location: Local directory path to save the model and metadata.
     """
 
     embed_local_ml_library: NotRequired[bool]
@@ -154,6 +155,7 @@ class BaseModelSaveOption(TypedDict):
     function_type: NotRequired[Literal["FUNCTION", "TABLE_FUNCTION"]]
     method_options: NotRequired[Dict[str, ModelMethodSaveOptions]]
     enable_explainability: NotRequired[bool]
+    save_location: NotRequired[str]
 
 
 class CatBoostModelSaveOptions(BaseModelSaveOption):

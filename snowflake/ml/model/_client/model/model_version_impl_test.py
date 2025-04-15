@@ -7,6 +7,7 @@ from unittest import mock
 import pandas as pd
 from absl.testing import absltest
 
+from snowflake.ml._internal import platform_capabilities as pc
 from snowflake.ml._internal.utils import sql_identifier
 from snowflake.ml.model import model_signature, type_hints as model_types
 from snowflake.ml.model._client.model import model_version_impl
@@ -46,7 +47,9 @@ class ModelVersionImplTest(absltest.TestCase):
     def setUp(self) -> None:
         self.m_session = mock_session.MockSession(conn=None, test_case=self)
         self.c_session = cast(Session, self.m_session)
-        with mock.patch.object(model_version_impl.ModelVersion, "_get_functions", return_value=[]):
+        with mock.patch.object(
+            model_version_impl.ModelVersion, "_get_functions", return_value=[]
+        ), pc.PlatformCapabilities.mock_features({"ENABLE_INLINE_DEPLOYMENT_SPEC": "true"}):
             self.m_mv = model_version_impl.ModelVersion._ref(
                 model_ops.ModelOperator(
                     self.c_session,
@@ -63,7 +66,9 @@ class ModelVersionImplTest(absltest.TestCase):
             )
 
     def test_ref(self) -> None:
-        with mock.patch.object(model_version_impl.ModelVersion, "_get_functions", return_value=[]) as mock_list_methods:
+        with mock.patch.object(
+            model_version_impl.ModelVersion, "_get_functions", return_value=[]
+        ) as mock_list_methods, pc.PlatformCapabilities.mock_features({"ENABLE_INLINE_DEPLOYMENT_SPEC": "true"}):
             model_version_impl.ModelVersion._ref(
                 model_ops.ModelOperator(
                     self.c_session,

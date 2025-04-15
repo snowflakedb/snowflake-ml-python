@@ -1,3 +1,4 @@
+import os
 from types import ModuleType
 from typing import Any, Dict, List, Optional, Tuple, Union
 
@@ -13,6 +14,7 @@ from snowflake.ml.model._client.model import model_impl, model_version_impl
 from snowflake.ml.model._client.ops import metadata_ops, model_ops, service_ops
 from snowflake.ml.model._model_composer import model_composer
 from snowflake.ml.model._packager.model_meta import model_meta
+from snowflake.ml.modeling._internal import constants
 from snowflake.snowpark import exceptions as snowpark_exceptions, session
 
 logger = logging.getLogger(__name__)
@@ -208,6 +210,14 @@ class ModelManager:
         if target_platforms:
             # Convert any string target platforms to TargetPlatform objects
             platforms = [model_types.TargetPlatform(platform) for platform in target_platforms]
+        else:
+            # Default the target platform to SPCS if not specified when running in ML runtime
+            if os.getenv(constants.IN_ML_RUNTIME_ENV_VAR):
+                logger.info(
+                    "Logging the model on Container Runtime for ML without specifying `target_platforms`. "
+                    'Default to `target_platforms=["SNOWPARK_CONTAINER_SERVICES"]`.'
+                )
+                platforms = [model_types.TargetPlatform.SNOWPARK_CONTAINER_SERVICES]
 
         if artifact_repository_map:
             for channel, artifact_repository_name in artifact_repository_map.items():
@@ -223,8 +233,17 @@ class ModelManager:
 
         logger.info("Start packaging and uploading your model. It might take some time based on the size of the model.")
 
+        # Extract save_location from options if present
+        save_location = None
+        if options and "save_location" in options:
+            save_location = options.get("save_location")
+            logger.info(f"Model will be saved to local directory: {save_location}")
+
         mc = model_composer.ModelComposer(
-            self._model_ops._session, stage_path=stage_path, statement_params=statement_params
+            self._model_ops._session,
+            stage_path=stage_path,
+            statement_params=statement_params,
+            save_location=save_location,
         )
         model_metadata: model_meta.ModelMetadata = mc.save(
             name=model_name_id.resolved(),

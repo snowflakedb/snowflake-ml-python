@@ -29,11 +29,13 @@ class ModelEnv:
         self,
         conda_env_rel_path: Optional[str] = None,
         pip_requirements_rel_path: Optional[str] = None,
+        prefer_pip: bool = False,
     ) -> None:
         if conda_env_rel_path is None:
             conda_env_rel_path = os.path.join(_DEFAULT_ENV_DIR, _DEFAULT_CONDA_ENV_FILENAME)
         if pip_requirements_rel_path is None:
             pip_requirements_rel_path = os.path.join(_DEFAULT_ENV_DIR, _DEFAULT_PIP_REQUIREMENTS_FILENAME)
+        self.prefer_pip: bool = prefer_pip
         self.conda_env_rel_path = pathlib.PurePosixPath(pathlib.Path(conda_env_rel_path).as_posix())
         self.pip_requirements_rel_path = pathlib.PurePosixPath(pathlib.Path(pip_requirements_rel_path).as_posix())
         self.artifact_repository_map: Optional[Dict[str, str]] = None
@@ -113,7 +115,11 @@ class ModelEnv:
         if snowpark_ml_version:
             self._snowpark_ml_version = version.parse(snowpark_ml_version)
 
-    def include_if_absent(self, pkgs: List[ModelDependency], check_local_version: bool = False) -> None:
+    def include_if_absent(
+        self,
+        pkgs: List[ModelDependency],
+        check_local_version: bool = False,
+    ) -> None:
         """Append requirements into model env if absent. Depending on the environment, requirements may be added
         to either the pip requirements or conda dependencies.
 
@@ -121,7 +127,7 @@ class ModelEnv:
             pkgs: A list of ModelDependency namedtuple to be appended.
             check_local_version: Flag to indicate if it is required to pin to local version. Defaults to False.
         """
-        if self.pip_requirements and not self.conda_dependencies and pkgs:
+        if (self.pip_requirements or self.prefer_pip) and not self.conda_dependencies and pkgs:
             pip_pkg_reqs: List[str] = []
             warnings.warn(
                 (

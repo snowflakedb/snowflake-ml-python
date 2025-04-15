@@ -75,7 +75,9 @@ class Registry:
             )
 
         self._model_manager = model_manager.ModelManager(
-            session, database_name=self._database_name, schema_name=self._schema_name
+            session,
+            database_name=self._database_name,
+            schema_name=self._schema_name,
         )
 
         self.enable_monitoring = options.get("enable_monitoring", True) if options else True
@@ -181,6 +183,7 @@ class Registry:
                 - target_methods: List of target methods to register when logging the model.
                   This option is not used in MLFlow models. Defaults to None, in which case the model handler's
                   default target methods will be used.
+                - save_location: Location to save the model and metadata.
                 - method_options: Per-method saving options. This dictionary has method names as keys and dictionary
                     values with the desired options.
 
@@ -317,6 +320,7 @@ class Registry:
                 - target_methods: List of target methods to register when logging the model.
                   This option is not used in MLFlow models. Defaults to None, in which case the model handler's
                   default target methods will be used.
+                - save_location: Location to save the model and metadata.
                 - method_options: Per-method saving options. This dictionary has method names as keys and dictionary
                     values with the desired options. See the example below.
 

@@ -108,11 +108,12 @@ class PayloadUtilsTests(parameterized.TestCase):
         )
         uploaded_payload = payload.upload(self.session, stage_path)
 
-        # NOTE: Add 1 for the launch script
-        expected_file_count = expected_file_count + 1
+        system_files_count = 6  # startup.sh and 5 files in scripts/ directory
+        expected_file_count = expected_file_count + system_files_count
 
-        actual_entrypoint = uploaded_payload.entrypoint[-1]
-        assert isinstance(actual_entrypoint, pathlib.PurePath)
+        actual_entrypoint = next(
+            item for item in reversed(uploaded_payload.entrypoint) if isinstance(item, pathlib.PurePath)
+        )
         self.assertEqual(actual_entrypoint.as_posix(), expected_entrypoint)
         self.assertEqual(self.session.sql(f"LIST {stage_path}").count(), expected_file_count)
 

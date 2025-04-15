@@ -16,7 +16,7 @@ class ModelDeploymentSpec:
 
     DEPLOY_SPEC_FILE_REL_PATH = "deploy.yml"
 
-    def __init__(self, workspace_path: pathlib.Path) -> None:
+    def __init__(self, workspace_path: Optional[pathlib.Path] = None) -> None:
         self.workspace_path = workspace_path
 
     def save(
@@ -43,7 +43,7 @@ class ModelDeploymentSpec:
         max_batch_rows: Optional[int],
         force_rebuild: bool,
         external_access_integrations: Optional[List[sql_identifier.SqlIdentifier]],
-    ) -> None:
+    ) -> str:
         # create the deployment spec
         # models spec
         fq_model_name = identifier.get_schema_level_object_identifier(
@@ -105,9 +105,12 @@ class ModelDeploymentSpec:
             service=service_dict,
         )
 
+        # Anchors are not supported in the server, avoid that.
+        yaml.SafeDumper.ignore_aliases = lambda *args: True  # type: ignore[method-assign]
+        if self.workspace_path is None:
+            return yaml.safe_dump(model_deployment_spec_dict)
         # save the yaml
         file_path = self.workspace_path / self.DEPLOY_SPEC_FILE_REL_PATH
         with file_path.open("w", encoding="utf-8") as f:
-            # Anchors are not supported in the server, avoid that.
-            yaml.SafeDumper.ignore_aliases = lambda *args: True  # type: ignore[method-assign]
             yaml.safe_dump(model_deployment_spec_dict, f)
+        return str(file_path.resolve())

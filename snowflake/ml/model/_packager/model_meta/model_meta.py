@@ -49,6 +49,7 @@ def create_model_metadata(
     conda_dependencies: Optional[List[str]] = None,
     pip_requirements: Optional[List[str]] = None,
     artifact_repository_map: Optional[Dict[str, str]] = None,
+    target_platforms: Optional[List[model_types.TargetPlatform]] = None,
     python_version: Optional[str] = None,
     task: model_types.Task = model_types.Task.UNKNOWN,
     **kwargs: Any,
@@ -69,6 +70,7 @@ def create_model_metadata(
         conda_dependencies: List of conda requirements for running the model. Defaults to None.
         pip_requirements: List of pip Python packages requirements for running the model. Defaults to None.
         artifact_repository_map: A dict mapping from package channel to artifact repository name.
+        target_platforms: List of target platforms to run the model.
         python_version: A string of python version where model is run. Used for user override. If specified as None,
             current version would be captured. Defaults to None.
         task: The task of the Model Version. It is an enum class Task with values TABULAR_REGRESSION,
@@ -101,12 +103,14 @@ def create_model_metadata(
         else:
             raise ValueError("`snowflake.ml` is imported via a way that embedding local ML library is not supported.")
 
+    prefer_pip = target_platforms == [model_types.TargetPlatform.SNOWPARK_CONTAINER_SERVICES]
     env = _create_env_for_model_metadata(
         conda_dependencies=conda_dependencies,
         pip_requirements=pip_requirements,
         artifact_repository_map=artifact_repository_map,
         python_version=python_version,
         embed_local_ml_library=embed_local_ml_library,
+        prefer_pip=prefer_pip,
     )
 
     if embed_local_ml_library:
@@ -157,8 +161,9 @@ def _create_env_for_model_metadata(
     artifact_repository_map: Optional[Dict[str, str]] = None,
     python_version: Optional[str] = None,
     embed_local_ml_library: bool = False,
+    prefer_pip: bool = False,
 ) -> model_env.ModelEnv:
-    env = model_env.ModelEnv()
+    env = model_env.ModelEnv(prefer_pip=prefer_pip)
 
     # Mypy doesn't like getter and setter have different types. See python/mypy #3004
     env.conda_dependencies = conda_dependencies  # type: ignore[assignment]

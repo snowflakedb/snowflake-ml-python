@@ -44,6 +44,7 @@ class ModelPackager:
         conda_dependencies: Optional[List[str]] = None,
         pip_requirements: Optional[List[str]] = None,
         artifact_repository_map: Optional[Dict[str, str]] = None,
+        target_platforms: Optional[List[model_types.TargetPlatform]] = None,
         python_version: Optional[str] = None,
         ext_modules: Optional[List[ModuleType]] = None,
         code_paths: Optional[List[str]] = None,
@@ -77,6 +78,7 @@ class ModelPackager:
             artifact_repository_map=artifact_repository_map,
             python_version=python_version,
             task=task,
+            target_platforms=target_platforms,
             **options,
         ) as meta:
             model_blobs_path = os.path.join(self.local_dir_path, ModelPackager.MODEL_BLOBS_DIR)

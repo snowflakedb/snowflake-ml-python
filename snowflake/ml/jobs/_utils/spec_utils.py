@@ -114,15 +114,9 @@ def generate_service_spec(
         Job service specification
     """
     is_multi_node = num_instances is not None and num_instances > 1
+    image_spec = _get_image_spec(session, compute_pool)
 
     # Set resource requests/limits, including nvidia.com/gpu quantity if applicable
-    if is_multi_node:
-        # If the job is of multi-node, we will need a different image which contains
-        # module snowflake.runtime.utils.get_instance_ip
-        # TODO(SNOW-1961849): Remove the hard-coded image name
-        image_spec = _get_image_spec(session, compute_pool, constants.MULTINODE_HEADLESS_IMAGE_TAG)
-    else:
-        image_spec = _get_image_spec(session, compute_pool)
     resource_requests: Dict[str, Union[str, int]] = {
         "cpu": f"{int(image_spec.resource_requests.cpu * 1000)}m",
         "memory": f"{image_spec.resource_limits.memory}Gi",
@@ -191,7 +185,10 @@ def generate_service_spec(
 
     # TODO: Add hooks for endpoints for integration with TensorBoard etc
 
-    env_vars = {constants.PAYLOAD_DIR_ENV_VAR: stage_mount.as_posix()}
+    env_vars = {
+        constants.PAYLOAD_DIR_ENV_VAR: stage_mount.as_posix(),
+        constants.RESULT_PATH_ENV_VAR: constants.RESULT_PATH_DEFAULT_VALUE,
+    }
     endpoints = []
 
     if is_multi_node:
